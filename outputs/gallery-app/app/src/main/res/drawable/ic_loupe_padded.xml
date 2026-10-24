@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item><shape android:shape="rectangle"><solid android:color="#181818" /></shape></item>
+    <item><inset android:drawable="@drawable/ic_loupe" android:insetLeft="5%" android:insetTop="5%" android:insetRight="5%" android:insetBottom="5%" /></item>
+</layer-list>

@@ -1,0 +1,16 @@
+# Local configuration and credentials
+.env
+.env.*
+local.properties
+*.jks
+*.keystore
+*.pem
+.DS_Store
+# Build outputs
+.gradle/
+**/build/
+*.apk
+*.aab
+# Local design drafts and device reports
+outputs/branding/
+outputs/gallery-app/docs/*-test-results.txt

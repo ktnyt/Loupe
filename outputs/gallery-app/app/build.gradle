@@ -1,0 +1,14 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'jp.nano.rawgallery'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'jp.nano.rawgallery'
+        minSdk 30
+        targetSdk 35
+        versionCode 22
+        versionName '0.15.1'
+        testInstrumentationRunner 'jp.nano.rawgallery.ArchiveInstrumentation'
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
