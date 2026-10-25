@@ -52,6 +52,9 @@ public final class TagActivity extends Activity {
   private LinearLayout root;
   private int generation, position;
   private boolean busy, reviewing;
+  private int browseMode;
+  private boolean browseAutomatic;
+  private final List<Integer> browsePhotos = new ArrayList<>();
 
   private static final class Step {
     final int position;
@@ -176,6 +179,7 @@ public final class TagActivity extends Activity {
   }
 
   private void showTag() {
+    browseMode = 0;
     if (busy) return;
     stopAnalysis(); reviewing = false;
     int token = screen(tag.name);
@@ -211,7 +215,7 @@ public final class TagActivity extends Activity {
         : "まず一枚にタグを付けると、残りにも自動でタグを広げます。", 13));
     root.addView(button(assigned > 0 ? "自動でタグを広げる" : "見本の写真にタグを付ける",
         assigned > 0 ? () -> startAutomatic(true, false) : this::startSeedReview));
-    root.addView(button("付与済みの写真を見る・訂正", () -> startReview(true)));
+    root.addView(button("付与済みの写真を見る", () -> showAssigned(false)));
     root.addView(button("自動付与した写真だけ見る", this::reviewAutomatic));
     root.addView(button("すべての未付与写真を順に確認", () -> startReview(false)));
     root.addView(button("除外した写真を見直す", () -> startExcluded()));
@@ -219,11 +223,76 @@ public final class TagActivity extends Activity {
     root.addView(button("タグ一覧", this::showTags));
   }
 
-  private void reviewAutomatic() {
-    stopAnalysis(); expandAfterAssignment = false;
-    queue.clear(); steps.clear(); position = 0;
-    for (int i = 0; i < photos.size(); i++) if (isAutomatic(i)) queue.add(i);
-    showReview();
+  private void reviewAutomatic() { showAssigned(true); }
+
+  private void showAssigned(boolean automaticOnly) {
+    stopAnalysis(); reviewing = true; browseMode = 1; browseAutomatic = automaticOnly;
+    browsePhotos.clear();
+    for (int i = 0; i < photos.size(); i++)
+      if (isAutomatic(i) || (!automaticOnly && value(i) == TagJudgments.Value.ASSIGNED)) browsePhotos.add(i);
+    int token = screen(tag.name + " · " + (automaticOnly ? "自動付与" : "付与済み"));
+    root.addView(text(browsePhotos.size() + "枚 · 写真をタップして拡大", 14));
+    android.widget.GridView grid = new android.widget.GridView(this);
+    grid.setNumColumns(3); grid.setHorizontalSpacing(4); grid.setVerticalSpacing(4);
+    grid.setAdapter(new android.widget.BaseAdapter() {
+      public int getCount() { return browsePhotos.size(); }
+      public Object getItem(int position) { return photos.get(browsePhotos.get(position)); }
+      public long getItemId(int position) { return position; }
+      public android.view.View getView(int position, android.view.View recycled, android.view.ViewGroup parent) {
+        ThumbnailCell cell = recycled instanceof ThumbnailCell ? (ThumbnailCell) recycled : new ThumbnailCell(TagActivity.this);
+        int index = browsePhotos.get(position);
+        PhotoRepository.Photo photo = photos.get(index);
+        Object binding = new Object(); cell.setTag(binding); cell.image.setImageDrawable(null);
+        cell.badges.rank = isAutomatic(index) ? "自動" : "手動"; cell.badges.invalidate();
+        cell.setContentDescription(photo.name + " · " + cell.badges.rank);
+        worker.execute(() -> {
+          if (!current(token)) return;
+          try {
+            Bitmap bitmap = PhotoRepository.bitmap(new PhotoRepository(TagActivity.this).preview(photo), 360);
+            main.post(() -> {
+              if (!current(token) || cell.getTag() != binding) { bitmap.recycle(); return; }
+              cell.image.setImageBitmap(bitmap);
+            });
+          } catch (Exception error) {
+            main.post(() -> { if (current(token) && cell.getTag() == binding) { cell.badges.rank = "読込失敗"; cell.badges.invalidate(); } });
+          }
+        });
+        return cell;
+      }
+    });
+    grid.setOnItemClickListener((parent, view, position, id) -> showAssignedPhoto(position));
+    root.addView(grid, new LinearLayout.LayoutParams(-1, 0, 1));
+    if (browsePhotos.isEmpty()) root.addView(text("この範囲に付与済みの写真はありません", 16));
+    root.addView(button("タグに戻る", this::showTag));
+  }
+
+  private void showAssignedPhoto(int position) {
+    browseMode = 2;
+    int index = browsePhotos.get(position);
+    PhotoRepository.Photo photo = photos.get(index);
+    int token = screen(tag.name);
+    root.addView(text((position + 1) + " / " + browsePhotos.size() + " · " + photo.name, 14));
+    root.addView(text(origin(index), 12));
+    ZoomImageView image = new ZoomImageView(this);
+    root.addView(image, new LinearLayout.LayoutParams(-1, 0, 1));
+    Runnable previous = () -> { if (position > 0) showAssignedPhoto(position - 1); };
+    Runnable next = () -> { if (position + 1 < browsePhotos.size()) showAssignedPhoto(position + 1); };
+    image.setPageListener(direction -> { if (direction > 0) next.run(); else previous.run(); });
+    LinearLayout navigation = new LinearLayout(this);
+    Button before = button("前の写真", previous), after = button("次の写真", next);
+    before.setEnabled(position > 0); after.setEnabled(position + 1 < browsePhotos.size());
+    navigation.addView(before, new LinearLayout.LayoutParams(0, -2, 1));
+    navigation.addView(after, new LinearLayout.LayoutParams(0, -2, 1)); root.addView(navigation);
+    root.addView(button("この写真のタグを訂正", () -> {
+      queue.clear(); steps.clear(); queue.add(index); this.position = 0; expandAfterAssignment = false; showReview();
+    }));
+    root.addView(button("付与済み一覧に戻る", () -> showAssigned(browseAutomatic)));
+    worker.execute(() -> {
+      try {
+        Bitmap bitmap = PhotoRepository.bitmap(new PhotoRepository(this).preview(photo), 1600);
+        main.post(() -> { if (current(token)) image.setBitmap(bitmap); else bitmap.recycle(); });
+      } catch (Exception error) { main.post(() -> { if (current(token)) failure(error); }); }
+    });
   }
 
   private void clearAutomatic() {
@@ -268,6 +337,7 @@ public final class TagActivity extends Activity {
   }
 
   private void showReview() {
+    browseMode = 0;
     reviewing = true;
     waiting = false;
     int token = screen(tag.name);
@@ -594,7 +664,8 @@ public final class TagActivity extends Activity {
 
   public void onBackPressed() {
     if (busy) return;
-    if (reviewing) showTag(); else super.onBackPressed();
+    if (browseMode == 2) showAssigned(browseAutomatic);
+    else if (reviewing) showTag(); else super.onBackPressed();
   }
 
   protected void onDestroy() {
