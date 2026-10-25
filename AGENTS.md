@@ -42,9 +42,9 @@
 
 詳細と委譲用の指示は [docs/development-workflow.md](docs/development-workflow.md) を参照する。
 
-1. 対応するissueがなければ起票し、本文・コメント・関連issue・作業IDを確認する。
+1. 対応するissueがなければ起票し、本文・コメント・関連issue・作業IDを確認する。この時点で作業状態を確認してmainへswitchし、remoteのmainをfetchしてfast-forwardのみで取り込む。既存変更や別worktreeの作業は保全する。
 2. purpose-driven-designで目的→機能→要件→契約を実装前に記録する。必要な既存コードのリファクタリングは別issueにして依存関係を記載し、その開発・検証を先に完了する。
-3. branchを `<issue-number>/<short-description>` 形式で作成する（例: `18/development-workflow`、接頭辞は付けない）。混在が見込まれる場合はworktreeを使う。
+3. branchを `<issue-number>/<short-description>` 形式で作成する（例: `18/development-workflow`、接頭辞は付けない）。最新化したmainを基点にする。先行リファクタリングをマージした場合はmainを再更新する。混在が見込まれる場合はworktreeを使う。
 4. エージェントが不要と判断できる場合を除き、変更前の実機操作・現状を確認する。省略時は理由をissueに記録する。
 5. UI変更はClaudeへ依頼し、完了まで低頻度で監視する。完了後にHTMLを出力し、`docs/design/`の参照HTMLとデザインドキュメントを更新してから実装する。
 6. 最もシンプルな方法で実装し、変更に応じた検証、インストール、変更後の実機確認を行う。実機不要の判断は根拠付きで記録する。
