@@ -68,7 +68,7 @@ trim内部の一覧取得・stat/ソート・削除それぞれの時間や削�
 [当該2操作の匿名ログ抜粋](diagnostics/issue-3-raw6-trace.jsonl)を保存した。session/request/parentで処理を辿れる。写真IDも抜粋時に除去した。
 
 ```sh
-python3 scripts/analyze-diagnostics.py outputs/gallery-app/docs/diagnostics/issue-3-raw6-trace.jsonl
+python3 scripts/analyze-diagnostics.py docs/diagnostics/issue-3-raw6-trace.jsonl
 ```
 
 回収元は `/tmp/loupe-issue3-raw6-complete` と再表示を含む `/tmp/loupe-issue3-raw6-repeat`。破損行0、dropped=0、writerエラーなし。

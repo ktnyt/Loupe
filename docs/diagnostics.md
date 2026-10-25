@@ -59,9 +59,9 @@ shutdownNowで未実行のキューが除去された場合やクラッシュ時
 
 ```sh
 mkdir -p /tmp/loupe-diagnostic-tests
-javac -d /tmp/loupe-diagnostic-tests outputs/gallery-app/app/src/main/java/jp/nano/rawgallery/DiagnosticWriter.java outputs/gallery-app/tests/DiagnosticWriterTest.java
+javac -d /tmp/loupe-diagnostic-tests app/src/main/java/jp/nano/rawgallery/DiagnosticWriter.java tests/DiagnosticWriterTest.java
 java -cp /tmp/loupe-diagnostic-tests jp.nano.rawgallery.DiagnosticWriterTest
-ANDROID_HOME=/opt/homebrew/share/android-commandlinetools outputs/gallery-app/gradlew -p outputs/gallery-app assembleDebug assembleDebugAndroidTest lintDebug
+ANDROID_HOME=/opt/homebrew/share/android-commandlinetools gradlew -p . assembleDebug assembleDebugAndroidTest lintDebug
 # APKとandroidTest APKをデータ保持で更新した後
 /opt/homebrew/share/android-commandlinetools/platform-tools/adb shell am instrument -w -e mode diagnostics jp.nano.rawgallery.test/jp.nano.rawgallery.ArchiveInstrumentation
 ```
