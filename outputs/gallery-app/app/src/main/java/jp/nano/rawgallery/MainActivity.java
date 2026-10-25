@@ -796,7 +796,25 @@ public final class MainActivity extends Activity {
     caption.setEllipsize(android.text.TextUtils.TruncateAt.END); card.addView(caption);
     LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(width), -1); lp.setMargins(0, 0, dp(8), 0);
     cards.addView(card, lp); card.setContentDescription(name); card.setOnClickListener(v -> open.run());
-    previewInto(image, photo, width * 3); return image;
+    final boolean[] requested = {false};
+    Runnable loadVisible = () -> {
+      android.graphics.Rect visible = new android.graphics.Rect();
+      if (!requested[0] && image.isShown() && image.getLocalVisibleRect(visible)) {
+        requested[0] = true; previewInto(image, photo, width * 3);
+      }
+    };
+    android.view.ViewTreeObserver.OnScrollChangedListener onScroll = loadVisible::run;
+    image.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+      public void onViewAttachedToWindow(View view) {
+        view.getViewTreeObserver().addOnScrollChangedListener(onScroll); view.post(loadVisible);
+      }
+      public void onViewDetachedFromWindow(View view) {
+        if (view.getViewTreeObserver().isAlive()) view.getViewTreeObserver().removeOnScrollChangedListener(onScroll);
+      }
+    });
+    if (image.isAttachedToWindow()) image.getViewTreeObserver().addOnScrollChangedListener(onScroll);
+    image.addOnLayoutChangeListener((v, l, t, r, bottom, ol, ot, or, ob) -> loadVisible.run());
+    image.post(loadVisible); return image;
   }
 
   private void addRecentPhotos() {
@@ -810,7 +828,10 @@ public final class MainActivity extends Activity {
           if (recent.isEmpty()) ((View) cards.getParent().getParent()).setVisibility(View.GONE);
           for (int n = 0; n < recent.size(); n++) {
             final int position = n; PhotoRepository.Photo photo = recent.get(n);
-            carouselPhoto(cards, photo, photo.name, 220, () -> {
+            long time = photoTime(photo);
+            String caption = time > 0 ? new java.text.SimpleDateFormat("M月d日 HH:mm", java.util.Locale.JAPAN)
+                .format(new java.util.Date(time)) : "撮影日時不明";
+            carouselPhoto(cards, photo, caption, 220, () -> {
               photos = new ArrayList<>(recent); bundles = new ArrayList<>();
               burstMembers = null; recentPhoto = true; showPhoto(position);
             });
@@ -1300,6 +1321,10 @@ public final class MainActivity extends Activity {
                     .show());
     int controlsStart = root.getChildCount();
     dock(button("拡大・戻す", image::toggleZoom));
+    if (fromRanking && !ranking.done())
+      dock(GalleryUi.neutralPrimary(button("この写真を選ぶ", () -> {
+        saveRanking(ranking.choose(rankingMembers.get(ranking.upper()) == position));
+      })));
     if (!fromRanking && "content".equals(photo.uri.getScheme()))
       dock(button("タグ", () -> openTags(photo)), button("前の写真", () -> adjacentPhoto(-1)), button("次の写真", () -> adjacentPhoto(1)));
     dock(

@@ -101,13 +101,13 @@ public final class SyncActivity extends Activity {
               requestPermissions(
                   new String[] {android.Manifest.permission.ACCESS_MEDIA_LOCATION}, 41));
     text(root, "撮影時の位置情報も含め、元のファイルを変更せず保存するための許可です。端末の現在位置は取得しません。", 13);
+    text(root, "撮影日から数えます。JPEGで撮影日がない場合は追加日、作成日の順に使います。日付がすべて不明のJPEGは保存確認後に削除対象になり、撮影日不明のRAWは残します。", 13);
     button(
         root,
         "端末に写真を残す期間",
         () ->
             new GalleryUi.Sheet(this)
                 .setTitle("端末に写真を残す期間")
-                .setMessage("撮影日から数えます。JPEGで撮影日がない場合は追加日、作成日の順に使います。日付がすべて不明のJPEGは保存確認後に削除対象になり、撮影日不明のRAWは残します。")
                 .setItems(
                     new String[] {"7日間", "30日間", "90日間"},
                     (d, w) -> {

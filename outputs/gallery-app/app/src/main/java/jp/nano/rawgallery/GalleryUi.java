@@ -167,7 +167,7 @@ final class GalleryUi {
       return dialog;
     }
     @Override public AlertDialog show() {
-      AlertDialog dialog = create(); dialog.show(); styleSheet(dialog); return dialog;
+      AlertDialog dialog = create(); dialog.show(); return dialog;
     }
   }
 }
