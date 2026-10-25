@@ -10,7 +10,11 @@ import uuid
 REPO = 'ktnyt/Loupe'
 MARKER = 'loupe-progress:v1 '
 PHASES = {'implementation': '実装（着手）', 'install': 'インストール',
-          'device-test': '実機検証', 'additional': '追加開発'}
+          'device-test': '実機検証', 'additional': '追加開発',
+          'design': '目的・契約設計', 'baseline-test': '変更前の実機確認',
+          'claude-design': 'Claude UI設計', 'ui-review': 'UI・UX独立レビュー',
+          'cold-review': '独立コードレビュー', 'security-review': 'セキュリティレビュー',
+          'delivery': 'PR・マージ'}
 STATUSES = {'start': '開始', 'complete': '完了', 'fail': '失敗',
             'cancel': '中断', 'skip': '省略'}
 

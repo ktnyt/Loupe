@@ -54,3 +54,12 @@ assignees: ""
 調査・設計だけのIssueでは、方式の決定や契約の整理などを完了条件とし、機能完成と混同しない。 -->
 
 - [ ]
+
+## 開発・計測計画
+
+<!-- 開発フローは docs/development-workflow.md。対象外は理由を書く。 -->
+- 先行リファクタリングissue・依存する契約:
+- UI変更の有無・Claude依頼先・基準HTML:
+- 変更前／変更後の実機操作・条件・計測イベント・単位:
+- UI・UX独立評価／Cold Review／Security Reviewの対象:
+- 作業ID・未計測項目:

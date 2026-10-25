@@ -39,6 +39,26 @@ class ProgressTest(unittest.TestCase):
             self.assertFalse(p.report([], 'missing'))
             self.assertTrue(p.report([event('skip')], 'test'))
 
+    def test_new_phases_record_and_report(self):
+        for phase in ('design', 'baseline-test', 'claude-design', 'ui-review',
+                      'cold-review', 'security-review', 'delivery'):
+            with self.subTest(phase=phase):
+                args = ['progress', 'record', '--issue', '18', '--run', 'test',
+                        '--phase', phase, '--status', 'start', '--note', 'test', '--dry-run']
+                output = io.StringIO()
+                with patch('sys.argv', args), contextlib.redirect_stdout(output):
+                    self.assertEqual(p.main(), 0)
+                line = next(line for line in output.getvalue().splitlines()
+                            if line.startswith('<!-- ' + p.MARKER))
+                start = json.loads(line[len('<!-- ' + p.MARKER):-4])
+                self.assertEqual(start['phase'], phase)
+                end = dict(start, status='complete')
+                p.validate([start], end)
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertTrue(p.report([start, end], 'test'))
+                self.assertEqual(json.loads(output.getvalue())['status'], 'complete')
+
     def test_post_and_read_back(self):
         saved = {}
         def api(path, payload=None):
