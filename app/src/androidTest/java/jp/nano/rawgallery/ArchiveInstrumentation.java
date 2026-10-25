@@ -17,6 +17,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean diagnosticTest, sheetTest;
   private boolean tagTest, lifecycleTest;
   private boolean relatedTest;
+  private boolean positionTest;
   private boolean automaticTest;
   private boolean cleanupTest;
   private boolean compactTest;
@@ -26,6 +27,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    positionTest = args != null && "gallery-position".equals(args.getString("mode"));
     burstTest = args != null && "burst".equals(args.getString("mode"));
     realBurstTest = args != null && "burst-real".equals(args.getString("mode"));
     diagnosticTest = args != null && "diagnostics".equals(args.getString("mode"));
@@ -47,6 +49,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     File restored = null;
     try {
       Context context = getTargetContext();
+      if (positionTest) { results.putString("stream", GalleryPositionChecks.run(this)); finish(-1, results); return; }
       if (burstTest || realBurstTest) { results.putString("stream", BurstPreviewChecks.run(this, realBurstTest)); finish(-1, results); return; }
       if (sheetTest) { results.putString("stream", SheetChecks.run(this)); finish(-1, results); return; }
       if (diagnosticTest) {
