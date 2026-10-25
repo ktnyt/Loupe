@@ -73,19 +73,21 @@ final class SyncEngine {
         + "JPEGは撮影日→追加日→取得できる作成日を使います。すべて不明なら復元照合・プレビュー保存後すぐ整理対象になります。RAWは撮影日不明なら残します。";
   }
 
-  static void status(Context c, String message) {
-    c.getSharedPreferences("settings", 0)
-        .edit()
-        .putString("syncStatus", message)
-        .putLong("syncStatusAt", System.currentTimeMillis())
-        .apply();
+  static void status(Context c, JobState.Kind kind, String message) {
+    long at=System.currentTimeMillis();
+    JobState.write(c.getSharedPreferences("settings", 0).edit(),"sync",kind,at)
+        .putString("syncStatus", message).putLong("syncStatusAt", at).apply();
+  }
+
+  static JobState snapshot(Context c) {
+    return JobState.read(c.getSharedPreferences("settings",0),"sync",RUNNING.get(),false);
   }
 
   static void run(Context c, String cookies, String agent) {
     try {
       runBatch(c, cookies, agent, candidates(c), true);
     } catch (Exception e) {
-      status(c, "対象フォルダを読み取れませんでした。アクセス許可を確認してください。");
+      status(c, JobState.Kind.FAILED, "対象フォルダを読み取れませんでした。アクセス許可を確認してください。");
     }
   }
 
@@ -126,11 +128,11 @@ final class SyncEngine {
                   managed(c, p, true),
                   verified);
           if (verified && !(settings.getBoolean("cleanupEnabled", false) && expired)) continue;
-          status(c, p.name + "\n同期と復元を確認しています…");
+          status(c, JobState.Kind.RUNNING, p.name + "\n同期と復元を確認しています…");
           if (old != null && "pending".equals(old.optString("state")))
-            cloud.verify(c, p, text -> status(c, text));
-          else if (!verified && allowUploads) cloud.uploadAndVerify(c, p, text -> status(c, text));
-          else cloud.verify(c, p, text -> status(c, text));
+            cloud.verify(c, p, text -> status(c, JobState.Kind.RUNNING, text));
+          else if (!verified && allowUploads) cloud.uploadAndVerify(c, p, text -> status(c, JobState.Kind.RUNNING, text));
+          else cloud.verify(c, p, text -> status(c, JobState.Kind.RUNNING, text));
           processed++;
           if (cloud.lastVerified == null) {
             JSONObject pending = store.get(ArchiveStore.key(p));
@@ -138,7 +140,7 @@ final class SyncEngine {
             pending.put("retryAfter", System.currentTimeMillis() + 3600000L);
             store.put(pending, "pending");
             deferred++;
-            status(c, p.name + "：保存結果が未確認です。自動再送せず、次回も照合だけ行います。");
+            status(c, JobState.Kind.PARTIAL, p.name + "：保存結果が未確認です。自動再送せず、次回も照合だけ行います。");
             continue;
           }
           store.verified(p, cloud.lastVerified);
@@ -159,7 +161,7 @@ final class SyncEngine {
             // media-item delete.
             store.preview(record.getString("key"));
             if (!unchanged(c, p) || !cloud.lastVerified.sha.equals(CloudVerifier.localSha(c, p))) {
-              status(c, p.name + "：端末の原本が変わったため整理を見送りました。");
+              status(c, JobState.Kind.PAUSED, p.name + "：端末の原本が変わったため整理を見送りました。");
               continue;
             }
             if (Thread.currentThread().isInterrupted()
@@ -184,13 +186,13 @@ final class SyncEngine {
         }
       }
       status(
-          c, "今回の同期処理を終了しました（確認した原本：" + processed + "枚、保留：" + deferred + "枚）。未完了の原本は次の定期処理で確認します。");
+          c, deferred > 0 ? JobState.Kind.PARTIAL : JobState.Kind.WAITING, "今回の同期処理を終了しました（確認した原本：" + processed + "枚、保留：" + deferred + "枚）。未完了の原本は次の定期処理で確認します。");
     } catch (CloudVerifier.AuthException e) {
       c.getSharedPreferences("settings", 0).edit().putBoolean("syncEnabled", false).apply();
       SyncJob.schedule(c);
-      status(c, "Amazonへの再ログインが必要なため、自動同期と整理を停止しました。");
+      status(c, JobState.Kind.AUTH_REQUIRED, "Amazonへの再ログインが必要なため、自動同期と整理を停止しました。");
     } catch (Exception e) {
-      status(c, "同期を中断しました。未確認の原本は整理しません。通信・アクセス許可・空き容量を確認してください。");
+      status(c, JobState.Kind.FAILED, "同期を中断しました。未確認の原本は整理しません。通信・アクセス許可・空き容量を確認してください。");
     } finally {
       RUNNING.set(false);
     }

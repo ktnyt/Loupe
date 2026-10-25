@@ -12,6 +12,7 @@ public final class PreviewPreparationJob extends JobService {
       new DiagnosticExecutor("PreviewPreparation.worker", 1);
   private static volatile int visible;
   private AtomicBoolean stopped;
+  private static final java.util.concurrent.atomic.AtomicInteger active = new java.util.concurrent.atomic.AtomicInteger();
   static void enter() { visible++; DiagnosticLog.event("preparation.pause", 0); }
   static void leave(Context c) { visible = Math.max(0, visible - 1); if (visible == 0) schedule(c); }
   static boolean browsing() { return visible > 0; }
@@ -33,18 +34,22 @@ public final class PreviewPreparationJob extends JobService {
         + state + "\n準備できなかった写真：" + p.getInt("failed", 0) + "枚"
         + "\n充電中以外も、Loupeを閉じている間に進めます。写真の原本は変更しません。";
   }
-  private void save(int ready, int total, int failed, String state) {
-    getSharedPreferences("preview-preparation", 0).edit().putInt("ready", ready)
-        .putInt("total", total).putInt("failed", failed).putString("state", state).apply();
+  static JobState snapshot(Context c) {
+    return JobState.read(c.getSharedPreferences("preview-preparation",0),"preparation",active.get()>0,true);
+  }
+  private void save(boolean countsKnown, int ready, int total, int failed, JobState.Kind kind, String state) {
+    JobState.write(getSharedPreferences("preview-preparation",0).edit(),"preparation",kind,System.currentTimeMillis())
+        .putBoolean("preparationCountsKnown",countsKnown).putInt("ready",ready).putInt("total",total).putInt("failed",failed).putString("state",state).apply();
     DiagnosticLog.event("preparation.progress", 0, "ready", ready, "total", total, "failed", failed);
   }
   public boolean onStartJob(JobParameters params) {
     if (browsing()) return false; // Leaving the last Activity schedules another attempt.
     AtomicBoolean cancel = new AtomicBoolean(); stopped = cancel;
     WORKER.execute(() -> {
+      active.incrementAndGet();
       android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
       int ready = 0, failed = 0, total = 0;
-      boolean retry = false;
+      boolean retry = false, countsKnown = false;
       try (GalleryIndex index = new GalleryIndex(this)) {
         PhotoRepository repository = new PhotoRepository(this, true);
         List<PhotoRepository.Photo> photos = index.load(null, "すべて").photos;
@@ -53,15 +58,16 @@ public final class PreviewPreparationJob extends JobService {
           if (cancel.get() || browsing()) { if (!cancel.get()) jobFinished(params, true); return; }
           total++; keys.add(PhotoRepository.previewKey(p)); if (repository.prepared(p)) ready++;
         }
+        countsKnown = true;
         repository.prunePrepared(keys, () -> cancel.get() || browsing());
-        save(ready, total, 0, "準備中");
+        save(countsKnown, ready, total, 0, JobState.Kind.RUNNING, "準備中");
         for (PhotoRepository.Photo p : photos) {
           if (cancel.get() || browsing()) { retry = true; break; }
           if (!local(p)) continue;
           boolean wasReady = repository.prepared(p);
           if (wasReady && PreviewPlaceholders.get(this).has(p)) continue;
           if (getFilesDir().getUsableSpace() < 1024L * 1024 * 1024) {
-            save(ready, total, failed, "空き容量が少ないため一時停止");
+            save(countsKnown, ready, total, failed, JobState.Kind.PAUSED, "空き容量が少ないため一時停止");
             retry = true; break;
           }
           try {
@@ -73,14 +79,14 @@ public final class PreviewPreparationJob extends JobService {
             }
           }
           catch (Exception e) { failed++; DiagnosticLog.event("preparation.item_fail", 0, "error", e.getClass().getSimpleName()); }
-          save(ready, total, failed, "準備中");
+          save(countsKnown, ready, total, failed, JobState.Kind.RUNNING, "準備中");
         }
-        if (browsing()) save(ready, total, failed, "閲覧中のため一時停止");
-        else if (!retry && !cancel.get()) save(ready, total, failed,
+        if (browsing()) save(countsKnown, ready, total, failed, JobState.Kind.PAUSED, "閲覧中のため一時停止");
+        else if (!retry && !cancel.get()) save(countsKnown, ready, total, failed, failed == 0 ? JobState.Kind.COMPLETE : JobState.Kind.PARTIAL,
             failed == 0 ? "準備できました" : "一部の写真を準備できませんでした");
       } catch (Exception e) {
-        save(ready, total, failed, "準備を再開できませんでした"); retry = true;
-      }
+        save(countsKnown, ready, total, failed, JobState.Kind.FAILED, "準備を再開できませんでした"); retry = true;
+      } finally { active.decrementAndGet(); }
       if (!cancel.get()) jobFinished(params, retry);
     });
     return true;

@@ -13,6 +13,7 @@ import org.json.JSONObject;
  * source.
  */
 public final class ArchiveInstrumentation extends Instrumentation {
+  private boolean jobStateTest;
   private boolean affordancesTest;
   private boolean rankingModesTest;
   private boolean systemBackTest;
@@ -30,6 +31,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    jobStateTest = args != null && "job-state".equals(args.getString("mode"));
     affordancesTest = args != null && "affordances".equals(args.getString("mode"));
     rankingModesTest = args != null && "ranking-modes".equals(args.getString("mode"));
     systemBackTest = args != null && "system-back".equals(args.getString("mode"));
@@ -60,6 +62,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     File restored = null;
     try {
       Context context = getTargetContext();
+      if (jobStateTest) { results.putString("stream", JobStateChecks.run(context)); finish(-1, results); return; }
       if (affordancesTest) { results.putString("stream", AffordanceChecks.run(this)); finish(-1, results); return; }
       if (rankingModesTest) { results.putString("stream", RankingModeChecks.run(this)); finish(-1, results); return; }
       if (systemBackTest) { results.putString("stream", SystemBackChecks.run(this)); finish(-1, results); return; }

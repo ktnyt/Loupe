@@ -234,3 +234,11 @@ SDKを使う検証では`ANDROID_HOME=/opt/homebrew/share/android-commandlinetoo
 結果一覧は説明文に代えてカードと拡大印を使う。順位・ファイル名・順番を保持し、長い名前は折り返す。各行は単一の操作対象で、読み上げ名は順位と名前、クリック操作名は「拡大」。写真の読込失敗でも行の操作を失わず、拡大から標準Backで結果へ戻る。
 
 Cloud初期画面は説明や空statusを表示しない。ログイン・同期の設定・接続と確認から明示的に操作する。実処理の状態メッセージはすべて可視にしpoliteで通知する。通信・原本・認証・削除条件を変更しない。同期の対象条件、共有の形式と失敗復帰、タグの空状態と入力エラー、安全確認、読み上げ用説明は残す。#1の推論と#17の状態表現は対象外。
+
+### 背景処理の観測状態（Issue #36）
+
+SyncEngineは既存の文章/時刻と同じSharedPreferences editでsyncStateCode/syncStateAtを保存する。1バッチ終了はWAITING、保留があるとPARTIALとし、全写真COMPLETEを推測しない。全体総数は未計測。
+
+PreviewPreparationJobは既存のready/total/failed/stateと同じeditでpreparationStateCode/preparationStateAt/preparationCountsKnownを保存する。総数の走査完了後だけ件数を既知とする。readyは準備済みpreview数、failedは今回の処理失敗数で、ThumbHashの失敗はreadyと重なり得るため合計で残数を算出しない。ThumbHash単独件数は未計測。
+
+JobState.snapshot相当の読取では旧データ・不明コード・時刻欠落はUNKNOWN。保存されたRUNNINGでも実行主体がない場合はUNKNOWNとし、過去の計測件数と更新時刻は保持する。状態保存は既存同様applyによるためプロセス停止時のdisk永続化を保証しない。UI、認証、送信、削除、タグ推論、jobの実行条件は変更しない。
