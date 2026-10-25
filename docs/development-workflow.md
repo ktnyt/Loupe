@@ -6,9 +6,24 @@
 
 `gh issue list --repo ktnyt/Loupe --state all --search '対象の語句'` で重複を調べ、対応するissueがなければ既存の開発・設計テンプレートで起票する。`gh issue view 番号 --comments` で最新の要求、契約、進捗を読む。既存のissueが同じ目的を扱っていれば引き継ぐ。
 
+issue確認時に `git status --short`、`git branch --show-current`、`git worktree list` で状態を確認し、設計・新規branch作成より先にmainを最新化する。作業中の変更を破棄したり、無関係な変更を自動でstash・コミットしたりしない。混在する場合は専用worktreeを使う。
+
+mainを安全に操作できるworktreeで、各コマンドの成功を確認して順に実行する。
+
+```sh
+git switch main
+git fetch origin main
+git merge --ff-only origin/main
+git rev-parse HEAD origin/main
+```
+
+最後の2つのコミットIDが一致することを確認し、issueの設計記録に基点を残す。fetch失敗、fast-forward不可、ローカルmainだけのコミットによる不一致は中断として記録し、強制リセットせず原因を確認する。
+
+mainが別worktreeで使用中なら、そのworktreeの状態と利用状況を確認し、安全に更新できる場合だけそこで上記手順を実施する。他の作業を妨げる場合は中断して調整し、強制checkoutはしない。専用worktreeの新規作業branchは確認済みのmainのコミットから作る。既存branchで作業を再開する場合は、そのbranchと変更を保持し、更新したmainとの差分を確認して必要な取り込みを別途行う。
+
 目的・機能・要件・不変条件・事前条件・事後条件を、issueまたは現行設計書に実装前に記す。成功条件と失敗からの復帰、UX、計測条件を含め、最もシンプルな実装方針を選ぶ。リファクタリングが必要なら、その必要性と完了条件を別issueに書き、元issueに依存先をリンクして先行実施する。単に周辺コードが気になるだけで依頼を広げない。
 
-branchは `18/development-workflow` のように作成する。先行issueにもその番号のbranchを使う。変更前の実機確認で再現操作・期待・実測・対象端末・アプリ版・写真枚数/形式・キャッシュ状態を残す。アプリに影響しない文書や開発ツールの変更など、省略できる場合は理由を記録する。接続できないことは「不要」の根拠にならない。
+branchは `18/development-workflow` のように作成する。先行issueにもその番号のbranchを使う。先行リファクタリングのマージ後はmainの最新化を再実行してから本題のbranchを作成する。変更前の実機確認で再現操作・期待・実測・対象端末・アプリ版・写真枚数/形式・キャッシュ状態を残す。アプリに影響しない文書や開発ツールの変更など、省略できる場合は理由を記録する。接続できないことは「不要」の根拠にならない。
 
 ## ClaudeによるUI設計
 
