@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loupe Issue #5 標準Backへの統一</title>
+<style>
+:root{--text:#EDEDEA;--sub:#A9A9A4;--ok:#9FE0B5;--ng:#F2A7AB;--k:1}
+*{box-sizing:border-box}
+body{margin:0;background:#0B0B0C;color:var(--text);font-family:"Noto Sans JP",system-ui,-apple-system,"Hiragino Sans",sans-serif;font-size:15px;line-height:1.6}
+.wrap{max-width:1500px;margin:0 auto;padding:28px 20px 64px}
+h1{margin:0;font-size:24px;line-height:1.4;font-weight:600}
+h2.sec{margin:28px 0 4px;font-size:18px;font-weight:600}
+.lead{margin:6px 0 0;color:var(--sub);font-size:14px}
+.controls{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;margin:14px 0 0}
+.controls .lb{color:var(--sub);font-size:13px;margin-right:6px}
+.seg{display:inline-flex;flex-wrap:wrap;background:#1C1C1F;border-radius:22px;padding:2px}
+.seg button{background:none;border:0;color:var(--text);font:inherit;font-size:13px;min-height:44px;padding:0 12px;border-radius:20px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:#EDEDEA;color:#111}
+.hw{background:#2A2A2E;border:1px solid #4A4A50;color:var(--text);font:inherit;font-size:14px;font-weight:600;min-height:48px;padding:0 18px;border-radius:24px;cursor:pointer}
+label.tg{display:inline-flex;gap:8px;align-items:center;font-size:13px;min-height:44px;cursor:pointer}
+label.tg input{width:18px;height:18px;accent-color:#EDEDEA}
+.cols{display:flex;gap:32px;flex-wrap:wrap;margin-top:14px;align-items:flex-start}
+.col{display:flex;flex-direction:column;gap:8px}
+.col h3{margin:0;font-size:14px;font-weight:600;display:flex;gap:8px;align-items:center}
+.tagc{font-size:12px;padding:2px 8px;border-radius:6px;font-weight:600}
+.tagc.old{background:#3A2224;color:#F2A7AB}.tagc.new{background:#1E3A2A;color:var(--ok)}
+.box{background:#141416;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.6;font-variant-numeric:tabular-nums;max-width:max(var(--w),320px)}
+.ok{color:var(--ok)}.ng{color:var(--ng)}
+
+/* 部品（1px = 1dp）。outline は寸法の外 */
+.part{width:var(--w);background:#0F0F10;outline:1px solid #3A3A3F;display:flex;flex-direction:column;font-family:Roboto,"Noto Sans JP","Noto Sans CJK JP",system-ui,sans-serif;color:var(--text)}
+.photo{height:var(--ph,200px);display:flex;gap:2px;flex-shrink:0}
+.photo i{flex:1;display:block}
+/* 既存 dock（#9と同じ値） */
+.dock{background:#19191B;padding:8px;display:flex;align-items:stretch;flex-shrink:0}
+.dock.grid{display:grid;grid-template-columns:repeat(var(--cols),minmax(0,1fr))}
+.dock.grid .db{flex:none}
+.db{flex:1 1 0;min-width:0;min-height:64px;height:auto;padding:6px;margin:0;border:0;border-radius:8px;background:transparent;color:#EDEDEA;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;position:relative;overflow:hidden;font-family:inherit;font-weight:500;font-size:calc(13px*var(--k));text-align:center}
+.db .ic{width:24px;height:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:visible}
+.db .ic svg{width:26px;height:26px;flex-shrink:0}
+.db .lbl{display:block;max-width:100%;line-height:24px;overflow-wrap:anywhere}
+.db:disabled{color:#626B72;cursor:default}
+.db.gone{outline:2px dashed #F2A7AB;outline-offset:-4px}
+.ctaRow{padding:8px 16px;flex-shrink:0}
+.cta{width:100%;min-height:64px;padding:6px 16px;border:0;border-radius:26px;background:#EDEDEA;color:#111111;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;font-family:inherit;font-weight:500;font-size:calc(13px*var(--k))}
+.cta .ic{width:24px;height:24px;display:flex;align-items:center;justify-content:center;overflow:visible}
+.cta .ic svg{width:26px;height:26px}
+.cta .lbl{line-height:24px}
+
+/* 模擬の端末 */
+.dev{position:relative;width:var(--w);height:760px;background:#0F0F10;outline:1px solid #3A3A3F;overflow:hidden;font-family:Roboto,"Noto Sans JP","Noto Sans CJK JP",system-ui,sans-serif;color:var(--text)}
+.scr{position:absolute;inset:0;display:flex;flex-direction:column}
+.list{flex:1;overflow-y:auto;min-height:0}
+.list::-webkit-scrollbar{width:0}
+.hd{padding:36px 20px 10px;display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.hd b{font-size:calc(22px*var(--k));line-height:1.35;font-weight:600}
+.hd span{font-size:calc(13px*var(--k));color:var(--sub)}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:2px}
+.g4 button{border:0;padding:0;height:calc((var(--w) - 6px)/4);cursor:pointer;position:relative}
+.g4 button em{position:absolute;top:5px;right:5px;height:20px;padding:0 6px;border-radius:10px;background:rgba(0,0,0,.62);color:#fff;font-style:normal;font-size:12px;line-height:20px}
+.g4 button.on{outline:3px solid #4C8DFF;outline-offset:-3px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:14px 12px;padding:0 16px 16px}
+.g2 button{background:none;border:0;padding:0;color:inherit;font:inherit;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:4px}
+.g2 i{display:block;height:120px;border-radius:12px}
+.g2 span{font-size:calc(14px*var(--k))}
+.rows button{display:flex;align-items:center;gap:12px;width:100%;min-height:64px;padding:8px 16px;background:none;border:0;color:inherit;font:inherit;text-align:left;cursor:pointer;font-size:calc(15px*var(--k))}
+.rows button i{width:48px;height:48px;border-radius:8px;flex-shrink:0;display:block}
+.rows button.on{background:#1E2B42}
+.chips{display:flex;gap:6px;padding:0 16px 8px}
+.chips button{min-height:48px;padding:0 4px;background:none;border:0;color:inherit;cursor:pointer;font:inherit}
+.chips button span{display:inline-flex;align-items:center;height:36px;padding:0 12px;border-radius:8px;border:1px solid #3A3A3F;font-size:calc(13px*var(--k))}
+.chips button[aria-pressed="true"] span{background:#EDEDEA;color:#111;border-color:#EDEDEA}
+.cmpA{flex:1;display:flex;flex-direction:column;gap:2px;min-height:0}
+.cmpA button{flex:1;border:0;padding:0;position:relative;cursor:pointer}
+.cmpA button b{position:absolute;left:8px;top:8px;min-width:24px;min-height:24px;padding:2px 7px;border-radius:6px;background:rgba(15,15,16,.72);box-shadow:0 0 0 1px rgba(237,237,234,.45);color:#EDEDEA;font-size:calc(13px*var(--k));line-height:calc(16px*var(--k));font-weight:500}
+.tabbar{flex-shrink:0;border-top:1px solid #19191B;padding:0 8px 20px;display:flex}
+.tab{flex:1;min-height:48px;background:none;border:0;color:var(--sub);font:inherit;font-weight:500;font-size:calc(16px*var(--k));display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer}
+.tab[aria-selected="true"]{color:var(--text)}
+.tab .ind{height:2px;width:0;border-radius:1px}
+.tab[aria-selected="true"] .ind{width:calc(4em);background:var(--text)}
+.dim{position:absolute;inset:0;background:rgba(0,0,0,.64);border:0;width:100%;cursor:default}
+.sheet{position:absolute;left:50%;transform:translateX(-50%);bottom:12px;width:min(calc(100% - 24px),560px);background:#19191B;border-radius:20px;padding:8px 0 16px}
+.sheet h4{margin:4px 0 6px;padding:0 24px;font-size:calc(18px*var(--k));font-weight:600}
+.sheet p{margin:0;padding:0 24px 12px;font-size:calc(14px*var(--k));color:#C9C9C4}
+.sheet .it{display:flex;align-items:center;width:100%;min-height:48px;padding:0 24px;background:none;border:0;color:inherit;font:inherit;font-size:calc(15px*var(--k));text-align:left;cursor:pointer}
+.sheet .bt{display:flex;flex-direction:column;gap:8px;padding:0 16px}
+.sheet .bt button{min-height:48px;border-radius:24px;border:1px solid #3A3A3F;background:none;color:inherit;font:inherit;font-size:calc(14px*var(--k));font-weight:500;cursor:pointer}
+.sheet .bt button.danger{border-color:#FF8A7A;color:#FFB4AA}
+.note{padding:0 20px 8px;font-size:12px;color:#8A8A85}
+.os{position:absolute;inset:0;background:#0B0B0C;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--sub);font-size:14px;z-index:6}
+.os button{min-height:48px;padding:0 18px;border-radius:24px;border:1px solid #3A3A3F;background:none;color:var(--text);font:inherit;cursor:pointer}
+.setrow{display:flex;align-items:center;justify-content:space-between;min-height:56px;padding:0 20px;border-bottom:1px solid #222226;font-size:calc(15px*var(--k))}
+.setrow small{color:var(--sub)}
+.navrow{display:flex;align-items:center;justify-content:space-between;width:100%;min-height:56px;padding:0 20px;background:none;border:0;border-bottom:1px solid #222226;color:inherit;font:inherit;font-size:calc(15px*var(--k));cursor:pointer;text-align:left}
+
+.spec h2{font-size:20px;margin:36px 0 10px;font-weight:600}
+.spec table{border-collapse:collapse;width:100%;font-size:14px}
+.spec th,.spec td{border-bottom:1px solid #2A2A2E;padding:8px 12px 8px 0;text-align:left;vertical-align:top}
+.spec th{color:var(--sub);font-weight:500;font-size:12.5px}
+.spec ul{margin:0;padding-left:20px}.spec li{margin:4px 0}
+.spec code{background:#1C1C1F;padding:1px 6px;border-radius:4px;font-size:13px}
+.spec{max-width:1180px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Loupe Issue #5 — 独自の戻るを廃止して、Android標準のBackへ統一</h1>
+<p class="lead">写真はダミーの色面です。Aは dock の部品の旧／新の比較、Bは画面のつながりの模擬です。画面の外にある［Android Back］は検証用で、アプリの中に説明や代わりのボタンは足していません。タグ・クラウド・同期の設定は<b>簡略な状態遷移</b>です。</p>
+
+<div class="controls" role="group" aria-label="共通の条件">
+<span><span class="lb">幅</span><span class="seg" id="oW"><button data-v="320" aria-pressed="false">320dp</button><button data-v="400" aria-pressed="true">400dp</button></span></span>
+<span><span class="lb">文字</span><span class="seg" id="oK"><button data-v="1" aria-pressed="true">1.0倍</button><button data-v="1.3" aria-pressed="false">1.3倍</button></span></span>
+</div>
+
+<h2 class="sec">A. dock の部品（旧：戻るあり／新：戻るなし）</h2>
+<div class="controls" role="group" aria-label="部品の条件">
+<span><span class="lb">画面</span><span class="seg" id="oPart">
+<button data-v="cmpBest" aria-pressed="true">比較・1位</button><button data-v="cmpRank" aria-pressed="false">比較・全順位</button><button data-v="cmpShare" aria-pressed="false">比較・共有から</button><button data-v="result" aria-pressed="false">結果</button><button data-v="burst" aria-pressed="false">連写の詳細</button><button data-v="album" aria-pressed="false">個別アルバム</button><button data-v="viewer" aria-pressed="false">写真の詳細</button><button data-v="cloud" aria-pressed="false">クラウド／同期の設定</button>
+</span></span>
+</div>
+<div class="cols">
+<div class="col"><h3>旧 <span class="tagc old">消す操作は赤い点線</span></h3><div class="part" id="pOld"></div><div class="box" id="cOld"></div></div>
+<div class="col"><h3>新 <span class="tagc new">#5</span></h3><div class="part" id="pNew"></div><div class="box" id="cNew"></div></div>
+</div>
+
+<h2 class="sec">B. 画面のつながり（標準Backの模擬）</h2>
+<div class="controls" role="group" aria-label="模擬の操作">
+<button class="hw" id="hwBack">Android Back（検証用・画面の外）</button>
+<label class="tg"><input type="checkbox" id="oBusy"> 保存中（busy）</label>
+<button class="hw" style="background:none;font-weight:500" id="reset">最初から</button>
+</div>
+<div class="cols">
+<div class="dev" id="dev"></div>
+<div class="col" style="flex:1;min-width:300px"><div class="box" id="state" style="max-width:none"></div><div class="box" id="log" style="max-width:none"></div></div>
+</div>
+
+<section class="spec" aria-label="仕様">
+<h2>1. 消す操作と残す操作</h2>
+<table>
+<tr><th>画面</th><th>消す（専用のナビ）</th><th>残す</th></tr>
+<tr><td>個別アルバムの一覧の dock</td><td>戻る</td><td>選択・タグ・その他</td></tr>
+<tr><td>連写の詳細の4操作の dock</td><td>戻る</td><td>前の写真・次の写真・拡大（主操作の全幅ボタンと、ほかの行は変えない）</td></tr>
+<tr><td>写真の詳細</td><td>戻る／比較に戻る</td><td>共有・その他</td></tr>
+<tr><td>比較・結果の dock の末尾</td><td>連写一覧／選択へ戻る</td><td>取り消し・その他。すべての順位方式の比較中だけ、同じ順位も残す</td></tr>
+<tr><td>タグの画面</td><td>写真に戻る／タグ一覧に戻る／タグに戻る／一覧に戻る</td><td>それ以外の既存の操作</td></tr>
+<tr><td>クラウド・同期の設定</td><td>戻る（dock がこれだけなら dock ごと消す）</td><td>中身の項目</td></tr>
+<tr><td>ナビではないので残す</td><td colspan="2">選択を終了・取り消し・拡大を戻す・確認ダイアログの否定操作（このあと「キャンセル」に統一）</td></tr>
+</table>
+
+<h2>2. 標準Backの順番</h2>
+<table>
+<tr><th>今いる場所</th><th>Back</th></tr>
+<tr><td>ダイアログ・シート</td><td>キャンセル（閉じるだけ。中身は変えない）</td></tr>
+<tr><td>保存中（busy）</td><td>既存どおり戻らない。データはそのまま保つ</td></tr>
+<tr><td>写真の拡大（写真の詳細）</td><td>開いた元へ：比較・連写の詳細・一覧</td></tr>
+<tr><td>比較・結果</td><td>開いた元へ：連写の詳細、または共有の選択（順位の進み具合と選択は保つ）</td></tr>
+<tr><td>連写の詳細</td><td>元の一覧へ（スクロールの位置を保つ）</td></tr>
+<tr><td>個別アルバム</td><td>呼び出し元のルート（アルバム／すべての写真）へ</td></tr>
+<tr><td>選択中の一覧</td><td>まず選択を終了する（選択はそこで終わる。画面は移らない）</td></tr>
+<tr><td>ルート</td><td>OSへ（アプリを離れる）</td></tr>
+<tr><td>タグ</td><td>写真 → 同じ絞り込み・同じ位置の一覧 → タグ詳細 → タグ一覧 → 呼び出し元。タグの写真一覧の選択中は、まず選択を終了</td></tr>
+<tr><td>クラウド・同期の設定</td><td>呼び出し元へ（同期の設定 → クラウド → 呼び出し元）。ログインや同期の設定は変えない</td></tr>
+</table>
+<ul>
+<li>一覧のスクロールの位置は、戻ったときにそのまま復元する。</li>
+<li>タグの推論（#1）と、タグの編集・保存の仕様は変えない。</li>
+</ul>
+
+<h2>3. dock の列</h2>
+<ul>
+<li>戻るを消して空いた列は、残りの操作で均等に分ける。空の戻るの枠は残さない。</li>
+<li>比較と連写の詳細の dock は、#9の列の決め方をそのまま使う（必要なセル幅 = 最も長いラベルの文字幅 + 12dp。同じ幅のセルに全部入る最大の列数。足りないときだけ複数行）。</li>
+<li>dock の値は#9と同じ：背景 #19191B、全周8dp、ボタン64dp以上、13sp（1.3倍でも縮めない）、上に24dpのアイコンの枠（26dpの描画基準）、間隔4dp、全周6dp、行の箱24dp。</li>
+<li>取り消しの読み上げ名は「直前の操作を取り消す」のまま。</li>
+</ul>
+
+<h2>4. 確認ダイアログ</h2>
+<ul>
+<li>安全のための確認（再ソート・ソート方式の変更など）はそのまま残す。</li>
+<li>否定の操作の名前を「キャンセル」に統一する案（#7で「戻る」にしていた確認も「キャンセル」に）。Backはこの「キャンセル」と同じ動き。</li>
+</ul>
+
+<h2>5. 範囲外</h2>
+<ul>
+<li>写真の全体表示、ほかの操作の再設計、全体の配置（#8）。</li>
+<li>アプリの中に、Backの説明や代わりのボタンは足さない。</li>
+<li>このHTMLのタグ・クラウド・同期の設定は簡略な状態遷移で、画面の中身は実際と異なる。</li>
+</ul>
+</section>
+</div>
+
+<script>
+(function () {
+  const ICON = {
+    login: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H21V21H14M3 12H16M11 7L16 12L11 17"/></svg>',
+    sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6H21M3 12H21M3 18H21"/><g fill="#19191B"><circle cx="8" cy="6" r="2.5"/><circle cx="16" cy="12" r="2.5"/><circle cx="8" cy="18" r="2.5"/></g></svg>',
+    list: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M11 6L5 12L11 18"/></svg>',
+    tie: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 9H19M5 15H19"/></svg>',
+    toSel: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="13" cy="13" r="9"></circle><path d="M9 13.3l2.8 2.8 5.3-5.6"></path></svg>',
+    undo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 4L3 9L8 14M3 9H13M14 9A7 6 0 0 1 14 21"/></svg>',
+    more: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>',
+    share: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="19.5" cy="6" r="2.7"></circle><circle cx="6.5" cy="13" r="2.7"></circle><circle cx="19.5" cy="20" r="2.7"></circle><path d="M8.9 11.7l8.2-4.4M8.9 14.3l8.2 4.4"></path></svg>',
+    back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M11 6L5 12L11 18"/></svg>',
+    prev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5L8 12L15 19"/></svg>',
+    next: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5L16 12L9 19"/></svg>',
+    zoom: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="M15 15L21 21M7 10H13M10 7V13"/></svg>',
+    sel: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="13" cy="13" r="9"></circle><path d="M9 13.3l2.8 2.8 5.3-5.6"></path></svg>',
+    bar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12H9V21H3ZM9 7H15V21H9ZM15 15H21V21H15Z"/></svg>',
+    tag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M3.8 12.2V4.8a1 1 0 0 1 1-1h7.4l8 8a1.4 1.4 0 0 1 0 2l-6.2 6.2a1.4 1.4 0 0 1-2 0z"></path><circle cx="8.3" cy="8.3" r="1.4"></circle></svg>'
+  };
+  const G = ['#a9c3d8,#69736a', '#7b5b45,#2a201b', '#3f4a3a,#1d241c', '#5b6168,#2a2d31', '#34425d,#07080b', '#eee5d5,#a89a83', '#c9a27e,#4a3a2a', '#2a1c18,#6b3a2a'];
+  const grad = (i) => 'linear-gradient(160deg,' + G[i % G.length] + ')';
+  const O = { w: 400, k: 1, part: 'cmpBest' };
+  const cv = document.createElement('canvas').getContext('2d');
+  const textW = (t) => { cv.font = '500 ' + (13 * O.k) + 'px Roboto, "Noto Sans JP", "Noto Sans CJK JP", system-ui, sans-serif'; return cv.measureText(t).width; };
+  function pickCols(labels) {
+    const need = Math.max(48, Math.max.apply(null, labels.map(textW)) + 12), avail = O.w - 16;
+    for (let n = labels.length; n >= 1; n--) if (avail / n >= need) return { n: n, need: need, cell: avail / n, count: labels.length };
+    return { n: 1, need: need, cell: avail, count: labels.length };
+  }
+  /* items: [icon, label, opts]  opts: {gone, act, aria, dis} */
+  function dock(items, adaptive, aria) {
+    const c = adaptive ? pickCols(items.map((x) => x[1])) : null;
+    const grid = c && c.n < items.length;
+    const html = '<div class="dock' + (grid ? ' grid' : '') + '"' + (grid ? ' style="--cols:' + c.n + '"' : '') + ' role="group" aria-label="' + (aria || '操作') + '">' +
+      items.map((x) => { const o = x[2] || {}; return '<button class="db' + (o.gone ? ' gone' : '') + '"' + (o.act ? ' data-act="' + o.act + '"' : '') + (o.aria ? ' aria-label="' + o.aria + '" title="' + o.aria + '"' : '') + (o.dis ? ' disabled' : '') + '><span class="ic">' + ICON[x[0]] + '</span><span class="lbl">' + x[1] + '</span></button>'; }).join('') + '</div>';
+    return { html: html, cols: c };
+  }
+  const UNDO = ['undo', '取り消し', { aria: '直前の操作を取り消す', act: 'undo' }];
+  function partItems(kind, isNew) {
+    const g = (it) => (isNew ? null : [it[0], it[1], Object.assign({}, it[2] || {}, { gone: true })]);
+    const keep = (arr) => arr.filter(Boolean);
+    switch (kind) {
+      case 'cmpBest': return { photos: 2, adaptive: true, items: keep([g(['list', '連写一覧']), UNDO, ['more', 'その他']]) };
+      case 'cmpRank': return { photos: 2, adaptive: true, items: keep([g(['list', '連写一覧']), UNDO, ['tie', '同じ順位'], ['more', 'その他']]) };
+      case 'cmpShare': return { photos: 2, adaptive: true, items: keep([g(['toSel', '選択へ戻る']), UNDO, ['tie', '同じ順位'], ['more', 'その他']]) };
+      case 'result': return { photos: 1, adaptive: true, items: keep([g(['list', '連写一覧']), UNDO, ['more', 'その他']]) };
+      case 'burst': return { photos: 1, adaptive: true, cta: true, items: keep([g(['back', '戻る']), ['prev', '前の写真'], ['next', '次の写真'], ['zoom', '拡大']]) };
+      case 'album': return { photos: 1, adaptive: false, items: keep([g(['back', '戻る']), ['sel', '選択'], ['tag', 'タグ'], ['more', 'その他']]) };
+      case 'viewer': return { photos: 1, adaptive: false, items: keep([g(['back', '比較に戻る']), ['share', '共有'], ['more', 'その他']]) };
+      case 'cloud': return { photos: 0, adaptive: false, items: keep([g(['back', '戻る']), ['login', 'ログイン'], ['sync', '同期設定'], ['more', 'その他']]) };
+    }
+  }
+  function renderParts() {
+    [['pOld', 'cOld', false], ['pNew', 'cNew', true]].forEach(([id, out, isNew]) => {
+      const P = partItems(O.part, isNew);
+      const el = document.getElementById(id);
+      let html = P.photos ? '<div class="photo" style="--ph:' + (P.photos === 2 ? 240 : 200) + 'px">' + Array.from({ length: P.photos }, (_, i) => '<i style="background:' + grad(i) + '"></i>').join('') + '</div>' : '<div class="hd"><b>クラウドと同期</b></div><div class="setrow">同期の状態<small>ダミー</small></div><div class="navrow">同期の設定 ›</div>';
+      if (P.cta) html += '<div class="ctaRow"><button class="cta"><span class="ic">' + ICON.bar + '</span><span class="lbl">ソート</span></button></div>';
+      let cols = null;
+      if (P.items.length) { const d = dock(P.items, P.adaptive, '操作'); html += d.html; cols = d.cols; }
+      el.innerHTML = html;
+      const rows = [...el.querySelectorAll('.db')].map((b) => {
+        const r = b.getBoundingClientRect(), l = b.querySelector('.lbl');
+        const rg = document.createRange(); rg.selectNodeContents(l);
+        const lines = new Set([...rg.getClientRects()].filter((x) => x.width > 0).map((x) => Math.round(x.top))).size;
+        const gone = b.classList.contains('gone');
+        const bad = !gone && (lines !== 1 || r.height < 48 || r.width < 48);
+        return (gone ? '<span class="ng">消す</span> ' : (bad ? '<span class="ng">✕</span> ' : '<span class="ok">○</span> ')) + l.textContent + '：' + Math.round(r.width) + '×' + Math.round(r.height) + 'dp・' + lines + '行' + (b.getAttribute('aria-label') ? '・読み上げ「' + b.getAttribute('aria-label') + '」' : '');
+      });
+      document.getElementById(out).innerHTML = '<b>' + O.w + 'dp・文字' + O.k + '倍</b><br>' + (rows.join('<br>') || (isNew ? '<span class="ok">dock なし（戻るだけだったので dock ごと消す）</span>' : '')) +
+        (cols ? '<br>列の決め方：必要なセル幅 ' + Math.round(cols.need) + 'dp → ' + cols.n + '列' + (cols.n < cols.count ? '・複数行' : '・1行') : (P.items.length && !P.adaptive ? '<br>均等' + P.items.length + '列' : ''));
+    });
+  }
+
+  /* ===== B. 画面のつながり ===== */
+  const ALB = ['カメラ', '嵐山 10.18', '夕方の散歩', 'テスト撮影', '旅行 9月', '公園'];
+  const TAGS = ['空', '夕景', '紅葉'];
+  const PH = Array.from({ length: 64 }, (_, i) => ({ i: i, burst: i % 7 === 2 ? 5 : 0 }));
+  let S;
+  function reset() {
+    S = { tab: 'albums', stack: [], sheet: null, busy: !!(S && S.busy), left: false, log: [],
+      scroll: {}, sel: { photos: null, album: null, tags: null }, prog: {}, best: {}, tagFilter: 'pos' };
+    S.stack = [{ t: 'root' }];
+  }
+  const top = () => S.stack[S.stack.length - 1];
+  const add = (x) => { S.log.unshift(x); S.log = S.log.slice(0, 12); };
+  const key = (f) => f.t + (f.id != null ? ':' + f.id : '') + (f.t === 'root' ? ':' + S.tab : '');
+  function saveScroll() { const L = document.querySelector('#dev [data-list]'); if (L) S.scroll[key(top())] = L.scrollTop; }
+  function push(f, msg) { saveScroll(); S.stack.push(f); if (msg) add(msg); render(); }
+  const nm = (f) => ({ root: (S.tab === 'albums' ? 'アルバム' : 'すべての写真') + '（ルート）', album: '個別アルバム「' + (f.id != null ? ALB[f.id] : '') + '」', burst: '連写の詳細', compare: '比較', result: '結果', viewer: '写真の詳細（拡大）', tagList: 'タグ一覧', tagDetail: 'タグ詳細', tagPhotos: 'タグの写真一覧', tagPhoto: 'タグの写真', cloud: 'クラウド', sync: '同期の設定' })[f.t];
+
+  function back() {
+    if (S.left) return;
+    if (S.sheet) { const was = S.sheet; S.sheet = null; add('Back：' + (was.confirm ? '確認ダイアログを「キャンセル」と同じく閉じる' : 'シートを閉じる')); return render(); }
+    if (S.busy) { add('Back：保存中のため戻らない（データはそのまま）'); return render(); }
+    const f = top();
+    const selKey = f.t === 'root' && S.tab === 'photos' ? 'photos' : (f.t === 'album' ? 'album' : (f.t === 'tagPhotos' ? 'tags' : null));
+    if (selKey && S.sel[selKey]) { S.sel[selKey] = null; add('Back：まず選択を終了（画面はそのまま）'); return render(); }
+    if (f.t === 'root') { S.left = true; add('Back：ルートなのでOSへ（アプリを離れる）'); return render(); }
+    saveScroll();
+    S.stack.pop();
+    const to = top();
+    let extra = '';
+    if (f.t === 'compare' || f.t === 'result') extra = to.t === 'root' ? '（共有の選択 ' + (S.sel.photos ? S.sel.photos.length : 0) + '件を保持・進み具合を保持）' : '（順位の進み具合を保持）';
+    if (f.t === 'tagPhoto') extra = '（絞り込み「' + (S.tagFilter === 'pos' ? 'タグ付き' : '該当しない') + '」・位置を保持）';
+    add('Back：' + nm(f) + ' → ' + nm(to) + extra);
+    render();
+  }
+
+  function grid4(list, onKey, selKey) {
+    const sel = selKey ? S.sel[selKey] : null;
+    return '<div class="g4">' + list.map((p) => '<button data-' + onKey + '="' + p.i + '" class="' + (sel && sel.indexOf(p.i) >= 0 ? 'on' : '') + '" style="background:' + grad(p.i) + '" aria-label="' + (p.burst ? '連写 ' + p.burst + '枚' : '写真') + '">' + (p.burst ? '<em>' + p.burst + '</em>' : '') + '</button>').join('') + '</div>';
+  }
+  const tabs = () => '<div class="tabbar" role="tablist"><button class="tab" role="tab" data-tab="photos" aria-selected="' + (S.tab === 'photos') + '"><span>すべての写真</span><span class="ind"></span></button><button class="tab" role="tab" data-tab="albums" aria-selected="' + (S.tab === 'albums') + '"><span>アルバム</span><span class="ind"></span></button></div>';
+  function remaining(f) { const p = S.prog[f.burst] != null ? S.prog[f.burst] : 4; return p; }
+
+  function screenHTML() {
+    const f = top();
+    if (f.t === 'root' && S.tab === 'albums') {
+      return '<div class="list" data-list><div class="hd"><b>アルバム</b><span>' + ALB.length + '件</span></div><div class="g2">' + ALB.map((n, i) => '<button data-album="' + i + '"><i style="background:' + grad(i + 2) + '"></i><span>' + n + '</span></button>').join('') + '</div></div>' +
+        dock([['tag', 'タグ', { act: 'tags' }], ['more', 'その他', { act: 'more' }]]).html + tabs();
+    }
+    if (f.t === 'root') {
+      const sel = S.sel.photos;
+      const d = sel ? '<div class="ctaRow" style="padding-bottom:0"><button class="cta" data-act="shareSort"><span class="ic">' + ICON.bar + '</span><span class="lbl">ソート</span></button></div>' + dock([['sel', '選択を終了', { act: 'endSel' }], ['share', '共有', { act: 'noop' }]]).html
+        : dock([['sel', '選択', { act: 'startSel' }], ['tag', 'タグ', { act: 'tags' }], ['more', 'その他', { act: 'more' }]]).html;
+      return '<div class="list" data-list><div class="hd"><b>すべての写真</b><span>' + (sel ? sel.length + '件選択' : PH.length + '枚') + '</span></div>' + grid4(PH, 'ph', 'photos') + '</div>' + d + tabs();
+    }
+    if (f.t === 'album') {
+      const sel = S.sel.album;
+      return '<div class="list" data-list><div class="hd"><b>' + ALB[f.id] + '</b><span>' + (sel ? sel.length + '件選択' : '40枚') + '</span></div>' + grid4(PH.slice(0, 40), 'ph', 'album') + '</div>' +
+        dock(sel ? [['sel', '選択を終了', { act: 'endSel' }]] : [['sel', '選択', { act: 'startSel' }], ['tag', 'タグ', { act: 'tags' }], ['more', 'その他', { act: 'more' }]]).html;
+    }
+    if (f.t === 'burst') {
+      return '<div class="hd"><b>連写 5枚</b><span>' + (S.best[f.id] != null ? '順位決定済み' : (S.prog[f.id] != null ? '途中' : '順位が未決定')) + '</span></div><div class="photo" style="--ph:240px"><i style="background:' + grad(f.id) + '"></i></div><div style="flex:1"></div>' +
+        '<div class="ctaRow"><button class="cta" data-act="sort"><span class="ic">' + ICON.bar + '</span><span class="lbl">' + (S.best[f.id] != null ? 'ソート結果' : (S.prog[f.id] != null ? 'ソートを再開' : 'ソート')) + '</span></button></div>' +
+        dock([['prev', '前の写真', { act: 'noop' }], ['next', '次の写真', { act: 'noop' }], ['zoom', '拡大', { act: 'zoom' }]], true).html;
+    }
+    if (f.t === 'compare') {
+      return '<div class="hd"><b>ソート</b><span>あと' + remaining(f) + '回</span></div><div class="cmpA"><button data-pick="A" style="background:' + grad(f.burst) + '" aria-label="A、タップで選ぶ、長押しで拡大"><b>A</b></button><button data-pick="B" style="background:' + grad(f.burst + 3) + '" aria-label="B、タップで選ぶ、長押しで拡大"><b>B</b></button></div>' +
+        dock([UNDO, ['more', 'その他', { act: 'noop' }]], true).html;
+    }
+    if (f.t === 'result') {
+      return '<div class="hd"><b>ソート結果</b><span>1位 · 2位 · 2位 · 2位 · 2位</span></div><div class="photo" style="--ph:260px"><i style="background:' + grad(f.burst) + '"></i></div><div style="flex:1"></div>' +
+        dock([UNDO, ['more', 'その他', { act: 'resort' }]], true).html;
+    }
+    if (f.t === 'viewer') {
+      return '<div class="photo" style="--ph:520px;margin-top:40px"><i style="background:' + grad(f.id || 0) + '"></i></div><div style="flex:1"></div>' + dock([['share', '共有', { act: 'noop' }], ['more', 'その他', { act: 'noop' }]]).html;
+    }
+    if (f.t === 'tagList') {
+      return '<div class="list" data-list><div class="hd"><b>タグ</b><span>簡略模擬</span></div><div class="rows">' + TAGS.map((t, i) => '<button data-tag="' + i + '">' + t + '</button>').join('') + '</div></div>';
+    }
+    if (f.t === 'tagDetail') {
+      return '<div class="list"><div class="hd"><b>' + TAGS[f.id] + '</b><span>簡略模擬</span></div><div class="rows"><button data-act="tagPhotos"><i style="background:' + grad(f.id) + '"></i>タグの写真一覧</button></div></div>' + dock([['more', 'その他', { act: 'noop' }]]).html;
+    }
+    if (f.t === 'tagPhotos') {
+      return '<div class="list" data-list><div class="hd"><b>' + TAGS[f.id] + 'の写真</b><span>簡略模擬</span></div><div class="chips"><button data-filter="pos" aria-pressed="' + (S.tagFilter === 'pos') + '"><span>タグ付き</span></button><button data-filter="neg" aria-pressed="' + (S.tagFilter === 'neg') + '"><span>該当しない</span></button></div>' +
+        grid4(PH.slice(S.tagFilter === 'pos' ? 0 : 20, S.tagFilter === 'pos' ? 48 : 60), 'tph', 'tags') + '</div>' + dock(S.sel.tags ? [['sel', '選択を終了', {act:'endSel'}]] : [['sel', '選択', {act:'startSel'}]]).html;
+    }
+    if (f.t === 'tagPhoto') return '<div class="photo" style="--ph:520px;margin-top:40px"><i style="background:' + grad(f.id) + '"></i></div><div style="flex:1"></div>' + dock([['more', 'その他', { act: 'noop' }]]).html;
+    if (f.t === 'cloud') return '<div class="hd"><b>クラウドと同期</b><span>簡略模擬</span></div><div class="setrow">同期の状態<small>ダミー</small></div><button class="navrow" data-act="sync">同期の設定<span>›</span></button>';
+    if (f.t === 'sync') return '<div class="hd"><b>同期の設定</b><span>簡略模擬</span></div><div class="setrow">ログイン<small>変更しない</small></div><div class="setrow">同期<small>変更しない</small></div>';
+    return '';
+  }
+  function sheetHTML() {
+    if (!S.sheet) return '';
+    if (S.sheet.confirm) return '<button class="dim" data-act="closeSheet" aria-label="閉じる"></button><div class="sheet" role="dialog" aria-modal="true"><h4>この連写を再ソートしますか？</h4><p>この連写の選択履歴を消して、最初から比較します。写真は変更しません。</p><div class="bt"><button class="danger" data-act="doResort">再ソート</button><button data-act="closeSheet">キャンセル</button></div></div>';
+    return '<button class="dim" data-act="closeSheet" aria-label="閉じる"></button><div class="sheet" role="dialog" aria-modal="true"><h4>その他</h4><button class="it" data-act="cloud">クラウドと同期</button><button class="it" data-act="noopSheet">処理の状況</button><div class="bt"><button data-act="closeSheet">閉じる</button></div></div>';
+  }
+  function render() {
+    const dev = document.getElementById('dev');
+    dev.style.setProperty('--w', O.w + 'px');
+    dev.innerHTML = '<div class="scr">' + screenHTML() + '</div>' + sheetHTML() + (S.left ? '<div class="os"><span>（OSへ戻った状態・デモ用）</span><button data-act="reopen">Loupeを開き直す（デモ）</button></div>' : '');
+    const L = dev.querySelector('[data-list]'); if (L) L.scrollTop = S.scroll[key(top())] || 0;
+    document.getElementById('state').innerHTML = '<b>画面の重なり</b>（下がルート）<br>' + S.stack.map((f, i) => (i === S.stack.length - 1 ? '▶ ' : '　') + nm(f)).reverse().join('<br>') +
+      '<br><b style="display:block;margin-top:6px">保持している状態</b>選択：すべての写真 ' + (S.sel.photos ? S.sel.photos.length + '件' : 'なし') + '・個別アルバム ' + (S.sel.album ? S.sel.album.length + '件' : 'なし') + '・タグの写真一覧 ' + (S.sel.tags ? S.sel.tags.length + '件' : 'なし') +
+      '<br>順位の進み具合：' + (Object.keys(S.prog).map((k) => '連写' + k + ' あと' + S.prog[k] + '回').join('・') || 'なし') + '<br>位置：' + (Object.keys(S.scroll).filter((k) => S.scroll[k] > 0).map((k) => k + ' ' + Math.round(S.scroll[k]) + 'dp').join('・') || 'すべて先頭') +
+      '<br>保存中：' + (S.busy ? 'はい（Backで戻らない）' : 'いいえ');
+    document.getElementById('log').innerHTML = '<b>操作の記録</b><br>' + (S.log.map((x) => '・' + x).join('<br>') || '—');
+  }
+  document.getElementById('dev').addEventListener('click', (e) => {
+    const f = top();
+    const t = e.target.closest('[data-tab]'); if (t) { if (S.sel.photos) return; saveScroll(); S.tab = t.dataset.tab; add('タブ：' + nm(f)); return render(); }
+    const a = e.target.closest('[data-act]');
+    if (a) {
+      const v = a.dataset.act;
+      if (v === 'more') { S.sheet = { more: true }; add('その他（シート）'); }
+      else if (v === 'closeSheet') { S.sheet = null; add('シート・ダイアログを閉じる'); }
+      else if (v === 'cloud') { S.sheet = null; return push({ t: 'cloud' }, 'クラウドと同期を開く'); }
+      else if (v === 'sync') return push({ t: 'sync' }, '同期の設定を開く');
+      else if (v === 'tags') return push({ t: 'tagList' }, 'タグ一覧を開く');
+      else if (v === 'tagPhotos') return push({ t: 'tagPhotos', id: f.id }, 'タグの写真一覧を開く');
+      else if (v === 'startSel') { const k = f.t === 'root' ? 'photos' : (f.t === 'album' ? 'album' : 'tags'); S.sel[k] = []; add('選択を開始'); }
+      else if (v === 'endSel') { const k = f.t === 'root' ? 'photos' : (f.t === 'album' ? 'album' : 'tags'); S.sel[k] = null; add('［選択を終了］'); }
+      else if (v === 'sort') { if (S.best[f.id] != null) return push({ t: 'result', burst: f.id }, 'ソート結果を開く'); return push({ t: 'compare', burst: f.id }, 'ソート（比較）を開く'); }
+      else if (v === 'shareSort') { const b = (S.sel.photos || []).find((i) => PH[i].burst) ; return push({ t: 'compare', burst: b != null ? b : 2, fromShare: true }, '共有の選択から「ソート」→ 比較'); }
+      else if (v === 'zoom') return push({ t: 'viewer', id: f.t === 'compare' ? f.burst : f.id }, '拡大（写真の詳細）');
+      else if (v === 'undo') { if (f.t === 'compare' && S.prog[f.burst] != null && S.prog[f.burst] < 4) { S.prog[f.burst] += 1; add('［取り消し］直前の1操作を取り消し'); } else add('［取り消し］（取り消す操作なし）'); }
+      else if (v === 'resort') { S.sheet = { confirm: true }; add('その他 → 再ソートの確認'); }
+      else if (v === 'doResort') { S.sheet = null; delete S.best[f.burst]; delete S.prog[f.burst]; S.stack.pop(); add('再ソート（確認ずみ）→ 連写の詳細'); }
+      else if (v === 'reopen') { S.left = false; add('（デモ）アプリを開き直す'); }
+      return render();
+    }
+    const al = e.target.closest('[data-album]'); if (al) return push({ t: 'album', id: +al.dataset.album }, '個別アルバムを開く');
+    const ph = e.target.closest('[data-ph]');
+    if (ph) {
+      const id = +ph.dataset.ph, k = f.t === 'root' ? 'photos' : 'album';
+      if (S.sel[k]) { const s = S.sel[k], i = s.indexOf(id); if (i >= 0) s.splice(i, 1); else s.push(id); return render(); }
+      return PH[id].burst ? push({ t: 'burst', id: id }, '連写の詳細を開く') : push({ t: 'viewer', id: id }, '写真の詳細を開く');
+    }
+    const pk = e.target.closest('[data-pick]');
+    if (pk) {
+      const r = remaining(f) - 1; S.prog[f.burst] = r; add('比較で' + pk.dataset.pick + 'を選ぶ（あと' + r + '回）');
+      if (r <= 0) { delete S.prog[f.burst]; S.best[f.burst] = 0; S.stack.pop(); S.stack.push({ t: 'result', burst: f.burst, fromShare: f.fromShare }); add('ソート完了 → 結果'); }
+      return render();
+    }
+    const tg = e.target.closest('[data-tag]');
+    if (tg) { if (S.sel.tags) { const s = S.sel.tags, i = s.indexOf(+tg.dataset.tag); if (i >= 0) s.splice(i, 1); else s.push(+tg.dataset.tag); return render(); } return push({ t: 'tagDetail', id: +tg.dataset.tag }, 'タグ詳細を開く'); }
+    const fl = e.target.closest('[data-filter]'); if (fl) { saveScroll(); S.tagFilter = fl.dataset.filter; return render(); }
+    const tp = e.target.closest('[data-tph]'); if (tp) { const id=+tp.dataset.tph; if(S.sel.tags){const i=S.sel.tags.indexOf(id);if(i>=0)S.sel.tags.splice(i,1);else S.sel.tags.push(id);return render();} return push({ t: 'tagPhoto', id: id }, 'タグの写真を開く'); }
+  });
+  let lp = null, lpAt = 0;
+  document.getElementById('dev').addEventListener('pointerdown', (e) => {
+    lpAt = 0; clearTimeout(lp);
+    const pk = e.target.closest('[data-pick]'); if (!pk) return;
+    lp = setTimeout(() => { lpAt = Date.now(); const f = top(); push({ t: 'viewer', id: f.burst }, '比較の写真' + pk.dataset.pick + 'を長押し → 拡大（写真の詳細）'); }, 500);
+  });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => document.getElementById('dev').addEventListener(ev, () => clearTimeout(lp)));
+  /* 長押しで拡大した直後の、同じ指を離したときのクリックだけを無視する */
+  document.getElementById('dev').addEventListener('click', (e) => { if (lpAt && Date.now() - lpAt < 400) { lpAt = 0; e.stopImmediatePropagation(); } }, true);
+  document.getElementById('hwBack').addEventListener('click', back);
+  document.getElementById('oBusy').addEventListener('change', (e) => { S.busy = e.target.checked; add(S.busy ? '保存中にする' : '保存が終わった'); render(); });
+  document.getElementById('reset').addEventListener('click', () => { reset(); render(); });
+
+  function seg(id, fn) {
+    const el = document.getElementById(id);
+    el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; el.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', x === b ? 'true' : 'false')); fn(b.dataset.v); all(); });
+  }
+  function all() { document.documentElement.style.setProperty('--k', O.k); document.documentElement.style.setProperty('--w', O.w + 'px'); renderParts(); render(); }
+  seg('oW', (v) => { O.w = +v; }); seg('oK', (v) => { O.k = +v; }); seg('oPart', (v) => { O.part = v; });
+  reset();
+  window.__l5 = { O: O, get S() { return S; }, all: all, back: back };
+  all();
+})();
+</script>
+</body>
+</html>
