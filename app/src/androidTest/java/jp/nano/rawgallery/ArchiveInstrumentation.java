@@ -13,6 +13,7 @@ import org.json.JSONObject;
  * source.
  */
 public final class ArchiveInstrumentation extends Instrumentation {
+  private boolean rankingModesTest;
   private boolean systemBackTest;
   private boolean burstTest, realBurstTest;
   private boolean diagnosticTest, sheetTest;
@@ -28,6 +29,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    rankingModesTest = args != null && "ranking-modes".equals(args.getString("mode"));
     systemBackTest = args != null && "system-back".equals(args.getString("mode"));
     actionLabelsTest = args != null && "action-labels".equals(args.getString("mode"));
     comparisonLabelsTest = args != null && "comparison-labels".equals(args.getString("mode"));
@@ -56,6 +58,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     File restored = null;
     try {
       Context context = getTargetContext();
+      if (rankingModesTest) { results.putString("stream", RankingModeChecks.run(this)); finish(-1, results); return; }
       if (systemBackTest) { results.putString("stream", SystemBackChecks.run(this)); finish(-1, results); return; }
       if (actionLabelsTest) { results.putString("stream", ActionLabelChecks.run(this)); finish(-1, results); return; }
       if (comparisonLabelsTest) { results.putString("stream", ComparisonLabelChecks.run(this)); finish(-1, results); return; }

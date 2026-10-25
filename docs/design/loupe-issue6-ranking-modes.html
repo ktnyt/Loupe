@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loupe Issue #6 ソート方式の選択</title>
+<style>
+:root{--bg:#0F0F10;--panel:#19191B;--text:#EDEDEA;--muted:#A0A0A4;--ok:#9FE0B5;--ng:#F2A7AB;--k:1}
+*{box-sizing:border-box}
+body{margin:0;background:#0B0B0C;color:var(--text);font-family:"Noto Sans JP",system-ui,-apple-system,"Hiragino Sans",sans-serif;font-size:15px;line-height:1.6}
+.wrap{max-width:1240px;margin:0 auto;padding:28px 20px 64px}
+h1{margin:0;font-size:24px;line-height:1.4;font-weight:600}
+.lead{margin:6px 0 0;color:var(--muted);font-size:14px}
+.controls{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;margin:16px 0 0}
+.controls .lb{color:var(--muted);font-size:13px;margin-right:6px}
+.seg{display:inline-flex;flex-wrap:wrap;background:#1C1C1F;border-radius:22px;padding:2px}
+.seg button{background:none;border:0;color:var(--text);font:inherit;font-size:13px;min-height:44px;padding:0 12px;border-radius:20px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:#EDEDEA;color:#111}
+.hw{background:#2A2A2E;border:1px solid #4A4A50;color:var(--text);font:inherit;font-size:14px;font-weight:600;min-height:48px;padding:0 18px;border-radius:24px;cursor:pointer}
+label.tg{display:inline-flex;gap:8px;align-items:center;font-size:13px;min-height:44px;cursor:pointer}
+label.tg input{width:18px;height:18px;accent-color:#EDEDEA}
+.stage{display:flex;gap:28px;flex-wrap:wrap;margin-top:18px;align-items:flex-start}
+.side{display:flex;flex-direction:column;gap:10px;flex:1;min-width:300px}
+.box{background:#141416;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.6;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok)}.ng{color:var(--ng)}
+
+/* 端末（1px = 1dp）。外枠は outline で寸法の外 */
+.dev{position:relative;width:var(--w);height:760px;background:var(--bg);outline:1px solid #3A3A3F;overflow:hidden;display:flex;flex-direction:column;font-family:Roboto,"Noto Sans JP","Noto Sans CJK JP",system-ui,sans-serif;color:var(--text)}
+.top{padding:36px 20px 8px;display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-shrink:0}
+.top b{font-size:calc(20px*var(--k));line-height:1.35;font-weight:600}
+.top span{font-size:calc(13px*var(--k));color:var(--muted)}
+.photos{flex:1;min-height:0;display:flex;flex-direction:column;gap:2px}
+.photos i{flex:1;display:block;position:relative}
+.photos i b{position:absolute;left:8px;top:8px;min-width:24px;min-height:24px;padding:2px 7px;border-radius:6px;background:rgba(15,15,16,.72);box-shadow:0 0 0 1px rgba(237,237,234,.45);color:#EDEDEA;font-size:calc(13px*var(--k));line-height:calc(16px*var(--k));font-weight:500;font-style:normal;display:flex;align-items:center;justify-content:center}
+
+/* ===== 今回の部品：ソート方式の選択 ===== */
+.modes{flex-shrink:0;margin:8px 16px;padding:4px;background:var(--panel);border-radius:14px;display:grid;grid-template-columns:1fr 1fr;gap:4px}
+.mode{position:relative;min-height:64px;min-width:48px;padding:8px 8px 8px;border-radius:10px;border:1px solid #3A3A3F;background:transparent;color:var(--text);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-family:inherit;text-align:center}
+.mode[aria-checked="true"]{border:2px solid #EDEDEA;background:#26262A;padding:7px}
+.mode .nm{display:block;max-width:100%;font-weight:500;font-size:calc(13px*var(--k));line-height:calc(20px*var(--k));overflow-wrap:anywhere}
+.mode .ex{display:flex;align-items:center;gap:6px}
+.mode .ck{width:18px;height:18px;flex-shrink:0;border-radius:9px;border:2px solid #6B6B70;display:flex;align-items:center;justify-content:center}
+.mode[aria-checked="true"] .ck{background:#EDEDEA;border-color:#EDEDEA;color:#111}
+.mode .ck svg{width:12px;height:12px;display:none}
+.mode[aria-checked="true"] .ck svg{display:block}
+.rk{display:flex;align-items:center;gap:3px}
+.rk span.tie{width:auto;height:auto;padding:0;background:none;display:flex;gap:1px;border-radius:5px;overflow:hidden}
+.rk .tie span{width:calc(16px*var(--k))}
+.rk span{width:calc(16px*var(--k));height:calc(18px*var(--k));padding:0;border-radius:5px;background:#34343A;color:#EDEDEA;font-size:calc(11px*var(--k));line-height:calc(18px*var(--k));font-weight:600;font-variant-numeric:tabular-nums;text-align:center}
+.rk span.r1{background:#EDEDEA;color:#111}
+.rk .tie{display:flex;gap:1px;border-radius:5px;overflow:hidden}
+.rk .tie span{border-radius:0}
+.mode:focus-visible{outline:2px solid #4C8DFF;outline-offset:2px}
+
+/* 既存の dock（変更しない・簡略模擬） */
+.dock{flex-shrink:0;background:#19191B;padding:8px 8px 28px;display:flex}
+.db{flex:1;min-height:64px;padding:6px;border:0;background:transparent;color:#EDEDEA;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-family:inherit;font-weight:500;font-size:calc(13px*var(--k));cursor:pointer}
+.db svg{width:24px;height:24px}
+.db span{line-height:24px}
+.db:disabled{color:#626B72}
+/* 既存の確認（#13の寸法） */
+.dim{position:absolute;inset:0;background:rgba(0,0,0,.64);border:0;width:100%;cursor:default}
+.sheet{position:absolute;left:50%;transform:translateX(-50%);bottom:12px;width:min(calc(100% - 24px),560px);background:#19191B;border-radius:20px;padding:16px 0}
+.sheet h3{margin:0 0 6px;padding:0 24px;font-size:calc(18px*var(--k));line-height:1.4;font-weight:600}
+.sheet p{margin:0;padding:0 24px 14px;font-size:calc(14px*var(--k));line-height:1.55;color:#C9C9C4}
+.sheet .bt{display:flex;flex-direction:column;gap:8px;padding:0 16px}
+.sheet .bt button{min-height:48px;border-radius:24px;border:1px solid #3A3A3F;background:none;color:var(--text);font:inherit;font-size:calc(14px*var(--k));font-weight:500;cursor:pointer}
+.sheet .bt .danger{border-color:#FF8A7A;color:#FFB4AA}
+
+.spec h2{font-size:20px;margin:36px 0 10px;font-weight:600}
+.spec table{border-collapse:collapse;width:100%;font-size:14px}
+.spec th,.spec td{border-bottom:1px solid #2A2A2E;padding:8px 12px 8px 0;text-align:left;vertical-align:top}
+.spec th{color:var(--muted);font-weight:500;font-size:12.5px}
+.spec ul{margin:0;padding-left:20px}.spec li{margin:4px 0}
+.spec code{background:#1C1C1F;padding:1px 6px;border-radius:4px;font-size:13px}
+.spec{max-width:1180px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Loupe Issue #6 — ソート方式（1位を決める／すべてに順位）</h1>
+<p class="lead">比較画面の方式選択の部分だけの設計です。写真はダミーの色面で、上の写真と下の dock は既存のものの簡略模擬です（変更しません）。画面の外の［Android Back］は検証用です。</p>
+
+<div class="controls" role="group" aria-label="条件">
+<span><span class="lb">幅</span><span class="seg" id="oW"><button data-v="320" aria-pressed="false">320dp</button><button data-v="400" aria-pressed="true">400dp</button></span></span>
+<span><span class="lb">文字</span><span class="seg" id="oK"><button data-v="1" aria-pressed="true">1.0倍</button><button data-v="1.3" aria-pressed="false">1.3倍</button></span></span>
+<span><span class="lb">名前</span><span class="seg" id="oN"><button data-v="new" aria-pressed="true">提案（すべてに順位）</button><button data-v="cur" aria-pressed="false">現行（すべての順位を決める）</button></span></span>
+<span><span class="lb">進み具合</span><span class="seg" id="oP"><button data-v="none" aria-pressed="true">未着手</button><button data-v="mid" aria-pressed="false">途中</button><button data-v="done" aria-pressed="false">完了</button></span></span>
+<span><span class="lb">今の方式</span><span class="seg" id="oM"><button data-v="best" aria-pressed="true">1位を決める</button><button data-v="all" aria-pressed="false">すべてに順位</button></span></span>
+<label class="tg"><input type="checkbox" id="oFail"> 変更の保存に失敗する</label>
+<button class="hw" id="hwBack">Android Back（検証用）</button>
+</div>
+
+<div class="stage">
+<div class="dev" id="dev"></div>
+<div class="side">
+<div class="box" id="chk"></div>
+<div class="box" id="ax"></div>
+<div class="box" id="log"></div>
+</div>
+</div>
+
+<section class="spec" aria-label="仕様">
+<h2>1. 構成（Androidの部品にそのまま写せる形）</h2>
+<ul>
+<li>写真の比較の下、既存の dock の上に、2つの選択肢を並べた「方式の選択」を置く（ラジオグループ）。写真と dock は変えない。</li>
+<li>各選択肢は2行：上が<b>短い名前</b>、下が<b>選択の印</b>と<b>順位の図</b>（4枚の例）。長い説明文は足さない。</li>
+<li>Android：外側は <code>LinearLayout</code>（横・均等 weight 1）または <code>Row</code>、各選択肢は <code>Modifier.selectable(role = Role.RadioButton)</code>。順位の図は小さな角丸の四角を並べた装飾。</li>
+</ul>
+
+<h2>2. 名前と順位の図</h2>
+<table>
+<tr><th>方式</th><th>名前（提案）</th><th>順位の図（4枚の例）</th><th>伝えること</th></tr>
+<tr><td>best</td><td>1位を決める</td><td>［1］［2 2 2］（2はつながった1つのかたまり）</td><td>1枚だけが1位。ほかは全員<b>同率2位</b>（順位がない写真は出ない）</td></tr>
+<tr><td>all</td><td>すべてに順位</td><td>［1］［2 2］［4］</td><td>すべてに順位が付く。<b>同じ順位も選べる</b>（必ず別々の順位になるわけではない）。同率のあとは飛び番（2位が2枚なら次は4位）</td></tr>
+</table>
+<ul>
+<li>図は4枚の例。3枚の例だと best（1・2・2）と all の同率の例（1・2・2）が同じ見た目になり、違いが伝わらないため、4枚にしている。</li>
+<li>1位の四角だけ白系（#EDEDEA の地に #111111 の数字）、ほかは #34343A の地に #EDEDEA の数字。同率は1つのかたまり（すき間1dp）で示す。</li>
+<li>名前の「すべての順位を決める」は、「すべてに順位」へ短くする提案。HTMLの「名前」で現行の名前にも切り替えられる（現行の名前は320dp・1.3倍で2行になる）。名前を変える場合、#7の対応表と確認の文の方式名もそろえる。</li>
+</ul>
+
+<h2>3. 寸法と色</h2>
+<table>
+<tr><th>項目</th><th>値</th></tr>
+<tr><td>外側</td><td>左右16dp・上下8dpの余白。背景 #19191B（パネル）、角丸14dp、内側の余白4dp、選択肢の間4dp</td></tr>
+<tr><td>選択肢</td><td>最低の高さ64dp（タップ領域は48dp以上を満たす）。幅は（画面幅 − 32 − 8 − 4）÷ 2（320dpで138dp、400dpで178dp）。角丸10dp。余白8dp</td></tr>
+<tr><td>選択していない</td><td>枠1dp #3A3A3F、背景なし。印は空の丸（18dp、線2dp #6B6B70）</td></tr>
+<tr><td>選択中</td><td>枠2dp #EDEDEA、背景 #26262A。印は白系の丸（#EDEDEA）に黒のチェック。色だけでなく、枠の太さと印で分かる</td></tr>
+<tr><td>名前</td><td>13sp、<code>sans-serif-medium</code>、#EDEDEA、行の高さ20sp。省略しない（入らないときは折り返し）</td></tr>
+<tr><td>順位の図</td><td>四角 幅16dp×高さ18dp（文字の倍率に合わせて伸びる）、角丸5dp、数字11sp・太め・等幅数字。かたまりの間3dp、同率のかたまりの中は1dp、印との間6dp。図の幅は文字1.0倍で約70dp、1.3倍で約90dp</td></tr>
+<tr><td>高さの目安</td><td>選択肢64dp＋外側の余白で約88dp（文字1.3倍で約92dp）。写真の領域は残りすべて</td></tr>
+</table>
+
+<h2>4. 状態と操作</h2>
+<table>
+<tr><th>操作</th><th>動き</th></tr>
+<tr><td>表示</td><td>未着手・途中・完了のどの時点でも表示し、今の方式に選択の印を付ける</td></tr>
+<tr><td>今と同じ方式を押す</td><td>何も変えない（確認も出さない）</td></tr>
+<tr><td>違う方式を押す</td><td>既存の確認を出す：「ソート方式を変更しますか？」「この連写の結果と途中の判断を置き換え、最初から比較します。」［変更］［キャンセル］。<b>確認の前に新しい方式を選択中にしない</b>（押した選択肢は押下の見た目だけ）</td></tr>
+<tr><td>［変更］</td><td>保存できたら新しい方式に切り替え、最初から比較する。保存に失敗したら元の方式のまま（印も元のまま）</td></tr>
+<tr><td>［キャンセル］・暗幕のタップ・Back</td><td>確認を閉じて、元の方式のまま</td></tr>
+<tr><td>dock</td><td>既存のまま（取り消し・その他。すべてに順位の比較中だけ［同じ順位］）</td></tr>
+</table>
+
+<h2>5. 読み上げ（TalkBack）</h2>
+<table>
+<tr><th>対象</th><th>読み上げ</th></tr>
+<tr><td>グループ</td><td>「ソート方式」</td></tr>
+<tr><td>1位を決める</td><td>「1位を決める。1枚だけが1位、ほかの写真はすべて同率2位」＋状態（選択中／選択していない）。ラジオボタンとして読む</td></tr>
+<tr><td>すべてに順位</td><td>「すべてに順位。すべての写真に順位を付ける、同じ順位も選べる」＋状態</td></tr>
+<tr><td>順位の図・印</td><td>読み上げない（装飾。<code>importantForAccessibility = no</code>）</td></tr>
+<tr><td>確認</td><td>見出し → 本文 → 変更 → キャンセルの順</td></tr>
+</table>
+
+<h2>6. 範囲外</h2>
+<ul>
+<li>写真の表示、dock、ほかの画面。順位のロジックと保存の形式。</li>
+<li>このHTMLの写真と dock は簡略模擬。フォントはブラウザとAndroidで数%ずれることがある（Androidは Roboto Medium と Noto Sans CJK JP Medium）。</li>
+</ul>
+</section>
+</div>
+
+<script>
+(function () {
+  const O = { w: 400, k: 1, name: 'new', prog: 'none', mode: 'best', fail: false, sheet: null, pressed: null, log: [] };
+  const NAME = { best: '1位を決める', all: { new: 'すべてに順位', cur: 'すべての順位を決める' } };
+  const nm = (m) => (m === 'best' ? NAME.best : NAME.all[O.name]);
+  const AX = { best: '1枚だけが1位、ほかの写真はすべて同率2位', all: 'すべての写真に順位を付ける、同じ順位も選べる' };
+  const CK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>';
+  const RK = {
+    best: '<span class="rk" aria-hidden="true"><span class="r1">1</span><span class="tie"><span>2</span><span>2</span><span>2</span></span></span>',
+    all: '<span class="rk" aria-hidden="true"><span class="r1">1</span><span class="tie"><span>2</span><span>2</span></span><span>4</span></span>'
+  };
+  const ICON = {
+    undo: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6.5L4.5 11 9 15.5"></path><path d="M4.5 11h10a6 6 0 0 1 0 12h-3"></path></svg>',
+    tie: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M6 10h14M6 16h14"></path></svg>',
+    more: '<svg viewBox="0 0 26 26" fill="currentColor" aria-hidden="true"><circle cx="13" cy="6" r="1.8"></circle><circle cx="13" cy="13" r="1.8"></circle><circle cx="13" cy="20" r="1.8"></circle></svg>'
+  };
+  const add = (t) => { O.log.unshift(t); O.log = O.log.slice(0, 10); };
+  const dev = document.getElementById('dev');
+  function modeBtn(m) {
+    const on = O.mode === m;
+    return '<button class="mode" role="radio" data-mode="' + m + '" aria-checked="' + on + '" tabindex="' + (on ? 0 : -1) + '" aria-label="' + nm(m) + '。' + AX[m] + '">' +
+      '<span class="nm">' + nm(m) + '</span><span class="ex"><span class="ck" aria-hidden="true">' + CK + '</span>' + RK[m] + '</span></button>';
+  }
+  function render() {
+    dev.style.setProperty('--w', O.w + 'px'); document.documentElement.style.setProperty('--k', O.k);
+    const progTxt = { none: '未着手 · あと4回', mid: '途中 · あと2回', done: '完了' }[O.prog];
+    const tie = O.mode === 'all' && O.prog !== 'done';
+    const dock = '<div class="dock" role="group" aria-label="比較の操作"><button class="db" aria-label="直前の操作を取り消す" title="直前の操作を取り消す"' + (O.prog === 'none' ? ' disabled' : '') + '>' + ICON.undo + '<span>取り消し</span></button>' + (tie ? '<button class="db">' + ICON.tie + '<span>同じ順位</span></button>' : '') + '<button class="db">' + ICON.more + '<span>その他</span></button></div>';
+    let html = '<div class="top"><b>ソート</b><span>連写 4枚 · ' + progTxt + '</span></div>' +
+      '<div class="photos"><i style="background:linear-gradient(160deg,#a9c3d8,#69736a)"><b>A</b></i><i style="background:linear-gradient(160deg,#7b5b45,#2a201b)"><b>B</b></i></div>' +
+      '<div class="modes" role="radiogroup" aria-label="ソート方式">' + modeBtn('best') + modeBtn('all') + '</div>' + dock;
+    if (O.sheet) html += '<button class="dim" data-act="cancel" aria-label="閉じる"></button><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="dlgT"><h3 id="dlgT">ソート方式を変更しますか？</h3><p>この連写の結果と途中の判断を置き換え、最初から比較します。</p><div class="bt"><button class="danger" data-act="change">変更</button><button data-act="cancel">キャンセル</button></div></div>';
+    dev.innerHTML = html;
+    measure();
+  }
+  function measure() {
+    const d = dev.getBoundingClientRect();
+    const g = dev.querySelector('.modes').getBoundingClientRect();
+    const rows = [...dev.querySelectorAll('.mode')].map((b) => {
+      const r = b.getBoundingClientRect(), n = b.querySelector('.nm'), ex = b.querySelector('.ex');
+      const rg = document.createRange(); rg.selectNodeContents(n);
+      const lines = new Set([...rg.getClientRects()].filter((x) => x.width > 0).map((x) => Math.round(x.top))).size;
+      const fit = ex.getBoundingClientRect().width <= b.clientWidth - 12 + 0.5 && n.scrollWidth <= b.clientWidth - 12 + 1;
+      const ok = r.height >= 48 && r.width >= 48 && fit;
+      return (ok ? '<span class="ok">○</span> ' : '<span class="ng">✕</span> ') + n.textContent + '：' + Math.round(r.width) + '×' + Math.round(r.height) + 'dp・名前' + lines + '行・図 ' + Math.round(ex.getBoundingClientRect().width) + 'dp' + (fit ? '' : '・はみ出し') + (b.getAttribute('aria-checked') === 'true' ? '・選択中' : '');
+    });
+    const ph = dev.querySelector('.photos').getBoundingClientRect();
+    document.getElementById('chk').innerHTML = '<b>' + O.w + 'dp・文字' + O.k + '倍</b><br>' + rows.join('<br>') + '<br>方式の選択の高さ：' + Math.round(g.height + 16) + 'dp（余白込み）・写真の領域：' + Math.round(ph.height) + 'dp';
+    document.getElementById('ax').innerHTML = '<b>読み上げ</b><br>グループ「ソート方式」<br>' + [...dev.querySelectorAll('.mode')].map((b) => b.getAttribute('aria-label') + '、' + (b.getAttribute('aria-checked') === 'true' ? '選択中' : '選択していない')).join('<br>') + '<br>（順位の図と印は読み上げない）';
+    document.getElementById('log').innerHTML = '<b>操作の記録</b><br>' + (O.log.map((x) => '・' + x).join('<br>') || '—');
+  }
+  dev.addEventListener('pointerdown', (e) => { const b = e.target.closest('.mode'); if (b) b.style.background = b.getAttribute('aria-checked') === 'true' ? '#2E2E33' : '#1F1F22'; });
+  dev.addEventListener('pointerup', (e) => { const b = e.target.closest('.mode'); if (b) b.style.background = ''; });
+  dev.addEventListener('click', (e) => {
+    const m = e.target.closest('[data-mode]');
+    if (m) {
+      const v = m.dataset.mode;
+      if (v === O.mode) { add('同じ方式（' + nm(v) + '）を押した → 変更なし'); return render(); }
+      O.sheet = v; add('違う方式（' + nm(v) + '）を押した → 確認（まだ選択中にしない）'); return render();
+    }
+    const a = e.target.closest('[data-act]');
+    if (!a) return;
+    if (a.dataset.act === 'cancel') { add('キャンセル → ' + nm(O.mode) + ' のまま'); O.sheet = null; }
+    else if (a.dataset.act === 'change') {
+      if (O.fail) add('変更の保存に失敗 → ' + nm(O.mode) + ' のまま');
+      else { O.mode = O.sheet; O.prog = 'none'; syncSeg(); add('変更 → ' + nm(O.mode) + '（最初から比較）'); }
+      O.sheet = null;
+    }
+    render();
+  });
+  dev.addEventListener('keydown', (e) => {
+    if (!e.target.closest('.mode')) return;
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].indexOf(e.key) >= 0) { e.preventDefault(); const o = dev.querySelector('.mode:not([aria-checked="true"])'); if (o) o.focus(); }
+  });
+  document.getElementById('hwBack').addEventListener('click', () => { if (O.sheet) { O.sheet = null; add('Back → キャンセルと同じ（' + nm(O.mode) + ' のまま）'); render(); } else add('Back（確認が出ていないので、この部品では何もしない）'), measure(); });
+  function syncSeg() { document.querySelectorAll('#oM button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.v === O.mode ? 'true' : 'false')); document.querySelectorAll('#oP button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.v === O.prog ? 'true' : 'false')); }
+  function seg(id, fn) {
+    const el = document.getElementById(id);
+    el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; el.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', x === b ? 'true' : 'false')); fn(b.dataset.v); render(); });
+  }
+  seg('oW', (v) => { O.w = +v; }); seg('oK', (v) => { O.k = +v; }); seg('oN', (v) => { O.name = v; }); seg('oP', (v) => { O.prog = v; }); seg('oM', (v) => { O.mode = v; O.sheet = null; });
+  document.getElementById('oFail').addEventListener('change', (e) => { O.fail = e.target.checked; });
+  window.__l6 = { O: O, render: render };
+  render();
+})();
+</script>
+</body>
+</html>
