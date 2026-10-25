@@ -19,7 +19,8 @@ public final class CloudActivity extends DiagnosticActivity {
   private static final String ORIGIN = "https://www.amazon.co.jp";
   private final ExecutorService worker = new DiagnosticExecutor("CloudActivity.worker", 1);
   private WebView web;
-  private TextView status;
+  private StatusView status;
+  private boolean showingRunning;
   private Button check, verify, upload, loginButton, logoutButton;
 
   public void onCreate(Bundle state) {
@@ -40,12 +41,7 @@ public final class CloudActivity extends DiagnosticActivity {
     title.setTextSize(24);
     title.setTextColor(Color.WHITE);
     root.addView(title);
-    status = new TextView(this);
-    status.setTextColor(0xffd4c7b4);
-    status.setTextSize(14);
-    status.setPadding(0, 20, 0, 20);
-    status.setVisibility(View.GONE);
-    status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    status=new StatusView(this);status.setVisibility(View.GONE);
     root.addView(status);
     LinearLayout row = new LinearLayout(this);
 
@@ -72,9 +68,7 @@ public final class CloudActivity extends DiagnosticActivity {
                     (d, which) -> {
                       Button target = new Button[] {check, verify, upload, logoutButton}[which];
                       if (!target.isEnabled()) {
-                        android.widget.Toast.makeText(
-                                this, "実行中の処理が終わるまでお待ちください", android.widget.Toast.LENGTH_SHORT)
-                            .show();
+                        StatusFeedback.show(this,StatusView.Symbol.WAITING,"実行中の処理が終わるまでお待ちください",null,"");
                         return;
                       }
                       if (which == 3)
@@ -130,13 +124,13 @@ public final class CloudActivity extends DiagnosticActivity {
                 "https".equals(u.getScheme())
                     && host != null
                     && (host.equals("amazon.co.jp") || host.endsWith(".amazon.co.jp"));
-            if (!allowed) setStatus("日本向けAmazon以外への移動を停止しました。接続方式の確認が必要です。");
+            if (!allowed) setStatus(StatusView.Symbol.HOST,"日本向けAmazon以外への移動を停止しました。接続方式の確認が必要です。",()->loginButton.performClick());
             return !allowed;
           }
 
           public void onReceivedSslError(WebView v, SslErrorHandler handler, SslError error) {
             handler.cancel();
-            setStatus("通信の安全性を確認できないため停止しました。");
+            setStatus(StatusView.Symbol.TLS,"通信の安全性を確認できないため停止しました。",()->loginButton.performClick());
           }
 
           public void onPageFinished(WebView v, String url) {
@@ -170,7 +164,7 @@ public final class CloudActivity extends DiagnosticActivity {
                         .remove("cloudCheckedAt")
                         .remove("cloudCount")
                         .apply();
-                    setStatus("このアプリのログイン情報を消しました。");
+                    setStatus(StatusView.Symbol.COMPLETE,"このアプリのログイン情報を消しました。",null);
                   });
         });
     View actions = actions(this, () -> login.performClick(), () -> sync.performClick(), () -> more.performClick());
@@ -180,9 +174,9 @@ public final class CloudActivity extends DiagnosticActivity {
     setContentView(root);
   }
 
-  private void setStatus(String message) {
-    status.setText(message);
-    status.setVisibility(View.VISIBLE);
+  private void setStatus(StatusView.Symbol kind,String message,Runnable retry) {
+    if(kind==StatusView.Symbol.RUNNING){if(!showingRunning)status.begin(message);else status.describe(message);showingRunning=true;}
+    else {showingRunning=false;status.show(kind,"",message,retry,kind==StatusView.Symbol.AUTH?"ログイン":"再試行");}
   }
 
   static View actions(android.content.Context c, Runnable login, Runnable sync, Runnable more) {
@@ -210,15 +204,16 @@ public final class CloudActivity extends DiagnosticActivity {
     final String cookies = CookieManager.getInstance().getCookie(url),
         agent = web.getSettings().getUserAgentString();
     if (cookies == null || cookies.isBlank()) {
-      setStatus("まずAmazonの画面でログインしてください。");
+      setStatus(StatusView.Symbol.AUTH,"まずAmazonの画面でログインしてください。",()->loginButton.performClick());
       return;
     }
     check.setEnabled(false);
-    setStatus("写真一覧への読み取り接続を確認しています…");
+    setStatus(StatusView.Symbol.RUNNING,"写真一覧への読み取り接続を確認しています",null);
     worker.execute(
         () -> {
           String message;
           int count = -1;
+          StatusView.Symbol outcome=StatusView.Symbol.FAILED;
           HttpsURLConnection connection = null;
           try {
             connection = (HttpsURLConnection) new URL(url).openConnection();
@@ -234,6 +229,7 @@ public final class CloudActivity extends DiagnosticActivity {
                 connection.setRequestProperty("x-amzn-sessionid", kv[1]);
             }
             int code = connection.getResponseCode();
+            if(code==401||code==403||code>=300&&code<400)outcome=StatusView.Symbol.AUTH;
             if (code == 401 || code == 403) message = "認証が必要です（" + code + "）。ログインを完了してから再確認してください。";
             else if (code >= 300 && code < 400) message = "ログイン画面などへの転送が返りました。ログイン後に再確認してください。";
             else if (code != 200) message = "接続を確認できませんでした（" + code + "）。写真は変更していません。";
@@ -252,6 +248,7 @@ public final class CloudActivity extends DiagnosticActivity {
                 throw new IOException("Unexpected response");
               count = data.getInt("count");
               if (count < 0) throw new IOException("Invalid count");
+              outcome=StatusView.Symbol.COMPLETE;
               message = "写真一覧への接続を確認できました。\nクラウドの写真：" + count + "件\nこの接続確認だけでは元のファイルの保存と復元を保証しません。";
             }
           } catch (Exception e) {
@@ -262,11 +259,13 @@ public final class CloudActivity extends DiagnosticActivity {
           final String result =
               message + (count >= 0 ? "\n" + new CloudVerifier(cookies, agent).endpoint() : "");
           final int found = count;
+          final StatusView.Symbol resultKind=outcome;
           runOnUiThread(
               () -> {
                 if (isDestroyed()) return;
                 check.setEnabled(true);
-                setStatus(result);
+                setStatus(resultKind,result,resultKind==StatusView.Symbol.AUTH?()->loginButton.performClick():found>=0?null:this::diagnose);
+                if(found>=0)status.counts(found+"件");
                 if (found >= 0)
                   getSharedPreferences("settings", 0)
                       .edit()
@@ -287,7 +286,7 @@ public final class CloudActivity extends DiagnosticActivity {
     final String cookies = CookieManager.getInstance().getCookie(ORIGIN + "/drive/v1/nodes");
     final String agent = web.getSettings().getUserAgentString();
     if (cookies == null || cookies.isBlank()) {
-      setStatus("先にAmazonへログインしてください。");
+      setStatus(StatusView.Symbol.AUTH,"先にAmazonへログインしてください。",()->loginButton.performClick());
       return;
     }
     verify.setEnabled(false);
@@ -309,7 +308,7 @@ public final class CloudActivity extends DiagnosticActivity {
                   if (isDestroyed()) return;
                   verify.setEnabled(true);
                   if (photos.isEmpty()) {
-                    setStatus("検証するRAWがありません。");
+                    setStatus(StatusView.Symbol.EMPTY,"検証するRAWがありません。",null);
                     return;
                   }
                   new GalleryUi.Sheet(this)
@@ -326,7 +325,7 @@ public final class CloudActivity extends DiagnosticActivity {
                 () -> {
                   if (!isDestroyed()) {
                     verify.setEnabled(true);
-                    setStatus("端末のRAWを読み取れませんでした。");
+                    setStatus(StatusView.Symbol.FAILED,"端末のRAWを読み取れませんでした。",()->chooseVerification(uploading));
                   }
                 });
           }
@@ -354,7 +353,7 @@ public final class CloudActivity extends DiagnosticActivity {
   private void verifyPhoto(
       PhotoRepository.Photo photo, String cookies, String agent, boolean uploading) {
     if (!SyncEngine.RUNNING.compareAndSet(false, true)) {
-      setStatus("自動同期が実行中です。完了後に検証してください。");
+      setStatus(StatusView.Symbol.WAITING,"自動同期が実行中です。完了後に検証してください。",()->chooseVerification(uploading));
       return;
     }
     verify.setEnabled(false);
@@ -366,13 +365,14 @@ public final class CloudActivity extends DiagnosticActivity {
     worker.execute(
         () -> {
           String result;
+          StatusView.Symbol outcome=StatusView.Symbol.PARTIAL;
           try {
             CloudVerifier client = new CloudVerifier(cookies, agent);
             CloudVerifier.Progress progress =
                 text ->
                     runOnUiThread(
                         () -> {
-                          if (!isDestroyed()) setStatus(text);
+                          if (!isDestroyed()) setStatus(StatusView.Symbol.RUNNING,text,null);
                         });
             result =
                 uploading
@@ -381,8 +381,10 @@ public final class CloudActivity extends DiagnosticActivity {
             if (client.lastVerified != null)
               try (ArchiveStore store = new ArchiveStore(this)) {
                 store.verified(photo, client.lastVerified);
+                outcome=StatusView.Symbol.COMPLETE;
               }
           } catch (CloudVerifier.VerificationException e) {
+            outcome=StatusView.Symbol.FAILED;
             result = "元のファイルの検証を完了できませんでした。\n" + e.getMessage();
           } catch (Exception e) {
             result =
@@ -392,6 +394,7 @@ public final class CloudActivity extends DiagnosticActivity {
           }
           SyncEngine.RUNNING.set(false);
           final String message = result;
+          final StatusView.Symbol resultKind=outcome;
           runOnUiThread(
               () -> {
                 if (isDestroyed()) return;
@@ -400,7 +403,7 @@ public final class CloudActivity extends DiagnosticActivity {
                 loginButton.setEnabled(true);
                 logoutButton.setEnabled(true);
                 check.setEnabled(true);
-                setStatus(message);
+                setStatus(resultKind,message,resultKind==StatusView.Symbol.COMPLETE?null:()->chooseVerification(false));
               });
         });
   }

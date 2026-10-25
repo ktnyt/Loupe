@@ -28,7 +28,7 @@ final class BurstPreviewChecks {
       ImageView hero=new DiagnosticImageView(a); stage.addView(hero,new FrameLayout.LayoutParams(-1,-1));
       root.addView(stage,new LinearLayout.LayoutParams(-1,400));
       LinearLayout strip=new LinearLayout(a); root.addView(strip);
-      TextView progress=new TextView(a);root.addView(progress);retry[0]=new Button(a);root.addView(retry[0]);
+      StatusView progress=new StatusView(a);root.addView(progress);retry[0]=new Button(a);root.addView(retry[0]);
       a.setContentView(root);
       controller[0]=new BurstPreviews(a,hero,stage,strip,progress,retry[0],photos,(v,p,e,done)-> {
         edges.add(e); replies.add(success -> { if(success)v.setImageBitmap(bitmap);done.accept(success); });

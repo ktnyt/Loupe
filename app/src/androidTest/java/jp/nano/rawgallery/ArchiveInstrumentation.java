@@ -13,6 +13,7 @@ import org.json.JSONObject;
  * source.
  */
 public final class ArchiveInstrumentation extends Instrumentation {
+  private boolean visualStatusTest;
   private boolean jobStateTest;
   private boolean affordancesTest;
   private boolean rankingModesTest;
@@ -31,6 +32,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    visualStatusTest=args!=null&&"visual-status".equals(args.getString("mode"));
     jobStateTest = args != null && "job-state".equals(args.getString("mode"));
     affordancesTest = args != null && "affordances".equals(args.getString("mode"));
     rankingModesTest = args != null && "ranking-modes".equals(args.getString("mode"));
@@ -62,6 +64,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     File restored = null;
     try {
       Context context = getTargetContext();
+      if(visualStatusTest){results.putString("stream",VisualStatusChecks.run(this));finish(-1,results);return;}
       if (jobStateTest) { results.putString("stream", JobStateChecks.run(context)); finish(-1, results); return; }
       if (affordancesTest) { results.putString("stream", AffordanceChecks.run(this)); finish(-1, results); return; }
       if (rankingModesTest) { results.putString("stream", RankingModeChecks.run(this)); finish(-1, results); return; }
@@ -180,7 +183,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     } catch (Throwable failure) {
       results.putString(
           "stream",
-          (affordancesTest ? android.util.Log.getStackTraceString(failure) : "") + "Archive device checks failed: "
+          (affordancesTest || visualStatusTest ? android.util.Log.getStackTraceString(failure) : "") + "Archive device checks failed: "
               + failure.getClass().getSimpleName()
               + (failure instanceof AssertionError ? ": " + failure.getMessage() : "")
               + "\n");
