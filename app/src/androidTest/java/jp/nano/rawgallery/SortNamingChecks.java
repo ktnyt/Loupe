@@ -32,6 +32,10 @@ final class SortNamingChecks {
     if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++){TextView found=find(((ViewGroup)v).getChildAt(i),text);if(found!=null)return found;}
     return null;
   }
+  private static ListView results(View v){
+    if(v instanceof ListView)return (ListView)v;
+    if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++){ListView l=results(((ViewGroup)v).getChildAt(i));if(l!=null)return l;}return null;
+  }
   private static TextView require(MainActivity a,String text){TextView v=find(a.getWindow().getDecorView(),text);if(v==null)throw new AssertionError("Missing "+text);return v;}
   private static void click(Instrumentation t,MainActivity a,String text)throws Exception{
     try { waitFor(t,()->{TextView v=find(a.getWindow().getDecorView(),text);return v!=null&&v.isEnabled();}); }
@@ -99,7 +103,17 @@ final class SortNamingChecks {
       if(!((PhotoRanking)field(a,"ranking")).bestOnly())throw new AssertionError("best mode not restored");
       capture(t,a,"comparison");click(t,a,"Aを選ぶ");back(t);
       main(t,()->require(a,"ソートを再開"));capture(t,a,"resume");click(t,a,"ソートを再開");click(t,a,"Aを選ぶ");
-      main(t,()->require(a,"ソート結果"));capture(t,a,"result");back(t);
+      main(t,()->require(a,"ソート結果"));capture(t,a,"result");
+      String resultJournal=((PhotoRanking)field(a,"ranking")).journal;
+      waitFor(t,()->results(a.getWindow().getDecorView()).getChildCount()>0);
+      main(t,()->{ListView list=results(a.getWindow().getDecorView());View row=list.getChildAt(0);
+        if(!(row instanceof RankingResultRow)||!row.getContentDescription().toString().contains("fixture-"))throw new AssertionError("result semantics");
+        if(find(a.getWindow().getDecorView(),"写真をタップして拡大")!=null)throw new AssertionError("redundant hint");
+        list.performItemClick(row,0,list.getItemIdAtPosition(0));});
+      waitFor(t,()->results(a.getWindow().getDecorView())==null);back(t);
+      waitFor(t,()->results(a.getWindow().getDecorView())!=null&&results(a.getWindow().getDecorView()).getChildCount()>0);
+      if(!resultJournal.equals(((PhotoRanking)field(a,"ranking")).journal))throw new AssertionError("open changed ranking");
+      back(t);
       main(t,()->require(a,"ソート結果"));capture(t,a,"done");click(t,a,"ソート結果");
       String journal=((PhotoRanking)field(a,"ranking")).journal;
       click(t,a,"その他");dialog(t,"再ソート",true);dialog(t,"この連写を再ソートしますか？",false);capture(t,a,"redo");dialog(t,"キャンセル",true);

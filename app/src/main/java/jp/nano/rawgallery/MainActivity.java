@@ -116,6 +116,7 @@ public final class MainActivity extends DiagnosticActivity {
   private Future<?> viewing;
   private boolean detail = false;
   private boolean rankingScreen = false;
+  private android.os.Parcelable rankingResultState;
   private PhotoRanking ranking;
   private final Map<String, Integer> rankingMembers = new HashMap<>();
   private int index = 0;
@@ -1503,6 +1504,7 @@ public final class MainActivity extends DiagnosticActivity {
 
   private void openRanking() {
     DiagnosticLog.event("screen.openRanking", 0);
+    rankingResultState = null;
     try {
       rankingMembers.clear();
       for (int member : burstMembers)
@@ -1521,6 +1523,7 @@ public final class MainActivity extends DiagnosticActivity {
       if (rankingStore.save(next)) {
         rankCache.clear();
         ranking = next;
+        rankingResultState = null;
         showRanking();
         return;
       }
@@ -1556,11 +1559,6 @@ public final class MainActivity extends DiagnosticActivity {
     LinearLayout modes = RankingModes.create(this, ranking.bestOnly(),
         () -> changeRankingMode(true), () -> changeRankingMode(false));
 
-    if (ranking.done()) {
-      TextView hint = label("写真をタップして拡大", 12, MUTED);
-      hint.setPadding(dp(16), 0, dp(16), dp(6));
-      root.addView(hint);
-    }
     Button undo = button("直前の操作を取り消す", () -> saveRanking(ranking.undo()));
     undo.setText("取り消し");
     undo.setEnabled(ranking.decisions() > 0);
@@ -1571,6 +1569,10 @@ public final class MainActivity extends DiagnosticActivity {
     tie.setEnabled(false);
     if (ranking.done()) {
       ListView results = new ListView(this);
+      results.setPadding(dp(8), 0, dp(8), 0);
+      results.setDivider(new android.graphics.drawable.ColorDrawable(BG));
+      results.setDividerHeight(dp(4));
+      results.setSelector(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
       List<String> rows = new ArrayList<>();
       for (int n = 0; n < ranking.order.size(); n++)
         rows.add(
@@ -1580,15 +1582,8 @@ public final class MainActivity extends DiagnosticActivity {
       results.setAdapter(
           new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, rows) {
             public View getView(int p, View v, ViewGroup parent) {
-              LinearLayout item = row();
-              item.setPadding(dp(12), dp(6), dp(16), dp(6));
-              ImageView thumbnail = new ImageView(MainActivity.this);
-              thumbnail.setScaleType(ImageView.ScaleType.CENTER_CROP);
-              thumbnail.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-              item.addView(thumbnail, new LinearLayout.LayoutParams(dp(88), dp(72)));
-              TextView text = label(rows.get(p), 14, TEXT);
-              text.setPadding(dp(16), 0, 0, 0);
-              item.addView(text, new LinearLayout.LayoutParams(0, -2, 1));
+              RankingResultRow item = new RankingResultRow(MainActivity.this, rows.get(p));
+              ImageView thumbnail = item.thumbnail;
               PhotoRepository.Photo photo = photos.get(rankingMembers.get(ranking.order.get(p)));
               images.execute(() -> {
                 try {
@@ -1597,13 +1592,20 @@ public final class MainActivity extends DiagnosticActivity {
                     if (!isDestroyed() && token == generation) thumbnail.setImageBitmap(bitmap);
                     else bitmap.recycle();
                   });
-                } catch (Exception e) { /* Rank and filename remain available without a preview. */ }
+                } catch (Exception e) {
+                  main.post(() -> { if (!isDestroyed() && token == generation) item.previewFailed(); });
+                }
               });
               return item;
             }
           });
       results.setOnItemClickListener(
-          (p, v, n, id) -> showRankedPhoto(rankingMembers.get(ranking.order.get(n))));
+          (p, v, n, id) -> {
+            rankingResultState = results.onSaveInstanceState();
+            GalleryUi.feedback(v);
+            showRankedPhoto(rankingMembers.get(ranking.order.get(n)));
+          });
+      if (rankingResultState != null) results.onRestoreInstanceState(rankingResultState);
       root.addView(results, new LinearLayout.LayoutParams(-1, 0, 1));
     } else {
 
