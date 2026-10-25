@@ -39,6 +39,7 @@ public final class PreviewPreparationJob extends JobService {
     DiagnosticLog.event("preparation.progress", 0, "ready", ready, "total", total, "failed", failed);
   }
   public boolean onStartJob(JobParameters params) {
+    if (browsing()) return false; // Leaving the last Activity schedules another attempt.
     AtomicBoolean cancel = new AtomicBoolean(); stopped = cancel;
     WORKER.execute(() -> {
       int ready = 0, failed = 0, total = 0;
@@ -48,6 +49,7 @@ public final class PreviewPreparationJob extends JobService {
         List<PhotoRepository.Photo> photos = index.load(null, "すべて").photos;
         Set<String> keys = new HashSet<>();
         for (PhotoRepository.Photo p : photos) if (local(p)) {
+          if (cancel.get() || browsing()) { if (!cancel.get()) jobFinished(params, true); return; }
           total++; keys.add(PhotoRepository.previewKey(p)); if (repository.prepared(p)) ready++;
         }
         repository.prunePrepared(keys, () -> cancel.get() || browsing());

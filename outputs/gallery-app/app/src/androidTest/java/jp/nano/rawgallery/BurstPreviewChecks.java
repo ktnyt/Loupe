@@ -50,6 +50,10 @@ final class BurstPreviewChecks {
       if(edges.size()!=3)throw new AssertionError("strip continued while hero waiting");
       replies.get(2).accept(false);
       if(retry[0].getVisibility()!=android.view.View.VISIBLE)throw new AssertionError("missing retry");
+      int beforeRetry=edges.size();
+      retry[0].performClick();
+      if(edges.size()!=beforeRetry+1 || edges.get(edges.size()-1)!=1600)
+        throw new AssertionError("failed hero not retried");
       active[0]=false;
       int before=edges.size(); replies.get(replies.size()-1).accept(true);
       if(edges.size()!=before)throw new AssertionError("left screen still loads");
