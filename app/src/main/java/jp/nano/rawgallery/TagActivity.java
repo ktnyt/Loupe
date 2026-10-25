@@ -123,7 +123,7 @@ public final class TagActivity extends DiagnosticActivity {
     input.setSingleLine(true); input.setHint("タグ名"); input.setTextColor(GalleryUi.TEXT);
     AlertDialog dialog = new GalleryUi.Sheet(this).setTitle("新しいタグ").setView(input)
         .setPositiveButton("作成", null).setNegativeButton("戻る", null).create();
-    dialog.setOnShowListener(ignored -> { GalleryUi.styleSheet(dialog); dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
+    dialog.setOnShowListener(ignored -> { dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
       String name = input.getText().toString().trim();
       if (name.isEmpty() || name.length() > 80) { input.setError("1〜80文字で入力してください"); return; }
       dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);

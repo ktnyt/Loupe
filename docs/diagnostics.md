@@ -85,3 +85,9 @@ ANDROID_HOME=/opt/homebrew/share/android-commandlinetools gradlew -p . assembleD
 - 実機の長時間連続収集・故意の容量枯渇・プロセスクラッシュ直前の保存保証・release APKでの非記録動作は未実施。releaseの無効化条件はコードで確認した。
 
 frame commitの意味: [Android公式API](https://developer.android.com/reference/android/view/ViewTreeObserver#registerFrameCommitCallback(java.lang.Runnable))。
+
+## 共通Sheetの初回描画
+
+`dialog.show`（window attach）、`dialog.first_draw`（高さ上限を満たした最初のpreDraw）、`dialog.frame_commit`を同じrequestで記録する。再表示は新しいrequest。first_drawには画面上のx/y/width/heightのみ記録し、項目名・入力内容は含めない。frame_commitはGPUへの提出であり画面録画と併用する。非hardware描画はframe_unavailable。入力からの区間は直前の対応するinput/actionと照合する。
+
+`am instrument -w -e mode sheets jp.nano.rawgallery.test/jp.nano.rawgallery.ArchiveInstrumentation`はダミーの短い/長い/入力Sheetの初回・同一Dialog再表示を検査する。onShowを置換した経路でも最初のdrawと300ms後の位置・寸法が同じこと、幅・下部位置・高さ上限・項目選択を確認する。実際のTalkBack、IME、OSアニメーションは録画・操作で別途確認する。

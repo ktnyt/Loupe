@@ -14,7 +14,7 @@ import org.json.JSONObject;
  */
 public final class ArchiveInstrumentation extends Instrumentation {
   private boolean burstTest, realBurstTest;
-  private boolean diagnosticTest;
+  private boolean diagnosticTest, sheetTest;
   private boolean tagTest, lifecycleTest;
   private boolean relatedTest;
   private boolean automaticTest;
@@ -38,6 +38,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     jpegCloudTest = args != null && "jpeg-cloud".equals(args.getString("mode"));
     jpegCleanupTest = args != null && "jpeg-cleanup".equals(args.getString("mode"));
     compactTest = args != null && "compact".equals(args.getString("mode"));
+    sheetTest = args != null && "sheets".equals(args.getString("mode"));
     start();
   }
 
@@ -47,6 +48,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     try {
       Context context = getTargetContext();
       if (burstTest || realBurstTest) { results.putString("stream", BurstPreviewChecks.run(this, realBurstTest)); finish(-1, results); return; }
+      if (sheetTest) { results.putString("stream", SheetChecks.run(this)); finish(-1, results); return; }
       if (diagnosticTest) {
         results.putString("stream", DiagnosticChecks.run(this)); finish(-1, results); return;
       }

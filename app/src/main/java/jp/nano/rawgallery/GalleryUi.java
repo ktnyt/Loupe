@@ -179,20 +179,52 @@ final class GalleryUi {
     root.addView(scroll, new LinearLayout.LayoutParams(-1, -2));
   }
 
-  static void styleSheet(AlertDialog dialog) {
+  /** Configure before show; never submit an oversized first frame (Issue #13). */
+  private static void styleSheet(AlertDialog dialog) {
     Window window = dialog.getWindow(); if (window == null) return;
     Context context = dialog.getContext();
     window.setBackgroundDrawable(shape(context, PANEL, 20));
     window.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+    window.setWindowAnimations(0);
     window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     int width = context.getResources().getDisplayMetrics().widthPixels;
     final int sheetWidth = Math.min(width - dp(context, 24), dp(context, 560));
     window.setLayout(sheetWidth, WindowManager.LayoutParams.WRAP_CONTENT);
-    window.getDecorView().addOnLayoutChangeListener((view, l, t, r, b, ol, ot, or, ob) -> {
-      android.graphics.Rect visible = new android.graphics.Rect(); view.getWindowVisibleDisplayFrame(visible);
-      int max = (int) (visible.height() * .48f);
-      if (max > 0 && view.getHeight() > max && window.getAttributes().height != max)
-        window.setLayout(sheetWidth, max);
+    View decor = window.getDecorView();
+    decor.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+      private ViewTreeObserver.OnPreDrawListener beforeDraw;
+      @Override public void onViewAttachedToWindow(View view) {
+        long request = DiagnosticLog.id();
+        DiagnosticLog.event("dialog.show", request);
+        beforeDraw = new ViewTreeObserver.OnPreDrawListener() {
+          private boolean first = true;
+          @Override public boolean onPreDraw() {
+            android.graphics.Rect visible = new android.graphics.Rect();
+            view.getWindowVisibleDisplayFrame(visible);
+            int max = (int) (visible.height() * .48f);
+            if (max > 0 && view.getHeight() > max) {
+              if (window.getAttributes().height != max) window.setLayout(sheetWidth, max);
+              return false;
+            }
+            if (first) {
+              first = false;
+              int[] location = new int[2]; view.getLocationOnScreen(location);
+              int w = view.getWidth(), h = view.getHeight();
+              DiagnosticLog.event("dialog.first_draw", request,
+                  "x", location[0], "y", location[1], "width", w, "height", h);
+              if (view.isHardwareAccelerated()) view.getViewTreeObserver().registerFrameCommitCallback(
+                  () -> DiagnosticLog.event("dialog.frame_commit", request));
+              else DiagnosticLog.event("dialog.frame_unavailable", request);
+            }
+            return true;
+          }
+        };
+        view.getViewTreeObserver().addOnPreDrawListener(beforeDraw);
+      }
+      @Override public void onViewDetachedFromWindow(View view) {
+        if (beforeDraw != null && view.getViewTreeObserver().isAlive())
+          view.getViewTreeObserver().removeOnPreDrawListener(beforeDraw);
+      }
     });
   }
 
@@ -200,11 +232,10 @@ final class GalleryUi {
     Sheet(Context c) { super(c); }
     @Override public AlertDialog create() {
       AlertDialog dialog = super.create();
-      dialog.setOnShowListener(ignored -> {
-        DiagnosticLog.event("dialog.show", 0);
-        styleSheet(dialog);
-        DiagnosticWindow.install(dialog.getWindow());
-      });
+      // Dialog.create finishes theme/content setup without adding the window to the screen.
+      dialog.create();
+      styleSheet(dialog);
+      DiagnosticWindow.install(dialog.getWindow());
       return dialog;
     }
     @Override public AlertDialog show() {
