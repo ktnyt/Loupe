@@ -12,6 +12,7 @@ import android.widget.*;
 final class RankingModes {
   static LinearLayout create(Context c, boolean best, Runnable chooseBest, Runnable chooseAll) {
     LinearLayout outer = new LinearLayout(c);
+    outer.setBackgroundColor(GalleryUi.BG);
     outer.setPadding(dp(c,16),dp(c,8),dp(c,16),dp(c,8));
     LinearLayout panel = new LinearLayout(c);
     panel.setPadding(dp(c,4),dp(c,4),dp(c,4),dp(c,4));
@@ -35,7 +36,8 @@ final class RankingModes {
       setAllCaps(false);setText(best?"1位を決める":"すべてに順位");
       setTextSize(13);setTextColor(GalleryUi.TEXT);setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));
       setIncludeFontPadding(false);setGravity(Gravity.CENTER);setMinWidth(0);setMinimumWidth(dp(c,48));
-      setMinHeight(dp(c,64));setMinimumHeight(dp(c,64));setPadding(dp(c,9),dp(c,9),dp(c,9),dp(c,9));
+      int height=dp(c,Math.max(64,22+38*c.getResources().getConfiguration().fontScale));
+      setMinHeight(height);setMinimumHeight(height);setPadding(dp(c,9),dp(c,9),dp(c,9),dp(c,9));
       setLineSpacing(Math.max(0,20*c.getResources().getDisplayMetrics().scaledDensity-getPaint().getFontMetrics(null)),1);
       setSelected(selected);setStateDescription(selected?"選択中":"未選択");
       setContentDescription(best?"1位を決める。1枚だけが1位、ほかの写真はすべて同率2位":"すべてに順位。すべての写真に順位を付ける、同じ順位も選べる");

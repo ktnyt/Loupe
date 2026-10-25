@@ -28,6 +28,7 @@ final class RankingModeChecks {
           waitFor(t,"modes",()->modes[0].getHeight()>0);
           main(t,()->{
             LinearLayout panel=(LinearLayout)modes[0].getChildAt(0);
+            if(panel.getImportantForAccessibility()!=View.IMPORTANT_FOR_ACCESSIBILITY_YES||!"ソート方式".contentEquals(panel.getContentDescription()))throw new AssertionError("group semantics");
             for(int i=0;i<2;i++) {
               Button b=(Button)panel.getChildAt(i);ActionLabelChecks.check(b);
               if(b.isSelected()!=(i==0?best:!best))throw new AssertionError("selection");
