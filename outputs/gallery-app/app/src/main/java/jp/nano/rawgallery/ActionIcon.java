@@ -7,6 +7,7 @@ import android.graphics.drawable.Drawable;
 final class ActionIcon extends Drawable {
   private final String action;
   private final float size;
+  private android.content.res.ColorStateList tint;
   private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
   ActionIcon(String action, float density) {
@@ -22,12 +23,15 @@ final class ActionIcon extends Drawable {
   public void draw(Canvas canvas) {
     boolean enabled = false;
     for (int state : getState()) if (state == android.R.attr.state_enabled) enabled = true;
-    paint.setColor(enabled ? GalleryUi.TEXT : 0xff626b72);
+    int foreground = tint == null ? (enabled ? GalleryUi.TEXT : 0xff626b72)
+        : tint.getColorForState(getState(), tint.getDefaultColor());
+    paint.setColor(foreground);
     int save = canvas.save();
     Rect bounds = getBounds();
     canvas.translate(bounds.exactCenterX() - size / 2, bounds.exactCenterY() - size / 2);
     canvas.scale(size / 24, size / 24);
     switch (action) {
+      case "同じ順位":
       case "同順位":
         line(canvas, 5, 9, 19, 9);
         line(canvas, 5, 15, 19, 15);
@@ -46,7 +50,7 @@ final class ActionIcon extends Drawable {
         line(canvas, 11, 6, 5, 12, 11, 18);
         break;
       case "その他":
-        for (int x : new int[] {5, 12, 19}) canvas.drawCircle(x, 12, 1, paint);
+        for (int y : new int[] {5, 12, 19}) canvas.drawCircle(12, y, 1, paint);
         break;
       case "戻る":
       case "一覧":
@@ -59,6 +63,7 @@ final class ActionIcon extends Drawable {
         canvas.drawRoundRect(3, 5, 10, 19, 1, 1, paint);
         canvas.drawRoundRect(14, 5, 21, 19, 1, 1, paint);
         break;
+      case "直前の操作を取り消す":
       case "一つ戻す":
         line(canvas, 8, 4, 3, 9, 8, 14);
         line(canvas, 3, 9, 13, 9);
@@ -76,10 +81,31 @@ final class ActionIcon extends Drawable {
       case "絞り込み":
         line(canvas, 3, 5, 21, 5, 14, 13, 14, 20, 10, 18, 10, 13, 3, 5);
         break;
+      case "順位を決める":
       case "順位を付ける":
         canvas.drawRect(3, 12, 9, 21, paint);
         canvas.drawRect(9, 7, 15, 21, paint);
         canvas.drawRect(15, 15, 21, 21, paint);
+        break;
+      case "選択":
+        canvas.drawCircle(12, 12, 8.5f, paint);
+        line(canvas, 8, 12, 11, 15, 16, 9);
+        break;
+      case "タグ":
+        line(canvas, 3, 3, 12, 3, 21, 12, 12, 21, 3, 12, 3, 3);
+        canvas.drawCircle(7.5f, 7.5f, 1, paint);
+        break;
+      case "拡大":
+        canvas.drawCircle(10, 10, 6, paint);
+        line(canvas, 15, 15, 21, 21);
+        line(canvas, 7, 10, 13, 10);
+        line(canvas, 10, 7, 10, 13);
+        break;
+      case "前の写真":
+        line(canvas, 15, 5, 8, 12, 15, 19);
+        break;
+      case "次の写真":
+        line(canvas, 9, 5, 16, 12, 9, 19);
         break;
       case "共有":
         line(canvas, 7, 11, 17, 5);
@@ -104,7 +130,7 @@ final class ActionIcon extends Drawable {
         canvas.drawCircle(16, 12, 2.5f, paint);
         canvas.drawCircle(8, 18, 2.5f, paint);
         paint.setStyle(Paint.Style.STROKE);
-        paint.setColor(enabled ? GalleryUi.TEXT : 0xff626b72);
+        paint.setColor(foreground);
         canvas.drawCircle(8, 6, 2.5f, paint);
         canvas.drawCircle(16, 12, 2.5f, paint);
         canvas.drawCircle(8, 18, 2.5f, paint);
@@ -131,6 +157,12 @@ final class ActionIcon extends Drawable {
   protected boolean onStateChange(int[] state) {
     invalidateSelf();
     return true;
+  }
+
+  @Override
+  public void setTintList(android.content.res.ColorStateList colors) {
+    tint = colors;
+    invalidateSelf();
   }
 
   @Override

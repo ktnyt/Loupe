@@ -39,14 +39,15 @@ public final class MainActivity extends Activity {
   private List<PhotoRepository.Photo> photos = new ArrayList<>();
   private LinearLayout root, body;
   private TextView subtitle;
-  private GridView grid, albumGridView;
+  private ScrollingGrid grid, albumGridView;
+  private LinearLayout listHeader;
   private int albumScroll;
   private String shownGalleryKey;
   private final Map<String, Integer> galleryScroll = new HashMap<>();
 
   private void rememberGallery() {
     if (!albumHome && !detail && grid != null && shownGalleryKey != null)
-      galleryScroll.put(shownGalleryKey, grid.getFirstVisiblePosition());
+      galleryScroll.put(shownGalleryKey, grid.firstCellPosition());
   }
 
   private boolean selecting, bestOnly = true, rankingFromSelection;
@@ -177,7 +178,7 @@ public final class MainActivity extends Activity {
 
   private void gallery() {
     rememberGallery();
-    if (albumHome && albumGridView != null) albumScroll = albumGridView.getFirstVisiblePosition();
+    if (albumHome && albumGridView != null) albumScroll = albumGridView.firstCellPosition();
     albumHome = false;
     if (viewing != null) viewing.cancel(true);
     detail = false;
@@ -206,9 +207,11 @@ public final class MainActivity extends Activity {
 
     if (!selecting && burstMembers == null) addOtherAlbums();
     root.addView(header);
+    collectListHeader();
     body = vertical();
     root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
-    grid = new GridView(this);
+    grid = new ScrollingGrid(this);
+    grid.addHeaderView(listHeader, null, false);
     grid.setNumColumns(4);
     grid.setHorizontalSpacing(dp(2));
     grid.setVerticalSpacing(dp(2));
@@ -217,10 +220,10 @@ public final class MainActivity extends Activity {
     displayed = new ArrayList<>();
     rebuildDisplayed();
     adapter = new GalleryAdapter();
-    grid.setAdapter(adapter);
+    grid.setCells(adapter);
     shownGalleryKey = albumFolder + "|" + filter + "|" + rankFilter + "|" + String.valueOf(burstMembers);
-    grid.setSelection(galleryScroll.getOrDefault(shownGalleryKey, 0));
-    grid.setOnItemClickListener(
+    grid.selectCell(galleryScroll.getOrDefault(shownGalleryKey, 0));
+    grid.onCellClick(
         (p, v, pos, id) -> {
           if (selecting) {
             root.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK);
@@ -237,7 +240,7 @@ public final class MainActivity extends Activity {
         });
     // The grid is rebuilt by this listener, so emit before detaching it.
     grid.setHapticFeedbackEnabled(false);
-    grid.setOnItemLongClickListener(
+    grid.onCellLongClick(
         (parent, view, pos, id) -> {
           root.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
           if (!selecting) {
@@ -765,10 +768,18 @@ public final class MainActivity extends Activity {
 
     subtitle.setPadding(dp(20), dp(4), dp(20), dp(8));
     root.addView(subtitle);
+    collectListHeader();
     body = vertical();
     root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
     dock(allPhotos, button("その他", this::galleryMenu));
     loadAlbums();
+  }
+
+  private void collectListHeader() {
+    listHeader = vertical();
+    while (root.getChildCount() > 0) {
+      View child = root.getChildAt(0); root.removeViewAt(0); listHeader.addView(child);
+    }
   }
 
   private long photoTime(PhotoRepository.Photo photo) {
@@ -874,16 +885,18 @@ public final class MainActivity extends Activity {
                 () -> {
                   if (isDestroyed() || !albumHome || token != generation) return;
                   subtitle.setText(albums.isEmpty() ? "写真の一覧を準備しています…" : albums.size() + " アルバム");
-                  if (albumGridView != null) albumScroll = albumGridView.getFirstVisiblePosition();
+                  if (albumGridView != null) albumScroll = albumGridView.firstCellPosition();
                   body.removeAllViews();
-                  GridView albumGrid = new GridView(this);
+                  ScrollingGrid albumGrid = new ScrollingGrid(this);
+                  if (listHeader.getParent() instanceof ViewGroup) ((ViewGroup) listHeader.getParent()).removeView(listHeader);
+                  albumGrid.addHeaderView(listHeader, null, false);
                   albumGridView = albumGrid;
                   albumGrid.setNumColumns(2);
                   albumGrid.setHorizontalSpacing(dp(12));
                   albumGrid.setPadding(dp(16), dp(8), dp(16), dp(16));
                   albumGrid.setClipToPadding(false);
                   albumGrid.setVerticalSpacing(dp(20));
-                  albumGrid.setAdapter(
+                  albumGrid.setCells(
                       new BaseAdapter() {
                         public int getCount() {
                           return albums.size();
@@ -959,8 +972,8 @@ public final class MainActivity extends Activity {
                           return cell;
                         }
                       });
-                  albumGrid.setSelection(albumScroll);
-                  albumGrid.setOnItemClickListener(
+                  albumGrid.selectCell(albumScroll);
+                  albumGrid.onCellClick(
                       (p, v, pos, id) -> {
                         albumFolder = albums.get(pos).folder;
                         filter = "すべて";
@@ -1034,7 +1047,7 @@ public final class MainActivity extends Activity {
                   }
                   rebuildDisplayed();
                   adapter.notifyDataSetChanged();
-                  grid.setSelection(galleryScroll.getOrDefault(shownGalleryKey, 0));
+                  grid.selectCell(galleryScroll.getOrDefault(shownGalleryKey, 0));
                   subtitle.setText(
                       photos.isEmpty() ? "写真がありません。写真の一覧を更新中の場合はしばらくお待ちください。" : countText());
                 });

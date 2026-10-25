@@ -48,12 +48,44 @@ final class GalleryUi {
             shape(c, Color.TRANSPARENT, 14),
             shape(c, Color.WHITE, 14)));
     button.setContentDescription(text);
+    decorateAction(button);
     button.setOnClickListener(
         v -> {
           feedback(v);
           action.run();
         });
     return button;
+  }
+
+  private static void decorateAction(Button button) {
+    String title = button.getText().toString();
+    String symbol = title;
+    if (title.startsWith("すべての写真")) symbol = "すべての写真";
+    else if (title.contains("拡大")) symbol = "拡大";
+    else if (title.equals("Aを選ぶ") || title.equals("Bを選ぶ") || title.equals("この写真を選ぶ")) symbol = "選択";
+    switch (symbol) {
+      case "戻る": case "選択": case "選択を終了": case "選択へ戻る": case "比較に戻る":
+      case "写真一覧": case "連写一覧": case "その他": case "タグ": case "共有":
+      case "すべての写真": case "すべて選択": case "順位を決める": case "同じ順位":
+      case "直前の操作を取り消す": case "拡大": case "前の写真": case "次の写真":
+      case "同期設定": case "ログイン":
+        ActionIcon icon = new ActionIcon(symbol, button.getResources().getDisplayMetrics().density);
+        int size = dp(button.getContext(), 24); icon.setBounds(0, 0, size, size);
+        button.setCompoundDrawables(null, icon, null, null);
+        button.setCompoundDrawablePadding(dp(button.getContext(), 4));
+        button.setGravity(Gravity.CENTER);
+        button.setPadding(dp(button.getContext(), 6), dp(button.getContext(), 6), dp(button.getContext(), 6), dp(button.getContext(), 6));
+        button.setMinHeight(dp(button.getContext(), 64));
+        button.setMinimumHeight(dp(button.getContext(), 64));
+        break;
+      default: break;
+    }
+  }
+
+  private static void tintIcon(Button button, int color) {
+    button.setCompoundDrawableTintList(new ColorStateList(
+        new int[][] {new int[] {android.R.attr.state_enabled}, new int[] {}},
+        new int[] {color, 0xff626b72}));
   }
 
   static Button icon(Context c, String title, Runnable action) {
@@ -68,6 +100,7 @@ final class GalleryUi {
 
   static Button neutralPrimary(Button button) {
     button.setTextColor(0xff111111);
+    tintIcon(button, 0xff111111);
     button.setBackground(new RippleDrawable(ColorStateList.valueOf(0x33000000),
         shape(button.getContext(), TEXT, 26), null));
     return button;
@@ -81,6 +114,7 @@ final class GalleryUi {
   static Button primary(Button button) {
     Context c = button.getContext();
     button.setTextColor(BG);
+    tintIcon(button, BG);
     button.setBackground(
         new RippleDrawable(
             ColorStateList.valueOf(0x44c7d8e4),
@@ -95,6 +129,9 @@ final class GalleryUi {
     row.setGravity(Gravity.CENTER_VERTICAL);
     row.setBackgroundColor(PANEL);
     for (Button button : buttons) {
+      decorateAction(button);
+      tintIcon(button, button.getTextColors().getColorForState(
+          new int[] {android.R.attr.state_enabled}, TEXT));
       button.setTooltipText(button.getText());
       row.addView(button, new LinearLayout.LayoutParams(0, -2, 1));
     }
