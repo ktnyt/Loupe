@@ -86,13 +86,30 @@ final class BurstPreviewChecks {
     if(chosen==null)throw new AssertionError("No RAW6 with five uncached remaining photos; no cache deleted");
     repository.preview(chosen.get(0)); // Same investigated condition: hero hit, five remaining misses.
     List<PhotoRepository.Photo> members=chosen;
+    long openedAt=android.os.SystemClock.elapsedRealtimeNanos();
+    long[] burstId={0};
     Method gallery=MainActivity.class.getDeclaredMethod("gallery");gallery.setAccessible(true);
     test.runOnMainSync(()->{try{
       set(a,"photos",members);set(a,"burstMembers",Arrays.asList(0,1,2,3,4,5));set(a,"burstPosition",0);
-      long id=DiagnosticLog.id();set(a,"burstRequest",id);DiagnosticLog.event("test.raw6.open",id);DiagnosticLog.event("burst.open",id,"count",6);
+      long id=DiagnosticLog.id();burstId[0]=id;set(a,"burstRequest",id);DiagnosticLog.event("test.raw6.open",id);DiagnosticLog.event("burst.open",id,"count",6);
       gallery.invoke(a);
     }catch(Exception e){throw new RuntimeException(e);}});
-    Thread.sleep(6000);
-    return "PASS opened RAW6: hero cached, remaining five compact misses; originals untouched; inspect diagnostics for timings. UI left open.\n";
+    long deadline=android.os.SystemClock.elapsedRealtime()+6000;
+    while(android.os.SystemClock.elapsedRealtime()<deadline) {
+      long hero=0;
+      File log=new File(a.getFilesDir(),"diagnostics/events.jsonl");
+      if(log.isFile()) for(String line:java.nio.file.Files.readAllLines(log.toPath())) {
+        org.json.JSONObject event;
+        try { event=new org.json.JSONObject(line); } catch(org.json.JSONException partial) { continue; }
+        if(event.optLong("ns")<openedAt)continue;
+        if("image.request".equals(event.optString("event")) && event.optInt("size")==1600
+            && event.optLong("burst")==burstId[0]) hero=event.optLong("request");
+        if(hero!=0 && event.optLong("request")==hero
+            && "image.frame_commit".equals(event.optString("event")))
+          return "PASS RAW6 real-image frame committed: hero cached, remaining five compact misses; originals untouched. Instrumentation finish closes the test process; use recording for visual confirmation.\n";
+      }
+      Thread.sleep(100);
+    }
+    throw new AssertionError("RAW6 first real-image frame did not commit within 6s");
   }
 }

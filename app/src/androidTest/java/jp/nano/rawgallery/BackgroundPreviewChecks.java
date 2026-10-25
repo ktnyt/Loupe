@@ -49,8 +49,22 @@ final class BackgroundPreviewChecks {
       if (background.prepare(cancelled, () -> boundaries.incrementAndGet() >= 4))
         throw new AssertionError("did not stop after source stage");
       if (foreground.prepared(cancelled)) throw new AssertionError("cancelled result published");
+      PhotoRepository.Preview damaged = foreground.preview(first);
+      try (FileOutputStream out = new FileOutputStream(damaged.file)) { out.write(new byte[]{1,2,3}); }
+      boolean rejected = false;
+      try { PhotoRepository.bitmap(damaged, 200); } catch (IOException expected) { rejected = true; }
+      if (!rejected || damaged.file.exists()) throw new AssertionError("corrupt derived preview retained");
+      Bitmap recovered = PhotoRepository.bitmap(foreground.preview(first), 200); recovered.recycle();
+      // A Preview representing an original must never invalidate its file on decode failure.
+      File badOriginal = File.createTempFile("bad-source-check-", ".jpg", context.getCacheDir());
+      try {
+        try (FileOutputStream out = new FileOutputStream(badOriginal)) { out.write(new byte[]{4,5,6}); }
+        try { PhotoRepository.bitmap(new PhotoRepository.Preview(badOriginal,"",10,10,1),200); }
+        catch (IOException expected) { }
+        if (!badOriginal.isFile() || badOriginal.length()!=3) throw new AssertionError("original invalidated");
+      } finally { badOriginal.delete(); }
       if (!Arrays.equals(original, Files.readAllBytes(source.toPath()))) throw new AssertionError("source changed");
-      return "PASS background held open while foreground miss completes, concurrent publication, stage cancellation, original unchanged\n";
+      return "PASS background held open while foreground miss completes, concurrent publication, stage cancellation, corrupt derived recovery, original unchanged\n";
     } finally {
       release.countDown(); workers.shutdownNow(); workers.awaitTermination(5, TimeUnit.SECONDS);
       source.delete();

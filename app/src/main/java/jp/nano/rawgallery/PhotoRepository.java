@@ -53,13 +53,17 @@ public final class PhotoRepository {
     public final File file;
     public final String model;
     public final int width, height, orientation;
+    private final Runnable invalidate;
 
-    Preview(File f, String m, int w, int h, int o) {
+    Preview(File f, String m, int w, int h, int o) { this(f, m, w, h, o, null); }
+
+    private Preview(File f, String m, int w, int h, int o, Runnable invalidation) {
       file = f;
       model = m;
       width = w;
       height = h;
       orientation = o;
+      invalidate = invalidation;
     }
   }
 
@@ -360,7 +364,7 @@ public final class PhotoRepository {
       if (webp.isFile() && meta.isFile()) {
         try {
           JSONObject j = new JSONObject(readText(meta));
-          return new Preview(webp, j.getString("model"), j.getInt("width"), j.getInt("height"), 1);
+          return preparedPreview(webp, meta, j.getString("model"), j.getInt("width"), j.getInt("height"));
         } catch (Exception ignored) {
           webp.delete(); meta.delete();
         }
@@ -389,8 +393,8 @@ public final class PhotoRepository {
             java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
         java.nio.file.Files.move(stagedMeta.toPath(), meta.toPath(),
             java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        return preparedPreview(webp, meta, compact.model, compact.width, compact.height);
       }
-      return new Preview(webp, compact.model, compact.width, compact.height, 1);
     } finally {
       if (staged != null) staged.delete();
       if (stagedMeta != null) stagedMeta.delete();
@@ -400,6 +404,25 @@ public final class PhotoRepository {
         new File(previews, key + ".json").delete();
       }
     }
+  }
+
+  /** Only derived prepared files receive invalidation; originals/archive previews never do. */
+  private static Preview preparedPreview(File webp, File meta, String model, int width, int height)
+      throws IOException {
+    final StructStat identity;
+    try { identity = Os.stat(webp.getPath()); }
+    catch (ErrnoException error) { throw new IOException(error); }
+    return new Preview(webp, model, width, height, 1, () -> {
+      synchronized (PUBLISH_LOCK) {
+        try {
+          StructStat current = Os.stat(webp.getPath());
+          // A concurrent publication may already have replaced the failed file.
+          if (current.st_dev != identity.st_dev || current.st_ino != identity.st_ino) return;
+          webp.delete(); meta.delete();
+          DiagnosticLog.event("cache.compact_invalidated", DiagnosticLog.parent());
+        } catch (ErrnoException ignored) { /* Already removed; the next request regenerates it. */ }
+      }
+    });
   }
 
   /** Called with a materialized original, never with the small archive proxy. */
@@ -609,7 +632,10 @@ public final class PhotoRepository {
     o.inSampleSize = 1;
     while (Math.max(p.width, p.height) / o.inSampleSize > maxEdge * 2) o.inSampleSize *= 2;
     Bitmap b = BitmapFactory.decodeFile(p.file.getPath(), o);
-    if (b == null) throw new IOException("JPEGを表示できません");
+    if (b == null) {
+      if (p.invalidate != null) p.invalidate.run();
+      throw new IOException("JPEGを表示できません");
+    }
     Matrix m = new Matrix();
     switch (p.orientation) {
       case 2:

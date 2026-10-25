@@ -46,6 +46,16 @@ python3 scripts/analyze-diagnostics.py /tmp/loupe-diagnostics/*.jsonl
 回収先は実行ごとに新しいディレクトリにする。JSONLとwriter-status.txtを確認し、droppedや破損行がある区間を完全な計測として使わない。
 ローテーションで消えた開始イベント、強制終了直前、別プロセス、取得不能な描画は推測で補わない。
 
+## 画面取得による計測への影響を避ける
+
+画面は端末の共有領域へ保存せず、Macへ直接取得する。
+
+```sh
+/opt/homebrew/share/android-commandlinetools/platform-tools/adb exec-out screencap -p > /tmp/loupe-screen.png
+```
+
+`adb shell screencap -p /sdcard/...` は画像追加の通知を発生させ、一覧更新・処理負荷・操作位置を変える場合がある。スクロールが静止してから操作対象を確認し、取得後の画面更新がないことと、診断ログの枚数・対象が予定と一致することを確認する。録画も計測負荷を含むため、撮影の有無を条件に記す。写真入りキャプチャはローカルに留める。
+
 ## 範囲と限界
 
 「全て」はアプリの入力と処理境界を追えることを目的とし、Android/OS/ネットワーク/WebView内部の全イベントや、毎行の実行トレースではない。
