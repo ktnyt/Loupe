@@ -49,11 +49,19 @@ final class GalleryLoadingChecks {
     if(logs.contains("\"event\":\"image.fail\""))throw new AssertionError("abandoned list touched source");
     if(logs.split("\\\"event\\\":\\\"image.discard\\\"",-1).length-1<36)throw new AssertionError("old list was not discarded");
     // A recycled cell's late placeholder must not replace its actual image.
-    CountDownLatch drained=new CountDownLatch(1);AtomicBoolean active=new AtomicBoolean(false),applied=new AtomicBoolean(false);
-    placeholders.load(missing,active::get,b->applied.set(true));
-    new android.os.Handler(android.os.Looper.getMainLooper()).post(drained::countDown);
-    drained.await(2,TimeUnit.SECONDS);
-    if(applied.get())throw new AssertionError("stale placeholder applied");
+    CountDownLatch readDone=new CountDownLatch(1);
+    AtomicBoolean active=new AtomicBoolean(true),applied=new AtomicBoolean(false);
+    java.util.concurrent.atomic.AtomicInteger checks=new java.util.concurrent.atomic.AtomicInteger();
+    Field reads=PreviewPlaceholders.class.getDeclaredField("reads");reads.setAccessible(true);
+    ExecutorService reader=(ExecutorService)reads.get(placeholders);
+    test.runOnMainSync(()->{
+      placeholders.load(missing,()->{checks.incrementAndGet();return active.get();},b->applied.set(true));
+      reader.execute(()->{active.set(false);readDone.countDown();});
+      try { if(!readDone.await(3,TimeUnit.SECONDS))throw new AssertionError("placeholder worker timeout"); }
+      catch(InterruptedException e){Thread.currentThread().interrupt();throw new AssertionError(e);}
+    });
+    test.waitForIdleSync();
+    if(checks.get()!=2 || applied.get())throw new AssertionError("late placeholder invalidation not enforced");
     fixture.delete();
     return "PASS 36 abandoned list requests discarded before source reads, persisted ThumbHash without original, version invalidation, stale placeholder suppressed\n";
   }
