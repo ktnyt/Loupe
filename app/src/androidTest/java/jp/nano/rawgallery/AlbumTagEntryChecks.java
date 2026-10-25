@@ -25,7 +25,7 @@ final class AlbumTagEntryChecks {
     throw new AssertionError(name);
   }
   static Button button(View v,String name){
-    if(v instanceof Button&&name.contentEquals(((Button)v).getText()))return (Button)v;
+    if(v instanceof Button&&(name.contentEquals(((Button)v).getText())||name.contentEquals(v.getContentDescription())))return (Button)v;
     if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++){Button b=button(((ViewGroup)v).getChildAt(i),name);if(b!=null)return b;}
     return null;
   }

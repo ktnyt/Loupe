@@ -494,7 +494,10 @@ public final class MainActivity extends DiagnosticActivity {
     controls.addView(sort, new LinearLayout.LayoutParams(-1, -2));
     LinearLayout secondary = row();
     secondary.setPadding(0, dp(8), 0, 0);
-    secondary.addView(button("この写真を1位に", this::chooseCurrentBest), new LinearLayout.LayoutParams(0, -2, 1));
+    Button best = button("この写真を1位に", this::chooseCurrentBest);
+    best.setText("1位にする");
+    best.setTooltipText(best.getContentDescription());
+    secondary.addView(best, new LinearLayout.LayoutParams(0, -2, 1));
     secondary.addView(button("共有", () -> {
       List<PhotoRepository.Photo> selected = new ArrayList<>();
       for (int member : burstMembers) selected.add(photos.get(member));
@@ -502,10 +505,10 @@ public final class MainActivity extends DiagnosticActivity {
     }), new LinearLayout.LayoutParams(0, -2, 1));
     controls.addView(secondary);
     root.addView(controls);
-    dock(button("戻る", () -> { burstMembers = null; gallery(); }),
+    root.addView(GalleryUi.adaptiveDock(this, button("戻る", () -> { burstMembers = null; gallery(); }),
         button("前の写真", () -> { burstPosition = (burstPosition + burstMembers.size() - 1) % burstMembers.size(); update.run(); }),
         button("次の写真", () -> { burstPosition = (burstPosition + 1) % burstMembers.size(); update.run(); }),
-        button("拡大", () -> showPhoto(burstMembers.get(burstPosition))));
+        button("拡大", () -> showPhoto(burstMembers.get(burstPosition)))));
     dock(button("選択", () -> { selecting = true; bestOnly = true; gallery(); }), button("その他", this::photoMenu));
     GalleryUi.bottomControls(root, controlsStart);
     update.run();
@@ -1577,6 +1580,7 @@ public final class MainActivity extends DiagnosticActivity {
       root.addView(hint);
     }
     Button undo = button("直前の操作を取り消す", () -> saveRanking(ranking.undo()));
+    undo.setText("取り消し");
     undo.setEnabled(ranking.decisions() > 0);
     Button chooseA = GalleryUi.neutralPrimary(button("Aを選ぶ", () -> saveRanking(ranking.choose(true))));
     Button chooseB = GalleryUi.neutralPrimary(button("Bを選ぶ", () -> saveRanking(ranking.choose(false))));
@@ -1656,9 +1660,9 @@ public final class MainActivity extends DiagnosticActivity {
     }
     root.addView(modes);
     Button back = button(rankingFromSelection ? "選択へ戻る" : "連写一覧", this::leaveRanking);
-    if (ranking.done()) dock(back, undo, button("その他", this::rankingMenu));
-    else if (ranking.bestOnly()) dock(back, undo, button("その他", this::rankingMenu));
-    else dock(back, undo, tie, button("その他", this::rankingMenu));
+    root.addView(ranking.done() || ranking.bestOnly()
+        ? GalleryUi.adaptiveDock(this, back, undo, button("その他", this::rankingMenu))
+        : GalleryUi.adaptiveDock(this, back, undo, tie, button("その他", this::rankingMenu)));
     GalleryUi.bottomControls(root, controlsStart);
   }
 
