@@ -58,6 +58,7 @@ final class SortNamingChecks {
     if(b==null)throw new AssertionError("No screenshot");
     try(FileOutputStream out=new FileOutputStream(new File(a.getCacheDir(),"sort-test-"+name+".png"))){b.compress(Bitmap.CompressFormat.PNG,100,out);}finally{b.recycle();}
   }
+  private static void back(Instrumentation t) { t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK); t.waitForIdleSync(); }
   static String run(Instrumentation t)throws Exception{
     MainActivity a=(MainActivity)t.startActivitySync(new Intent(t.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     SharedPreferences prefs=a.getSharedPreferences("sort-naming-test",0);
@@ -77,23 +78,23 @@ final class SortNamingChecks {
       main(t,()->{TextView b=require(a,"ソート");if(!"ソート".contentEquals(b.getContentDescription())||b.getHeight()<GalleryUi.dp(a,64))throw new AssertionError("CTA accessibility/height");});
       click(t,a,"次の写真");if((int)field(a,"burstPosition")!=1)throw new AssertionError("next photo");
       click(t,a,"前の写真");if((int)field(a,"burstPosition")!=0)throw new AssertionError("previous photo");
-      click(t,a,"この写真を1位に");dialog(t,"この写真を1位にしますか？",false);dialog(t,"戻る",true);
+      click(t,a,"この写真を1位に");dialog(t,"この写真を1位にしますか？",false);dialog(t,"キャンセル",true);
       capture(t,a,"idle");click(t,a,"ソート");
       main(t,()->{if(!require(a,"ソート").isAccessibilityHeading())throw new AssertionError("heading");});
-      capture(t,a,"comparison");click(t,a,"Aを選ぶ");click(t,a,"連写一覧");
+      capture(t,a,"comparison");click(t,a,"Aを選ぶ");back(t);
       main(t,()->require(a,"ソートを再開"));capture(t,a,"resume");click(t,a,"ソートを再開");click(t,a,"Aを選ぶ");
-      main(t,()->require(a,"ソート結果"));capture(t,a,"result");click(t,a,"連写一覧");
+      main(t,()->require(a,"ソート結果"));capture(t,a,"result");back(t);
       main(t,()->require(a,"ソート結果"));capture(t,a,"done");click(t,a,"ソート結果");
       String journal=((PhotoRanking)field(a,"ranking")).journal;
-      click(t,a,"その他");dialog(t,"再ソート",true);dialog(t,"この連写を再ソートしますか？",false);capture(t,a,"redo");dialog(t,"戻る",true);
+      click(t,a,"その他");dialog(t,"再ソート",true);dialog(t,"この連写を再ソートしますか？",false);capture(t,a,"redo");dialog(t,"キャンセル",true);
       if(!journal.equals(((PhotoRanking)field(a,"ranking")).journal))throw new AssertionError("cancel changed journal");
-      click(t,a,"すべての順位を決める");dialog(t,"ソート方式を変更しますか？",false);capture(t,a,"mode");dialog(t,"戻る",true);
+      click(t,a,"すべての順位を決める");dialog(t,"ソート方式を変更しますか？",false);capture(t,a,"mode");dialog(t,"キャンセル",true);
       click(t,a,"その他");dialog(t,"再ソート",true);dialog(t,"再ソート",true);
       main(t,()->{try{if(((PhotoRanking)field(a,"ranking")).decisions()!=0)throw new AssertionError("redo did not reset");}catch(Exception e){throw new RuntimeException(e);}});
-      click(t,a,"連写一覧");
+      back(t);
       main(t,()->{try{set(a,"selecting",true);Set<String> selected=(Set<String>)field(a,"selectedPhotos");selected.clear();for(PhotoRepository.Photo p:photos)selected.add(p.uri.toString());invoke(a,"shareSelection");}catch(Exception e){throw new RuntimeException(e);}});
       dialog(t,"1組の順位がまだ決まっていません。ソートした後に選択画面へ戻れます。",false);capture(t,a,"share");dialog(t,"ソート",true);
-      main(t,()->require(a,"ソート"));click(t,a,"選択へ戻る");
+      main(t,()->require(a,"ソート"));back(t);
       main(t,()->{
         for(float scale:new float[]{1f,1.3f})for(int width:new int[]{280,320,360,412})for(String label:new String[]{"ソート","ソートを再開","ソート結果"}){
           Configuration config=new Configuration(a.getResources().getConfiguration());config.fontScale=scale;

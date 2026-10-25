@@ -33,7 +33,7 @@ public final class SyncActivity extends DiagnosticActivity {
 
   private void button(LinearLayout root, String label, Runnable action) {
     Button b = GalleryUi.button(this, label, action);
-    if (label.equals("同期・端末からの削除の設定") || label.equals("その他の操作") || label.equals("戻る")) {
+    if (label.equals("同期・端末からの削除の設定") || label.equals("その他の操作")) {
       footerButtons.add(b);
     } else settingsButtons.add(b);
   }
@@ -157,15 +157,13 @@ public final class SyncActivity extends DiagnosticActivity {
                 .setNegativeButton("閉じる", null)
                 .show());
     text(root, "アプリを削除すると端末のプレビューと管理記録も消えます。クラウドの元のファイルはAmazon Photosに残ります。", 13);
-    button(root, "戻る", this::finish);
     Button settings = footerButtons.get(0),
-        other = footerButtons.get(1),
-        back = footerButtons.get(2);
+        other = footerButtons.get(1);
     settings.setText("同期・端末からの削除");
     other.setText("その他");
     int controlsStart = screen.getChildCount();
     for (Button setting : settingsButtons) screen.addView(setting);
-    screen.addView(GalleryUi.dock(this, back, GalleryUi.primary(settings), other));
+    screen.addView(GalleryUi.dock(this, GalleryUi.primary(settings), other));
     GalleryUi.bottomControls(screen, controlsStart);
   }
 

@@ -54,6 +54,9 @@ public final class TagActivity extends DiagnosticActivity {
   private int generation;
   private boolean busy, reviewing;
   private int browseMode;
+  private int tagScrollY;
+  private android.os.Parcelable photoGridState;
+  private ScrollView tagScroll;
   private boolean selecting;
   private final Set<Integer> selectedPhotos = new LinkedHashSet<>();
   private android.widget.GridView photoGrid;
@@ -98,14 +101,15 @@ public final class TagActivity extends DiagnosticActivity {
   private void showTags() {
     if (busy) return;
     stopAnalysis();
-    reviewing = false;
+    reviewing = false; tag = null; browseMode = 0;
+    selecting = false; selectedPhotos.clear();
     int token = screen("タグ");
     root.addView(text("現在のアルバム・絞り込み内の端末写真が対象です", 13));
     LinearLayout list = new LinearLayout(this); list.setOrientation(LinearLayout.VERTICAL);
     ScrollView scroll = new ScrollView(this); scroll.addView(list);
+    tagScroll = scroll;
     root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
     root.addView(button("新しいタグ", this::createTag));
-    root.addView(button("写真に戻る", this::finish));
     worker.execute(() -> {
       try (TagStore store = new TagStore(this)) {
         List<TagStore.Tag> tags = store.tags();
@@ -113,6 +117,7 @@ public final class TagActivity extends DiagnosticActivity {
           if (!current(token)) return;
           if (tags.isEmpty()) list.addView(text("写真に付けるタグを作成してください", 16));
           for (TagStore.Tag item : tags) list.addView(button(item.name, () -> openTag(item)));
+          scroll.post(() -> { if (current(token)) scroll.scrollTo(0, tagScrollY); });
         });
       } catch (Exception error) { main.post(() -> { if (current(token)) failure(error); }); }
     });
@@ -122,7 +127,7 @@ public final class TagActivity extends DiagnosticActivity {
     EditText input = new EditText(this);
     input.setSingleLine(true); input.setHint("タグ名"); input.setTextColor(GalleryUi.TEXT);
     AlertDialog dialog = new GalleryUi.Sheet(this).setTitle("新しいタグ").setView(input)
-        .setPositiveButton("作成", null).setNegativeButton("戻る", null).create();
+        .setPositiveButton("作成", null).setNegativeButton("キャンセル", null).create();
     dialog.setOnShowListener(ignored -> { dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
       String name = input.getText().toString().trim();
       if (name.isEmpty() || name.length() > 80) { input.setError("1〜80文字で入力してください"); return; }
@@ -142,7 +147,8 @@ public final class TagActivity extends DiagnosticActivity {
 
   private void openTag(TagStore.Tag selected) {
     stopAnalysis();
-    tag = selected; reviewing = false;
+    if (tag == null && tagScroll != null) tagScrollY = tagScroll.getScrollY();
+    tag = selected; reviewing = false; browseMode = 0;
     int token = screen(tag.name);
     root.addView(text("写真と判断を読み込み中…", 15));
     worker.execute(() -> {
@@ -242,7 +248,6 @@ public final class TagActivity extends DiagnosticActivity {
           if (which == 0) showPhotos(Filter.AUTOMATIC);
           else if (which == 1) showPhotos(Filter.REMOVED); else clearAutomatic();
         }).show()));
-    root.addView(button("タグ一覧に戻る", this::showTags));
     GalleryUi.bottomControls(root, controlsStart);
   }
 
@@ -318,7 +323,6 @@ public final class TagActivity extends DiagnosticActivity {
     root.addView(selectionButton);
     batchButton = button("", this::changeSelected);
     root.addView(batchButton); refreshSelection();
-    root.addView(button("タグに戻る", this::showTag));
     GalleryUi.bottomControls(root, controlsStart);
     grid.setSelectionFromTop(scrollPosition, scrollOffset);
   }
@@ -381,6 +385,9 @@ public final class TagActivity extends DiagnosticActivity {
 
   private void showAssignedPhoto(int position) {
     if (busy) return;
+    if (browseMode == 1 && photoGrid != null) {
+      photoGridState = photoGrid.onSaveInstanceState();
+    }
     browseMode = 2;
     int index = browsePhotos.get(position);
     PhotoRepository.Photo photo = photos.get(index);
@@ -402,7 +409,6 @@ public final class TagActivity extends DiagnosticActivity {
     navigation.addView(after, new LinearLayout.LayoutParams(0, -2, 1)); root.addView(navigation);
     root.addView(button(attached ? "タグを外す" : "タグを付ける",
         () -> changeTag(index, position, attached ? TagJudgments.Value.EXCLUDED : TagJudgments.Value.ASSIGNED)));
-    root.addView(button("一覧に戻る", () -> showPhotos(browseFilter)));
     GalleryUi.bottomControls(root, controlsStart);
     worker.execute(() -> {
       try {
@@ -652,8 +658,13 @@ public final class TagActivity extends DiagnosticActivity {
     DiagnosticLog.event("action.back", 0, "screen", "TagActivity");
     if (busy) return;
     if (browseMode == 1 && selecting) { selecting = false; selectedPhotos.clear(); refreshSelection(); }
-    else if (browseMode == 2) showPhotos(browseFilter);
-    else if (reviewing) showTag(); else super.onBackPressed();
+    else if (browseMode == 2) {
+      renderPhotos(browseFilter, 0, 0);
+      if (photoGridState != null) photoGrid.onRestoreInstanceState(photoGridState);
+    }
+    else if (reviewing) showTag();
+    else if (tag != null) showTags();
+    else super.onBackPressed();
   }
 
   protected void onDestroy() {

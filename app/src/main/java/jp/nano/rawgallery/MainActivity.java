@@ -240,11 +240,6 @@ public final class MainActivity extends DiagnosticActivity {
     LinearLayout header = row();
     header.setPadding(dp(4), dp(4), dp(4), dp(4));
     header.setMinimumHeight(dp(64));
-    Button navigate = button(selecting ? "選択を終了" : "戻る", () -> {
-      if (selecting) endSelection();
-      else if (burstMembers != null) { burstMembers = null; gallery(); }
-      else returnLibraryRoot();
-    });
     LinearLayout heading = vertical();
     TextView title = label(burstMembers != null ? "連写" : albumFolder == null ? "すべての写真"
         : new File(albumFolder).getName(), 18, TEXT);
@@ -314,14 +309,12 @@ public final class MainActivity extends DiagnosticActivity {
     body.addView(gridFrame, new LinearLayout.LayoutParams(-1, -1));
     int controlsStart = root.getChildCount();
     addRankFilters();
-    if (selecting) { selectionControls(); dock(navigate); }
+    if (selecting) { selectionControls(); dock(button("選択を終了", this::endSelection)); }
     else {
       Button select = button("選択", () -> {
         if (!photos.isEmpty()) { selecting = true; bestOnly = true; gallery(); }
       });
-      if (albumFolder == null && burstMembers == null)
-        dock(select, button("タグ", () -> openTags(null)), button("その他", this::photoMenu));
-      else dock(navigate, select, button("タグ", () -> openTags(null)), button("その他", this::photoMenu));
+      dock(select, button("タグ", () -> openTags(null)), button("その他", this::photoMenu));
     }
     GalleryUi.bottomControls(root, controlsStart);
     if (albumFolder == null && burstMembers == null)
@@ -505,7 +498,7 @@ public final class MainActivity extends DiagnosticActivity {
     }), new LinearLayout.LayoutParams(0, -2, 1));
     controls.addView(secondary);
     root.addView(controls);
-    root.addView(GalleryUi.adaptiveDock(this, button("戻る", () -> { burstMembers = null; gallery(); }),
+    root.addView(GalleryUi.adaptiveDock(this,
         button("前の写真", () -> { burstPosition = (burstPosition + burstMembers.size() - 1) % burstMembers.size(); update.run(); }),
         button("次の写真", () -> { burstPosition = (burstPosition + 1) % burstMembers.size(); update.run(); }),
         button("拡大", () -> showPhoto(burstMembers.get(burstPosition)))));
@@ -527,7 +520,7 @@ public final class MainActivity extends DiagnosticActivity {
             rankCache.clear();
             gallery();
           } catch (Exception e) { toast("順位を保存できませんでした"); }
-        }).setNegativeButton("戻る", null).show();
+        }).setNegativeButton("キャンセル", null).show();
   }
 
   private PhotoRanking rankingFor(List<Integer> members) throws IOException {
@@ -742,7 +735,7 @@ public final class MainActivity extends DiagnosticActivity {
                 burstMembers = new ArrayList<>(result.unresolved.get(0));
                 openRanking();
               })
-          .setNegativeButton("戻る", null);
+          .setNegativeButton("キャンセル", null);
       if (!result.photos.isEmpty())
         sheet.setNeutralButton("順位が未決定の連写を除いて共有", (d, w) -> shareMenu(result.photos));
       sheet.show();
@@ -1419,13 +1412,6 @@ public final class MainActivity extends DiagnosticActivity {
     if (!fromRanking && "content".equals(photo.uri.getScheme()))
       dock(button("タグ", () -> openTags(photo)), button("前の写真", () -> adjacentPhoto(-1)), button("次の写真", () -> adjacentPhoto(1)));
     dock(
-        button(
-            fromRanking ? "比較に戻る" : "戻る",
-            () -> {
-              if (fromRanking) showRanking();
-              else if (recentPhoto) { recentPhoto = false; albumHome(); }
-              else gallery();
-            }),
         GalleryUi.primary(button("共有", () -> shareMenu(photo))),
         more);
     GalleryUi.bottomControls(root, controlsStart);
@@ -1659,10 +1645,9 @@ public final class MainActivity extends DiagnosticActivity {
           button("Bを拡大", () -> showRankedPhoto(rankingMembers.get(ranking.lower()))));
     }
     root.addView(modes);
-    Button back = button(rankingFromSelection ? "選択へ戻る" : "連写一覧", this::leaveRanking);
     root.addView(ranking.done() || ranking.bestOnly()
-        ? GalleryUi.adaptiveDock(this, back, undo, button("その他", this::rankingMenu))
-        : GalleryUi.adaptiveDock(this, back, undo, tie, button("その他", this::rankingMenu)));
+        ? GalleryUi.adaptiveDock(this, undo, button("その他", this::rankingMenu))
+        : GalleryUi.adaptiveDock(this, undo, tie, button("その他", this::rankingMenu)));
     GalleryUi.bottomControls(root, controlsStart);
   }
 
@@ -1671,22 +1656,20 @@ public final class MainActivity extends DiagnosticActivity {
     new GalleryUi.Sheet(this).setTitle("ソート方式を変更しますか？")
         .setMessage("この連写の結果と途中の判断を置き換え、最初から比較します。")
         .setPositiveButton("変更", (d, w) -> saveRanking(new PhotoRanking(ranking.ids, best ? "B:" : "A:")))
-        .setNegativeButton("戻る", null).show();
+        .setNegativeButton("キャンセル", null).show();
   }
 
   private void rankingMenu() {
     new GalleryUi.Sheet(this)
         .setItems(
-            new String[] {"保留して一覧へ", "再ソート"},
+            new String[] {"再ソート"},
             (d, choice) -> {
-              if (choice == 0) leaveRanking();
-              else
-                new GalleryUi.Sheet(this)
+              new GalleryUi.Sheet(this)
                     .setTitle("この連写を再ソートしますか？")
                     .setMessage("この連写の選択履歴を消して、最初から比較します。写真は変更しません。")
                     .setPositiveButton(
                         "再ソート", (dialog, which) -> saveRanking(new PhotoRanking(ranking.ids, ranking.bestOnly() ? "B:" : "A:")))
-                    .setNegativeButton("戻る", null)
+                    .setNegativeButton("キャンセル", null)
                     .show();
             })
         .show();
@@ -1913,7 +1896,8 @@ public final class MainActivity extends DiagnosticActivity {
               ShareTargets.save(this, targets);
               editTargets();
             })
-        .setNegativeButton("戻る", (d, w) -> editTargets())
+        .setNegativeButton("キャンセル", (d, w) -> editTargets())
+        .setOnCancelListener(d -> editTargets())
         .show();
   }
 
@@ -1950,7 +1934,8 @@ public final class MainActivity extends DiagnosticActivity {
               ShareTargets.save(this, targets);
               editTargets();
             })
-        .setNegativeButton("戻る", (d, w) -> editTargets())
+        .setNegativeButton("キャンセル", (d, w) -> editTargets())
+        .setOnCancelListener(d -> editTargets())
         .show();
   }
 

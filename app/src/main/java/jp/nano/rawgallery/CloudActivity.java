@@ -48,10 +48,6 @@ public final class CloudActivity extends DiagnosticActivity {
     root.addView(status);
     LinearLayout row = new LinearLayout(this);
 
-    Button back = new Button(this);
-    back.setText("戻る");
-    back.setOnClickListener(v -> finish());
-    row.addView(back);
     Button login = new Button(this);
     loginButton = login;
     login.setText("ログイン");
@@ -89,7 +85,7 @@ public final class CloudActivity extends DiagnosticActivity {
                                 (dialog, w) -> {
                                   if (target.isEnabled()) target.performClick();
                                 })
-                            .setNegativeButton("戻る", null)
+                            .setNegativeButton("キャンセル", null)
                             .show();
                       else target.performClick();
                     })
@@ -176,12 +172,11 @@ public final class CloudActivity extends DiagnosticActivity {
                     status.setText("このアプリのログイン情報を消しました。");
                   });
         });
-    Button dockBack = GalleryUi.button(this, "戻る", () -> back.performClick());
     Button dockLogin = GalleryUi.button(this, "ログイン", () -> login.performClick());
     loginButton = dockLogin;
     Button dockSync = GalleryUi.primary(GalleryUi.button(this, "同期設定", () -> sync.performClick()));
     Button dockMore = GalleryUi.button(this, "その他", () -> more.performClick());
-    root.addView(GalleryUi.dock(this, dockBack, dockLogin, dockSync, dockMore));
+    root.addView(GalleryUi.dock(this, dockLogin, dockSync, dockMore));
     getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     setContentView(root);
   }
