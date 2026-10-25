@@ -42,10 +42,11 @@ public final class PreviewPreparationJob extends JobService {
     if (browsing()) return false; // Leaving the last Activity schedules another attempt.
     AtomicBoolean cancel = new AtomicBoolean(); stopped = cancel;
     WORKER.execute(() -> {
+      android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
       int ready = 0, failed = 0, total = 0;
       boolean retry = false;
       try (GalleryIndex index = new GalleryIndex(this)) {
-        PhotoRepository repository = new PhotoRepository(this);
+        PhotoRepository repository = new PhotoRepository(this, true);
         List<PhotoRepository.Photo> photos = index.load(null, "すべて").photos;
         Set<String> keys = new HashSet<>();
         for (PhotoRepository.Photo p : photos) if (local(p)) {

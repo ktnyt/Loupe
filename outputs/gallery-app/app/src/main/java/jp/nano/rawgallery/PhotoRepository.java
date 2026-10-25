@@ -101,11 +101,19 @@ public final class PhotoRepository {
   private final File previews;
   private final File prepared;
   private static final Object PREVIEW_LOCK = new Object();
+  private static final Object BACKGROUND_LOCK = new Object();
+  private static final Object PUBLISH_LOCK = new Object();
+  private final Object processingLock;
+  private final File legacyPreviews;
 
-  public PhotoRepository(Context c) {
+  public PhotoRepository(Context c) { this(c, false); }
+
+  PhotoRepository(Context c, boolean background) {
+    processingLock = background ? BACKGROUND_LOCK : PREVIEW_LOCK;
     context = c.getApplicationContext();
     DiagnosticLog.init(context);
-    previews = new File(context.getCacheDir(), "previews");
+    legacyPreviews = new File(context.getCacheDir(), "previews");
+    previews = background ? new File(context.getCacheDir(), "preview-preparation-source") : legacyPreviews;
     previews.mkdirs();
     prepared = new File(context.getFilesDir(), "prepared-previews");
     prepared.mkdirs();
@@ -262,10 +270,14 @@ public final class PhotoRepository {
   }
 
   boolean prepare(Photo p, java.util.function.BooleanSupplier cancelled) throws IOException {
-    synchronized (PREVIEW_LOCK) {
+    synchronized (processingLock) {
       if (cancelled.getAsBoolean()) return false;
       DiagnosticLog.event("preparation.item_start", 0, "photo", DiagnosticLog.photo(p));
-      previewLocked(p);
+      try { previewLocked(p, cancelled); }
+      catch (java.io.InterruptedIOException e) {
+        DiagnosticLog.event("preparation.item_cancel", 0, "photo", DiagnosticLog.photo(p));
+        return false;
+      }
       DiagnosticLog.event("preparation.item_end", 0, "photo", DiagnosticLog.photo(p));
       return true;
     }
@@ -280,7 +292,7 @@ public final class PhotoRepository {
       String name = file.getName();
       if (!name.endsWith(".webp") && !name.endsWith(".webp.json")) continue;
       String key = name.substring(0, name.indexOf(".webp"));
-      if (!keep.contains(key)) synchronized (PREVIEW_LOCK) {
+      if (!keep.contains(key)) synchronized (PUBLISH_LOCK) {
         if (cancelled.getAsBoolean()) return;
         file.delete();
       }
@@ -290,7 +302,7 @@ public final class PhotoRepository {
   public Preview preview(Photo p) throws IOException {
     try (DiagnosticLog.Scope span = DiagnosticLog.span("repository.preview")) {
       DiagnosticLog.event("repository.lock_wait", span.id);
-      synchronized (PREVIEW_LOCK) {
+      synchronized (processingLock) {
         DiagnosticLog.event("repository.lock_acquired", span.id);
         try { return previewLocked(p); }
         catch (IOException | RuntimeException e) {
@@ -302,6 +314,14 @@ public final class PhotoRepository {
   }
 
   private Preview previewLocked(Photo p) throws IOException {
+    return previewLocked(p, () -> false);
+  }
+
+  private static void checkPreparation(java.util.function.BooleanSupplier cancelled) throws IOException {
+    if (cancelled.getAsBoolean()) throw new java.io.InterruptedIOException("Preview preparation paused");
+  }
+
+  private Preview previewLocked(Photo p, java.util.function.BooleanSupplier cancelled) throws IOException {
     if ("archive".equals(p.uri.getScheme())) {
       try (ArchiveStore store = new ArchiveStore(context)) {
         return store.preview(p.uri.getHost());
@@ -311,46 +331,60 @@ public final class PhotoRepository {
     }
     String key = digest("raw-preview-v2:" + p.uri + ":" + p.size + ":" + p.modified);
     File webp = new File(prepared, key + ".webp"), meta = new File(prepared, key + ".webp.json");
-    // Reuse existing cache without regenerating it; the background pass promotes it.
-    if (!webp.isFile() || !meta.isFile()) {
-      File old = new File(previews, key + ".webp"), oldMeta = new File(previews, key + ".webp.json");
-      if (old.isFile() && oldMeta.isFile()) {
-        java.nio.file.Files.move(old.toPath(), webp.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-        java.nio.file.Files.move(oldMeta.toPath(), meta.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+    // Only metadata/file publication is shared. No parsing, decoding or compression under this lock.
+    synchronized (PUBLISH_LOCK) {
+      checkPreparation(cancelled);
+      if (!webp.isFile() || !meta.isFile()) {
+        File old = new File(legacyPreviews, key + ".webp"), oldMeta = new File(legacyPreviews, key + ".webp.json");
+        if (old.isFile() && oldMeta.isFile()) {
+          java.nio.file.Files.move(old.toPath(), webp.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+          java.nio.file.Files.move(oldMeta.toPath(), meta.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
+      }
+      DiagnosticLog.event("cache.compact", DiagnosticLog.parent(), "hit", webp.isFile() && meta.isFile());
+      if (webp.isFile() && meta.isFile()) {
+        try {
+          JSONObject j = new JSONObject(readText(meta));
+          return new Preview(webp, j.getString("model"), j.getInt("width"), j.getInt("height"), 1);
+        } catch (Exception ignored) {
+          webp.delete(); meta.delete();
+        }
       }
     }
-    DiagnosticLog.event("cache.compact", DiagnosticLog.parent(), "hit", webp.isFile() && meta.isFile());
-    if (webp.isFile() && meta.isFile()) {
-      try {
-        JSONObject j = new JSONObject(readText(meta));
-        webp.setLastModified(System.currentTimeMillis());
-        return new Preview(webp, j.getString("model"), j.getInt("width"), j.getInt("height"), 1);
-      } catch (Exception ignored) {
-        webp.delete();
-        meta.delete();
-      }
-    }
+    checkPreparation(cancelled);
     Preview source = sourcePreview(p);
-    Preview compact;
-    try (DiagnosticLog.Scope ignored = DiagnosticLog.span("preview.compact")) {
-      compact = CompactPreview.save(source, webp);
+    File staged = null, stagedMeta = null;
+    try {
+      checkPreparation(cancelled);
+      staged = File.createTempFile("compact-", ".part", previews);
+      Preview compact;
+      try (DiagnosticLog.Scope ignored = DiagnosticLog.span("preview.compact")) {
+        compact = CompactPreview.save(source, staged);
+      }
+      checkPreparation(cancelled);
+      stagedMeta = File.createTempFile("compact-meta-", ".part", previews);
+      try (FileOutputStream out = new FileOutputStream(stagedMeta)) {
+        JSONObject j = new JSONObject().put("model", compact.model)
+            .put("width", compact.width).put("height", compact.height);
+        out.write(j.toString().getBytes(StandardCharsets.UTF_8));
+      } catch (JSONException e) { throw new IOException(e); }
+      synchronized (PUBLISH_LOCK) {
+        checkPreparation(cancelled);
+        java.nio.file.Files.move(staged.toPath(), webp.toPath(),
+            java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        java.nio.file.Files.move(stagedMeta.toPath(), meta.toPath(),
+            java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+      }
+      return new Preview(webp, compact.model, compact.width, compact.height, 1);
+    } finally {
+      if (staged != null) staged.delete();
+      if (stagedMeta != null) stagedMeta.delete();
+      // Background and foreground use separate source files, including for the same photo.
+      if (source.file.getParentFile().equals(previews)) {
+        source.file.delete();
+        new File(previews, key + ".json").delete();
+      }
     }
-    try (FileOutputStream out = new FileOutputStream(meta)) {
-      JSONObject j =
-          new JSONObject()
-              .put("model", compact.model)
-              .put("width", compact.width)
-              .put("height", compact.height);
-      out.write(j.toString().getBytes(StandardCharsets.UTF_8));
-    } catch (JSONException e) {
-      throw new IOException(e);
-    }
-    // Full embedded JPEGs can be recreated from the original when needed.
-    if (source.file.getParentFile().equals(previews)) {
-      source.file.delete();
-      new File(previews, key + ".json").delete();
-    }
-    return compact;
   }
 
   /** Called with a materialized original, never with the small archive proxy. */
@@ -378,7 +412,7 @@ public final class PhotoRepository {
   public Preview sourcePreview(Photo p) throws IOException {
     try (DiagnosticLog.Scope span = DiagnosticLog.span("repository.sourcePreview")) {
       DiagnosticLog.event("repository.lock_wait", span.id);
-      synchronized (PREVIEW_LOCK) {
+      synchronized (processingLock) {
         DiagnosticLog.event("repository.lock_acquired", span.id);
         try { return sourcePreviewLocked(p); }
         catch (IOException | RuntimeException e) {
