@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loupe Issue #14 操作の手がかりをUIへ</title>
+<style>
+:root{--bg:#0F0F10;--panel:#19191B;--text:#EDEDEA;--muted:#A0A0A4;--ok:#9FE0B5;--ng:#F2A7AB;--k:1}
+*{box-sizing:border-box}
+body{margin:0;background:#0B0B0C;color:var(--text);font-family:"Noto Sans JP",system-ui,-apple-system,"Hiragino Sans",sans-serif;font-size:15px;line-height:1.6}
+.wrap{max-width:1300px;margin:0 auto;padding:28px 20px 64px}
+h1{margin:0;font-size:24px;line-height:1.4;font-weight:600}
+h2.sec{margin:30px 0 4px;font-size:18px;font-weight:600}
+.lead{margin:6px 0 0;color:var(--muted);font-size:14px}
+.controls{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;margin:14px 0 0}
+.controls .lb{color:var(--muted);font-size:13px;margin-right:6px}
+.seg{display:inline-flex;flex-wrap:wrap;background:#1C1C1F;border-radius:22px;padding:2px}
+.seg button{background:none;border:0;color:var(--text);font:inherit;font-size:13px;min-height:44px;padding:0 12px;border-radius:20px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:#EDEDEA;color:#111}
+.hw{background:#2A2A2E;border:1px solid #4A4A50;color:var(--text);font:inherit;font-size:14px;font-weight:600;min-height:48px;padding:0 18px;border-radius:24px;cursor:pointer}
+label.tg{display:inline-flex;gap:8px;align-items:center;font-size:13px;min-height:44px;cursor:pointer}
+label.tg input{width:18px;height:18px;accent-color:#EDEDEA}
+.cols{display:flex;gap:28px;flex-wrap:wrap;margin-top:14px;align-items:flex-start}
+.col{display:flex;flex-direction:column;gap:8px}
+.col h3{margin:0;font-size:14px;font-weight:600;display:flex;gap:8px;align-items:center}
+.tagc{font-size:12px;padding:2px 8px;border-radius:6px;font-weight:600}
+.tagc.old{background:#3A2224;color:#F2A7AB}.tagc.new{background:#1E3A2A;color:var(--ok)}
+.box{background:#141416;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.6;font-variant-numeric:tabular-nums;max-width:max(var(--w),320px)}
+.ok{color:var(--ok)}.ng{color:var(--ng)}
+
+/* 端末（1px = 1dp）。外枠 outline は寸法の外 */
+.dev{position:relative;width:var(--w);height:700px;background:var(--bg);outline:1px solid #3A3A3F;overflow:hidden;display:flex;flex-direction:column;font-family:Roboto,"Noto Sans JP","Noto Sans CJK JP",system-ui,sans-serif;color:var(--text)}
+.hd{padding:36px 20px 8px;flex-shrink:0}
+.hd b{display:block;font-size:calc(22px*var(--k));line-height:1.35;font-weight:600}
+.hd span{font-size:calc(13px*var(--k));color:var(--muted)}
+.hint{padding:0 20px 10px;font-size:calc(14px*var(--k));line-height:1.5;color:var(--muted);flex-shrink:0}
+.list{flex:1;overflow-y:auto;min-height:0}
+.list::-webkit-scrollbar{width:0}
+
+/* 1. ソート結果の行 */
+.rOld{display:flex;align-items:center;width:100%;padding:6px 16px 6px 12px;background:none;border:0;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.rNew{display:flex;align-items:center;width:calc(100% - 16px);margin:0 8px 4px;padding:6px 16px 6px 12px;min-height:84px;background:var(--panel);border:0;border-radius:12px;color:inherit;font:inherit;text-align:left;cursor:pointer;position:relative;overflow:hidden}
+.rNew:active,.rNew.press{background:#26262A}
+.rNew:focus-visible,.rOld:focus-visible{outline:2px solid #4C8DFF;outline-offset:-2px}
+.th{width:88px;height:72px;flex-shrink:0;border-radius:8px;background-size:cover;background-position:center;display:flex;align-items:center;justify-content:center;color:#8A8A85}
+.rOld .th{border-radius:0}
+.th.fail{background:#26262A !important}
+.th svg{width:24px;height:24px}
+.rt{flex:1;min-width:0;margin-left:16px;font-size:calc(14px*var(--k));line-height:calc(20px*var(--k));overflow-wrap:anywhere}
+.rt b{font-weight:600}
+.go{width:24px;height:24px;flex-shrink:0;margin-left:12px;color:var(--muted)}
+.zoom{position:absolute;inset:0;background:#000;display:flex;flex-direction:column;z-index:3}
+.zoom .zi{flex:1;background-size:contain;background-repeat:no-repeat;background-position:center}
+.zoom .zf{flex:1;display:flex;align-items:center;justify-content:center;color:#8A8A85;font-size:calc(14px*var(--k))}
+
+/* 2. Cloud */
+.status{margin:0 16px 12px;padding:12px 16px;border-radius:12px;background:var(--panel);display:flex;gap:12px;align-items:flex-start;font-size:calc(14px*var(--k));line-height:1.5}
+.status svg{width:20px;height:20px;flex-shrink:0;margin-top:2px}
+.status.err{color:#FFB4AA}.status.ok{color:#B9E8C9}.status.run{color:var(--text)}.status.need{color:#F5D38A}
+.status small{display:block;color:var(--muted);font-size:calc(12px*var(--k))}
+.oldStatus{margin:0 16px 12px;min-height:64px;border-radius:12px;border:1px dashed #3A3A3F}
+.dock{flex-shrink:0;background:#19191B;padding:8px 8px 28px;display:flex}
+.db{flex:1 1 0;min-width:0;min-height:64px;padding:6px;border:0;border-radius:8px;background:transparent;color:#EDEDEA;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-family:inherit;font-weight:500;font-size:calc(13px*var(--k));text-align:center;cursor:pointer}
+.db .ic{width:24px;height:24px;display:flex;align-items:center;justify-content:center}
+.db svg{width:24px;height:24px}
+.db .lbl{line-height:24px;overflow-wrap:anywhere}
+.db:disabled{color:#626B72;cursor:default}
+.dim{position:absolute;inset:0;background:rgba(0,0,0,.64);border:0;width:100%;cursor:default;z-index:4}
+.sheet{position:absolute;left:50%;transform:translateX(-50%);bottom:12px;width:min(calc(100% - 24px),560px);max-height:48%;overflow-y:auto;background:#19191B;border-radius:20px;padding:8px 0 16px;z-index:5}
+.sheet .handle{display:block;width:32px;height:4px;border-radius:2px;background:#4A4A50;margin:4px auto 12px}
+.sheet h4{margin:0 0 4px;padding:0 24px;font-size:calc(18px*var(--k));line-height:1.4;font-weight:600}
+.sheet p{margin:0;padding:0 24px 12px;font-size:calc(14px*var(--k));color:#C9C9C4}
+.sheet .it{display:flex;align-items:center;gap:16px;width:100%;min-height:56px;padding:8px 24px;background:none;border:0;color:inherit;font:inherit;font-size:calc(15px*var(--k));line-height:1.4;text-align:left;cursor:pointer}
+.sheet .it svg{width:24px;height:24px;flex-shrink:0;color:var(--muted)}
+.sheet .it.danger{color:#FFB4AA}.sheet .it.danger svg{color:#FFB4AA}
+.sheet .bt{display:flex;flex-direction:column;gap:8px;padding:4px 16px 0}
+.sheet .bt button{min-height:48px;border-radius:24px;border:1px solid #3A3A3F;background:none;color:inherit;font:inherit;font-size:calc(14px*var(--k));font-weight:500;cursor:pointer}
+.sheet .bt .danger{border-color:#FF8A7A;color:#FFB4AA}
+.secure{position:absolute;right:8px;top:8px;font-size:10px;color:#8A8A85;border:1px dashed #3A3A3F;border-radius:6px;padding:1px 6px}
+
+.spec h2{font-size:20px;margin:36px 0 10px;font-weight:600}
+.spec table{border-collapse:collapse;width:100%;font-size:14px}
+.spec th,.spec td{border-bottom:1px solid #2A2A2E;padding:8px 12px 8px 0;text-align:left;vertical-align:top}
+.spec th{color:var(--muted);font-weight:500;font-size:12.5px}
+.spec ul{margin:0;padding-left:20px}.spec li{margin:4px 0}
+.spec code{background:#1C1C1F;padding:1px 6px;border-radius:4px;font-size:13px}
+.spec{max-width:1180px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Loupe Issue #14 — 説明文に頼る操作案内をUIへ</h1>
+<p class="lead">対象は「ソート結果の一覧」と「クラウドの最初の画面」の2か所だけです。写真はダミーの色面、クラウドの画面は FLAG_SECURE のため合成の画面です。画面の外の［Android Back］は検証用です。</p>
+
+<div class="controls" role="group" aria-label="共通の条件">
+<span><span class="lb">幅</span><span class="seg" id="oW"><button data-v="320" aria-pressed="false">320dp</button><button data-v="400" aria-pressed="true">400dp</button></span></span>
+<span><span class="lb">文字</span><span class="seg" id="oK"><button data-v="1" aria-pressed="true">1.0倍</button><button data-v="1.3" aria-pressed="false">1.3倍</button></span></span>
+<button class="hw" id="hwBack">Android Back（検証用）</button>
+</div>
+
+<h2 class="sec">1. ソート結果の一覧</h2>
+<div class="controls" role="group" aria-label="1の条件">
+<label class="tg"><input type="checkbox" id="oLong"> 長いファイル名</label>
+<label class="tg"><input type="checkbox" id="oFail"> 2位の1枚のプレビューに失敗</label>
+</div>
+<div class="cols">
+<div class="col"><h3>旧 <span class="tagc old">説明文あり</span></h3><div class="dev" id="rOld"></div></div>
+<div class="col"><h3>新 <span class="tagc new">#14</span></h3><div class="dev" id="rNew"></div><div class="box" id="cR"></div></div>
+</div>
+
+<h2 class="sec">2. クラウドの最初の画面（合成）</h2>
+<div class="controls" role="group" aria-label="2の条件">
+<span><span class="lb">ログイン</span><span class="seg" id="oLogin"><button data-v="out" aria-pressed="true">未ログイン</button><button data-v="in" aria-pressed="false">ログイン済み</button></span></span>
+<span><span class="lb">3つ目の名前</span><span class="seg" id="oLabel"><button data-v="new" aria-pressed="true">提案：接続と確認</button><button data-v="cur" aria-pressed="false">現行：その他</button></span></span>
+<label class="tg"><input type="checkbox" id="oNetFail"> 接続に失敗する</label>
+</div>
+<div class="cols">
+<div class="col"><h3>旧 <span class="tagc old">説明文あり・アイコンは簡略</span></h3><div class="dev" id="cOld"></div></div>
+<div class="col"><h3>新 <span class="tagc new">#14</span></h3><div class="dev" id="cNew"></div><div class="box" id="cC"></div><div class="box" id="log"></div></div>
+</div>
+
+<section class="spec" aria-label="仕様">
+<h2>1. ソート結果の一覧</h2>
+<table>
+<tr><th>項目</th><th>旧</th><th>新</th></tr>
+<tr><td>説明文</td><td>「写真をタップして拡大」</td><td>削除</td></tr>
+<tr><td>行の形</td><td>背景なしの行</td><td>行を1枚のカードにする：背景 #19191B、角丸12dp、左右の外側の余白8dp、行と行の間4dp。最低の高さ84dp（サムネイル72dp＋上下6dp）</td></tr>
+<tr><td>行の中の余白</td><td colspan="2">既存のまま：左12dp・右16dp・上下6dp</td></tr>
+<tr><td>サムネイル</td><td>88×72dp、CENTER_CROP</td><td>88×72dp、CENTER_CROP（そのまま）。角丸8dp</td></tr>
+<tr><td>文字</td><td colspan="2">既存のまま：左の余白16dp、14sp「1位 · fixture-1.jpg」。長いファイル名は省略せず折り返す</td></tr>
+<tr><td>拡大の印</td><td>—</td><td>行の右端に24dpの拡大アイコン（#A0A0A4）、文字との間12dp。<b>装飾で、別のボタンにしない</b>（行全体が1つのタップ領域）</td></tr>
+<tr><td>押したとき</td><td>—</td><td>行のカード全体に標準のリップル（押している間は背景 #26262A）</td></tr>
+<tr><td>プレビューの失敗</td><td>—</td><td>サムネイルの場所に #26262A の地と、壊れた画像のアイコン（24dp、#8A8A85）。行はそのまま押せて、拡大の画面へ進む（拡大の画面の既存の失敗表示に任せる）</td></tr>
+<tr><td>操作</td><td colspan="2">行全体のタップで、その写真の拡大へ。標準のBackで結果の一覧へ戻る（スクロールの位置を保つ）。順位・ファイル名・並び順・原本・順位のロジックは変えない</td></tr>
+<tr><td>読み上げ</td><td colspan="2">読み上げ名は既存のまま（例：「1位 · fixture-1.jpg」）。ボタンとして読む。クリック操作のラベルを「拡大」にする（<code>AccessibilityAction(ACTION_CLICK, "拡大")</code>。TalkBackは「ダブルタップして拡大」と読む）。アイコンは読み上げない</td></tr>
+</table>
+
+<h2>2. クラウドの最初の画面</h2>
+<table>
+<tr><th>項目</th><th>旧</th><th>新</th></tr>
+<tr><td>タイトル</td><td colspan="2">「Amazon Photos」（そのまま）</td></tr>
+<tr><td>説明文</td><td>「同期や端末容量の管理は設定から…『その他』から開けます。」</td><td>削除</td></tr>
+<tr><td>状態の欄</td><td>最初から空の欄がある</td><td>伝えることがあるときだけ出す：ログインが必要／接続を確認しています／接続できました／接続できませんでした。カード：背景 #19191B、角丸12dp、余白 上下12dp・左右16dp、アイコン20dp、文字14sp。<code>accessibilityLiveRegion = polite</code></td></tr>
+<tr><td>dock</td><td>［ログイン］［同期設定］［その他］</td><td>［ログイン］［同期の設定］［接続と確認］の均等3列。値は既存の dock と同じ（背景 #19191B、全周8dp、ボタン64dp以上、13sp、24dpのアイコン、間隔4dp）</td></tr>
+<tr><td>アイコン</td><td>—</td><td>ログイン＝人と矢印、同期の設定＝回転する矢印、接続と確認＝雲とチェック。名前と形で入口が分かる</td></tr>
+<tr><td>3つ目の名前</td><td>その他</td><td>「接続と確認」を提案（中身が接続の確認と検証、ログアウトのため）。HTMLで現行の「その他」にも切り替えられる</td></tr>
+<tr><td>3つ目の中身</td><td colspan="2">既存の4つ：接続を確認／保存した写真をダウンロードして確認／写真1枚を保存して内容を確認／ログアウト（既存の確認つき）</td></tr>
+<tr><td>動き</td><td colspan="2">接続・検証は、利用者がメニューで選んだときだけ行う。画面を開いただけでは何もしない。自動ログイン・送信・同期の開始はしない。未ログインで接続や検証を選んだら「ログインが必要です」を出す</td></tr>
+<tr><td>読み上げ</td><td colspan="2">dock：「ログイン」「同期の設定」「接続と確認」（ボタン。3つ目はメニューを開く）。状態のカードは変化したときに1回だけ読む</td></tr>
+<tr><td>Back</td><td colspan="2">メニュー・確認を開いているときは閉じる（キャンセルと同じ）。それ以外は呼び出し元へ（#5のとおり）</td></tr>
+</table>
+
+<h2>3. 残す文章（一律に消さない）</h2>
+<ul>
+<li>同期：対象の機種、削除の条件、日付の基準。</li>
+<li>共有：形式、対象の枚数、失敗からの戻り方。</li>
+<li>タグ：空の状態、入力のエラー。</li>
+<li>削除などの安全のための確認。</li>
+<li>読み上げのジェスチャーの説明。</li>
+<li>タグの推論の説明は#1の範囲で、ここでは扱わない。</li>
+</ul>
+
+<h2>4. 範囲外</h2>
+<ul>
+<li>ほかの写真の画面、dock、方式の選択。UI全体の再設計（#8）、状態全体の文字以外への置き換え（#17）。</li>
+<li>このHTMLのクラウドの画面は合成の画面で、実際のログイン・通信はしない。フォントはブラウザとAndroidで数%ずれることがある。</li>
+</ul>
+</section>
+</div>
+
+<script>
+(function () {
+  const O = { w: 400, k: 1, long: false, fail: false, login: 'out', label: 'new', netFail: false, zoomOld: null, zoomNew: null, sheet: null, status: null, log: [] };
+  const G = ['#a9c3d8,#69736a', '#7b5b45,#2a201b', '#3f4a3a,#1d241c', '#5b6168,#2a2d31', '#eee5d5,#a89a83', '#34425d,#07080b'];
+  const grad = (i) => 'linear-gradient(160deg,' + G[i % G.length] + ')';
+  const ROWS = [['1位', 'fixture-1.jpg'], ['2位', 'fixture-2.jpg'], ['2位', 'fixture-3.jpg'], ['2位', 'fixture-4.jpg'], ['2位', 'fixture-5.jpg']];
+  const LONGN = ['P1010403_嵐山_渡月橋_夕景_連写_0001_編集用.ORF', 'P1010404_嵐山_渡月橋_夕景_連写_0002_編集用.ORF', 'fixture-3-with-a-very-long-file-name-for-wrapping-check.jpg', 'fixture-4.jpg', 'fixture-5.jpg'];
+  const I = {
+    zoom: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"></circle><path d="M15 15l5 5M10.5 8v5M8 10.5h5"></path></svg>',
+    broken: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v14H4z"></path><path d="M4 15l4-4 3 3M14 9l-2 3 2 1-1 3"></path></svg>',
+    login: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"></circle><path d="M3 19c.8-3.2 3.2-5 6-5"></path><path d="M14 13h7M18 10l3 3-3 3"></path></svg>',
+    sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 8.5A7.5 7.5 0 0 0 5.6 7.4"></path><path d="M19 4v4.5h-4.5"></path><path d="M5 15.5a7.5 7.5 0 0 0 13.4 1.1"></path><path d="M5 20v-4.5h4.5"></path></svg>',
+    check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 18.5h10.5a3.5 3.5 0 0 0 .3-7A5.5 5.5 0 0 0 7.2 10 4.3 4.3 0 0 0 7 18.5z"></path><path d="M9.5 14l2 2 3.5-3.8"></path></svg>',
+    ph: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="2 2" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle></svg>',
+    more: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5.5" r="1.7"></circle><circle cx="12" cy="12" r="1.7"></circle><circle cx="12" cy="18.5" r="1.7"></circle></svg>',
+    dl: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19h14"></path></svg>',
+    up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4M7.5 8.5L12 4l4.5 4.5M5 19h14"></path></svg>',
+    out: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 5H5v14h5"></path><path d="M14 12h7M18 9l3 3-3 3"></path></svg>',
+    run: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke="rgba(255,255,255,.2)"></circle><path d="M12 4a8 8 0 0 1 8 8" stroke="#EDEDEA"></path></svg>',
+    okc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"></circle><path d="M8.3 12.3l2.6 2.6 5-5.2"></path></svg>',
+    err: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5v5.5M12 16.4v.1"></path></svg>'
+  };
+  const add = (t) => { O.log.unshift(t); O.log = O.log.slice(0, 10); };
+  const name = (i) => (O.long ? LONGN[i] : ROWS[i][1]);
+  const scroll = { old: 0, nw: 0 };
+
+  function resultHTML(isNew) {
+    const z = isNew ? O.zoomNew : O.zoomOld;
+    let h = '<div class="hd"><b>ソート結果</b><span>連写 5枚</span></div>' + (isNew ? '' : '<div class="hint">写真をタップして拡大</div>') + '<div class="list" data-list>';
+    ROWS.forEach((r, i) => {
+      const f = O.fail && i === 1;
+      const label = r[0] + ' · ' + name(i);
+      h += '<button class="' + (isNew ? 'rNew' : 'rOld') + '" data-row="' + i + '" aria-label="' + label + (isNew ? '' : '') + '"' + (isNew ? ' data-click-label="拡大"' : '') + '>' +
+        '<span class="th' + (f ? ' fail' : '') + '" style="background-image:' + grad(i) + '" aria-hidden="true">' + (f ? I.broken : '') + '</span>' +
+        '<span class="rt"><b>' + r[0] + '</b> · ' + name(i) + '</span>' + (isNew ? '<span class="go" aria-hidden="true">' + I.zoom + '</span>' : '') + '</button>';
+    });
+    h += '<div style="height:24px"></div></div>';
+    if (z != null) h += '<div class="zoom" aria-label="拡大"><div class="hd"><b style="font-size:calc(15px*var(--k))">' + ROWS[z][0] + ' · ' + name(z) + '</b></div>' + (O.fail && z === 1 ? '<div class="zf">（拡大の画面の既存の失敗表示）</div>' : '<div class="zi" style="background-image:' + grad(z) + '"></div>') + '</div>';
+    return h;
+  }
+  function cloudHTML(isNew) {
+    const loggedIn = O.login === 'in';
+    const lab3 = isNew ? (O.label === 'new' ? '接続と確認' : 'その他') : 'その他';
+    let h = '<span class="secure">合成の画面（FLAG_SECURE）</span><div class="hd"><b>Amazon Photos</b></div>';
+    if (!isNew) h += '<div class="hint">同期や端末容量の管理は設定から変更できます。接続確認や１枚だけの検証は『その他』から開けます。</div><div class="oldStatus" aria-hidden="true"></div>';
+    else if (O.status) {
+      const S = { need: ['need', 'err', 'ログインが必要です', ''], run: ['run', 'run', '接続を確認しています', ''], ok: ['ok', 'okc', '接続できました', '10:42'], fail: ['err', 'err', '接続できませんでした', 'ネットワークを確認して、もう一度お試しください'] }[O.status];
+      h += '<div class="status ' + S[0] + '" role="status" aria-live="polite">' + I[S[1]] + '<span>' + S[2] + (S[3] ? '<small>' + S[3] + '</small>' : '') + '</span></div>';
+    }
+    h += '<div style="flex:1"></div><div class="dock" role="group" aria-label="クラウドの操作">' +
+      '<button class="db" data-c="login"><span class="ic">' + (isNew ? I.login : I.ph) + '</span><span class="lbl">ログイン</span></button>' +
+      '<button class="db" data-c="sync"><span class="ic">' + (isNew ? I.sync : I.ph) + '</span><span class="lbl">' + (isNew ? '同期の設定' : '同期設定') + '</span></button>' +
+      '<button class="db" data-c="menu" aria-haspopup="dialog"><span class="ic">' + (isNew && O.label === 'new' ? I.check : I.more) + '</span><span class="lbl">' + lab3 + '</span></button></div>';
+    if (isNew && O.sheet === 'menu') h += '<button class="dim" data-c="close" aria-label="閉じる"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="' + lab3 + '"><span class="handle" aria-hidden="true"></span><h4>' + lab3 + '</h4>' +
+      '<button class="it" data-c="conn">' + I.check + '<span>接続を確認</span></button><button class="it" data-c="dl">' + I.dl + '<span>保存した写真をダウンロードして確認</span></button><button class="it" data-c="up">' + I.up + '<span>写真1枚を保存して内容を確認</span></button>' +
+      (loggedIn ? '<button class="it danger" data-c="logout">' + I.out + '<span>ログアウト</span></button>' : '') + '<div class="bt"><button data-c="close">閉じる</button></div></div>';
+    if (isNew && O.sheet === 'logout') h += '<button class="dim" data-c="close" aria-label="閉じる"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="ログアウトしますか？"><span class="handle" aria-hidden="true"></span><h4>ログアウトしますか？</h4><p>（既存の確認の文）</p><div class="bt"><button class="danger" data-c="doLogout">ログアウト</button><button data-c="close">キャンセル</button></div></div>';
+    return h;
+  }
+  function render() {
+    document.documentElement.style.setProperty('--k', O.k); document.documentElement.style.setProperty('--w', O.w + 'px');
+    [['rOld', false, 'old'], ['rNew', true, 'nw']].forEach(([id, isNew, sk]) => {
+      const d = document.getElementById(id); d.innerHTML = resultHTML(isNew);
+      const L = d.querySelector('[data-list]'); if (L) { L.scrollTop = scroll[sk]; L.addEventListener('scroll', () => { scroll[sk] = L.scrollTop; }, { passive: true }); }
+    });
+    document.getElementById('cOld').innerHTML = cloudHTML(false);
+    document.getElementById('cNew').innerHTML = cloudHTML(true);
+    checks();
+  }
+  function lines(el) { const rg = document.createRange(); rg.selectNodeContents(el); return new Set([...rg.getClientRects()].filter((x) => x.width > 0).map((x) => Math.round(x.top))).size; }
+  function checks() {
+    const d = document.getElementById('rNew');
+    const rows = [...d.querySelectorAll('.rNew')].map((b) => {
+      const r = b.getBoundingClientRect(), t = b.querySelector('.rt'), g = b.querySelector('.go');
+      const fit = t.scrollWidth <= t.clientWidth + 1 && g.getBoundingClientRect().right <= r.right - 15;
+      const ok = r.height >= 48 && fit;
+      return (ok ? '<span class="ok">○</span> ' : '<span class="ng">✕</span> ') + b.getAttribute('aria-label').slice(0, 26) + '：' + Math.round(r.width) + '×' + Math.round(r.height) + 'dp・文字' + lines(t) + '行・タップ領域は行全体';
+    });
+    const btns = d.querySelectorAll('.rNew button, .rNew [role=button]').length;
+    document.getElementById('cR').innerHTML = '<b>' + O.w + 'dp・文字' + O.k + '倍</b><br>' + rows.join('<br>') + '<br>行の中の別ボタン：' + (btns ? '<span class="ng">' + btns + '</span>' : '<span class="ok">なし</span>') + '<br>読み上げ：行ごとに既存の名前（例「1位 · ' + name(0) + '」）・クリック操作「拡大」';
+    const c = document.getElementById('cNew');
+    const cr = [...c.querySelectorAll('.dock .db')].map((b) => { const r = b.getBoundingClientRect(), l = b.querySelector('.lbl'); const ok = r.height >= 48 && lines(l) === 1; return (ok ? '<span class="ok">○</span> ' : '<span class="ng">✕</span> ') + l.textContent + '：' + Math.round(r.width) + '×' + Math.round(r.height) + 'dp・' + lines(l) + '行'; });
+    const items = [...c.querySelectorAll('.sheet .it, .sheet .bt button')].map((b) => { const r = b.getBoundingClientRect(); return (r.height >= 48 ? '<span class="ok">○</span> ' : '<span class="ng">✕</span> ') + b.textContent + '：' + Math.round(r.height) + 'dp'; });
+    document.getElementById('cC').innerHTML = '<b>クラウド ' + O.w + 'dp・文字' + O.k + '倍</b><br>' + cr.join('<br>') + (items.length ? '<br><b>メニュー</b><br>' + items.join('<br>') : '') + '<br>状態の欄：' + (O.status ? '表示中' : 'なし（伝えることがないので出さない）');
+    document.getElementById('log').innerHTML = '<b>操作の記録</b><br>' + (O.log.map((x) => '・' + x).join('<br>') || '—');
+  }
+  // 1. 結果の行
+  function rowClick(isNew) {
+    return (e) => {
+      const r = e.target.closest('[data-row]'); if (!r) return;
+      const i = +r.dataset.row;
+      if (isNew) O.zoomNew = i; else O.zoomOld = i;
+      add((isNew ? '新' : '旧') + '：行「' + r.getAttribute('aria-label').slice(0, 30) + '」をタップ → 拡大');
+      render();
+    };
+  }
+  document.getElementById('rOld').addEventListener('click', rowClick(false));
+  document.getElementById('rNew').addEventListener('click', rowClick(true));
+  document.getElementById('rNew').addEventListener('pointerdown', (e) => { const r = e.target.closest('.rNew'); if (r) r.classList.add('press'); });
+  ['pointerup', 'pointerleave'].forEach((ev) => document.getElementById('rNew').addEventListener(ev, () => document.querySelectorAll('.rNew.press').forEach((x) => x.classList.remove('press'))));
+  // 2. Cloud
+  let tm = null;
+  document.getElementById('cNew').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-c]'); if (!b) return;
+    const v = b.dataset.c, loggedIn = O.login === 'in';
+    if (v === 'login') { add('［ログイン］→ 既存のログイン画面へ（自動ではログインしない）'); }
+    else if (v === 'sync') { add('［同期の設定］→ 同期の設定へ（同期は始めない）'); }
+    else if (v === 'menu') { O.sheet = 'menu'; add('［' + (O.label === 'new' ? '接続と確認' : 'その他') + '］→ メニュー'); }
+    else if (v === 'close') { O.sheet = null; add('閉じる（キャンセル）'); }
+    else if (v === 'conn' || v === 'dl' || v === 'up') {
+      O.sheet = null;
+      const what = { conn: '接続を確認', dl: '保存した写真をダウンロードして確認', up: '写真1枚を保存して内容を確認' }[v];
+      if (!loggedIn) { O.status = 'need'; add('「' + what + '」→ 未ログインのため「ログインが必要です」'); }
+      else { O.status = 'run'; add('「' + what + '」を開始（利用者が選んだときだけ）'); clearTimeout(tm); tm = setTimeout(() => { O.status = O.netFail ? 'fail' : 'ok'; add(O.netFail ? '失敗：接続できませんでした' : '完了：接続できました'); render(); }, 900); }
+    }
+    else if (v === 'logout') { O.sheet = 'logout'; add('ログアウト → 既存の確認'); }
+    else if (v === 'doLogout') { O.sheet = null; O.login = 'out'; O.status = null; syncSeg(); add('ログアウトした'); }
+    render();
+  });
+  document.getElementById('hwBack').addEventListener('click', () => {
+    if (O.sheet) { O.sheet = null; add('Back：メニュー・確認を閉じる（キャンセルと同じ）'); }
+    else if (O.zoomNew != null || O.zoomOld != null) { O.zoomNew = null; O.zoomOld = null; add('Back：拡大 → ソート結果の一覧（位置を保つ）'); }
+    else add('Back：呼び出し元へ（この比較ページでは画面を変えない）');
+    render();
+  });
+  function syncSeg() { document.querySelectorAll('#oLogin button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.v === O.login ? 'true' : 'false')); }
+  function seg(id, fn) {
+    const el = document.getElementById(id);
+    el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; el.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', x === b ? 'true' : 'false')); fn(b.dataset.v); render(); });
+  }
+  seg('oW', (v) => { O.w = +v; }); seg('oK', (v) => { O.k = +v; }); seg('oLogin', (v) => { O.login = v; O.status = null; O.sheet = null; }); seg('oLabel', (v) => { O.label = v; });
+  document.getElementById('oLong').addEventListener('change', (e) => { O.long = e.target.checked; render(); });
+  document.getElementById('oFail').addEventListener('change', (e) => { O.fail = e.target.checked; render(); });
+  document.getElementById('oNetFail').addEventListener('change', (e) => { O.netFail = e.target.checked; });
+  window.__l14 = { O: O, render: render };
+  render();
+})();
+</script>
+</body>
+</html>

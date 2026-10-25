@@ -13,6 +13,7 @@ import org.json.JSONObject;
  * source.
  */
 public final class ArchiveInstrumentation extends Instrumentation {
+  private boolean affordancesTest;
   private boolean rankingModesTest;
   private boolean systemBackTest;
   private boolean burstTest, realBurstTest;
@@ -29,6 +30,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    affordancesTest = args != null && "affordances".equals(args.getString("mode"));
     rankingModesTest = args != null && "ranking-modes".equals(args.getString("mode"));
     systemBackTest = args != null && "system-back".equals(args.getString("mode"));
     actionLabelsTest = args != null && "action-labels".equals(args.getString("mode"));
@@ -58,6 +60,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     File restored = null;
     try {
       Context context = getTargetContext();
+      if (affordancesTest) { results.putString("stream", AffordanceChecks.run(this)); finish(-1, results); return; }
       if (rankingModesTest) { results.putString("stream", RankingModeChecks.run(this)); finish(-1, results); return; }
       if (systemBackTest) { results.putString("stream", SystemBackChecks.run(this)); finish(-1, results); return; }
       if (actionLabelsTest) { results.putString("stream", ActionLabelChecks.run(this)); finish(-1, results); return; }
@@ -174,7 +177,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     } catch (Throwable failure) {
       results.putString(
           "stream",
-          "Archive device checks failed: "
+          (affordancesTest ? android.util.Log.getStackTraceString(failure) : "") + "Archive device checks failed: "
               + failure.getClass().getSimpleName()
               + (failure instanceof AssertionError ? ": " + failure.getMessage() : "")
               + "\n");

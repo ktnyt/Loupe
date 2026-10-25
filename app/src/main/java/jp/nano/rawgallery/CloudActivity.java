@@ -44,7 +44,8 @@ public final class CloudActivity extends DiagnosticActivity {
     status.setTextColor(0xffd4c7b4);
     status.setTextSize(14);
     status.setPadding(0, 20, 0, 20);
-    status.setText("同期や端末容量の管理は設定から変更できます。接続確認や１枚だけの検証は「その他」から開けます。");
+    status.setVisibility(View.GONE);
+    status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
     root.addView(status);
     LinearLayout row = new LinearLayout(this);
 
@@ -129,13 +130,13 @@ public final class CloudActivity extends DiagnosticActivity {
                 "https".equals(u.getScheme())
                     && host != null
                     && (host.equals("amazon.co.jp") || host.endsWith(".amazon.co.jp"));
-            if (!allowed) status.setText("日本向けAmazon以外への移動を停止しました。接続方式の確認が必要です。");
+            if (!allowed) setStatus("日本向けAmazon以外への移動を停止しました。接続方式の確認が必要です。");
             return !allowed;
           }
 
           public void onReceivedSslError(WebView v, SslErrorHandler handler, SslError error) {
             handler.cancel();
-            status.setText("通信の安全性を確認できないため停止しました。");
+            setStatus("通信の安全性を確認できないため停止しました。");
           }
 
           public void onPageFinished(WebView v, String url) {
@@ -169,16 +170,37 @@ public final class CloudActivity extends DiagnosticActivity {
                         .remove("cloudCheckedAt")
                         .remove("cloudCount")
                         .apply();
-                    status.setText("このアプリのログイン情報を消しました。");
+                    setStatus("このアプリのログイン情報を消しました。");
                   });
         });
-    Button dockLogin = GalleryUi.button(this, "ログイン", () -> login.performClick());
-    loginButton = dockLogin;
-    Button dockSync = GalleryUi.primary(GalleryUi.button(this, "同期設定", () -> sync.performClick()));
-    Button dockMore = GalleryUi.button(this, "その他", () -> more.performClick());
-    root.addView(GalleryUi.dock(this, dockLogin, dockSync, dockMore));
+    View actions = actions(this, () -> login.performClick(), () -> sync.performClick(), () -> more.performClick());
+    loginButton = (Button)((LinearLayout)actions).getChildAt(0);
+    root.addView(actions);
     getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     setContentView(root);
+  }
+
+  private void setStatus(String message) {
+    status.setText(message);
+    status.setVisibility(View.VISIBLE);
+  }
+
+  static View actions(android.content.Context c, Runnable login, Runnable sync, Runnable more) {
+    Button[] buttons = { GalleryUi.button(c, "ログイン", login),
+        GalleryUi.button(c, "同期の設定", sync), GalleryUi.button(c, "接続と確認", more) };
+    View dock = GalleryUi.dock(c, buttons);
+    for (int i = 0; i < buttons.length; i++) {
+      AffordanceIcon icon = new AffordanceIcon(i + 2, GalleryUi.TEXT);
+      int size = GalleryUi.dp(c, 24); icon.setBounds(0, 0, size, size);
+      buttons[i].setCompoundDrawables(null, icon, null, null);
+      buttons[i].setCompoundDrawablePadding(GalleryUi.dp(c, 4));
+      buttons[i].setGravity(android.view.Gravity.CENTER);
+      buttons[i].setPadding(GalleryUi.dp(c,6), GalleryUi.dp(c,6), GalleryUi.dp(c,6), GalleryUi.dp(c,6));
+      buttons[i].setMinHeight(GalleryUi.dp(c,64));
+      buttons[i].setMinimumHeight(GalleryUi.dp(c,64));
+    }
+    dock.setContentDescription("クラウドの操作");
+    return dock;
   }
 
   private void diagnose() {
@@ -188,11 +210,11 @@ public final class CloudActivity extends DiagnosticActivity {
     final String cookies = CookieManager.getInstance().getCookie(url),
         agent = web.getSettings().getUserAgentString();
     if (cookies == null || cookies.isBlank()) {
-      status.setText("まずAmazonの画面でログインしてください。");
+      setStatus("まずAmazonの画面でログインしてください。");
       return;
     }
     check.setEnabled(false);
-    status.setText("写真一覧への読み取り接続を確認しています…");
+    setStatus("写真一覧への読み取り接続を確認しています…");
     worker.execute(
         () -> {
           String message;
@@ -244,7 +266,7 @@ public final class CloudActivity extends DiagnosticActivity {
               () -> {
                 if (isDestroyed()) return;
                 check.setEnabled(true);
-                status.setText(result);
+                setStatus(result);
                 if (found >= 0)
                   getSharedPreferences("settings", 0)
                       .edit()
@@ -265,7 +287,7 @@ public final class CloudActivity extends DiagnosticActivity {
     final String cookies = CookieManager.getInstance().getCookie(ORIGIN + "/drive/v1/nodes");
     final String agent = web.getSettings().getUserAgentString();
     if (cookies == null || cookies.isBlank()) {
-      status.setText("先にAmazonへログインしてください。");
+      setStatus("先にAmazonへログインしてください。");
       return;
     }
     verify.setEnabled(false);
@@ -287,7 +309,7 @@ public final class CloudActivity extends DiagnosticActivity {
                   if (isDestroyed()) return;
                   verify.setEnabled(true);
                   if (photos.isEmpty()) {
-                    status.setText("検証するRAWがありません。");
+                    setStatus("検証するRAWがありません。");
                     return;
                   }
                   new GalleryUi.Sheet(this)
@@ -304,7 +326,7 @@ public final class CloudActivity extends DiagnosticActivity {
                 () -> {
                   if (!isDestroyed()) {
                     verify.setEnabled(true);
-                    status.setText("端末のRAWを読み取れませんでした。");
+                    setStatus("端末のRAWを読み取れませんでした。");
                   }
                 });
           }
@@ -332,7 +354,7 @@ public final class CloudActivity extends DiagnosticActivity {
   private void verifyPhoto(
       PhotoRepository.Photo photo, String cookies, String agent, boolean uploading) {
     if (!SyncEngine.RUNNING.compareAndSet(false, true)) {
-      status.setText("自動同期が実行中です。完了後に検証してください。");
+      setStatus("自動同期が実行中です。完了後に検証してください。");
       return;
     }
     verify.setEnabled(false);
@@ -350,7 +372,7 @@ public final class CloudActivity extends DiagnosticActivity {
                 text ->
                     runOnUiThread(
                         () -> {
-                          if (!isDestroyed()) status.setText(text);
+                          if (!isDestroyed()) setStatus(text);
                         });
             result =
                 uploading
@@ -378,7 +400,7 @@ public final class CloudActivity extends DiagnosticActivity {
                 loginButton.setEnabled(true);
                 logoutButton.setEnabled(true);
                 check.setEnabled(true);
-                status.setText(message);
+                setStatus(message);
               });
         });
   }
