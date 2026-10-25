@@ -26,6 +26,7 @@ public final class GalleryIndexJob extends JobService {
           boolean retry = false;
           try {
             GalleryIndex.rebuild(getApplicationContext(), false, cancel::get);
+            PreviewPreparationJob.schedule(this);
           } catch (Exception e) {
             retry = true;
           }

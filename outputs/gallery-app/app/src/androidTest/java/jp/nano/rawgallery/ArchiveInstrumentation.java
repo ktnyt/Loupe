@@ -13,6 +13,7 @@ import org.json.JSONObject;
  * source.
  */
 public final class ArchiveInstrumentation extends Instrumentation {
+  private boolean burstTest, realBurstTest;
   private boolean diagnosticTest;
   private boolean tagTest, lifecycleTest;
   private boolean relatedTest;
@@ -25,6 +26,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    burstTest = args != null && "burst".equals(args.getString("mode"));
+    realBurstTest = args != null && "burst-real".equals(args.getString("mode"));
     diagnosticTest = args != null && "diagnostics".equals(args.getString("mode"));
     lifecycleTest = args != null && "tag-lifecycle".equals(args.getString("mode"));
     tagTest = args != null && "tags".equals(args.getString("mode"));
@@ -43,6 +46,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     File restored = null;
     try {
       Context context = getTargetContext();
+      if (burstTest || realBurstTest) { results.putString("stream", BurstPreviewChecks.run(this, realBurstTest)); finish(-1, results); return; }
       if (diagnosticTest) {
         results.putString("stream", DiagnosticChecks.run(this)); finish(-1, results); return;
       }

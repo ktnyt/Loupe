@@ -73,7 +73,7 @@ public final class MainActivity extends DiagnosticActivity {
           if (!main.hasCallbacks(mediaChanged)) main.postDelayed(mediaChanged, 300);
         }
       };
-  private int generation = 0;
+  private volatile int generation = 0;
   private Future<?> viewing;
   private boolean detail = false;
   private boolean rankingScreen = false;
@@ -286,11 +286,15 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private void previewInto(ImageView image, PhotoRepository.Photo photo, int size) {
+    previewInto(image, photo, size, success -> {});
+  }
+
+  private void previewInto(ImageView image, PhotoRepository.Photo photo, int size, java.util.function.Consumer<Boolean> complete) {
     long request = DiagnosticLog.id();
     DiagnosticLog.event("image.request", request, "burst", burstRequest,
         "photo", DiagnosticLog.photo(photo), "size", size, "format", photo.isJpeg() ? "JPEG" : "RAW");
     String key = photo.uri + ":" + photo.modified + ":" + size;
-    image.setTag(key);
+    image.setTag(request);
     image.setImageDrawable(null);
     int token = generation;
     Bitmap cached = thumbs.get(key);
@@ -299,27 +303,31 @@ public final class MainActivity extends DiagnosticActivity {
       if (image instanceof DiagnosticImageView) ((DiagnosticImageView) image).bound(request);
       image.setImageBitmap(cached);
       DiagnosticLog.event("image.bind", request);
+      complete.accept(true);
       return;
     }
     long previous = DiagnosticLog.use(request);
     images.execute(() -> {
+      if (token != generation) { DiagnosticLog.event("image.discard", request); return; }
       try {
         Bitmap bitmap = PhotoRepository.bitmap(repository.preview(photo), size);
         thumbs.put(key, bitmap);
         DiagnosticLog.event("image.post", request);
         main.post(() -> {
-          if (!isDestroyed() && token == generation && key.equals(image.getTag())) {
+          if (!isDestroyed() && token == generation && Long.valueOf(request).equals(image.getTag())) {
             if (image instanceof DiagnosticImageView) ((DiagnosticImageView) image).bound(request);
             image.setImageBitmap(bitmap);
             DiagnosticLog.event("image.bind", request);
+            complete.accept(true);
           } else DiagnosticLog.event("image.discard", request);
         });
       } catch (Exception e) {
         DiagnosticLog.event("image.fail", request, "error", e.getClass().getSimpleName());
         main.post(() -> {
-          if (!isDestroyed() && token == generation && key.equals(image.getTag())) {
+          if (!isDestroyed() && token == generation && Long.valueOf(request).equals(image.getTag())) {
             image.setContentDescription(photo.name + "、プレビューを読み込めませんでした");
             DiagnosticLog.event("image.failure_applied", request);
+            complete.accept(false);
           } else DiagnosticLog.event("image.discard", request);
         });
       }
@@ -360,12 +368,21 @@ public final class MainActivity extends DiagnosticActivity {
     LinearLayout strip = row();
     strip.setGravity(Gravity.CENTER);
     strip.setPadding(dp(12), dp(16), dp(12), dp(16));
-    List<ImageView> thumbnails = new ArrayList<>();
+    List<PhotoRepository.Photo> members = new ArrayList<>();
+    for (int member : burstMembers) members.add(photos.get(member));
+    int screenGeneration = generation;
+    TextView loading = label("", 12, MUTED);
+    heading.addView(loading);
+    Button retry = button("読み込めなかった写真を再試行", () -> {});
+    final Runnable[] selection = new Runnable[1];
+    BurstPreviews previews = new BurstPreviews(this, hero, stage, strip, loading, retry,
+        members, this::previewInto, () -> screenGeneration == generation && !isDestroyed(),
+        position -> { burstPosition = position; selection[0].run(); });
     Runnable update = () -> {
       DiagnosticLog.event("burst.select", burstRequest, "position", burstPosition);
       int member = burstMembers.get(burstPosition);
       PhotoRepository.Photo photo = photos.get(member);
-      previewInto(hero, photo, 1600);
+      previews.select(burstPosition);
       hero.setContentDescription(photo.name + "、タップで写真を拡大");
       String status = "順位が未決定";
       try {
@@ -376,34 +393,12 @@ public final class MainActivity extends DiagnosticActivity {
       rank.setText(status);
       rank.setTextColor(status.contains("位") ? 0xfff5b947 : TEXT);
       subtitle.setText((burstPosition + 1) + " / " + burstMembers.size() + "枚");
-      for (int i = 0; i < thumbnails.size(); i++) {
-        ImageView thumbnail = thumbnails.get(i);
-        android.graphics.drawable.GradientDrawable border = GalleryUi.shape(this, Color.TRANSPARENT, 6);
-        border.setStroke(dp(2), i == burstPosition ? GalleryUi.ACCENT : Color.TRANSPARENT);
-        thumbnail.setForeground(border);
-        thumbnail.setSelected(i == burstPosition);
-        thumbnail.setStateDescription(i == burstPosition ? "表示中" : "");
-      }
     };
-    for (int i = 0; i < burstMembers.size(); i++) {
-      final int position = i;
-      PhotoRepository.Photo photo = photos.get(burstMembers.get(i));
-      ImageView thumbnail = new ImageView(this);
-      thumbnail.setScaleType(ImageView.ScaleType.CENTER_CROP);
-      thumbnail.setPadding(dp(3), dp(3), dp(3), dp(3));
-      thumbnail.setContentDescription((i + 1) + "枚目、" + photo.name);
-      thumbnail.setBackground(GalleryUi.shape(this, PANEL, 6));
-      thumbnail.setClipToOutline(true);
-      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(64), dp(56));
-      lp.setMargins(dp(3), 0, dp(3), 0);
-      strip.addView(thumbnail, lp);
-      thumbnails.add(thumbnail);
-      thumbnail.setOnClickListener(v -> { burstPosition = position; update.run(); });
-      previewInto(thumbnail, photo, 200);
-    }
+    selection[0] = update;
     stripScroll.addView(strip);
     int controlsStart = root.getChildCount();
     root.addView(stripScroll);
+    root.addView(retry);
     LinearLayout controls = vertical();
     controls.setPadding(dp(16), dp(8), dp(16), dp(20));
     Button sort = GalleryUi.neutralPrimary(button(sortLabel(), this::openRanking));
@@ -703,9 +698,17 @@ public final class MainActivity extends DiagnosticActivity {
     new GalleryUi.Sheet(this)
         .setTitle("設定とその他の操作")
         .setItems(
-            new String[] {"クラウドと同期", "共有先の設定", "連写のまとめ方", "写真へのアクセス", "再読み込み"},
+            new String[] {"クラウドと同期", "共有先の設定", "連写のまとめ方", "写真へのアクセス", "再読み込み", "写真のプレビュー"},
             (d, which) -> {
               switch (which) {
+                case 5:
+                  new GalleryUi.Sheet(this).setTitle("写真のプレビュー")
+                      .setMessage(PreviewPreparationJob.status(this))
+                      .setPositiveButton("もう一度準備する", (dialog, w) -> {
+                        PreviewPreparationJob.schedule(this);
+                        toast("Loupeを閉じると準備を再開します");
+                      }).setNegativeButton("閉じる", null).show();
+                  break;
                 case 0:
                   startActivity(new Intent(this, CloudActivity.class));
                   break;

@@ -99,12 +99,16 @@ public final class PhotoRepository {
 
   private final Context context;
   private final File previews;
+  private final File prepared;
+  private static final Object PREVIEW_LOCK = new Object();
 
   public PhotoRepository(Context c) {
     context = c.getApplicationContext();
     DiagnosticLog.init(context);
     previews = new File(context.getCacheDir(), "previews");
     previews.mkdirs();
+    prepared = new File(context.getFilesDir(), "prepared-previews");
+    prepared.mkdirs();
   }
 
   public List<Photo> scan(String filter) throws IOException {
@@ -247,10 +251,46 @@ public final class PhotoRepository {
     }
   }
 
+  static String previewKey(Photo p) throws IOException {
+    return digest("raw-preview-v2:" + p.uri + ":" + p.size + ":" + p.modified);
+  }
+
+  boolean prepared(Photo p) throws IOException {
+    String key = previewKey(p);
+    return new File(prepared, key + ".webp").isFile()
+        && new File(prepared, key + ".webp.json").isFile();
+  }
+
+  boolean prepare(Photo p, java.util.function.BooleanSupplier cancelled) throws IOException {
+    synchronized (PREVIEW_LOCK) {
+      if (cancelled.getAsBoolean()) return false;
+      DiagnosticLog.event("preparation.item_start", 0, "photo", DiagnosticLog.photo(p));
+      previewLocked(p);
+      DiagnosticLog.event("preparation.item_end", 0, "photo", DiagnosticLog.photo(p));
+      return true;
+    }
+  }
+
+  // Run only off the UI thread. Remove derived images whose indexed source/version is gone.
+  void prunePrepared(java.util.Set<String> keep, java.util.function.BooleanSupplier cancelled) {
+    File[] files = prepared.listFiles();
+    if (files == null) return;
+    for (File file : files) {
+      if (cancelled.getAsBoolean()) return;
+      String name = file.getName();
+      if (!name.endsWith(".webp") && !name.endsWith(".webp.json")) continue;
+      String key = name.substring(0, name.indexOf(".webp"));
+      if (!keep.contains(key)) synchronized (PREVIEW_LOCK) {
+        if (cancelled.getAsBoolean()) return;
+        file.delete();
+      }
+    }
+  }
+
   public Preview preview(Photo p) throws IOException {
     try (DiagnosticLog.Scope span = DiagnosticLog.span("repository.preview")) {
       DiagnosticLog.event("repository.lock_wait", span.id);
-      synchronized (this) {
+      synchronized (PREVIEW_LOCK) {
         DiagnosticLog.event("repository.lock_acquired", span.id);
         try { return previewLocked(p); }
         catch (IOException | RuntimeException e) {
@@ -270,7 +310,15 @@ public final class PhotoRepository {
       }
     }
     String key = digest("raw-preview-v2:" + p.uri + ":" + p.size + ":" + p.modified);
-    File webp = new File(previews, key + ".webp"), meta = new File(previews, key + ".webp.json");
+    File webp = new File(prepared, key + ".webp"), meta = new File(prepared, key + ".webp.json");
+    // Reuse existing cache without regenerating it; the background pass promotes it.
+    if (!webp.isFile() || !meta.isFile()) {
+      File old = new File(previews, key + ".webp"), oldMeta = new File(previews, key + ".webp.json");
+      if (old.isFile() && oldMeta.isFile()) {
+        java.nio.file.Files.move(old.toPath(), webp.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        java.nio.file.Files.move(oldMeta.toPath(), meta.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+      }
+    }
     DiagnosticLog.event("cache.compact", DiagnosticLog.parent(), "hit", webp.isFile() && meta.isFile());
     if (webp.isFile() && meta.isFile()) {
       try {
@@ -302,7 +350,6 @@ public final class PhotoRepository {
       source.file.delete();
       new File(previews, key + ".json").delete();
     }
-    trim(webp);
     return compact;
   }
 
@@ -331,7 +378,7 @@ public final class PhotoRepository {
   public Preview sourcePreview(Photo p) throws IOException {
     try (DiagnosticLog.Scope span = DiagnosticLog.span("repository.sourcePreview")) {
       DiagnosticLog.event("repository.lock_wait", span.id);
-      synchronized (this) {
+      synchronized (PREVIEW_LOCK) {
         DiagnosticLog.event("repository.lock_acquired", span.id);
         try { return sourcePreviewLocked(p); }
         catch (IOException | RuntimeException e) {
@@ -480,11 +527,12 @@ public final class PhotoRepository {
 
   private void trimFiles(File keep) {
     File[] files =
-        previews.listFiles((dir, name) -> (name.endsWith(".jpg") || name.endsWith(".webp")));
+        previews.listFiles((dir, name) -> name.endsWith(".jpg"));
     if (files == null) return;
-    Arrays.sort(files, Comparator.comparingLong(File::lastModified));
     long total = 0;
     for (File f : files) total += f.length();
+    if (total <= 256L * 1024 * 1024) return;
+    Arrays.sort(files, Comparator.comparingLong(File::lastModified));
     for (File f : files)
       if (total > 256L * 1024 * 1024 && !f.equals(keep)) {
         long n = f.length();
