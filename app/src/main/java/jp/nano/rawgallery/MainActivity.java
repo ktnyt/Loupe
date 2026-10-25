@@ -725,7 +725,7 @@ public final class MainActivity extends DiagnosticActivity {
       GalleryUi.Sheet sheet = new GalleryUi.Sheet(this);
       sheet
           .setTitle("ソート")
-          .setView(status(StatusView.Symbol.PAUSED,result.unresolved.size()+"組","順位が未決定の連写があります。ソートした後に選択画面へ戻れます。"))
+          .setView(status(StatusView.Symbol.PAUSED,result.unresolved.size()+"組",result.unresolved.size()+"組の順位がまだ決まっていません。ソートした後に選択画面へ戻れます。"))
           .setPositiveButton(
               "ソート",
               (d, w) -> {

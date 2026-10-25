@@ -16,6 +16,7 @@ final class StatusView extends View {
   private String numbers="", spoken="";
   private boolean shown, loading, marker, transientResult;
   private long started, visibleAt;
+  private final Typeface numberTypeface=Typeface.create("sans-serif-medium",Typeface.NORMAL);
   private int revision;
   private Runnable recovery;
   private String recoveryName="";
@@ -28,14 +29,14 @@ final class StatusView extends View {
   void show(Symbol value,String numeric,String description,Runnable action,String actionName) {
     revision++;animate().cancel();setAlpha(1);loading=false;transientResult=false;
     symbol=value;numbers=numeric==null?"":numeric;spoken=description;recovery=action;
-    recoveryName=actionName==null?"":actionName;marker=action!=null||!numbers.isEmpty()||companion!=null;
+    recoveryName=action==null||actionName==null?"":actionName;marker=action!=null||!numbers.isEmpty()||companion!=null;
     setOnClickListener(action==null?null:v->action.run());setClickable(action!=null);setFocusable(action!=null);
     shown=true;setVisibility(VISIBLE);publish();requestLayout();invalidate();
   }
   void show(Symbol value,String description){show(value,"",description,null,"");}
   void companion(Symbol value){companion=value;marker=value!=null||recovery!=null||!numbers.isEmpty();requestLayout();invalidate();}
   void begin(String description) {
-    clear();loading=true;started=SystemClock.uptimeMillis();spoken=description;symbol=Symbol.RUNNING;
+    clear();loading=true;started=SystemClock.uptimeMillis();spoken=description;symbol=Symbol.RUNNING;requestLayout();
     int token=revision;
     postDelayed(()->{if(token!=revision||!loading)return;shown=true;visibleAt=SystemClock.uptimeMillis();setVisibility(VISIBLE);publish();invalidate();},400);
     postDelayed(()->{if(token!=revision||!loading)return;marker=true;requestLayout();invalidate();},8000);
@@ -59,22 +60,22 @@ final class StatusView extends View {
   private void publish(){String value=spoken+(recoveryName.isEmpty()?"":"。"+recoveryName);if(!android.text.TextUtils.equals(getContentDescription(),value))setContentDescription(value);}
   @Override public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info){super.onInitializeAccessibilityNodeInfo(info);if(recovery!=null){info.setClassName("android.widget.Button");info.addAction(new AccessibilityNodeInfo.AccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK,recoveryName));}}
   @Override protected void onDetachedFromWindow(){revision++;animate().cancel();super.onDetachedFromWindow();}
-  @Override protected void onMeasure(int w,int h){paint.setTextSize(13*getResources().getDisplayMetrics().scaledDensity);String measured=numbers.isEmpty()&&loading&&marker?"999分":numbers;int width=dp(companion==null?48:68)+(measured.isEmpty()?0:(int)paint.measureText(measured)+dp(8));setMeasuredDimension(resolveSize(width,w),resolveSize(dp(48),h));}
+  @Override protected void onMeasure(int w,int h){paint.setTypeface(numberTypeface);paint.setTextSize(13*getResources().getDisplayMetrics().scaledDensity);String measured=numbers.isEmpty()&&loading?"999分":numbers;int width=dp(companion==null?48:68)+(measured.isEmpty()?0:(int)paint.measureText(measured)+dp(8));setMeasuredDimension(resolveSize(width,w),resolveSize(dp(48),h));}
   @Override protected void onDraw(Canvas original){
     if(!shown)return;float density=getResources().getDisplayMetrics().density;
     Canvas c=original;int save=c.save();c.scale(density,density);
     float w=getWidth()/density,h=getHeight()/density;
     String value=numbers;
     if(loading&&marker&&value.isEmpty()){long mins=(SystemClock.uptimeMillis()-started)/60000;value=mins==0?"<1分":mins+"分";}
-    paint.setTextSize(13*getResources().getConfiguration().fontScale);paint.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));
+    paint.setTextSize(13*getResources().getConfiguration().fontScale);paint.setTypeface(numberTypeface);
     float textWidth=value.isEmpty()?0:paint.measureText(value)+4;
     float content=20+(companion==null?0:24)+textWidth;
-    float left=(w-content)/2;
-    if(marker){paint.setStyle(Paint.Style.FILL);paint.setColor(0xff1f1f22);c.drawRoundRect(left-4,h/2-14,left+content+8,h/2+14,14,14,paint);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(error(symbol)?1.5f:1);paint.setColor(error(symbol)?0xffff8a7a:0xff3a3a3f);c.drawRoundRect(left-4,h/2-14,left+content+8,h/2+14,14,14,paint);}
-    if(transientResult){paint.setStyle(Paint.Style.FILL);paint.setColor(0xff26262a);c.drawCircle(w/2,h/2,20,paint);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1);paint.setColor(0xff3a3a3f);c.drawCircle(w/2,h/2,20,paint);}
-    if(companion!=null){glyph(c,paint,companion,left,h/2-10,20,0xffa0a0a4,0);left+=24;}
+    float left=(w-content)/2-(marker?2:0);
+    if(marker){paint.setStyle(Paint.Style.FILL);paint.setColor(0xff1f1f22);c.drawRoundRect(left-4,h/2-14,left+content+8,h/2+14,14,14,paint);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(error(symbol)?1.5f:1);paint.setColor(error(symbol)?0xffff8a7a:0xff3a3a3f);float inset=paint.getStrokeWidth()/2;c.drawRoundRect(left-4+inset,h/2-14+inset,left+content+8-inset,h/2+14-inset,14-inset,14-inset,paint);}
+    if(transientResult){paint.setStyle(Paint.Style.FILL);paint.setColor(0xff26262a);c.drawCircle(w/2,h/2,20,paint);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1);paint.setColor(0xff3a3a3f);c.drawCircle(w/2,h/2,19.5f,paint);}
+    if(companion!=null){glyph(c,paint,companion,left+1,h/2-9,18,0xffa0a0a4,0);left+=24;}
     float angle=symbol==Symbol.RUNNING?(SystemClock.uptimeMillis()%1000)*.36f:0;
-    if(symbol==Symbol.EMPTY)glyph(c,paint,symbol,w/2-24,h/2-24,48,GalleryUi.MUTED,0);else glyph(c,paint,symbol,left,h/2-10,20,error(symbol)?0xffff8a7a:GalleryUi.TEXT,angle);
+    if(symbol==Symbol.EMPTY)glyph(c,paint,symbol,w/2-24,h/2-24,48,GalleryUi.MUTED,0);else glyph(c,paint,symbol,left+(marker?1:0),h/2-(marker?9:10),marker?18:20,error(symbol)?0xffff8a7a:GalleryUi.TEXT,angle);
     if(!value.isEmpty()){paint.setStyle(Paint.Style.FILL);paint.setColor(GalleryUi.TEXT);c.drawText(value,left+24,h/2-(paint.ascent()+paint.descent())/2,paint);}
     c.restoreToCount(save);if(symbol==Symbol.RUNNING&&isShown())postInvalidateDelayed(50);
   }
@@ -91,7 +92,7 @@ final class StatusView extends View {
       case PARTIAL:c.drawCircle(11,11,8.5f,p);line(c,p,7.3f,11.2f,9.8f,13.7f,14.6f,8.7f);p.setStyle(Paint.Style.FILL);p.setColor(GalleryUi.BG);c.drawCircle(18.5f,18.5f,5,p);p.setStyle(Paint.Style.STROKE);p.setColor(0xffff8a7a);line(c,p,18.5f,15.8f,18.5f,18.8f);c.drawPoint(18.5f,21,p);break;
       case FAILED:line(c,p,12,4,21,19.5f,3,19.5f,12,4);line(c,p,12,10,12,14.5f);c.drawPoint(12,17.2f,p);break;
       case AUTH:c.drawRoundRect(5.5f,10.5f,18.5f,20,2,2,p);c.drawArc(8.5f,4.5f,15.5f,11.5f,180,180,false,p);line(c,p,8.5f,8,8.5f,10.5f);line(c,p,15.5f,8,15.5f,10.5f);break;
-      case UNKNOWN:p.setPathEffect(new DashPathEffect(new float[]{2.2f,2.2f},0));c.drawCircle(12,12,8.5f,p);p.setPathEffect(null);c.drawArc(9.5f,7.5f,14.5f,12.5f,190,250,false,p);line(c,p,12,12.5f,12,14);c.drawPoint(12,16.6f,p);break;
+      case UNKNOWN:p.setPathEffect(new DashPathEffect(new float[]{2.2f,2.2f},0));c.drawCircle(12,12,8.5f,p);p.setPathEffect(null);Path question=new Path();question.moveTo(9.8f,9.6f);question.arcTo(9.7999403f,7.2834243f,14.3999403f,11.8834243f,179.5870769f,247.3756221f,false);question.cubicTo(12.3f,12,12,12.5f,12,13.2f);question.lineTo(12,13.6f);question.moveTo(12,16.6f);question.lineTo(12,16.7f);c.drawPath(question,p);break;
       case EMPTY:p.setPathEffect(new DashPathEffect(new float[]{2,2},0));c.drawRoundRect(3.5f,4.5f,20.5f,19.5f,3,3,p);p.setPathEffect(null);break;
       case CANCELLED:c.drawCircle(12,12,8.5f,p);p.setStyle(Paint.Style.FILL);c.drawRoundRect(9,9,15,15,1,1,p);break;
       case PREVIEW:for(int a=0;a<2;a++)for(int b=0;b<2;b++)c.drawRoundRect(4+a*9,4+b*9,11+a*9,11+b*9,1,1,p);break;

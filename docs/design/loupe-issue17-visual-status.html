@@ -536,6 +536,7 @@ table.t code{background:#1C1C1F;padding:1px 5px;border-radius:4px;font-size:12px
   document.getElementById('oFast').addEventListener('change', (e) => { O.fast = e.target.checked; });
   window.__l17 = { O: O, setScene: setScene, render: render, get st() { return st; }, scr: (v) => { O.scr = v; sceneButtons(); setScene(SC[v][0][0]); } };
   renderGal(); renderAssign(); sceneButtons(); setScene('short');
+const fixture=document.createElement('section');fixture.innerHTML='<h2>Android照合用・状態部品</h2><div id="status-fixture" style="width:320px;--k:1.3;background:#0F0F10">'+['unknown','wait','pause','done','partial','fail','auth','preview'].map(k=>'<div style="height:48px;display:flex;align-items:center;justify-content:center">'+(k==='partial'?mk(gl(k)+'<span>3</span>',false,'一部失敗'):k==='fail'?mk(gl(k,'fail'),true,'失敗','retry'):gl(k))+'</div>').join('')+'</div>';document.querySelector('.wrap').appendChild(fixture);
 })();
 </script>
 </body>

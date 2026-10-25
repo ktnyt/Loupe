@@ -33,6 +33,16 @@ final class VisualStatusChecks {
       main(t,()->{if(v[0].getVisibility()!=View.VISIBLE)throw new AssertionError("failure disappeared");AccessibilityNodeInfo node=v[0].createAccessibilityNodeInfo();if(!node.isClickable()||!node.getContentDescription().toString().contains("再試行"))throw new AssertionError("recovery AX");if(!v[0].performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK,null)||clicks[0]!=1)throw new AssertionError("recovery action");v[0].result(StatusView.Symbol.COMPLETE,"保存しました");return true;});
       Thread.sleep(1200);
       main(t,()->{if(v[0].getVisibility()==View.VISIBLE)throw new AssertionError("success remains");return true;});
+      main(t,()->{v[0].begin("8秒を超える処理");return true;});
+      Thread.sleep(500);final int[] initialBounds={v[0].getWidth(),v[0].getHeight()};
+      Thread.sleep(7700);
+      main(t,()->{if(!(boolean)field(v[0],"marker")||v[0].getWidth()!=initialBounds[0]||v[0].getHeight()!=initialBounds[1])throw new AssertionError("8 second marker shifts layout");set(v[0],"started",SystemClock.uptimeMillis()-61000);v[0].invalidate();return true;});
+      // Advance only the elapsed-time origin; no claim of waiting a real minute.
+      Thread.sleep(100);
+      capture(t,a,v[0],v[0].getHeight(),"status-elapsed-minute");
+      main(t,()->{v[0].counts("3/12");v[0].describe("12枚中3枚");return true;});
+      capture(t,a,v[0],v[0].getHeight(),"status-known-count");
+      main(t,()->{v[0].clear();return true;});
       int cases=0;
       for(int width:new int[]{320,400})for(float scale:new float[]{1,1.3f}) {
         LinearLayout[] board={null};
@@ -46,7 +56,8 @@ final class VisualStatusChecks {
         });
         capture(t,a,board[0],board[0].getHeight(),"status-"+width+"-"+scale);cases++;
       }
-      return "PASS status delay (<400ms hidden), minimum 600ms, completion fade, stale clear, persistent failure, actual AX retry, transient result; "+cases+" real-device synthetic captures. No external transfer; TalkBack audio untested.\n";
+      String flows=VisualStatusFlowChecks.run(t,a);
+      return flows+"PASS status delay (<400ms hidden), minimum 600ms, completion fade, stale clear, persistent failure, actual AX retry, transient result, real 8s marker with stable bounds, simulated 61s elapsed origin and known count capture; "+cases+" real-device synthetic captures. No external transfer; TalkBack audio untested.\n";
     }finally{main(t,()->{a.finish();return true;});}
   }
 }

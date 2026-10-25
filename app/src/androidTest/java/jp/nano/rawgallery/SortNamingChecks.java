@@ -48,6 +48,7 @@ final class SortNamingChecks {
       AccessibilityNodeInfo root=t.getUiAutomation().getRootInActiveWindow();
       if(root!=null)for(AccessibilityNodeInfo n:root.findAccessibilityNodeInfosByText(text)){
         if(android.text.TextUtils.equals(text,n.getText())||android.text.TextUtils.equals(text,n.getContentDescription())){
+          if(click&&!n.isClickable())continue;
           if(click && !n.performAction(AccessibilityNodeInfo.ACTION_CLICK))throw new AssertionError("Cannot click "+text);
           t.waitForIdleSync();return;
         }
