@@ -41,14 +41,53 @@ public final class MainActivity extends DiagnosticActivity {
   private TextView subtitle;
   private ScrollingGrid grid, albumGridView;
   private LinearLayout listHeader;
-  private int albumScroll;
+  private int albumScroll, albumTop;
+  private boolean albumHeader = true, libraryAlbums = true;
+  private String allPhotosFilter = "すべて";
+  private int allPhotosRankFilter;
   private String shownGalleryKey;
-  private final Map<String, Integer> galleryScroll = new HashMap<>();
+  private final Map<String, GalleryPosition> galleryScroll = new HashMap<>();
 
   private void rememberGallery() {
-    if (!albumHome && !detail && grid != null && shownGalleryKey != null)
-      galleryScroll.put(shownGalleryKey, grid.firstCellPosition());
+    if (!albumHome && !detail && grid != null && grid.isAttachedToWindow()
+        && shownGalleryKey != null && !photos.isEmpty()) {
+      GalleryPosition position = GalleryPosition.capture(grid, photos, displayed);
+      if (position != null) galleryScroll.put(shownGalleryKey, position);
+    }
+    if (!albumHome && !detail && albumFolder == null && burstMembers == null) {
+      allPhotosFilter = filter; allPhotosRankFilter = rankFilter;
+    }
   }
+
+  private void rememberAlbums() {
+    if (albumHome && albumGridView != null && albumGridView.isAttachedToWindow()
+        && albumGridView.getChildCount() > 0) {
+      albumScroll = albumGridView.firstCellPosition();
+      albumTop = albumGridView.getChildAt(0).getTop();
+      albumHeader = albumGridView.getFirstVisiblePosition() < albumGridView.getHeaderViewsCount();
+    }
+  }
+
+  private void restoreGallery() {
+    GalleryPosition position = galleryScroll.get(shownGalleryKey);
+    if (position != null && !displayed.isEmpty()) position.restore(grid, photos, displayed);
+    else grid.selectCell(0);
+  }
+
+  private void switchLibraryTab(boolean albums) {
+    if (selecting) return;
+    rememberGallery(); rememberAlbums();
+    DiagnosticLog.event("library.tab", 0, "albums", albums);
+    libraryAlbums = albums;
+    if (albums) albumHome();
+    else {
+      albumFolder = null; filter = allPhotosFilter; rankFilter = allPhotosRankFilter;
+      burstMembers = null; rankCache.clear(); photos = new ArrayList<>(); bundles = new ArrayList<>();
+      gallery(); loadIndexedPhotos();
+    }
+  }
+
+  private void returnLibraryRoot() { switchLibraryTab(libraryAlbums); }
 
   private boolean selecting, bestOnly = true, rankingFromSelection;
   private final Set<String> selectedPhotos = new LinkedHashSet<>();
@@ -95,6 +134,11 @@ public final class MainActivity extends DiagnosticActivity {
     rankingStore = new RankingStore(this);
     sharePreparation = new SharePreparation(this, repository);
     targets = ShareTargets.load(this);
+    if (state != null) {
+      libraryAlbums = state.getBoolean("libraryAlbums", state.getBoolean("home", true));
+      allPhotosFilter = state.getString("allPhotosFilter", "すべて");
+      allPhotosRankFilter = state.getInt("allPhotosRankFilter", 0);
+    }
     if (state != null && !state.getBoolean("home", true)) {
       pendingRestore = state;
       albumFolder = state.getString("album");
@@ -117,6 +161,10 @@ public final class MainActivity extends DiagnosticActivity {
   @Override
   protected void onSaveInstanceState(Bundle state) {
     super.onSaveInstanceState(state);
+    rememberGallery(); rememberAlbums();
+    state.putBoolean("libraryAlbums", libraryAlbums);
+    state.putString("allPhotosFilter", allPhotosFilter);
+    state.putInt("allPhotosRankFilter", allPhotosRankFilter);
     state.putBoolean("home", albumHome);
     state.putString("album", albumFolder);
     state.putString("camera", filter);
@@ -180,7 +228,7 @@ public final class MainActivity extends DiagnosticActivity {
   private void gallery() {
     DiagnosticLog.event("screen.gallery", burstRequest);
     rememberGallery();
-    if (albumHome && albumGridView != null) albumScroll = albumGridView.firstCellPosition();
+    rememberAlbums();
     albumHome = false;
     if (viewing != null) viewing.cancel(true);
     detail = false;
@@ -195,7 +243,7 @@ public final class MainActivity extends DiagnosticActivity {
     Button navigate = button(selecting ? "選択を終了" : "戻る", () -> {
       if (selecting) endSelection();
       else if (burstMembers != null) { burstMembers = null; gallery(); }
-      else albumHome();
+      else returnLibraryRoot();
     });
     LinearLayout heading = vertical();
     TextView title = label(burstMembers != null ? "連写" : albumFolder == null ? "すべての写真"
@@ -224,7 +272,7 @@ public final class MainActivity extends DiagnosticActivity {
     adapter = new GalleryAdapter();
     grid.setCells(adapter);
     shownGalleryKey = albumFolder + "|" + filter + "|" + rankFilter + "|" + String.valueOf(burstMembers);
-    grid.selectCell(galleryScroll.getOrDefault(shownGalleryKey, 0));
+    restoreGallery();
     grid.onCellClick(
         (p, v, pos, id) -> {
           if (selecting) {
@@ -267,10 +315,17 @@ public final class MainActivity extends DiagnosticActivity {
     int controlsStart = root.getChildCount();
     addRankFilters();
     if (selecting) { selectionControls(); dock(navigate); }
-    else dock(navigate, button("選択", () -> {
-      if (!photos.isEmpty()) { selecting = true; bestOnly = true; gallery(); }
-    }), button("タグ", () -> openTags(null)), button("その他", this::photoMenu));
+    else {
+      Button select = button("選択", () -> {
+        if (!photos.isEmpty()) { selecting = true; bestOnly = true; gallery(); }
+      });
+      if (albumFolder == null && burstMembers == null)
+        dock(select, button("タグ", () -> openTags(null)), button("その他", this::photoMenu));
+      else dock(navigate, select, button("タグ", () -> openTags(null)), button("その他", this::photoMenu));
+    }
     GalleryUi.bottomControls(root, controlsStart);
+    if (albumFolder == null && burstMembers == null)
+      root.addView(new LibraryTabs(this, false, !selecting, this::switchLibraryTab));
     if (selecting) updateSelection();
     else if (!photos.isEmpty()) updateCount();
   }
@@ -555,6 +610,7 @@ public final class MainActivity extends DiagnosticActivity {
       final int choice = i;
       Button chip = GalleryUi.chip(this, names[i], rankFilter == i, () -> {
         if (photos.isEmpty()) return;
+        rememberGallery();
         rankFilter = choice;
         gallery();
       });
@@ -707,6 +763,7 @@ public final class MainActivity extends DiagnosticActivity {
             Arrays.asList(values).indexOf(filter),
             (d, which) -> {
               d.dismiss();
+              rememberGallery();
               filter = values[which];
               rankCache.clear();
               photos = new ArrayList<>();
@@ -811,7 +868,9 @@ public final class MainActivity extends DiagnosticActivity {
     DiagnosticLog.event("screen.albumHome", 0);
     rememberGallery();
     if (viewing != null) viewing.cancel(true);
+    rememberAlbums();
     albumHome = true;
+    libraryAlbums = true;
     detail = false;
     rankingScreen = false;
     burstMembers = null;
@@ -825,20 +884,13 @@ public final class MainActivity extends DiagnosticActivity {
     subtitle = label("読み込み中…", 12, MUTED);
     addRecentPhotos();
     root.addView(top);
-    Button allPhotos = button("すべての写真  →", () -> {
-      albumFolder = null; filter = "すべて"; rankFilter = 0;
-      rankCache.clear(); photos = new ArrayList<>(); bundles = new ArrayList<>();
-      gallery(); loadIndexedPhotos();
-    });
-    allPhotos.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-    allPhotos.setPadding(dp(20), 0, dp(20), 0);
-
     subtitle.setPadding(dp(20), dp(4), dp(20), dp(8));
     root.addView(subtitle);
     collectListHeader();
     body = vertical();
     root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
-    dock(allPhotos, button("その他", this::galleryMenu));
+    dock(button("その他", this::galleryMenu));
+    root.addView(new LibraryTabs(this, true, true, this::switchLibraryTab));
     loadAlbums();
   }
 
@@ -931,6 +983,7 @@ public final class MainActivity extends DiagnosticActivity {
           for (GalleryIndex.Album album : albums) {
             if (java.util.Objects.equals(album.folder, albumFolder)) continue;
             carouselPhoto(cards, album.cover, album.name(), 100, () -> {
+              rememberGallery();
               albumFolder = album.folder; filter = "すべて"; rankFilter = 0;
               rankCache.clear(); photos = new ArrayList<>(); bundles = new ArrayList<>();
               gallery(); loadIndexedPhotos();
@@ -953,7 +1006,7 @@ public final class MainActivity extends DiagnosticActivity {
                 () -> {
                   if (isDestroyed() || !albumHome || token != generation) return;
                   subtitle.setText(albums.isEmpty() ? "写真の一覧を準備しています…" : albums.size() + " アルバム");
-                  if (albumGridView != null) albumScroll = albumGridView.firstCellPosition();
+                  rememberAlbums();
                   body.removeAllViews();
                   // ListView owns attached headers; update its adapter instead of reparenting one.
                   ScrollingGrid albumGrid = listHeader.getParent() instanceof ScrollingGrid
@@ -1014,9 +1067,10 @@ public final class MainActivity extends DiagnosticActivity {
                           return cell;
                         }
                       });
-                  albumGrid.selectCell(albumScroll);
+                  albumGrid.restoreCell(albumScroll, albumTop, albumHeader);
                   albumGrid.onCellClick(
                       (p, v, pos, id) -> {
+                        rememberAlbums();
                         albumFolder = albums.get(pos).folder;
                         filter = "すべて";
                         rankCache.clear();
@@ -1091,7 +1145,7 @@ public final class MainActivity extends DiagnosticActivity {
                   }
                   rebuildDisplayed();
                   adapter.notifyDataSetChanged();
-                  if (position == null) grid.selectCell(galleryScroll.getOrDefault(shownGalleryKey, 0));
+                  if (position == null) restoreGallery();
                   else position.restore(grid, photos, displayed);
                   subtitle.setText(
                       photos.isEmpty() ? "写真がありません。写真の一覧を更新中の場合はしばらくお待ちください。" : countText());
@@ -1453,7 +1507,7 @@ public final class MainActivity extends DiagnosticActivity {
     } else if (burstMembers != null) {
       burstMembers = null;
       gallery();
-    } else if (!albumHome) albumHome();
+    } else if (!albumHome && albumFolder != null) returnLibraryRoot();
     else super.onBackPressed();
   }
 
