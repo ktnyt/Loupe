@@ -436,7 +436,7 @@ public final class MainActivity extends DiagnosticActivity {
     LinearLayout controls = vertical();
     controls.setPadding(dp(16), dp(8), dp(16), dp(20));
     Button sort = GalleryUi.neutralPrimary(button(sortLabel(), this::openRanking));
-    controls.addView(sort, new LinearLayout.LayoutParams(-1, dp(52)));
+    controls.addView(sort, new LinearLayout.LayoutParams(-1, -2));
     LinearLayout secondary = row();
     secondary.setPadding(0, dp(8), 0, 0);
     secondary.addView(button("この写真を1位に", this::chooseCurrentBest), new LinearLayout.LayoutParams(0, -2, 1));
@@ -541,8 +541,8 @@ public final class MainActivity extends DiagnosticActivity {
   private String sortLabel() {
     try {
       PhotoRanking saved = rankingFor(burstMembers);
-      return saved.done() ? "順位の結果" : saved.decisions() > 0 ? "順位決めを再開" : "順位を決める";
-    } catch (Exception e) { return "順位を決める"; }
+      return saved.done() ? "ソート結果" : saved.decisions() > 0 ? "ソートを再開" : "ソート";
+    } catch (Exception e) { return "ソート"; }
   }
 
   private void addRankFilters() {
@@ -674,9 +674,9 @@ public final class MainActivity extends DiagnosticActivity {
       GalleryUi.Sheet sheet = new GalleryUi.Sheet(this);
       sheet
           .setTitle("順位が未決定の連写があります")
-          .setMessage(result.unresolved.size() + "組の順位がまだ決まっていません。順位を決めた後に選択画面へ戻れます。")
+          .setMessage(result.unresolved.size() + "組の順位がまだ決まっていません。ソートした後に選択画面へ戻れます。")
           .setPositiveButton(
-              "順位を決める",
+              "ソート",
               (d, w) -> {
                 selectionBurst = burstMembers == null ? null : new ArrayList<>(burstMembers);
                 rankingFromSelection = true;
@@ -1498,9 +1498,9 @@ public final class MainActivity extends DiagnosticActivity {
     top.setPadding(dp(16), dp(8), dp(16), dp(8));
     top.setMinimumHeight(dp(64));
 
-    top.addView(
-        label(ranking.done() ? "順位決定済み" : "順位を決める", 22, TEXT),
-        new LinearLayout.LayoutParams(0, -2, 1));
+    TextView sortHeading = label(ranking.done() ? "ソート結果" : "ソート", 22, TEXT);
+    sortHeading.setAccessibilityHeading(true);
+    top.addView(sortHeading, new LinearLayout.LayoutParams(0, -2, 1));
     top.addView(
         label(
             ranking.done()
@@ -1608,7 +1608,7 @@ public final class MainActivity extends DiagnosticActivity {
 
   private void changeRankingMode(boolean best) {
     if (ranking.bestOnly() == best) return;
-    new GalleryUi.Sheet(this).setTitle("順位の決め方を変更しますか？")
+    new GalleryUi.Sheet(this).setTitle("ソート方式を変更しますか？")
         .setMessage("この連写の結果と途中の判断を置き換え、最初から比較します。")
         .setPositiveButton("変更", (d, w) -> saveRanking(new PhotoRanking(ranking.ids, best ? "B:" : "A:")))
         .setNegativeButton("戻る", null).show();
@@ -1617,15 +1617,15 @@ public final class MainActivity extends DiagnosticActivity {
   private void rankingMenu() {
     new GalleryUi.Sheet(this)
         .setItems(
-            new String[] {"保留して一覧へ", "順位を付け直す"},
+            new String[] {"保留して一覧へ", "再ソート"},
             (d, choice) -> {
               if (choice == 0) leaveRanking();
               else
                 new GalleryUi.Sheet(this)
-                    .setTitle("この連写の順位を付け直しますか？")
+                    .setTitle("この連写を再ソートしますか？")
                     .setMessage("この連写の選択履歴を消して、最初から比較します。写真は変更しません。")
                     .setPositiveButton(
-                        "やり直す", (dialog, which) -> saveRanking(new PhotoRanking(ranking.ids, ranking.bestOnly() ? "B:" : "A:")))
+                        "再ソート", (dialog, which) -> saveRanking(new PhotoRanking(ranking.ids, ranking.bestOnly() ? "B:" : "A:")))
                     .setNegativeButton("戻る", null)
                     .show();
             })

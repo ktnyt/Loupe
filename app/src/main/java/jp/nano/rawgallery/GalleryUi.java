@@ -66,7 +66,7 @@ final class GalleryUi {
     switch (symbol) {
       case "戻る": case "選択": case "選択を終了": case "選択へ戻る": case "比較に戻る":
       case "写真一覧": case "連写一覧": case "その他": case "タグ": case "共有":
-      case "すべての写真": case "すべて選択": case "順位を決める": case "同じ順位":
+      case "すべての写真": case "すべて選択": case "ソート": case "ソートを再開": case "ソート結果": case "同じ順位":
       case "直前の操作を取り消す": case "拡大": case "前の写真": case "次の写真":
       case "同期設定": case "ログイン":
         ActionIcon icon = new ActionIcon(symbol, button.getResources().getDisplayMetrics().density);

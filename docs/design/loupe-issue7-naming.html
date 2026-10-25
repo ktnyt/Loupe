@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loupe Issue #7 名称の比較</title>
+<style>
+:root{--bg:#0B0B0C;--panel:#141416;--text:#EDEDEA;--muted:#A9A9A4;--line:#2A2A2E;--ok:#9FE0B5;--ng:#F2A7AB}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:"Noto Sans JP",system-ui,-apple-system,"Hiragino Sans",sans-serif;font-size:15px;line-height:1.6}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 20px 64px}
+h1{margin:0;font-size:24px;line-height:1.4;font-weight:600}
+.lead{margin:6px 0 0;color:var(--muted);font-size:14px}
+.controls{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:center;margin:18px 0 0}
+.controls .lb{color:var(--muted);font-size:13px;margin-right:6px}
+.seg{display:inline-flex;flex-wrap:wrap;background:#1C1C1F;border-radius:22px;padding:2px}
+.seg button{background:none;border:0;color:var(--text);font:inherit;font-size:13px;min-height:44px;padding:0 14px;border-radius:20px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:#EDEDEA;color:#111}
+label.tg{display:inline-flex;gap:8px;align-items:center;font-size:13px;min-height:44px;cursor:pointer}
+label.tg input{width:18px;height:18px;accent-color:#EDEDEA}
+.cols{display:flex;gap:28px;flex-wrap:wrap;margin-top:18px}
+.col{display:flex;flex-direction:column;gap:8px}
+.col h2{margin:0;font-size:15px;font-weight:600;display:flex;gap:8px;align-items:center}
+.tag{font-size:12px;padding:2px 8px;border-radius:6px;font-weight:600}
+.tag.old{background:#26262A;color:#C9C9C4}.tag.new{background:#1E3A2A;color:var(--ok)}
+/* 部品の表示枠（現行の値。色・形・寸法は変えない） */
+.dev{position:relative;width:var(--w);background:#0F0F10;color:#EDEDEA;outline:1px solid #2A2A2E;border-radius:20px;overflow:hidden;min-height:520px;display:flex;flex-direction:column}
+.dev .ph{height:200px;background:linear-gradient(160deg,#a9c3d8 0%,#e4eaec 55%,#97a197 56%,#69736a 100%);position:relative;flex-shrink:0}
+.dev .ph span{position:absolute;right:12px;bottom:12px;height:24px;padding:0 8px;border-radius:12px;background:rgba(0,0,0,.62);color:#fff;font-size:12px;line-height:24px}
+.dev .hd{padding:16px 16px 8px;display:flex;flex-direction:column;gap:2px}
+.dev .hd b{font-size:calc(20px*var(--k));line-height:1.4;font-weight:600}
+.dev .hd small{font-size:calc(13px*var(--k));line-height:1.4;color:#A9A9A4}
+.dev .body{flex:1;padding:0 16px 16px;display:flex;flex-direction:column;justify-content:flex-end;gap:8px}
+.primary{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;width:100%;min-height:64px;height:auto;padding:6px;border:0;border-radius:26px;background:#EDEDEA;color:#111111;font:inherit;font-size:calc(13px*var(--k));line-height:calc(24px*var(--k));font-weight:500;cursor:pointer;text-align:center}
+.primary svg{width:24px;height:24px;flex-shrink:0}
+.sub{display:flex;align-items:center;justify-content:center;width:100%;min-height:48px;padding:6px 16px;border:1px solid #3A3A3F;border-radius:24px;background:none;color:inherit;font:inherit;font-size:calc(14px*var(--k));line-height:1.35;font-weight:500;cursor:pointer;text-align:center}
+.chips{display:flex;gap:4px;background:#1C1C1F;border-radius:24px}
+.chips span{flex:1;min-height:48px;display:flex;align-items:center;justify-content:center;text-align:center;padding:4px 8px;border-radius:24px;font-size:calc(13px*var(--k));line-height:1.35;font-weight:500}
+.chips span.on{background:#EDEDEA;color:#111}
+.chips button{flex:1;min-height:48px;border:0;background:none;color:inherit;font:inherit;font-size:calc(13px*var(--k));line-height:1.35;font-weight:500;border-radius:24px;cursor:pointer;padding:4px 8px}
+.chips button[aria-pressed="true"]{background:#EDEDEA;color:#111}
+.note{font-size:calc(13px*var(--k));line-height:1.45;color:#A9A9A4}
+.menu .it{display:flex;align-items:center;width:100%;min-height:48px;padding:0 24px;background:none;border:0;color:inherit;font:inherit;font-size:calc(15px*var(--k));line-height:1.4;text-align:left;cursor:pointer}
+.policy{display:flex;flex-direction:column;gap:4px}
+.policy div{min-height:48px;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 12px;border-radius:12px;background:#1C1C1F;font-size:calc(14px*var(--k));line-height:1.35}
+.policy div.on{outline:2px solid #EDEDEA}
+.policy em{font-style:normal;color:#A9A9A4;font-size:calc(12px*var(--k));white-space:nowrap}
+/* 既存のSheet（#13 v2 の現行寸法） */
+.dim{position:absolute;inset:0;background:rgba(0,0,0,.64);border:0;padding:0;width:100%;cursor:default}
+.sheet{position:absolute;left:50%;transform:translateX(-50%);bottom:12px;width:min(calc(100% - 24px),560px);max-height:calc(100% * .48 + 120px);overflow:auto;background:#19191B;border-radius:20px;padding:8px 0 16px;display:flex;flex-direction:column}
+.sheet .handle{display:block;width:32px;height:4px;border-radius:2px;background:#4A4A50;margin:4px auto 12px}
+.sheet h3{margin:0;padding:0 24px 6px;font-size:calc(18px*var(--k));line-height:1.4;font-weight:600}
+.sheet p{margin:0;padding:0 24px 12px;font-size:calc(14px*var(--k));line-height:1.55;color:#C9C9C4}
+.sheet .btns{display:flex;flex-direction:column;gap:8px;padding:0 16px}
+.sheet .btns .sub.danger{border-color:#FF8A7A;color:#FFB4AA}
+/* 判定と表 */
+.check{margin-top:4px;font-size:12.5px;line-height:1.5;background:var(--panel);border-radius:12px;padding:10px 12px;font-variant-numeric:tabular-nums;width:var(--w);max-width:100%}
+.check .ok{color:var(--ok)}.check .ng{color:var(--ng)}
+.spec h2{font-size:20px;margin:36px 0 10px;font-weight:600}
+.spec table{border-collapse:collapse;width:100%;font-size:14px}
+.spec th,.spec td{border-bottom:1px solid var(--line);padding:8px 12px 8px 0;text-align:left;vertical-align:top}
+.spec th{color:var(--muted);font-weight:500;font-size:12.5px}
+.spec ul{margin:0;padding-left:20px}.spec li{margin:4px 0}
+.spec code{background:#1C1C1F;padding:1px 6px;border-radius:4px;font-size:13px}
+.muted{color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Loupe Issue #7 — 操作名を「ソート」に戻す</h1>
+<p class="lead">名称だけの比較です。左が版29の名称、右が#7の名称。部品の色・形・寸法は現行のままで、写真はダミーです。</p>
+
+<div class="controls" role="group" aria-label="比較の条件">
+<span><span class="lb">場面</span><span class="seg" id="scene">
+<button data-v="idle" aria-pressed="true">未開始</button><button data-v="mid" aria-pressed="false">途中</button><button data-v="done" aria-pressed="false">完了</button><button data-v="compare" aria-pressed="false">比較画面</button><button data-v="result" aria-pressed="false">結果画面</button><button data-v="share" aria-pressed="false">共有前</button>
+</span></span>
+<span><span class="lb">幅</span><span class="seg" id="width"><button data-v="400" aria-pressed="false">400dp</button><button data-v="412" aria-pressed="false">412dp</button><button data-v="360" aria-pressed="true">360dp</button><button data-v="320" aria-pressed="false">320dp</button><button data-v="280" aria-pressed="false">280dp</button></span></span>
+<label class="tg"><input type="checkbox" id="big"> 文字1.3倍</label>
+</div>
+
+<div class="cols">
+<div class="col"><h2>版29の名称 <span class="tag old">現行のデザイン</span></h2><div class="dev" id="devOld"></div><div class="check" id="chkOld"></div></div>
+<div class="col"><h2>#7の名称 <span class="tag new">今回</span></h2><div class="dev" id="devNew"></div><div class="check" id="chkNew"></div></div>
+</div>
+
+<section class="spec" aria-label="仕様">
+<h2>1. 名称の対応表</h2>
+<table>
+<tr><th>場所</th><th>版29</th><th>#7</th><th>読み上げ名（contentDescription）</th></tr>
+<tr><td>連写の主操作（未開始）</td><td>順位を決める</td><td><b>ソート</b></td><td>ソート</td></tr>
+<tr><td>連写の主操作（途中）</td><td>順位決めを再開</td><td><b>ソートを再開</b></td><td>ソートを再開</td></tr>
+<tr><td>連写の主操作（完了後・結果を開く）</td><td>（版29では「順位を付け直す」）</td><td><b>ソート結果</b></td><td>ソート結果</td></tr>
+<tr><td>メニューのやり直し（完了後）</td><td>順位を付け直す／付け直す</td><td><b>再ソート</b></td><td>再ソート</td></tr>
+<tr><td>比較画面の見出し</td><td>順位を決める</td><td><b>ソート</b></td><td>見出し「ソート」</td></tr>
+<tr><td>結果画面の見出し</td><td>順位の結果</td><td><b>ソート結果</b></td><td>見出し「ソート結果」</td></tr>
+<tr><td>方式変更の確認（見出し）</td><td>—</td><td><b>ソート方式を変更しますか？</b></td><td>同じ文</td></tr>
+<tr><td>再ソートの確認（見出し）</td><td>—</td><td><b>この連写を再ソートしますか？</b></td><td>同じ文</td></tr>
+<tr><td>方式変更の確認（本文・ボタン）</td><td colspan="2">現行のまま：「この連写の結果と途中の判断を置き換え、最初から比較します。」／実行「変更」／取消「戻る」</td><td>同じ文・同じ名前</td></tr>
+<tr><td>再ソートの確認（本文・ボタン）</td><td>—</td><td>本文は現行のまま：「この連写の選択履歴を消して、最初から比較します。写真は変更しません。」／実行は操作名に合わせて<b>「再ソート」</b>／取消「戻る」</td><td>同じ文・同じ名前</td></tr>
+<tr><td>共有前の誘導ボタン</td><td>順位を決める</td><td><b>ソート</b></td><td>ソート</td></tr>
+<tr><td>共有前の案内（本文）</td><td>順位が未決定の連写が1組あります</td><td><b>○組の順位がまだ決まっていません。ソートした後に選択画面へ戻れます。</b></td><td>同じ文</td></tr>
+<tr><td>共有前の連写の扱い（本文の操作名）</td><td>順位を決めて1位を共有</td><td><b>ソートして1位を共有</b></td><td>同じ文</td></tr>
+<tr><td>完了の知らせ</td><td>1組目の順位を決めました（3枚目が1位）</td><td><b>表示しない</b>（新しい完了ステータスの可視表示は追加しない。#17の方針）</td><td>—</td></tr>
+</table>
+
+<h2>2. 変えないもの</h2>
+<ul>
+<li>比較のモード選択「1位を決める」「すべての順位を決める」（順位を表す説明のため維持。伝え方は#6で別途設計）。</li>
+<li>順位の値、1位方式（選んだ写真が1位、残りは同率2位）、すべての順位を決める方式、保存形式。</li>
+<li>「順位が未決定」「順位決定済み」などの状態表示と、フィルター「1位」「順位が未決定の連写」。#17で文字から見た目へ変える予定のため、「ソート済み」などへの置き換えはしない（版29の文言のまま）。</li>
+<li>「直前の操作を取り消す」「あとで続ける」など、ソートの名前を含まないほかの操作名。</li>
+<li>色・形・寸法・アイコン。全体の配置、文字欠け、戻る、A/B表示は別issue。</li>
+</ul>
+
+<h2>3. 主操作ボタン（現行の値をそのまま使う）</h2>
+<table>
+<tr><th>項目</th><th>値</th></tr>
+<tr><td>背景 / 文字とアイコン</td><td>#EDEDEA / #111111（画面の背景は #0F0F10）</td></tr>
+<tr><td>角丸</td><td>26dp</td></tr>
+<tr><td>文字</td><td>13sp・Android sans-serif-medium。Androidのfont paddingを含む行箱を約24dpで表現。ブラウザの代替フォントは字形・ウェイトが一致しない場合がある</td></tr>
+<tr><td>幅</td><td>親の幅いっぱい</td></tr>
+<tr><td>高さ</td><td>52dp固定を外し、既存の最低高64dpを守る。文字拡大で2行になったら高さが伸びる</td></tr>
+<tr><td>アイコン</td><td>24dpの割当内に26dp基準で描く既存の棒グラフ、文字との間隔4dp。「ソート」「ソートを再開」「ソート結果」で同じアイコンを使う</td></tr>
+</table>
+
+<h2>4. 読み上げ</h2>
+<ul>
+<li>ボタンの読み上げ名は、見えている名前と同じにする（「ソート」「ソートを再開」「ソート結果」「再ソート」）。アイコンは読み上げない。</li>
+<li>見出しは見出しとして読み上げる（「ソート」「ソート結果」）。</li>
+<li>確認ダイアログは見出し → 本文 → 実行 → 戻るの順。文言は表と同じ。</li>
+<li>状態（順位が未決定など）の読み上げは今回変えない（#17で扱う）。</li>
+</ul>
+
+<h2>5. 確認の観点（文字1.3倍・狭い幅）</h2>
+<ul>
+<li>412・360・320・280dpの幅と、文字1.0倍・1.3倍のすべての組み合わせで、対象の名前が省略されずに読めること（折り返しは可、「…」での省略や切れは不可）。</li>
+<li>対象のボタン・メニュー項目のタップ領域が、高さ・幅とも48dp以上であること。</li>
+<li>上の比較部品の下に、表示中の組み合わせの判定を出している。</li>
+</ul>
+
+<h2>6. 未確認</h2>
+<ul>
+<li>完了後の「ソート結果」と、メニューの「再ソート」が、現行の画面のどこにあるか（このHTMLは連写の詳細の下部と、その場のメニューで代表させている）。</li>
+<li>Android実機のフォント（Noto Sans CJK）での折り返し位置。</li>
+</ul>
+</section>
+</div>
+
+<script>
+(function () {
+  const BAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><g transform="translate(-1 -1) scale(1.083333)"><rect x="3" y="12" width="6" height="9"></rect><rect x="9" y="7" width="6" height="14"></rect><rect x="15" y="15" width="6" height="6"></rect></g></svg>';
+  const N = {
+    old: { idle: '順位を決める', mid: '順位決めを再開', done: '順位を付け直す', redo: '順位を付け直す', cmpH: '順位を決める', resH: '順位の結果', share: '順位を決める', policy: '順位を決めて1位を共有', toast: '1組目の順位を決めました（3枚目が1位）', shareNote: '順位が未決定の連写が1組あります', modeQ: null, redoQ: null },
+    nw: { idle: 'ソート', mid: 'ソートを再開', done: 'ソート結果', redo: '再ソート', cmpH: 'ソート', resH: 'ソート結果', share: 'ソート', policy: 'ソートして1位を共有', toast: '', shareNote: '1組の順位がまだ決まっていません。ソートした後に選択画面へ戻れます。', modeQ: 'ソート方式を変更しますか？', redoQ: 'この連写を再ソートしますか？' }
+  };
+  const opt = { scene: 'idle', w: 360, big: false };
+  const MODE_BODY = 'この連写の結果と途中の判断を置き換え、最初から比較します。';
+  const REDO_BODY = 'この連写の選択履歴を消して、最初から比較します。写真は変更しません。';
+
+  function primary(label) { return '<button class="primary" data-t="1" aria-label="' + label + '">' + BAR + '<span>' + label + '</span></button>'; }
+  function head(t, sub) { return '<div class="hd"><b role="heading" aria-level="1">' + t + '</b>' + (sub ? '<small>' + sub + '</small>' : '') + '</div>'; }
+
+  function sceneHTML(n, isNew) {
+    const s = opt.scene;
+    const ph = '<div class="ph"><span>5枚中1枚目</span></div>';
+    if (s === 'idle') return ph + head('連写 5枚', '順位が未決定') + '<div class="body">' + primary(n.idle) + '</div>';
+    if (s === 'mid') return ph + head('連写 5枚', '順位が未決定 · 途中まで比べています') + '<div class="body">' + primary(n.mid) + '</div>';
+    if (s === 'done') return ph + head('連写 5枚', '順位決定済み · 3枚目が1位') + '<div class="body">' + primary(n.done) +
+      '<button class="sub" data-t="1" data-open="menu">' + (isNew ? 'メニュー' : 'メニュー') + '</button></div>';
+    if (s === 'compare') return head(n.cmpH, '連写 5枚 · あと4回') + '<div class="ph" style="height:150px"></div><div class="ph" style="height:150px;margin-top:2px;filter:brightness(.85)"></div>' +
+      '<div class="body"><div class="chips" role="group" aria-label="モード"><button data-mode="best" aria-pressed="true" data-t="1">1位を決める</button><button data-mode="rank" aria-pressed="false" data-t="1">すべての順位を決める</button></div></div>';
+    if (s === 'result') return head(n.resH, '1組 · 順位決定済み') + '<div class="body" style="justify-content:flex-start;gap:6px">' +
+      ['1位', '2位', '2位', '2位', '2位'].map((r, i) => '<div style="display:flex;align-items:center;gap:12px"><span style="width:72px;height:48px;border-radius:6px;background:linear-gradient(160deg,#a9c3d8,#69736a);filter:brightness(' + (1 - i * .08) + ')"></span><span class="note" style="color:#EDEDEA">' + r + '</span></div>').join('') +
+      (n.toast ? '<div class="note" style="margin-top:6px">' + n.toast + '</div>' : '') + '</div>';
+    if (s === 'share') return head('2件を共有', '') + '<div class="body" style="justify-content:flex-start">' +
+      '<div class="note">' + n.shareNote + '</div><div class="policy"><div class="on"><span>' + n.policy + '</span><em>合計2枚</em></div><div><span>連写の写真をすべて共有</span><em>合計6枚</em></div><div><span>順位が未決定の連写は共有しない</span><em>合計1枚</em></div></div>' +
+      '<div style="flex:1"></div>' + primary(n.share) + '</div>';
+    return '';
+  }
+  function sheet(dev, title, body, okLabel, cancel, cancelLabel) {
+    const layer = document.createElement('div');
+    layer.style.cssText = 'position:absolute;inset:0';
+    layer.innerHTML = '<button class="dim" aria-label="閉じる"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="' + title + '"><span class="handle" aria-hidden="true"></span><h3>' + title + '</h3>' + (body ? '<p>' + body + '</p>' : '') +
+      '<div class="btns">' + okLabel + (cancel ? '<button class="sub" data-t="1" data-close="1">' + (cancelLabel || 'キャンセル') + '</button>' : '') + '</div></div>';
+    dev.appendChild(layer);
+    layer.addEventListener('click', (e) => { if (e.target.closest('[data-close]') || e.target.classList.contains('dim')) { layer.remove(); check(dev); } });
+    check(dev);
+    return layer;
+  }
+  function build(id, n, isNew) {
+    const dev = document.getElementById('dev' + id);
+    dev.style.setProperty('--w', opt.w + 'px'); dev.style.setProperty('--k', opt.big ? 1.3 : 1);
+    document.getElementById('chk' + id).style.setProperty('--w', opt.w + 'px');
+    dev.innerHTML = sceneHTML(n, isNew);
+    dev.onclick = (e) => {
+      const m = e.target.closest('[data-open="menu"]');
+      if (m) {
+        const L = sheet(dev, 'メニュー', '', '<div class="menu"><button class="it" data-t="1" data-redo="1">' + n.redo + '</button></div>', true);
+        L.querySelector('[data-redo]').addEventListener('click', () => {
+          L.remove();
+          if (isNew) sheet(dev, n.redoQ, REDO_BODY, '<button class="sub danger" data-t="1" data-close="1">再ソート</button>', true, '戻る');
+          else check(dev);
+        });
+        return;
+      }
+      const md = e.target.closest('[data-mode]');
+      if (md && md.getAttribute('aria-pressed') === 'false') {
+        if (isNew) {
+          const L = sheet(dev, n.modeQ, MODE_BODY, '<button class="sub danger" data-t="1" data-apply="' + md.dataset.mode + '">変更</button>', true, '戻る');
+          L.querySelector('[data-apply]').addEventListener('click', () => { dev.querySelectorAll('[data-mode]').forEach((b) => b.setAttribute('aria-pressed', b === md ? 'true' : 'false')); L.remove(); check(dev); });
+        } else { dev.querySelectorAll('[data-mode]').forEach((b) => b.setAttribute('aria-pressed', b === md ? 'true' : 'false')); }
+      }
+    };
+    check(dev);
+  }
+  function check(dev) {
+    const out = document.getElementById(dev.id === 'devOld' ? 'chkOld' : 'chkNew');
+    const t = [...dev.querySelectorAll('[data-t]')].filter((b) => b.offsetParent !== null);
+    let bad = 0; const rows = [];
+    t.forEach((b) => {
+      const r = b.getBoundingClientRect();
+      const clip = b.scrollWidth > b.clientWidth + 1 || b.scrollHeight > b.clientHeight + 1;
+      const small = r.height < 48 || r.width < 48;
+      if (clip || small) bad++;
+      rows.push((clip || small ? '<span class="ng">✕</span> ' : '<span class="ok">○</span> ') + (b.getAttribute('aria-label') || b.textContent.trim()) + ' · ' + Math.round(r.width) + '×' + Math.round(r.height) + (clip ? ' · 文字が切れている' : ''));
+    });
+    out.innerHTML = '<b>' + opt.w + 'dp · 文字' + (opt.big ? '1.3' : '1.0') + '倍：</b>' + (bad ? '<span class="ng">問題 ' + bad + '件</span>' : '<span class="ok">名前は読める・タップ領域48dp以上</span>') + '<br>' + rows.join('<br>');
+  }
+  function all() { build('Old', N.old, false); build('New', N.nw, true); }
+  function seg(id, key, num) {
+    const el = document.getElementById(id);
+    el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; opt[key] = num ? +b.dataset.v : b.dataset.v; el.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', x === b ? 'true' : 'false')); all(); });
+  }
+  seg('scene', 'scene'); seg('width', 'w', true);
+  document.getElementById('big').addEventListener('change', (e) => { opt.big = e.target.checked; all(); });
+  window.__loupe7 = { opt: opt, all: all };
+  all();
+})();
+</script>
+</body>
+</html>
