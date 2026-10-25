@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Loupe Issue #9 操作ラベル</title>
+<title>Loupe Issue #9 操作ラベル（最終）</title>
 <style>
 :root{--text:#EDEDEA;--sub:#A9A9A4;--ok:#9FE0B5;--ng:#F2A7AB;--k:1}
 *{box-sizing:border-box}
@@ -39,14 +39,14 @@ label.tg input{width:18px;height:18px;accent-color:#EDEDEA}
 .db{flex:var(--wt,1) 1 0;min-width:0;min-height:64px;height:auto;padding:6px;margin:0;border:0;border-radius:8px;background:transparent;color:#EDEDEA;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;position:relative;overflow:hidden;font-family:inherit;font-weight:500;font-size:calc(13px*var(--k));text-align:center}
 .db .ic{width:24px;height:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:visible}
 .db .ic svg{width:26px;height:26px;flex-shrink:0}
-.db .lbl{display:block;max-width:100%;line-height:max(24px,calc(1.846em));overflow-wrap:anywhere}
+.db .lbl{display:block;max-width:100%;line-height:24px;overflow-wrap:anywhere}
 .db:disabled{color:#626B72;cursor:default}
 .db.press::after{content:"";position:absolute;inset:0;background:rgba(237,237,234,.12);border-radius:inherit}
 .ctaRow{padding:8px 16px}
-.cta{width:100%;min-height:64px;height:auto;padding:6px 16px;border:0;border-radius:26px;background:#EDEDEA;color:#111111;display:flex;flex-direction:row;align-items:center;justify-content:center;gap:4px;cursor:pointer;position:relative;overflow:hidden;font-family:inherit;font-weight:500;font-size:calc(13px*var(--k));text-align:center}
+.cta{width:100%;min-height:64px;height:auto;padding:6px 16px;border:0;border-radius:26px;background:#EDEDEA;color:#111111;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;position:relative;overflow:hidden;font-family:inherit;font-weight:500;font-size:calc(13px*var(--k));text-align:center}
 .cta .ic{width:24px;height:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:visible}
 .cta .ic svg{width:26px;height:26px;flex-shrink:0}
-.cta .lbl{display:block;max-width:100%;line-height:max(24px,calc(1.846em));overflow-wrap:anywhere}
+.cta .lbl{display:block;max-width:100%;line-height:24px;overflow-wrap:anywhere}
 .cta.press::after{content:"";position:absolute;inset:0;background:rgba(17,17,17,.12);border-radius:inherit}
 .pair{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 16px 8px}
 .pair button{min-height:48px;padding:4px 12px;border:1px solid #3A3A3F;border-radius:24px;background:none;color:#EDEDEA;font-family:inherit;font-weight:500;font-size:calc(14px*var(--k));line-height:1.35;cursor:pointer}
@@ -63,7 +63,7 @@ label.tg input{width:18px;height:18px;accent-color:#EDEDEA}
 </head>
 <body>
 <div class="wrap">
-<h1>Loupe Issue #9 — 操作ラベルの文字欠け・意図しない折り返し</h1>
+<h1>Loupe Issue #9 — 操作ラベルの文字欠け・意図しない折り返し（最終）</h1>
 <p class="lead">対象は2つの dock の操作ラベルだけです。写真はダミーの色面で、部品のまわりの線（outline）は寸法に含みません。押すと押下の見た目を出し、取り消しの状態はログに出します。</p>
 
 <div class="controls" role="group" aria-label="共通の条件">
@@ -84,13 +84,13 @@ label.tg input{width:18px;height:18px;accent-color:#EDEDEA}
 <div class="col"><h3>#9 <span class="tagc new">採用案</span></h3><div class="part" id="aNew"></div><div class="box" id="caNew"></div><div class="box" id="undoLog"></div></div>
 </div>
 
-<h2 class="sec">B. 連写の詳細 — 主操作［ソート］（全幅・今回は変更なし、検査のみ）</h2>
+<h2 class="sec">B. 連写の詳細 — 主操作（全幅・変更なし）、［1位にする］［共有］、4操作の dock（列の調整）</h2>
 <div class="controls" role="group" aria-label="Bの条件">
 <span><span class="lb">主操作の状態</span><span class="seg" id="oCta"><button data-v="idle" aria-pressed="true">未開始</button><button data-v="mid" aria-pressed="false">途中</button><button data-v="done" aria-pressed="false">完了</button></span></span>
 </div>
 <div class="cols">
-<div class="col"><h3>#4由来の元の名前 <span class="tagc old">比較用</span></h3><div class="part" id="bOld"></div><div class="box" id="cbOld"></div></div>
-<div class="col"><h3>現行（#7の名前） <span class="tagc new">このまま維持</span></h3><div class="part" id="bNew"></div><div class="box" id="cbNew"></div></div>
+<div class="col"><h3>元の名前・固定4列 <span class="tagc old">比較用</span></h3><div class="part" id="bOld"></div><div class="box" id="cbOld"></div></div>
+<div class="col"><h3>#9 <span class="tagc new">採用案</span></h3><div class="part" id="bNew"></div><div class="box" id="cbNew"></div></div>
 </div>
 
 <section class="spec" aria-label="仕様">
@@ -98,8 +98,11 @@ label.tg input{width:18px;height:18px;accent-color:#EDEDEA}
 <table>
 <tr><th>対象</th><th>現行</th><th>#9</th></tr>
 <tr><td>比較の dock の取り消し（比較中・比較終了とも）</td><td>見える名前「直前の操作を取り消す」（400dpの縦で2行になる）</td><td>見える名前「<b>取り消し</b>」。読み上げ名とツールチップは「直前の操作を取り消す」のまま。アイコンは既存の曲がった左矢印（戻る・やり直し・中断と区別するため）</td></tr>
-<tr><td>連写の詳細の主操作</td><td>左右16dpの余白の全幅ボタン［ソート／ソートを再開／ソート結果］（#7の名前）</td><td><b>変更なし</b>（既存の配置のまま）。今回は欠けと折り返しがないことの検査だけ。その下の［この写真を1位に］［共有］、［戻る］［前の写真］［次の写真］［拡大］、［選択］［その他］も変更しない</td></tr>
-<tr><td>比較・比較終了の dock の列（必要なときだけ）</td><td>1行の均等列（1位方式：［連写一覧］［取り消し］［その他］の3列、すべての順位方式：［連写一覧］［取り消し］［同じ順位］［その他］の4列。共有から来たときは［連写一覧］が［選択へ戻る］）</td><td>幅が足りるときは既存の1行のまま。足りないときだけ、同じ幅のセルに全部の操作が入る最大の列数を選び、複数行にする（4→3→2→1）</td></tr>
+<tr><td>連写の詳細の主操作</td><td>左右16dpの余白の全幅ボタン［ソート／ソートを再開／ソート結果］（#7の名前）</td><td><b>変更なし</b>（全幅の配置のまま）。欠けと折り返しがないことの検査だけ</td></tr>
+<tr><td>連写の詳細の［この写真を1位に］</td><td>見える名前「この写真を1位に」</td><td>見える名前「<b>1位にする</b>」。読み上げ名とツールチップは「この写真を1位に」のまま。押したときの意味（確認を含む）は変えない。［共有］と2列の配置もそのまま</td></tr>
+<tr><td>連写の詳細の4操作の dock</td><td>［戻る］［前の写真］［次の写真］［拡大］の1行4列（320dp・1.3倍で2行に折り返す）</td><td>比較の dock と同じ列の決め方を使う。幅が足りるときは1行4列のまま。足りないときだけ列を減らして複数行に</td></tr>
+<tr><td>連写の詳細の［選択］［その他］</td><td colspan="2">変更なし（参考として検査だけ）</td></tr>
+<tr><td>比較・比較終了の dock の列（必要なときだけ）</td><td>1行の均等列（比較中の1位方式：［連写一覧］［取り消し］［その他］の3列、比較中のすべての順位方式：［連写一覧］［取り消し］［同じ順位］［その他］の4列。比較終了はどちらの方式でも3操作（同じ順位はない）。共有から来たときは［連写一覧］が［選択へ戻る］）</td><td>幅が足りるときは既存の1行のまま。足りないときだけ、同じ幅のセルに全部の操作が入る最大の列数を選び、複数行にする（4→3→2→1）</td></tr>
 <tr><td>変えないもの</td><td colspan="2">文字の大きさ（縮めない）、ほかの名前、取り消しの動き、順位のロジック、原本、保存。方式チップ（#6）、ボタン全体の再設計（#8）、説明の削減（#14）</td></tr>
 </table>
 
@@ -110,9 +113,9 @@ label.tg input{width:18px;height:18px;accent-color:#EDEDEA}
 <tr><td>ボタン</td><td>最低の高さ64dp・高さは wrap-content、全周6dpの余白、背景は透明、押したときは標準のリップル</td></tr>
 <tr><td>アイコン</td><td>上に24dpの枠。中に既存の26dpの描画基準のアイコンを中央に描く（はみ出した1dpは切らない）。文字との間隔4dp</td></tr>
 <tr><td>文字</td><td>13sp、<code>sans-serif-medium</code>。通常 #EDEDEA、無効 #626B72（アイコンも同じ色）。1行。省略記号は使わない</td></tr>
-<tr><td>行の箱</td><td>Androidのフォントの上下の余白（includeFontPadding）に相当する24dp。文字1.3倍では必要な高さまで伸びる（このHTMLでは文字の大きさ×1.846、1.3倍で約31dp）</td></tr>
-<tr><td>高さの目安</td><td>6 + 24 + 4 + 24 + 6 = 64dp。文字1.3倍では約71dp</td></tr>
-<tr><td>比較の dock の列</td><td>［連写一覧］［取り消し］［その他］を均等の3列（weight 1）。比較終了の画面も同じ</td></tr>
+<tr><td>行の箱</td><td>24dpで固定（Androidのフォントの上下の余白 includeFontPadding に相当）。実機では13spの1.3倍でもボタンの高さは64dpのままと確認済みなので、このHTMLも1.3倍で24dpのまま</td></tr>
+<tr><td>高さ</td><td>6 + 24 + 4 + 24 + 6 = 64dp（文字1.0倍・1.3倍とも）</td></tr>
+<tr><td>比較の dock の列</td><td>比較中は3列（1位方式）または4列（すべての順位方式）、比較終了は3列。どれも均等（weight 1）</td></tr>
 <tr><td>操作の領域</td><td>どのボタンも高さ64dp以上、幅48dp以上</td></tr>
 <tr><td>列の決め方</td><td>必要なセル幅 = max（各ラベルの実際の文字幅 ＋ 左右の余白 6dp×2, 48dp）。使える幅 = dock の幅 − 16dp（左右の余白）。列数 n は、操作の数から1まで順に試し、使える幅 ÷ n ≥ 必要なセル幅 になる最大の n。全部のセルは同じ幅（使える幅 ÷ n）。並びの順番は変えず、左から右・上から下へ詰める。文字幅は Android の <code>Paint.measureText</code>（または TextLayout の幅）で測る</td></tr>
 <tr><td>複数行のとき</td><td>dock の高さが行の数だけ伸びる。写真の領域が狭くなる分は、既存の bottomControls のスクロールで確保する（全画面の再設計はしない）。名前・読み上げ名・順番・最低64dp・13spは変えない</td></tr>
@@ -120,8 +123,8 @@ label.tg input{width:18px;height:18px;accent-color:#EDEDEA}
 <h2>2b. 連写の詳細の主操作（既存の値・検査用）</h2>
 <table>
 <tr><th>項目</th><th>値</th></tr>
-<tr><td>配置</td><td>左右16dpの余白で全幅。その下に別の行で［この写真を1位に］［共有］の2列、さらに既存の dock［戻る］［前の写真］［次の写真］［拡大］の4列と［選択］［その他］の2列（このHTMLでは簡略模擬）</td></tr>
-<tr><td>見た目</td><td>背景 #EDEDEA、文字とアイコン #111111、角丸26dp、13sp・<code>sans-serif-medium</code>。棒グラフのアイコン（24dpの枠に26dpの描画基準）を文字の左に4dpあけて置く。最低の高さ64dp（指定は52dp、アイコン付きの現行の最低高）</td></tr>
+<tr><td>配置</td><td>左右16dpの余白で全幅。その下に別の行で［1位にする］［共有］の2列、さらに既存の dock［戻る］［前の写真］［次の写真］［拡大］（列の決め方を適用）と［選択］［その他］の2列（このHTMLでは簡略模擬）</td></tr>
+<tr><td>見た目</td><td>背景 #EDEDEA、文字とアイコン #111111、角丸26dp、13sp・<code>sans-serif-medium</code>。棒グラフのアイコン（24dpの枠に26dpの描画基準）を<b>文字の上</b>に置き、間隔4dp。最低の高さ64dp。行の箱は24dp固定</td></tr>
 </table>
 
 <h2>3. 取り消しの動き（既存のまま）</h2>
@@ -135,17 +138,19 @@ label.tg input{width:18px;height:18px;accent-color:#EDEDEA}
 <h2>4. 確認の観点</h2>
 <ul>
 <li>縦320・400dp、横640・800dp、文字1.0・1.3倍のすべてで、各ラベルが1行・欠けなし・操作の領域48dp以上。</li>
-<li>比較の dock は、1位方式（3操作）・すべての順位方式（4操作）・共有から来たとき（選択へ戻る）のすべてを検査。</li>
+<li>比較の dock は、比較中の1位方式（3操作）・比較中のすべての順位方式（4操作）・比較終了（3操作）・共有から来たとき（選択へ戻る）のすべてを検査。</li>
+<li>連写の詳細の4操作の dock と［1位にする］［共有］も、同じ条件で検査。</li>
 <li>主操作の3つの状態（ソート／ソートを再開／ソート結果）すべてを、全幅の条件で検査。</li>
-<li>比較のため、Aの左に「直前の操作を取り消す」、Bの左に#4由来の元の名前（順位を決める など）を置いている。</li>
-<li>主操作より下の行は参考として同じ検査をしているが、今回は変更しない（結果に「参考」と付く）。</li>
+<li>比較のため、Aの左に「直前の操作を取り消す」、Bの左に元の名前（順位を決める・この写真を1位に）と固定4列を置いている。</li>
+<li>［選択］［その他］の行は参考として同じ検査をしているが、変更しない（結果に「参考」と付く）。</li>
 </ul>
 
 <h2>5. フォントの注記</h2>
 <ul>
 <li>Androidの <code>sans-serif-medium</code> は、英数字が Roboto Medium、日本語は Noto Sans CJK JP Medium（多くの端末）。このHTMLは Roboto と Noto Sans JP を指定しているが、ない環境ではブラウザの標準フォントになり、幅が数%ずれる。</li>
 <li>日本語は1文字がほぼ1em。「取り消し」（4文字）は13sp×1.3倍で約68dpで、320dpの均等3列の中身（約89dp）に入る。「直前の操作を取り消す」（10文字）は約169dpで、400dp・1.0倍でも中身（約116dp）に入らず2行になる。</li>
-<li>行の箱の24dpは、Androidの includeFontPadding の高さを模したもの。実機の値と1〜2dpずれることがある。</li>
+<li>行の箱の24dpは、Androidの includeFontPadding の高さを模したもの。実機では13sp・1.3倍でもボタンの高さ64dpを確認済み。</li>
+<li>アイコンのSVGは既存の参照のまま（このファイルでは新しいアイコンを追加していない）。本体の線形に合わせる正規化は別途。</li>
 </ul>
 </section>
 </div>
@@ -153,20 +158,20 @@ label.tg input{width:18px;height:18px;accent-color:#EDEDEA}
 <script>
 (function () {
   const ICON = {
-    list: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true"><rect x="8.5" y="8.5" width="13" height="13" rx="2"></rect><path d="M4.5 16.5V6.5a2 2 0 0 1 2-2h10"></path></svg>',
-    tie: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M6 10h14M6 16h14"></path></svg>',
+    list: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M11 6L5 12L11 18"/></svg>',
+    tie: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 9H19M5 15H19"/></svg>',
     toSel: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="13" cy="13" r="9"></circle><path d="M9 13.3l2.8 2.8 5.3-5.6"></path></svg>',
-    undo: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6.5L4.5 11 9 15.5"></path><path d="M4.5 11h10a6 6 0 0 1 0 12h-3"></path></svg>',
-    more: '<svg viewBox="0 0 26 26" fill="currentColor" aria-hidden="true"><circle cx="13" cy="6" r="1.8"></circle><circle cx="13" cy="13" r="1.8"></circle><circle cx="13" cy="20" r="1.8"></circle></svg>',
+    undo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 4L3 9L8 14M3 9H13M14 9A7 6 0 0 1 14 21"/></svg>',
+    more: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>',
     share: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="19.5" cy="6" r="2.7"></circle><circle cx="6.5" cy="13" r="2.7"></circle><circle cx="19.5" cy="20" r="2.7"></circle><path d="M8.9 11.7l8.2-4.4M8.9 14.3l8.2 4.4"></path></svg>',
-    back: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.5 13H5.5M11.5 19l-6-6 6-6"></path></svg>',
-    prev: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 6.5L9.5 13l6.5 6.5"></path></svg>',
-    next: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 6.5l6.5 6.5-6.5 6.5"></path></svg>',
-    zoom: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="11.5" cy="11.5" r="6.5"></circle><path d="M16.5 16.5l5 5M11.5 8.5v6M8.5 11.5h6"></path></svg>',
+    back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M11 6L5 12L11 18"/></svg>',
+    prev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5L8 12L15 19"/></svg>',
+    next: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5L16 12L9 19"/></svg>',
+    zoom: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="M15 15L21 21M7 10H13M10 7V13"/></svg>',
     sel: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="13" cy="13" r="9"></circle><path d="M9 13.3l2.8 2.8 5.3-5.6"></path></svg>',
-    bar: '<svg viewBox="0 0 26 26" fill="currentColor" aria-hidden="true"><rect x="4.5" y="14" width="4.4" height="7.5" rx="1"></rect><rect x="10.8" y="8.5" width="4.4" height="13" rx="1"></rect><rect x="17.1" y="4.5" width="4.4" height="17" rx="1"></rect></svg>'
+    bar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12H9V21H3ZM9 7H15V21H9ZM15 15H21V21H15Z"/></svg>'
   };
-  const O = { w: 400, k: 1, scr: 'cmp', cta: 'idle', ops: 2, fail: false, log: [], mode: 'best', share: false, cols: null };
+  const O = { w: 400, k: 1, scr: 'cmp', cta: 'idle', ops: 2, fail: false, log: [], mode: 'best', share: false, cols: null, colsB: null };
   const CTA = { idle: 'ソート', mid: 'ソートを再開', done: 'ソート結果' };
   const btn = (ic, label, o) => {
     o = o || {};
@@ -189,21 +194,25 @@ label.tg input{width:18px;height:18px;accent-color:#EDEDEA}
       ['list', O.share ? '選択へ戻る' : '連写一覧', {}],
       ['undo', isNew ? '取り消し' : '直前の操作を取り消す', { aria: '直前の操作を取り消す', dis: dis, act: 'undo' }]
     ];
-    if (O.mode === 'rank') items.push(['tie', '同じ順位', {}]);
+    if (O.mode === 'rank' && O.scr === 'cmp') items.push(['tie', '同じ順位', {}]);
     items.push(['more', 'その他', {}]);
     let cls = 'dock', style = '';
-    if (isNew) { const c = pickCols(items.map((x) => x[1])); O.cols = c; if (c.n < items.length) { cls += ' grid'; style = ' style="--cols:' + c.n + '"'; } }
+    if (isNew) { const c = pickCols(items.map((x) => x[1])); c.count = items.length; O.cols = c; if (c.n < items.length) { cls += ' grid'; style = ' style="--cols:' + c.n + '"'; } }
     return photos(O.scr === 'cmp' ? 2 : 1) + '<div class="' + cls + '"' + style + ' role="group" aria-label="比較の操作">' + items.map((x) => btn(x[0], x[1], x[2])).join('') + '</div>';
   }
   const CTA_OLD = { idle: '順位を決める', mid: '順位決めを再開', done: '順位の結果' };
   function partB(isNew) {
     const name = isNew ? CTA[O.cta] : CTA_OLD[O.cta];
+    const four = [['back', '戻る'], ['prev', '前の写真'], ['next', '次の写真'], ['zoom', '拡大']];
+    let cls = 'dock', style = '';
+    if (isNew) { const c = pickCols(four.map((x) => x[1])); c.count = 4; O.colsB = c; if (c.n < 4) { cls += ' grid'; style = ' style="--cols:' + c.n + '"'; } }
+    const best = isNew ? '<button aria-label="この写真を1位に" title="この写真を1位に">1位にする</button>' : '<button>この写真を1位に</button>';
     return photos(1) +
       '<div class="ctaRow"><button class="cta" data-check="cta"><span class="ic">' + ICON.bar + '</span><span class="lbl">' + name + '</span></button></div>' +
-      '<div class="pair ref"><button>この写真を1位に</button><button>共有</button></div>' +
-      '<div class="dock ref" role="group" aria-label="写真の操作">' + btn('back', '戻る') + btn('prev', '前の写真') + btn('next', '次の写真') + btn('zoom', '拡大') + '</div>' +
+      '<div class="pair">' + best + '<button>共有</button></div>' +
+      '<div class="' + cls + '"' + style + ' role="group" aria-label="写真の操作">' + four.map((x) => btn(x[0], x[1])).join('') + '</div>' +
       '<div class="dock ref" role="group" aria-label="そのほかの操作" style="padding-top:0">' + btn('sel', '選択') + btn('more', 'その他') + '</div>' +
-      '<div class="refnote">主操作より下の行は既存配置の簡略模擬（参考・今回は変更しない）</div>';
+      '<div class="refnote">［1位にする］［共有］の行と dock は既存配置の簡略模擬。［選択］［その他］は参考（変更しない）</div>';
   }
   function check(part, out) {
     const rows = [...part.querySelectorAll('.db,.cta,.pair button')].map((b) => {
@@ -237,7 +246,9 @@ label.tg input{width:18px;height:18px;accent-color:#EDEDEA}
     });
     document.getElementById('aNew').querySelector('[data-act=undo]').addEventListener('click', undo);
     document.getElementById('aOld').querySelector('[data-act=undo]').addEventListener('click', undo);
-    if (O.cols) document.getElementById('caNew').innerHTML += '<br>列の決め方：必要なセル幅 ' + Math.round(O.cols.need) + 'dp → ' + O.cols.n + '列（セル ' + Math.round(O.cols.cell) + 'dp）' + (O.cols.n < (O.mode === 'rank' ? 4 : 3) ? '・複数行' : '・1行のまま');
+    const colTxt = (c) => '<br>列の決め方：必要なセル幅 ' + Math.round(c.need) + 'dp → ' + c.n + '列（セル ' + Math.round(c.cell) + 'dp）' + (c.n < c.count ? '・複数行' : '・1行のまま');
+    if (O.cols) document.getElementById('caNew').innerHTML += colTxt(O.cols);
+    if (O.colsB) document.getElementById('cbNew').innerHTML += colTxt(O.colsB);
     document.getElementById('undoLog').innerHTML = '<b>取り消しの状態（' + (O.scr === 'cmp' ? '比較中' : '比較終了') + '）</b><br>取り消せる操作：' + O.ops + '件' + (O.ops ? '' : '（取り消しは無効）') + '<br>' + (O.log.map((x) => '・' + x).join('<br>') || '—');
   }
   function undo() {

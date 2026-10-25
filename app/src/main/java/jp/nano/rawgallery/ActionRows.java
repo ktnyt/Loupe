@@ -6,12 +6,12 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 
-/** Comparison actions keep their names and order; insufficient width adds rows, not smaller text. */
-final class RankingActions extends ViewGroup {
+/** Photo actions keep their names and order; insufficient width adds rows, not smaller text. */
+final class ActionRows extends ViewGroup {
   private int columns = 1;
   private final int[] rowHeights;
 
-  RankingActions(Context context, Button... buttons) {
+  ActionRows(Context context, Button... buttons) {
     super(context);
     int padding = GalleryUi.dp(context, 8);
     setPadding(padding, padding, padding, padding);

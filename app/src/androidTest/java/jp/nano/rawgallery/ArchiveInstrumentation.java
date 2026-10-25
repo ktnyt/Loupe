@@ -54,7 +54,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     File restored = null;
     try {
       Context context = getTargetContext();
-      if (actionLabelsTest) { results.putString("stream", ActionLabelChecks.run(this)); finish(0, results); return; }
+      if (actionLabelsTest) { results.putString("stream", ActionLabelChecks.run(this)); finish(-1, results); return; }
       if (comparisonLabelsTest) { results.putString("stream", ComparisonLabelChecks.run(this)); finish(-1, results); return; }
       if (albumTagsTest) { results.putString("stream", AlbumTagEntryChecks.run(this)); finish(-1, results); return; }
       if (tabsTest) { results.putString("stream", LibraryTabsChecks.run(this)); finish(-1, results); return; }

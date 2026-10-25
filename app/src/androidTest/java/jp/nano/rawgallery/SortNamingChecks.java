@@ -75,6 +75,9 @@ final class SortNamingChecks {
       main(t,()->{try{set(a,"rankingStore",store);set(a,"photos",photos);set(a,"bundles",List.of(List.of(0,1,2)));set(a,"burstMembers",List.of(0,1,2));set(a,"burstPosition",0);((Map<?,?>)field(a,"rankCache")).clear();invoke(a,"gallery");}catch(Exception e){throw new RuntimeException(e);}});
       waitFor(t,()->require(a,"ソート").getHeight()>0);
       main(t,()->{TextView b=require(a,"ソート");if(!"ソート".contentEquals(b.getContentDescription())||b.getHeight()<GalleryUi.dp(a,64))throw new AssertionError("CTA accessibility/height");});
+      click(t,a,"次の写真");if((int)field(a,"burstPosition")!=1)throw new AssertionError("next photo");
+      click(t,a,"前の写真");if((int)field(a,"burstPosition")!=0)throw new AssertionError("previous photo");
+      click(t,a,"この写真を1位に");dialog(t,"この写真を1位にしますか？",false);dialog(t,"戻る",true);
       capture(t,a,"idle");click(t,a,"ソート");
       main(t,()->{if(!require(a,"ソート").isAccessibilityHeading())throw new AssertionError("heading");});
       capture(t,a,"comparison");click(t,a,"Aを選ぶ");click(t,a,"連写一覧");
