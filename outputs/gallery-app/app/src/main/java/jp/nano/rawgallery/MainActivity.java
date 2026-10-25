@@ -887,9 +887,10 @@ public final class MainActivity extends Activity {
                   subtitle.setText(albums.isEmpty() ? "写真の一覧を準備しています…" : albums.size() + " アルバム");
                   if (albumGridView != null) albumScroll = albumGridView.firstCellPosition();
                   body.removeAllViews();
-                  ScrollingGrid albumGrid = new ScrollingGrid(this);
-                  if (listHeader.getParent() instanceof ViewGroup) ((ViewGroup) listHeader.getParent()).removeView(listHeader);
-                  albumGrid.addHeaderView(listHeader, null, false);
+                  // ListView owns attached headers; update its adapter instead of reparenting one.
+                  ScrollingGrid albumGrid = listHeader.getParent() instanceof ScrollingGrid
+                      ? (ScrollingGrid) listHeader.getParent() : new ScrollingGrid(this);
+                  if (listHeader.getParent() == null) albumGrid.addHeaderView(listHeader, null, false);
                   albumGridView = albumGrid;
                   albumGrid.setNumColumns(2);
                   albumGrid.setHorizontalSpacing(dp(12));
