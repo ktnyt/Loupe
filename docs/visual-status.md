@@ -1,6 +1,6 @@
 # 状態表示の契約と対象
 
-Issue #17の実装前契約。Claude完成版の[参照HTML](design/loupe-issue17-visual-status.html)に基づく。Android実装・変更後の実機検証は未完了。
+Issue #17の現行契約。Claude完成版の[参照HTML](design/loupe-issue17-visual-status.html)に基づく。Android実装の確認範囲と限界は末尾に記す。
 
 ## 目的と境界
 
