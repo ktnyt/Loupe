@@ -17,7 +17,8 @@ final class AffordanceIcon extends Drawable {
   }
   public void draw(Canvas c) {
     int save=c.save();Rect b=getBounds();c.translate(b.left,b.top);c.scale(b.width()/24f,b.height()/24f);
-    p.setColor(color);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1.8f);p.setStrokeCap(Paint.Cap.ROUND);p.setStrokeJoin(Paint.Join.ROUND);
+    boolean enabled=false;for(int state:getState())if(state==android.R.attr.state_enabled)enabled=true;
+    p.setColor(kind>=2&&!enabled?0xff626b72:color);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1.8f);p.setStrokeCap(Paint.Cap.ROUND);p.setStrokeJoin(Paint.Join.ROUND);
     switch(kind) {
       case 0: c.drawCircle(10.5f,10.5f,6,p);path(c,15,15,20,20);path(c,10.5f,8,10.5f,13);path(c,8,10.5f,13,10.5f);break;
       case 1: c.drawRect(4,5,20,19,p);path(c,4,15,8,11,11,14);path(c,14,9,12,12,14,13,13,16);break;
@@ -27,6 +28,8 @@ final class AffordanceIcon extends Drawable {
     }
     c.restoreToCount(save);
   }
+  public boolean isStateful(){return kind>=2;}
+  protected boolean onStateChange(int[] state){invalidateSelf();return true;}
   public void setAlpha(int alpha) { p.setAlpha(alpha); }
   public void setColorFilter(ColorFilter filter) { p.setColorFilter(filter); }
   public int getOpacity() { return PixelFormat.TRANSLUCENT; }

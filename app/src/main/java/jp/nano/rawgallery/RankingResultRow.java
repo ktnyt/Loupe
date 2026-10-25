@@ -21,8 +21,17 @@ final class RankingResultRow extends LinearLayout {
     setContentDescription(name);setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_YES);
     setAccessibilityDelegate(new View.AccessibilityDelegate(){
       public void onInitializeAccessibilityNodeInfo(View host, AccessibilityNodeInfo info){
-        super.onInitializeAccessibilityNodeInfo(host,info);info.setClassName(Button.class.getName());
+        super.onInitializeAccessibilityNodeInfo(host,info);info.setClassName(Button.class.getName());info.setClickable(true);
         info.addAction(new AccessibilityNodeInfo.AccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK,"拡大"));
+      }
+      public boolean performAccessibilityAction(View host,int action,android.os.Bundle args){
+        if(action==AccessibilityNodeInfo.ACTION_CLICK && host.isEnabled() && host.getParent() instanceof ListView){
+          ListView list=(ListView)host.getParent();int position=list.getPositionForView(host);
+          if(list.isEnabled() && position!=AdapterView.INVALID_POSITION && list.getAdapter().isEnabled(position))
+            return list.performItemClick(host,position,list.getItemIdAtPosition(position));
+          return false;
+        }
+        return super.performAccessibilityAction(host,action,args);
       }
     });
     thumbnail=new ImageView(c);thumbnail.setScaleType(ImageView.ScaleType.CENTER_CROP);

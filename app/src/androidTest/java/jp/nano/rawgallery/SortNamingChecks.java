@@ -109,10 +109,25 @@ final class SortNamingChecks {
       main(t,()->{ListView list=results(a.getWindow().getDecorView());View row=list.getChildAt(0);
         if(!(row instanceof RankingResultRow)||!row.getContentDescription().toString().contains("fixture-"))throw new AssertionError("result semantics");
         if(find(a.getWindow().getDecorView(),"写真をタップして拡大")!=null)throw new AssertionError("redundant hint");
-        list.performItemClick(row,0,list.getItemIdAtPosition(0));});
+        if(!row.performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK,null))throw new AssertionError("accessible open rejected");});
       waitFor(t,()->results(a.getWindow().getDecorView())==null);back(t);
       waitFor(t,()->results(a.getWindow().getDecorView())!=null&&results(a.getWindow().getDecorView()).getChildCount()>0);
       if(!resultJournal.equals(((PhotoRanking)field(a,"ranking")).journal))throw new AssertionError("open changed ranking");
+      PhotoRanking originalRanking=(PhotoRanking)field(a,"ranking");
+      Map<String,Integer> originalMembers=new LinkedHashMap<>((Map<String,Integer>)field(a,"rankingMembers"));
+      List<PhotoRepository.Photo> many=new ArrayList<>();Map<String,Integer> manyMembers=new LinkedHashMap<>();
+      for(int i=0;i<40;i++){PhotoRepository.Photo photo=new PhotoRepository.Photo(photos.get(0).uri,"scroll-fixture-"+i+".jpg","",photos.get(0).size,i,0);many.add(photo);manyMembers.put(ArchiveStore.key(photo),i);}
+      PhotoRanking completed=new PhotoRanking(new ArrayList<>(manyMembers.keySet()),"B:");while(!completed.done())completed=completed.choose(true);
+      PhotoRanking scrollRanking=completed;
+      main(t,()->{try{set(a,"photos",many);Map<String,Integer> members=(Map<String,Integer>)field(a,"rankingMembers");members.clear();members.putAll(manyMembers);set(a,"ranking",scrollRanking);set(a,"rankingResultState",null);invoke(a,"showRanking");}catch(Exception e){throw new RuntimeException(e);}});
+      waitFor(t,()->results(a.getWindow().getDecorView()).getChildCount()>0);
+      main(t,()->results(a.getWindow().getDecorView()).scrollListBy(1800));
+      waitFor(t,()->results(a.getWindow().getDecorView()).getFirstVisiblePosition()>0);
+      int[] pos={0,0};main(t,()->{ListView list=results(a.getWindow().getDecorView());pos[0]=list.getFirstVisiblePosition();pos[1]=list.getChildAt(0).getTop();list.performItemClick(list.getChildAt(0),pos[0],list.getItemIdAtPosition(pos[0]));});
+      waitFor(t,()->results(a.getWindow().getDecorView())==null);back(t);
+      waitFor(t,()->{ListView list=results(a.getWindow().getDecorView());return list!=null&&list.getChildCount()>0&&list.getFirstVisiblePosition()==pos[0]&&list.getChildAt(0).getTop()==pos[1];});
+      main(t,()->{try{set(a,"photos",photos);Map<String,Integer> members=(Map<String,Integer>)field(a,"rankingMembers");members.clear();members.putAll(originalMembers);set(a,"ranking",originalRanking);set(a,"rankingResultState",null);invoke(a,"showRanking");}catch(Exception e){throw new RuntimeException(e);}});
+
       back(t);
       main(t,()->require(a,"ソート結果"));capture(t,a,"done");click(t,a,"ソート結果");
       String journal=((PhotoRanking)field(a,"ranking")).journal;
@@ -138,7 +153,7 @@ final class SortNamingChecks {
           int required=b.getLayout().getHeight()+b.getCompoundPaddingTop()+b.getCompoundPaddingBottom();if(required>b.getMeasuredHeight())throw new AssertionError("vertical clipping "+label);
         }
       });
-      return "PASS synthetic actual screens: start, compare, resume, finish, result, redo cancel/execute, mode cancel, share guidance/return; mode same/cancel/confirm/save failure; isolated rankings; 24 button size/font checks; accessibility names/headings. Screenshots cache/sort-test-*.png. TalkBack spoken order not tested.\n";
+      return "PASS synthetic actual screens: start, compare, resume, finish, result, redo cancel/execute, mode cancel, share guidance/return; mode same/cancel/confirm/save failure; AX ACTION_CLICK opens result; 40-result scroll/open/Back restores first row and pixel offset; isolated rankings; 24 button size/font checks; accessibility names/headings. Screenshots cache/sort-test-*.png. TalkBack spoken order not tested.\n";
     }finally{main(t,a::finish);prefs.edit().clear().commit();for(File f:files)f.delete();}
   }
 }
