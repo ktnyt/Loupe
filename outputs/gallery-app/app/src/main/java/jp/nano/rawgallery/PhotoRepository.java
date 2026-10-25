@@ -299,12 +299,27 @@ public final class PhotoRepository {
     }
   }
 
-  public Preview preview(Photo p) throws IOException {
+  Bitmap thumbnail(Photo p, int edge, java.util.function.BooleanSupplier cancelled) throws IOException {
+    checkPreparation(cancelled);
+    if ("media".equals(p.uri.getAuthority())) {
+      try (DiagnosticLog.Scope ignored = DiagnosticLog.span("thumbnail.provider")) {
+        Bitmap bitmap = context.getContentResolver().loadThumbnail(p.uri, new android.util.Size(edge, edge), null);
+        if (bitmap == null) throw new IOException("No provider thumbnail");
+        if (cancelled.getAsBoolean()) { bitmap.recycle(); checkPreparation(cancelled); }
+        return bitmap;
+      } catch (IOException | RuntimeException e) { checkPreparation(cancelled); }
+    }
+    return bitmap(preview(p, cancelled), edge);
+  }
+
+  public Preview preview(Photo p) throws IOException { return preview(p, () -> false); }
+
+  Preview preview(Photo p, java.util.function.BooleanSupplier cancelled) throws IOException {
     try (DiagnosticLog.Scope span = DiagnosticLog.span("repository.preview")) {
       DiagnosticLog.event("repository.lock_wait", span.id);
       synchronized (processingLock) {
         DiagnosticLog.event("repository.lock_acquired", span.id);
-        try { return previewLocked(p); }
+        try { return previewLocked(p, cancelled); }
         catch (IOException | RuntimeException e) {
           DiagnosticLog.event("repository.fail", span.id, "error", e.getClass().getSimpleName());
           throw e;

@@ -11,6 +11,11 @@ final class DiagnosticImageView extends ImageView {
   private boolean pending;
   private ViewTreeObserver.OnPreDrawListener listener;
   DiagnosticImageView(Context c) { super(c); }
+  void loading() {
+    removeListener();
+    pending = false;
+    drawn = 0;
+  }
   void bound(long request) {
     if (pending) DiagnosticLog.event("image.draw_superseded", this.request);
     removeListener();

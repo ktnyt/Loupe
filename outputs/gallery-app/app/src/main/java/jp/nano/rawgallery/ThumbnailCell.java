@@ -13,7 +13,7 @@ final class ThumbnailCell extends FrameLayout {
   ThumbnailCell(Context context) {
     super(context);
     setBackgroundColor(0xff22272a);
-    image = new ImageView(context);
+    image = new DiagnosticImageView(context);
     image.setScaleType(ImageView.ScaleType.CENTER_CROP);
     image.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
     addView(image, new LayoutParams(-1, -1));

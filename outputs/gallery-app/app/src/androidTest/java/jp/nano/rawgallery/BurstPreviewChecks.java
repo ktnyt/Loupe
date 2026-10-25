@@ -62,8 +62,9 @@ final class BurstPreviewChecks {
     if(repository.prepare(photos.get(0),()->true))throw new AssertionError("cancelled background generated");
     if(PreviewPreparationJob.local(new PhotoRepository.Photo(Uri.parse("archive://id"),"x","",1,1,0)))throw new AssertionError("archive included");
     String backgroundResult = BackgroundPreviewChecks.run(a);
+    String listResult = GalleryLoadingChecks.run(test, a);
     test.runOnMainSync(a::finish);
-    return backgroundResult + "PASS hero-before-strip/draw, selection priority, failure/retry visibility, stale screen, cancelled preparation, local-only\n";
+    return listResult + backgroundResult + "PASS hero-before-strip/draw, selection priority, failure/retry visibility, stale screen, cancelled preparation, local-only\n";
   }
   private static void set(Object o,String name,Object value)throws Exception {Field f=o.getClass().getDeclaredField(name);f.setAccessible(true);f.set(o,value);}
   private static String real(Instrumentation test,MainActivity a)throws Exception {

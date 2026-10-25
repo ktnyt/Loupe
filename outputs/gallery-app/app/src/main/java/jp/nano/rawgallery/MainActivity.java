@@ -285,6 +285,14 @@ public final class MainActivity extends DiagnosticActivity {
     }).setNegativeButton("閉じる", null).show();
   }
 
+  private static final class ImageLoad {
+    volatile boolean cancelled, complete;
+  }
+
+  private String imageKey(PhotoRepository.Photo photo, int edge) {
+    return PreviewPlaceholders.key(photo) + ":" + edge;
+  }
+
   private void previewInto(ImageView image, PhotoRepository.Photo photo, int size) {
     previewInto(image, photo, size, success -> {});
   }
@@ -293,38 +301,64 @@ public final class MainActivity extends DiagnosticActivity {
     long request = DiagnosticLog.id();
     DiagnosticLog.event("image.request", request, "burst", burstRequest,
         "photo", DiagnosticLog.photo(photo), "size", size, "format", photo.isJpeg() ? "JPEG" : "RAW");
-    String key = photo.uri + ":" + photo.modified + ":" + size;
-    image.setTag(request);
+    String key = imageKey(photo, size);
+    if (image.getTag() instanceof ImageLoad) ((ImageLoad) image.getTag()).cancelled = true;
+    ImageLoad load = new ImageLoad();
+    image.setTag(load);
+    if (image instanceof DiagnosticImageView) ((DiagnosticImageView) image).loading();
     image.setImageDrawable(null);
     int token = generation;
+    java.util.function.BooleanSupplier cancelled = () -> load.cancelled || token != generation;
     Bitmap cached = thumbs.get(key);
     DiagnosticLog.event("image.memory", request, "hit", cached != null);
     if (cached != null) {
+      load.complete = true;
       if (image instanceof DiagnosticImageView) ((DiagnosticImageView) image).bound(request);
       image.setImageBitmap(cached);
       DiagnosticLog.event("image.bind", request);
       complete.accept(true);
       return;
     }
+    Bitmap provisional = size > 600 ? thumbs.get(imageKey(photo, 400)) : null;
+    if (provisional == null && size > 600) provisional = thumbs.get(imageKey(photo, 600));
+    if (provisional != null) {
+      image.setImageBitmap(provisional);
+      DiagnosticLog.event("image.provisional", request, "kind", "thumbnail");
+    } else if (size >= 400 && size <= 600) {
+      PreviewPlaceholders.get(this).load(photo, () -> !cancelled.getAsBoolean() && !load.complete,
+          bitmap -> {
+            image.setImageBitmap(bitmap);
+            image.setStateDescription("読み込み中");
+            DiagnosticLog.event("image.placeholder", request);
+          });
+    }
     long previous = DiagnosticLog.use(request);
     images.execute(() -> {
-      if (token != generation) { DiagnosticLog.event("image.discard", request); return; }
+      if (cancelled.getAsBoolean()) { DiagnosticLog.event("image.discard", request); return; }
       try {
-        Bitmap bitmap = PhotoRepository.bitmap(repository.preview(photo), size);
+        Bitmap bitmap = size <= 600 ? repository.thumbnail(photo, size, cancelled)
+            : PhotoRepository.bitmap(repository.preview(photo, cancelled), size);
+        if (cancelled.getAsBoolean()) { bitmap.recycle(); DiagnosticLog.event("image.discard", request); return; }
         thumbs.put(key, bitmap);
         DiagnosticLog.event("image.post", request);
         main.post(() -> {
-          if (!isDestroyed() && token == generation && Long.valueOf(request).equals(image.getTag())) {
+          if (!isDestroyed() && !cancelled.getAsBoolean() && image.getTag() == load) {
+            load.complete = true;
             if (image instanceof DiagnosticImageView) ((DiagnosticImageView) image).bound(request);
             image.setImageBitmap(bitmap);
+            image.setStateDescription("表示済み");
             DiagnosticLog.event("image.bind", request);
             complete.accept(true);
           } else DiagnosticLog.event("image.discard", request);
         });
+        PreviewPlaceholders.get(this).remember(photo, bitmap);
       } catch (Exception e) {
+        if (cancelled.getAsBoolean()) { DiagnosticLog.event("image.discard", request); return; }
         DiagnosticLog.event("image.fail", request, "error", e.getClass().getSimpleName());
         main.post(() -> {
-          if (!isDestroyed() && token == generation && Long.valueOf(request).equals(image.getTag())) {
+          if (!isDestroyed() && !cancelled.getAsBoolean() && image.getTag() == load) {
+            load.complete = true;
+            image.setStateDescription("読み込めませんでした");
             image.setContentDescription(photo.name + "、プレビューを読み込めませんでした");
             DiagnosticLog.event("image.failure_applied", request);
             complete.accept(false);
@@ -844,7 +878,7 @@ public final class MainActivity extends DiagnosticActivity {
     Runnable loadVisible = () -> {
       android.graphics.Rect visible = new android.graphics.Rect();
       if (!requested[0] && image.isShown() && image.getLocalVisibleRect(visible)) {
-        requested[0] = true; previewInto(image, photo, width * 3);
+        requested[0] = true; previewInto(image, photo, Math.min(600, width * 3));
       }
     };
     android.view.ViewTreeObserver.OnScrollChangedListener onScroll = loadVisible::run;
@@ -950,7 +984,8 @@ public final class MainActivity extends DiagnosticActivity {
                           if (reused instanceof LinearLayout) cell = (LinearLayout) reused;
                           else {
                             cell = vertical();
-                            ImageView cover = new ImageView(MainActivity.this);
+                            ImageView cover = new DiagnosticImageView(MainActivity.this);
+                            cover.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
                             cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
                             cover.setBackground(GalleryUi.shape(MainActivity.this, PANEL, 12));
                             cover.setClipToOutline(true);
@@ -969,41 +1004,13 @@ public final class MainActivity extends DiagnosticActivity {
                           ((TextView) cell.getChildAt(2)).setText(album.count + "枚");
                           cell.setContentDescription(
                               "アルバム、" + album.folder + "、" + album.count + "枚");
-                          String key =
-                              album.cover.uri + ":" + album.cover.modified + ":" + album.cover.size;
-                          cover.setTag(key);
-                          cover.setImageDrawable(null);
-                          Bitmap cached = thumbs.get(key);
-                          if (cached != null) cover.setImageBitmap(cached);
-                          else
-                            images.execute(
-                                () -> {
-                                  try {
-                                    Bitmap bitmap =
-                                        PhotoRepository.bitmap(
-                                            repository.preview(album.cover), 600);
-                                    thumbs.put(key, bitmap);
-                                    main.post(
-                                        () -> {
-                                          if (!isDestroyed()
-                                              && token == generation
-                                              && key.equals(cover.getTag())) {
-                                            cover.setImageBitmap(bitmap);
-                                            if (!reportedCover) {
-                                              reportedCover = true;
-                                              cover.postOnAnimation(
-                                                  () ->
-                                                      android.util.Log.i(
-                                                          "YohakuStartup",
-                                                          "album_cover_ms="
-                                                              + (SystemClock.elapsedRealtime()
-                                                                  - startedAt)));
-                                            }
-                                          }
-                                        });
-                                  } catch (Exception ignored) {
-                                  }
-                                });
+                          previewInto(cover, album.cover, 600, success -> {
+                            if (success && !reportedCover) {
+                              reportedCover = true;
+                              cover.postOnAnimation(() -> android.util.Log.i("YohakuStartup",
+                                  "album_cover_ms=" + (SystemClock.elapsedRealtime() - startedAt)));
+                            }
+                          });
                           return cell;
                         }
                       });
@@ -1221,8 +1228,7 @@ public final class MainActivity extends DiagnosticActivity {
           if (saved.best().contains(ArchiveStore.key(photos.get(member)))) { representative = member; break; }
       } catch (Exception ignored) {}
       PhotoRepository.Photo p = photos.get(representative);
-      String key = p.uri + ":" + p.modified + ":" + p.size;
-      image.setTag(key);
+
       cell.setContentDescription(
           p.name
               + "、"
@@ -1258,37 +1264,11 @@ public final class MainActivity extends DiagnosticActivity {
         cell.setContentDescription(cell.getContentDescription() + "、" + cell.badges.rank);
       cell.badges.failed = false;
       cell.badges.invalidate();
-      Bitmap cached = thumbs.get(key);
-      if (cached != null) {
-        image.setImageBitmap(cached);
-        return cell;
-      }
-      ImageView target = image;
-      ThumbnailCell targetCell = cell;
-      images.execute(
-          () -> {
-            if (!key.equals(target.getTag()) || isDestroyed()) return;
-            try {
-              PhotoRepository.Preview preview = repository.preview(p);
-              Bitmap bitmap = PhotoRepository.bitmap(preview, 400);
-              thumbs.put(key, bitmap);
-              main.post(
-                  () -> {
-                    if (!isDestroyed() && key.equals(target.getTag()))
-                      target.setImageBitmap(bitmap);
-                  });
-            } catch (Exception e) {
-              main.post(
-                  () -> {
-                    if (!isDestroyed() && key.equals(target.getTag())) {
-                      targetCell.badges.failed = true;
-                      targetCell.badges.invalidate();
-                      targetCell.setContentDescription(
-                          targetCell.getContentDescription() + "、プレビューなし");
-                    }
-                  });
-            }
-          });
+      previewInto(image, p, 400, success -> {
+        cell.badges.failed = !success;
+        cell.badges.invalidate();
+        if (!success) cell.setContentDescription(cell.getContentDescription() + "、プレビューなし");
+      });
       return cell;
     }
   }

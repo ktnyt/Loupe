@@ -57,14 +57,20 @@ public final class PreviewPreparationJob extends JobService {
         save(ready, total, 0, "準備中");
         for (PhotoRepository.Photo p : photos) {
           if (cancel.get() || browsing()) { retry = true; break; }
-          if (!local(p) || repository.prepared(p)) continue;
+          if (!local(p)) continue;
+          boolean wasReady = repository.prepared(p);
+          if (wasReady && PreviewPlaceholders.get(this).has(p)) continue;
           if (getFilesDir().getUsableSpace() < 1024L * 1024 * 1024) {
             save(ready, total, failed, "空き容量が少ないため一時停止");
             retry = true; break;
           }
           try {
             if (!repository.prepare(p, () -> cancel.get() || browsing())) { retry = true; break; }
-            ready++;
+            if (!wasReady) ready++;
+            if (!cancel.get() && !browsing() && !PreviewPlaceholders.get(this).has(p)) {
+              android.graphics.Bitmap small = PhotoRepository.bitmap(repository.preview(p), 64);
+              try { PreviewPlaceholders.get(this).store(p, small); } finally { small.recycle(); }
+            }
           }
           catch (Exception e) { failed++; DiagnosticLog.event("preparation.item_fail", 0, "error", e.getClass().getSimpleName()); }
           save(ready, total, failed, "準備中");
