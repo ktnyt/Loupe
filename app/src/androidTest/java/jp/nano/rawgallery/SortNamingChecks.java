@@ -35,7 +35,7 @@ final class SortNamingChecks {
   private static TextView require(MainActivity a,String text){TextView v=find(a.getWindow().getDecorView(),text);if(v==null)throw new AssertionError("Missing "+text);return v;}
   private static void click(Instrumentation t,MainActivity a,String text)throws Exception{
     try { waitFor(t,()->{TextView v=find(a.getWindow().getDecorView(),text);return v!=null&&v.isEnabled();}); }
-    catch(AssertionError e){throw new AssertionError("Waiting for "+text,e);}
+    catch(AssertionError e){capture(t,a,"failed");throw new AssertionError("Waiting for "+text+" ranking="+field(a,"rankingScreen")+" finishing="+a.isFinishing()+" journal="+((PhotoRanking)field(a,"ranking")).journal,e);}
     main(t,()->require(a,text).performClick());
   }
   private static void dialog(Instrumentation t,String text,boolean click)throws Exception{
@@ -81,6 +81,22 @@ final class SortNamingChecks {
       click(t,a,"この写真を1位に");dialog(t,"この写真を1位にしますか？",false);dialog(t,"キャンセル",true);
       capture(t,a,"idle");click(t,a,"ソート");
       main(t,()->{if(!require(a,"ソート").isAccessibilityHeading())throw new AssertionError("heading");});
+      String initial=((PhotoRanking)field(a,"ranking")).journal;
+      click(t,a,"1位を決める");if(!initial.equals(((PhotoRanking)field(a,"ranking")).journal))throw new AssertionError("same mode changed journal");
+      click(t,a,"すべてに順位");dialog(t,"ソート方式を変更しますか？",false);
+      if(!((PhotoRanking)field(a,"ranking")).bestOnly())throw new AssertionError("changed before confirmation");
+      waitFor(t,()->!a.hasWindowFocus());back(t);if(!initial.equals(((PhotoRanking)field(a,"ranking")).journal))throw new AssertionError("Back changed mode");
+      click(t,a,"すべてに順位");dialog(t,"変更",true);
+      if(((PhotoRanking)field(a,"ranking")).bestOnly())throw new AssertionError("all mode not saved");
+      capture(t,a,"all-mode");
+      SharedPreferences.Editor failedEditor=(SharedPreferences.Editor)Proxy.newProxyInstance(SortNamingChecks.class.getClassLoader(),new Class<?>[]{SharedPreferences.Editor.class},(proxy,m,args)->{if(m.getName().equals("commit"))return false;if(m.getName().equals("putString"))return proxy;throw new AssertionError(m.getName());});
+      SharedPreferences failedPrefs=(SharedPreferences)Proxy.newProxyInstance(SortNamingChecks.class.getClassLoader(),new Class<?>[]{SharedPreferences.class},(proxy,m,args)->{if(m.getName().equals("edit"))return failedEditor;throw new AssertionError(m.getName());});
+      main(t,()->{try{set(a,"rankingStore",new RankingStore(failedPrefs));}catch(Exception e){throw new RuntimeException(e);}});
+      click(t,a,"1位を決める");dialog(t,"変更",true);
+      if(((PhotoRanking)field(a,"ranking")).bestOnly()||!require(a,"すべてに順位").isSelected())throw new AssertionError("save failure changed mode");
+      main(t,()->{try{set(a,"rankingStore",store);}catch(Exception e){throw new RuntimeException(e);}});
+      click(t,a,"1位を決める");dialog(t,"変更",true);
+      if(!((PhotoRanking)field(a,"ranking")).bestOnly())throw new AssertionError("best mode not restored");
       capture(t,a,"comparison");click(t,a,"Aを選ぶ");back(t);
       main(t,()->require(a,"ソートを再開"));capture(t,a,"resume");click(t,a,"ソートを再開");click(t,a,"Aを選ぶ");
       main(t,()->require(a,"ソート結果"));capture(t,a,"result");back(t);
@@ -88,7 +104,7 @@ final class SortNamingChecks {
       String journal=((PhotoRanking)field(a,"ranking")).journal;
       click(t,a,"その他");dialog(t,"再ソート",true);dialog(t,"この連写を再ソートしますか？",false);capture(t,a,"redo");dialog(t,"キャンセル",true);
       if(!journal.equals(((PhotoRanking)field(a,"ranking")).journal))throw new AssertionError("cancel changed journal");
-      click(t,a,"すべての順位を決める");dialog(t,"ソート方式を変更しますか？",false);capture(t,a,"mode");dialog(t,"キャンセル",true);
+      click(t,a,"すべてに順位");dialog(t,"ソート方式を変更しますか？",false);capture(t,a,"mode");dialog(t,"キャンセル",true);
       click(t,a,"その他");dialog(t,"再ソート",true);dialog(t,"再ソート",true);
       main(t,()->{try{if(((PhotoRanking)field(a,"ranking")).decisions()!=0)throw new AssertionError("redo did not reset");}catch(Exception e){throw new RuntimeException(e);}});
       back(t);
@@ -108,7 +124,7 @@ final class SortNamingChecks {
           int required=b.getLayout().getHeight()+b.getCompoundPaddingTop()+b.getCompoundPaddingBottom();if(required>b.getMeasuredHeight())throw new AssertionError("vertical clipping "+label);
         }
       });
-      return "PASS synthetic actual screens: start, compare, resume, finish, result, redo cancel/execute, mode cancel, share guidance/return; isolated rankings; 24 button size/font checks; accessibility names/headings. Screenshots cache/sort-test-*.png. TalkBack spoken order not tested.\n";
+      return "PASS synthetic actual screens: start, compare, resume, finish, result, redo cancel/execute, mode cancel, share guidance/return; mode same/cancel/confirm/save failure; isolated rankings; 24 button size/font checks; accessibility names/headings. Screenshots cache/sort-test-*.png. TalkBack spoken order not tested.\n";
     }finally{main(t,a::finish);prefs.edit().clear().commit();for(File f:files)f.delete();}
   }
 }

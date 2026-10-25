@@ -1553,12 +1553,8 @@ public final class MainActivity extends DiagnosticActivity {
             12,
             MUTED));
     root.addView(top);
-    LinearLayout modes = row();
-    modes.setPadding(dp(12), 0, dp(12), dp(8));
-    modes.addView(GalleryUi.chip(this, "1位を決める", ranking.bestOnly(),
-        () -> changeRankingMode(true)), new LinearLayout.LayoutParams(0, -2, 1));
-    modes.addView(GalleryUi.chip(this, "すべての順位を決める", !ranking.bestOnly(),
-        () -> changeRankingMode(false)), new LinearLayout.LayoutParams(0, -2, 1));
+    LinearLayout modes = RankingModes.create(this, ranking.bestOnly(),
+        () -> changeRankingMode(true), () -> changeRankingMode(false));
 
     if (ranking.done()) {
       TextView hint = label("写真をタップして拡大", 12, MUTED);
