@@ -95,6 +95,8 @@ final class SortNamingChecks {
       main(t,()->{try{set(a,"selecting",true);Set<String> selected=(Set<String>)field(a,"selectedPhotos");selected.clear();for(PhotoRepository.Photo p:photos)selected.add(p.uri.toString());invoke(a,"shareSelection");}catch(Exception e){throw new RuntimeException(e);}});
       dialog(t,"1組の順位がまだ決まっていません。ソートした後に選択画面へ戻れます。",false);capture(t,a,"share");dialog(t,"ソート",true);
       main(t,()->require(a,"ソート"));back(t);
+      main(t,()->{try{if(!(boolean)field(a,"selecting") || (boolean)field(a,"rankingScreen") || ((Set<?>)field(a,"selectedPhotos")).size()!=3)throw new AssertionError("share selection not preserved");invoke(a,"addTarget");}catch(Exception e){throw new RuntimeException(e);}});
+      dialog(t,"登録するアプリ",false);back(t);dialog(t,"共有先と並び順",false);back(t);
       main(t,()->{
         for(float scale:new float[]{1f,1.3f})for(int width:new int[]{280,320,360,412})for(String label:new String[]{"ソート","ソートを再開","ソート結果"}){
           Configuration config=new Configuration(a.getResources().getConfiguration());config.fontScale=scale;
