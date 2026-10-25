@@ -1,0 +1,499 @@
+{
+  "verified_date_jst": "2026-10-25",
+  "source": "https://raw.pixls.us/",
+  "exiftool_version": "13.55",
+  "samples": [
+    {
+      "group": "samples",
+      "extension": "cr2",
+      "camera": "Canon EOS 40D",
+      "url": "https://raw.pixls.us/getfile.php/2102/nice/Canon - EOS 40D - sRAW2 (sRAW) (3:2).CR2",
+      "sha256": "ba644e7dd2abe74eca260e67f0206ff113bf0f62e710f8130611e964d6be5bf1",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "result": [
+        "MATCH",
+        "1936x1288",
+        "366439 bytes",
+        "69 ms",
+        "Canon EOS 40D",
+        "orientation=1"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "orf",
+      "camera": "Olympus C5050Z",
+      "url": "https://raw.pixls.us/getfile.php/254/nice/Olympus - C5050Z - 12bit (4:3).ORF",
+      "sha256": "f4b013e78204ebaadd740d93416080856b3c51ec154760e2e2de0e552873044a",
+      "license_url": "http://creativecommons.org/licenses/by-nc-sa/4.0/",
+      "result": [
+        "MATCH",
+        "160x120",
+        "3616 bytes",
+        "22 ms",
+        "C5050Z",
+        "orientation=8"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "nef",
+      "camera": "Nikon Nikon COOLSCAN IV ED",
+      "url": "https://raw.pixls.us/getfile.php/4282/nice/Nikon - Nikon COOLSCAN IV ED - uncompressed (4:3).nef",
+      "sha256": "268d9a98920a9f3ea3ebf6a2b9ff68b956df74ac0e46b980bee69e7ef3ebc172",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "result": [
+        "MATCH",
+        "869x593",
+        "434630 bytes",
+        "31 ms",
+        "Nikon COOLSCAN IV ED",
+        "orientation=1"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "rw2",
+      "camera": "Panasonic DMC-LX7",
+      "url": "https://raw.pixls.us/getfile.php/7008/nice/Panasonic - DMC-LX7 - 1:1.RW2",
+      "sha256": "d142a23aca836053ed53e9ce3cb3ed2d434541d734d71a94a6eefadcd08bd31b",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "result": [
+        "MATCH",
+        "1920x1920",
+        "937604 bytes",
+        "95 ms",
+        "DMC-LX7",
+        "orientation=1"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "arw",
+      "camera": "Sony ILCE-7S",
+      "url": "https://raw.pixls.us/getfile.php/1582/nice/Sony - ILCE-7S - 14bit 14bit compressed (3:2).ARW",
+      "sha256": "a35ebb2fbec929daa5beb20d1ce5c15a8aac7b1a7a231455387f3df8a7442e07",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "result": [
+        "MATCH",
+        "1616x1080",
+        "734118 bytes",
+        "136 ms",
+        "ILCE-7S",
+        "orientation=1"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "mrw",
+      "camera": "Minolta Dimage Z2",
+      "url": "https://raw.pixls.us/getfile.php/373/nice/Minolta - Dimage Z2.MRW",
+      "sha256": "bdb7c245062a40bf22e9f440a0e190f21a8645eadf68f75e805af54ca26c8d21",
+      "license_url": "http://creativecommons.org/licenses/by-nc-sa/4.0/",
+      "result": [
+        "NO_JPEG",
+        "埋め込みJPEGが見つかりません"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "crw",
+      "camera": "Canon PowerShot Pro70",
+      "url": "https://raw.pixls.us/getfile.php/572/nice/Canon - PowerShot Pro70.CRW",
+      "sha256": "3e583286dd5e63b03aca3de6671b7921fc9fd814a7f4cbed50a20c028728c802",
+      "license_url": "http://creativecommons.org/licenses/by-nc-sa/4.0/",
+      "result": [
+        "NO_JPEG",
+        "埋め込みJPEGが見つかりません"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "srw",
+      "camera": "Samsung NX500",
+      "url": "https://raw.pixls.us/getfile.php/3668/nice/Samsung - NX500 - 12bit 12bit normal compression (3:2).SRW",
+      "sha256": "156e43118811bcecb6fcc600b5f41ee1773c4f00b6a5b2dd72e177e35f6596ab",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "result": [
+        "MATCH",
+        "6480x4320",
+        "3802827 bytes",
+        "574 ms",
+        "NX500",
+        "orientation=1"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "mef",
+      "camera": "Mamiya ZD",
+      "url": "https://raw.pixls.us/getfile.php/562/nice/Mamiya - ZD.MEF",
+      "sha256": "bcd63507c3c4cc3ea1bad2945e3f88cb4677a1a3c762e1acc38df4445714eb7c",
+      "license_url": "http://creativecommons.org/licenses/by-nc-sa/4.0/",
+      "result": [
+        "NO_JPEG",
+        "埋め込みJPEGが見つかりません"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "x3f",
+      "camera": "Polaroid Polaroid x530",
+      "url": "https://raw.pixls.us/getfile.php/584/nice/Polaroid - Polaroid x530.X3F",
+      "sha256": "151b4411058b768adc69183edd11656a4224ca03d3a118442cfa692986fb4754",
+      "license_url": "http://creativecommons.org/licenses/by-nc-sa/4.0/",
+      "result": [
+        "MATCH",
+        "1408x1056",
+        "589193 bytes",
+        "63 ms",
+        "x530",
+        "orientation=1"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "raw",
+      "camera": "Kodak Kodak C330",
+      "url": "https://raw.pixls.us/getfile.php/590/nice/Kodak - Kodak C330 - Format 4:2:2 YRGB (4:2).RAW",
+      "sha256": "d3c945dff5f0f20f850183c6b5ac06d9eecad3f420e84313bcbeb101517674df",
+      "license_url": "http://creativecommons.org/licenses/by-nc-sa/4.0/",
+      "result": [
+        "NO_JPEG",
+        "埋め込みJPEGが見つかりません"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "tif",
+      "camera": "Kodak EOS DCS 3",
+      "url": "https://raw.pixls.us/getfile.php/2465/nice/Kodak - EOS DCS 3 - 8bit (4:3).TIF",
+      "sha256": "dd05419fedb091ca14c86485106e8c338509b09c8188dacf92eef6c78007deca",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "result": [
+        "NO_JPEG",
+        "埋め込みJPEGが見つかりません"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "nrw",
+      "camera": "Nikon Coolpix P7000",
+      "url": "https://raw.pixls.us/getfile.php/598/nice/Nikon - Coolpix P7000 - 12bit 12bit-uncompressed.NRW",
+      "sha256": "09165ec1031b36e6ae43f2263b4400ec4d9c3444ae252d258d002f7e96dbea25",
+      "license_url": "http://creativecommons.org/licenses/by-nc-sa/4.0/",
+      "result": [
+        "MATCH",
+        "3648x2736",
+        "821629 bytes",
+        "213 ms",
+        "COOLPIX P7000",
+        "orientation=1"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "raf",
+      "camera": "Fujifilm FinePix S5000",
+      "url": "https://raw.pixls.us/getfile.php/2726/nice/Fujifilm - FinePix S5000 - 4:3.RAF",
+      "sha256": "dabd5e74521a6980156be9fd4b88d0c37b0fe4d0e0e6f5c12db8cffff1b76297",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "result": [
+        "MATCH",
+        "1280x960",
+        "489938 bytes",
+        "60 ms",
+        "FinePix S5000",
+        "orientation=1"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "dng",
+      "camera": "Blackmagic Micro Cinema Camera",
+      "url": "https://raw.pixls.us/getfile.php/7317/nice/Blackmagic - Micro Cinema Camera - 12bit (16:9).dng",
+      "sha256": "4c65b8cda205087cfb94d8931811e53e15eb4df538ad67c1b4a3e76c1185b277",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "result": [
+        "NO_JPEG",
+        "埋め込みJPEGが見つかりません"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "pef",
+      "camera": "Pentax K10D",
+      "url": "https://raw.pixls.us/getfile.php/2239/nice/Pentax - K10D - 12bit 12bit compressed (3:2).PEF",
+      "sha256": "e35ae4154a468be3154f5f462e884ba5941f010d3e8f23d347fbec14809f44d3",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "result": [
+        "MATCH",
+        "3872x2592",
+        "1348879 bytes",
+        "218 ms",
+        "PENTAX K10D",
+        "orientation=1"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "mos",
+      "camera": "Leaf Aptus 22",
+      "url": "https://raw.pixls.us/getfile.php/3196/nice/Leaf - Aptus 22 - 16bit (4:3).mos",
+      "sha256": "8a1a101cb3940b0648af54a721d92e6fb8612dd29a0909036ea2753196a00ec2",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "result": [
+        "MATCH_LEAF_LF_NORMALIZATION",
+        "332x244",
+        "24132 bytes",
+        "50 ms",
+        "不明なカメラ",
+        "orientation=1"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "kdc",
+      "camera": "Kodak KODAK P712 ZOOM DIGITAL CAMERA",
+      "url": "https://raw.pixls.us/getfile.php/2345/nice/Kodak - KODAK P712 ZOOM DIGITAL CAMERA - NAN.KDC",
+      "sha256": "b1c3870c8c794f0271053a80a15296e3a9b575ab736796cdb53929d50c86a084",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "result": [
+        "MATCH",
+        "3072x2304",
+        "1468416 bytes",
+        "183 ms",
+        "KODAK P712 ZOOM DIGITAL CAMERA",
+        "orientation=1"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "3fr",
+      "camera": "Hasselblad CFV",
+      "url": "https://raw.pixls.us/getfile.php/709/nice/Hasselblad - CFV.3FR",
+      "sha256": "f7c0f941bd542ec638073bfa9febdc4efa01f4a4855d73c5d9218b975d1de91a",
+      "license_url": "http://creativecommons.org/licenses/by-nc-sa/4.0/",
+      "result": [
+        "NO_JPEG",
+        "埋め込みJPEGが見つかりません"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "rwl",
+      "camera": "Leica D-LUX 5",
+      "url": "https://raw.pixls.us/getfile.php/2811/nice/Leica - D-LUX 5 - 1:1.RWL",
+      "sha256": "ceeb5e5bf2358c04706e807bc023971e085d969b6f36491a57ecff051a05e8d3",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "result": [
+        "MATCH",
+        "1920x1920",
+        "998125 bytes",
+        "110 ms",
+        "D-LUX 5",
+        "orientation=1"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "gpr",
+      "camera": "GoPro HERO7 Black",
+      "url": "https://raw.pixls.us/getfile.php/2908/nice/GoPro - HERO7 Black - 16bit (4:3).GPR",
+      "sha256": "f7d8a5b693bc173a777164dbad48921c8d145d602d5422925a13090404514b66",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "result": [
+        "NO_JPEG",
+        "埋め込みJPEGが見つかりません"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "dcr",
+      "camera": "Kodak DCS760C",
+      "url": "https://raw.pixls.us/getfile.php/1347/nice/Kodak - DCS760C - 12bit (3:2).DCR",
+      "sha256": "d0e6bd0a3339daff884e73a08fed8e75b20fe05bba438fc185e3f0bd019d0da8",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "result": [
+        "NO_JPEG",
+        "埋め込みJPEGが見つかりません"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "srf",
+      "camera": "Sony DSC-F828",
+      "url": "https://raw.pixls.us/getfile.php/1351/nice/Sony - DSC-F828 - 4:3.SRF",
+      "sha256": "07739f94bcab0c7e198d418ac65172d0dce04bb84a7683ecffd0bfe4b32f6d79",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "result": [
+        "MATCH",
+        "640x480",
+        "151046 bytes",
+        "51 ms",
+        "DSC-F828",
+        "orientation=1"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "iiq",
+      "camera": "Phase One P40+",
+      "url": "https://raw.pixls.us/getfile.php/8010/nice/Phase One - P40+ - IIQ S (4:3).IIQ",
+      "sha256": "61aa32c5947d386f0d5ee465c5183185df6c9cd7ff7eb66ffec12e84b487878c",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "result": [
+        "NO_JPEG",
+        "埋め込みJPEGが見つかりません"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "ori",
+      "camera": "Olympus E-M5 Mark II",
+      "url": "https://raw.pixls.us/getfile.php/2857/nice/Olympus - E-M5 Mark II - 16bit 16bit \"normal\" (4:3).ORI",
+      "sha256": "f2c7a1dfbfcc6093b28373a1616569b8bd9c2d91cb708480b8312d510c57fbd6",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "result": [
+        "MATCH",
+        "3200x2400",
+        "909027 bytes",
+        "195 ms",
+        "E-M5MarkII",
+        "orientation=1"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "cr3",
+      "camera": "Canon EOS R6",
+      "url": "https://raw.pixls.us/getfile.php/4659/nice/Canon - EOS R6 - 3:2.CR3",
+      "sha256": "74abb0a113d075ad9887a058082f40dd2a938c4813a08474d82356f11a027778",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "result": [
+        "MATCH",
+        "3408x2272",
+        "962675 bytes",
+        "190 ms",
+        "不明なカメラ",
+        "orientation=1"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "erf",
+      "camera": "Epson R-D1",
+      "url": "https://raw.pixls.us/getfile.php/2680/nice/Epson - R-D1 - 12bit (3:2).ERF",
+      "sha256": "09d8e533d93116294a9f3e161ed868e929454c7b946e083b644bd6bb75bcb5e4",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "result": [
+        "MATCH",
+        "640x424",
+        "55150 bytes",
+        "49 ms",
+        "R-D1",
+        "orientation=1"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "sr2",
+      "camera": "Sony DSC-R1",
+      "url": "https://raw.pixls.us/getfile.php/3221/nice/Sony - DSC-R1 - 14bit 14bit uncompressed (3:2).SR2",
+      "sha256": "921c5f2513dd1671a9089e73fc778fc3573bc4cb70a3a555d0414661d0e62274",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "result": [
+        "MATCH",
+        "640x424",
+        "145173 bytes",
+        "62 ms",
+        "DSC-R1",
+        "orientation=1"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "ari",
+      "camera": "Arri Alexa Mini",
+      "url": "https://raw.pixls.us/getfile.php/3497/nice/Arri - Alexa Mini.ari",
+      "sha256": "4d487a43d1259049d6f7145049ec33da378681dab1278a8eb3941ac231cc844a",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "result": [
+        "NO_JPEG",
+        "埋め込みJPEGが見つかりません"
+      ]
+    },
+    {
+      "group": "samples",
+      "extension": "mdc",
+      "camera": "Minolta RD 175",
+      "url": "https://raw.pixls.us/getfile.php/4510/nice/Minolta - RD 175.MDC",
+      "sha256": "b7dfc1e9c895610c7170d00a03d3eff6e689f87bb750574c94c056ee4905ced4",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "result": [
+        "NO_JPEG",
+        "埋め込みJPEGが見つかりません"
+      ]
+    },
+    {
+      "group": "extra",
+      "extension": "dng",
+      "camera": "Ricoh GR DIGITAL 2",
+      "url": "https://raw.pixls.us/getfile.php/667/nice/Ricoh - GR DIGITAL 2.DNG",
+      "sha256": "43d6b45c9e05c0d5906c08300a7a51aba5968e38d46ec27034ae3bab0fe605f5",
+      "license_url": "http://creativecommons.org/licenses/by-nc-sa/4.0/",
+      "result": [
+        "NO_JPEG",
+        "埋め込みJPEGが見つかりません"
+      ]
+    },
+    {
+      "group": "extra",
+      "extension": "crw",
+      "camera": "Canon EOS D60",
+      "url": "https://raw.pixls.us/getfile.php/2010/nice/Canon - EOS D60 - RAW (3:2).CRW",
+      "sha256": "2b98659ecff170af1dfe44f89b493139e75e995b2979686f6ff0847cfb56b97f",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "result": [
+        "MATCH",
+        "2048x1360",
+        "1891328 bytes",
+        "206 ms",
+        "不明なカメラ",
+        "orientation=1"
+      ]
+    },
+    {
+      "group": "extra",
+      "extension": "mrw",
+      "camera": "Minolta DiMAGE A1",
+      "url": "https://raw.pixls.us/getfile.php/372/nice/Minolta - DiMAGE A1.MRW",
+      "sha256": "bde1e2cd788e49c9bef20dfdd41be948fb02c2ee198c6b0959a67a3f79fd41c9",
+      "license_url": "http://creativecommons.org/licenses/by-nc-sa/4.0/",
+      "result": [
+        "MATCH",
+        "640x480",
+        "56028 bytes",
+        "29 ms",
+        "不明なカメラ",
+        "orientation=1"
+      ]
+    },
+    {
+      "group": "modern",
+      "extension": "dng",
+      "camera": "Ricoh GR III",
+      "url": "https://raw.pixls.us/getfile.php/3115/nice/Ricoh - GR III - 14bit (3:2).DNG",
+      "sha256": "05513ee72f7cac4165534c9f64995412084f414a033c80c473c79fd94154292e",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "result": [
+        "MATCH",
+        "6000x4000",
+        "2949020 bytes",
+        "728 ms",
+        "RICOH GR III",
+        "orientation=1"
+      ]
+    }
+  ]
+}

@@ -11,6 +11,9 @@ local.properties
 **/build/
 *.apk
 *.aab
+# Python local caches
+__pycache__/
+*.py[cod]
 # Local design drafts and device reports
 outputs/branding/
 outputs/gallery-app/docs/*-test-results.txt

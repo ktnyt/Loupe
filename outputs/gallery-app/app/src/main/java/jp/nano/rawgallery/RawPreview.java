@@ -4,7 +4,7 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
-/** Reads only declared TIFF/ORF JPEG ranges. Never decodes or changes the raw sensor data. */
+/** Extracts complete embedded JPEG streams without decoding or changing raw sensor data. */
 public final class RawPreview {
   public interface Source {
     long length() throws IOException;
@@ -38,12 +38,19 @@ public final class RawPreview {
     public final int length, width, height, orientation;
     public final String model;
     public final long taken;
+    public final boolean repairedHeader;
 
     Result(long o, int n, int w, int h, int rotation, String camera) {
       this(o, n, w, h, rotation, camera, 0);
     }
 
     Result(long o, int n, int w, int h, int rotation, String camera, long capturedAt) {
+      this(o, n, w, h, rotation, camera, capturedAt, false);
+    }
+
+    Result(long o, int n, int w, int h, int rotation, String camera, long capturedAt,
+        boolean repaired) {
+      repairedHeader = repaired;
       taken = capturedAt;
       offset = o;
       length = n;
@@ -56,6 +63,7 @@ public final class RawPreview {
     public byte[] jpeg(Source source) throws IOException {
       byte[] data = new byte[length];
       source.read(offset, data);
+      if (repairedHeader) data[0] = (byte) 255;
       return data;
     }
   }
@@ -64,6 +72,7 @@ public final class RawPreview {
   private final long size;
   private boolean little;
   private int orientation = 1;
+  private boolean orientationKnown, repairPreviewHeader;
   private String model = "不明なカメラ", capturedText = "", capturedOffset = "";
   private final Set<String> visited = new HashSet<>();
   private final List<Result> candidates = new ArrayList<>();
@@ -72,21 +81,30 @@ public final class RawPreview {
   private RawPreview(Source s) throws IOException {
     source = s;
     size = s.length();
+    if (size < 0) throw new IOException("RAWのサイズを取得できません");
   }
 
   public static Result inspect(Source source) throws IOException {
     RawPreview p = new RawPreview(source);
-    byte[] h = p.bytes(0, 8);
-    if (h[0] == 'I' && h[1] == 'I') p.little = true;
-    else if (h[0] == 'M' && h[1] == 'M') p.little = false;
-    else throw new IOException("TIFF/ORF形式ではありません");
-    int magic = p.u16(h, 2);
-    if (magic != 42 && magic != 0x4f52 && magic != 0x5352) throw new IOException("未対応のRAW形式です");
-    p.directory(p.u32(h, 4), 0, 0, 0);
+    // Metadata is optional: proprietary or damaged directories must not hide a valid JPEG.
+    try {
+      byte[] h = p.bytes(0, 8);
+      p.repairPreviewHeader = h[0] == 0 && h[1] == 'M' && h[2] == 'R' && h[3] == 'M';
+      if ((h[0] == 'I' && h[1] == 'I') || (h[0] == 'M' && h[1] == 'M')) {
+        p.little = h[0] == 'I';
+        int magic = p.u16(h, 2);
+        if (magic == 42 || magic == 0x4f52 || magic == 0x5352 || magic == 85)
+          p.directory(p.u32(h, 4), 0, 0, 0);
+      }
+    } catch (IOException ignored) {
+      // The stream scan below still propagates source I/O failures and cancellation.
+    }
+    p.scan();
     Result best =
         p.candidates.stream()
             .max(Comparator.comparingLong(r -> (long) r.width * r.height))
             .orElseThrow(() -> new IOException("埋め込みJPEGが見つかりません"));
+    p.jpegMetadata(best);
     return new Result(
         best.offset,
         best.length,
@@ -94,7 +112,7 @@ public final class RawPreview {
         best.height,
         p.orientation,
         p.model,
-        captureTime(p.capturedText, p.capturedOffset));
+        captureTime(p.capturedText, p.capturedOffset), best.repairedHeader);
   }
 
   static long captureTime(String text, String offset) {
@@ -204,6 +222,10 @@ public final class RawPreview {
       entries.put(u16(e, 0), new Entry(e, offset + 2 + i * 12, base));
     }
     if (kind == 0) {
+      if (entries.containsKey(271)) {
+        String make = entries.get(271).text().toUpperCase(Locale.ROOT);
+        if (make.contains("EPSON") || make.contains("MINOLTA")) repairPreviewHeader = true;
+      }
       if (entries.containsKey(36867)) capturedText = entries.get(36867).text();
       if (entries.containsKey(36881)) capturedOffset = entries.get(36881).text();
       if (entries.containsKey(272)) {
@@ -212,7 +234,7 @@ public final class RawPreview {
       }
       if (depth == 0 && entries.containsKey(274)) {
         int o = (int) num(entries, 274);
-        if (o >= 1 && o <= 8) orientation = o;
+        if (o >= 1 && o <= 8) { orientation = o; orientationKnown = true; }
       }
       if (entries.containsKey(513) && entries.containsKey(514))
         candidate(base + num(entries, 513), num(entries, 514));
@@ -259,35 +281,137 @@ public final class RawPreview {
   }
 
   private void candidate(long offset, long length) throws IOException {
-    if (length < 16 || length > MAX_JPEG) return;
-    byte[] h = bytes(offset, (int) Math.min(length, 262144));
-    if ((h[0] & 255) != 255 || (h[1] & 255) != 216) return;
-    int p = 2;
-    while (p + 4 <= h.length) {
-      if ((h[p++] & 255) != 255) return;
-      while (p < h.length && (h[p] & 255) == 255) p++;
-      if (p >= h.length) return;
-      int marker = h[p++] & 255;
-      if (marker == 0xda || marker == 0xd9) return;
-      if (marker == 1 || (marker >= 0xd0 && marker <= 0xd7)) continue;
-      if (p + 2 > h.length) return;
-      int n = ((h[p] & 255) << 8) | (h[p + 1] & 255);
-      if (n < 2 || p + n > h.length) return;
-      if (marker == 0xc0 || marker == 0xc1 || marker == 0xc2) {
-        if (n < 8 || (h[p + 2] & 255) != 8) return;
-        int height = ((h[p + 3] & 255) << 8) | (h[p + 4] & 255),
-            width = ((h[p + 5] & 255) << 8) | (h[p + 6] & 255),
-            components = h[p + 7] & 255;
-        if (width < 1
-            || height < 1
-            || (long) width * height > 120_000_000L
-            || (components != 1 && components != 3)) return;
-        byte[] end = bytes(offset + length - 2, 2);
-        if ((end[0] & 255) != 255 || (end[1] & 255) != 217) return;
-        candidates.add(new Result(offset, (int) length, width, height, orientation, model));
-        return;
+    if (offset < 0 || length < 16 || length > MAX_JPEG || offset > size - length) return;
+    // All candidates, including declared TIFF ranges, use the same complete-stream validator.
+    Result r = new JpegReader().parse(offset, offset + length);
+    if (r != null) candidates.add(r);
+  }
+
+  private void scan() throws IOException {
+    candidates.clear();
+    JpegReader reader = new JpegReader();
+    for (long pos = 0; pos + 1 < size; pos++) {
+      if (reader.at(pos + 1) != 216) continue;
+      if (reader.at(pos) != 255 && !(repairPreviewHeader && pos + 3 < size
+          && reader.at(pos + 2) == 255 && reader.at(pos + 3) == 219)) continue;
+      Result r = reader.parse(pos, pos + Math.min(size - pos, MAX_JPEG));
+      if (r != null) {
+        // Retain only the largest scan candidate, so memory does not grow with file size.
+        if (candidates.isEmpty()
+            || (long) r.width * r.height > (long) candidates.get(0).width * candidates.get(0).height) {
+          candidates.clear();
+          candidates.add(r);
+        }
+        pos = r.offset + r.length - 1;
       }
-      p += n;
+    }
+  }
+
+  /** Buffered random access; JPEG payloads are never allocated during inspection. */
+  private final class JpegReader {
+    private byte[] buffer = new byte[0];
+    private long start = -1;
+    // Overlapping malformed candidates must not turn a linear scan into unbounded re-parsing.
+    private long budget = size > Long.MAX_VALUE / 8 ? Long.MAX_VALUE : Math.max(1_048_576, size * 8);
+
+    int at(long offset) throws IOException {
+      if (--budget < 0) throw new IOException("JPEG探索の処理量上限を超えました");
+      if (offset < 0 || offset >= size) throw new EOFException();
+      if (start < 0 || offset < start || offset - start >= buffer.length) {
+        if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("RAW抽出を中断しました");
+        start = offset;
+        buffer = bytes(start, (int) Math.min(65536, size - start));
+      }
+      return buffer[(int) (offset - start)] & 255;
+    }
+
+    int word(long offset) throws IOException {
+      return (at(offset) << 8) | at(offset + 1);
+    }
+
+    Result parse(long offset, long end) throws IOException {
+      if (end - offset < 4 || at(offset + 1) != 216) return null;
+      boolean repair = at(offset) != 255;
+      if (repair && !(repairPreviewHeader && at(offset + 2) == 255 && at(offset + 3) == 219)) return null;
+      long pos = offset + 2;
+      int width = 0, height = 0, components = 0;
+      boolean entropy = false, scan = false, payload = false;
+      while (pos < end) {
+        int value = at(pos++);
+        if (value != 255) {
+          if (!entropy) return null;
+          payload = true;
+          continue;
+        }
+        while (pos < end && at(pos) == 255) pos++;
+        if (pos >= end) return null;
+        int marker = at(pos++);
+        if (entropy && marker == 0) { payload = true; continue; }
+        if (entropy && marker >= 0xd0 && marker <= 0xd7) continue;
+        if (marker == 0xd9) {
+          return width > 0 && scan && payload
+              ? new Result(offset, (int) (pos - offset), width, height, orientation, model, 0, repair) : null;
+        }
+        entropy = false;
+        if (marker == 0 || marker == 0xd8 || (marker >= 0xd0 && marker <= 0xd7)) return null;
+        if (marker == 1) continue;
+        if (pos + 2 > end) return null;
+        int length = word(pos);
+        if (length < 2 || length > end - pos) return null;
+        if (marker >= 0xc0 && marker <= 0xcf && marker != 0xc4 && marker != 0xc8 && marker != 0xcc) {
+          // Lossless sensor JPEG (SOF3 etc.) is not a display preview.
+          if (marker != 0xc0 && marker != 0xc1 && marker != 0xc2) return null;
+          if (width != 0 || length < 8 || at(pos + 2) != 8) return null;
+          height = word(pos + 3);
+          width = word(pos + 5);
+          components = at(pos + 7);
+          if (width == 0 || height == 0 || (long) width * height > 120_000_000L
+              || (components != 1 && components != 3) || length != 8 + 3 * components) return null;
+        }
+        if (marker == 0xda) {
+          if (width == 0 || length < 6) return null;
+          int count = at(pos + 2);
+          if (count < 1 || count > components || length != 6 + 2 * count) return null;
+          entropy = true;
+          scan = true;
+        }
+        pos += length;
+      }
+      return null;
+    }
+  }
+
+  private void jpegMetadata(Result result) throws IOException {
+    // RAF/RW2/CR3/X3F often keep orientation and capture time in the selected JPEG's EXIF.
+    long pos = result.offset + 2, end = result.offset + result.length;
+    JpegReader reader = new JpegReader();
+    while (pos + 4 <= end && reader.at(pos++) == 255) {
+      int marker = reader.at(pos++);
+      if (marker == 0xda || marker == 0xd9) break;
+      if (marker == 1) continue;
+      int length = reader.word(pos);
+      if (length < 2 || length > end - pos) break;
+      if (marker == 0xe1 && length >= 16
+          && Arrays.equals(bytes(pos + 2, 6), new byte[] {'E', 'x', 'i', 'f', 0, 0})) {
+        final long base = pos + 8, limit = pos + length - base;
+        RawPreview exif = new RawPreview(new Source() {
+          public long length() { return limit; }
+          public void read(long offset, byte[] data) throws IOException { source.read(base + offset, data); }
+        });
+        try {
+          byte[] h = exif.bytes(0, 8);
+          if (!((h[0] == 'I' && h[1] == 'I') || (h[0] == 'M' && h[1] == 'M'))) break;
+          exif.little = h[0] == 'I';
+          if (exif.u16(h, 2) != 42) break;
+          exif.directory(exif.u32(h, 4), 0, 0, 0);
+        } catch (IOException ignored) { /* Optional EXIF may be incomplete. */ }
+        if (!orientationKnown) orientation = exif.orientation;
+        if (model.equals("不明なカメラ")) model = exif.model;
+        if (capturedText.isEmpty()) capturedText = exif.capturedText;
+        if (capturedOffset.isEmpty()) capturedOffset = exif.capturedOffset;
+        break;
+      }
+      pos += length;
     }
   }
 }

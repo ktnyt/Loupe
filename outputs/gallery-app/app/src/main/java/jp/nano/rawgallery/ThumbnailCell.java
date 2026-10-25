@@ -32,9 +32,9 @@ final class ThumbnailCell extends FrameLayout {
   static final class Badges extends View {
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final float density;
-    String camera = "";
+    String camera = "", rank = "";
     int count;
-    boolean cloud, failed, selectionMode, selected;
+    boolean cloud, failed, selectionMode, selected, partial;
 
     Badges(Context context) {
       super(context);
@@ -53,41 +53,49 @@ final class ThumbnailCell extends FrameLayout {
         canvas.drawText(camera, 11, 19, paint);
       }
       if (cloud && !selectionMode) {
-        box(canvas, w - 29, 5, 24, 21);
+        box(canvas, w - 29, h - 26, 24, 21);
         paint.setColor(Color.WHITE);
-        canvas.drawCircle(w - 21, 17, 3, paint);
-        canvas.drawCircle(w - 16, 14, 5, paint);
-        canvas.drawCircle(w - 11, 17, 3, paint);
-        canvas.drawRect(w - 21, 16, w - 11, 20, paint);
+        canvas.drawCircle(w - 21, h - 14, 3, paint);
+        canvas.drawCircle(w - 16, h - 17, 5, paint);
+        canvas.drawCircle(w - 11, h - 14, 3, paint);
+        canvas.drawRect(w - 21, h - 15, w - 11, h - 11, paint);
       }
       if (count > 1) {
         String number = Integer.toString(count);
         float width = 26 + paint.measureText(number), left = w - 5 - width;
-        box(canvas, left, h - 26, width, 21);
+        box(canvas, left, 5, width, 21);
         paint.setColor(Color.WHITE);
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeWidth(1.3f);
-        canvas.drawRoundRect(left + 5, h - 21, left + 13, h - 13, 1, 1, paint);
-        canvas.drawRoundRect(left + 8, h - 18, left + 16, h - 10, 1, 1, paint);
+        canvas.drawRoundRect(left + 5, 10, left + 13, 18, 1, 1, paint);
+        canvas.drawRoundRect(left + 8, 13, left + 16, 21, 1, 1, paint);
         paint.setStyle(Paint.Style.FILL);
-        canvas.drawText(number, left + 21, h - 12, paint);
+        canvas.drawText(number, left + 21, 19, paint);
+      }
+      if (!rank.isEmpty()) {
+        box(canvas, 5, h - 26, paint.measureText(rank) + 12, 21);
+        paint.setColor(rank.equals("未ソート") || rank.equals("読込失敗") ? Color.WHITE : 0xfff5b947);
+        canvas.drawText(rank, 11, h - 12, paint);
       }
       if (selectionMode) {
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(selected ? GalleryUi.ACCENT : 0xaa141719);
-        canvas.drawCircle(w - 17, 17, 11, paint);
+        canvas.drawCircle(17, 17, 11, paint);
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeWidth(1.8f);
         paint.setColor(selected ? GalleryUi.BG : Color.WHITE);
         if (selected) {
           Path tick = new Path();
-          tick.moveTo(w - 22, 17);
-          tick.lineTo(w - 18, 21);
-          tick.lineTo(w - 11, 13);
+          tick.moveTo(12, 17);
+          tick.lineTo(16, 21);
+          tick.lineTo(23, 13);
           canvas.drawPath(tick, paint);
           paint.setColor(GalleryUi.ACCENT);
           canvas.drawRect(1, 1, w - 1, h - 1, paint);
-        } else canvas.drawCircle(w - 17, 17, 10, paint);
+        } else {
+          canvas.drawCircle(17, 17, 10, paint);
+          if (partial) canvas.drawLine(12, 17, 22, 17, paint);
+        }
         paint.setStyle(Paint.Style.FILL);
       }
       if (failed) {

@@ -13,6 +13,9 @@ import org.json.JSONObject;
  * source.
  */
 public final class ArchiveInstrumentation extends Instrumentation {
+  private boolean tagTest;
+  private boolean relatedTest;
+  private boolean automaticTest;
   private boolean cleanupTest;
   private boolean compactTest;
   private boolean jpegTest;
@@ -21,6 +24,9 @@ public final class ArchiveInstrumentation extends Instrumentation {
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    tagTest = args != null && "tags".equals(args.getString("mode"));
+    relatedTest = args != null && "related".equals(args.getString("mode"));
+    automaticTest = args != null && "automatic".equals(args.getString("mode"));
     cleanupTest = args != null && "cleanup".equals(args.getString("mode"));
     jpegTest = args != null && "jpeg".equals(args.getString("mode"));
     jpegCloudTest = args != null && "jpeg-cloud".equals(args.getString("mode"));
@@ -34,6 +40,21 @@ public final class ArchiveInstrumentation extends Instrumentation {
     File restored = null;
     try {
       Context context = getTargetContext();
+      if (automaticTest) {
+        results.putString("stream", AutomaticTagChecks.run(context));
+        finish(-1, results);
+        return;
+      }
+      if (relatedTest) {
+        results.putString("stream", RelatedPhotoChecks.run(context));
+        finish(-1, results);
+        return;
+      }
+      if (tagTest) {
+        results.putString("stream", TagStoreChecks.run(context));
+        finish(-1, results);
+        return;
+      }
       if (compactTest) {
         results.putString("stream", testCompact(context));
         finish(-1, results);

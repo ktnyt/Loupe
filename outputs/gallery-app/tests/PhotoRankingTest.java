@@ -5,6 +5,33 @@ import java.util.*;
 public final class PhotoRankingTest {
   public static void main(String[] args) {
     Random random = new Random(42);
+    for (int size = 2; size <= 60; size++) {
+      List<String> ids = new ArrayList<>();
+      for (int i = 0; i < size; i++) ids.add("best" + i);
+      for (String winner : ids) {
+        PhotoRanking best = new PhotoRanking(ids, "B:");
+        if (best.decisions() != 0 || !best.undo().journal.equals("B:"))
+          throw new AssertionError("best mode survives undo at start");
+        while (!best.done()) {
+          PhotoRanking previous = best;
+          best = best.choose(best.upper().equals(winner));
+          if (!best.undo().journal.equals(previous.journal)) throw new AssertionError("best undo");
+          best = new PhotoRanking(ids, best.journal);
+          if (!best.done() && !best.best().isEmpty()) throw new AssertionError("premature winner");
+        }
+        if (!best.best().equals(List.of(winner)) || best.decisions() != size - 1)
+          throw new AssertionError("winner or comparison count");
+        for (String id : ids) if (best.rankOf(id) != (id.equals(winner) ? 1 : 2))
+          throw new AssertionError("remaining photos must tie at rank two");
+      }
+    }
+    for (String bad : List.of("B:2", "B:00", "B:x")) {
+      try {
+        new PhotoRanking(List.of("a", "b"), bad);
+        throw new AssertionError("invalid best journal");
+      } catch (IllegalArgumentException expected) {}
+    }
+    System.out.println("Best-only: all winners for 2..60 photos, tied second, replay, undo, invalid journals passed");
     for (int size = 1; size <= 100; size++) {
       List<String> ids = new ArrayList<>();
       for (int i = 0; i < size; i++) ids.add("p" + i);

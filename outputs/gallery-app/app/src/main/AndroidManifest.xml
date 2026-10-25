@@ -8,6 +8,7 @@
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <queries>
+        <intent><action android:name="android.intent.action.SEND" /><data android:mimeType="application/octet-stream" /></intent>
         <intent><action android:name="android.intent.action.SEND" /><data android:mimeType="image/*" /></intent>
         <intent><action android:name="android.intent.action.SEND_MULTIPLE" /><data android:mimeType="image/*" /></intent>
     </queries>
@@ -16,6 +17,7 @@
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
         </activity>
         <activity android:name=".SyncActivity" android:exported="false" />
+        <activity android:name=".TagActivity" android:exported="false" />
         <service android:name=".GalleryIndexJob" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true" />
         <service android:name=".SyncJob" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true" />
         <activity android:name=".CloudActivity" android:exported="false" />

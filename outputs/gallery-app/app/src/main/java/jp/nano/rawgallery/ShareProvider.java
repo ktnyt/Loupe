@@ -17,7 +17,7 @@ public final class ShareProvider extends ContentProvider {
     if (!"jp.nano.rawgallery.share".equals(uri.getAuthority()) || uri.getPathSegments().size() != 1)
       throw new FileNotFoundException();
     String name = uri.getLastPathSegment();
-    if (name == null || !name.matches("[a-f0-9-]{36}\\.(jpg|dng|orf)"))
+    if (name == null || !name.matches("[a-f0-9-]{36}\\.(" + RawFormats.IMAGE_EXTENSIONS + ")"))
       throw new FileNotFoundException();
     File f = new File(new File(getContext().getCacheDir(), "shares"), name);
     if (!f.isFile()) throw new FileNotFoundException();
@@ -30,10 +30,7 @@ public final class ShareProvider extends ContentProvider {
   }
 
   public String getType(Uri uri) {
-    String s = uri.toString();
-    return s.endsWith(".jpg")
-        ? "image/jpeg"
-        : s.endsWith(".orf") ? "image/x-olympus-orf" : "image/x-adobe-dng";
+    return RawFormats.mime(uri.getLastPathSegment());
   }
 
   public Cursor query(Uri uri, String[] projection, String selection, String[] args, String sort) {

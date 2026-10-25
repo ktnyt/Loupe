@@ -9,11 +9,11 @@ import android.view.*;
 import android.widget.*;
 
 final class GalleryUi {
-  static final int BG = 0xff151719,
-      PANEL = 0xff22262a,
-      TEXT = 0xfff1f3f4,
-      MUTED = 0xffacb3b8,
-      ACCENT = 0xffc7d8e4;
+  static final int BG = 0xff0f0f10,
+      PANEL = 0xff19191b,
+      TEXT = 0xffededea,
+      MUTED = 0xffa9a9a4,
+      ACCENT = 0xff4c8dff;
 
   static int dp(Context c, float value) {
     return Math.round(value * c.getResources().getDisplayMetrics().density);
@@ -56,6 +56,23 @@ final class GalleryUi {
     return button;
   }
 
+  static Button icon(Context c, String title, Runnable action) {
+    Button button = button(c, title, action);
+    button.setText("");
+    button.setContentDescription(title);
+    button.setTooltipText(title);
+    button.setForeground(new ActionIcon(title, c.getResources().getDisplayMetrics().density));
+    button.setLayoutParams(new LinearLayout.LayoutParams(dp(c, 48), dp(c, 48)));
+    return button;
+  }
+
+  static Button neutralPrimary(Button button) {
+    button.setTextColor(0xff111111);
+    button.setBackground(new RippleDrawable(ColorStateList.valueOf(0x33000000),
+        shape(button.getContext(), TEXT, 26), null));
+    return button;
+  }
+
   static void feedback(View view) {
     if (view.isShown() && view.isEnabled())
       view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK);
@@ -63,46 +80,44 @@ final class GalleryUi {
 
   static Button primary(Button button) {
     Context c = button.getContext();
-    button.setTextColor(ACCENT);
+    button.setTextColor(TEXT);
     button.setBackground(
         new RippleDrawable(
             ColorStateList.valueOf(0x44c7d8e4),
-            shape(c, 0xff344753, 14),
+            shape(c, 0xff285fbb, 24),
             shape(c, Color.WHITE, 14)));
     return button;
   }
 
   static View dock(Context c, Button... buttons) {
-    int actionHeight = dp(c, Math.max(48, 34 * c.getResources().getConfiguration().fontScale));
-    int rowHeight = actionHeight + dp(c, 8), totalHeight = rowHeight + dp(c, 8);
-    FrameLayout outer =
-        new FrameLayout(c) {
-          protected void onMeasure(int w, int h) {
-            super.onMeasure(w, h);
-            View row = getChildAt(0);
-            int available = Math.max(0, MeasureSpec.getSize(w) - dp(c, 24));
-            row.measure(
-                MeasureSpec.makeMeasureSpec(Math.min(available, dp(c, 560)), MeasureSpec.EXACTLY),
-                MeasureSpec.makeMeasureSpec(rowHeight, MeasureSpec.EXACTLY));
-            setMeasuredDimension(MeasureSpec.getSize(w), totalHeight);
-          }
-        };
     LinearLayout row = new LinearLayout(c);
-    row.setPadding(dp(c, 4), dp(c, 4), dp(c, 4), dp(c, 4));
+    row.setPadding(dp(c, 8), dp(c, 8), dp(c, 8), dp(c, 8));
     row.setGravity(Gravity.CENTER_VERTICAL);
-    row.setBackground(shape(c, PANEL, 22));
+    row.setBackgroundColor(PANEL);
     for (Button button : buttons) {
-      String label = button.getText().toString();
-      button.setContentDescription(label);
-      button.setTooltipText(label);
-      button.setText("");
-      button.setForeground(new ActionIcon(label, c.getResources().getDisplayMetrics().density));
-      row.addView(button, new LinearLayout.LayoutParams(0, actionHeight, 1));
+      button.setTooltipText(button.getText());
+      row.addView(button, new LinearLayout.LayoutParams(0, -2, 1));
     }
-    FrameLayout.LayoutParams lp =
-        new FrameLayout.LayoutParams(-1, rowHeight, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
-    outer.addView(row, lp);
-    return outer;
+    return row;
+  }
+
+  // The check occupies the same advance in both states; no neighbouring control moves.
+  static Button chip(Context c, String title, boolean selected, Runnable action) {
+    Button button = button(c, "✓  " + title, action);
+    android.text.SpannableString text = new android.text.SpannableString("✓  " + title);
+    text.setSpan(new android.text.style.ForegroundColorSpan(
+        selected ? TEXT : Color.TRANSPARENT), 0, 1, 0);
+    button.setText(text);
+    button.setContentDescription(title);
+    button.setSelected(selected);
+    button.setStateDescription(selected ? "選択中" : "未選択");
+    GradientDrawable fill = shape(c, selected ? 0xff2c2c30 : 0xff19191b, 8);
+    fill.setStroke(dp(c, 1), selected ? 0xff66666c : 0xff343438);
+    android.graphics.drawable.InsetDrawable inset = new android.graphics.drawable.InsetDrawable(
+        fill, 0, dp(c, 8), 0, dp(c, 8));
+    button.setBackground(new RippleDrawable(ColorStateList.valueOf(0x334c8dff), inset, null));
+    button.setPadding(dp(c, 12), 0, dp(c, 12), 0);
+    return button;
   }
 
   static final class Sheet extends AlertDialog.Builder {

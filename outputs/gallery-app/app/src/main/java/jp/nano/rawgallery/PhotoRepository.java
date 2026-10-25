@@ -118,16 +118,9 @@ public final class PhotoRepository {
       MediaStore.MediaColumns.DATE_ADDED
     };
     Uri root = MediaStore.Files.getContentUri("external");
-    String condition =
-        "("
-            + MediaStore.Files.FileColumns.DISPLAY_NAME
-            + " LIKE ? OR "
-            + MediaStore.Files.FileColumns.DISPLAY_NAME
-            + " LIKE ? OR "
-            + MediaStore.Files.FileColumns.DISPLAY_NAME
-            + " LIKE ? OR "
-            + MediaStore.Files.FileColumns.DISPLAY_NAME
-            + " LIKE ?)";
+    String[] patterns = RawFormats.patterns();
+    String condition = "(" + String.join(" OR ",
+        Collections.nCopies(patterns.length, MediaStore.Files.FileColumns.DISPLAY_NAME + " LIKE ?")) + ")";
     try (Cursor c =
         context
             .getContentResolver()
@@ -135,7 +128,7 @@ public final class PhotoRepository {
                 root,
                 cols,
                 condition,
-                new String[] {"%.dng", "%.orf", "%.jpg", "%.jpeg"},
+                patterns,
                 MediaStore.Files.FileColumns.DATE_MODIFIED + " DESC")) {
       if (c != null)
         while (c.moveToNext()) {
@@ -202,7 +195,7 @@ public final class PhotoRepository {
           scanTree(tree, child, result, depth + 1);
           continue;
         }
-        if (name == null || !name.toLowerCase(Locale.ROOT).matches(".*\\.(dng|orf|jpg|jpeg)$"))
+        if (!RawFormats.accepts(name))
           continue;
         String relative = child.startsWith("primary:") ? child.substring(8) : child;
         String folder = relative.substring(0, Math.max(0, relative.lastIndexOf('/') + 1));
@@ -261,7 +254,7 @@ public final class PhotoRepository {
         throw new IOException("保存済みプレビューを読めません", e);
       }
     }
-    String key = digest(p.uri + ":" + p.size + ":" + p.modified);
+    String key = digest("raw-preview-v2:" + p.uri + ":" + p.size + ":" + p.modified);
     File webp = new File(previews, key + ".webp"), meta = new File(previews, key + ".webp.json");
     if (webp.isFile() && meta.isFile()) {
       try {
@@ -324,7 +317,7 @@ public final class PhotoRepository {
         throw new IOException("保存済みプレビューを読めません", e);
       }
     }
-    String key = digest(p.uri + ":" + p.size + ":" + p.modified);
+    String key = digest("raw-preview-v2:" + p.uri + ":" + p.size + ":" + p.modified);
     File jpg = new File(previews, key + ".jpg"), meta = new File(previews, key + ".json");
     if (jpg.isFile() && meta.isFile()) {
       try {

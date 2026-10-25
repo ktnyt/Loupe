@@ -4,11 +4,14 @@ android {
     compileSdk 35
     defaultConfig {
         applicationId 'jp.nano.rawgallery'
+        // Keep the test APK identity stable across test modes and build variants.
+        testApplicationId 'jp.nano.rawgallery.test'
         minSdk 30
         targetSdk 35
-        versionCode 22
-        versionName '0.15.1'
+        versionCode 24
+        versionName '0.16.1'
         testInstrumentationRunner 'jp.nano.rawgallery.ArchiveInstrumentation'
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }
+dependencies { implementation 'com.google.mediapipe:tasks-vision:0.10.35' }

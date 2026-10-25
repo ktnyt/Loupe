@@ -6,6 +6,8 @@ Android向けの個人用写真ギャラリーです。RAWの埋め込みJPEGと
 
 Androidアプリは [`outputs/gallery-app`](outputs/gallery-app) にあります。機能の詳細と過去の検証記録は[アプリのREADME](outputs/gallery-app/README.md)、設計の経緯は[設計文書](outputs/gallery-app/docs/design.md)を参照してください。
 
+目的・要件・契約・実装の対応と未検証事項は[現行の目的駆動設計](outputs/gallery-app/docs/current-design.md)に整理しています。
+
 - Android 11以降（minSdk 30）
 - バージョン: 0.15.1
 - RAWは現像せず、内蔵プレビューを表示します。

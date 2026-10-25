@@ -1,0 +1,7 @@
+Image feature model: Google MediaPipe MobileNet V3 Small Image Embedder
+Official artifact version: float32/1
+Source: https://storage.googleapis.com/mediapipe-models/image_embedder/mobilenet_v3_small/float32/1/mobilenet_v3_small.tflite
+SHA-256: bbbb4c51a55a53905af1daec995ca1aae355046f8839bb8c9f5ce9271394bc40
+Guide: https://developers.google.com/edge/mediapipe/solutions/vision/image_embedder
+Runtime: com.google.mediapipe:tasks-vision:0.10.35 (Apache-2.0)
+The model compares visual features. It does not infer a user's intended tag definition or authorize automatic assignment.

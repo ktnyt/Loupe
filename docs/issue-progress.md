@@ -1,0 +1,43 @@
+# issue進捗記録
+
+目的は工程ごとの経過時間と手戻りを測れるようにすること。`AGENTS.md`が作業開始時の規約、CLIがJST時刻・構造化データ・投稿後の再取得を担当する。Python 3と認証済みのGitHub CLI（`gh`）、`ktnyt/Loupe`のissueコメント権限が必要。
+
+## 使い方
+
+例のissue番号は実際の対象に置き換える。作業IDは `20261025-issue42-feature-a` など、他の作業と重複しない値を作り、再開時にも引き継ぐ。
+
+```sh
+python3 scripts/issue-progress.py record --issue 42 --run 20261025-issue42-feature-a --phase implementation --status start --note '対象範囲と実装方針'
+python3 scripts/issue-progress.py record --issue 42 --run 20261025-issue42-feature-a --phase implementation --status complete --note '変更内容、テスト結果、残る未確認事項'
+python3 scripts/issue-progress.py record --issue 42 --run 20261025-issue42-feature-a --phase install --status start --note '対象端末とAPKバージョン'
+python3 scripts/issue-progress.py record --issue 42 --run 20261025-issue42-feature-a --phase install --status complete --note 'adb installの結果と端末上のバージョン確認'
+python3 scripts/issue-progress.py record --issue 42 --run 20261025-issue42-feature-a --phase device-test --status skip --note '今回の依頼範囲に実機検証を含まない'
+python3 scripts/issue-progress.py report --issue 42 --run 20261025-issue42-feature-a
+```
+
+| phase | 記録する境界 |
+| --- | --- |
+| implementation | 着手直前／予定した実装と必要なローカル検証の完了直後 |
+| install | 端末へのインストール直前／結果確認直後 |
+| device-test | 実機操作直前／結果の確認直後 |
+| additional | 追加修正の着手直前／実装と必要なローカル検証の完了直後 |
+
+各工程のstatusは `start` → `complete` / `fail` / `cancel`。未実施の工程は `skip` と理由を記す。失敗・中断後や同じ工程を繰り返す場合、`--attempt 2`、`--attempt 3` と増やす。開始と結果は同じ試行番号にする。待機に入ったら中断として閉じ、再開を別の試行にする。
+
+`--dry-run`は投稿本文の確認専用で、GitHubへのアクセスも遷移検査もしない。通常実行は既存コメントを取得して二重開始・二重終了・開始なしの終了を拒否する。同時投稿の排他制御はないため、一つの作業IDの記録は一人が担当する。
+
+## 集計と限界
+
+コメントのHTMLコメント内に `loupe-progress:v1` 形式のJSONを保存する。`run`（作業ID）、`phase`、`attempt`、`status`、`at`（ISO 8601、+09:00）、`id`（イベントUUID）で機械的に集計できる。人向け本文には実施内容と根拠を書く。
+
+`report`は工程・試行ごとの状態と経過秒数をJSON Linesで出力する。未終了または対象作業の記録なしなら終了コード1。省略は時間なしとして扱う。必要工程の欠落は自動判定できないため、担当者が実施内容と照合する。
+
+計測値は開始から結果までの**経過時間**であり、純粋な稼働時間やストーリーポイントのベロシティではない。並行工程を単純合算しない。失敗・中断の時間、追加開発回数、省略を分離し、完了件数と工程時間の推移を比較する。端末時計に依存するので時刻同期を前提とする。
+
+記録漏れは通常CLIで過去の開始を作らず、issueに「事後補記」と明記して追記する。証拠のある実施日時・記録日時・根拠を区別し、不明な日時は不明とする。通常の集計には混ぜない。
+
+## 導入の確認と見直し
+
+今回の導入はプロジェクト規約と補助CLIによるもの。エージェントの全操作をフックで監視・強制する仕組みではなく、規約を読まないエージェントの記録漏れまでは防げない。PRテンプレートでも記録確認を求める。
+
+最初の実開発issueで、必要な開始・終了コメントが揃うこと、投稿の負担、失敗後の再開が正しく集計されることを確認する。記録漏れや負担が続く場合は、実際のビルド・インストール手順への組込みを検討する。実務での遵守率・時間短縮はまだ未検証。戻す場合はAGENTS.mdの本ルーティン、CLI、本文書、PRの確認項目を一緒に外す。

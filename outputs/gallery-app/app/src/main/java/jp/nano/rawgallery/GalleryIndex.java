@@ -117,10 +117,17 @@ final class GalleryIndex extends SQLiteOpenHelper {
   private static String signature(Context c) {
     String media;
     try {
-      media =
-          MediaStore.getVersion(c, "external_primary")
-              + ":"
-              + MediaStore.getGeneration(c, "external_primary");
+      StringBuilder versions = new StringBuilder();
+      for (String volume : new TreeSet<>(MediaStore.getExternalVolumeNames(c))) {
+        versions
+            .append(volume)
+            .append(':')
+            .append(MediaStore.getVersion(c, volume))
+            .append(':')
+            .append(MediaStore.getGeneration(c, volume))
+            .append(';');
+      }
+      media = versions.toString();
     } catch (Exception e) {
       media = "unavailable";
     }

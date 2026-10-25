@@ -21,10 +21,7 @@ final class OriginalCache {
     File target =
         new File(
             dir,
-            key
-                + (p.isJpeg()
-                    ? ".jpg"
-                    : p.name.toLowerCase(Locale.ROOT).endsWith(".orf") ? ".orf" : ".dng"));
+            key + "." + RawFormats.originalExtension(p.name));
     JSONObject record = null;
     if ("archive".equals(p.uri.getScheme())) {
       try (ArchiveStore store = new ArchiveStore(c)) {
