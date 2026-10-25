@@ -45,7 +45,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
         results.putString("stream", TagLifecycleChecks.run(this)); finish(-1, results); return;
       }
       if (automaticTest) {
-        results.putString("stream", AutomaticTagChecks.run(context));
+        results.putString("stream", AutomaticTagChecks.run(context) + BatchTagChecks.run(context));
         finish(-1, results);
         return;
       }

@@ -54,6 +54,11 @@ public final class TagActivity extends Activity {
   private int generation;
   private boolean busy, reviewing;
   private int browseMode;
+  private boolean selecting;
+  private final Set<Integer> selectedPhotos = new LinkedHashSet<>();
+  private android.widget.GridView photoGrid;
+  private android.widget.BaseAdapter photoAdapter;
+  private Button selectionButton, batchButton;
   private enum Filter { ATTACHED, ALL, AUTOMATIC, REMOVED }
   private Filter browseFilter = Filter.ATTACHED;
   private final List<Integer> browsePhotos = new ArrayList<>();
@@ -175,8 +180,8 @@ public final class TagActivity extends Activity {
   }
 
   private void showTag() {
-    browseMode = 0;
     if (busy) return;
+    browseMode = 0;
     stopAnalysis(); reviewing = false;
     int token = screen(tag.name);
     root.addView(text("タグを読み込み中…", 14));
@@ -223,6 +228,12 @@ public final class TagActivity extends Activity {
 
   private void showPhotos(Filter filter) {
     if (busy) return;
+    selecting = false; selectedPhotos.clear();
+    renderPhotos(filter, 0, 0);
+  }
+
+  private void renderPhotos(Filter filter, int scrollPosition, int scrollOffset) {
+    if (busy) return;
     stopAnalysis(); reviewing = true; browseMode = 1; browseFilter = filter;
     browsePhotos.clear();
     for (int i = 0; i < photos.size(); i++) {
@@ -235,9 +246,14 @@ public final class TagActivity extends Activity {
         : filter == Filter.AUTOMATIC ? "自動で付いた写真" : "タグ付きの写真";
     int token = screen(tag.name + " · " + title);
     root.addView(text(scope() + " · " + browsePhotos.size() + "枚", 14));
-    android.widget.GridView grid = new android.widget.GridView(this);
+    selectionButton = button(selecting ? "選択を終了" : "選択", () -> {
+      if (busy) return;
+      selecting = !selecting; selectedPhotos.clear(); refreshSelection();
+    });
+    root.addView(selectionButton);
+    android.widget.GridView grid = new android.widget.GridView(this); photoGrid = grid;
     grid.setNumColumns(3); grid.setHorizontalSpacing(4); grid.setVerticalSpacing(4);
-    grid.setAdapter(new android.widget.BaseAdapter() {
+    photoAdapter = new android.widget.BaseAdapter() {
       public int getCount() { return browsePhotos.size(); }
       public Object getItem(int position) { return photos.get(browsePhotos.get(position)); }
       public long getItemId(int position) { return position; }
@@ -245,10 +261,14 @@ public final class TagActivity extends Activity {
         ThumbnailCell cell = recycled instanceof ThumbnailCell ? (ThumbnailCell) recycled : new ThumbnailCell(TagActivity.this);
         int index = browsePhotos.get(position);
         PhotoRepository.Photo photo = photos.get(index);
-        Object binding = new Object(); cell.setTag(binding); cell.image.setImageDrawable(null);
+        boolean reload = cell.image.getTag() != photo;
+        Object binding = reload ? new Object() : cell.getTag();
+        if (reload) { cell.setTag(binding); cell.image.setTag(photo); cell.image.setImageDrawable(null); }
         cell.badges.rank = isAutomatic(index) ? "タグあり · 自動" : value(index) == TagJudgments.Value.ASSIGNED ? "タグあり" : "タグなし"; cell.badges.invalidate();
-        cell.setContentDescription(photo.name + " · " + cell.badges.rank);
-        worker.execute(() -> {
+        cell.badges.selectionMode = selecting;
+        cell.badges.selected = selectedPhotos.contains(index);
+        cell.setContentDescription(photo.name + " · " + cell.badges.rank + (selecting ? (selectedPhotos.contains(index) ? " · 選択済み" : " · 未選択") : ""));
+        if (reload) worker.execute(() -> {
           if (!current(token)) return;
           try {
             Bitmap bitmap = PhotoRepository.bitmap(new PhotoRepository(TagActivity.this).preview(photo), 360);
@@ -262,11 +282,78 @@ public final class TagActivity extends Activity {
         });
         return cell;
       }
+    };
+    grid.setAdapter(photoAdapter);
+    grid.setOnItemClickListener((parent, view, position, id) -> {
+      if (busy) return;
+      if (selecting) toggleSelection(position); else showAssignedPhoto(position);
     });
-    grid.setOnItemClickListener((parent, view, position, id) -> showAssignedPhoto(position));
+    grid.setOnItemLongClickListener((parent, view, position, id) -> {
+      if (!busy) { selecting = true; toggleSelection(position); }
+      return true;
+    });
     root.addView(grid, new LinearLayout.LayoutParams(-1, 0, 1));
     if (browsePhotos.isEmpty()) root.addView(text("この範囲に該当する写真はありません", 16));
+    batchButton = button("", this::changeSelected);
+    root.addView(batchButton); refreshSelection();
     root.addView(button("タグに戻る", this::showTag));
+    grid.setSelectionFromTop(scrollPosition, scrollOffset);
+  }
+
+  private void toggleSelection(int position) {
+    int index = browsePhotos.get(position);
+    if (!selectedPhotos.add(index)) selectedPhotos.remove(index);
+    refreshSelection();
+  }
+
+  private void refreshSelection() {
+    selectionButton.setText(selecting ? "選択を終了" : "選択");
+    batchButton.setVisibility(selecting ? android.view.View.VISIBLE : android.view.View.GONE);
+    boolean remove = browseFilter == Filter.ATTACHED || browseFilter == Filter.AUTOMATIC;
+    batchButton.setText(busy ? "保存中…" : selectedPhotos.size() + (remove ? "枚のタグを外す" : "枚にタグを付ける"));
+    batchButton.setEnabled(!busy && !selectedPhotos.isEmpty()); selectionButton.setEnabled(!busy);
+    photoAdapter.notifyDataSetChanged();
+  }
+
+  private void changeSelected() {
+    if (busy || selectedPhotos.isEmpty()) return;
+    List<Integer> selected = new ArrayList<>(selectedPhotos);
+    int first = photoGrid.getFirstVisiblePosition();
+    int anchor = browsePhotos.get(Math.min(first, browsePhotos.size() - 1));
+    int offset = photoGrid.getChildCount() == 0 ? 0 : photoGrid.getChildAt(0).getTop();
+    String tagId = tag.id, operation = UUID.randomUUID().toString();
+    TagJudgments baseline = judgments;
+    TagJudgments.Value value = browseFilter == Filter.ATTACHED || browseFilter == Filter.AUTOMATIC
+        ? TagJudgments.Value.EXCLUDED : TagJudgments.Value.ASSIGNED;
+    int token = generation; busy = true; refreshSelection();
+    worker.execute(() -> {
+      try (TagStore store = new TagStore(this)) {
+        Map<String, Long> expected = new java.util.LinkedHashMap<>();
+        Map<Integer, String> ids = new HashMap<>();
+        for (int index : selected) {
+          String id = store.photoId(photos.get(index), true); ids.put(index, id);
+          TagJudgments.Entry entry = baseline.latest(tagId, id);
+          expected.put(id, entry == null ? 0L : entry.revision);
+        }
+        TagJudgments saved = store.recordBatch(operation, tagId, expected, value);
+        Map<String, AutomaticTags.Decision> inferred = store.automatic(tagId);
+        main.post(() -> {
+          busy = false; if (!current(token)) return;
+          judgments = saved; automatic = inferred;
+          for (Map.Entry<Integer, String> entry : ids.entrySet()) photoIds.set(entry.getKey(), entry.getValue());
+          selectedPhotos.clear();
+          int target = 0;
+          for (int index : browsePhotos) {
+            if (index >= anchor) break;
+            if (value != TagJudgments.Value.EXCLUDED || !selected.contains(index)) target++;
+          }
+          renderPhotos(browseFilter, target, offset);
+          Toast.makeText(this, selected.size() + (value == TagJudgments.Value.EXCLUDED ? "枚のタグを外しました" : "枚にタグを付けました"), Toast.LENGTH_SHORT).show();
+        });
+      } catch (Exception error) {
+        main.post(() -> { busy = false; if (current(token)) { refreshSelection(); failure(error); } });
+      }
+    });
   }
 
   private void showAssignedPhoto(int position) {
@@ -536,7 +623,8 @@ public final class TagActivity extends Activity {
 
   public void onBackPressed() {
     if (busy) return;
-    if (browseMode == 2) showPhotos(browseFilter);
+    if (browseMode == 1 && selecting) { selecting = false; selectedPhotos.clear(); refreshSelection(); }
+    else if (browseMode == 2) showPhotos(browseFilter);
     else if (reviewing) showTag(); else super.onBackPressed();
   }
 

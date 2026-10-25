@@ -203,24 +203,43 @@ final class TagStore extends SQLiteOpenHelper {
       TagJudgments next = undo == null ? before.record(operation, tag, photo, expected, value) : before.undo(operation, undo);
       if (next != before) {
         TagJudgments.Entry entry = next.history.get(next.history.size() - 1);
-        requireReference(db, "tags", entry.tagId);
-        requireReference(db, "photos", entry.photoId);
-        ContentValues history = new ContentValues();
-        history.put("operation", entry.operationId); history.put("tag", entry.tagId);
-        history.put("photo", entry.photoId); history.put("revision", entry.revision);
-        history.put("value", entry.value.name()); history.put("undone", entry.undoneOperationId);
-        db.insertOrThrow("history", null, history);
-        ContentValues current = new ContentValues();
-        current.put("tag", entry.tagId); current.put("photo", entry.photoId);
-        current.put("revision", entry.revision); current.put("value", entry.value.name());
-        if (db.insertWithOnConflict("judgments", null, current, SQLiteDatabase.CONFLICT_REPLACE) < 0)
-          throw new IllegalStateException("判断の現在値を保存できませんでした");
-        db.execSQL("INSERT OR IGNORE INTO reevaluation(tag,revision) VALUES(?,0)", new Object[] {entry.tagId});
-        db.execSQL("UPDATE reevaluation SET revision=revision+1 WHERE tag=?", new Object[] {entry.tagId});
+        persistEntry(db, entry);
       }
       db.setTransactionSuccessful();
       return next;
     } finally { db.endTransaction(); }
+  }
+
+  /** All selected changes succeed together; expected revisions reject stale UI edits. */
+  TagJudgments recordBatch(String operation, String tag, Map<String, Long> expected, TagJudgments.Value value) {
+    SQLiteDatabase db = getWritableDatabase();
+    db.beginTransaction();
+    try {
+      TagJudgments state = load();
+      for (Map.Entry<String, Long> item : expected.entrySet()) {
+        TagJudgments next = state.record(operation + ":" + item.getKey(), tag, item.getKey(), item.getValue(), value);
+        if (next != state) persistEntry(db, next.history.get(next.history.size() - 1));
+        state = next;
+      }
+      db.setTransactionSuccessful(); return state;
+    } finally { db.endTransaction(); }
+  }
+
+  private static void persistEntry(SQLiteDatabase db, TagJudgments.Entry entry) {
+    requireReference(db, "tags", entry.tagId);
+    requireReference(db, "photos", entry.photoId);
+    ContentValues history = new ContentValues();
+    history.put("operation", entry.operationId); history.put("tag", entry.tagId);
+    history.put("photo", entry.photoId); history.put("revision", entry.revision);
+    history.put("value", entry.value.name()); history.put("undone", entry.undoneOperationId);
+    db.insertOrThrow("history", null, history);
+    ContentValues current = new ContentValues();
+    current.put("tag", entry.tagId); current.put("photo", entry.photoId);
+    current.put("revision", entry.revision); current.put("value", entry.value.name());
+    if (db.insertWithOnConflict("judgments", null, current, SQLiteDatabase.CONFLICT_REPLACE) < 0)
+      throw new IllegalStateException("判断の現在値を保存できませんでした");
+    db.execSQL("INSERT OR IGNORE INTO reevaluation(tag,revision) VALUES(?,0)", new Object[] {entry.tagId});
+    db.execSQL("UPDATE reevaluation SET revision=revision+1 WHERE tag=?", new Object[] {entry.tagId});
   }
 
   private static void requireReference(SQLiteDatabase db, String table, String id) {
