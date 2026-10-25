@@ -81,8 +81,9 @@ final class ActionIcon extends Drawable {
       case "絞り込み":
         line(canvas, 3, 5, 21, 5, 14, 13, 14, 20, 10, 18, 10, 13, 3, 5);
         break;
-      case "順位を決める":
-      case "順位を付ける":
+      case "ソート":
+      case "ソートを再開":
+      case "ソート結果":
         canvas.drawRect(3, 12, 9, 21, paint);
         canvas.drawRect(9, 7, 15, 21, paint);
         canvas.drawRect(15, 15, 21, 21, paint);
