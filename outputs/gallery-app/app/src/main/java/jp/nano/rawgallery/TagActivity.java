@@ -40,7 +40,10 @@ public final class TagActivity extends Activity {
   private Future<?> analyzing;
   private volatile int analysisGeneration;
   private boolean related, waiting, rankingPending, analysisFinished, expandAfterAssignment;
-  private int analyzed, analysisFailures;
+  private int analyzed, analysisFailures, automaticCount;
+  private volatile boolean analysisPaused;
+  private boolean analysisActive;
+  private final Set<Integer> processed = new HashSet<>();
   private TextView analysisStatus, originStatus;
   private String automaticError = "";
   private String candidateReason = "";
@@ -201,6 +204,7 @@ public final class TagActivity extends Activity {
   }
 
   private void renderTag() {
+    updateAutomaticCount();
     screen(tag.name);
     int assigned = 0, excluded = 0, inferred = 0;
     for (int i = 0; i < photos.size(); i++) {
@@ -213,7 +217,7 @@ public final class TagActivity extends Activity {
     root.addView(text(assigned > 0
         ? "見本から広く自動付与します。誤りは訂正でき、自動分だけ取り消せます。"
         : "まず一枚にタグを付けると、残りにも自動でタグを広げます。", 13));
-    root.addView(button(assigned > 0 ? "自動でタグを広げる" : "見本の写真にタグを付ける",
+    root.addView(button(assigned > 0 ? "似た写真に自動でタグを付ける" : "見本の写真にタグを付ける",
         assigned > 0 ? () -> startAutomatic(true, false) : this::startSeedReview));
     root.addView(button("付与済みの写真を見る", () -> showAssigned(false)));
     root.addView(button("自動付与した写真だけ見る", this::reviewAutomatic));
@@ -467,7 +471,8 @@ public final class TagActivity extends Activity {
     }
     autoPending = false; autoAgain = false;
     analysisGeneration++;
-    if (analyzing != null) analyzing.cancel(true);
+    if (analyzing != null) analyzing.cancel(false);
+    analysisActive = false;
     related = false; waiting = false; rankingPending = false; analysisStatus = null;
   }
 
@@ -477,11 +482,14 @@ public final class TagActivity extends Activity {
     return result;
   }
 
+  private void updateAutomaticCount() {
+    automaticCount = 0;
+    for (int i = 0; i < photos.size(); i++) if (isAutomatic(i)) automaticCount++;
+  }
+
   private String progress() {
-    int count = 0;
-    for (int i = 0; i < photos.size(); i++) if (isAutomatic(i)) count++;
     if (!automaticError.isEmpty()) return automaticError;
-    return "自動付与 " + count + "枚 · " + (autoPending ? "保存中 · " : "") + "解析 " + analyzed + " / " + photos.size() + "枚 · 取得失敗 " + analysisFailures + "枚"
+    return "自動付与 " + automaticCount + "枚 · " + (autoPending ? "保存中 · " : "") + "解析 " + analyzed + " / " + photos.size() + "枚 · 取得失敗 " + analysisFailures + "枚"
         + (analysisFinished && !autoPending ? " · 完了" : " · 解析中も確認できます");
   }
 
@@ -515,7 +523,7 @@ public final class TagActivity extends Activity {
   private void showAutomaticProgress() {
     reviewing = true; waiting = false;
     screen(tag.name);
-    root.addView(text("見本から自動でタグを広げています", 20));
+    root.addView(text("似た写真を探してタグを付けています", 20));
     root.addView(text("一枚ずつ判断しなくても付与されます。誤付与を含む推定結果として保存します。", 14));
     analysisStatus = text(progress(), 16); root.addView(analysisStatus);
     root.addView(button("候補を判断して調整", this::advance));
@@ -557,6 +565,7 @@ public final class TagActivity extends Activity {
             automatic = saved;
             for (int i = 0; i < photos.size(); i++) photoIds.set(i, savedIds.get(TagStore.source(photos.get(i))));
           }
+          updateAutomaticCount();
           automaticError = applied ? "" : "判断が更新されたため保存を見送りました。再実行してください。";
           if (originStatus != null && position < queue.size()) originStatus.setText(origin(queue.get(position)));
           if (analysisStatus != null) analysisStatus.setText(progress());
@@ -575,8 +584,16 @@ public final class TagActivity extends Activity {
 
   private void beginAnalysis() {
     int epoch = ++analysisGeneration;
-    if (analyzing != null) analyzing.cancel(true);
-    features.clear(); analyzed = 0; analysisFailures = 0; analysisFinished = false;
+    if (analyzing != null) analyzing.cancel(false);
+    features.clear(); processed.clear(); analyzed = 0; analysisFailures = 0; analysisFinished = false;
+    analysisActive = false; analysisPaused = false;
+    resumeAnalysis();
+  }
+
+  private void resumeAnalysis() {
+    if (analysisActive || analysisPaused || analysisFinished || !related) return;
+    analysisActive = true;
+    int epoch = analysisGeneration;
     List<PhotoRepository.Photo> sources = new ArrayList<>(photos);
     List<TagJudgments.Value> initialLabels = labels();
     // Examples first, then evenly interleave the entire date-ordered scope.
@@ -586,17 +603,18 @@ public final class TagActivity extends Activity {
     int stride = Math.max(1, (sources.size() + 31) / 32);
     for (int offset = 0; offset < stride; offset++)
       for (int i = offset; i < sources.size(); i += stride) order.add(i);
+    order.removeAll(processed);
     analyzing = analysis.submit(() -> {
       try (PhotoFeatures extractor = new PhotoFeatures(this)) {
         for (int i : order) {
-          if (epoch != analysisGeneration || Thread.currentThread().isInterrupted()) return;
+          if (epoch != analysisGeneration || analysisPaused || Thread.currentThread().isInterrupted()) return;
           RelatedPhotos.Vector vector = null;
           try { vector = extractor.obtain(sources.get(i)); }
           catch (Exception error) { /* Missing/failed analysis is not a negative judgment. */ }
           RelatedPhotos.Vector completed = vector;
           main.post(() -> {
             if (isDestroyed() || epoch != analysisGeneration) return;
-            analyzed++;
+            processed.add(i); analyzed = processed.size();
             if (completed == null) analysisFailures++; else features.put(i, completed);
             if (analysisStatus != null) analysisStatus.setText(progress());
             if (autoRunning && analyzed % 128 == 0) requestAutomatic();
@@ -604,14 +622,16 @@ public final class TagActivity extends Activity {
           });
         }
       } catch (Exception error) {
-        main.post(() -> { if (!isDestroyed() && epoch == analysisGeneration) failure(error); });
+        main.post(() -> { if (!isDestroyed() && epoch == analysisGeneration) { analysisPaused = true; automaticError = "解析を続けられませんでした。終了して再試行してください。"; failure(error); } });
       } finally {
         main.post(() -> {
           if (isDestroyed() || epoch != analysisGeneration) return;
-          analysisFinished = true;
+          analysisActive = false;
+          analysisFinished = processed.size() == photos.size();
           if (autoRunning) requestAutomatic();
           if (analysisStatus != null) analysisStatus.setText(progress());
           if (waiting && !rankingPending) selectCandidate();
+          if (!analysisPaused && !analysisFinished) resumeAnalysis();
         });
       }
     });
@@ -673,16 +693,17 @@ public final class TagActivity extends Activity {
   }
 
   protected void onStop() {
-    if (related) {
-      autoPending = false; autoAgain = false;
-      analysisGeneration++;
-      if (analyzing != null) analyzing.cancel(true);
-    }
+    // Finish the current image, then pause at a safe boundary. Do not interrupt native inference.
+    analysisPaused = true;
     super.onStop();
   }
 
   protected void onRestart() {
     super.onRestart();
-    if (related) beginAnalysis();
+    analysisPaused = false;
+    if (related) {
+      resumeAnalysis();
+      if (analysisStatus != null) analysisStatus.setText(progress());
+    }
   }
 }
