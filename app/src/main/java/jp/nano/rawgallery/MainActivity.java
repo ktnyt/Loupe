@@ -1064,6 +1064,7 @@ public final class MainActivity extends DiagnosticActivity {
                       || burstMembers != null
                       || rankingScreen
                       || token != generation) return;
+                  GalleryPosition position = GalleryPosition.capture(grid, photos, displayed);
                   rankCache.clear();
                   photos = snapshot.photos;
                   bundles = snapshot.bundles;
@@ -1090,7 +1091,8 @@ public final class MainActivity extends DiagnosticActivity {
                   }
                   rebuildDisplayed();
                   adapter.notifyDataSetChanged();
-                  grid.selectCell(galleryScroll.getOrDefault(shownGalleryKey, 0));
+                  if (position == null) grid.selectCell(galleryScroll.getOrDefault(shownGalleryKey, 0));
+                  else position.restore(grid, photos, displayed);
                   subtitle.setText(
                       photos.isEmpty() ? "写真がありません。写真の一覧を更新中の場合はしばらくお待ちください。" : countText());
                 });

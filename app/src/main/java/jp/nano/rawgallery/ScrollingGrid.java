@@ -33,6 +33,10 @@ final class ScrollingGrid extends ListView {
     setSelection(position == 0 ? 0 : position / columns + getHeaderViewsCount());
   }
 
+  void restoreCell(int position, int top, boolean header) {
+    setSelectionFromTop(header ? 0 : position / columns + getHeaderViewsCount(), top - getListPaddingTop());
+  }
+
   void setCells(BaseAdapter source) {
     if (cells != null && observer != null) cells.unregisterDataSetObserver(observer);
     cells = source;

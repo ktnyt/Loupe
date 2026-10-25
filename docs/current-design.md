@@ -47,6 +47,7 @@ flowchart TD
 - 不変条件: 索引は閲覧用であり、同期済み判定や削除許可に用いない。更新中は直前に完成した索引を読む。
 - 事前条件: 写真アクセス権がある範囲を走査する。初回は索引作成が必要。
 - 事後条件: 写真・アルバム・連写所属・更新状態を一つのDBトランザクションで置換する。失敗・キャンセルでは途中の索引を公開しない。
+- 一覧の背景反映: 反映直前に先頭可視行の写真と行上端を保持し、更新後は同じ写真を含む束の行へ復元する。対象が消えた場合は元のセル位置を新しい範囲内へ丸める。ヘッダーの途中表示は維持し、初回の空一覧だけ保存済み位置を使う。`GalleryPosition`と`ScrollingGrid`が担当。原本・順位・タグ・選択は変更しない。
 - 更新契約: 画面の変更通知は最初の通知から300ms後に要求する。更新中の追加要求は次回へまとめ、強制要求を優先する。これは表示完了までの300ms保証ではない。定期更新もAndroidの実行制御を受ける。
 - 実装: [GalleryIndex.java](../app/src/main/java/jp/nano/rawgallery/GalleryIndex.java) `load/rebuild/signature`、[IndexRefreshRequests.java](../app/src/main/java/jp/nano/rawgallery/IndexRefreshRequests.java) `start/finish`、[MainActivity.java](../app/src/main/java/jp/nano/rawgallery/MainActivity.java) `mediaObserver/refreshIndex`、[GalleryIndexJob.java](../app/src/main/java/jp/nano/rawgallery/GalleryIndexJob.java)。主な位置はそれぞれ85、117、154行、8行、64・653行。
 - 検証: 更新要求の単体回帰テスト成功。DBのロールバック、実端末での通知、外部ストレージは今回未検査。READMEの約2.5秒という実測は小さな検証JPEGに限る過去記録。
