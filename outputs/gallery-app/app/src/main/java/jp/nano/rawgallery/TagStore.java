@@ -72,8 +72,8 @@ final class TagStore extends SQLiteOpenHelper {
     try (Cursor c = getReadableDatabase().rawQuery(
         "SELECT p.source,a.positive,a.negative,a.threshold FROM automatic_tags a JOIN photos p ON p.id=a.photo "
         + "LEFT JOIN judgments j ON j.tag=a.tag AND j.photo=a.photo "
-        + "WHERE a.tag=? AND a.pipeline=? AND a.judgment_revision=? AND j.photo IS NULL",
-        new String[] {tag, automaticVersion(), Long.toString(judgmentRevision(tag))})) {
+        + "WHERE a.tag=? AND a.pipeline=? AND j.photo IS NULL",
+        new String[] {tag, automaticVersion()})) {
       while (c.moveToNext()) result.put(c.getString(0), new AutomaticTags.Decision(c.getDouble(1), c.getDouble(2), c.getDouble(3)));
     }
     return result;

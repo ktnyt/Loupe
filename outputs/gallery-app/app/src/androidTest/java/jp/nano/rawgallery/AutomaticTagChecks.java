@@ -39,7 +39,7 @@ final class AutomaticTagChecks {
         epoch = store.automation(tagId, true, false);
         String otherId = store.photoId(other, false);
         store.record("exclude", tagId, otherId, 0, TagJudgments.Value.EXCLUDED);
-        check(store.automatic(tagId).isEmpty(), "Old human revision remained effective");
+        check(store.automatic(tagId).size() == 1, "Correction erased unrelated automatic results");
         check(!store.applyAutomatic(tagId, epoch, revision, scope, features.keySet(), plan, () -> false), "Stale judgment version wrote");
         revision = store.judgmentRevision(tagId);
         check(store.applyAutomatic(tagId, epoch, revision, scope, features.keySet(), plan, () -> false), "New version rejected");

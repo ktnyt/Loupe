@@ -33,37 +33,30 @@ public final class TagActivity extends Activity {
   private final Handler main = new Handler(Looper.getMainLooper());
   private final List<PhotoRepository.Photo> photos = new ArrayList<>();
   private final List<String> photoIds = new ArrayList<>();
-  private final List<Integer> queue = new ArrayList<>();
-  private final List<Step> steps = new ArrayList<>();
   private final ExecutorService analysis = Executors.newSingleThreadExecutor();
   private final Map<Integer, RelatedPhotos.Vector> features = new HashMap<>();
   private Future<?> analyzing;
   private volatile int analysisGeneration;
-  private boolean related, waiting, rankingPending, analysisFinished, expandAfterAssignment;
+  private boolean related, analysisFinished;
   private int analyzed, analysisFailures, automaticCount;
   private volatile boolean analysisPaused;
   private boolean analysisActive;
   private final Set<Integer> processed = new HashSet<>();
-  private TextView analysisStatus, originStatus;
+  private TextView analysisStatus, jobTitle;
+  private Button resultButton;
   private String automaticError = "";
-  private String candidateReason = "";
   private Map<String, AutomaticTags.Decision> automatic = new HashMap<>();
   private boolean autoRunning, autoPending, autoAgain;
   private long autoEpoch;
   private TagJudgments judgments = new TagJudgments();
   private TagStore.Tag tag;
   private LinearLayout root;
-  private int generation, position;
+  private int generation;
   private boolean busy, reviewing;
   private int browseMode;
-  private boolean browseAutomatic;
+  private enum Filter { ATTACHED, ALL, AUTOMATIC, REMOVED }
+  private Filter browseFilter = Filter.ATTACHED;
   private final List<Integer> browsePhotos = new ArrayList<>();
-
-  private static final class Step {
-    final int position;
-    final String operation;
-    Step(int position, String operation) { this.position = position; this.operation = operation; }
-  }
 
   public void onCreate(Bundle state) {
     super.onCreate(state);
@@ -81,7 +74,7 @@ public final class TagActivity extends Activity {
 
   private int screen(String title) {
     generation++;
-    originStatus = null;
+    analysisStatus = null; jobTitle = null; resultButton = null;
     root = new LinearLayout(this);
     root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(GalleryUi.BG);
     root.setOnApplyWindowInsetsListener((view, insets) -> {
@@ -203,39 +196,45 @@ public final class TagActivity extends Activity {
     });
   }
 
-  private void renderTag() {
-    updateAutomaticCount();
-    screen(tag.name);
-    int assigned = 0, excluded = 0, inferred = 0;
-    for (int i = 0; i < photos.size(); i++) {
-      if (value(i) == TagJudgments.Value.ASSIGNED) assigned++;
-      if (value(i) == TagJudgments.Value.EXCLUDED) excluded++;
-      if (isAutomatic(i)) inferred++;
-    }
-    root.addView(text("付与済み " + (assigned + inferred) + "枚（手動 " + assigned + " · 自動 " + inferred
-        + "）\n該当しない " + excluded + "枚 · 未付与 " + (photos.size() - assigned - inferred - excluded) + "枚", 16));
-    root.addView(text(assigned > 0
-        ? "見本から広く自動付与します。誤りは訂正でき、自動分だけ取り消せます。"
-        : "まず一枚にタグを付けると、残りにも自動でタグを広げます。", 13));
-    root.addView(button(assigned > 0 ? "似た写真に自動でタグを付ける" : "見本の写真にタグを付ける",
-        assigned > 0 ? () -> startAutomatic(true, false) : this::startSeedReview));
-    root.addView(button("付与済みの写真を見る", () -> showAssigned(false)));
-    root.addView(button("自動付与した写真だけ見る", this::reviewAutomatic));
-    root.addView(button("すべての未付与写真を順に確認", () -> startReview(false)));
-    root.addView(button("除外した写真を見直す", () -> startExcluded()));
-    root.addView(button("自動付与をすべて取り消す", this::clearAutomatic));
-    root.addView(button("タグ一覧", this::showTags));
+  private String scope() {
+    String folder = getIntent().getStringExtra("folder"), camera = getIntent().getStringExtra("camera");
+    return (folder == null ? "すべての写真" : folder) + (camera == null || camera.equals("すべて") ? "" : " · " + camera);
   }
 
-  private void reviewAutomatic() { showAssigned(true); }
+  private void renderTag() {
+    updateAutomaticCount(); screen(tag.name);
+    int assigned = 0;
+    for (int i = 0; i < photos.size(); i++) if (value(i) == TagJudgments.Value.ASSIGNED) assigned++;
+    root.addView(text(scope(), 13));
+    root.addView(text("タグ付き " + (assigned + automaticCount) + "枚", 22));
+    root.addView(button("写真を見る", () -> showPhotos(Filter.ATTACHED)));
+    root.addView(button("写真を追加", () -> showPhotos(Filter.ALL)));
+    Button search = button("自動で探す", this::startAutomatic);
+    search.setEnabled(assigned > 0); root.addView(search);
+    root.addView(text(assigned > 0 ? "付けた写真と外した写真を参考に、似た写真へタグを付けます。訂正をほかの写真にも反映するには、もう一度実行してください。"
+        : "「写真を追加」で見本にタグを付けると、自動で探せます。", 13));
+    root.addView(button("その他", () -> new GalleryUi.Sheet(this).setTitle("その他")
+        .setItems(new String[]{"自動で付いた写真", "外した写真", "自動で付いたタグを一括削除"}, (d, which) -> {
+          if (which == 0) showPhotos(Filter.AUTOMATIC);
+          else if (which == 1) showPhotos(Filter.REMOVED); else clearAutomatic();
+        }).show()));
+    root.addView(button("タグ一覧に戻る", this::showTags));
+  }
 
-  private void showAssigned(boolean automaticOnly) {
-    stopAnalysis(); reviewing = true; browseMode = 1; browseAutomatic = automaticOnly;
+  private void showPhotos(Filter filter) {
+    if (busy) return;
+    stopAnalysis(); reviewing = true; browseMode = 1; browseFilter = filter;
     browsePhotos.clear();
-    for (int i = 0; i < photos.size(); i++)
-      if (isAutomatic(i) || (!automaticOnly && value(i) == TagJudgments.Value.ASSIGNED)) browsePhotos.add(i);
-    int token = screen(tag.name + " · " + (automaticOnly ? "自動付与" : "付与済み"));
-    root.addView(text(browsePhotos.size() + "枚 · 写真をタップして拡大", 14));
+    for (int i = 0; i < photos.size(); i++) {
+      boolean attached = isAutomatic(i) || value(i) == TagJudgments.Value.ASSIGNED;
+      if (filter == Filter.ALL || filter == Filter.ATTACHED && attached
+          || filter == Filter.AUTOMATIC && isAutomatic(i)
+          || filter == Filter.REMOVED && value(i) == TagJudgments.Value.EXCLUDED) browsePhotos.add(i);
+    }
+    String title = filter == Filter.ALL ? "写真を追加" : filter == Filter.REMOVED ? "外した写真"
+        : filter == Filter.AUTOMATIC ? "自動で付いた写真" : "タグ付きの写真";
+    int token = screen(tag.name + " · " + title);
+    root.addView(text(scope() + " · " + browsePhotos.size() + "枚", 14));
     android.widget.GridView grid = new android.widget.GridView(this);
     grid.setNumColumns(3); grid.setHorizontalSpacing(4); grid.setVerticalSpacing(4);
     grid.setAdapter(new android.widget.BaseAdapter() {
@@ -247,7 +246,7 @@ public final class TagActivity extends Activity {
         int index = browsePhotos.get(position);
         PhotoRepository.Photo photo = photos.get(index);
         Object binding = new Object(); cell.setTag(binding); cell.image.setImageDrawable(null);
-        cell.badges.rank = isAutomatic(index) ? "自動" : "手動"; cell.badges.invalidate();
+        cell.badges.rank = isAutomatic(index) ? "タグあり · 自動" : value(index) == TagJudgments.Value.ASSIGNED ? "タグあり" : "タグなし"; cell.badges.invalidate();
         cell.setContentDescription(photo.name + " · " + cell.badges.rank);
         worker.execute(() -> {
           if (!current(token)) return;
@@ -266,17 +265,19 @@ public final class TagActivity extends Activity {
     });
     grid.setOnItemClickListener((parent, view, position, id) -> showAssignedPhoto(position));
     root.addView(grid, new LinearLayout.LayoutParams(-1, 0, 1));
-    if (browsePhotos.isEmpty()) root.addView(text("この範囲に付与済みの写真はありません", 16));
+    if (browsePhotos.isEmpty()) root.addView(text("この範囲に該当する写真はありません", 16));
     root.addView(button("タグに戻る", this::showTag));
   }
 
   private void showAssignedPhoto(int position) {
+    if (busy) return;
     browseMode = 2;
     int index = browsePhotos.get(position);
     PhotoRepository.Photo photo = photos.get(index);
     int token = screen(tag.name);
     root.addView(text((position + 1) + " / " + browsePhotos.size() + " · " + photo.name, 14));
-    root.addView(text(origin(index), 12));
+    boolean attached = isAutomatic(index) || value(index) == TagJudgments.Value.ASSIGNED;
+    root.addView(text(attached ? (isAutomatic(index) ? "タグあり · 自動で付けました" : "タグあり · 自分で付けました") : "タグなし", 12));
     ZoomImageView image = new ZoomImageView(this);
     root.addView(image, new LinearLayout.LayoutParams(-1, 0, 1));
     Runnable previous = () -> { if (position > 0) showAssignedPhoto(position - 1); };
@@ -287,10 +288,9 @@ public final class TagActivity extends Activity {
     before.setEnabled(position > 0); after.setEnabled(position + 1 < browsePhotos.size());
     navigation.addView(before, new LinearLayout.LayoutParams(0, -2, 1));
     navigation.addView(after, new LinearLayout.LayoutParams(0, -2, 1)); root.addView(navigation);
-    root.addView(button("この写真のタグを訂正", () -> {
-      queue.clear(); steps.clear(); queue.add(index); this.position = 0; expandAfterAssignment = false; showReview();
-    }));
-    root.addView(button("付与済み一覧に戻る", () -> showAssigned(browseAutomatic)));
+    root.addView(button(attached ? "タグを外す" : "タグを付ける",
+        () -> changeTag(index, position, attached ? TagJudgments.Value.EXCLUDED : TagJudgments.Value.ASSIGNED)));
+    root.addView(button("一覧に戻る", () -> showPhotos(browseFilter)));
     worker.execute(() -> {
       try {
         Bitmap bitmap = PhotoRepository.bitmap(new PhotoRepository(this).preview(photo), 1600);
@@ -314,147 +314,22 @@ public final class TagActivity extends Activity {
         }).setNegativeButton("戻る", null).show();
   }
 
-  private void startSeedReview() {
-    startReview(false);
-    expandAfterAssignment = true;
-  }
-
-  private void startReview(boolean assignedOnly) {
-    stopAnalysis();
-    expandAfterAssignment = false;
-    queue.clear(); steps.clear(); position = 0;
-    String seed = getIntent().getStringExtra("photo");
-    for (int i = 0; i < photos.size(); i++) {
-      boolean assigned = value(i) == TagJudgments.Value.ASSIGNED || isAutomatic(i);
-      if (assignedOnly ? !assigned : (assigned || value(i) != TagJudgments.Value.UNDECIDED)) continue;
-      if (photos.get(i).uri.toString().equals(seed)) queue.add(0, i); else queue.add(i);
-    }
-    showReview();
-  }
-
-  private void startExcluded() {
-    stopAnalysis();
-    expandAfterAssignment = false;
-    queue.clear(); steps.clear(); position = 0;
-    for (int i = 0; i < photos.size(); i++) if (value(i) == TagJudgments.Value.EXCLUDED) queue.add(i);
-    showReview();
-  }
-
-  private void showReview() {
-    browseMode = 0;
-    reviewing = true;
-    waiting = false;
-    int token = screen(tag.name);
-    if (position >= queue.size()) {
-      root.addView(text("この範囲の確認が終わりました", 18));
-      root.addView(button("一つ戻す", this::undo));
-      root.addView(button("終了して結果を見る", this::showTag));
-      return;
-    }
-    int photoIndex = queue.get(position);
-    PhotoRepository.Photo photo = photos.get(photoIndex);
-    originStatus = text(origin(photoIndex), 12); root.addView(originStatus);
-    root.addView(text((related ? "候補 " + (position + 1) : (position + 1) + " / " + queue.size()) + " · " + photo.name, 13));
-    if (related) {
-      root.addView(text(candidateReason, 13));
-      analysisStatus = text(progress(), 12); root.addView(analysisStatus);
-    }
-    ZoomImageView image = new ZoomImageView(this);
-    root.addView(image, new LinearLayout.LayoutParams(-1, 0, 1));
-    TextView status = text("写真を読み込み中…", 13); root.addView(status);
-    LinearLayout controls = new LinearLayout(this);
-    Button pass = button("← パス", this::pass);
-    Button assign = button("付与 →", () -> record(TagJudgments.Value.ASSIGNED));
-    Button exclude = button("該当しない", () -> record(TagJudgments.Value.EXCLUDED));
-    pass.setEnabled(false); assign.setEnabled(false); exclude.setEnabled(false);
-    controls.addView(pass, new LinearLayout.LayoutParams(0, -2, 1));
-    controls.addView(assign, new LinearLayout.LayoutParams(0, -2, 1));
-    root.addView(controls); root.addView(exclude);
-    Button clear = button("判断を取り消す", () -> record(TagJudgments.Value.UNDECIDED));
-    clear.setEnabled(false); root.addView(clear);
-    root.addView(button("一つ戻す", this::undo)); root.addView(button("終了して結果を見る", this::showTag));
-    worker.execute(() -> {
-      try {
-        PhotoRepository repository = new PhotoRepository(this);
-        Bitmap bitmap = PhotoRepository.bitmap(repository.preview(photo), 1600);
-        main.post(() -> {
-          if (!current(token)) { bitmap.recycle(); return; }
-          image.setBitmap(bitmap);
-          status.setText(autoRunning ? "左: 提示をパス（自動付与は継続） · 右: 手動確定" : "左: パス · 右: 付与（保存後に次へ）");
-          pass.setEnabled(true); assign.setEnabled(true); exclude.setEnabled(true); clear.setEnabled(true);
-          image.setPageListener(direction -> { if (direction > 0) pass(); else record(TagJudgments.Value.ASSIGNED); });
-        });
-      } catch (Exception error) {
-        main.post(() -> {
-          if (!current(token)) return;
-          status.setText("写真を取得できません。パスするか、終了して開き直してください。"); pass.setEnabled(true);
-        });
-      }
-    });
-  }
-
-  private void pass() {
-    if (busy || position >= queue.size()) return;
-    steps.add(new Step(position, null)); position++; advance();
-  }
-
-  private void record(TagJudgments.Value value) {
-    if (busy || position >= queue.size()) return;
-    boolean restartAutomatic = autoRunning || !automatic.isEmpty() || expandAfterAssignment;
-    busy = true;
-    int token = generation, previousPosition = position, photoIndex = queue.get(position);
-    String operation = UUID.randomUUID().toString(), tagId = tag.id;
-    String knownId = photoIds.get(photoIndex);
-    TagJudgments.Entry current = knownId == null ? null : judgments.latest(tagId, knownId);
-    long expected = current == null ? 0 : current.revision;
-    PhotoRepository.Photo photo = photos.get(photoIndex);
-    worker.execute(() -> {
-      try (TagStore store = new TagStore(this)) {
-        String id = store.photoId(photo, true);
-        TagJudgments saved = store.record(operation, tagId, id, expected, value);
-        Map<String, AutomaticTags.Decision> inferred = store.automatic(tagId);
-        main.post(() -> {
-          busy = false;
-          if (!current(token)) return;
-          photoIds.set(photoIndex, id); judgments = saved; automatic = inferred;
-          steps.add(new Step(previousPosition, operation)); position++;
-          if (restartAutomatic && !autoRunning) { startAutomatic(false, true); return; }
-          if (autoRunning) requestAutomatic();
-          advance();
-        });
-      } catch (Exception error) {
-        main.post(() -> { busy = false; if (current(token)) failure(error); });
-      }
-    });
-  }
-
-  private String origin(int index) {
-    return isAutomatic(index) ? "自動付与 · 推定結果です。誤りは訂正できます"
-        : value(index) == TagJudgments.Value.ASSIGNED ? "手動で付与済み" : "未付与／確認中";
-  }
-
-  private void undo() {
-    if (busy || steps.isEmpty()) return;
-    boolean restartAutomatic = autoRunning || !automatic.isEmpty();
-    Step step = steps.get(steps.size() - 1);
-    if (step.operation == null) {
-      candidateReason = "一つ戻した写真";
-      steps.remove(steps.size() - 1); position = step.position; showReview(); return;
-    }
+  private void changeTag(int index, int position, TagJudgments.Value value) {
+    if (busy) return;
     busy = true;
     int token = generation;
+    String tagId = tag.id, id = photoIds.get(index);
+    TagJudgments.Entry entry = id == null ? null : judgments.latest(tagId, id);
+    long revision = entry == null ? 0 : entry.revision;
     worker.execute(() -> {
       try (TagStore store = new TagStore(this)) {
-        TagJudgments saved = store.undo(UUID.randomUUID().toString(), step.operation);
-        Map<String, AutomaticTags.Decision> inferred = store.automatic(tag.id);
+        String savedId = store.photoId(photos.get(index), true);
+        TagJudgments saved = store.record(UUID.randomUUID().toString(), tagId, savedId, revision, value);
+        Map<String, AutomaticTags.Decision> inferred = store.automatic(tagId);
         main.post(() -> {
           busy = false; if (!current(token)) return;
-          judgments = saved; automatic = inferred;
-          if (autoRunning) requestAutomatic();
-          steps.remove(steps.size() - 1); position = step.position;
-          candidateReason = "一つ戻した写真";
-          if (restartAutomatic && !autoRunning) { startAutomatic(false, true); return; }
-          showReview();
+          photoIds.set(index, savedId); judgments = saved; automatic = inferred;
+          showAssignedPhoto(position);
         });
       } catch (Exception error) { main.post(() -> { busy = false; if (current(token)) failure(error); }); }
     });
@@ -473,7 +348,7 @@ public final class TagActivity extends Activity {
     analysisGeneration++;
     if (analyzing != null) analyzing.cancel(false);
     analysisActive = false;
-    related = false; waiting = false; rankingPending = false; analysisStatus = null;
+    related = false; analysisStatus = null;
   }
 
   private List<TagJudgments.Value> labels() {
@@ -493,16 +368,21 @@ public final class TagActivity extends Activity {
         + (analysisFinished && !autoPending ? " · 完了" : " · 解析中も確認できます");
   }
 
-  private void startRelated() {
-    stopAnalysis();
-    queue.clear(); steps.clear(); position = 0;
-    related = true;
-    beginAnalysis(); advance();
+  private void updateProgress() {
+    if (analysisStatus != null) analysisStatus.setText(progress());
+    boolean done = analysisFinished && !autoPending && !autoAgain && automaticError.isEmpty();
+    if (jobTitle != null) jobTitle.setText(!automaticError.isEmpty() ? "処理を続けられませんでした" : done ? "自動処理が完了しました" : "自動処理中");
+    if (resultButton != null) resultButton.setText(done ? "結果を見る" : "停止して写真を見る");
   }
 
-  private void startAutomatic(boolean reset, boolean review) {
+  private void startRelated() {
     stopAnalysis();
-    if (reset) { queue.clear(); steps.clear(); position = 0; }
+    related = true;
+    beginAnalysis();
+  }
+
+  private void startAutomatic() {
+    stopAnalysis();
     busy = true;
     int token = generation;
     String tagId = tag.id;
@@ -514,20 +394,40 @@ public final class TagActivity extends Activity {
           if (!current(token)) return;
           automaticError = ""; autoEpoch = epoch; autoRunning = true; related = true;
           beginAnalysis();
-          if (review) advance(); else showAutomaticProgress();
+          showAutomaticProgress();
         });
       } catch (Exception error) { main.post(() -> { busy = false; if (current(token)) failure(error); }); }
     });
   }
 
   private void showAutomaticProgress() {
-    reviewing = true; waiting = false;
+    reviewing = true; browseMode = 0;
     screen(tag.name);
-    root.addView(text("似た写真を探してタグを付けています", 20));
+    jobTitle = text("自動処理中", 20); root.addView(jobTitle);
     root.addView(text("一枚ずつ判断しなくても付与されます。誤付与を含む推定結果として保存します。", 14));
     analysisStatus = text(progress(), 16); root.addView(analysisStatus);
-    root.addView(button("候補を判断して調整", this::advance));
-    root.addView(button("停止して付与済みを見る", this::showTag));
+    root.addView(text(scope(), 13));
+    resultButton = button("停止して写真を見る", this::loadResults);
+    root.addView(resultButton);
+  }
+
+  private void loadResults() {
+    if (busy) return;
+    stopAnalysis(); busy = true;
+    String tagId = tag.id;
+    int token = generation;
+    worker.execute(() -> {
+      try (TagStore store = new TagStore(this)) {
+        Map<String, AutomaticTags.Decision> saved = store.automatic(tagId);
+        Map<String, String> ids = store.photoIds();
+        main.post(() -> {
+          busy = false; if (!current(token)) return;
+          automatic = saved;
+          for (int i = 0; i < photos.size(); i++) photoIds.set(i, ids.get(TagStore.source(photos.get(i))));
+          showPhotos(Filter.ATTACHED);
+        });
+      } catch (Exception error) { main.post(() -> { busy = false; if (current(token)) failure(error); }); }
+    });
   }
 
   private void requestAutomatic() {
@@ -567,8 +467,7 @@ public final class TagActivity extends Activity {
           }
           updateAutomaticCount();
           automaticError = applied ? "" : "判断が更新されたため保存を見送りました。再実行してください。";
-          if (originStatus != null && position < queue.size()) originStatus.setText(origin(queue.get(position)));
-          if (analysisStatus != null) analysisStatus.setText(progress());
+          updateProgress();
           if (autoAgain) requestAutomatic();
         });
       } catch (Exception error) {
@@ -576,7 +475,7 @@ public final class TagActivity extends Activity {
           if (isDestroyed() || token != analysisGeneration) return;
           autoPending = false; failure(error);
           automaticError = "自動付与を保存できませんでした。終了して再試行してください。";
-          if (analysisStatus != null) analysisStatus.setText(progress());
+          updateProgress();
         });
       }
     });
@@ -616,9 +515,8 @@ public final class TagActivity extends Activity {
             if (isDestroyed() || epoch != analysisGeneration) return;
             processed.add(i); analyzed = processed.size();
             if (completed == null) analysisFailures++; else features.put(i, completed);
-            if (analysisStatus != null) analysisStatus.setText(progress());
+            updateProgress();
             if (autoRunning && analyzed % 128 == 0) requestAutomatic();
-            if (waiting && !rankingPending) selectCandidate();
           });
         }
       } catch (Exception error) {
@@ -629,62 +527,16 @@ public final class TagActivity extends Activity {
           analysisActive = false;
           analysisFinished = processed.size() == photos.size();
           if (autoRunning) requestAutomatic();
-          if (analysisStatus != null) analysisStatus.setText(progress());
-          if (waiting && !rankingPending) selectCandidate();
+          updateProgress();
           if (!analysisPaused && !analysisFinished) resumeAnalysis();
         });
       }
     });
   }
 
-  private void advance() {
-    if (!related) { showReview(); return; }
-    reviewing = true; waiting = true; rankingPending = false;
-    screen(tag.name);
-    root.addView(text("見本と判断から次の候補を探しています", 17));
-    analysisStatus = text(progress(), 12); root.addView(analysisStatus);
-    root.addView(button("一つ戻す", this::undo));
-    root.addView(button("未判断の写真を順に確認", () -> startReview(false)));
-    root.addView(button("終了して結果を見る", this::showTag));
-    selectCandidate();
-  }
-
-  private void selectCandidate() {
-    if (!related || !waiting || rankingPending || busy) return;
-    if (!analysisFinished && analyzed < Math.min(32, photos.size())) return;
-    rankingPending = true;
-    int token = generation, featureCount = features.size();
-    boolean finished = analysisFinished;
-    Map<Integer, RelatedPhotos.Vector> snapshot = new HashMap<>(features);
-    List<TagJudgments.Value> decisions = labels();
-    Set<Integer> seen = new HashSet<>(queue.subList(0, Math.min(position, queue.size())));
-    int reviewed = position;
-    worker.execute(() -> {
-      RelatedPhotos.Candidate candidate = null;
-      try { candidate = RelatedPhotos.next(snapshot, decisions, seen, reviewed); }
-      catch (RuntimeException error) { main.post(() -> { if (current(token)) failure(error); }); }
-      RelatedPhotos.Candidate result = candidate;
-      main.post(() -> {
-        if (!current(token) || !related || !waiting) return;
-        rankingPending = false;
-        if (result == null) {
-          if (featureCount != features.size() || finished != analysisFinished) { selectCandidate(); return; }
-          if (analysisFinished) analysisStatus.setText(progress()
-              + "\n候補がありません。見本を追加するか、取得できなかった写真を再確認してください。");
-          return;
-        }
-        while (queue.size() > position) queue.remove(queue.size() - 1);
-        queue.add(result.photo);
-        candidateReason = result.exploration ? "見落としを探す候補 · 見本と違う写真も確認"
-            : "見本「" + photos.get(result.exemplar).name + "」に近い候補";
-        showReview();
-      });
-    });
-  }
-
   public void onBackPressed() {
     if (busy) return;
-    if (browseMode == 2) showAssigned(browseAutomatic);
+    if (browseMode == 2) showPhotos(browseFilter);
     else if (reviewing) showTag(); else super.onBackPressed();
   }
 
@@ -703,7 +555,7 @@ public final class TagActivity extends Activity {
     analysisPaused = false;
     if (related) {
       resumeAnalysis();
-      if (analysisStatus != null) analysisStatus.setText(progress());
+      updateProgress();
     }
   }
 }
