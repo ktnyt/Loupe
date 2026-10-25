@@ -21,8 +21,8 @@ public final class MainActivity extends Activity {
       MUTED = GalleryUi.MUTED,
       ACCENT = GalleryUi.ACCENT;
   private final ExecutorService scans = Executors.newSingleThreadExecutor(),
+      images = Executors.newFixedThreadPool(2),
       actions = Executors.newSingleThreadExecutor();
-  private final PreviewExecutor images = new PreviewExecutor();
   private final Handler main = new Handler(Looper.getMainLooper());
   private final LruCache<String, Bitmap> thumbs =
       new LruCache<String, Bitmap>(24 * 1024 * 1024) {
@@ -73,7 +73,7 @@ public final class MainActivity extends Activity {
           if (!main.hasCallbacks(mediaChanged)) main.postDelayed(mediaChanged, 300);
         }
       };
-  private volatile int generation = 0;
+  private int generation = 0;
   private Future<?> viewing;
   private boolean detail = false;
   private boolean rankingScreen = false;
@@ -86,7 +86,6 @@ public final class MainActivity extends Activity {
   private AlertDialog shareProgress;
   private int shareAttempt;
   private Bundle pendingRestore;
-  private long burstOpenedAt;
   private int burstPosition;
 
   public void onCreate(Bundle state) {
@@ -234,7 +233,6 @@ public final class MainActivity extends Activity {
           GalleryUi.feedback(v);
           List<Integer> members = displayed.get(pos);
           if (members.size() > 1) {
-            burstOpenedAt = SystemClock.elapsedRealtime();
             burstMembers = new ArrayList<>(members);
             burstPosition = 0;
             gallery();
@@ -282,36 +280,19 @@ public final class MainActivity extends Activity {
   }
 
   private void previewInto(ImageView image, PhotoRepository.Photo photo, int size) {
-    long requested = SystemClock.elapsedRealtime();
-    long opened = burstOpenedAt;
-    int count = burstMembers == null ? 0 : burstMembers.size();
     String key = photo.uri + ":" + photo.modified + ":" + size;
     image.setTag(key);
     image.setImageDrawable(null);
     int token = generation;
     Bitmap cached = thumbs.get(key);
-    if (cached != null) {
-      image.setImageBitmap(cached);
-      if (size == 1600) android.util.Log.i("LoupePreview", "memory=hit count=" + count
-          + " tap_to_bind_ms=" + (SystemClock.elapsedRealtime() - opened));
-      return;
-    }
+    if (cached != null) { image.setImageBitmap(cached); return; }
     images.execute(() -> {
-      if (token != generation) return;
-      long started = SystemClock.elapsedRealtime();
       try {
         Bitmap bitmap = PhotoRepository.bitmap(repository.preview(photo), size);
-        long decoded = SystemClock.elapsedRealtime();
         thumbs.put(key, bitmap);
         main.post(() -> {
-          if (!isDestroyed() && token == generation && key.equals(image.getTag())) {
+          if (!isDestroyed() && token == generation && key.equals(image.getTag()))
             image.setImageBitmap(bitmap);
-            if (size == 1600) android.util.Log.i("LoupePreview",
-                "memory=miss count=" + count + " tap_to_bind_ms=" + (SystemClock.elapsedRealtime() - opened)
-                + " queue_ms=" + (started - requested) + " load_ms=" + (decoded - started)
-                + " bind_ms=" + (SystemClock.elapsedRealtime() - requested)
-                + " format=" + (photo.isJpeg() ? "JPEG" : "RAW"));
-          }
         });
       } catch (Exception e) {
         main.post(() -> {
@@ -319,7 +300,7 @@ public final class MainActivity extends Activity {
             image.setContentDescription(photo.name + "、プレビューを読み込めませんでした");
         });
       }
-    }, size == 1600);
+    });
   }
 
   private void burstDetail() {
@@ -378,8 +359,6 @@ public final class MainActivity extends Activity {
         thumbnail.setStateDescription(i == burstPosition ? "表示中" : "");
       }
     };
-    // Submit the visible photo before any strip thumbnails.
-    update.run();
     for (int i = 0; i < burstMembers.size(); i++) {
       final int position = i;
       PhotoRepository.Photo photo = photos.get(burstMembers.get(i));
@@ -393,11 +372,6 @@ public final class MainActivity extends Activity {
       lp.setMargins(dp(3), 0, dp(3), 0);
       strip.addView(thumbnail, lp);
       thumbnails.add(thumbnail);
-      android.graphics.drawable.GradientDrawable border = GalleryUi.shape(this, Color.TRANSPARENT, 6);
-      border.setStroke(dp(2), i == burstPosition ? GalleryUi.ACCENT : Color.TRANSPARENT);
-      thumbnail.setForeground(border);
-      thumbnail.setSelected(i == burstPosition);
-      thumbnail.setStateDescription(i == burstPosition ? "表示中" : "");
       thumbnail.setOnClickListener(v -> { burstPosition = position; update.run(); });
       previewInto(thumbnail, photo, 200);
     }
@@ -424,6 +398,7 @@ public final class MainActivity extends Activity {
         button("拡大", () -> showPhoto(burstMembers.get(burstPosition))));
     dock(button("選択", () -> { selecting = true; bestOnly = true; gallery(); }), button("その他", this::photoMenu));
     GalleryUi.bottomControls(root, controlsStart);
+    update.run();
   }
 
   private void chooseCurrentBest() {
