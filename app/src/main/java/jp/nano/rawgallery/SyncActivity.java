@@ -258,7 +258,7 @@ public final class SyncActivity extends DiagnosticActivity {
                               SyncJob.now(this);
                             } catch (Exception e) {
                               stop();
-                              SyncEngine.status(this, "定期処理を登録できませんでした。");
+                              SyncEngine.status(this, JobState.Kind.FAILED, "定期処理を登録できませんでした。");
                             }
                             refresh();
                           })
