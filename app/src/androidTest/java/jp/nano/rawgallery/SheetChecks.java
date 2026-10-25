@@ -23,18 +23,24 @@ final class SheetChecks {
         backdrop.setText("メニュー表示テスト"); backdrop.setTextColor(GalleryUi.TEXT);
         backdrop.setBackgroundColor(GalleryUi.BG); activity.setContentView(backdrop);
       });
-      for (int kind = 0; kind < 3; kind++) {
+      for (int kind = 0; kind < 4; kind++) {
         int mode = kind;
         AlertDialog[] dialog = new AlertDialog[1];
         boolean[] clicked = {false}, shown = {false};
         test.runOnMainSync(() -> {
-          GalleryUi.Sheet builder = new GalleryUi.Sheet(activity);
+          android.content.Context context = activity;
+          if (mode == 3) {
+            android.view.ContextThemeWrapper enlarged = new android.view.ContextThemeWrapper(activity, activity.getTheme());
+            android.content.res.Configuration config = new android.content.res.Configuration();
+            config.fontScale = 1.3f; enlarged.applyOverrideConfiguration(config); context = enlarged;
+          }
+          GalleryUi.Sheet builder = new GalleryUi.Sheet(context);
           if (mode == 2) {
             EditText input = new EditText(activity); input.setHint("タグ名");
             builder.setTitle("新しいタグ").setView(input).setPositiveButton("作成", null);
           } else {
             String[] items = mode == 0 ? new String[]{"カメラで絞り込み", "タグ", "設定とその他"} : new String[40];
-            if (mode == 1) for (int i = 0; i < items.length; i++) items[i] = "項目 " + i;
+            if (mode == 1 || mode == 3) for (int i = 0; i < items.length; i++) items[i] = "項目 " + i;
             builder.setItems(items, (d, which) -> clicked[0] = true);
           }
           builder.setNegativeButton("閉じる", null);
@@ -44,9 +50,12 @@ final class SheetChecks {
         });
         for (int repeat = 0; repeat < 2; repeat++) {
           Rect[] first = new Rect[1]; Rect[] visible = new Rect[1];
+          java.util.List<Rect> frames = new java.util.ArrayList<>();
           CountDownLatch drawn = new CountDownLatch(1);
           View decor = dialog[0].getWindow().getDecorView();
           ViewTreeObserver.OnDrawListener observer = () -> {
+            frames.add(bounds(decor));
+            decor.postInvalidateOnAnimation();
             if (first[0] == null) {
               first[0] = bounds(decor);
               visible[0] = new Rect(); decor.getWindowVisibleDisplayFrame(visible[0]);
@@ -64,13 +73,17 @@ final class SheetChecks {
           });
           int expectedWidth = Math.min(activity.getResources().getDisplayMetrics().widthPixels
               - GalleryUi.dp(activity, 24), GalleryUi.dp(activity, 560));
+          if (frames.size() < 2) throw new AssertionError("insufficient frames");
+          for (Rect frame : frames) if (!frame.equals(first[0]))
+            throw new AssertionError("intermediate moving frame " + first[0] + " -> " + frame);
+          if (Math.abs(first[0].centerX() - visible[0].centerX()) > 1) throw new AssertionError("not centered " + first[0]);
           if (!first[0].equals(stable[0])) throw new AssertionError("moving frame " + first[0] + " -> " + stable[0]);
           if (first[0].width() != expectedWidth) throw new AssertionError("wrong width " + first[0]);
           if (Math.abs(first[0].bottom - visible[0].bottom) > 1) throw new AssertionError("not bottom " + first[0] + " visible=" + visible[0]);
           if (first[0].height() > (int)(visible[0].height() * .48f)) throw new AssertionError("height cap " + first[0]);
           if (!shown[0]) throw new AssertionError("onShow lost");
           result.append("PASS mode=").append(mode).append(" repeat=").append(repeat)
-              .append(" first=").append(first[0]).append(" unchanged after 300ms; observed_ms=")
+              .append(" frames=").append(frames.size()).append(" first=").append(first[0]).append(" unchanged after 300ms; observed_ms=")
               .append(android.os.SystemClock.elapsedRealtime() - start).append('\n');
           test.runOnMainSync(() -> {
             if (mode == 0 && dialog[0].getListView() != null)
