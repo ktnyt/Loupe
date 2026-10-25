@@ -15,9 +15,9 @@ import javax.net.ssl.HttpsURLConnection;
 import org.json.*;
 
 /** Login stays on Amazon's page; diagnostics only GET the first page of the user's photo index. */
-public final class CloudActivity extends Activity {
+public final class CloudActivity extends DiagnosticActivity {
   private static final String ORIGIN = "https://www.amazon.co.jp";
-  private final ExecutorService worker = Executors.newSingleThreadExecutor();
+  private final ExecutorService worker = new DiagnosticExecutor("CloudActivity.worker", 1);
   private WebView web;
   private TextView status;
   private Button check, verify, upload, loginButton, logoutButton;

@@ -11,7 +11,7 @@ import java.util.function.BooleanSupplier;
 /** Rebuildable browsing index; never participates in backup or deletion decisions. */
 final class GalleryIndex extends SQLiteOpenHelper {
   static final java.util.concurrent.ExecutorService WORKER =
-      java.util.concurrent.Executors.newSingleThreadExecutor();
+      new DiagnosticExecutor("GalleryIndex.worker", 1);
   private static final String COLS = "uri,name,folder,size,modified,taken,added,created";
 
   GalleryIndex(Context c) {

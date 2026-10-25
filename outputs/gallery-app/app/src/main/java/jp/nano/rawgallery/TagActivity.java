@@ -28,12 +28,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /** Human judgments and separately stored, correctable automatic assignments. */
-public final class TagActivity extends Activity {
-  private final ExecutorService worker = Executors.newSingleThreadExecutor();
+public final class TagActivity extends DiagnosticActivity {
+  private final ExecutorService worker = new DiagnosticExecutor("TagActivity.worker", 1);
   private final Handler main = new Handler(Looper.getMainLooper());
   private final List<PhotoRepository.Photo> photos = new ArrayList<>();
   private final List<String> photoIds = new ArrayList<>();
-  private final ExecutorService analysis = Executors.newSingleThreadExecutor();
+  private final ExecutorService analysis = new DiagnosticExecutor("TagActivity.analysis", 1);
   private final Map<Integer, RelatedPhotos.Vector> features = new HashMap<>();
   private Future<?> analyzing;
   private volatile int analysisGeneration;
@@ -649,6 +649,7 @@ public final class TagActivity extends Activity {
   }
 
   public void onBackPressed() {
+    DiagnosticLog.event("action.back", 0, "screen", "TagActivity");
     if (busy) return;
     if (browseMode == 1 && selecting) { selecting = false; selectedPhotos.clear(); refreshSelection(); }
     else if (browseMode == 2) showPhotos(browseFilter);

@@ -52,7 +52,7 @@ final class GalleryUi {
     button.setOnClickListener(
         v -> {
           feedback(v);
-          action.run();
+          try (DiagnosticLog.Scope ignored = DiagnosticLog.span("action.button")) { action.run(); }
         });
     return button;
   }
@@ -200,7 +200,11 @@ final class GalleryUi {
     Sheet(Context c) { super(c); }
     @Override public AlertDialog create() {
       AlertDialog dialog = super.create();
-      dialog.setOnShowListener(ignored -> styleSheet(dialog));
+      dialog.setOnShowListener(ignored -> {
+        DiagnosticLog.event("dialog.show", 0);
+        styleSheet(dialog);
+        DiagnosticWindow.install(dialog.getWindow());
+      });
       return dialog;
     }
     @Override public AlertDialog show() {

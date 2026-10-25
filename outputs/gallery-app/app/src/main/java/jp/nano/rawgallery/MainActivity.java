@@ -14,15 +14,15 @@ import java.io.*;
 import java.util.*;
 import java.util.concurrent.*;
 
-public final class MainActivity extends Activity {
+public final class MainActivity extends DiagnosticActivity {
   private static final int BG = GalleryUi.BG,
       PANEL = GalleryUi.PANEL,
       TEXT = GalleryUi.TEXT,
       MUTED = GalleryUi.MUTED,
       ACCENT = GalleryUi.ACCENT;
-  private final ExecutorService scans = Executors.newSingleThreadExecutor(),
-      images = Executors.newFixedThreadPool(2),
-      actions = Executors.newSingleThreadExecutor();
+  private final ExecutorService scans = new DiagnosticExecutor("MainActivity.scans", 1),
+      images = new DiagnosticExecutor("MainActivity.images", 2),
+      actions = new DiagnosticExecutor("MainActivity.actions", 1);
   private final Handler main = new Handler(Looper.getMainLooper());
   private final LruCache<String, Bitmap> thumbs =
       new LruCache<String, Bitmap>(24 * 1024 * 1024) {
@@ -86,6 +86,7 @@ public final class MainActivity extends Activity {
   private AlertDialog shareProgress;
   private int shareAttempt;
   private Bundle pendingRestore;
+  private long burstRequest;
   private int burstPosition;
 
   public void onCreate(Bundle state) {
@@ -177,6 +178,7 @@ public final class MainActivity extends Activity {
   }
 
   private void gallery() {
+    DiagnosticLog.event("screen.gallery", burstRequest);
     rememberGallery();
     if (albumHome && albumGridView != null) albumScroll = albumGridView.firstCellPosition();
     albumHome = false;
@@ -231,8 +233,11 @@ public final class MainActivity extends Activity {
             return;
           }
           GalleryUi.feedback(v);
+          DiagnosticLog.event("action.grid", 0, "position", pos);
           List<Integer> members = displayed.get(pos);
           if (members.size() > 1) {
+            burstRequest = DiagnosticLog.id();
+            DiagnosticLog.event("burst.open", burstRequest, "count", members.size());
             burstMembers = new ArrayList<>(members);
             burstPosition = 0;
             gallery();
@@ -271,6 +276,7 @@ public final class MainActivity extends Activity {
   }
 
   private void photoMenu() {
+    DiagnosticLog.event("screen.photoMenu", 0);
     new GalleryUi.Sheet(this).setItems(new String[] {"カメラで絞り込み", "タグ", "設定とその他"}, (d, which) -> {
       if (which == 0 && !selecting) chooseFilter();
       else if (which == 0) toast("選択を終了してからカメラを変更してください");
@@ -280,30 +286,49 @@ public final class MainActivity extends Activity {
   }
 
   private void previewInto(ImageView image, PhotoRepository.Photo photo, int size) {
+    long request = DiagnosticLog.id();
+    DiagnosticLog.event("image.request", request, "burst", burstRequest,
+        "photo", DiagnosticLog.photo(photo), "size", size, "format", photo.isJpeg() ? "JPEG" : "RAW");
     String key = photo.uri + ":" + photo.modified + ":" + size;
     image.setTag(key);
     image.setImageDrawable(null);
     int token = generation;
     Bitmap cached = thumbs.get(key);
-    if (cached != null) { image.setImageBitmap(cached); return; }
+    DiagnosticLog.event("image.memory", request, "hit", cached != null);
+    if (cached != null) {
+      if (image instanceof DiagnosticImageView) ((DiagnosticImageView) image).bound(request);
+      image.setImageBitmap(cached);
+      DiagnosticLog.event("image.bind", request);
+      return;
+    }
+    long previous = DiagnosticLog.use(request);
     images.execute(() -> {
       try {
         Bitmap bitmap = PhotoRepository.bitmap(repository.preview(photo), size);
         thumbs.put(key, bitmap);
+        DiagnosticLog.event("image.post", request);
         main.post(() -> {
-          if (!isDestroyed() && token == generation && key.equals(image.getTag()))
+          if (!isDestroyed() && token == generation && key.equals(image.getTag())) {
+            if (image instanceof DiagnosticImageView) ((DiagnosticImageView) image).bound(request);
             image.setImageBitmap(bitmap);
+            DiagnosticLog.event("image.bind", request);
+          } else DiagnosticLog.event("image.discard", request);
         });
       } catch (Exception e) {
+        DiagnosticLog.event("image.fail", request, "error", e.getClass().getSimpleName());
         main.post(() -> {
-          if (!isDestroyed() && token == generation && key.equals(image.getTag()))
+          if (!isDestroyed() && token == generation && key.equals(image.getTag())) {
             image.setContentDescription(photo.name + "、プレビューを読み込めませんでした");
+            DiagnosticLog.event("image.failure_applied", request);
+          } else DiagnosticLog.event("image.discard", request);
         });
       }
     });
+    DiagnosticLog.use(previous);
   }
 
   private void burstDetail() {
+    DiagnosticLog.event("screen.burstDetail", burstRequest);
     grid = null;
     burstPosition = Math.max(0, Math.min(burstPosition, burstMembers.size() - 1));
     LinearLayout header = row();
@@ -318,7 +343,7 @@ public final class MainActivity extends Activity {
 
     root.addView(header);
     FrameLayout stage = new FrameLayout(this);
-    ImageView hero = new ImageView(this);
+    ImageView hero = new DiagnosticImageView(this);
     hero.setScaleType(ImageView.ScaleType.FIT_CENTER);
     stage.addView(hero, new FrameLayout.LayoutParams(-1, -1));
     TextView rank = label("", 13, TEXT);
@@ -337,6 +362,7 @@ public final class MainActivity extends Activity {
     strip.setPadding(dp(12), dp(16), dp(12), dp(16));
     List<ImageView> thumbnails = new ArrayList<>();
     Runnable update = () -> {
+      DiagnosticLog.event("burst.select", burstRequest, "position", burstPosition);
       int member = burstMembers.get(burstPosition);
       PhotoRepository.Photo photo = photos.get(member);
       previewInto(hero, photo, 1600);
@@ -544,6 +570,7 @@ public final class MainActivity extends Activity {
   }
 
   private void selectionControls() {
+    DiagnosticLog.event("screen.selectionControls", 0);
     CheckBox check = new CheckBox(this);
     check.setText("連写は1位だけ共有（同率を含む）");
     check.setTextColor(TEXT);
@@ -612,6 +639,7 @@ public final class MainActivity extends Activity {
   }
 
   private void shareSelection() {
+    DiagnosticLog.event("screen.shareSelection", 0);
     SelectionResult result = resolveSelection();
     if (!result.unresolved.isEmpty()) {
       GalleryUi.Sheet sheet = new GalleryUi.Sheet(this);
@@ -671,6 +699,7 @@ public final class MainActivity extends Activity {
   }
 
   private void galleryMenu() {
+    DiagnosticLog.event("screen.galleryMenu", 0);
     new GalleryUi.Sheet(this)
         .setTitle("設定とその他の操作")
         .setItems(
@@ -742,6 +771,7 @@ public final class MainActivity extends Activity {
   }
 
   private void albumHome() {
+    DiagnosticLog.event("screen.albumHome", 0);
     rememberGallery();
     if (viewing != null) viewing.cancel(true);
     albumHome = true;
@@ -876,6 +906,7 @@ public final class MainActivity extends Activity {
   }
 
   private void loadAlbums() {
+    DiagnosticLog.event("screen.loadAlbums", burstRequest);
     int token = generation;
     scans.execute(
         () -> {
@@ -1007,6 +1038,7 @@ public final class MainActivity extends Activity {
   }
 
   private void loadIndexedPhotos() {
+    DiagnosticLog.event("screen.loadIndexedPhotos", burstRequest);
     int token = generation;
     String folder = albumFolder, selected = filter;
     scans.execute(
@@ -1063,6 +1095,7 @@ public final class MainActivity extends Activity {
   }
 
   private void refresh() {
+    DiagnosticLog.event("screen.refresh", 0);
     if (!detail) {
       if (albumHome) loadAlbums();
       else if (burstMembers == null) loadIndexedPhotos();
@@ -1264,6 +1297,7 @@ public final class MainActivity extends Activity {
   private boolean returnToRanking, recentPhoto;
 
   private void showPhoto(int position, boolean fromRanking) {
+    DiagnosticLog.event("screen.photo", 0, "position", position);
     rememberGallery();
     if (position < 0 || position >= photos.size()) return;
     if (viewing != null) viewing.cancel(true);
@@ -1424,6 +1458,7 @@ public final class MainActivity extends Activity {
   }
 
   public void onBackPressed() {
+    DiagnosticLog.event("action.back", 0, "screen", "MainActivity");
     if (rankingScreen) leaveRanking();
     else if (selecting && !detail) endSelection();
     else if (detail) {
@@ -1438,6 +1473,7 @@ public final class MainActivity extends Activity {
   }
 
   private void openRanking() {
+    DiagnosticLog.event("screen.openRanking", 0);
     try {
       rankingMembers.clear();
       for (int member : burstMembers)
@@ -1466,6 +1502,7 @@ public final class MainActivity extends Activity {
   }
 
   private void showRanking() {
+    DiagnosticLog.event("screen.showRanking", 0);
     rememberGallery();
     if (viewing != null) viewing.cancel(true);
     detail = true;
@@ -1794,6 +1831,7 @@ public final class MainActivity extends Activity {
   }
 
   private void editTargets() {
+    DiagnosticLog.event("screen.editTargets", 0);
     targets = ShareTargets.load(this);
     List<String> options = new ArrayList<>();
     for (int i = 0; i < targets.size(); i++) {

@@ -102,6 +102,7 @@ public final class PhotoRepository {
 
   public PhotoRepository(Context c) {
     context = c.getApplicationContext();
+    DiagnosticLog.init(context);
     previews = new File(context.getCacheDir(), "previews");
     previews.mkdirs();
   }
@@ -246,7 +247,21 @@ public final class PhotoRepository {
     }
   }
 
-  public synchronized Preview preview(Photo p) throws IOException {
+  public Preview preview(Photo p) throws IOException {
+    try (DiagnosticLog.Scope span = DiagnosticLog.span("repository.preview")) {
+      DiagnosticLog.event("repository.lock_wait", span.id);
+      synchronized (this) {
+        DiagnosticLog.event("repository.lock_acquired", span.id);
+        try { return previewLocked(p); }
+        catch (IOException | RuntimeException e) {
+          DiagnosticLog.event("repository.fail", span.id, "error", e.getClass().getSimpleName());
+          throw e;
+        }
+      }
+    }
+  }
+
+  private Preview previewLocked(Photo p) throws IOException {
     if ("archive".equals(p.uri.getScheme())) {
       try (ArchiveStore store = new ArchiveStore(context)) {
         return store.preview(p.uri.getHost());
@@ -256,6 +271,7 @@ public final class PhotoRepository {
     }
     String key = digest("raw-preview-v2:" + p.uri + ":" + p.size + ":" + p.modified);
     File webp = new File(previews, key + ".webp"), meta = new File(previews, key + ".webp.json");
+    DiagnosticLog.event("cache.compact", DiagnosticLog.parent(), "hit", webp.isFile() && meta.isFile());
     if (webp.isFile() && meta.isFile()) {
       try {
         JSONObject j = new JSONObject(readText(meta));
@@ -267,7 +283,10 @@ public final class PhotoRepository {
       }
     }
     Preview source = sourcePreview(p);
-    Preview compact = CompactPreview.save(source, webp);
+    Preview compact;
+    try (DiagnosticLog.Scope ignored = DiagnosticLog.span("preview.compact")) {
+      compact = CompactPreview.save(source, webp);
+    }
     try (FileOutputStream out = new FileOutputStream(meta)) {
       JSONObject j =
           new JSONObject()
@@ -309,7 +328,21 @@ public final class PhotoRepository {
         exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, 1));
   }
 
-  public synchronized Preview sourcePreview(Photo p) throws IOException {
+  public Preview sourcePreview(Photo p) throws IOException {
+    try (DiagnosticLog.Scope span = DiagnosticLog.span("repository.sourcePreview")) {
+      DiagnosticLog.event("repository.lock_wait", span.id);
+      synchronized (this) {
+        DiagnosticLog.event("repository.lock_acquired", span.id);
+        try { return sourcePreviewLocked(p); }
+        catch (IOException | RuntimeException e) {
+          DiagnosticLog.event("repository.fail", span.id, "error", e.getClass().getSimpleName());
+          throw e;
+        }
+      }
+    }
+  }
+
+  private Preview sourcePreviewLocked(Photo p) throws IOException {
     if ("archive".equals(p.uri.getScheme())) {
       try (ArchiveStore store = new ArchiveStore(context)) {
         return store.preview(p.uri.getHost());
@@ -319,6 +352,7 @@ public final class PhotoRepository {
     }
     String key = digest("raw-preview-v2:" + p.uri + ":" + p.size + ":" + p.modified);
     File jpg = new File(previews, key + ".jpg"), meta = new File(previews, key + ".json");
+    DiagnosticLog.event("cache.source", DiagnosticLog.parent(), "hit", jpg.isFile() && meta.isFile());
     if (jpg.isFile() && meta.isFile()) {
       try {
         JSONObject j = new JSONObject(readText(meta));
@@ -334,13 +368,16 @@ public final class PhotoRepository {
         meta.delete();
       }
     }
-    if (p.isJpeg()) return jpegPreview(p, jpg, meta);
+    if (p.isJpeg()) {
+      try (DiagnosticLog.Scope ignored = DiagnosticLog.span("jpeg.source")) { return jpegPreview(p, jpg, meta); }
+    }
     try (DescriptorSource source =
         new DescriptorSource(context.getContentResolver(), p.uri, p.size)) {
-      RawPreview.Result r = RawPreview.inspect(source);
+      RawPreview.Result r;
+      try (DiagnosticLog.Scope ignored = DiagnosticLog.span("raw.inspect")) { r = RawPreview.inspect(source); }
       File partial = new File(previews, key + ".part");
       try (FileOutputStream f = new FileOutputStream(partial)) {
-        f.write(r.jpeg(source));
+        try (DiagnosticLog.Scope ignored = DiagnosticLog.span("raw.extract")) { f.write(r.jpeg(source)); }
       }
       if (!partial.renameTo(jpg)) throw new IOException("プレビューを保存できません");
       try {
@@ -438,6 +475,10 @@ public final class PhotoRepository {
   }
 
   private void trim(File keep) {
+    try (DiagnosticLog.Scope ignored = DiagnosticLog.span("cache.trim")) { trimFiles(keep); }
+  }
+
+  private void trimFiles(File keep) {
     File[] files =
         previews.listFiles((dir, name) -> (name.endsWith(".jpg") || name.endsWith(".webp")));
     if (files == null) return;
@@ -461,6 +502,12 @@ public final class PhotoRepository {
 
   /** Applies the RAW orientation once; BitmapFactory does not apply JPEG EXIF orientation. */
   public static Bitmap bitmap(Preview p, int maxEdge) throws IOException {
+    try (DiagnosticLog.Scope ignored = DiagnosticLog.span("bitmap.decode")) {
+      return bitmapDecoded(p, maxEdge);
+    }
+  }
+
+  private static Bitmap bitmapDecoded(Preview p, int maxEdge) throws IOException {
     BitmapFactory.Options o = new BitmapFactory.Options();
     o.inSampleSize = 1;
     while (Math.max(p.width, p.height) / o.inSampleSize > maxEdge * 2) o.inSampleSize *= 2;

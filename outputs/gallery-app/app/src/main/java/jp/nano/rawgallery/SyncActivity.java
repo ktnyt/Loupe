@@ -9,8 +9,8 @@ import android.view.*;
 import android.widget.*;
 import java.util.concurrent.*;
 
-public final class SyncActivity extends Activity {
-  private final ExecutorService worker = Executors.newSingleThreadExecutor();
+public final class SyncActivity extends DiagnosticActivity {
+  private final ExecutorService worker = new DiagnosticExecutor("SyncActivity.worker", 1);
   private final Handler main = new Handler(Looper.getMainLooper());
   private TextView info, progress;
   private boolean refreshing;

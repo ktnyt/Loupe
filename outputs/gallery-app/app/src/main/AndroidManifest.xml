@@ -12,7 +12,7 @@
         <intent><action android:name="android.intent.action.SEND" /><data android:mimeType="image/*" /></intent>
         <intent><action android:name="android.intent.action.SEND_MULTIPLE" /><data android:mimeType="image/*" /></intent>
     </queries>
-    <application android:label="Loupe" android:theme="@style/AppTheme" android:allowBackup="false" android:fullBackupContent="false" android:dataExtractionRules="@xml/data_extraction_rules" android:icon="@drawable/ic_loupe_padded" android:usesCleartextTraffic="false" android:supportsRtl="true">
+    <application android:name=".DiagnosticApplication" android:label="Loupe" android:theme="@style/AppTheme" android:allowBackup="false" android:fullBackupContent="false" android:dataExtractionRules="@xml/data_extraction_rules" android:icon="@drawable/ic_loupe_padded" android:usesCleartextTraffic="false" android:supportsRtl="true">
         <activity android:name=".MainActivity" android:exported="true" android:configChanges="orientation|screenSize|smallestScreenSize">
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
         </activity>

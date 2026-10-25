@@ -6,7 +6,7 @@ import android.webkit.*;
 import java.util.concurrent.*;
 
 public final class SyncJob extends JobService {
-  private final ExecutorService worker = Executors.newSingleThreadExecutor();
+  private final ExecutorService worker = new DiagnosticExecutor("SyncJob.worker", 1);
   private Future<?> running;
 
   static void schedule(Context c) {

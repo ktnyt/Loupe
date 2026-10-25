@@ -13,6 +13,7 @@ import org.json.JSONObject;
  * source.
  */
 public final class ArchiveInstrumentation extends Instrumentation {
+  private boolean diagnosticTest;
   private boolean tagTest, lifecycleTest;
   private boolean relatedTest;
   private boolean automaticTest;
@@ -24,6 +25,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    diagnosticTest = args != null && "diagnostics".equals(args.getString("mode"));
     lifecycleTest = args != null && "tag-lifecycle".equals(args.getString("mode"));
     tagTest = args != null && "tags".equals(args.getString("mode"));
     relatedTest = args != null && "related".equals(args.getString("mode"));
@@ -41,6 +43,9 @@ public final class ArchiveInstrumentation extends Instrumentation {
     File restored = null;
     try {
       Context context = getTargetContext();
+      if (diagnosticTest) {
+        results.putString("stream", DiagnosticChecks.run(this)); finish(-1, results); return;
+      }
       if (lifecycleTest) {
         results.putString("stream", TagLifecycleChecks.run(this)); finish(-1, results); return;
       }
