@@ -82,6 +82,16 @@ final class GalleryIndex extends SQLiteOpenHelper {
     return result;
   }
 
+  List<PhotoRepository.Photo> recent(int limit) {
+    List<PhotoRepository.Photo> result = new ArrayList<>();
+    try (Cursor c = getReadableDatabase().query("photos", COLS.split(","), null, null, null, null,
+        "CASE WHEN taken>0 THEN taken WHEN added>0 THEN added WHEN created>0 THEN created ELSE modified*1000 END DESC, ordinal",
+        Integer.toString(Math.max(1, Math.min(limit, 100))))) {
+      while (c.moveToNext()) result.add(photo(c, 0));
+    }
+    return result;
+  }
+
   Snapshot load(String folder, String camera) {
     Snapshot result = new Snapshot();
     List<String> where = new ArrayList<>(), args = new ArrayList<>();

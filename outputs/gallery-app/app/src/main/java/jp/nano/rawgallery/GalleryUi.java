@@ -80,11 +80,11 @@ final class GalleryUi {
 
   static Button primary(Button button) {
     Context c = button.getContext();
-    button.setTextColor(TEXT);
+    button.setTextColor(BG);
     button.setBackground(
         new RippleDrawable(
             ColorStateList.valueOf(0x44c7d8e4),
-            shape(c, 0xff285fbb, 24),
+            shape(c, TEXT, 24),
             shape(c, Color.WHITE, 14)));
     return button;
   }
@@ -120,50 +120,54 @@ final class GalleryUi {
     return button;
   }
 
-  static final class Sheet extends AlertDialog.Builder {
-    private final Context context;
-
-    Sheet(Context c) {
-      super(c);
-      context = c;
+  // Keep controls reachable while allowing content to occupy the remaining screen.
+  static void bottomControls(LinearLayout root, int first) {
+    Context c = root.getContext();
+    LinearLayout controls = new LinearLayout(c); controls.setOrientation(LinearLayout.VERTICAL);
+    controls.setBackgroundColor(PANEL);
+    while (root.getChildCount() > first) {
+      View child = root.getChildAt(first); root.removeViewAt(first);
+      controls.addView(child);
     }
-
-    @Override
-    public AlertDialog show() {
-      AlertDialog dialog = super.show();
-      Window window = dialog.getWindow();
-      if (window != null) {
-        window.setBackgroundDrawable(shape(context, PANEL, 20));
-        window.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-        int width = context.getResources().getDisplayMetrics().widthPixels;
-        if (context instanceof Activity)
-          width =
-              ((Activity) context).getWindowManager().getCurrentWindowMetrics().getBounds().width();
-        window.setLayout(
-            Math.min(width - dp(context, 24), dp(context, 560)),
-            WindowManager.LayoutParams.WRAP_CONTENT);
-        WindowManager.LayoutParams params = window.getAttributes();
-        params.y = dp(context, 8);
-        window.setAttributes(params);
-        final int sheetWidth = Math.min(width - dp(context, 24), dp(context, 560));
-        int screenHeight =
-            context instanceof Activity
-                ? ((Activity) context)
-                    .getWindowManager()
-                    .getCurrentWindowMetrics()
-                    .getBounds()
-                    .height()
-                : context.getResources().getDisplayMetrics().heightPixels;
-        final int maxHeight = (int) (screenHeight * .7f);
-        window
-            .getDecorView()
-            .post(
-                () -> {
-                  if (dialog.isShowing() && window.getDecorView().getHeight() > maxHeight)
-                    window.setLayout(sheetWidth, maxHeight);
-                });
+    ScrollView scroll = new ScrollView(c) {
+      @Override protected void onMeasure(int width, int height) {
+        android.graphics.Rect visible = new android.graphics.Rect();
+        getWindowVisibleDisplayFrame(visible);
+        int available = visible.height() > 0 ? visible.height() : getResources().getDisplayMetrics().heightPixels;
+        int cap = Math.min(MeasureSpec.getSize(height), (int) (available * .48f));
+        super.onMeasure(width, MeasureSpec.makeMeasureSpec(cap, MeasureSpec.AT_MOST));
       }
+    };
+    scroll.setFillViewport(false); scroll.addView(controls);
+    root.addView(scroll, new LinearLayout.LayoutParams(-1, -2));
+  }
+
+  static void styleSheet(AlertDialog dialog) {
+    Window window = dialog.getWindow(); if (window == null) return;
+    Context context = dialog.getContext();
+    window.setBackgroundDrawable(shape(context, PANEL, 20));
+    window.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+    window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+    int width = context.getResources().getDisplayMetrics().widthPixels;
+    final int sheetWidth = Math.min(width - dp(context, 24), dp(context, 560));
+    window.setLayout(sheetWidth, WindowManager.LayoutParams.WRAP_CONTENT);
+    window.getDecorView().addOnLayoutChangeListener((view, l, t, r, b, ol, ot, or, ob) -> {
+      android.graphics.Rect visible = new android.graphics.Rect(); view.getWindowVisibleDisplayFrame(visible);
+      int max = (int) (visible.height() * .48f);
+      if (max > 0 && view.getHeight() > max && window.getAttributes().height != max)
+        window.setLayout(sheetWidth, max);
+    });
+  }
+
+  static final class Sheet extends AlertDialog.Builder {
+    Sheet(Context c) { super(c); }
+    @Override public AlertDialog create() {
+      AlertDialog dialog = super.create();
+      dialog.setOnShowListener(ignored -> styleSheet(dialog));
       return dialog;
+    }
+    @Override public AlertDialog show() {
+      AlertDialog dialog = create(); dialog.show(); styleSheet(dialog); return dialog;
     }
   }
 }

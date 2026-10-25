@@ -71,7 +71,7 @@ public final class CloudActivity extends Activity {
         v ->
             new GalleryUi.Sheet(this)
                 .setItems(
-                    new String[] {"接続を確認", "原本の復元を検証", "原本１枚を保存して検証", "ログアウト"},
+                    new String[] {"接続を確認", "保存した写真をダウンロードして確認", "写真1枚を保存して内容を確認", "ログアウト"},
                     (d, which) -> {
                       Button target = new Button[] {check, verify, upload, logoutButton}[which];
                       if (!target.isEnabled()) {
@@ -83,7 +83,7 @@ public final class CloudActivity extends Activity {
                       if (which == 3)
                         new GalleryUi.Sheet(this)
                             .setTitle("ログアウトしますか？")
-                            .setMessage("自動同期と自動整理を停止し、このアプリのログイン情報を消します。")
+                            .setMessage("自動同期と端末からの自動削除を停止し、このアプリのログイン情報を消します。")
                             .setPositiveButton(
                                 "ログアウト",
                                 (dialog, w) -> {
@@ -97,10 +97,10 @@ public final class CloudActivity extends Activity {
                 .show());
     row.addView(more);
     verify = new Button(this);
-    verify.setText("原本の復元を検証（読み取りのみ）");
+    verify.setText("保存した写真をダウンロードして確認（読み取りのみ）");
     verify.setOnClickListener(v -> chooseVerification(false));
     upload = new Button(this);
-    upload.setText("原本１枚を保存して検証");
+    upload.setText("写真1枚を保存して内容を確認");
     upload.setOnClickListener(v -> chooseVerification(true));
     Button sync = new Button(this);
     sync.setText("自動同期・端末容量の設定");
@@ -235,10 +235,10 @@ public final class CloudActivity extends Activity {
                 throw new IOException("Unexpected response");
               count = data.getInt("count");
               if (count < 0) throw new IOException("Invalid count");
-              message = "写真一覧への接続を確認できました。\nクラウドの写真：" + count + "件\nこの接続確認だけでは原本の保存と復元を保証しません。";
+              message = "写真一覧への接続を確認できました。\nクラウドの写真：" + count + "件\nこの接続確認だけでは元のファイルの保存と復元を保証しません。";
             }
           } catch (Exception e) {
-            message = "接続を確認できませんでした。通信状態、ログイン状態、APIの変更を確認する必要があります。";
+            message = "接続を確認できませんでした。通信状態、ログイン状態、接続先の仕様が変わった可能性があります。";
           } finally {
             if (connection != null) connection.disconnect();
           }
@@ -323,13 +323,13 @@ public final class CloudActivity extends Activity {
       return;
     }
     new GalleryUi.Sheet(this)
-        .setTitle("この原本をAmazon Photosに保存しますか？")
+        .setTitle("この元のファイルをAmazon Photosに保存しますか？")
         .setMessage(
             photo.name
                 + "\n"
                 + String.format(java.util.Locale.JAPAN, "%.1f MiB", photo.size / 1048576.0)
-                + "\n原本１枚を保存し、再取得して内容を照合します。同じ原本があれば再送しません。端末の写真は削除しません。")
-        .setPositiveButton("保存して検証", (dialog, which) -> verifyPhoto(photo, cookies, agent, true))
+                + "\n元のファイル１枚を保存し、再取得して内容を照合します。同じ元のファイルがあれば再送しません。端末の写真は削除しません。")
+        .setPositiveButton("保存して確認", (dialog, which) -> verifyPhoto(photo, cookies, agent, true))
         .setNegativeButton("キャンセル", null)
         .show();
   }
@@ -366,11 +366,11 @@ public final class CloudActivity extends Activity {
                 store.verified(photo, client.lastVerified);
               }
           } catch (CloudVerifier.VerificationException e) {
-            result = "原本の検証を完了できませんでした。\n" + e.getMessage();
+            result = "元のファイルの検証を完了できませんでした。\n" + e.getMessage();
           } catch (Exception e) {
             result =
                 uploading
-                    ? "通信または保存結果を確認できませんでした。自動再送はせず、復元検証で保存状態を確認してください。端末の原本は残しています。"
+                    ? "通信または保存結果を確認できませんでした。自動再送はせず、復元検証で保存状態を確認してください。端末の元のファイルは残しています。"
                     : "通信または復元の応答形式を確認できませんでした。写真は変更していません。";
           }
           SyncEngine.RUNNING.set(false);

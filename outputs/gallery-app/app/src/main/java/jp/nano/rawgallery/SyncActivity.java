@@ -14,6 +14,7 @@ public final class SyncActivity extends Activity {
   private final Handler main = new Handler(Looper.getMainLooper());
   private TextView info, progress;
   private boolean refreshing;
+  private final java.util.List<Button> settingsButtons = new java.util.ArrayList<>();
   private final java.util.List<Button> footerButtons = new java.util.ArrayList<>();
   private final Runnable refreshProgress =
       new Runnable() {
@@ -32,9 +33,9 @@ public final class SyncActivity extends Activity {
 
   private void button(LinearLayout root, String label, Runnable action) {
     Button b = GalleryUi.button(this, label, action);
-    if (label.equals("同期・整理の設定") || label.equals("その他の操作") || label.equals("戻る")) {
+    if (label.equals("同期・端末からの削除の設定") || label.equals("その他の操作") || label.equals("戻る")) {
       footerButtons.add(b);
-    } else root.addView(b);
+    } else settingsButtons.add(b);
   }
 
   private TextView text(LinearLayout root, String value, int size) {
@@ -75,12 +76,12 @@ public final class SyncActivity extends Activity {
     text(
         root,
         "モバイル通信でも同期します。実行時刻はAndroidの省電力制御などにより遅れる場合があります。\n"
-            + "自動整理には「すべてのファイルへのアクセス」が必要です。アプリが整理するのは対象機種のRAWとすべてのJPEGで、復元照合とプレビュー保存を終えた原本に限ります。",
+            + "端末の写真の自動削除には「すべてのファイルへのアクセス」が必要です。端末から削除するのは対象機種のRAWとすべてのJPEGで、クラウドから同じ内容で戻せることを確認し、プレビューを保存した元のファイルに限ります。",
         13);
     if (!android.os.Environment.isExternalStorageManager())
       button(
           root,
-          "自動管理に必要なアクセスを許可",
+          "写真の自動削除に必要なアクセスを許可",
           () -> {
             try {
               startActivity(
@@ -95,17 +96,18 @@ public final class SyncActivity extends Activity {
         != android.content.pm.PackageManager.PERMISSION_GRANTED)
       button(
           root,
-          "原本の位置情報を含めた読み取りを許可",
+          "元のファイルの位置情報を含めた読み取りを許可",
           () ->
               requestPermissions(
                   new String[] {android.Manifest.permission.ACCESS_MEDIA_LOCATION}, 41));
-    text(root, "撮影時の位置情報も含め、原本を変更せず保存するための許可です。端末の現在位置は取得しません。", 13);
+    text(root, "撮影時の位置情報も含め、元のファイルを変更せず保存するための許可です。端末の現在位置は取得しません。", 13);
     button(
         root,
-        "原本の保持期間を変更",
+        "端末に写真を残す期間",
         () ->
             new GalleryUi.Sheet(this)
-                .setTitle("基準日から残す期間")
+                .setTitle("端末に写真を残す期間")
+                .setMessage("撮影日から数えます。JPEGで撮影日がない場合は追加日、作成日の順に使います。日付がすべて不明のJPEGは保存確認後に削除対象になり、撮影日不明のRAWは残します。")
                 .setItems(
                     new String[] {"7日間", "30日間", "90日間"},
                     (d, w) -> {
@@ -120,12 +122,12 @@ public final class SyncActivity extends Activity {
                 .show());
     button(
         root,
-        "同期・整理の設定",
+        "同期・端末からの削除の設定",
         () ->
             new GalleryUi.Sheet(this)
-                .setTitle("同期・整理の設定")
+                .setTitle("同期・端末からの削除の設定")
                 .setItems(
-                    new String[] {"自動同期を開始", "自動整理も有効にする", "自動整理だけ停止", "同期と整理を停止"},
+                    new String[] {"自動同期を開始", "端末の写真の自動削除も有効にする", "端末の写真の自動削除だけ停止", "同期と端末からの削除を停止"},
                     (d, which) -> {
                       if (which == 0) confirm(false);
                       else if (which == 1) confirm(true);
@@ -147,21 +149,24 @@ public final class SyncActivity extends Activity {
         () ->
             new GalleryUi.Sheet(this)
                 .setItems(
-                    new String[] {"今すぐ同期を要求", "状態を更新"},
+                    new String[] {"同期を予約する", "状態を更新"},
                     (d, which) -> {
                       if (which == 0) SyncJob.now(this);
                       refresh();
                     })
                 .setNegativeButton("閉じる", null)
                 .show());
-    text(root, "アプリを削除すると端末のプレビューと管理記録も消えます。クラウドの原本はAmazon Photosに残ります。", 13);
+    text(root, "アプリを削除すると端末のプレビューと管理記録も消えます。クラウドの元のファイルはAmazon Photosに残ります。", 13);
     button(root, "戻る", this::finish);
     Button settings = footerButtons.get(0),
         other = footerButtons.get(1),
         back = footerButtons.get(2);
-    settings.setText("同期・整理");
+    settings.setText("同期・端末からの削除");
     other.setText("その他");
+    int controlsStart = screen.getChildCount();
+    for (Button setting : settingsButtons) screen.addView(setting);
     screen.addView(GalleryUi.dock(this, back, GalleryUi.primary(settings), other));
+    GalleryUi.bottomControls(screen, controlsStart);
   }
 
   private void stop() {
@@ -193,7 +198,7 @@ public final class SyncActivity extends Activity {
                 info.setText(
                     "自動同期："
                         + (s.getBoolean("syncEnabled", false) ? "有効" : "停止")
-                        + " ／ 自動整理："
+                        + " ／ 端末の写真の自動削除："
                         + (s.getBoolean("cleanupEnabled", false) ? "有効" : "停止")
                         + "\n自動管理の権限："
                         + (Environment.isExternalStorageManager() ? "許可済み" : "未許可")
@@ -208,14 +213,14 @@ public final class SyncActivity extends Activity {
         && checkSelfPermission(android.Manifest.permission.ACCESS_MEDIA_LOCATION)
             != android.content.pm.PackageManager.PERMISSION_GRANTED) {
       new GalleryUi.Sheet(this)
-          .setMessage("先に原本の位置情報を含めた読み取りを許可してください。")
+          .setMessage("先に元のファイルの位置情報を含めた読み取りを許可してください。")
           .setPositiveButton("閉じる", null)
           .show();
       return;
     }
     if (cleanup && !Environment.isExternalStorageManager()) {
       new GalleryUi.Sheet(this)
-          .setMessage("先に自動管理に必要なアクセスを許可してください。")
+          .setMessage("先に写真の自動削除に必要なアクセスを許可してください。")
           .setPositiveButton("閉じる", null)
           .show();
       return;
@@ -236,15 +241,15 @@ public final class SyncActivity extends Activity {
                     return;
                   }
                   new GalleryUi.Sheet(this)
-                      .setTitle(cleanup ? "期間を過ぎた原本を自動で整理しますか？" : "対象機種のRAWとすべてのJPEGを自動同期しますか？")
+                      .setTitle(cleanup ? "保存期間を過ぎた写真を端末から自動で削除しますか？" : "対象機種のRAWとすべてのJPEGを自動同期しますか？")
                       .setMessage(
                           summary
                               + "\n"
                               + (cleanup
-                                  ? "今後追加される対象機種のRAWとすべてのJPEGも含め、復元照合済みの原本を端末から削除し、プレビューを残します。クラウドの原本は削除しません。"
+                                  ? "今後追加される対象機種のRAWとすべてのJPEGも含め、クラウドから同じ内容で戻せることを確認した元のファイルを端末から削除し、プレビューを残します。クラウドの元のファイルは削除しません。"
                                   : "現在と今後追加される対象機種のRAWとすべてのJPEGを、モバイル通信を含む接続で保存・再取得して検証します。"))
                       .setPositiveButton(
-                          cleanup ? "自動整理を有効にする" : "自動同期を開始",
+                          cleanup ? "端末の写真の自動削除を有効にする" : "自動同期を開始",
                           (d, w) -> {
                             getSharedPreferences("settings", 0)
                                 .edit()

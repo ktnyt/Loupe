@@ -63,6 +63,10 @@ public final class ZoomImageView extends View {
             });
   }
 
+  public void toggleZoom() {
+    zoom = zoom > 1 ? 1 : 2.5f; dx = 0; dy = 0; invalidate();
+  }
+
   public void setBitmap(Bitmap b) {
     bitmap = b;
     zoom = 1;

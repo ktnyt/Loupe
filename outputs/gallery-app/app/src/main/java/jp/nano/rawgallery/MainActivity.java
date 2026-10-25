@@ -189,11 +189,11 @@ public final class MainActivity extends Activity {
     LinearLayout header = row();
     header.setPadding(dp(4), dp(4), dp(4), dp(4));
     header.setMinimumHeight(dp(64));
-    header.addView(GalleryUi.icon(this, selecting ? "選択を終了" : "戻る", () -> {
+    Button navigate = button(selecting ? "選択を終了" : "戻る", () -> {
       if (selecting) endSelection();
       else if (burstMembers != null) { burstMembers = null; gallery(); }
       else albumHome();
-    }));
+    });
     LinearLayout heading = vertical();
     TextView title = label(burstMembers != null ? "連写" : albumFolder == null ? "すべての写真"
         : new File(albumFolder).getName(), 18, TEXT);
@@ -203,12 +203,9 @@ public final class MainActivity extends Activity {
     subtitle = label("読み込み中…", 12, MUTED);
     heading.addView(subtitle);
     header.addView(heading, new LinearLayout.LayoutParams(0, -2, 1));
-    if (!selecting) header.addView(button("選択", () -> {
-      if (!photos.isEmpty()) { selecting = true; bestOnly = true; gallery(); }
-    }));
-    header.addView(GalleryUi.icon(this, "その他", this::photoMenu));
+
+    if (!selecting && burstMembers == null) addOtherAlbums();
     root.addView(header);
-    addRankFilters();
     body = vertical();
     root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
     grid = new GridView(this);
@@ -259,7 +256,13 @@ public final class MainActivity extends Activity {
     gridFrame.addView(empty, new FrameLayout.LayoutParams(-1, -1));
     grid.setEmptyView(empty);
     body.addView(gridFrame, new LinearLayout.LayoutParams(-1, -1));
-    if (selecting) selectionControls();
+    int controlsStart = root.getChildCount();
+    addRankFilters();
+    if (selecting) { selectionControls(); dock(navigate); }
+    else dock(navigate, button("選択", () -> {
+      if (!photos.isEmpty()) { selecting = true; bestOnly = true; gallery(); }
+    }), button("タグ", () -> openTags(null)), button("その他", this::photoMenu));
+    GalleryUi.bottomControls(root, controlsStart);
     if (selecting) updateSelection();
     else if (!photos.isEmpty()) updateCount();
   }
@@ -303,14 +306,13 @@ public final class MainActivity extends Activity {
     LinearLayout header = row();
     header.setPadding(dp(4), dp(4), dp(4), dp(4));
     header.setMinimumHeight(dp(64));
-    header.addView(GalleryUi.icon(this, "戻る", () -> { burstMembers = null; gallery(); }));
+
     LinearLayout heading = vertical();
     heading.addView(label("連写", 18, TEXT));
     subtitle = label(burstMembers.size() + "枚", 12, MUTED);
     heading.addView(subtitle);
     header.addView(heading, new LinearLayout.LayoutParams(0, -2, 1));
-    header.addView(button("選択", () -> { selecting = true; bestOnly = true; gallery(); }));
-    header.addView(GalleryUi.icon(this, "その他", this::photoMenu));
+
     root.addView(header);
     FrameLayout stage = new FrameLayout(this);
     ImageView hero = new ImageView(this);
@@ -335,12 +337,12 @@ public final class MainActivity extends Activity {
       int member = burstMembers.get(burstPosition);
       PhotoRepository.Photo photo = photos.get(member);
       previewInto(hero, photo, 1600);
-      hero.setContentDescription(photo.name + "、タップで原本を拡大");
-      String status = "未ソート";
+      hero.setContentDescription(photo.name + "、タップで写真を拡大");
+      String status = "順位が未決定";
       try {
         PhotoRanking saved = rankingFor(burstMembers);
-        if (saved.done()) status = saved.rankOf(ArchiveStore.key(photo)) + "位 · ソート済み";
-        else if (saved.decisions() > 0) status = "ソート中";
+        if (saved.done()) status = saved.rankOf(ArchiveStore.key(photo)) + "位 · 順位決定済み";
+        else if (saved.decisions() > 0) status = "順位決めの途中";
       } catch (Exception e) { status = "順位を読み込めません"; }
       rank.setText(status);
       rank.setTextColor(status.contains("位") ? 0xfff5b947 : TEXT);
@@ -371,6 +373,7 @@ public final class MainActivity extends Activity {
       previewInto(thumbnail, photo, 200);
     }
     stripScroll.addView(strip);
+    int controlsStart = root.getChildCount();
     root.addView(stripScroll);
     LinearLayout controls = vertical();
     controls.setPadding(dp(16), dp(8), dp(16), dp(20));
@@ -386,6 +389,12 @@ public final class MainActivity extends Activity {
     }), new LinearLayout.LayoutParams(0, -2, 1));
     controls.addView(secondary);
     root.addView(controls);
+    dock(button("戻る", () -> { burstMembers = null; gallery(); }),
+        button("前の写真", () -> { burstPosition = (burstPosition + burstMembers.size() - 1) % burstMembers.size(); update.run(); }),
+        button("次の写真", () -> { burstPosition = (burstPosition + 1) % burstMembers.size(); update.run(); }),
+        button("拡大", () -> showPhoto(burstMembers.get(burstPosition))));
+    dock(button("選択", () -> { selecting = true; bestOnly = true; gallery(); }), button("その他", this::photoMenu));
+    GalleryUi.bottomControls(root, controlsStart);
     update.run();
   }
 
@@ -474,8 +483,8 @@ public final class MainActivity extends Activity {
   private String sortLabel() {
     try {
       PhotoRanking saved = rankingFor(burstMembers);
-      return saved.done() ? "ソート結果" : saved.decisions() > 0 ? "ソートを再開" : "ソート";
-    } catch (Exception e) { return "ソート"; }
+      return saved.done() ? "順位の結果" : saved.decisions() > 0 ? "順位決めを再開" : "順位を決める";
+    } catch (Exception e) { return "順位を決める"; }
   }
 
   private void addRankFilters() {
@@ -483,7 +492,7 @@ public final class MainActivity extends Activity {
     scroll.setHorizontalScrollBarEnabled(false);
     LinearLayout chips = row();
     chips.setPadding(dp(12), 0, dp(12), dp(8));
-    String[] names = {"すべて", "1位", "未ソート", "ソート済み"};
+    String[] names = {"すべて", "1位", "順位が未決定", "順位決定済み"};
     for (int i = 0; i < names.length; i++) {
       final int choice = i;
       Button chip = GalleryUi.chip(this, names[i], rankFilter == i, () -> {
@@ -579,8 +588,8 @@ public final class MainActivity extends Activity {
         "対象 "
             + result.photos.size()
             + "枚"
-            + (hidden > 0 ? " · 非表示の選択 " + hidden + "枚を含む" : "")
-            + (result.unresolved.isEmpty() ? "" : " · 未ソート " + result.unresolved.size() + "組"));
+            + (hidden > 0 ? "\n現在の絞り込みでは表示されない写真" + hidden + "枚を含みます" : "")
+            + (result.unresolved.isEmpty() ? "" : " · 順位が未決定 " + result.unresolved.size() + "組"));
     selectionShare.setEnabled(!result.photos.isEmpty() || !result.unresolved.isEmpty());
     String allLabel =
         allVisibleSelected()
@@ -604,10 +613,10 @@ public final class MainActivity extends Activity {
     if (!result.unresolved.isEmpty()) {
       GalleryUi.Sheet sheet = new GalleryUi.Sheet(this);
       sheet
-          .setTitle("未ソートの連写があります")
-          .setMessage(result.unresolved.size() + "組が未ソートです。ソート後に選択画面へ戻れます。")
+          .setTitle("順位が未決定の連写があります")
+          .setMessage(result.unresolved.size() + "組の順位がまだ決まっていません。順位を決めた後に選択画面へ戻れます。")
           .setPositiveButton(
-              "ソート",
+              "順位を決める",
               (d, w) -> {
                 selectionBurst = burstMembers == null ? null : new ArrayList<>(burstMembers);
                 rankingFromSelection = true;
@@ -616,7 +625,7 @@ public final class MainActivity extends Activity {
               })
           .setNegativeButton("戻る", null);
       if (!result.photos.isEmpty())
-        sheet.setNeutralButton("確定分だけ共有", (d, w) -> shareMenu(result.photos));
+        sheet.setNeutralButton("順位が未決定の連写を除いて共有", (d, w) -> shareMenu(result.photos));
       sheet.show();
     } else if (!result.photos.isEmpty()) shareMenu(result.photos);
   }
@@ -712,7 +721,7 @@ public final class MainActivity extends Activity {
 
   private String countText() {
     return burstMembers == null
-        ? photos.size() + "枚 · " + bundles.size() + "枠"
+        ? photos.size() + "枚 · " + bundles.size() + "組"
         : burstMembers.size() + "枚";
   }
 
@@ -742,8 +751,9 @@ public final class MainActivity extends Activity {
     top.setPadding(dp(16), dp(8), dp(16), dp(8));
     top.setMinimumHeight(dp(48));
     top.addView(label("アルバム", 22, TEXT), new LinearLayout.LayoutParams(0, -2, 1));
-    top.addView(GalleryUi.icon(this, "その他", this::galleryMenu));
+
     subtitle = label("読み込み中…", 12, MUTED);
+    addRecentPhotos();
     root.addView(top);
     Button allPhotos = button("すべての写真  →", () -> {
       albumFolder = null; filter = "すべて"; rankFilter = 0;
@@ -752,12 +762,85 @@ public final class MainActivity extends Activity {
     });
     allPhotos.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
     allPhotos.setPadding(dp(20), 0, dp(20), 0);
-    root.addView(allPhotos);
+
     subtitle.setPadding(dp(20), dp(4), dp(20), dp(8));
     root.addView(subtitle);
     body = vertical();
     root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
+    dock(allPhotos, button("その他", this::galleryMenu));
     loadAlbums();
+  }
+
+  private long photoTime(PhotoRepository.Photo photo) {
+    return photo.taken > 0 ? photo.taken : photo.added > 0 ? photo.added
+        : photo.created > 0 ? photo.created : photo.modified * 1000;
+  }
+
+  private LinearLayout carousel(String title, int height) {
+    LinearLayout section = vertical();
+    TextView heading = label(title, 13, MUTED);
+    heading.setPadding(dp(16), dp(8), dp(16), dp(4)); section.addView(heading);
+    HorizontalScrollView scroll = new HorizontalScrollView(this);
+    scroll.setHorizontalScrollBarEnabled(false);
+    LinearLayout cards = row(); cards.setPadding(dp(16), 0, dp(8), 0);
+    scroll.addView(cards); section.addView(scroll, new LinearLayout.LayoutParams(-1, dp(height)));
+    root.addView(section); return cards;
+  }
+
+  private ImageView carouselPhoto(LinearLayout cards, PhotoRepository.Photo photo, String name, int width, Runnable open) {
+    LinearLayout card = vertical();
+    ImageView image = new ImageView(this); image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+    image.setBackground(GalleryUi.shape(this, PANEL, 12)); image.setClipToOutline(true);
+    card.addView(image, new LinearLayout.LayoutParams(-1, 0, 1));
+    TextView caption = label(name, 12, TEXT); caption.setMaxLines(1);
+    caption.setEllipsize(android.text.TextUtils.TruncateAt.END); card.addView(caption);
+    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(width), -1); lp.setMargins(0, 0, dp(8), 0);
+    cards.addView(card, lp); card.setContentDescription(name); card.setOnClickListener(v -> open.run());
+    previewInto(image, photo, width * 3); return image;
+  }
+
+  private void addRecentPhotos() {
+    LinearLayout cards = carousel("最近の写真", 156);
+    int token = generation;
+    scans.execute(() -> {
+      try (GalleryIndex catalog = new GalleryIndex(this)) {
+        List<PhotoRepository.Photo> recent = catalog.recent(20);
+        main.post(() -> {
+          if (isDestroyed() || token != generation || !albumHome) return;
+          if (recent.isEmpty()) ((View) cards.getParent().getParent()).setVisibility(View.GONE);
+          for (int n = 0; n < recent.size(); n++) {
+            final int position = n; PhotoRepository.Photo photo = recent.get(n);
+            carouselPhoto(cards, photo, photo.name, 220, () -> {
+              photos = new ArrayList<>(recent); bundles = new ArrayList<>();
+              burstMembers = null; recentPhoto = true; showPhoto(position);
+            });
+          }
+        });
+      } catch (Exception ignored) { main.post(() -> { if (token == generation) ((View) cards.getParent().getParent()).setVisibility(View.GONE); }); }
+    });
+  }
+
+  private void addOtherAlbums() {
+    LinearLayout cards = carousel("ほかのアルバム", 82);
+    int token = generation;
+    scans.execute(() -> {
+      try (GalleryIndex catalog = new GalleryIndex(this)) {
+        List<GalleryIndex.Album> albums = catalog.albums();
+        albums.sort((a, b) -> Long.compare(photoTime(b.cover), photoTime(a.cover)));
+        main.post(() -> {
+          if (isDestroyed() || token != generation || selecting) return;
+          for (GalleryIndex.Album album : albums) {
+            if (java.util.Objects.equals(album.folder, albumFolder)) continue;
+            carouselPhoto(cards, album.cover, album.name(), 100, () -> {
+              albumFolder = album.folder; filter = "すべて"; rankFilter = 0;
+              rankCache.clear(); photos = new ArrayList<>(); bundles = new ArrayList<>();
+              gallery(); loadIndexedPhotos();
+            });
+          }
+          if (cards.getChildCount() == 0) ((View) cards.getParent().getParent()).setVisibility(View.GONE);
+        });
+      } catch (Exception ignored) { main.post(() -> { if (token == generation) ((View) cards.getParent().getParent()).setVisibility(View.GONE); }); }
+    });
   }
 
   private void loadAlbums() {
@@ -769,7 +852,7 @@ public final class MainActivity extends Activity {
             main.post(
                 () -> {
                   if (isDestroyed() || !albumHome || token != generation) return;
-                  subtitle.setText(albums.isEmpty() ? "初回の索引を作成しています…" : albums.size() + " アルバム");
+                  subtitle.setText(albums.isEmpty() ? "写真の一覧を準備しています…" : albums.size() + " アルバム");
                   if (albumGridView != null) albumScroll = albumGridView.getFirstVisiblePosition();
                   body.removeAllViews();
                   GridView albumGrid = new GridView(this);
@@ -932,7 +1015,7 @@ public final class MainActivity extends Activity {
                   adapter.notifyDataSetChanged();
                   grid.setSelection(galleryScroll.getOrDefault(shownGalleryKey, 0));
                   subtitle.setText(
-                      photos.isEmpty() ? "写真がありません。索引を更新中の場合はしばらくお待ちください。" : countText());
+                      photos.isEmpty() ? "写真がありません。写真の一覧を更新中の場合はしばらくお待ちください。" : countText());
                 });
           } catch (Exception e) {
             main.post(
@@ -970,7 +1053,7 @@ public final class MainActivity extends Activity {
                 int next = refreshRequests.finish();
                 if (isDestroyed()) return;
                 if (failed) {
-                  toast("索引を更新できませんでした。保存済みの一覧を表示しています。");
+                  toast("写真の一覧を更新できませんでした。保存済みの一覧を表示しています。");
                 }
                 if (updated) {
                   if (albumHome) loadAlbums();
@@ -1143,7 +1226,7 @@ public final class MainActivity extends Activity {
     showPhoto(position, false);
   }
 
-  private boolean returnToRanking;
+  private boolean returnToRanking, recentPhoto;
 
   private void showPhoto(int position, boolean fromRanking) {
     rememberGallery();
@@ -1159,8 +1242,7 @@ public final class MainActivity extends Activity {
     base();
     LinearLayout top = row();
     top.setPadding(dp(10), dp(8), dp(10), dp(8));
-    if (!fromRanking && "content".equals(photo.uri.getScheme()))
-      top.addView(button("タグ", () -> openTags(photo)));
+
 
     int within = burstMembers == null ? position : burstMembers.indexOf(position);
     TextView count =
@@ -1182,7 +1264,7 @@ public final class MainActivity extends Activity {
           adjacentPhoto(direction);
         });
     photoFrame.addView(image, new FrameLayout.LayoutParams(-1, -1));
-    TextView loadStatus = label("原本を読み込んでいます…", 11, TEXT);
+    TextView loadStatus = label("元のファイルを読み込んでいます…", 11, TEXT);
     loadStatus.setPadding(dp(8), dp(5), dp(8), dp(5));
     loadStatus.setBackground(GalleryUi.shape(this, 0xbb151719, 8));
     FrameLayout.LayoutParams statusPosition =
@@ -1216,15 +1298,21 @@ public final class MainActivity extends Activity {
                         })
                     .setNegativeButton("閉じる", null)
                     .show());
+    int controlsStart = root.getChildCount();
+    dock(button("拡大・戻す", image::toggleZoom));
+    if (!fromRanking && "content".equals(photo.uri.getScheme()))
+      dock(button("タグ", () -> openTags(photo)), button("前の写真", () -> adjacentPhoto(-1)), button("次の写真", () -> adjacentPhoto(1)));
     dock(
         button(
-            fromRanking ? "比較に戻る" : "一覧",
+            fromRanking ? "比較に戻る" : "戻る",
             () -> {
               if (fromRanking) showRanking();
+              else if (recentPhoto) { recentPhoto = false; albumHome(); }
               else gallery();
             }),
         GalleryUi.primary(button("共有", () -> shareMenu(photo))),
         more);
+    GalleryUi.bottomControls(root, controlsStart);
     viewing =
         actions.submit(
             () -> {
@@ -1240,14 +1328,14 @@ public final class MainActivity extends Activity {
                       activePreview = preview;
                       image.setBitmap(bitmap);
                       model.setText(preview.model);
-                      dimensions.setText("小サイズのプレビュー・原本を取得しています…\n" + photo.name);
-                      loadStatus.setText("プレビュー表示中 · 原本を取得しています…");
+                      dimensions.setText("小さい画像・元のファイルを読み込みしています…\n" + photo.name);
+                      loadStatus.setText("プレビュー表示中 · 元のファイルを読み込みしています…");
                     });
               } catch (Exception missingPreview) {
                 main.post(
                     () -> {
                       if (!isDestroyed() && detail && token == generation)
-                        model.setText("原本を取得しています…");
+                        model.setText("元のファイルを読み込みしています…");
                     });
               }
               try {
@@ -1275,7 +1363,7 @@ public final class MainActivity extends Activity {
                           full.width
                               + " × "
                               + full.height
-                              + (photo.isJpeg() ? "  ·  原本" : "  ·  原本内のJPEG")
+                              + (photo.isJpeg() ? "  ·  元のファイル" : "  ·  RAWファイル内のJPEG")
                               + "\n"
                               + photo.name);
                     });
@@ -1284,11 +1372,11 @@ public final class MainActivity extends Activity {
                     () -> {
                       if (!isDestroyed() && detail && token == generation) {
                         loadStatus.setVisibility(View.VISIBLE);
-                        loadStatus.setText("原本を取得できませんでした · 開き直してください");
+                        loadStatus.setText("元のファイルを読み込みできませんでした · 開き直してください");
                         if (activePreview == null) model.setText("写真を表示できません");
                         dimensions.setText(
-                            (activePreview == null ? "" : "小サイズのプレビューを表示中\n")
-                                + "原本を取得できませんでした。通信とログインを確認して開き直してください\n"
+                            (activePreview == null ? "" : "小さい画像を表示中\n")
+                                + "元のファイルを読み込みできませんでした。通信とログインを確認して開き直してください\n"
                                 + photo.name);
                       }
                     });
@@ -1301,6 +1389,7 @@ public final class MainActivity extends Activity {
     else if (selecting && !detail) endSelection();
     else if (detail) {
       if (returnToRanking) showRanking();
+      else if (recentPhoto) { recentPhoto = false; albumHome(); }
       else gallery();
     } else if (burstMembers != null) {
       burstMembers = null;
@@ -1347,9 +1436,9 @@ public final class MainActivity extends Activity {
     LinearLayout top = row();
     top.setPadding(dp(16), dp(8), dp(16), dp(8));
     top.setMinimumHeight(dp(64));
-    top.addView(GalleryUi.icon(this, "戻る", this::leaveRanking));
+
     top.addView(
-        label(ranking.done() ? "ソート済み" : "ソート", 22, TEXT),
+        label(ranking.done() ? "順位決定済み" : "順位を決める", 22, TEXT),
         new LinearLayout.LayoutParams(0, -2, 1));
     top.addView(
         label(
@@ -1363,15 +1452,18 @@ public final class MainActivity extends Activity {
     modes.setPadding(dp(12), 0, dp(12), dp(8));
     modes.addView(GalleryUi.chip(this, "1位を決める", ranking.bestOnly(),
         () -> changeRankingMode(true)), new LinearLayout.LayoutParams(0, -2, 1));
-    modes.addView(GalleryUi.chip(this, "全順位", !ranking.bestOnly(),
+    modes.addView(GalleryUi.chip(this, "すべての順位を決める", !ranking.bestOnly(),
         () -> changeRankingMode(false)), new LinearLayout.LayoutParams(0, -2, 1));
-    root.addView(modes);
-    TextView hint = label(ranking.done() ? "写真をタップして原本を確認" : "好きな写真をタップ · 長押しで原本", 12, MUTED);
+
+    TextView hint = label(ranking.done() ? "写真をタップして拡大" : "好きな写真を選んでください", 12, MUTED);
     hint.setPadding(dp(16), 0, dp(16), dp(6));
     root.addView(hint);
-    Button undo = button("一つ戻す", () -> saveRanking(ranking.undo()));
+    Button undo = button("直前の操作を取り消す", () -> saveRanking(ranking.undo()));
     undo.setEnabled(ranking.decisions() > 0);
-    Button tie = button("同順位", () -> saveRanking(ranking.tie()));
+    Button chooseA = GalleryUi.neutralPrimary(button("Aを選ぶ", () -> saveRanking(ranking.choose(true))));
+    Button chooseB = GalleryUi.neutralPrimary(button("Bを選ぶ", () -> saveRanking(ranking.choose(false))));
+    chooseA.setEnabled(false); chooseB.setEnabled(false);
+    Button tie = button("同じ順位", () -> saveRanking(ranking.tie()));
     tie.setEnabled(false);
     if (ranking.done()) {
       ListView results = new ListView(this);
@@ -1422,6 +1514,7 @@ public final class MainActivity extends Activity {
                 || comparison.getWidth() == 0
                 || comparison.getHeight() == 0) return;
             tie.setEnabled(!ranking.bestOnly());
+            chooseA.setEnabled(true); chooseB.setEnabled(true);
             boolean horizontal =
                 ComparisonLayout.horizontal(
                     comparison.getWidth(), comparison.getHeight(), ratios[0], ratios[1]);
@@ -1429,6 +1522,7 @@ public final class MainActivity extends Activity {
             if (comparison.getTag() != null && comparison.getTag().equals(orientation)) return;
             comparison.setTag(orientation);
             comparison.setOrientation(orientation);
+            hint.setText(horizontal ? "Aは左の写真 · Bは右の写真" : "Aは上の写真 · Bは下の写真");
             for (ImageView image : candidates)
               image.setLayoutParams(
                   new LinearLayout.LayoutParams(horizontal ? 0 : -1, horizontal ? -1 : 0, 1));
@@ -1437,15 +1531,23 @@ public final class MainActivity extends Activity {
       rankingCandidate(ranking.upper(), true, token, comparison, candidates, ratios, arrange);
       rankingCandidate(ranking.lower(), false, token, comparison, candidates, ratios, arrange);
     }
+    int controlsStart = root.getChildCount();
+    if (!ranking.done()) {
+      dock(chooseA, chooseB);
+      dock(button("Aを拡大", () -> showRankedPhoto(rankingMembers.get(ranking.upper()))),
+          button("Bを拡大", () -> showRankedPhoto(rankingMembers.get(ranking.lower()))));
+    }
+    root.addView(modes);
     Button back = button(rankingFromSelection ? "選択へ戻る" : "連写一覧", this::leaveRanking);
     if (ranking.done()) dock(back, undo, button("その他", this::rankingMenu));
     else if (ranking.bestOnly()) dock(back, undo, button("その他", this::rankingMenu));
     else dock(back, undo, tie, button("その他", this::rankingMenu));
+    GalleryUi.bottomControls(root, controlsStart);
   }
 
   private void changeRankingMode(boolean best) {
     if (ranking.bestOnly() == best) return;
-    new GalleryUi.Sheet(this).setTitle("ソート方法を変更しますか？")
+    new GalleryUi.Sheet(this).setTitle("順位の決め方を変更しますか？")
         .setMessage("この連写の結果と途中の判断を置き換え、最初から比較します。")
         .setPositiveButton("変更", (d, w) -> saveRanking(new PhotoRanking(ranking.ids, best ? "B:" : "A:")))
         .setNegativeButton("戻る", null).show();
@@ -1454,12 +1556,12 @@ public final class MainActivity extends Activity {
   private void rankingMenu() {
     new GalleryUi.Sheet(this)
         .setItems(
-            new String[] {"保留して一覧へ", "再ソート"},
+            new String[] {"保留して一覧へ", "順位を付け直す"},
             (d, choice) -> {
               if (choice == 0) leaveRanking();
               else
                 new GalleryUi.Sheet(this)
-                    .setTitle("この連写を再ソートしますか？")
+                    .setTitle("この連写の順位を付け直しますか？")
                     .setMessage("この連写の選択履歴を消して、最初から比較します。写真は変更しません。")
                     .setPositiveButton(
                         "やり直す", (dialog, which) -> saveRanking(new PhotoRanking(ranking.ids, ranking.bestOnly() ? "B:" : "A:")))
@@ -1484,7 +1586,7 @@ public final class MainActivity extends Activity {
     PhotoRepository.Photo photo = photos.get(rankingMembers.get(key));
     ImageView image = new ImageView(this);
     image.setScaleType(ImageView.ScaleType.FIT_CENTER);
-    image.setContentDescription(photo.name + "。タップで選択、長押しで原本を確認");
+    image.setContentDescription(photo.name + "。タップで選択、長押しで拡大");
     image.setOnClickListener(
         v -> {
           if (rankingScreen && token == generation && ratios[0] > 0 && ratios[1] > 0) {
@@ -1546,13 +1648,13 @@ public final class MainActivity extends Activity {
     Runnable renderFormats = new Runnable() {
       public void run() {
         formats.removeAllViews();
-        formats.addView(GalleryUi.chip(MainActivity.this, "JPEG", !raw[0], () -> {
+        formats.addView(GalleryUi.chip(MainActivity.this, "JPEGで共有", !raw[0], () -> {
           raw[0] = false; run();
         }), new LinearLayout.LayoutParams(0, -2, 1));
-        formats.addView(GalleryUi.chip(MainActivity.this, "原本", raw[0], () -> {
+        formats.addView(GalleryUi.chip(MainActivity.this, "元の形式で共有", raw[0], () -> {
           raw[0] = true; run();
         }), new LinearLayout.LayoutParams(0, -2, 1));
-        description.setText(raw[0] ? "撮影した形式のまま · RAW / JPEG" : "JPEG · RAWは原本内のJPEGを使用");
+        description.setText(raw[0] ? "撮影した形式のまま · RAW / JPEG" : "RAWの場合は、ファイル内のJPEG画像を使います");
       }
     };
     renderFormats.run();
@@ -1564,7 +1666,7 @@ public final class MainActivity extends Activity {
       title.setPadding(0, dp(20), 0, dp(4));
       sheet.addView(title);
       for (ShareTargets.Target target : savedTargets) {
-        Button item = button(target.label + " · " + (target.raw ? "原本" : "JPEG"), () -> {
+        Button item = button(target.label + " · " + (target.raw ? "元のファイル" : "JPEG"), () -> {
           dialog[0].dismiss(); export(frozen, target.raw, target);
         });
         item.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
@@ -1583,7 +1685,7 @@ public final class MainActivity extends Activity {
     final int attempt = ++shareAttempt;
     shareProgress = new GalleryUi.Sheet(this)
         .setTitle(selection.size() + "枚を準備中")
-        .setMessage((raw ? "原本" : "原本のJPEG") + "を準備しています。選択は保持されます。")
+        .setMessage((raw ? "元のファイル" : "JPEG画像") + "を準備しています。選択は保持されます。")
         .setCancelable(false)
         .setNegativeButton("中止", (d, w) -> {
           shareAttempt++;
@@ -1657,7 +1759,7 @@ public final class MainActivity extends Activity {
     List<String> options = new ArrayList<>();
     for (int i = 0; i < targets.size(); i++) {
       ShareTargets.Target t = targets.get(i);
-      options.add((i + 1) + ". " + t.label + "  /  " + (t.raw ? "原本" : "原本のJPEG"));
+      options.add((i + 1) + ". " + t.label + "  /  " + (t.raw ? "元のファイル" : "JPEG画像"));
     }
     options.add("＋ 共有先を追加");
     new GalleryUi.Sheet(this)
@@ -1677,7 +1779,7 @@ public final class MainActivity extends Activity {
     new GalleryUi.Sheet(this)
         .setTitle(t.label)
         .setItems(
-            new String[] {"原本のJPEGを渡す", "原本を渡す", "一つ上へ移動", "一つ下へ移動", "登録を外す"},
+            new String[] {"JPEGで共有", "元の形式で共有", "一つ上へ移動", "一つ下へ移動", "登録を外す"},
             (d, choice) -> {
               if (choice == 0) t.raw = false;
               if (choice == 1) t.raw = true;
