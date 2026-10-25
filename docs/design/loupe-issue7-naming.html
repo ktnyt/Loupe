@@ -31,7 +31,7 @@ label.tg input{width:18px;height:18px;accent-color:#EDEDEA}
 .dev .hd b{font-size:calc(20px*var(--k));line-height:1.4;font-weight:600}
 .dev .hd small{font-size:calc(13px*var(--k));line-height:1.4;color:#A9A9A4}
 .dev .body{flex:1;padding:0 16px 16px;display:flex;flex-direction:column;justify-content:flex-end;gap:8px}
-.primary{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;width:100%;min-height:64px;height:auto;padding:6px;border:0;border-radius:26px;background:#EDEDEA;color:#111111;font:inherit;font-size:calc(13px*var(--k));line-height:1.35;font-weight:500;cursor:pointer;text-align:center}
+.primary{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;width:100%;min-height:64px;height:auto;padding:6px;border:0;border-radius:26px;background:#EDEDEA;color:#111111;font:inherit;font-size:calc(13px*var(--k));line-height:calc(24px*var(--k));font-weight:500;cursor:pointer;text-align:center}
 .primary svg{width:24px;height:24px;flex-shrink:0}
 .sub{display:flex;align-items:center;justify-content:center;width:100%;min-height:48px;padding:6px 16px;border:1px solid #3A3A3F;border-radius:24px;background:none;color:inherit;font:inherit;font-size:calc(14px*var(--k));line-height:1.35;font-weight:500;cursor:pointer;text-align:center}
 .chips{display:flex;gap:4px;background:#1C1C1F;border-radius:24px}
@@ -117,10 +117,10 @@ label.tg input{width:18px;height:18px;accent-color:#EDEDEA}
 <tr><th>項目</th><th>値</th></tr>
 <tr><td>背景 / 文字とアイコン</td><td>#EDEDEA / #111111（画面の背景は #0F0F10）</td></tr>
 <tr><td>角丸</td><td>26dp</td></tr>
-<tr><td>文字</td><td>13sp・medium</td></tr>
+<tr><td>文字</td><td>13sp・Android sans-serif-medium。Androidのfont paddingを含む行箱を約24dpで表現。ブラウザの代替フォントは字形・ウェイトが一致しない場合がある</td></tr>
 <tr><td>幅</td><td>親の幅いっぱい</td></tr>
 <tr><td>高さ</td><td>52dp固定を外し、既存の最低高64dpを守る。文字拡大で2行になったら高さが伸びる</td></tr>
-<tr><td>アイコン</td><td>24dpの棒グラフ、文字との間隔4dp。「ソート」「ソートを再開」「ソート結果」で同じアイコンを使う</td></tr>
+<tr><td>アイコン</td><td>24dpの割当内に26dp基準で描く既存の棒グラフ、文字との間隔4dp。「ソート」「ソートを再開」「ソート結果」で同じアイコンを使う</td></tr>
 </table>
 
 <h2>4. 読み上げ</h2>
@@ -148,7 +148,7 @@ label.tg input{width:18px;height:18px;accent-color:#EDEDEA}
 
 <script>
 (function () {
-  const BAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="12" width="6" height="9"></rect><rect x="9" y="7" width="6" height="14"></rect><rect x="15" y="15" width="6" height="6"></rect></svg>';
+  const BAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><g transform="translate(-1 -1) scale(1.083333)"><rect x="3" y="12" width="6" height="9"></rect><rect x="9" y="7" width="6" height="14"></rect><rect x="15" y="15" width="6" height="6"></rect></g></svg>';
   const N = {
     old: { idle: '順位を決める', mid: '順位決めを再開', done: '順位を付け直す', redo: '順位を付け直す', cmpH: '順位を決める', resH: '順位の結果', share: '順位を決める', policy: '順位を決めて1位を共有', toast: '1組目の順位を決めました（3枚目が1位）', shareNote: '順位が未決定の連写が1組あります', modeQ: null, redoQ: null },
     nw: { idle: 'ソート', mid: 'ソートを再開', done: 'ソート結果', redo: '再ソート', cmpH: 'ソート', resH: 'ソート結果', share: 'ソート', policy: 'ソートして1位を共有', toast: '', shareNote: '1組の順位がまだ決まっていません。ソートした後に選択画面へ戻れます。', modeQ: 'ソート方式を変更しますか？', redoQ: 'この連写を再ソートしますか？' }
