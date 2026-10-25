@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loupe Issue #9 操作ラベル</title>
+<style>
+:root{--text:#EDEDEA;--sub:#A9A9A4;--ok:#9FE0B5;--ng:#F2A7AB;--k:1}
+*{box-sizing:border-box}
+body{margin:0;background:#0B0B0C;color:var(--text);font-family:"Noto Sans JP",system-ui,-apple-system,"Hiragino Sans",sans-serif;font-size:15px;line-height:1.6}
+.wrap{max-width:1760px;margin:0 auto;padding:28px 20px 64px}
+h1{margin:0;font-size:24px;line-height:1.4;font-weight:600}
+h2.sec{margin:28px 0 4px;font-size:18px;font-weight:600}
+.lead{margin:6px 0 0;color:var(--sub);font-size:14px}
+.controls{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;margin:14px 0 0}
+.controls .lb{color:var(--sub);font-size:13px;margin-right:6px}
+.seg{display:inline-flex;flex-wrap:wrap;background:#1C1C1F;border-radius:22px;padding:2px}
+.seg button{background:none;border:0;color:var(--text);font:inherit;font-size:13px;min-height:44px;padding:0 12px;border-radius:20px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:#EDEDEA;color:#111}
+.hw{background:none;border:1px solid #3A3A3F;color:var(--text);font:inherit;font-size:13px;min-height:44px;padding:0 14px;border-radius:22px;cursor:pointer}
+label.tg{display:inline-flex;gap:8px;align-items:center;font-size:13px;min-height:44px;cursor:pointer}
+label.tg input{width:18px;height:18px;accent-color:#EDEDEA}
+.cols{display:flex;gap:32px;flex-wrap:wrap;margin-top:14px;align-items:flex-start}
+.col{display:flex;flex-direction:column;gap:8px}
+.col h3{margin:0;font-size:14px;font-weight:600;display:flex;gap:8px;align-items:center}
+.tagc{font-size:12px;padding:2px 8px;border-radius:6px;font-weight:600}
+.tagc.old{background:#3A2224;color:#F2A7AB}.tagc.new{background:#1E3A2A;color:var(--ok)}
+.box{background:#141416;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.6;font-variant-numeric:tabular-nums;max-width:var(--w)}
+.ok{color:var(--ok)}.ng{color:var(--ng)}
+
+/* 部品（1px = 1dp）。outline は寸法の外 */
+.part{width:var(--w);background:#0F0F10;outline:1px solid #3A3A3F;display:flex;flex-direction:column;font-family:Roboto,"Noto Sans JP","Noto Sans CJK JP",system-ui,sans-serif}
+.photo{height:var(--ph);display:flex;gap:2px}
+.photo i{flex:1;display:block}
+/* 既存 dock */
+.dock{background:#19191B;padding:8px;display:flex;align-items:stretch}
+.dock.grid{display:grid;grid-template-columns:repeat(var(--cols),minmax(0,1fr))}
+.dock.grid .db{flex:none}
+.db{flex:var(--wt,1) 1 0;min-width:0;min-height:64px;height:auto;padding:6px;margin:0;border:0;border-radius:8px;background:transparent;color:#EDEDEA;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;position:relative;overflow:hidden;font-family:inherit;font-weight:500;font-size:calc(13px*var(--k));text-align:center}
+.db .ic{width:24px;height:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:visible}
+.db .ic svg{width:26px;height:26px;flex-shrink:0}
+.db .lbl{display:block;max-width:100%;line-height:max(24px,calc(1.846em));overflow-wrap:anywhere}
+.db:disabled{color:#626B72;cursor:default}
+.db.press::after{content:"";position:absolute;inset:0;background:rgba(237,237,234,.12);border-radius:inherit}
+.ctaRow{padding:8px 16px}
+.cta{width:100%;min-height:64px;height:auto;padding:6px 16px;border:0;border-radius:26px;background:#EDEDEA;color:#111111;display:flex;flex-direction:row;align-items:center;justify-content:center;gap:4px;cursor:pointer;position:relative;overflow:hidden;font-family:inherit;font-weight:500;font-size:calc(13px*var(--k));text-align:center}
+.cta .ic{width:24px;height:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:visible}
+.cta .ic svg{width:26px;height:26px;flex-shrink:0}
+.cta .lbl{display:block;max-width:100%;line-height:max(24px,calc(1.846em));overflow-wrap:anywhere}
+.cta.press::after{content:"";position:absolute;inset:0;background:rgba(17,17,17,.12);border-radius:inherit}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 16px 8px}
+.pair button{min-height:48px;padding:4px 12px;border:1px solid #3A3A3F;border-radius:24px;background:none;color:#EDEDEA;font-family:inherit;font-weight:500;font-size:calc(14px*var(--k));line-height:1.35;cursor:pointer}
+.ref{opacity:1}
+.refnote{padding:4px 16px 8px;font-size:11.5px;color:#8A8A85}
+.spec h2{font-size:20px;margin:36px 0 10px;font-weight:600}
+.spec table{border-collapse:collapse;width:100%;font-size:14px}
+.spec th,.spec td{border-bottom:1px solid #2A2A2E;padding:8px 12px 8px 0;text-align:left;vertical-align:top}
+.spec th{color:var(--sub);font-weight:500;font-size:12.5px}
+.spec ul{margin:0;padding-left:20px}.spec li{margin:4px 0}
+.spec code{background:#1C1C1F;padding:1px 6px;border-radius:4px;font-size:13px}
+.spec{max-width:1180px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Loupe Issue #9 — 操作ラベルの文字欠け・意図しない折り返し</h1>
+<p class="lead">対象は2つの dock の操作ラベルだけです。写真はダミーの色面で、部品のまわりの線（outline）は寸法に含みません。押すと押下の見た目を出し、取り消しの状態はログに出します。</p>
+
+<div class="controls" role="group" aria-label="共通の条件">
+<span><span class="lb">向きと幅</span><span class="seg" id="oW"><button data-v="320" aria-pressed="false">縦 320dp</button><button data-v="400" aria-pressed="true">縦 400dp</button><button data-v="640" aria-pressed="false">横 640dp</button><button data-v="800" aria-pressed="false">横 800dp</button></span></span>
+<span><span class="lb">文字</span><span class="seg" id="oK"><button data-v="1" aria-pressed="true">1.0倍</button><button data-v="1.3" aria-pressed="false">1.3倍</button></span></span>
+</div>
+
+<h2 class="sec">A. 比較・比較終了の dock — ［連写一覧］［取り消し］（［同じ順位］）［その他］</h2>
+<div class="controls" role="group" aria-label="Aの条件">
+<span><span class="lb">画面</span><span class="seg" id="oScr"><button data-v="cmp" aria-pressed="true">比較中</button><button data-v="end" aria-pressed="false">比較終了</button></span></span>
+<span><span class="lb">方式</span><span class="seg" id="oMode"><button data-v="best" aria-pressed="true">1位を決める（3操作）</button><button data-v="rank" aria-pressed="false">すべての順位を決める（4操作）</button></span></span>
+<label class="tg"><input type="checkbox" id="oShare"> 共有から来た（選択へ戻る）</label>
+<button class="hw" id="addOp">比較で1回選ぶ（操作を1つ増やす）</button>
+<label class="tg"><input type="checkbox" id="saveFail"> 取り消しの保存に失敗する</label>
+</div>
+<div class="cols">
+<div class="col"><h3>現行 <span class="tagc old">長い元の名前</span></h3><div class="part" id="aOld"></div><div class="box" id="caOld"></div></div>
+<div class="col"><h3>#9 <span class="tagc new">採用案</span></h3><div class="part" id="aNew"></div><div class="box" id="caNew"></div><div class="box" id="undoLog"></div></div>
+</div>
+
+<h2 class="sec">B. 連写の詳細 — 主操作［ソート］（全幅・今回は変更なし、検査のみ）</h2>
+<div class="controls" role="group" aria-label="Bの条件">
+<span><span class="lb">主操作の状態</span><span class="seg" id="oCta"><button data-v="idle" aria-pressed="true">未開始</button><button data-v="mid" aria-pressed="false">途中</button><button data-v="done" aria-pressed="false">完了</button></span></span>
+</div>
+<div class="cols">
+<div class="col"><h3>#4由来の元の名前 <span class="tagc old">比較用</span></h3><div class="part" id="bOld"></div><div class="box" id="cbOld"></div></div>
+<div class="col"><h3>現行（#7の名前） <span class="tagc new">このまま維持</span></h3><div class="part" id="bNew"></div><div class="box" id="cbNew"></div></div>
+</div>
+
+<section class="spec" aria-label="仕様">
+<h2>1. 変更範囲</h2>
+<table>
+<tr><th>対象</th><th>現行</th><th>#9</th></tr>
+<tr><td>比較の dock の取り消し（比較中・比較終了とも）</td><td>見える名前「直前の操作を取り消す」（400dpの縦で2行になる）</td><td>見える名前「<b>取り消し</b>」。読み上げ名とツールチップは「直前の操作を取り消す」のまま。アイコンは既存の曲がった左矢印（戻る・やり直し・中断と区別するため）</td></tr>
+<tr><td>連写の詳細の主操作</td><td>左右16dpの余白の全幅ボタン［ソート／ソートを再開／ソート結果］（#7の名前）</td><td><b>変更なし</b>（既存の配置のまま）。今回は欠けと折り返しがないことの検査だけ。その下の［この写真を1位に］［共有］、［戻る］［前の写真］［次の写真］［拡大］、［選択］［その他］も変更しない</td></tr>
+<tr><td>比較・比較終了の dock の列（必要なときだけ）</td><td>1行の均等列（1位方式：［連写一覧］［取り消し］［その他］の3列、すべての順位方式：［連写一覧］［取り消し］［同じ順位］［その他］の4列。共有から来たときは［連写一覧］が［選択へ戻る］）</td><td>幅が足りるときは既存の1行のまま。足りないときだけ、同じ幅のセルに全部の操作が入る最大の列数を選び、複数行にする（4→3→2→1）</td></tr>
+<tr><td>変えないもの</td><td colspan="2">文字の大きさ（縮めない）、ほかの名前、取り消しの動き、順位のロジック、原本、保存。方式チップ（#6）、ボタン全体の再設計（#8）、説明の削減（#14）</td></tr>
+</table>
+
+<h2>2. dock とボタンの数値（実装済みの dock と同じ）</h2>
+<table>
+<tr><th>項目</th><th>値</th></tr>
+<tr><td>dock</td><td>背景 #19191B、全周8dpの余白、横並び</td></tr>
+<tr><td>ボタン</td><td>最低の高さ64dp・高さは wrap-content、全周6dpの余白、背景は透明、押したときは標準のリップル</td></tr>
+<tr><td>アイコン</td><td>上に24dpの枠。中に既存の26dpの描画基準のアイコンを中央に描く（はみ出した1dpは切らない）。文字との間隔4dp</td></tr>
+<tr><td>文字</td><td>13sp、<code>sans-serif-medium</code>。通常 #EDEDEA、無効 #626B72（アイコンも同じ色）。1行。省略記号は使わない</td></tr>
+<tr><td>行の箱</td><td>Androidのフォントの上下の余白（includeFontPadding）に相当する24dp。文字1.3倍では必要な高さまで伸びる（このHTMLでは文字の大きさ×1.846、1.3倍で約31dp）</td></tr>
+<tr><td>高さの目安</td><td>6 + 24 + 4 + 24 + 6 = 64dp。文字1.3倍では約71dp</td></tr>
+<tr><td>比較の dock の列</td><td>［連写一覧］［取り消し］［その他］を均等の3列（weight 1）。比較終了の画面も同じ</td></tr>
+<tr><td>操作の領域</td><td>どのボタンも高さ64dp以上、幅48dp以上</td></tr>
+<tr><td>列の決め方</td><td>必要なセル幅 = max（各ラベルの実際の文字幅 ＋ 左右の余白 6dp×2, 48dp）。使える幅 = dock の幅 − 16dp（左右の余白）。列数 n は、操作の数から1まで順に試し、使える幅 ÷ n ≥ 必要なセル幅 になる最大の n。全部のセルは同じ幅（使える幅 ÷ n）。並びの順番は変えず、左から右・上から下へ詰める。文字幅は Android の <code>Paint.measureText</code>（または TextLayout の幅）で測る</td></tr>
+<tr><td>複数行のとき</td><td>dock の高さが行の数だけ伸びる。写真の領域が狭くなる分は、既存の bottomControls のスクロールで確保する（全画面の再設計はしない）。名前・読み上げ名・順番・最低64dp・13spは変えない</td></tr>
+</table>
+<h2>2b. 連写の詳細の主操作（既存の値・検査用）</h2>
+<table>
+<tr><th>項目</th><th>値</th></tr>
+<tr><td>配置</td><td>左右16dpの余白で全幅。その下に別の行で［この写真を1位に］［共有］の2列、さらに既存の dock［戻る］［前の写真］［次の写真］［拡大］の4列と［選択］［その他］の2列（このHTMLでは簡略模擬）</td></tr>
+<tr><td>見た目</td><td>背景 #EDEDEA、文字とアイコン #111111、角丸26dp、13sp・<code>sans-serif-medium</code>。棒グラフのアイコン（24dpの枠に26dpの描画基準）を文字の左に4dpあけて置く。最低の高さ64dp（指定は52dp、アイコン付きの現行の最低高）</td></tr>
+</table>
+
+<h2>3. 取り消しの動き（既存のまま）</h2>
+<ul>
+<li>押すと、直前の1操作だけを取り消す。</li>
+<li>取り消せる操作がないときは無効（#626B72）。読み上げも「無効」になる。</li>
+<li>取り消しの保存に失敗したときは、今の状態をそのまま保つ（取り消す前の状態に戻さない・進めない）。このHTMLでは記録にだけ出し、画面に新しい文は足さない。</li>
+<li>読み上げ名：「直前の操作を取り消す」。ツールチップ（長押し・ホバー）も同じ文。</li>
+</ul>
+
+<h2>4. 確認の観点</h2>
+<ul>
+<li>縦320・400dp、横640・800dp、文字1.0・1.3倍のすべてで、各ラベルが1行・欠けなし・操作の領域48dp以上。</li>
+<li>比較の dock は、1位方式（3操作）・すべての順位方式（4操作）・共有から来たとき（選択へ戻る）のすべてを検査。</li>
+<li>主操作の3つの状態（ソート／ソートを再開／ソート結果）すべてを、全幅の条件で検査。</li>
+<li>比較のため、Aの左に「直前の操作を取り消す」、Bの左に#4由来の元の名前（順位を決める など）を置いている。</li>
+<li>主操作より下の行は参考として同じ検査をしているが、今回は変更しない（結果に「参考」と付く）。</li>
+</ul>
+
+<h2>5. フォントの注記</h2>
+<ul>
+<li>Androidの <code>sans-serif-medium</code> は、英数字が Roboto Medium、日本語は Noto Sans CJK JP Medium（多くの端末）。このHTMLは Roboto と Noto Sans JP を指定しているが、ない環境ではブラウザの標準フォントになり、幅が数%ずれる。</li>
+<li>日本語は1文字がほぼ1em。「取り消し」（4文字）は13sp×1.3倍で約68dpで、320dpの均等3列の中身（約89dp）に入る。「直前の操作を取り消す」（10文字）は約169dpで、400dp・1.0倍でも中身（約116dp）に入らず2行になる。</li>
+<li>行の箱の24dpは、Androidの includeFontPadding の高さを模したもの。実機の値と1〜2dpずれることがある。</li>
+</ul>
+</section>
+</div>
+
+<script>
+(function () {
+  const ICON = {
+    list: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true"><rect x="8.5" y="8.5" width="13" height="13" rx="2"></rect><path d="M4.5 16.5V6.5a2 2 0 0 1 2-2h10"></path></svg>',
+    tie: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M6 10h14M6 16h14"></path></svg>',
+    toSel: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="13" cy="13" r="9"></circle><path d="M9 13.3l2.8 2.8 5.3-5.6"></path></svg>',
+    undo: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6.5L4.5 11 9 15.5"></path><path d="M4.5 11h10a6 6 0 0 1 0 12h-3"></path></svg>',
+    more: '<svg viewBox="0 0 26 26" fill="currentColor" aria-hidden="true"><circle cx="13" cy="6" r="1.8"></circle><circle cx="13" cy="13" r="1.8"></circle><circle cx="13" cy="20" r="1.8"></circle></svg>',
+    share: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="19.5" cy="6" r="2.7"></circle><circle cx="6.5" cy="13" r="2.7"></circle><circle cx="19.5" cy="20" r="2.7"></circle><path d="M8.9 11.7l8.2-4.4M8.9 14.3l8.2 4.4"></path></svg>',
+    back: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.5 13H5.5M11.5 19l-6-6 6-6"></path></svg>',
+    prev: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 6.5L9.5 13l6.5 6.5"></path></svg>',
+    next: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 6.5l6.5 6.5-6.5 6.5"></path></svg>',
+    zoom: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="11.5" cy="11.5" r="6.5"></circle><path d="M16.5 16.5l5 5M11.5 8.5v6M8.5 11.5h6"></path></svg>',
+    sel: '<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="13" cy="13" r="9"></circle><path d="M9 13.3l2.8 2.8 5.3-5.6"></path></svg>',
+    bar: '<svg viewBox="0 0 26 26" fill="currentColor" aria-hidden="true"><rect x="4.5" y="14" width="4.4" height="7.5" rx="1"></rect><rect x="10.8" y="8.5" width="4.4" height="13" rx="1"></rect><rect x="17.1" y="4.5" width="4.4" height="17" rx="1"></rect></svg>'
+  };
+  const O = { w: 400, k: 1, scr: 'cmp', cta: 'idle', ops: 2, fail: false, log: [], mode: 'best', share: false, cols: null };
+  const CTA = { idle: 'ソート', mid: 'ソートを再開', done: 'ソート結果' };
+  const btn = (ic, label, o) => {
+    o = o || {};
+    return '<button class="db' + (o.cta ? ' cta' : '') + '"' + (o.dis ? ' disabled' : '') + (o.aria ? ' aria-label="' + o.aria + '" title="' + o.aria + '"' : '') + (o.act ? ' data-act="' + o.act + '"' : '') + (o.wt ? ' style="--wt:' + o.wt + '"' : '') + '><span class="ic">' + ICON[ic] + '</span><span class="lbl">' + label + '</span></button>';
+  };
+  const land = () => O.w >= 640;
+  function photos(n) { return '<div class="photo" style="--ph:' + (land() ? 180 : 300) + 'px">' + Array.from({ length: n }, (_, i) => '<i style="background:linear-gradient(160deg,' + ['#a9c3d8,#69736a', '#7b5b45,#2a201b', '#3f4a3a,#1d241c'][i] + ')"></i>').join('') + '</div>'; }
+  /* 必要幅不足のときだけ列を減らす：実際の文字幅 + 左右の余白 6dp×2 が、同じ幅のセルに収まる最大の列数 */
+  const cv = document.createElement('canvas').getContext('2d');
+  function textW(t) { cv.font = '500 ' + (13 * O.k) + 'px Roboto, "Noto Sans JP", "Noto Sans CJK JP", system-ui, sans-serif'; return cv.measureText(t).width; }
+  function pickCols(labels) {
+    const need = Math.max(48, Math.max.apply(null, labels.map(textW)) + 12);
+    const avail = O.w - 16;
+    for (let n = labels.length; n >= 1; n--) { if (avail / n >= need) return { n: n, need: need, cell: avail / n }; }
+    return { n: 1, need: need, cell: avail };
+  }
+  function partA(isNew) {
+    const dis = O.ops === 0;
+    const items = [
+      ['list', O.share ? '選択へ戻る' : '連写一覧', {}],
+      ['undo', isNew ? '取り消し' : '直前の操作を取り消す', { aria: '直前の操作を取り消す', dis: dis, act: 'undo' }]
+    ];
+    if (O.mode === 'rank') items.push(['tie', '同じ順位', {}]);
+    items.push(['more', 'その他', {}]);
+    let cls = 'dock', style = '';
+    if (isNew) { const c = pickCols(items.map((x) => x[1])); O.cols = c; if (c.n < items.length) { cls += ' grid'; style = ' style="--cols:' + c.n + '"'; } }
+    return photos(O.scr === 'cmp' ? 2 : 1) + '<div class="' + cls + '"' + style + ' role="group" aria-label="比較の操作">' + items.map((x) => btn(x[0], x[1], x[2])).join('') + '</div>';
+  }
+  const CTA_OLD = { idle: '順位を決める', mid: '順位決めを再開', done: '順位の結果' };
+  function partB(isNew) {
+    const name = isNew ? CTA[O.cta] : CTA_OLD[O.cta];
+    return photos(1) +
+      '<div class="ctaRow"><button class="cta" data-check="cta"><span class="ic">' + ICON.bar + '</span><span class="lbl">' + name + '</span></button></div>' +
+      '<div class="pair ref"><button>この写真を1位に</button><button>共有</button></div>' +
+      '<div class="dock ref" role="group" aria-label="写真の操作">' + btn('back', '戻る') + btn('prev', '前の写真') + btn('next', '次の写真') + btn('zoom', '拡大') + '</div>' +
+      '<div class="dock ref" role="group" aria-label="そのほかの操作" style="padding-top:0">' + btn('sel', '選択') + btn('more', 'その他') + '</div>' +
+      '<div class="refnote">主操作より下の行は既存配置の簡略模擬（参考・今回は変更しない）</div>';
+  }
+  function check(part, out) {
+    const rows = [...part.querySelectorAll('.db,.cta,.pair button')].map((b) => {
+      const ref = !!b.closest('.ref');
+      const r = b.getBoundingClientRect(), l = b.querySelector('.lbl');
+      const tl = l || b;
+      const lh = parseFloat(getComputedStyle(tl).lineHeight);
+      const rg = document.createRange(); rg.selectNodeContents(tl);
+      const tops = new Set([...rg.getClientRects()].filter((x) => x.width > 0).map((x) => Math.round(x.top)));
+      const lines = Math.max(1, tops.size);
+      const l2 = l || b;
+      const padX = b.classList.contains('cta') ? 32 : (b.closest('.pair') ? 24 : 12);
+      const clip = l ? (l.scrollWidth > b.clientWidth - padX + 1) : (b.scrollWidth > b.clientWidth + 1);
+      const bad = lines !== 1 || clip || r.height < 48 || r.width < 48;
+      return (ref ? '<span style="color:#8A8A85">参考 </span>' : '') + (bad ? '<span class="ng">✕</span> ' : '<span class="ok">○</span> ') + tl.textContent + '：' + Math.round(r.width) + '×' + Math.round(r.height) + 'dp・' + lines + '行' + (b.disabled ? '・無効' : '') + (b.getAttribute('aria-label') ? '・読み上げ「' + b.getAttribute('aria-label') + '」' : '');
+    });
+    const fs = getComputedStyle(part.querySelector('.lbl')).fontSize;
+    document.getElementById(out).innerHTML = '<b>' + (land() ? '横 ' : '縦 ') + O.w + 'dp・文字' + O.k + '倍（' + fs + '）</b><br>' + rows.join('<br>');
+  }
+  function bindPress(part) {
+    part.querySelectorAll('.db,.cta').forEach((b) => {
+      b.addEventListener('pointerdown', () => { if (!b.disabled) b.classList.add('press'); });
+      ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => b.addEventListener(ev, () => b.classList.remove('press')));
+    });
+  }
+  function render() {
+    document.documentElement.style.setProperty('--k', O.k);
+    document.documentElement.style.setProperty('--w', O.w + 'px');
+    [['aOld', partA(false), 'caOld'], ['aNew', partA(true), 'caNew'], ['bOld', partB(false), 'cbOld'], ['bNew', partB(true), 'cbNew']].forEach(([id, html, out]) => {
+      const p = document.getElementById(id); p.innerHTML = html; bindPress(p); check(p, out);
+    });
+    document.getElementById('aNew').querySelector('[data-act=undo]').addEventListener('click', undo);
+    document.getElementById('aOld').querySelector('[data-act=undo]').addEventListener('click', undo);
+    if (O.cols) document.getElementById('caNew').innerHTML += '<br>列の決め方：必要なセル幅 ' + Math.round(O.cols.need) + 'dp → ' + O.cols.n + '列（セル ' + Math.round(O.cols.cell) + 'dp）' + (O.cols.n < (O.mode === 'rank' ? 4 : 3) ? '・複数行' : '・1行のまま');
+    document.getElementById('undoLog').innerHTML = '<b>取り消しの状態（' + (O.scr === 'cmp' ? '比較中' : '比較終了') + '）</b><br>取り消せる操作：' + O.ops + '件' + (O.ops ? '' : '（取り消しは無効）') + '<br>' + (O.log.map((x) => '・' + x).join('<br>') || '—');
+  }
+  function undo() {
+    if (O.ops === 0) return;
+    if (O.fail) { O.log.unshift('取り消しの保存に失敗：今の状態を保つ（操作 ' + O.ops + '件のまま）'); }
+    else { O.ops -= 1; O.log.unshift('直前の1操作を取り消し（残り ' + O.ops + '件）'); }
+    O.log = O.log.slice(0, 6); render();
+  }
+  document.getElementById('addOp').addEventListener('click', () => { O.ops += 1; O.log.unshift('比較で選ぶ（操作 ' + O.ops + '件）'); O.log = O.log.slice(0, 6); render(); });
+  document.getElementById('saveFail').addEventListener('change', (e) => { O.fail = e.target.checked; render(); });
+  function seg(id, fn) {
+    const el = document.getElementById(id);
+    el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; el.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', x === b ? 'true' : 'false')); fn(b.dataset.v); render(); });
+  }
+  seg('oMode', (v) => { O.mode = v; });
+  document.getElementById('oShare').addEventListener('change', (e) => { O.share = e.target.checked; render(); });
+  seg('oW', (v) => { O.w = +v; }); seg('oK', (v) => { O.k = +v; }); seg('oScr', (v) => { O.scr = v; }); seg('oCta', (v) => { O.cta = v; });
+  window.__l9 = { O: O, render: render };
+  render();
+})();
+</script>
+</body>
+</html>

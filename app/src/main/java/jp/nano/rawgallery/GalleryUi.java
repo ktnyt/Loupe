@@ -138,6 +138,16 @@ final class GalleryUi {
     return row;
   }
 
+  static View rankingDock(Context c, Button... buttons) {
+    for (Button button : buttons) {
+      // Keep the original action icon and full accessible name when its visible label is short.
+      tintIcon(button, button.getTextColors().getColorForState(
+          new int[] {android.R.attr.state_enabled}, TEXT));
+      button.setTooltipText(button.getContentDescription());
+    }
+    return new RankingActions(c, buttons);
+  }
+
   // The check occupies the same advance in both states; no neighbouring control moves.
   static Button chip(Context c, String title, boolean selected, Runnable action) {
     Button button = button(c, "✓  " + title, action);

@@ -1577,6 +1577,7 @@ public final class MainActivity extends DiagnosticActivity {
       root.addView(hint);
     }
     Button undo = button("直前の操作を取り消す", () -> saveRanking(ranking.undo()));
+    undo.setText("取り消し");
     undo.setEnabled(ranking.decisions() > 0);
     Button chooseA = GalleryUi.neutralPrimary(button("Aを選ぶ", () -> saveRanking(ranking.choose(true))));
     Button chooseB = GalleryUi.neutralPrimary(button("Bを選ぶ", () -> saveRanking(ranking.choose(false))));
@@ -1656,9 +1657,9 @@ public final class MainActivity extends DiagnosticActivity {
     }
     root.addView(modes);
     Button back = button(rankingFromSelection ? "選択へ戻る" : "連写一覧", this::leaveRanking);
-    if (ranking.done()) dock(back, undo, button("その他", this::rankingMenu));
-    else if (ranking.bestOnly()) dock(back, undo, button("その他", this::rankingMenu));
-    else dock(back, undo, tie, button("その他", this::rankingMenu));
+    root.addView(ranking.done() || ranking.bestOnly()
+        ? GalleryUi.rankingDock(this, back, undo, button("その他", this::rankingMenu))
+        : GalleryUi.rankingDock(this, back, undo, tie, button("その他", this::rankingMenu)));
     GalleryUi.bottomControls(root, controlsStart);
   }
 
