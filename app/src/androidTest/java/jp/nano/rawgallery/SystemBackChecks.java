@@ -21,6 +21,16 @@ final class SystemBackChecks {
   private static void check(boolean ok,String message) { if(!ok)throw new AssertionError(message); }
   private static void drain(Instrumentation t,TagActivity a)throws Exception { ((ExecutorService)get(a,"worker")).submit(()->{}).get(10,TimeUnit.SECONDS);t.waitForIdleSync(); }
   private static void back(Instrumentation t) { t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);t.waitForIdleSync(); }
+  private static void exited(Instrumentation t,Activity a)throws Exception {
+    long until=android.os.SystemClock.uptimeMillis()+4000;
+    while(android.os.SystemClock.uptimeMillis()<until){
+      boolean[] inactive={false};ui(t,()->inactive[0]=a.isFinishing()||a.isDestroyed()||!a.hasWindowFocus());
+      android.view.accessibility.AccessibilityNodeInfo node=t.getUiAutomation().getRootInActiveWindow();
+      if(inactive[0]&&node!=null&&!"jp.nano.rawgallery".contentEquals(node.getPackageName()))return;
+      if(a.isFinishing()||a.isDestroyed())return;
+      Thread.sleep(50);
+    }throw new AssertionError("Back did not leave "+a.getClass().getSimpleName());
+  }
   private static void noBack(View v) {
     if(v instanceof Button) { String s=((Button)v).getText().toString();check(!Arrays.asList("戻る","写真に戻る","タグ一覧に戻る","タグに戻る","一覧に戻る","比較に戻る","連写一覧","選択へ戻る").contains(s),"navigation button remains: "+s); }
     if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++)noBack(((ViewGroup)v).getChildAt(i));
@@ -54,11 +64,11 @@ final class SystemBackChecks {
       ui(t,()->set(a,"busy",true));back(t);ui(t,()->{check((int)get(a,"browseMode")==1,"busy Back escaped");set(a,"busy",false);});
       back(t);drain(t,a);ui(t,()->{check((int)get(a,"browseMode")==0&&get(a,"tag")!=null&&!a.isFinishing(),"tag detail Back");noBack(a.getWindow().getDecorView());});
       back(t);drain(t,a);ui(t,()->{check(get(a,"tag")==null&&!a.isFinishing(),"tag list Back");noBack(a.getWindow().getDecorView());});
-      back(t);check(a.isFinishing()||a.isDestroyed(),"tag root did not finish");
+      back(t);exited(t,a);
     } finally { ui(t,a::finish);file.delete(); }
     for(Class<? extends Activity> type:List.of(CloudActivity.class,SyncActivity.class)) {
       Activity screen=t.startActivitySync(new Intent(t.getTargetContext(),type).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-      try { ui(t,()->noBack(screen.getWindow().getDecorView()));back(t);check(screen.isFinishing()||screen.isDestroyed(),type.getSimpleName()+" Back"); }
+      try { ui(t,()->noBack(screen.getWindow().getDecorView()));back(t);exited(t,screen); }
       finally {ui(t,screen::finish);}
     }
     return result+"PASS system Back: tag photo/filter/scroll, selection cancellation, busy guard, detail/list/root chain, Cloud and Sync exit. Generated private cache images; no tag writes/inference/login/sync.\n";

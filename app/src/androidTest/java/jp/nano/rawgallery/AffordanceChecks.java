@@ -20,11 +20,11 @@ final class AffordanceChecks {
       waitFor(t,"Cloud focused",()->cloud.hasWindowFocus());
       main(t,()->{
         if((cloud.getWindow().getAttributes().flags&WindowManager.LayoutParams.FLAG_SECURE)==0)throw new AssertionError("secure flag missing");
-        TextView status=(TextView)field(cloud,"status");WebView web=(WebView)field(cloud,"web");
+        StatusView status=(StatusView)field(cloud,"status");WebView web=(WebView)field(cloud,"web");
         if(status.getVisibility()!=View.GONE||web.getVisibility()!=View.GONE||web.getUrl()!=null)throw new AssertionError("initial state");
         for(String name:new String[]{"ログイン","同期の設定","接続と確認"})if(button(cloud.getWindow().getDecorView(),name)==null)throw new AssertionError(name);
-        Method method=CloudActivity.class.getDeclaredMethod("setStatus",String.class);method.setAccessible(true);method.invoke(cloud,"合成検査：通信の安全性を確認できないため停止しました。");
-        if(status.getVisibility()!=View.VISIBLE||status.getAccessibilityLiveRegion()!=View.ACCESSIBILITY_LIVE_REGION_POLITE||!status.getText().toString().contains("安全性"))throw new AssertionError("status lost");
+        Method method=CloudActivity.class.getDeclaredMethod("setStatus",StatusView.Symbol.class,String.class,Runnable.class);method.setAccessible(true);method.invoke(cloud,StatusView.Symbol.TLS,"合成検査：通信の安全性を確認できないため停止しました。",null);
+        if(status.getVisibility()!=View.VISIBLE||status.getAccessibilityLiveRegion()!=View.ACCESSIBILITY_LIVE_REGION_POLITE||!status.getContentDescription().toString().contains("安全性"))throw new AssertionError("status lost");
         button(cloud.getWindow().getDecorView(),"接続と確認").performClick();return true;
       });
       waitFor(t,"menu focus",()->!cloud.hasWindowFocus());

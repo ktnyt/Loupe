@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loupe Issue #17 状態表示の非テキスト化</title>
+<style>
+:root{--bg:#0F0F10;--panel:#19191B;--text:#EDEDEA;--muted:#A0A0A4;--fail:#FF8A7A;--ok:#9FE0B5;--ng:#F2A7AB;--k:1}
+*{box-sizing:border-box}
+body{margin:0;background:#0B0B0C;color:var(--text);font-family:"Noto Sans JP",system-ui,-apple-system,"Hiragino Sans",sans-serif;font-size:15px;line-height:1.6}
+.wrap{max-width:1360px;margin:0 auto;padding:28px 20px 64px}
+h1{margin:0;font-size:24px;line-height:1.4;font-weight:600}
+h2.sec{margin:32px 0 6px;font-size:19px;font-weight:600}
+.lead{margin:6px 0 0;color:var(--muted);font-size:14px}
+.note{color:var(--muted);font-size:13px}
+.controls{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;margin:12px 0 0}
+.controls .lb{color:var(--muted);font-size:13px;margin-right:6px}
+.seg{display:inline-flex;flex-wrap:wrap;background:#1C1C1F;border-radius:22px;padding:2px}
+.seg button{background:none;border:0;color:var(--text);font:inherit;font-size:13px;min-height:44px;padding:0 12px;border-radius:20px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:#EDEDEA;color:#111}
+.hw{background:#2A2A2E;border:1px solid #4A4A50;color:var(--text);font:inherit;font-size:13px;font-weight:600;min-height:44px;padding:0 14px;border-radius:22px;cursor:pointer}
+label.tg{display:inline-flex;gap:8px;align-items:center;font-size:13px;min-height:44px;cursor:pointer}
+label.tg input{width:18px;height:18px;accent-color:#EDEDEA}
+.box{background:#141416;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.6;font-variant-numeric:tabular-nums}
+.okc{color:var(--ok)}.ngc{color:var(--ng)}
+table.t{border-collapse:collapse;width:100%;font-size:13.5px}
+table.t th,table.t td{border-bottom:1px solid #2A2A2E;padding:7px 10px 7px 0;text-align:left;vertical-align:top}
+table.t th{color:var(--muted);font-weight:500;font-size:12px}
+table.t code{background:#1C1C1F;padding:1px 5px;border-radius:4px;font-size:12px}
+.spec ul{margin:0;padding-left:20px}.spec li{margin:3px 0}
+
+/* ===== 共通の状態部品（1px = 1dp） ===== */
+.gl{display:inline-flex;width:24px;height:24px;align-items:center;justify-content:center;flex-shrink:0;color:var(--text)}
+.gl svg{width:20px;height:20px}
+.gl.fail{color:var(--fail)}
+.gl.muted{color:var(--muted)}
+.spin{animation:spin 1s linear infinite;transform-origin:50% 50%}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}}
+.mk{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 8px 0 4px;border-radius:14px;background:#1F1F22;box-shadow:inset 0 0 0 1px #3A3A3F;font-family:Roboto,"Noto Sans JP",system-ui,sans-serif;font-size:calc(13px*var(--k));font-weight:500;font-variant-numeric:tabular-nums;color:var(--text);white-space:nowrap}
+.mk.fail{box-shadow:inset 0 0 0 1.5px var(--fail)}
+.mk .gl{width:20px;height:20px}.mk .gl svg{width:18px;height:18px}
+.mkbtn{min-width:48px;min-height:48px;display:inline-flex;align-items:center;justify-content:center;background:none;border:0;padding:0;cursor:pointer;color:inherit}
+.pip{position:absolute;z-index:6;width:40px;height:40px;border-radius:20px;background:#26262A;box-shadow:0 0 0 1px #3A3A3F;display:flex;align-items:center;justify-content:center;pointer-events:none;opacity:1;transition:opacity .15s linear}
+.pip.out{opacity:0}
+.badge{position:absolute;top:2px;right:calc(50% - 22px);width:18px;height:18px;border-radius:9px;background:#0F0F10;display:flex;align-items:center;justify-content:center;color:var(--fail);pointer-events:none}
+.badge svg{width:16px;height:16px}
+.dot{position:absolute;top:8px;right:calc(50% - 18px);width:10px;height:10px;border-radius:5px;background:#F5D38A;box-shadow:0 0 0 2px #19191B}
+
+/* 端末 */
+.stage{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;margin-top:12px}
+.side{display:flex;flex-direction:column;gap:10px;flex:1;min-width:300px}
+.dev{position:relative;width:var(--w);height:740px;background:var(--bg);outline:1px solid #3A3A3F;overflow:hidden;display:flex;flex-direction:column;font-family:Roboto,"Noto Sans JP","Noto Sans CJK JP",system-ui,sans-serif;color:var(--text);flex-shrink:0}
+.hd{padding:36px 20px 8px;display:flex;align-items:center;gap:8px;flex-shrink:0;min-height:76px}
+.hd b{font-size:calc(20px*var(--k));line-height:1.35;font-weight:600}
+.hd .meta{margin-left:auto;display:flex;align-items:center;gap:4px;color:var(--muted);font-size:calc(13px*var(--k));font-variant-numeric:tabular-nums}
+.body{flex:1;min-height:0;overflow-y:auto;position:relative}
+.body::-webkit-scrollbar{width:0}
+.ph{position:relative;background-size:cover;background-position:center;overflow:hidden}
+.ph .cnr{position:absolute;right:8px;top:8px;display:flex;gap:4px}
+.ph .ctr{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px}
+.blur{filter:blur(6px);transform:scale(1.04)}
+.metarow{padding:8px 16px;font-size:calc(13px*var(--k));color:var(--muted);font-variant-numeric:tabular-nums;flex-shrink:0;min-height:36px}
+.dock{flex-shrink:0;background:#19191B;padding:8px 8px 28px;display:flex}
+.db{position:relative;flex:1 1 0;min-width:0;min-height:64px;padding:6px;border:0;border-radius:8px;background:transparent;color:#EDEDEA;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-family:inherit;font-weight:500;font-size:calc(13px*var(--k));text-align:center;cursor:pointer}
+.db .ic{width:24px;height:24px;display:flex;align-items:center;justify-content:center}
+.db .ic svg{width:24px;height:24px}
+.db .lbl{line-height:24px}
+.db:disabled{color:#626B72;cursor:default}
+.btn48{min-height:48px;padding:0 18px;border-radius:24px;border:1px solid #3A3A3F;background:none;color:var(--text);font:inherit;font-size:calc(14px*var(--k));font-weight:500;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;position:relative}
+.btn48.nw{white-space:nowrap;flex-shrink:0}
+.btn48.pri{background:#EDEDEA;color:#111;border-color:#EDEDEA}
+.btn48:disabled{opacity:.5;cursor:default}
+.row{display:flex;align-items:center;gap:12px;min-height:56px;padding:6px 16px;border-bottom:1px solid #1F1F22;font-size:calc(15px*var(--k))}
+.row .r{margin-left:auto;display:flex;align-items:center;gap:6px;color:var(--muted);font-variant-numeric:tabular-nums}
+.strip{display:flex;justify-content:center;gap:4px;padding:8px 0}
+.strip button{width:56px;height:48px;border:0;background:none;padding:0;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.strip span{width:52px;height:35px;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#A0A0A4;font-size:12px;font-variant-numeric:tabular-nums}
+.strip .cur span{outline:2px solid #EDEDEA;outline-offset:2px}
+.strip .f span{box-shadow:inset 0 0 0 1px var(--fail);color:var(--fail)}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:2px}
+.g4 i{display:block;height:calc((var(--w) - 6px)/4)}
+.skel i{background:#19191B !important}
+.sheet{position:absolute;left:50%;transform:translateX(-50%);bottom:12px;width:min(calc(100% - 24px),560px);background:#19191B;border-radius:20px;padding:16px 0;z-index:5}
+.sheet h4{margin:0 0 10px;padding:0 24px;font-size:calc(18px*var(--k));line-height:1.4;font-weight:600;font-variant-numeric:tabular-nums}
+.sheet .bt{display:flex;flex-direction:column;gap:8px;padding:0 16px}
+.dim{position:absolute;inset:0;background:rgba(0,0,0,.64);border:0;width:100%;z-index:4;cursor:default}
+.bar{height:4px;border-radius:2px;background:#2E2E32;overflow:hidden;margin:0 24px 14px}
+.bar i{display:block;height:4px;background:#EDEDEA}
+.stat{margin:0 16px 12px;padding:10px 12px 10px 14px;border-radius:12px;background:var(--panel);display:flex;flex-wrap:wrap;align-items:center;gap:10px;min-height:56px;font-variant-numeric:tabular-nums;font-size:calc(14px*var(--k))}
+.stat .sp{margin-left:auto}
+.card{margin:0 16px 8px;padding:12px 14px;border-radius:14px;background:var(--panel);display:flex;flex-direction:column;gap:8px}
+.card .t{display:flex;align-items:center;gap:8px;font-size:calc(15px*var(--k));font-weight:600}
+.card .t .gl{margin-left:auto}
+.card .n{display:flex;align-items:center;gap:8px;font-size:calc(14px*var(--k));font-variant-numeric:tabular-nums;color:var(--text)}
+.card .n .mut{color:var(--muted);font-size:calc(12px*var(--k))}
+.field{margin:12px 16px 4px;height:48px;border-radius:12px;background:#26262A;border:1px solid #3A3A3F;display:flex;align-items:center;padding:0 12px 0 16px;font-size:calc(16px*var(--k))}
+.field.err{border:2px solid var(--fail)}
+.field .gl{margin-left:auto}
+.cond{margin:0 24px 8px;font-size:calc(12px*var(--k));color:var(--muted);display:flex;justify-content:space-between}
+.sw{width:52px;height:32px;border-radius:16px;background:#3A3A3F;position:relative;flex-shrink:0}
+.sw::after{content:"";position:absolute;top:4px;left:4px;width:24px;height:24px;border-radius:12px;background:#A0A0A4}
+.sw.on{background:#EDEDEA}.sw.on::after{left:24px;background:#111}
+.safe{padding:4px 16px 12px;font-size:calc(13px*var(--k));color:#C9C9C4;line-height:1.55;border-bottom:1px solid #1F1F22}
+/* 部品の一覧 */
+.gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-top:10px}
+.gal .c{background:#141416;border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:6px;font-size:12px}
+.gal .c .v{display:flex;align-items:center;gap:8px;min-height:48px}
+.gal .c b{font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Loupe Issue #17 — 見える状態の文を、文字以外の表現へ統一する</h1>
+<p class="lead">このページの説明文はデザイン検査用です。端末の枠の中には状態の文を出しません（操作名・機能の見出し・写真のメタデータ・安全確認・数値と単位は残します）。写真はダミーの色面、クラウドは FLAG_SECURE のため合成の画面です。</p>
+
+<div class="controls" role="group" aria-label="共通の条件">
+<span><span class="lb">幅</span><span class="seg" id="oW"><button data-v="320" aria-pressed="false">320dp</button><button data-v="400" aria-pressed="true">400dp</button></span></span>
+<span><span class="lb">文字</span><span class="seg" id="oK"><button data-v="1" aria-pressed="true">1.0倍</button><button data-v="1.3" aria-pressed="false">1.3倍</button></span></span>
+<label class="tg"><input type="checkbox" id="oFast"> 時間を早送り（×10：長時間の表示を早く確認）</label>
+</div>
+
+<h2 class="sec">1. 共通の状態部品</h2>
+<p class="note">#36の明示状態（UNKNOWN / RUNNING / WAITING / PAUSED / COMPLETE / PARTIAL / FAILED / AUTH_REQUIRED）と、失敗の原因を、形で区別します。色は補助で、形だけでも見分けられます。</p>
+<div class="gal" id="gal"></div>
+
+<h2 class="sec">2. 代表画面（操作できる状態遷移）</h2>
+<div class="controls" role="group" aria-label="画面">
+<span><span class="lb">画面</span><span class="seg" id="oScr">
+<button data-v="viewer" aria-pressed="true">写真の詳細</button><button data-v="burst" aria-pressed="false">連写</button><button data-v="share" aria-pressed="false">共有</button><button data-v="main" aria-pressed="false">写真一覧</button><button data-v="cloud" aria-pressed="false">クラウド</button><button data-v="tag" aria-pressed="false">タグ</button><button data-v="sync" aria-pressed="false">同期の設定</button><button data-v="dash" aria-pressed="false">処理の状況</button>
+</span></span>
+</div>
+<div class="controls" id="scn" role="group" aria-label="場面"></div>
+<div class="stage">
+<div class="dev" id="dev"></div>
+<div class="side"><div class="box" id="ax"></div><div class="box" id="chk"></div><div class="box" id="log"></div></div>
+</div>
+
+<h2 class="sec">3. 部品の数値・時間・読み上げ</h2>
+<div class="spec">
+<table class="t">
+<tr><th>部品</th><th>形と寸法</th><th>時間と消え方</th><th>読み上げ（AX）</th></tr>
+<tr><td>状態の印（Glyph）</td><td>24dpの枠に20dpで描く。線1.8dp。RUNNING＝回る弧（進み具合が分かるときは弧の長さ）、WAITING＝時計、PAUSED＝2本の縦棒、COMPLETE＝白系の塗りの丸に黒のチェック、PARTIAL＝チェックの丸の右下に小さな「!」、FAILED＝三角の「!」（#FF8A7A）、AUTH_REQUIRED＝鍵、UNKNOWN＝点線の丸に「?」</td><td>—</td><td>contentDescription に旧の文をそのまま（例：「元のファイルを読み込んでいます」）</td></tr>
+<tr><td>原因の印</td><td>24dpの枠。ネット＝雲に斜線、容量＝記憶媒体に「!」、権限＝盾に斜線、認証＝鍵、TLS＝盾に×、許可されていない接続先＝地球に斜線、共有先がない＝アプリの格子に斜線、形式が合わない＝ファイルに×、不明＝「?」</td><td>—</td><td>失敗の文の全文（原因と、どうすれば戻れるかまで）</td></tr>
+<tr><td>読み込み中の印</td><td>回る弧の印を、決まった場所（写真の右上の隅・ボタンのアイコンの位置・行の右端）に置く。場所はあらかじめ空けておき、出ても配置は動かない</td><td>開始から<b>400ms</b>は何も出さない。出たら最低<b>600ms</b>は出し、ちらつかせない。終わったら150msで消える</td><td>400msを超えたときに1回だけ polite で知らせる</td></tr>
+<tr><td>長い処理の印（Marker）</td><td>高さ28dpの丸い札：印＋数値。進み具合が分かるときは「5/12」、分からないときは経過の時間を分の単位で「&lt;1分」「2分」（1分ごとにしか変えない）。中止などの既存の操作があれば並べる</td><td>開始から<b>8秒</b>で、読み込み中の印からこの札に変わる</td><td>数値も含めて読む（「12枚中5枚を準備しています」）</td></tr>
+<tr><td>成功の合図（Pip）</td><td>直径40dpの丸（#26262A、線1dp #3A3A3F）にCOMPLETEの印。押した操作のすぐ上に出す。文字はない</td><td><b>900ms</b>出して、150msで消える。重ねて出さない（新しいものに置き換える）</td><td>旧のトーストの文を polite で1回（例：「タグを保存しました」）</td></tr>
+<tr><td>中止・登録済みの合図</td><td>Pipと同じ形で、印だけ変える（中止＝丸の中の四角、登録済み＝線だけのチェック）</td><td>Pipと同じ</td><td>旧の文を polite で1回</td></tr>
+<tr><td>失敗の印（持続）</td><td>失敗した操作や項目に付ける。ボタンなら右上に18dpの印（三角の「!」か原因の印）、行や見出しなら28dpの札（原因の印＋数）で線1.5dp #FF8A7A。札は48dpのタップ領域を持ち、押すと<b>その場の既存の操作</b>（再試行・ログインなど）を行う</td><td>解決するか、利用者が同じ操作をやり直すまで消さない。自動で消さない</td><td>assertive ではなく polite で1回。名前は「失敗の全文＋操作名」（例：「接続できませんでした。ネットワークを確認してください。再試行」）</td></tr>
+<tr><td>空の状態</td><td>48dpの点線の枠の印を中央に。既存の操作（新しいタグなど）があれば下に並べる</td><td>—</td><td>「タグはまだありません」など旧の文</td></tr>
+<tr><td>入力のエラー</td><td>入力欄の枠を2dp #FF8A7A にし、右端に三角の「!」。入力の条件（1〜80文字）と文字数は残す</td><td>入力が直るまで</td><td>入力欄の error に旧の文（「1〜80文字で入力してください」）</td></tr>
+<tr><td>品質の印（写真の詳細）</td><td>写真の右上の隅に高さ28dpの札：格子の印（プレビュー）＋読み込み中は回る弧。原本の読み込みに失敗してプレビューだけのときは、格子＋三角の「!」の札が残り、押すと再試行</td><td>原本が出たら150msで消える。別の写真へ移ったら、すぐ消す（持ち越さない）</td><td>「プレビューを表示しています。元のファイルを読み込めませんでした。再試行」</td></tr>
+</table>
+
+<h3 style="font-size:16px;margin:24px 0 8px">割当表（棚卸しA〜I）</h3>
+<table class="t" id="assign"></table>
+
+<h3 style="font-size:16px;margin:24px 0 8px">#36の状態の扱い</h3>
+<ul>
+<li>旧のデータ、知らないコード、実行の主体がない RUNNING は UNKNOWN（点線の「?」）として出す。</li>
+<li>プレビューの ready / total / failed は、総数の走査が終わったときだけ数で出す。現行JobStateでcountsKnown=falseならready/total/failedすべて「—」、割合とバーを出さない（0や100%にしない）。</li>
+<li>failed は ThumbHash の失敗で ready と重なることがあるので、total − ready − failed で残りを出さない。</li>
+<li>同期の1バッチの終わりは WAITING か PARTIAL。全体を COMPLETE にしない。</li>
+<li>lastUpdated は実際の時刻だけ出し、測っていないときは「—」。ThumbHash だけの件数と同期全体の総数は、今は未計測なので「—」。</li>
+</ul>
+
+<h3 style="font-size:16px;margin:24px 0 8px">残すもの・範囲外</h3>
+<ul>
+<li>残す：操作名（再試行・中止・選択に戻る・停止して写真を見る・結果を見る など）、機能の見出し、写真のメタデータ、安全確認、数値と単位、同期の削除の条件・機種・日付の基準・許可の意味・有効化の確認文、入力の条件。</li>
+<li>空の状態の文は、#14では残すとしていたが、#17の「全画面で状態の文をなくす」に合わせて印と既存の操作に置き換える（読み上げには残す）。#17の全画面要件に基づき採用。</li>
+<li>詳細を開くと旧の長い文が出る、という作り方はしない。</li>
+<li>範囲外：タグの推論のロジック（#1）、共有の送信の条件、写真と操作の配置（#8）。</li>
+<li>フォントはブラウザとAndroidで数%ずれることがある。</li>
+</ul>
+</div>
+</div>
+
+<script>
+(function () {
+  /* ===== 印（SVG） ===== */
+  const S = (p, extra) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"' + (extra || '') + '>' + p + '</svg>';
+  const arc = (p) => { const a = Math.max(0.02, Math.min(0.999, p)) * 2 * Math.PI; const x = 12 + 8 * Math.sin(a), y = 12 - 8 * Math.cos(a); return '<circle cx="12" cy="12" r="8" stroke="currentColor" stroke-opacity=".22"></circle><path d="M12 4A8 8 0 ' + (p > 0.5 ? 1 : 0) + ' 1 ' + x.toFixed(2) + ' ' + y.toFixed(2) + '"></path>'; };
+  const G = {
+    run: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke-opacity=".22"></circle><path class="spin" d="M12 4a8 8 0 0 1 8 8"></path></svg>',
+    prog: (p) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">' + arc(p) + '</svg>',
+    wait: S('<circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"></path>'),
+    pause: S('<circle cx="12" cy="12" r="8.5"></circle><path d="M10 9v6M14 9v6"></path>'),
+    done: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.5" fill="#EDEDEA"></circle><path d="M7.8 12.3l2.8 2.8 5.6-5.8" fill="none" stroke="#111" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg>',
+    partial: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8.5" fill="none" stroke="#EDEDEA" stroke-width="1.8"></circle><path d="M7.3 11.2l2.5 2.5 4.8-5" fill="none" stroke="#EDEDEA" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path><circle cx="18.5" cy="18.5" r="5" fill="#0F0F10"></circle><path d="M18.5 15.8v3M18.5 21v.1" stroke="#FF8A7A" stroke-width="1.8" stroke-linecap="round"></path></svg>',
+    fail: S('<path d="M12 4l9 15.5H3z"></path><path d="M12 10v4.5M12 17.2v.1"></path>'),
+    auth: S('<rect x="5.5" y="10.5" width="13" height="9.5" rx="2"></rect><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"></path>'),
+    unknown: S('<circle cx="12" cy="12" r="8.5" stroke-dasharray="2.2 2.2"></circle><path d="M9.8 9.6a2.3 2.3 0 1 1 3.2 2.1c-.7.3-1 .8-1 1.5v.4M12 16.6v.1"></path>'),
+    net: S('<path d="M7 18h10.5a3.5 3.5 0 0 0 .3-7A5.5 5.5 0 0 0 7.2 9.5 4.3 4.3 0 0 0 7 18z"></path><path d="M4 4l16 16"></path>'),
+    storage: S('<rect x="6" y="3.5" width="12" height="17" rx="2"></rect><path d="M9 3.5v4M12 3.5v4M15 3.5v4"></path><path d="M12 11v4M12 17.6v.1"></path>'),
+    perm: S('<path d="M12 3.5l7 3v5c0 4.2-3 7.4-7 9-4-1.6-7-4.8-7-9v-5z"></path><path d="M7 7l10 10"></path>'),
+    key: S('<circle cx="8" cy="14" r="3.8"></circle><path d="M10.8 11.3L19 3.5M16 6.5l2 2M14 8.5l1.5 1.5"></path>'),
+    tls: S('<path d="M12 3.5l7 3v5c0 4.2-3 7.4-7 9-4-1.6-7-4.8-7-9v-5z"></path><path d="M9.5 10l5 5M14.5 10l-5 5"></path>'),
+    host: S('<circle cx="12" cy="12" r="8.5"></circle><path d="M3.5 12h17M12 3.5c2.5 2.7 2.5 14.3 0 17M12 3.5c-2.5 2.7-2.5 14.3 0 17"></path><path d="M5 5l14 14"></path>'),
+    noapp: S('<rect x="4" y="4" width="6.5" height="6.5" rx="1.5"></rect><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"></rect><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"></rect><path d="M14 14l6 6"></path>'),
+    format: S('<path d="M6.5 3.5h7.5l4 4v13h-11.5z"></path><path d="M14 3.5v4h4"></path><path d="M9.5 12.5l5 5M14.5 12.5l-5 5"></path>'),
+    q: S('<circle cx="12" cy="12" r="8.5"></circle><path d="M9.8 9.6a2.3 2.3 0 1 1 3.2 2.1c-.7.3-1 .8-1 1.5v.4M12 16.6v.1"></path>'),
+    stop: S('<circle cx="12" cy="12" r="8.5"></circle><rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" stroke="none"></rect>'),
+    already: S('<circle cx="12" cy="12" r="8.5"></circle><path d="M8.3 12.3l2.6 2.6 5-5.2"></path>'),
+    empty: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="4 4" aria-hidden="true"><rect x="7" y="9" width="34" height="30" rx="6"></rect></svg>',
+    preview: S('<rect x="4" y="4" width="7" height="7" rx="1"></rect><rect x="13" y="4" width="7" height="7" rx="1"></rect><rect x="4" y="13" width="7" height="7" rx="1"></rect><rect x="13" y="13" width="7" height="7" rx="1"></rect>'),
+    view: S('<path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"></path><circle cx="12" cy="12" r="2.8"></circle>'),
+    auto: S('<path d="M3.8 12.2V4.8a1 1 0 0 1 1-1h7.4l8 8a1.4 1.4 0 0 1 0 2l-6.2 6.2a1.4 1.4 0 0 1-2 0z"></path><path d="M8 6.5v3M6.5 8h3"></path>'),
+    tag: S('<path d="M3.8 12.2V4.8a1 1 0 0 1 1-1h7.4l8 8a1.4 1.4 0 0 1 0 2l-6.2 6.2a1.4 1.4 0 0 1-2 0z"></path><circle cx="8.3" cy="8.3" r="1.4"></circle>'),
+    notag: S('<path d="M3.8 12.2V4.8a1 1 0 0 1 1-1h7.4l8 8a1.4 1.4 0 0 1 0 2l-6.2 6.2a1.4 1.4 0 0 1-2 0z" stroke-dasharray="2.5 2.5"></path>'),
+    share: S('<circle cx="18" cy="5.5" r="2.5"></circle><circle cx="6" cy="12" r="2.5"></circle><circle cx="18" cy="18.5" r="2.5"></circle><path d="M8.2 10.8l7.6-4.1M8.2 13.2l7.6 4.1"></path>'),
+    more: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5.5" r="1.7"></circle><circle cx="12" cy="12" r="1.7"></circle><circle cx="12" cy="18.5" r="1.7"></circle></svg>',
+    login: S('<circle cx="9" cy="8" r="3.5"></circle><path d="M3 19c.8-3.2 3.2-5 6-5"></path><path d="M14 13h7M18 10l3 3-3 3"></path>'),
+    sync: S('<path d="M19 8.5A7.5 7.5 0 0 0 5.6 7.4"></path><path d="M19 4v4.5h-4.5"></path><path d="M5 15.5a7.5 7.5 0 0 0 13.4 1.1"></path><path d="M5 20v-4.5h4.5"></path>'),
+    ccheck: S('<path d="M7 18.5h10.5a3.5 3.5 0 0 0 .3-7A5.5 5.5 0 0 0 7.2 10 4.3 4.3 0 0 0 7 18.5z"></path><path d="M9.5 14l2 2 3.5-3.8"></path>'),
+    retry: S('<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"></path><path d="M19.5 4.5v4h-4"></path>'),
+    best: S('<path d="M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z"></path>'),
+    plus: S('<path d="M12 5v14M5 12h14"></path>'),
+    save: S('<path d="M5 4h11l3 3v13H5z"></path><path d="M8 4v5h7V4M8 20v-6h8v6"></path>')
+  };
+  const gl = (k, cls, label) => '<span class="gl' + (cls ? ' ' + cls : '') + '"' + (label ? ' role="img" aria-label="' + label + '"' : ' aria-hidden="true"') + '>' + (typeof G[k] === 'function' ? '' : G[k]) + '</span>';
+  const glp = (p, label) => '<span class="gl" role="img" aria-label="' + label + '">' + G.prog(p) + '</span>';
+  const mk = (inner, fail, label, act) => (act ? '<button class="mkbtn" data-act="' + act + '" aria-label="' + label + '">' : '<span role="img" aria-label="' + label + '" style="display:inline-flex">') + '<span class="mk' + (fail ? ' fail' : '') + '" aria-hidden="true">' + inner + '</span>' + (act ? '</button>' : '</span>');
+
+  /* ===== 共通の条件 ===== */
+  const O = { w: 400, k: 1, fast: false, scr: 'viewer' };
+  const T = (ms) => (O.fast ? ms / 10 : ms);
+  const SHOW_DELAY = 400, MIN_VIS = 600, LONG = 8000, PIP = 900;
+
+  /* ===== 1. 部品の一覧 ===== */
+  const GAL = [
+    ['RUNNING（短い）', gl('run'), '400ms後に出す・最低600ms', '「読み込んでいます」'],
+    ['RUNNING（進み具合）', glp(0.4, '進み具合 40%'), '弧の長さ＝割合（分かるときだけ）', '「12枚中5枚」'],
+    ['RUNNING（長い）', mk(gl('run') + '<span>5/12</span>', false, '12枚中5枚を準備しています'), '8秒から札に。数値は残す', '数値まで読む'],
+    ['WAITING', gl('wait'), '順番待ち', '「待機中です」'],
+    ['PAUSED（閲覧優先）', mk(gl('pause') + gl('view', 'muted'), false, '一時停止中。写真の閲覧を優先しています'), '停止の印＋原因の印', '原因まで読む'],
+    ['COMPLETE', gl('done'), '一瞬の合図は900ms', '「完了しました」'],
+    ['PARTIAL', gl('partial'), '一部だけ失敗', '「一部を処理できませんでした」'],
+    ['FAILED', gl('fail', 'fail'), '持続。自動で消さない', '原因と戻り方まで'],
+    ['AUTH_REQUIRED', gl('auth'), 'ログインへつなぐ', '「ログインが必要です」'],
+    ['UNKNOWN', gl('unknown', 'muted'), '旧データ・不明コード', '「状態を確認できません」'],
+    ['原因：ネット', mk(gl('net', 'fail'), true, '接続できませんでした。ネットワークを確認してください'), '失敗の札', '全文'],
+    ['原因：容量', mk(gl('storage', 'fail'), true, '端末の空き容量が足りません'), '', ''],
+    ['原因：権限', mk(gl('perm', 'fail'), true, '写真へのアクセスが許可されていません'), '', ''],
+    ['原因：認証', mk(gl('key', 'fail'), true, 'ログインの有効期限が切れています'), '', ''],
+    ['原因：TLS', mk(gl('tls', 'fail'), true, '安全な接続を確認できませんでした'), '', ''],
+    ['原因：接続先', mk(gl('host', 'fail'), true, '許可されていない接続先です'), '', ''],
+    ['原因：共有先なし', mk(gl('noapp', 'fail'), true, '共有できるアプリがありません'), '', ''],
+    ['原因：形式', mk(gl('format', 'fail') + '<span>RAW</span>', true, 'この共有先はRAWを受け取れません'), '形式名は残す', ''],
+    ['原因：不明', mk(gl('q', 'fail'), true, '原因が分からない失敗です'), '', ''],
+    ['成功の合図', '<span style="position:relative;width:40px;height:40px;display:inline-block"><span class="pip" style="position:absolute;left:0;top:0">' + gl('done') + '</span></span>', '900ms→150msで消える', 'politeで1回'],
+    ['中止の合図', '<span style="position:relative;width:40px;height:40px;display:inline-block"><span class="pip" style="position:absolute;left:0;top:0">' + gl('stop') + '</span></span>', '', '「中止しました」'],
+    ['登録済みの合図', '<span style="position:relative;width:40px;height:40px;display:inline-block"><span class="pip" style="position:absolute;left:0;top:0">' + gl('already') + '</span></span>', '', '「すでに登録されています」'],
+    ['品質の印', mk(gl('preview') + gl('run'), false, 'プレビューを表示しています。元のファイルを読み込んでいます'), '写真の右上', ''],
+    ['空の状態', '<span class="gl muted" style="width:48px;height:48px" role="img" aria-label="まだありません">' + G.empty.replace('viewBox="0 0 48 48"', 'viewBox="0 0 48 48" style="width:48px;height:48px"') + '</span>', '中央に', '']
+  ];
+  function renderGal() {
+    document.getElementById('gal').innerHTML = GAL.map((g) => '<div class="c"><b>' + g[0] + '</b><div class="v">' + g[1] + '</div><span class="note" style="font-size:11.5px">' + [g[2], g[3] ? 'AX：' + g[3] : ''].filter(Boolean).join(' ／ ') + '</span></div>').join('');
+  }
+
+  /* ===== 割当表 ===== */
+  const AS = [
+    ['A 写真一覧・アルバム', '読み込み中／写真の一覧を準備しています／写真がありません／読み込めませんでした／更新に失敗（保存済みの一覧を表示）', '仮のタイル（文字なし）＋400ms後に見出しの右に回る弧（分かれば進み具合）／空の印／失敗の印＋［再試行］／一覧はそのまま、見出しの件数の右に失敗の札（押すと再試行）', '件数・アルバム名'],
+    ['B 連写', 'heroの読み込み中・失敗の文／stripの待機の番号・回る印・失敗の！／読み込み済み n/N枚・失敗数／再試行', 'heroは写真を先に描く（読み込み中は写真の右上に回る弧）。stripは各サムネイルで 番号・回る弧・三角の！。「n/N枚」の文は消し、失敗があれば失敗の札「!1」＋［再試行］。順位の保存の失敗は［1位にする］に失敗の印', '位置 n/N、順位'],
+    ['C 写真の詳細', '元のファイルを読み込み中／小さいプレビュー／失敗（プレビューあり・なし）', 'プレビューは少しぼかして出し、右上に品質の札（格子＋回る弧）。原本が出たら消える。失敗でプレビューだけ：格子＋！の札が残り、押すと再試行。プレビューもないとき：中央に失敗の印＋［再試行］。スワイプで別の写真へ移ったら印も消す', '写真・ファイル名・カメラの情報、前後・共有'],
+    ['D 共有', 'n枚を準備中（RAW／JPEG）／失敗／共有先がない／形式が合わない／キャンセル', '見出し「12枚を共有 · JPEG」（操作名・数・形式名）＋進み具合のバー＋「5/12」＋［中止］／失敗：原因の印＋「失敗の数/全体」＋［再試行］［選択に戻る］／共有先なし・形式：原因の印（形式名は残す）／中止：中止の合図。選択は保つ', '枚数・形式名'],
+    ['E タグ', 'タグの読み込み／空／保存中／保存の成功・失敗のトースト／タグあり・なし・自動・手動／解析 n/N・取得失敗数・自動付与数／処理中・完了・失敗の見出し', '仮の行／空の印＋［新しいタグ］／保存ボタンのアイコンが回る弧に（名前は変えない）／成功の合図・ボタンに失敗の印／タグの印：手動＝塗り、自動＝＋つき、なし＝点線／解析は数値＋状態の印、失敗数は失敗の札、自動付与数は自動の印＋数／見出しは機能名だけ＋状態の印。入力エラーは枠と！、条件「1〜80文字」は残す', '「停止して写真を見る」「結果を見る」、タグ名'],
+    ['F クラウド', '接続中／成功／失敗／ログイン不足／TLS・許可されていない接続先／検証・保存・復元中・結果／ログアウトの結果／busy', '最初は状態の欄なし。状態の行：印＋（実時刻）。失敗は原因の印＋［再試行］。ログイン不足は鍵の印＋［ログイン］ボタンに点。検証などは進み具合の弧と数。ログアウトは合図。busyは dock を押せなくし、実行中の操作のアイコンを回る弧に。自動の送信・再試行はしない', 'ログイン・同期の設定・接続と確認'],
+    ['G 同期の設定', '集計中／失敗／同期と自動削除のオン・オフ・権限／背景の処理の状態', '数の場所に「—」と回る弧／失敗の札＋［再試行］／スイッチの状態はスイッチで、権限がないときは鍵の印＋［許可］／背景の処理は#36の状態の印', '削除の条件・機種・日付の基準・許可の意味・有効化の確認文'],
+    ['H 写真のプレビュー（#16）', '準備済み ready/total・failed／閲覧優先の停止・容量不足・未確認', '数値「1,180/1,284」（総数が未計測なら「1,180/—」でバーなし）、失敗の札「!3」、状態の印＋原因の印。#16の一覧と詳細も同じ部品。最終更新は実時刻か「—」', '機能名・数値'],
+    ['I 全画面のトースト', '順位の保存に失敗／読み取り許可の保存に失敗／登録済み／中止 など', '成功＝合図（900ms）、失敗＝その操作に持続する失敗の印（押すと既存の操作をやり直す）、登録済み・中止＝合図。原因は印で区別し、AXに全文', '—']
+  ];
+  function renderAssign() {
+    document.getElementById('assign').innerHTML = '<tr><th>対象</th><th>旧の状態の文</th><th>新の表現</th><th>残す文字</th></tr>' + AS.map((r) => '<tr><td>' + r.join('</td><td>') + '</td></tr>').join('');
+  }
+
+  /* ===== 2. 代表画面 ===== */
+  let st = {}, timers = [], log = [], axLog = [];
+  const clear = () => { timers.forEach(clearTimeout); timers = []; };
+  const later = (ms, fn) => { timers.push(setTimeout(fn, T(ms))); };
+  const say = (t) => { axLog.unshift(t); axLog = axLog.slice(0, 8); };
+  const add = (t) => { log.unshift(t); log = log.slice(0, 10); };
+  const dev = document.getElementById('dev');
+  const grad = (i) => 'linear-gradient(160deg,' + ['#a9c3d8,#69736a', '#7b5b45,#2a201b', '#3f4a3a,#1d241c', '#5b6168,#2a2d31', '#eee5d5,#a89a83', '#34425d,#07080b'][i % 6] + ')';
+  const dock = (items) => '<div class="dock" role="group">' + items.map((x) => '<button class="db" data-act="' + (x.act || 'noop') + '"' + (x.dis ? ' disabled' : '') + (x.aria ? ' aria-label="' + x.aria + '"' : '') + '><span class="ic">' + (x.icon.startsWith('<') ? x.icon : G[x.icon]) + '</span><span class="lbl">' + x.label + '</span>' + (x.badge || '') + '</button>').join('') + '</div>';
+  const badge = (k) => '<span class="badge" aria-hidden="true">' + G[k] + '</span>';
+  /* 遅れて出す読み込み中の印：400msまでは出さず、出たら最低600ms */
+  function runTask(key, dur, done) {
+    st[key] = { phase: 'quiet', t0: Date.now() };
+    later(SHOW_DELAY, () => { if (st[key] && st[key].phase === 'quiet') { st[key].phase = 'show'; st[key].shownAt = Date.now(); say(st.ax || '読み込んでいます'); render(); } });
+    later(LONG, () => { if (st[key] && st[key].phase === 'show') { st[key].phase = 'long'; render(); } });
+    if (dur != null) later(dur, () => finish(key, done));
+  }
+  function finish(key, done) {
+    const s = st[key]; if (!s) return;
+    const wait = s.phase === 'quiet' ? 0 : Math.max(0, T(MIN_VIS) - (Date.now() - (s.shownAt || Date.now())));
+    timers.push(setTimeout(() => { delete st[key]; done && done(); render(); }, wait));
+  }
+  const elapsed = (key) => { const s = st[key]; if (!s) return ''; const m = Math.floor((Date.now() - s.t0) / T(60000)); return m < 1 ? '<1分' : m + '分'; };
+  function pip(kind, anchor, ax) { st.pip = { kind: kind, anchor: anchor }; say(ax); render(); later(PIP, () => { const p = dev.querySelector('.pip'); if (p) p.classList.add('out'); later(150, () => { delete st.pip; render(); }); }); }
+  function pipHTML() {
+    if (!st.pip) return '';
+    const a = dev.querySelector('[data-anchor="' + st.pip.anchor + '"]');
+    let x = O.w / 2 - 20, y = 560;
+    if (a) { const d = dev.getBoundingClientRect(), r = a.getBoundingClientRect(); x = r.left - d.left + r.width / 2 - 20; y = r.top - d.top - 46; }
+    return '<span class="pip" style="left:' + x + 'px;top:' + y + 'px" aria-hidden="true">' + G[st.pip.kind] + '</span>';
+  }
+
+  /* 各画面の場面 */
+  const SC = {
+    viewer: [['short', '原本 200ms（何も出ない）'], ['ok', '原本 1.5秒で成功'], ['long', '原本 長時間'], ['failP', '原本失敗・プレビューあり'], ['failN', '原本失敗・プレビューなし'], ['unknown', '状態が不明'], ['swipe', '次の写真へスワイプ']],
+    burst: [['open', '連写を開く（順に読み込み）'], ['failRow', '1枚失敗'], ['bestFail', '順位の保存に失敗'], ['bestOk', '1位にする（成功）']],
+    share: [['prep', '12枚を準備（JPEG）'], ['prepLong', '準備が長い（RAW）'], ['fail', '失敗（ネット）'], ['noapp', '共有先がない'], ['format', '形式が合わない（RAW）']],
+    main: [['loading', '読み込み中'], ['index', '写真の一覧を準備（長い）'], ['empty', '空'], ['fail', '読み込み失敗'], ['refresh', '更新に失敗（一覧は保持）'], ['ok', '通常']],
+    cloud: [['init', '最初（状態なし）'], ['conn', '接続を確認（成功）'], ['connFail', '接続に失敗（ネット）'], ['tls', 'TLSの失敗'], ['host', '許可されていない接続先'], ['auth', 'ログインが必要'], ['verify', '検証（長い・一部失敗）'], ['logout', 'ログアウト']],
+    tag: [['loading', 'タグの読み込み'], ['empty', '空'], ['list', '一覧（自動・手動・なし）'], ['saveOk', '保存（成功）'], ['saveFail', '保存（失敗）'], ['input', '名前の入力エラー'], ['ana', '解析 n/N・失敗・自動']],
+    sync: [['count', '集計中'], ['countFail', '集計に失敗'], ['perm', '権限がない'], ['bg', '背景の処理（1バッチ終了＝待機）'], ['unknown', '背景の処理が不明']],
+    dash: [['a', '準備済み・閲覧優先で停止・一部失敗'], ['b', '総数未計測・容量不足・不明'], ['c', '進行中（長い）・待機']]
+  };
+  function setScene(sc) {
+    clear(); st = { scene: sc }; add('場面：' + (SC[O.scr].find((x) => x[0] === sc) || [0, sc])[1]);
+    const s = O.scr;
+    if (s === 'viewer') {
+      st.photo = st.photo != null ? st.photo : 0;
+      if (sc === 'short') { st.preview = true; st.ax = '元のファイルを読み込んでいます'; runTask('orig', 200, () => { st.orig = 'ok'; }); }
+      if (sc === 'ok' || sc === 'long' || sc === 'failP' || sc === 'swipe') st.ax = 'プレビューを表示しています。元のファイルを読み込んでいます';
+      if (sc === 'failN') st.ax = '写真を読み込んでいます';
+      if (sc === 'ok') { st.preview = true; runTask('orig', 1500, () => { st.orig = 'ok'; say('元のファイルを表示しました'); }); }
+      if (sc === 'long') { st.preview = true; runTask('orig', null); }
+      if (sc === 'failP') { st.preview = true; runTask('orig', 1200, () => { st.orig = 'failP'; say('元のファイルを読み込めませんでした。表示しているのはプレビューです'); }); }
+      if (sc === 'failN') { st.preview = false; runTask('orig', 1200, () => { st.orig = 'failN'; say('写真を読み込めませんでした'); }); }
+      if (sc === 'unknown') { st.preview = true; st.orig = 'unknown'; }
+      if (sc === 'swipe') { st.photo = 1; st.preview = true; add('前の写真の印は持ち越さない'); runTask('orig', 900, () => { st.orig = 'ok'; }); }
+    }
+    if (s === 'burst') {
+      st.ld = ['loading', 'idle', 'idle', 'idle', 'idle']; st.cur = 0;
+      const step = (i) => later(450 * (i + 1), () => { st.ld = st.ld.map((x, j) => (j === i ? ((sc === 'failRow' && i === 3) ? 'failed' : 'shown') : (j === i + 1 || j === i + 2) && x === 'idle' ? 'loading' : x)); render(); if (i < 4) step(i + 1); else if (sc === 'failRow') say('1枚を読み込めませんでした。再試行できます'); });
+      if (sc === 'open' || sc === 'failRow') step(0); else st.ld = ['shown', 'shown', 'shown', 'shown', 'shown'];
+      if (sc === 'bestFail') { st.bestFail = true; say('順位を保存できませんでした。もう一度「1位にする」を押してください'); }
+      if (sc === 'bestOk') { later(50, () => pip('done', 'best', '1位にしました')); }
+    }
+    if (s === 'share') {
+      st.sheet = 'prep'; st.n = 0; st.total = 12; st.fmt = sc === 'prepLong' ? 'RAW' : 'JPEG';
+      if (sc === 'prep' || sc === 'prepLong') { runTask('prep', null); const tick = () => later(sc === 'prepLong' ? 1500 : 300, () => { if (st.sheet !== 'prep') return; st.n++; if (st.n >= st.total) { delete st.prep; st.sheet = null; pip('done', 'sel', '共有先を開きました'); } else { render(); tick(); } }); tick(); }
+      if (sc === 'fail') { st.sheet = 'fail'; st.failN = 3; say('3枚を準備できませんでした。ネットワークを確認して、再試行するか選択に戻ってください'); }
+      if (sc === 'noapp') { st.sheet = 'noapp'; say('共有できるアプリがありません'); }
+      if (sc === 'format') { st.sheet = 'format'; say('この共有先はRAWを受け取れません。JPEGで共有できます'); }
+    }
+    if (s === 'main') {
+      st.list = sc === 'ok' || sc === 'refresh' ? 'ok' : (sc === 'empty' ? 'empty' : (sc === 'fail' ? 'fail' : 'skel'));
+      if (sc === 'loading') { runTask('load', 1600, () => { st.list = 'ok'; }); }
+      if (sc === 'index') { st.idx = 0; runTask('load', null); const tick = () => later(900, () => { st.idx = Math.min(51, st.idx + 7); if (st.idx >= 51) { delete st.load; st.list = 'ok'; say('写真の一覧を準備しました'); } else tick(); render(); }); tick(); st.ax = '写真の一覧を準備しています'; }
+      if (sc === 'fail') say('写真を読み込めませんでした。再試行できます');
+      if (sc === 'refresh') { st.refreshFail = true; say('一覧を更新できませんでした。保存済みの一覧を表示しています。再試行できます'); }
+      if (sc === 'empty') say('写真がありません');
+    }
+    if (s === 'cloud') {
+      st.login = sc !== 'auth';
+      if (sc === 'conn' || sc === 'connFail' || sc === 'tls' || sc === 'host') { st.busy = true; st.ax = '接続を確認しています'; runTask('conn', 1400, () => { st.busy = false; st.res = sc === 'conn' ? 'ok' : sc; say({ conn: '接続できました', connFail: '接続できませんでした。ネットワークを確認してください', tls: '安全な接続を確認できませんでした', host: '許可されていない接続先です' }[sc]); }); }
+      if (sc === 'auth') { st.res = 'auth'; say('ログインが必要です。ログインを押してください'); }
+      if (sc === 'verify') { st.busy = true; st.vn = 0; runTask('conn', null); const tick = () => later(1100, () => { st.vn++; if (st.vn >= 10) { delete st.conn; st.busy = false; st.res = 'partial'; say('10枚中8枚を確認しました。2枚を確認できませんでした'); } else tick(); render(); }); tick(); }
+      if (sc === 'logout') { later(50, () => pip('done', 'menu', 'ログアウトしました')); }
+    }
+    if (s === 'tag') {
+      st.tl = sc === 'loading' ? 'skel' : (sc === 'empty' ? 'empty' : 'list');
+      if (sc === 'loading') runTask('tl', 1500, () => { st.tl = 'list'; });
+      if (sc === 'saveOk' || sc === 'saveFail') { st.saving = true; st.ax = '保存しています'; runTask('save', 1100, () => { st.saving = false; if (sc === 'saveOk') later(10, () => pip('done', 'save', 'タグを保存しました')); else { st.saveFail = true; say('タグを保存できませんでした。もう一度保存を押してください'); } }); }
+      if (sc === 'input') { st.input = true; say('1〜80文字で入力してください'); }
+      if (sc === 'ana') st.ana = true;
+      if (sc === 'empty') say('タグはまだありません');
+    }
+    if (s === 'sync') {
+      if (sc === 'count') { st.ax = '対象を集計しています'; runTask('count', null); }
+      if (sc === 'countFail') { st.countFail = true; say('対象を集計できませんでした。再試行できます'); }
+      if (sc === 'perm') { st.perm = true; say('写真の削除が許可されていません。許可を押して設定してください'); }
+      st.bg = sc === 'bg' ? 'WAITING' : (sc === 'unknown' ? 'UNKNOWN' : 'COMPLETE_HIDDEN');
+    }
+    if (s === 'dash') {
+      if (sc === 'c') { st.ax = '表示用プレビューを準備しています'; runTask('dash', null); }
+    }
+    render();
+  }
+
+  function viewerHTML() {
+    const loading = st.orig == null && (st.orig_task = st.orig) == null && st['orig'];
+    const s = st.orig, task = st['orig'];
+    let badgeH = '';
+    if (task && task.phase === 'show') badgeH = mk(gl('preview') + gl('run'), false, 'プレビューを表示しています。元のファイルを読み込んでいます');
+    if (task && task.phase === 'long') badgeH = mk(gl('preview') + gl('run') + '<span>' + elapsed('orig') + '</span>', false, 'プレビューを表示しています。元のファイルの読み込みに時間がかかっています');
+    if (s === 'failP') badgeH = mk(gl('preview') + gl('fail', 'fail'), true, 'プレビューを表示しています。元のファイルを読み込めませんでした。再試行', 'retryOrig');
+    if (s === 'unknown') badgeH = mk(gl('preview') + gl('unknown', 'muted'), false, 'プレビューを表示しています。元のファイルの状態を確認できません。再試行', 'retryOrig');
+    const showPhoto = st.preview || s === 'ok';
+    const blur = s !== 'ok' && st.preview;
+    const center = s === 'failN' ? '<div class="ctr">' + gl('fail', 'fail', '写真を読み込めませんでした') + '<button class="btn48" data-act="retryOrig">' + G.retry.replace('<svg', '<svg style="width:20px;height:20px"') + '再試行</button></div>' : '';
+    const names = ['P1010403.ORF', 'P1010404.ORF'];
+    return '<div class="hd"><b>写真</b><span class="meta">2/5</span></div><div class="body" style="display:flex;flex-direction:column"><div class="ph" style="flex:1;background:' + (showPhoto ? grad(st.photo) : '#19191B') + '"><div class="' + (blur ? 'blur' : '') + '" style="position:absolute;inset:0;background:' + (showPhoto ? grad(st.photo) : '#19191B') + '"></div><div class="cnr">' + badgeH + '</div>' + center + '</div>' +
+      '<div class="metarow">' + names[st.photo] + ' · OM-1 · 1/250 F4 ISO200</div></div>' + dock([{ icon: 'share', label: '共有' }, { icon: 'more', label: 'その他' }]);
+  }
+  function burstHTML() {
+    const ld = st.ld || [];
+    const fails = ld.filter((x) => x === 'failed').length, pend = ld.filter((x) => x === 'idle' || x === 'loading').length;
+    const hero = ld[0] === 'shown';
+    const strip = '<div class="strip" role="group" aria-label="連写の写真">' + ld.map((x, j) => '<button class="' + (j === st.cur ? 'cur ' : '') + (x === 'failed' ? 'f' : '') + '" aria-label="' + (j + 1) + '枚目' + ({ idle: '、まだ読み込んでいません', loading: '、読み込んでいます', failed: '、読み込めませんでした', shown: '' })[x] + '"><span style="background:' + (x === 'shown' ? grad(j) : (x === 'failed' ? '#1A1414' : '#26262A')) + '">' + (x === 'idle' ? (j + 1) : x === 'loading' ? gl('run') : x === 'failed' ? gl('fail', 'fail') : '') + '</span></button>').join('') + '</div>';
+    const failRow = fails ? '<div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:0 16px 4px">' + mk(gl('fail', 'fail') + '<span>' + fails + '</span>', true, fails + '枚を読み込めませんでした') + '<button class="btn48" data-act="retryBurst">' + G.retry.replace('<svg', '<svg style="width:20px;height:20px"') + '再試行</button></div>' : '';
+    return '<div class="hd"><b>連写 5枚</b><span class="meta">' + (pend ? gl('run', 'muted', '読み込んでいます') : '') + '1/5</span></div><div class="body"><div class="ph" style="height:240px;background:' + (hero ? grad(0) : '#19191B') + '"><div class="cnr">' + (hero ? '' : gl('run', '', '読み込んでいます')) + '</div></div>' + strip + failRow +
+      '<div style="padding:4px 16px;display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn48" data-act="best" data-anchor="best" aria-label="この写真を1位に' + (st.bestFail ? '。順位を保存できませんでした。もう一度押してください' : '') + '">1位にする' + (st.bestFail ? '<span class="badge" style="top:-4px;right:-4px" aria-hidden="true">' + G.fail + '</span>' : '') + '</button><button class="btn48">共有</button></div></div>' +
+      dock([{ icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"></path></svg>', label: '前の写真' }, { icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>', label: '次の写真' }, { icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"></circle><path d="M15 15l5 5"></path></svg>', label: '拡大' }]);
+  }
+  function shareHTML() {
+    let sh = '';
+    const t = st['prep'];
+    if (st.sheet === 'prep') {
+      const p = st.n / st.total;
+      const ind = t && t.phase === 'long' ? mk(gl('run') + '<span>' + st.n + '/' + st.total + '</span>', false, st.total + '枚中' + st.n + '枚を準備しています') : '<span style="font-variant-numeric:tabular-nums;color:var(--muted);font-size:calc(13px*var(--k))" aria-hidden="true">' + st.n + '/' + st.total + '</span>';
+      sh = '<h4 style="display:flex;align-items:center;gap:8px">' + st.total + '枚を共有 · ' + st.fmt + '<span style="margin-left:auto">' + ind + '</span></h4><div class="bar" role="progressbar" aria-label="' + st.total + '枚中' + st.n + '枚を準備しています" aria-valuemin="0" aria-valuemax="' + st.total + '" aria-valuenow="' + st.n + '"><i style="width:' + (p * 100) + '%"></i></div><div class="bt"><button class="btn48" data-act="cancelShare">中止</button></div>';
+    }
+    if (st.sheet === 'fail') sh = '<h4>12枚を共有 · JPEG</h4><div style="display:flex;justify-content:center;padding:0 0 14px">' + mk(gl('net', 'fail') + '<span>3/12</span>', true, '12枚中3枚を準備できませんでした。ネットワークを確認してください') + '</div><div class="bt"><button class="btn48 pri" data-act="retryShare">' + G.retry.replace('<svg', '<svg style="width:20px;height:20px"') + '再試行</button><button class="btn48" data-act="backSel">選択に戻る</button></div>';
+    if (st.sheet === 'noapp') sh = '<h4>12枚を共有 · JPEG</h4><div style="display:flex;justify-content:center;padding:0 0 14px">' + mk(gl('noapp', 'fail'), true, '共有できるアプリがありません') + '</div><div class="bt"><button class="btn48" data-act="backSel">選択に戻る</button></div>';
+    if (st.sheet === 'format') sh = '<h4>12枚を共有 · RAW</h4><div style="display:flex;justify-content:center;padding:0 0 14px">' + mk(gl('format', 'fail') + '<span>RAW</span>', true, 'この共有先はRAWを受け取れません。JPEGで共有できます') + '</div><div class="bt"><button class="btn48 pri" data-act="jpeg">JPEGで共有</button><button class="btn48" data-act="backSel">選択に戻る</button></div>';
+    return '<div class="hd"><b>すべての写真</b><span class="meta">12件選択</span></div><div class="body"><div class="g4">' + Array.from({ length: 28 }, (_, i) => '<i style="background:' + grad(i) + ';' + (i < 12 ? 'outline:3px solid #4C8DFF;outline-offset:-3px' : '') + '"></i>').join('') + '</div></div>' +
+      dock([{ icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>', label: '選択を終了' }, { icon: 'share', label: '共有', act: 'reshare' }]).replace('data-act="reshare"', 'data-act="reshare" data-anchor="sel"') +
+      (sh ? '<button class="dim" data-act="cancelShare" aria-label="閉じる"></button><div class="sheet" role="dialog" aria-modal="true">' + sh + '</div>' : '');
+  }
+  function mainHTML() {
+    const t = st['load'];
+    let meta = '51枚';
+    if (t && t.phase !== 'quiet') meta = (st.scene === 'index' ? glp((st.idx || 0) / 51, '写真の一覧を準備しています。51枚中' + (st.idx || 0) + '枚') + (t.phase === 'long' ? '<span>' + (st.idx || 0) + '/51</span>' : '') : gl('run', 'muted', '読み込んでいます')) + (st.scene === 'index' ? '' : '');
+    if (st.refreshFail) meta = '51枚' + mk(gl('net', 'fail'), true, '一覧を更新できませんでした。保存済みの一覧を表示しています。再試行', 'retryList');
+    let body;
+    if (st.list === 'empty') body = '<div style="padding:120px 0;display:flex;justify-content:center">' + '<span class="gl muted" style="width:48px;height:48px" role="img" aria-label="写真がありません">' + G.empty.replace('viewBox="0 0 48 48"', 'viewBox="0 0 48 48" style="width:48px;height:48px"') + '</span></div>';
+    else if (st.list === 'fail') body = '<div style="padding:120px 0;display:flex;flex-direction:column;align-items:center;gap:12px">' + gl('fail', 'fail', '写真を読み込めませんでした') + '<button class="btn48" data-act="retryList">' + G.retry.replace('<svg', '<svg style="width:20px;height:20px"') + '再試行</button></div>';
+    else body = '<div class="g4' + (st.list === 'skel' ? ' skel' : '') + '">' + Array.from({ length: 32 }, (_, i) => '<i style="background:' + grad(i) + '"></i>').join('') + '</div>';
+    return '<div class="hd"><b>嵐山 10.18</b><span class="meta">' + meta + '</span></div><div class="body">' + body + '</div>' + dock([{ icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8.5"></circle><path d="M8.2 12.3l2.6 2.6 5-5.2"></path></svg>', label: '選択' }, { icon: 'tag', label: 'タグ' }, { icon: 'more', label: 'その他' }]);
+  }
+  function cloudHTML() {
+    const t = st['conn'];
+    let row = '';
+    const time = '<span style="color:var(--muted)">10:42</span>';
+    if (t && t.phase !== 'quiet') row = '<div class="stat" role="status">' + (st.scene === 'verify' ? glp((st.vn || 0) / 10, '10枚中' + (st.vn || 0) + '枚を確認しています') + '<span>' + (st.vn || 0) + '/10</span>' : gl('run', '', '接続を確認しています')) + (t.phase === 'long' && st.scene !== 'verify' ? '<span>' + elapsed('conn') + '</span>' : '') + '</div>';
+    const R = {
+      ok: [gl('done', '', '接続できました'), time, ''],
+      connFail: [mk(gl('net', 'fail'), true, '接続できませんでした。ネットワークを確認してください'), '', 1],
+      tls: [mk(gl('tls', 'fail'), true, '安全な接続を確認できませんでした'), '', 1],
+      host: [mk(gl('host', 'fail'), true, '許可されていない接続先です'), '', 0],
+      auth: [gl('auth', '', 'ログインが必要です'), '', 0],
+      partial: [gl('partial', '', '10枚中8枚を確認しました。2枚を確認できませんでした') + '<span>8/10</span>' + mk(gl('fail', 'fail') + '<span>2</span>', true, '2枚を確認できませんでした'), time, 1]
+    }[st.res];
+    if (R) row = '<div class="stat" role="status">' + R[0] + R[1] + (R[2] ? '<button class="btn48 nw sp" data-act="retryConn">' + G.retry.replace('<svg', '<svg style="width:20px;height:20px"') + '再試行</button>' : '') + '</div>';
+    return '<span style="position:absolute;right:8px;top:8px;font-size:10px;color:#8A8A85;border:1px dashed #3A3A3F;border-radius:6px;padding:1px 6px">合成の画面</span><div class="hd"><b>Amazon Photos</b></div><div class="body">' + row + '</div>' +
+      dock([{ icon: 'login', label: 'ログイン', dis: st.busy, badge: st.res === 'auth' ? '<span class="dot" aria-hidden="true"></span>' : '' }, { icon: 'sync', label: '同期の設定', dis: st.busy }, { icon: st.busy ? G.run : 'ccheck', label: '接続と確認', dis: st.busy, act: 'conn' }]).replace('data-act="conn"', 'data-act="conn" data-anchor="menu"');
+  }
+  function tagHTML() {
+    const t = st['tl'], sv = st['save'];
+    let body = '';
+    if (st.tl === 'skel') body = Array.from({ length: 3 }, () => '<div class="row"><i style="width:44px;height:44px;border-radius:8px;background:#19191B;display:block"></i><i style="width:40%;height:14px;border-radius:7px;background:#19191B;display:block"></i></div>').join('');
+    else if (st.tl === 'empty') body = '<div style="padding:110px 0 0;display:flex;flex-direction:column;align-items:center;gap:16px"><span class="gl muted" style="width:48px;height:48px" role="img" aria-label="タグはまだありません">' + G.empty.replace('viewBox="0 0 48 48"', 'viewBox="0 0 48 48" style="width:48px;height:48px"') + '</span><button class="btn48 pri">' + G.plus.replace('<svg', '<svg style="width:20px;height:20px"') + '新しいタグ</button></div>';
+    else {
+      body = [['空', 'tag', '手動のタグ', 12, 3], ['夕景', 'auto', '自動で付いたタグ', 8, 5], ['紅葉', 'notag', 'まだ付いていない', 0, 0]].map((r) => '<div class="row">' + gl(r[1], r[1] === 'notag' ? 'muted' : '', r[2]) + '<span>' + r[0] + '</span><span class="r"><span aria-label="タグ付き' + r[3] + '枚">' + r[3] + '</span>' + (r[4] ? gl('auto', 'muted', '自動で付いた写真') + '<span>' + r[4] + '</span>' : '') + '</span></div>').join('');
+      if (st.ana) body += '<div class="card" style="margin-top:12px"><div class="t">タグの解析' + gl('partial', '', '解析は一部だけ完了しました') + '</div><div class="n">' + glp(48 / 51, '51枚中48枚を解析しました') + '<span>48/51</span>' + mk(gl('fail', 'fail') + '<span>1</span>', true, '1枚を解析できませんでした') + gl('auto', 'muted', '自動で付けた写真') + '<span>5</span></div><div style="display:flex;gap:8px"><button class="btn48">停止して写真を見る</button><button class="btn48">結果を見る</button></div></div>';
+    }
+    if (st.input) body = '<div class="field err" aria-invalid="true">（81文字のダミーの名前…）' + gl('fail', 'fail', '1〜80文字で入力してください') + '</div><div class="cond"><span>1〜80文字</span><span>81 / 80</span></div>' + body;
+    const saveIcon = st.saving && sv && sv.phase !== 'quiet' ? G.run : G.save;
+    return '<div class="hd"><b>タグ</b>' + (t && t.phase !== 'quiet' ? '<span class="meta">' + gl('run', 'muted', 'タグを読み込んでいます') + '</span>' : '') + '</div><div class="body">' + body + '</div>' +
+      dock([{ icon: 'plus', label: '新しいタグ' }, { icon: saveIcon, label: '保存', act: 'save', dis: st.saving, aria: '保存' + (st.saveFail ? '。タグを保存できませんでした。もう一度押してください' : ''), badge: st.saveFail ? badge('fail') : '' }, { icon: 'more', label: 'その他' }]).replace('data-act="save"', 'data-act="save" data-anchor="save"');
+  }
+  function syncHTML() {
+    const t = st['count'];
+    let num = '<span>1,180枚</span>';
+    if (t && t.phase !== 'quiet') num = '<span aria-hidden="true">—</span>' + gl('run', 'muted', '対象を集計しています');
+    if (st.countFail) num = '<span aria-hidden="true">—</span>' + mk(gl('fail', 'fail'), true, '対象を集計できませんでした。再試行', 'retryCount');
+    const BG = { WAITING: gl('wait', '', '背景の処理：次の実行を待っています'), UNKNOWN: gl('unknown', 'muted', '背景の処理の状態を確認できません'), COMPLETE_HIDDEN: gl('wait', '', '背景の処理：次の実行を待っています') }[st.bg || 'COMPLETE_HIDDEN'];
+    return '<div class="hd"><b>同期の設定</b></div><div class="body">' +
+      '<div class="row">同期<span class="r"><span class="sw on" role="switch" aria-checked="true" aria-label="同期"></span></span></div>' +
+      '<div class="row">端末から自動で削除<span class="r">' + (st.perm ? gl('auth', '', '写真の削除が許可されていません') + '<button class="btn48 nw">許可</button>' : '<span class="sw" role="switch" aria-checked="false" aria-label="端末から自動で削除"></span>') + '</span></div>' +
+      '<div class="safe">クラウドに保存済みの写真を、この端末から削除します。対象は［機種の条件］の写真で、［基準日］から30日たったものです。クラウドの写真は残ります。（安全条件の文は残す・ダミー）</div>' +
+      '<div class="row">対象の写真<span class="r">' + num + '</span></div>' +
+      '<div class="row">背景の処理<span class="r">' + BG + '<span>最終 <span aria-label="最終更新 10:42">10:42</span></span></span></div></div>' +
+      dock([{ icon: 'more', label: 'その他' }]);
+  }
+  function dashHTML() {
+    const sc = st.scene || 'a';
+    const t = st['dash'];
+    const C = {
+      a: [['読み込み中の仮画像', gl('done', '', '完了'), '1,284/1,284', '', ''], ['表示用プレビュー', mk(gl('pause') + gl('view', 'muted'), false, '一時停止中。写真の閲覧を優先しています'), '1,180/1,284', mk(gl('fail', 'fail') + '<span>3</span>', true, '3枚を準備できませんでした'), '10:42'], ['タグのための写真の解析', gl('partial', '', '一部を解析できませんでした'), '50/51', mk(gl('fail', 'fail') + '<span>1</span>', true, '1枚を解析できませんでした'), '10:40']],
+      b: [['読み込み中の仮画像', gl('run', '', '準備しています'), '312/—', '', '—'], ['表示用プレビュー', mk(gl('pause') + gl('storage', 'muted'), false, '一時停止中。端末の空き容量が少なくなっています'), '640/1,284', '', '10:42'], ['タグのための写真の解析', gl('unknown', 'muted', '状態を確認できません'), '—', '', '—']],
+      c: [['読み込み中の仮画像', gl('wait', '', '待機中'), '1,284/1,284', '', '10:30'], ['表示用プレビュー', t && t.phase === 'long' ? mk(gl('run') + '<span>' + elapsed('dash') + '</span>', false, '準備しています') : gl('run', '', '準備しています'), '902/1,284', '', '10:42'], ['タグのための写真の解析', gl('wait', '', '待機中'), '21/51', '', '10:41']]
+    }[sc];
+    return '<div class="hd"><b>処理の状況</b></div><div class="body">' + C.map((c) => {
+      const parts = c[2].split('/');
+      const known = parts[1] && parts[1] !== '—';
+      const p = known ? parseInt(parts[0].replace(/,/g, '')) / parseInt(parts[1].replace(/,/g, '')) : 0;
+      return '<div class="card"><div class="t">' + c[0] + '<span style="margin-left:auto;display:flex;align-items:center">' + c[1] + '</span></div><div class="n"><span>' + c[2] + (c[2] === '—' ? '' : '枚') + '</span>' + c[3] + '<span class="mut" style="margin-left:auto">' + (c[4] === '—' ? '<span aria-label="最終更新は未測定">—</span>' : c[4]) + '</span></div>' + (known ? '<div class="bar" style="margin:0"><i style="width:' + (p * 100) + '%;background:' + (p >= 1 ? '#7FD1A0' : '#EDEDEA') + '"></i></div>' : '') + '</div>';
+    }).join('') + '</div>' + dock([{ icon: G.retry, label: '状況を読み込み直す' }]);
+  }
+
+  function render() {
+    document.documentElement.style.setProperty('--k', O.k); document.documentElement.style.setProperty('--w', O.w + 'px');
+    const H = { viewer: viewerHTML, burst: burstHTML, share: shareHTML, main: mainHTML, cloud: cloudHTML, tag: tagHTML, sync: syncHTML, dash: dashHTML }[O.scr]();
+    dev.innerHTML = H;
+    dev.insertAdjacentHTML('beforeend', pipHTML());
+    // 検査：dev の中に状態の文がないか（許可した語以外）
+    const BAN = /読み込み中|読み込んでいます|準備中|準備しています|失敗しました|できませんでした|しています|完了しました|保存しました|待機中|一時停止|未確認|確認中|集計中|ありません|必要です/;
+    const vis = [...dev.querySelectorAll('*')].filter((e) => e.children.length === 0 && e.offsetParent !== null && !e.closest('[aria-hidden="true"]') && e.textContent.trim()).map((e) => e.textContent.trim());
+    const bad = vis.filter((t) => BAN.test(t));
+    const small = [...dev.querySelectorAll('button')].filter((b) => b.offsetParent !== null).filter((b) => { const r = b.getBoundingClientRect(); return r.height < 48 || r.width < 48; }).filter((b) => !b.closest('.strip'));
+    document.getElementById('chk').innerHTML = '<b>検査（' + O.w + 'dp・文字' + O.k + '倍）</b><br>端末の中の状態の文：' + (bad.length ? '<span class="ngc">' + bad.join(' / ') + '</span>' : '<span class="okc">なし</span>') + '<br>48dp未満のボタン：' + (small.length ? '<span class="ngc">' + small.length + '</span>' : '<span class="okc">なし</span>') + '<br>見えている文字：' + vis.slice(0, 18).join('・');
+    const labs = [...dev.querySelectorAll('[role=img][aria-label], [role=status], button[aria-label], [role=progressbar]')].filter((e) => e.offsetParent !== null).map((e) => e.getAttribute('aria-label')).filter(Boolean);
+    document.getElementById('ax').innerHTML = '<b>読み上げ</b>（印に付けた全文）<br>' + ([...new Set(labs)].slice(0, 8).map((x) => '・' + x).join('<br>') || '—') + '<br><b>通知（polite・1回ずつ）</b><br>' + (axLog.map((x) => '・' + x).join('<br>') || '—');
+    document.getElementById('log').innerHTML = '<b>操作の記録</b><br>' + (log.map((x) => '・' + x).join('<br>') || '—');
+  }
+  dev.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act]'); if (!b) return;
+    const a = b.dataset.act;
+    if (a === 'retryOrig') { add('再試行（原本）'); delete st.orig; runTask('orig', 1200, () => { st.orig = 'ok'; say('元のファイルを表示しました'); }); }
+    else if (a === 'retryBurst') { add('再試行（失敗した写真だけ）'); st.ld = st.ld.map((x) => (x === 'failed' ? 'loading' : x)); later(700, () => { st.ld = st.ld.map((x) => (x === 'loading' ? 'shown' : x)); render(); }); }
+    else if (a === 'best') { if (st.bestFail) { st.bestFail = false; add('［1位にする］をもう一度 → 成功'); later(10, () => pip('done', 'best', '1位にしました')); } else later(10, () => pip('done', 'best', '1位にしました')); }
+    else if (a === 'cancelShare') { if (st.sheet === 'prep') { clear(); delete st.prep; st.sheet = null; add('中止（選択12件は保持）'); later(10, () => pip('stop', 'sel', '共有を中止しました')); } else { st.sheet = null; add('閉じる（選択は保持）'); } }
+    else if (a === 'retryShare' || a === 'jpeg') { add(a === 'jpeg' ? 'JPEGで共有' : '再試行'); setScene('prep'); return; }
+    else if (a === 'backSel') { st.sheet = null; add('選択に戻る（12件を保持）'); }
+    else if (a === 'retryList') { add('再試行（一覧）'); st.refreshFail = false; st.list = st.list === 'fail' ? 'skel' : st.list; runTask('load', 1000, () => { st.list = 'ok'; }); }
+    else if (a === 'retryConn') { add('再試行（利用者が押したときだけ）'); setScene('conn'); return; }
+    else if (a === 'conn') { add('［接続と確認］→ 接続を確認'); setScene('conn'); return; }
+    else if (a === 'save') { add('保存'); setScene(st.saveFail ? 'saveOk' : 'saveOk'); return; }
+    else if (a === 'retryCount') { add('再試行（集計）'); st.countFail = false; setScene('count'); return; }
+    render();
+  });
+  function sceneButtons() {
+    document.getElementById('scn').innerHTML = '<span class="lb">場面</span>' + SC[O.scr].map((s) => '<button class="hw" data-sc="' + s[0] + '">' + s[1] + '</button>').join('');
+    document.querySelectorAll('#scn [data-sc]').forEach((b) => b.addEventListener('click', () => setScene(b.dataset.sc)));
+  }
+  function seg(id, fn) {
+    const el = document.getElementById(id);
+    el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; el.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', x === b ? 'true' : 'false')); fn(b.dataset.v); });
+  }
+  seg('oW', (v) => { O.w = +v; render(); }); seg('oK', (v) => { O.k = +v; render(); });
+  seg('oScr', (v) => { O.scr = v; clear(); log = []; axLog = []; sceneButtons(); setScene(SC[v][v === 'cloud' ? 0 : (v === 'dash' ? 0 : 0)][0]); });
+  document.getElementById('oFast').addEventListener('change', (e) => { O.fast = e.target.checked; });
+  window.__l17 = { O: O, setScene: setScene, render: render, get st() { return st; }, scr: (v) => { O.scr = v; sceneButtons(); setScene(SC[v][0][0]); } };
+  renderGal(); renderAssign(); sceneButtons(); setScene('short');
+const fixture=document.createElement('section');fixture.innerHTML='<h2>Android照合用・状態部品</h2><div id="status-fixture" style="width:320px;--k:1.3;background:#0F0F10">'+['unknown','wait','pause','done','partial','fail','auth','preview'].map(k=>'<div style="height:48px;display:flex;align-items:center;justify-content:center">'+(k==='partial'?mk(gl(k)+'<span>3</span>',false,'一部失敗'):k==='fail'?mk(gl(k,'fail'),true,'失敗','retry'):gl(k))+'</div>').join('')+'</div>';document.querySelector('.wrap').appendChild(fixture);
+const causes=document.createElement('section');causes.innerHTML='<h2>Android照合用・原因別</h2><div id="cause-fixture" style="width:320px;--k:1.3;background:#0F0F10">'+['run','net','storage','perm','tls','host','noapp','format','empty','stop','already'].map(k=>'<div style="height:48px;display:flex;align-items:center;justify-content:center">'+(k==='empty'?'<span class="gl muted" style="width:48px;height:48px">'+G.empty.replace('viewBox="0 0 48 48"','viewBox="0 0 48 48" style="width:48px;height:48px"')+'</span>':gl(k,['net','storage','perm','tls','host','noapp','format'].includes(k)?'fail':''))+'</div>').join('')+'</div>';document.querySelector('.wrap').appendChild(causes);
+})();
+</script>
+</body>
+</html>

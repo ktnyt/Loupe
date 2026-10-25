@@ -247,9 +247,10 @@ public final class MainActivity extends DiagnosticActivity {
     title.setMaxLines(1);
     title.setEllipsize(android.text.TextUtils.TruncateAt.END);
     heading.addView(title);
-    subtitle = label("読み込み中…", 12, MUTED);
+    subtitle = label("", 12, MUTED);
     heading.addView(subtitle);
     header.addView(heading, new LinearLayout.LayoutParams(0, -2, 1));
+    listStatus=new StatusView(this);header.addView(listStatus);
 
     if (!selecting && burstMembers == null) addOtherAlbums();
     root.addView(header);
@@ -303,8 +304,7 @@ public final class MainActivity extends DiagnosticActivity {
         });
     FrameLayout gridFrame = new FrameLayout(this);
     gridFrame.addView(grid, new FrameLayout.LayoutParams(-1, -1));
-    TextView empty = label("表示する写真がありません", 14, MUTED);
-    empty.setGravity(Gravity.CENTER);
+    StatusView empty = status(StatusView.Symbol.EMPTY,"","表示する写真がありません");
     gridFrame.addView(empty, new FrameLayout.LayoutParams(-1, -1));
     grid.setEmptyView(empty);
     body.addView(gridFrame, new LinearLayout.LayoutParams(-1, -1));
@@ -328,7 +328,7 @@ public final class MainActivity extends DiagnosticActivity {
     DiagnosticLog.event("screen.photoMenu", 0);
     new GalleryUi.Sheet(this).setItems(new String[] {"カメラで絞り込み", "タグ", "設定とその他"}, (d, which) -> {
       if (which == 0 && !selecting) chooseFilter();
-      else if (which == 0) toast("選択を終了してからカメラを変更してください");
+      else if (which == 0) feedback(StatusView.Symbol.PAUSED,"選択を終了してからカメラを変更してください",this::endSelection,"選択を終了");
       else if (which == 1) openTags(null);
       else galleryMenu();
     }).setNegativeButton("閉じる", null).show();
@@ -437,9 +437,7 @@ public final class MainActivity extends DiagnosticActivity {
     ImageView hero = new DiagnosticImageView(this);
     hero.setScaleType(ImageView.ScaleType.FIT_CENTER);
     stage.addView(hero, new FrameLayout.LayoutParams(-1, -1));
-    TextView rank = label("", 13, TEXT);
-    rank.setPadding(dp(12), dp(6), dp(12), dp(6));
-    rank.setBackground(GalleryUi.shape(this, 0xcc19191b, 16));
+    StatusView rank = new StatusView(this);
     FrameLayout.LayoutParams badge = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.START);
     badge.setMargins(dp(16), dp(16), dp(16), 0);
     stage.addView(rank, badge);
@@ -454,9 +452,9 @@ public final class MainActivity extends DiagnosticActivity {
     List<PhotoRepository.Photo> members = new ArrayList<>();
     for (int member : burstMembers) members.add(photos.get(member));
     int screenGeneration = generation;
-    TextView loading = label("", 12, MUTED);
+    StatusView loading = new StatusView(this);
     heading.addView(loading);
-    Button retry = button("読み込めなかった写真を再試行", () -> {});
+    Button retry = button("再試行", () -> {});
     final Runnable[] selection = new Runnable[1];
     BurstPreviews previews = new BurstPreviews(this, hero, stage, strip, loading, retry,
         members, this::previewInto, () -> screenGeneration == generation && !isDestroyed(),
@@ -467,14 +465,14 @@ public final class MainActivity extends DiagnosticActivity {
       PhotoRepository.Photo photo = photos.get(member);
       previews.select(burstPosition);
       hero.setContentDescription(photo.name + "、タップで写真を拡大");
-      String status = "順位が未決定";
+      String rankNumber="",rankDescription="順位が未決定";
+      StatusView.Symbol rankSymbol=StatusView.Symbol.UNKNOWN;
       try {
-        PhotoRanking saved = rankingFor(burstMembers);
-        if (saved.done()) status = saved.rankOf(ArchiveStore.key(photo)) + "位 · 順位決定済み";
-        else if (saved.decisions() > 0) status = "順位決めの途中";
-      } catch (Exception e) { status = "順位を読み込めません"; }
-      rank.setText(status);
-      rank.setTextColor(status.contains("位") ? 0xfff5b947 : TEXT);
+        PhotoRanking saved=rankingFor(burstMembers);
+        if(saved.done()){rankNumber=saved.rankOf(ArchiveStore.key(photo))+"位";rankDescription=rankNumber+"、順位決定済み";rankSymbol=StatusView.Symbol.COMPLETE;}
+        else if(saved.decisions()>0){rankDescription="順位決めの途中";rankSymbol=StatusView.Symbol.PAUSED;}
+      }catch(Exception e){rankDescription="順位を読み込めません";rankSymbol=StatusView.Symbol.FAILED;}
+      rank.show(rankSymbol,rankNumber,rankDescription,null,"");
       subtitle.setText((burstPosition + 1) + " / " + burstMembers.size() + "枚");
     };
     selection[0] = update;
@@ -517,10 +515,10 @@ public final class MainActivity extends DiagnosticActivity {
             String winner = ArchiveStore.key(photos.get(burstMembers.get(burstPosition)));
             PhotoRanking next = new PhotoRanking(saved.ids, "B:");
             while (!next.done()) next = next.choose(next.upper().equals(winner));
-            if (!rankingStore.save(next)) { toast("順位を保存できませんでした"); return; }
+            if (!rankingStore.save(next)) { feedback(StatusView.Symbol.FAILED,"順位を保存できませんでした",this::chooseCurrentBest,"1位にする"); return; }
             rankCache.clear();
             gallery();
-          } catch (Exception e) { toast("順位を保存できませんでした"); }
+          } catch (Exception e) { feedback(StatusView.Symbol.FAILED,"順位を保存できませんでした",this::chooseCurrentBest,"1位にする"); }
         }).setNegativeButton("キャンセル", null).show();
   }
 
@@ -726,8 +724,8 @@ public final class MainActivity extends DiagnosticActivity {
     if (!result.unresolved.isEmpty()) {
       GalleryUi.Sheet sheet = new GalleryUi.Sheet(this);
       sheet
-          .setTitle("順位が未決定の連写があります")
-          .setMessage(result.unresolved.size() + "組の順位がまだ決まっていません。ソートした後に選択画面へ戻れます。")
+          .setTitle("ソート")
+          .setView(status(StatusView.Symbol.PAUSED,result.unresolved.size()+"組",result.unresolved.size()+"組の順位がまだ決まっていません。ソートした後に選択画面へ戻れます。"))
           .setPositiveButton(
               "ソート",
               (d, w) -> {
@@ -792,10 +790,10 @@ public final class MainActivity extends DiagnosticActivity {
               switch (which) {
                 case 5:
                   new GalleryUi.Sheet(this).setTitle("写真のプレビュー")
-                      .setMessage(PreviewPreparationJob.status(this))
+                      .setView(preparationStatus())
                       .setPositiveButton("もう一度準備する", (dialog, w) -> {
                         PreviewPreparationJob.schedule(this);
-                        toast("Loupeを閉じると準備を再開します");
+                        feedback(StatusView.Symbol.PAUSED,"Loupeを閉じると準備を再開します",null,"");
                       }).setNegativeButton("閉じる", null).show();
                   break;
                 case 0:
@@ -879,7 +877,8 @@ public final class MainActivity extends DiagnosticActivity {
     top.setMinimumHeight(dp(48));
     top.addView(label("アルバム", 22, TEXT), new LinearLayout.LayoutParams(0, -2, 1));
 
-    subtitle = label("読み込み中…", 12, MUTED);
+    subtitle = label("", 12, MUTED);
+    listStatus=new StatusView(this);top.addView(listStatus);listStatus.begin("アルバムを読み込んでいます");
     addRecentPhotos();
     root.addView(top);
     subtitle.setPadding(dp(20), dp(4), dp(20), dp(8));
@@ -1003,7 +1002,8 @@ public final class MainActivity extends DiagnosticActivity {
             main.post(
                 () -> {
                   if (isDestroyed() || !albumHome || token != generation) return;
-                  subtitle.setText(albums.isEmpty() ? "写真の一覧を準備しています…" : albums.size() + " アルバム");
+                  subtitle.setText(albums.size()+" アルバム");
+                  if(albums.isEmpty())listStatus.show(StatusView.Symbol.EMPTY,"写真がありません");else listStatus.finish();
                   rememberAlbums();
                   body.removeAllViews();
                   // ListView owns attached headers; update its adapter instead of reparenting one.
@@ -1093,7 +1093,7 @@ public final class MainActivity extends DiagnosticActivity {
             main.post(
                 () -> {
                   if (!isDestroyed() && albumHome && token == generation)
-                    subtitle.setText("アルバムを読み込めません。メニューから再読み込みしてください。");
+                    listStatus.show(StatusView.Symbol.FAILED,"","アルバムを読み込めません",this::refresh,"再試行");
                 });
           }
         });
@@ -1102,6 +1102,7 @@ public final class MainActivity extends DiagnosticActivity {
   private void loadIndexedPhotos() {
     DiagnosticLog.event("screen.loadIndexedPhotos", burstRequest);
     int token = generation;
+    if(listStatus!=null)listStatus.begin("写真の一覧を読み込んでいます");
     String folder = albumFolder, selected = filter;
     scans.execute(
         () -> {
@@ -1145,14 +1146,14 @@ public final class MainActivity extends DiagnosticActivity {
                   adapter.notifyDataSetChanged();
                   if (position == null) restoreGallery();
                   else position.restore(grid, photos, displayed);
-                  subtitle.setText(
-                      photos.isEmpty() ? "写真がありません。写真の一覧を更新中の場合はしばらくお待ちください。" : countText());
+                  subtitle.setText(countText());
+                  listStatus.finish();
                 });
           } catch (Exception e) {
             main.post(
                 () -> {
                   if (!isDestroyed() && !albumHome && token == generation)
-                    subtitle.setText("一覧を読み込めませんでした");
+                    listStatus.show(StatusView.Symbol.FAILED,"","一覧を読み込めませんでした",this::refresh,"再試行");
                 });
           }
         });
@@ -1185,7 +1186,7 @@ public final class MainActivity extends DiagnosticActivity {
                 int next = refreshRequests.finish();
                 if (isDestroyed()) return;
                 if (failed) {
-                  toast("写真の一覧を更新できませんでした。保存済みの一覧を表示しています。");
+                  feedback(StatusView.Symbol.FAILED,"写真の一覧を更新できませんでした。保存済みの一覧を表示しています。",this::refresh,"再読み込み");
                 }
                 if (updated) {
                   if (albumHome) loadAlbums();
@@ -1246,13 +1247,21 @@ public final class MainActivity extends DiagnosticActivity {
             .takePersistableUriPermission(data.getData(), Intent.FLAG_GRANT_READ_URI_PERMISSION);
         refresh();
       } catch (SecurityException e) {
-        toast("読み取り許可を保存できませんでした");
+        feedback(StatusView.Symbol.PERMISSION,"読み取り許可を保存できませんでした",this::chooseFolder,"写真へのアクセス");
       }
     }
   }
 
-  private void toast(String text) {
-    Toast.makeText(this, text, Toast.LENGTH_LONG).show();
+  private StatusView listStatus;
+  private StatusView status(StatusView.Symbol kind,String numbers,String message) {
+    StatusView view=new StatusView(this);view.show(kind,numbers,message,null,"");return view;
+  }
+  private View preparationStatus() {
+    JobState state=PreviewPreparationJob.snapshot(this);
+    return status(StatusView.symbol(state.kind),state.countsKnown?state.ready+"/"+state.total+" · "+state.failed:"—",(state.kind==JobState.Kind.UNKNOWN?"現在の状態は不明です。最後の記録: ":"")+PreviewPreparationJob.status(this));
+  }
+  private void feedback(StatusView.Symbol state,String text,Runnable action,String label) {
+    StatusFeedback.show(this,state,text,action,label);
   }
 
   private final class GalleryAdapter extends BaseAdapter {
@@ -1304,7 +1313,7 @@ public final class MainActivity extends DiagnosticActivity {
       cell.badges.camera = "";
       cell.badges.cloud = "archive".equals(p.uri.getScheme());
       cell.badges.count = members.size();
-      cell.badges.rank = "";
+      cell.badges.rank = "";cell.badges.rankFailed=false;
       List<Integer> group = photoBundles.get(members.get(0));
       if (group != null && group.size() > 1) {
         try {
@@ -1312,7 +1321,7 @@ public final class MainActivity extends DiagnosticActivity {
           cell.badges.rank = saved.done()
               ? (members.size() > 1 ? "1位" : saved.rankOf(ArchiveStore.key(p)) + "位")
               : "";
-        } catch (Exception e) { cell.badges.rank = "読込失敗"; }
+        } catch (Exception e) { cell.badges.rankFailed=true;cell.setContentDescription(cell.getContentDescription()+"、順位を読み込めませんでした"); }
       }
       if (!cell.badges.rank.isEmpty())
         cell.setContentDescription(cell.getContentDescription() + "、" + cell.badges.rank);
@@ -1370,15 +1379,12 @@ public final class MainActivity extends DiagnosticActivity {
           adjacentPhoto(direction);
         });
     photoFrame.addView(image, new FrameLayout.LayoutParams(-1, -1));
-    TextView loadStatus = label("元のファイルを読み込んでいます…", 11, TEXT);
-    loadStatus.setPadding(dp(8), dp(5), dp(8), dp(5));
-    loadStatus.setBackground(GalleryUi.shape(this, 0xbb151719, 8));
-    FrameLayout.LayoutParams statusPosition =
-        new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.START);
-    statusPosition.setMargins(dp(12), 0, dp(12), dp(8));
-    photoFrame.addView(loadStatus, statusPosition);
+    StatusView loadStatus=new StatusView(this);
+    FrameLayout.LayoutParams statusPosition=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.END);
+    statusPosition.setMargins(0,dp(8),dp(8),0);photoFrame.addView(loadStatus,statusPosition);
+    loadStatus.begin("元のファイルを読み込んでいます");
     root.addView(photoFrame, new LinearLayout.LayoutParams(-1, 0, 1));
-    TextView model = label("読み込み中…", 16, TEXT), dimensions = label(photo.name, 11, MUTED);
+    TextView model = label("", 16, TEXT), dimensions = label(photo.name, 11, MUTED);
     Button more =
         button(
             "その他",
@@ -1431,14 +1437,15 @@ public final class MainActivity extends DiagnosticActivity {
                       activePreview = preview;
                       image.setBitmap(bitmap);
                       model.setText(preview.model);
-                      dimensions.setText("小さい画像・元のファイルを読み込みしています…\n" + photo.name);
-                      loadStatus.setText("プレビュー表示中 · 元のファイルを読み込みしています…");
+                      dimensions.setText(photo.name);
+                      loadStatus.companion(StatusView.Symbol.PREVIEW);
+                      image.setStateDescription("プレビューを表示しています。元のファイルを読み込んでいます");
                     });
               } catch (Exception missingPreview) {
                 main.post(
                     () -> {
                       if (!isDestroyed() && detail && token == generation)
-                        model.setText("元のファイルを読み込みしています…");
+                        model.setText("");
                     });
               }
               try {
@@ -1455,7 +1462,8 @@ public final class MainActivity extends DiagnosticActivity {
                         high.recycle();
                         return;
                       }
-                      loadStatus.setVisibility(View.GONE);
+                      loadStatus.companion(null);loadStatus.finish();
+                      image.setStateDescription("元のファイルを表示しています");
                       activePreview = full;
                       image.setBitmap(high);
                       model.setText(
@@ -1474,13 +1482,19 @@ public final class MainActivity extends DiagnosticActivity {
                 main.post(
                     () -> {
                       if (!isDestroyed() && detail && token == generation) {
-                        loadStatus.setVisibility(View.VISIBLE);
-                        loadStatus.setText("元のファイルを読み込みできませんでした · 開き直してください");
-                        if (activePreview == null) model.setText("写真を表示できません");
-                        dimensions.setText(
-                            (activePreview == null ? "" : "小さい画像を表示中\n")
-                                + "元のファイルを読み込みできませんでした。通信とログインを確認して開き直してください\n"
-                                + photo.name);
+                        String failure=activePreview==null?"写真を読み込めませんでした":"プレビューを表示しています。元のファイルを読み込めませんでした";
+                        if(activePreview==null){
+                          photoFrame.removeView(loadStatus);
+                          LinearLayout recovery=new LinearLayout(this);recovery.setOrientation(LinearLayout.VERTICAL);recovery.setGravity(Gravity.CENTER);
+                          loadStatus.show(StatusView.Symbol.FAILED,failure);recovery.addView(loadStatus,new LinearLayout.LayoutParams(dp(48),dp(48)));
+                          Button retry=button("再試行",()->showPhoto(position,fromRanking));retry.setContentDescription(failure+"。再試行");retry.setTextSize(14);retry.setPadding(dp(18),0,dp(18),0);
+                          android.graphics.drawable.GradientDrawable outline=GalleryUi.shape(this,Color.TRANSPARENT,24);outline.setStroke(dp(1),0xff3a3a3f);retry.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x33c7d8e4),outline,GalleryUi.shape(this,Color.WHITE,24)));
+                          ActionIcon retryIcon=new ActionIcon("再試行",getResources().getDisplayMetrics().density*20/26);retryIcon.setBounds(0,0,dp(20),dp(20));retry.setCompoundDrawables(retryIcon,null,null,null);retry.setCompoundDrawablePadding(dp(6));recovery.addView(retry,new LinearLayout.LayoutParams(-2,dp(48)));
+                          photoFrame.addView(recovery,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER));
+                        }else loadStatus.show(StatusView.Symbol.FAILED,"",failure,()->showPhoto(position,fromRanking),"再試行");
+                        image.setStateDescription(failure);
+                        if(activePreview==null)model.setText("");
+                        dimensions.setText(photo.name);
                       }
                     });
               }
@@ -1514,7 +1528,7 @@ public final class MainActivity extends DiagnosticActivity {
       if (ranking.journal.isEmpty()) ranking = new PhotoRanking(ranking.ids, "B:");
       showRanking();
     } catch (Exception e) {
-      toast("順位の記録を読み込めませんでした。保存済みの記録は変更していません。");
+      feedback(StatusView.Symbol.FAILED,"順位の記録を読み込めませんでした。保存済みの記録は変更していません。",this::openRanking,"再試行");
     }
   }
 
@@ -1530,7 +1544,7 @@ public final class MainActivity extends DiagnosticActivity {
     } catch (IOException e) {
       // Keep the displayed comparison unchanged when the journal cannot be saved.
     }
-    toast("順位を保存できませんでした。空き容量を確認してください。");
+    feedback(StatusView.Symbol.STORAGE,"順位を保存できませんでした。空き容量を確認してください。",this::showRanking,"ソートに戻る");
   }
 
   private void showRanking() {
@@ -1725,7 +1739,7 @@ public final class MainActivity extends DiagnosticActivity {
                 () -> {
                   if (!isDestroyed() && token == generation) {
                     image.failed();
-                    toast("写真を読み込めませんでした。一覧へ戻って開き直してください。");
+                    feedback(StatusView.Symbol.FAILED,"写真を読み込めませんでした。一覧へ戻って開き直してください。",this::leaveRanking,"一覧へ");
                   }
                 });
           }
@@ -1786,14 +1800,15 @@ public final class MainActivity extends DiagnosticActivity {
       List<PhotoRepository.Photo> selection, boolean raw, ShareTargets.Target target) {
     if (shareProgress != null && shareProgress.isShowing()) return;
     final int attempt = ++shareAttempt;
+    StatusView preparation=new StatusView(this);preparation.begin((raw?"元のファイル":"JPEG画像")+"を準備しています。選択は保持されます。");
     shareProgress = new GalleryUi.Sheet(this)
-        .setTitle(selection.size() + "枚を準備中")
-        .setMessage((raw ? "元のファイル" : "JPEG画像") + "を準備しています。選択は保持されます。")
+        .setTitle(selection.size()+"枚を共有 · "+(raw?"RAW":"JPEG"))
+        .setView(preparation)
         .setCancelable(false)
         .setNegativeButton("中止", (d, w) -> {
           shareAttempt++;
           if (sharing != null) sharing.cancel(true);
-          toast("共有の準備を中止しました");
+          feedback(StatusView.Symbol.CANCELLED,"共有の準備を中止しました",null,"");
         }).show();
     sharing = actions.submit(
         () -> {
@@ -1833,7 +1848,7 @@ public final class MainActivity extends DiagnosticActivity {
                       }
                     }
                     if (!supported) {
-                      toast("この共有先は選んだ画像形式に対応していません。共有先の形式を変更してください。");
+                      feedback(StatusView.Symbol.FORMAT,"この共有先は選んだ画像形式に対応していません。共有先の形式を変更してください。",this::editTargets,"共有先の設定");
                       return;
                     }
                     send.setComponent(component);
@@ -1841,15 +1856,15 @@ public final class MainActivity extends DiagnosticActivity {
                   try {
                     startActivity(target == null ? Intent.createChooser(send, "写真を共有") : send);
                   } catch (ActivityNotFoundException e) {
-                    toast("共有先が見つかりません。共有先の設定を変更してください。");
+                    feedback(StatusView.Symbol.NO_APP,"共有先が見つかりません。共有先の設定を変更してください。",this::editTargets,"共有先の設定");
                   }
                 });
           } catch (Exception e) {
             main.post(() -> {
               if (isDestroyed() || attempt != shareAttempt) return;
               shareProgress.dismiss();
-              new GalleryUi.Sheet(this).setTitle("共有を準備できませんでした")
-                  .setMessage(selection.size() + "枚の選択は保持されています。空き容量・通信・読み取り許可を確認してください。")
+              new GalleryUi.Sheet(this).setTitle(selection.size()+"枚を共有 · "+(raw?"RAW":"JPEG"))
+                  .setView(status(StatusView.Symbol.FAILED,"",selection.size()+"枚の選択は保持されています。共有を準備できませんでした。空き容量・通信・読み取り許可を確認してください。"))
                   .setPositiveButton("再試行", (d, w) -> export(selection, raw, target))
                   .setNegativeButton("選択に戻る", null).show();
             });
@@ -1925,7 +1940,7 @@ public final class MainActivity extends DiagnosticActivity {
               String component = entries.get(i).getKey();
               for (ShareTargets.Target t : targets)
                 if (t.component.equals(component)) {
-                  toast("登録済みです");
+                  feedback(StatusView.Symbol.ALREADY,"登録済みです",null,"");
                   return;
                 }
               targets.add(new ShareTargets.Target(component, names[i], false));

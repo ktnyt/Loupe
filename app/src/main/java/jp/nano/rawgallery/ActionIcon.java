@@ -31,6 +31,9 @@ final class ActionIcon extends Drawable {
     canvas.translate(bounds.exactCenterX() - size / 2, bounds.exactCenterY() - size / 2);
     canvas.scale(size / 24, size / 24);
     switch (action) {
+      case "再試行":
+        canvas.drawArc(4.5f,4.5f,19.5f,19.5f,0,315,false,paint);
+        line(canvas,19.5f,4.5f,19.5f,8.5f);line(canvas,19.5f,8.5f,15.5f,8.5f);break;
       case "同じ順位":
       case "同順位":
         line(canvas, 5, 9, 19, 9);

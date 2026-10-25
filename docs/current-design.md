@@ -243,6 +243,10 @@ PreviewPreparationJobは既存のready/total/failed/stateと同じeditでprepara
 
 JobState.snapshot相当の読取では旧データ・不明コード・時刻欠落はUNKNOWN。保存されたRUNNINGでも実行主体がない場合はUNKNOWNとし、過去の計測件数と更新時刻は保持する。状態保存は既存同様applyによるためプロセス停止時のdisk永続化を保証しない。UI、認証、送信、削除、タグ推論、jobの実行条件は変更しない。
 
+## 状態表示（Issue #17）
+
+可視の状態文を形と数値へ統一し、操作名・機能見出し・写真メタデータ・安全確認を保持する。実装前契約と全対象は[状態表示](visual-status.md)を正とする。明示した状態と原因を描画し、JobStateの未知・未計測を成功や0件と扱わない。読み上げと明示的な復帰操作を保持する。実装/実機検証は進行に応じて別記する。
+
 ## 処理状況ダッシュボード（設計・未実装）
 
 #16の[観測契約](background-dashboard.md)と[参照HTML](design/loupe-issue16-dashboard.html)を使用する。その他から4工程と共通準備ジョブの保存済み状態を読取専用で確認する設計で、現在のAndroidに画面はまだない。未計測は—、工程別の結果と共通ジョブ結果、前面抑制条件を区別する。[実装#39](https://github.com/ktnyt/Loupe/issues/39)で実機検証まで行う。
