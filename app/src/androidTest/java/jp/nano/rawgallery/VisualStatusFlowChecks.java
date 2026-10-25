@@ -21,9 +21,10 @@ final class VisualStatusFlowChecks {
       Thread.sleep(80);
     }throw new AssertionError("Missing action "+label);
   }
-  static StatusView failed(android.view.View view){
-    if(view instanceof StatusView&&view.isClickable()&&view.getVisibility()==android.view.View.VISIBLE)return (StatusView)view;
-    if(view instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)view).getChildCount();i++){StatusView v=failed(((android.view.ViewGroup)view).getChildAt(i));if(v!=null)return v;}return null;
+  static android.view.View failed(android.view.View view){
+    if(view instanceof StatusView&&view.isClickable()&&view.getVisibility()==android.view.View.VISIBLE)return view;
+    if(view instanceof android.widget.Button&&"再試行".contentEquals(((android.widget.Button)view).getText()))return view;
+    if(view instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)view).getChildCount();i++){android.view.View v=failed(((android.view.ViewGroup)view).getChildAt(i));if(v!=null)return v;}return null;
   }
   static AccessibilityNodeInfo input(Instrumentation t){AccessibilityNodeInfo root=t.getUiAutomation().getRootInActiveWindow();return inputNode(root);}
   static AccessibilityNodeInfo inputNode(AccessibilityNodeInfo n){if(n==null)return null;if("android.widget.EditText".contentEquals(n.getClassName()))return n;for(int i=0;i<n.getChildCount();i++){AccessibilityNodeInfo found=inputNode(n.getChild(i));if(found!=null)return found;}return null;}
@@ -50,11 +51,12 @@ final class VisualStatusFlowChecks {
       main(t,()->{if(!((Set<?>)field(a,"selectedPhotos")).contains(photo.uri.toString()))throw new AssertionError("failure lost selection");return true;});
       main(t,()->{set(a,"photos",new ArrayList<>(selection));set(a,"burstMembers",null);Method show=MainActivity.class.getDeclaredMethod("showPhoto",int.class);show.setAccessible(true);show.invoke(a,0);return true;});
       waitFor(t,"detail failure recovery",()->failed(a.getWindow().getDecorView())!=null);
+      main(t,()->{android.widget.Button retry=(android.widget.Button)failed(a.getWindow().getDecorView());if(retry.getLayout()==null||retry.getLayout().getWidth()<retry.getPaint().measureText("再試行"))throw new AssertionError("retry label clipped");return true;});
       android.view.View content=a.findViewById(android.R.id.content);
       capture(t,a,content,content.getHeight(),"status-detail-failed");
       File restored=new File(photo.uri.getPath());dir.mkdirs();
       try(FileOutputStream out=new FileOutputStream(restored)){out.write(jpeg);}
-      main(t,()->{StatusView retry=failed(a.getWindow().getDecorView());if(!retry.performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK,null))throw new AssertionError("detail retry AX");return true;});
+      main(t,()->{android.view.View retry=failed(a.getWindow().getDecorView());if(!retry.performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK,null))throw new AssertionError("detail retry AX");return true;});
       waitFor(t,"detail recovered",()->field(a,"activePreview")!=null&&failed(a.getWindow().getDecorView())==null);
       Thread.sleep(900);capture(t,a,content,content.getHeight(),"status-detail-recovered");
       TagActivity tags=(TagActivity)t.startActivitySync(new Intent(t.getTargetContext(),TagActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
