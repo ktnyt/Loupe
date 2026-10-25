@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loupe Issue #13 その他メニューの初期表示（v2）</title>
+<style>
+:root{--bg:#0B0B0C;--panel:#141416;--text:#EDEDEA;--muted:#A9A9A4;--line:#2A2A2E;--ok:#9FE0B5;--ng:#F2A7AB;--warn:#F5D38A}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:"Noto Sans JP",system-ui,-apple-system,"Hiragino Sans",sans-serif;font-size:15px;line-height:1.6}
+header.page{padding:32px 24px 8px;max-width:1240px;margin:0 auto}
+h1{margin:0;font-size:26px;line-height:1.35;font-weight:600}
+.lead{margin:6px 0 0;color:var(--muted);font-size:14px}
+.controls{max-width:1240px;margin:16px auto 0;padding:0 24px;display:flex;flex-wrap:wrap;gap:16px 24px;align-items:center}
+.controls fieldset{border:0;margin:0;padding:0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.controls legend{float:left;margin-right:8px;color:var(--muted);font-size:13px}
+.seg{display:inline-flex;background:#1C1C1F;border-radius:22px;padding:2px}
+.seg button{background:none;border:0;color:var(--text);font:inherit;font-size:13px;min-height:40px;padding:0 14px;border-radius:20px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:#EDEDEA;color:#111}
+label.tg{display:inline-flex;gap:8px;align-items:center;font-size:13px;min-height:40px;cursor:pointer}
+label.tg input{width:18px;height:18px;accent-color:#EDEDEA}
+.stage{max-width:1240px;margin:20px auto 0;padding:0 24px;display:flex;gap:32px;flex-wrap:wrap}
+.col{display:flex;flex-direction:column;gap:10px;width:390px;max-width:100%}
+.col h2{margin:0;font-size:16px;font-weight:600;display:flex;gap:8px;align-items:center}
+.tag{font-size:12px;padding:2px 8px;border-radius:6px;font-weight:600}
+.tag.ng{background:#3A2224;color:var(--ng)}.tag.ok{background:#1E3A2A;color:var(--ok)}
+.btnrow{display:flex;gap:8px;flex-wrap:wrap}
+.btnrow button{background:none;border:1px solid #3A3A3F;color:var(--text);font:inherit;font-size:13px;min-height:44px;padding:0 14px;border-radius:22px;cursor:pointer}
+.btnrow button.primary{background:#EDEDEA;color:#111;border-color:#EDEDEA;font-weight:600}
+/* phone */
+.phone{position:relative;width:390px;height:844px;max-width:100%;overflow:hidden;border-radius:28px;border:1px solid #2A2A2E;background:#0F0F10;color:#EDEDEA;contain:layout paint}
+.scr{position:absolute;inset:0;overflow:hidden}
+.scr .head{padding:40px 20px 12px}
+.scr .head b{display:block;font-size:24px;line-height:32px;font-weight:600}
+.scr .head span{font-size:13px;color:var(--muted)}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:2px}
+.grid4 i{display:block;height:96px}
+.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:20px 12px;padding:0 16px}
+.grid2 i{display:block;height:150px;border-radius:12px}
+.rows{display:flex;flex-direction:column;padding:0 16px;gap:4px}
+.rows i{display:flex;align-items:center;gap:12px;min-height:64px;font-style:normal;font-size:15px}
+.rows i em{display:block;width:44px;height:44px;border-radius:8px}
+.bar{position:absolute;left:0;right:0;bottom:0;background:#0F0F10;border-top:1px solid #222226;padding:0 8px 20px;display:grid}
+.bar button{background:none;border:0;color:inherit;font:inherit;font-size:12px;line-height:16px;font-weight:500;height:64px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer}
+.kb{position:absolute;left:0;right:0;bottom:0;height:270px;background:#2A2A2E;display:flex;align-items:center;justify-content:center;color:#8A8A85;font-size:13px}
+.field{position:absolute;left:16px;right:16px;bottom:96px;height:48px;border-radius:12px;border:1px solid #4C8DFF;background:#26262A;padding:0 16px;display:flex;align-items:center;color:#8A8A85;font-size:15px}
+/* sheet (既存デザインと同じ値) */
+.dim{position:absolute;inset:0;background:rgba(0,0,0,0.64);border:0;padding:0;margin:0;width:100%;cursor:default}
+.sheet{position:absolute;background:#19191B;border-radius:20px;padding:8px 0 16px;display:flex;flex-direction:column;width:min(calc(100% - 24px),560px);max-height:calc(var(--vis) * 0.48);color:#EDEDEA}
+.area{position:absolute;left:0;right:0;top:0}
+.sheet .handle{display:block;width:32px;height:4px;border-radius:2px;background:#4A4A50;margin:4px auto 12px;flex-shrink:0}
+.sheet h3{margin:0;padding:0 24px 4px;font-size:20px;line-height:28px;font-weight:600;outline:none;flex-shrink:0}
+.sheet .items{display:flex;flex-direction:column;overflow-y:auto;min-height:0}
+.sheet .it{background:none;border:0;padding:0 24px;margin:0;color:inherit;font:inherit;cursor:pointer;width:100%;min-height:48px;display:flex;align-items:center;gap:16px;text-align:left}
+.sheet .it .tx{flex:1;display:flex;flex-direction:column}
+.sheet .it .l{font-size:15px;line-height:22px}
+.sheet .it .s{font-size:12px;line-height:16px;color:#A9A9A4}
+.sheet .close{padding:8px 16px 0;flex-shrink:0}
+.sheet .close button{background:none;border:1px solid #3A3A3F;color:inherit;font:inherit;cursor:pointer;width:100%;min-height:48px;border-radius:24px;font-size:14px;font-weight:500}
+.big .sheet .it .l{font-size:19.5px;line-height:28px}.big .sheet .it .s{font-size:15.6px;line-height:21px}.big .sheet h3{font-size:26px;line-height:36px}.big .sheet .close button{font-size:18px}
+.dest{position:absolute;inset:0;background:#0F0F10;display:flex;flex-direction:column}
+/* log */
+.log{background:var(--panel);border-radius:14px;padding:12px 14px;font-size:12.5px;line-height:1.55;font-variant-numeric:tabular-nums}
+.log .sum{font-size:13.5px;font-weight:600;margin-bottom:6px}
+.log table{border-collapse:collapse;width:100%}
+.log td,.log th{padding:2px 6px 2px 0;text-align:left;white-space:nowrap}
+.log th{color:var(--muted);font-weight:500}
+.ok{color:var(--ok)}.ng{color:var(--ng)}
+/* spec */
+.spec{max-width:1240px;margin:40px auto 64px;padding:0 24px}
+.spec h2{font-size:22px;margin:36px 0 12px;font-weight:600}
+.spec h3{font-size:16px;margin:20px 0 8px;font-weight:600}
+.spec table{border-collapse:collapse;width:100%;font-size:14px}
+.spec th,.spec td{border-bottom:1px solid var(--line);padding:8px 12px 8px 0;text-align:left;vertical-align:top}
+.spec th{color:var(--muted);font-weight:500;font-size:12.5px}
+.spec ul{margin:0;padding-left:20px}.spec li{margin:4px 0}
+.spec code{background:#1C1C1F;padding:1px 6px;border-radius:4px;font-size:13px}
+.note{color:var(--muted);font-size:13px}
+@media (max-width:860px){.stage{gap:24px}}
+</style>
+</head>
+<body>
+<header class="page">
+<h1>Loupe Issue #13 — その他メニューの初期表示</h1>
+<p class="lead">左が今の動き（再現したもの）、右が基準です。どちらも「その他」を押すと開きます。下の記録は、開いてからのフレームごとの位置です。寸法は現行Androidの値で、項目と文言はダミーです。</p>
+</header>
+
+<div class="controls" role="group" aria-label="比較の条件">
+<fieldset><legend>画面</legend><span class="seg" id="ctx"><button aria-pressed="false" data-v="albums">アルバム</button><button aria-pressed="true" data-v="grid">写真一覧</button><button aria-pressed="false" data-v="tags">タグ</button></span></fieldset>
+<fieldset><legend>今の動きの再現</legend><span class="seg" id="bug"><button aria-pressed="true" data-v="center">中央から飛ぶ</button><button aria-pressed="false" data-v="side">横から飛ぶ</button></span></fieldset>
+<label class="tg"><input type="checkbox" id="slow"> スロー（10倍）</label>
+<label class="tg"><input type="checkbox" id="big"> 文字拡大（1.3倍）</label>
+<label class="tg"><input type="checkbox" id="kbd"> キーボード表示中に開く</label>
+</div>
+
+<div class="stage">
+<div class="col" id="colA">
+<h2>今の動き <span class="tag ng">再現</span></h2>
+<div class="btnrow"><button data-act="first">初回として開く</button><button data-act="reopen">もう一度開く</button><button data-act="back">戻る（端末の戻る）</button><button data-act="kbclose" hidden>キーボードを閉じる（resize）</button></div>
+<div class="phone" id="phA"></div>
+<div class="log" id="logA" aria-live="polite"><div class="sum">まだ開いていません</div></div>
+</div>
+<div class="col" id="colB">
+<h2>基準 <span class="tag ok">修正後</span></h2>
+<div class="btnrow"><button data-act="first" class="primary">初回として開く</button><button data-act="reopen">もう一度開く</button><button data-act="back">戻る（端末の戻る）</button><button data-act="kbclose" hidden>キーボードを閉じる（resize）</button></div>
+<div class="phone" id="phB"></div>
+<div class="log" id="logB" aria-live="polite"><div class="sum">まだ開いていません</div></div>
+</div>
+</div>
+
+<section class="spec" aria-label="仕様">
+<h2>1. 契約と範囲</h2>
+<ul>
+<li><b>#13の契約：</b>「その他」メニューが、初回も再表示も、最初の描画から現行の寸法・位置で表示され、表示中に位置・幅・高さが変わらないこと。直すのは位置のちらつきだけ。</li>
+<li>対象：アルバム一覧・写真一覧・タグなど、「その他」メニューを開くすべての画面。</li>
+<li>範囲外（変えない）：寸法・色・角丸、項目と並び、ラベルの文言、読み上げの挙動、キーボードの扱い（ADJUST_RESIZE）。写真の原本・順位・タグ・選択の状態。説明文や演出の追加。</li>
+<li>#8へ分けるもの：全幅にする、角丸28dpにする、高さの上限をほぼ全画面にする。今回は採用しない。</li>
+</ul>
+
+<h2>2. 現行の寸法（維持する値）</h2>
+<table>
+<tr><th>項目</th><th>値</th></tr>
+<tr><td>背景</td><td>#19191B</td></tr>
+<tr><td>角丸</td><td>20dp（4つの角すべて）</td></tr>
+<tr><td>幅</td><td>min(表示幅 − 24dp, 560dp)</td></tr>
+<tr><td>位置</td><td>下部・中央（gravity = bottom | center_horizontal）。下端からの距離は現行の値のまま（このHTMLでは仮に12dp）</td></tr>
+<tr><td>高さ</td><td>wrap_content。上限は見えている高さの48%。超える分はメニューの中だけスクロール</td></tr>
+<tr><td>暗幕・中身</td><td>現行のまま</td></tr>
+</table>
+
+<h2>3. 受け入れ条件</h2>
+<ul>
+<li><b>最初の1フレーム</b>で、幅・左右の位置（中央）・下端からの距離・高さが最終値と同じ（±1px）。中央や横など、別の位置に描かれるフレームがない。</li>
+<li>表示が落ち着いたあとから閉じるまで、メニューの位置・大きさが変わらない。中身のスクロールは除く。キーボードの開閉によるresizeも除く（4. を参照）。</li>
+<li>確認方法：画面録画（60fps以上）をコマ送りして、最初のフレームと落ち着いたあとのフレームを比べる。参照HTMLの記録と同じ観点で見る。</li>
+</ul>
+
+<h2>4. 場面ごとの条件</h2>
+<table>
+<tr><th>場面</th><th>条件</th></tr>
+<tr><td>初回表示</td><td>アプリの起動直後や、その画面で初めて開くときも、受け入れ条件を満たす。gravity・幅・高さの上限は、最初に描かれる前に確定させる</td></tr>
+<tr><td>再表示</td><td>閉じたあと何度開いても、初回と同じ。表示後に配置を直さない</td></tr>
+<tr><td>戻る（端末の戻る）</td><td>今の挙動のまま（メニューを閉じる）。閉じる途中で位置が横や中央へずれない</td></tr>
+<tr><td>外側タップ</td><td>今の挙動のまま。閉じる途中で位置がずれない</td></tr>
+<tr><td>項目の選択</td><td>今の挙動のまま。閉じて項目の画面へ移る途中で、メニューが別の位置に描かれない</td></tr>
+<tr><td>文字拡大</td><td>拡大後の中身の高さで最初から描く。見えている高さの48%を超えたら、上限の高さで最初から描き、中をスクロール。拡大前の高さで出してから伸ばさない</td></tr>
+<tr><td>読み上げ（TalkBack）</td><td>挙動は変えない。メニューが別の位置に一瞬描かれないので、読み上げのフォーカス枠が最初の位置から動かないことだけを確認する</td></tr>
+<tr><td>キーボード（その他メニュー）</td><td>ADJUST_RESIZEのまま（画面と下部の操作バーはキーボードの上に縮む）。キーボードを閉じる・待つ処理は追加しない。キーボードが出ているときに開いたら、resize後の見えている範囲の下部中央に、最初の描画から表示する。高さの上限48%も、その見えている高さが基準</td></tr>
+<tr><td>キーボードの開閉（表示中）</td><td>表示中にキーボードが開閉したときの移動はresizeによるもので、今の挙動を維持する。ちらつきとは扱わない</td></tr>
+<tr><td>入力のあるSheet</td><td>（例：新しいタグ）IMEが出たときの既存のresizeを維持する。#13ではこの動きを変えない。ただし、開くときの最初の描画は同じく最終の位置で出ること</td></tr>
+</table>
+
+<h2>5. Android 実装への注意（原因は調査中）</h2>
+<ul>
+<li>今の共通Sheetは <code>show()</code> のあとで gravity・幅・高さを設定している。Dialogの初期値（中央寄せ・中身の幅）で1フレーム以上描かれてから配置が変わると、報告の症状と一致する。</li>
+<li>直し方は決めない。条件は「最初に描かれる前に、現行の寸法・位置が確定していること」と「表示後に配置を直さないこと」。</li>
+<li>確認したい点：show前にウインドウの属性を設定できるか、テーマやスタイルで下部中央・幅・上限を指定できるか、48%の基準を最初の描画の時点で取れるか（resize後の高さを含む）、初回だけ中身の測定が遅れていないか。</li>
+</ul>
+
+<h2>6. 参照HTMLの使い方</h2>
+<ul>
+<li>「初回として開く」：初めて開いた状態として開く。「もう一度開く」：閉じてから開き直す。</li>
+<li>「スロー」：今の動きの再現を10倍に遅くする。</li>
+<li>記録：開いてから落ち着くまで、フレームごとにメニューの左・上・幅・高さを記録し、最終値と同じかを表示する。最終値が現行の寸法（幅・中央・下端からの距離）と合っているかも判定する。</li>
+<li>「キーボード表示中に開く」：キーボードを出したまま開く。「キーボードを閉じる（resize）」で、閉じたあとのresizeの動きを確かめられる（この移動はちらつきとは扱わない）。</li>
+<li>閉じる方法：暗幕のタップ、「閉じる」、「戻る（端末の戻る）」、Esc。項目を押すと、ダミーの項目画面に移る。</li>
+<li>左の「今の動き」は症状を再現したもので、実機の描画そのものではない。項目とラベルはデザインのダミーで、現行アプリの文言とは限らない。</li>
+</ul>
+
+<h2>7. 未確認</h2>
+<ul>
+<li>実機で位置が飛ぶ原因（属性を設定する順番か、測定の遅れか、インセットの適用順か）。</li>
+<li>現行の下端からの距離と、ナビゲーションバーの扱い。</li>
+<li>「見えている高さ」の48%を、キーボード表示中や初回の描画の時点で正しく取れているか。</li>
+<li>共通Sheetを使うほかのシートでも同じ症状が出ているか（#13の確認対象は「その他」）。</li>
+<li>画面回転・分割表示・折りたたみ端末での表示。</li>
+</ul>
+</section>
+
+<script>
+(function () {
+  const ITEMS = [
+    ['並べ替え', '撮影日時の新しい順'], ['クラウドと同期', ''], ['容量の整理', 'クラウドに保存済みの写真を端末から削除'],
+    ['アクセス許可', ''], ['共有先の設定', ''], ['処理の状況', 'プレビューの準備・タグのための解析など'], ['設定', '']
+  ];
+  const G = ['#3f4a3a,#1d241c', '#5b6168,#2a2d31', '#a9c3d8,#69736a', '#7b5b45,#2a201b', '#34425d,#07080b', '#eee5d5,#a89a83', '#c9a27e,#4a3a2a', '#2a1c18,#6b3a2a'];
+  const grad = (i) => 'linear-gradient(160deg,' + G[i % G.length] + ')';
+  const opt = { ctx: 'grid', bug: 'center', slow: false, big: false, kbd: false };
+
+  function screenHTML(ctx) {
+    let body = '', bar = '';
+    const btn = (label, act) => '<button data-scr="' + act + '"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="7"></circle></svg><span>' + label + '</span></button>';
+    if (ctx === 'albums') {
+      body = '<div class="head"><b>アルバム</b><span>6件</span></div><div class="grid2">' + [0, 1, 2, 3, 4, 5].map((i) => '<i style="background:' + grad(i) + '"></i>').join('') + '</div>';
+      bar = '<nav class="bar" style="grid-template-columns:repeat(2,1fr)">' + btn('すべての写真', 'noop') + btn('その他', 'more') + '</nav>';
+    } else if (ctx === 'tags') {
+      body = '<div class="head"><b>タグ</b><span>嵐山 10.18 · 2個</span></div><div class="rows">' + ['空', '夕景'].map((n, i) => '<i><em style="background:' + grad(i + 2) + '"></em>' + n + '</i>').join('') + '</div>';
+      bar = '<nav class="bar" style="grid-template-columns:repeat(3,1fr)">' + btn('戻る', 'noop') + btn('新しいタグ', 'noop') + btn('その他', 'more') + '</nav>';
+    } else {
+      body = '<div class="head"><b>嵐山 10.18</b><span>51枚</span></div><div class="grid4">' + Array.from({ length: 40 }, (_, i) => '<i style="background:' + grad(i) + '"></i>').join('') + '</div>';
+      bar = '<nav class="bar" style="grid-template-columns:repeat(4,1fr)">' + btn('戻る', 'noop') + btn('選択', 'noop') + btn('タグ', 'noop') + btn('その他', 'more') + '</nav>';
+    }
+    return '<div class="scr">' + body + bar + '</div>';
+  }
+
+  function sheetEl() {
+    const d = document.createElement('div');
+    d.className = 'sheet';
+    d.setAttribute('role', 'dialog'); d.setAttribute('aria-modal', 'true'); d.setAttribute('aria-labelledby', 'h' + Math.random().toString(36).slice(2));
+    const hid = d.getAttribute('aria-labelledby');
+    d.innerHTML = '<span class="handle" aria-hidden="true"></span><h3 id="' + hid + '" tabindex="-1">その他</h3><div class="items">' +
+      ITEMS.map((it, i) => '<button class="it" data-item="' + i + '"><span class="tx"><span class="l">' + it[0] + '</span>' + (it[1] ? '<span class="s">' + it[1] + '</span>' : '') + '</span><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#A9A9A4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></button>').join('') +
+      '</div><div class="close"><button data-close="1">閉じる</button></div>';
+    return d;
+  }
+
+  function makeSide(id, fixed) {
+    const ph = document.getElementById('ph' + id);
+    const log = document.getElementById('log' + id);
+    const st = { open: false, closing: false, cold: true, opener: null, layer: null, timers: [] };
+
+    function render() {
+      ph.classList.toggle('big', opt.big);
+      const kb = document.getElementById('col' + id).querySelector('[data-act=kbclose]'); if (kb) kb.hidden = !opt.kbd;
+      ph.innerHTML = screenHTML(opt.ctx) + (opt.kbd ? '<div class="kb">キーボード（仮）</div>' : '');
+      if (opt.kbd) { const sc = ph.querySelector('.scr'); sc.style.bottom = '270px'; sc.insertAdjacentHTML('beforeend', '<div class="field">（入力中のダミー）</div>'); }
+      st.open = false; st.layer = null;
+    }
+    function clearTimers() { st.timers.forEach(clearTimeout); st.timers = []; }
+    const BOTTOM_GAP = 12; /* 下端からの距離は現行値を維持。このHTMLでは仮に12dp */
+    const kbH = () => (ph.querySelector('.kb') ? 270 : 0);
+    const setVis = () => { ph.style.setProperty('--vis', (ph.clientHeight - kbH()) + 'px'); };
+    const finalStyle = (sh) => { sh.style.left = '50%'; sh.style.right = 'auto'; sh.style.top = 'auto'; sh.style.bottom = (kbH() + BOTTOM_GAP) + 'px'; sh.style.transform = 'translateX(-50%)'; };
+
+    function rectOf(sh) {
+      const p = ph.getBoundingClientRect(), r = sh.getBoundingClientRect();
+      const x0 = p.left + ph.clientLeft, y0 = p.top + ph.clientTop, y1 = y0 + ph.clientHeight;
+      return { l: Math.round(r.left - x0), t: Math.round(r.top - y0), w: Math.round(r.width), h: Math.round(r.height), b: Math.round(y1 - r.bottom) };
+    }
+    function record(sh, label) {
+      const frames = []; let n = 0; let stable = 0; let last = null; const kbAtOpen = kbH();
+      const t0 = performance.now();
+      function step() {
+        if (!sh.isConnected) return finish();
+        const r = rectOf(sh);
+        frames.push(Object.assign({ ms: Math.round(performance.now() - t0) }, r));
+        const same = last && last.l === r.l && last.t === r.t && last.w === r.w && last.h === r.h;
+        stable = same ? stable + 1 : 0; last = r; n++;
+        if ((stable >= 6 && performance.now() - t0 > (opt.slow ? 1400 : 300)) || n > 400) return finish();
+        requestAnimationFrame(step);
+      }
+      function finish() {
+        if (!frames.length) return;
+        const f = frames[frames.length - 1];
+        const eq = (a) => Math.abs(a.l - f.l) <= 1 && Math.abs(a.t - f.t) <= 1 && Math.abs(a.w - f.w) <= 1 && Math.abs(a.h - f.h) <= 1;
+        const bad = frames.filter((a) => !eq(a)).length;
+        const firstOk = eq(frames[0]);
+        const expW = Math.min(ph.clientWidth - 24, 560);
+        const atBottom = Math.abs(f.w - expW) <= 1 && Math.abs(f.l - (ph.clientWidth - expW) / 2) <= 1 && f.b === kbAtOpen + BOTTOM_GAP;
+        let rows = '';
+        const show = [];
+        frames.forEach((a, i) => { if (i < 4 || (i > 0 && !eq(frames[i - 1]) !== !eq(a)) || i === frames.length - 1) show.push(i); });
+        [...new Set(show)].slice(0, 9).forEach((i) => { const a = frames[i]; rows += '<tr><td>' + (i + 1) + '</td><td>' + a.ms + 'ms</td><td>' + a.l + '</td><td>' + a.t + '</td><td>' + a.w + '</td><td>' + a.h + '</td><td class="' + (eq(a) ? 'ok">同じ' : 'ng">違う') + '</td></tr>'; });
+        log.innerHTML = '<div class="sum">' + label + '：' + (firstOk && bad === 0 && atBottom ? '<span class="ok">最初のフレームから最終位置</span>' : '<span class="ng">最終位置と違うフレーム ' + bad + ' / ' + frames.length + '</span>') + '</div>' +
+          '<div>最終：左 ' + f.l + ' · 上 ' + f.t + ' · 幅 ' + f.w + ' · 高さ ' + f.h + ' · 下端からの距離 ' + f.b + 'px（期待値：幅 ' + expW + ' · 中央 · 下端から ' + (kbAtOpen + BOTTOM_GAP) + 'px' + (kbAtOpen ? '（キーボードの上）' : '') + '）</div>' +
+          '<table><tr><th>フレーム</th><th>経過</th><th>左</th><th>上</th><th>幅</th><th>高さ</th><th>最終と</th></tr>' + rows + '</table>';
+      }
+      requestAnimationFrame(step);
+    }
+
+    function open(isFirst) {
+      if (st.open) close('reopen');
+      clearTimers();
+      if (isFirst) { st.cold = true; render(); }
+      const label = st.cold ? '初回' : '再表示';
+      const opener = ph.querySelector('[data-scr="more"]');
+      st.opener = opener;
+      setVis();
+      const layer = document.createElement('div');
+      layer.style.cssText = 'position:absolute;inset:0';
+      const dim = document.createElement('button'); dim.className = 'dim'; dim.setAttribute('aria-label', '閉じる'); dim.tabIndex = -1;
+      const sh = sheetEl();
+      layer.appendChild(dim); layer.appendChild(sh);
+      if (fixed) {
+        finalStyle(sh);
+        ph.appendChild(layer);
+      } else {
+        /* 今の動きの再現：既定の配置で一度描いてから、あとで下寄せ・全幅に直す */
+        const k = opt.slow ? 10 : 1;
+        if (opt.bug === 'center') { sh.style.cssText += ';left:50%;top:' + ((ph.clientHeight - kbH()) / 2) + 'px;width:300px;transform:translate(-50%,-50%)'; }
+        else { sh.style.cssText += ';left:0;top:120px;width:300px'; }
+        ph.appendChild(layer);
+        const d1 = (st.cold ? 50 : 34) * k;
+        st.timers.push(setTimeout(() => { sh.style.width = ''; finalStyle(sh); }, d1));
+      }
+      st.open = true; st.layer = layer; st.closing = false; st.cold = false;
+      dim.addEventListener('click', () => close('outside'));
+      sh.addEventListener('click', (e) => {
+        const c = e.target.closest('[data-close]'); if (c) return close('close');
+        const it = e.target.closest('[data-item]'); if (it) pick(+it.dataset.item);
+      });
+      record(sh, label);
+    }
+    function close(why) {
+      if (!st.open || st.closing) return;
+      st.closing = true; clearTimers();
+      if (st.layer) st.layer.remove();
+      st.open = false; st.layer = null; st.closing = false;
+    }
+    function pick(i) {
+      if (st.closing) return;
+      close('pick');
+      const d = document.createElement('div'); d.className = 'dest';
+      d.innerHTML = '<div style="padding:40px 20px 12px"><b style="font-size:24px;line-height:32px;font-weight:600">' + ITEMS[i][0] + '</b><div style="font-size:13px;color:#A9A9A4">項目の画面（ダミー）</div></div><nav class="bar" style="grid-template-columns:1fr"><button data-destback="1"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M11 18l-6-6 6-6"></path></svg><span>戻る</span></button></nav>';
+      ph.appendChild(d);
+      d.querySelector('[data-destback]').addEventListener('click', () => { d.remove(); });
+    }
+    function back() {
+      if (st.open) return close('back');
+      const d = ph.querySelector('.dest'); if (d) d.remove();
+    }
+    ph.addEventListener('click', (e) => { const b = e.target.closest('[data-scr="more"]'); if (b) open(false); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') back(); });
+    document.getElementById('col' + id).querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => {
+      const a = b.dataset.act;
+      if (a === 'first') open(true); else if (a === 'reopen') { if (st.open) close('reopen'); open(false); }
+      else if (a === 'kbclose') { ph.querySelectorAll('.kb,.field').forEach((e) => e.remove()); ph.querySelector('.scr').style.bottom = '0px'; setVis(); const sh = ph.querySelector('.sheet'); if (sh) finalStyle(sh); b.hidden = true; }
+      else back();
+    }));
+    render(); setVis();
+    return { render: () => { clearTimers(); st.cold = true; render(); setVis(); log.innerHTML = '<div class="sum">まだ開いていません</div>'; } };
+  }
+
+  const A = makeSide('A', false), B = makeSide('B', true);
+  const rerender = () => { A.render(); B.render(); };
+  function seg(id, key) {
+    const el = document.getElementById(id);
+    el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; opt[key] = b.dataset.v; el.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', x === b ? 'true' : 'false')); rerender(); });
+  }
+  seg('ctx', 'ctx'); seg('bug', 'bug');
+  ['slow', 'big', 'kbd'].forEach((k) => document.getElementById(k).addEventListener('change', (e) => { opt[k] = e.target.checked; rerender(); }));
+})();
+</script>
+</body>
+</html>
