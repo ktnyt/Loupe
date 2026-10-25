@@ -214,7 +214,7 @@ public final class TagActivity extends Activity {
     root.addView(text(assigned > 0 ? "付けた写真と外した写真を参考に、似た写真へタグを付けます。訂正をほかの写真にも反映するには、もう一度実行してください。"
         : "「写真を追加」で見本にタグを付けると、自動で探せます。", 13));
     root.addView(button("その他", () -> new GalleryUi.Sheet(this).setTitle("その他")
-        .setItems(new String[]{"自動で付いた写真", "外した写真", "自動で付いたタグを一括削除"}, (d, which) -> {
+        .setItems(new String[]{"自動で付いた写真", "外した写真", "自動で付いたタグをすべて外す"}, (d, which) -> {
           if (which == 0) showPhotos(Filter.AUTOMATIC);
           else if (which == 1) showPhotos(Filter.REMOVED); else clearAutomatic();
         }).show()));
@@ -300,9 +300,9 @@ public final class TagActivity extends Activity {
   }
 
   private void clearAutomatic() {
-    new GalleryUi.Sheet(this).setTitle("自動付与を取り消す")
-        .setMessage("このタグの全アルバムの自動付与を取り消します。手動で付けたタグは残ります。")
-        .setPositiveButton("取り消す", (d, w) -> {
+    new GalleryUi.Sheet(this).setTitle("自動で付いたタグをすべて外しますか？")
+        .setMessage("「" + tag.name + "」が対象です。全アルバムの自動で付いた分を外します。自分で付けたタグは残ります。")
+        .setPositiveButton("すべて外す", (d, w) -> {
           stopAnalysis(); busy = true;
           String tagId = tag.id;
           worker.execute(() -> {
@@ -311,7 +311,7 @@ public final class TagActivity extends Activity {
               main.post(() -> { busy = false; if (!isDestroyed()) showTag(); });
             } catch (Exception error) { main.post(() -> { busy = false; failure(error); }); }
           });
-        }).setNegativeButton("戻る", null).show();
+        }).setNegativeButton("外さない", null).show();
   }
 
   private void changeTag(int index, int position, TagJudgments.Value value) {
