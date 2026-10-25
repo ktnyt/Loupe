@@ -365,7 +365,7 @@ public final class CloudActivity extends DiagnosticActivity {
     worker.execute(
         () -> {
           String result;
-          StatusView.Symbol outcome=StatusView.Symbol.PARTIAL;
+          StatusView.Symbol outcome=StatusView.Symbol.FAILED;
           try {
             CloudVerifier client = new CloudVerifier(cookies, agent);
             CloudVerifier.Progress progress =
@@ -387,6 +387,7 @@ public final class CloudActivity extends DiagnosticActivity {
             outcome=StatusView.Symbol.FAILED;
             result = "元のファイルの検証を完了できませんでした。\n" + e.getMessage();
           } catch (Exception e) {
+            outcome=uploading?StatusView.Symbol.UNKNOWN:StatusView.Symbol.FAILED;
             result =
                 uploading
                     ? "通信または保存結果を確認できませんでした。自動再送はせず、復元検証で保存状態を確認してください。端末の元のファイルは残しています。"

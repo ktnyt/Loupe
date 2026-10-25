@@ -58,13 +58,24 @@ final class BurstPreviewChecks {
       int before=edges.size(); replies.get(replies.size()-1).accept(true);
       if(edges.size()!=before)throw new AssertionError("left screen still loads");
     });
+    Field statesField=BurstPreviews.class.getDeclaredField("states");statesField.setAccessible(true);
+    Field spinnerField=BurstPreviews.class.getDeclaredField("spinners");spinnerField.setAccessible(true);
+    Method render=BurstPreviews.class.getDeclaredMethod("render");render.setAccessible(true);
+    int[] timingStates=(int[])statesField.get(controller[0]);StatusView timing=(StatusView)((List<?>)spinnerField.get(controller[0])).get(0);
+    AlbumTagEntryChecks.main(test,()->{timingStates[0]=1;render.invoke(controller[0]);return true;});
+    Thread.sleep(470);
+    AlbumTagEntryChecks.main(test,()->{if(timing.getVisibility()!=android.view.View.VISIBLE)throw new AssertionError("strip loading hidden");timingStates[0]=2;render.invoke(controller[0]);return true;});
+    Thread.sleep(150);
+    AlbumTagEntryChecks.main(test,()->{if(timing.getVisibility()!=android.view.View.VISIBLE)throw new AssertionError("strip success flicker");return true;});
+    Thread.sleep(650);
+    AlbumTagEntryChecks.main(test,()->{if(timing.getVisibility()==android.view.View.VISIBLE)throw new AssertionError("strip success persists");return true;});
     PhotoRepository repository=new PhotoRepository(a);
     if(repository.prepare(photos.get(0),()->true))throw new AssertionError("cancelled background generated");
     if(PreviewPreparationJob.local(new PhotoRepository.Photo(Uri.parse("archive://id"),"x","",1,1,0)))throw new AssertionError("archive included");
     String backgroundResult = BackgroundPreviewChecks.run(a);
     String listResult = GalleryLoadingChecks.run(test, a);
     test.runOnMainSync(a::finish);
-    return listResult + backgroundResult + "PASS hero-before-strip/draw, selection priority, failure/retry visibility, stale screen, cancelled preparation, local-only\n";
+    return listResult + backgroundResult + "PASS strip running-to-ready minimum visibility, hero-before-strip/draw, selection priority, failure/retry visibility, stale screen, cancelled preparation, local-only\n";
   }
   private static void set(Object o,String name,Object value)throws Exception {Field f=o.getClass().getDeclaredField(name);f.setAccessible(true);f.set(o,value);}
   private static String real(Instrumentation test,MainActivity a)throws Exception {

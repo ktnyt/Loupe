@@ -114,6 +114,7 @@ final class BurstPreviews {
       if(rendered[i]!=state){rendered[i]=state;StatusView indicator=spinners.get(i);
         if(state==1)indicator.begin("読み込み中");
         else if(state==3)indicator.show(StatusView.Symbol.FAILED,"読み込めませんでした");
+        else if(state==2)indicator.finish();
         else indicator.clear();
       }
       String status=state==0?"待機中":state==1?"読み込み中":state==2?"表示済み":"読み込めませんでした";
