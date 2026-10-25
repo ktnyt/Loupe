@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loupe Issue #10 比較写真のA/B</title>
+<style>
+:root{--text:#EDEDEA;--sub:#A9A9A4;--ok:#9FE0B5;--ng:#F2A7AB}
+*{box-sizing:border-box}
+body{margin:0;background:#0B0B0C;color:var(--text);font-family:"Noto Sans JP",system-ui,-apple-system,"Hiragino Sans",sans-serif;font-size:15px;line-height:1.6}
+.wrap{max-width:1200px;margin:0 auto;padding:28px 20px 64px}
+h1{margin:0;font-size:24px;line-height:1.4;font-weight:600}
+.lead{margin:6px 0 0;color:var(--sub);font-size:14px}
+.controls{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;margin:16px 0 0}
+.controls .lb{color:var(--sub);font-size:13px;margin-right:6px}
+.seg{display:inline-flex;flex-wrap:wrap;background:#1C1C1F;border-radius:22px;padding:2px}
+.seg button{background:none;border:0;color:var(--text);font:inherit;font-size:13px;min-height:44px;padding:0 12px;border-radius:20px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:#EDEDEA;color:#111}
+.hw{background:none;border:1px solid #3A3A3F;color:var(--text);font:inherit;font-size:13px;min-height:44px;padding:0 14px;border-radius:22px;cursor:pointer}
+.stage{display:flex;gap:32px;flex-wrap:wrap;margin-top:20px;align-items:flex-start}
+.side{display:flex;flex-direction:column;gap:10px;flex:1;min-width:300px}
+.box{background:#141416;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.6;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok)}.ng{color:var(--ng)}
+
+/* 比較部品（1px = 1dp）。外枠は outline */
+.part{width:var(--w);background:#0F0F10;color:var(--text);outline:1px solid #3A3A3F;font-family:Roboto,"Noto Sans JP","Noto Sans CJK JP",system-ui,sans-serif;flex-shrink:0}
+.hint{padding:8px 16px;font-size:calc(13px*var(--k));line-height:1.4;color:var(--sub)}
+.cmp{position:relative;width:var(--w);height:420px;background:#0F0F10;overflow:hidden}
+.slot{position:absolute;overflow:hidden;background:#0F0F10;touch-action:manipulation;cursor:pointer;-webkit-user-select:none;user-select:none}
+.slot:focus-visible{outline:2px solid #4C8DFF;outline-offset:-2px}
+.img{position:absolute;background:#555}
+.img.sel{box-shadow:inset 0 0 0 3px #EDEDEA}
+.ph{position:absolute;inset:0;background:#19191B;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;color:#8A8A85;font-size:calc(13px*var(--k))}
+.ph svg{width:28px;height:28px}
+/* ===== 今回の部品：A/Bラベル ===== */
+.lab{position:absolute;pointer-events:none;display:flex;align-items:center;justify-content:center;min-width:24px;min-height:24px;padding:2px 7px;border-radius:6px;background:rgba(15,15,16,.72);box-shadow:0 0 0 1px rgba(237,237,234,.45);color:#EDEDEA;font-family:Roboto,"Noto Sans JP",system-ui,sans-serif;font-weight:500;font-size:calc(13px*var(--k));line-height:calc(16px*var(--k));letter-spacing:0}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px 16px 16px}
+.btns button{min-height:48px;border-radius:24px;border:1px solid #3A3A3F;background:none;color:var(--text);font:inherit;font-size:calc(14px*var(--k));font-weight:500;cursor:pointer}
+.btns button.pri{background:#EDEDEA;color:#111;border-color:#EDEDEA}
+.btns button:disabled{opacity:.38;cursor:default}
+.mocknote{padding:0 16px 10px;font-size:11.5px;color:#8A8A85}
+.zoom{position:absolute;inset:0;background:#000;z-index:4;display:flex;flex-direction:column}
+.zoom .zi{flex:1;position:relative}
+.zoom button{min-height:48px;margin:8px 16px 16px;border-radius:24px;border:1px solid #3A3A3F;background:none;color:var(--text);font:inherit;cursor:pointer}
+
+.spec h2{font-size:20px;margin:36px 0 10px;font-weight:600}
+.spec table{border-collapse:collapse;width:100%;font-size:14px}
+.spec th,.spec td{border-bottom:1px solid #2A2A2E;padding:8px 12px 8px 0;text-align:left;vertical-align:top}
+.spec th{color:var(--sub);font-weight:500;font-size:12.5px}
+.spec ul{margin:0;padding-left:20px}.spec li{margin:4px 0}
+.spec code{background:#1C1C1F;padding:1px 6px;border-radius:4px;font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Loupe Issue #10 — 比較写真にA/Bを重ねる</h1>
+<p class="lead">比較部品だけの模擬です。写真はダミーの色面で、下のボタンは既存ボタンの<b>簡略模擬</b>です。写真をタップすると選択、長押し（0.5秒）で拡大します。</p>
+
+<div class="controls" role="group" aria-label="条件">
+<span><span class="lb">表示</span><span class="seg" id="oV"><button data-v="new" aria-pressed="true">#10（A/Bを重ねる）</button><button data-v="old" aria-pressed="false">現行（説明文）</button></span></span>
+<span><span class="lb">幅</span><span class="seg" id="oW"><button data-v="320" aria-pressed="false">320dp</button><button data-v="400" aria-pressed="true">400dp</button></span></span>
+<span><span class="lb">配置</span><span class="seg" id="oL"><button data-v="auto" aria-pressed="true">自動</button><button data-v="v" aria-pressed="false">上下</button><button data-v="h" aria-pressed="false">左右</button></span></span>
+<span><span class="lb">写真の形</span><span class="seg" id="oR"><button data-v="1.5,1.5" aria-pressed="true">横長×横長</button><button data-v="0.667,0.667" aria-pressed="false">縦長×縦長</button><button data-v="1.5,0.667" aria-pressed="false">横長×縦長</button><button data-v="1,1" aria-pressed="false">正方形</button><button data-v="3,3" aria-pressed="false">細長いパノラマ</button></span></span>
+<span><span class="lb">写真の明るさ</span><span class="seg" id="oP"><button data-v="bright" aria-pressed="false">明るい</button><button data-v="dark" aria-pressed="false">暗い</button><button data-v="detail" aria-pressed="false">細かい</button><button data-v="mix" aria-pressed="true">混在</button></span></span>
+<span><span class="lb">文字</span><span class="seg" id="oK"><button data-v="1" aria-pressed="true">1.0倍</button><button data-v="1.3" aria-pressed="false">1.3倍</button></span></span>
+<span><span class="lb">A</span><span class="seg" id="oSA"><button data-v="ok" aria-pressed="true">表示済み</button><button data-v="loading" aria-pressed="false">読込中</button><button data-v="failed" aria-pressed="false">失敗</button></span></span>
+<span><span class="lb">B</span><span class="seg" id="oSB"><button data-v="ok" aria-pressed="true">表示済み</button><button data-v="loading" aria-pressed="false">読込中</button><button data-v="failed" aria-pressed="false">失敗</button></span></span>
+<button class="hw" id="reload">再表示（読み込み直しの模擬）</button>
+</div>
+
+<div class="stage">
+<div class="part" id="part"></div>
+<div class="side">
+<div class="box" id="geo"></div>
+<div class="box" id="a11y"></div>
+<div class="box" id="log"><b>A/B と操作の対応ログ</b><div id="logBody"></div></div>
+</div>
+</div>
+
+<section class="spec" aria-label="仕様">
+<h2>1. 変更範囲</h2>
+<table>
+<tr><th>対象</th><th>現行</th><th>#10</th></tr>
+<tr><td>位置の説明文</td><td>「Aは上の写真 · Bは下の写真」「Aは左の写真 · Bは右の写真」</td><td>削除</td></tr>
+<tr><td>案内文</td><td>「比較中の好きな写真を選んでください」</td><td>削除</td></tr>
+<tr><td>A/Bラベル</td><td>—</td><td>各写真の実画像の左上の隅に重ねる（新規・装飾）</td></tr>
+<tr><td>変えないもの</td><td colspan="2">順位のロジック、FIT_CENTERでの写真全体の表示、面積で上下／左右を選ぶ判定、A＝ranking.upper（上または左）・B＝lower（下または右）、タップ＝選択・長押し＝拡大、下部の［Aを選ぶ］［Bを選ぶ］［Aを拡大］［Bを拡大］、取り消し・同率・中断と再開・拡大・保存、読み込み前と失敗時は選べない契約。結果画面の案内（#14）、モード（#6）、全体の配置（#8・#9）</td></tr>
+</table>
+
+<h2>2. ラベルの数値（Android実装用）</h2>
+<table>
+<tr><th>項目</th><th>値</th></tr>
+<tr><td>置く場所</td><td>各写真の<b>実画像の領域</b>（FIT_CENTERで描かれた範囲。<code>ImageView.imageMatrix</code> と画像の寸法から求める矩形）の左上の隅。スロットの余白には置かない。A・Bとも同じ左上</td></tr>
+<tr><td>画像の端からの余白</td><td>上・左とも8dp。実画像の短い辺が96dp未満のときは4dp</td></tr>
+<tr><td>大きさ</td><td>最小 24×24dp。左右の内側の余白7dp、上下2dp。文字が大きいときは中身に合わせて広がる（1.3倍で約26×25dp）</td></tr>
+<tr><td>形</td><td>角丸6dp の四角</td></tr>
+<tr><td>背景</td><td>#0F0F10 を不透明度72%（#B80F0F10）。外側に1dpの線 #EDEDEA を不透明度45%（#73EDEDEA）</td></tr>
+<tr><td>文字</td><td>「A」「B」の1文字。13sp、<code>sans-serif-medium</code>、#EDEDEA、行の高さ16sp、左右中央</td></tr>
+<tr><td>見分けやすさ</td><td>明るい写真の上では暗い背景が、暗い写真の上では明るい線と文字が、細かい模様の上では無地の背景が輪郭をつくる。文字とラベル背景のコントラストは、真っ白な写真の上で約6.6:1、真っ黒な写真の上で約16.7:1（どちらも4.5:1以上）</td></tr>
+<tr><td>中央を邪魔しない</td><td>ラベルは隅だけ。実画像の短い辺が96dp以上なら、ラベルが画像に占める幅は最大で約3割以下（320dpの左右配置の縦長でも、中央の半分には入らない）</td></tr>
+<tr><td>はみ出さない</td><td>ラベルは常に実画像の矩形の中に収める：<code>x = 画像左 + 余白</code>、<code>y = 画像上 + 余白</code>。画像がラベルより小さい極端な場合は、余白を0dpまで減らしてから、それでも入らなければ表示しない（読み上げ名には常にA/Bが入る）</td></tr>
+<tr><td>操作</td><td>装飾。クリック・長押しを受けない（<code>clickable = false</code>、<code>importantForAccessibility = no</code>、または画像のViewの上に描画するだけ）。写真のタップ・長押しをそのまま通す</td></tr>
+<tr><td>選択中の見た目</td><td>既存のまま（このHTMLの白い内側の線は模擬）。ラベルは選択で変えない</td></tr>
+</table>
+
+<h2>3. 読み上げ名（画像の contentDescription）</h2>
+<table>
+<tr><th>状態</th><th>読み上げ名</th></tr>
+<tr><td>表示済み</td><td>「A、{写真名}、タップで選ぶ、長押しで拡大」／「B、{写真名}、タップで選ぶ、長押しで拡大」</td></tr>
+<tr><td>読み込み中</td><td>「A、{写真名}、読み込み中」（選べない）</td></tr>
+<tr><td>失敗</td><td>「A、{写真名}、読み込めませんでした」（選べない）</td></tr>
+<tr><td>ラベル</td><td>読み上げない（画像の読み上げ名に含まれるため）</td></tr>
+</table>
+<p style="font-size:13px;color:#A9A9A4">「上の写真」などの位置の言葉は、読み上げにも入れない（位置は画面ごとに変わるため）。</p>
+
+<h2>4. 読み込み中・失敗・再表示</h2>
+<ul>
+<li>読み込み中と失敗のときは、実画像の範囲がまだ決まらないので、既存の仮の表示（スロット全体）の左上に、同じ余白・同じ見た目でラベルを置く。選べない契約は既存のまま。</li>
+<li>読み込みが終わったら、ラベルを実画像の左上に置き直す（移動のアニメーションはしない）。</li>
+<li>再表示（画面の再生成や回転のあと）も、実画像の矩形を求め直してから置く。前の位置を使い回さない。</li>
+</ul>
+
+<h2>5. フォントと確認の注記</h2>
+<ul>
+<li>Androidの <code>sans-serif-medium</code> は英字が Roboto Medium。このHTMLは Roboto を指定しているが、入っていない環境ではブラウザの標準フォントになり、ラベルの幅が1〜2dpずれることがある。</li>
+<li>比較部品の大きさは例として幅320／400dp × 高さ420dp。上下と左右の切り替えは、2枚の実画像の面積の合計が大きい方を選ぶ既存の判定を模擬している（スロットの間隔は現行Androidに合わせ0dp）。</li>
+<li>下の［Aを選ぶ］などのボタンは既存ボタンの簡略模擬で、寸法・配置は再設計していない。</li>
+</ul>
+</section>
+</div>
+
+<script>
+(function () {
+  const O = { v: 'new', w: 400, lay: 'auto', ra: 1.5, rb: 1.5, pat: 'mix', k: 1, sa: 'ok', sb: 'ok', sel: null, zoom: null, log: [] };
+  const NAME = { A: 'P1010403.ORF', B: 'P1010404.ORF' };
+  const H = 420, GAP = 0;
+  const PAT = {
+    bright: ['#ffffff', '#ffffff'],
+    dark: ['#0f0f10', '#0f0f10'],
+    detail: ['repeating-conic-gradient(#f2f2ee 0 25%,#16171a 0 50%) 0 0/6px 6px', 'repeating-linear-gradient(45deg,#e9e6dd 0 2px,#202226 2px 5px)'],
+    mix: ['linear-gradient(170deg,#ffffff 0%,#e9e4d8 100%)', 'repeating-conic-gradient(#f2f2ee 0 25%,#16171a 0 50%) 0 0/6px 6px']
+  };
+  const part = document.getElementById('part');
+  const fit = (sw, sh, r) => (sw / sh > r ? { w: sh * r, h: sh } : { w: sw, h: sw / r });
+  function layout() {
+    const W = O.w;
+    const v = { sw: W, sh: (H - GAP) / 2 }, h = { sw: (W - GAP) / 2, sh: H };
+    const area = (s) => { const a = fit(s.sw, s.sh, O.ra), b = fit(s.sw, s.sh, O.rb); return a.w * a.h + b.w * b.h; };
+    const av = area(v), ah = area(h);
+    const mode = O.lay === 'auto' ? (av >= ah ? 'v' : 'h') : O.lay;
+    const s = mode === 'v' ? v : h;
+    const slots = mode === 'v' ? [{ x: 0, y: 0 }, { x: 0, y: s.sh + GAP }] : [{ x: 0, y: 0 }, { x: s.sw + GAP, y: 0 }];
+    return { mode: mode, sw: s.sw, sh: s.sh, slots: slots, av: av, ah: ah };
+  }
+  const add = (t) => { O.log.unshift(t); O.log = O.log.slice(0, 10); };
+  function render() {
+    part.style.setProperty('--w', O.w + 'px'); part.style.setProperty('--k', O.k);
+    const L = layout();
+    const where = (i) => (L.mode === 'v' ? (i ? '下' : '上') : (i ? '右' : '左'));
+    let html = O.v === 'old' ? '<div class="hint">比較中の好きな写真を選んでください</div><div class="hint" style="padding-top:0">Aは' + where(0) + 'の写真 · Bは' + where(1) + 'の写真</div>' : '';
+    html += '<div class="cmp" id="cmp">';
+    const geo = [];
+    ['A', 'B'].forEach((k, i) => {
+      const st = k === 'A' ? O.sa : O.sb, r = k === 'A' ? O.ra : O.rb;
+      const sl = L.slots[i], f = fit(L.sw, L.sh, r);
+      const ix = (L.sw - f.w) / 2, iy = (L.sh - f.h) / 2;
+      const ok = st === 'ok';
+      const area = ok ? { x: ix, y: iy, w: f.w, h: f.h } : { x: 0, y: 0, w: L.sw, h: L.sh };
+      const inset = Math.min(area.w, area.h) < 96 ? 4 : 8;
+      const lab = O.v === 'new' ? '<span class="lab" aria-hidden="true" data-lab="' + k + '" style="left:' + (area.x + inset) + 'px;top:' + (area.y + inset) + 'px">' + k + '</span>' : '';
+      const name = k + '、' + NAME[k] + '、' + (ok ? 'タップで選ぶ、長押しで拡大' : (st === 'loading' ? '読み込み中' : '読み込めませんでした'));
+      const inner = ok ? '<div class="img' + (O.sel === k ? ' sel' : '') + '" style="left:' + ix + 'px;top:' + iy + 'px;width:' + f.w + 'px;height:' + f.h + 'px;background:' + PAT[O.pat][i] + '"></div>'
+        : '<div class="ph">' + (st === 'loading' ? '<svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke="rgba(255,255,255,.18)"></circle><path d="M12 4a8 8 0 0 1 8 8" stroke="#EDEDEA"></path></svg>' : '<svg viewBox="0 0 24 24" fill="none" stroke="#FF8A7A" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5v5.5M12 16.4v.1"></path></svg>') + '</div>';
+      html += '<div class="slot" role="button" tabindex="0" data-k="' + k + '" aria-disabled="' + (O.sa !== 'ok' || O.sb !== 'ok') + '" aria-label="' + (O.v === 'new' ? name : NAME[k] + '、' + where(i) + 'の写真') + '" style="left:' + sl.x + 'px;top:' + sl.y + 'px;width:' + L.sw + 'px;height:' + L.sh + 'px">' + inner + lab + '</div>';
+      geo.push({ k: k, area: area, ok: ok, name: name, inset: inset, pos: where(i) });
+    });
+    html += zoomHTML() + '</div>';
+    const da = O.sa !== 'ok' || O.sb !== 'ok', db = da;
+    html += '<div class="btns"><button class="pri" data-b="selA"' + (da ? ' disabled' : '') + '>Aを選ぶ</button><button class="pri" data-b="selB"' + (db ? ' disabled' : '') + '>Bを選ぶ</button><button data-b="zA">Aを拡大</button><button data-b="zB">Bを拡大</button></div><div class="mocknote">下のボタンは既存ボタンの簡略模擬（寸法・配置は再設計していない）</div>';
+    part.innerHTML = html;
+    // 実測
+    const c = document.getElementById('cmp').getBoundingClientRect();
+    const rows = geo.map((g) => {
+      const lb = part.querySelector('[data-lab="' + g.k + '"]');
+      if (!lb) return g.k + '：' + g.pos + '・ラベルなし（現行表示）';
+      const s = part.querySelector('.slot[data-k="' + g.k + '"]').getBoundingClientRect();
+      const r = lb.getBoundingClientRect();
+      const lx = r.left - s.left, ly = r.top - s.top;
+      const inside = lx >= g.area.x - 0.5 && ly >= g.area.y - 0.5 && lx + r.width <= g.area.x + g.area.w + 0.5 && ly + r.height <= g.area.y + g.area.h + 0.5;
+      const cx = g.area.x + g.area.w / 2, cy = g.area.y + g.area.h / 2;
+      const center = !(lx + r.width > cx - g.area.w / 4 && lx < cx + g.area.w / 4 && ly + r.height > cy - g.area.h / 4 && ly < cy + g.area.h / 4);
+      return (inside && center ? '<span class="ok">○</span> ' : '<span class="ng">✕</span> ') + g.k + '（' + g.pos + '）：' + (g.ok ? '実画像 ' : '仮の表示 ') + Math.round(g.area.w) + '×' + Math.round(g.area.h) + 'dp・ラベル ' + Math.round(r.width) + '×' + Math.round(r.height) + 'dp・余白 ' + g.inset + 'dp・' + (inside ? '画像の中' : 'はみ出し') + '・' + (center ? '中央の半分に入らない' : '中央にかかる');
+    });
+    document.getElementById('geo').innerHTML = '<b>配置：' + (L.mode === 'v' ? '上下' : '左右') + (O.lay === 'auto' ? '（自動。面積 上下 ' + Math.round(L.av) + ' ／ 左右 ' + Math.round(L.ah) + ' dp²）' : '（固定）') + '・部品 ' + O.w + '×' + H + 'dp・文字' + O.k + '倍</b><br>' + rows.join('<br>');
+    document.getElementById('a11y').innerHTML = '<b>画像の読み上げ名</b><br>' + [...part.querySelectorAll('.slot')].map((s) => s.getAttribute('aria-label')).join('<br>');
+    document.getElementById('logBody').innerHTML = O.log.map((x) => '・' + x).join('<br>') || '—';
+    bind(L);
+  }
+  function zoomHTML() {
+    if (!O.zoom) return '';
+    const i = O.zoom === 'A' ? 0 : 1;
+    return '<div class="zoom"><div class="zi" style="background:' + PAT[O.pat][i] + '"></div><button data-b="zclose">閉じる（拡大の模擬）</button></div>';
+  }
+  function act(k, how, src) {
+    const L = layout();
+    const pos = L.mode === 'v' ? (k === 'A' ? '上' : '下') : (k === 'A' ? '左' : '右');
+    const st = k === 'A' ? O.sa : O.sb;
+    if ((how === 'sel' || src === '写真を長押し') && (O.sa !== 'ok' || O.sb !== 'ok')) { add(src + '：両画像の表示完了まで操作できない（既存の契約）'); render(); return; }
+    if (how === 'sel') { O.sel = k; add(src + ' → ' + k + 'を選択（' + pos + 'の写真・' + NAME[k] + '）'); }
+    else { O.zoom = k; add(src + ' → ' + k + 'を拡大（' + pos + 'の写真・' + NAME[k] + '）'); }
+    render();
+  }
+  function bind() {
+    part.querySelectorAll('.slot').forEach((s) => {
+      let t = null, long = false;
+      s.addEventListener('pointerdown', () => { long = false; t = setTimeout(() => { long = true; act(s.dataset.k, 'zoom', '写真を長押し'); }, 500); });
+      const cancel = () => clearTimeout(t);
+      s.addEventListener('pointerleave', cancel);
+      s.addEventListener('pointerup', () => { cancel(); if (!long) act(s.dataset.k, 'sel', '写真をタップ'); });
+      s.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(s.dataset.k, 'sel', '写真をタップ'); } });
+    });
+    part.querySelectorAll('[data-b]').forEach((b) => b.addEventListener('click', () => {
+      const v = b.dataset.b;
+      if (v === 'selA') act('A', 'sel', 'ボタン［Aを選ぶ］'); else if (v === 'selB') act('B', 'sel', 'ボタン［Bを選ぶ］');
+      else if (v === 'zA') act('A', 'zoom', 'ボタン［Aを拡大］'); else if (v === 'zB') act('B', 'zoom', 'ボタン［Bを拡大］');
+      else if (v === 'zclose') { O.zoom = null; render(); }
+    }));
+  }
+  function seg(id, fn) {
+    const el = document.getElementById(id);
+    el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; el.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', x === b ? 'true' : 'false')); fn(b.dataset.v); render(); });
+  }
+  const syncState = () => { [['oSA', O.sa], ['oSB', O.sb]].forEach(([id, v]) => document.querySelectorAll('#' + id + ' button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.v === v ? 'true' : 'false'))); };
+  seg('oV', (v) => { O.v = v; }); seg('oW', (v) => { O.w = +v; }); seg('oL', (v) => { O.lay = v; });
+  seg('oR', (v) => { const p = v.split(','); O.ra = +p[0]; O.rb = +p[1]; }); seg('oP', (v) => { O.pat = v; }); seg('oK', (v) => { O.k = +v; });
+  seg('oSA', (v) => { O.sa = v; if (v !== 'ok' && O.sel === 'A') O.sel = null; }); seg('oSB', (v) => { O.sb = v; if (v !== 'ok' && O.sel === 'B') O.sel = null; });
+  document.getElementById('reload').addEventListener('click', () => {
+    O.sa = 'loading'; O.sb = 'loading'; O.zoom = null; syncState(); add('再表示：A・Bとも読み込み直し'); render();
+    setTimeout(() => { O.sa = 'ok'; syncState(); render(); }, 500);
+    setTimeout(() => { O.sb = 'ok'; syncState(); add('再表示：読み込み完了（ラベルを実画像の左上へ置き直し）'); render(); }, 900);
+  });
+  window.__l10 = { O: O, render: render };
+  render();
+})();
+</script>
+</body>
+</html>

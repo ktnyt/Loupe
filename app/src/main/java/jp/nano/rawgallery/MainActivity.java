@@ -1571,9 +1571,11 @@ public final class MainActivity extends DiagnosticActivity {
     modes.addView(GalleryUi.chip(this, "すべての順位を決める", !ranking.bestOnly(),
         () -> changeRankingMode(false)), new LinearLayout.LayoutParams(0, -2, 1));
 
-    TextView hint = label(ranking.done() ? "写真をタップして拡大" : "好きな写真を選んでください", 12, MUTED);
-    hint.setPadding(dp(16), 0, dp(16), dp(6));
-    root.addView(hint);
+    if (ranking.done()) {
+      TextView hint = label("写真をタップして拡大", 12, MUTED);
+      hint.setPadding(dp(16), 0, dp(16), dp(6));
+      root.addView(hint);
+    }
     Button undo = button("直前の操作を取り消す", () -> saveRanking(ranking.undo()));
     undo.setEnabled(ranking.decisions() > 0);
     Button chooseA = GalleryUi.neutralPrimary(button("Aを選ぶ", () -> saveRanking(ranking.choose(true))));
@@ -1638,7 +1640,6 @@ public final class MainActivity extends DiagnosticActivity {
             if (comparison.getTag() != null && comparison.getTag().equals(orientation)) return;
             comparison.setTag(orientation);
             comparison.setOrientation(orientation);
-            hint.setText(horizontal ? "Aは左の写真 · Bは右の写真" : "Aは上の写真 · Bは下の写真");
             for (ImageView image : candidates)
               image.setLayoutParams(
                   new LinearLayout.LayoutParams(horizontal ? 0 : -1, horizontal ? -1 : 0, 1));
@@ -1700,9 +1701,7 @@ public final class MainActivity extends DiagnosticActivity {
       double[] ratios,
       Runnable arrange) {
     PhotoRepository.Photo photo = photos.get(rankingMembers.get(key));
-    ImageView image = new ImageView(this);
-    image.setScaleType(ImageView.ScaleType.FIT_CENTER);
-    image.setContentDescription(photo.name + "。タップで選択、長押しで拡大");
+    ComparisonPhotoView image = new ComparisonPhotoView(this, upper ? "A" : "B", photo.name);
     image.setOnClickListener(
         v -> {
           if (rankingScreen && token == generation && ratios[0] > 0 && ratios[1] > 0) {
@@ -1729,6 +1728,7 @@ public final class MainActivity extends DiagnosticActivity {
                     return;
                   }
                   image.setImageBitmap(bitmap);
+                  image.loaded();
                   ratios[upper ? 0 : 1] = (double) bitmap.getWidth() / bitmap.getHeight();
                   if (ratios[0] > 0 && ratios[1] > 0) {
                     arrange.run();
@@ -1738,8 +1738,10 @@ public final class MainActivity extends DiagnosticActivity {
           } catch (Exception e) {
             main.post(
                 () -> {
-                  if (!isDestroyed() && token == generation)
+                  if (!isDestroyed() && token == generation) {
+                    image.failed();
                     toast("写真を読み込めませんでした。一覧へ戻って開き直してください。");
+                  }
                 });
           }
         });
