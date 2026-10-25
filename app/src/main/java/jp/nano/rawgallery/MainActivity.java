@@ -778,8 +778,9 @@ public final class MainActivity extends DiagnosticActivity {
 
   private void openTags(PhotoRepository.Photo photo) {
     Intent intent = new Intent(this, TagActivity.class);
-    intent.putExtra("folder", albumFolder);
-    intent.putExtra("camera", filter);
+    boolean albumRoot = albumHome && !detail && photo == null;
+    intent.putExtra("folder", albumRoot ? null : albumFolder);
+    intent.putExtra("camera", albumRoot ? "すべて" : filter);
     if (photo != null) intent.putExtra("photo", photo.uri.toString());
     startActivity(intent);
   }
@@ -889,7 +890,7 @@ public final class MainActivity extends DiagnosticActivity {
     collectListHeader();
     body = vertical();
     root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
-    dock(button("その他", this::galleryMenu));
+    dock(button("タグ", () -> openTags(null)), button("その他", this::galleryMenu));
     root.addView(new LibraryTabs(this, true, true, this::switchLibraryTab));
     loadAlbums();
   }
