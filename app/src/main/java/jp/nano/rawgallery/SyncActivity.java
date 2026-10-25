@@ -226,7 +226,7 @@ public final class SyncActivity extends DiagnosticActivity {
       new GalleryUi.Sheet(this)
           .setTitle("写真の自動削除に必要なアクセス")
           .setView(requirement(StatusView.Symbol.PERMISSION,"先に写真の自動削除に必要なアクセスを許可してください"))
-          .setPositiveButton("許可",(d,w)->startActivity(new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,Uri.parse("package:"+getPackageName()))))
+          .setPositiveButton("許可",(d,w)->{try{startActivity(new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,Uri.parse("package:"+getPackageName())));}catch(ActivityNotFoundException e){startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));}})
           .setNegativeButton("キャンセル",null)
           .show();
       return;

@@ -1258,7 +1258,7 @@ public final class MainActivity extends DiagnosticActivity {
   }
   private View preparationStatus() {
     JobState state=PreviewPreparationJob.snapshot(this);
-    return status(StatusView.symbol(state.kind),state.countsKnown?state.ready+"/"+state.total+" · "+state.failed:"—",PreviewPreparationJob.status(this));
+    return status(StatusView.symbol(state.kind),state.countsKnown?state.ready+"/"+state.total+" · "+state.failed:"—",(state.kind==JobState.Kind.UNKNOWN?"現在の状態は不明です。最後の記録: ":"")+PreviewPreparationJob.status(this));
   }
   private void feedback(StatusView.Symbol state,String text,Runnable action,String label) {
     StatusFeedback.show(this,state,text,action,label);
@@ -1462,7 +1462,7 @@ public final class MainActivity extends DiagnosticActivity {
                         high.recycle();
                         return;
                       }
-                      loadStatus.finish();
+                      loadStatus.companion(null);loadStatus.finish();
                       image.setStateDescription("元のファイルを表示しています");
                       activePreview = full;
                       image.setBitmap(high);

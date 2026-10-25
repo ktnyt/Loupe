@@ -130,6 +130,11 @@ public final class TagActivity extends DiagnosticActivity {
     input.setSingleLine(true); input.setHint("タグ名"); input.setTextColor(GalleryUi.TEXT);
     LinearLayout form=new LinearLayout(this);form.setOrientation(LinearLayout.VERTICAL);form.addView(input);form.addView(text("1〜80文字",12));
     StatusView inputError=new StatusView(this);form.addView(inputError);
+    input.addTextChangedListener(new android.text.TextWatcher(){
+      public void beforeTextChanged(CharSequence s,int start,int count,int after){}
+      public void onTextChanged(CharSequence s,int start,int before,int count){}
+      public void afterTextChanged(android.text.Editable value){String name=value.toString().trim();if(!name.isEmpty()&&name.length()<=80){inputError.clear();input.setStateDescription(null);input.setBackground(GalleryUi.shape(TagActivity.this,GalleryUi.PANEL,12));}}
+    });
     AlertDialog dialog = new GalleryUi.Sheet(this).setTitle("新しいタグ").setView(form)
         .setPositiveButton("作成", null).setNegativeButton("キャンセル", null).create();
     dialog.setOnShowListener(ignored -> { dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
@@ -143,7 +148,7 @@ public final class TagActivity extends DiagnosticActivity {
           TagStore.Tag created = store.create(name);
           main.post(() -> { if (current(token)) { dialog.dismiss(); openTag(created); } });
         } catch (Exception error) {
-          main.post(() -> { if (current(token)) { dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true); failure(error); } });
+          main.post(() -> { if (current(token)) { dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true); inputError.show(StatusView.Symbol.FAILED,"タグを保存できませんでした。入力は保持されています。作成ボタンで再試行できます"); } });
         }
       });
     }); });
@@ -385,7 +390,7 @@ public final class TagActivity extends DiagnosticActivity {
           StatusFeedback.show(this,StatusView.Symbol.COMPLETE,selected.size()+(value==TagJudgments.Value.EXCLUDED?"枚のタグを外しました":"枚にタグを付けました"),null,"");
         });
       } catch (Exception error) {
-        main.post(() -> { busy = false; if (current(token)) { refreshSelection(); failure(error); } });
+        main.post(() -> { busy = false; if (current(token)) { refreshSelection(); StatusFeedback.show(this,StatusView.Symbol.FAILED,"タグを保存できませんでした。選択は保持されています。",this::changeSelected,"再試行"); } });
       }
     });
   }
@@ -498,8 +503,8 @@ public final class TagActivity extends DiagnosticActivity {
     boolean done=analysisFinished&&!autoPending&&!autoAgain&&automaticError.isEmpty();
     if(analysisStatus!=null){
       StatusView.Symbol kind=!automaticError.isEmpty()?StatusView.Symbol.FAILED:done?(analysisFailures>0?StatusView.Symbol.PARTIAL:StatusView.Symbol.COMPLETE):analysisPaused?StatusView.Symbol.PAUSED:StatusView.Symbol.RUNNING;
-      analysisStatus.show(kind,analyzed+"/"+photos.size(),progress(),null,"");
-      assignmentStatus.show(autoPending?StatusView.Symbol.RUNNING:StatusView.Symbol.AUTO_TAG,Integer.toString(automaticCount),"自動付与"+automaticCount+"枚"+(autoPending?"、保存中":""),null,"");
+      analysisStatus.observe(kind,analyzed+"/"+photos.size(),progress());
+      assignmentStatus.observe(autoPending?StatusView.Symbol.RUNNING:StatusView.Symbol.AUTO_TAG,Integer.toString(automaticCount),"自動付与"+automaticCount+"枚"+(autoPending?"、保存中":""));
       if(analysisFailures>0)failureCount.show(StatusView.Symbol.FAILED,Integer.toString(analysisFailures),"取得失敗"+analysisFailures+"枚",null,"");else failureCount.clear();
     }
     if (resultButton != null) resultButton.setText(done ? "結果を見る" : "停止して写真を見る");

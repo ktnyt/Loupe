@@ -33,7 +33,7 @@ final class VisualStatusChecks {
       main(t,()->{if(v[0].getVisibility()!=View.VISIBLE)throw new AssertionError("failure disappeared");AccessibilityNodeInfo node=v[0].createAccessibilityNodeInfo();if(!node.isClickable()||!node.getContentDescription().toString().contains("再試行"))throw new AssertionError("recovery AX");if(!v[0].performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK,null)||clicks[0]!=1)throw new AssertionError("recovery action");v[0].result(StatusView.Symbol.COMPLETE,"保存しました");return true;});
       Thread.sleep(1200);
       main(t,()->{if(v[0].getVisibility()==View.VISIBLE)throw new AssertionError("success remains");return true;});
-      main(t,()->{v[0].begin("8秒を超える処理");return true;});
+      main(t,()->{v[0].begin("8秒を超える処理");if((boolean)field(v[0],"transientResult")||(boolean)field(v[0],"marker")||!"".equals(field(v[0],"recoveryName")))throw new AssertionError("previous state leaked into loading");return true;});
       Thread.sleep(500);final int[] initialBounds={v[0].getWidth(),v[0].getHeight()};
       Thread.sleep(7700);
       main(t,()->{if(!(boolean)field(v[0],"marker")||v[0].getWidth()!=initialBounds[0]||v[0].getHeight()!=initialBounds[1])throw new AssertionError("8 second marker shifts layout");set(v[0],"started",SystemClock.uptimeMillis()-61000);v[0].invalidate();return true;});
@@ -44,17 +44,18 @@ final class VisualStatusChecks {
       capture(t,a,v[0],v[0].getHeight(),"status-known-count");
       main(t,()->{v[0].clear();return true;});
       int cases=0;
-      for(int width:new int[]{320,400})for(float scale:new float[]{1,1.3f}) {
+      for(int page=0;page<2;page++)for(int width:new int[]{320,400})for(float scale:new float[]{1,1.3f}) {
+        final int statePage=page;
         LinearLayout[] board={null};
         main(t,()->{
           Configuration config=new Configuration(a.getResources().getConfiguration());config.fontScale=scale;Context c=a.createConfigurationContext(config);
           FrameLayout host=new FrameLayout(a);host.setBackgroundColor(GalleryUi.BG);board[0]=new LinearLayout(c);board[0].setOrientation(1);board[0].setBackgroundColor(GalleryUi.BG);
           FrameLayout.LayoutParams bounds=new FrameLayout.LayoutParams(GalleryUi.dp(c,width),-2);bounds.topMargin=GalleryUi.dp(c,64);host.addView(board[0],bounds);a.setContentView(host);
-          StatusView.Symbol[] symbols={StatusView.Symbol.UNKNOWN,StatusView.Symbol.WAITING,StatusView.Symbol.PAUSED,StatusView.Symbol.COMPLETE,StatusView.Symbol.PARTIAL,StatusView.Symbol.FAILED,StatusView.Symbol.AUTH,StatusView.Symbol.PREVIEW};
+          StatusView.Symbol[] symbols=statePage==0?new StatusView.Symbol[]{StatusView.Symbol.UNKNOWN,StatusView.Symbol.WAITING,StatusView.Symbol.PAUSED,StatusView.Symbol.COMPLETE,StatusView.Symbol.PARTIAL,StatusView.Symbol.FAILED,StatusView.Symbol.AUTH,StatusView.Symbol.PREVIEW}:new StatusView.Symbol[]{StatusView.Symbol.RUNNING,StatusView.Symbol.NETWORK,StatusView.Symbol.STORAGE,StatusView.Symbol.PERMISSION,StatusView.Symbol.TLS,StatusView.Symbol.HOST,StatusView.Symbol.NO_APP,StatusView.Symbol.FORMAT,StatusView.Symbol.EMPTY,StatusView.Symbol.CANCELLED,StatusView.Symbol.ALREADY};
           for(StatusView.Symbol symbol:symbols){StatusView item=new StatusView(c);board[0].addView(item,new LinearLayout.LayoutParams(-1,GalleryUi.dp(c,48)));item.show(symbol,symbol==StatusView.Symbol.PARTIAL?"3":"",symbol.name(),null,"");if(symbol==StatusView.Symbol.FAILED)item.show(symbol,"","原本失敗",()->clicks[0]++,"再試行");}
           return true;
         });
-        capture(t,a,board[0],board[0].getHeight(),"status-"+width+"-"+scale);cases++;
+        capture(t,a,board[0],board[0].getHeight(),"status-"+width+"-"+scale+(statePage==0?"":"-causes"));cases++;
       }
       String flows=VisualStatusFlowChecks.run(t,a);
       return flows+"PASS status delay (<400ms hidden), minimum 600ms, completion fade, stale clear, persistent failure, actual AX retry, transient result, real 8s marker with stable bounds, simulated 61s elapsed origin and known count capture; "+cases+" real-device synthetic captures. No external transfer; TalkBack audio untested.\n";

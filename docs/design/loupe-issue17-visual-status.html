@@ -537,6 +537,7 @@ table.t code{background:#1C1C1F;padding:1px 5px;border-radius:4px;font-size:12px
   window.__l17 = { O: O, setScene: setScene, render: render, get st() { return st; }, scr: (v) => { O.scr = v; sceneButtons(); setScene(SC[v][0][0]); } };
   renderGal(); renderAssign(); sceneButtons(); setScene('short');
 const fixture=document.createElement('section');fixture.innerHTML='<h2>Android照合用・状態部品</h2><div id="status-fixture" style="width:320px;--k:1.3;background:#0F0F10">'+['unknown','wait','pause','done','partial','fail','auth','preview'].map(k=>'<div style="height:48px;display:flex;align-items:center;justify-content:center">'+(k==='partial'?mk(gl(k)+'<span>3</span>',false,'一部失敗'):k==='fail'?mk(gl(k,'fail'),true,'失敗','retry'):gl(k))+'</div>').join('')+'</div>';document.querySelector('.wrap').appendChild(fixture);
+const causes=document.createElement('section');causes.innerHTML='<h2>Android照合用・原因別</h2><div id="cause-fixture" style="width:320px;--k:1.3;background:#0F0F10">'+['run','net','storage','perm','tls','host','noapp','format','empty','stop','already'].map(k=>'<div style="height:48px;display:flex;align-items:center;justify-content:center">'+(k==='empty'?'<span class="gl muted" style="width:48px;height:48px">'+G.empty.replace('viewBox="0 0 48 48"','viewBox="0 0 48 48" style="width:48px;height:48px"')+'</span>':gl(k,['net','storage','perm','tls','host','noapp','format'].includes(k)?'fail':''))+'</div>').join('')+'</div>';document.querySelector('.wrap').appendChild(causes);
 })();
 </script>
 </body>
