@@ -17,7 +17,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean diagnosticTest, sheetTest;
   private boolean tagTest, lifecycleTest;
   private boolean relatedTest;
-  private boolean positionTest, sortTest, tabsTest;
+  private boolean positionTest, sortTest, tabsTest, albumTagsTest;
   private boolean automaticTest;
   private boolean cleanupTest;
   private boolean compactTest;
@@ -27,6 +27,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    albumTagsTest = args != null && "album-tags".equals(args.getString("mode"));
     tabsTest = args != null && "library-tabs".equals(args.getString("mode"));
     sortTest = args != null && "sort-naming".equals(args.getString("mode"));
     positionTest = args != null && "gallery-position".equals(args.getString("mode"));
@@ -51,6 +52,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     File restored = null;
     try {
       Context context = getTargetContext();
+      if (albumTagsTest) { results.putString("stream", AlbumTagEntryChecks.run(this)); finish(-1, results); return; }
       if (tabsTest) { results.putString("stream", LibraryTabsChecks.run(this)); finish(-1, results); return; }
       if (sortTest) { results.putString("stream", SortNamingChecks.run(this)); finish(-1, results); return; }
       if (positionTest) { results.putString("stream", GalleryPositionChecks.run(this)); finish(-1, results); return; }

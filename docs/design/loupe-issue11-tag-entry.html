@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loupe Issue #11 アルバムからタグへ</title>
+<style>
+:root{--bg:#0F0F10;--panel:#19191B;--text:#EDEDEA;--sub:#A9A9A4;--ok:#9FE0B5;--ng:#F2A7AB}
+*{box-sizing:border-box}
+body{margin:0;background:#0B0B0C;color:var(--text);font-family:"Noto Sans JP",system-ui,-apple-system,"Hiragino Sans",sans-serif;font-size:15px;line-height:1.6}
+.wrap{max-width:1200px;margin:0 auto;padding:28px 20px 64px}
+h1{margin:0;font-size:24px;line-height:1.4;font-weight:600}
+.lead{margin:6px 0 0;color:var(--sub);font-size:14px}
+.controls{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;margin:16px 0 0}
+.controls .lb{color:var(--sub);font-size:13px;margin-right:6px}
+.seg{display:inline-flex;flex-wrap:wrap;background:#1C1C1F;border-radius:22px;padding:2px}
+.seg button{background:none;border:0;color:var(--text);font:inherit;font-size:13px;min-height:44px;padding:0 12px;border-radius:20px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:#EDEDEA;color:#111}
+.hw{background:none;border:1px solid #3A3A3F;color:var(--text);font:inherit;font-size:13px;min-height:44px;padding:0 14px;border-radius:22px;cursor:pointer}
+.cols{display:flex;gap:40px;flex-wrap:wrap;margin-top:20px;align-items:flex-start}
+.col{display:flex;flex-direction:column;gap:10px}
+.col h2{margin:0;font-size:15px;font-weight:600;display:flex;gap:8px;align-items:center}
+.tagc{font-size:12px;padding:2px 8px;border-radius:6px;font-weight:600}
+.tagc.old{background:#26262A;color:#C9C9C4}.tagc.new{background:#1E3A2A;color:var(--ok)}
+.box{background:#141416;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.6;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok)}.ng{color:var(--ng)}
+
+/* 端末：外枠は outline（内容の幅を狭めない）。1px = 1dp */
+.dev{position:relative;width:var(--w);height:760px;background:var(--bg);color:var(--text);outline:1px solid #3A3A3F;outline-offset:0;overflow:hidden;font-family:Roboto,"Noto Sans JP","Noto Sans CJK JP",system-ui,sans-serif;flex-shrink:0}
+.scrn{position:absolute;inset:0;display:flex;flex-direction:column}
+.list{flex:1;overflow-y:auto;min-height:0}
+.list::-webkit-scrollbar{width:0}
+.h2s{padding:40px 20px 8px;font-size:calc(13px*var(--k));color:var(--sub);font-weight:500}
+.car{display:flex;gap:8px;overflow:hidden;padding:0 16px}
+.car i{flex:0 0 auto;width:240px;height:180px;border-radius:12px;display:block}
+.h1{padding:24px 20px 12px;display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.h1 b{font-size:calc(24px*var(--k));line-height:1.35;font-weight:600}
+.h1 span{font-size:calc(13px*var(--k));color:var(--sub)}
+.ag{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 12px;padding:0 16px 16px}
+.ag .al{display:flex;flex-direction:column;gap:6px}
+.ag i{display:block;height:130px;border-radius:12px}
+.ag span{font-size:calc(14px*var(--k));line-height:1.35}
+.ag small{font-size:calc(12px*var(--k));color:var(--sub)}
+.skel{background:#19191B !important}
+.msg{padding:140px 24px;text-align:center;color:var(--sub);font-size:calc(14px*var(--k))}
+
+/* ===== 比較対象1：dock（実装済みの寸法） ===== */
+.dock{flex-shrink:0;background:#19191B;padding:8px;display:flex}
+.dbtn{flex:1 1 0;min-width:0;min-height:64px;height:auto;padding:6px;background:transparent;border:0;border-radius:14px;color:#EDEDEA;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;position:relative;overflow:hidden;font-family:Roboto,"Noto Sans JP","Noto Sans CJK JP",system-ui,sans-serif;font-weight:500;font-size:calc(13px*var(--k));line-height:24px;text-align:center}
+.dbtn svg{width:24px;height:24px;flex-shrink:0}
+.dbtn .lbl{overflow-wrap:anywhere}
+.dbtn .rip{position:absolute;border-radius:50%;background:rgba(237,237,234,.16);transform:scale(0);animation:rip .45s ease-out forwards;pointer-events:none}
+@keyframes rip{to{transform:scale(1);opacity:0}}
+@media (prefers-reduced-motion:reduce){.dbtn .rip{animation:none;opacity:.16;transform:scale(1)}}
+
+/* ===== 比較対象2：#12の固定2タブ（変更なし） ===== */
+.tabbar{flex-shrink:0;background:var(--bg);border-top:1px solid #19191B;padding:0 8px 20px;display:flex}
+.tabs{flex:1;display:flex;min-width:0}
+.tab{flex:1 1 0;min-width:0;min-height:48px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:6px 4px;background:none;border:0;color:var(--sub);cursor:pointer;font-family:Roboto,"Noto Sans JP","Noto Sans CJK JP",system-ui,sans-serif;font-weight:500;font-size:calc(16px*var(--k));line-height:calc(24px*var(--k))}
+.tab .ind{display:block;height:2px;border-radius:1px;width:var(--iw,0);background:transparent}
+.tab[aria-selected="true"]{color:var(--text)}
+.tab[aria-selected="true"] .ind{background:var(--text)}
+
+/* 既存タグ画面の簡略模擬 */
+.mock{padding:40px 20px 12px}
+.mock b{display:block;font-size:calc(24px*var(--k));line-height:1.35;font-weight:600}
+.mock span{font-size:calc(13px*var(--k));color:var(--sub)}
+.badge{margin:0 16px 12px;padding:8px 12px;border:1px dashed #3A3A3F;border-radius:8px;font-size:12px;line-height:1.5;color:#8A8A85}
+.trow{display:flex;align-items:center;gap:12px;width:100%;min-height:64px;padding:8px 16px;background:none;border:0;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.trow i{width:48px;height:48px;border-radius:8px;flex-shrink:0;display:block}
+.trow span{font-size:calc(15px*var(--k));line-height:1.35}
+.trow small{display:block;font-size:calc(12px*var(--k));color:var(--sub)}
+.left{position:absolute;inset:0;background:#0B0B0C;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--sub);font-size:14px;z-index:5}
+.left button{min-height:48px;padding:0 18px;border-radius:24px;border:1px solid #3A3A3F;background:none;color:var(--text);font:inherit;cursor:pointer}
+
+.spec h2{font-size:20px;margin:36px 0 10px;font-weight:600}
+.spec table{border-collapse:collapse;width:100%;font-size:14px}
+.spec th,.spec td{border-bottom:1px solid #2A2A2E;padding:8px 12px 8px 0;text-align:left;vertical-align:top}
+.spec th{color:var(--sub);font-weight:500;font-size:12.5px}
+.spec ul{margin:0;padding-left:20px}.spec li{margin:4px 0}
+.spec code{background:#1C1C1F;padding:1px 6px;border-radius:4px;font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Loupe Issue #11 — アルバム一覧からタグへ</h1>
+<p class="lead">比較対象は、アルバム一覧の下部の dock と、そのすぐ下の#12の固定2タブだけです。タグ一覧・タグ詳細は既存画面の<b>簡略模擬</b>で、内容は実際の画面と異なります。写真はダミーです。</p>
+
+<div class="controls" role="group" aria-label="条件">
+<span><span class="lb">幅</span><span class="seg" id="optW"><button data-v="320" aria-pressed="false">320dp</button><button data-v="400" aria-pressed="true">400dp</button></span></span>
+<span><span class="lb">文字</span><span class="seg" id="optK"><button data-v="1" aria-pressed="true">1.0倍</button><button data-v="1.3" aria-pressed="false">1.3倍</button></span></span>
+<span><span class="lb">アルバム一覧</span><span class="seg" id="optS"><button data-v="ok" aria-pressed="true">通常</button><button data-v="empty" aria-pressed="false">空</button><button data-v="loading" aria-pressed="false">読み込み中</button></span></span>
+<button class="hw" id="hwBack">端末の戻る（Android標準Back・#11側）</button>
+</div>
+
+<div class="cols">
+<div class="col"><h2>#12マージ後（現行） <span class="tagc old">比較の基準</span></h2><div class="dev" id="devOld"></div><div class="box" id="chkOld"></div></div>
+<div class="col"><h2>#11 <span class="tagc new">今回</span></h2><div class="dev" id="devNew"></div><div class="box" id="chkNew"></div><div class="box" id="flow"></div></div>
+</div>
+
+<section class="spec" aria-label="仕様">
+<h2>1. 変更範囲</h2>
+<table>
+<tr><th>対象</th><th>#12マージ後</th><th>#11</th></tr>
+<tr><td>アルバム一覧の dock</td><td>［その他］1つ</td><td>［タグ］［その他］の均等2ボタン（左がタグ）</td></tr>
+<tr><td>#12の固定2タブ</td><td colspan="2">変更なし。#12で候補だった右端48dpの枠は使わない（タブが狭くなるため）</td></tr>
+<tr><td>すべての写真の dock</td><td colspan="2">既存の［タグ］ボタンを含め、変更なし</td></tr>
+<tr><td>タグ一覧・タグ詳細</td><td colspan="2">内容は変更なし（#1の推論も変更なし）。アルバム一覧から開けるようになるだけ</td></tr>
+<tr><td>そのほか</td><td colspan="2">写真・順位・タグのデータ・原本は、入口の開閉で変わらない。ほかの画面は再設計しない</td></tr>
+</table>
+
+<h2>2. dock の数値（実装済みの dock と同じ。#7のボタン基準を流用）</h2>
+<table>
+<tr><th>項目</th><th>値</th></tr>
+<tr><td>dock</td><td>背景 #19191B、全周8dpの余白、横並び</td></tr>
+<tr><td>ボタン</td><td>各 weight 1（均等）、最低の高さ64dp、高さは wrap-content、背景は透明、全周6dpの余白、押したときは標準のリップル</td></tr>
+<tr><td>アイコン</td><td>上に配置、24dp。［タグ］は既存のタグの輪郭アイコン、［その他］は既存の縦3点アイコン</td></tr>
+<tr><td>文字</td><td>13sp、<code>sans-serif-medium</code>、#EDEDEA。アイコンとの間隔4dp。省略せず、入らないときは折り返す</td></tr>
+<tr><td>幅の目安</td><td>ボタン1つ＝（画面幅 − 16dp）÷ 2。320dpで152dp、400dpで192dp</td></tr>
+<tr><td>読み上げ</td><td>見えている名前と同じ「タグ」「その他」。アイコンは読み上げない。ボタンとして読む</td></tr>
+</table>
+
+<h2>3. 入口の動き</h2>
+<table>
+<tr><th>場面</th><th>動き</th></tr>
+<tr><td>［タグ］を押す</td><td>既存のタグ一覧を開く。対象は全写真：<code>folder = null</code>、<code>camera = すべて</code>、写真の指定なし。特定の写真やアルバムは開かない</td></tr>
+<tr><td>一覧が空・読み込み中</td><td>入口は有効のまま（押せる）</td></tr>
+<tr><td>タグ一覧でBack</td><td>アルバム一覧へ戻る。開く前と同じ一覧の位置（先頭の項目と上端のずれ）と、同じタブ（アルバム）</td></tr>
+<tr><td>タグ詳細でBack</td><td>既存実装どおりタグ画面を終了してアルバム一覧へ戻る（タグ一覧を経由しない）</td></tr>
+<tr><td>アルバム一覧でBack</td><td>#12のとおり、アプリを離れる</td></tr>
+<tr><td>タグ一覧・詳細を開いている間</td><td>#12の子画面と同じく、固定2タブは隠す</td></tr>
+</table>
+
+<h2>4. ブラウザとAndroidのフォントの違い</h2>
+<ul>
+<li>Androidの <code>sans-serif-medium</code> は、英数字が Roboto Medium、日本語は端末の日本語フォント（多くは Noto Sans CJK JP の Medium）。このHTMLは Roboto と Noto Sans JP を指定しているが、入っていない環境ではブラウザの標準フォントになり、文字の幅や行の高さが実機と数%ずれることがある。</li>
+<li>「タグ」「その他」は2〜3文字なので、320dp・1.3倍（約17sp）でも1行に収まる余裕は大きい。</li>
+<li>HTMLの外枠は outline で描いていて、内容の幅（320dp／400dp）は狭めていない。</li>
+</ul>
+</section>
+</div>
+
+<script>
+(function () {
+  const G = ['#3f4a3a,#1d241c', '#5b6168,#2a2d31', '#a9c3d8,#69736a', '#7b5b45,#2a201b', '#34425d,#07080b', '#eee5d5,#a89a83', '#c9a27e,#4a3a2a', '#2a1c18,#6b3a2a'];
+  const grad = (i) => 'linear-gradient(160deg,' + G[i % G.length] + ')';
+  const ALBUMS = ['カメラ', '嵐山 10.18', '夕方の散歩', 'テスト撮影', 'スクリーンショット', 'ダウンロード', '旅行 9月', '公園', '家族', '夜景'];
+  const TAGS = [['空', 12], ['夕景', 8], ['紅葉', 5], ['猫', 3]];
+  const TAG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g transform="translate(-1 -1) scale(1.083333)"><path d="M3 3H12L21 12L12 21L3 12Z"></path><circle cx="7.5" cy="7.5" r="1"></circle></g></svg>';
+  const MORE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><g transform="translate(-1 -1) scale(1.083333)"><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="19" r="1"></circle></g></svg>';
+  const opt = { w: 400, k: 1, st: 'ok' };
+  const S = { screen: 'albums', pos: 0, tag: null, left: false, log: [] };
+  const devOld = document.getElementById('devOld'), devNew = document.getElementById('devNew');
+
+  function albumsBody() {
+    if (opt.st === 'empty') return '<div class="msg">アルバムがありません</div>';
+    const sk = opt.st === 'loading';
+    return '<div class="h2s">最近の写真</div><div class="car">' + [0, 1, 2].map((i) => '<i class="' + (sk ? 'skel' : '') + '" style="background:' + grad(i) + '"></i>').join('') + '</div>' +
+      '<div class="h1"><b>アルバム</b><span>' + (sk ? '' : ALBUMS.length + '件') + '</span></div><div class="ag">' +
+      ALBUMS.map((n, i) => '<div class="al" data-item><i class="' + (sk ? 'skel' : '') + '" style="background:' + grad(i + 3) + '"></i><span>' + (sk ? '&nbsp;' : n) + '</span><small>' + (sk ? '&nbsp;' : (20 + i * 7) + '枚') + '</small></div>').join('') + '</div>';
+  }
+  const dbtn = (icon, label, act) => '<button class="dbtn" data-act="' + act + '">' + icon + '<span class="lbl">' + label + '</span></button>';
+  const tabs = () => '<div class="tabbar"><div class="tabs" role="tablist" aria-label="表示"><button class="tab" role="tab" aria-selected="false" tabindex="-1"><span>すべての写真</span><span class="ind" aria-hidden="true"></span></button><button class="tab" role="tab" aria-selected="true" tabindex="0"><span>アルバム</span><span class="ind" aria-hidden="true"></span></button></div></div>';
+
+  function render(dev, isNew) {
+    dev.style.setProperty('--w', opt.w + 'px'); dev.style.setProperty('--k', opt.k);
+    let html;
+    const scr = isNew ? S.screen : 'albums';
+    if (scr === 'albums') {
+      html = '<div class="list" data-list>' + albumsBody() + '</div><div class="dock" role="group">' + (isNew ? dbtn(TAG, 'タグ', 'tags') : '') + dbtn(MORE, 'その他', 'more') + '</div>' + tabs();
+    } else if (scr === 'tags') {
+      html = '<div class="list"><div class="mock"><b>タグ</b><span>すべての写真 · ' + TAGS.length + '個</span></div><div class="badge">既存のタグ一覧の簡略模擬。開いた条件：folder = null ・ camera = すべて ・ 写真の指定なし</div>' +
+        TAGS.map((t, i) => '<button class="trow" data-tag="' + i + '"><i style="background:' + grad(i + 2) + '"></i><span>' + t[0] + '<small>タグ付き ' + t[1] + '枚</small></span></button>').join('') + '</div>';
+    } else {
+      const t = TAGS[S.tag];
+      html = '<div class="list"><div class="mock"><b>' + t[0] + '</b><span>タグ付き ' + t[1] + '枚</span></div><div class="badge">既存のタグ詳細の簡略模擬</div><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:2px">' +
+        Array.from({ length: t[1] }, (_, i) => '<i style="display:block;height:calc((var(--w) - 6px)/4);background:' + grad(i + S.tag) + '"></i>').join('') + '</div></div>';
+    }
+    dev.innerHTML = '<div class="scrn">' + html + '</div>' + (isNew && S.left ? '<div class="left"><span>（アプリを離れた状態・デモ用）</span><button data-act="reopen">Loupeに戻る（デモ）</button></div>' : '');
+    const L = dev.querySelector('[data-list]');
+    if (L) { if (isNew) { L.scrollTop = S.pos; L.addEventListener('scroll', () => { S.pos = L.scrollTop; syncOld(); flow(); }, { passive: true }); } else L.scrollTop = S.pos; }
+    dev.querySelectorAll('.tab').forEach((tb) => { const l = tb.querySelector('span'); tb.style.setProperty('--iw', l.getBoundingClientRect().width + 'px'); });
+    check(dev, isNew);
+  }
+  function syncOld() { const L = devOld.querySelector('[data-list]'); if (L) L.scrollTop = S.pos; }
+  const geo = {};
+  function check(dev, isNew) {
+    const out = document.getElementById(isNew ? 'chkNew' : 'chkOld');
+    const d = dev.getBoundingClientRect();
+    const dock = dev.querySelector('.dock'), tb = dev.querySelector('.tabs');
+    if (!dock) { out.innerHTML = '<b>確認</b><br>タグの画面を表示中（固定2タブは隠している）'; return; }
+    const rows = [...dock.querySelectorAll('.dbtn')].map((b) => {
+      const r = b.getBoundingClientRect(), l = b.querySelector('.lbl');
+      const bad = r.height < 64 || r.width < 48 || l.scrollWidth > l.clientWidth + 1;
+      return (bad ? '<span class="ng">✕</span> ' : '<span class="ok">○</span> ') + l.textContent + '：' + Math.round(r.width) + '×' + Math.round(r.height) + 'dp';
+    });
+    const tr = tb.getBoundingClientRect();
+    geo[isNew ? 'n' : 'o'] = [Math.round(tr.top - d.top), Math.round(tr.height), Math.round(tr.width)];
+    const tabRows = [...tb.querySelectorAll('.tab')].map((t) => { const r = t.getBoundingClientRect(); return t.textContent + ' ' + Math.round(r.width) + '×' + Math.round(r.height) + 'dp'; }).join('・');
+    let cmp = '';
+    if (geo.o && geo.n) cmp = (geo.o.join() === geo.n.join()) ? '<span class="ok">タブの位置・大きさは現行と同じ（上端 ' + geo.n[0] + 'dp）</span>' : '<span class="ng">タブの位置・大きさが現行と違う（現行 ' + geo.o.join('/') + '・#11 ' + geo.n.join('/') + '）</span>';
+    out.innerHTML = '<b>' + opt.w + 'dp・文字' + opt.k + '倍</b><br>dock：' + Math.round(dock.getBoundingClientRect().height) + 'dp<br>' + rows.join('<br>') + '<br>タブ：' + tabRows + (isNew ? '<br>' + cmp : '');
+  }
+  function flow() {
+    const name = { albums: 'アルバム一覧（ルート）', tags: 'タグ一覧（簡略模擬）', detail: 'タグ詳細（簡略模擬）' }[S.screen];
+    document.getElementById('flow').innerHTML = '<b>#11 の状態</b><br>表示中：' + name + '<br>アルバム一覧の位置：上端から ' + Math.round(S.pos) + 'dp<br>タグのデータ：変更なし（入口の開閉では書き込まない）' +
+      '<br><b style="display:block;margin-top:6px">操作の記録</b>' + (S.log.map((x) => '・' + x).join('<br>') || '—');
+  }
+  function all() { render(devOld, false); render(devNew, true); render(devNew, true); flow(); }
+  function ripple(b, e) {
+    const r = b.getBoundingClientRect(), s = Math.max(r.width, r.height) * 2;
+    const sp = document.createElement('span'); sp.className = 'rip';
+    sp.style.cssText = 'width:' + s + 'px;height:' + s + 'px;left:' + ((e.clientX || r.left + r.width / 2) - r.left - s / 2) + 'px;top:' + ((e.clientY || r.top + r.height / 2) - r.top - s / 2) + 'px';
+    b.appendChild(sp); setTimeout(() => sp.remove(), 500);
+  }
+  const add = (t) => { S.log.unshift(t); S.log = S.log.slice(0, 6); };
+  devNew.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act]');
+    if (b) {
+      if (b.classList.contains('dbtn')) ripple(b, e);
+      const a = b.dataset.act;
+      if (a === 'tags') { setTimeout(() => { S.screen = 'tags'; add('［タグ］→ タグ一覧（全写真が対象）'); all(); }, 120); }
+      else if (a === 'more') add('［その他］（既存のメニュー。ここでは開かない）'), flow();
+      else if (a === 'reopen') { S.left = false; all(); }
+      return;
+    }
+    const t = e.target.closest('[data-tag]');
+    if (t) { S.tag = +t.dataset.tag; S.screen = 'detail'; add('タグ一覧 → タグ詳細'); all(); }
+  });
+  devOld.addEventListener('click', (e) => { const b = e.target.closest('.dbtn'); if (b) ripple(b, e); });
+  document.getElementById('hwBack').addEventListener('click', () => {
+    if (S.left) return;
+    if (S.screen === 'detail') { S.screen = 'albums'; add('Back：タグ詳細 → アルバム一覧（既存どおりタグ画面を終了）'); }
+    else if (S.screen === 'tags') { S.screen = 'albums'; add('Back：タグ一覧 → アルバム一覧（同じ位置 ' + Math.round(S.pos) + 'dp）'); }
+    else { S.left = true; add('Back：ルートなのでアプリを離れる'); }
+    all();
+  });
+  function seg(id, fn) {
+    const el = document.getElementById(id);
+    el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; el.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', x === b ? 'true' : 'false')); fn(b.dataset.v); all(); });
+  }
+  seg('optW', (v) => { opt.w = +v; }); seg('optK', (v) => { opt.k = +v; }); seg('optS', (v) => { opt.st = v; });
+  window.__l11 = { opt: opt, S: S, all: all };
+  all();
+})();
+</script>
+</body>
+</html>
