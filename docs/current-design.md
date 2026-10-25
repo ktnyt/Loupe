@@ -242,3 +242,7 @@ SyncEngineは既存の文章/時刻と同じSharedPreferences editでsyncStateCo
 PreviewPreparationJobは既存のready/total/failed/stateと同じeditでpreparationStateCode/preparationStateAt/preparationCountsKnownを保存する。総数の走査完了後だけ件数を既知とする。readyは準備済みpreview数、failedは今回の処理失敗数で、ThumbHashの失敗はreadyと重なり得るため合計で残数を算出しない。ThumbHash単独件数は未計測。
 
 JobState.snapshot相当の読取では旧データ・不明コード・時刻欠落はUNKNOWN。保存されたRUNNINGでも実行主体がない場合はUNKNOWNとし、過去の計測件数と更新時刻は保持する。状態保存は既存同様applyによるためプロセス停止時のdisk永続化を保証しない。UI、認証、送信、削除、タグ推論、jobの実行条件は変更しない。
+
+## 処理状況ダッシュボード（設計・未実装）
+
+#16の[観測契約](background-dashboard.md)と[参照HTML](design/loupe-issue16-dashboard.html)を使用する。その他から4工程と共通準備ジョブの保存済み状態を読取専用で確認する設計で、現在のAndroidに画面はまだない。未計測は—、工程別の結果と共通ジョブ結果、前面抑制条件を区別する。[実装#39](https://github.com/ktnyt/Loupe/issues/39)で実機検証まで行う。

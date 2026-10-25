@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loupe Issue #16 処理の状況（設計）</title>
+<style>
+:root{--bg:#0F0F10;--panel:#19191B;--text:#EDEDEA;--muted:#A0A0A4;--fail:#FF8A7A;--ok:#9FE0B5;--ng:#F2A7AB;--k:1}
+*{box-sizing:border-box}
+body{margin:0;background:#0B0B0C;color:var(--text);font-family:"Noto Sans JP",system-ui,-apple-system,"Hiragino Sans",sans-serif;font-size:15px;line-height:1.6}
+.wrap{max-width:1360px;margin:0 auto;padding:28px 20px 64px}
+h1{margin:0;font-size:24px;line-height:1.4;font-weight:600}
+h2.sec{margin:32px 0 6px;font-size:19px;font-weight:600}
+h3{font-size:16px;margin:22px 0 8px}
+.lead{margin:6px 0 0;color:var(--muted);font-size:14px}
+.warnbox{margin:12px 0 0;padding:10px 14px;border-radius:10px;border:1px dashed #F5D38A;color:#F5D38A;font-size:13px}
+.controls{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;margin:12px 0 0}
+.controls .lb{color:var(--muted);font-size:13px;margin-right:6px}
+.seg{display:inline-flex;flex-wrap:wrap;background:#1C1C1F;border-radius:22px;padding:2px}
+.seg button{background:none;border:0;color:var(--text);font:inherit;font-size:13px;min-height:44px;padding:0 12px;border-radius:20px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:#EDEDEA;color:#111}
+.hw{background:#2A2A2E;border:1px solid #4A4A50;color:var(--text);font:inherit;font-size:14px;font-weight:600;min-height:48px;padding:0 18px;border-radius:24px;cursor:pointer}
+.box{background:#141416;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.6;font-variant-numeric:tabular-nums}
+.okc{color:var(--ok)}.ngc{color:var(--ng)}
+table.t{border-collapse:collapse;width:100%;font-size:13.5px}
+table.t th,table.t td{border-bottom:1px solid #2A2A2E;padding:7px 10px 7px 0;text-align:left;vertical-align:top}
+table.t th{color:var(--muted);font-weight:500;font-size:12px}
+table.t code{background:#1C1C1F;padding:1px 5px;border-radius:4px;font-size:12px}
+.spec ul{margin:0;padding-left:20px}.spec li{margin:3px 0}
+.modeTag{display:inline-block;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px}
+.modeTag.cur{background:#1E3A2A;color:var(--ok)}.modeTag.fut{background:#3A3320;color:#F5D38A}
+
+/* #17の状態部品（継承） */
+.gl{display:inline-flex;width:24px;height:24px;align-items:center;justify-content:center;flex-shrink:0;color:var(--text)}
+.gl svg{width:20px;height:20px}
+.gl.fail{color:var(--fail)}.gl.muted{color:var(--muted)}
+.spin{animation:spin 1s linear infinite;transform-origin:50% 50%}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}}
+.mk{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 8px 0 4px;border-radius:14px;background:#1F1F22;box-shadow:inset 0 0 0 1px #3A3A3F;font-family:Roboto,"Noto Sans JP",system-ui,sans-serif;font-size:calc(13px*var(--k));font-weight:500;font-variant-numeric:tabular-nums;color:var(--text);white-space:nowrap}
+.mk.fail{box-shadow:inset 0 0 0 1.5px var(--fail)}
+.mk.obs{box-shadow:inset 0 0 0 1px #3A3A3F;background:transparent}
+.mk .gl{width:20px;height:20px}.mk .gl svg{width:18px;height:18px}
+
+/* 端末 */
+.stage{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;margin-top:12px}
+.side{display:flex;flex-direction:column;gap:10px;flex:1;min-width:300px}
+.dev{position:relative;width:var(--w);height:var(--h,760px);background:var(--bg);outline:1px solid #3A3A3F;overflow:hidden;display:flex;flex-direction:column;font-family:Roboto,"Noto Sans JP","Noto Sans CJK JP",system-ui,sans-serif;color:var(--text);flex-shrink:0}
+.hd{padding:36px 20px 10px;display:flex;align-items:center;gap:8px;flex-shrink:0}
+.hd b{font-size:calc(22px*var(--k));line-height:1.35;font-weight:600}
+.body{flex:1;min-height:0;overflow-y:auto}
+.body::-webkit-scrollbar{width:0}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:2px}
+.g4 i{display:block;height:calc((var(--w) - 6px)/4)}
+.dock{flex-shrink:0;background:#19191B;padding:8px 8px 28px;display:flex}
+.db{flex:1 1 0;min-width:0;min-height:64px;padding:6px;border:0;border-radius:8px;background:transparent;color:#EDEDEA;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-family:inherit;font-weight:500;font-size:calc(13px*var(--k));cursor:pointer}
+.db .ic{width:24px;height:24px;display:flex}.db .ic svg{width:24px;height:24px}
+.db .lbl{line-height:24px}
+/* 既存のその他（#13の寸法） */
+.dim{position:absolute;inset:0;background:rgba(0,0,0,.64);border:0;width:100%;z-index:4;cursor:default}
+.sheet{position:absolute;left:50%;transform:translateX(-50%);bottom:12px;width:min(calc(100% - 24px),560px);max-height:48%;overflow-y:auto;background:#19191B;border-radius:20px;padding:8px 0 16px;z-index:5}
+.sheet .handle{display:block;width:32px;height:4px;border-radius:2px;background:#4A4A50;margin:4px auto 12px}
+.sheet h4{margin:0 0 4px;padding:0 24px;font-size:calc(20px*var(--k));line-height:1.4;font-weight:600}
+.sheet .it{display:flex;align-items:center;width:100%;min-height:48px;padding:0 24px;background:none;border:0;color:inherit;font:inherit;font-size:calc(15px*var(--k));line-height:1.4;text-align:left;cursor:pointer}
+.sheet .cl{padding:8px 16px 0}.sheet .cl button{width:100%;min-height:48px;border-radius:24px;border:1px solid #3A3A3F;background:none;color:inherit;font:inherit;font-size:calc(14px*var(--k));font-weight:500;cursor:pointer}
+/* 一覧のカード */
+.card{display:flex;flex-direction:column;gap:6px;width:calc(100% - 32px);margin:0 16px 8px;min-height:72px;padding:12px 14px;border-radius:14px;background:var(--panel);border:0;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.card:active{background:#26262A}
+.card:focus-visible{outline:2px solid #4C8DFF;outline-offset:2px}
+.card .t{display:flex;align-items:center;gap:6px;width:100%}
+.card .t .nm{font-size:calc(15px*var(--k));line-height:1.35;font-weight:600;margin-right:auto}
+.card .t .chev{width:20px;height:20px;color:var(--muted);flex-shrink:0}
+.nums{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;width:100%;font-variant-numeric:tabular-nums}
+.nums .f{display:inline-flex;align-items:baseline;gap:4px}
+.nums .f small{font-size:calc(12px*var(--k));color:var(--muted)}
+.nums .f span{font-size:calc(14px*var(--k));font-weight:500}
+.nums .f.old span{color:var(--muted)}
+.nums .tm{margin-left:auto;font-size:calc(12px*var(--k));color:var(--muted)}
+.bar{width:100%;height:4px;border-radius:2px;background:#2E2E32;overflow:hidden}
+.bar i{display:block;height:4px;background:#EDEDEA}
+.bar.old i{background:#6B6B70}
+/* 詳細 */
+.dhead{margin:0 16px 12px;padding:12px 14px;border-radius:14px;background:var(--panel);display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-height:56px}
+.frow{display:flex;align-items:center;gap:12px;min-height:56px;padding:6px 20px;border-bottom:1px solid #1F1F22}
+.frow small{font-size:calc(14px*var(--k));color:var(--muted)}
+.frow span{margin-left:auto;font-size:calc(15px*var(--k));font-weight:500;font-variant-numeric:tabular-nums}
+.frow span.old{color:var(--muted)}
+.fixed{margin:14px 20px 0;font-size:calc(13px*var(--k));line-height:1.6;color:#C9C9C4}
+.fixed dt{color:var(--muted);font-size:calc(12px*var(--k));margin-top:8px}
+.fixed dd{margin:0}
+.secure{position:absolute;right:8px;top:8px;font-size:10px;color:#8A8A85;border:1px dashed #3A3A3F;border-radius:6px;padding:1px 6px;z-index:3}
+.os{position:absolute;inset:0;background:#0B0B0C;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--muted);font-size:14px;z-index:9}
+</style>
+</head>
+<body>
+<style>
+.grp{margin:4px 20px 6px;font-size:calc(13px*var(--k));color:var(--muted);font-weight:500}
+.job{margin:0 16px 8px;padding:8px 14px;border-radius:12px;border:1px dashed #3A3A3F;display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;min-height:48px;font-variant-numeric:tabular-nums}
+.job .jl{font-size:calc(12px*var(--k));color:var(--muted)}
+.job .tm{margin-left:auto;font-size:calc(12px*var(--k));color:var(--muted)}
+.sub{margin:16px 20px 4px;font-size:calc(13px*var(--k));color:var(--muted);font-weight:500}
+.cond{margin:0 16px 8px;padding:8px 14px;border-radius:12px;border:1px dashed #3A3A3F;display:flex;align-items:center;gap:10px;min-height:48px}
+.cond .jl{font-size:calc(12px*var(--k));color:var(--muted)}
+.gl.still svg path{animation:none}
+.hm{display:inline-flex;width:calc(16px*var(--k));height:calc(16px*var(--k));vertical-align:-0.15em;margin-right:3px;color:var(--muted);flex-shrink:0}
+.hm svg{width:100%;height:100%}
+.barw{display:flex;align-items:center;gap:6px;width:100%}.barw .bar{flex:1}
+.mk .hm{margin:0 0 0 2px}
+.dsp{height:12px}
+</style>
+<div class="wrap">
+<h1>Loupe Issue #16 — その他から「処理の状況」（設計の確定案・取得元の訂正版）</h1>
+<p class="lead">設計です。Androidには<b>まだ実装していません</b>。このHTMLは見本で、データはすべて明示した合成の例です。端末の枠の中は#17の状態部品だけを使い、状態名の長い文は出しません（機能名・数値欄の見出し・実時刻・操作名は出します）。</p>
+<div class="warnbox">実装の基準は「現在取得できる値」モードです。「将来の計測済みの例」モードは、計測と理由コードを追加したあとの見え方の参考で、今の実装では表示できません。</div>
+
+<div class="controls" role="group" aria-label="条件">
+<span><span class="lb">データ</span><span class="seg" id="oMode"><button data-v="cur" aria-pressed="true">現在取得できる値（実装基準）</button><button data-v="fut" aria-pressed="false">将来の計測済みの例（未実装）</button></span></span>
+<span><span class="lb">幅</span><span class="seg" id="oW"><button data-v="320" aria-pressed="false">320dp</button><button data-v="400" aria-pressed="true">400dp</button></span></span>
+<span><span class="lb">高さ</span><span class="seg" id="oH"><button data-v="760" aria-pressed="true">760dp</button><button data-v="480" aria-pressed="false">480dp（一覧をスクロール）</button></span></span>
+<span><span class="lb">文字</span><span class="seg" id="oK"><button data-v="1" aria-pressed="true">1.0倍</button><button data-v="1.3" aria-pressed="false">1.3倍</button></span></span>
+</div>
+<div class="controls" role="group" aria-label="共通の準備ジョブの保存済みsnapshot（現在モード）" id="curCtl">
+<span><span class="lb">共通の準備ジョブ snapshot.kind</span><span class="seg" id="oP">
+<button data-v="unknown0" aria-pressed="false">UNKNOWN・countsKnown=false・updatedAt=0（保存なし／旧データ／知らないkind）</button><button data-v="running" aria-pressed="true">RUNNING（取得時に実行主体あり）</button><button data-v="runningLost" aria-pressed="false">保存RUNNING＋実行主体なし → UNKNOWN・countsKnown=true</button><button data-v="waiting" aria-pressed="false">WAITING</button><button data-v="paused" aria-pressed="false">PAUSED（理由コードなし）</button><button data-v="partialTh" aria-pressed="false">PARTIAL（プレビューは全件・仮画像だけ失敗）</button><button data-v="complete" aria-pressed="false">COMPLETE</button><button data-v="completeZero" aria-pressed="false">COMPLETE・countsKnown=true・0/0/0</button><button data-v="failed" aria-pressed="false">FAILED・countsKnown=true</button><button data-v="failedEarly" aria-pressed="false">列挙前FAILED・countsKnown=false・updatedAtあり</button><button data-v="readFailPrev" aria-pressed="false">読み取り失敗（前回観測あり）</button><button data-v="readFailFirst" aria-pressed="false">読み取り失敗（初回・前回なし）</button>
+</span></span>
+</div>
+<div class="controls" role="group" aria-label="将来の例" id="futCtl" hidden>
+<span><span class="lb">将来の例</span><span class="seg" id="oF">
+<button data-v="view" aria-pressed="true">理由コード：前面での抑制</button><button data-v="storage" aria-pressed="false">理由コード：容量不足</button><button data-v="mixed" aria-pressed="false">工程ごとに別の結果</button>
+</span></span>
+</div>
+<div class="controls"><button class="hw" id="hwBack">Android Back（OSのシミュレータ・画面の外）</button><button class="hw" style="background:none;font-weight:500" id="reset">最初から（写真一覧）</button><span style="color:var(--muted);font-size:13px">写真一覧の［その他］→［処理の状況］→ 各カード → 詳細</span></div>
+
+<div class="stage">
+<div class="dev" id="dev"></div>
+<div class="side"><div class="box" id="ax"></div><div class="box" id="chk"></div><div class="box" id="log"></div></div>
+</div>
+
+<section class="spec" aria-label="仕様">
+<h2 class="sec">1. 構成と遷移</h2>
+<table class="t">
+<tr><th>画面</th><th>内容</th><th>寸法</th><th>Back</th></tr>
+<tr><td>その他（既存のSheet）</td><td>既存の項目のまま。［処理の状況］を押すと一覧へ</td><td>#13の寸法（#19191B・角丸20dp・幅 min(表示幅−24, 560)・下部中央・高さ上限48%）</td><td>閉じる</td></tr>
+<tr><td>処理の状況（一覧）</td><td>見出し「表示の準備」の下に、<b>共通の準備ジョブの行</b>（押せない補助の行）と、カード2枚（読み込み中の仮画像・表示用プレビュー）。見出し「タグ」の下に、カード2枚（タグのための写真の解析・自動のタグ付け）。カード全体が詳細への入口</td><td>グループの見出し13sp #A0A0A4。共通の行：点線1dp #3A3A3F・角丸12dp・最低48dp。カード：左右16dp・間8dp・最低72dp・内側の余白 上下12dp 左右14dp・角丸14dp・#19191B。名前15sp・数値14sp・数値の見出し12sp。右に状態の印（24dp）と ›</td><td>呼び出し元へ。アプリ内に戻るボタンはない</td></tr>
+<tr><td>詳細</td><td>その工程の状態の印、数値の欄、（表示の準備の2つは）<b>共通の準備ジョブ</b>の欄と<b>前面での抑制</b>の欄を分けて表示、短い固定の説明。操作は置かない。補助の欄の名前は<b>枠の中の見出しだけ</b>に出す（枠の外の見出しは置かない）</td><td>状態の行：#19191B・角丸14dp・最低56dp。数値の欄：各56dp。補助の欄は点線の枠（数値の欄との間12dp）。固定の説明13sp</td><td>一覧へ（スクロール位置を保つ）</td></tr>
+</table>
+
+<h2 class="sec">2. 工程と、件数の意味・取得元（訂正）</h2>
+<table class="t">
+<tr><th>工程（技術名）</th><th>この工程だけの結果</th><th>数値欄と意味</th><th>現在の取得元</th><th>現在の表示</th></tr>
+<tr><td>共通の準備ジョブ（プレビュー＋ThumbHash）</td><td>—（ジョブ全体）</td><td>状態＝kind、件数の有無＝countsKnown、失敗＝failed（プレビューと仮画像の失敗が重なることがある）、観測時刻＝updatedAt</td><td><code>PreviewPreparationJob.snapshot</code>（active &gt; 0 を <code>JobState.read</code> へ渡し、保存RUNNINGで active がなければ UNKNOWN に変換済み）の kind・countsKnown・updatedAt・failed</td><td>補助の行として、<b>ジョブ全体のもの</b>と分かる場所に出す。プレビュー単独の結果としては出さない。countsKnown=false なら failed は出さない</td></tr>
+<tr><td>読み込み中の仮画像（ThumbHash）</td><td>なし</td><td>準備済み／対象／失敗：未計測</td><td>なし</td><td>UNKNOWN、数値は「—」</td></tr>
+<tr><td>表示用プレビュー（プレビューキャッシュ）</td><td>なし</td><td>準備済み＝ファイルの対があることを確かめ、準備に成功した数の合計（全件を読み込んで確かめた数ではない）。対象＝直近に走査した端末内の写真の数</td><td><code>snapshot.ready</code>・<code>snapshot.total</code>（countsKnown=true のときだけ意味がある）</td><td>状態はUNKNOWN（独立した結果がないため）。countsKnown=true なら準備済み／対象とバーを出し、false なら<b>内部の値が0でもすべて「—」</b>でバーを出さない。失敗はこの工程に付けない（ジョブの行に出す）。total − ready − failed は出さない</td></tr>
+<tr><td>タグのための写真の解析</td><td>なし</td><td>—</td><td>なし（TagActivity の値はその画面のその回だけ）</td><td>UNKNOWN、数値は「—」</td></tr>
+<tr><td>自動のタグ付け</td><td>なし</td><td>—</td><td>なし（同上）</td><td>UNKNOWN、数値は「—」</td></tr>
+<tr><td>前面での抑制（条件）</td><td colspan="2"><code>browsing()</code>＝Activity の started 数 &gt; 0。前面で新しい準備を抑える<b>条件</b>で、停止が完了したことの観測ではない。ワーカーは次の協調チェックまで動くことがあり、COMPLETE のあとも true になる</td><td><code>browsing()</code></td><td>保存済みの状態とは<b>別の欄</b>に、目の印で出す。kind を上書きしない（COMPLETE や RUNNING を PAUSED にしない）</td></tr>
+<tr><td colspan="5">同期は今回の4項目に入れない。停止の理由（容量不足など）は現状、型付きのコードがないので、現在モードでは「理由は不明」とし、旧の状態の文から推測しない。</td></tr>
+</table>
+
+<h2 class="sec">3. データ契約と出し方（現在モード）</h2>
+<p style="font-size:13.5px;color:#C9C9C4;margin:0 0 8px">モデル J = { kind, countsKnown, ready, total, failed, updatedAt }。<b>countsKnown=false</b> のとき ready・total・failed は内部で0でも実測の0ではないので、件数はすべて「—」、バーは出さない。updatedAt=0 は時刻なし（「—」）。</p>
+<table class="t">
+<tr><th>ケース</th><th>kind</th><th>countsKnown</th><th>updatedAt</th><th>ジョブの行の印</th><th>件数とバー</th><th>読み上げ（AX）</th></tr>
+<tr><td>保存なし・旧データ・知らないkind</td><td>UNKNOWN</td><td>false</td><td>0</td><td>UNKNOWN</td><td>すべて「—」、バーなし、時刻「—」</td><td>「状態は不明です。件数と時刻の記録はありません」</td></tr>
+<tr><td>取得時に実行主体あり</td><td>RUNNING</td><td>true</td><td>あり</td><td>RUNNING（回る弧）＋時刻</td><td>ready／total、バー</td><td>「取得時点では実行中。件数の最終観測は10時42分。その後も続いているかは分かりません」（保存の updatedAt を生存確認の時刻として読まない）</td></tr>
+<tr><td>保存RUNNING＋取得時に実行主体なし</td><td>UNKNOWN（変換済み）</td><td>true</td><td>あり</td><td>UNKNOWN＋前回の値（履歴の印）</td><td>前回の ready／total／failed・時刻・バーに<b>履歴の印</b>を添え、薄い色にもする</td><td>「状態は不明です。取得時に実行していませんでした。前回 10時42分の観測値があります」＋各値「…、前回の観測値」、時刻「前回の観測時刻、10時42分」（旧データの UNKNOWN と区別する）</td></tr>
+<tr><td>WAITING</td><td>WAITING</td><td>true</td><td>あり</td><td>WAITING＋時刻</td><td>ready／total</td><td>「10時40分の記録では待機中」</td></tr>
+<tr><td>PAUSED</td><td>PAUSED</td><td>true</td><td>あり</td><td>PAUSED＋「?」（理由コードがない）</td><td>ready／total</td><td>「…一時停止中。理由は記録されていません」</td></tr>
+<tr><td>PARTIAL（プレビューは全件・仮画像だけ失敗）</td><td>PARTIAL</td><td>true</td><td>あり</td><td>PARTIAL＋失敗の札</td><td>1,284／1,284、!3（ジョブの行）</td><td>「…一部を準備できませんでした。失敗3件はプレビューと仮画像の合計で、重なることがあります」</td></tr>
+<tr><td>COMPLETE</td><td>COMPLETE</td><td>true</td><td>あり</td><td>COMPLETE</td><td>ready／total、バーは満ちる</td><td>「…完了」</td></tr>
+<tr><td>COMPLETE・対象0</td><td>COMPLETE</td><td>true</td><td>あり</td><td>COMPLETE</td><td>0／0（実測の0）、バーなし</td><td>「…完了。対象の写真は0枚」</td></tr>
+<tr><td>FAILED（件数あり）</td><td>FAILED</td><td>true</td><td>あり</td><td>FAILED＋失敗の札</td><td>ready／total、!failed</td><td>「…失敗」</td></tr>
+<tr><td>列挙前のFAILED（合成の条件名）</td><td>FAILED</td><td>false</td><td>あり</td><td>FAILED（札なし）＋時刻</td><td>すべて「—」、バーなし</td><td>「失敗。件数の記録はありません」（件数がないことから「数える前に失敗した」とは断定しない。「列挙前」は外側の条件名だけ）</td></tr>
+<tr><td>読み取り失敗・前回観測あり</td><td>—</td><td>（前回の値）</td><td>前回の時刻</td><td>観測できない印（目に斜線）</td><td>前回の値・時刻・バーに履歴の印を添え、薄い色にもする（前回が countsKnown=false なら「—」で印なし）</td><td>「状況を読み込めませんでした。処理の失敗ではありません。前回 10時42分の観測値があります」＋各値「…、前回の観測値」、時刻「前回の観測時刻、10時42分」</td></tr>
+<tr><td>読み取り失敗・初回（前回なし）</td><td>—</td><td>—</td><td>—</td><td>観測できない印</td><td>すべて「—」、時刻「—」</td><td>「状況を読み込めませんでした。処理の失敗ではありません。前回の観測はありません」</td></tr>
+</table>
+<ul>
+<li><b>履歴の印</b>（前回の観測値）：時計に反時計回りの戻る矢印。数値の前・時刻の前・バーの右端・失敗の札の中に、16dp（文字の倍率に合わせる）・#A0A0A4で添える。待機（矢印のない時計）・処理の失敗（三角）・観測できない（目に斜線）とは形で区別し、色だけに頼らない。可視の文は増やさず、詳細の固定の説明に「印について」を1行だけ足し、読み上げで「前回の観測値」「前回の観測時刻」と言う。</li>
+<li>前面での抑制（<code>browsing()</code>）は、kind と別の欄にいつも並べて出す（画面を開いている今は true）。読み上げ：「前面での抑制：アプリが前面にあるため、新しい準備は抑えています。停止が完了したかは分かりません」。kind は上書きしない。</li>
+<li>アプリが前面にある間は準備を抑える今の仕様を維持する。閲覧中だけ止める仕様には変えない。</li>
+</ul>
+
+<h2 class="sec">4. 更新の頻度・動き</h2>
+<ul>
+<li>保存済みの値と browsing() を読むだけ。開いたとき、onResume、表示中は5秒ごと（または snapshot の変更を監視）。原本の走査や写真の読み込みはしない。</li>
+<li>回る弧は kind=RUNNING（取得時に active &gt; 0 の観測）のときだけ使う。取得後も続く保証はないので、必ず観測時刻を添える。減らす設定では回さない。</li>
+<li>新しい操作（開始・一時停止・再開・再試行・削除・再解析・読み込み直し）は置かない。</li>
+</ul>
+
+<h2 class="sec">5. 読み上げ（AX名）</h2>
+<table class="t">
+<tr><th>対象</th><th>AX名</th></tr>
+<tr><td>表示用プレビューのカード（現在）</td><td>「表示用プレビュー。この工程だけの状態は記録されていません。準備済み、902、対象、1,284。観測時刻、10時42分。詳細を開く」。前回の値なら「準備済み、1,180、前回の観測値、…。前回の観測時刻、10時42分」。countsKnown=false なら「準備済み、件数の記録はありません」</td></tr>
+<tr><td>詳細の観測時刻</td><td>「観測時刻、10時42分」。前回の値なら「前回の観測時刻、10時42分」</td></tr>
+<tr><td>未計測のカード</td><td>「読み込み中の仮画像。状態は不明です。件数は計測していません。詳細を開く」</td></tr>
+<tr><td>共通の準備ジョブの行</td><td>上の表のとおり（ジョブ全体の記録であることを先に言う）</td></tr>
+<tr><td>前面での抑制</td><td>上の注記のとおり（停止の完了とは言わない）</td></tr>
+<tr><td>状態の変化</td><td>表示中に変わったら polite で1回</td></tr>
+</table>
+
+<h2 class="sec">6. 後続の実装で計測を足す必要がある箇所</h2>
+<table class="t">
+<tr><th>項目</th><th>必要な計測</th><th>理由</th></tr>
+<tr><td>工程ごとの結果</td><td>プレビューと ThumbHash の結果を別々に保存（状態・ready・total・failed・updatedAt）</td><td>今の kind はジョブ全体の結果のため</td></tr>
+<tr><td>プレビューの検証</td><td>必要なら、デコードで確かめた数を別に数える</td><td>今の ready はファイルの存在の確認と準備の成功の合計</td></tr>
+<tr><td>タグの解析・自動のタグ付け</td><td>TagActivity の外に残る集計（解析済み・対象・失敗・自動付与数・updatedAt・状態）</td><td>今はその画面のその回だけ</td></tr>
+<tr><td>停止の理由</td><td>前面での抑制・容量不足・OSの延期などを型付きの理由コードとして保存</td><td>今はコードがなく、推測できないため</td></tr>
+<tr><td>停止の完了</td><td>前面での抑制のあと、ワーカーが実際に止まったことの観測</td><td>browsing() は抑制の条件で、停止の完了ではないため</td></tr>
+<tr><td>読み取り失敗の前回値</td><td>最後に読めた snapshot と時刻をメモリまたは保存先に保持</td><td>「前回観測あり」と「初回の失敗」を区別するため</td></tr>
+<tr><td>読み取りの失敗</td><td>snapshot の読み取りの失敗を、処理の失敗と別に返す</td><td>「観測できない」と「処理の失敗」を区別するため</td></tr>
+</table>
+
+<h2 class="sec">7. 範囲外・注記</h2>
+<ul>
+<li>同期、ほかの画面、写真の表示。タグの推論（#1）。</li>
+<li>このHTMLのデータは合成。フォントはブラウザとAndroidで数%ずれることがある。</li>
+</ul>
+</section>
+</div>
+<script>
+(function () {
+  const S = (p) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + p + '</svg>';
+  const G = {
+    run: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke-opacity=".22"></circle><path class="spin" d="M12 4a8 8 0 0 1 8 8"></path></svg>',
+    runStill: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke-opacity=".22"></circle><path d="M12 4a8 8 0 0 1 8 8"></path></svg>',
+    wait: S('<circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"></path>'),
+    pause: S('<circle cx="12" cy="12" r="8.5"></circle><path d="M10 9v6M14 9v6"></path>'),
+    done: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.5" fill="#EDEDEA"></circle><path d="M7.8 12.3l2.8 2.8 5.6-5.8" fill="none" stroke="#111" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg>',
+    partial: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8.5" fill="none" stroke="#EDEDEA" stroke-width="1.8"></circle><path d="M7.3 11.2l2.5 2.5 4.8-5" fill="none" stroke="#EDEDEA" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path><circle cx="18.5" cy="18.5" r="5" fill="#0F0F10"></circle><path d="M18.5 15.8v3M18.5 21v.1" stroke="#FF8A7A" stroke-width="1.8" stroke-linecap="round"></path></svg>',
+    fail: S('<path d="M12 4l9 15.5H3z"></path><path d="M12 10v4.5M12 17.2v.1"></path>'),
+    unknown: S('<circle cx="12" cy="12" r="8.5" stroke-dasharray="2.2 2.2"></circle><path d="M9.8 9.6a2.3 2.3 0 1 1 3.2 2.1c-.7.3-1 .8-1 1.5v.4M12 16.6v.1"></path>'),
+    storage: S('<rect x="6" y="3.5" width="12" height="17" rx="2"></rect><path d="M9 3.5v4M12 3.5v4M15 3.5v4"></path><path d="M12 11v4M12 17.6v.1"></path>'),
+    view: S('<path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"></path><circle cx="12" cy="12" r="2.8"></circle>'),
+    noobs: S('<path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"></path><circle cx="12" cy="12" r="2.8"></circle><path d="M4 20L20 4"></path>'),
+    q: S('<circle cx="12" cy="12" r="8.5"></circle><path d="M9.8 9.6a2.3 2.3 0 1 1 3.2 2.1c-.7.3-1 .8-1 1.5v.4M12 16.6v.1"></path>'),
+    hist: S('<path d="M4.6 12a7.4 7.4 0 1 0 2.2-5.2"></path><path d="M4.2 4.4v3.8H8"></path><path d="M12 8.4V12l2.4 1.6"></path>'),
+    chev: S('<path d="M9 6l6 6-6 6"></path>'),
+    more: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5.5" r="1.7"></circle><circle cx="12" cy="12" r="1.7"></circle><circle cx="12" cy="18.5" r="1.7"></circle></svg>',
+    sel: S('<circle cx="12" cy="12" r="8.5"></circle><path d="M8.2 12.3l2.6 2.6 5-5.2"></path>'),
+    tag: S('<path d="M3.8 12.2V4.8a1 1 0 0 1 1-1h7.4l8 8a1.4 1.4 0 0 1 0 2l-6.2 6.2a1.4 1.4 0 0 1-2 0z"></path><circle cx="8.3" cy="8.3" r="1.4"></circle>')
+  };
+  const gl = (k, cls) => '<span class="gl' + (cls ? ' ' + cls : '') + '" aria-hidden="true">' + G[k] + '</span>';
+  const mk = (inner, cls) => '<span class="mk' + (cls ? ' ' + cls : '') + '" aria-hidden="true">' + inner + '</span>';
+  const hm = () => '<span class="hm" aria-hidden="true">' + G.hist + '</span>'; /* 前回の観測値の印（時計＋戻る矢印） */
+  const fmt = (n) => n.toLocaleString('en-US');
+  const tAX = (t) => t.replace(':', '時') + '分';
+  const O = { mode: 'cur', w: 400, k: 1, p: 'running', f: 'view', h: 760 };
+  let N = { screen: 'grid', sheet: false, detail: null, listScroll: 0, left: false }, log = [];
+  const add = (t) => { log.unshift(t); log = log.slice(0, 10); };
+  const BROWSING = true; /* ダッシュボードを開いている＝前面。browsing() は true */
+
+  /* ===== 共通の準備ジョブ（snapshot・合成） ===== */
+  /* モデル J = { kind, countsKnown, ready, total, failed, time(updatedAt。0はnull) } と、取得の結果 read（ok / fail） */
+  function snap() {
+    const J = (kind, ck, ready, total, failed, time) => ({ kind: kind, ck: ck, ready: ready, total: total, failed: failed, time: time });
+    if (O.mode === 'fut') return { read: 'ok', j: { view: J('PAUSED', true, 1180, 1284, 3, '10:42'), storage: J('PAUSED', true, 640, 1284, 0, '10:38'), mixed: J('PARTIAL', true, 1284, 1284, 2, '10:42') }[O.f] };
+    const prev = J('RUNNING', true, 1180, 1284, 3, '10:42');
+    return {
+      unknown0: { read: 'ok', j: J('UNKNOWN', false, 0, 0, 0, null) },
+      running: { read: 'ok', j: J('RUNNING', true, 902, 1284, 0, '10:42') },
+      runningLost: { read: 'ok', j: J('UNKNOWN', true, 1180, 1284, 3, '10:42'), lost: true },
+      waiting: { read: 'ok', j: J('WAITING', true, 1180, 1284, 0, '10:40') },
+      paused: { read: 'ok', j: J('PAUSED', true, 1180, 1284, 0, '10:35') },
+      partialTh: { read: 'ok', j: J('PARTIAL', true, 1284, 1284, 3, '10:42') },
+      complete: { read: 'ok', j: J('COMPLETE', true, 1284, 1284, 0, '10:42') },
+      completeZero: { read: 'ok', j: J('COMPLETE', true, 0, 0, 0, '10:42') },
+      failed: { read: 'ok', j: J('FAILED', true, 640, 1284, 12, '10:20') },
+      failedEarly: { read: 'ok', j: J('FAILED', false, 0, 0, 0, '10:20') },
+      readFailPrev: { read: 'fail', j: prev },
+      readFailFirst: { read: 'fail', j: null }
+    }[O.p];
+  }
+  /* 表示に使う値：前回の値（薄い色）かどうか */
+  function view() {
+    const sn = snap(), j = sn.j;
+    const old = sn.read === 'fail' || !!sn.lost;
+    const ck = !!(j && j.ck);
+    return { sn: sn, j: j, old: old, ck: ck, time: j ? j.time : null };
+  }
+  function jobLook(v) {
+    const j = v.j;
+    if (v.sn.read === 'fail') return { html: mk(gl('noobs', 'muted'), 'obs'), ax: '状況を読み込めませんでした。処理の失敗ではありません。' + (j && j.time ? '前回 ' + tAX(j.time) + 'の観測値があります' : '前回の観測はありません') };
+    if (!j) return { html: gl('unknown', 'muted'), ax: '状態は不明です。件数と時刻の記録はありません' };
+    const at = j.time ? tAX(j.time) + 'の記録では' : '';
+    switch (j.kind) {
+      case 'RUNNING': return O.mode === 'fut' ? { html: gl('run'), ax: '実行中' } : { html: gl('run'), ax: '取得時点では実行中。件数の最終観測は' + tAX(j.time) + '。その後も続いているかは分かりません' };
+      case 'WAITING': return { html: gl('wait'), ax: at + '待機中' };
+      case 'PAUSED': return O.mode === 'fut' ? { html: mk(gl('pause') + gl(O.f === 'storage' ? 'storage' : 'view', 'muted')), ax: at + '一時停止中。理由コード：' + (O.f === 'storage' ? '端末の空き容量が足りません' : '前面での抑制') } : { html: mk(gl('pause') + gl('q', 'muted')), ax: at + '一時停止中。理由は記録されていません' };
+      case 'COMPLETE': return { html: gl('done'), ax: at + '完了' + (v.ck && j.total === 0 ? '。対象の写真は0枚' : '') };
+      case 'PARTIAL': return { html: gl('partial'), ax: at + '一部を準備できませんでした' };
+      case 'FAILED': return { html: gl('fail', 'fail'), ax: v.ck ? at + '失敗' : '失敗。件数の記録はありません' };
+      case 'UNKNOWN': return v.sn.lost ? { html: gl('unknown', 'muted'), ax: '状態は不明です。取得時に実行していませんでした。前回 ' + tAX(j.time) + 'の観測値があります' } : { html: gl('unknown', 'muted'), ax: '状態は不明です。件数と時刻の記録はありません' };
+    }
+  }
+  const failAX = (v) => (v.ck && v.j.failed ? '。失敗' + fmt(v.j.failed) + '件' + (v.old ? '（前回の観測値）' : '') + 'はプレビューと仮画像の合計で、重なることがあります' : '');
+  function jobRowHTML(tag) {
+    const v = view(), L = jobLook(v);
+    const ax = '共通の準備ジョブ（プレビューと仮画像）。' + L.ax + failAX(v);
+    return '<div class="job" role="' + (tag || 'group') + '" aria-label="' + ax + '"><span class="jl" aria-hidden="true">共通の準備ジョブ</span>' + L.html +
+      (v.ck && v.j.failed ? mk(gl('fail', 'fail') + '<span>' + fmt(v.j.failed) + '</span>' + (v.old ? hm() : ''), v.old ? 'obs' : 'fail') : '') + '<span class="tm" aria-hidden="true" style="' + (v.old ? '' : 'color:var(--text)') + '">' + (v.old && v.time ? hm() : '') + (v.time || '—') + '</span></div>';
+  }
+  function condHTML() {
+    const ax = '前面での抑制：アプリが前面にあるため、新しい準備は抑えています。停止が完了したかは分かりません';
+    return '<div class="cond" role="group" aria-label="' + ax + '"><span class="jl" aria-hidden="true">前面での抑制</span>' + (BROWSING ? gl('view') : gl('unknown', 'muted')) + '</div>';
+  }
+
+  /* ===== 工程 ===== */
+  const UNM = (key, name, fields) => ({ key: key, name: name, look: { html: gl('unknown', 'muted'), ax: '状態は不明です。件数は計測していません' }, fields: fields.map((f) => ({ k: f, v: null, unm: true })), time: null, prep: key === 'th' });
+  function items() {
+    if (O.mode === 'cur') {
+      const v = view();
+      const nr = !v.ck; /* 件数の記録なし */
+      const pv = {
+        key: 'pv', name: '表示用プレビュー', prep: true,
+        look: { html: gl('unknown', 'muted'), ax: 'この工程だけの状態は記録されていません' },
+        fields: [{ k: '準備済み', v: v.ck ? v.j.ready : null, old: v.old, nr: nr }, { k: '対象', v: v.ck ? v.j.total : null, old: v.old, nr: nr }],
+        time: v.time, old: v.old
+      };
+      return [UNM('th', '読み込み中の仮画像', ['準備済み', '対象', '失敗']), pv, UNM('ta', 'タグのための写真の解析', ['解析済み', '対象', '失敗']), UNM('au', '自動のタグ付け', ['付けた数'])];
+    }
+    const R = (st, ax) => ({ html: st, ax: ax });
+    const F = {
+      view: [
+        { key: 'th', name: '読み込み中の仮画像', prep: true, look: R(gl('done'), '完了'), fields: [{ k: '準備済み', v: 1284 }, { k: '対象', v: 1284 }, { k: '失敗', v: 0 }], time: '10:30' },
+        { key: 'pv', name: '表示用プレビュー', prep: true, look: R(mk(gl('pause') + gl('view', 'muted')), '一時停止中。理由コード：前面での抑制'), fields: [{ k: '準備済み', v: 1180 }, { k: '対象', v: 1284 }, { k: '失敗', v: 3, fail: true }], time: '10:42' }
+      ],
+      storage: [
+        { key: 'th', name: '読み込み中の仮画像', prep: true, look: R(mk(gl('pause') + gl('storage', 'muted')), '一時停止中。理由コード：端末の空き容量が足りません'), fields: [{ k: '準備済み', v: 700 }, { k: '対象', v: 1284 }, { k: '失敗', v: 0 }], time: '10:38' },
+        { key: 'pv', name: '表示用プレビュー', prep: true, look: R(mk(gl('pause') + gl('storage', 'muted')), '一時停止中。理由コード：端末の空き容量が足りません'), fields: [{ k: '準備済み', v: 640 }, { k: '対象', v: 1284 }, { k: '失敗', v: 0 }], time: '10:38' }
+      ],
+      mixed: [
+        { key: 'th', name: '読み込み中の仮画像', prep: true, look: R(gl('partial'), '一部を準備できませんでした'), fields: [{ k: '準備済み', v: 1282 }, { k: '対象', v: 1284 }, { k: '失敗', v: 2, fail: true }], time: '10:42' },
+        { key: 'pv', name: '表示用プレビュー', prep: true, look: R(gl('done'), '完了'), fields: [{ k: '準備済み', v: 1284 }, { k: '対象', v: 1284 }, { k: '失敗', v: 0 }], time: '10:42' }
+      ]
+    }[O.f];
+    return F.concat([
+      { key: 'ta', name: 'タグのための写真の解析', look: R(O.f === 'mixed' ? gl('run') : gl('wait'), O.f === 'mixed' ? '実行中' : '待機中'), fields: [{ k: '解析済み', v: 48 }, { k: '対象', v: 51 }, { k: '失敗', v: 1, fail: true }], time: '10:41' },
+      { key: 'au', name: '自動のタグ付け', look: R(gl('done'), '完了'), fields: [{ k: '付けた数', v: 5 }], time: '10:41' }
+    ]);
+  }
+  const DESC = {
+    th: ['写真一覧で、サムネイルが届くまでのあいだに出す、ぼかした仮画像を準備します。表示用プレビューと同じ準備ジョブで作ります。', 'ThumbHash', 'この工程だけの件数と結果はまだ記録していません。'],
+    pv: ['写真を開いたときにすぐ表示できるよう、表示用の縮小画像を前もって作ります。仮画像と同じ準備ジョブで作ります。', 'プレビューキャッシュ', '準備済みは、ファイルがあることを確かめて準備に成功した数です（すべてを読み込んで確かめた数ではありません）。対象は直近に数えた端末内の写真です。'],
+    ta: ['「似た写真にもタグを付ける」で候補を探すために、写真を端末内で解析します。', '画像の特徴の解析', '件数はタグの画面の中だけで数えていて、ここではまだ使えません。'],
+    au: ['解析の結果から自動で付けたタグの数です。', '自動のタグ付け', '件数はタグの画面の中だけで数えていて、ここではまだ使えません。']
+  };
+  const miss = (f) => (f.unm ? '計測していません' : '件数の記録はありません');
+  const fAX = (it) => it.fields.map((f) => f.k + '、' + (f.v == null ? miss(f) : fmt(f.v) + (f.old ? '、前回の観測値' : ''))).join('、');
+  const timeAX = (it) => (it.time ? (it.old ? '前回の観測時刻、' : '観測時刻、') + tAX(it.time) : '観測時刻はありません');
+  function cardHTML(it) {
+    const ready = it.fields[0], total = it.fields[1], failF = it.fields.find((f) => f.fail && f.v);
+    const showBar = total && ready.v != null && total.v != null && total.v > 0;
+    const p = showBar ? Math.min(1, ready.v / total.v) : 0;
+    const nums = '<div class="nums">' + it.fields.filter((f) => !f.fail).map((f) => '<span class="f' + (f.old ? ' old' : '') + '"><small>' + f.k + '</small><span>' + (f.v == null ? '—' : (f.old ? hm() : '') + fmt(f.v)) + '</span></span>').join('') +
+      (failF ? mk(gl('fail', 'fail') + '<span>' + fmt(failF.v) + '</span>', 'fail') : '') + '<span class="tm">' + (it.old && it.time ? hm() : '') + (it.time || '—') + '</span></div>';
+    const ax = it.name + '。' + it.look.ax + '。' + fAX(it) + '。' + timeAX(it) + '。詳細を開く';
+    return '<button class="card" data-open="' + it.key + '" aria-label="' + ax + '"><span class="t"><span class="nm">' + it.name + '</span>' + it.look.html + '<span class="chev" aria-hidden="true">' + G.chev + '</span></span>' + nums +
+      (showBar ? '<span class="barw" aria-hidden="true"><span class="bar' + (it.old ? ' old' : '') + '"><i style="width:' + (p * 100) + '%;' + (p >= 1 && !it.old ? 'background:#7FD1A0' : '') + '"></i></span>' + (it.old ? hm() : '') + '</span>' : '') + '</button>';
+  }
+  function detailHTML(it) {
+    const D = DESC[it.key];
+    const hasHist = O.mode === 'cur' && it.prep && view().old && !!view().time;
+    return '<div class="hd"><b>' + it.name + '</b></div><div class="body" data-detail>' +
+      '<div class="dhead" role="img" aria-label="' + it.name + '。' + it.look.ax + '">' + it.look.html + '</div>' +
+      it.fields.map((f) => '<div class="frow" role="text" aria-label="' + f.k + '、' + (f.v == null ? miss(f) : fmt(f.v) + '枚' + (f.old ? '、前回の観測値' : '')) + '"><small>' + f.k + '</small><span class="' + (f.old ? 'old' : '') + '">' + (f.fail && f.v ? mk(gl('fail', 'fail') + '<span>' + fmt(f.v) + '</span>', 'fail') : (f.v == null ? '—' : (f.old ? hm() : '') + fmt(f.v) + '枚')) + '</span></div>').join('') +
+      '<div class="frow" role="text" aria-label="' + (it.time ? (it.old ? '前回の観測時刻、' : '観測時刻、') + tAX(it.time) : '観測時刻、なし') + '"><small>観測時刻</small><span class="' + (it.old ? 'old' : '') + '">' + (it.old && it.time ? hm() : '') + (it.time || '—') + '</span></div>' +
+      (it.prep ? '<div class="dsp"></div>' + jobRowHTML('img') + condHTML() : '') +
+      '<dl class="fixed"><dd>' + D[0] + '</dd><dt>技術名</dt><dd>' + D[1] + '</dd><dt>数値について</dt><dd>' + D[2] + '</dd>' +
+      (hasHist ? '<dt>印について</dt><dd>' + hm() + 'の付いた数値・時刻・バーは、前回の観測値です。今の値とは限りません。</dd>' : '') + '</dl><div style="height:32px"></div></div>';
+  }
+  const dev = document.getElementById('dev');
+  function render() {
+    document.documentElement.style.setProperty('--k', O.k); dev.style.setProperty('--w', O.w + 'px'); dev.style.setProperty('--h', O.h + 'px');
+    document.getElementById('curCtl').hidden = O.mode !== 'cur'; document.getElementById('futCtl').hidden = O.mode !== 'fut';
+    let h = '';
+    if (N.screen === 'grid') {
+      h = '<div class="hd"><b>すべての写真</b></div><div class="body"><div class="g4">' + Array.from({ length: 32 }, (_, i) => '<i style="background:linear-gradient(160deg,' + ['#a9c3d8,#69736a', '#7b5b45,#2a201b', '#3f4a3a,#1d241c', '#5b6168,#2a2d31'][i % 4] + ')"></i>').join('') + '</div></div>' +
+        '<div class="dock"><button class="db"><span class="ic">' + G.sel + '</span><span class="lbl">選択</span></button><button class="db"><span class="ic">' + G.tag + '</span><span class="lbl">タグ</span></button><button class="db" data-act="more"><span class="ic">' + G.more + '</span><span class="lbl">その他</span></button></div>';
+      if (N.sheet) h += '<button class="dim" data-act="close" aria-label="閉じる"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="その他"><span class="handle" aria-hidden="true"></span><h4>その他</h4>' +
+        ['並べ替え', 'クラウドと同期', '容量の整理', 'アクセス許可', '共有先の設定', '処理の状況', '設定'].map((x) => '<button class="it"' + (x === '処理の状況' ? ' data-act="jobs"' : '') + '>' + x + '</button>').join('') + '<div class="cl"><button data-act="close">閉じる</button></div></div>';
+    } else if (N.screen === 'list') {
+      const its = items();
+      h = '<div class="hd"><b>処理の状況</b></div><div class="body" data-list>' +
+        '<div class="grp" role="heading" aria-level="2">表示の準備</div>' + jobRowHTML() + condHTML() + cardHTML(its[0]) + cardHTML(its[1]) +
+        '<div class="grp" role="heading" aria-level="2" style="margin-top:14px">タグ</div>' + cardHTML(its[2]) + cardHTML(its[3]) + '<div style="height:24px"></div></div>';
+    } else {
+      h = detailHTML(items().find((x) => x.key === N.detail));
+    }
+    dev.innerHTML = (O.mode === 'fut' ? '<span class="secure" style="color:#F5D38A;border-color:#F5D38A">将来の計測済みの例（未実装）</span>' : '<span class="secure">現在取得できる値（合成）</span>') + h + (N.left ? '<div class="os"><span>（OSへ戻った状態・デモ）</span><button class="hw" data-act="reopen">開き直す（デモ）</button></div>' : '');
+    const L = dev.querySelector('[data-list]'); if (L) { L.scrollTop = N.listScroll; L.addEventListener('scroll', () => { N.listScroll = L.scrollTop; }, { passive: true }); }
+    side();
+  }
+  function side() {
+    const labs = [...dev.querySelectorAll('.card,[role=img][aria-label],[role=text],.job,.cond')].map((e) => e.getAttribute('aria-label')).filter(Boolean);
+    document.getElementById('ax').innerHTML = '<b>読み上げ（AX名）</b><span class="modeTag ' + O.mode + '" style="margin-left:8px">' + (O.mode === 'cur' ? '実装基準' : '将来の例・未実装') + '</span><br>' + ([...new Set(labs)].map((x) => '・' + x).join('<br>') || '—');
+    const BAN = /一時停止中|進行中|実行中|待機中|完了|不明|観測していません|計測していません|読み込めません|失敗しました|抑えています|足りません|記録されていません/;
+    const vis = [...dev.querySelectorAll('*')].filter((e) => e.children.length === 0 && e.offsetParent !== null && !e.closest('[aria-hidden="true"]') && !e.closest('.fixed') && !e.classList.contains('secure') && e.textContent.trim()).map((e) => e.textContent.trim());
+    const bad = vis.filter((t) => BAN.test(t));
+    const small = [...dev.querySelectorAll('button')].filter((b) => b.offsetParent !== null && !b.classList.contains('dim')).filter((b) => { const r = b.getBoundingClientRect(); return r.height < 48 || r.width < 48; });
+    const d = dev.getBoundingClientRect();
+    const ov = [...dev.querySelectorAll('.card *, .dhead *, .frow *, .job *, .cond *')].filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.right > d.right + 1; }).length;
+    const spinning = [...dev.querySelectorAll('.spin')].filter((e) => e.closest('.dev')).length;
+    document.getElementById('chk').innerHTML = '<b>検査（' + O.w + 'dp・文字' + O.k + '倍）</b><br>状態名の文（固定の説明以外）：' + (bad.length ? '<span class="ngc">' + bad.join(' / ') + '</span>' : '<span class="okc">なし</span>') + '<br>48dp未満のボタン：' + (small.length ? '<span class="ngc">' + small.length + '</span>' : '<span class="okc">なし</span>') + '<br>はみ出し：' + (ov ? '<span class="ngc">' + ov + '</span>' : '<span class="okc">なし</span>') + '<br>回る弧：' + spinning + (O.mode === 'cur' ? ((spinning > 0) !== (O.p === 'running' && !!dev.querySelector('.job')) ? ' <span class="ngc">（回る弧は RUNNING の観測のときだけ）</span>' : ' <span class="okc">（RUNNING の観測のときだけ）</span>') : '') + '<br>新しい操作（開始・再試行など）：<span class="okc">なし</span>';
+    document.getElementById('log').innerHTML = '<b>操作の記録</b><br>' + (log.map((x) => '・' + x).join('<br>') || '—');
+  }
+  dev.addEventListener('click', (e) => {
+    const a = e.target.closest('[data-act]');
+    if (a) {
+      const v = a.dataset.act;
+      if (v === 'more') { N.sheet = true; add('［その他］→ 既存のSheet'); }
+      else if (v === 'close') { N.sheet = false; add('Sheetを閉じる'); }
+      else if (v === 'jobs') { N.sheet = false; N.screen = 'list'; N.listScroll = 0; add('［処理の状況］→ 一覧'); }
+      else if (v === 'reopen') { N.left = false; }
+      return render();
+    }
+    const c = e.target.closest('[data-open]');
+    if (c) { N.screen = 'detail'; N.detail = c.dataset.open; add('カード → 詳細（' + items().find((x) => x.key === N.detail).name + '）'); render(); }
+  });
+  document.getElementById('hwBack').addEventListener('click', () => {
+    if (N.left) return;
+    if (N.screen === 'grid' && N.sheet) { N.sheet = false; add('Back：Sheetを閉じる'); }
+    else if (N.screen === 'detail') { N.screen = 'list'; add('Back：詳細 → 一覧（位置 ' + Math.round(N.listScroll) + 'dp を保つ）'); }
+    else if (N.screen === 'list') { N.screen = 'grid'; add('Back：一覧 → 呼び出し元（写真一覧）'); }
+    else { N.left = true; add('Back：ルートなのでOSへ'); }
+    render();
+  });
+  document.getElementById('reset').addEventListener('click', () => { N = { screen: 'grid', sheet: false, detail: null, listScroll: 0, left: false }; log = []; render(); });
+  function seg(id, fn) {
+    const el = document.getElementById(id);
+    el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; el.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', x === b ? 'true' : 'false')); fn(b.dataset.v); render(); });
+  }
+  seg('oMode', (v) => { O.mode = v; }); seg('oW', (v) => { O.w = +v; }); seg('oK', (v) => { O.k = +v; }); seg('oH', (v) => { O.h = +v; });
+  seg('oP', (v) => { O.p = v; add('共通の準備ジョブ：' + v); }); seg('oF', (v) => { O.f = v; add('将来の例：' + v); });
+  window.__l16 = { O: O, get N() { return N; }, render: render, go: (s, d) => { N.screen = s; N.detail = d || null; N.sheet = false; N.left = false; render(); } };
+  render();
+})();
+</script>
+</body>
+</html>
