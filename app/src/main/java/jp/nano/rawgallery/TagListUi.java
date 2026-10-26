@@ -80,7 +80,7 @@ final class TagListUi {
     final int kind;final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
     Mark(Context c,int kind){this.kind=kind;int size=dp(c,kind==0?40:20);setBounds(0,0,size,size);}
     public void draw(Canvas canvas){int save=canvas.save();Rect r=getBounds();canvas.translate(r.left,r.top);canvas.scale(r.width()/(kind==0?40f:20f),r.height()/(kind==0?40f:20f));
-      if(kind==0){p.setStyle(Paint.Style.FILL);p.setColor(GalleryUi.PANEL);canvas.drawRoundRect(0,0,40,40,12,12,p);StatusView.glyph(canvas,p,StatusView.Symbol.TAG,10,10,20,0xffa0a0a4,0);}
+      if(kind==0){p.setStyle(Paint.Style.FILL);p.setColor(GalleryUi.PANEL);canvas.drawRoundRect(0,0,40,40,12,12,p);p.setStyle(Paint.Style.STROKE);p.setColor(0xffa0a0a4);p.setStrokeWidth(1.8f);p.setStrokeJoin(Paint.Join.ROUND);Path tag=new Path();tag.moveTo(12,11);tag.lineTo(21,11);tag.lineTo(30,20);tag.lineTo(20,30);tag.lineTo(11,21);tag.close();canvas.drawPath(tag,p);canvas.drawCircle(16,16,1.8f,p);}
       else{p.setStyle(Paint.Style.STROKE);p.setColor(kind==2?0xff111111:0xffa0a0a4);p.setStrokeWidth(1.8f);p.setStrokeCap(Paint.Cap.ROUND);p.setStrokeJoin(Paint.Join.ROUND);Path path=new Path();if(kind==1){path.moveTo(7,4);path.lineTo(13,10);path.lineTo(7,16);}else{path.moveTo(10,4);path.lineTo(10,16);path.moveTo(4,10);path.lineTo(16,10);}canvas.drawPath(path,p);}canvas.restoreToCount(save);
     }
     public void setAlpha(int alpha){p.setAlpha(alpha);invalidateSelf();}

@@ -12,7 +12,7 @@ import java.util.concurrent.*;
 public final class SyncActivity extends DiagnosticActivity {
   private final ExecutorService worker = new DiagnosticExecutor("SyncActivity.worker", 1);
   private final Handler main = new Handler(Looper.getMainLooper());
-  private TextView info, retention;
+  private TextView info, retention, progressTime;
   private StatusView progress, collection, permissionState;
   private Switch syncState, cleanupState;
   private boolean refreshing;
@@ -24,7 +24,8 @@ public final class SyncActivity extends DiagnosticActivity {
           if(progress!=null){JobState state=SyncEngine.snapshot(SyncActivity.this);
             String description=getSharedPreferences("settings",0).getString("syncStatus","まだ同期していません");
             if(state.kind==JobState.Kind.UNKNOWN)description="現在の処理状態を確認できません。"+description;
-            progress.show(StatusView.symbol(state.kind),state.updatedAt>0?android.text.format.DateFormat.format("MM/dd HH:mm",state.updatedAt).toString():"—",description,null,"");
+            progress.show(StatusView.symbol(state.kind),"",description,null,"");
+            progressTime.setText(state.updatedAt>0?android.text.format.DateFormat.format("MM/dd HH:mm",state.updatedAt).toString():"—");
           }
           main.postDelayed(this, 3000);
         }
@@ -59,7 +60,7 @@ public final class SyncActivity extends DiagnosticActivity {
         });
     screen.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
     setContentView(screen);
-    info = new TextView(this);
+    info = new TextView(this);progressTime = new TextView(this);
     collection=new StatusView(this);permissionState=new StatusView(this);progress=new StatusView(this);
     syncState=new SyncSettingsUi.ReadOnlySwitch(this);cleanupState=new SyncSettingsUi.ReadOnlySwitch(this);
     if (!android.os.Environment.isExternalStorageManager())
@@ -145,7 +146,7 @@ public final class SyncActivity extends DiagnosticActivity {
     Button allFiles = !Environment.isExternalStorageManager()?settingsButtons.get(permissionIndex++):null;
     Button location = checkSelfPermission(android.Manifest.permission.ACCESS_MEDIA_LOCATION)
         != android.content.pm.PackageManager.PERMISSION_GRANTED?settingsButtons.get(permissionIndex):null;
-    retention=SyncSettingsUi.populate(this,root,screen,info,collection,permissionState,progress,
+    retention=SyncSettingsUi.populate(this,root,screen,info,collection,permissionState,progress,progressTime,
         syncState,cleanupState,allFiles,location,keep,settings,other);
 
   }

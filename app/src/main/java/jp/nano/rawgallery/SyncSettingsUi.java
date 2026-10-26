@@ -28,7 +28,7 @@ final class SyncSettingsUi {
     if(value instanceof TextView&&!(value instanceof Button)){
       TextView t=(TextView)value;t.setPadding(0,0,0,0);t.setTextSize(15);t.setTextColor(GalleryUi.TEXT);t.setIncludeFontPadding(false);t.setLineHeight(Math.round(t.getTextSize()*1.45f));
       t.setGravity(Gravity.END);row.addView(value,new LinearLayout.LayoutParams(0,-2,1));
-    }else row.addView(value,new LinearLayout.LayoutParams(-2,-2));
+    }else row.addView(value,new LinearLayout.LayoutParams(value instanceof StatusView?dp(c,value.isClickable()?48:24):-2,-2));
     card.addView(row,new LinearLayout.LayoutParams(-1,-2));
   }
   private static void description(Context c,LinearLayout card,String title,String body,boolean first){
@@ -43,12 +43,12 @@ final class SyncSettingsUi {
     b.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(primary?0x22000000:0x33ffffff),states,GalleryUi.shape(c,Color.WHITE,min/2)));
   }
   private static void action(Context c,LinearLayout card,Button b,String label){if(b==null)return;b.setText(label);b.setContentDescription(label);styleButton(c,b,false,14,48);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-2,-2);p.topMargin=dp(c,12);card.addView(b,p);}
-  static TextView populate(Context c,LinearLayout root,LinearLayout screen,TextView info,StatusView collection,StatusView permission,StatusView progress,Switch sync,Switch cleanup,Button allFiles,Button location,Button keep,Button settings,Button other){
+  static TextView populate(Context c,LinearLayout root,LinearLayout screen,TextView info,StatusView collection,StatusView permission,StatusView progress,TextView progressTime,Switch sync,Switch cleanup,Button allFiles,Button location,Button keep,Button settings,Button other){
     TextView title=TagListUi.title(c);title.setText("同期と端末容量");root.addView(title);
     LinearLayout cards=column(c);cards.setPadding(dp(c,16),dp(c,4),dp(c,16),dp(c,16));root.addView(cards);
     LinearLayout config=card(c,cards,"設定");sync.setText("自動同期");cleanup.setText("端末から自動で削除");config.addView(sync,new LinearLayout.LayoutParams(-1,-2));line(c,config);config.addView(cleanup,new LinearLayout.LayoutParams(-1,-2));
     TextView hint=text(c,"変更は［同期・端末からの削除］から",13,0xffa0a0a4,1.5f);hint.setPadding(0,dp(c,8),0,0);config.addView(hint);
-    LinearLayout status=card(c,cards,"状態");row(c,status,"写真情報の読み取り",collection,false);row(c,status,"写真の集計",info,true);row(c,status,"自動管理の権限",permission,true);row(c,status,"バックグラウンド同期",progress,true);
+    LinearLayout status=card(c,cards,"状態");row(c,status,"写真情報の読み取り",collection,false);row(c,status,"写真の集計",info,true);row(c,status,"自動管理の権限",permission,true);LinearLayout job=new LinearLayout(c);job.setGravity(Gravity.CENTER_VERTICAL);job.addView(progress,new LinearLayout.LayoutParams(dp(c,24),dp(c,48)));progressTime.setTextSize(13);progressTime.setTextColor(0xffa0a0a4);progressTime.setIncludeFontPadding(false);progressTime.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);LinearLayout.LayoutParams clock=new LinearLayout.LayoutParams(-2,-2);clock.leftMargin=dp(c,6);job.addView(progressTime,clock);row(c,status,"バックグラウンド同期",job,true);
     LinearLayout save=card(c,cards,"保存と通信");description(c,save,"原本の保存","フォルダ選択は不要です。すべてのJPEGと、RAW内の機種情報からGR IV（Monochrome含む）、OM-1 Mark II、E-P7、LeitzphoneのRAWを自動で見つけます。",true);description(c,save,"モバイル通信","モバイル通信でも同期します。実行時刻はAndroidの省電力制御などにより遅れる場合があります。",false);
     LinearLayout delete=card(c,cards,"端末からの削除");description(c,delete,"削除の条件","端末の写真の自動削除には「すべてのファイルへのアクセス」が必要です。端末から削除するのは対象機種のRAWとすべてのJPEGで、クラウドから同じ内容で戻せることを確認し、プレビューを保存した元のファイルに限ります。",true);
     action(c,delete,allFiles,"写真の自動削除に必要なアクセスを許可");description(c,delete,"日付の条件","撮影日から数えます。JPEGで撮影日がない場合は追加日、作成日の順に使います。日付がすべて不明のJPEGは保存確認後に削除対象になり、撮影日不明のRAWは残します。",false);description(c,delete,"アプリを削除したとき","アプリを削除すると端末のプレビューと管理記録も消えます。クラウドの元のファイルはAmazon Photosに残ります。",false);
