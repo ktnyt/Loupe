@@ -13,6 +13,11 @@ import org.json.JSONObject;
  * source.
  */
 public final class ArchiveInstrumentation extends Instrumentation {
+  private boolean dashboardTalkBackTest;
+  private boolean dashboardLayoutTest;
+  private boolean dashboardTest;
+  private boolean talkBackStatusTest;
+  private boolean visualStatusTest;
   private boolean jobStateTest;
   private boolean affordancesTest;
   private boolean rankingModesTest;
@@ -31,6 +36,11 @@ public final class ArchiveInstrumentation extends Instrumentation {
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    dashboardTalkBackTest=args!=null&&"dashboard-talkback".equals(args.getString("mode"));
+    dashboardLayoutTest=args!=null&&"dashboard-layout".equals(args.getString("mode"));
+    dashboardTest=args!=null&&"dashboard".equals(args.getString("mode"));
+    talkBackStatusTest=args!=null&&"talkback-status".equals(args.getString("mode"));
+    visualStatusTest=args!=null&&"visual-status".equals(args.getString("mode"));
     jobStateTest = args != null && "job-state".equals(args.getString("mode"));
     affordancesTest = args != null && "affordances".equals(args.getString("mode"));
     rankingModesTest = args != null && "ranking-modes".equals(args.getString("mode"));
@@ -62,6 +72,11 @@ public final class ArchiveInstrumentation extends Instrumentation {
     File restored = null;
     try {
       Context context = getTargetContext();
+      if(dashboardTalkBackTest){results.putString("stream",DashboardTalkBackChecks.run(this));finish(-1,results);return;}
+      if(dashboardLayoutTest){results.putString("stream",DashboardLayoutChecks.run(this));finish(-1,results);return;}
+      if(dashboardTest){results.putString("stream",DashboardChecks.run(this));finish(-1,results);return;}
+      if(talkBackStatusTest){results.putString("stream",TalkBackStatusChecks.run(this));finish(-1,results);return;}
+      if(visualStatusTest){results.putString("stream",VisualStatusChecks.run(this));finish(-1,results);return;}
       if (jobStateTest) { results.putString("stream", JobStateChecks.run(context)); finish(-1, results); return; }
       if (affordancesTest) { results.putString("stream", AffordanceChecks.run(this)); finish(-1, results); return; }
       if (rankingModesTest) { results.putString("stream", RankingModeChecks.run(this)); finish(-1, results); return; }
@@ -180,7 +195,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     } catch (Throwable failure) {
       results.putString(
           "stream",
-          (affordancesTest ? android.util.Log.getStackTraceString(failure) : "") + "Archive device checks failed: "
+          (affordancesTest || visualStatusTest ? android.util.Log.getStackTraceString(failure) : "") + "Archive device checks failed: "
               + failure.getClass().getSimpleName()
               + (failure instanceof AssertionError ? ": " + failure.getMessage() : "")
               + "\n");

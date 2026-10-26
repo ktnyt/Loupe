@@ -34,7 +34,8 @@ final class ThumbnailCell extends FrameLayout {
     private final float density;
     String camera = "", rank = "";
     int count;
-    boolean cloud, failed, selectionMode, selected, partial;
+    StatusView.Symbol tagState;
+    boolean cloud, failed, rankFailed, selectionMode, selected, partial;
 
     Badges(Context context) {
       super(context);
@@ -74,9 +75,11 @@ final class ThumbnailCell extends FrameLayout {
       }
       if (!rank.isEmpty()) {
         box(canvas, 5, h - 26, paint.measureText(rank) + 12, 21);
-        paint.setColor(rank.equals("未ソート") || rank.equals("読込失敗") ? Color.WHITE : 0xfff5b947);
+        paint.setColor(0xfff5b947);
         canvas.drawText(rank, 11, h - 12, paint);
       }
+      if(tagState!=null)StatusView.glyph(canvas,paint,tagState,5,h-26,20,GalleryUi.TEXT,0);
+      if(rankFailed)StatusView.glyph(canvas,paint,StatusView.Symbol.FAILED,5,h-26,20,0xffff8a7a,0);
       if (selectionMode) {
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(selected ? GalleryUi.ACCENT : 0xaa141719);
@@ -101,7 +104,7 @@ final class ThumbnailCell extends FrameLayout {
       if (failed) {
         box(canvas, w / 2 - 12, h / 2 - 12, 24, 24);
         paint.setColor(Color.WHITE);
-        canvas.drawText("!", w / 2 - 2, h / 2 + 4, paint);
+        StatusView.glyph(canvas,paint,StatusView.Symbol.FAILED,w/2-10,h/2-10,20,0xffff8a7a,0);
       }
       canvas.restore();
     }
