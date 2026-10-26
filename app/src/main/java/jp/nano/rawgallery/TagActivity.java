@@ -53,6 +53,10 @@ public final class TagActivity extends DiagnosticActivity {
   private LinearLayout root;
   private volatile int generation;
   private boolean busy, reviewing;
+  private PhotoViewerUi photoViewer;
+  private Button photoPrevious, photoNext, photoTag;
+  private int photoPosition;
+  private boolean photoAttached;
   private int browseMode;
   private int tagScrollY;
   private android.os.Parcelable photoGridState;
@@ -83,6 +87,7 @@ public final class TagActivity extends DiagnosticActivity {
 
   private int screen(String title) {
     generation++;
+    photoViewer=null;photoPrevious=null;photoNext=null;photoTag=null;
     analysisStatus = null; assignmentStatus=null;failureCount=null;savingStatus=null;jobTitle = null; resultButton = null;
     root = new LinearLayout(this);
     root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(GalleryUi.BG);
@@ -422,30 +427,47 @@ public final class TagActivity extends DiagnosticActivity {
     int index = browsePhotos.get(position);
     PhotoRepository.Photo photo = photos.get(index);
     int token = screen(tag.name);
-    root.addView(text((position + 1) + " / " + browsePhotos.size() + " · " + photo.name, 14));
-    boolean attached = isAutomatic(index) || value(index) == TagJudgments.Value.ASSIGNED;
-    root.addView(state(attached?(isAutomatic(index)?StatusView.Symbol.AUTO_TAG:StatusView.Symbol.TAG):StatusView.Symbol.NO_TAG,"",attached?(isAutomatic(index)?"タグあり、自動で付けました":"タグあり、自分で付けました"):"タグなし"));
-    ZoomImageView image = new ZoomImageView(this);
-    root.addView(image, new LinearLayout.LayoutParams(-1, 0, 1));
-    int controlsStart = root.getChildCount();
-    root.addView(button("拡大・戻す", image::toggleZoom));
-    Runnable previous = () -> { if (position > 0) showAssignedPhoto(position - 1); };
-    Runnable next = () -> { if (position + 1 < browsePhotos.size()) showAssignedPhoto(position + 1); };
-    image.setPageListener(direction -> { if (direction > 0) next.run(); else previous.run(); });
-    LinearLayout navigation = new LinearLayout(this);
-    Button before = button("前の写真", previous), after = button("次の写真", next);
-    before.setEnabled(position > 0); after.setEnabled(position + 1 < browsePhotos.size());
-    navigation.addView(before, new LinearLayout.LayoutParams(0, -2, 1));
-    navigation.addView(after, new LinearLayout.LayoutParams(0, -2, 1)); root.addView(navigation);
-    root.addView(button(attached ? "タグを外す" : "タグを付ける",
-        () -> changeTag(index, position, attached ? TagJudgments.Value.EXCLUDED : TagJudgments.Value.ASSIGNED)));
-    GalleryUi.bottomControls(root, controlsStart);
-    worker.execute(() -> {
-      try {
-        Bitmap bitmap = PhotoRepository.bitmap(new PhotoRepository(this).preview(photo), 1600);
-        main.post(() -> { if (current(token)) image.setBitmap(bitmap); else bitmap.recycle(); });
-      } catch (Exception error) { main.post(() -> { if (current(token)) failure(error); }); }
+    root.removeAllViews();root.setBackgroundColor(android.graphics.Color.BLACK);
+    PhotoViewerUi viewer = new PhotoViewerUi(this,photo);
+    photoViewer=viewer;photoPosition=position;
+    root.addView(viewer,new LinearLayout.LayoutParams(-1,0,1));
+    photoAttached=isAutomatic(index)||value(index)==TagJudgments.Value.ASSIGNED;
+    viewer.image.setContentDescription(viewer.image.getContentDescription()+"、タグ「"+tag.name+"」、"+(photoAttached?(isAutomatic(index)?"自動で付けました":"自分で付けました"):"タグなし"));
+    Runnable previous=()->{if(position>0)showAssignedPhoto(position-1);};
+    Runnable next=()->{if(position+1<browsePhotos.size())showAssignedPhoto(position+1);};
+    viewer.image.setPageListener(direction->{if(direction>0)next.run();else previous.run();});
+    photoPrevious=viewer.action("前の写真","前へ","前の写真",previous);
+    photoNext=viewer.action("次の写真","次へ","次の写真",next);
+    viewer.zoom();
+    photoTag=viewer.action("タグ",photoAttached?"タグを外す":"タグを付ける",photoAttached?"タグを外す":"タグを付ける",
+        ()->changeTag(index,position,photoAttached?TagJudgments.Value.EXCLUDED:TagJudgments.Value.ASSIGNED));
+    photoTag.setAccessibilityLiveRegion(android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    refreshPhotoSave(false);
+    StatusView loading=new StatusView(this);loading.asPhotoOverlay();viewer.status(loading);loading.begin("写真を読み込んでいます");
+    worker.execute(()->{
+      try{
+        Bitmap bitmap=PhotoRepository.bitmap(new PhotoRepository(this).preview(photo),1600);
+        main.post(()->{if(current(token)){viewer.image.setBitmap(bitmap);loading.finish();viewer.refreshStatus();}else bitmap.recycle();});
+      }catch(Exception error){main.post(()->{if(current(token)){
+        viewer.failed();viewer.stage.removeView(loading);
+        LinearLayout recovery=new LinearLayout(this);recovery.setOrientation(LinearLayout.VERTICAL);recovery.setGravity(Gravity.CENTER);
+        loading.asPhotoFailure();loading.show(StatusView.Symbol.FAILED,"写真を読み込めませんでした");recovery.addView(loading,new LinearLayout.LayoutParams(GalleryUi.dp(this,32),GalleryUi.dp(this,32)));
+        Button retry=button("再試行",()->showAssignedPhoto(position));retry.setContentDescription("写真を読み込めませんでした。再試行");retry.setTextSize(14);retry.setPadding(GalleryUi.dp(this,18),0,GalleryUi.dp(this,18),0);
+        android.graphics.drawable.GradientDrawable background=GalleryUi.shape(this,android.graphics.Color.BLACK,24);background.setStroke(GalleryUi.dp(this,1),0xff3a3a3f);retry.setBackground(background);
+        ActionIcon icon=new ActionIcon("再試行",getResources().getDisplayMetrics().density*20/26);icon.setBounds(0,0,GalleryUi.dp(this,20),GalleryUi.dp(this,20));retry.setCompoundDrawables(icon,null,null,null);retry.setCompoundDrawablePadding(GalleryUi.dp(this,6));
+        LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(-2,GalleryUi.dp(this,48));rp.topMargin=GalleryUi.dp(this,12);recovery.addView(retry,rp);
+        viewer.stage.addView(recovery,new android.widget.FrameLayout.LayoutParams(-2,-2,Gravity.CENTER));
+      }});}
     });
+  }
+
+  private void refreshPhotoSave(boolean failed){
+    if(photoViewer==null||browseMode!=2)return;
+    photoPrevious.setEnabled(!busy&&photoPosition>0);photoNext.setEnabled(!busy&&photoPosition+1<browsePhotos.size());photoTag.setEnabled(!busy);
+    String label=photoAttached?"タグを外す":"タグを付ける";
+    photoTag.setContentDescription(label+"、タグ「"+tag.name+"」"+(busy?"。保存しています":failed?"。保存できませんでした。判断はそのままです。もう一度押すと保存します":""));
+    photoTag.setStateDescription(busy?"保存中":failed?"保存失敗、再試行できます":photoAttached?"タグあり":"タグなし");
+    PhotoViewerUi.tagState(photoTag,photoAttached,busy,failed);
   }
 
   private void clearAutomatic() {
@@ -463,24 +485,42 @@ public final class TagActivity extends DiagnosticActivity {
         }).setNegativeButton("外さない", null).show();
   }
 
+  static final class PhotoTagSave {
+    final String photoId;final TagJudgments judgments;final boolean conflict;
+    PhotoTagSave(String photoId,TagJudgments judgments,boolean conflict){this.photoId=photoId;this.judgments=judgments;this.conflict=conflict;}
+  }
+  static PhotoTagSave savePhotoTag(TagStore store,PhotoRepository.Photo photo,String operation,String tagId,long revision,TagJudgments.Value value){
+    String id=store.photoId(photo,true);
+    try{return new PhotoTagSave(id,store.record(operation,tagId,id,revision,value),false);}
+    catch(IllegalStateException error){
+      TagJudgments latest=store.load();TagJudgments.Entry current=latest.latest(tagId,id);
+      if((current==null?0:current.revision)==revision)throw error;
+      return new PhotoTagSave(id,latest,true);
+    }
+  }
+
   private void changeTag(int index, int position, TagJudgments.Value value) {
     if (busy) return;
     busy = true;
+    refreshPhotoSave(false);
     int token = generation;
     String tagId = tag.id, id = photoIds.get(index);
     TagJudgments.Entry entry = id == null ? null : judgments.latest(tagId, id);
     long revision = entry == null ? 0 : entry.revision;
     worker.execute(() -> {
       try (TagStore store = new TagStore(this)) {
-        String savedId = store.photoId(photos.get(index), true);
-        TagJudgments saved = store.record(UUID.randomUUID().toString(), tagId, savedId, revision, value);
-        Map<String, AutomaticTags.Decision> inferred = store.automatic(tagId);
+        PhotoTagSave saved=savePhotoTag(store,photos.get(index),UUID.randomUUID().toString(),tagId,revision,value);
         main.post(() -> {
           busy = false; if (!current(token)) return;
-          photoIds.set(index, savedId); judgments = saved; automatic = inferred;
+          photoIds.set(index,saved.photoId);judgments=saved.judgments;
           showAssignedPhoto(position);
+          if(saved.conflict){
+            refreshPhotoSave(true);
+            String message="ほかの操作でタグが変更されました。最新の判断を表示しています。内容を確認してもう一度操作してください";
+            photoTag.setContentDescription(photoTag.getText()+"、タグ「"+tag.name+"」。"+message);photoTag.setStateDescription("変更競合、最新の判断を表示しています");photoTag.announceForAccessibility(message);
+          }
         });
-      } catch (Exception error) { main.post(() -> { busy = false; if (current(token)) failure(error); }); }
+      } catch (Exception error) { main.post(() -> { busy = false; if (current(token)) refreshPhotoSave(true); }); }
     });
   }
 

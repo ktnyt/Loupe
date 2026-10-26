@@ -114,6 +114,21 @@ final class PhotoViewerUi extends ViewGroup {
     dock.addView(b,new LinearLayout.LayoutParams(0,-1,1));
     return b;
   }
+  static void tagState(Button button,boolean attached,boolean busy,boolean failed){
+    Context c=button.getContext();
+    android.graphics.drawable.Drawable tag=c.getDrawable(attached?R.drawable.ic_viewer_untag:R.drawable.ic_viewer_tag).mutate();
+    android.graphics.drawable.Drawable state=new android.graphics.drawable.Drawable(){
+      private final Paint p=new Paint(3);
+      public void draw(Canvas canvas){int save=canvas.save();canvas.translate(getBounds().left,getBounds().top);canvas.scale(getBounds().width()/24f,getBounds().height()/24f);
+        if(busy){StatusView.glyph(canvas,p,StatusView.Symbol.RUNNING,0,0,24,button.getCurrentTextColor(),android.animation.ValueAnimator.areAnimatorsEnabled()?(android.os.SystemClock.uptimeMillis()%1000)*.36f:0);if(button.isShown()&&android.animation.ValueAnimator.areAnimatorsEnabled())button.postInvalidateDelayed(50);}
+        else{tag.setTint(button.getCurrentTextColor());tag.setBounds(0,0,24,24);tag.draw(canvas);}
+        if(failed){p.setStyle(Paint.Style.FILL);p.setColor(Color.BLACK);canvas.drawCircle(25,5,9,p);StatusView.glyph(canvas,p,StatusView.Symbol.FAILED,17,-3,16,0xffff8a7a,0);}
+        canvas.restoreToCount(save);
+      }
+      public void setAlpha(int value){}public void setColorFilter(ColorFilter value){}public int getOpacity(){return PixelFormat.TRANSLUCENT;}
+    };
+    state.setBounds(0,0,GalleryUi.dp(c,24),GalleryUi.dp(c,24));button.setCompoundDrawables(null,state,null,null);button.invalidate();
+  }
   void zoom() {
     zoom = action("拡大","拡大","拡大",image::toggleZoom);
     zoom.setAccessibilityDelegate(new View.AccessibilityDelegate(){
