@@ -23,17 +23,17 @@ final class TagListUi {
   static LinearLayout footer(Context c,Runnable create){
     LinearLayout box=new LinearLayout(c);box.setOrientation(LinearLayout.VERTICAL);
     box.setPadding(dp(c,16),dp(c,12),dp(c,16),dp(c,16));
-    Button b=GalleryUi.button(c,"新しいタグ",create);b.setTextSize(16);
+    Button b=new CenteredPlusButton(c);b.setText("新しいタグ");b.setAllCaps(false);b.setOnClickListener(v->create.run());b.setTextSize(16);
     b.setIncludeFontPadding(false);b.setLineHeight(Math.round(b.getTextSize()*1.35f));
     b.setMinHeight(dp(c,52));b.setMinimumHeight(dp(c,52));
     b.setPadding(dp(c,20),dp(c,12),dp(c,20),dp(c,12));
-    b.setTextColor(0xff111111);b.setCompoundDrawables(new Mark(c,2),null,null,null);
+    b.setTextColor(0xff111111);b.setGravity(Gravity.CENTER);b.setPadding(dp(c,48),dp(c,12),dp(c,20),dp(c,12));
     b.setCompoundDrawablePadding(dp(c,8));b.setBackground(background(c,true,26));
     box.addView(b,new LinearLayout.LayoutParams(-1,-2));return box;
   }
   static TextView title(Context c){
     TextView t=new TextView(c);t.setText("タグ");t.setTextSize(22);t.setTextColor(GalleryUi.TEXT);
-    t.setTypeface(Typeface.create("sans-serif",Typeface.BOLD));t.setIncludeFontPadding(false);
+    t.setTypeface(Typeface.create(Typeface.create("sans-serif",Typeface.NORMAL),600,false));t.setIncludeFontPadding(false);
     t.setLineHeight(Math.round(t.getTextSize()*1.35f));t.setAccessibilityHeading(true);
     t.setPadding(dp(c,20),dp(c,24),dp(c,20),dp(c,4));return t;
   }
@@ -41,6 +41,32 @@ final class TagListUi {
     TextView t=new TextView(c);t.setText("現在のアルバム・絞り込み内の端末写真が対象です");
     t.setTextSize(14);t.setTextColor(0xffa0a0a4);t.setIncludeFontPadding(false);
     t.setLineHeight(Math.round(t.getTextSize()*1.5f));t.setPadding(dp(c,20),0,dp(c,20),dp(c,12));return t;
+  }
+  static android.view.View empty(Context c){
+    LinearLayout box=new LinearLayout(c);box.setOrientation(LinearLayout.VERTICAL);box.setGravity(Gravity.CENTER);box.setPadding(dp(c,20),dp(c,48),dp(c,20),dp(c,48));
+    StatusView mark=new StatusView(c);mark.show(StatusView.Symbol.EMPTY,"タグはまだありません。新しいタグを作成してください");box.addView(mark,new LinearLayout.LayoutParams(dp(c,48),dp(c,48)));return box;
+  }
+  static android.view.View failure(Context c,Runnable retry){
+    LinearLayout box=new LinearLayout(c);box.setGravity(Gravity.CENTER);box.setPadding(dp(c,20),dp(c,48),dp(c,20),dp(c,48));
+    Button button=new RetryButton(c);button.setOnClickListener(v->retry.run());box.addView(button,new LinearLayout.LayoutParams(-2,-2));return box;
+  }
+  private static final class CenteredPlusButton extends Button {
+    private final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
+    CenteredPlusButton(Context c){super(c);}
+    @Override protected void onDraw(Canvas c){super.onDraw(c);android.text.Layout l=getLayout();if(l==null)return;
+      float left=getCompoundPaddingLeft()+l.getLineLeft(0)-dp(getContext(),28);float y=getHeight()/2f;
+      p.setColor(0xff111111);p.setStrokeWidth(dp(getContext(),1.8f));p.setStrokeCap(Paint.Cap.ROUND);
+      c.drawLine(left+dp(getContext(),10),y-dp(getContext(),6),left+dp(getContext(),10),y+dp(getContext(),6),p);c.drawLine(left+dp(getContext(),4),y,left+dp(getContext(),16),y,p);
+    }
+  }
+  private static final class RetryButton extends Button {
+    private final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
+    RetryButton(Context c){super(c);setText("再読み込み");setAllCaps(false);setTextColor(GalleryUi.TEXT);setTextSize(14);setIncludeFontPadding(false);setGravity(Gravity.CENTER);setPadding(dp(c,42),dp(c,76),dp(c,16),dp(c,20));setMinHeight(dp(c,128));setMinimumWidth(dp(c,120));setBackground(background(c,false,16));setContentDescription("タグを読み込めませんでした。再読み込み");}
+    @Override protected void onDraw(Canvas c){float d=getResources().getDisplayMetrics().density;int save=c.save();c.scale(d,d);float w=getWidth()/d;
+      StatusView.glyph(c,p,StatusView.Symbol.FAILED,w/2-24,12,48,0xffff8a7a,0);
+      p.setStyle(Paint.Style.FILL);p.setColor(0xff26262a);c.drawRoundRect(0,68,w,getHeight()/d-12,20,20,p);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1);p.setColor(0xff3a3a3f);c.drawRoundRect(.5f,68.5f,w-.5f,getHeight()/d-12.5f,20,20,p);
+      p.setColor(GalleryUi.TEXT);p.setStrokeWidth(1.8f);c.drawArc(18,78,34,94,30,300,false,p);c.drawLine(18,78,18,84,p);c.drawLine(18,84,24,84,p);c.restoreToCount(save);super.onDraw(c);
+    }
   }
   private static Drawable background(Context c,boolean primary,int radius){
     StateListDrawable states=new StateListDrawable();

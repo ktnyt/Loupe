@@ -121,14 +121,14 @@ public final class TagActivity extends DiagnosticActivity {
         List<TagStore.Tag> tags = store.tags();
         main.post(() -> {
           if (!current(token)) return;
-          if (tags.isEmpty()) list.addView(state(StatusView.Symbol.EMPTY,"","タグはまだありません。新しいタグを作成してください"));
+          if (tags.isEmpty()) list.addView(TagListUi.empty(this));
           for (int i=0;i<tags.size();i++) {
             TagStore.Tag item=tags.get(i);list.addView(TagListUi.row(this,item.name,()->openTag(item)),new LinearLayout.LayoutParams(-1,-2));
             if(i+1<tags.size()){android.view.View divider=new android.view.View(this);divider.setBackgroundColor(0xff26262a);LinearLayout.LayoutParams gap=new LinearLayout.LayoutParams(-1,GalleryUi.dp(this,1));gap.leftMargin=GalleryUi.dp(this,76);list.addView(divider,gap);}
           }
           scroll.post(() -> { if (current(token)) scroll.scrollTo(0, tagScrollY); });
         });
-      } catch (Exception error) { main.post(() -> { if (current(token)) failure(error); }); }
+      } catch (Exception error) { main.post(() -> { if (current(token)) {list.removeAllViews();list.addView(TagListUi.failure(this,this::showTags));} }); }
     });
   }
 

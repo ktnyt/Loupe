@@ -12,7 +12,7 @@ import java.util.concurrent.*;
 public final class SyncActivity extends DiagnosticActivity {
   private final ExecutorService worker = new DiagnosticExecutor("SyncActivity.worker", 1);
   private final Handler main = new Handler(Looper.getMainLooper());
-  private TextView info;
+  private TextView info, retention;
   private StatusView progress, collection, permissionState;
   private Switch syncState, cleanupState;
   private boolean refreshing;
@@ -36,27 +36,17 @@ public final class SyncActivity extends DiagnosticActivity {
   }
 
   private void button(LinearLayout root, String label, Runnable action) {
-    Button b = GalleryUi.button(this, label, action);
+    Button b = new SyncSettingsUi.ActionButton(this, label, action);
     if (label.equals("同期・端末からの削除の設定") || label.equals("その他の操作")) {
       footerButtons.add(b);
     } else settingsButtons.add(b);
-  }
-
-  private TextView text(LinearLayout root, String value, int size) {
-    TextView t = new TextView(this);
-    t.setText(value);
-    t.setTextSize(size);
-    t.setTextColor(0xfff0ede7);
-    t.setPadding(16, 16, 16, 16);
-    root.addView(t);
-    return t;
   }
 
   private void screen() {
     ScrollView scroll = new ScrollView(this);
     LinearLayout root = new LinearLayout(this);
     root.setOrientation(LinearLayout.VERTICAL);
-    root.setBackgroundColor(0xff141719);
+    root.setBackgroundColor(GalleryUi.BG);
     scroll.addView(root);
     LinearLayout screen = new LinearLayout(this);
     screen.setOrientation(LinearLayout.VERTICAL);
@@ -64,28 +54,14 @@ public final class SyncActivity extends DiagnosticActivity {
     screen.setOnApplyWindowInsetsListener(
         (v, insets) -> {
           android.graphics.Insets i = insets.getInsets(WindowInsets.Type.systemBars());
-          v.setPadding(i.left + 12, i.top + 12, i.right + 12, i.bottom);
+          v.setPadding(i.left, i.top, i.right, i.bottom);
           return insets;
         });
     screen.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
     setContentView(screen);
-    text(root, "同期と端末容量", 24);
-    text(
-        root,
-        "フォルダ選択は不要です。すべてのJPEGと、RAW内の機種情報からGR IV（Monochrome含む）、OM-1 Mark"
-            + " II、E-P7、LeitzphoneのRAWを自動で見つけます。",
-        14);
-    info = text(root,"—",14);
-    collection=new StatusView(this);root.addView(collection);
-    syncState=new Switch(this);syncState.setText("自動同期");syncState.setClickable(false);root.addView(syncState);
-    cleanupState=new Switch(this);cleanupState.setText("端末の写真の自動削除");cleanupState.setClickable(false);root.addView(cleanupState);
-    text(root,"自動管理の権限",14);permissionState=new StatusView(this);root.addView(permissionState);
-    text(root,"バックグラウンド同期",14);progress=new StatusView(this);root.addView(progress);
-    text(
-        root,
-        "モバイル通信でも同期します。実行時刻はAndroidの省電力制御などにより遅れる場合があります。\n"
-            + "端末の写真の自動削除には「すべてのファイルへのアクセス」が必要です。端末から削除するのは対象機種のRAWとすべてのJPEGで、クラウドから同じ内容で戻せることを確認し、プレビューを保存した元のファイルに限ります。",
-        13);
+    info = new TextView(this);
+    collection=new StatusView(this);permissionState=new StatusView(this);progress=new StatusView(this);
+    syncState=new SyncSettingsUi.ReadOnlySwitch(this);cleanupState=new SyncSettingsUi.ReadOnlySwitch(this);
     if (!android.os.Environment.isExternalStorageManager())
       button(
           root,
@@ -108,8 +84,6 @@ public final class SyncActivity extends DiagnosticActivity {
           () ->
               requestPermissions(
                   new String[] {android.Manifest.permission.ACCESS_MEDIA_LOCATION}, 41));
-    text(root, "撮影時の位置情報も含め、元のファイルを変更せず保存するための許可です。端末の現在位置は取得しません。", 13);
-    text(root, "撮影日から数えます。JPEGで撮影日がない場合は追加日、作成日の順に使います。日付がすべて不明のJPEGは保存確認後に削除対象になり、撮影日不明のRAWは残します。", 13);
     button(
         root,
         "端末に写真を残す期間",
@@ -164,15 +138,16 @@ public final class SyncActivity extends DiagnosticActivity {
                     })
                 .setNegativeButton("閉じる", null)
                 .show());
-    text(root, "アプリを削除すると端末のプレビューと管理記録も消えます。クラウドの元のファイルはAmazon Photosに残ります。", 13);
-    Button settings = footerButtons.get(0),
-        other = footerButtons.get(1);
-    settings.setText("同期・端末からの削除");
-    other.setText("その他");
-    int controlsStart = screen.getChildCount();
-    for (Button setting : settingsButtons) screen.addView(setting);
-    screen.addView(GalleryUi.dock(this, GalleryUi.primary(settings), other));
-    GalleryUi.bottomControls(screen, controlsStart);
+    // Keep all existing action callbacks; only their presentation and placement changes.
+    Button settings = footerButtons.get(0), other = footerButtons.get(1);
+    Button keep = settingsButtons.get(settingsButtons.size()-1);
+    int permissionIndex=0;
+    Button allFiles = !Environment.isExternalStorageManager()?settingsButtons.get(permissionIndex++):null;
+    Button location = checkSelfPermission(android.Manifest.permission.ACCESS_MEDIA_LOCATION)
+        != android.content.pm.PackageManager.PERMISSION_GRANTED?settingsButtons.get(permissionIndex):null;
+    retention=SyncSettingsUi.populate(this,root,screen,info,collection,permissionState,progress,
+        syncState,cleanupState,allFiles,location,keep,settings,other);
+
   }
 
   private void stop() {
@@ -202,6 +177,7 @@ public final class SyncActivity extends DiagnosticActivity {
                 if (isDestroyed()) return;
                 SharedPreferences s = getSharedPreferences("settings", 0);
                 syncState.setChecked(s.getBoolean("syncEnabled",false));cleanupState.setChecked(s.getBoolean("cleanupEnabled",false));
+                retention.setText(s.getInt("retentionDays",30)+"日");
                 permissionState.show(Environment.isExternalStorageManager()?StatusView.Symbol.COMPLETE:StatusView.Symbol.PERMISSION,Environment.isExternalStorageManager()?"自動管理の権限は許可済み":"自動管理の権限は未許可。必要なアクセスを許可する操作を選んでください");
                 info.setText(collected?message:"—");
                 if(collected)collection.finish();else collection.show(StatusView.Symbol.FAILED,"","写真の情報を取得できませんでした。アクセス許可を確認してください",this::refresh,"再試行");
