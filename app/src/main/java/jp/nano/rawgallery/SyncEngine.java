@@ -103,12 +103,13 @@ final class SyncEngine {
       CloudVerifier cloud = new CloudVerifier(cookies, agent);
       long deadline = System.nanoTime() + 240_000_000_000L;
       int processed = 0, deferred = 0;
+      boolean reachedEnd=true;
       for (PhotoRepository.Photo p : batch) {
         SharedPreferences settings = c.getSharedPreferences("settings", 0);
         if (!settings.getBoolean("syncEnabled", false)
             || Thread.currentThread().isInterrupted()
             || System.nanoTime() > deadline
-            || processed >= 20) break;
+            || processed >= 20) {reachedEnd=false;break;}
         JSONObject old = store.get(ArchiveStore.key(p));
         if (old != null && old.optLong("retryAfter", 0) > System.currentTimeMillis()) {
           deferred++;
@@ -166,7 +167,7 @@ final class SyncEngine {
             }
             if (Thread.currentThread().isInterrupted()
                 || !settings.getBoolean("cleanupEnabled", false)
-                || !settings.getBoolean("syncEnabled", false)) break;
+                || !settings.getBoolean("syncEnabled", false)) {reachedEnd=false;break;}
             store.put(record, "releasing");
             if (c.getContentResolver().delete(p.uri, null, null) != 1)
               throw new java.io.IOException("Delete refused");
@@ -175,7 +176,7 @@ final class SyncEngine {
         } catch (CloudVerifier.AuthException e) {
           throw e;
         } catch (Exception e) {
-          if (Thread.currentThread().isInterrupted()) break;
+          if (Thread.currentThread().isInterrupted()) {reachedEnd=false;break;}
           JSONObject failed = store.get(ArchiveStore.key(p));
           if (failed == null) failed = ArchiveStore.base(p);
           String state = failed.optString("state", "error");
@@ -185,7 +186,7 @@ final class SyncEngine {
           processed++;
         }
       }
-      if(deferred==0 && !Thread.currentThread().isInterrupted())
+      if(reachedEnd && deferred==0 && !Thread.currentThread().isInterrupted())
         c.getSharedPreferences("settings",0).edit().putLong("syncFinishedAt",System.currentTimeMillis()).apply();
       status(
           c, deferred > 0 ? JobState.Kind.PARTIAL : JobState.Kind.WAITING, "今回の同期処理を終了しました（確認した原本：" + processed + "枚、保留：" + deferred + "枚）。未完了の原本は次の定期処理で確認します。");

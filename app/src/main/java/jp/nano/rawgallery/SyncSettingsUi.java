@@ -20,7 +20,7 @@ final class SyncSettingsUi {
     TextView title=text(c,name,16,GalleryUi.TEXT,22f/16);title.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));title.setAccessibilityHeading(true);
     LinearLayout.LayoutParams heading=new LinearLayout.LayoutParams(-1,-2);heading.bottomMargin=dp(c,8);card.addView(title,heading);return card;
   }
-  private static void line(Context c,LinearLayout card){View line=new View(c);line.setBackgroundColor(0xff26262a);card.addView(line,new LinearLayout.LayoutParams(-1,dp(c,1)));}
+  private static void line(Context c,LinearLayout card){View line=new View(c);line.setBackgroundColor(0xff26262a);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(c,1));lp.topMargin=dp(c,12);lp.bottomMargin=dp(c,10);card.addView(line,lp);}
   private static void row(Context c,LinearLayout card,String label,View value,boolean divider){
     if(divider)line(c,card);LinearLayout row=new LinearLayout(c);row.setGravity(Gravity.CENTER_VERTICAL);row.setMinimumHeight(dp(c,32));
     TextView name=text(c,label,13,0xffa9a9a4,20f/13);LinearLayout.LayoutParams labelParams=new LinearLayout.LayoutParams(0,-2,1);labelParams.rightMargin=dp(c,12);row.addView(name,labelParams);
@@ -32,12 +32,12 @@ final class SyncSettingsUi {
     card.addView(row,new LinearLayout.LayoutParams(-1,-2));
   }
   private static void description(Context c,LinearLayout card,String title,String body,boolean first){
-    if(title!=null){TextView label=text(c,title,14,GalleryUi.TEXT,1.45f);label.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=dp(c,first?0:12);p.bottomMargin=dp(c,2);card.addView(label,p);}
+    if(title!=null){TextView label=text(c,title,13,0xffd6d6d2,20f/13);label.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=dp(c,first?0:20);p.bottomMargin=dp(c,2);card.addView(label,p);}
     card.addView(text(c,body,13,0xffa9a9a4,20f/13),new LinearLayout.LayoutParams(-1,-2));
   }
   static void styleButton(Context c,Button b,boolean primary,int size,int min){
     b.setAllCaps(false);b.setTextSize(size);b.setTextColor(primary?0xff111111:GalleryUi.TEXT);b.setIncludeFontPadding(false);b.setLineHeight(Math.round(b.getTextSize()*1.35f));b.setSingleLine(false);b.setEllipsize(null);b.setGravity(Gravity.CENTER);b.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));
-    b.setMinHeight(dp(c,min));b.setMinimumHeight(dp(c,min));b.setPadding(dp(c,b instanceof ActionButton?44:16),dp(c,10),dp(c,16),dp(c,10));
+    b.setMinHeight(dp(c,min));b.setMinimumHeight(dp(c,min));b.setPadding(dp(c,b instanceof ActionButton&&hasIcon(b)?44:16),dp(c,10),dp(c,16),dp(c,10));
     GradientDrawable shape=GalleryUi.shape(c,primary?GalleryUi.TEXT:Color.TRANSPARENT,min/2);if(!primary)shape.setStroke(dp(c,1),0xff3a3a3f);
     android.graphics.drawable.StateListDrawable states=new android.graphics.drawable.StateListDrawable();GradientDrawable focus=GalleryUi.shape(c,primary?GalleryUi.TEXT:Color.TRANSPARENT,min/2);focus.setStroke(dp(c,2),primary?0xff111111:GalleryUi.TEXT);states.addState(new int[]{android.R.attr.state_focused},focus);states.addState(new int[]{},shape);
     b.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(primary?0x22000000:0x33ffffff),states,GalleryUi.shape(c,Color.WHITE,min/2)));
@@ -45,8 +45,30 @@ final class SyncSettingsUi {
   private static void action(Context c,LinearLayout card,Button b,String label){if(b==null)return;b.setText(label);b.setContentDescription(label);styleButton(c,b,false,14,48);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=dp(c,8);card.addView(b,p);}
   private static void headingControl(Context c,LinearLayout card,Switch control,String description){
     View title=card.getChildAt(0);card.removeView(title);LinearLayout header=new LinearLayout(c);header.setGravity(Gravity.CENTER_VERTICAL);
-    header.addView(title,new LinearLayout.LayoutParams(0,-2,1));control.setText("");control.setContentDescription(description);control.setMinimumWidth(dp(c,48));header.addView(control,new LinearLayout.LayoutParams(dp(c,48),dp(c,48)));card.addView(header,0);
+    header.addView(title,new LinearLayout.LayoutParams(0,-2,1));control.setText("");control.setContentDescription(description);control.setMinimumWidth(dp(c,52));control.setSwitchMinWidth(dp(c,52));control.setSplitTrack(false);control.setPadding(0,0,0,0);
+    GradientDrawable track=new GradientDrawable(){
+      @Override public boolean getPadding(Rect padding){padding.set(dp(c,6),0,dp(c,6),0);return true;}
+    };track.setColor(GalleryUi.TEXT);track.setCornerRadius(dp(c,16));track.setSize(dp(c,52),dp(c,32));control.setTrackDrawable(track);
+    android.graphics.drawable.Drawable thumb=new android.graphics.drawable.Drawable(){
+      private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
+      @Override public int getIntrinsicWidth(){return dp(c,20);}
+      @Override public int getIntrinsicHeight(){return dp(c,20);}
+      @Override public boolean isStateful(){return true;}
+      @Override protected boolean onStateChange(int[] state){invalidateSelf();return true;}
+      @Override public void draw(Canvas canvas){paint.setColor(control.isChecked()?0xff111111:0xffa9a9a4);Rect bounds=getBounds();canvas.drawCircle(bounds.exactCenterX(),bounds.exactCenterY(),dp(c,10),paint);}
+      @Override public void setAlpha(int alpha){paint.setAlpha(alpha);}
+      @Override public void setColorFilter(ColorFilter filter){paint.setColorFilter(filter);}
+      @Override public int getOpacity(){return PixelFormat.TRANSLUCENT;}
+    };control.setThumbDrawable(thumb);control.setThumbTintList(null);
+    control.setTrackTintList(new android.content.res.ColorStateList(new int[][]{new int[]{android.R.attr.state_checked},new int[]{}},new int[]{GalleryUi.TEXT,0xff3a3a3f}));
+    LinearLayout.LayoutParams controlParams=new LinearLayout.LayoutParams(dp(c,52),dp(c,48));controlParams.leftMargin=dp(c,12);header.addView(control,controlParams);card.addView(header,0);
   }
+  static void verification(Context c,LinearLayout root,StatusView status,Button action){
+    LinearLayout card=root.findViewWithTag("verification-card");View title=card.getChildAt(0);card.removeView(title);
+    LinearLayout header=new LinearLayout(c);header.setGravity(Gravity.CENTER_VERTICAL);header.addView(title,new LinearLayout.LayoutParams(0,-2,1));header.addView(status,new LinearLayout.LayoutParams(dp(c,24),dp(c,24)));card.addView(header,0);
+    action(c,card,action,"確認する");
+  }
+  private static boolean hasIcon(Button b){String label=b.getText().toString();return label.contains("位置情報")||label.contains("アクセス")||label.equals("状態を更新");}
   static TextView populate(Context c,LinearLayout root,LinearLayout screen,TextView info,StatusView collection,StatusView permission,StatusView progress,TextView progressTime,Switch sync,Switch cleanup,Button allFiles,Button location,Button keep,Button settings,Button other){
     LinearLayout heading=column(c);heading.setMinimumHeight(dp(c,424));heading.setGravity(Gravity.BOTTOM);heading.setPadding(dp(c,20),0,dp(c,20),dp(c,20));
     TextView title=text(c,"クラウドと同期",28,GalleryUi.TEXT,36f/28);title.setTypeface(Typeface.create(Typeface.create("sans-serif",Typeface.NORMAL),600,false));title.setAccessibilityHeading(true);heading.addView(title);TextView last=text(c,"最後の同期：—",14,0xffa9a9a4,20f/14);last.setTag("last-sync");heading.addView(last);root.addView(heading);
@@ -63,7 +85,7 @@ final class SyncSettingsUi {
     LinearLayout delete=card(c,cards,"端末の写真を自動で削除");headingControl(c,delete,cleanup,"クラウドに保存済みの写真を端末から自動で削除");
     delete.addView(text(c,"クラウドに保存済みの写真を、この端末から削除します。クラウドの写真は残ります。",13,GalleryUi.TEXT,20f/13));
     delete.addView(text(c,"保存内容の確認とプレビューの保存が済んだ写真だけが対象です。",13,0xffa9a9a4,20f/13));row(c,delete,"自動管理の権限",permission,false);
-    TextView retention=text(c,"—",13,0xffa9a9a4,18f/13);row(c,delete,"端末に残す期間",retention,false);action(c,delete,keep,"変更");line(c,delete);
+    TextView retention=text(c,"—",13,0xffa9a9a4,18f/13);LinearLayout period=new LinearLayout(c);period.setGravity(Gravity.CENTER_VERTICAL);LinearLayout labels=column(c);labels.addView(text(c,"端末に残す期間",14,GalleryUi.TEXT,20f/14));labels.addView(retention);period.addView(labels,new LinearLayout.LayoutParams(0,-2,1));keep.setText("変更");keep.setContentDescription("端末に残す期間を変更");styleButton(c,keep,false,14,48);period.addView(keep,new LinearLayout.LayoutParams(-2,-2));delete.addView(period);line(c,delete);
     description(c,delete,"削除の条件","端末の写真の自動削除には「すべてのファイルへのアクセス」が必要です。端末から削除するのは対象機種のRAWとすべてのJPEGで、クラウドから同じ内容で戻せることを確認し、プレビューを保存した元のファイルに限ります。",true);
     action(c,delete,allFiles,"写真の自動削除に必要なアクセスを許可");description(c,delete,"日付の条件","撮影日から数えます。JPEGで撮影日がない場合は追加日、作成日の順に使います。日付がすべて不明のJPEGは保存確認後に削除対象になり、撮影日不明のRAWは残します。",false);description(c,delete,"アプリを削除したとき","アプリを削除すると端末のプレビューと管理記録も消えます。クラウドの元のファイルはAmazon Photosに残ります。",false);
     return retention;
@@ -72,7 +94,7 @@ final class SyncSettingsUi {
   static final class ActionButton extends Button {
     private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
     ActionButton(Context c,String label,Runnable action){super(c);setText(label);setMinWidth(0);setMinimumWidth(0);setOnClickListener(v->{GalleryUi.feedback(v);try(DiagnosticLog.Scope ignored=DiagnosticLog.span("action.button")){action.run();}});}
-    @Override protected void onDraw(Canvas canvas){super.onDraw(canvas);android.text.Layout layout=getLayout();if(layout==null)return;
+    @Override protected void onDraw(Canvas canvas){super.onDraw(canvas);if(!hasIcon(this))return;android.text.Layout layout=getLayout();if(layout==null)return;
       float left=getCompoundPaddingLeft()+layout.getLineLeft(0)-dp(getContext(),28),top=getHeight()/2f-dp(getContext(),10);int save=canvas.save();canvas.translate(left,top);float d=getResources().getDisplayMetrics().density;canvas.scale(d,d);
       paint.setColor(getCurrentTextColor());paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1.7f);paint.setStrokeCap(Paint.Cap.ROUND);paint.setStrokeJoin(Paint.Join.ROUND);String label=getText().toString();
       if(label.equals("その他")){paint.setStyle(Paint.Style.FILL);for(int x:new int[]{4,10,16})canvas.drawCircle(x,10,1.4f,paint);}

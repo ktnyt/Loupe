@@ -162,10 +162,9 @@ public final class SyncActivity extends DiagnosticActivity {
     retention=SyncSettingsUi.populate(this,root,screen,info,collection,permissionState,progress,progressTime,
         syncState,cleanupState,allFiles,location,keep,settings,other);
     lastSync=root.findViewWithTag("last-sync");
-    LinearLayout verification=root.findViewWithTag("verification-card");
-    verificationStatus=new StatusView(this);verification.addView(verificationStatus,new LinearLayout.LayoutParams(GalleryUi.dp(this,24),GalleryUi.dp(this,24)));
+    verificationStatus=new StatusView(this);
     Button verify=new SyncSettingsUi.ActionButton(this,"確認する",()->startActivity(new Intent(this,CloudActivity.class).putExtra("verify-on-open",true)));
-    SyncSettingsUi.styleButton(this,verify,false,14,48);verification.addView(verify,new LinearLayout.LayoutParams(-1,-2));
+    SyncSettingsUi.verification(this,root,verificationStatus,verify);
 
 
   }
