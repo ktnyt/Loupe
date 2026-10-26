@@ -14,7 +14,7 @@ final class StatusView extends View {
   private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
   private Symbol symbol=Symbol.UNKNOWN, companion;
   private String numbers="", spoken="";
-  private boolean shown, loading, marker, transientResult;
+  private boolean shown, loading, marker, transientResult, collapseWhenIdle;
   private long started, visibleAt;
   private final Typeface numberTypeface=Typeface.create("sans-serif-medium",Typeface.NORMAL);
   private int revision;
@@ -26,6 +26,7 @@ final class StatusView extends View {
     setVisibility(INVISIBLE);
   }
   private int dp(float n){return GalleryUi.dp(getContext(),n);}
+  void collapseWhenIdle(){collapseWhenIdle=true;requestLayout();}
   void show(Symbol value,String numeric,String description,Runnable action,String actionName) {
     revision++;animate().cancel();setAlpha(1);loading=false;transientResult=false;
     symbol=value;numbers=numeric==null?"":numeric;spoken=description;recovery=action;
@@ -59,12 +60,12 @@ final class StatusView extends View {
   void clear() {
     revision++;animate().cancel();setAlpha(1);loading=false;shown=false;marker=false;transientResult=false;recoveryName="";companion=null;numbers="";
     recovery=null;setOnClickListener(null);setClickable(false);setFocusable(false);
-    setContentDescription(null);setVisibility(INVISIBLE);invalidate();
+    setContentDescription(null);setVisibility(INVISIBLE);requestLayout();invalidate();
   }
   private void publish(){String value=spoken+(recoveryName.isEmpty()?"":"。"+recoveryName);if(!android.text.TextUtils.equals(getContentDescription(),value))setContentDescription(value);}
   @Override public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info){super.onInitializeAccessibilityNodeInfo(info);if(recovery!=null){info.setClassName("android.widget.Button");info.addAction(new AccessibilityNodeInfo.AccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK,recoveryName));}}
   @Override protected void onDetachedFromWindow(){revision++;animate().cancel();super.onDetachedFromWindow();}
-  @Override protected void onMeasure(int w,int h){paint.setTypeface(numberTypeface);paint.setTextSize(13*getResources().getDisplayMetrics().scaledDensity);String measured=numbers.isEmpty()&&loading?"999分":numbers;int width=dp(companion==null?48:68)+(measured.isEmpty()?0:(int)paint.measureText(measured)+dp(8));setMeasuredDimension(resolveSize(width,w),resolveSize(dp(48),h));}
+  @Override protected void onMeasure(int w,int h){if(collapseWhenIdle&&!loading&&!shown){setMeasuredDimension(0,0);return;}paint.setTypeface(numberTypeface);paint.setTextSize(13*getResources().getDisplayMetrics().scaledDensity);String measured=numbers.isEmpty()&&loading?"999分":numbers;int width=dp(companion==null?48:68)+(measured.isEmpty()?0:(int)paint.measureText(measured)+dp(8));setMeasuredDimension(resolveSize(width,w),resolveSize(dp(48),h));}
   @Override protected void onDraw(Canvas original){
     if(!shown)return;float density=getResources().getDisplayMetrics().density;
     Canvas c=original;int save=c.save();c.scale(density,density);

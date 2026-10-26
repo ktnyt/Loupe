@@ -875,17 +875,9 @@ public final class MainActivity extends DiagnosticActivity {
     burstMembers = null;
     generation++;
     base();
-    LinearLayout top = row();
-    top.setPadding(dp(16), dp(8), dp(16), dp(8));
-    top.setMinimumHeight(dp(48));
-    top.addView(label("アルバム", 22, TEXT), new LinearLayout.LayoutParams(0, -2, 1));
-
-    subtitle = label("", 12, MUTED);
-    listStatus=new StatusView(this);top.addView(listStatus);listStatus.begin("アルバムを読み込んでいます");
+    subtitle=new TextView(this);listStatus=new StatusView(this);listStatus.begin("アルバムを読み込んでいます");
     addRecentPhotos();
-    root.addView(top);
-    subtitle.setPadding(dp(20), dp(4), dp(20), dp(8));
-    root.addView(subtitle);
+    root.addView(AlbumListUi.heading(this,subtitle,listStatus));
     collectListHeader();
     body = vertical();
     root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -907,25 +899,11 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private LinearLayout carousel(String title, int height) {
-    LinearLayout section = vertical();
-    TextView heading = label(title, 13, MUTED);
-    heading.setPadding(dp(16), dp(8), dp(16), dp(4)); section.addView(heading);
-    HorizontalScrollView scroll = new HorizontalScrollView(this);
-    scroll.setHorizontalScrollBarEnabled(false);
-    LinearLayout cards = row(); cards.setPadding(dp(16), 0, dp(8), 0);
-    scroll.addView(cards); section.addView(scroll, new LinearLayout.LayoutParams(-1, dp(height)));
-    root.addView(section); return cards;
+    return GalleryCarouselUi.section(this,root,title,title.equals("最近の写真"));
   }
 
   private ImageView carouselPhoto(LinearLayout cards, PhotoRepository.Photo photo, String name, int width, Runnable open) {
-    LinearLayout card = vertical();
-    ImageView image = new ImageView(this); image.setScaleType(ImageView.ScaleType.CENTER_CROP);
-    image.setBackground(GalleryUi.shape(this, PANEL, 12)); image.setClipToOutline(true);
-    card.addView(image, new LinearLayout.LayoutParams(-1, 0, 1));
-    TextView caption = label(name, 12, TEXT); caption.setMaxLines(1);
-    caption.setEllipsize(android.text.TextUtils.TruncateAt.END); card.addView(caption);
-    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(width), -1); lp.setMargins(0, 0, dp(8), 0);
-    cards.addView(card, lp); card.setContentDescription(name); card.setOnClickListener(v -> open.run());
+    ImageView image=GalleryCarouselUi.photo(this,cards,name,width==300,open);
     final boolean[] requested = {false};
     Runnable loadVisible = () -> {
       android.graphics.Rect visible = new android.graphics.Rect();
@@ -956,12 +934,13 @@ public final class MainActivity extends DiagnosticActivity {
         main.post(() -> {
           if (isDestroyed() || token != generation || !albumHome) return;
           if (recent.isEmpty()) ((View) cards.getParent().getParent()).setVisibility(View.GONE);
+          else {TextView date=((View)cards.getParent().getParent()).findViewWithTag("carousel-date");long time=photoTime(recent.get(0));date.setText(time>0?new java.text.SimpleDateFormat("M月d日",java.util.Locale.JAPAN).format(new java.util.Date(time)):"");}
           for (int n = 0; n < recent.size(); n++) {
             final int position = n; PhotoRepository.Photo photo = recent.get(n);
             long time = photoTime(photo);
             String caption = time > 0 ? new java.text.SimpleDateFormat("M月d日 HH:mm", java.util.Locale.JAPAN)
                 .format(new java.util.Date(time)) : "撮影日時不明";
-            carouselPhoto(cards, photo, caption, 220, () -> {
+            carouselPhoto(cards, photo, caption, 300, () -> {
               photos = new ArrayList<>(recent); bundles = new ArrayList<>();
               burstMembers = null; recentPhoto = true; showPhoto(position);
             });
@@ -982,7 +961,7 @@ public final class MainActivity extends DiagnosticActivity {
           if (isDestroyed() || token != generation || selecting) return;
           for (GalleryIndex.Album album : albums) {
             if (java.util.Objects.equals(album.folder, albumFolder)) continue;
-            carouselPhoto(cards, album.cover, album.name(), 100, () -> {
+            carouselPhoto(cards, album.cover, album.name(), 104, () -> {
               rememberGallery();
               albumFolder = album.folder; filter = "すべて"; rankFilter = 0;
               rankCache.clear(); photos = new ArrayList<>(); bundles = new ArrayList<>();
@@ -1005,7 +984,7 @@ public final class MainActivity extends DiagnosticActivity {
             main.post(
                 () -> {
                   if (isDestroyed() || !albumHome || token != generation) return;
-                  subtitle.setText(albums.size()+" アルバム");
+                  subtitle.setText(albums.size()+"件");
                   if(albums.isEmpty())listStatus.show(StatusView.Symbol.EMPTY,"写真がありません");else listStatus.finish();
                   rememberAlbums();
                   body.removeAllViews();
@@ -1014,11 +993,7 @@ public final class MainActivity extends DiagnosticActivity {
                       ? (ScrollingGrid) listHeader.getParent() : new ScrollingGrid(this);
                   if (listHeader.getParent() == null) albumGrid.addHeaderView(listHeader, null, false);
                   albumGridView = albumGrid;
-                  albumGrid.setNumColumns(2);
-                  albumGrid.setHorizontalSpacing(dp(12));
-                  albumGrid.setPadding(dp(16), dp(8), dp(16), dp(16));
-                  albumGrid.setClipToPadding(false);
-                  albumGrid.setVerticalSpacing(dp(20));
+                  AlbumListUi.configureGrid(this,albumGrid);
                   albumGrid.setCells(
                       new BaseAdapter() {
                         public int getCount() {
@@ -1037,19 +1012,7 @@ public final class MainActivity extends DiagnosticActivity {
                           LinearLayout cell;
                           if (reused instanceof LinearLayout) cell = (LinearLayout) reused;
                           else {
-                            cell = vertical();
-                            ImageView cover = new DiagnosticImageView(MainActivity.this);
-                            cover.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-                            cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
-                            cover.setBackground(GalleryUi.shape(MainActivity.this, PANEL, 12));
-                            cover.setClipToOutline(true);
-                            cell.addView(cover, new LinearLayout.LayoutParams(-1, dp(160)));
-                            TextView caption = label("", 15, TEXT);
-                            caption.setPadding(dp(2), dp(8), dp(2), 0);
-                            cell.addView(caption);
-                            TextView count = label("", 13, MUTED);
-                            count.setPadding(dp(2), dp(3), dp(2), 0);
-                            cell.addView(count);
+                            cell = AlbumListUi.cell(MainActivity.this);
                           }
                           GalleryIndex.Album album = albums.get(p);
                           ImageView cover = (ImageView) cell.getChildAt(0);
