@@ -97,3 +97,5 @@ cold-reviewの手順を用い、開発履歴を継承しないレビュアーへ
 利用者が検証中の有効化を許可している場合は、`python3 scripts/talkback-check.py --serial <端末ID>` で合成検査を実行する。元の設定を取得し、終了時は各設定を独立して復元して再読する。PASSだけでなく `Restored and verified` を確認する。既存のサービスが有効な端末は変更せず止まる。通常タップの検査と、実TalkBack下のフォーカス検査は分ける。
 
 端末の切断やプロセスの強制終了では復元を保証できない。復元エラー時は端末の設定を確認して戻し、検証完了として扱わない。この手順を変更したら `python3 scripts/test-talkback-check.py` と同じ実機検証で有効化から復元まで確かめる。
+
+通常の合成実機検査は `python3 scripts/device-check.py --serial <端末> --mode <mode> --width 400 --font 1.0` で実行する。instrumentationが終了コード0でも本文がPASSでなければ失敗として終了する。結果の確認と次の検査は分け、失敗時は対策と再確認を先に行う。
