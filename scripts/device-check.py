@@ -34,21 +34,22 @@ def standby_video(shell, enabled):
         require_unlocked(shell)
         shell('am', 'start', '-n', 'com.google.android.youtube/com.google.android.apps.youtube.app.watchwhile.WatchWhileActivity')
         shell('input', 'keyevent', '126')
-        wait_for_playback(shell)
+        wait_for_standby(shell)
         require_unlocked(shell)
-        print('Standby playback reported PLAYING; recheck lock before the next device operation.', flush=True)
+        print('YouTube window is focused and holds the screen on; recheck lock before the next device operation.', flush=True)
 
 
-def wait_for_playback(shell, attempts=10, interval=0.5):
-    # Filter on the device so titles, URLs and other session metadata stay there.
-    query = "dumpsys media_session | awk '/package=/{youtube=($0 ~ /package=com.google.android.youtube([[:space:]]|$)/)} youtube && /state=PlaybackState/{print}'"
+def wait_for_standby(shell, attempts=10, interval=0.5):
+    # Read only the current YouTube focus/hold lines; do not expose window contents.
+    query = "dumpsys window | awk '/mCurrentFocus=|mHoldScreenWindow=/{if(index($0,\" com.google.android.youtube/\")) print}'"
     for attempt in range(attempts):
-        states = shell('sh', '-c', query)
-        if re.search(r'state=(?:PLAYING\(3\)|3),', states):
+        windows = shell('sh', '-c', query)
+        if all(re.search(r'(?m)^\s*' + key + r'=Window\{[^\n]* com\.google\.android\.youtube/', windows)
+               for key in ('mCurrentFocus', 'mHoldScreenWindow')):
             return
         if attempt + 1 < attempts:
             time.sleep(interval)
-    raise RuntimeError('YouTube standby playback was not confirmed; check device before waiting')
+    raise RuntimeError('YouTube screen hold was not confirmed; check device before waiting')
 
 
 def main():
