@@ -127,7 +127,7 @@ public final class MainActivity extends DiagnosticActivity {
   private PhotoRepository.Preview activePreview;
   private List<ShareTargets.Target> targets;
   private Future<?> sharing;
-  private AlertDialog shareProgress;
+  private Dialog shareProgress;
   private int shareAttempt;
   private Bundle pendingRestore;
   private long burstRequest;
@@ -1668,16 +1668,13 @@ public final class MainActivity extends DiagnosticActivity {
       List<PhotoRepository.Photo> selection, boolean raw, ShareTargets.Target target) {
     if (shareProgress != null && shareProgress.isShowing()) return;
     final int attempt = ++shareAttempt;
-    StatusView preparation=new StatusView(this);preparation.begin((raw?"元のファイル":"JPEG画像")+"を準備しています。選択は保持されます。");
-    shareProgress = new GalleryUi.Sheet(this)
-        .setTitle(selection.size()+"枚を共有 · "+(raw?"RAW":"JPEG"))
-        .setView(preparation)
-        .setCancelable(false)
-        .setNegativeButton("中止", (d, w) -> {
-          shareAttempt++;
-          if (sharing != null) sharing.cancel(true);
-          feedback(StatusView.Symbol.CANCELLED,"共有の準備を中止しました",null,"");
-        }).show();
+    shareProgress = new ShareUi.Preparing(this,selection.size(),raw,()->{
+      if(attempt!=shareAttempt)return;
+      shareAttempt++;
+      if(sharing!=null)sharing.cancel(true);
+      feedback(StatusView.Symbol.CANCELLED,"共有の準備を中止しました",null,"");
+    });
+    shareProgress.show();
     sharing = actions.submit(
         () -> {
           try {
@@ -1731,10 +1728,10 @@ public final class MainActivity extends DiagnosticActivity {
             main.post(() -> {
               if (isDestroyed() || attempt != shareAttempt) return;
               shareProgress.dismiss();
-              new GalleryUi.Sheet(this).setTitle(selection.size()+"枚を共有 · "+(raw?"RAW":"JPEG"))
-                  .setView(status(StatusView.Symbol.FAILED,"",selection.size()+"枚の選択は保持されています。共有を準備できませんでした。空き容量・通信・読み取り許可を確認してください。"))
-                  .setPositiveButton("再試行", (d, w) -> export(selection, raw, target))
-                  .setNegativeButton("選択に戻る", null).show();
+              shareDialog=new ShareUi.Failure(this,selection.size(),raw,
+                  selection.size()+"枚の選択は保持されています。共有を準備できませんでした。空き容量・通信・読み取り許可を確認してください。",
+                  ()->export(selection,raw,target));
+              shareDialog.show();
             });
           }
         });
@@ -1824,6 +1821,7 @@ public final class MainActivity extends DiagnosticActivity {
     generation++;
     shareAttempt++;
     if (shareProgress != null) shareProgress.dismiss();
+    if (shareDialog != null) shareDialog.dismiss();
     getContentResolver().unregisterContentObserver(mediaObserver);
     main.removeCallbacks(mediaChanged);
     scans.shutdownNow();

@@ -23,10 +23,8 @@ final class ShareScreenChecks {
     View[] found={null};for(int attempt=0;attempt<100&&found[0]==null;attempt++){TagDetailChecks.ui(t,()->{for(View root:android.view.inspector.WindowInspector.getGlobalWindowViews())if(root!=a.getWindow().getDecorView()&&root.isShown()&&root.hasWindowFocus())found[0]=root;});if(found[0]==null)Thread.sleep(50);}
     TagDetailChecks.require(found[0]!=null,"focused synthetic dialog");return found[0];
   }
-  static void canvasShot(Instrumentation t,View view,File dir,String name)throws Exception{
-    ConsistencyLayoutChecks.frame(t,view);Bitmap[] bitmap={null};TagDetailChecks.ui(t,()->{bitmap[0]=Bitmap.createBitmap(view.getWidth(),view.getHeight(),Bitmap.Config.ARGB_8888);view.draw(new Canvas(bitmap[0]));});
-    try(FileOutputStream out=new FileOutputStream(new File(dir,name+".png"))){bitmap[0].compress(Bitmap.CompressFormat.PNG,100,out);}finally{bitmap[0].recycle();}
-  }
+  static ShareUi.StateIcon marker(View root){if(root instanceof ShareUi.StateIcon)return (ShareUi.StateIcon)root;if(root instanceof ViewGroup)for(int i=0;i<((ViewGroup)root).getChildCount();i++){ShareUi.StateIcon found=marker(((ViewGroup)root).getChildAt(i));if(found!=null)return found;}return null;}
+  static void visibleMarker(Instrumentation t,Dialog dialog)throws Exception{boolean[] shown={false};for(int i=0;i<100&&!shown[0];i++){TagDetailChecks.ui(t,()->{ShareUi.StateIcon icon=marker(dialog.getWindow().getDecorView());shown[0]=icon!=null&&icon.isShown();});if(!shown[0])Thread.sleep(50);}TagDetailChecks.require(shown[0],"share state marker becomes visible");}
   static void worker(Instrumentation t,MainActivity a)throws Exception{((ExecutorService)RankingResultChecks.get(a,"actions")).submit(()->{}).get(10,TimeUnit.SECONDS);t.waitForIdleSync();}
   static String run(Instrumentation t,int width)throws Exception{
     MainActivity a=(MainActivity)t.startActivitySync(new Intent(t.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
@@ -44,25 +42,27 @@ final class ShareScreenChecks {
       ShareUi.Menu[] menu={null};
       TagDetailChecks.ui(t,()->{menu[0]=new ShareUi.Menu(a,photos,targets,2,Set.of(photos.get(0).uri.toString()),(value,destination)->{chosen.incrementAndGet();raw[0]=value;target[0]=destination;});dialogs.add(menu[0]);for(ImageView image:menu[0].previews)image.setImageBitmap(bitmap);menu[0].show();});
       shot(t,menu[0],dir,prefix+"-menu-jpeg");
+      TagDetailChecks.ui(t,()->{TagDetailChecks.require(menu[0].getWindow().getDecorView().getWidth()==GalleryUi.dp(a,width),"share sheet follows available width");TagDetailChecks.inspect(menu[0].content);});
       TagDetailChecks.ui(t,()->TagDetailChecks.require(!a.hasWindowFocus()&&menu[0].getWindow().getDecorView().hasWindowFocus(),"dialog owns focus while activity remains visible"));
       ConsistencyLayoutChecks.captureHardware(t,a,(View)RankingResultChecks.get(a,"root"),dir,prefix+"-dialog-underlay");
-      TagDetailChecks.ui(t,()->{menu[0].original.performClick();TagDetailChecks.require(chosen.get()==0&&menu[0].raw,"format alone does not prepare");});shot(t,menu[0],dir,prefix+"-menu-original");
+      TagDetailChecks.ui(t,()->{menu[0].original.performClick();TagDetailChecks.require(chosen.get()==0&&menu[0].raw,"format alone does not prepare");});shot(t,menu[0],dir,prefix+"-menu-original");TagDetailChecks.ui(t,()->TagDetailChecks.inspect(menu[0].content));
       TagDetailChecks.ui(t,()->{menu[0].jpeg.performClick();ViewGroup destinations=(ViewGroup)menu[0].content.getChildAt(menu[0].content.getChildCount()-2);destinations.getChildAt(1).performClick();TagDetailChecks.require(chosen.get()==1&&raw[0]&&target[0]==targets.get(1),"saved destination uses its saved format");});
       TagDetailChecks.ui(t,()->{menu[0]=new ShareUi.Menu(a,photos,targets,0,Set.of(),(value,destination)->{chosen.incrementAndGet();raw[0]=value;target[0]=destination;});dialogs.add(menu[0]);menu[0].show();menu[0].original.performClick();ViewGroup destinations=(ViewGroup)menu[0].content.getChildAt(menu[0].content.getChildCount()-2);destinations.getChildAt(2).performClick();TagDetailChecks.require(chosen.get()==2&&raw[0]&&target[0]==null,"chooser uses current format");});
       CountDownLatch entered=new CountDownLatch(1);AtomicInteger copies=new AtomicInteger();
       SharePreparation blocked=new SharePreparation(new File(fixtures,"cancel"),(photo,value,destination)->{copies.incrementAndGet();entered.countDown();release.await();throw new IOException("synthetic preparation never succeeds");});
       TagDetailChecks.ui(t,()->{RankingResultChecks.set(a,"sharePreparation",blocked);export(a,List.copyOf(photos),true);});TagDetailChecks.require(entered.await(10,TimeUnit.SECONDS),"preparation started");t.waitForIdleSync();
-      Dialog progress=(Dialog)RankingResultChecks.get(a,"shareProgress");dialogs.add(progress);shot(t,progress,dir,prefix+"-preparing");
-      TagDetailChecks.ui(t,()->{progress.onBackPressed();TagDetailChecks.require(progress.isShowing(),"Back does not cancel preparation");TagDetailChecks.button(progress.getWindow().getDecorView(),"中止").performClick();});worker(t,a);
+      Dialog progress=(Dialog)RankingResultChecks.get(a,"shareProgress");dialogs.add(progress);visibleMarker(t,progress);shot(t,progress,dir,prefix+"-preparing");
+      t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);t.waitForIdleSync();
+      TagDetailChecks.ui(t,()->{TagDetailChecks.require(progress.isShowing(),"Back does not cancel preparation");TagDetailChecks.button(progress.getWindow().getDecorView(),"中止").performClick();});worker(t,a);
       TagDetailChecks.ui(t,()->TagDetailChecks.require(!progress.isShowing()&&copies.get()==1&&((Set<?>)RankingResultChecks.get(a,"selectedPhotos")).equals(selection),"cancel retains selection and closes preparation"));
       AtomicInteger attempts=new AtomicInteger();
       SharePreparation failed=new SharePreparation(new File(fixtures,"failed"),(photo,value,destination)->{attempts.incrementAndGet();throw new IOException("synthetic failure");});
       TagDetailChecks.ui(t,()->{RankingResultChecks.set(a,"sharePreparation",failed);export(a,List.copyOf(photos),false);});worker(t,a);
-      View failure=modal(t,a);canvasShot(t,failure,dir,prefix+"-failed-canvas");
+      View failure=modal(t,a);Dialog failureDialog=(Dialog)RankingResultChecks.get(a,"shareDialog");dialogs.add(failureDialog);shot(t,failureDialog,dir,prefix+"-failed");TagDetailChecks.ui(t,()->TagDetailChecks.inspect(failure));
       TagDetailChecks.ui(t,()->TagDetailChecks.button(failure,"再試行").performClick());worker(t,a);
       View retry=modal(t,a);TagDetailChecks.ui(t,()->{TagDetailChecks.require(attempts.get()==2&&((Set<?>)RankingResultChecks.get(a,"selectedPhotos")).equals(selection),"retry repeats preparation without changing selection");TagDetailChecks.button(retry,"選択に戻る").performClick();});
       bitmap.recycle();
-      return "PASS synthetic share Menu formats and destination callbacks; actual export cancellation, Back guard, preparation failure and retry with writers that always throw. Selection retained. No send or user preference save invoked. Menu/preparing use PixelCopy, baseline failure uses Canvas of the focused dialog only. Existing startup index may update browsing DB.\n";
+      return "PASS synthetic share Menu formats and destination callbacks; actual export cancellation, Back guard, preparation failure and retry with writers that always throw. Selection retained. No send or user preference save invoked. Menu/preparing/failure use PixelCopy of their own windows; available width and text bounds checked. Existing startup index may update browsing DB.\n";
     }finally{
       release.countDown();TagDetailChecks.ui(t,()->{for(Dialog dialog:dialogs)if(dialog.isShowing())dialog.dismiss();a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);a.finish();});
       for(File file:files)file.delete();for(String child:new String[]{"cancel","failed"}){File sub=new File(fixtures,child);File[] contents=sub.listFiles();if(contents!=null)for(File file:contents)file.delete();sub.delete();}fixtures.delete();
