@@ -23,7 +23,7 @@ final class PhotoListUi {
     GradientDrawable shape=GalleryUi.shape(c,selected?GalleryUi.TEXT:0,8);shape.setStroke(dp(c,1),selected?GalleryUi.TEXT:0xff3a3a3f);button.setBackground(new RippleDrawable(ColorStateList.valueOf(0x334c8dff),new InsetDrawable(shape,dp(c,4),dp(c,6),dp(c,4),dp(c,6)),null));button.setPadding(dp(c,16),0,dp(c,16),0);return button;
   }
   static final class Filters extends ViewGroup {
-    Filters(Context c){super(c);setPadding(dp(c,12),dp(c,4),dp(c,12),0);setBackgroundColor(GalleryUi.BG);}
+    Filters(Context c){super(c);setPadding(dp(c,8),dp(c,4),dp(c,8),0);setBackgroundColor(GalleryUi.BG);}
     protected void onMeasure(int w,int h){int width=MeasureSpec.getSize(w),available=width-getPaddingLeft()-getPaddingRight(),x=0,y=0,row=0;for(int i=0;i<getChildCount();i++){View child=getChildAt(i);child.measure(MeasureSpec.makeMeasureSpec(available,MeasureSpec.AT_MOST),MeasureSpec.makeMeasureSpec(0,MeasureSpec.UNSPECIFIED));if(x>0&&x+child.getMeasuredWidth()>available){x=0;y+=row;row=0;}x+=child.getMeasuredWidth();row=Math.max(row,child.getMeasuredHeight());}setMeasuredDimension(width,getPaddingTop()+y+row+getPaddingBottom());}
     protected void onLayout(boolean changed,int l,int t,int r,int b){int x=getPaddingLeft(),y=getPaddingTop(),row=0;for(int i=0;i<getChildCount();i++){View child=getChildAt(i);if(x>getPaddingLeft()&&x+child.getMeasuredWidth()>getWidth()-getPaddingRight()){x=getPaddingLeft();y+=row;row=0;}child.layout(x,y,x+child.getMeasuredWidth(),y+child.getMeasuredHeight());x+=child.getMeasuredWidth();row=Math.max(row,child.getMeasuredHeight());}}
   }

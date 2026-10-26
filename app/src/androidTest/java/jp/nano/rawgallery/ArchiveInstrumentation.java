@@ -25,7 +25,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     super.callActivityOnCreate(activity, state);
     if ((tagDetailTest || resultTest || galleryScreenTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
   }
-  private boolean galleryScreenTest;
+  private boolean galleryScreenTest, galleryTalkBack;
   private boolean consistencyTest, syncControlsTest, tagDetailTest, resultTest, resultTalkBack;
   private boolean dashboardTalkBackTest;
   private boolean dashboardLayoutTest;
@@ -50,7 +50,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
-    galleryScreenTest=args!=null&&"gallery-screen".equals(args.getString("mode"));
+    galleryTalkBack=args!=null&&"gallery-screen-talkback".equals(args.getString("mode"));
+    galleryScreenTest=galleryTalkBack||(args!=null&&"gallery-screen".equals(args.getString("mode")));
     resultTalkBack=args!=null&&"ranking-result-talkback".equals(args.getString("mode"));
     resultTest=resultTalkBack||(args!=null&&"ranking-result".equals(args.getString("mode")));
     tagDetailTest=args!=null&&"tag-detail".equals(args.getString("mode"));
@@ -93,7 +94,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     File restored = null;
     try {
       Context context = getTargetContext();
-      if(galleryScreenTest){results.putString("stream",GalleryScreenChecks.run(this,tagWidth));finish(-1,results);return;}
+      if(galleryScreenTest){results.putString("stream",GalleryScreenChecks.run(this,tagWidth,galleryTalkBack));finish(-1,results);return;}
       if(resultTest){results.putString("stream",RankingResultChecks.run(this,tagWidth,resultTalkBack));finish(-1,results);return;}
       if(tagDetailTest){results.putString("stream",TagDetailChecks.run(this,tagWidth));finish(-1,results);return;}
       if(syncControlsTest){results.putString("stream",SyncControlChecks.run(this));finish(-1,results);return;}

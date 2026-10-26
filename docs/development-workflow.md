@@ -99,3 +99,5 @@ cold-reviewの手順を用い、開発履歴を継承しないレビュアーへ
 端末の切断やプロセスの強制終了では復元を保証できない。復元エラー時は端末の設定を確認して戻し、検証完了として扱わない。この手順を変更したら `python3 scripts/test-talkback-check.py` と同じ実機検証で有効化から復元まで確かめる。
 
 通常の合成実機検査は `python3 scripts/device-check.py --serial <端末> --mode <mode> --width 400 --font 1.0` で実行する。instrumentationが終了コード0でも本文がPASSでなければ失敗として終了する。結果の確認と次の検査は分け、失敗時は対策と再確認を先に行う。
+
+写真一覧・選択のTalkBack検査は同じ復元付きCLIで `--mode gallery-screen-talkback` を指定する。実TalkBackのタッチガイド有効状態、写真のフォーカスとAX操作、共有設定スイッチの読み上げ属性と切替を確認する。通常の `gallery-screen` は画面上の座標へタップを送る。音声の聞き取りやTalkBackのジェスチャー操作まで検査済みとは扱わない。

@@ -32,7 +32,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--serial', required=True)
     parser.add_argument('--adb', default='/opt/homebrew/share/android-commandlinetools/platform-tools/adb')
-    parser.add_argument('--mode', choices=('ranking-result-talkback',), default='ranking-result-talkback')
+    parser.add_argument('--mode', choices=('ranking-result-talkback', 'gallery-screen-talkback'), default='ranking-result-talkback')
     parser.add_argument('--width', default='400')
     parser.add_argument('--font', default='1.0')
     args = parser.parse_args()
