@@ -46,7 +46,7 @@ class DeviceCheckTests(unittest.TestCase):
                     calls.append(parts)
                     if parts[0] == 'dumpsys':
                         return 'showing=true' if locked_after and len(calls) > 2 else 'showing=false'
-                    return 'state=PlaybackState {state=3,'
+                    return 'state=PlaybackState {state=PLAYING(3),'
                 def run():
                     with module.standby_video(shell, True):
                         calls.append(('instrument',))
@@ -69,6 +69,7 @@ class DeviceCheckTests(unittest.TestCase):
         spec.loader.exec_module(module)
         def shell(*parts):
             return 'showing=false' if parts[0] == 'dumpsys' else 'state=PlaybackState {state=2,'
+        module.time.sleep = lambda _: None
         with self.assertRaisesRegex(RuntimeError, 'not confirmed'):
             with module.standby_video(shell, True): pass
 
@@ -84,6 +85,14 @@ class DeviceCheckTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse(marker.exists())
 
+    def test_standby_accepts_numeric_playing(self):
+        spec = importlib.util.spec_from_file_location('device_check', pathlib.Path(__file__).with_name('device-check.py'))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        def shell(*parts):
+            return 'showing=false' if parts[0] == 'dumpsys' else 'state=PlaybackState {state=3,'
+        with module.standby_video(shell, True): pass
+
     def test_initial_lock_never_changes_playback(self):
         spec = importlib.util.spec_from_file_location('device_check', pathlib.Path(__file__).with_name('device-check.py'))
         module = importlib.util.module_from_spec(spec)
@@ -95,6 +104,19 @@ class DeviceCheckTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'lock state'):
             with module.standby_video(shell, True): self.fail('must not start test')
         self.assertEqual(calls, [('dumpsys', 'window', 'policy')])
+
+    def test_playback_confirmation_waits_without_repeating_input(self):
+        spec = importlib.util.spec_from_file_location('device_check', pathlib.Path(__file__).with_name('device-check.py'))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        replies = iter(['state=PlaybackState {state=PAUSED(2),', 'state=PlaybackState {state=PLAYING(3),'])
+        calls = []
+        def shell(*parts):
+            calls.append(parts)
+            return next(replies)
+        module.wait_for_playback(shell, attempts=2, interval=0)
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(all(c[:2] == ('sh', '-c') and 'package=com.google.android.youtube' in c[2] for c in calls))
 
 
 if __name__ == '__main__':

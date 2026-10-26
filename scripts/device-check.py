@@ -3,8 +3,10 @@
 import argparse
 from contextlib import contextmanager
 import shlex
+import re
 import subprocess
 import sys
+import time
 
 
 def require_pass(output):
@@ -32,11 +34,21 @@ def standby_video(shell, enabled):
         require_unlocked(shell)
         shell('am', 'start', '-n', 'com.google.android.youtube/com.google.android.apps.youtube.app.watchwhile.WatchWhileActivity')
         shell('input', 'keyevent', '126')
-        # Filter on the device so titles, URLs and other session metadata stay there.
-        states = shell('sh', '-c', "dumpsys media_session | sed -n '/state=PlaybackState/p'")
-        if 'state=3,' not in states:
-            raise RuntimeError('Standby playback was not confirmed; check device before waiting')
+        wait_for_playback(shell)
+        require_unlocked(shell)
         print('Standby playback reported PLAYING; recheck lock before the next device operation.', flush=True)
+
+
+def wait_for_playback(shell, attempts=10, interval=0.5):
+    # Filter on the device so titles, URLs and other session metadata stay there.
+    query = "dumpsys media_session | awk '/package=/{youtube=($0 ~ /package=com.google.android.youtube([[:space:]]|$)/)} youtube && /state=PlaybackState/{print}'"
+    for attempt in range(attempts):
+        states = shell('sh', '-c', query)
+        if re.search(r'state=(?:PLAYING\(3\)|3),', states):
+            return
+        if attempt + 1 < attempts:
+            time.sleep(interval)
+    raise RuntimeError('YouTube standby playback was not confirmed; check device before waiting')
 
 
 def main():
