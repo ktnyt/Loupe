@@ -29,6 +29,21 @@ final class GalleryScreenChecks {
     });t.waitForIdleSync();
   }
   static ThumbnailCell firstPhoto(View view){if(view instanceof ThumbnailCell)return (ThumbnailCell)view;if(view instanceof ViewGroup)for(int i=0;i<((ViewGroup)view).getChildCount();i++){ThumbnailCell found=firstPhoto(((ViewGroup)view).getChildAt(i));if(found!=null)return found;}return null;}
+  static void selectionPresentation(Instrumentation t,MainActivity a,boolean any)throws Exception{
+    TagDetailChecks.ui(t,()->{View root=(View)RankingResultChecks.get(a,"root");TagDetailChecks.inspect(root);Button share=(Button)RankingResultChecks.get(a,"selectionShare"),sort=(Button)RankingResultChecks.get(a,"selectionSort");TagDetailChecks.require(share.isEnabled()==any,"share enabled state");for(Button action:new Button[]{share,sort})TagDetailChecks.require(action.getCompoundDrawables()[1]==null,"single inline action icon");android.graphics.drawable.GradientDrawable bg=(android.graphics.drawable.GradientDrawable)share.getBackground().getCurrent();TagDetailChecks.require(bg.getColor().getDefaultColor()==(any?GalleryUi.TEXT:0xff26262a),"share state background");TagDetailChecks.require(!sort.isEnabled(),"singleton sort disabled");});
+  }
+  static void selectionStates(Instrumentation t,MainActivity a,List<File> fixtures,int width)throws Exception{
+    ArrayList<PhotoRepository.Photo> photos=new ArrayList<>();for(int i=0;i<9;i++)photos.add(new PhotoRepository.Photo(Uri.fromFile(fixtures.get(i)),"合成状態"+i+".jpg","",fixtures.get(i).length(),i,0));
+    List<Integer> undecided=List.of(0,1,2),decided=List.of(3,4,5);ArrayList<String> pendingIds=new ArrayList<>(),doneIds=new ArrayList<>();for(int i:undecided)pendingIds.add(ArchiveStore.key(photos.get(i)));for(int i:decided)doneIds.add(ArchiveStore.key(photos.get(i)));PhotoRanking done=new PhotoRanking(doneIds,"B:");while(!done.done())done=done.choose(true);PhotoRanking finished=done;
+    TagDetailChecks.ui(t,()->{RankingResultChecks.set(a,"photos",photos);RankingResultChecks.set(a,"bundles",List.of(undecided,decided,List.of(6),List.of(7),List.of(8)));Map<List<Integer>,PhotoRanking> cache=(Map<List<Integer>,PhotoRanking>)RankingResultChecks.get(a,"rankCache");cache.clear();cache.put(undecided,new PhotoRanking(pendingIds,"B:"));cache.put(decided,finished);Set<String> selected=(Set<String>)RankingResultChecks.get(a,"selectedPhotos");selected.clear();for(int i=0;i<7;i++)selected.add(photos.get(i).uri.toString());RankingResultChecks.set(a,"selecting",true);RankingResultChecks.set(a,"bestOnly",true);RankingResultChecks.set(a,"rankFilter",0);RankingResultChecks.set(a,"albumFolder","/synthetic/嵐山 10.18");RankingResultChecks.call(a,"gallery");});settle(t,a);
+    File dir=new File(a.getCacheDir(),"consistency-checks");TagDetailChecks.ui(t,()->{Button sort=(Button)RankingResultChecks.get(a,"selectionSort");TagDetailChecks.require(sort.isEnabled()&&sort.getCurrentTextColor()==0xfff5b947,"pending sort enabled and gold");TagDetailChecks.require(((View)RankingResultChecks.get(a,"selectionCount")).getContentDescription().toString().contains("未決定の連写 1組"),"pending count");TagDetailChecks.inspect((View)RankingResultChecks.get(a,"root"));});
+    ConsistencyLayoutChecks.captureHardware(t,a,(View)RankingResultChecks.get(a,"root"),dir,"gallery-selection-pending-"+width+"-"+a.getResources().getConfiguration().fontScale);
+    TagDetailChecks.ui(t,()->TagDetailChecks.button((View)RankingResultChecks.get(a,"root"),"順位決定済み").performClick());settle(t,a);
+    TagDetailChecks.ui(t,()->{String summary=((View)RankingResultChecks.get(a,"selectionCount")).getContentDescription().toString();TagDetailChecks.require(((Set<?>)RankingResultChecks.get(a,"selectedPhotos")).size()==7&&summary.contains("見えない選択 4枚"),"hidden selection retained");});
+    ConsistencyLayoutChecks.captureHardware(t,a,(View)RankingResultChecks.get(a,"root"),dir,"gallery-selection-hidden-"+width+"-"+a.getResources().getConfiguration().fontScale);
+    TagDetailChecks.ui(t,()->{SelectionUi.BestSwitch toggle=findSwitch((View)RankingResultChecks.get(a,"root"));TagDetailChecks.require(toggle!=null&&toggle.isChecked(),"best switch initial");toggle.performClick();TagDetailChecks.require(!(boolean)RankingResultChecks.get(a,"bestOnly")&&!((Button)RankingResultChecks.get(a,"selectionSort")).isEnabled(),"all burst photos no pending sort");((Button)RankingResultChecks.get(a,"selectionAll")).performClick();TagDetailChecks.require(((Set<?>)RankingResultChecks.get(a,"selectedPhotos")).size()==4,"visible deselection retains hidden photos");a.onBackPressed();});settle(t,a);
+  }
+  static SelectionUi.BestSwitch findSwitch(View view){if(view instanceof SelectionUi.BestSwitch)return (SelectionUi.BestSwitch)view;if(view instanceof ViewGroup)for(int i=0;i<((ViewGroup)view).getChildCount();i++){SelectionUi.BestSwitch result=findSwitch(((ViewGroup)view).getChildAt(i));if(result!=null)return result;}return null;}
   static String run(Instrumentation t,int width)throws Exception{
     MainActivity a=(MainActivity)t.startActivitySync(new Intent(t.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     File file=new File(a.getCacheDir(),"gallery-screen-synthetic.jpg");ArrayList<File> fixtures=new ArrayList<>();
@@ -44,12 +59,15 @@ final class GalleryScreenChecks {
         ConsistencyLayoutChecks.captureHardware(t,a,root,dir,"gallery-"+width+"-"+a.getResources().getConfiguration().fontScale+"-"+state);
         TagDetailChecks.ui(t,()->TagDetailChecks.button((View)RankingResultChecks.get(a,"root"),"1位").performClick());syntheticCarousel(t,a);
         TagDetailChecks.ui(t,()->{TagDetailChecks.require((int)RankingResultChecks.get(a,"rankFilter")==1&&((List<?>)RankingResultChecks.get(a,"displayed")).size()==40,"best filter preserves singleton photos");TagDetailChecks.button((View)RankingResultChecks.get(a,"root"),"選択").performClick();});syntheticCarousel(t,a);
+        selectionPresentation(t,a,false);
         ConsistencyLayoutChecks.captureHardware(t,a,(View)RankingResultChecks.get(a,"root"),dir,"gallery-selection-empty-"+width+"-"+state);
         TagDetailChecks.ui(t,()->{ThumbnailCell first=firstPhoto((View)RankingResultChecks.get(a,"root"));TagDetailChecks.require(first!=null,"selection photo present");first.performClick();TagDetailChecks.require(((Set<?>)RankingResultChecks.get(a,"selectedPhotos")).size()==1,"photo selection");});settle(t,a);
+        selectionPresentation(t,a,true);
         ConsistencyLayoutChecks.captureHardware(t,a,(View)RankingResultChecks.get(a,"root"),dir,"gallery-selection-one-"+width+"-"+state);
         TagDetailChecks.ui(t,()->{a.onBackPressed();TagDetailChecks.require(!(boolean)RankingResultChecks.get(a,"selecting")&&(int)RankingResultChecks.get(a,"rankFilter")==1,"Back leaves selection and preserves filter");});settle(t,a);
       }
-      return "PASS synthetic actual gallery captures: all/album/long title. Existing data read only; carousel replaced before captures. Text bounds, all four visible filters, 96dp photos, filtering, selection and Back checked.\n";
+      selectionStates(t,a,fixtures,width);
+      return "PASS selection states/backgrounds/single icons, pending sort, hidden retention, best switch, visible deselection; synthetic actual gallery captures: all/album/long title. Existing data read only; carousel replaced before captures. Text bounds, all four visible filters, 96dp photos, filtering, selection and Back checked.\n";
     }finally{TagDetailChecks.ui(t,()->{a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);a.finish();});file.delete();for(File fixture:fixtures)fixture.delete();}
   }
 }

@@ -95,8 +95,9 @@ public final class MainActivity extends DiagnosticActivity {
   private final Map<Integer, List<Integer>> photoBundles = new HashMap<>();
   private final Map<List<Integer>, PhotoRanking> rankCache = new HashMap<>();
   private List<Integer> selectionBurst;
-  private TextView selectionCount;
-  private Button selectionShare, selectionAll;
+  private SelectionUi.Summary selectionCount;
+  private TextView selectionTitle;
+  private Button selectionShare, selectionAll, selectionSort;
   private GalleryAdapter adapter;
   private String filter = "すべて";
   private String albumFolder;
@@ -246,6 +247,8 @@ public final class MainActivity extends DiagnosticActivity {
     PhotoListUi.Heading header = new PhotoListUi.Heading(this,
         burstMembers != null ? "連写" : albumFolder == null ? "すべての写真" : new File(albumFolder).getName(),
         subtitle, listStatus);
+    selectionTitle = selecting ? header.title : null;
+    if(selecting)header.setPadding(dp(20),dp(40),dp(20),dp(16));
 
     if (!selecting && burstMembers == null) addOtherAlbums();
     root.addView(header);
@@ -253,6 +256,7 @@ public final class MainActivity extends DiagnosticActivity {
     body = vertical();
     root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
     grid = new ScrollingGrid(this);
+    grid.setVerticalScrollBarEnabled(false);
     grid.addHeaderView(listHeader, null, false);
     grid.setNumColumns(4);
     grid.setHorizontalSpacing(dp(2));
@@ -304,15 +308,15 @@ public final class MainActivity extends DiagnosticActivity {
     grid.setEmptyView(empty);
     body.addView(gridFrame, new LinearLayout.LayoutParams(-1, -1));
     int controlsStart = root.getChildCount();
-    addRankFilters();
-    if (selecting) { selectionControls(); dock(button("選択を終了", this::endSelection)); }
+    if (selecting) { selectionControls(); }
     else {
+      addRankFilters();
       Button select = TagDetailUi.dockButton(this,"選択", () -> {
         if (!photos.isEmpty()) { selecting = true; bestOnly = true; gallery(); }
       });
       root.addView(TagDetailUi.dock(this,select, TagDetailUi.dockButton(this,"タグ", () -> openTags(null)), TagDetailUi.dockButton(this,"その他", this::photoMenu)));
     }
-    GalleryUi.bottomControls(root, controlsStart, BG);
+    if(selecting)SelectionUi.finishFooter(root,controlsStart);else GalleryUi.bottomControls(root, controlsStart, BG);
     if (albumFolder == null && burstMembers == null)
       root.addView(new LibraryTabs(this, false, !selecting, this::switchLibraryTab));
     if (selecting) updateSelection();
@@ -640,26 +644,18 @@ public final class MainActivity extends DiagnosticActivity {
 
   private void selectionControls() {
     DiagnosticLog.event("screen.selectionControls", 0);
-    CheckBox check = new CheckBox(this);
-    check.setText("連写は1位だけ共有（同率を含む）");
-    check.setTextColor(TEXT);
-    check.setTextSize(14);
-    check.setMinHeight(dp(48));
-    check.setPadding(dp(16), 0, dp(16), 0);
-    check.setChecked(bestOnly);
-    check.setOnClickListener(GalleryUi::feedback);
-    check.setOnCheckedChangeListener(
-        (v, enabled) -> {
-          bestOnly = enabled;
-          updateSelection();
-        });
-    root.addView(check);
-    selectionCount = label("", 12, MUTED);
-    selectionCount.setPadding(dp(16), 0, dp(16), dp(6));
+    selectionCount = new SelectionUi.Summary(this);
     root.addView(selectionCount);
-    selectionShare = GalleryUi.primary(button("共有", this::shareSelection));
+    addRankFilters();
+    View filters=root.getChildAt(root.getChildCount()-1);
+    LinearLayout.LayoutParams filterParams=new LinearLayout.LayoutParams(-1,-2);filterParams.leftMargin=-dp(16);filterParams.rightMargin=-dp(16);filters.setLayoutParams(filterParams);
+    SelectionUi.BestSwitch check=new SelectionUi.BestSwitch(this);check.setChecked(bestOnly);check.setOnClickListener(GalleryUi::feedback);check.setOnCheckedChangeListener((v,enabled)->{bestOnly=enabled;updateSelection();});
+    root.addView(check,new LinearLayout.LayoutParams(-1,-2));
+    selectionShare = SelectionUi.action(this,"共有",true,this::shareSelection);
+    selectionSort = SelectionUi.action(this,"ソート",false,this::shareSelection);
+    LinearLayout actions=row();actions.addView(selectionSort,new LinearLayout.LayoutParams(0,-2,1));LinearLayout.LayoutParams shareParams=new LinearLayout.LayoutParams(0,-2,1);shareParams.leftMargin=dp(8);actions.addView(selectionShare,shareParams);root.addView(actions);
     selectionAll =
-        button(
+        TagDetailUi.dockButton(this,
             "すべて選択",
             () -> {
               boolean remove = allVisibleSelected();
@@ -670,7 +666,8 @@ public final class MainActivity extends DiagnosticActivity {
               adapter.notifyDataSetChanged();
               updateSelection();
             });
-    dock(selectionAll, selectionShare);
+    SelectionUi.allIcon(selectionAll);
+    root.addView(TagDetailUi.dock(this,TagDetailUi.dockButton(this,"選択を終了",this::endSelection),selectionAll));
     updateSelection();
   }
 
@@ -678,24 +675,22 @@ public final class MainActivity extends DiagnosticActivity {
     if (!selecting || selectionCount == null) return;
     SelectionResult result = resolveSelection();
     subtitle.setText(selectedPhotos.size() + "枚選択");
+    subtitle.setVisibility(selectedPhotos.isEmpty()?View.GONE:View.VISIBLE);
     Set<String> visible = new HashSet<>();
     for (List<Integer> members : displayed) for (int member : members)
       visible.add(photos.get(member).uri.toString());
     int hidden = 0;
     for (String key : selectedPhotos) if (!visible.contains(key)) hidden++;
-    selectionCount.setText(
-        "対象 "
-            + result.photos.size()
-            + "枚"
-            + (hidden > 0 ? "\n現在の絞り込みでは表示されない写真" + hidden + "枚を含みます" : "")
-            + (result.unresolved.isEmpty() ? "" : " · 順位が未決定 " + result.unresolved.size() + "組"));
+    selectionCount.counts(result.photos.size(),hidden,result.unresolved.size(),!selectedPhotos.isEmpty());
+    if(selectionTitle!=null)selectionTitle.setText(selectedPhotos.isEmpty()?"写真を選択":burstMembers!=null?"連写":albumFolder==null?"すべての写真":new File(albumFolder).getName());
+    selectionSort.setEnabled(!result.unresolved.isEmpty());
     selectionShare.setEnabled(!result.photos.isEmpty() || !result.unresolved.isEmpty());
     String allLabel =
         allVisibleSelected()
-            ? "表示分を解除"
-            : "表示分を選択";
+            ? "選択を解除"
+            : "すべて選択";
     selectionAll.setText(allLabel);
-    selectionAll.setContentDescription(allLabel);
+    selectionAll.setContentDescription(allVisibleSelected()?"表示中の写真の選択を解除":"表示中の写真をすべて選択");
     selectionAll.setTooltipText(allLabel);
   }
 
@@ -1256,12 +1251,14 @@ public final class MainActivity extends DiagnosticActivity {
               + (members.size() > 1 ? "、連写" + members.size() + "枚" : ""));
       image.setImageDrawable(null);
       cell.badges.selectionMode = selecting;
+      cell.badges.photoSelection = true;
       cell.badges.selected = selecting && tileSelected(members);
       cell.badges.partial = false;
       if (selecting && !cell.badges.selected) for (int member : members)
         if (selectedPhotos.contains(photos.get(member).uri.toString())) cell.badges.partial = true;
       cell.setSelected(cell.badges.selected || cell.badges.partial);
-      int inset = cell.badges.selected ? dp(5) : 0;
+      int inset = cell.badges.selected ? dp(10) : 0;
+      cell.setBackgroundColor(cell.badges.selected?0xff1e2b42:0xff22272a);
       image.setPadding(inset, inset, inset, inset);
       if (selecting)
         cell.setContentDescription(

@@ -104,3 +104,5 @@ Android実装は[#39](https://github.com/ktnyt/Loupe/issues/39)で導入済み�
 [タグ詳細の既存操作を保持したHTML](loupe-tag-detail-existing-ops.html)をV05の実装参照とする。合算件数、写真追加、一括訂正、解除確認を含む。[ソート結果の既存操作を保持したHTML](loupe-sort-result-existing-ops.html)は結果画面の実装参照。全写真の拡大、同率、読込失敗、長い名前を含む。
 
 [写真一覧の4フィルターを保持したHTML](loupe-photo-list-filters.html)は全写真・アルバム内の写真一覧の実装参照。元S02の配置に既存4フィルター、長い名前の折返し、ルートの固定タブを反映する。
+
+[写真選択と共有のHTML](loupe-select-share.html)は元S03/T01/T08/S09と必要な変更を並べる。写真選択部分を適用対象とし、共有準備は中止操作だけで取り消し、Backでは閉じない現行契約を反映している。
