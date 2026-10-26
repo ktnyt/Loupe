@@ -30,12 +30,15 @@ final class TagListUi {
   static void photo(Button row,Bitmap bitmap){
     row.setCompoundDrawables(cover(row.getContext(),bitmap),null,new Mark(row.getContext(),1),null);
   }
-  private static Drawable cover(Context c,Bitmap bitmap){
+  static void photoFailure(Button row){ row.setCompoundDrawables(cover(row.getContext(),null,true),null,new Mark(row.getContext(),1),null); }
+  private static Drawable cover(Context c,Bitmap bitmap){return cover(c,bitmap,false);}
+  private static Drawable cover(Context c,Bitmap bitmap,boolean failed){
     Drawable drawable=new Drawable(){
       final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG|Paint.FILTER_BITMAP_FLAG);
       public void draw(Canvas canvas){Rect b=getBounds();int save=canvas.save();Path clip=new Path();clip.addRoundRect(new RectF(b),dp(c,8),dp(c,8),Path.Direction.CW);canvas.clipPath(clip);
         paint.setColor(0xff26262a);canvas.drawRect(b,paint);
         if(bitmap!=null){float scale=Math.max(b.width()/(float)bitmap.getWidth(),b.height()/(float)bitmap.getHeight());float w=bitmap.getWidth()*scale,h=bitmap.getHeight()*scale;canvas.drawBitmap(bitmap,null,new RectF(b.centerX()-w/2,b.centerY()-h/2,b.centerX()+w/2,b.centerY()+h/2),paint);}
+        if(failed){paint.setStyle(Paint.Style.STROKE);paint.setColor(0xff8a8a85);paint.setStrokeWidth(dp(c,1.5f));float x=b.centerX(),y=b.centerY(),u=dp(c,10);canvas.drawRect(x-u,y-u,x+u,y+u,paint);Path broken=new Path();broken.moveTo(x-u,y+u/2);broken.lineTo(x-u/3,y-u/3);broken.lineTo(x+u/3,y+u/2);broken.lineTo(x+u,y);canvas.drawPath(broken,paint);canvas.drawCircle(x+u/3,y-u/2,dp(c,1.5f),paint);paint.setStyle(Paint.Style.FILL);}
         canvas.restoreToCount(save);
       }
       public void setAlpha(int value){paint.setAlpha(value);}public void setColorFilter(ColorFilter f){paint.setColorFilter(f);}public int getOpacity(){return PixelFormat.TRANSLUCENT;}
@@ -55,17 +58,17 @@ final class TagListUi {
   static TextView title(Context c){
     TextView t=new TextView(c);t.setText("タグ");t.setTextSize(28);t.setTextColor(GalleryUi.TEXT);
     t.setTypeface(Typeface.create(Typeface.create("sans-serif",Typeface.NORMAL),600,false));t.setIncludeFontPadding(false);
-    t.setLineHeight(Math.round(t.getTextSize()*1.35f));t.setAccessibilityHeading(true);
+    t.setLineHeight(Math.round(t.getTextSize()*36f/28));t.setAccessibilityHeading(true);
     t.setPadding(dp(c,20),dp(c,40),dp(c,20),dp(c,4));return t;
   }
   static TextView scope(Context c){
     TextView t=new TextView(c);t.setText("すべての写真");
-    t.setTextSize(13);t.setTextColor(0xffa9a9a4);t.setIncludeFontPadding(false);
-    t.setLineHeight(Math.round(t.getTextSize()*1.5f));t.setPadding(dp(c,20),0,dp(c,20),dp(c,12));return t;
+    t.setTextSize(14);t.setTextColor(0xffa9a9a4);t.setIncludeFontPadding(false);
+    t.setLineHeight(Math.round(t.getTextSize()*20f/14));t.setPadding(dp(c,20),0,dp(c,20),dp(c,20));return t;
   }
   static android.view.View empty(Context c){
-    LinearLayout box=new LinearLayout(c);box.setOrientation(LinearLayout.VERTICAL);box.setGravity(Gravity.CENTER);box.setPadding(dp(c,20),dp(c,48),dp(c,20),dp(c,48));
-    StatusView mark=new StatusView(c);mark.show(StatusView.Symbol.EMPTY,"タグはまだありません。新しいタグを作成してください");box.addView(mark,new LinearLayout.LayoutParams(dp(c,48),dp(c,48)));return box;
+    LinearLayout box=new LinearLayout(c);box.setGravity(Gravity.CENTER);box.setPadding(dp(c,20),dp(c,32),dp(c,20),dp(c,32));
+    ImageView mark=new ImageView(c);mark.setImageDrawable(new Mark(c,0));mark.setContentDescription("タグはまだありません");box.addView(mark,new LinearLayout.LayoutParams(dp(c,40),dp(c,40)));return box;
   }
   static android.view.View failure(Context c,Runnable retry){
     LinearLayout box=new LinearLayout(c);box.setGravity(Gravity.CENTER);box.setPadding(dp(c,20),dp(c,48),dp(c,20),dp(c,48));

@@ -24,27 +24,27 @@ final class ConsistencyLayoutChecks {
         final Context[] context={null};t.runOnMainSync(()->{Configuration config=new Configuration(original);config.fontScale=scale;config.screenWidthDp=width;context[0]=a.createConfigurationContext(config);});Context c=context[0];
         for(String state:new String[]{"normal","long","empty","fail","off"}){
           final LinearLayout[] root={null};t.runOnMainSync(()->{
-            LinearLayout screen=column(c);screen.setBackgroundColor(GalleryUi.BG);LinearLayout content=column(c);content.addView(TagListUi.title(c));content.addView(TagListUi.scope(c));
+            LinearLayout screen=column(c);screen.setBackgroundColor(GalleryUi.BG);LinearLayout content=column(c);content.addView(TagListUi.title(c));TextView scope=TagListUi.scope(c);scope.setText("嵐山 10.18 · 2個");content.addView(scope);
             if(state.equals("empty"))content.addView(TagListUi.empty(c));else if(state.equals("fail"))content.addView(TagListUi.failure(c,actions::incrementAndGet));
-            else{String[] names=state.equals("long")?new String[]{"空","二〇二六年の秋に京都と奈良をめぐった家族旅行で撮った、あとで写真集にまとめたい写真","夕景","スクラムフェスの会場と登壇のようす（ダミーの長い名前）","紅葉"}:new String[]{"空","夕景","紅葉","家族","旅行"};for(int i=0;i<names.length;i++){Button b=TagListUi.row(c,names[i],actions::incrementAndGet);TagListUi.summary(b,names[i],i==0?3:2,i==0?0:1);if(state.equals("off")){b.setEnabled(false);b.setAlpha(.38f);}content.addView(b);}}
+            else{String[] names=state.equals("long")?new String[]{"空","二〇二六年の秋に京都と奈良をめぐった家族旅行で撮った、あとで写真集にまとめたい写真","夕景","スクラムフェスの会場と登壇のようす（ダミーの長い名前）","紅葉"}:new String[]{"空","夕景"};for(int i=0;i<names.length;i++){Button b=TagListUi.row(c,names[i],actions::incrementAndGet);TagListUi.summary(b,names[i],i==0?3:2,i==0?0:1);Bitmap photo=Bitmap.createBitmap(112,112,Bitmap.Config.ARGB_8888);Canvas canvas=new Canvas(photo);Paint paint=new Paint();paint.setShader(new LinearGradient(0,0,112,112,i==0?0xff427f9e:0xffc5947a,i==0?0xffd4c7a1:0xff615d75,Shader.TileMode.CLAMP));canvas.drawRect(0,0,112,112,paint);TagListUi.photo(b,photo);if(state.equals("off")){b.setEnabled(false);b.setAlpha(.38f);}content.addView(b);}}
             ScrollView scroll=new ScrollView(c);scroll.addView(content);screen.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));View line=new View(c);line.setBackgroundColor(0xff26262a);screen.addView(line,new LinearLayout.LayoutParams(-1,GalleryUi.dp(c,1)));LinearLayout footer=TagListUi.footer(c,actions::incrementAndGet);if(state.equals("off")){footer.getChildAt(0).setEnabled(false);footer.getChildAt(0).setAlpha(.38f);}screen.addView(footer);mount(a,screen,c,width);root[0]=screen;
           });
           t.waitForIdleSync();Thread.sleep(100);check(t,root[0]);capture(t,root[0],dir,"tags-"+width+"-"+scale+"-"+state);captures++;
           if(state.equals("fail")){int before=actions.get();t.runOnMainSync(()->clickAll(root[0]));if(actions.get()!=before+2)throw new AssertionError("retry/create callbacks");}
         }
         for(String state:new String[]{"normal","denied","failed","long-info"}){
-          final LinearLayout[] root={null};final ScrollView[] scroll={null};final SyncSettingsUi.ReadOnlySwitch[] toggle={null};
+          final LinearLayout[] root={null};final ScrollView[] scroll={null};final Switch[] toggle={null};
           t.runOnMainSync(()->{LinearLayout screen=column(c);screen.setBackgroundColor(GalleryUi.BG);LinearLayout content=column(c);scroll[0]=new ScrollView(c);scroll[0].addView(content);screen.addView(scroll[0],new LinearLayout.LayoutParams(-1,0,1));
             StatusView collection=new StatusView(c),permission=new StatusView(c),progress=new StatusView(c);collection.show(state.equals("failed")?StatusView.Symbol.FAILED:StatusView.Symbol.COMPLETE,"写真情報の読み取り");permission.show(state.equals("denied")?StatusView.Symbol.PERMISSION:StatusView.Symbol.COMPLETE,"自動管理の権限");progress.show(StatusView.Symbol.COMPLETE,"","バックグラウンド同期、完了",null,"");TextView clock=new TextView(c);clock.setText("10:42");TextView info=new TextView(c);info.setText(state.equals("long-info")?"JPEG 1180枚\nRAW 245枚\n合計1425枚。元のファイルの集計です。":"1,180枚");
-            SyncSettingsUi.ReadOnlySwitch sync=new SyncSettingsUi.ReadOnlySwitch(c),cleanup=new SyncSettingsUi.ReadOnlySwitch(c);sync.setChecked(true);cleanup.setChecked(true);toggle[0]=sync;
+            Switch sync=new Switch(c),cleanup=new Switch(c);sync.setChecked(true);cleanup.setChecked(true);toggle[0]=sync;
             TextView retention=SyncSettingsUi.populate(c,content,screen,info,collection,permission,progress,clock,sync,cleanup,state.equals("denied")?button(c,actions):null,button(c,actions),button(c,actions),button(c,actions),button(c,actions));retention.setText("30日");mount(a,screen,c,width);root[0]=screen;
           });t.waitForIdleSync();Thread.sleep(100);check(t,root[0]);
-          t.runOnMainSync(()->{SyncSettingsUi.ReadOnlySwitch sw=toggle[0];if(sw.performClick()||!sw.isChecked())throw new AssertionError("readonly switch changed");AccessibilityNodeInfo node=sw.createAccessibilityNodeInfo();if(node.isClickable()||!node.isChecked())throw new AssertionError("switch AX contract");});
+          t.runOnMainSync(()->{Switch sw=toggle[0];sw.performClick();if(sw.isChecked())throw new AssertionError("switch click did not toggle");AccessibilityNodeInfo node=sw.createAccessibilityNodeInfo();if(!node.isClickable()||node.isChecked())throw new AssertionError("switch AX contract");sw.setChecked(true);});
           capture(t,root[0],dir,"sync-"+width+"-"+scale+"-"+state);captures++;
           t.runOnMainSync(()->scroll[0].fullScroll(View.FOCUS_DOWN));t.waitForIdleSync();Thread.sleep(80);capture(t,root[0],dir,"sync-"+width+"-"+scale+"-"+state+"-bottom");captures++;
         }
       }
-      return "PASS "+captures+" synthetic real-device captures at 320/400dp font 1/1.3. Text ellipsis/height, child horizontal bounds, minimum48dp controls, retry/create callbacks and readonly switch AX checked. Permission/state combinations and long summary rendered independently; no stored settings changed. Output "+dir+"\n";
+      return "PASS "+captures+" synthetic real-device captures at 320/400dp font 1/1.3. Text ellipsis/height, child horizontal bounds, minimum48dp controls, retry/create callbacks and direct switch AX checked. Permission/state combinations and long summary rendered independently; no stored settings changed. Output "+dir+"\n";
     }finally{t.runOnMainSync(()->{a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);a.finish();});}
   }
   private static LinearLayout column(Context c){LinearLayout l=new LinearLayout(c);l.setOrientation(1);return l;}

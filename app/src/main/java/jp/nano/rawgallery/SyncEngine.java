@@ -185,6 +185,8 @@ final class SyncEngine {
           processed++;
         }
       }
+      if(deferred==0 && !Thread.currentThread().isInterrupted())
+        c.getSharedPreferences("settings",0).edit().putLong("syncFinishedAt",System.currentTimeMillis()).apply();
       status(
           c, deferred > 0 ? JobState.Kind.PARTIAL : JobState.Kind.WAITING, "今回の同期処理を終了しました（確認した原本：" + processed + "枚、保留：" + deferred + "枚）。未完了の原本は次の定期処理で確認します。");
     } catch (CloudVerifier.AuthException e) {

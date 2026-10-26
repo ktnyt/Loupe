@@ -117,21 +117,27 @@ public final class TagActivity extends DiagnosticActivity {
     root.addView(line,new LinearLayout.LayoutParams(-1,GalleryUi.dp(this,1)));
     root.addView(TagListUi.footer(this,this::createTag));
     worker.execute(() -> {
-      try (TagStore store = new TagStore(this); GalleryIndex index = new GalleryIndex(this)) {
-        GalleryIndex.Snapshot snapshot=index.load(getIntent().getStringExtra("folder"),getIntent().getStringExtra("camera")==null?"すべて":getIntent().getStringExtra("camera"));
-        List<TagStore.Summary> tags = store.summaries(snapshot.photos);
+      try (TagStore store = new TagStore(this)) {
+        List<TagStore.Summary> loaded;
+        boolean countsAvailable;
+        List<TagStore.Tag> names=store.tags();
+        try(GalleryIndex index=new GalleryIndex(this)){
+          GalleryIndex.Snapshot snapshot=index.load(getIntent().getStringExtra("folder"),getIntent().getStringExtra("camera")==null?"すべて":getIntent().getStringExtra("camera"));
+          loaded=store.summaries(snapshot.photos);countsAvailable=true;
+        }catch(Exception readFailure){loaded=new ArrayList<>();for(TagStore.Tag name:names)loaded.add(new TagStore.Summary(name));countsAvailable=false;}
+        final List<TagStore.Summary> tags=loaded;final boolean haveCounts=countsAvailable;
         main.post(() -> {
           if (!current(token)) return;
           scopeLabel.setText(scope()+" · "+tags.size()+"個");
           if (tags.isEmpty()) list.addView(TagListUi.empty(this));
           for (int i=0;i<tags.size();i++) {
             TagStore.Summary summary=tags.get(i);TagStore.Tag item=summary.tag;
-            Button row=TagListUi.row(this,item.name,()->openTag(item));TagListUi.summary(row,item.name,summary.attached,summary.excluded);
+            Button row=TagListUi.row(this,item.name,()->openTag(item));if(haveCounts)TagListUi.summary(row,item.name,summary.attached,summary.excluded);else {row.setText(item.name+"\nタグ付き — · 該当しない —");row.setContentDescription(item.name+"。写真と枚数を読み込めませんでした。タグを開く");TagListUi.photoFailure(row);}
             list.addView(row,new LinearLayout.LayoutParams(-1,-2));
             if(summary.cover!=null) worker.execute(()->{
               try{Bitmap bitmap=new PhotoRepository(this).thumbnail(summary.cover,GalleryUi.dp(this,56),()->!current(token));
                 main.post(()->{if(current(token))TagListUi.photo(row,bitmap);else bitmap.recycle();});
-              }catch(Exception error){main.post(()->{if(current(token))row.setContentDescription(row.getContentDescription()+"。代表の写真を読み込めませんでした");});}
+              }catch(Exception error){main.post(()->{if(current(token)){TagListUi.photoFailure(row);row.setContentDescription(row.getContentDescription()+"。代表の写真を読み込めませんでした");}});}
             });
           }
           scroll.post(() -> { if (current(token)) scroll.scrollTo(0, tagScrollY); });

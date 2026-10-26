@@ -15,7 +15,9 @@ public final class SyncActivity extends DiagnosticActivity {
   private TextView info, retention, progressTime;
   private StatusView progress, collection, permissionState;
   private Switch syncState, cleanupState;
-  private boolean refreshing;
+  private boolean refreshing, updatingSwitches;
+  private TextView lastSync;
+  private StatusView verificationStatus;
   private final java.util.List<Button> settingsButtons = new java.util.ArrayList<>();
   private final java.util.List<Button> footerButtons = new java.util.ArrayList<>();
   private final Runnable refreshProgress =
@@ -25,6 +27,12 @@ public final class SyncActivity extends DiagnosticActivity {
             String description=getSharedPreferences("settings",0).getString("syncStatus","まだ同期していません");
             if(state.kind==JobState.Kind.UNKNOWN)description="現在の処理状態を確認できません。"+description;
             progress.show(StatusView.symbol(state.kind),"",description,null,"");
+            long finishedAt=getSharedPreferences("settings",0).getLong("syncFinishedAt",0);
+            if(lastSync!=null)lastSync.setText("最後の同期："+(finishedAt>0?android.text.format.DateFormat.format("M月d日 HH:mm",finishedAt):"—"));
+            if(verificationStatus!=null){String result=getSharedPreferences("settings",0).getString("cloudVerificationResult","");
+              StatusView.Symbol symbol=result.equals("COMPLETE")?StatusView.Symbol.COMPLETE:result.equals("FAILED")?StatusView.Symbol.FAILED:StatusView.Symbol.UNKNOWN;
+              verificationStatus.show(symbol,result.equals("COMPLETE")?"前回選んだ写真は元どおりダウンロードできました":result.equals("FAILED")?"前回の写真の確認に失敗しました":"写真の確認結果は記録されていません");}
+
             progressTime.setText(state.updatedAt>0?android.text.format.DateFormat.format("MM/dd HH:mm",state.updatedAt).toString():"—");
           }
           main.postDelayed(this, 3000);
@@ -62,7 +70,10 @@ public final class SyncActivity extends DiagnosticActivity {
     setContentView(screen);
     info = new TextView(this);progressTime = new TextView(this);
     collection=new StatusView(this);permissionState=new StatusView(this);progress=new StatusView(this);
-    syncState=new SyncSettingsUi.ReadOnlySwitch(this);cleanupState=new SyncSettingsUi.ReadOnlySwitch(this);
+    syncState=new Switch(this);cleanupState=new Switch(this);
+    for(Switch toggle:new Switch[]{syncState,cleanupState}){toggle.setTextColor(GalleryUi.TEXT);toggle.setMinHeight(GalleryUi.dp(this,48));toggle.setTextSize(14);}
+    syncState.setOnCheckedChangeListener((button,checked)->changeSetting(false,checked));
+    cleanupState.setOnCheckedChangeListener((button,checked)->changeSetting(true,checked));
     if (!android.os.Environment.isExternalStorageManager())
       button(
           root,
@@ -146,9 +157,27 @@ public final class SyncActivity extends DiagnosticActivity {
     Button allFiles = !Environment.isExternalStorageManager()?settingsButtons.get(permissionIndex++):null;
     Button location = checkSelfPermission(android.Manifest.permission.ACCESS_MEDIA_LOCATION)
         != android.content.pm.PackageManager.PERMISSION_GRANTED?settingsButtons.get(permissionIndex):null;
+    settings.setOnClickListener(v->{if(!getSharedPreferences("settings",0).getBoolean("syncEnabled",false)){confirm(false);return;}SyncJob.now(this);refresh();});
+    other.setOnClickListener(v->refresh());
     retention=SyncSettingsUi.populate(this,root,screen,info,collection,permissionState,progress,progressTime,
         syncState,cleanupState,allFiles,location,keep,settings,other);
+    lastSync=root.findViewWithTag("last-sync");
+    LinearLayout verification=root.findViewWithTag("verification-card");
+    verificationStatus=new StatusView(this);verification.addView(verificationStatus,new LinearLayout.LayoutParams(GalleryUi.dp(this,24),GalleryUi.dp(this,24)));
+    Button verify=new SyncSettingsUi.ActionButton(this,"確認する",()->startActivity(new Intent(this,CloudActivity.class).putExtra("verify-on-open",true)));
+    SyncSettingsUi.styleButton(this,verify,false,14,48);verification.addView(verify,new LinearLayout.LayoutParams(-1,-2));
 
+
+  }
+
+  private void changeSetting(boolean cleanup,boolean checked){
+    if(updatingSwitches)return;
+    SharedPreferences prefs=getSharedPreferences("settings",0);boolean saved=prefs.getBoolean(cleanup?"cleanupEnabled":"syncEnabled",false);
+    updatingSwitches=true;(cleanup?cleanupState:syncState).setChecked(saved);updatingSwitches=false;
+    if(saved==checked)return;
+    if(checked)confirm(cleanup);
+    else {if(cleanup)prefs.edit().putBoolean("cleanupEnabled",false).apply();else stop();
+      updatingSwitches=true;syncState.setChecked(prefs.getBoolean("syncEnabled",false));cleanupState.setChecked(prefs.getBoolean("cleanupEnabled",false));updatingSwitches=false;refresh();}
   }
 
   private void stop() {
@@ -177,8 +206,8 @@ public final class SyncActivity extends DiagnosticActivity {
                 refreshing = false;
                 if (isDestroyed()) return;
                 SharedPreferences s = getSharedPreferences("settings", 0);
-                syncState.setChecked(s.getBoolean("syncEnabled",false));cleanupState.setChecked(s.getBoolean("cleanupEnabled",false));
-                retention.setText(s.getInt("retentionDays",30)+"日");
+                updatingSwitches=true;syncState.setChecked(s.getBoolean("syncEnabled",false));cleanupState.setChecked(s.getBoolean("cleanupEnabled",false));updatingSwitches=false;
+                retention.setText("撮影日から"+s.getInt("retentionDays",30)+"日");
                 permissionState.show(Environment.isExternalStorageManager()?StatusView.Symbol.COMPLETE:StatusView.Symbol.PERMISSION,Environment.isExternalStorageManager()?"自動管理の権限は許可済み":"自動管理の権限は未許可。必要なアクセスを許可する操作を選んでください");
                 info.setText(collected?message:"—");
                 if(collected)collection.finish();else collection.show(StatusView.Symbol.FAILED,"","写真の情報を取得できませんでした。アクセス許可を確認してください",this::refresh,"再試行");

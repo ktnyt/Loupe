@@ -172,6 +172,7 @@ public final class CloudActivity extends DiagnosticActivity {
     root.addView(actions);
     getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     setContentView(root);
+    if(state==null && getIntent().getBooleanExtra("verify-on-open",false)) chooseVerification(false);
   }
 
   private void setStatus(StatusView.Symbol kind,String message,Runnable retry) {
@@ -396,6 +397,7 @@ public final class CloudActivity extends DiagnosticActivity {
           SyncEngine.RUNNING.set(false);
           final String message = result;
           final StatusView.Symbol resultKind=outcome;
+          if(!uploading)getSharedPreferences("settings",0).edit().putString("cloudVerificationResult",outcome.name()).apply();
           runOnUiThread(
               () -> {
                 if (isDestroyed()) return;
