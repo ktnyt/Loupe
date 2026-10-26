@@ -12,18 +12,39 @@ final class TagListUi {
   private static int dp(Context c,float n){return GalleryUi.dp(c,n);}
   static Button row(Context c,String name,Runnable open){
     Button b=GalleryUi.button(c,name,open);
-    b.setTextSize(16);b.setIncludeFontPadding(false);b.setLineHeight(Math.round(b.getTextSize()*1.45f));
+    b.setTextSize(16);b.setTypeface(Typeface.create(Typeface.create("sans-serif",Typeface.NORMAL),500,false));b.setIncludeFontPadding(false);b.setLineHeight(Math.round(b.getTextSize()*1.45f));
     b.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);b.setSingleLine(false);b.setEllipsize(null);
-    b.setPadding(dp(c,20),dp(c,12),dp(c,16),dp(c,12));
+    b.setPadding(dp(c,20),dp(c,8),dp(c,16),dp(c,8));
     b.setMinHeight(dp(c,72));b.setMinimumHeight(dp(c,72));
-    b.setCompoundDrawables(new Mark(c,0),null,new Mark(c,1),null);
+    b.setCompoundDrawables(cover(c,null),null,new Mark(c,1),null);
     b.setCompoundDrawablePadding(dp(c,16));b.setContentDescription(name+"。タグを開く");
     b.setBackground(background(c,false,0));return b;
   }
+  static void summary(Button row,String name,int attached,int excluded){
+    String detail="タグ付き "+attached+"枚 · 該当しない "+excluded+"枚";
+    android.text.SpannableString text=new android.text.SpannableString(name+"\n"+detail);
+    text.setSpan(new android.text.style.AbsoluteSizeSpan(Math.round(13*row.getResources().getDisplayMetrics().scaledDensity)),name.length()+1,text.length(),0);
+    text.setSpan(new android.text.style.ForegroundColorSpan(0xffa9a9a4),name.length()+1,text.length(),0);
+    row.setText(text);row.setContentDescription(name+"、タグ付き "+attached+"枚、該当しない "+excluded+"枚");
+  }
+  static void photo(Button row,Bitmap bitmap){
+    row.setCompoundDrawables(cover(row.getContext(),bitmap),null,new Mark(row.getContext(),1),null);
+  }
+  private static Drawable cover(Context c,Bitmap bitmap){
+    Drawable drawable=new Drawable(){
+      final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG|Paint.FILTER_BITMAP_FLAG);
+      public void draw(Canvas canvas){Rect b=getBounds();int save=canvas.save();Path clip=new Path();clip.addRoundRect(new RectF(b),dp(c,8),dp(c,8),Path.Direction.CW);canvas.clipPath(clip);
+        paint.setColor(0xff26262a);canvas.drawRect(b,paint);
+        if(bitmap!=null){float scale=Math.max(b.width()/(float)bitmap.getWidth(),b.height()/(float)bitmap.getHeight());float w=bitmap.getWidth()*scale,h=bitmap.getHeight()*scale;canvas.drawBitmap(bitmap,null,new RectF(b.centerX()-w/2,b.centerY()-h/2,b.centerX()+w/2,b.centerY()+h/2),paint);}
+        canvas.restoreToCount(save);
+      }
+      public void setAlpha(int value){paint.setAlpha(value);}public void setColorFilter(ColorFilter f){paint.setColorFilter(f);}public int getOpacity(){return PixelFormat.TRANSLUCENT;}
+    };drawable.setBounds(0,0,dp(c,56),dp(c,56));return drawable;
+  }
   static LinearLayout footer(Context c,Runnable create){
     LinearLayout box=new LinearLayout(c);box.setOrientation(LinearLayout.VERTICAL);
-    box.setPadding(dp(c,16),dp(c,12),dp(c,16),dp(c,16));
-    Button b=new CenteredPlusButton(c);b.setText("新しいタグ");b.setAllCaps(false);b.setOnClickListener(v->create.run());b.setTextSize(16);
+    box.setPadding(dp(c,16),dp(c,10),dp(c,16),dp(c,20));
+    Button b=new CenteredPlusButton(c);b.setText("新しいタグ");b.setAllCaps(false);b.setOnClickListener(v->create.run());b.setTextSize(15);b.setTypeface(Typeface.create(Typeface.create("sans-serif",Typeface.NORMAL),600,false));
     b.setIncludeFontPadding(false);b.setLineHeight(Math.round(b.getTextSize()*1.35f));
     b.setMinHeight(dp(c,52));b.setMinimumHeight(dp(c,52));
     b.setPadding(dp(c,20),dp(c,12),dp(c,20),dp(c,12));
@@ -32,14 +53,14 @@ final class TagListUi {
     box.addView(b,new LinearLayout.LayoutParams(-1,-2));return box;
   }
   static TextView title(Context c){
-    TextView t=new TextView(c);t.setText("タグ");t.setTextSize(22);t.setTextColor(GalleryUi.TEXT);
+    TextView t=new TextView(c);t.setText("タグ");t.setTextSize(28);t.setTextColor(GalleryUi.TEXT);
     t.setTypeface(Typeface.create(Typeface.create("sans-serif",Typeface.NORMAL),600,false));t.setIncludeFontPadding(false);
     t.setLineHeight(Math.round(t.getTextSize()*1.35f));t.setAccessibilityHeading(true);
-    t.setPadding(dp(c,20),dp(c,24),dp(c,20),dp(c,4));return t;
+    t.setPadding(dp(c,20),dp(c,40),dp(c,20),dp(c,4));return t;
   }
   static TextView scope(Context c){
-    TextView t=new TextView(c);t.setText("現在のアルバム・絞り込み内の端末写真が対象です");
-    t.setTextSize(14);t.setTextColor(0xffa0a0a4);t.setIncludeFontPadding(false);
+    TextView t=new TextView(c);t.setText("すべての写真");
+    t.setTextSize(13);t.setTextColor(0xffa9a9a4);t.setIncludeFontPadding(false);
     t.setLineHeight(Math.round(t.getTextSize()*1.5f));t.setPadding(dp(c,20),0,dp(c,20),dp(c,12));return t;
   }
   static android.view.View empty(Context c){

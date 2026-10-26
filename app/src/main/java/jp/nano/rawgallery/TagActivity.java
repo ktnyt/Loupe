@@ -51,7 +51,7 @@ public final class TagActivity extends DiagnosticActivity {
   private TagJudgments judgments = new TagJudgments();
   private TagStore.Tag tag;
   private LinearLayout root;
-  private int generation;
+  private volatile int generation;
   private boolean busy, reviewing;
   private int browseMode;
   private int tagScrollY;
@@ -108,7 +108,7 @@ public final class TagActivity extends DiagnosticActivity {
     int token = screen("タグ");
     root.removeViewAt(0);
     LinearLayout content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL);
-    content.addView(TagListUi.title(this)); content.addView(TagListUi.scope(this));
+    content.addView(TagListUi.title(this)); TextView scopeLabel=TagListUi.scope(this); scopeLabel.setText(scope()); content.addView(scopeLabel);
     LinearLayout list = new LinearLayout(this); list.setOrientation(LinearLayout.VERTICAL);content.addView(list);
     ScrollView scroll = new ScrollView(this); scroll.addView(content);
     tagScroll = scroll;
@@ -117,14 +117,22 @@ public final class TagActivity extends DiagnosticActivity {
     root.addView(line,new LinearLayout.LayoutParams(-1,GalleryUi.dp(this,1)));
     root.addView(TagListUi.footer(this,this::createTag));
     worker.execute(() -> {
-      try (TagStore store = new TagStore(this)) {
-        List<TagStore.Tag> tags = store.tags();
+      try (TagStore store = new TagStore(this); GalleryIndex index = new GalleryIndex(this)) {
+        GalleryIndex.Snapshot snapshot=index.load(getIntent().getStringExtra("folder"),getIntent().getStringExtra("camera")==null?"すべて":getIntent().getStringExtra("camera"));
+        List<TagStore.Summary> tags = store.summaries(snapshot.photos);
         main.post(() -> {
           if (!current(token)) return;
+          scopeLabel.setText(scope()+" · "+tags.size()+"個");
           if (tags.isEmpty()) list.addView(TagListUi.empty(this));
           for (int i=0;i<tags.size();i++) {
-            TagStore.Tag item=tags.get(i);list.addView(TagListUi.row(this,item.name,()->openTag(item)),new LinearLayout.LayoutParams(-1,-2));
-            if(i+1<tags.size()){android.view.View divider=new android.view.View(this);divider.setBackgroundColor(0xff26262a);LinearLayout.LayoutParams gap=new LinearLayout.LayoutParams(-1,GalleryUi.dp(this,1));gap.leftMargin=GalleryUi.dp(this,76);list.addView(divider,gap);}
+            TagStore.Summary summary=tags.get(i);TagStore.Tag item=summary.tag;
+            Button row=TagListUi.row(this,item.name,()->openTag(item));TagListUi.summary(row,item.name,summary.attached,summary.excluded);
+            list.addView(row,new LinearLayout.LayoutParams(-1,-2));
+            if(summary.cover!=null) worker.execute(()->{
+              try{Bitmap bitmap=new PhotoRepository(this).thumbnail(summary.cover,GalleryUi.dp(this,56),()->!current(token));
+                main.post(()->{if(current(token))TagListUi.photo(row,bitmap);else bitmap.recycle();});
+              }catch(Exception error){main.post(()->{if(current(token))row.setContentDescription(row.getContentDescription()+"。代表の写真を読み込めませんでした");});}
+            });
           }
           scroll.post(() -> { if (current(token)) scroll.scrollTo(0, tagScrollY); });
         });
