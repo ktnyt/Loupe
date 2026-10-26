@@ -21,19 +21,19 @@ final class RankingResultUi {
     LinearLayout box=new LinearLayout(c);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(dp(c,16),dp(c,8),dp(c,8),dp(c,12));box.setClipChildren(false);box.setClipToPadding(false);
     Map<Integer,Integer> counts=new HashMap<>();for(String id:ranking.ids)counts.merge(ranking.rankOf(id),1,Integer::sum);
     String winner=ranking.best().get(0);String first=counts.get(1)>1?"=1位":"1位";
-    LinearLayout hero=new LinearLayout(c);hero.setOrientation(LinearLayout.VERTICAL);action(hero,"1位の写真、"+names.apply(winner)+"。拡大",()->open.accept(winner,hero));hero.setTag("result-hero-"+winner);
+    LinearLayout hero=new LinearLayout(c);hero.setOrientation(LinearLayout.VERTICAL);action(hero,summary(ranking)+"。1位の写真："+names.apply(winner)+"。拡大",()->open.accept(winner,hero));hero.setTag("result-hero-"+winner);
     FrameLayout frame=new FrameLayout(c);ImageView image=image(c,6);frame.addView(image,new FrameLayout.LayoutParams(-1,-1));
     TextView rank=text(c,"★ "+first,12,16,0xff241800);rank.setBackground(GalleryUi.shape(c,0xfff5b947,12));rank.setGravity(Gravity.CENTER);rank.setPadding(dp(c,6),dp(c,4),dp(c,8),dp(c,4));FrameLayout.LayoutParams badge=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.LEFT);badge.leftMargin=dp(c,6);badge.topMargin=dp(c,6);frame.addView(rank,badge);
     ImageView zoom=new ImageView(c);zoom.setImageDrawable(new AffordanceIcon(0,0xffffffff));zoom.setPadding(dp(c,6),dp(c,6),dp(c,6),dp(c,6));zoom.setBackground(GalleryUi.shape(c,0x8c000000,16));FrameLayout.LayoutParams zp=new FrameLayout.LayoutParams(dp(c,32),dp(c,32),Gravity.RIGHT|Gravity.BOTTOM);zp.rightMargin=dp(c,6);zp.bottomMargin=dp(c,6);frame.addView(zoom,zp);hero.addView(frame,new LinearLayout.LayoutParams(dp(c,210),dp(c,140)));
     TextView name=text(c,first+" · "+names.apply(winner),14,20,GalleryUi.TEXT);LinearLayout.LayoutParams np=new LinearLayout.LayoutParams(-1,-2);np.topMargin=dp(c,6);hero.addView(name,np);box.addView(hero,new LinearLayout.LayoutParams(-1,-2));hideChildren(hero);
-    whenVisible(image,()->loader.load(winner,image,()->failed(image)));
+    whenVisible(image,()->loader.load(winner,image,()->failed(image,hero)));
     LinearLayout bottom=new LinearLayout(c);bottom.setGravity(Gravity.BOTTOM);bottom.setClipChildren(false);bottom.setClipToPadding(false);LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-1,-2);bp.topMargin=dp(c,6);box.addView(bottom,bp);
     Frames frames=new Frames(c);bottom.addView(frames,new LinearLayout.LayoutParams(0,-2,1));
     for(int i=0;i<ranking.ids.size();i++){
       String id=ranking.ids.get(i);int n=ranking.rankOf(id);boolean tie=!ranking.bestOnly()&&counts.get(n)>1;
       LinearLayout item=new LinearLayout(c);item.setOrientation(LinearLayout.VERTICAL);item.setPadding(0,dp(c,5),0,dp(c,4));item.setMinimumHeight(dp(c,52));item.setMinimumWidth(dp(c,48));item.setTag("result-"+id);action(item,(i+1)+"枚目、"+n+"位"+(tie?"（同率）":"")+"、"+names.apply(id)+"。拡大",()->open.accept(id,item));
       FrameLayout outlineBox=new FrameLayout(c);outlineBox.setClipChildren(false);ImageView thumb=image(c,3);if(n!=1)thumb.setAlpha(.6f);else{android.graphics.drawable.GradientDrawable outline=GalleryUi.shape(c,0,6);outline.setStroke(dp(c,2),0xfff5b947);outlineBox.setBackground(outline);}FrameLayout.LayoutParams imageParams=new FrameLayout.LayoutParams(dp(c,33),dp(c,22));imageParams.leftMargin=dp(c,3);imageParams.topMargin=dp(c,3);outlineBox.addView(thumb,imageParams);LinearLayout.LayoutParams frameParams=new LinearLayout.LayoutParams(dp(c,39),dp(c,28));frameParams.leftMargin=-dp(c,3);item.setClipChildren(false);item.setClipToPadding(false);item.setPadding(0,dp(c,2),0,dp(c,4));item.addView(outlineBox,frameParams);
-      TextView label=text(c,(tie?"=":"")+n+"位",12,14,n==1?0xfff5b947:GalleryUi.MUTED);label.setGravity(Gravity.CENTER);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(dp(c,33),-2);lp.topMargin=0;item.addView(label,lp);hideChildren(item);frames.addView(item,new ViewGroup.LayoutParams(dp(c,48),-2));whenVisible(thumb,()->loader.load(id,thumb,()->failed(thumb)));
+      TextView label=text(c,(tie?"=":"")+n+"位",12,14,n==1?0xfff5b947:GalleryUi.MUTED);label.setGravity(Gravity.CENTER);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(dp(c,33),-2);lp.topMargin=0;item.addView(label,lp);hideChildren(item);frames.addView(item,new ViewGroup.LayoutParams(dp(c,48),-2));whenVisible(thumb,()->loader.load(id,thumb,()->failed(thumb,item)));
     }
     Button reset=GalleryUi.button(c,"再ソート",resort);reset.setTextSize(14);reset.setMinWidth(dp(c,86));reset.setMinimumWidth(dp(c,86));reset.setPadding(dp(c,14),dp(c,4),dp(c,14),dp(c,4));reset.setBackground(GalleryUi.shape(c,0x00000000,24));android.graphics.drawable.GradientDrawable outline=GalleryUi.shape(c,0,24);outline.setStroke(dp(c,1),0xff3a3a3f);reset.setBackground(outline);LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(-2,-2);rp.leftMargin=dp(c,8);bottom.addView(reset,rp);return box;
   }
@@ -45,7 +45,16 @@ final class RankingResultUi {
     image.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener(){public void onViewAttachedToWindow(View v){}public void onViewDetachedFromWindow(View v){if(image.getViewTreeObserver().isAlive())image.getViewTreeObserver().removeOnPreDrawListener(listener);image.removeOnAttachStateChangeListener(this);}});
   }
   static ImageView image(Context c,int radius){ImageView v=new ImageView(c);v.setScaleType(ImageView.ScaleType.CENTER_CROP);v.setBackground(GalleryUi.shape(c,0xff26262a,radius));v.setClipToOutline(true);return v;}
-  static void failed(ImageView image){image.setScaleType(ImageView.ScaleType.CENTER);image.setImageDrawable(new AffordanceIcon(1,GalleryUi.MUTED,dp(image.getContext(),24)));}
+  static void failed(ImageView image,View target){target.setContentDescription(target.getContentDescription().toString().replace("。拡大","。プレビューを読み込めませんでした。拡大"));image.setScaleType(ImageView.ScaleType.CENTER);image.setImageDrawable(new AffordanceIcon(1,GalleryUi.MUTED,dp(image.getContext(),24)));}
+  static String summary(PhotoRanking ranking){
+    int count=ranking.ids.size();
+    if(ranking.bestOnly())return count+"枚の順位を決めました。1位は"+(ranking.ids.indexOf(ranking.best().get(0))+1)+"枚目"+(count>1?"、ほかの"+(count-1)+"枚は2位":"");
+    TreeMap<Integer,List<String>> ranks=new TreeMap<>();
+    for(int i=0;i<count;i++)ranks.computeIfAbsent(ranking.rankOf(ranking.ids.get(i)),k->new ArrayList<>()).add((i+1)+"枚目");
+    ArrayList<String> parts=new ArrayList<>();
+    for(Map.Entry<Integer,List<String>> rank:ranks.entrySet())parts.add(rank.getKey()+"位"+(rank.getValue().size()>1?"（同率）":"")+"は"+String.join("と",rank.getValue()));
+    return count+"枚の順位："+String.join("、",parts);
+  }
   static void action(View view,String name,Runnable action){view.setContentDescription(name);view.setFocusable(true);view.setClickable(true);view.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);view.setOnClickListener(v->{GalleryUi.feedback(v);action.run();});view.setAccessibilityDelegate(new View.AccessibilityDelegate(){public void onInitializeAccessibilityNodeInfo(View host,AccessibilityNodeInfo info){super.onInitializeAccessibilityNodeInfo(host,info);info.setClassName(Button.class.getName());info.addAction(new AccessibilityNodeInfo.AccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK,"拡大"));}});}
   static void hideChildren(ViewGroup parent){for(int i=0;i<parent.getChildCount();i++)parent.getChildAt(i).setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);}
   static int dp(Context c,float n){return GalleryUi.dp(c,n);}
