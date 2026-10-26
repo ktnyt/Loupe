@@ -110,3 +110,4 @@ Android実装は[#39](https://github.com/ktnyt/Loupe/issues/39)で導入済み�
 ## 個別写真表示
 
 [元のS08を保持した写真表示HTML](loupe-photo-viewer.html)をMainの通常/比較・結果からの閲覧とTagActivityの写真閲覧に適用する。黒背景、日時、写真のfit、64dp一列dockを保ち、専用Back削除と既存の拡大・共有・タグ・情報の条件を反映する。HTML確認とAndroid実機の適用完了は区別する。
+- 2026-10-26の追加訂正：既存の倍率2.5に合わせて仕様と `scale(2.5)` を更新。元S08と既存操作の変更はなく、ローカル表示と拡大切替を確認。

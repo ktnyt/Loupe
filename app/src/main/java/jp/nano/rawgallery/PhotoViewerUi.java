@@ -48,12 +48,9 @@ final class PhotoViewerUi extends ViewGroup {
         canvas.scale(density, density);
         paint.setStyle(Paint.Style.FILL); paint.setColor(0x9e000000);
         canvas.drawRoundRect(0, 0, 32, 24, 12, 12, paint);
-        paint.setColor(GalleryUi.TEXT); paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(1.4f);
-        Path path = new Path(); path.moveTo(10,17);
-        path.cubicTo(4,17,5,9,10,9); path.cubicTo(11,2,21,3,22,10);
-        path.cubicTo(28,10,27,17,22,17); path.close();
-        canvas.drawPath(path, paint); canvas.restoreToCount(saved);
+        android.graphics.drawable.Drawable glyph = getResources().getDrawable(R.drawable.ic_viewer_cloud, context.getTheme());
+        glyph.setBounds(9,5,23,19); glyph.draw(canvas);
+        canvas.restoreToCount(saved);
       }
     };
     cloud.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
