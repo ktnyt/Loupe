@@ -125,6 +125,48 @@ final class TagStore extends SQLiteOpenHelper {
     return result;
   }
 
+  static final class Summary {
+    final Tag tag;
+    int attached, excluded;
+    PhotoRepository.Photo cover;
+    private int coverPosition = Integer.MAX_VALUE;
+    Summary(Tag tag) { this.tag = tag; }
+  }
+
+  /** Read-only counts for the current local-photo scope. Human decisions override automation. */
+  List<Summary> summaries(List<PhotoRepository.Photo> scope) {
+    Map<String, Integer> positions = new HashMap<>();
+    for (int i = 0; i < scope.size(); i++) {
+      PhotoRepository.Photo photo = scope.get(i);
+      if ("content".equals(photo.uri.getScheme())) positions.putIfAbsent(source(photo), i);
+    }
+    List<Summary> result = new ArrayList<>();
+    Map<String, Summary> byTag = new HashMap<>();
+    for (Tag tag : tags()) {
+      Summary summary = new Summary(tag); result.add(summary); byTag.put(tag.id, summary);
+    }
+    String sql = "SELECT j.tag,p.source,j.value FROM judgments j JOIN photos p ON p.id=j.photo "
+        + "WHERE j.value IN ('ASSIGNED','EXCLUDED') UNION ALL "
+        + "SELECT a.tag,p.source,'ASSIGNED' FROM automatic_tags a JOIN photos p ON p.id=a.photo "
+        + "LEFT JOIN judgments j ON j.tag=a.tag AND j.photo=a.photo "
+        + "WHERE a.pipeline=? AND j.photo IS NULL";
+    try (Cursor c = getReadableDatabase().rawQuery(sql, new String[] {automaticVersion()})) {
+      while (c.moveToNext()) {
+        Summary summary = byTag.get(c.getString(0));
+        Integer position = positions.get(c.getString(1));
+        if (summary == null || position == null) continue;
+        if ("EXCLUDED".equals(c.getString(2))) summary.excluded++;
+        else {
+          summary.attached++;
+          if (position < summary.coverPosition) {
+            summary.coverPosition = position; summary.cover = scope.get(position);
+          }
+        }
+      }
+    }
+    return result;
+  }
+
   Tag create(String name) {
     String trimmed = name.trim();
     if (trimmed.isEmpty() || trimmed.length() > 80) throw new IllegalArgumentException("タグ名は1〜80文字で入力してください");
