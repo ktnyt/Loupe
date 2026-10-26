@@ -785,9 +785,12 @@ public final class MainActivity extends DiagnosticActivity {
     new GalleryUi.Sheet(this)
         .setTitle("設定とその他の操作")
         .setItems(
-            new String[] {"クラウドと同期", "共有先の設定", "連写のまとめ方", "写真へのアクセス", "再読み込み", "写真のプレビュー"},
+            new String[] {"クラウドと同期", "共有先の設定", "連写のまとめ方", "写真へのアクセス", "再読み込み", "写真のプレビュー", "処理の状況"},
             (d, which) -> {
               switch (which) {
+                case 6:
+                  startActivity(new Intent(this, DashboardActivity.class));
+                  break;
                 case 5:
                   new GalleryUi.Sheet(this).setTitle("写真のプレビュー")
                       .setView(preparationStatus())
