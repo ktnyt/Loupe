@@ -117,6 +117,8 @@ public final class MainActivity extends DiagnosticActivity {
   private boolean detail = false;
   private boolean rankingScreen = false;
   private android.os.Parcelable rankingResultState;
+  private String rankingResultFocus;
+  private int rankingResultPosition, rankingResultOffset;
   private PhotoRanking ranking;
   private final Map<String, Integer> rankingMembers = new HashMap<>();
   private int index = 0;
@@ -1485,6 +1487,7 @@ public final class MainActivity extends DiagnosticActivity {
   private void openRanking() {
     DiagnosticLog.event("screen.openRanking", 0);
     rankingResultState = null;
+    rankingResultFocus = null;
     try {
       rankingMembers.clear();
       for (int member : burstMembers)
@@ -1504,6 +1507,7 @@ public final class MainActivity extends DiagnosticActivity {
         rankCache.clear();
         ranking = next;
         rankingResultState = null;
+    rankingResultFocus = null;
         showRanking();
         return;
       }
@@ -1521,6 +1525,7 @@ public final class MainActivity extends DiagnosticActivity {
     rankingScreen = true;
     int token = ++generation;
     base();
+    if (ranking.done()) { showRankingResult(token); return; }
     LinearLayout top = row();
     top.setPadding(dp(16), dp(8), dp(16), dp(8));
     top.setMinimumHeight(dp(64));
@@ -1547,47 +1552,7 @@ public final class MainActivity extends DiagnosticActivity {
     chooseA.setEnabled(false); chooseB.setEnabled(false);
     Button tie = button("同じ順位", () -> saveRanking(ranking.tie()));
     tie.setEnabled(false);
-    if (ranking.done()) {
-      ListView results = new ListView(this);
-      results.setPadding(dp(8), 0, dp(8), 0);
-      results.setDivider(new android.graphics.drawable.ColorDrawable(BG));
-      results.setDividerHeight(dp(4));
-      results.setSelector(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
-      List<String> rows = new ArrayList<>();
-      for (int n = 0; n < ranking.order.size(); n++)
-        rows.add(
-            ranking.rankOf(ranking.order.get(n))
-                + "位  ·  "
-                + photos.get(rankingMembers.get(ranking.order.get(n))).name);
-      results.setAdapter(
-          new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, rows) {
-            public View getView(int p, View v, ViewGroup parent) {
-              RankingResultRow item = new RankingResultRow(MainActivity.this, rows.get(p));
-              ImageView thumbnail = item.thumbnail;
-              PhotoRepository.Photo photo = photos.get(rankingMembers.get(ranking.order.get(p)));
-              images.execute(() -> {
-                try {
-                  Bitmap bitmap = PhotoRepository.bitmap(repository.preview(photo), 200);
-                  main.post(() -> {
-                    if (!isDestroyed() && token == generation) thumbnail.setImageBitmap(bitmap);
-                    else bitmap.recycle();
-                  });
-                } catch (Exception e) {
-                  main.post(() -> { if (!isDestroyed() && token == generation) item.previewFailed(); });
-                }
-              });
-              return item;
-            }
-          });
-      results.setOnItemClickListener(
-          (p, v, n, id) -> {
-            rankingResultState = results.onSaveInstanceState();
-            GalleryUi.feedback(v);
-            showRankedPhoto(rankingMembers.get(ranking.order.get(n)));
-          });
-      if (rankingResultState != null) results.onRestoreInstanceState(rankingResultState);
-      root.addView(results, new LinearLayout.LayoutParams(-1, 0, 1));
-    } else {
+
 
       LinearLayout comparison = new LinearLayout(this);
       root.addView(comparison, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -1615,7 +1580,7 @@ public final class MainActivity extends DiagnosticActivity {
       comparison.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> arrange.run());
       rankingCandidate(ranking.upper(), true, token, comparison, candidates, ratios, arrange);
       rankingCandidate(ranking.lower(), false, token, comparison, candidates, ratios, arrange);
-    }
+
     int controlsStart = root.getChildCount();
     if (!ranking.done()) {
       dock(chooseA, chooseB);
@@ -1627,6 +1592,33 @@ public final class MainActivity extends DiagnosticActivity {
         ? GalleryUi.adaptiveDock(this, undo, button("その他", this::rankingMenu))
         : GalleryUi.adaptiveDock(this, undo, tie, button("その他", this::rankingMenu)));
     GalleryUi.bottomControls(root, controlsStart);
+  }
+
+  private void showRankingResult(int token) {
+    ListView results=new ListView(this);results.setDivider(null);results.setDividerHeight(0);results.setSelector(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));results.setItemsCanFocus(true);
+    results.addHeaderView(RankingResultUi.heading(this,ranking.ids.size(),ranking.bestOnly()),null,false);
+    results.setAdapter(new android.widget.BaseAdapter(){
+      public int getCount(){return 1;} public Object getItem(int p){return ranking;} public long getItemId(int p){return p;} public boolean isEnabled(int p){return false;}
+      public View getView(int p,View recycled,ViewGroup parent){
+        return RankingResultUi.body(MainActivity.this,ranking,id->photos.get(rankingMembers.get(id)).name,
+          (id,image,failed)->{PhotoRepository.Photo photo=photos.get(rankingMembers.get(id));int edge=Math.max(1,image.getWidth());images.execute(()->{if(isDestroyed()||token!=generation)return;try{PhotoRepository.Preview preview=repository.preview(photo,()->isDestroyed()||token!=generation);if(isDestroyed()||token!=generation)return;Bitmap bitmap=PhotoRepository.bitmap(preview,edge);main.post(()->{if(!isDestroyed()&&token==generation)image.setImageBitmap(bitmap);else bitmap.recycle();});}catch(Exception e){main.post(()->{if(!isDestroyed()&&token==generation)failed.run();});}});},
+          id->{rankingResultState=results.onSaveInstanceState();rankingResultPosition=results.getFirstVisiblePosition();rankingResultOffset=results.getChildAt(0)==null?0:results.getChildAt(0).getTop();View focus=results.findFocus();rankingResultFocus=focus!=null&&focus.getTag() instanceof String?(String)focus.getTag():"result-"+id;showRankedPhoto(rankingMembers.get(id));},MainActivity.this::confirmResort);
+      }
+    });
+    root.addView(results,new LinearLayout.LayoutParams(-1,0,1));
+    if(rankingResultState!=null)results.onRestoreInstanceState(rankingResultState);
+    results.post(()->{if(rankingResultState!=null)results.setSelectionFromTop(rankingResultPosition,rankingResultOffset);});
+    int first=root.getChildCount();LinearLayout controls=vertical();
+    Button share=TagDetailUi.action(this,"共有",true,()->{selecting=true;bestOnly=true;leaveRanking();});share.setCompoundDrawables(null,null,null,null);controls.addView(share,new LinearLayout.LayoutParams(-1,-2));
+    Button mode=TagDetailUi.action(this,ranking.bestOnly()?"すべての順位を決める":"1位を決める",false,()->changeRankingMode(!ranking.bestOnly()));mode.setText(ranking.bestOnly()?"すべての順位を決める":"1位を決める");controls.addView(mode,new LinearLayout.LayoutParams(-1,-2));
+    Button undo=TagDetailUi.dockButton(this,"直前の操作を取り消す",()->saveRanking(ranking.undo()));undo.setText("取り消し");undo.setEnabled(ranking.decisions()>0);controls.addView(TagDetailUi.dock(this,undo));TagDetailUi.gaps(controls);root.addView(controls);TagDetailUi.footer(root,first);
+  }
+
+  private void confirmResort() {
+    new GalleryUi.Sheet(this).setTitle("この連写を再ソートしますか？")
+      .setMessage("この連写の選択履歴を消して、最初から比較します。写真は変更しません。")
+      .setPositiveButton("再ソート",(dialog,which)->saveRanking(new PhotoRanking(ranking.ids,ranking.bestOnly()?"B:":"A:")))
+      .setNegativeButton("キャンセル",null).show();
   }
 
   private void changeRankingMode(boolean best) {
@@ -1642,13 +1634,7 @@ public final class MainActivity extends DiagnosticActivity {
         .setItems(
             new String[] {"再ソート"},
             (d, choice) -> {
-              new GalleryUi.Sheet(this)
-                    .setTitle("この連写を再ソートしますか？")
-                    .setMessage("この連写の選択履歴を消して、最初から比較します。写真は変更しません。")
-                    .setPositiveButton(
-                        "再ソート", (dialog, which) -> saveRanking(new PhotoRanking(ranking.ids, ranking.bestOnly() ? "B:" : "A:")))
-                    .setNegativeButton("キャンセル", null)
-                    .show();
+              confirmResort();
             })
         .show();
   }

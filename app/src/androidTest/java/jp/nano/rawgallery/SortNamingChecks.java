@@ -16,6 +16,7 @@ import java.util.concurrent.*;
 /** Real screen transitions with generated JPEGs and an isolated ranking store. */
 final class SortNamingChecks {
   private static Object field(Object o,String n)throws Exception{Field f=o.getClass().getDeclaredField(n);f.setAccessible(true);return f.get(o);}
+  private static Object uncheckedField(Object o,String n){try{return field(o,n);}catch(Exception e){throw new RuntimeException(e);}}
   private static void set(Object o,String n,Object v)throws Exception{Field f=o.getClass().getDeclaredField(n);f.setAccessible(true);f.set(o,v);}
   private static void invoke(Object o,String n)throws Exception{Method m=o.getClass().getDeclaredMethod(n);m.setAccessible(true);m.invoke(o);}
   private static void main(Instrumentation t,Runnable r){
@@ -59,9 +60,8 @@ final class SortNamingChecks {
   }
   private static void capture(Instrumentation t,MainActivity a,String name)throws Exception{
     Thread.sleep(350);t.waitForIdleSync();
-    Bitmap b=t.getUiAutomation().takeScreenshot();
-    if(b==null)throw new AssertionError("No screenshot");
-    try(FileOutputStream out=new FileOutputStream(new File(a.getCacheDir(),"sort-test-"+name+".png"))){b.compress(Bitmap.CompressFormat.PNG,100,out);}finally{b.recycle();}
+    File dir=new File(a.getCacheDir(),"consistency-checks");dir.mkdirs();
+    ConsistencyLayoutChecks.captureHardware(t,a,(View)field(a,"root"),dir,"sort-test-"+name);
   }
   private static void back(Instrumentation t) { t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK); t.waitForIdleSync(); }
   static String run(Instrumentation t)throws Exception{
@@ -107,9 +107,8 @@ final class SortNamingChecks {
       main(t,()->require(a,"ソート結果"));capture(t,a,"result");
       String resultJournal=((PhotoRanking)field(a,"ranking")).journal;
       waitFor(t,()->results(a.getWindow().getDecorView()).getChildCount()>0);
-      main(t,()->{ListView list=results(a.getWindow().getDecorView());View row=list.getChildAt(0);
-        if(!(row instanceof RankingResultRow)||!row.getContentDescription().toString().contains("fixture-"))throw new AssertionError("result semantics");
-        if(find(a.getWindow().getDecorView(),"写真をタップして拡大")!=null)throw new AssertionError("redundant hint");
+      main(t,()->{View row=a.getWindow().getDecorView().findViewWithTag("result-hero-"+((PhotoRanking)uncheckedField(a,"ranking")).best().get(0));
+        if(row==null||!row.getContentDescription().toString().contains("fixture-"))throw new AssertionError("result semantics");
         if(!row.performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK,null))throw new AssertionError("accessible open rejected");});
       waitFor(t,()->results(a.getWindow().getDecorView())==null);back(t);
       waitFor(t,()->results(a.getWindow().getDecorView())!=null&&results(a.getWindow().getDecorView()).getChildCount()>0);
@@ -124,7 +123,7 @@ final class SortNamingChecks {
       waitFor(t,()->results(a.getWindow().getDecorView()).getChildCount()>0);
       main(t,()->results(a.getWindow().getDecorView()).scrollListBy(1800));
       waitFor(t,()->results(a.getWindow().getDecorView()).getFirstVisiblePosition()>0);
-      int[] pos={0,0};main(t,()->{ListView list=results(a.getWindow().getDecorView());pos[0]=list.getFirstVisiblePosition();pos[1]=list.getChildAt(0).getTop();list.performItemClick(list.getChildAt(0),pos[0],list.getItemIdAtPosition(pos[0]));});
+      int[] pos={0,0};main(t,()->{ListView list=results(a.getWindow().getDecorView());pos[0]=list.getFirstVisiblePosition();pos[1]=list.getChildAt(0).getTop();View target=list.findViewWithTag("result-"+scrollRanking.ids.get(30));if(target==null)throw new AssertionError("photo target missing");target.performClick();});
       waitFor(t,()->results(a.getWindow().getDecorView())==null);back(t);
       waitFor(t,()->{ListView list=results(a.getWindow().getDecorView());return list!=null&&list.getChildCount()>0&&list.getFirstVisiblePosition()==pos[0]&&list.getChildAt(0).getTop()==pos[1];});
       main(t,()->{try{set(a,"photos",photos);Map<String,Integer> members=(Map<String,Integer>)field(a,"rankingMembers");members.clear();members.putAll(originalMembers);set(a,"ranking",originalRanking);set(a,"rankingResultState",null);invoke(a,"showRanking");}catch(Exception e){throw new RuntimeException(e);}});
@@ -132,10 +131,10 @@ final class SortNamingChecks {
       back(t);
       main(t,()->require(a,"ソート結果"));capture(t,a,"done");click(t,a,"ソート結果");
       String journal=((PhotoRanking)field(a,"ranking")).journal;
-      click(t,a,"その他");dialog(t,"再ソート",true);dialog(t,"この連写を再ソートしますか？",false);capture(t,a,"redo");dialog(t,"キャンセル",true);
+      click(t,a,"再ソート");dialog(t,"この連写を再ソートしますか？",false);capture(t,a,"redo");dialog(t,"キャンセル",true);
       if(!journal.equals(((PhotoRanking)field(a,"ranking")).journal))throw new AssertionError("cancel changed journal");
-      click(t,a,"すべてに順位");dialog(t,"ソート方式を変更しますか？",false);capture(t,a,"mode");dialog(t,"キャンセル",true);
-      click(t,a,"その他");dialog(t,"再ソート",true);dialog(t,"再ソート",true);
+      click(t,a,"すべての順位を決める");dialog(t,"ソート方式を変更しますか？",false);capture(t,a,"mode");dialog(t,"キャンセル",true);
+      click(t,a,"再ソート");dialog(t,"再ソート",true);
       main(t,()->{try{if(((PhotoRanking)field(a,"ranking")).decisions()!=0)throw new AssertionError("redo did not reset");}catch(Exception e){throw new RuntimeException(e);}});
       back(t);
       main(t,()->{try{set(a,"selecting",true);Set<String> selected=(Set<String>)field(a,"selectedPhotos");selected.clear();for(PhotoRepository.Photo p:photos)selected.add(p.uri.toString());invoke(a,"shareSelection");}catch(Exception e){throw new RuntimeException(e);}});
