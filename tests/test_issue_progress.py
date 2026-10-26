@@ -75,6 +75,32 @@ class ProgressTest(unittest.TestCase):
         self.assertIn('loupe-progress:v1', saved['body'])
         self.assertIn('+09:00', saved['body'])
 
+    def test_then_requires_verified_start(self):
+        base=['progress','record','--issue','42','--run','test','--phase','install','--status','start','--note','test']
+        for failure in ('request','mismatch',None):
+            saved={};order=[]
+            def api(path,payload=None):
+                if failure=='request':raise ValueError('request failed')
+                if payload:saved['body']=payload['body'];return {'id':123}
+                if path.endswith('/comments/123'):
+                    order.append('verified')
+                    return {'body':'mismatch' if failure=='mismatch' else saved['body'],'html_url':'https://example.test/123'}
+                return {'number':42}
+            def child(command):
+                self.assertEqual(order,['verified']);self.assertEqual(command,['fixture-command','--literal']);return type('Result',(),{'returncode':7})()
+            with self.subTest(failure=failure),patch('sys.argv',base+['--then','fixture-command','--literal']),patch.object(p,'api',side_effect=api),patch.object(p,'events',return_value=[]),patch.object(p.subprocess,'run',side_effect=child) as run,contextlib.redirect_stdout(io.StringIO()):
+                if failure:
+                    with self.assertRaises(ValueError):p.main()
+                    run.assert_not_called()
+                else:self.assertEqual(p.main(),7);run.assert_called_once()
+
+    def test_then_rejects_invalid_or_non_start_records(self):
+        for phase,status,extra in [('baseline','start',[]),('install','complete',[]),('install','start',['--dry-run'])]:
+            args=['progress','record','--issue','42','--run','test','--phase',phase,'--status',status,'--note','test']+extra+['--then','fixture-command']
+            with self.subTest(phase=phase,status=status,extra=extra),patch('sys.argv',args),patch.object(p,'api') as api,patch.object(p.subprocess,'run') as run,contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as error:p.main()
+                self.assertEqual(error.exception.code,2);api.assert_not_called();run.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()
