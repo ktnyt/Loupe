@@ -107,6 +107,8 @@ final class SortNamingChecks {
       main(t,()->require(a,"ソート結果"));capture(t,a,"result");
       String resultJournal=((PhotoRanking)field(a,"ranking")).journal;
       waitFor(t,()->results(a.getWindow().getDecorView()).getChildCount()>0);
+      main(t,()->results(a.getWindow().getDecorView()).setSelectionFromTop(1,0));
+      waitFor(t,()->a.getWindow().getDecorView().findViewWithTag("result-hero-"+((PhotoRanking)uncheckedField(a,"ranking")).best().get(0))!=null);
       main(t,()->{View row=a.getWindow().getDecorView().findViewWithTag("result-hero-"+((PhotoRanking)uncheckedField(a,"ranking")).best().get(0));
         if(row==null||!row.getContentDescription().toString().contains("fixture-"))throw new AssertionError("result semantics");
         if(!row.performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK,null))throw new AssertionError("accessible open rejected");});
@@ -121,7 +123,7 @@ final class SortNamingChecks {
       PhotoRanking scrollRanking=completed;
       main(t,()->{try{set(a,"photos",many);Map<String,Integer> members=(Map<String,Integer>)field(a,"rankingMembers");members.clear();members.putAll(manyMembers);set(a,"ranking",scrollRanking);set(a,"rankingResultState",null);invoke(a,"showRanking");}catch(Exception e){throw new RuntimeException(e);}});
       waitFor(t,()->results(a.getWindow().getDecorView()).getChildCount()>0);
-      main(t,()->results(a.getWindow().getDecorView()).scrollListBy(1800));
+      main(t,()->results(a.getWindow().getDecorView()).setSelectionFromTop(1,-GalleryUi.dp(a,100)));
       waitFor(t,()->results(a.getWindow().getDecorView()).getFirstVisiblePosition()>0);
       int[] pos={0,0};main(t,()->{ListView list=results(a.getWindow().getDecorView());pos[0]=list.getFirstVisiblePosition();pos[1]=list.getChildAt(0).getTop();View target=list.findViewWithTag("result-"+scrollRanking.ids.get(30));if(target==null)throw new AssertionError("photo target missing");target.performClick();});
       waitFor(t,()->results(a.getWindow().getDecorView())==null);back(t);

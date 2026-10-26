@@ -16,15 +16,16 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private int tagWidth;
   private float tagFont;
   @Override public void callActivityOnCreate(android.app.Activity activity, Bundle state) {
-    if ((tagDetailTest || resultTest) && (activity instanceof TagActivity || activity instanceof MainActivity) && tagWidth > 0) {
+    if ((tagDetailTest || resultTest || galleryScreenTest) && (activity instanceof TagActivity || activity instanceof MainActivity) && tagWidth > 0) {
       android.content.res.Configuration config = new android.content.res.Configuration(activity.getBaseContext().getResources().getConfiguration());
       config.fontScale = tagFont; config.screenWidthDp = tagWidth;
       // Test process resources only; never writes system settings.
       activity.getResources().updateConfiguration(config, activity.getResources().getDisplayMetrics());
     }
     super.callActivityOnCreate(activity, state);
-    if ((tagDetailTest || resultTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+    if ((tagDetailTest || resultTest || galleryScreenTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
   }
+  private boolean galleryScreenTest;
   private boolean consistencyTest, syncControlsTest, tagDetailTest, resultTest, resultTalkBack;
   private boolean dashboardTalkBackTest;
   private boolean dashboardLayoutTest;
@@ -49,10 +50,11 @@ public final class ArchiveInstrumentation extends Instrumentation {
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    galleryScreenTest=args!=null&&"gallery-screen".equals(args.getString("mode"));
     resultTalkBack=args!=null&&"ranking-result-talkback".equals(args.getString("mode"));
     resultTest=resultTalkBack||(args!=null&&"ranking-result".equals(args.getString("mode")));
     tagDetailTest=args!=null&&"tag-detail".equals(args.getString("mode"));
-    if((tagDetailTest || resultTest) && args.containsKey("width")){tagWidth=Integer.parseInt(args.getString("width"));tagFont=Float.parseFloat(args.getString("font","1.0"));}
+    if((tagDetailTest || resultTest || galleryScreenTest) && args.containsKey("width")){tagWidth=Integer.parseInt(args.getString("width"));tagFont=Float.parseFloat(args.getString("font","1.0"));}
     syncControlsTest=args!=null&&"sync-controls".equals(args.getString("mode"));
     consistencyTest=args!=null&&"consistency-layout".equals(args.getString("mode"));
     dashboardTalkBackTest=args!=null&&"dashboard-talkback".equals(args.getString("mode"));
@@ -91,6 +93,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     File restored = null;
     try {
       Context context = getTargetContext();
+      if(galleryScreenTest){results.putString("stream",GalleryScreenChecks.run(this,tagWidth));finish(-1,results);return;}
       if(resultTest){results.putString("stream",RankingResultChecks.run(this,tagWidth,resultTalkBack));finish(-1,results);return;}
       if(tagDetailTest){results.putString("stream",TagDetailChecks.run(this,tagWidth));finish(-1,results);return;}
       if(syncControlsTest){results.putString("stream",SyncControlChecks.run(this));finish(-1,results);return;}

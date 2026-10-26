@@ -15,8 +15,8 @@ final class GalleryCarouselUi {
   static LinearLayout section(Context c,LinearLayout root,String title,boolean recent){
     LinearLayout section=new LinearLayout(c);section.setOrientation(LinearLayout.VERTICAL);
     LinearLayout heading=new LinearLayout(c);heading.setGravity(Gravity.CENTER_VERTICAL);
-    heading.setPadding(dp(c,20),dp(c,recent?40:24),dp(c,20),dp(c,12));
-    TextView label=text(c,title,17,GalleryUi.TEXT,24);label.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));label.setAccessibilityHeading(true);
+    heading.setPadding(dp(c,20),dp(c,40),dp(c,20),dp(c,recent?12:10));
+    TextView label=text(c,title,recent?17:13,recent?GalleryUi.TEXT:GalleryUi.MUTED,recent?24:18);label.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));label.setAccessibilityHeading(true);
     heading.addView(label,new LinearLayout.LayoutParams(0,-2,1));
     TextView date=text(c,"",13,0xffa9a9a4,18);date.setTag("carousel-date");heading.addView(date);section.addView(heading);
     HorizontalScrollView scroll=new HorizontalScrollView(c);scroll.setHorizontalScrollBarEnabled(false);

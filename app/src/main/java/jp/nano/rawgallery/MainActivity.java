@@ -241,19 +241,11 @@ public final class MainActivity extends DiagnosticActivity {
     activePreview = null;
     base();
     if (burstMembers != null && !selecting) { burstDetail(); return; }
-    LinearLayout header = row();
-    header.setPadding(dp(4), dp(4), dp(4), dp(4));
-    header.setMinimumHeight(dp(64));
-    LinearLayout heading = vertical();
-    TextView title = label(burstMembers != null ? "連写" : albumFolder == null ? "すべての写真"
-        : new File(albumFolder).getName(), 18, TEXT);
-    title.setMaxLines(1);
-    title.setEllipsize(android.text.TextUtils.TruncateAt.END);
-    heading.addView(title);
-    subtitle = label("", 12, MUTED);
-    heading.addView(subtitle);
-    header.addView(heading, new LinearLayout.LayoutParams(0, -2, 1));
-    listStatus=new StatusView(this);header.addView(listStatus);
+    subtitle = label("", 14, MUTED);
+    listStatus = new StatusView(this);
+    PhotoListUi.Heading header = new PhotoListUi.Heading(this,
+        burstMembers != null ? "連写" : albumFolder == null ? "すべての写真" : new File(albumFolder).getName(),
+        subtitle, listStatus);
 
     if (!selecting && burstMembers == null) addOtherAlbums();
     root.addView(header);
@@ -315,12 +307,12 @@ public final class MainActivity extends DiagnosticActivity {
     addRankFilters();
     if (selecting) { selectionControls(); dock(button("選択を終了", this::endSelection)); }
     else {
-      Button select = button("選択", () -> {
+      Button select = TagDetailUi.dockButton(this,"選択", () -> {
         if (!photos.isEmpty()) { selecting = true; bestOnly = true; gallery(); }
       });
-      dock(select, button("タグ", () -> openTags(null)), button("その他", this::photoMenu));
+      root.addView(TagDetailUi.dock(this,select, TagDetailUi.dockButton(this,"タグ", () -> openTags(null)), TagDetailUi.dockButton(this,"その他", this::photoMenu)));
     }
-    GalleryUi.bottomControls(root, controlsStart);
+    GalleryUi.bottomControls(root, controlsStart, BG);
     if (albumFolder == null && burstMembers == null)
       root.addView(new LibraryTabs(this, false, !selecting, this::switchLibraryTab));
     if (selecting) updateSelection();
@@ -599,25 +591,19 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private void addRankFilters() {
-    HorizontalScrollView scroll = new HorizontalScrollView(this);
-    scroll.setHorizontalScrollBarEnabled(false);
-    LinearLayout chips = row();
-    chips.setPadding(dp(12), 0, dp(12), dp(8));
+    PhotoListUi.Filters chips = new PhotoListUi.Filters(this);
     String[] names = {"すべて", "1位", "順位が未決定", "順位決定済み"};
     for (int i = 0; i < names.length; i++) {
       final int choice = i;
-      Button chip = GalleryUi.chip(this, names[i], rankFilter == i, () -> {
+      Button chip = PhotoListUi.chip(this, names[i], rankFilter == i, () -> {
         if (photos.isEmpty()) return;
         rememberGallery();
         rankFilter = choice;
         gallery();
       });
-      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
-      lp.setMargins(0, 0, dp(8), 0);
-      chips.addView(chip, lp);
+      chips.addView(chip, new ViewGroup.LayoutParams(-2,-2));
     }
-    scroll.addView(chips);
-    root.addView(scroll);
+    root.addView(chips);
   }
 
   private void rebuildDisplayed() {
@@ -1251,6 +1237,7 @@ public final class MainActivity extends DiagnosticActivity {
           recycled instanceof ThumbnailCell
               ? (ThumbnailCell) recycled
               : new ThumbnailCell(MainActivity.this);
+      cell.fixedHeight = dp(96);
       ImageView image = cell.image;
       List<Integer> members = displayed.get(position);
       int representative = members.get(0);

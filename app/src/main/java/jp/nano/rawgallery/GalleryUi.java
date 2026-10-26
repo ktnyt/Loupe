@@ -168,10 +168,12 @@ final class GalleryUi {
   }
 
   // Keep controls reachable while allowing content to occupy the remaining screen.
-  static void bottomControls(LinearLayout root, int first) {
+  static void bottomControls(LinearLayout root, int first) { bottomControls(root, first, PANEL); }
+
+  static void bottomControls(LinearLayout root, int first, int background) {
     Context c = root.getContext();
     LinearLayout controls = new LinearLayout(c); controls.setOrientation(LinearLayout.VERTICAL);
-    controls.setBackgroundColor(PANEL);
+    controls.setBackgroundColor(background);
     while (root.getChildCount() > first) {
       View child = root.getChildAt(first); root.removeViewAt(first);
       controls.addView(child);
