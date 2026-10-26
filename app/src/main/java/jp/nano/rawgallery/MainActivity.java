@@ -1687,50 +1687,20 @@ public final class MainActivity extends DiagnosticActivity {
     shareMenu(List.of(photo));
   }
 
+  private Dialog shareDialog;
   private void shareMenu(List<PhotoRepository.Photo> selection) {
     List<PhotoRepository.Photo> frozen = List.copyOf(selection);
-    List<ShareTargets.Target> savedTargets = ShareTargets.load(this);
-    boolean[] raw = {false};
-    LinearLayout sheet = vertical();
-    sheet.setPadding(dp(20), dp(4), dp(20), dp(16));
-    TextView description = label("写真を元の品質で渡します", 13, MUTED);
-    sheet.addView(description);
-    LinearLayout formats = row();
-    formats.setPadding(0, dp(12), 0, dp(12));
-    sheet.addView(formats);
-    AlertDialog[] dialog = new AlertDialog[1];
-    Runnable renderFormats = new Runnable() {
-      public void run() {
-        formats.removeAllViews();
-        formats.addView(GalleryUi.chip(MainActivity.this, "JPEGで共有", !raw[0], () -> {
-          raw[0] = false; run();
-        }), new LinearLayout.LayoutParams(0, -2, 1));
-        formats.addView(GalleryUi.chip(MainActivity.this, "元の形式で共有", raw[0], () -> {
-          raw[0] = true; run();
-        }), new LinearLayout.LayoutParams(0, -2, 1));
-        description.setText(raw[0] ? "撮影した形式のまま · RAW / JPEG" : "RAWの場合は、ファイル内のJPEG画像を使います");
-      }
-    };
-    renderFormats.run();
-    sheet.addView(GalleryUi.primary(button("共有先を選ぶ", () -> {
-      dialog[0].dismiss(); export(frozen, raw[0], null);
-    })), new LinearLayout.LayoutParams(-1, dp(52)));
-    if (!savedTargets.isEmpty()) {
-      TextView title = label("登録した共有先", 13, MUTED);
-      title.setPadding(0, dp(20), 0, dp(4));
-      sheet.addView(title);
-      for (ShareTargets.Target target : savedTargets) {
-        Button item = button(target.label + " · " + (target.raw ? "元のファイル" : "JPEG"), () -> {
-          dialog[0].dismiss(); export(frozen, target.raw, target);
-        });
-        item.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-        sheet.addView(item);
-      }
+    Set<String> best = new HashSet<>();int cloud=0;
+    for(PhotoRepository.Photo photo:frozen){
+      if("archive".equals(photo.uri.getScheme()))cloud++;
+      int index=photos.indexOf(photo);List<Integer> group=photoBundles.get(index);
+      if(group!=null&&group.size()>1)try{PhotoRanking rank=rankingFor(group);if(rank.done()&&rank.best().contains(ArchiveStore.key(photo)))best.add(photo.uri.toString());}catch(Exception ignored){}
     }
-    ScrollView scroll = new ScrollView(this);
-    scroll.addView(sheet);
-    dialog[0] = new GalleryUi.Sheet(this).setTitle(frozen.size() + "枚を共有")
-        .setView(scroll).setNegativeButton("閉じる", null).show();
+    ShareUi.Menu menu=new ShareUi.Menu(this,frozen,ShareTargets.load(this),cloud,best,(raw,target)->export(frozen,raw,target));
+    shareDialog=menu;
+    menu.setOnDismissListener(d->{for(ImageView image:menu.previews)if(image.getTag() instanceof ImageLoad)((ImageLoad)image.getTag()).cancelled=true;});
+    menu.show();
+    for(int i=0;i<menu.previews.size();i++)previewInto(menu.previews.get(i),menu.previewPhotos.get(i),dp(52));
   }
 
   private void export(
