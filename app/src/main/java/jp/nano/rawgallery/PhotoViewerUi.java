@@ -81,7 +81,22 @@ final class PhotoViewerUi extends ViewGroup {
   void status(StatusView view){status=view;stage.addView(view,new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT));refreshStatus();}
   void refreshStatus(){if(status==null||status.getParent()!=stage)return;RectF bounds=photoRect();FrameLayout.LayoutParams p=(FrameLayout.LayoutParams)status.getLayoutParams();int top=Math.round(Math.max(0,bounds.top))+dp(2),right=Math.round(Math.max(0,stage.getWidth()-bounds.right))+dp(status.photoRightInset());if(p.topMargin!=top||p.rightMargin!=right){p.topMargin=top;p.rightMargin=right;status.setLayoutParams(p);}}
   void failed(){failed=true;placeholder.invalidate();}
-  static void icon(Button button,String action){Context c=button.getContext();ActionIcon drawable=new ActionIcon(action,c.getResources().getDisplayMetrics().density*24f/26);drawable.setBounds(0,0,GalleryUi.dp(c,24),GalleryUi.dp(c,24));button.setCompoundDrawables(null,drawable,null,null);}
+  static void icon(Button button,String action){
+    int resource;
+    switch(action){
+      case "前の写真": resource=R.drawable.ic_viewer_previous;break;
+      case "次の写真": resource=R.drawable.ic_viewer_next;break;
+      case "拡大": resource=R.drawable.ic_viewer_zoom_in;break;
+      case "全体": resource=R.drawable.ic_viewer_zoom_out;break;
+      case "共有": resource=R.drawable.ic_viewer_share;break;
+      case "情報": resource=R.drawable.ic_viewer_info;break;
+      case "タグ": resource=R.drawable.ic_viewer_tag;break;
+      default: throw new IllegalArgumentException(action);
+    }
+    android.graphics.drawable.Drawable drawable=button.getContext().getDrawable(resource).mutate();
+    drawable.setBounds(0,0,GalleryUi.dp(button.getContext(),24),GalleryUi.dp(button.getContext(),24));
+    button.setCompoundDrawables(null,drawable,null,null);
+  }
 
   int dp(int n) { return GalleryUi.dp(getContext(),n); }
   static String date(PhotoRepository.Photo photo, boolean spoken) {
@@ -96,17 +111,66 @@ final class PhotoViewerUi extends ViewGroup {
   }
 
   static Button button(Context c, String icon, String label, String spoken, Runnable action) {
-    Button b = GalleryUi.button(c, icon, action);
-    b.setCompoundDrawables(null,null,null,null);
+    Button b = new DockButton(c);
+    b.setAllCaps(false);
+    b.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));
+    b.setTextColor(new android.content.res.ColorStateList(new int[][]{new int[]{android.R.attr.state_enabled},new int[]{}},new int[]{GalleryUi.TEXT,0xff626b72}));
+    b.setMinWidth(0);b.setMinimumWidth(0);
+    b.setOnClickListener(v->{GalleryUi.feedback(v);try(DiagnosticLog.Scope ignored=DiagnosticLog.span("action.button")){action.run();}});
     b.setText(label); b.setContentDescription(spoken);
     b.setTextSize(12); b.setIncludeFontPadding(false);
     b.setLineHeight(Math.round(b.getTextSize()*16/12));
     b.setMinHeight(GalleryUi.dp(c,64)); b.setMinimumHeight(GalleryUi.dp(c,64));
-    b.setPadding(GalleryUi.dp(c,4),GalleryUi.dp(c,6),GalleryUi.dp(c,4),GalleryUi.dp(c,6));
+    b.setPadding(GalleryUi.dp(c,2),GalleryUi.dp(c,4),GalleryUi.dp(c,2),GalleryUi.dp(c,4));
     b.setBackgroundColor(Color.TRANSPARENT);
     icon(b,icon);
     b.setCompoundDrawablePadding(GalleryUi.dp(c,4));
     return b;
+  }
+
+  /** Each column centers its own icon and label, including wrapped labels. */
+  static final class DockButton extends Button {
+    private android.graphics.drawable.Drawable glyph;
+    private boolean saveFailed;
+    private final Paint badge=new Paint(Paint.ANTI_ALIAS_FLAG);
+    DockButton(Context c){super(c);}
+    private int dp(float value){return GalleryUi.dp(getContext(),value);}
+    @Override public void setCompoundDrawables(android.graphics.drawable.Drawable left,android.graphics.drawable.Drawable top,android.graphics.drawable.Drawable right,android.graphics.drawable.Drawable bottom){
+      if(glyph!=null)glyph.setCallback(null);
+      glyph=top;
+      if(glyph!=null)glyph.setCallback(this);
+      super.setCompoundDrawables(left,null,right,bottom);
+      requestLayout();invalidate();
+    }
+    @Override protected boolean verifyDrawable(android.graphics.drawable.Drawable value){return value==glyph||super.verifyDrawable(value);}
+    @Override protected void onMeasure(int w,int h){
+      super.onMeasure(w,h);
+      int lines=getLayout()==null?1:getLayout().getLineCount();
+      int desired=Math.max(dp(64),Math.round(dp(36)+lines*getTextSize()*16/12));
+      setMeasuredDimension(getMeasuredWidth(),resolveSizeAndState(desired,h,0));
+    }
+    @Override protected void onDraw(Canvas canvas){
+      android.text.Layout layout=getLayout();if(layout==null)return;
+      float lineHeight=getTextSize()*16/12;
+      float top=(getHeight()-dp(28)-layout.getLineCount()*lineHeight)/2f;
+      if(glyph!=null){
+        glyph.setTint(getCurrentTextColor());
+        int left=(getWidth()-dp(24))/2;
+        glyph.setBounds(left,Math.round(top),left+dp(24),Math.round(top)+dp(24));
+        glyph.draw(canvas);
+      }
+      android.text.TextPaint paint=getPaint();paint.setColor(getCurrentTextColor());
+      float baseline=top+dp(28)+(lineHeight-paint.ascent()-paint.descent())/2;
+      for(int i=0;i<layout.getLineCount();i++){
+        String line=getText().subSequence(layout.getLineStart(i),layout.getLineEnd(i)).toString().replace("\n","");
+        canvas.drawText(line,(getWidth()-paint.measureText(line))/2,baseline+i*lineHeight,paint);
+      }
+      if(saveFailed){
+        badge.setStyle(Paint.Style.FILL);badge.setColor(Color.BLACK);
+        canvas.drawCircle(getWidth()/2f+dp(13),dp(11),dp(9),badge);
+        StatusView.glyph(canvas,badge,StatusView.Symbol.FAILED,getWidth()/2f+dp(5),dp(3),dp(16),0xffff8a7a,0);
+      }
+    }
   }
 
   Button action(String icon,String label,String spoken,Runnable action) {
@@ -122,11 +186,11 @@ final class PhotoViewerUi extends ViewGroup {
       public void draw(Canvas canvas){int save=canvas.save();canvas.translate(getBounds().left,getBounds().top);canvas.scale(getBounds().width()/24f,getBounds().height()/24f);
         if(busy){StatusView.glyph(canvas,p,StatusView.Symbol.RUNNING,0,0,24,button.getCurrentTextColor(),android.animation.ValueAnimator.areAnimatorsEnabled()?(android.os.SystemClock.uptimeMillis()%1000)*.36f:0);if(button.isShown()&&android.animation.ValueAnimator.areAnimatorsEnabled())button.postInvalidateDelayed(50);}
         else{tag.setTint(button.getCurrentTextColor());tag.setBounds(0,0,24,24);tag.draw(canvas);}
-        if(failed){p.setStyle(Paint.Style.FILL);p.setColor(Color.BLACK);canvas.drawCircle(25,5,9,p);StatusView.glyph(canvas,p,StatusView.Symbol.FAILED,17,-3,16,0xffff8a7a,0);}
         canvas.restoreToCount(save);
       }
       public void setAlpha(int value){}public void setColorFilter(ColorFilter value){}public int getOpacity(){return PixelFormat.TRANSLUCENT;}
     };
+    ((DockButton)button).saveFailed=failed;
     state.setBounds(0,0,GalleryUi.dp(c,24),GalleryUi.dp(c,24));button.setCompoundDrawables(null,state,null,null);button.invalidate();
   }
   void zoom() {
