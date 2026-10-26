@@ -37,32 +37,33 @@ final class DashboardChecks {
       a=(DashboardActivity)t.startActivitySync(new Intent(t.getTargetContext(),DashboardActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       DashboardActivity screen=a;
       AtomicInteger reads=new AtomicInteger();
-      t.runOnMainSync(()->{screen.onPause();screen.source=()->{reads.incrementAndGet();return live;};screen.onResume();});
+      onMain(t,()->{screen.onPause();screen.source=()->{reads.incrementAndGet();return live;};screen.onResume();});
       Thread.sleep(700);t.waitForIdleSync();
       require(reads.get()==1,"initial read");
-      t.runOnMainSync(()->{require(current(screen).ready==12,"injected rendered observation");});
+      onMain(t,()->{require(current(screen).ready==12,"injected rendered observation");});
       Thread.sleep(5100);require(reads.get()==2,"five second refresh");
-      t.runOnMainSync(screen::onPause);int stopped=reads.get();Thread.sleep(5200);require(reads.get()==stopped,"no reads while paused");
-      t.runOnMainSync(()->{screen.source=()->{throw new IllegalStateException("synthetic read failure");};screen.onResume();});
+      onMain(t,screen::onPause);int stopped=reads.get();Thread.sleep(5200);require(reads.get()==stopped,"no reads while paused");
+      onMain(t,()->{screen.source=()->{throw new IllegalStateException("synthetic read failure");};screen.onResume();});
       Thread.sleep(700);t.waitForIdleSync();
-      t.runOnMainSync(()->{
+      onMain(t,()->{
         require(current(screen).readFailed&&current(screen).ready==12,"screen retains values on read failure");
         ScrollView scroll=(ScrollView)get(screen,"scroll");
         // Restrict viewport to exercise actual scrolling without changing device settings.
         ViewGroup.LayoutParams params=scroll.getLayoutParams();params.height=GalleryUi.dp(screen,240);if(params instanceof android.widget.LinearLayout.LayoutParams)((android.widget.LinearLayout.LayoutParams)params).weight=0;scroll.setLayoutParams(params);
       });
       t.waitForIdleSync();
-      t.runOnMainSync(()->((ScrollView)get(screen,"scroll")).scrollTo(0,120));t.waitForIdleSync();
+      onMain(t,()->((ScrollView)get(screen,"scroll")).scrollTo(0,120));t.waitForIdleSync();
+      final int[] expectedY={120};
       for(int i=0;i<4;i++){
         final int index=i;
-        t.runOnMainSync(()->{View card=find(screen.getWindow().getDecorView(),new String[]{"読み込み中の仮画像","表示用プレビュー","タグのための写真の解析","自動のタグ付け"}[index]);require(card!=null,"card "+index);card.performClick();require((int)get(screen,"detail")==index,"detail navigation");screen.onBackPressed();});
+        onMain(t,()->{View card=find(screen.getWindow().getDecorView(),new String[]{"読み込み中の仮画像","表示用プレビュー","タグのための写真の解析","自動のタグ付け"}[index]);require(card!=null,"card "+index);card.setFocusableInTouchMode(true);card.requestFocus();expectedY[0]=((ScrollView)get(screen,"scroll")).getScrollY();card.performClick();require((int)get(screen,"detail")==index,"detail navigation");screen.onBackPressed();});
         t.waitForIdleSync();
-        t.runOnMainSync(()->require(((ScrollView)get(screen,"scroll")).getScrollY()==120,"back restores position"));
+        onMain(t,()->{require(((ScrollView)get(screen,"scroll")).getScrollY()==expectedY[0],"back restores position");require(((View[])get(screen,"cards"))[index].hasFocus(),"back restores selected card focus");});
       }
-      t.runOnMainSync(()->{Bundle saved=new Bundle();screen.onSaveInstanceState(saved);require(saved.getInt("listY")==120,"saved list position");require(DashboardObservation.restore(saved.getBundle("observation")).readFailed,"saved last observation");});
+      onMain(t,()->{Bundle saved=new Bundle();screen.onSaveInstanceState(saved);require(saved.getInt("listY")==expectedY[0],"saved list position");require(DashboardObservation.restore(saved.getBundle("observation")).readFailed,"saved last observation");});
       return "PASS dashboard: unknown vs measured zero; stale runner; overlapping ready/fail; read failure retains prior data; snapshot Bundle; initial and 5s refresh; paused refresh removed; 4 detail transitions and actual Back scroll restoration. No original or production preference writes.\n";
     } finally {
-      if(a!=null){DashboardActivity screen=a;t.runOnMainSync(screen::finish);}
+      if(a!=null){DashboardActivity screen=a;onMain(t,screen::finish);}
       p.edit().clear().commit();t.getTargetContext().deleteSharedPreferences(file);
     }
   }
@@ -70,4 +71,6 @@ final class DashboardChecks {
   private static Object get(Object o,String name){try{Field f=o.getClass().getDeclaredField(name);f.setAccessible(true);return f.get(o);}catch(Exception e){throw new AssertionError(e);}}
   private static View find(View v,String prefix){if(v.isClickable()&&v.getContentDescription()!=null&&v.getContentDescription().toString().startsWith(prefix))return v;if(v instanceof ViewGroup){ViewGroup g=(ViewGroup)v;for(int i=0;i<g.getChildCount();i++){View found=find(g.getChildAt(i),prefix);if(found!=null)return found;}}return null;}
   private static void require(boolean value,String message){if(!value)throw new AssertionError(message);}
+  private static void onMain(Instrumentation t,Runnable action){final Throwable[] failure={null};t.runOnMainSync(()->{try{action.run();}catch(Throwable e){failure[0]=e;}});if(failure[0]!=null)throw new AssertionError(failure[0]);}
+
 }

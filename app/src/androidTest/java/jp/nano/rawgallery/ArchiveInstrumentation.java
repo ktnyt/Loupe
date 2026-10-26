@@ -13,6 +13,8 @@ import org.json.JSONObject;
  * source.
  */
 public final class ArchiveInstrumentation extends Instrumentation {
+  private boolean dashboardTalkBackTest;
+  private boolean dashboardLayoutTest;
   private boolean dashboardTest;
   private boolean talkBackStatusTest;
   private boolean visualStatusTest;
@@ -34,6 +36,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    dashboardTalkBackTest=args!=null&&"dashboard-talkback".equals(args.getString("mode"));
+    dashboardLayoutTest=args!=null&&"dashboard-layout".equals(args.getString("mode"));
     dashboardTest=args!=null&&"dashboard".equals(args.getString("mode"));
     talkBackStatusTest=args!=null&&"talkback-status".equals(args.getString("mode"));
     visualStatusTest=args!=null&&"visual-status".equals(args.getString("mode"));
@@ -68,6 +72,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
     File restored = null;
     try {
       Context context = getTargetContext();
+      if(dashboardTalkBackTest){results.putString("stream",DashboardTalkBackChecks.run(this));finish(-1,results);return;}
+      if(dashboardLayoutTest){results.putString("stream",DashboardLayoutChecks.run(this));finish(-1,results);return;}
       if(dashboardTest){results.putString("stream",DashboardChecks.run(this));finish(-1,results);return;}
       if(talkBackStatusTest){results.putString("stream",TalkBackStatusChecks.run(this));finish(-1,results);return;}
       if(visualStatusTest){results.putString("stream",VisualStatusChecks.run(this));finish(-1,results);return;}
