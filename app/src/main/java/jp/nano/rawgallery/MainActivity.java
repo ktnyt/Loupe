@@ -1308,73 +1308,30 @@ public final class MainActivity extends DiagnosticActivity {
     int token = ++generation;
     PhotoRepository.Photo photo = photos.get(position);
     base();
-    LinearLayout top = row();
-    top.setPadding(dp(10), dp(8), dp(10), dp(8));
-
-
-    int within = burstMembers == null ? position : burstMembers.indexOf(position);
-    TextView count =
-        label(
-            (within + 1)
-                + " / "
-                + (burstMembers == null ? photos.size() : burstMembers.size())
-                + (burstMembers == null ? "" : " 連写"),
-            13,
-            MUTED);
-    count.setGravity(Gravity.END);
-    top.addView(count, new LinearLayout.LayoutParams(0, -2, 1));
-    root.addView(top);
-    FrameLayout photoFrame = new FrameLayout(this);
-    ZoomImageView image = new ZoomImageView(this);
-    image.setPageListener(
-        direction -> {
-          if (fromRanking) return;
-          adjacentPhoto(direction);
-        });
-    photoFrame.addView(image, new FrameLayout.LayoutParams(-1, -1));
+    root.setBackgroundColor(Color.BLACK);
+    PhotoViewerUi viewer=new PhotoViewerUi(this,photo);
+    root.addView(viewer,new LinearLayout.LayoutParams(-1,0,1));
+    FrameLayout photoFrame=viewer.stage;
+    ZoomImageView image=viewer.image;
+    image.setPageListener(direction->{if(!fromRanking)adjacentPhoto(direction);});
     StatusView loadStatus=new StatusView(this);
-    FrameLayout.LayoutParams statusPosition=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.END);
-    statusPosition.setMargins(0,dp(8),dp(8),0);photoFrame.addView(loadStatus,statusPosition);
+    loadStatus.asPhotoOverlay();viewer.status(loadStatus);
     loadStatus.begin("元のファイルを読み込んでいます");
-    root.addView(photoFrame, new LinearLayout.LayoutParams(-1, 0, 1));
     TextView model = label("", 16, TEXT), dimensions = label(photo.name, 11, MUTED);
-    Button more =
-        button(
-            "その他",
-            () ->
-                new GalleryUi.Sheet(this)
-                    .setItems(
-                        fromRanking
-                            ? new String[] {"写真の情報"}
-                            : new String[] {"写真の情報", "前の写真", "次の写真"},
-                        (d, which) -> {
-                          if (which == 0)
-                            new GalleryUi.Sheet(this)
-                                .setTitle(photo.name)
-                                .setMessage(
-                                    model.getText()
-                                        + "\n"
-                                        + dimensions.getText()
-                                        + "\n"
-                                        + photo.folder)
-                                .setPositiveButton("閉じる", null)
-                                .show();
-                          else adjacentPhoto(which == 1 ? -1 : 1);
-                        })
-                    .setNegativeButton("閉じる", null)
-                    .show());
-    int controlsStart = root.getChildCount();
-    dock(button("拡大・戻す", image::toggleZoom));
-    if (fromRanking && !ranking.done())
-      dock(GalleryUi.neutralPrimary(button("この写真を選ぶ", () -> {
-        saveRanking(ranking.choose(rankingMembers.get(ranking.upper()) == position));
-      })));
-    if (!fromRanking && "content".equals(photo.uri.getScheme()))
-      dock(button("タグ", () -> openTags(photo)), button("前の写真", () -> adjacentPhoto(-1)), button("次の写真", () -> adjacentPhoto(1)));
-    dock(
-        GalleryUi.primary(button("共有", () -> shareMenu(photo))),
-        more);
-    GalleryUi.bottomControls(root, controlsStart);
+    if(!fromRanking){
+      int within=burstMembers==null?position:burstMembers.indexOf(position);
+      int count=burstMembers==null?photos.size():burstMembers.size();
+      Button previous=viewer.action("前の写真","前へ","前の写真",()->adjacentPhoto(-1));
+      Button next=viewer.action("次の写真","次へ","次の写真",()->adjacentPhoto(1));
+      previous.setEnabled(within>0);next.setEnabled(within+1<count);
+    }
+    viewer.zoom();
+    viewer.action("共有","共有","共有",()->shareMenu(photo));
+    if(!fromRanking&&"content".equals(photo.uri.getScheme()))viewer.action("タグ","タグ","タグ",()->openTags(photo));
+    viewer.action("情報","情報","写真の情報",()->new GalleryUi.Sheet(this).setTitle(photo.name)
+        .setMessage(model.getText()+"\n"+dimensions.getText()+"\n"+photo.folder)
+        .setPositiveButton("閉じる",null).show());
+    if(fromRanking&&!ranking.done())viewer.choose(()->saveRanking(ranking.choose(rankingMembers.get(ranking.upper())==position)));
     viewing =
         actions.submit(
             () -> {
@@ -1391,7 +1348,7 @@ public final class MainActivity extends DiagnosticActivity {
                       image.setBitmap(bitmap);
                       model.setText(preview.model);
                       dimensions.setText(photo.name);
-                      loadStatus.companion(StatusView.Symbol.PREVIEW);
+                      loadStatus.companion(StatusView.Symbol.PREVIEW);viewer.refreshStatus();
                       image.setStateDescription("プレビューを表示しています。元のファイルを読み込んでいます");
                     });
               } catch (Exception missingPreview) {
@@ -1415,7 +1372,7 @@ public final class MainActivity extends DiagnosticActivity {
                         high.recycle();
                         return;
                       }
-                      loadStatus.companion(null);loadStatus.finish();
+                      loadStatus.companion(null);loadStatus.finish();viewer.refreshStatus();
                       image.setStateDescription("元のファイルを表示しています");
                       activePreview = full;
                       image.setBitmap(high);
@@ -1437,14 +1394,18 @@ public final class MainActivity extends DiagnosticActivity {
                       if (!isDestroyed() && detail && token == generation) {
                         String failure=activePreview==null?"写真を読み込めませんでした":"プレビューを表示しています。元のファイルを読み込めませんでした";
                         if(activePreview==null){
+                          viewer.failed();
                           photoFrame.removeView(loadStatus);
                           LinearLayout recovery=new LinearLayout(this);recovery.setOrientation(LinearLayout.VERTICAL);recovery.setGravity(Gravity.CENTER);
-                          loadStatus.show(StatusView.Symbol.FAILED,failure);recovery.addView(loadStatus,new LinearLayout.LayoutParams(dp(48),dp(48)));
+                          loadStatus.asPhotoFailure();loadStatus.show(StatusView.Symbol.FAILED,failure);recovery.addView(loadStatus,new LinearLayout.LayoutParams(dp(32),dp(32)));
                           Button retry=button("再試行",()->showPhoto(position,fromRanking));retry.setContentDescription(failure+"。再試行");retry.setTextSize(14);retry.setPadding(dp(18),0,dp(18),0);
                           android.graphics.drawable.GradientDrawable outline=GalleryUi.shape(this,Color.TRANSPARENT,24);outline.setStroke(dp(1),0xff3a3a3f);retry.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x33c7d8e4),outline,GalleryUi.shape(this,Color.WHITE,24)));
                           ActionIcon retryIcon=new ActionIcon("再試行",getResources().getDisplayMetrics().density*20/26);retryIcon.setBounds(0,0,dp(20),dp(20));retry.setCompoundDrawables(retryIcon,null,null,null);retry.setCompoundDrawablePadding(dp(6));recovery.addView(retry,new LinearLayout.LayoutParams(-2,dp(48)));
+                          android.graphics.drawable.GradientDrawable retryBackground=GalleryUi.shape(this,Color.BLACK,24);retryBackground.setStroke(dp(1),0xff3a3a3f);retry.setBackground(retryBackground);
+                          LinearLayout.LayoutParams retryPosition=(LinearLayout.LayoutParams)retry.getLayoutParams();retryPosition.topMargin=dp(12);retry.setLayoutParams(retryPosition);
                           photoFrame.addView(recovery,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER));
                         }else loadStatus.show(StatusView.Symbol.FAILED,"",failure,()->showPhoto(position,fromRanking),"再試行");
+                        viewer.refreshStatus();
                         image.setStateDescription(failure);
                         if(activePreview==null)model.setText("");
                         dimensions.setText(photo.name);

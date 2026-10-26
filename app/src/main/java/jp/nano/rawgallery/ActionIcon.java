@@ -60,6 +60,8 @@ final class ActionIcon extends Drawable {
         line(canvas, 19, 12, 5, 12);
         line(canvas, 11, 6, 5, 12, 11, 18);
         break;
+      case "情報":
+        canvas.drawCircle(12,12,9,paint);line(canvas,12,11,12,17);canvas.drawCircle(12,7.5f,.5f,paint);break;
       case "その他":
         for (int y : new int[] {5, 12, 19}) canvas.drawCircle(12, y, 1, paint);
         break;
@@ -107,6 +109,8 @@ final class ActionIcon extends Drawable {
         line(canvas, 3, 3, 12, 3, 21, 12, 12, 21, 3, 12, 3, 3);
         canvas.drawCircle(7.5f, 7.5f, 1, paint);
         break;
+      case "全体":
+        canvas.drawCircle(11,11,6.5f,paint);line(canvas,20,20,15.6f,15.6f);line(canvas,8.5f,11,13.5f,11);break;
       case "拡大":
         canvas.drawCircle(10, 10, 6, paint);
         line(canvas, 15, 15, 21, 21);

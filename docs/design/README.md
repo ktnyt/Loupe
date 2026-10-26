@@ -105,4 +105,8 @@ Android実装は[#39](https://github.com/ktnyt/Loupe/issues/39)で導入済み�
 
 [写真一覧の4フィルターを保持したHTML](loupe-photo-list-filters.html)は全写真・アルバム内の写真一覧の実装参照。元S02の配置に既存4フィルター、長い名前の折返し、ルートの固定タブを反映する。
 
-[写真選択と共有のHTML](loupe-select-share.html)は元S03/T01/T08/S09と必要な変更を並べる。写真選択部分を適用対象とし、共有準備は中止操作だけで取り消し、Backでは閉じない現行契約を反映している。
+[写真選択と共有のHTML](loupe-select-share.html)は元S03/T01/T08/S09と必要な変更を並べる。写真選択と共有シートを適用対象とし、選択中も元の右下の雲印（24×20dp、未選択5dp・選択14dp）を保持する。共有準備は中止操作だけで取り消し、Backでは閉じない現行契約を反映している。
+
+## 個別写真表示
+
+[元のS08を保持した写真表示HTML](loupe-photo-viewer.html)をMainの通常/比較・結果からの閲覧とTagActivityの写真閲覧に適用する。黒背景、日時、写真のfit、64dp一列dockを保ち、専用Back削除と既存の拡大・共有・タグ・情報の条件を反映する。HTML確認とAndroid実機の適用完了は区別する。
