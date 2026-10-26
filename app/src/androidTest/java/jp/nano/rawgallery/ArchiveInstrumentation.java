@@ -25,7 +25,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     super.callActivityOnCreate(activity, state);
     if ((tagDetailTest || resultTest || galleryScreenTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
   }
-  private boolean galleryScreenTest, galleryTalkBack, viewerScreenTest;
+  private boolean galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest;
   private boolean consistencyTest, syncControlsTest, tagDetailTest, resultTest, resultTalkBack;
   private boolean dashboardTalkBackTest;
   private boolean dashboardLayoutTest;
@@ -50,9 +50,10 @@ public final class ArchiveInstrumentation extends Instrumentation {
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    shareScreenTest=args!=null&&"share-screen".equals(args.getString("mode"));
     viewerScreenTest=args!=null&&"viewer-screen".equals(args.getString("mode"));
     galleryTalkBack=args!=null&&"gallery-screen-talkback".equals(args.getString("mode"));
-    galleryScreenTest=viewerScreenTest||galleryTalkBack||(args!=null&&"gallery-screen".equals(args.getString("mode")));
+    galleryScreenTest=shareScreenTest||viewerScreenTest||galleryTalkBack||(args!=null&&"gallery-screen".equals(args.getString("mode")));
     resultTalkBack=args!=null&&"ranking-result-talkback".equals(args.getString("mode"));
     resultTest=resultTalkBack||(args!=null&&"ranking-result".equals(args.getString("mode")));
     tagDetailTest=args!=null&&"tag-detail".equals(args.getString("mode"));
@@ -97,6 +98,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       String report=failureReport(new AssertionError(new java.io.IOException("PRIVATE_VALUE")));
       if(report.contains("PRIVATE_VALUE")||!report.contains("java.io.IOException")||!report.contains("ArchiveInstrumentation.java:"))throw new AssertionError();
       Context context = getTargetContext();
+      if(shareScreenTest){results.putString("stream",ShareScreenChecks.run(this,tagWidth));finish(-1,results);return;}
       if(viewerScreenTest){results.putString("stream",ViewerScreenChecks.run(this,tagWidth));finish(-1,results);return;}
       if(galleryScreenTest){results.putString("stream",GalleryScreenChecks.run(this,tagWidth,galleryTalkBack));finish(-1,results);return;}
       if(resultTest){results.putString("stream",RankingResultChecks.run(this,tagWidth,resultTalkBack));finish(-1,results);return;}

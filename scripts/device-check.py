@@ -57,7 +57,7 @@ def wait_for_standby(shell, attempts=10, interval=0.5):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--serial', required=True)
-    parser.add_argument('--mode', required=True, choices=('viewer-screen', 'gallery-screen', 'ranking-result', 'tag-detail', 'sort-naming', 'consistency-layout'))
+    parser.add_argument('--mode', required=True, choices=('share-screen', 'viewer-screen', 'gallery-screen', 'ranking-result', 'tag-detail', 'sort-naming', 'consistency-layout'))
     parser.add_argument('--width', default='400')
     parser.add_argument('--font', default='1.0')
     parser.add_argument('--adb', default='/opt/homebrew/share/android-commandlinetools/platform-tools/adb')
