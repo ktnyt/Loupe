@@ -14,16 +14,17 @@ import org.json.JSONObject;
  */
 public final class ArchiveInstrumentation extends Instrumentation {
   private int tagWidth;
+  private boolean sortDimensionsSpecified;
   private float tagFont;
   @Override public void callActivityOnCreate(android.app.Activity activity, Bundle state) {
-    if ((tagDetailTest || resultTest || galleryScreenTest) && (activity instanceof TagActivity || activity instanceof MainActivity) && tagWidth > 0) {
+    if ((tagDetailTest || resultTest || galleryScreenTest || sortTest) && (activity instanceof TagActivity || activity instanceof MainActivity) && tagWidth > 0) {
       android.content.res.Configuration config = new android.content.res.Configuration(activity.getBaseContext().getResources().getConfiguration());
       config.fontScale = tagFont; config.screenWidthDp = tagWidth;
       // Test process resources only; never writes system settings.
       activity.getResources().updateConfiguration(config, activity.getResources().getDisplayMetrics());
     }
     super.callActivityOnCreate(activity, state);
-    if ((tagDetailTest || resultTest || galleryScreenTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+    if ((tagDetailTest || resultTest || galleryScreenTest || sortTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
   }
   private boolean galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest;
   private boolean consistencyTest, syncControlsTest, tagDetailTest, resultTest, resultTalkBack;
@@ -50,6 +51,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    sortTest = args != null && "sort-naming".equals(args.getString("mode"));
     shareScreenTest=args!=null&&"share-screen".equals(args.getString("mode"));
     viewerScreenTest=args!=null&&"viewer-screen".equals(args.getString("mode"));
     galleryTalkBack=args!=null&&"gallery-screen-talkback".equals(args.getString("mode"));
@@ -57,7 +59,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
     resultTalkBack=args!=null&&"ranking-result-talkback".equals(args.getString("mode"));
     resultTest=resultTalkBack||(args!=null&&"ranking-result".equals(args.getString("mode")));
     tagDetailTest=args!=null&&"tag-detail".equals(args.getString("mode"));
-    if((tagDetailTest || resultTest || galleryScreenTest) && args.containsKey("width")){tagWidth=Integer.parseInt(args.getString("width"));tagFont=Float.parseFloat(args.getString("font","1.0"));}
+    if((tagDetailTest || resultTest || galleryScreenTest || sortTest) && args.containsKey("width")){tagWidth=Integer.parseInt(args.getString("width"));tagFont=Float.parseFloat(args.getString("font","1.0"));}
+    sortDimensionsSpecified=sortTest && args.containsKey("width");
     syncControlsTest=args!=null&&"sync-controls".equals(args.getString("mode"));
     consistencyTest=args!=null&&"consistency-layout".equals(args.getString("mode"));
     dashboardTalkBackTest=args!=null&&"dashboard-talkback".equals(args.getString("mode"));
@@ -73,7 +76,6 @@ public final class ArchiveInstrumentation extends Instrumentation {
     comparisonLabelsTest = args != null && "comparison-labels".equals(args.getString("mode"));
     albumTagsTest = args != null && "album-tags".equals(args.getString("mode"));
     tabsTest = args != null && "library-tabs".equals(args.getString("mode"));
-    sortTest = args != null && "sort-naming".equals(args.getString("mode"));
     positionTest = args != null && "gallery-position".equals(args.getString("mode"));
     burstTest = args != null && "burst".equals(args.getString("mode"));
     realBurstTest = args != null && "burst-real".equals(args.getString("mode"));
@@ -91,6 +93,11 @@ public final class ArchiveInstrumentation extends Instrumentation {
     start();
   }
 
+  private void validateSortDimensions(Context context){
+    if(tagWidth<=0 || !Float.isFinite(tagFont) || tagFont<=0)throw new IllegalArgumentException("sort dimensions must be finite and positive");
+    if(GalleryUi.dp(context,tagWidth)>context.getResources().getDisplayMetrics().widthPixels)throw new IllegalArgumentException("sort width exceeds device");
+  }
+
   public void onStart() {
     Bundle results = new Bundle();
     File restored = null;
@@ -98,6 +105,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       String report=failureReport(new AssertionError(new java.io.IOException("PRIVATE_VALUE")));
       if(report.contains("PRIVATE_VALUE")||!report.contains("java.io.IOException")||!report.contains("ArchiveInstrumentation.java:"))throw new AssertionError();
       Context context = getTargetContext();
+      if(sortDimensionsSpecified)validateSortDimensions(context);
       if(shareScreenTest){results.putString("stream",ShareScreenChecks.run(this,tagWidth));finish(-1,results);return;}
       if(viewerScreenTest){results.putString("stream",ViewerScreenChecks.run(this,tagWidth));finish(-1,results);return;}
       if(galleryScreenTest){results.putString("stream",GalleryScreenChecks.run(this,tagWidth,galleryTalkBack));finish(-1,results);return;}
@@ -118,7 +126,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if (comparisonLabelsTest) { results.putString("stream", ComparisonLabelChecks.run(this)); finish(-1, results); return; }
       if (albumTagsTest) { results.putString("stream", AlbumTagEntryChecks.run(this)); finish(-1, results); return; }
       if (tabsTest) { results.putString("stream", LibraryTabsChecks.run(this)); finish(-1, results); return; }
-      if (sortTest) { results.putString("stream", SortNamingChecks.run(this)); finish(-1, results); return; }
+      if (sortTest) { results.putString("stream", SortNamingChecks.run(this,tagWidth,tagFont)); finish(-1, results); return; }
       if (positionTest) { results.putString("stream", GalleryPositionChecks.run(this)); finish(-1, results); return; }
       if (burstTest || realBurstTest) { results.putString("stream", BurstPreviewChecks.run(this, realBurstTest)); finish(-1, results); return; }
       if (sheetTest) { results.putString("stream", SheetChecks.run(this)); finish(-1, results); return; }
