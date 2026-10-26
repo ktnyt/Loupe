@@ -29,6 +29,8 @@ def standby_video(shell, enabled):
     # Pause before instrumentation; resume even if the test fails. Never unlock.
     shell('input', 'keyevent', '127')
     try:
+        # Leave the paused video window before instrumentation opens its activity.
+        shell('input', 'keyevent', '3')
         yield
     finally:
         require_unlocked(shell)

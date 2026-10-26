@@ -70,9 +70,33 @@ final class ConsistencyLayoutChecks {
   private static void clickAll(View view){if(view instanceof Button&&view.isEnabled())view.performClick();else if(view instanceof ViewGroup)for(int i=0;i<((ViewGroup)view).getChildCount();i++)clickAll(((ViewGroup)view).getChildAt(i));}
   private static void check(Instrumentation t,View root){final Throwable[] error={null};t.runOnMainSync(()->{try{bounds(root);}catch(Throwable e){error[0]=e;}});if(error[0]!=null)throw new AssertionError(error[0]);}
   private static void bounds(View v){if(v.getVisibility()!=View.VISIBLE)return;if(v instanceof Button&&v.getHeight()<GalleryUi.dp(v.getContext(),48))throw new AssertionError("small control");if(v instanceof TextView){TextView text=(TextView)v;android.text.Layout layout=text.getLayout();if(layout!=null){for(int i=0;i<layout.getLineCount();i++)if(layout.getEllipsisCount(i)>0)throw new AssertionError("ellipsis");if(layout.getHeight()>v.getHeight()-text.getCompoundPaddingTop()-text.getCompoundPaddingBottom()+1)throw new AssertionError("text height "+text.getText());}}if(v instanceof ViewGroup){ViewGroup g=(ViewGroup)v;for(int i=0;i<g.getChildCount();i++){View child=g.getChildAt(i);if(!(g instanceof HorizontalScrollView)&&(child.getLeft()<0||child.getRight()>g.getWidth()+1))throw new AssertionError("horizontal overflow "+child.getClass());bounds(child);}}}
-  static void captureHardware(Instrumentation t,Activity activity,View view,File dir,String name)throws Exception{
+  private static boolean processWindowFocused(){for(View root:android.view.inspector.WindowInspector.getGlobalWindowViews())if(root.isShown()&&root.hasWindowFocus())return true;return false;}
+  static void frame(Instrumentation t,View view)throws Exception{
+    java.util.concurrent.CountDownLatch committed=new java.util.concurrent.CountDownLatch(1);
+    TagDetailChecks.ui(t,()->{
+      if(!view.isAttachedToWindow()||!view.isHardwareAccelerated())throw new AssertionError("synthetic frame requires attached hardware view");
+      View decor=view.getRootView();
+      decor.getViewTreeObserver().registerFrameCommitCallback(committed::countDown);
+      decor.requestLayout();decor.postInvalidateOnAnimation();
+    });
+    if(!committed.await(5,java.util.concurrent.TimeUnit.SECONDS)){
+      TagDetailChecks.ui(t,()->android.util.Log.e("LoupeFixtureGeometry","frameTimeout attached="+view.isAttachedToWindow()+" shown="+view.isShown()+" focus="+view.hasWindowFocus()+" visibility="+view.getWindowVisibility()+" width="+view.getWidth()+" height="+view.getHeight()+" measured="+view.getMeasuredHeight()+" layoutRequested="+view.isLayoutRequested()+" decorWidth="+view.getRootView().getWidth()+" decorHeight="+view.getRootView().getHeight()));
+      throw new AssertionError("synthetic frame commit timeout");
+    }
+    long deadline=android.os.SystemClock.uptimeMillis()+5000;
+    boolean[] ready={false};
+    do{
+      TagDetailChecks.ui(t,()->ready[0]=view.isLaidOut()&&view.getWidth()>0&&view.getHeight()>0&&view.isShown()&&processWindowFocused());
+      if(ready[0])return;
+      Thread.sleep(16);
+    }while(android.os.SystemClock.uptimeMillis()<deadline);
+    throw new AssertionError("synthetic frame layout or app focus timeout");
+  }
+  static void captureHardware(Instrumentation t,Activity activity,View view,File dir,String name)throws Exception{captureHardware(t,activity.getWindow(),view,dir,name);}
+  static void captureHardware(Instrumentation t,Window window,View view,File dir,String name)throws Exception{
+    frame(t,view);
     java.util.concurrent.CountDownLatch done=new java.util.concurrent.CountDownLatch(1);int[] result={-1};Bitmap bitmap=Bitmap.createBitmap(view.getWidth(),view.getHeight(),Bitmap.Config.ARGB_8888);
-    t.runOnMainSync(()->{int[] origin=new int[2];view.getLocationInWindow(origin);Rect region=new Rect(origin[0],origin[1],origin[0]+view.getWidth(),origin[1]+view.getHeight());PixelCopy.request(activity.getWindow(),region,bitmap,value->{result[0]=value;done.countDown();},new android.os.Handler(android.os.Looper.getMainLooper()));});
+    t.runOnMainSync(()->{int[] origin=new int[2];view.getLocationInWindow(origin);Rect region=new Rect(origin[0],origin[1],origin[0]+view.getWidth(),origin[1]+view.getHeight());PixelCopy.request(window,region,bitmap,value->{result[0]=value;done.countDown();},new android.os.Handler(android.os.Looper.getMainLooper()));});
     try{if(!done.await(5,java.util.concurrent.TimeUnit.SECONDS)||result[0]!=PixelCopy.SUCCESS)throw new AssertionError("synthetic PixelCopy "+result[0]);try(FileOutputStream out=new FileOutputStream(new File(dir,name+".png"))){bitmap.compress(Bitmap.CompressFormat.PNG,100,out);}}finally{bitmap.recycle();}
   }
   private static void capture(Instrumentation t,View view,File dir,String name)throws Exception{final Bitmap[] bitmap={null};t.runOnMainSync(()->{bitmap[0]=Bitmap.createBitmap(view.getWidth(),view.getHeight(),Bitmap.Config.ARGB_8888);view.draw(new Canvas(bitmap[0]));});try(FileOutputStream out=new FileOutputStream(new File(dir,name+".png"))){bitmap[0].compress(Bitmap.CompressFormat.PNG,100,out);}finally{bitmap[0].recycle();}}

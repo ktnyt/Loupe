@@ -33,7 +33,7 @@ final class TagDetailChecks {
     if(v instanceof Button)require(v.getHeight()>=Math.round(48*v.getResources().getDisplayMetrics().density),"touch height");
     if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++)inspect(((ViewGroup)v).getChildAt(i));
   }
-  static void idle(Instrumentation t,TagActivity a)throws Exception{((ExecutorService)get(a,"worker")).submit(()->{}).get(10,TimeUnit.SECONDS);t.waitForIdleSync();if(width>0)ui(t,()->{View root=(View)get(a,"root");ViewGroup.LayoutParams params=root.getLayoutParams();params.width=Math.round(width*a.getResources().getDisplayMetrics().density);root.setLayoutParams(params);});t.waitForIdleSync();Thread.sleep(150);}
+  static void idle(Instrumentation t,TagActivity a)throws Exception{((ExecutorService)get(a,"worker")).submit(()->{}).get(10,TimeUnit.SECONDS);t.waitForIdleSync();if(width>0)ui(t,()->{View root=(View)get(a,"root");ViewGroup.LayoutParams params=root.getLayoutParams();params.width=Math.round(width*a.getResources().getDisplayMetrics().density);root.setLayoutParams(params);});t.waitForIdleSync();ConsistencyLayoutChecks.frame(t,(View)get(a,"root"));}
   static void photoSave(TagActivity a,boolean failed){try{Method m=TagActivity.class.getDeclaredMethod("refreshPhotoSave",boolean.class);m.setAccessible(true);m.invoke(a,failed);}catch(Exception e){throw new RuntimeException(e);}}
   static PhotoViewerUi viewer(TagActivity a){return (PhotoViewerUi)((ViewGroup)get(a,"root")).getChildAt(0);}
   static void viewerCapture(Instrumentation t,TagActivity a,File dir,String state)throws Exception{

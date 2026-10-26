@@ -63,7 +63,8 @@ class DeviceCheckTests(unittest.TestCase):
                 elif failed_test:
                     with self.assertRaises(ValueError): run()
                 else: run()
-                self.assertLess(calls.index(('input', 'keyevent', '127')), calls.index(('instrument',)))
+                self.assertLess(calls.index(('input', 'keyevent', '127')), calls.index(('input', 'keyevent', '3')))
+                self.assertLess(calls.index(('input', 'keyevent', '3')), calls.index(('instrument',)))
                 if not locked_after:
                     self.assertGreater(calls.index(('input', 'keyevent', '126')), calls.index(('instrument',)))
 
