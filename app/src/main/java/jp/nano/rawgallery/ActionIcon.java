@@ -31,6 +31,14 @@ final class ActionIcon extends Drawable {
     canvas.translate(bounds.exactCenterX() - size / 2, bounds.exactCenterY() - size / 2);
     canvas.scale(size / 24, size / 24);
     switch (action) {
+      case "似た写真にもタグを付ける":
+        canvas.drawRoundRect(3.5f,7,11.5f,17,1.5f,1.5f,paint);canvas.drawRoundRect(13.5f,4,20.5f,11,1.5f,1.5f,paint);canvas.drawRoundRect(13.5f,13,20.5f,20,1.5f,1.5f,paint);break;
+      case "1枚ずつ確認する":
+        canvas.drawRoundRect(5,4,19,20,2,2,paint);line(canvas,9,12,15,12);break;
+      case "写真を追加":
+        canvas.drawRoundRect(3.5f,5,16.5f,18,2,2,paint);line(canvas,18.5f,9,18.5f,17);line(canvas,14.5f,13,22.5f,13);break;
+      case "一括訂正":
+        canvas.drawRoundRect(3.5f,3.5f,10.5f,10.5f,1.5f,1.5f,paint);canvas.drawRoundRect(13.5f,3.5f,20.5f,10.5f,1.5f,1.5f,paint);canvas.drawRoundRect(3.5f,13.5f,10.5f,20.5f,1.5f,1.5f,paint);line(canvas,14,17,16,19,20,14.5f);break;
       case "再試行":
         canvas.drawArc(4.5f,4.5f,19.5f,19.5f,0,315,false,paint);
         line(canvas,19.5f,4.5f,19.5f,8.5f);line(canvas,19.5f,8.5f,15.5f,8.5f);break;

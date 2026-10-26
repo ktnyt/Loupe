@@ -13,7 +13,7 @@ import org.json.JSONObject;
  * source.
  */
 public final class ArchiveInstrumentation extends Instrumentation {
-  private boolean consistencyTest, syncControlsTest;
+  private boolean consistencyTest, syncControlsTest, tagDetailTest;
   private boolean dashboardTalkBackTest;
   private boolean dashboardLayoutTest;
   private boolean dashboardTest;
@@ -37,6 +37,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    tagDetailTest=args!=null&&"tag-detail".equals(args.getString("mode"));
     syncControlsTest=args!=null&&"sync-controls".equals(args.getString("mode"));
     consistencyTest=args!=null&&"consistency-layout".equals(args.getString("mode"));
     dashboardTalkBackTest=args!=null&&"dashboard-talkback".equals(args.getString("mode"));
@@ -75,6 +76,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     File restored = null;
     try {
       Context context = getTargetContext();
+      if(tagDetailTest){results.putString("stream",TagDetailChecks.run(this));finish(-1,results);return;}
       if(syncControlsTest){results.putString("stream",SyncControlChecks.run(this));finish(-1,results);return;}
       if(consistencyTest){results.putString("stream",ConsistencyLayoutChecks.run(this));finish(-1,results);return;}
       if(dashboardTalkBackTest){results.putString("stream",DashboardTalkBackChecks.run(this));finish(-1,results);return;}

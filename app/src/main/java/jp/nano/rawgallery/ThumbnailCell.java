@@ -9,6 +9,7 @@ import android.widget.*;
 final class ThumbnailCell extends FrameLayout {
   final ImageView image;
   final Badges badges;
+  int fixedHeight;
 
   ThumbnailCell(Context context) {
     super(context);
@@ -26,7 +27,7 @@ final class ThumbnailCell extends FrameLayout {
     int side = MeasureSpec.getSize(width);
     super.onMeasure(
         MeasureSpec.makeMeasureSpec(side, MeasureSpec.EXACTLY),
-        MeasureSpec.makeMeasureSpec(side, MeasureSpec.EXACTLY));
+        MeasureSpec.makeMeasureSpec(fixedHeight>0?fixedHeight:side, MeasureSpec.EXACTLY));
   }
 
   static final class Badges extends View {
@@ -35,7 +36,7 @@ final class ThumbnailCell extends FrameLayout {
     String camera = "", rank = "";
     int count;
     StatusView.Symbol tagState;
-    boolean cloud, failed, rankFailed, selectionMode, selected, partial;
+    boolean cloud, failed, rankFailed, selectionMode, selected, partial, tagAtRight;
 
     Badges(Context context) {
       super(context);
@@ -78,7 +79,7 @@ final class ThumbnailCell extends FrameLayout {
         paint.setColor(0xfff5b947);
         canvas.drawText(rank, 11, h - 12, paint);
       }
-      if(tagState!=null)StatusView.glyph(canvas,paint,tagState,5,h-26,20,GalleryUi.TEXT,0);
+      if(tagState!=null){if(tagAtRight)box(canvas,w-30,h-26,24,20);StatusView.glyph(canvas,paint,tagState,tagAtRight?w-28:5,h-26,20,GalleryUi.TEXT,0);}
       if(rankFailed)StatusView.glyph(canvas,paint,StatusView.Symbol.FAILED,5,h-26,20,0xffff8a7a,0);
       if (selectionMode) {
         paint.setStyle(Paint.Style.FILL);
