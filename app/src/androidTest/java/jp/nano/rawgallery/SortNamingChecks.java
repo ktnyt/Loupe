@@ -58,10 +58,27 @@ final class SortNamingChecks {
     }
     throw new AssertionError("Missing dialog text "+text);
   }
+  private static void checkModeDiagrams(View view){
+    if(view instanceof RankingModes.Choice){Button b=(Button)view;int diagram=b.getCompoundDrawables()[3].getBounds().width();if(diagram>b.getWidth()-b.getPaddingLeft()-b.getPaddingRight())throw new AssertionError("actual comparison mode diagram clipped");}
+    if(view instanceof ViewGroup)for(int i=0;i<((ViewGroup)view).getChildCount();i++)checkModeDiagrams(((ViewGroup)view).getChildAt(i));
+  }
+  private static void checkShortRankingScreen(MainActivity a){
+    for(boolean burst:new boolean[]{true,false})for(int height:new int[]{180,240,320}){
+      TextView header=new TextView(a);header.setMinHeight(GalleryUi.dp(a,84));
+      TextView actions=new TextView(a);actions.setMinHeight(GalleryUi.dp(a,400));
+      RankingUi.Screen screen=new RankingUi.Screen(a,header,new View(a),actions,burst);
+      int w=GalleryUi.dp(a,320),h=GalleryUi.dp(a,height);
+      screen.measure(View.MeasureSpec.makeMeasureSpec(w,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(h,View.MeasureSpec.EXACTLY));screen.layout(0,0,w,h);
+      if(screen.footer.getHeight()<=0||screen.footer.getChildAt(0).getHeight()<=screen.footer.getHeight())throw new AssertionError("short ranking screen lost scrollable actions");
+      screen.footer.scrollTo(0,screen.footer.getChildAt(0).getHeight());
+      if(screen.footer.getScrollY()<=0)throw new AssertionError("short ranking actions cannot scroll");
+    }
+  }
   private static void capture(Instrumentation t,MainActivity a,int width,float font,String name)throws Exception{
     Thread.sleep(350);t.waitForIdleSync();
     View root=(View)field(a,"root");ConsistencyLayoutChecks.frame(t,root);
     main(t,()->{if(width>0){Configuration actual=a.getResources().getConfiguration();int pixels=GalleryUi.dp(a,width);if(root.getWidth()!=pixels || a.getWindow().getDecorView().getWidth()!=pixels || actual.screenWidthDp!=width || Math.abs(actual.fontScale-font)>.001f)throw new AssertionError("requested sort dimensions do not match rendered window");}});
+    main(t,()->checkModeDiagrams(root));
     File dir=new File(a.getCacheDir(),"consistency-checks");dir.mkdirs();
     ConsistencyLayoutChecks.captureHardware(t,a,(View)field(a,"root"),dir,"sort-test-"+a.getResources().getConfiguration().screenWidthDp+"-"+a.getResources().getConfiguration().fontScale+"-"+name);
   }
@@ -73,6 +90,7 @@ final class SortNamingChecks {
     List<File> files=new ArrayList<>();
     try{
       ((ExecutorService)field(a,"scans")).submit(()->{}).get(10,TimeUnit.SECONDS);t.waitForIdleSync();
+      main(t,()->checkShortRankingScreen(a));
       prefs.edit().clear().commit();RankingStore store=new RankingStore(prefs);
       List<PhotoRepository.Photo> photos=new ArrayList<>();
       for(int i=0;i<3;i++){

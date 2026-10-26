@@ -18,7 +18,8 @@ final class StatusView extends View {
   private long started, visibleAt;
   private final Typeface numberTypeface=Typeface.create("sans-serif-medium",Typeface.NORMAL);
   private int revision;
-  private boolean suppressElapsed, photoOverlay, photoFailure;
+  private boolean suppressElapsed, photoOverlay, photoFailure,compact;
+  void asCompact(){compact=true;suppressElapsed=true;requestLayout();}
   void asPhotoOverlay(){photoOverlay=true;suppressElapsed=true;requestLayout();}
   void asPhotoFailure(){photoOverlay=false;photoFailure=true;requestLayout();}
   int photoRightInset(){return companion==null||isClickable()?2:12;}
@@ -79,7 +80,7 @@ final class StatusView extends View {
   private void publish(){String value=spoken+(recoveryName.isEmpty()?"":"。"+recoveryName);if(!android.text.TextUtils.equals(getContentDescription(),value))setContentDescription(value);}
   @Override public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info){super.onInitializeAccessibilityNodeInfo(info);if(recovery!=null){info.setClassName("android.widget.Button");info.addAction(new AccessibilityNodeInfo.AccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK,recoveryName));}}
   @Override protected void onDetachedFromWindow(){revision++;animate().cancel();super.onDetachedFromWindow();}
-  @Override protected void onMeasure(int w,int h){if(photoFailure){setMeasuredDimension(resolveSize(dp(32),w),resolveSize(dp(32),h));return;}if(photoOverlay){setMeasuredDimension(resolveSize(dp(companion==null?48:50),w),resolveSize(dp(48),h));return;}if(collapseWhenIdle&&!loading&&!shown){setMeasuredDimension(0,0);return;}paint.setTypeface(numberTypeface);paint.setTextSize(13*getResources().getDisplayMetrics().scaledDensity);String measured=numbers.isEmpty()&&loading&&!suppressElapsed?"999分":numbers;int width=dp(companion==null?48:68)+(measured.isEmpty()?0:(int)paint.measureText(measured)+dp(8));setMeasuredDimension(resolveSize(width,w),resolveSize(dp(48),h));}
+  @Override protected void onMeasure(int w,int h){if(photoFailure){setMeasuredDimension(resolveSize(dp(32),w),resolveSize(dp(32),h));return;}if(photoOverlay){setMeasuredDimension(resolveSize(dp(companion==null?48:50),w),resolveSize(dp(48),h));return;}if(collapseWhenIdle&&!loading&&!shown){setMeasuredDimension(0,0);return;}paint.setTypeface(numberTypeface);paint.setTextSize(13*getResources().getDisplayMetrics().scaledDensity);String measured=numbers.isEmpty()&&loading&&!suppressElapsed?"999分":numbers;int width=dp(companion==null?48:68)+(measured.isEmpty()?0:(int)paint.measureText(measured)+dp(8));setMeasuredDimension(resolveSize(width,w),resolveSize(dp(compact?28:48),h));}
   @Override protected void onDraw(Canvas original){
     if(!shown)return;
     if(photoFailure){glyph(original,paint,Symbol.FAILED,(getWidth()-dp(32))/2f,(getHeight()-dp(32))/2f,dp(32),0xffff8a7a,0);return;}

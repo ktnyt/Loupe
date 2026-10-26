@@ -422,37 +422,36 @@ public final class MainActivity extends DiagnosticActivity {
     grid = null;
     burstPosition = Math.max(0, Math.min(burstPosition, burstMembers.size() - 1));
     LinearLayout header = row();
-    header.setPadding(dp(4), dp(4), dp(4), dp(4));
-    header.setMinimumHeight(dp(64));
+    header.setPadding(dp(20), dp(40), dp(20), dp(16));
 
     LinearLayout heading = vertical();
-    heading.addView(label("連写", 18, TEXT));
-    subtitle = label(burstMembers.size() + "枚", 12, MUTED);
-    heading.addView(subtitle);
+    TextView title=label("連写 "+burstMembers.size()+"枚",20,TEXT);
+    title.setAccessibilityHeading(true); heading.addView(title);
+    subtitle = label("", 12, MUTED);
     header.addView(heading, new LinearLayout.LayoutParams(0, -2, 1));
 
-    root.addView(header);
     FrameLayout stage = new FrameLayout(this);
+    stage.setBackgroundColor(Color.BLACK);
     ImageView hero = new DiagnosticImageView(this);
     hero.setScaleType(ImageView.ScaleType.FIT_CENTER);
     stage.addView(hero, new FrameLayout.LayoutParams(-1, -1));
-    StatusView rank = new StatusView(this);
-    FrameLayout.LayoutParams badge = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.START);
-    badge.setMargins(dp(16), dp(16), dp(16), 0);
+    TextView rank = label("",12,Color.WHITE);rank.setGravity(Gravity.CENTER);rank.setIncludeFontPadding(false);rank.setPadding(dp(10),0,dp(10),0);
+    TextView rankState=label("",13,MUTED);rankState.setVisibility(View.GONE);heading.addView(rankState);
+    FrameLayout.LayoutParams badge = new FrameLayout.LayoutParams(-2, dp(28), Gravity.TOP | Gravity.START);
+    badge.setMargins(dp(12), dp(12), dp(12), 0);
     stage.addView(rank, badge);
-    root.addView(stage, new LinearLayout.LayoutParams(-1, 0, 1));
     hero.setOnClickListener(v -> showPhoto(burstMembers.get(burstPosition)));
     HorizontalScrollView stripScroll = new HorizontalScrollView(this);
     stripScroll.setHorizontalScrollBarEnabled(false);
     stripScroll.setFillViewport(true);
     LinearLayout strip = row();
     strip.setGravity(Gravity.CENTER);
-    strip.setPadding(dp(12), dp(16), dp(12), dp(16));
+    strip.setPadding(0, 0, 0, 0);
     List<PhotoRepository.Photo> members = new ArrayList<>();
     for (int member : burstMembers) members.add(photos.get(member));
     int screenGeneration = generation;
     StatusView loading = new StatusView(this);
-    heading.addView(loading);
+    loading.collapseWhenIdle();loading.asCompact();heading.addView(loading);
     Button retry = button("再試行", () -> {});
     final Runnable[] selection = new Runnable[1];
     BurstPreviews previews = new BurstPreviews(this, hero, stage, strip, loading, retry,
@@ -464,44 +463,45 @@ public final class MainActivity extends DiagnosticActivity {
       PhotoRepository.Photo photo = photos.get(member);
       previews.select(burstPosition);
       hero.setContentDescription(photo.name + "、タップで写真を拡大");
+      int bestPosition=0;
       String rankNumber="",rankDescription="順位が未決定";
       StatusView.Symbol rankSymbol=StatusView.Symbol.UNKNOWN;
       try {
         PhotoRanking saved=rankingFor(burstMembers);
-        if(saved.done()){rankNumber=saved.rankOf(ArchiveStore.key(photo))+"位";rankDescription=rankNumber+"、順位決定済み";rankSymbol=StatusView.Symbol.COMPLETE;}
+        if(saved.done()){for(int i=0;i<burstMembers.size();i++)if(saved.best().contains(ArchiveStore.key(photos.get(burstMembers.get(i))))){bestPosition=i+1;break;}rankNumber=saved.rankOf(ArchiveStore.key(photo))+"位";rankDescription=rankNumber+"、順位決定済み";rankSymbol=StatusView.Symbol.COMPLETE;}
         else if(saved.decisions()>0){rankDescription="順位決めの途中";rankSymbol=StatusView.Symbol.PAUSED;}
       }catch(Exception e){rankDescription="順位を読み込めません";rankSymbol=StatusView.Symbol.FAILED;}
-      rank.show(rankSymbol,rankNumber,rankDescription,null,"");
-      subtitle.setText((burstPosition + 1) + " / " + burstMembers.size() + "枚");
+      rank.setVisibility(rankSymbol==StatusView.Symbol.COMPLETE?View.VISIBLE:View.GONE);
+      rank.setText(rankNumber);rank.setContentDescription(rankDescription);
+      boolean winner="1位".equals(rankNumber);rank.setTextColor(winner?0xff241800:Color.WHITE);
+      rank.setBackground(GalleryUi.shape(this,winner?0xfff5b947:0xa8000000,14));
+      rankState.setVisibility(rankSymbol==StatusView.Symbol.UNKNOWN?View.GONE:View.VISIBLE);
+      RankingUi.state(rankState,rankSymbol,bestPosition);
+      rankState.setContentDescription(rankSymbol==StatusView.Symbol.COMPLETE?"順位決定済み、1位は"+bestPosition+"枚目":rankDescription);
+      heading.setContentDescription("連写 "+burstMembers.size()+"枚、"+rankDescription);
     };
     selection[0] = update;
     stripScroll.addView(strip);
-    int controlsStart = root.getChildCount();
-    root.addView(stripScroll);
-    root.addView(retry);
     LinearLayout controls = vertical();
     controls.setPadding(dp(16), dp(8), dp(16), dp(20));
+    controls.addView(stripScroll); controls.addView(retry);
     Button sort = GalleryUi.neutralPrimary(button(sortLabel(), this::openRanking));
-    controls.addView(sort, new LinearLayout.LayoutParams(-1, -2));
-    LinearLayout secondary = row();
-    secondary.setPadding(0, dp(8), 0, 0);
-    Button best = button("この写真を1位に", this::chooseCurrentBest);
-    best.setText("1位にする");
-    best.setTooltipText(best.getContentDescription());
-    secondary.addView(best, new LinearLayout.LayoutParams(0, -2, 1));
-    secondary.addView(button("共有", () -> {
+    sort.setElevation(0);sort.setStateListAnimator(null);
+    RankingUi.add(controls,sort,8);
+    Button best = RankingUi.action(button("この写真を1位に", this::chooseCurrentBest),false,48,14,null);
+    RankingUi.inline(best,RankingUi.star(this),"1位にする",18);best.setTooltipText(best.getContentDescription());
+    Button share=RankingUi.action(button("共有", () -> {
       List<PhotoRepository.Photo> selected = new ArrayList<>();
       for (int member : burstMembers) selected.add(photos.get(member));
       shareMenu(selected);
-    }), new LinearLayout.LayoutParams(0, -2, 1));
-    controls.addView(secondary);
-    root.addView(controls);
-    root.addView(GalleryUi.adaptiveDock(this,
+    }),false,48,14,"共有");
+    RankingUi.add(controls,RankingUi.pair(this,best,share),8);
+    RankingUi.add(controls,RankingUi.dock(this,
         button("前の写真", () -> { burstPosition = (burstPosition + burstMembers.size() - 1) % burstMembers.size(); update.run(); }),
         button("次の写真", () -> { burstPosition = (burstPosition + 1) % burstMembers.size(); update.run(); }),
-        button("拡大", () -> showPhoto(burstMembers.get(burstPosition)))));
-    dock(button("選択", () -> { selecting = true; bestOnly = true; gallery(); }), button("その他", this::photoMenu));
-    GalleryUi.bottomControls(root, controlsStart);
+        button("拡大", () -> showPhoto(burstMembers.get(burstPosition))),
+        button("選択", () -> { selecting = true; bestOnly = true; gallery(); }),button("その他",this::photoMenu)),8);
+    root.addView(new RankingUi.Screen(this,header,stage,controls,true),new LinearLayout.LayoutParams(-1,0,1));
     update.run();
   }
 
@@ -1464,13 +1464,13 @@ public final class MainActivity extends DiagnosticActivity {
     int token = ++generation;
     base();
     if (ranking.done()) { showRankingResult(token); return; }
-    LinearLayout top = row();
-    top.setPadding(dp(16), dp(8), dp(16), dp(8));
-    top.setMinimumHeight(dp(64));
+    LinearLayout top = vertical();
+    top.setGravity(Gravity.CENTER_HORIZONTAL|Gravity.BOTTOM);
+    top.setPadding(dp(16),0,dp(16),0);top.setMinimumHeight(dp(52));
 
-    TextView sortHeading = label(ranking.done() ? "ソート結果" : "ソート", 22, TEXT);
+    TextView sortHeading = label(ranking.done() ? "ソート結果" : "ソート", 17, TEXT);
     sortHeading.setAccessibilityHeading(true);
-    top.addView(sortHeading, new LinearLayout.LayoutParams(0, -2, 1));
+    top.addView(sortHeading);
     top.addView(
         label(
             ranking.done()
@@ -1478,7 +1478,6 @@ public final class MainActivity extends DiagnosticActivity {
                 : "比較 " + (ranking.decisions() + 1) + "回目",
             12,
             MUTED));
-    root.addView(top);
     LinearLayout modes = RankingModes.create(this, ranking.bestOnly(),
         () -> changeRankingMode(true), () -> changeRankingMode(false));
 
@@ -1493,7 +1492,7 @@ public final class MainActivity extends DiagnosticActivity {
 
 
       LinearLayout comparison = new LinearLayout(this);
-      root.addView(comparison, new LinearLayout.LayoutParams(-1, 0, 1));
+      comparison.setBackgroundColor(Color.BLACK);
       ImageView[] candidates = new ImageView[2];
       double[] ratios = new double[2];
       Runnable arrange =
@@ -1519,17 +1518,18 @@ public final class MainActivity extends DiagnosticActivity {
       rankingCandidate(ranking.upper(), true, token, comparison, candidates, ratios, arrange);
       rankingCandidate(ranking.lower(), false, token, comparison, candidates, ratios, arrange);
 
-    int controlsStart = root.getChildCount();
-    if (!ranking.done()) {
-      dock(chooseA, chooseB);
-      dock(button("Aを拡大", () -> showRankedPhoto(rankingMembers.get(ranking.upper()))),
-          button("Bを拡大", () -> showRankedPhoto(rankingMembers.get(ranking.lower()))));
-    }
-    root.addView(modes);
-    root.addView(ranking.done() || ranking.bestOnly()
-        ? GalleryUi.adaptiveDock(this, undo, button("その他", this::rankingMenu))
-        : GalleryUi.adaptiveDock(this, undo, tie, button("その他", this::rankingMenu)));
-    GalleryUi.bottomControls(root, controlsStart);
+    LinearLayout controls=vertical();controls.setPadding(dp(16),dp(10),dp(16),dp(20));
+    RankingUi.action(chooseA,true,52,15,null);RankingUi.action(chooseB,true,52,15,null);
+    RankingUi.choice(chooseA,"A");RankingUi.choice(chooseB,"B");
+    RankingUi.add(controls,RankingUi.pair(this,chooseA,chooseB),0);
+    Button zoomA=RankingUi.action(button("Aを拡大",()->showRankedPhoto(rankingMembers.get(ranking.upper()))),false,48,13,"拡大");
+    Button zoomB=RankingUi.action(button("Bを拡大",()->showRankedPhoto(rankingMembers.get(ranking.lower()))),false,48,13,"拡大");
+    RankingUi.action(tie,false,48,13,"同じ順位");
+    RankingUi.add(controls,RankingUi.zooms(this,zoomA,ranking.bestOnly()?null:tie,zoomB),8);
+    modes.setPadding(0,0,0,0);modes.setBackgroundColor(RankingUi.BG);
+    RankingUi.add(controls,modes,8);
+    RankingUi.add(controls,RankingUi.dock(this,undo,button("その他",this::rankingMenu)),8);
+    root.addView(new RankingUi.Screen(this,top,comparison,controls,false),new LinearLayout.LayoutParams(-1,0,1));
   }
 
   private void showRankingResult(int token) {
