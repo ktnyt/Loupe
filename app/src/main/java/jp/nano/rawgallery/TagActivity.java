@@ -106,19 +106,26 @@ public final class TagActivity extends DiagnosticActivity {
     reviewing = false; tag = null; browseMode = 0;
     selecting = false; selectedPhotos.clear();
     int token = screen("タグ");
-    root.addView(text("現在のアルバム・絞り込み内の端末写真が対象です", 13));
-    LinearLayout list = new LinearLayout(this); list.setOrientation(LinearLayout.VERTICAL);
-    ScrollView scroll = new ScrollView(this); scroll.addView(list);
+    root.removeViewAt(0);
+    LinearLayout content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL);
+    content.addView(TagListUi.title(this)); content.addView(TagListUi.scope(this));
+    LinearLayout list = new LinearLayout(this); list.setOrientation(LinearLayout.VERTICAL);content.addView(list);
+    ScrollView scroll = new ScrollView(this); scroll.addView(content);
     tagScroll = scroll;
     root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-    root.addView(button("新しいタグ", this::createTag));
+    android.view.View line=new android.view.View(this);line.setBackgroundColor(0xff26262a);
+    root.addView(line,new LinearLayout.LayoutParams(-1,GalleryUi.dp(this,1)));
+    root.addView(TagListUi.footer(this,this::createTag));
     worker.execute(() -> {
       try (TagStore store = new TagStore(this)) {
         List<TagStore.Tag> tags = store.tags();
         main.post(() -> {
           if (!current(token)) return;
           if (tags.isEmpty()) list.addView(state(StatusView.Symbol.EMPTY,"","タグはまだありません。新しいタグを作成してください"));
-          for (TagStore.Tag item : tags) list.addView(button(item.name, () -> openTag(item)));
+          for (int i=0;i<tags.size();i++) {
+            TagStore.Tag item=tags.get(i);list.addView(TagListUi.row(this,item.name,()->openTag(item)),new LinearLayout.LayoutParams(-1,-2));
+            if(i+1<tags.size()){android.view.View divider=new android.view.View(this);divider.setBackgroundColor(0xff26262a);LinearLayout.LayoutParams gap=new LinearLayout.LayoutParams(-1,GalleryUi.dp(this,1));gap.leftMargin=GalleryUi.dp(this,76);list.addView(divider,gap);}
+          }
           scroll.post(() -> { if (current(token)) scroll.scrollTo(0, tagScrollY); });
         });
       } catch (Exception error) { main.post(() -> { if (current(token)) failure(error); }); }
