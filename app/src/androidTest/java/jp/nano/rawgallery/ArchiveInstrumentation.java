@@ -94,6 +94,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
     Bundle results = new Bundle();
     File restored = null;
     try {
+      String report=failureReport(new AssertionError(new java.io.IOException("PRIVATE_VALUE")));
+      if(report.contains("PRIVATE_VALUE")||!report.contains("java.io.IOException")||!report.contains("ArchiveInstrumentation.java:"))throw new AssertionError();
       Context context = getTargetContext();
       if(viewerScreenTest){results.putString("stream",ViewerScreenChecks.run(this,tagWidth));finish(-1,results);return;}
       if(galleryScreenTest){results.putString("stream",GalleryScreenChecks.run(this,tagWidth,galleryTalkBack));finish(-1,results);return;}
@@ -222,16 +224,26 @@ public final class ArchiveInstrumentation extends Instrumentation {
               + " original download, source unchanged\n");
       finish(-1, results);
     } catch (Throwable failure) {
-      results.putString(
-          "stream",
-          (affordancesTest || visualStatusTest || sortTest ? android.util.Log.getStackTraceString(failure) : "") + "Archive device checks failed: "
-              + failure.getClass().getSimpleName()
-              + (failure instanceof AssertionError ? ": " + failure.getMessage() : "")
-              + "\n");
+      results.putString("stream",failureReport(failure));
       finish(0, results);
     } finally {
       if (restored != null) restored.delete();
     }
+  }
+
+  private static String failureReport(Throwable failure){
+    return failureLocations(failure)+"Archive device checks failed: "+failure.getClass().getSimpleName()+"\n";
+  }
+  /** Source locations aid synthetic checks without printing file paths or other exception values. */
+  private static String failureLocations(Throwable failure) {
+    StringBuilder result=new StringBuilder();
+    java.util.Set<Throwable> seen=java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    while(failure!=null&&seen.add(failure)){
+      result.append(failure.getClass().getName()).append('\n');
+      for(StackTraceElement frame:failure.getStackTrace())result.append("  at ").append(frame).append('\n');
+      failure=failure.getCause();
+    }
+    return result.toString();
   }
 
   private String testCompact(Context context) throws Exception {

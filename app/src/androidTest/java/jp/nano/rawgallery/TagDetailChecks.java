@@ -22,7 +22,9 @@ final class TagDetailChecks {
   static void inspect(View v) {
     if(v.getVisibility()!=View.VISIBLE)return;
     if(v instanceof TextView){TextView text=(TextView)v;android.text.Layout layout=text.getLayout();
-      if(layout!=null){require(layout.getHeight()<=text.getHeight()-text.getCompoundPaddingTop()-text.getCompoundPaddingBottom(),"text height: "+text.getText());
+      if(layout!=null){
+        if(layout.getHeight()>text.getHeight()-text.getCompoundPaddingTop()-text.getCompoundPaddingBottom())android.util.Log.e("LoupeFixtureGeometry","layout="+layout.getHeight()+" view="+text.getHeight()+" measured="+text.getMeasuredHeight()+" paddingTop="+text.getCompoundPaddingTop()+" paddingBottom="+text.getCompoundPaddingBottom()+" lines="+layout.getLineCount()+" textSize="+text.getTextSize()+" lineHeight="+text.getLineHeight());
+        require(layout.getHeight()<=text.getHeight()-text.getCompoundPaddingTop()-text.getCompoundPaddingBottom(),"text height: "+text.getText());
         for(int i=0;i<layout.getLineCount();i++){
           require(layout.getEllipsisCount(i)==0,"ellipsis: "+text.getText());
           int available=text.getWidth()-text.getCompoundPaddingLeft()-text.getCompoundPaddingRight();
