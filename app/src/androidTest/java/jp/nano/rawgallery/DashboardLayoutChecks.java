@@ -17,7 +17,7 @@ final class DashboardLayoutChecks {
     String file="dashboard-layout-"+java.util.UUID.randomUUID();SharedPreferences p=t.getTargetContext().getSharedPreferences(file,0);
     DashboardActivity a=(DashboardActivity)t.startActivitySync(new Intent(t.getTargetContext(),DashboardActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     Configuration original=new Configuration(a.getResources().getConfiguration());DisplayMetrics originalMetrics=new DisplayMetrics();originalMetrics.setTo(a.getResources().getDisplayMetrics());
-    File output=new File(a.getCacheDir(),"dashboard-checks");output.mkdirs();int captures=0;
+    File output=new File(a.getCacheDir(),"dashboard-checks");output.mkdirs();int captures=0;StringBuilder measured=new StringBuilder();
     try {
       onMain(t,()->{a.onPause();a.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);});
       String[] cases={"unknown","running","lost","waiting","paused","partial","complete","zero","failed","unmeasured-failed","read-fail-prior","read-fail-first"};
@@ -26,7 +26,7 @@ final class DashboardLayoutChecks {
           Configuration configuration=new Configuration(original);configuration.fontScale=scale;configuration.screenWidthDp=width;
           DisplayMetrics metrics=new DisplayMetrics();metrics.setTo(originalMetrics);metrics.scaledDensity=metrics.density*scale;
           a.getResources().updateConfiguration(configuration,metrics);
-          View root=(View)get(a,"root");ViewGroup.LayoutParams params=root.getLayoutParams();params.width=GalleryUi.dp(a,width);root.setLayoutParams(params);((TextView)get(a,"heading")).setTextSize(22);
+          View root=(View)get(a,"root");ViewGroup.LayoutParams params=root.getLayoutParams();params.width=GalleryUi.dp(a,width);root.setLayoutParams(params);((TextView)get(a,"heading")).setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP,22,a.getResources().getDisplayMetrics()));measured.append(width).append("/").append(scale).append(" headingPx=").append(((TextView)get(a,"heading")).getTextSize()).append("; ");
         });
         for(String kind:cases){
           DashboardObservation value=sample(p,kind);
@@ -41,7 +41,7 @@ final class DashboardLayoutChecks {
           t.waitForIdleSync();Thread.sleep(120);onMain(t,()->checkBounds((View)get(a,"content")));capture(t,output,width+"-"+scale+"-detail"+detail+".png");captures++;
         }
       }
-      return "PASS "+captures+" synthetic real-device captures: 12 list states + 4 details at 320/400dp and font 1/1.3. Child horizontal bounds checked. Visual and TalkBack review separate. Output "+output+"\n";
+      return "PASS "+measured+captures+" synthetic real-device captures: 12 list states + 4 details at 320/400dp and font 1/1.3. Child horizontal bounds checked. Visual and TalkBack review separate. Output "+output+"\n";
     }finally{onMain(t,()->{a.getResources().updateConfiguration(original,originalMetrics);a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);a.finish();});p.edit().clear().commit();t.getTargetContext().deleteSharedPreferences(file);}
   }
   static DashboardObservation sample(SharedPreferences p,String name){

@@ -61,7 +61,14 @@ final class DashboardChecks {
         onMain(t,()->{require(((ScrollView)get(screen,"scroll")).getScrollY()==expectedY[0],"back restores position");require(((View[])get(screen,"cards"))[index].hasFocus(),"back restores selected card focus");});
       }
       onMain(t,()->{Bundle saved=new Bundle();screen.onSaveInstanceState(saved);require(saved.getInt("listY")==expectedY[0],"saved list position");require(DashboardObservation.restore(saved.getBundle("observation")).readFailed,"saved last observation");});
-      return "PASS dashboard: unknown vs measured zero; stale runner; overlapping ready/fail; read failure retains prior data; snapshot Bundle; initial and 5s refresh; paused refresh removed; 4 detail transitions and actual Back scroll restoration. No original or production preference writes.\n";
+      onMain(t,()->{View card=find(screen.getWindow().getDecorView(),"表示用プレビュー");expectedY[0]=((ScrollView)get(screen,"scroll")).getScrollY();card.performClick();});
+      Instrumentation.ActivityMonitor monitor=t.addMonitor(DashboardActivity.class.getName(),null,false);
+      onMain(t,screen::recreate);
+      DashboardActivity recreated=(DashboardActivity)t.waitForMonitorWithTimeout(monitor,5000);t.removeMonitor(monitor);
+      require(recreated!=null,"actual recreation completed");a=recreated;t.waitForIdleSync();
+      onMain(t,()->{require((int)get(recreated,"detail")==1,"recreated detail retained");ScrollView recreatedScroll=(ScrollView)get(recreated,"scroll");android.widget.LinearLayout.LayoutParams viewport=(android.widget.LinearLayout.LayoutParams)recreatedScroll.getLayoutParams();viewport.height=GalleryUi.dp(recreated,240);viewport.weight=0;recreatedScroll.setLayoutParams(viewport);recreated.onBackPressed();});t.waitForIdleSync();
+      onMain(t,()->require(((ScrollView)get(recreated,"scroll")).getScrollY()==expectedY[0],"recreated back position"));
+      return "PASS dashboard: unknown vs measured zero; stale runner; overlapping ready/fail; read failure retains prior data; snapshot Bundle; initial and 5s refresh; paused refresh removed; 4 detail transitions, selected card keyboard focus, actual Back scroll restoration and Activity recreation. No original or production preference writes.\n";
     } finally {
       if(a!=null){DashboardActivity screen=a;onMain(t,screen::finish);}
       p.edit().clear().commit();t.getTargetContext().deleteSharedPreferences(file);
