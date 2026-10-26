@@ -13,6 +13,7 @@ import org.json.JSONObject;
  * source.
  */
 public final class ArchiveInstrumentation extends Instrumentation {
+  private boolean dashboardTest;
   private boolean talkBackStatusTest;
   private boolean visualStatusTest;
   private boolean jobStateTest;
@@ -33,6 +34,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    dashboardTest=args!=null&&"dashboard".equals(args.getString("mode"));
     talkBackStatusTest=args!=null&&"talkback-status".equals(args.getString("mode"));
     visualStatusTest=args!=null&&"visual-status".equals(args.getString("mode"));
     jobStateTest = args != null && "job-state".equals(args.getString("mode"));
@@ -66,6 +68,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     File restored = null;
     try {
       Context context = getTargetContext();
+      if(dashboardTest){results.putString("stream",DashboardChecks.run(this));finish(-1,results);return;}
       if(talkBackStatusTest){results.putString("stream",TalkBackStatusChecks.run(this));finish(-1,results);return;}
       if(visualStatusTest){results.putString("stream",VisualStatusChecks.run(this));finish(-1,results);return;}
       if (jobStateTest) { results.putString("stream", JobStateChecks.run(context)); finish(-1, results); return; }
