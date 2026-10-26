@@ -118,6 +118,7 @@ public final class MainActivity extends DiagnosticActivity {
   private boolean rankingScreen = false;
   private android.os.Parcelable rankingResultState;
   private String rankingResultFocus;
+  private boolean rankingResultInputFocus, rankingResultAccessibilityFocus;
   private int rankingResultPosition, rankingResultOffset;
   private PhotoRanking ranking;
   private final Map<String, Integer> rankingMembers = new HashMap<>();
@@ -1602,12 +1603,12 @@ public final class MainActivity extends DiagnosticActivity {
       public View getView(int p,View recycled,ViewGroup parent){
         return RankingResultUi.body(MainActivity.this,ranking,id->photos.get(rankingMembers.get(id)).name,
           (id,image,failed)->{PhotoRepository.Photo photo=photos.get(rankingMembers.get(id));int edge=Math.max(1,image.getWidth());images.execute(()->{if(isDestroyed()||token!=generation)return;try{PhotoRepository.Preview preview=repository.preview(photo,()->isDestroyed()||token!=generation);if(isDestroyed()||token!=generation)return;Bitmap bitmap=PhotoRepository.bitmap(preview,edge);main.post(()->{if(!isDestroyed()&&token==generation)image.setImageBitmap(bitmap);else bitmap.recycle();});}catch(Exception e){main.post(()->{if(!isDestroyed()&&token==generation)failed.run();});}});},
-          id->{rankingResultState=results.onSaveInstanceState();rankingResultPosition=results.getFirstVisiblePosition();rankingResultOffset=results.getChildAt(0)==null?0:results.getChildAt(0).getTop();View focus=results.findFocus();rankingResultFocus=focus!=null&&focus.getTag() instanceof String?(String)focus.getTag():"result-"+id;showRankedPhoto(rankingMembers.get(id));},MainActivity.this::confirmResort);
+          (id,target)->{rankingResultState=results.onSaveInstanceState();rankingResultPosition=results.getFirstVisiblePosition();rankingResultOffset=results.getChildAt(0)==null?0:results.getChildAt(0).getTop();rankingResultFocus=(String)target.getTag();rankingResultInputFocus=target.hasFocus();rankingResultAccessibilityFocus=target.isAccessibilityFocused();showRankedPhoto(rankingMembers.get(id));},MainActivity.this::confirmResort);
       }
     });
     root.addView(results,new LinearLayout.LayoutParams(-1,0,1));
     if(rankingResultState!=null)results.onRestoreInstanceState(rankingResultState);
-    results.post(()->{if(rankingResultState!=null)results.setSelectionFromTop(rankingResultPosition,rankingResultOffset);});
+    results.post(()->{if(rankingResultState!=null){results.setSelectionFromTop(rankingResultPosition,rankingResultOffset);results.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener(){public boolean onPreDraw(){results.getViewTreeObserver().removeOnPreDrawListener(this);View target=rankingResultFocus==null?null:results.findViewWithTag(rankingResultFocus);if(target!=null){if(rankingResultInputFocus)target.requestFocus();if(rankingResultAccessibilityFocus)target.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS,null);}return true;}});}});
     int first=root.getChildCount();LinearLayout controls=vertical();
     Button share=TagDetailUi.action(this,"共有",true,()->{selecting=true;bestOnly=true;leaveRanking();});share.setCompoundDrawables(null,null,null,null);controls.addView(share,new LinearLayout.LayoutParams(-1,-2));
     Button mode=TagDetailUi.action(this,ranking.bestOnly()?"すべての順位を決める":"1位を決める",false,()->changeRankingMode(!ranking.bestOnly()));mode.setText(ranking.bestOnly()?"すべての順位を決める":"1位を決める");controls.addView(mode,new LinearLayout.LayoutParams(-1,-2));

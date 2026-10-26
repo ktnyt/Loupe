@@ -25,7 +25,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     super.callActivityOnCreate(activity, state);
     if ((tagDetailTest || resultTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
   }
-  private boolean consistencyTest, syncControlsTest, tagDetailTest, resultTest;
+  private boolean consistencyTest, syncControlsTest, tagDetailTest, resultTest, resultTalkBack;
   private boolean dashboardTalkBackTest;
   private boolean dashboardLayoutTest;
   private boolean dashboardTest;
@@ -49,7 +49,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
-    resultTest=args!=null&&"ranking-result".equals(args.getString("mode"));
+    resultTalkBack=args!=null&&"ranking-result-talkback".equals(args.getString("mode"));
+    resultTest=resultTalkBack||(args!=null&&"ranking-result".equals(args.getString("mode")));
     tagDetailTest=args!=null&&"tag-detail".equals(args.getString("mode"));
     if((tagDetailTest || resultTest) && args.containsKey("width")){tagWidth=Integer.parseInt(args.getString("width"));tagFont=Float.parseFloat(args.getString("font","1.0"));}
     syncControlsTest=args!=null&&"sync-controls".equals(args.getString("mode"));
@@ -90,7 +91,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     File restored = null;
     try {
       Context context = getTargetContext();
-      if(resultTest){results.putString("stream",RankingResultChecks.run(this,tagWidth));finish(-1,results);return;}
+      if(resultTest){results.putString("stream",RankingResultChecks.run(this,tagWidth,resultTalkBack));finish(-1,results);return;}
       if(tagDetailTest){results.putString("stream",TagDetailChecks.run(this,tagWidth));finish(-1,results);return;}
       if(syncControlsTest){results.putString("stream",SyncControlChecks.run(this));finish(-1,results);return;}
       if(consistencyTest){results.putString("stream",ConsistencyLayoutChecks.run(this));finish(-1,results);return;}
