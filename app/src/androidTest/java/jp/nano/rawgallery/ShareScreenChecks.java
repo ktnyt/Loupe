@@ -25,6 +25,30 @@ final class ShareScreenChecks {
   }
   static ShareUi.StateIcon marker(View root){if(root instanceof ShareUi.StateIcon)return (ShareUi.StateIcon)root;if(root instanceof ViewGroup)for(int i=0;i<((ViewGroup)root).getChildCount();i++){ShareUi.StateIcon found=marker(((ViewGroup)root).getChildAt(i));if(found!=null)return found;}return null;}
   static void visibleMarker(Instrumentation t,Dialog dialog)throws Exception{boolean[] shown={false};for(int i=0;i<100&&!shown[0];i++){TagDetailChecks.ui(t,()->{ShareUi.StateIcon icon=marker(dialog.getWindow().getDecorView());shown[0]=icon!=null&&icon.isShown();});if(!shown[0])Thread.sleep(50);}TagDetailChecks.require(shown[0],"share state marker becomes visible");}
+  static ShareUi.Confirmation confirmationDialog(Object dialog){TagDetailChecks.require(dialog instanceof ShareUi.Confirmation,"expected full-width Confirmation, not legacy dialog");return (ShareUi.Confirmation)dialog;}
+  static void confirmation(Instrumentation t,MainActivity a,List<PhotoRepository.Photo> photos,Set<String> selection,File dir,String prefix)throws Exception{
+    boolean bestOnly=(boolean)RankingResultChecks.get(a,"bestOnly");
+    TagDetailChecks.ui(t,()->{boolean rejected=false;try{confirmationDialog(new AlertDialog.Builder(a).create());}catch(AssertionError expected){rejected=true;}TagDetailChecks.require(rejected,"legacy AlertDialog rejected by current confirmation test");});
+    PhotoRanking unfinished=new PhotoRanking(List.of(ArchiveStore.key(photos.get(0)),ArchiveStore.key(photos.get(1))),"");
+    try{
+      TagDetailChecks.ui(t,()->{RankingResultChecks.set(a,"bestOnly",true);List<List<Integer>> groups=new ArrayList<>();groups.add(List.of(0,1));for(int i=2;i<photos.size();i++)groups.add(List.of(i));RankingResultChecks.set(a,"bundles",groups);Map<List<Integer>,PhotoRanking> cache=(Map<List<Integer>,PhotoRanking>)RankingResultChecks.get(a,"rankCache");cache.clear();cache.put(List.of(0,1),unfinished);});
+      for(boolean partial:new boolean[]{false,true}){
+        Set<String> expected=new HashSet<>(partial?selection:Set.of(photos.get(0).uri.toString(),photos.get(1).uri.toString()));
+        TagDetailChecks.ui(t,()->{Set<String> chosen=(Set<String>)RankingResultChecks.get(a,"selectedPhotos");chosen.clear();chosen.addAll(expected);RankingResultChecks.call(a,"shareSelection");});
+        View root=modal(t,a);ConsistencyLayoutChecks.frame(t,root);
+        ShareUi.Confirmation active=confirmationDialog(RankingResultChecks.get(a,"shareDialog"));
+        TagDetailChecks.require(active.isShowing(),"confirmation shown");shot(t,active,dir,prefix+"-confirm-"+(partial?"partial":"only"));
+        TagDetailChecks.ui(t,()->{TagDetailChecks.inspect(root);TagDetailChecks.require(root==active.getWindow().getDecorView() && root.getWidth()==GalleryUi.dp(a,a.getResources().getConfiguration().screenWidthDp),"confirmation owns focused full-width window");});
+        TagDetailChecks.ui(t,()->{TagDetailChecks.require((TagDetailChecks.button(root,"順位が未決定の連写を除いて共有")!=null)==partial,"partial share visibility");TagDetailChecks.button(root,"キャンセル").performClick();TagDetailChecks.require(((Set<?>)RankingResultChecks.get(a,"selectedPhotos")).equals(expected),"confirmation cancel retains selection");});t.waitForIdleSync();
+        TagDetailChecks.ui(t,()->RankingResultChecks.call(a,"shareSelection"));View backRoot=modal(t,a);t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);t.waitForIdleSync();
+        TagDetailChecks.ui(t,()->TagDetailChecks.require(!confirmationDialog(RankingResultChecks.get(a,"shareDialog")).isShowing()&&((Set<?>)RankingResultChecks.get(a,"selectedPhotos")).equals(expected),"confirmation Back retains selection"));
+        if(partial){
+          TagDetailChecks.ui(t,()->RankingResultChecks.call(a,"shareSelection"));View again=modal(t,a);
+          TagDetailChecks.ui(t,()->{TagDetailChecks.button(again,"順位が未決定の連写を除いて共有").performClick();Object menu=RankingResultChecks.get(a,"shareDialog");TagDetailChecks.require(menu instanceof ShareUi.Menu && ((ShareUi.Menu)menu).previews.size()==photos.size()-2,"partial share opens only resolved photos");TagDetailChecks.require(((Set<?>)RankingResultChecks.get(a,"selectedPhotos")).equals(expected),"partial share retains selection");((Dialog)menu).dismiss();});t.waitForIdleSync();
+        }
+      }
+    }finally{TagDetailChecks.ui(t,()->{RankingResultChecks.set(a,"bestOnly",bestOnly);Set<String> chosen=(Set<String>)RankingResultChecks.get(a,"selectedPhotos");chosen.clear();chosen.addAll(selection);});}
+  }
   static String geometry(View view,String path){StringBuilder value=new StringBuilder();float d=view.getResources().getDisplayMetrics().density;
     value.append(path).append(' ').append(view.getClass().getSimpleName()).append(" x=").append(view.getLeft()/d).append(" y=").append(view.getTop()/d).append(" w=").append(view.getWidth()/d).append(" h=").append(view.getHeight()/d);
     if(view instanceof TextView){TextView text=(TextView)view;value.append(" textDp=").append(text.getTextSize()/d).append(" lineDp=").append(text.getLineHeight()/d).append(" lines=").append(text.getLineCount()).append(" layoutDp=").append(text.getLayout()==null?-1:text.getLayout().getHeight()/d).append(" pad=").append(text.getPaddingTop()/d).append(',').append(text.getPaddingBottom()/d).append(" weight=").append(text.getTypeface().getWeight()).append(" scaleX=").append(text.getTextScaleX());}
@@ -43,6 +67,7 @@ final class ShareScreenChecks {
       for(int i=0;i<7;i++){File file=new File(fixtures,i+".jpg");files.add(file);try(FileOutputStream out=new FileOutputStream(file)){bitmap.compress(Bitmap.CompressFormat.JPEG,90,out);}photos.add(new PhotoRepository.Photo(Uri.fromFile(file),"合成"+i+".jpg","",file.length(),0,0));}
       Set<String> selection=new HashSet<>();for(PhotoRepository.Photo photo:photos)selection.add(photo.uri.toString());
       TagDetailChecks.ui(t,()->{a.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);((ViewGroup)RankingResultChecks.get(a,"root")).removeAllViews();((View)RankingResultChecks.get(a,"root")).setBackgroundColor(Color.BLACK);RankingResultChecks.set(a,"photos",photos);Set<String> selected=(Set<String>)RankingResultChecks.get(a,"selectedPhotos");selected.clear();selected.addAll(selection);});
+      confirmation(t,a,photos,selection,dir,prefix);
       AtomicInteger chosen=new AtomicInteger();boolean[] raw={false};ShareTargets.Target[] target={null};
       List<ShareTargets.Target> targets=List.of(new ShareTargets.Target("fixture/.Family","家族アルバム",false),new ShareTargets.Target("fixture/.Computer","PCへ転送",true));
       ShareUi.Menu[] menu={null};
@@ -68,7 +93,7 @@ final class ShareScreenChecks {
       TagDetailChecks.ui(t,()->TagDetailChecks.button(failure,"再試行").performClick());worker(t,a);
       View retry=modal(t,a);TagDetailChecks.ui(t,()->{TagDetailChecks.require(attempts.get()==2&&((Set<?>)RankingResultChecks.get(a,"selectedPhotos")).equals(selection),"retry repeats preparation without changing selection");TagDetailChecks.button(retry,"選択に戻る").performClick();});
       bitmap.recycle();
-      return "PASS synthetic share Menu formats and destination callbacks; actual export cancellation, Back guard, preparation failure and retry with writers that always throw. Selection retained. No send or user preference save invoked. Menu/preparing/failure use PixelCopy of their own windows; available width and text bounds checked. Existing startup index may update browsing DB.\n"+metrics;
+      return "PASS strict Confirmation type (legacy AlertDialog rejected), conditional action visibility, cancel/Back selection retention, own Window PixelCopy and partial-share Menu transition. Synthetic share Menu formats and destination callbacks; actual export cancellation, Back guard, preparation failure and retry with writers that always throw. Selection retained. No send or user preference save invoked. Menu/preparing/failure use PixelCopy of their own windows; available width and text bounds checked. Existing startup index may update browsing DB.\n"+metrics;
     }finally{
       release.countDown();TagDetailChecks.ui(t,()->{for(Dialog dialog:dialogs)if(dialog.isShowing())dialog.dismiss();a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);a.finish();});
       for(File file:files)file.delete();for(String child:new String[]{"cancel","failed"}){File sub=new File(fixtures,child);File[] contents=sub.listFiles();if(contents!=null)for(File file:contents)file.delete();sub.delete();}fixtures.delete();

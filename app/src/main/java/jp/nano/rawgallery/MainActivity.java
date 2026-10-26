@@ -706,22 +706,14 @@ public final class MainActivity extends DiagnosticActivity {
     DiagnosticLog.event("screen.shareSelection", 0);
     SelectionResult result = resolveSelection();
     if (!result.unresolved.isEmpty()) {
-      GalleryUi.Sheet sheet = new GalleryUi.Sheet(this);
-      sheet
-          .setTitle("ソート")
-          .setView(status(StatusView.Symbol.PAUSED,result.unresolved.size()+"組",result.unresolved.size()+"組の順位がまだ決まっていません。ソートした後に選択画面へ戻れます。"))
-          .setPositiveButton(
-              "ソート",
-              (d, w) -> {
-                selectionBurst = burstMembers == null ? null : new ArrayList<>(burstMembers);
-                rankingFromSelection = true;
-                burstMembers = new ArrayList<>(result.unresolved.get(0));
-                openRanking();
-              })
-          .setNegativeButton("キャンセル", null);
-      if (!result.photos.isEmpty())
-        sheet.setNeutralButton("順位が未決定の連写を除いて共有", (d, w) -> shareMenu(result.photos));
-      sheet.show();
+      shareDialog = new ShareUi.Confirmation(this,result.unresolved.size(),
+          () -> {
+            selectionBurst = burstMembers == null ? null : new ArrayList<>(burstMembers);
+            rankingFromSelection = true;
+            burstMembers = new ArrayList<>(result.unresolved.get(0));
+            openRanking();
+          },result.photos.isEmpty()?null:() -> shareMenu(result.photos));
+      shareDialog.show();
     } else if (!result.photos.isEmpty()) shareMenu(result.photos);
   }
 

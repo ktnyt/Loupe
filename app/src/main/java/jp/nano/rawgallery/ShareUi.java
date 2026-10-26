@@ -29,6 +29,14 @@ final class ShareUi {
     }
     public void show(){super.show();getWindow().setLayout(sheetWidth(getContext()),-2);}
   }
+  static final class Confirmation extends Sheet {
+    Confirmation(Context c,int groups,Runnable sort,Runnable partial){super(c,"ソート");
+      TextView badge=text(c,groups+"組",13,18,GalleryUi.TEXT);badge.setMinHeight(dp(c,28));badge.setPadding(dp(c,6),0,dp(c,10),0);badge.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_confirmation_pause,0,0,0);badge.setCompoundDrawablePadding(dp(c,6));GradientDrawable shape=GalleryUi.shape(c,0xff1f1f22,14);shape.setStroke(dp(c,1),0xff3a3a3f);badge.setBackground(shape);badge.setContentDescription(groups+"組の順位がまだ決まっていません。ソートした後に選択画面へ戻れます。");LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-2,-2);bp.setMargins(dp(c,24),dp(c,8),dp(c,24),0);content.addView(badge,bp);
+      LinearLayout actions=column(c);add(content,actions,16,16,16,0);Button start=action(c,"ソート",true,()->{dismiss();sort.run();});start.setBackground(GalleryUi.shape(c,GalleryUi.TEXT,24));start.setStateListAnimator(null);start.setElevation(0);start.setTypeface(Typeface.create(Typeface.DEFAULT,600,false));start.setTextSize(14);start.setLineHeight(Math.round(start.getTextSize()*20/14));actions.addView(start,new LinearLayout.LayoutParams(-1,-2));
+      if(partial!=null)add(actions,action(c,"順位が未決定の連写を除いて共有",false,()->{dismiss();partial.run();}),0,8,0,0);
+      add(actions,action(c,"キャンセル",false,this::dismiss),0,8,0,0);
+    }
+  }
   static String title(int count,boolean raw){return count+"枚を共有 · "+(raw?"RAW / JPEG":"JPEG");}
   static final class StateIcon extends View {
     final boolean busy;final Paint paint=new Paint(3);
