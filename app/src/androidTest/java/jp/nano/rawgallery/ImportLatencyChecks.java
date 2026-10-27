@@ -20,7 +20,7 @@ final class ImportLatencyChecks {
   }
   private static final class ImportInterrupted extends AssertionError {}
 
-  static String run(ArchiveInstrumentation test, boolean interrupt, boolean pause) throws Exception {
+  static String run(ArchiveInstrumentation test, boolean interrupt, boolean pause, boolean deferred) throws Exception {
     Context context = test.getTargetContext();
     ContentResolver resolver = context.getContentResolver();
     String folder = "Pictures/Loupe-import-test-" + UUID.randomUUID() + "/";
@@ -54,6 +54,21 @@ final class ImportLatencyChecks {
       });
       ((ExecutorService) field(a, "scans")).submit(() -> {}).get(30, TimeUnit.SECONDS);
       test.waitForIdleSync();
+      if (deferred) {
+        // A synthetic local seed supplies the viewer; no user's photo is selected or edited.
+        PhotoRepository.Photo seed = new PhotoRepository.Photo(Uri.fromFile(container), "seed.dng", folder,
+            container.length(), System.currentTimeMillis(), 0);
+        test.runOnMainSync(() -> {
+          try {
+            Field photos = MainActivity.class.getDeclaredField("photos"); photos.setAccessible(true);
+            photos.set(a, new ArrayList<>(Collections.singletonList(seed)));
+            Method show = MainActivity.class.getDeclaredMethod("showPhoto", int.class); show.setAccessible(true); show.invoke(a, 0);
+            generation[0] = (int) field(a, "generation");
+          } catch (Exception e) { throw new RuntimeException(e); }
+        });
+        ((ExecutorService) field(a, "images")).submit(() -> {}).get(30, TimeUnit.SECONDS);
+        test.waitForIdleSync();
+      }
       long pauses = test.importPauses();
       long begin = SystemClock.elapsedRealtimeNanos();
       DiagnosticLog.event("test.import_begin", 0, "count", count, "bytes", container.length());
@@ -78,6 +93,28 @@ final class ImportLatencyChecks {
         resolver.update(uri, values, null, null);
       }
       DiagnosticLog.event("test.import_published", 0);
+      if (deferred) {
+        long readyDeadline = SystemClock.elapsedRealtime() + 30000;
+        boolean pending = false;
+        while (SystemClock.elapsedRealtime() < readyDeadline) {
+          boolean[] state = {false, false};
+          test.runOnMainSync(() -> {
+            try {
+              state[0] = (boolean) field(a, "pendingIndexUpdate");
+              state[1] = (int) field(a, "generation") != generation[0] || !(boolean) field(a, "detail");
+            } catch (Exception e) { throw new RuntimeException(e); }
+          });
+          if (state[1] || test.importPauses() != pauses) throw new ImportInterrupted();
+          if (state[0]) { pending = true; break; }
+          Thread.sleep(20);
+        }
+        if (!pending) throw new AssertionError("viewer did not retain pending index update");
+        test.runOnMainSync(() -> {
+          a.onBackPressed();
+          try { generation[0] = (int) field(a, "generation"); }
+          catch (Exception e) { throw new RuntimeException(e); }
+        });
+      }
       if (pause) {
         long resumes = test.importResumes();
         test.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_HOME);
@@ -133,8 +170,8 @@ final class ImportLatencyChecks {
       if (applied == 0 || frame == 0) throw new AssertionError("new import did not reach list and image frame");
       if (interrupt) throw new AssertionError("screen change was not detected");
       return String.format(Locale.ROOT,
-          "PASS new synthetic RAW6, 24MiB padding each, no derived cache; import_to_list_ms=%.3f publish_to_list_ms=%.3f publish_to_frame_ms=%.3f. Existing photos untouched; fixture URIs removed in finally.\n",
-          (applied-begin)/1e6, (applied-publishing)/1e6, (frame-publishing)/1e6);
+          "PASS new synthetic RAW6, 24MiB padding each, no derived cache; import_to_list_ms=%.3f publish_to_list_ms=%.3f publish_to_frame_ms=%.3f deferred=%s. Existing photos untouched; fixture URIs removed in finally.\n",
+          (applied-begin)/1e6, (applied-publishing)/1e6, (frame-publishing)/1e6, deferred);
     } catch (ImportInterrupted interrupted) {
       if (!interrupt) throw interrupted;
       return "PASS import test detects changed screen without waiting for timeout; fixture cleanup runs in finally.\n";

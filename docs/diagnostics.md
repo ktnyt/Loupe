@@ -111,3 +111,9 @@ frame commitの意味: [Android公式API](https://developer.android.com/referenc
 `am instrument -w -e mode import-latency jp.nano.rawgallery.test/jp.nano.rawgallery.ArchiveInstrumentation`は、一意の試験フォルダへ合成RAW6枚（各24MiBのパディングと640×480の合成JPEG）を新規に作り、MediaStore公開開始→一覧への全件反映と初回実画像frame_commitを測る。毎回新しいURIを使い、既存写真やキャッシュを削除しない。終了時はこの試験でinsertが返したURIだけを削除し、再構築可能な索引を更新する。プロセス強制終了時にはfinallyの実行は保証できない。写真形式・枚数・ファイルサイズ・端末内の総枚数・ログ設定・電池温度・サンプル数を比較条件に残す。
 
 試験中は対象画面の操作を控える。画面遷移や対象Activityのpauseは`test.import_interrupted`で失敗にし、一時退避後に復帰した回も比較に採用しない。`import-interruption`モードは戻る操作、`import-pause-interruption`は端末ホームへの退避と復帰を意図的に実行し、この検出と後片付けを検査する。合成コンテナでの結果を、利用者が取り込んだ実RAWや外部転送アプリの速度の検証済み結果として扱わない。
+
+索引の入力署名はMediaStoreの世代とArchiveStoreの写真レコード変更世代を使う。派生metadataの保存とDB/WALのcheckpointは再走査の理由にしない。走査中の入力変更は次の確認で検出する。前面の確認が変更なしでも、先行する背景更新で完成した索引を表示し、連写・選択・拡大・ソート中の反映は通常の一覧へ戻るまで保留する。
+
+`index-signature`モードは一時DBだけを使い、ArchiveStoreのschema1/2から3への移行と新規作成、既存記録の保全、metadata/checkpointで署名が変わらないこと、写真レコードの変更とrollbackを検査する。`import-deferred`は合成画像の拡大中に新規取り込みを行い、更新結果が保留され、戻る操作で一覧へ反映されることを検査する。
+
+更新の保留は非同期読込の依頼時には解除せず、同じ更新世代のデータを一覧へ適用できた時点で解除する。`index-apply-race`は読込を止めて拡大へ移り、破棄された結果の保留が残ることと、古い読込が新しい更新の保留を解除しないことを合成データで検査する。

@@ -103,6 +103,8 @@ public final class MainActivity extends DiagnosticActivity {
   private String albumFolder;
   private boolean albumHome = true, resumed;
   private final IndexRefreshRequests refreshRequests = new IndexRefreshRequests();
+  private boolean pendingIndexUpdate;
+  private long indexUpdateVersion;
   private final long startedAt = SystemClock.elapsedRealtime();
   private boolean reportedAlbums, reportedCover;
   private final Runnable mediaChanged = () -> refresh();
@@ -322,6 +324,7 @@ public final class MainActivity extends DiagnosticActivity {
       root.addView(new LibraryTabs(this, false, !selecting, this::switchLibraryTab));
     if (selecting) updateSelection();
     else if (!photos.isEmpty()) updateCount();
+    applyPendingIndexUpdate();
   }
 
   private void photoMenu() {
@@ -950,6 +953,7 @@ public final class MainActivity extends DiagnosticActivity {
   private void loadAlbums() {
     DiagnosticLog.event("screen.loadAlbums", burstRequest);
     int token = generation;
+    long updateVersion = indexUpdateVersion;
     scans.execute(
         () -> {
           try (GalleryIndex catalog = new GalleryIndex(this)) {
@@ -1017,6 +1021,7 @@ public final class MainActivity extends DiagnosticActivity {
                         loadIndexedPhotos();
                       });
                   body.addView(albumGrid, new LinearLayout.LayoutParams(-1, -1));
+                  if (updateVersion == indexUpdateVersion) pendingIndexUpdate = false;
                   if (!albums.isEmpty() && !reportedAlbums) {
                     reportedAlbums = true;
                     albumGrid.postOnAnimation(
@@ -1041,6 +1046,7 @@ public final class MainActivity extends DiagnosticActivity {
   private void loadIndexedPhotos() {
     DiagnosticLog.event("screen.loadIndexedPhotos", burstRequest);
     int token = generation;
+    long updateVersion = indexUpdateVersion;
     if(listStatus!=null)listStatus.begin("写真の一覧を読み込んでいます");
     String folder = albumFolder, selected = filter;
     scans.execute(
@@ -1060,6 +1066,7 @@ public final class MainActivity extends DiagnosticActivity {
                   rankCache.clear();
                   photos = snapshot.photos;
                   bundles = snapshot.bundles;
+                  if (updateVersion == indexUpdateVersion) pendingIndexUpdate = false;
                   DiagnosticLog.event("screen.index_applied", 0, "count", photos.size());
                   burstMembers = null;
                   if (pendingRestore != null) {
@@ -1114,13 +1121,12 @@ public final class MainActivity extends DiagnosticActivity {
     GalleryIndex.WORKER.execute(
         () -> {
           Exception failure = null;
-          boolean changed = false;
           try {
-            changed = GalleryIndex.rebuild(app, force, () -> false);
+            GalleryIndex.rebuild(app, force, () -> false);
           } catch (Exception e) {
             failure = e;
           }
-          final boolean failed = failure != null, updated = changed;
+          final boolean failed = failure != null;
           main.post(
               () -> {
                 int next = refreshRequests.finish();
@@ -1128,14 +1134,22 @@ public final class MainActivity extends DiagnosticActivity {
                 if (failed) {
                   feedback(StatusView.Symbol.FAILED,"写真の一覧を更新できませんでした。保存済みの一覧を表示しています。",this::refresh,"再読み込み");
                 }
-                if (updated) {
-                  if (albumHome) loadAlbums();
-                  else if (!detail && burstMembers == null) loadIndexedPhotos();
+                if (!failed) {
+                  // A preceding background job may have published the current index.
+                  pendingIndexUpdate = true;
+                  indexUpdateVersion++;
+                  applyPendingIndexUpdate();
                 }
                 if (next != IndexRefreshRequests.NONE)
                   refreshIndex(next == IndexRefreshRequests.FORCE);
               });
         });
+  }
+
+  private void applyPendingIndexUpdate() {
+    if (!pendingIndexUpdate || detail || selecting || burstMembers != null || rankingScreen) return;
+    if (albumHome) loadAlbums();
+    else loadIndexedPhotos();
   }
 
   private void requestPhotoAccess() {

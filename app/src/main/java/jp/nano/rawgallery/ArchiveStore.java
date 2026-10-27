@@ -13,7 +13,7 @@ final class ArchiveStore extends SQLiteOpenHelper {
   private final Context context;
 
   ArchiveStore(Context c) {
-    super(c, "archive.db", null, 2);
+    super(c, "archive.db", null, 3);
     context = c.getApplicationContext();
   }
 
@@ -23,6 +23,7 @@ final class ArchiveStore extends SQLiteOpenHelper {
             + " NULL)");
     db.execSQL(
         "CREATE TABLE photos (key TEXT PRIMARY KEY, state TEXT NOT NULL, payload TEXT NOT NULL)");
+    createIndexRevision(db);
   }
 
   public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
@@ -30,6 +31,23 @@ final class ArchiveStore extends SQLiteOpenHelper {
       db.execSQL(
           "CREATE TABLE metadata (key TEXT PRIMARY KEY, model TEXT NOT NULL, taken INTEGER NOT"
               + " NULL)");
+    if (oldVersion < 3) createIndexRevision(db);
+  }
+
+  /** Only source photo records invalidate browsing; derived metadata and WAL checkpoints do not. */
+  private static void createIndexRevision(SQLiteDatabase db) {
+    db.execSQL("CREATE TABLE index_revision (id INTEGER PRIMARY KEY CHECK(id=1), value INTEGER NOT NULL)");
+    db.execSQL("INSERT INTO index_revision VALUES (1,0)");
+    for (String operation : new String[] {"INSERT", "UPDATE", "DELETE"})
+      db.execSQL("CREATE TRIGGER index_revision_" + operation + " AFTER " + operation
+          + " ON photos BEGIN UPDATE index_revision SET value=value+1 WHERE id=1; END");
+  }
+
+  long indexRevision() {
+    try (Cursor c = getReadableDatabase().rawQuery("SELECT value FROM index_revision WHERE id=1", null)) {
+      if (!c.moveToFirst()) throw new IllegalStateException("Archive index revision missing");
+      return c.getLong(0);
+    }
   }
 
   RawMetadata metadata(PhotoRepository.Photo p) throws Exception {

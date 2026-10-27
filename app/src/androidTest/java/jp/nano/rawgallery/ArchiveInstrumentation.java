@@ -48,7 +48,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean jpegTest;
   private boolean jpegCloudTest;
   private boolean jpegCleanupTest;
-  private boolean importLatencyTest, importInterruptionTest, importPauseTest;
+  private boolean importLatencyTest, importInterruptionTest, importPauseTest, importDeferredTest, indexSignatureTest, indexApplyRaceTest;
   private volatile long importPauses, importResumes;
 
   @Override public void callActivityOnPause(android.app.Activity activity) {
@@ -66,9 +66,12 @@ public final class ArchiveInstrumentation extends Instrumentation {
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    indexSignatureTest = args != null && "index-signature".equals(args.getString("mode"));
+    indexApplyRaceTest = args != null && "index-apply-race".equals(args.getString("mode"));
+    importDeferredTest = args != null && "import-deferred".equals(args.getString("mode"));
     importPauseTest = args != null && "import-pause-interruption".equals(args.getString("mode"));
     importInterruptionTest = importPauseTest || (args != null && "import-interruption".equals(args.getString("mode")));
-    importLatencyTest = importInterruptionTest || (args != null && "import-latency".equals(args.getString("mode")));
+    importLatencyTest = importInterruptionTest || importDeferredTest || (args != null && "import-latency".equals(args.getString("mode")));
     sortTest = args != null && "sort-naming".equals(args.getString("mode"));
     shareScreenTest=args!=null&&"share-screen".equals(args.getString("mode"));
     viewerScreenTest=args!=null&&"viewer-screen".equals(args.getString("mode"));
@@ -123,7 +126,9 @@ public final class ArchiveInstrumentation extends Instrumentation {
       String report=failureReport(new AssertionError(new java.io.IOException("PRIVATE_VALUE")));
       if(report.contains("PRIVATE_VALUE")||!report.contains("java.io.IOException")||!report.contains("ArchiveInstrumentation.java:"))throw new AssertionError();
       Context context = getTargetContext();
-      if (importLatencyTest) { results.putString("stream", ImportLatencyChecks.run(this, importInterruptionTest, importPauseTest)); finish(-1, results); return; }
+      if (indexSignatureTest) { results.putString("stream", IndexSignatureChecks.run(context)); finish(-1, results); return; }
+      if (indexApplyRaceTest) { results.putString("stream", IndexApplyRaceChecks.run(this)); finish(-1, results); return; }
+      if (importLatencyTest) { results.putString("stream", ImportLatencyChecks.run(this, importInterruptionTest, importPauseTest, importDeferredTest)); finish(-1, results); return; }
       if(sortDimensionsSpecified)validateSortDimensions(context);
       if(shareScreenTest){results.putString("stream",ShareScreenChecks.run(this,tagWidth));finish(-1,results);return;}
       if(viewerScreenTest){results.putString("stream",ViewerScreenChecks.run(this,tagWidth));finish(-1,results);return;}
