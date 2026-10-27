@@ -290,19 +290,34 @@ public final class RawPreview {
   private void scan() throws IOException {
     candidates.clear();
     JpegReader reader = new JpegReader();
-    for (long pos = 0; pos + 1 < size; pos++) {
-      if (reader.at(pos + 1) != 216) continue;
-      if (reader.at(pos) != 255 && !(repairPreviewHeader && pos + 3 < size
-          && reader.at(pos + 2) == 255 && reader.at(pos + 3) == 219)) continue;
-      Result r = reader.parse(pos, pos + Math.min(size - pos, MAX_JPEG));
-      if (r != null) {
-        // Retain only the largest scan candidate, so memory does not grow with file size.
-        if (candidates.isEmpty()
-            || (long) r.width * r.height > (long) candidates.get(0).width * candidates.get(0).height) {
-          candidates.clear();
-          candidates.add(r);
+    long pos = 0;
+    int previous = -1;
+    while (pos < size) {
+      if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("RAW抽出を中断しました");
+      byte[] block = bytes(pos, (int) Math.min(65536, size - pos));
+      boolean found = false;
+      for (int i = 0; i < block.length; i++) {
+        int value = block[i] & 255;
+        int before = i == 0 ? previous : block[i - 1] & 255;
+        if (value != 216 || before < 0 || (before != 255 && !repairPreviewHeader)) continue;
+        long start = pos + i - 1;
+        Result r = reader.parse(start, start + Math.min(size - start, MAX_JPEG));
+        if (r != null) {
+          // Retain only the largest complete stream, preserving first-on-tie ordering.
+          if (candidates.isEmpty()
+              || (long) r.width * r.height > (long) candidates.get(0).width * candidates.get(0).height) {
+            candidates.clear();
+            candidates.add(r);
+          }
+          pos = r.offset + r.length;
+          previous = 217; // The validated stream ends at EOI; resume after its payload.
+          found = true;
+          break;
         }
-        pos = r.offset + r.length - 1;
+      }
+      if (!found) {
+        previous = block[block.length - 1] & 255;
+        pos += block.length;
       }
     }
   }

@@ -53,6 +53,9 @@ public final class RawPreviewStructureTest {
     extracts(join(new byte[37], small, new byte[17], large, new byte[101]), large);
     extracts(join(new byte[65535], large), large); // SOI straddles a read boundary
     extracts(join(new byte[65534], large), large);
+    extracts(join(new byte[65536], large, new byte[65535], small), large);
+    extracts(join(new byte[65535], small, new byte[65535], large), large);
+    extracts(join(large, small), large); // Resume directly at the next complete stream.
     extracts(join(new byte[2 * 1024 * 1024], large), large); // no prefix-only search
     // A corrupt TIFF directory does not hide a valid preview.
     extracts(join(new byte[] {'I','I',42,0,-1,-1,-1,127}, large), large);
@@ -91,6 +94,8 @@ public final class RawPreviewStructureTest {
     check(RawPreview.inspect(source(join(new byte[] {0,'M','R','M',0,0,0,0}, damagedHeader)))
         .repairedHeader, "repair reported");
     reject(damagedHeader);
+    extracts(join(new byte[] {0,'M','R','M',0,0,0,0}, new byte[65527], damagedHeader), repaired);
+    extracts(join(new byte[] {0,'M','R','M',0,0,0,0}, new byte[65528], damagedHeader), repaired);
     reject(new byte[0]);
     reject(Arrays.copyOf(large, large.length - 2));
     reject(new byte[] {-1,-40,-1,-39});
@@ -103,6 +108,10 @@ public final class RawPreviewStructureTest {
     reject(invalidLength);
     Thread.currentThread().interrupt();
     try { RawPreview.inspect(source(large)); throw new AssertionError("cancellation ignored"); }
+    catch (InterruptedIOException expected) { checks++; }
+    finally { Thread.interrupted(); }
+    Thread.currentThread().interrupt();
+    try { RawPreview.inspect(source(new byte[65537])); throw new AssertionError("empty scan ignored cancellation"); }
     catch (InterruptedIOException expected) { checks++; }
     finally { Thread.interrupted(); }
     // Source failures must never be converted into a successful extraction.
