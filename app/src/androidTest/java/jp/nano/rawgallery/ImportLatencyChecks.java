@@ -20,7 +20,7 @@ final class ImportLatencyChecks {
   }
   private static final class ImportInterrupted extends AssertionError {}
 
-  static String run(Instrumentation test, boolean interrupt) throws Exception {
+  static String run(ArchiveInstrumentation test, boolean interrupt, boolean pause) throws Exception {
     Context context = test.getTargetContext();
     ContentResolver resolver = context.getContentResolver();
     String folder = "Pictures/Loupe-import-test-" + UUID.randomUUID() + "/";
@@ -54,6 +54,7 @@ final class ImportLatencyChecks {
       });
       ((ExecutorService) field(a, "scans")).submit(() -> {}).get(30, TimeUnit.SECONDS);
       test.waitForIdleSync();
+      long pauses = test.importPauses();
       long begin = SystemClock.elapsedRealtimeNanos();
       DiagnosticLog.event("test.import_begin", 0, "count", count, "bytes", container.length());
       for (int i = 0; i < count; i++) {
@@ -77,7 +78,14 @@ final class ImportLatencyChecks {
         resolver.update(uri, values, null, null);
       }
       DiagnosticLog.event("test.import_published", 0);
-      if (interrupt) test.runOnMainSync(a::onBackPressed);
+      if (pause) {
+        test.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_HOME);
+        long pauseDeadline = SystemClock.elapsedRealtime() + 5000;
+        while (test.importPauses() == pauses && SystemClock.elapsedRealtime() < pauseDeadline) Thread.sleep(20);
+        if (test.importPauses() == pauses) throw new AssertionError("home did not pause activity");
+        test.startActivitySync(new Intent(context, MainActivity.class)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+      } else if (interrupt) test.runOnMainSync(a::onBackPressed);
       long deadline = SystemClock.elapsedRealtime() + 90000;
       long applied = 0, frame = 0;
       Set<Long> ids = new HashSet<>();
@@ -94,7 +102,7 @@ final class ImportLatencyChecks {
             if (ready[0]) for (PhotoRepository.Photo p : photos) ids.add(DiagnosticLog.photo(p));
           } catch (Exception e) { throw new RuntimeException(e); }
         });
-        if (changed[0]) {
+        if (changed[0] || test.importPauses() != pauses) {
           DiagnosticLog.event("test.import_interrupted", 0);
           throw new ImportInterrupted();
         }
