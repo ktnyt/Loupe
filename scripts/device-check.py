@@ -42,7 +42,7 @@ def standby_video(shell, enabled):
         print('YouTube window is focused and holds the screen on; recheck lock before the next device operation.', flush=True)
 
 
-def wait_for_standby(shell, attempts=10, interval=0.5):
+def wait_for_standby(shell, attempts=30, interval=0.5):
     # Read only the current YouTube focus/hold lines; do not expose window contents.
     query = "dumpsys window | awk '/mCurrentFocus=|mHoldScreenWindow=/{if(index($0,\" com.google.android.youtube/\")) print}'"
     for attempt in range(attempts):

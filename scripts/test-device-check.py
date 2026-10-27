@@ -89,6 +89,15 @@ class DeviceCheckTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertTrue(all(c[:2] == ('sh', '-c') and 'mHoldScreenWindow' in c[2] for c in calls))
 
+    def test_delayed_screen_hold_uses_bounded_confirmation_without_more_input(self):
+        m = module(); calls = []
+        def shell(*parts):
+            calls.append(parts)
+            return HELD if len(calls) >= 12 else 'mCurrentFocus=' + YOUTUBE
+        m.wait_for_standby(shell, interval=0)
+        self.assertEqual(len(calls), 12)
+        self.assertTrue(all(c[:2] == ('sh', '-c') for c in calls))
+
     def test_stale_hold_or_another_app_never_counts_as_standby(self):
         for windows in ('mCurrentFocus=' + YOUTUBE,
                         'mCurrentFocus=' + YOUTUBE + '\nmLastWakeLockHoldingWindow=' + YOUTUBE,
