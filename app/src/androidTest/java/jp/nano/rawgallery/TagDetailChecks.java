@@ -38,7 +38,7 @@ final class TagDetailChecks {
   static PhotoViewerUi viewer(TagActivity a){return (PhotoViewerUi)((ViewGroup)get(a,"root")).getChildAt(0);}
   static void viewerCapture(Instrumentation t,TagActivity a,File dir,String state)throws Exception{
     int[] position=new int[2];ui(t,()->{ScrollingGrid grid=(ScrollingGrid)get(a,"photoGrid");position[0]=grid.getFirstVisiblePosition();position[1]=grid.getChildAt(0)==null?0:grid.getChildAt(0).getTop();});
-    ui(t,()->button((View)get(a,"root"),"1枚ずつ確認する").performClick());idle(t,a);
+    ui(t,()->{try{Method m=TagActivity.class.getDeclaredMethod("showAssignedPhoto",int.class);m.setAccessible(true);m.invoke(a,0);}catch(Exception e){throw new RuntimeException(e);}});idle(t,a);
     String name="tag-viewer-"+width+"-"+a.getResources().getConfiguration().fontScale+"-"+state;
     ui(t,()->{PhotoViewerUi v=viewer(a);require((int)get(a,"browseMode")==2&&v.dock.getChildCount()==4,"four-action tag viewer");require(((android.graphics.drawable.ColorDrawable)v.getBackground()).getColor()==Color.BLACK,"black tag viewer");require(button(v,"共有")==null&&button(v,"情報")==null,"tag viewer has no share/info");require(button(v,"assigned".equals(state)?"タグを外す":"タグを付ける")!=null,"current tag action");require(!button(v,"前の写真").isEnabled()&&button(v,"次の写真").isEnabled(),"first endpoint");inspect(v);});
     ConsistencyLayoutChecks.captureHardware(t,a,(View)get(a,"root"),dir,name);
@@ -84,7 +84,7 @@ final class TagDetailChecks {
       File dir=new File(a.getCacheDir(),"consistency-checks");dir.mkdirs();ConsistencyLayoutChecks.captureHardware(t,a,(View)get(a,"root"),dir,"tag-detail-"+width+"-"+a.getResources().getConfiguration().fontScale+"-normal");
       ui(t,()->inspect((View)get(a,"root")));
       viewerCapture(t,a,dir,"assigned");
-      ui(t,()->{View root=(View)get(a,"root");require(((List<?>)get(a,"browsePhotos")).size()==6,"attached filter");require(button(root,"似た写真にもタグを付ける").isEnabled(),"automatic entry");button(root,"該当しない 2").performClick();});idle(t,a);
+      ui(t,()->{View root=(View)get(a,"root");require(((List<?>)get(a,"browsePhotos")).size()==6,"attached filter");require(button(root,"写真を解析").isEnabled(),"automatic entry");button(root,"該当しない 2").performClick();});idle(t,a);
       viewerCapture(t,a,dir,"excluded");
       ui(t,()->{require(((List<?>)get(a,"browsePhotos")).size()==2,"excluded filter");button((View)get(a,"root"),"一括訂正").performClick();require((boolean)get(a,"selecting"),"bulk entry");button((View)get(a,"root"),"すべて選択").performClick();require(((Set<?>)get(a,"selectedPhotos")).size()==2,"select all");require(button((View)get(a,"root"),"タグ付きにする").isEnabled(),"batch action");set(a,"busy",true);a.onBackPressed();require((boolean)get(a,"selecting"),"busy guard");set(a,"busy",false);a.onBackPressed();require(!(boolean)get(a,"selecting")&&((Set<?>)get(a,"selectedPhotos")).isEmpty(),"selection Back");button((View)get(a,"root"),"写真を追加").performClick();});idle(t,a);
       ui(t,()->{require(!(boolean)get(a,"tagOverview")&&(boolean)get(a,"selecting"),"add-photo entry");require(((List<?>)get(a,"browsePhotos")).size()==40,"all filter");require(!button((View)get(a,"root"),"タグ付きにする").isEnabled(),"empty selection disabled");a.onBackPressed();require(!(boolean)get(a,"selecting"),"add selection Back");});

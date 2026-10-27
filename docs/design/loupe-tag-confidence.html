@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loupe タグの適合スコア</title>
+<style>
+:root{--ink:#EDEDEA;--muted:#A9A9A4;--k:1;--w:400px;--h:844px}
+*{box-sizing:border-box}
+body{margin:0;background:#1E1E20;color:var(--ink);font-family:'Noto Sans JP',system-ui,sans-serif;font-size:15px;line-height:1.6}
+.wrap{max-width:1500px;padding:28px 24px 64px}
+h1.pg{margin:0;font-size:24px;line-height:1.4}
+.lead{margin:6px 0 0;color:#D6D6D2;font-size:14px}
+.note{margin:10px 0 0;padding:10px 14px;border-radius:10px;border:1px solid #4A4A50;background:#161618;font-size:13.5px}
+.controls{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin:10px 0 0}
+.lb{color:var(--muted);font-size:12.5px;margin-right:6px}
+.seg{display:inline-flex;flex-wrap:wrap;background:#2A2A2E;border-radius:22px;padding:2px}
+.seg button{background:none;border:0;color:var(--ink);font:inherit;font-size:13px;min-height:44px;padding:0 12px;border-radius:20px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:#EDEDEA;color:#111}
+.hw{background:#2A2A2E;border:1px solid #4A4A50;color:var(--ink);font:inherit;font-size:13px;font-weight:600;min-height:44px;padding:0 14px;border-radius:22px;cursor:pointer}
+.hw[aria-pressed="true"]{background:#EDEDEA;color:#111}
+.wrap :focus-visible{outline:2px solid #8AB4F8;outline-offset:2px}
+.stage{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start;margin-top:14px}
+.col>h2{margin:0 0 8px;font-size:14px;font-weight:600}
+.col>h2 small{color:var(--muted);font-weight:400}
+.side{flex:1;min-width:300px;display:flex;flex-direction:column;gap:10px}
+.box{background:#141416;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.6;overflow-wrap:anywhere}
+.okc{color:#9FE0B5}.ngc{color:#F2A7AB}
+table.t{border-collapse:collapse;width:100%;font-size:13.5px;line-height:1.6}
+table.t th,table.t td{border-bottom:1px solid #2E2E32;padding:6px 10px 6px 0;text-align:left;vertical-align:top}
+table.t th{color:var(--muted);font-weight:500;font-size:12px}
+h2.sec{margin:32px 0 8px;font-size:19px}
+.spec ul{margin:0;padding-left:20px}.spec li{margin:3px 0;font-size:14px}
+.tscroll{overflow-x:auto}
+.tg{display:inline-block;padding:0 8px;border-radius:10px;font-size:12px;color:#111;background:#F5A623;white-space:nowrap;margin:0 2px 2px 0}
+.tg.q{background:#8AB4F8}.tg.k{background:#9FE0B5}
+.orig,.dev{position:relative;overflow:hidden;transform:translateZ(0);outline:1px solid #3A3A3F;background:#0F0F10;color:#EDEDEA}
+.orig{width:390px;height:844px}
+.dev{width:var(--w);height:var(--h);font-family:'Noto Sans JP',system-ui,sans-serif;font-size:calc(15px*var(--k));line-height:calc(22px*var(--k));-webkit-font-smoothing:antialiased}
+.dev button{font-family:inherit;color:inherit}
+.dev *{text-overflow:clip}
+.dev :focus{outline:none}
+.dev :focus-visible{outline:2px solid #EDEDEA;outline-offset:2px}
+.dev.showchg [data-chg]{outline:2px solid #F5A623;outline-offset:-2px}
+.dev.showchg [data-chg="new"]{outline:2px dashed #F5A623}
+.spin{animation:spin 1s linear infinite;transform-origin:50% 50%}
+@keyframes spin{to{transform:rotate(360deg)}}
+.rm .spin{animation:none}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}}
+.caller{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:20px;color:#A9A9A4;text-align:center;background:#0F0F10;z-index:9;font-size:calc(14px*var(--k));line-height:1.5}
+.caller button{min-height:48px;padding:10px 18px;border-radius:24px;background:#26262A;border:1px solid #3A3A3F;color:#EDEDEA;font:inherit;cursor:pointer}
+.synth{position:absolute;right:8px;top:6px;font-size:10px;color:#8A8A85;border:1px dashed #3A3A3F;border-radius:6px;padding:0 6px;z-index:8;line-height:1.6;pointer-events:none;background:#0F0F10}
+.f12{font-size:calc(12px*var(--k));line-height:calc(16px*var(--k))}
+.f13{font-size:calc(13px*var(--k));line-height:calc(18px*var(--k))}
+.f14{font-size:calc(14px*var(--k));line-height:calc(20px*var(--k))}
+.f15{font-size:calc(15px*var(--k));line-height:calc(22px*var(--k))}
+.f28{font-size:calc(28px*var(--k));line-height:calc(36px*var(--k))}
+.mut{color:#A9A9A4}.num{font-variant-numeric:tabular-nums}
+.scr{position:absolute;inset:0;overflow-y:auto}
+.scr::-webkit-scrollbar{width:0}
+.panel{position:absolute;left:0;right:0;bottom:0;background:#0F0F10;border-top:1px solid #222226;padding:10px 16px 20px;display:flex;flex-direction:column;gap:8px;z-index:3}
+.pri{background:#EDEDEA;border:0;padding:6px 16px;margin:0;color:#111 !important;cursor:pointer;min-height:52px;border-radius:26px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:calc(15px*var(--k));line-height:calc(20px*var(--k));font-weight:600;text-align:center}
+.out{background:none;border:1px solid #3A3A3F;padding:4px 16px;margin:0;cursor:pointer;min-height:48px;border-radius:24px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:calc(14px*var(--k));line-height:calc(18px*var(--k));font-weight:500;text-align:center}
+.dock{display:grid;margin:0 -8px}
+.db{background:none;border:0;padding:6px 4px;margin:0;cursor:pointer;min-height:64px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:calc(12px*var(--k));line-height:calc(16px*var(--k));font-weight:500;text-align:center}
+.db[aria-disabled="true"]{color:#626B72}
+.db svg{width:24px;height:24px;flex-shrink:0}
+.dim{position:absolute;inset:0;background:rgba(0,0,0,.64);border:0;padding:0;margin:0;width:100%;cursor:default;z-index:5}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:#1C1C1F;border-radius:28px 28px 0 0;padding:8px 0 20px;display:flex;flex-direction:column;z-index:6}
+.sheet .hdl{display:block;width:32px;height:4px;border-radius:2px;background:#4A4A50;margin:4px auto 12px}
+.sheet h2{margin:0;padding:0 24px 4px;font-size:calc(20px*var(--k));line-height:calc(28px*var(--k));font-weight:600}
+.sheet .body{margin:4px 24px 0;font-size:calc(14px*var(--k));line-height:calc(21px*var(--k))}
+.sheet .acts{display:flex;flex-direction:column;gap:8px;padding:16px 16px 0}
+.sheet .it{background:none;border:0;padding:4px 24px;margin:0;cursor:pointer;width:100%;min-height:48px;display:flex;align-items:center;gap:16px;text-align:left;font-size:calc(15px*var(--k));line-height:calc(22px*var(--k))}
+.danger{background:none;border:1px solid #FF8A7A;padding:6px 16px;margin:0;color:#FF8A7A !important;cursor:pointer;min-height:52px;border-radius:26px;font-size:calc(15px*var(--k));line-height:calc(22px*var(--k));font-weight:600}
+.cancel{background:#EDEDEA;border:0;padding:6px 16px;margin:0;color:#111 !important;cursor:pointer;min-height:48px;border-radius:24px;font-size:calc(14px*var(--k));line-height:calc(20px*var(--k));font-weight:600}
+body.solo .wrap>*:not(.stage),body.solo .side,body.solo .col.o,body.solo .col>h2{display:none}
+#soloExit{display:none}
+body.solo #soloExit{display:inline-flex;position:fixed;right:16px;top:16px;z-index:20}
+
+.f17{font-size:calc(17px*var(--k));line-height:calc(22px*var(--k))}
+.panel{background:#0B0B0D}
+.mk{display:inline-flex;align-items:center;gap:6px;min-height:28px;font-size:calc(13px*var(--k));line-height:calc(18px*var(--k));font-variant-numeric:tabular-nums;color:#A9A9A4}
+.mkb{background:none;border:0;padding:0 6px;margin:0;min-height:48px;min-width:48px;cursor:pointer;border-radius:14px;box-shadow:inset 0 0 0 1.5px #FF8A7A}
+.dev .mk svg{flex-shrink:0}
+[data-slider]{-webkit-appearance:none;appearance:none;width:100%;height:48px;margin:0;background:transparent;cursor:pointer;--p:60%}
+[data-slider]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:linear-gradient(90deg,#EDEDEA var(--p),#3A3A3F var(--p))}
+[data-slider]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:10px;background:#EDEDEA;margin-top:-8px;border:0}
+[data-slider]::-moz-range-track{height:4px;border-radius:2px;background:#3A3A3F}
+[data-slider]::-moz-range-progress{height:4px;border-radius:2px;background:#EDEDEA}
+[data-slider]::-moz-range-thumb{width:20px;height:20px;border-radius:10px;background:#EDEDEA;border:0}
+.dev .db{color:#EDEDEA}.dev .db[aria-disabled="true"]{color:#626B72}
+.dev .sheet h2{color:#EDEDEA}
+.dev.showchg [data-fit]{outline:2px dashed #8AB4F8;outline-offset:-2px}
+.pri,.out{flex-shrink:0}
+</style>
+</head>
+<body>
+<button class="hw" id="soloExit" type="button">単独表示をやめる</button>
+<div class="wrap">
+<h1 class="pg">Loupe — タグ詳細の適合スコアと表示の基準（Issue #46）</h1>
+<p class="lead">左は元のアートボード（T5 タグ詳細・タグ付き＝V05。基準を教えるでは元の1枚ずつ確認 V09、写真の拡大では S08）、右は元の写真中心の4列の格子・下部の操作・黒い背景と文字の体系を保ったまま、#46 の合意だけを当てた案です。［変更箇所の枠］で元から変えた部分にオレンジの枠を出します。</p>
+<div class="note">本人の判断からタグごとに学習し、写真ごとの適合スコアを保存して、表示の基準で絞ります。基準を動かすと表示だけが変わります。判断の保存後は保存済みの特徴で学習し直し、新しい写真の解析は［写真を解析］で始めます。自分で含めた写真は常に表示、含めない写真は除外。写真は合成の色面、スコアと学習は模擬です。Androidには<b>まだ実装していません</b>。</div>
+<div class="controls" role="group" aria-label="画面"><span><span class="lb">画面</span><span class="seg" id="oV"><button data-v="detail" aria-pressed="true">タグ詳細</button><button data-v="teach" aria-pressed="false">基準を教える</button><button data-v="view" aria-pressed="false">写真の拡大</button></span></span><span><span class="lb">タグ</span><span class="seg" id="oT"><button data-v="mika" aria-pressed="true">ミカヅキインコ</button><button data-v="oka" aria-pressed="false">オカメインコ</button><button data-v="kiky" aria-pressed="false">キキョウインコ</button><button data-v="long" aria-pressed="false">長いタグ名</button></span></span><span><span class="lb">保存・解析の結果</span><span class="seg" id="oF"><button data-v="0" aria-pressed="true">成功</button><button data-v="1" aria-pressed="false">失敗</button></span></span></div><div class="controls" role="group" aria-label="学習と解析" id="detCtl"><span><span class="lb">学習</span><span class="seg" id="oM"><button data-v="fresh" aria-pressed="true">学習済み</button><button data-v="stale" aria-pressed="false">再計算中（前回の結果のまま）</button><button data-v="few" aria-pressed="false">見本が片方だけ（＋2 −0）</button><button data-v="none" aria-pressed="false">判断なし</button></span></span><span><span class="lb">解析</span><span class="seg" id="oAn"><button data-v="done" aria-pressed="true">済み</button><button data-v="part" aria-pressed="false">未解析あり</button><button data-v="running" aria-pressed="false">計算中</button><button data-v="fail" aria-pressed="false">失敗</button></span></span><span><span class="lb">一覧</span><span class="seg" id="oD"><button data-v="ok" aria-pressed="true">通常</button><button data-v="loading" aria-pressed="false">読み込み中</button><button data-v="empty" aria-pressed="false">結果なし</button></span></span></div><div class="controls" role="group" aria-label="基準を教えるの候補"><span><span class="lb">教える候補</span><span class="seg" id="oQ"><button data-v="ok" aria-pressed="true">あり</button><button data-v="none" aria-pressed="false">なし</button></span></span></div>
+<div class="controls"><span><span class="lb">幅</span><span class="seg" id="oW"><button data-v="320" aria-pressed="false">320dp</button><button data-v="390" aria-pressed="false">390dp（元と同じ）</button><button data-v="400" aria-pressed="true">400dp</button></span></span><span><span class="lb">高さ</span><span class="seg" id="oH"><button data-v="844" aria-pressed="true">844dp</button><button data-v="640" aria-pressed="false">640dp</button></span></span><span><span class="lb">文字</span><span class="seg" id="oK"><button data-v="1" aria-pressed="true">1.0倍</button><button data-v="1.3" aria-pressed="false">1.3倍</button></span></span><button class="hw" id="oChg" aria-pressed="true">変更箇所の枠</button><button class="hw" id="oRM" aria-pressed="false">減らす動き</button><button class="hw" id="hwBack" type="button">Android Back（OSのシミュレータ・画面の外）</button><button class="hw" id="reset" type="button" style="background:none;font-weight:500">最初から</button><button class="hw" id="solo" type="button">変更後の画面だけを表示</button></div>
+<div class="stage">
+<div class="col o"><h2>元のデザイン <small id="origName"></small></h2><div class="orig" id="orig"></div></div>
+<div class="col"><h2>変更後 <small id="devName"></small></h2><div class="dev showchg" id="dev"></div></div>
+<div class="side"><div class="box" id="ax"></div><div class="box" id="chk"></div><div class="box" id="log"></div></div>
+</div>
+<div id="live" aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)"></div>
+<section class="spec" aria-label="差分と仕様">
+<h2 class="sec">1. 元の画面（T5 タグ詳細・タグ付き／V05）から保つもの</h2>
+<ul>
+<li>黒い背景、上の余白40dp・左右20dp、対象（アルバム名）13sp・行18sp、タグ名 28sp・行36sp・600（長い名前は折り返す）、件数 14sp・行20sp・#A9A9A4。</li>
+<li>写真中心の4列の格子：高さ96dp・間2dp。タグの一覧を同じ画面に増やさず、従来どおりタグごとの詳細。</li>
+<li>下部の操作パネル（背景 #0B0B0D、上の線 #222226）：［タグ付き｜該当しない］の切り替え（#1C1C1F・角丸24dp・48dp）、主ボタン（#EDEDEA・文字 #111111・52dp・角丸26dp）、補助ボタン（48dp・角丸24dp・線 #3A3A3F）、dock（64dp・12sp・24dpのアイコン）。</li>
+<li>既存の dock［写真を追加］［一括訂正］［その他］の3つ。アプリの中の戻る操作は置かず、Android 標準の Back を使う。</li>
+</ul>
+
+<h2 class="sec">2. 元との違い（合意した変更だけ）</h2>
+<div class="tscroll"><table class="t">
+<tr><th>#</th><th>場所</th><th>元の画面</th><th>変更後</th><th>根拠</th></tr>
+<tr><td>1</td><td>表示の基準</td><td>—</td><td>主操作の上に横のスライダー（0.00〜1.00、最初は0.60、刻み0.01、％では書かない）。上の行に「表示の基準」と今の値・表示枚数（例「0.60 · 12枚」）、下の両端に「広く拾う」（左＝低い基準）「絞り込む」（右＝高い基準）。動かすと表示だけが変わり、学習・写真の解析は始めない</td><td><span class="tg">#46</span></td></tr>
+<tr><td>2</td><td>表示の規則</td><td>人と自動の判断の合算</td><td>自分で「含める」にした写真は基準に関係なく常に表示。自分で「含めない」にした写真は除外（該当しないの一覧へ）。自分の判断がない写真は、保存した適合スコアが基準以上のときだけ表示（右下に既存の自動の印）</td><td><span class="tg">#46</span></td></tr>
+<tr><td>3</td><td>件数の行</td><td>「タグ付き 3枚 · 該当しない 0枚 · 未確認 48枚」</td><td>同じ形で「タグ付き {表示}枚（推定 {基準以上の推定}枚）· 該当しない {含めない}枚 · 未確認 {残り}枚」。基準を動かすとその場で変わる</td><td><span class="tg">#46</span></td></tr>
+<tr><td>4</td><td>2つの主操作</td><td>［似た写真にもタグを付ける］［1枚ずつ確認する］</td><td>［写真を解析］（白の主ボタン。<b>新しい写真の特徴の取り出し</b>を端末の中で始め、続けて学習とスコアの計算をする。新しい写真の解析はこのボタンを押したときだけ）と［基準を教える］（補助ボタン。人の判断の画面へ）。解析中は［中止］で止められ、前回の結果のまま</td><td><span class="tg">#46</span></td></tr>
+<tr><td>4b</td><td>学習のし直し</td><td>—</td><td><b>保存済みの特徴だけを使う学習のし直しは、新しい写真の特徴の取り出しと分ける</b>。判断・訂正・取り消し（基準を教える・写真の拡大の付け外し・一括訂正）の保存に成功したら、保存済みの特徴だけで裏で学習し直し、全写真のスコアを計算し直す。計算中は今表示している写真を差し替えず、前回の結果の印（時計）で今の表示を保つ。新しい結果は、用意できたあと一覧を表示し直したとき（写真の拡大・基準を教える・写真を追加から戻る、タグ付き／該当しないの切り替え）に反映する。写真を見るだけ・スライダーを動かすだけでは、学習も解析も始めない</td><td><span class="tg">#46</span></td></tr>
+<tr><td>4c</td><td>暫定のスコアの条件</td><td>—</td><td>互換のある特徴を持つ手動の「含める」1枚以上と「含めない」1枚以上があれば、暫定のスコアを計算する。決まった必要枚数は設けない。精度の保証や確率への校正はしない（読み上げでも「未校正の適合スコアで、正解率ではない」と伝える）</td><td><span class="tg">#46</span></td></tr>
+<tr><td>5</td><td>学習と解析の状態</td><td>—</td><td>長い常駐の説明は置かず、既存の記号と件数だけで区別（表4）。読み上げには、未校正の適合スコアで正解率ではないこと・自分の判断が優先されることを入れる</td><td><span class="tg">#46</span><span class="tg">#17</span></td></tr>
+<tr><td>6</td><td>写真のタップ</td><td>写真の画面</td><td>従来の黒い写真の拡大のまま。dock は［前へ］［次へ］［拡大］［タグを外す／タグを付ける］の4つ。付け外しは保存に成功してもその写真に留まる。学習の画面とは分ける</td><td><span class="tg k">既存の操作</span></td></tr>
+<tr><td>7</td><td>一括訂正</td><td>—</td><td>既存のまま。タグ付きの一覧では［該当しないにする］、該当しないの一覧では［タグ付きにする］。保存に成功したら選択を終える。失敗したら選択を残し、押した操作の右上に失敗の印、もう一度押すと再試行。Back は選択の終了 → タグ一覧</td><td><span class="tg k">既存の操作</span></td></tr>
+<tr><td>8</td><td>［その他］</td><td>—</td><td>既存のまま：［自動で付いた写真］（推定の写真だけを表示）と［自動で付いたタグをすべて外す］。確認「自動で付いたタグをすべて外しますか？」「「{タグ名}」が対象です。全アルバムの自動で付いた分を外します。自分で付けたタグは残ります。」［すべて外す］［外さない］。外すのはこのタグの全アルバムの推定の結果だけで、自分の判断は残る。実行すると<b>このタグの推定の結果とモデルを消して学習を無効</b>にし、計算中・用意済みの結果も捨てる（古い計算が復活しない）。学習は［写真を解析］を押したときにだけ再開する</td><td><span class="tg k">既存の確認</span></td></tr>
+<tr><td>9</td><td>dock</td><td>［タグ一覧］</td><td>既存の［写真を追加］［一括訂正］［その他］。［タグ一覧］は外して Back</td><td><span class="tg">#5</span><span class="tg k">既存の入口</span></td></tr>
+</table></div>
+
+<h2 class="sec">3. 基準を教える（人の判断の画面）</h2>
+<div class="tscroll"><table class="t">
+<tr><th>項目</th><th>仕様</th></tr>
+<tr><td>配置</td><td>黒い背景。上に最小限のタグ名（17sp・600・折り返す）と対象（13sp）、右に「{n} / {全体}」。写真を大きく中央（切り取らない）。下部に［含めない］［保留］［含める］の3つ（左から）。その下に小さな［取り消し］</td></tr>
+<tr><td>3つの操作</td><td>［含める］は白の主ボタン（52dp・角丸26dp）、［含めない］［保留］は補助ボタン（48dp・角丸24dp・線 #3A3A3F）。それぞれ20dpの図形（丸にチェック／丸に斜線／丸に横線）と名前。読み上げ「含める。この写真は「{タグ名}」に含める」「含めない。この写真は「{タグ名}」に含めない」「保留。判断しないで次の写真へ。学習には使いません」。3列に入らない幅・文字の大きさでは縦に並べる（順番は同じ）</td></tr>
+<tr><td>保存</td><td>［含める］［含めない］は保存に成功してから次の写真へ進む。保存中は押した操作に回る弧、3つの操作と取り消しは無効、Back も止める。失敗したら写真と判断を残し、押した操作の右上に失敗の印。もう一度押すと再試行</td></tr>
+<tr><td>保留</td><td>保存も学習もしないで次の写真へ</td></tr>
+<tr><td>取り消し</td><td>小さな操作（48dp・アイコン20dp＋「取り消し」12sp）。読み上げとツールチップは「直前の判断を取り消す」。前の判断の取り消しを訂正として保存し、その写真へ戻る。失敗したら今の写真のまま、印を付けて再試行。取り消せる判断がないときは無効</td></tr>
+<tr><td>スワイプ</td><td>写真を左右にスワイプしても判断にしない（写真も変えない）</td></tr>
+<tr><td>候補</td><td>開いたときに、基準の近く・高いスコア・探索（スコアに関係なく選ぶ）を混ぜて決める。途中で写真が勝手に入れ替わらない。まだ解析していない・見本が足りないときも、探索の候補で手動の判断を続けられる。候補が尽きたら完了の印、候補がないときは空の印（どちらも Back でタグ詳細へ）</td></tr>
+<tr><td>戻る</td><td>端末の Back でタグ詳細へ。保存のあと裏で計算し直していれば、終わるまでは前回の結果の印のまま。用意できた結果は一覧へ戻ったときに反映する。この画面の写真は、計算し直しても入れ替えない</td></tr>
+</table></div>
+
+<h2 class="sec">4. 状態の区別（記号と件数だけ）</h2>
+<div class="tscroll"><table class="t">
+<tr><th>状態</th><th>形と数</th><th>読み上げ</th></tr>
+<tr><td>学習済み（暫定のスコア）</td><td>完了の印＋「＋{含める}」「−{含めない}」（実数だけ）</td><td>「学習済み（暫定のスコア）。含める n枚、含めない m枚」</td></tr>
+<tr><td>再計算中・結果を用意済み</td><td>時計の印＋同じ件数（表示は前回の結果）</td><td>「前回の結果を表示しています。保存した判断から新しい結果を計算しています。…」／「…新しい結果を用意しました。一覧を表示し直すと反映します。…」</td></tr>
+<tr><td>見本が片方だけ・判断なし</td><td>点線の丸＋「＋2」「−0」（実数だけ。必要枚数は書かない）</td><td>「暫定のスコアを計算するには、特徴のある含める・含めないの見本がそれぞれ1枚以上必要です。今は含める 2枚、含めない 0枚」</td></tr>
+<tr><td>全解除のあと（学習は無効）</td><td>点線の丸＋件数、推定の写真はなし</td><td>「推定の結果とモデルを外しました。学習は止まっています。写真を解析を押すと学習し直します。…」</td></tr>
+<tr><td>未解析の写真がある</td><td>格子の印＋「{n}枚」（特徴がない写真。スコアもない）</td><td>「まだ解析していない写真 n枚。写真を解析で特徴を取り出します」</td></tr>
+<tr><td>計算中</td><td>回る弧（400msまでは出さない）＋「{済み}/{全体}」と［中止］</td><td>「写真を解析しています。12枚中6枚」（数は新しく特徴を取り出す写真）。中止すると前回の結果のまま</td></tr>
+<tr><td>失敗</td><td>三角の印＋枚数（押すと再試行・48dp）</td><td>「写真を解析できませんでした。前回の結果のままです。再試行」</td></tr>
+<tr><td>結果なし</td><td>格子の場所に48dpの点線の枠</td><td>「表示する写真はありません。基準を下げると推定の写真が増えます」</td></tr>
+<tr><td>読み込み中</td><td>格子の場所に回る弧の仮の写真、件数は「—」</td><td>「写真を読み込んでいます」</td></tr>
+</table></div>
+<p class="lead" style="font-size:13.5px">スライダーの読み上げ：「表示の基準、0.60。12枚を表示。適合スコアは未校正の値で、正解率ではありません。自分の判断が常に優先されます。動かしても表示だけが変わり、解析は始まりません」。写真は「写真、推定、適合スコア 0.82」「写真、自分で含めた」など。</p>
+
+<h2 class="sec">5. 寸法</h2>
+<div class="tscroll"><table class="t">
+<tr><th>部品</th><th>値</th></tr>
+<tr><td>見出し</td><td>上40・左右20・下20dp。対象13sp/18、タグ名28sp/36・600、件数14sp/20・#A9A9A4、間4dp</td></tr>
+<tr><td>写真の格子</td><td>4列、高さ96dp、間2dp。推定の写真の右下に自動の印（高さ20dp・rgba(0,0,0,.62)）</td></tr>
+<tr><td>下部の操作パネル</td><td>背景 #0B0B0D、余白 上10・左右16・下20dp、間8dp。見えている高さの62%を超えるときだけ、パネルの中を縦にスクロール（写真の格子は別にスクロール）</td></tr>
+<tr><td>状態の行</td><td>最小28dp、印16〜18dp、13sp・等幅数字、間12dp（入らないときは折り返す）。［中止］は48dp</td></tr>
+<tr><td>スライダー</td><td>押せる高さ48dp、線4dp（#3A3A3F、基準より左は #EDEDEA）、つまみ20dp（#EDEDEA）。上の行 13sp／14sp、両端のラベル 12sp・#A9A9A4</td></tr>
+<tr><td>主ボタン・補助ボタン</td><td>［写真を解析］52dp・角丸26dp・#EDEDEA／#111111（解析中は #2A2A2E／#8A8A85 と回る弧）。［基準を教える］48dp・角丸24dp・線1dp #3A3A3F。15sp／14sp・600／500</td></tr>
+<tr><td>dock</td><td>3列、64dp、12sp、24dpのアイコン、無効 #626B72</td></tr>
+<tr><td>基準を教える</td><td>上40・左右20・下12dp。写真は残りの高さに切り取らずに収める（最低120dp）。下部 余白 上8・左右16・下20dp、3つの操作の間8dp</td></tr>
+<tr><td>写真の拡大</td><td>従来どおり：背景 #000000、上64dpに日時、写真の舞台は上72・下100dp、dock 4列・64dp</td></tr>
+</table></div>
+
+<h2 class="sec">6. 確認の観点と注記</h2>
+<ul>
+<li>縦画面だけ。320・390・400dp × 文字1.0・1.3倍 × 高さ844・640dp で、省略・縮小・はみ出しがなく、押せるものとスライダーが48dp以上、写真の格子が96dpで4列、下部の操作がパネルの中のスクロールで届くことを右の検査で確かめています。</li>
+<li>このHTMLの文字の倍率は単純な掛け算（線形）です。Android 14以降（Android 16を含む）は大きな文字ほど拡大率を抑える非線形なので、実機では28spのタグ名がこのHTMLより少し小さくなります。</li>
+<li>スコア・学習・解析の進み方は合成の模擬です（裏の学習のし直しは約1.5秒で終わる模擬）。候補の数と混ぜ方の割合は実装で決めます。［中止］の後は前回の結果のままです。</li>
+<li>タグは優先の3つ（ミカヅキインコ・オカメインコ・キキョウインコ）と長い名前の例を切り替えられます。写っていれば対象、複数の種類なら複数のタグ（タグごとの詳細で別々に判断）。写真は合成の色面だけです。</li>
+<li>元のアーティファクトは変更していません。Androidには<b>まだ実装していません</b>（Issue #46 の設計案です）。</li>
+</ul>
+</section>
+</div>
+<script id="origData" type="application/json">{"V05-Tag-Detail": "<div class=\"sc-host\" data-sc-name=\"V05-Tag-Detail\"><div data-dc-tpl=\"3\" style=\"width: 390px; height: 844px; background: rgb(15, 15, 16);\"><div class=\"sc-host\" data-sc-name=\"Main\" data-dc-tpl=\"4\"><div data-dc-tpl=\"3\" style=\"width: 390px; height: 844px; position: relative; overflow: hidden; background: rgb(15, 15, 16); color: rgb(237, 237, 234); font-family: &quot;Noto Sans JP&quot;, system-ui, sans-serif; font-size: 15px; line-height: 22px; -webkit-font-smoothing: antialiased;\"><div data-dc-tpl=\"451\" style=\"position: absolute; inset: 0px; overflow-y: auto;\"><div data-dc-tpl=\"452\" style=\"box-sizing: border-box; padding: 40px 20px 20px; display: flex; flex-direction: column; gap: 4px;\"><span data-dc-tpl=\"453\" style=\"font-size: 13px; line-height: 18px; color: rgb(169, 169, 164);\"><span class=\"sc-interp\">嵐山 10.18<\/span><\/span><h1 data-dc-tpl=\"454\" style=\"margin: 0px; font-size: 28px; line-height: 36px; font-weight: 600; overflow-wrap: anywhere;\"><span class=\"sc-interp\">空<\/span><\/h1><span data-dc-tpl=\"455\" style=\"font-size: 14px; line-height: 20px; color: rgb(169, 169, 164); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">タグ付き 3枚 · 該当しない 0枚 · 未確認 48枚<\/span><\/span><\/div><div data-dc-tpl=\"456\" style=\"display: grid; grid-template-columns: repeat(4, minmax(0px, 1fr)); gap: 2px;\"><button data-dc-tpl=\"458\" aria-label=\"タグ付きの写真、変更する\" style=\"background: radial-gradient(11% 17% at 35% 72%, rgb(93, 107, 88) 0px, rgb(93, 107, 88) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(169, 195, 216) 0%, rgb(228, 234, 236) 62%, rgb(151, 161, 151) 63%, rgb(105, 115, 106) 100%); border: 0px; padding: 0px; margin: 0px; cursor: pointer; position: relative; display: block; height: 96px;\"><\/button><button data-dc-tpl=\"458\" aria-label=\"タグ付きの写真、変更する\" style=\"background: radial-gradient(11% 17% at 40% 30%, rgb(47, 53, 64) 0px, rgb(47, 53, 64) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(169, 195, 216) 0%, rgb(228, 234, 236) 62%, rgb(151, 161, 151) 63%, rgb(105, 115, 106) 100%); border: 0px; padding: 0px; margin: 0px; cursor: pointer; position: relative; display: block; height: 96px;\"><\/button><button data-dc-tpl=\"458\" aria-label=\"タグ付きの写真、変更する\" style=\"background: radial-gradient(11% 17% at 66% 74%, rgb(95, 108, 90) 0px, rgb(95, 108, 90) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(169, 195, 216) 0%, rgb(228, 234, 236) 62%, rgb(151, 161, 151) 63%, rgb(105, 115, 106) 100%); border: 0px; padding: 0px; margin: 0px; cursor: pointer; position: relative; display: block; height: 96px;\"><\/button><\/div><div data-dc-tpl=\"461\" style=\"height: 440px;\"><\/div><\/div><div data-dc-tpl=\"462\" style=\"position: absolute; left: 0px; right: 0px; bottom: 0px; background: rgb(15, 15, 16); border-top: 1px solid rgb(34, 34, 38); padding: 10px 16px 20px; display: flex; flex-direction: column; gap: 8px;\"><div data-dc-tpl=\"463\" role=\"group\" aria-label=\"表示する写真\" style=\"display: grid; grid-template-columns: repeat(2, minmax(0px, 1fr)); padding: 0px; gap: 4px; border-radius: 24px; background: rgb(28, 28, 31);\"><button data-dc-tpl=\"465\" aria-pressed=\"true\" style=\"background: rgb(237, 237, 234); border: 0px; padding: 4px 8px; margin: 0px; color: rgb(17, 17, 17); font-style: inherit; font-variant-ligatures: inherit; font-variant-caps: inherit; font-variant-east-asian: inherit; font-variant-alternates: inherit; font-variant-position: inherit; font-variant-emoji: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; min-height: 48px; border-radius: 24px; display: flex; align-items: center; justify-content: center; gap: 4px; font-size: 13px; line-height: 18px; font-weight: 500; text-align: center; font-variant-numeric: tabular-nums;\"><span data-dc-tpl=\"466\" style=\"width: 16px; height: 16px; display: flex; align-items: center; justify-content: center;\"><svg data-dc-tpl=\"468\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"469\" d=\"M5 12.5l4.5 4.5L19 7.5\"><\/path><\/svg><\/span><span data-dc-tpl=\"470\"><span class=\"sc-interp\">タグ付き 3<\/span><\/span><\/button><button data-dc-tpl=\"465\" aria-pressed=\"false\" style=\"background: transparent; border: 0px; padding: 4px 8px; margin: 0px; color: rgb(237, 237, 234); font-style: inherit; font-variant-ligatures: inherit; font-variant-caps: inherit; font-variant-east-asian: inherit; font-variant-alternates: inherit; font-variant-position: inherit; font-variant-emoji: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; min-height: 48px; border-radius: 24px; display: flex; align-items: center; justify-content: center; gap: 4px; font-size: 13px; line-height: 18px; font-weight: 500; text-align: center; font-variant-numeric: tabular-nums;\"><span data-dc-tpl=\"466\" style=\"width: 16px; height: 16px; display: flex; align-items: center; justify-content: center;\"><\/span><span data-dc-tpl=\"470\"><span class=\"sc-interp\">該当しない 0<\/span><\/span><\/button><\/div><button data-dc-tpl=\"471\" style=\"background: rgb(237, 237, 234); border: 0px; padding: 0px 12px; margin: 0px; color: rgb(17, 17, 17); font-style: inherit; font-variant: inherit; font-stretch: inherit; line-height: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 52px; border-radius: 26px; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 15px; font-weight: 600;\"><svg data-dc-tpl=\"472\" width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.9\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect data-dc-tpl=\"473\" x=\"3.5\" y=\"7\" width=\"8\" height=\"10\" rx=\"1.5\"><\/rect><rect data-dc-tpl=\"474\" x=\"13.5\" y=\"4\" width=\"7\" height=\"7\" rx=\"1.5\"><\/rect><rect data-dc-tpl=\"475\" x=\"13.5\" y=\"13\" width=\"7\" height=\"7\" rx=\"1.5\"><\/rect><\/svg><span data-dc-tpl=\"476\">似た写真にもタグを付ける<\/span><\/button><button data-dc-tpl=\"477\" style=\"background: none; border: 1px solid rgb(58, 58, 63); padding: 4px 12px; margin: 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; min-height: 48px; box-sizing: border-box; border-radius: 24px; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 14px; line-height: 18px; font-weight: 500; text-align: center;\"><svg data-dc-tpl=\"478\" width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect data-dc-tpl=\"479\" x=\"5\" y=\"4\" width=\"14\" height=\"16\" rx=\"2\"><\/rect><path data-dc-tpl=\"480\" d=\"M9 12h6\"><\/path><\/svg><span data-dc-tpl=\"481\">1枚ずつ確認する<\/span><\/button><nav data-dc-tpl=\"482\" aria-label=\"タグの操作\" style=\"display: grid; grid-template-columns: repeat(1, minmax(0px, 1fr)); margin: 0px -8px;\"><button data-dc-tpl=\"483\" style=\"background: none; border: 0px; padding: 0px; margin: 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 500;\"><svg data-dc-tpl=\"484\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"485\" d=\"M19 12H5M11 18l-6-6 6-6\"><\/path><\/svg><span data-dc-tpl=\"486\">タグ一覧<\/span><\/button><\/nav><\/div><\/div><\/div><\/div><\/div>", "V09-Tag-Manual": "<div class=\"sc-host\" data-sc-name=\"V09-Tag-Manual\"><div data-dc-tpl=\"3\" style=\"width: 390px; height: 844px; background: rgb(15, 15, 16);\"><div class=\"sc-host\" data-sc-name=\"Main\" data-dc-tpl=\"4\"><div data-dc-tpl=\"3\" style=\"width: 390px; height: 844px; position: relative; overflow: hidden; background: rgb(15, 15, 16); color: rgb(237, 237, 234); font-family: &quot;Noto Sans JP&quot;, system-ui, sans-serif; font-size: 15px; line-height: 22px; -webkit-font-smoothing: antialiased;\"><div data-dc-tpl=\"515\" style=\"position: absolute; inset: 0px; background: rgb(11, 11, 12);\"><div data-dc-tpl=\"516\" style=\"padding: 36px 20px 12px; display: flex; flex-direction: column; gap: 2px;\"><span data-dc-tpl=\"517\" style=\"font-size: 13px; line-height: 18px; color: rgb(169, 169, 164);\"><span class=\"sc-interp\">1枚ずつ確認<\/span><\/span><span data-dc-tpl=\"518\" style=\"font-size: 20px; line-height: 28px; font-weight: 600; overflow-wrap: anywhere;\"><span class=\"sc-interp\">空<\/span><\/span><span data-dc-tpl=\"519\" style=\"font-size: 13px; line-height: 18px; color: rgb(169, 169, 164); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">51枚中7枚目<\/span><\/span><\/div><div data-dc-tpl=\"521\" style=\"position: absolute; left: 0px; right: 0px; top: 128px; height: 300px; overflow: hidden; display: flex; align-items: center; justify-content: center;\"><button data-dc-tpl=\"522\" aria-label=\"写真、タグ付き。右にスワイプでタグを付ける、左にスワイプでスキップ\" style=\"background: radial-gradient(11% 17% at 60% 70%, rgb(107, 122, 98) 0px, rgb(107, 122, 98) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(169, 195, 216) 0%, rgb(228, 234, 236) 62%, rgb(151, 161, 151) 63%, rgb(105, 115, 106) 100%); border: 0px; padding: 0px; margin: 0px; cursor: grab; width: 390px; height: 260px; flex-shrink: 0; transform: none; transform-origin: 50% 50%;\"><\/button><span data-dc-tpl=\"523\" style=\"position: absolute; left: 12px; top: 32px; height: 28px; padding: 0px 10px 0px 8px; box-sizing: border-box; border-radius: 14px; background: rgb(237, 237, 234); color: rgb(17, 17, 17); border: 1px solid transparent; display: flex; align-items: center; gap: 6px; font-size: 13px; line-height: 18px; font-weight: 600; pointer-events: none;\"><svg data-dc-tpl=\"525\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"526\" d=\"M3.8 12.2V4.8a1 1 0 0 1 1-1h7.4l8 8a1.4 1.4 0 0 1 0 2l-6.2 6.2a1.4 1.4 0 0 1-2 0z\"><\/path><\/svg><span data-dc-tpl=\"531\"><span class=\"sc-interp\">タグ付き<\/span><\/span><\/span><\/div><div data-dc-tpl=\"539\" style=\"position: absolute; left: 0px; right: 0px; bottom: 0px; background: rgb(11, 11, 12); border-top: 1px solid rgb(34, 34, 38); padding: 8px 16px 20px; display: flex; flex-direction: column; gap: 8px;\"><div data-dc-tpl=\"540\" role=\"status\" style=\"height: 48px; display: flex; align-items: center; gap: 12px;\"><span data-dc-tpl=\"541\" style=\"flex: 1 1 0%; display: flex; flex-direction: column; min-width: 0px;\"><span data-dc-tpl=\"542\" style=\"font-size: 13px; line-height: 18px; color: rgb(237, 237, 234); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">タグ付き 4 · 該当しない 0 · 未確認 47<\/span><\/span><span data-dc-tpl=\"543\" style=\"font-size: 12px; line-height: 16px; color: rgb(169, 169, 164);\"><span class=\"sc-interp\">右にスワイプでタグを付ける、左でスキップ<\/span><\/span><\/span><\/div><div data-dc-tpl=\"548\" style=\"display: grid; grid-template-columns: repeat(3, minmax(0px, 1fr)); gap: 8px;\"><button data-dc-tpl=\"549\" aria-label=\"スキップ（タグを付けるか決めずに次へ）\" style=\"background: none; border: 1px solid rgb(58, 58, 63); padding: 0px 6px; margin: 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; line-height: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 56px; box-sizing: border-box; border-radius: 28px; display: flex; align-items: center; justify-content: center; gap: 4px; font-size: 14px; font-weight: 500;\"><svg data-dc-tpl=\"550\" width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.9\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"551\" d=\"M19 12H5M11 6l-6 6 6 6\"><\/path><\/svg><span data-dc-tpl=\"552\">スキップ<\/span><\/button><button data-dc-tpl=\"553\" style=\"background: none; border: 1px solid rgb(58, 58, 63); padding: 0px 6px; margin: 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; line-height: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 56px; box-sizing: border-box; border-radius: 28px; display: flex; align-items: center; justify-content: center; gap: 4px; font-size: 14px; font-weight: 500; white-space: nowrap;\"><svg data-dc-tpl=\"554\" width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.9\" stroke-linecap=\"round\" aria-hidden=\"true\"><circle data-dc-tpl=\"555\" cx=\"12\" cy=\"12\" r=\"8\"><\/circle><path data-dc-tpl=\"556\" d=\"M6.5 6.5l11 11\"><\/path><\/svg><span data-dc-tpl=\"557\">該当しない<\/span><\/button><button data-dc-tpl=\"558\" style=\"background: rgb(237, 237, 234); border: 0px; padding: 0px 6px; margin: 0px; color: rgb(17, 17, 17); font-style: inherit; font-variant: inherit; font-stretch: inherit; line-height: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 56px; border-radius: 28px; display: flex; align-items: center; justify-content: center; gap: 4px; font-size: 14px; font-weight: 600;\"><span data-dc-tpl=\"559\" style=\"white-space: nowrap;\">タグを付ける<\/span><svg data-dc-tpl=\"560\" width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.9\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"561\" d=\"M5 12h14M13 6l6 6-6 6\"><\/path><\/svg><\/button><\/div><nav data-dc-tpl=\"574\" aria-label=\"判断の操作\" style=\"display: grid; grid-template-columns: repeat(4, minmax(0px, 1fr)); margin: 0px -8px;\"><button data-dc-tpl=\"575\" style=\"background: none; border: 0px; padding: 0px; margin: 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 500;\"><svg data-dc-tpl=\"576\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"577\" d=\"M6 6l12 12M18 6L6 18\"><\/path><\/svg><span data-dc-tpl=\"578\">終了<\/span><\/button><button data-dc-tpl=\"579\" aria-label=\"直前の操作を取り消す\" style=\"background: none; border: 0px; padding: 0px; margin: 0px; color: rgb(237, 237, 234); font-style: inherit; font-variant: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 500;\"><svg data-dc-tpl=\"580\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"581\" d=\"M9 14L4 9l5-5\"><\/path><path data-dc-tpl=\"582\" d=\"M4 9h10.5a5.5 5.5 0 0 1 0 11H11\"><\/path><\/svg><span data-dc-tpl=\"583\">直前の操作を取り消す<\/span><\/button><button data-dc-tpl=\"584\" aria-label=\"この写真を未確認に戻す\" style=\"background: none; border: 0px; padding: 0px; margin: 0px; color: rgb(237, 237, 234); font-style: inherit; font-variant: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 500;\"><svg data-dc-tpl=\"585\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" aria-hidden=\"true\"><circle data-dc-tpl=\"586\" cx=\"12\" cy=\"12\" r=\"8.5\" stroke-dasharray=\"3 3\"><\/circle><\/svg><span data-dc-tpl=\"587\">未確認に戻す<\/span><\/button><button data-dc-tpl=\"588\" aria-pressed=\"false\" style=\"background: none; border: 0px; padding: 0px; margin: 0px; color: rgb(237, 237, 234); font-style: inherit; font-variant: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 500;\"><svg data-dc-tpl=\"589\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" aria-hidden=\"true\"><circle data-dc-tpl=\"590\" cx=\"11\" cy=\"11\" r=\"6.5\"><\/circle><path data-dc-tpl=\"591\" d=\"M20 20l-4.4-4.4M11 8.5v5M8.5 11h5\"><\/path><\/svg><span data-dc-tpl=\"592\">拡大<\/span><\/button><\/nav><\/div><\/div><\/div><\/div><\/div><\/div>", "S08-Viewer": "<div class=\"sc-host\" data-sc-name=\"S08-Viewer\"><div data-dc-tpl=\"3\" style=\"width: 390px; height: 844px; background: rgb(15, 15, 16);\"><div class=\"sc-host\" data-sc-name=\"Main\" data-dc-tpl=\"4\"><div data-dc-tpl=\"3\" style=\"width: 390px; height: 844px; position: relative; overflow: hidden; background: rgb(15, 15, 16); color: rgb(237, 237, 234); font-family: &quot;Noto Sans JP&quot;, system-ui, sans-serif; font-size: 15px; line-height: 22px; -webkit-font-smoothing: antialiased;\"><div data-dc-tpl=\"373\" style=\"position: absolute; inset: 0px; background: rgb(0, 0, 0);\"><div data-dc-tpl=\"374\" style=\"height: 64px; display: flex; align-items: flex-end; justify-content: center;\"><span data-dc-tpl=\"375\" style=\"font-size: 15px; line-height: 22px; font-weight: 500; font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">10月18日 13:34<\/span><\/span><\/div><div data-dc-tpl=\"376\" style=\"position: absolute; inset: 72px 0px 100px; display: flex; align-items: center; justify-content: center;\"><div data-dc-tpl=\"377\" role=\"img\" aria-label=\"写真、10月18日 13:34\" style=\"position: relative; width: 390px; height: 260px; background: radial-gradient(11% 17% at 50% 62%, rgb(200, 176, 138) 0px, rgb(200, 176, 138) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(195deg, rgb(141, 147, 153) 0%, rgb(91, 97, 104) 58%, rgb(42, 45, 49) 100%);\"><\/div><\/div><nav data-dc-tpl=\"382\" aria-label=\"写真の操作\" style=\"position: absolute; left: 0px; right: 0px; bottom: 0px; padding: 0px 0px 20px; background: rgb(0, 0, 0); display: grid; grid-template-columns: repeat(6, minmax(0px, 1fr));\"><button data-dc-tpl=\"383\" style=\"background: none; border: 0px; padding: 0px; margin: 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 500;\"><svg data-dc-tpl=\"384\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"385\" d=\"M19 12H5M11 18l-6-6 6-6\"><\/path><\/svg><span data-dc-tpl=\"386\">戻る<\/span><\/button><button data-dc-tpl=\"387\" aria-label=\"前の写真\" style=\"background: none; border: 0px; padding: 0px; margin: 0px; color: rgb(237, 237, 234); font-style: inherit; font-variant: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 500;\"><svg data-dc-tpl=\"388\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"389\" d=\"M15 6l-6 6 6 6\"><\/path><\/svg><span data-dc-tpl=\"390\">前へ<\/span><\/button><button data-dc-tpl=\"391\" aria-label=\"次の写真\" style=\"background: none; border: 0px; padding: 0px; margin: 0px; color: rgb(237, 237, 234); font-style: inherit; font-variant: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 500;\"><svg data-dc-tpl=\"392\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"393\" d=\"M9 6l6 6-6 6\"><\/path><\/svg><span data-dc-tpl=\"394\">次へ<\/span><\/button><button data-dc-tpl=\"395\" style=\"background: none; border: 0px; padding: 0px; margin: 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 500;\"><svg data-dc-tpl=\"396\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" aria-hidden=\"true\"><circle data-dc-tpl=\"397\" cx=\"18\" cy=\"5.5\" r=\"2.5\"><\/circle><circle data-dc-tpl=\"398\" cx=\"6\" cy=\"12\" r=\"2.5\"><\/circle><circle data-dc-tpl=\"399\" cx=\"18\" cy=\"18.5\" r=\"2.5\"><\/circle><path data-dc-tpl=\"400\" d=\"M8.2 10.8l7.6-4.1M8.2 13.2l7.6 4.1\"><\/path><\/svg><span data-dc-tpl=\"401\">共有<\/span><\/button><button data-dc-tpl=\"402\" style=\"background: none; border: 0px; padding: 0px; margin: 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 500;\"><svg data-dc-tpl=\"403\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"404\" d=\"M3.8 12.2V4.8a1 1 0 0 1 1-1h7.4l8 8a1.4 1.4 0 0 1 0 2l-6.2 6.2a1.4 1.4 0 0 1-2 0z\"><\/path><circle data-dc-tpl=\"405\" cx=\"8.3\" cy=\"8.3\" r=\"1.4\"><\/circle><\/svg><span data-dc-tpl=\"406\">タグ<\/span><\/button><button data-dc-tpl=\"407\" style=\"background: none; border: 0px; padding: 0px; margin: 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 500;\"><svg data-dc-tpl=\"408\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" aria-hidden=\"true\"><circle data-dc-tpl=\"409\" cx=\"12\" cy=\"12\" r=\"9\"><\/circle><path data-dc-tpl=\"410\" d=\"M12 11v5.5M12 7.8v.01\"><\/path><\/svg><span data-dc-tpl=\"411\">情報<\/span><\/button><\/nav><\/div><\/div><\/div><\/div><\/div>"}</script>
+<script>
+(function () {
+
+  function check(extra) {
+    const dev = document.getElementById('dev'); const d = dev.getBoundingClientRect();
+    const vis = (e) => e.offsetParent !== null && !e.closest('.caller') && !e.classList.contains('synth');
+    const labs = [...dev.querySelectorAll('button,[role=img],[role=text],[role=radio],[role=checkbox]')].filter((e) => vis(e) && !e.closest('[aria-hidden="true"]') && !e.classList.contains('dim')).map((e) => '[' + (e.getAttribute('role') || 'button') + '] ' + (e.getAttribute('aria-label') || e.textContent.replace(/\s+/g, ' ').trim()) + (e.getAttribute('aria-pressed') === 'true' || e.getAttribute('aria-checked') === 'true' ? '（オン）' : '') + (e.getAttribute('aria-disabled') === 'true' ? '（無効）' : ''));
+    document.getElementById('ax').innerHTML = '<b>読み上げ（AX名）</b><br>' + ([...new Set(labs)].slice(0, 48).map((x) => '・' + x).join('<br>') || '—');
+    const small = [...dev.querySelectorAll('button')].filter((b) => vis(b) && !b.classList.contains('dim')).filter((b) => { const r = b.getBoundingClientRect(); return r.height < 47.5 || r.width < 47.5; });
+    const ov = [...dev.querySelectorAll('*')].filter(vis).filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && (r.right > d.right + 0.5 || r.left < d.left - 0.5); }).length;
+    const trunc = [...dev.querySelectorAll('*')].filter((e) => vis(e) && e.children.length === 0 && e.textContent.trim() && getComputedStyle(e).display !== 'inline' && (e.scrollWidth > e.clientWidth + 1) && getComputedStyle(e).overflow !== 'visible').length + [...dev.querySelectorAll('*')].filter((e) => vis(e) && getComputedStyle(e).textOverflow === 'ellipsis').length;
+    const clipBtn = [...dev.querySelectorAll('button')].filter(vis).filter((b) => { const r = b.getBoundingClientRect(); return [...b.querySelectorAll('span')].some((s) => { const q = s.getBoundingClientRect(); return q.height > 0 && s.textContent.trim() && (q.bottom > r.bottom + 1 || q.top < r.top - 1 || q.right > r.right + 1 || q.left < r.left - 1); }); }).length;
+    const minF = Math.min(...[...dev.querySelectorAll('*')].filter((e) => vis(e) && [...e.childNodes].some((c) => c.nodeType === 3 && c.textContent.trim())).map((e) => parseFloat(getComputedStyle(e).fontSize)));
+    const sc = dev.querySelector('.scr'), panel = dev.querySelector('.panel');
+    let cover = true;
+    if (sc && panel) { const keep = sc.scrollTop; sc.scrollTop = 1e6; const items = [...sc.querySelectorAll('button,span,h1,p')].filter((e) => e.getBoundingClientRect().height > 0 && (e.textContent.trim() || e.tagName === 'BUTTON')); const last = items.reduce((m, e) => Math.max(m, e.getBoundingClientRect().bottom), 0); cover = last <= panel.getBoundingClientRect().top + 0.5; sc.scrollTop = keep; }
+    const back = [...dev.querySelectorAll('button')].filter((b) => vis(b) && ['戻る', 'タグ一覧', '連写一覧', '選択へ戻る'].includes(b.textContent.trim())).length;
+    const okc = (b) => b ? '<span class="okc">なし</span>' : '<span class="ngc">あり</span>';
+    let html = '<b>検査（' + O.w + 'dp・文字' + O.k + '倍）</b><br>48dp未満のボタン：' + (small.length ? '<span class="ngc">' + small.length + '</span>' : '<span class="okc">なし</span>') + '<br>はみ出し：' + okc(!ov) + '<br>省略・切れ：' + okc(!trunc) + '<br>ボタンの中身の切れ：' + okc(!clipBtn) + '<br>文字の縮小：' + (minF >= 11.9 * O.k ? '<span class="okc">なし</span>' : '<span class="ngc">' + minF + 'px</span>') + '<br>下部と内容の重なり：' + okc(cover) + '<br>専用の戻る：' + okc(!back);
+    if (extra) html += extra();
+    document.getElementById('chk').innerHTML = html;
+  }
+  const ORIG = JSON.parse(document.getElementById('origData').textContent);
+  const O = { w: 400, h: 844, k: 1, chg: true, rm: false, v: 'detail', t: 'mika', m: 'fresh', an: 'done', d: 'ok', f: 0, s: 'pos', b: 0, auto: 0, q: 'ok' };
+  const TAGS = { mika: 'ミカヅキインコ', oka: 'オカメインコ', kiky: 'キキョウインコ', long: 'ミカヅキインコ（ノーマル・ルチノー・シナモンの見分け用）' };
+  const NP = 48;
+  const rnd = (i) => { const x = Math.sin(i * 12.9898 + 4.1) * 43758.5453; return x - Math.floor(x); };
+  let D, N, log = [], T = 0.6, runT = null, spinT = null, saveT = null;
+  const add = (x) => { log.unshift(x); log = log.slice(0, 14); };
+  const say = (x) => { const l = document.getElementById('live'); l.textContent = ''; setTimeout(() => { l.textContent = x; }, 30); };
+  /* ===== 合成のデータ ===== */
+  function calc(H, F) {
+    const S = {}, v = Object.values(H), d = (v.filter((x) => x === 'in').length - v.filter((x) => x === 'out').length) * 0.004;
+    for (let i = 0; i < NP; i++) { if (!F[i]) { S[i] = null; continue; } const b = O.d === 'empty' ? rnd(i) * 0.5 : H[i] === 'in' ? 0.7 + rnd(i) * 0.29 : H[i] === 'out' ? rnd(i) * 0.35 : rnd(i); S[i] = Math.round(Math.max(0, Math.min(1, b + (H[i] == null ? d : 0))) * 100) / 100; }
+    return S;
+  }
+  function makeData() {
+    const H = {}, F = {};
+    const hin = O.m === 'few' ? [0, 1] : O.m === 'none' ? [] : [0, 1, 2, 5, 8], hout = O.m === 'few' || O.m === 'none' ? [] : [3, 11, 20];
+    if (O.d === 'empty') hin.length = 0;
+    hin.forEach((i) => { H[i] = 'in'; }); hout.forEach((i) => { H[i] = 'out'; });
+    for (let i = 0; i < NP; i++) F[i] = !(O.an === 'part' && i >= 36);
+    const trained = O.m === 'fresh' || O.m === 'stale';
+    const S = trained ? calc(H, F) : Object.fromEntries(Array.from({ length: NP }, (_, i) => [i, null]));
+    return { H: H, S: S, F: F, trained: trained, disabled: false, gen: 0, bg: false, pending: null };
+  }
+  let bgT = null;
+  const trainable = () => Object.keys(D.H).some((i) => D.H[i] === 'in' && D.F[i]) && Object.keys(D.H).some((i) => D.H[i] === 'out' && D.F[i]);
+  /* 判断・訂正・取り消しの保存に成功したあと：保存済みの特徴だけで、裏で学習し直して全スコアを計算し直す（新しい写真の特徴は取り出さない） */
+  function retrain(why) {
+    if (D.disabled) { add(why + ' → 学習は無効のまま（［写真を解析］で学習し直す）'); return; }
+    if (!trainable()) { add(why + ' → 特徴のある含める・含めないの見本が揃わないので、再計算しない'); return; }
+    const g = ++D.gen; D.bg = true; D.pending = null; clearTimeout(bgT);
+    add(why + ' → 保存済みの特徴だけで裏で学習し直し、全スコアを再計算（今の写真は差し替えない）');
+    bgT = setTimeout(() => { if (g !== D.gen || D.disabled) return; D.bg = false; D.pending = calc(D.H, D.F); add('新しい結果を用意した（一覧へ戻ったときに反映）'); const ae = document.activeElement; const sel = ae && ae.matches('[data-slider]') ? '[data-slider]' : null; if (!N.saving && !N.busy) render(sel); }, 1500);
+  }
+  function applyPending(where) { if (D.pending && !D.bg) { D.S = D.pending; D.pending = null; D.trained = true; add(where + '：新しい結果を反映'); } }
+  const fresh = () => ({ sheet: null, caller: null, left: false, sel: [], fail: null, run: 0, runN: NP, t0: 0, vi: 0, zoom: false, busy: false, q: [], qi: 0, hist: [], pick: null, saving: false, back: null });
+  function reset() { D = makeData(); N = fresh(); T = 0.6; }
+  const ex = () => { const v = Object.values(D.H); return { p: v.filter((x) => x === 'in').length, n: v.filter((x) => x === 'out').length }; };
+  const scored = () => Object.values(D.S).filter((x) => x != null).length;
+  function lists() {
+    const ids = Array.from({ length: NP }, (_, i) => i);
+    const est = ids.filter((i) => D.H[i] == null && D.S[i] != null && D.S[i] >= T);
+    const man = ids.filter((i) => D.H[i] === 'in');
+    const pos = ids.filter((i) => D.H[i] === 'in' || est.includes(i)).sort((a, b) => (D.H[a] === 'in' ? 2 : D.S[a]) > (D.H[b] === 'in' ? 2 : D.S[b]) ? -1 : 1);
+    const neg = ids.filter((i) => D.H[i] === 'out');
+    return { pos: pos, neg: neg, est: est, man: man, unk: ids.filter((i) => !pos.includes(i) && !neg.includes(i)), unscored: ids.filter((i) => D.S[i] == null && D.H[i] == null) };
+  }
+  const tname = () => TAGS[O.t];
+  const SCOPE = '嵐山 10.18';
+  /* ===== 印 ===== */
+  const S_ = (p, w) => '<svg width="' + (w || 24) + '" height="' + (w || 24) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + p + '</svg>';
+  const G = {
+    spin: (w) => '<svg width="' + w + '" height="' + w + '" viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke="rgba(255,255,255,0.18)"></circle><path class="spin" d="M12 4a8 8 0 0 1 8 8" stroke="currentColor"></path></svg>',
+    done: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="9.5" fill="#EDEDEA"></circle><path d="M7.8 12.3l2.8 2.8 5.6-5.8" fill="none" stroke="#111" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg>',
+    clock: S_('<circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"></path>', 18),
+    unk: S_('<circle cx="12" cy="12" r="8.5" stroke-dasharray="2.6 2.4"></circle>', 18),
+    grid: S_('<rect x="4" y="4" width="7" height="7" rx="1"></rect><rect x="13" y="4" width="7" height="7" rx="1"></rect><rect x="4" y="13" width="7" height="7" rx="1"></rect><rect x="13" y="13" width="7" height="7" rx="1"></rect>', 18),
+    fail: (w) => S_('<path d="M12 4l9 15.5H3z"></path><path d="M12 10v4.5M12 17.2v.1"></path>', w),
+    plus: S_('<circle cx="12" cy="12" r="8.5"></circle><path d="M8.5 12.3l2.4 2.4 4.6-4.9"></path>', 16),
+    minus: S_('<circle cx="12" cy="12" r="8.5"></circle><path d="M6.8 17.2L17.2 6.8"></path>', 16),
+    empty: '<svg width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="#6B6B70" stroke-width="2" stroke-dasharray="5 4" aria-hidden="true"><rect x="4" y="4" width="40" height="40" rx="8"></rect></svg>',
+    auto: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M3.8 12.2V4.8a1 1 0 0 1 1-1h7.4l8 8a1.4 1.4 0 0 1 0 2l-6.2 6.2a1.4 1.4 0 0 1-2 0z"></path><path d="M8 6.5v3M6.5 8h3" stroke-linecap="round"></path></svg>',
+    check16: S_('<path d="M5 12.5l4.5 4.5L19 7.5"></path>', 16),
+    scan: S_('<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"></path><circle cx="12" cy="12" r="3.2"></circle>', 20),
+    teach: S_('<rect x="4" y="4" width="16" height="16" rx="2.5"></rect><path d="M8.3 12.3l2.6 2.6 4.9-5.2"></path>', 18),
+    add: S_('<rect x="3.5" y="5" width="13" height="13" rx="2"></rect><path d="M18.5 9v8M14.5 13h8"></path>'),
+    bulk: S_('<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"></rect><path d="M14 17l2 2 4-4.5"></path>'),
+    more: '<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5.5" r="1.7"></circle><circle cx="12" cy="12" r="1.7"></circle><circle cx="12" cy="18.5" r="1.7"></circle></svg>',
+    end: S_('<path d="M6 6l12 12M18 6L6 18"></path>'), all: S_('<rect x="4" y="4" width="16" height="16" rx="2.5"></rect><path d="M8.5 12.3l2.5 2.5 4.8-5"></path>'),
+    x16: S_('<path d="M6 6l12 12M18 6L6 18"></path>', 16), on: S_('<path d="M5 12.5l4.5 4.5L19 7.5"></path>', 20),
+    inc: S_('<circle cx="12" cy="12" r="8.5"></circle><path d="M8.3 12.3l2.6 2.6 4.9-5.2"></path>', 20), exc: S_('<circle cx="12" cy="12" r="8.5"></circle><path d="M6.8 17.2L17.2 6.8"></path>', 20), hold: S_('<circle cx="12" cy="12" r="8.5"></circle><path d="M8 12h8"></path>', 20),
+    undo: S_('<path d="M9 14L4 9l5-5"></path><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"></path>', 20),
+    prev: S_('<path d="M15 6l-6 6 6 6"></path>'), next: S_('<path d="M9 6l6 6-6 6"></path>'), zin: S_('<circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4.4-4.4M11 8.5v5M8.5 11h5"></path>'), zout: S_('<circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4.4-4.4M8.5 11h5"></path>'),
+    tag: S_('<path d="M3.8 12.2V4.8a1 1 0 0 1 1-1h7.4l8 8a1.4 1.4 0 0 1 0 2l-6.2 6.2a1.4 1.4 0 0 1-2 0z"></path><circle cx="8.3" cy="8.3" r="1.4"></circle>'), untag: S_('<path d="M3.8 12.2V4.8a1 1 0 0 1 1-1h7.4l8 8a1.4 1.4 0 0 1 0 2l-6.2 6.2a1.4 1.4 0 0 1-2 0z"></path><path d="M14 17l5-5"></path>'),
+    failB: '<span aria-hidden="true" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:9px;background:#0F0F10;color:#FF8A7A;display:flex;align-items:center;justify-content:center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l9 15.5H3z"></path><path d="M12 10v4.5M12 17.2v.1"></path></svg></span>'
+  };
+  const BG = (i) => 'radial-gradient(14% 18% at ' + (30 + (i * 17) % 45) + '% ' + (45 + (i * 11) % 25) + '%,' + ['#9FCB6B', '#E9D35A', '#7FB2D8', '#D9D6CC', '#C9A27E', '#8FB59A'][i % 6] + ' 0,' + ['#9FCB6B', '#E9D35A', '#7FB2D8', '#D9D6CC', '#C9A27E', '#8FB59A'][i % 6] + ' 96%,rgba(0,0,0,0) 100%),linear-gradient(' + (150 + (i * 23) % 70) + 'deg,' + ['#4A5A48', '#6E7E86', '#5A4A3E', '#3E4C5E', '#7A6E58', '#2F3A34'][i % 6] + ',' + ['#1E241D', '#323A40', '#2A221C', '#1A2230', '#3A3328', '#151A17'][(i + 2) % 6] + ')';
+  const AXNOTE = '適合スコアは未校正の値で、正解率ではありません。自分の判断が常に優先されます';
+  const spinOn = () => Date.now() - N.t0 >= 400;
+  const tw = document.createElement('canvas').getContext('2d');
+  const textW = (t, px) => { tw.font = '500 ' + px + 'px "Noto Sans JP", system-ui, sans-serif'; return tw.measureText(t).width; };
+
+  /* ===== 状態の印（#17：記号と数だけ） ===== */
+  function statusRow() {
+    const e = ex(), parts = [];
+    let mg, max;
+    const mk = (g, ax) => parts.push('<span role="img" aria-label="' + ax + '" class="mk" data-chg="17">' + g + '<span aria-hidden="true" style="display:flex;align-items:center;gap:2px">' + G.plus + e.p + '</span><span aria-hidden="true" style="display:flex;align-items:center;gap:2px">' + G.minus + e.n + '</span>' + '</span>');
+    const nums = '含める ' + e.p + '枚、含めない ' + e.n + '枚';
+    if (D.disabled) mk(G.unk, '推定の結果とモデルを外しました。学習は止まっています。写真を解析を押すと学習し直します。' + nums);
+    else if (D.bg || D.pending) mk(G.clock, '前回の結果を表示しています。' + (D.bg ? '保存した判断から新しい結果を計算しています。' : '新しい結果を用意しました。一覧を表示し直すと反映します。') + nums);
+    else if (!trainable()) mk(G.unk, '暫定のスコアを計算するには、特徴のある含める・含めないの見本がそれぞれ1枚以上必要です。今は' + nums);
+    else if (D.trained) mk(G.done, '学習済み（暫定のスコア）。' + nums);
+    else mk(G.unk, 'まだ学習していません。' + nums);
+    const L = lists();
+    if (O.an === 'running') parts.push('<span role="img" aria-label="写真を解析しています。' + N.runN + '枚中' + N.run + '枚" class="mk" data-chg="17"><span aria-hidden="true" style="display:flex;visibility:' + (spinOn() ? 'visible' : 'hidden') + '">' + G.spin(16) + '</span><span aria-hidden="true">' + N.run + '/' + N.runN + '</span></span><button data-act="stopRun" class="out" style="min-height:48px;padding:0 14px;flex-shrink:0" data-chg="new">中止</button>');
+    else if (O.an === 'fail') parts.push('<button data-act="analyze" class="mk mkb" aria-label="写真を解析できませんでした。前回の結果のままです。再試行" data-chg="17" style="color:#FF8A7A">' + G.fail(16) + '<span aria-hidden="true">' + NP + '枚</span></button>');
+    else if (Object.values(D.F).some((x) => !x)) parts.push('<span role="img" aria-label="まだ解析していない写真 ' + Object.values(D.F).filter((x) => !x).length + '枚。写真を解析で特徴を取り出します" class="mk" data-chg="17">' + G.grid + '<span aria-hidden="true">' + Object.values(D.F).filter((x) => !x).length + '枚</span></span>');
+    return '<div data-status style="display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;min-height:28px">' + parts.join('') + '</div>';
+  }
+  function thrBlock() {
+    const L = lists();
+    const vt = T.toFixed(2) + '。' + L.pos.length + '枚を表示。' + AXNOTE + '。動かしても表示だけが変わり、解析は始まりません';
+    return '<div data-thr data-chg="thr" style="display:flex;flex-direction:column;gap:2px">' + statusRow() +
+      '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap"><span class="f13 mut" id="thrLab">表示の基準</span><span class="f14 num" data-thrv>' + T.toFixed(2) + ' · ' + L.pos.length + '枚</span></div>' +
+      '<input type="range" min="0" max="1" step="0.01" value="' + T.toFixed(2) + '" data-slider aria-labelledby="thrLab" aria-valuetext="' + vt + '">' +
+      '<div class="f12 mut" style="display:flex;justify-content:space-between;gap:12px" aria-hidden="true"><span>広く拾う</span><span style="text-align:right">絞り込む</span></div></div>';
+  }
+  function tile(i, selOn, sel) {
+    const L = lists(), on = sel.includes(i), est = D.H[i] == null, sc = D.S[i];
+    const st = D.H[i] === 'in' ? '自分で含めた' : D.H[i] === 'out' ? '自分で含めない' : '推定、適合スコア ' + (sc != null ? sc.toFixed(2) : '—');
+    return '<button data-tile="' + i + '" aria-label="写真、' + st + (selOn ? (on ? '、選択中' : '、未選択') : '') + '" style="background:' + (on ? 'rgb(30,43,66)' : '#151517') + ';border:0;padding:0;margin:0;cursor:pointer;position:relative;display:block;height:96px;overflow:hidden">' +
+      '<span style="position:absolute;inset:' + (on ? '10px' : '0') + ';border-radius:' + (on ? '6px' : '0') + ';background:' + BG(i) + '"></span>' +
+      (est && O.s === 'pos' ? '<span aria-hidden="true" style="position:absolute;right:6px;bottom:6px;height:20px;padding:0 5px;border-radius:10px;background:rgba(0,0,0,0.62);color:#fff;display:flex;align-items:center">' + G.auto + '</span>' : '') +
+      (selOn ? (on ? '<span aria-hidden="true" style="position:absolute;top:6px;left:6px;width:22px;height:22px;border-radius:11px;background:#4C8DF6;color:#fff;display:flex;align-items:center;justify-content:center">' + G.check16 + '</span>' : '<span aria-hidden="true" style="position:absolute;top:6px;left:6px;width:22px;height:22px;box-sizing:border-box;border-radius:11px;border:2px solid rgba(255,255,255,0.92);background:rgba(0,0,0,0.28)"></span>') : '') + '</button>';
+  }
+  const curList = () => { const L = lists(); return O.s === 'neg' ? L.neg : (O.auto ? L.est : L.pos); };
+  function gridHTML(selOn, sel) {
+    if (O.d === 'loading') return '<div role="img" aria-label="写真を読み込んでいます" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px">' + Array.from({ length: 12 }, () => '<span style="height:96px;background:#151517;display:flex;align-items:center;justify-content:center;color:#A9A9A4">' + (spinOn() ? G.spin(16) : '') + '</span>').join('') + '</div>';
+    const list = curList();
+    if (!list.length) return '<div role="img" data-empty aria-label="表示する写真はありません' + (O.s === 'pos' && D.trained && !D.disabled ? '。基準を下げると推定の写真が増えます' : '') + '" data-chg="17" style="min-height:160px;display:flex;align-items:center;justify-content:center">' + G.empty + '</div>';
+    return '<div data-grid style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px">' + list.map((i) => tile(i, selOn, sel)).join('') + '</div>';
+  }
+  function countLine() { const L = lists(); if (O.d === 'loading') return '<span class="f14 mut num" data-cnt role="text" aria-label="件数を読み込んでいます">— · — · —</span>'; return '<span class="f14 mut num" data-cnt>タグ付き ' + L.pos.length + '枚' + (L.est.length ? '（推定 ' + L.est.length + '枚）' : '') + ' · 該当しない ' + L.neg.length + '枚 · 未確認 ' + L.unk.length + '枚</span>'; }
+
+  /* ===== タグ詳細 ===== */
+  function detail() {
+    const L = lists(), selOn = !!O.b, list = curList(), sel = N.sel.filter((i) => list.includes(i));
+    const head = '<div style="padding:40px 20px 20px;display:flex;flex-direction:column;gap:4px"><div style="display:flex;align-items:baseline;gap:12px"><span class="f13 mut" style="flex:1;min-width:0">' + SCOPE + '</span>' + (selOn ? '<span class="f13 num">' + sel.length + '枚選択</span>' : '') + '</div>' +
+      '<h1 class="f28" style="margin:0;font-weight:600;overflow-wrap:anywhere">' + tname() + '</h1>' + countLine() + '</div>' +
+      (O.auto && O.s === 'pos' && !selOn ? '<div style="padding:0 16px 12px"><button data-act="clearAuto" aria-label="自動で付いた写真だけを表示中。押すとタグ付きの写真をすべて表示" class="out" style="display:inline-flex;gap:6px;padding:4px 12px 4px 10px;background:#1C1C1F;justify-content:flex-start">' + G.auto + '<span>自動で付いた写真</span>' + G.x16 + '</button></div>' : '');
+    const segB = (v, label, n) => '<button data-seg="' + v + '" aria-label="' + label + ' ' + n + (v === 'neg' ? '。外した写真の一覧' : '') + '" aria-pressed="' + (O.s === v) + '" style="background:' + (O.s === v ? '#EDEDEA' : 'none') + ';border:0;padding:4px 8px;margin:0;color:' + (O.s === v ? '#111' : '#EDEDEA') + ' !important;cursor:pointer;min-height:48px;border-radius:24px;display:flex;align-items:center;justify-content:center;gap:4px;font-weight:500;text-align:center" class="f13 num"><span style="width:16px;height:16px;display:flex;align-items:center;justify-content:center">' + (O.s === v ? G.check16 : '') + '</span><span>' + label + ' ' + n + '</span></button>';
+    let panel;
+    if (selOn) {
+      const act = O.s === 'neg' ? 'タグ付きにする' : '該当しないにする', dis = sel.length ? '' : ' aria-disabled="true"';
+      panel = '<div class="panel" data-panel><button class="out" data-act="bulkSet" aria-label="' + act + (N.fail === 'bulk' ? '。保存できませんでした。選んだ写真はそのままです。もう一度押すと保存します' : '') + '"' + dis + ' style="position:relative' + (sel.length ? '' : ';color:#626B72') + '"><span>' + act + '</span>' + (N.fail === 'bulk' ? G.failB : '') + '</button>' +
+        '<nav aria-label="選択の操作" class="dock" style="grid-template-columns:repeat(2,minmax(0,1fr))"><button class="db" data-act="endBulk">' + G.end + '<span>選択を終了</span></button><button class="db" data-act="selAll">' + G.all + '<span>すべて選択</span></button></nav></div>';
+    } else {
+      const run = O.an === 'running';
+      panel = '<div class="panel" data-panel style="overflow-y:auto"><div role="group" aria-label="表示する写真" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;border-radius:24px;background:#1C1C1F;flex-shrink:0">' + segB('pos', 'タグ付き', O.d === 'loading' ? '—' : L.pos.length) + segB('neg', '該当しない', O.d === 'loading' ? '—' : L.neg.length) + '</div>' +
+        thrBlock() +
+        '<button class="pri" data-act="analyze" data-chg="main" aria-label="写真を解析。端末の中で写真の特徴を取り出し、自分の判断から学習して適合スコアを計算します' + (run ? '。解析しています' : '') + '"' + (run ? ' aria-disabled="true" style="background:#2A2A2E;color:#8A8A85 !important;flex-shrink:0"' : ' style="flex-shrink:0"') + '>' + (run ? G.spin(20) : G.scan) + '<span>写真を解析</span></button>' +
+        '<button class="out" data-act="teach" data-chg="main" aria-label="基準を教える。写真を1枚ずつ見て、含めるか含めないかを自分で決めます" style="color:#EDEDEA;flex-shrink:0">' + G.teach + '<span>基準を教える</span></button>' +
+        '<nav aria-label="タグの操作" class="dock" style="grid-template-columns:repeat(3,minmax(0,1fr));flex-shrink:0"><button class="db" data-act="addPhotos">' + G.add + '<span>写真を追加</span></button><button class="db" data-act="bulk">' + G.bulk + '<span>一括訂正</span></button><button class="db" data-act="more">' + G.more + '<span>その他</span></button></nav></div>';
+    }
+    return '<div class="scr" data-scroll>' + head + '<div data-gridwrap>' + gridHTML(selOn, sel) + '</div><div class="sp"></div></div>' + panel + sheet();
+  }
+  function sheet() {
+    if (N.sheet === 'more') return '<button class="dim" data-act="close" aria-label="閉じる" tabindex="-1"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="その他"><span class="hdl" aria-hidden="true"></span><h2>その他</h2><div style="display:flex;flex-direction:column">' +
+      '<button class="it" data-act="toggleAuto" aria-pressed="' + (O.auto ? 'true' : 'false') + '"><span style="flex:1">自動で付いた写真</span>' + (O.auto ? G.on : '') + '</button>' +
+      '<button class="it" data-act="askRemove"' + (scored() ? ' style="color:#FF8A7A"' : ' aria-disabled="true" style="color:#626B72"') + '><span style="flex:1">自動で付いたタグをすべて外す</span></button></div><div class="acts"><button class="out" data-act="close">閉じる</button></div></div>';
+    if (N.sheet === 'remove') return '<button class="dim" data-act="close" aria-label="閉じる" tabindex="-1"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="自動で付いたタグをすべて外す"><span class="hdl" aria-hidden="true"></span><h2>自動で付いたタグをすべて外しますか？</h2><p class="body" style="margin-top:4px">「' + tname() + '」が対象です。全アルバムの自動で付いた分を外します。自分で付けたタグは残ります。</p><div class="acts"><button class="danger" data-act="doRemove">すべて外す</button><button class="cancel" data-act="close">外さない</button></div></div>';
+    return '';
+  }
+
+  /* ===== 基準を教える ===== */
+  function buildQueue() {
+    const ids = Array.from({ length: NP }, (_, i) => i).filter((i) => D.H[i] == null);
+    if (O.q === 'none') return [];
+    const sc = ids.filter((i) => D.S[i] != null), un = ids.filter((i) => D.S[i] == null);
+    const near = sc.slice().sort((a, b) => Math.abs(D.S[a] - T) - Math.abs(D.S[b] - T)).slice(0, 4);
+    const high = sc.filter((i) => !near.includes(i)).sort((a, b) => D.S[b] - D.S[a]).slice(0, 3);
+    const rest = ids.filter((i) => !near.includes(i) && !high.includes(i));
+    const exp = rest.filter((_, j) => j % 5 === 0).slice(0, 3).concat(un.filter((i) => !near.includes(i) && !high.includes(i)).slice(0, sc.length ? 0 : 10));
+    const q = []; const src = [near.map((i) => [i, '閾値の近く']), high.map((i) => [i, '高いスコア']), exp.map((i) => [i, '探索'])];
+    for (let k = 0; q.length < near.length + high.length + exp.length; k++) src.forEach((s) => { if (s[k]) q.push(s[k]); });
+    return q.slice(0, 10);
+  }
+  function teach() {
+    const done = N.qi >= N.q.length, cur = N.q[N.qi];
+    const head = '<div data-th style="padding:40px 20px 12px;display:flex;align-items:flex-start;gap:12px;flex-shrink:0"><div style="flex:1;min-width:0;display:flex;flex-direction:column"><span class="f17" style="font-weight:600;overflow-wrap:anywhere">' + tname() + '</span><span class="f13 mut">' + SCOPE + '</span></div>' + (N.q.length ? '<span class="f13 mut num" role="text" aria-label="' + N.q.length + '枚中' + Math.min(N.qi + 1, N.q.length) + '枚目">' + Math.min(N.qi + 1, N.q.length) + ' / ' + N.q.length + '</span>' : '') + '</div>';
+    let stage;
+    if (done) stage = '<div role="img" aria-label="' + (N.q.length ? '候補の写真をすべて見ました。端末のBackでタグ詳細へ戻ります' : '今は教える候補の写真がありません。端末のBackでタグ詳細へ戻ります') + '" style="display:flex;align-items:center;justify-content:center;height:100%" data-chg="17">' + (N.q.length ? '<span style="display:flex;transform:scale(2)">' + G.done + '</span>' : G.empty) + '</div>';
+    else { const sc = D.S[cur[0]]; stage = '<div data-tphoto role="img" aria-label="写真。「' + tname() + '」が写っているか決めてください。候補：' + cur[1] + (sc != null ? '、適合スコア ' + sc.toFixed(2) + '。' + AXNOTE : '、まだ解析していません') + '" style="position:absolute;background:' + BG(cur[0]) + ';touch-action:pan-y"></div>'; }
+    const dis = N.saving || done;
+    const btn = (k, label, icon, ax, cls) => '<button data-act="judge" data-j="' + k + '" class="' + cls + '" aria-label="' + ax + (N.fail === k ? '。保存できませんでした。写真と判断はそのままです。もう一度押すと保存します' : '') + '"' + (dis ? ' aria-disabled="true"' : '') + (N.pick === k ? ' aria-pressed="true"' : '') + ' style="position:relative;flex-direction:column;gap:2px;min-height:' + (cls === 'pri' ? 52 : 48) + 'px;padding:4px 8px;' + (dis && !(N.saving && N.pick === k) ? (cls === 'pri' ? 'background:#2A2A2E;color:#8A8A85 !important;' : 'color:#626B72;border-color:#2E2E32;') : (cls === 'out' ? 'color:#EDEDEA;' : '')) + (N.pick === k && cls === 'out' ? 'border:2px solid #EDEDEA;' : '') + '">' + (N.saving && N.pick === k ? G.spin(20) : icon) + '<span>' + label + '</span>' + (N.fail === k ? G.failB : '') + '</button>';
+    const three = [['out', '含めない', G.exc, '含めない。この写真は「' + tname() + '」に含めない', 'out'], ['hold', '保留', G.hold, '保留。判断しないで次の写真へ。学習には使いません', 'out'], ['in', '含める', G.inc, '含める。この写真は「' + tname() + '」に含める', 'pri']];
+    const need = Math.max(...three.map((x) => textW(x[1], (x[4] === 'pri' ? 15 : 14) * O.k))) + 16 + 2;
+    const cols = (O.w - 32 - 16) / 3 >= need ? 3 : 1; N.tcols = cols;
+    const row = '<div style="display:grid;grid-template-columns:repeat(' + cols + ',minmax(0,1fr));gap:8px;align-items:center"' + (cols < 3 ? ' data-fit' : '') + ' data-chg="judge">' + three.map((x) => btn(x[0], x[1], x[2], x[3], x[4])).join('') + '</div>';
+    const undoDis = !N.hist.length || N.saving;
+    const undo = '<div style="display:flex;justify-content:flex-start;margin:0 -8px"><button data-act="tundo" class="db" aria-label="直前の判断を取り消す' + (N.fail === 'undo' ? '。保存できませんでした。もう一度押すと取り消します' : '') + '" title="直前の判断を取り消す"' + (undoDis ? ' aria-disabled="true"' : '') + ' style="flex-direction:row;min-height:48px;padding:0 12px;gap:6px;position:relative">' + G.undo + '<span aria-hidden="true">取り消し</span>' + (N.fail === 'undo' ? G.failB : '') + '</button></div>';
+    const panel = '<div data-panel style="flex-shrink:0;background:#000;padding:8px 16px 20px;display:flex;flex-direction:column;gap:8px;overflow-y:auto">' + row + undo + '</div>';
+    return '<div data-screen="teach" style="position:absolute;inset:0;display:flex;flex-direction:column;background:#000">' + head + '<div data-tstage style="position:relative;flex:1 1 0;min-height:120px">' + stage + '</div>' + panel + '</div>';
+  }
+  function layoutTeach() {
+    const st = dev.querySelector('[data-tstage]'), p = dev.querySelector('[data-tphoto]'); if (!st || !p) return;
+    const W = st.clientWidth, H = st.clientHeight, r = 3 / 2; let w = W, h = W / r; if (h > H) { h = H; w = H * r; }
+    Object.assign(p.style, { width: w + 'px', height: h + 'px', left: (W - w) / 2 + 'px', top: (H - h) / 2 + 'px' });
+  }
+
+  /* ===== 写真の拡大（従来の黒い写真の画面） ===== */
+  function viewer() {
+    const list = N.vlist, i = list[N.vi], h = D.H[i], inTag = h === 'in' || (h == null && D.S[i] != null && D.S[i] >= T);
+    const lab = inTag ? 'タグを外す' : 'タグを付ける', busy = N.busy;
+    const items = [['vprev', G.prev, '前へ', '前の写真', N.vi === 0 || busy], ['vnext', G.next, '次へ', '次の写真', N.vi === list.length - 1 || busy], ['vzoom', N.zoom ? G.zout : G.zin, N.zoom ? '全体' : '拡大', N.zoom ? '全体を表示' : '拡大', false], ['vtag', busy ? G.spin(24) : (inTag ? G.untag : G.tag), lab, lab + (busy ? '。保存しています' : '') + (N.fail === 'vtag' ? '。保存できませんでした。判断はそのままです。もう一度押すと保存します' : ''), busy]];
+    const dock = '<nav aria-label="写真の操作" style="position:absolute;left:0;right:0;bottom:0;padding:0 0 20px;background:#000;display:grid;grid-template-columns:repeat(4,minmax(0,1fr))">' + items.map((b) => '<button class="db" data-act="' + b[0] + '" aria-label="' + b[3] + '"' + (b[0] === 'vzoom' ? ' aria-pressed="' + N.zoom + '"' : '') + (b[4] ? ' aria-disabled="true"' : '') + ' style="position:relative">' + b[1] + '<span aria-hidden="true">' + b[2] + '</span>' + (b[0] === 'vtag' && N.fail === 'vtag' ? G.failB.replace('right:-6px', 'right:calc(50% - 22px)').replace('top:-6px', 'top:2px') : '') + '</button>').join('') + '</nav>';
+    const st = h === 'in' ? '自分で含めた' : h === 'out' ? '自分で含めない' : '推定';
+    return '<div data-screen="view" style="position:absolute;inset:0;background:#000"><div style="height:64px;display:flex;align-items:flex-end;justify-content:center"><span class="f15 num" style="font-weight:500">10月18日 13:' + String(10 + i).padStart(2, '0') + '</span></div><div data-vstage style="position:absolute;left:0;right:0;top:72px;bottom:100px;display:flex;align-items:center;justify-content:center;overflow:hidden"><div data-photo role="img" aria-label="写真、' + st + (N.zoom ? '、拡大中' : '') + '" style="width:100%;aspect-ratio:3/2;max-height:100%;background:' + BG(i) + ';transform:scale(' + (N.zoom ? 2.5 : 1) + ');transition:' + (O.rm ? 'none' : 'transform .2s') + '"></div></div>' + dock + '</div>';
+  }
+
+  /* ===== 描画 ===== */
+  const dev = document.getElementById('dev'), orig = document.getElementById('orig');
+  function render(f) {
+    document.documentElement.style.setProperty('--k', O.k);
+    dev.style.setProperty('--w', O.w + 'px'); dev.style.setProperty('--h', O.h + 'px');
+    dev.classList.toggle('showchg', O.chg); dev.classList.toggle('rm', O.rm);
+    const ok = O.v === 'teach' ? 'V09-Tag-Manual' : O.v === 'view' ? 'S08-Viewer' : 'V05-Tag-Detail';
+    if (orig.dataset.k !== ok) { orig.innerHTML = ORIG[ok]; orig.dataset.k = ok; }
+    document.getElementById('origName').textContent = ok + ({ 'V09-Tag-Manual': '（元の1枚ずつ確認。基準を教えるの元）', 'S08-Viewer': '（元の写真の画面）', 'V05-Tag-Detail': '（T5 タグ詳細・タグ付き）' })[ok];
+    document.getElementById('devName').textContent = ({ detail: 'タグ詳細', teach: '基準を教える', view: '写真の拡大' })[O.v] + '・' + O.w + 'dp・文字' + O.k + '倍・高さ' + O.h + 'dp';
+    document.getElementById('detCtl').hidden = O.v !== 'detail';
+    let h = '<span class="synth" aria-hidden="true">合成の画面</span>' + (O.v === 'teach' ? teach() : O.v === 'view' ? viewer() : detail());
+    if (N.caller) h += '<div class="caller"><span>（' + N.caller + '・ダミー）</span><button data-act="reopen">タグ詳細へ戻る（デモ）</button></div>';
+    if (N.left) h += '<div class="caller" style="background:#000"><span>（タグ一覧へ戻った状態・デモ）</span><button data-act="reopen">開き直す（デモ）</button></div>';
+    dev.innerHTML = h;
+    if (O.v === 'detail') { const pn = dev.querySelector('.panel'); pn.style.maxHeight = Math.round(O.h * 0.62) + 'px'; const sp = dev.querySelector('.sp'); if (sp) sp.style.height = (pn.offsetHeight + 24) + 'px'; if (N.sheet) { dev.querySelector('.scr').inert = true; pn.inert = true; } }
+    if (O.v === 'teach') layoutTeach();
+    bindSlider();
+    if (f) { const e = dev.querySelector(f); if (e) e.focus(); }
+    check(extra);
+    document.getElementById('log').innerHTML = '<b>操作の記録</b><br>' + (log.map((x) => '・' + x).join('<br>') || '—');
+  }
+  function bindSlider() {
+    const s = dev.querySelector('[data-slider]'); if (!s) return;
+    const paint = () => { s.style.setProperty('--p', (T * 100) + '%'); };
+    paint();
+    s.addEventListener('input', () => {
+      T = Math.round(+s.value * 100) / 100; paint();
+      const L = lists();
+      dev.querySelector('[data-thrv]').textContent = T.toFixed(2) + ' · ' + L.pos.length + '枚';
+      s.setAttribute('aria-valuetext', T.toFixed(2) + '。' + L.pos.length + '枚を表示。' + AXNOTE + '。動かしても表示だけが変わり、解析は始まりません');
+      dev.querySelector('[data-gridwrap]').innerHTML = gridHTML(false, []);
+      dev.querySelector('[data-cnt]').outerHTML = countLine();
+      dev.querySelectorAll('[data-seg]')[0].querySelector('span:last-child').textContent = 'タグ付き ' + L.pos.length;
+      dev.querySelectorAll('[data-seg]')[0].setAttribute('aria-label', 'タグ付き ' + L.pos.length);
+    });
+    s.addEventListener('change', () => { add('表示の基準 → ' + T.toFixed(2) + '（表示だけが変わる。学習・解析は始めない）'); document.getElementById('log').innerHTML = '<b>操作の記録</b><br>' + log.map((x) => '・' + x).join('<br>'); check(extra); });
+  }
+  const SENT = /読み込み中|解析中|学習していません|足りません|失敗しました|計算中|結果なし|ありません/;
+  function extra() {
+    const dv = dev.getBoundingClientRect();
+    const sent = [...dev.querySelectorAll('[data-screen] *, .scr *, .panel *')].some((e) => e.offsetParent !== null && [...e.childNodes].some((c) => c.nodeType === 3 && SENT.test(c.textContent)));
+    let s = '<br>状態の文（画面上）：' + (sent ? '<span class="ngc">あり</span>' : '<span class="okc">なし</span>');
+    const pn = dev.querySelector('[data-panel]');
+    if (pn) s += '<br>下部の操作：' + (pn.scrollHeight > pn.clientHeight + 1 ? '<span class="okc">パネルだけスクロールで届く</span>（' + pn.clientHeight + '／' + pn.scrollHeight + 'dp）' : '<span class="okc">すべて見えている</span>');
+    if (O.v === 'detail' && !O.b) {
+      const sl = dev.querySelector('[data-slider]'), r = sl.getBoundingClientRect();
+      s += '<br>スライダー：' + Math.round(r.width) + '×' + Math.round(r.height) + 'dp ' + (r.height >= 47.5 ? '<span class="okc">48dp以上</span>' : '<span class="ngc">低い</span>') + '・値 ' + T.toFixed(2) + '（0.00〜1.00・刻み0.01）';
+      const L = lists(); s += '<br>表示の規則：自分で含めた ' + L.man.length + '枚は常に表示・自分で含めない ' + L.neg.length + '枚は除外・推定は基準以上の ' + L.est.length + '枚';
+      const g = dev.querySelector('[data-grid] button'); if (g) s += '<br>写真の高さ：' + Math.round(g.getBoundingClientRect().height) + 'dp・4列';
+    }
+    if (O.v === 'teach') s += '<br>判断の操作：' + N.tcols + '列' + (N.tcols < 3 ? '（入らない幅なので縦に並べる）' : '') + '・候補 ' + N.q.length + '枚（' + [...new Set(N.q.map((x) => x[1]))].join('・') + '）';
+    return s;
+  }
+  /* ===== 操作 ===== */
+  function startRun() {
+    const todo = Object.keys(D.F).filter((i) => !D.F[i]);
+    O.an = 'running'; N.run = 0; N.runN = todo.length; N.t0 = Date.now(); syncSeg(); clearInterval(runT); clearTimeout(spinT); spinT = setTimeout(() => { if (O.an === 'running') render(); }, 410);
+    add('［写真を解析］→ 新しい写真 ' + todo.length + '枚の特徴を端末の中で取り出し、学習してスコアを計算（明示して開始）');
+    runT = setInterval(() => {
+      if (O.v !== 'detail' || O.an !== 'running') { clearInterval(runT); return; }
+      N.run = Math.min(N.runN, N.run + 3);
+      if (N.run >= N.runN) { clearInterval(runT);
+        if (O.f) { O.an = 'fail'; add('解析に失敗：前回の結果のまま'); say('写真を解析できませんでした'); }
+        else { O.an = 'done'; todo.forEach((i) => { D.F[i] = true; }); D.disabled = false; D.gen++; D.bg = false; D.pending = null; clearTimeout(bgT);
+          if (trainable()) { D.S = calc(D.H, D.F); D.trained = true; add('解析が終わった：特徴を保存し、学習して全写真の暫定のスコアを保存'); say('写真の解析が終わりました'); }
+          else { add('解析が終わった：特徴は保存。特徴のある含める・含めないの見本が揃わないので、スコアはまだ計算しない'); say('写真の解析が終わりました'); } }
+        syncSeg(); }
+      const ae = document.activeElement && document.activeElement.matches('[data-slider]');
+      render(ae ? '[data-slider]' : null);
+    }, 300);
+    render('[data-act=stopRun]');
+  }
+  function persist(cb, failKey) { N.saving = true; render(); clearTimeout(saveT); saveT = setTimeout(() => { N.saving = false; if (O.f) { N.fail = failKey; add('保存に失敗：写真と判断はそのまま。もう一度押すと再試行'); say('保存できませんでした'); render('[data-act=' + (failKey === 'undo' ? 'tundo' : 'judge][data-j=' + failKey) + ']'); } else { N.fail = null; cb(); } }, 700); }
+  dev.addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.getAttribute('aria-disabled') === 'true') { add('（無効のため何もしない' + (N.saving ? '：保存中' : '') + '）'); return render(); }
+    const a = b.dataset.act, was = N.sheet; let f = null;
+    if (b.dataset.seg) { applyPending('一覧を表示し直した'); O.s = b.dataset.seg; if (O.s === 'neg') O.auto = 0; N.sel = []; N.fail = null; add('表示：' + (O.s === 'pos' ? 'タグ付き' : '該当しない')); }
+    else if (b.dataset.tile != null) { const i = +b.dataset.tile; if (O.b) { N.sel = N.sel.includes(i) ? N.sel.filter((x) => x !== i) : N.sel.concat([i]); } else { N.vlist = curList().slice(); N.vi = N.vlist.indexOf(i); N.zoom = false; N.fail = null; N.back = '[data-tile="' + i + '"]'; O.v = 'view'; add('写真 → 従来の黒い写真の拡大（学習の画面とは別）'); f = '[data-act=vtag]'; } }
+    else if (a === 'analyze') { if (O.an !== 'running') startRun(); return; }
+    else if (a === 'stopRun') { clearInterval(runT); O.an = 'done'; syncSeg(); add('［中止］→ 解析を止めた。前回の結果のまま（途中の計算は使わない）'); say('解析を中止しました'); f = '[data-act=analyze]'; }
+    else if (a === 'teach') { clearInterval(runT); if (O.an === 'running') { O.an = 'done'; } N.q = buildQueue(); N.qi = 0; N.hist = []; N.pick = null; N.fail = null; O.v = 'teach'; add('［基準を教える］→ 候補 ' + N.q.length + '枚を開いたときに決める（途中で入れ替えない）'); f = '[data-act=judge][data-j=in]'; }
+    else if (a === 'addPhotos') { N.caller = '既存の写真一覧の画面（写真を追加）'; N.back = '[data-act=addPhotos]'; add('［写真を追加］→ 既存の画面'); }
+    else if (a === 'bulk') { O.b = 1; N.sel = []; N.fail = null; add('［一括訂正］→ 選択に入る'); }
+    else if (a === 'endBulk') { O.b = 0; N.sel = []; N.fail = null; add('［選択を終了］'); f = '[data-act=bulk]'; }
+    else if (a === 'selAll') { N.sel = curList().slice(); add('［すべて選択］'); }
+    else if (a === 'bulkSet') { if (O.f) { N.fail = 'bulk'; add('保存に失敗：選択（' + N.sel.length + '枚）はそのまま。もう一度押すと再試行'); say('保存できませんでした。選んだ写真はそのままです'); f = '[data-act=bulkSet]'; } else { const v = O.s === 'neg' ? 'in' : 'out'; N.sel.forEach((i) => { D.H[i] = v; }); add(N.sel.length + '枚を' + (v === 'in' ? 'タグ付き' : '該当しない') + 'にした → 選択を終了'); retrain('一括訂正の保存に成功'); say(N.sel.length + '枚を保存しました'); N.sel = []; N.fail = null; O.b = 0; f = '[data-act=bulk]'; } }
+    else if (a === 'more') { N.sheet = 'more'; add('［その他］'); f = '.sheet .it'; }
+    else if (a === 'toggleAuto') { O.auto = O.auto ? 0 : 1; if (O.auto) O.s = 'pos'; N.sheet = null; add(O.auto ? '［自動で付いた写真］→ 推定の写真だけ' : '［自動で付いた写真］→ 解除'); f = '[data-act=more]'; }
+    else if (a === 'clearAuto') { O.auto = 0; add('絞り込みを解除'); }
+    else if (a === 'askRemove') { N.sheet = 'remove'; add('［自動で付いたタグをすべて外す］→ 確認'); f = '.sheet .danger'; }
+    else if (a === 'doRemove') { N.sheet = null; for (let i = 0; i < NP; i++) D.S[i] = null; D.gen++; clearTimeout(bgT); D.bg = false; D.pending = null; D.trained = false; D.disabled = true; O.auto = 0; add('このタグの全アルバムの推定の結果とモデルを消し、学習を無効にした。計算中・用意済みの結果も捨てる（復活しない）。自分の判断（含める・含めない）は残る'); say('自動で付いたタグを外しました'); f = '[data-act=more]'; }
+    else if (a === 'close') { N.sheet = null; add(was === 'remove' ? '［外さない］（キャンセル）' : '閉じる'); f = '[data-act=more]'; }
+    else if (a === 'judge') {
+      const j = b.dataset.j, cur = N.q[N.qi];
+      if (j === 'hold') { N.qi++; N.pick = null; N.fail = null; add('［保留］→ 学習しないで次の写真へ'); f = '[data-act=judge][data-j=in]'; }
+      else { N.pick = j; add('［' + (j === 'in' ? '含める' : '含めない') + '］→ 保存中（変更・Backは止める）'); persist(() => { N.hist.push({ i: cur[0], prev: D.H[cur[0]] == null ? null : D.H[cur[0]], qi: N.qi }); D.H[cur[0]] = j; N.qi++; N.pick = null; add('保存できた → 次の写真へ（候補の写真は入れ替えない）'); retrain('判断の保存に成功'); render('[data-act=judge][data-j=in]'); }, j); return; }
+    }
+    else if (a === 'tundo') { const last = N.hist[N.hist.length - 1]; add('［取り消し］→ 訂正を保存中'); persist(() => { N.hist.pop(); if (last.prev == null) delete D.H[last.i]; else D.H[last.i] = last.prev; N.qi = last.qi; N.pick = null; add('直前の判断を取り消して前の写真へ戻った（訂正を保存）'); retrain('取り消しの保存に成功'); say('直前の判断を取り消しました'); render('[data-act=tundo]'); }, 'undo'); return; }
+    else if (a === 'vprev' || a === 'vnext') { N.vi += a === 'vprev' ? -1 : 1; N.zoom = false; N.fail = null; add('［' + (a === 'vprev' ? '前へ' : '次へ') + '］'); f = '[data-act=' + a + ']'; }
+    else if (a === 'vzoom') { N.zoom = !N.zoom; add('［' + (N.zoom ? '拡大' : '全体') + '］'); f = '[data-act=vzoom]'; }
+    else if (a === 'vtag') { const i = N.vlist[N.vi], h = D.H[i], inTag = h === 'in' || (h == null && D.S[i] != null && D.S[i] >= T); N.busy = true; add('［' + (inTag ? 'タグを外す' : 'タグを付ける') + '］→ 保存中'); render(); clearTimeout(saveT); saveT = setTimeout(() => { N.busy = false; if (O.f) { N.fail = 'vtag'; add('保存に失敗：判断はそのまま。もう一度押すと再試行'); say('保存できませんでした'); } else { D.H[i] = inTag ? 'out' : 'in'; N.fail = null; add('保存できた → この写真に留まる'); retrain('付け外しの保存に成功'); say(inTag ? 'タグを外しました' : 'タグを付けました'); } render('[data-act=vtag]'); }, 700); return; }
+    else if (a === 'reopen') { N.caller = null; N.left = false; f = N.back; applyPending('タグ詳細へ戻った'); }
+    syncSeg(); render(f);
+  });
+  let sx = null;
+  dev.addEventListener('pointerdown', (e) => { if (e.target.closest('[data-tphoto]')) sx = e.clientX; });
+  dev.addEventListener('pointerup', (e) => { if (sx == null) return; const dx = e.clientX - sx; sx = null; if (Math.abs(dx) > 40) { add('写真を左右にスワイプ：判断にはしない（写真も変えない）'); render(); } });
+  document.getElementById('hwBack').addEventListener('click', () => {
+    let f = null;
+    if (N.left) return;
+    if (N.sheet) { N.sheet = null; add('Back：シート・確認を閉じる（キャンセル）'); f = '[data-act=more]'; }
+    else if (N.caller) { N.caller = null; add('Back：タグ詳細へ'); f = N.back; applyPending('一覧へ戻った'); }
+    else if (O.v === 'teach') { if (N.saving) { add('Back：保存中は戻らない'); } else { O.v = 'detail'; add('Back：基準を教える → タグ詳細' + (D.bg ? '（計算中なので前回の結果のまま。用意できたあと一覧を表示し直すと反映）' : '')); applyPending('一覧へ戻った'); f = '[data-act=teach]'; } }
+    else if (O.v === 'view') { if (N.busy) add('Back：保存中は戻らない'); else { O.v = 'detail'; add('Back：写真 → タグ詳細'); applyPending('一覧へ戻った'); f = N.back; } }
+    else if (O.b) { O.b = 0; N.sel = []; N.fail = null; add('Back：選択を終了'); f = '[data-act=bulk]'; }
+    else { N.left = true; add('Back：タグ詳細 → タグ一覧'); }
+    syncSeg(); render(f);
+  });
+  document.getElementById('reset').addEventListener('click', () => { clearInterval(runT); Object.assign(O, { v: 'detail', m: 'fresh', an: 'done', d: 'ok', f: 0, s: 'pos', b: 0, auto: 0, q: 'ok' }); reset(); log = []; syncSeg(); render(); });
+  function seg(id, fn) { const el = document.getElementById(id); el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; fn(b.dataset.v); N.sheet = null; N.caller = null; N.left = false; syncSeg(); render(); }); }
+  function syncSeg() { [['oW', O.w], ['oH', O.h], ['oK', O.k], ['oV', O.v], ['oT', O.t], ['oM', O.m], ['oAn', O.an], ['oD', O.d], ['oF', O.f], ['oQ', O.q]].forEach(([id, v]) => document.querySelectorAll('#' + id + ' button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.v == String(v)))); }
+  seg('oW', (v) => { O.w = +v; }); seg('oH', (v) => { O.h = +v; }); seg('oK', (v) => { O.k = +v; });
+  seg('oV', (v) => { clearInterval(runT); if (O.an === 'running') O.an = 'done'; O.v = v; O.b = 0; if (v === 'teach') { N.q = buildQueue(); N.qi = 0; N.hist = []; N.pick = null; N.fail = null; N.saving = false; } if (v === 'view') { N.vlist = curList().length ? curList().slice() : [0]; N.vi = 0; N.zoom = false; N.busy = false; N.fail = null; } });
+  seg('oT', (v) => { O.t = v; });
+  seg('oM', (v) => { O.m = v; clearInterval(runT); clearTimeout(bgT); if (O.an === 'running') O.an = 'done'; D = makeData(); if (v === 'stale') { D.bg = true; const g = D.gen; bgT = setTimeout(() => { if (g !== D.gen) return; D.bg = false; D.pending = calc(D.H, D.F); add('新しい結果を用意した（一覧へ戻ったときに反映）'); render(); }, 2500); } });
+  seg('oAn', (v) => { clearInterval(runT); clearTimeout(bgT); if (v === 'running') { O.v = 'detail'; D = makeData(); for (let i = 36; i < NP; i++) { D.F[i] = false; D.S[i] = null; } startRun(); return; } O.an = v; D = makeData(); });
+  seg('oD', (v) => { O.d = v; N.t0 = Date.now(); if (v === 'loading') setTimeout(() => render(), 410); D = makeData(); });
+  seg('oF', (v) => { O.f = +v; N.fail = null; }); seg('oQ', (v) => { O.q = v; if (O.v === 'teach') { N.q = buildQueue(); N.qi = 0; N.hist = []; } });
+  const tg = (id, key) => { const b = document.getElementById(id); b.addEventListener('click', () => { O[key] = !O[key]; b.setAttribute('aria-pressed', O[key]); render(); }); };
+  tg('oChg', 'chg'); tg('oRM', 'rm');
+  document.getElementById('solo').addEventListener('click', () => document.body.classList.add('solo'));
+  document.getElementById('soloExit').addEventListener('click', () => document.body.classList.remove('solo'));
+  window.__t = { O: O, get N() { return N; }, get D() { return D; }, get T() { return T; }, set: (o) => { clearInterval(runT); clearTimeout(bgT); Object.assign(O, o); D = makeData(); if (O.m === 'stale') { D.bg = !o.pendingReady; if (o.pendingReady) D.pending = calc(D.H, D.F); } if (o.disabled) { D.disabled = true; D.trained = false; for (let i = 0; i < NP; i++) D.S[i] = null; } N = fresh(); T = o.T != null ? o.T : 0.6; N.t0 = Date.now() - 1000; if (O.v === 'teach') N.q = buildQueue(); if (O.v === 'view') { N.vlist = curList().length ? curList().slice() : [0]; } if (o.b) N.sel = curList().slice(0, 3); if (o.saving) { N.saving = true; N.pick = 'in'; } if (o.failK) N.fail = o.failK; if (o.hist) N.hist = [{ i: 40, prev: null, qi: 0 }], N.qi = 1; syncSeg(); render(); }, render: render };
+  reset(); syncSeg(); render();
+
+})();
+</script>
+</body>
+</html>

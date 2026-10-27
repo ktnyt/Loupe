@@ -17,14 +17,14 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean sortDimensionsSpecified;
   private float tagFont;
   @Override public void callActivityOnCreate(android.app.Activity activity, Bundle state) {
-    if ((tagDetailTest || resultTest || galleryScreenTest || sortTest) && (activity instanceof TagActivity || activity instanceof MainActivity) && tagWidth > 0) {
+    if ((tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest) && (activity instanceof TagActivity || activity instanceof MainActivity) && tagWidth > 0) {
       android.content.res.Configuration config = new android.content.res.Configuration(activity.getBaseContext().getResources().getConfiguration());
       config.fontScale = tagFont; config.screenWidthDp = tagWidth;
       // Test process resources only; never writes system settings.
       activity.getResources().updateConfiguration(config, activity.getResources().getDisplayMetrics());
     }
     super.callActivityOnCreate(activity, state);
-    if ((tagDetailTest || resultTest || galleryScreenTest || sortTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+    if ((tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
   }
   private boolean galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest;
   private boolean consistencyTest, syncControlsTest, tagDetailTest, resultTest, resultTalkBack;
@@ -42,7 +42,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean tagTest, lifecycleTest;
   private boolean relatedTest;
   private boolean positionTest, sortTest, tabsTest, albumTagsTest, comparisonLabelsTest, actionLabelsTest;
-  private boolean automaticTest, confidenceStoreTest;
+  private boolean automaticTest, confidenceStoreTest, confidenceUiTest;
   private boolean cleanupTest;
   private boolean compactTest;
   private boolean jpegTest;
@@ -66,6 +66,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    confidenceUiTest=args!=null&&"tag-confidence".equals(args.getString("mode"));
     confidenceStoreTest=args!=null&&"confidence-store".equals(args.getString("mode"));
     indexSignatureTest = args != null && "index-signature".equals(args.getString("mode"));
     indexApplyRaceTest = args != null && "index-apply-race".equals(args.getString("mode"));
@@ -81,7 +82,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     resultTalkBack=args!=null&&"ranking-result-talkback".equals(args.getString("mode"));
     resultTest=resultTalkBack||(args!=null&&"ranking-result".equals(args.getString("mode")));
     tagDetailTest=args!=null&&"tag-detail".equals(args.getString("mode"));
-    if((tagDetailTest || resultTest || galleryScreenTest || sortTest) && args.containsKey("width")){tagWidth=Integer.parseInt(args.getString("width"));tagFont=Float.parseFloat(args.getString("font","1.0"));}
+    if((tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest) && args.containsKey("width")){tagWidth=Integer.parseInt(args.getString("width"));tagFont=Float.parseFloat(args.getString("font","1.0"));}
     sortDimensionsSpecified=sortTest && args.containsKey("width");
     syncControlsTest=args!=null&&"sync-controls".equals(args.getString("mode"));
     consistencyTest=args!=null&&"consistency-layout".equals(args.getString("mode"));
@@ -127,6 +128,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       String report=failureReport(new AssertionError(new java.io.IOException("PRIVATE_VALUE")));
       if(report.contains("PRIVATE_VALUE")||!report.contains("java.io.IOException")||!report.contains("ArchiveInstrumentation.java:"))throw new AssertionError();
       Context context = getTargetContext();
+      if(confidenceUiTest){results.putString("stream",ConfidenceUiChecks.run(this,tagWidth));finish(-1,results);return;}
       if(confidenceStoreTest){results.putString("stream",ConfidenceStoreChecks.run(context));finish(-1,results);return;}
       if (indexSignatureTest) { results.putString("stream", IndexSignatureChecks.run(context)); finish(-1, results); return; }
       if (indexApplyRaceTest) { results.putString("stream", IndexApplyRaceChecks.run(this)); finish(-1, results); return; }
