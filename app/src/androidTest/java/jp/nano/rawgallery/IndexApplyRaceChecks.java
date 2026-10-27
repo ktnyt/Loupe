@@ -9,7 +9,7 @@ import java.lang.reflect.*;
 import java.util.*;
 import java.util.concurrent.*;
 
-/** Synthetic view state only; the real browsing index and source photos are read-only. */
+/** Injects synthetic view state; normal Activity startup may refresh the browsing index. */
 final class IndexApplyRaceChecks {
   private static Object get(Object o, String name) throws Exception {
     Field f = MainActivity.class.getDeclaredField(name); f.setAccessible(true); return f.get(o);
@@ -79,7 +79,7 @@ final class IndexApplyRaceChecks {
       test.runOnMainSync(() -> {try{call(a,"applyPendingIndexUpdate");}catch(Exception e){throw new RuntimeException(e);}});
       drain(test,a);
       check(!(boolean)get(a,"pendingIndexUpdate"),"latest read clears pending update");
-      return "PASS discarded list read survives viewer round-trip; old read cannot clear newer update; successful latest apply clears pending. No source photos or index changed.\n";
+      return "PASS discarded list read survives viewer round-trip; old read cannot clear newer update; successful latest apply clears pending. No source photos changed; normal Activity startup may refresh the browsing index.\n";
     } finally {
       release.countDown(); test.runOnMainSync(a::finish); seed.delete();
     }
