@@ -310,6 +310,7 @@ public final class TagActivity extends DiagnosticActivity {
   }
 
   private void tagMenu(){
+    if(busy)return;
     new GalleryUi.Sheet(this).setTitle("その他").setItems(new String[]{"自動で付いた写真","自動で付いたタグをすべて外す"},(d,which)->{if(which==0){selecting=false;selectedPhotos.clear();tagOverview=true;renderPhotos(Filter.AUTOMATIC,0,0);}else clearAutomatic();}).show();
   }
 
@@ -449,6 +450,8 @@ public final class TagActivity extends DiagnosticActivity {
     String counts="含めるの見本"+yes+"枚、含めないの見本"+no+"枚";
     if(confidence!=null&&!confidence.preferences.enabled)learningStatus.show(StatusView.Symbol.UNKNOWN,"＋"+yes+" −"+no,"学習は停止しています。写真を解析を押すと、保存済みの判断から学習を開始します。"+counts,null,"");
     else if(learning)learningStatus.show(StatusView.Symbol.WAITING,"＋"+yes+" −"+no,"前回の結果を表示しています。保存した判断から計算しています。"+counts,null,"");
+    else if(pendingConfidence!=null&&resultPrepared&&!learningUnavailable)learningStatus.show(StatusView.Symbol.WAITING,"＋"+yes+" −"+no,"新しい結果を用意しました。一覧を表示し直すと反映します。"+counts,null,"");
+    else if((confidence==null||confidence.model==null)&&examplesKnown&&yes>0&&no>0)learningStatus.show(StatusView.Symbol.WAITING,"＋"+yes+" −"+no,(autoRunning?"適合スコアを計算しています。":"まだ学習結果がありません。写真を解析で計算します。")+counts,null,"");
     else if(learningUnavailable||confidence==null||confidence.model==null)learningStatus.show(StatusView.Symbol.UNKNOWN,"＋"+yes+" −"+no,"互換な特徴を持つ含める・含めないの見本が不足しているため更新できません。写真を解析で特徴を取り出せます。"+(confidence!=null&&confidence.model!=null?"前回の完成結果を表示しています。":"")+counts,null,"");
     else learningStatus.show(confidence.stale||pendingConfidence!=null?StatusView.Symbol.WAITING:StatusView.Symbol.COMPLETE,"＋"+yes+" −"+no,(pendingConfidence!=null&&resultPrepared?"新しい結果を用意しました。一覧を表示し直すと反映します。":confidence.stale||pendingConfidence!=null?"前回の結果を表示しています。":"暫定の適合スコア。")+counts,null,"");
   }
@@ -653,6 +656,7 @@ public final class TagActivity extends DiagnosticActivity {
   }
 
   private void clearAutomatic() {
+    if(busy)return;
     new GalleryUi.Sheet(this).setTitle("自動で付いたタグをすべて外しますか？")
         .setMessage("「" + tag.name + "」が対象です。全アルバムの自動で付いた分を外します。自分で付けたタグは残ります。")
         .setPositiveButton("すべて外す", (d, w) -> {
@@ -759,16 +763,20 @@ public final class TagActivity extends DiagnosticActivity {
   }
 
   private void startAutomatic() {
+    if(busy)return;
     stopAnalysis();
     busy = true;
     int token = generation;
     String tagId = tag.id;
     worker.execute(() -> {
       try (TagStore store = openStore()) {
-        new TagScores(store).enable(tagId);
+        TagScores scores=new TagScores(store);scores.enable(tagId);TagScores.Preferences enabled=scores.preferences(tagId);
         main.post(() -> {
           busy = false;
           if (!current(token)) return;
+          if(confidence!=null)confidence=new TagScores.Snapshot(enabled,confidence.model,confidence.revision,confidence.stale,confidence.scores);
+          else confidence=new TagScores.Snapshot(enabled,null,-1,false,java.util.Collections.emptyMap());
+          if(pendingConfidence!=null)pendingConfidence=new TagScores.Snapshot(enabled,pendingConfidence.model,pendingConfidence.revision,pendingConfidence.stale,pendingConfidence.scores);
           automaticError = ""; autoRunning = true; related = true;
           beginAnalysis();
           showAutomaticProgress();

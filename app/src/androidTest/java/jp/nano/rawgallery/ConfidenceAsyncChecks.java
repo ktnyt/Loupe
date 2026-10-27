@@ -68,6 +68,11 @@ final class ConfidenceAsyncChecks {
     try(TagStore store=new TagStore(context,db)){store.automation(finishing.id,false,true);}
     useTag(t,a,finishing);ui(t,()->require(((StatusView)get(a,"learningStatus")).getContentDescription().toString().contains("停止"),"clear state explains disabled learning"));
 
+    CountDownLatch third=blockAnalysis(a);
+    try{ui(t,()->click(a,"写真を解析"));idle(t,a);ui(t,()->require(!((StatusView)get(a,"learningStatus")).getContentDescription().toString().contains("停止"),"restart clears stopped status during analysis"));finishAnalysis(t,a,third);ui(t,()->require(((StatusView)get(a,"learningStatus")).getContentDescription().toString().contains("新しい結果"),"prepared model reports ready after restart"));}
+    finally{third.countDown();}
+    ui(t,()->call(a,"loadResults"));idle(t,a);
+
     TagActivity restarted=(TagActivity)t.startActivitySync(TagFixtureIsolation.intent(context,db,cache));
     try{idle(t,restarted);TagFixtureIsolation.assertGuard(restarted);ui(t,()->{restarted.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);set(restarted,"tag",original);((List<PhotoRepository.Photo>)get(restarted,"photos")).addAll(photos);((List<String>)get(restarted,"photoIds")).addAll(ids);call(restarted,"showTag");});idle(t,restarted);require((double)get(restarted,"displayThreshold")==threshold,"new Activity restores persisted threshold");require(((TagScores.Snapshot)get(restarted,"confidence")).model!=null,"new Activity restores saved scores");}
     finally{ui(t,()->{restarted.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);restarted.finish();});TagFixtureIsolation.cleanup(restarted);}
