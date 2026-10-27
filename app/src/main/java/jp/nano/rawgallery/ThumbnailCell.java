@@ -39,6 +39,7 @@ final class ThumbnailCell extends FrameLayout {
   static final class Badges extends View {
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final float density;
+    private final android.graphics.drawable.Drawable selectionCloud;
     String camera = "", rank = "";
     int count;
     StatusView.Symbol tagState;
@@ -47,6 +48,7 @@ final class ThumbnailCell extends FrameLayout {
     Badges(Context context) {
       super(context);
       density = getResources().getDisplayMetrics().density;
+      selectionCloud=context.getDrawable(R.drawable.ic_selection_cloud);
     }
 
     protected void onDraw(Canvas canvas) {
@@ -59,6 +61,11 @@ final class ThumbnailCell extends FrameLayout {
         box(canvas, 5, 5, paint.measureText(camera) + 12, 21);
         paint.setColor(Color.WHITE);
         canvas.drawText(camera, 11, 19, paint);
+      }
+      if(cloud&&photoSelection&&selectionMode){
+        float edge=selected?14:5,left=w-edge-24,top=h-edge-20;
+        paint.setStyle(Paint.Style.FILL);paint.setColor(0x9e000000);canvas.drawRoundRect(left,top,left+24,top+20,10,10,paint);
+        int save=canvas.save();canvas.translate(left+5,top+3);selectionCloud.setBounds(0,0,14,14);selectionCloud.draw(canvas);canvas.restoreToCount(save);
       }
       if (cloud && !selectionMode) {
         box(canvas, w - 29, h - 26, 24, 21);

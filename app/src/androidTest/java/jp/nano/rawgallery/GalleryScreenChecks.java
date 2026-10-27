@@ -12,6 +12,21 @@ import java.util.concurrent.*;
 
 /** Captures actual gallery structure after replacing photos and carousel contents with fixtures. */
 final class GalleryScreenChecks {
+  static void cloudBadgePresentation(Instrumentation t,MainActivity a)throws Exception{
+    File dir=new File(a.getCacheDir(),"consistency-checks");dir.mkdirs();
+    for(boolean selected:new boolean[]{false,true})TagDetailChecks.ui(t,()->{
+      ThumbnailCell cell=new ThumbnailCell(a);cell.fixedHeight=GalleryUi.dp(a,96);cell.badges.photoSelection=true;cell.badges.selectionMode=true;cell.badges.selected=selected;
+      cell.image.setBackgroundColor(0xff587c8a);int w=GalleryUi.dp(a,a.getResources().getConfiguration().screenWidthDp/4f-1.5f),h=GalleryUi.dp(a,96);
+      cell.measure(View.MeasureSpec.makeMeasureSpec(w,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(h,View.MeasureSpec.EXACTLY));cell.layout(0,0,w,h);
+      Bitmap without=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888),with=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);
+      try{cell.draw(new Canvas(without));cell.badges.cloud=true;cell.draw(new Canvas(with));
+        int changed=0;Rect expected=new Rect(w-GalleryUi.dp(a,(selected?14:5)+24),h-GalleryUi.dp(a,(selected?14:5)+20),w-GalleryUi.dp(a,selected?14:5),h-GalleryUi.dp(a,selected?14:5));
+        for(int y=0;y<h;y++)for(int x=0;x<w;x++)if(without.getPixel(x,y)!=with.getPixel(x,y)){changed++;if(!expected.contains(x,y))throw new AssertionError("cloud badge outside reference position");}
+        try(FileOutputStream out=new FileOutputStream(new File(dir,"selection-cloud-"+a.getResources().getConfiguration().screenWidthDp+"-"+a.getResources().getConfiguration().fontScale+"-"+selected+".png"))){with.compress(Bitmap.CompressFormat.PNG,100,out);}catch(IOException e){throw new java.io.UncheckedIOException(e);}
+        if(changed<GalleryUi.dp(a,20))throw new AssertionError("cloud badge hidden during selection");
+      }finally{without.recycle();with.recycle();}
+    });
+  }
   static void finishInitialIndex(Instrumentation t,MainActivity a)throws Exception{
     TagDetailChecks.ui(t,()->{a.getContentResolver().unregisterContentObserver((android.database.ContentObserver)RankingResultChecks.get(a,"mediaObserver"));((android.os.Handler)RankingResultChecks.get(a,"main")).removeCallbacks((Runnable)RankingResultChecks.get(a,"mediaChanged"));});
     java.lang.reflect.Field running=IndexRefreshRequests.class.getDeclaredField("running");running.setAccessible(true);
@@ -68,7 +83,7 @@ final class GalleryScreenChecks {
     MainActivity a=(MainActivity)t.startActivitySync(new Intent(t.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     File file=new File(a.getCacheDir(),"gallery-screen-synthetic.jpg");ArrayList<File> fixtures=new ArrayList<>();
     try{if(talkBack){android.view.accessibility.AccessibilityManager manager=(android.view.accessibility.AccessibilityManager)a.getSystemService(Context.ACCESSIBILITY_SERVICE);long until=android.os.SystemClock.uptimeMillis()+5000;while(!manager.isTouchExplorationEnabled()&&android.os.SystemClock.uptimeMillis()<until)Thread.sleep(100);TagDetailChecks.require(manager.isTouchExplorationEnabled(),"real TalkBack touch exploration enabled");}
-      finishInitialIndex(t,a);Bitmap bitmap=Bitmap.createBitmap(200,200,Bitmap.Config.ARGB_8888);bitmap.eraseColor(0xff718774);try(FileOutputStream out=new FileOutputStream(file)){bitmap.compress(Bitmap.CompressFormat.JPEG,90,out);}bitmap.recycle();for(int i=0;i<40;i++){File fixture=new File(a.getCacheDir(),"gallery-screen-synthetic-"+i+".jpg");java.nio.file.Files.copy(file.toPath(),fixture.toPath(),java.nio.file.StandardCopyOption.REPLACE_EXISTING);fixtures.add(fixture);}
+      finishInitialIndex(t,a);cloudBadgePresentation(t,a);Bitmap bitmap=Bitmap.createBitmap(200,200,Bitmap.Config.ARGB_8888);bitmap.eraseColor(0xff718774);try(FileOutputStream out=new FileOutputStream(file)){bitmap.compress(Bitmap.CompressFormat.JPEG,90,out);}bitmap.recycle();for(int i=0;i<40;i++){File fixture=new File(a.getCacheDir(),"gallery-screen-synthetic-"+i+".jpg");java.nio.file.Files.copy(file.toPath(),fixture.toPath(),java.nio.file.StandardCopyOption.REPLACE_EXISTING);fixtures.add(fixture);}
       for(String state:new String[]{"all","album","long"}){
         ArrayList<PhotoRepository.Photo> photos=new ArrayList<>();ArrayList<List<Integer>> groups=new ArrayList<>();
         for(int i=0;i<40;i++){photos.add(new PhotoRepository.Photo(Uri.fromFile(fixtures.get(i)),"合成"+i+".jpg","",file.length(),i,0));groups.add(List.of(i));}
