@@ -101,3 +101,13 @@ frame commitの意味: [Android公式API](https://developer.android.com/referenc
 `dialog.show`（window attach）、`dialog.first_draw`（高さ上限を満たした最初のpreDraw）、`dialog.frame_commit`を同じrequestで記録する。再表示は新しいrequest。first_drawには画面上のx/y/width/heightのみ記録し、項目名・入力内容は含めない。frame_commitはGPUへの提出であり画面録画と併用する。非hardware描画はframe_unavailable。入力からの区間は直前の対応するinput/actionと照合する。
 
 `am instrument -w -e mode sheets jp.nano.rawgallery.test/jp.nano.rawgallery.ArchiveInstrumentation`はダミーの短い/長い/入力Sheetの初回・同一Dialog再表示を検査する。onShowを置換した経路でも最初のdrawから300msの各描画フレームの位置・寸法が同じこと、幅・水平中央・下部位置・高さ上限・項目選択を確認する。長いリストはfontScale 1.3倍の条件でも検査し、端末の文字サイズ設定は変更しない。実際のTalkBack、IME、OSアニメーションは録画・操作で別途確認する。
+
+## 新規取り込みから一覧反映まで
+
+`media.changed`はMediaStoreの変更通知。`index.start/end`を同じrequestで結び、`index.scan_start/end`、`index.metadata_start/end`、`index.publish_start/published`で走査・メタデータ解析・連写判定後の索引公開を区別する。`index.end`は終了境界であり、成功・変更ありの証拠には`index.published`を使う。変更なし・中断・例外ではpublishedを記録しない。
+
+`screen.index_applied`は一覧データの適用であり、写真描画完了ではない。新写真の匿名photo IDから`image.request`を結び、`image.frame_commit`を別の終点として扱う。解析時はsession内でns順に並べ、別セッション・端末再起動後の時刻やrequestを混ぜない。
+
+`am instrument -w -e mode import-latency jp.nano.rawgallery.test/jp.nano.rawgallery.ArchiveInstrumentation`は、一意の試験フォルダへ合成RAW6枚（各24MiBのパディングと640×480の合成JPEG）を新規に作り、MediaStore公開開始→一覧への全件反映と初回実画像frame_commitを測る。毎回新しいURIを使い、既存写真やキャッシュを削除しない。終了時はこの試験でinsertが返したURIだけを削除し、再構築可能な索引を更新する。プロセス強制終了時にはfinallyの実行は保証できない。写真形式・枚数・ファイルサイズ・端末内の総枚数・ログ設定・電池温度・サンプル数を比較条件に残す。
+
+試験中は対象画面の操作を控える。画面遷移や対象Activityのpauseは`test.import_interrupted`で失敗にし、一時退避後に復帰した回も比較に採用しない。`import-interruption`モードは戻る操作、`import-pause-interruption`は端末ホームへの退避と復帰を意図的に実行し、この検出と後片付けを検査する。合成コンテナでの結果を、利用者が取り込んだ実RAWや外部転送アプリの速度の検証済み結果として扱わない。

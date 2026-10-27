@@ -48,9 +48,27 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean jpegTest;
   private boolean jpegCloudTest;
   private boolean jpegCleanupTest;
+  private boolean importLatencyTest, importInterruptionTest, importPauseTest;
+  private volatile long importPauses, importResumes;
+
+  @Override public void callActivityOnPause(android.app.Activity activity) {
+    if (importLatencyTest && activity instanceof MainActivity) importPauses++;
+    super.callActivityOnPause(activity);
+  }
+
+  long importPauses() { return importPauses; }
+  long importResumes() { return importResumes; }
+
+  @Override public void callActivityOnResume(android.app.Activity activity) {
+    super.callActivityOnResume(activity);
+    if (importLatencyTest && activity instanceof MainActivity) importResumes++;
+  }
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    importPauseTest = args != null && "import-pause-interruption".equals(args.getString("mode"));
+    importInterruptionTest = importPauseTest || (args != null && "import-interruption".equals(args.getString("mode")));
+    importLatencyTest = importInterruptionTest || (args != null && "import-latency".equals(args.getString("mode")));
     sortTest = args != null && "sort-naming".equals(args.getString("mode"));
     shareScreenTest=args!=null&&"share-screen".equals(args.getString("mode"));
     viewerScreenTest=args!=null&&"viewer-screen".equals(args.getString("mode"));
@@ -105,6 +123,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       String report=failureReport(new AssertionError(new java.io.IOException("PRIVATE_VALUE")));
       if(report.contains("PRIVATE_VALUE")||!report.contains("java.io.IOException")||!report.contains("ArchiveInstrumentation.java:"))throw new AssertionError();
       Context context = getTargetContext();
+      if (importLatencyTest) { results.putString("stream", ImportLatencyChecks.run(this, importInterruptionTest, importPauseTest)); finish(-1, results); return; }
       if(sortDimensionsSpecified)validateSortDimensions(context);
       if(shareScreenTest){results.putString("stream",ShareScreenChecks.run(this,tagWidth));finish(-1,results);return;}
       if(viewerScreenTest){results.putString("stream",ViewerScreenChecks.run(this,tagWidth));finish(-1,results);return;}

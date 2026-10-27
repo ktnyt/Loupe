@@ -162,6 +162,9 @@ final class GalleryIndex extends SQLiteOpenHelper {
   static boolean rebuild(Context context, boolean force, BooleanSupplier cancelled)
       throws Exception {
     Context c = context.getApplicationContext();
+    DiagnosticLog.init(c);
+    long request = DiagnosticLog.id();
+    DiagnosticLog.event("index.start", request, "force", force);
     try (GalleryIndex index = new GalleryIndex(c)) {
       String before = signature(c);
       try (Cursor state =
@@ -173,9 +176,12 @@ final class GalleryIndex extends SQLiteOpenHelper {
             && before.equals(state.getString(0))
             && System.currentTimeMillis() - state.getLong(1) < 15 * 60 * 1000) return false;
       }
+      DiagnosticLog.event("index.scan_start", request);
       List<PhotoRepository.Photo> photos = new PhotoRepository(c).scan("すべて");
+      DiagnosticLog.event("index.scan_end", request, "count", photos.size());
       int gap = c.getSharedPreferences("settings", 0).getInt("burstGapSeconds", 1);
       List<BurstGroups.Entry> entries = new ArrayList<>();
+      DiagnosticLog.event("index.metadata_start", request);
       try (ArchiveStore store = new ArchiveStore(c)) {
         Map<String, ArchiveStore.RawMetadata> metadata = store.metadataSnapshot();
         for (int i = 0; i < photos.size(); i++) {
@@ -203,10 +209,12 @@ final class GalleryIndex extends SQLiteOpenHelper {
                       : model + "|" + p.folder + "|" + (p.isJpeg() ? "jpeg" : "raw")));
         }
       }
+      DiagnosticLog.event("index.metadata_end", request, "count", entries.size());
       if (cancelled.getAsBoolean()) return false;
       List<List<Integer>> groups = BurstGroups.group(entries, gap * 1000L);
       int[] membership = new int[photos.size()];
       for (int i = 0; i < groups.size(); i++) for (int item : groups.get(i)) membership[item] = i;
+      DiagnosticLog.event("index.publish_start", request, "groups", groups.size());
       SQLiteDatabase db = index.getWritableDatabase();
       db.beginTransaction();
       try {
@@ -254,7 +262,10 @@ final class GalleryIndex extends SQLiteOpenHelper {
       } finally {
         db.endTransaction();
       }
+      DiagnosticLog.event("index.published", request, "count", photos.size());
       return true;
+    } finally {
+      DiagnosticLog.event("index.end", request);
     }
   }
 }
