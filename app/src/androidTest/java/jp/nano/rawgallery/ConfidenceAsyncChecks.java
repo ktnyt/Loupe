@@ -65,6 +65,9 @@ final class ConfidenceAsyncChecks {
       ui(t,()->{set(a,"busy",false);set(a,"pendingConfidence",null);call(a,"loadResults");});idle(t,a);require(((TagScores.Snapshot)get(a,"confidence")).model!=null,"results reload completed DB model even without callback snapshot");
     }finally{second.countDown();ui(t,()->set(a,"busy",false));}
 
+    try(TagStore store=new TagStore(context,db)){store.automation(finishing.id,false,true);}
+    useTag(t,a,finishing);ui(t,()->require(((StatusView)get(a,"learningStatus")).getContentDescription().toString().contains("停止"),"clear state explains disabled learning"));
+
     TagActivity restarted=(TagActivity)t.startActivitySync(TagFixtureIsolation.intent(context,db,cache));
     try{idle(t,restarted);TagFixtureIsolation.assertGuard(restarted);ui(t,()->{restarted.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);set(restarted,"tag",original);((List<PhotoRepository.Photo>)get(restarted,"photos")).addAll(photos);((List<String>)get(restarted,"photoIds")).addAll(ids);call(restarted,"showTag");});idle(t,restarted);require((double)get(restarted,"displayThreshold")==threshold,"new Activity restores persisted threshold");require(((TagScores.Snapshot)get(restarted,"confidence")).model!=null,"new Activity restores saved scores");}
     finally{ui(t,()->{restarted.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);restarted.finish();});TagFixtureIsolation.cleanup(restarted);}

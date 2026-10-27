@@ -447,7 +447,8 @@ public final class TagActivity extends DiagnosticActivity {
     int yes=examplePositive,no=exampleNegative;
     if(!examplesKnown){yes=0;no=0;for(TagJudgments.Entry e:latestJudgments().values()){if(e.value==TagJudgments.Value.ASSIGNED)yes++;if(e.value==TagJudgments.Value.EXCLUDED)no++;}}
     String counts="含めるの見本"+yes+"枚、含めないの見本"+no+"枚";
-    if(learning)learningStatus.show(StatusView.Symbol.WAITING,"＋"+yes+" −"+no,"前回の結果を表示しています。保存した判断から計算しています。"+counts,null,"");
+    if(confidence!=null&&!confidence.preferences.enabled)learningStatus.show(StatusView.Symbol.UNKNOWN,"＋"+yes+" −"+no,"学習は停止しています。写真を解析を押すと、保存済みの判断から学習を開始します。"+counts,null,"");
+    else if(learning)learningStatus.show(StatusView.Symbol.WAITING,"＋"+yes+" −"+no,"前回の結果を表示しています。保存した判断から計算しています。"+counts,null,"");
     else if(learningUnavailable||confidence==null||confidence.model==null)learningStatus.show(StatusView.Symbol.UNKNOWN,"＋"+yes+" −"+no,"互換な特徴を持つ含める・含めないの見本が不足しているため更新できません。写真を解析で特徴を取り出せます。"+(confidence!=null&&confidence.model!=null?"前回の完成結果を表示しています。":"")+counts,null,"");
     else learningStatus.show(confidence.stale||pendingConfidence!=null?StatusView.Symbol.WAITING:StatusView.Symbol.COMPLETE,"＋"+yes+" −"+no,(pendingConfidence!=null&&resultPrepared?"新しい結果を用意しました。一覧を表示し直すと反映します。":confidence.stale||pendingConfidence!=null?"前回の結果を表示しています。":"暫定の適合スコア。")+counts,null,"");
   }

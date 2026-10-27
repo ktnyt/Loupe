@@ -7,7 +7,7 @@ import java.util.UUID;
 
 /** Installed by instrumentation before Activity.onCreate, never activated by production intents. */
 final class TagFixtureIsolation {
-  static Intent intent(Context context,String db,String features){return new Intent(context,TagActivity.class).putExtra("fixtureTags",db).putExtra("fixtureFeatures",features).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);}
+  static Intent intent(Context context,String db,String features){return new Intent(context,TagActivity.class).putExtra("fixtureTags",db).putExtra("fixtureFeatures",features).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_MULTIPLE_TASK);}
   static void install(TagActivity activity){
     String db=activity.getIntent().getStringExtra("fixtureTags"),features=activity.getIntent().getStringExtra("fixtureFeatures");
     if(!valid(db)||!valid(features))throw new IllegalArgumentException("Named fixture databases required before onCreate");
