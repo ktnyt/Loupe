@@ -39,6 +39,6 @@ final class SyncControlChecks {
       }finally{test.runOnMainSync(activity::finish);test.waitForIdleSync();}
     }
     if(prefs.getBoolean("syncEnabled",false)!=sync||prefs.getBoolean("cleanupEnabled",false)!=cleanup)throw new AssertionError("settings changed");
-    return "PASS four isolated retention periods (unset=7, explicit7/30/90); actual display matches stored/processing period; pre-confirmation state-change path: "+checked+" switches checked; active settings skipped. No confirmation accepted, no upload/deletion enabled. Physical drag gesture not exercised.\n";
+    return "PASS four isolated retention periods (unset=7, explicit7/30/90); pre-confirmation state-change path: "+checked+" switches and actual retention displays checked; active settings skipped (zero means actual displays not checked). No confirmation accepted, no upload/deletion enabled. Physical drag gesture not exercised.\n";
   }
 }
