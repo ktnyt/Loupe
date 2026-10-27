@@ -19,6 +19,9 @@ final class AutomaticTagChecks {
         // Recreate a genuine v1 schema before opening the v2 helper again.
         store.getWritableDatabase().execSQL("DROP TABLE automatic_tags");
         store.getWritableDatabase().execSQL("DROP TABLE automation");
+        store.getWritableDatabase().execSQL("DROP TABLE confidence_preferences");
+        store.getWritableDatabase().execSQL("DROP TABLE confidence_models");
+        store.getWritableDatabase().execSQL("DROP TABLE confidence_scores");
         store.getWritableDatabase().setVersion(1);
       }
       try (TagStore store = new TagStore(context, database)) {

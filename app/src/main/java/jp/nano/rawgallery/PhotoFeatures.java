@@ -49,6 +49,19 @@ final class PhotoFeatures implements AutoCloseable {
     }
   }
 
+  /** Reuses completed features across albums without reading images or starting inference. */
+  java.util.Map<String,RelatedPhotos.Vector> allCached() {
+    java.util.Map<String,RelatedPhotos.Vector> result=new java.util.HashMap<>();
+    try(Cursor c=cache.getReadableDatabase().rawQuery("SELECT source,vector FROM features WHERE pipeline=?",new String[]{PIPELINE})) {
+      while(c.moveToNext()) {
+        byte[] bytes=c.getBlob(1);if(bytes.length!=1024)continue;
+        try{result.put(c.getString(0),new RelatedPhotos.Vector(bytes));}
+        catch(IllegalArgumentException invalid){ /* Regenerable invalid features are not judgments. */ }
+      }
+    }
+    return result;
+  }
+
   RelatedPhotos.Vector obtain(PhotoRepository.Photo photo) throws Exception {
     if (!"content".equals(photo.uri.getScheme())) throw new IllegalArgumentException("Local photos only");
     RelatedPhotos.Vector saved = cached(photo);

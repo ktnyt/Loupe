@@ -42,7 +42,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean tagTest, lifecycleTest;
   private boolean relatedTest;
   private boolean positionTest, sortTest, tabsTest, albumTagsTest, comparisonLabelsTest, actionLabelsTest;
-  private boolean automaticTest;
+  private boolean automaticTest, confidenceStoreTest;
   private boolean cleanupTest;
   private boolean compactTest;
   private boolean jpegTest;
@@ -66,6 +66,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    confidenceStoreTest=args!=null&&"confidence-store".equals(args.getString("mode"));
     indexSignatureTest = args != null && "index-signature".equals(args.getString("mode"));
     indexApplyRaceTest = args != null && "index-apply-race".equals(args.getString("mode"));
     importDeferredTest = args != null && "import-deferred".equals(args.getString("mode"));
@@ -126,6 +127,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       String report=failureReport(new AssertionError(new java.io.IOException("PRIVATE_VALUE")));
       if(report.contains("PRIVATE_VALUE")||!report.contains("java.io.IOException")||!report.contains("ArchiveInstrumentation.java:"))throw new AssertionError();
       Context context = getTargetContext();
+      if(confidenceStoreTest){results.putString("stream",ConfidenceStoreChecks.run(context));finish(-1,results);return;}
       if (indexSignatureTest) { results.putString("stream", IndexSignatureChecks.run(context)); finish(-1, results); return; }
       if (indexApplyRaceTest) { results.putString("stream", IndexApplyRaceChecks.run(this)); finish(-1, results); return; }
       if (importLatencyTest) { results.putString("stream", ImportLatencyChecks.run(this, importInterruptionTest, importPauseTest, importDeferredTest)); finish(-1, results); return; }
