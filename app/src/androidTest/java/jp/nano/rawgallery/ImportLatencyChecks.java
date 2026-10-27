@@ -79,12 +79,17 @@ final class ImportLatencyChecks {
       }
       DiagnosticLog.event("test.import_published", 0);
       if (pause) {
+        long resumes = test.importResumes();
         test.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_HOME);
         long pauseDeadline = SystemClock.elapsedRealtime() + 5000;
         while (test.importPauses() == pauses && SystemClock.elapsedRealtime() < pauseDeadline) Thread.sleep(20);
         if (test.importPauses() == pauses) throw new AssertionError("home did not pause activity");
-        test.startActivitySync(new Intent(context, MainActivity.class)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+        // Existing activities do not call onCreate, which startActivitySync waits for.
+        test.runOnMainSync(() -> context.startActivity(new Intent(context, MainActivity.class)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)));
+        long resumeDeadline = SystemClock.elapsedRealtime() + 5000;
+        while (test.importResumes() == resumes && SystemClock.elapsedRealtime() < resumeDeadline) Thread.sleep(20);
+        if (test.importResumes() == resumes) throw new AssertionError("activity did not resume");
       } else if (interrupt) test.runOnMainSync(a::onBackPressed);
       long deadline = SystemClock.elapsedRealtime() + 90000;
       long applied = 0, frame = 0;

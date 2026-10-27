@@ -49,7 +49,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean jpegCloudTest;
   private boolean jpegCleanupTest;
   private boolean importLatencyTest, importInterruptionTest, importPauseTest;
-  private volatile long importPauses;
+  private volatile long importPauses, importResumes;
 
   @Override public void callActivityOnPause(android.app.Activity activity) {
     if (importLatencyTest && activity instanceof MainActivity) importPauses++;
@@ -57,6 +57,12 @@ public final class ArchiveInstrumentation extends Instrumentation {
   }
 
   long importPauses() { return importPauses; }
+  long importResumes() { return importResumes; }
+
+  @Override public void callActivityOnResume(android.app.Activity activity) {
+    super.callActivityOnResume(activity);
+    if (importLatencyTest && activity instanceof MainActivity) importResumes++;
+  }
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
