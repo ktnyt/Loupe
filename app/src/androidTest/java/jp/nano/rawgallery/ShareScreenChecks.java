@@ -19,6 +19,10 @@ final class ShareScreenChecks {
   static void shot(Instrumentation t,Dialog dialog,File dir,String name)throws Exception{
     ConsistencyLayoutChecks.captureHardware(t,dialog.getWindow(),dialog.getWindow().getDecorView(),dir,name);
   }
+  static void outside(Instrumentation t,Dialog dialog)throws Exception{
+    View decor=dialog.getWindow().getDecorView();ConsistencyLayoutChecks.frame(t,decor);int[] point=new int[2];TagDetailChecks.ui(t,()->{decor.getLocationOnScreen(point);point[0]+=decor.getWidth()/2;point[1]-=GalleryUi.dp(decor.getContext(),24);TagDetailChecks.require(point[1]>GalleryUi.dp(decor.getContext(),48),"outside tap lies below system status area");});
+    long now=android.os.SystemClock.uptimeMillis();MotionEvent down=MotionEvent.obtain(now,now,MotionEvent.ACTION_DOWN,point[0],point[1],0),up=MotionEvent.obtain(now,now+40,MotionEvent.ACTION_UP,point[0],point[1],0);try{t.sendPointerSync(down);t.sendPointerSync(up);}finally{down.recycle();up.recycle();}t.waitForIdleSync();
+  }
   static View modal(Instrumentation t,MainActivity a)throws Exception{
     View[] found={null};for(int attempt=0;attempt<100&&found[0]==null;attempt++){TagDetailChecks.ui(t,()->{for(View root:android.view.inspector.WindowInspector.getGlobalWindowViews())if(root!=a.getWindow().getDecorView()&&root.isShown()&&root.hasWindowFocus())found[0]=root;});if(found[0]==null)Thread.sleep(50);}
     TagDetailChecks.require(found[0]!=null,"focused synthetic dialog");return found[0];
@@ -42,6 +46,8 @@ final class ShareScreenChecks {
         TagDetailChecks.ui(t,()->{TagDetailChecks.require((TagDetailChecks.button(root,"順位が未決定の連写を除いて共有")!=null)==partial,"partial share visibility");TagDetailChecks.button(root,"キャンセル").performClick();TagDetailChecks.require(((Set<?>)RankingResultChecks.get(a,"selectedPhotos")).equals(expected),"confirmation cancel retains selection");});t.waitForIdleSync();
         TagDetailChecks.ui(t,()->RankingResultChecks.call(a,"shareSelection"));View backRoot=modal(t,a);t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);t.waitForIdleSync();
         TagDetailChecks.ui(t,()->TagDetailChecks.require(!confirmationDialog(RankingResultChecks.get(a,"shareDialog")).isShowing()&&((Set<?>)RankingResultChecks.get(a,"selectedPhotos")).equals(expected),"confirmation Back retains selection"));
+        TagDetailChecks.ui(t,()->RankingResultChecks.call(a,"shareSelection"));modal(t,a);ShareUi.Confirmation outsideConfirm=confirmationDialog(RankingResultChecks.get(a,"shareDialog"));outside(t,outsideConfirm);
+        TagDetailChecks.ui(t,()->TagDetailChecks.require(!outsideConfirm.isShowing()&&((Set<?>)RankingResultChecks.get(a,"selectedPhotos")).equals(expected),"confirmation outside retains selection"));
         if(partial){
           TagDetailChecks.ui(t,()->RankingResultChecks.call(a,"shareSelection"));View again=modal(t,a);
           TagDetailChecks.ui(t,()->{TagDetailChecks.button(again,"順位が未決定の連写を除いて共有").performClick();Object menu=RankingResultChecks.get(a,"shareDialog");TagDetailChecks.require(menu instanceof ShareUi.Menu && ((ShareUi.Menu)menu).previews.size()==photos.size()-2,"partial share opens only resolved photos");TagDetailChecks.require(((Set<?>)RankingResultChecks.get(a,"selectedPhotos")).equals(expected),"partial share retains selection");((Dialog)menu).dismiss();});t.waitForIdleSync();
@@ -79,12 +85,15 @@ final class ShareScreenChecks {
       TagDetailChecks.ui(t,()->{menu[0].original.performClick();TagDetailChecks.require(chosen.get()==0&&menu[0].raw,"format alone does not prepare");});shot(t,menu[0],dir,prefix+"-menu-original");TagDetailChecks.ui(t,()->TagDetailChecks.inspect(menu[0].content));
       TagDetailChecks.ui(t,()->{menu[0].jpeg.performClick();ViewGroup destinations=(ViewGroup)menu[0].content.getChildAt(menu[0].content.getChildCount()-2);destinations.getChildAt(1).performClick();TagDetailChecks.require(chosen.get()==1&&raw[0]&&target[0]==targets.get(1),"saved destination uses its saved format");});
       TagDetailChecks.ui(t,()->{menu[0]=new ShareUi.Menu(a,photos,targets,0,Set.of(),(value,destination)->{chosen.incrementAndGet();raw[0]=value;target[0]=destination;});dialogs.add(menu[0]);menu[0].show();menu[0].original.performClick();ViewGroup destinations=(ViewGroup)menu[0].content.getChildAt(menu[0].content.getChildCount()-2);destinations.getChildAt(2).performClick();TagDetailChecks.require(chosen.get()==2&&raw[0]&&target[0]==null,"chooser uses current format");});
+      TagDetailChecks.ui(t,()->{menu[0]=new ShareUi.Menu(a,photos,targets,0,Set.of(),(value,destination)->chosen.incrementAndGet());dialogs.add(menu[0]);menu[0].show();});outside(t,menu[0]);
+      TagDetailChecks.ui(t,()->TagDetailChecks.require(!menu[0].isShowing()&&chosen.get()==2&&((Set<?>)RankingResultChecks.get(a,"selectedPhotos")).equals(selection),"menu outside retains selection without sharing"));
       CountDownLatch entered=new CountDownLatch(1);AtomicInteger copies=new AtomicInteger();
       SharePreparation blocked=new SharePreparation(new File(fixtures,"cancel"),(photo,value,destination)->{copies.incrementAndGet();entered.countDown();release.await();throw new IOException("synthetic preparation never succeeds");});
       TagDetailChecks.ui(t,()->{RankingResultChecks.set(a,"sharePreparation",blocked);export(a,List.copyOf(photos),true);});TagDetailChecks.require(entered.await(10,TimeUnit.SECONDS),"preparation started");t.waitForIdleSync();
       Dialog progress=(Dialog)RankingResultChecks.get(a,"shareProgress");dialogs.add(progress);visibleMarker(t,progress);shot(t,progress,dir,prefix+"-preparing");TagDetailChecks.ui(t,()->metrics.append(geometry(((ShareUi.Sheet)progress).content,"preparing")));
       t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);t.waitForIdleSync();
-      TagDetailChecks.ui(t,()->{TagDetailChecks.require(progress.isShowing(),"Back does not cancel preparation");TagDetailChecks.button(progress.getWindow().getDecorView(),"中止").performClick();});worker(t,a);
+      outside(t,progress);
+      TagDetailChecks.ui(t,()->{TagDetailChecks.require(progress.isShowing(),"Back and outside do not cancel preparation");TagDetailChecks.button(progress.getWindow().getDecorView(),"中止").performClick();});worker(t,a);
       TagDetailChecks.ui(t,()->TagDetailChecks.require(!progress.isShowing()&&copies.get()==1&&((Set<?>)RankingResultChecks.get(a,"selectedPhotos")).equals(selection),"cancel retains selection and closes preparation"));
       AtomicInteger attempts=new AtomicInteger();
       SharePreparation failed=new SharePreparation(new File(fixtures,"failed"),(photo,value,destination)->{attempts.incrementAndGet();throw new IOException("synthetic failure");});
@@ -92,8 +101,10 @@ final class ShareScreenChecks {
       View failure=modal(t,a);Dialog failureDialog=(Dialog)RankingResultChecks.get(a,"shareDialog");dialogs.add(failureDialog);shot(t,failureDialog,dir,prefix+"-failed");TagDetailChecks.ui(t,()->TagDetailChecks.inspect(failure));
       TagDetailChecks.ui(t,()->TagDetailChecks.button(failure,"再試行").performClick());worker(t,a);
       View retry=modal(t,a);TagDetailChecks.ui(t,()->{TagDetailChecks.require(attempts.get()==2&&((Set<?>)RankingResultChecks.get(a,"selectedPhotos")).equals(selection),"retry repeats preparation without changing selection");TagDetailChecks.button(retry,"選択に戻る").performClick();});
+      TagDetailChecks.ui(t,()->export(a,List.copyOf(photos),false));worker(t,a);modal(t,a);Dialog outsideFailure=(Dialog)RankingResultChecks.get(a,"shareDialog");dialogs.add(outsideFailure);outside(t,outsideFailure);
+      TagDetailChecks.ui(t,()->TagDetailChecks.require(!outsideFailure.isShowing()&&attempts.get()==3&&((Set<?>)RankingResultChecks.get(a,"selectedPhotos")).equals(selection),"failure outside retains selection"));
       bitmap.recycle();
-      return "PASS strict Confirmation type (legacy AlertDialog rejected), conditional action visibility, cancel/Back selection retention, own Window PixelCopy and partial-share Menu transition. Synthetic share Menu formats and destination callbacks; actual export cancellation, Back guard, preparation failure and retry with writers that always throw. Selection retained. No send or user preference save invoked. Menu/preparing/failure use PixelCopy of their own windows; available width and text bounds checked. Existing startup index may update browsing DB.\n"+metrics;
+      return "PASS strict Confirmation type (legacy AlertDialog rejected), conditional action visibility, cancel/Back/outside selection retention, own Window PixelCopy and partial-share Menu transition. Synthetic share Menu formats and destination callbacks; Menu/Confirmation/failure outside cancellation and preparation outside guard; actual export cancellation, Back guard, preparation failure and retry with writers that always throw. Selection retained. No send or user preference save invoked. Menu/preparing/failure use PixelCopy of their own windows; available width and text bounds checked. Existing startup index may update browsing DB.\n"+metrics;
     }finally{
       release.countDown();TagDetailChecks.ui(t,()->{for(Dialog dialog:dialogs)if(dialog.isShowing())dialog.dismiss();a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);a.finish();});
       for(File file:files)file.delete();for(String child:new String[]{"cancel","failed"}){File sub=new File(fixtures,child);File[] contents=sub.listFiles();if(contents!=null)for(File file:contents)file.delete();sub.delete();}fixtures.delete();
