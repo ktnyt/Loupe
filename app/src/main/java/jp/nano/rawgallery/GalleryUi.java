@@ -192,14 +192,14 @@ final class GalleryUi {
   }
 
   /** Configure before show; never submit an oversized first frame (Issue #13). */
-  private static void styleSheet(AlertDialog dialog) {
+  static void styleSheet(Dialog dialog, int availableWidth) {
     Window window = dialog.getWindow(); if (window == null) return;
     Context context = dialog.getContext();
     window.setBackgroundDrawable(shape(context, PANEL, 20));
     window.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
     window.setWindowAnimations(0);
     window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
-    int width = context.getResources().getDisplayMetrics().widthPixels;
+    int width = availableWidth;
     final int sheetWidth = Math.min(width - dp(context, 24), dp(context, 560));
     window.setLayout(sheetWidth, WindowManager.LayoutParams.WRAP_CONTENT);
     View decor = window.getDecorView();
@@ -246,7 +246,7 @@ final class GalleryUi {
       AlertDialog dialog = super.create();
       // Dialog.create finishes theme/content setup without adding the window to the screen.
       dialog.create();
-      styleSheet(dialog);
+      styleSheet(dialog, getContext().getResources().getDisplayMetrics().widthPixels);
       DiagnosticWindow.install(dialog.getWindow());
       return dialog;
     }

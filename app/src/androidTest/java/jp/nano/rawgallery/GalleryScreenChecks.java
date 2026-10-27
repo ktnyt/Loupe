@@ -27,7 +27,7 @@ final class GalleryScreenChecks {
       }finally{without.recycle();with.recycle();}
     });
   }
-  private static void portraitFixture(Instrumentation t,MainActivity a,int width,float font)throws Exception{
+  static void portraitFixture(Instrumentation t,MainActivity a,int width,float font)throws Exception{
     TagDetailChecks.ui(t,()->a.setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT));
     long until=android.os.SystemClock.uptimeMillis()+10000;boolean[] ready={false};
     do{TagDetailChecks.ui(t,()->ready[0]=a.getResources().getConfiguration().orientation==android.content.res.Configuration.ORIENTATION_PORTRAIT&&a.getWindow().getDecorView().getHeight()>GalleryUi.dp(a,600));if(ready[0])break;Thread.sleep(30);}while(android.os.SystemClock.uptimeMillis()<until);
@@ -37,7 +37,7 @@ final class GalleryScreenChecks {
       a.getResources().updateConfiguration(config,a.getResources().getDisplayMetrics());
       a.getWindow().setLayout(GalleryUi.dp(a,width),WindowManager.LayoutParams.MATCH_PARENT);
     });
-    t.waitForIdleSync();ConsistencyLayoutChecks.frame(t,(View)RankingResultChecks.get(a,"root"));
+    t.waitForIdleSync();ConsistencyLayoutChecks.frame(t,a.getWindow().getDecorView());
   }
   private static void portraitDimensions(MainActivity a,View root,int width,float font){
     android.content.res.Configuration config=a.getResources().getConfiguration();

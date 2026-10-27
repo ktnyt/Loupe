@@ -8,8 +8,8 @@ android {
         testApplicationId 'jp.nano.rawgallery.test'
         minSdk 30
         targetSdk 35
-        versionCode 120
-        versionName '0.17.95'
+        versionCode 122
+        versionName '0.17.97'
         testInstrumentationRunner 'jp.nano.rawgallery.ArchiveInstrumentation'
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }

@@ -325,12 +325,12 @@ public final class MainActivity extends DiagnosticActivity {
 
   private void photoMenu() {
     DiagnosticLog.event("screen.photoMenu", 0);
-    new GalleryUi.Sheet(this).setItems(new String[] {"カメラで絞り込み", "タグ", "設定とその他"}, (d, which) -> {
+    MoreMenuUi.show(this,"その他",new String[] {"カメラで絞り込み", "タグ", "設定とその他"}, (d, which) -> {
       if (which == 0 && !selecting) chooseFilter();
       else if (which == 0) feedback(StatusView.Symbol.PAUSED,"選択を終了してからカメラを変更してください",this::endSelection,"選択を終了");
       else if (which == 1) openTags(null);
       else galleryMenu();
-    }).setNegativeButton("閉じる", null).show();
+    });
   }
 
   private static final class ImageLoad {
@@ -758,9 +758,7 @@ public final class MainActivity extends DiagnosticActivity {
 
   private void galleryMenu() {
     DiagnosticLog.event("screen.galleryMenu", 0);
-    new GalleryUi.Sheet(this)
-        .setTitle("設定とその他の操作")
-        .setItems(
+    MoreMenuUi.show(this,"設定とその他の操作",
             new String[] {"クラウドと同期", "共有先の設定", "連写のまとめ方", "写真へのアクセス", "再読み込み", "写真のプレビュー", "処理の状況"},
             (d, which) -> {
               switch (which) {
@@ -815,9 +813,7 @@ public final class MainActivity extends DiagnosticActivity {
                   refreshIndex(true);
                   break;
               }
-            })
-        .setNegativeButton("閉じる", null)
-        .show();
+            });
   }
 
   private String countText() {
