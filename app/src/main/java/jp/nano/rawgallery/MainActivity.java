@@ -103,6 +103,7 @@ public final class MainActivity extends DiagnosticActivity {
   private String albumFolder;
   private boolean albumHome = true, resumed;
   private final IndexRefreshRequests refreshRequests = new IndexRefreshRequests();
+  private boolean pendingIndexUpdate;
   private final long startedAt = SystemClock.elapsedRealtime();
   private boolean reportedAlbums, reportedCover;
   private final Runnable mediaChanged = () -> refresh();
@@ -322,6 +323,7 @@ public final class MainActivity extends DiagnosticActivity {
       root.addView(new LibraryTabs(this, false, !selecting, this::switchLibraryTab));
     if (selecting) updateSelection();
     else if (!photos.isEmpty()) updateCount();
+    applyPendingIndexUpdate();
   }
 
   private void photoMenu() {
@@ -1114,13 +1116,12 @@ public final class MainActivity extends DiagnosticActivity {
     GalleryIndex.WORKER.execute(
         () -> {
           Exception failure = null;
-          boolean changed = false;
           try {
-            changed = GalleryIndex.rebuild(app, force, () -> false);
+            GalleryIndex.rebuild(app, force, () -> false);
           } catch (Exception e) {
             failure = e;
           }
-          final boolean failed = failure != null, updated = changed;
+          final boolean failed = failure != null;
           main.post(
               () -> {
                 int next = refreshRequests.finish();
@@ -1128,14 +1129,22 @@ public final class MainActivity extends DiagnosticActivity {
                 if (failed) {
                   feedback(StatusView.Symbol.FAILED,"写真の一覧を更新できませんでした。保存済みの一覧を表示しています。",this::refresh,"再読み込み");
                 }
-                if (updated) {
-                  if (albumHome) loadAlbums();
-                  else if (!detail && burstMembers == null) loadIndexedPhotos();
+                if (!failed) {
+                  // A preceding background job may have published the current index.
+                  pendingIndexUpdate = true;
+                  applyPendingIndexUpdate();
                 }
                 if (next != IndexRefreshRequests.NONE)
                   refreshIndex(next == IndexRefreshRequests.FORCE);
               });
         });
+  }
+
+  private void applyPendingIndexUpdate() {
+    if (!pendingIndexUpdate || detail || selecting || burstMembers != null || rankingScreen) return;
+    pendingIndexUpdate = false;
+    if (albumHome) loadAlbums();
+    else loadIndexedPhotos();
   }
 
   private void requestPhotoAccess() {

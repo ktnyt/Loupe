@@ -141,12 +141,13 @@ final class GalleryIndex extends SQLiteOpenHelper {
     } catch (Exception e) {
       media = "unavailable";
     }
-    java.io.File db = c.getDatabasePath("archive.db"), wal = new java.io.File(db + "-wal");
+    long archiveRevision;
+    try (ArchiveStore archive = new ArchiveStore(c)) {
+      archiveRevision = archive.indexRevision();
+    }
     return media
-        + ":"
-        + db.lastModified()
-        + ":"
-        + wal.lastModified()
+        + ":archive-v3:"
+        + archiveRevision
         + ":"
         + c.getSharedPreferences("settings", 0).getInt("burstGapSeconds", 1)
         + ":"
