@@ -63,6 +63,8 @@ final class TagStore extends SQLiteOpenHelper {
         db.delete("confidence_scores", "tag=?", new String[] {tag});
         db.delete("confidence_models", "tag=?", new String[] {tag});
         db.execSQL("UPDATE confidence_preferences SET enabled=0,epoch=epoch+1 WHERE tag=?",new Object[]{tag});
+      } else if (!enabled) {
+        db.execSQL("UPDATE confidence_preferences SET epoch=epoch+1 WHERE tag=?",new Object[]{tag});
       }
       long epoch;
       try (Cursor c = db.rawQuery("SELECT epoch FROM automation WHERE tag=?", new String[] {tag})) {

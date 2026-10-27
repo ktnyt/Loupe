@@ -23,6 +23,13 @@ final class ConfidenceStoreChecks {
         Map<String,Double> values=Map.of(TagStore.source(seed),.98,TagStore.source(negative),.02,TagStore.source(unknown),.45);
         check(scores.publish(tag,epoch,revision,model,values,()->false),"initial publish");
         check(scores.snapshot(tag).scores.size()==3,"below-threshold scores retained");
+        store.automation(tag,false,false);
+        check(!scores.publish(tag,epoch,revision,model,values,()->false),"stop rejects earlier learned job");
+        check(scores.snapshot(tag).scores.size()==3,"stop retains completed results");
+        epoch=scores.begin(tag);
+        long firstJob=epoch;epoch=scores.begin(tag);
+        check(!scores.publish(tag,firstJob,revision,model,values,()->false),"later computation supersedes older snapshot");
+        check(scores.publish(tag,epoch,revision,model,values,()->false),"latest computation can publish");
         check(store.automatic(tag).isEmpty(),"manual priority and initial threshold");
         scores.threshold(tag,.4);
         check(store.automatic(tag).size()==1,"lower threshold reveals cached score");

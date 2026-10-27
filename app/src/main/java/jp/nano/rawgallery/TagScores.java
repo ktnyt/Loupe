@@ -52,6 +52,17 @@ final class TagScores {
     } finally { db.endTransaction(); }
   }
 
+  /** Every computation receives a new generation, including simultaneous Activity instances. */
+  long begin(String tag) {
+    SQLiteDatabase db=store.getWritableDatabase();db.beginTransaction();
+    try {
+      Preferences current=preferences(tag);
+      if(!current.enabled)return -1;
+      db.execSQL("UPDATE confidence_preferences SET epoch=epoch+1 WHERE tag=?",new Object[]{tag});
+      long epoch=preferences(tag).epoch;db.setTransactionSuccessful();return epoch;
+    } finally {db.endTransaction();}
+  }
+
   void threshold(String tag, double threshold) {
     TagConfidence.requireScore(threshold);
     SQLiteDatabase db=store.getWritableDatabase();db.beginTransaction();
@@ -143,8 +154,9 @@ final class TagScores {
 
   /** No extraction here: edits replay latest labels using completed, compatible feature caches only. */
   boolean recompute(String tag,PhotoFeatures features,BooleanSupplier cancelled) {
-    Preferences preferences=preferences(tag);
-    if(!preferences.enabled)return false;
+    TagConfidence.requireActive(cancelled);
+    long epoch=begin(tag);
+    if(epoch<0)return false;
     long revision=store.judgmentRevision(tag);
     try(DiagnosticLog.Scope span=DiagnosticLog.span("tag.confidence")) {
       Map<String,RelatedPhotos.Vector> cached=features.allCached();
@@ -154,7 +166,7 @@ final class TagScores {
       for(Map.Entry<String,RelatedPhotos.Vector> entry:cached.entrySet()) {
         TagConfidence.requireActive(cancelled);scores.put(entry.getKey(),model.score(entry.getValue()));
       }
-      boolean applied=publish(tag,preferences.epoch,revision,model,scores,cancelled);
+      boolean applied=publish(tag,epoch,revision,model,scores,cancelled);
       DiagnosticLog.event("tag.confidence.result",0,"positive",model.positives,"negative",model.negatives,"scored",scores.size(),"applied",applied);
       return applied;
     }
