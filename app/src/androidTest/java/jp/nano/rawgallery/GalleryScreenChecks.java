@@ -27,6 +27,25 @@ final class GalleryScreenChecks {
       }finally{without.recycle();with.recycle();}
     });
   }
+  private static void portraitFixture(Instrumentation t,MainActivity a,int width,float font)throws Exception{
+    TagDetailChecks.ui(t,()->a.setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT));
+    long until=android.os.SystemClock.uptimeMillis()+10000;boolean[] ready={false};
+    do{TagDetailChecks.ui(t,()->ready[0]=a.getResources().getConfiguration().orientation==android.content.res.Configuration.ORIENTATION_PORTRAIT&&a.getWindow().getDecorView().getHeight()>GalleryUi.dp(a,600));if(ready[0])break;Thread.sleep(30);}while(android.os.SystemClock.uptimeMillis()<until);
+    TagDetailChecks.require(ready[0],"portrait fixture height/orientation ready");
+    TagDetailChecks.ui(t,()->{
+      android.content.res.Configuration config=new android.content.res.Configuration(a.getResources().getConfiguration());config.fontScale=font;config.screenWidthDp=width;
+      a.getResources().updateConfiguration(config,a.getResources().getDisplayMetrics());
+      a.getWindow().setLayout(GalleryUi.dp(a,width),WindowManager.LayoutParams.MATCH_PARENT);
+    });
+    t.waitForIdleSync();ConsistencyLayoutChecks.frame(t,(View)RankingResultChecks.get(a,"root"));
+  }
+  private static void portraitDimensions(MainActivity a,View root,int width,float font){
+    android.content.res.Configuration config=a.getResources().getConfiguration();
+    TagDetailChecks.require(config.orientation==android.content.res.Configuration.ORIENTATION_PORTRAIT,"portrait fixture orientation");
+    TagDetailChecks.require(config.screenWidthDp==width&&Math.abs(config.fontScale-font)<.001f,"portrait fixture requested configuration");
+    TagDetailChecks.require(root.getWidth()==GalleryUi.dp(a,width)&&a.getWindow().getDecorView().getWidth()==GalleryUi.dp(a,width),"portrait fixture rendered width");
+    TagDetailChecks.require(root.getHeight()>GalleryUi.dp(a,600),"portrait fixture rendered height");
+  }
   private static void photoGeometry(MainActivity a,View root){
     TagDetailChecks.inspect(root);
     ThumbnailCell first=firstPhoto(root);
@@ -40,6 +59,9 @@ final class GalleryScreenChecks {
       TagDetailChecks.require(visible.width()==filter.getWidth(),"filter fully visible");
       TagDetailChecks.require(filter.getPaddingLeft()>=GalleryUi.dp(a,16)&&filter.getPaddingRight()>=GalleryUi.dp(a,16),"filter interior spacing");
     }
+  }
+  private static String statusState(StatusView status){
+    try{String result="";for(String name:new String[]{"loading","shown","symbol","collapseWhenIdle"}){java.lang.reflect.Field field=StatusView.class.getDeclaredField(name);field.setAccessible(true);result+=name+":"+field.get(status)+",";}return result;}catch(ReflectiveOperationException e){throw new RuntimeException(e);}
   }
   private static void headingGeometry(MainActivity a,View root){
     TextView count=(TextView)RankingResultChecks.get(a,"subtitle");
@@ -63,7 +85,8 @@ final class GalleryScreenChecks {
     ((ExecutorService)RankingResultChecks.get(a,"scans")).submit(()->{}).get(15,TimeUnit.SECONDS);
     t.waitForIdleSync();
     ((ExecutorService)RankingResultChecks.get(a,"images")).submit(()->{}).get(15,TimeUnit.SECONDS);
-    t.waitForIdleSync();Thread.sleep(150);
+    t.waitForIdleSync();
+    Thread.sleep(150);
   }
   static void syntheticCarousel(Instrumentation t,MainActivity a)throws Exception{
     settle(t,a);
@@ -104,8 +127,9 @@ final class GalleryScreenChecks {
   static String run(Instrumentation t,int width)throws Exception{return run(t,width,false);}
   static String run(Instrumentation t,int width,boolean talkBack)throws Exception{
     MainActivity a=(MainActivity)t.startActivitySync(new Intent(t.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    int originalOrientation=a.getRequestedOrientation();float requestedFont=a.getResources().getConfiguration().fontScale;
     File file=new File(a.getCacheDir(),"gallery-screen-synthetic.jpg");ArrayList<File> fixtures=new ArrayList<>();
-    try{if(talkBack){android.view.accessibility.AccessibilityManager manager=(android.view.accessibility.AccessibilityManager)a.getSystemService(Context.ACCESSIBILITY_SERVICE);long until=android.os.SystemClock.uptimeMillis()+5000;while(!manager.isTouchExplorationEnabled()&&android.os.SystemClock.uptimeMillis()<until)Thread.sleep(100);TagDetailChecks.require(manager.isTouchExplorationEnabled(),"real TalkBack touch exploration enabled");}
+    try{portraitFixture(t,a,width,requestedFont);if(talkBack){android.view.accessibility.AccessibilityManager manager=(android.view.accessibility.AccessibilityManager)a.getSystemService(Context.ACCESSIBILITY_SERVICE);long until=android.os.SystemClock.uptimeMillis()+5000;while(!manager.isTouchExplorationEnabled()&&android.os.SystemClock.uptimeMillis()<until)Thread.sleep(100);TagDetailChecks.require(manager.isTouchExplorationEnabled(),"real TalkBack touch exploration enabled");}
       finishInitialIndex(t,a);cloudBadgePresentation(t,a);Bitmap bitmap=Bitmap.createBitmap(200,200,Bitmap.Config.ARGB_8888);bitmap.eraseColor(0xff718774);try(FileOutputStream out=new FileOutputStream(file)){bitmap.compress(Bitmap.CompressFormat.JPEG,90,out);}bitmap.recycle();for(int i=0;i<40;i++){File fixture=new File(a.getCacheDir(),"gallery-screen-synthetic-"+i+".jpg");java.nio.file.Files.copy(file.toPath(),fixture.toPath(),java.nio.file.StandardCopyOption.REPLACE_EXISTING);fixtures.add(fixture);}
       for(String state:new String[]{"all","album","long"}){
         ArrayList<PhotoRepository.Photo> photos=new ArrayList<>();ArrayList<List<Integer>> groups=new ArrayList<>();
@@ -114,9 +138,9 @@ final class GalleryScreenChecks {
         syntheticCarousel(t,a);
         View root=(View)RankingResultChecks.get(a,"root");File dir=new File(a.getCacheDir(),"consistency-checks");dir.mkdirs();
         ConsistencyLayoutChecks.frame(t,root);
-        try{TagDetailChecks.ui(t,()->{photoGeometry(a,root);headingGeometry(a,root);});}
+        try{TagDetailChecks.ui(t,()->{portraitDimensions(a,root,width,requestedFont);photoGeometry(a,root);headingGeometry(a,root);});}
         catch(AssertionError e){
-          TagDetailChecks.ui(t,()->{ThumbnailCell photo=firstPhoto(root);TextView count=(TextView)RankingResultChecks.get(a,"subtitle");View status=(View)RankingResultChecks.get(a,"listStatus");Button dock=TagDetailChecks.button(root,"選択");android.util.Log.e("LoupeFixtureGeometry","root="+root.getWidth()+"x"+root.getHeight()+" photoH="+(photo==null?-1:photo.getHeight())+" countRight="+count.getRight()+" countParentW="+((View)count.getParent()).getWidth()+" status="+status.getWidth()+"x"+status.getHeight()+" dockH="+(dock==null?-1:dock.getHeight()));});
+          TagDetailChecks.ui(t,()->{ThumbnailCell photo=firstPhoto(root);TextView count=(TextView)RankingResultChecks.get(a,"subtitle");View status=(View)RankingResultChecks.get(a,"listStatus");Button dock=TagDetailChecks.button(root,"選択");android.util.Log.e("LoupeFixtureGeometry","root="+root.getWidth()+"x"+root.getHeight()+" photoH="+(photo==null?-1:photo.getHeight())+" countRight="+count.getRight()+" countParentW="+((View)count.getParent()).getWidth()+" status="+status.getWidth()+"x"+status.getHeight()+" measured="+status.getMeasuredWidth()+"x"+status.getMeasuredHeight()+" requested="+status.isLayoutRequested()+" parentRequested="+((View)status.getParent()).isLayoutRequested()+" attached="+status.isAttachedToWindow()+" rootCurrent="+(root==RankingResultChecks.get(a,"root"))+" state="+statusState((StatusView)status)+" dockH="+(dock==null?-1:dock.getHeight()));});
           ConsistencyLayoutChecks.captureHardware(t,a,root,dir,"gallery-geometry-failed-"+width+"-"+a.getResources().getConfiguration().fontScale+"-"+state);throw e;
         }
         ConsistencyLayoutChecks.captureHardware(t,a,root,dir,"gallery-"+width+"-"+a.getResources().getConfiguration().fontScale+"-"+state);
@@ -133,6 +157,6 @@ final class GalleryScreenChecks {
       if(talkBack)TagDetailChecks.ui(t,()->{RankingResultChecks.set(a,"selecting",true);RankingResultChecks.call(a,"gallery");});
       if(talkBack){settle(t,a);TagDetailChecks.ui(t,()->{SelectionUi.BestSwitch toggle=findSwitch((View)RankingResultChecks.get(a,"root"));TagDetailChecks.require(toggle.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS,null),"TalkBack switch focus");android.view.accessibility.AccessibilityNodeInfo node=toggle.createAccessibilityNodeInfo();TagDetailChecks.require(node.isCheckable()&&android.widget.Switch.class.getName().contentEquals(node.getClassName()),"TalkBack switch semantics");boolean before=toggle.isChecked();TagDetailChecks.require(toggle.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK,null)&&toggle.isChecked()!=before,"TalkBack switch toggles");a.onBackPressed();});}
       return "PASS "+(talkBack?"real TalkBack focus/AX click/switch semantics; ":"physical photo taps; ")+"selection states/backgrounds/single icons, pending sort, hidden retention, best switch, visible deselection; synthetic actual gallery captures: all/album/long title. Existing data read only; carousel replaced before captures. Text bounds, all four visible filters, 96dp photos, filtering, selection and Back checked.\n";
-    }finally{TagDetailChecks.ui(t,()->{a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);a.finish();});file.delete();for(File fixture:fixtures)fixture.delete();}
+    }finally{TagDetailChecks.ui(t,()->{a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);a.setRequestedOrientation(originalOrientation);a.finish();});file.delete();for(File fixture:fixtures)fixture.delete();}
   }
 }
