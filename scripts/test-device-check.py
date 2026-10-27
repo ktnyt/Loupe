@@ -59,11 +59,12 @@ class DeviceCheckTests(unittest.TestCase):
                         if failed_test: raise ValueError('test failed')
                 if locked_after:
                     with self.assertRaises(RuntimeError): run()
-                    self.assertFalse(any(c[0] == 'am' for c in calls))
+                    self.assertFalse(any(c[:2] == ('am', 'start') for c in calls))
                 elif failed_test:
                     with self.assertRaises(ValueError): run()
                 else: run()
                 self.assertLess(calls.index(('input', 'keyevent', '127')), calls.index(('input', 'keyevent', '3')))
+                self.assertLess(calls.index(('am', 'force-stop', 'com.google.android.youtube')), calls.index(('instrument',)))
                 self.assertLess(calls.index(('input', 'keyevent', '3')), calls.index(('instrument',)))
                 if not locked_after:
                     self.assertGreater(calls.index(('input', 'keyevent', '126')), calls.index(('instrument',)))
