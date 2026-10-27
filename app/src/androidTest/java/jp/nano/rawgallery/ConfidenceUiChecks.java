@@ -45,8 +45,12 @@ final class ConfidenceUiChecks {
       // Android SeekBar supports arrow keys on all supported platform versions.
       ui(t,()->{SeekBar b=slider((View)get(a,"root"));b.requestFocus();b.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_RIGHT));b.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_DPAD_RIGHT));});idle(t,a);
       try(TagStore store=new TagStore(context,db)){TagScores.Preferences prefs=new TagScores(store).preferences(tag.id);require(prefs.threshold!=.6,"threshold action persists");require(prefs.epoch==epoch,"slider does not train");require(new TagScores(store).snapshot(tag.id).scores.size()==12,"below threshold scores retained");}
+      double persisted;try(TagStore store=new TagStore(context,db)){persisted=new TagScores(store).preferences(tag.id).threshold;store.getWritableDatabase().execSQL("CREATE TRIGGER fail_threshold BEFORE UPDATE ON confidence_preferences BEGIN SELECT RAISE(ABORT,'fixture'); END");}
+      ui(t,()->{SeekBar b=slider((View)get(a,"root"));b.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_LEFT));b.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_DPAD_LEFT));});idle(t,a);
+      require(Math.abs((double)get(a,"displayThreshold")-persisted)<1e-9,"failed threshold restores current value");
+      try(TagStore store=new TagStore(context,db)){require(new TagScores(store).preferences(tag.id).threshold==persisted,"failed threshold not persisted");store.getWritableDatabase().execSQL("DROP TRIGGER fail_threshold");}
       ui(t,()->click(a,"基準を教える"));idle(t,a);int first=(int)get(a,"teachingIndex");
-      ui(t,()->{require((int)get(a,"browseMode")==3,"teaching entry");TagDetailChecks.inspect((View)get(a,"root"));});
+      ui(t,()->{require((int)get(a,"browseMode")==3,"teaching entry");require((int)get(a,"teachingTotal")==10,"denominator counts only candidates");TagDetailChecks.inspect((View)get(a,"root"));});
       ConsistencyLayoutChecks.captureHardware(t,a,(View)get(a,"root"),dir,prefix+"-teaching");
       ui(t,()->click(a,"保留"));idle(t,a);require((int)get(a,"teachingIndex")!=first,"pass advances without repeat");
       try(TagStore store=new TagStore(context,db)){require(store.load().history.size()==2,"pass not a judgment");store.getWritableDatabase().execSQL("CREATE TRIGGER fail_fixture BEFORE INSERT ON history BEGIN SELECT RAISE(ABORT,'fixture'); END");}
@@ -57,11 +61,18 @@ final class ConfidenceUiChecks {
       ui(t,()->click(a,"含める"));idle(t,a);
       try(TagStore store=new TagStore(context,db)){require(store.load().value(tag.id,ids.get(failed))==TagJudgments.Value.ASSIGNED,"retry saved positive");require(new TagScores(store).snapshot(tag.id).model.positives==2,"edit retrains from cached vectors");}
       int afterSave=(int)get(a,"teachingIndex");idle(t,a);require((int)get(a,"teachingIndex")==afterSave,"learning does not replace current image");
+      try(TagStore store=new TagStore(context,db)){store.getWritableDatabase().execSQL("CREATE TRIGGER fail_undo BEFORE INSERT ON history BEGIN SELECT RAISE(ABORT,'fixture'); END");}
+      ui(t,()->click(a,"取り消し"));idle(t,a);require((int)get(a,"teachingIndex")==afterSave,"failed undo keeps current image");
+      ui(t,()->require(((List<Button>)get(a,"teachingButtons")).get(3).getTag()==StatusView.Symbol.FAILED,"undo failure is visible"));
+      ConsistencyLayoutChecks.captureHardware(t,a,(View)get(a,"root"),dir,prefix+"-undo-failed");
+      try(TagStore store=new TagStore(context,db)){store.getWritableDatabase().execSQL("DROP TRIGGER fail_undo");}
       ui(t,()->click(a,"取り消し"));idle(t,a);require((int)get(a,"teachingIndex")==failed,"undo returns to judged image");
       try(TagStore store=new TagStore(context,db)){require(store.load().value(tag.id,ids.get(failed))==TagJudgments.Value.UNDECIDED,"undo persisted");require(new TagScores(store).snapshot(tag.id).model.positives==1,"undo retrains");}
+      for(int remaining=0;remaining<12&&(int)get(a,"teachingIndex")>=0;remaining++){ui(t,()->click(a,"保留"));idle(t,a);}
+      require((int)get(a,"teachingIndex")==-1&&(int)get(a,"teachingCount")==10,"completion reaches ten candidates");
       ui(t,()->{TagDetailChecks.set(a,"busy",true);a.onBackPressed();require((int)get(a,"browseMode")==3,"busy Back guard");TagDetailChecks.set(a,"busy",false);a.onBackPressed();});idle(t,a);
       ui(t,()->{TagDetailChecks.set(a,"tag",new TagStore.Tag(selected.id,"旅先で見つけたミカヅキインコと長い名前のタグ"));call(a,"renderTag");});idle(t,a);ui(t,()->TagDetailChecks.inspect((View)get(a,"root")));ConsistencyLayoutChecks.captureHardware(t,a,(View)get(a,"root"),dir,prefix+"-long");
-      return "PASS tag confidence UI with generated photos and disposable databases: threshold persists without training; all scores retained; teaching pass/save failure/retry/undo; cached learning and current-image stability; busy Back guard; real layout and PixelCopy. No user judgments modified.\n";
+      return "PASS tag confidence UI with generated photos and disposable databases: threshold persists without training; all scores retained; teaching pass/save failure/retry/undo failure/retry and correct completion count; cached learning and current-image stability; busy Back guard; real layout and PixelCopy. No user judgments modified.\n";
     }finally{ui(t,()->{a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);a.finish();});for(File f:files)f.delete();context.deleteDatabase(db);context.deleteDatabase(cache);}
   }
 }

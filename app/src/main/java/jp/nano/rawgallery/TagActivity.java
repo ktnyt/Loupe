@@ -38,7 +38,10 @@ public final class TagActivity extends DiagnosticActivity {
   private double displayThreshold=TagConfidence.DEFAULT_THRESHOLD, persistedThreshold=TagConfidence.DEFAULT_THRESHOLD;
   private final Set<Integer> teachingSeen=new HashSet<>();
   private final List<String> teachingUndo=new ArrayList<>();
-  private int teachingIndex=-1, teachingCount;
+  private int teachingIndex=-1, teachingCount, teachingTotal;
+  private TagJudgments indexedJudgments;
+  private String indexedTag;
+  private final Map<String,TagJudgments.Entry> latestJudgments=new HashMap<>();
   private final List<Button> teachingButtons=new ArrayList<>();
   private StatusView teachingStatus, learningStatus;
   private Button analysisAction;
@@ -230,15 +233,24 @@ public final class TagActivity extends DiagnosticActivity {
     });
   }
 
+  private Map<String,TagJudgments.Entry> latestJudgments(){
+    if(indexedJudgments!=judgments||!tag.id.equals(indexedTag)){
+      latestJudgments.clear();for(TagJudgments.Entry entry:judgments.history)if(entry.tagId.equals(tag.id))latestJudgments.put(entry.photoId,entry);
+      indexedJudgments=judgments;indexedTag=tag.id;
+    }
+    return latestJudgments;
+  }
+
   private TagJudgments.Value value(int photo) {
     String id = photoIds.get(photo);
-    return id == null ? TagJudgments.Value.UNDECIDED : judgments.value(tag.id, id);
+    TagJudgments.Entry entry=id==null?null:latestJudgments().get(id);
+    return entry==null?TagJudgments.Value.UNDECIDED:entry.value;
   }
 
   private boolean isAutomatic(int photo) {
     if(confidence!=null&&confidence.model!=null){
       String id=photoIds.get(photo);
-      if(id!=null&&judgments.latest(tag.id,id)!=null)return false;
+      if(id!=null&&latestJudgments().containsKey(id))return false;
       Double score=confidence.scores.get(TagStore.source(photos.get(photo)));
       return score!=null&&score>=displayThreshold;
     }
@@ -391,12 +403,12 @@ public final class TagActivity extends DiagnosticActivity {
     LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(0,0,0,0);
     StatusView status=new StatusView(this);status.asCompact();learningStatus=status;box.addView(status,new LinearLayout.LayoutParams(-2,GalleryUi.dp(this,28)));
     TextView label=text("",14);label.setPadding(0,0,0,0);box.addView(label);
-    android.widget.SeekBar slider=new android.widget.SeekBar(this);slider.setMax(100);slider.setProgress((int)Math.round(displayThreshold*100));slider.setMinHeight(GalleryUi.dp(this,48));
+    android.widget.SeekBar slider=new android.widget.SeekBar(this);slider.setMax(100);slider.setKeyProgressIncrement(1);slider.setProgress((int)Math.round(displayThreshold*100));slider.setMinHeight(GalleryUi.dp(this,48));
     slider.setProgressTintList(android.content.res.ColorStateList.valueOf(GalleryUi.TEXT));slider.setThumbTintList(android.content.res.ColorStateList.valueOf(GalleryUi.TEXT));
     box.addView(slider,new LinearLayout.LayoutParams(-1,GalleryUi.dp(this,48)));
     LinearLayout ends=new LinearLayout(this);TextView broad=text("広く拾う",12),strict=text("絞り込む",12);broad.setPadding(0,0,0,0);strict.setPadding(0,0,0,0);strict.setGravity(Gravity.RIGHT);ends.addView(broad,new LinearLayout.LayoutParams(0,-2,1));ends.addView(strict,new LinearLayout.LayoutParams(0,-2,1));box.addView(ends);
     if(confidence==null||confidence.model==null){
-      Map<String,TagJudgments.Entry> latest=new HashMap<>();for(TagJudgments.Entry e:judgments.history)if(e.tagId.equals(tag.id))latest.put(e.photoId,e);
+      Map<String,TagJudgments.Entry> latest=latestJudgments();
       int yes=0,no=0;for(TagJudgments.Entry e:latest.values()){if(e.value==TagJudgments.Value.ASSIGNED)yes++;if(e.value==TagJudgments.Value.EXCLUDED)no++;}
       status.show(StatusView.Symbol.UNKNOWN,"＋"+yes+" −"+no,"含めるの判断"+yes+"枚、含めないの判断"+no+"枚。見本の特徴が未解析、または両方の見本が不足しています。写真を解析で特徴を取り出します",null,"");
     }
@@ -446,7 +458,7 @@ public final class TagActivity extends DiagnosticActivity {
   }
 
   private void startTeaching(){
-    if(busy)return;stopAnalysis();teachingSeen.clear();teachingUndo.clear();teachingCount=0;nextTeaching();
+    if(busy)return;stopAnalysis();teachingSeen.clear();teachingUndo.clear();teachingCount=0;teachingTotal=0;for(TagJudgments.Value value:labels())if(value==TagJudgments.Value.UNDECIDED)teachingTotal++;nextTeaching();
   }
 
   private void nextTeaching(){
@@ -459,7 +471,7 @@ public final class TagActivity extends DiagnosticActivity {
   private void showTeaching(){
     browseMode=3;reviewing=true;int token=screen(tag.name);root.removeAllViews();root.setBackgroundColor(android.graphics.Color.BLACK);teachingButtons.clear();
     LinearLayout heading=new LinearLayout(this);heading.setOrientation(LinearLayout.VERTICAL);heading.setPadding(GalleryUi.dp(this,20),GalleryUi.dp(this,40),GalleryUi.dp(this,20),GalleryUi.dp(this,12));
-    TextView name=text(tag.name,17);name.setPadding(0,0,0,0);name.setTypeface(android.graphics.Typeface.DEFAULT,android.graphics.Typeface.BOLD);heading.addView(name);TextView context=text(scope()+" · "+Math.min(teachingCount+1,photos.size())+" / "+photos.size(),13);context.setPadding(0,0,0,0);heading.addView(context);root.addView(heading);
+    TextView name=text(tag.name,17);name.setPadding(0,0,0,0);name.setTypeface(android.graphics.Typeface.DEFAULT,android.graphics.Typeface.BOLD);heading.addView(name);TextView context=text(scope()+" · "+Math.min(teachingCount+1,teachingTotal)+" / "+teachingTotal,13);context.setPadding(0,0,0,0);heading.addView(context);root.addView(heading);
     ZoomImageView image=new ZoomImageView(this);root.addView(image,new LinearLayout.LayoutParams(-1,0,1));
     teachingStatus=new StatusView(this);teachingStatus.collapseWhenIdle();root.addView(teachingStatus);
     if(teachingIndex<0){image.setContentDescription("未判断の写真はありません");teachingStatus.show(StatusView.Symbol.COMPLETE,"未判断の写真はありません");}
@@ -471,7 +483,7 @@ public final class TagActivity extends DiagnosticActivity {
     LinearLayout actions=new LinearLayout(this);actions.setOrientation(getResources().getConfiguration().screenWidthDp<360||getResources().getConfiguration().fontScale>1.15?LinearLayout.VERTICAL:LinearLayout.HORIZONTAL);
     String[] titles={"含めない","保留","含める"};
     for(int i=0;i<3;i++){final int choice=i;Button b=TagDetailUi.action(this,titles[i],i==2,()->{if(choice==1){teachingSeen.add(teachingIndex);teachingCount++;nextTeaching();}else saveTeaching(choice==2?TagJudgments.Value.ASSIGNED:TagJudgments.Value.EXCLUDED,false);});b.setContentDescription(titles[i]+"。"+(i==1?"判断せず次へ。学習には使いません":"この写真を「"+tag.name+"」に"+titles[i]));b.setEnabled(teachingIndex>=0);teachingButtons.add(b);actions.addView(b,new LinearLayout.LayoutParams(actions.getOrientation()==LinearLayout.HORIZONTAL?0:-1,-2,actions.getOrientation()==LinearLayout.HORIZONTAL?1:0));}
-    root.addView(actions);Button undo=button("取り消し",()->saveTeaching(null,true));undo.setTextSize(12);undo.setContentDescription("直前の判断を取り消す");undo.setEnabled(!teachingUndo.isEmpty());teachingButtons.add(undo);root.addView(undo);TagDetailUi.footer(root,controls);
+    root.addView(actions);Button undo=TagDetailUi.action(this,"取り消し",false,()->saveTeaching(null,true));undo.setBackgroundColor(android.graphics.Color.TRANSPARENT);undo.setTextSize(12);undo.setContentDescription("直前の判断を取り消す");undo.setEnabled(!teachingUndo.isEmpty());teachingButtons.add(undo);root.addView(undo);TagDetailUi.footer(root,controls);
     if(actions.getOrientation()==LinearLayout.VERTICAL)TagDetailUi.gaps(actions);else for(int i=1;i<actions.getChildCount();i++)((LinearLayout.LayoutParams)actions.getChildAt(i).getLayoutParams()).leftMargin=GalleryUi.dp(this,8);
   }
 

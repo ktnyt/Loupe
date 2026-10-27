@@ -86,6 +86,7 @@ final class ActionIcon extends Drawable {
         canvas.drawRoundRect(3, 5, 10, 19, 1, 1, paint);
         canvas.drawRoundRect(14, 5, 21, 19, 1, 1, paint);
         break;
+      case "取り消し":
       case "直前の操作を取り消す":
       case "一つ戻す":
         line(canvas, 8, 4, 3, 9, 8, 14);
