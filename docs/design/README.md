@@ -125,3 +125,7 @@ Android実装は[#39](https://github.com/ktnyt/Loupe/issues/39)で導入済み�
 ## Issue #46 タグConfidence
 
 [loupe-tag-confidence.html](loupe-tag-confidence.html) はタグ詳細と基準を教える画面の現行参照。ClaudeのLoupe UIブラッシュアップから出力し、ブラウザ表示と閾値変更・基準を教える画面への遷移を確認した。上部の説明文1か所を、判断後のキャッシュによる再学習と明示的な写真解析を区別する文へ補正した。写真とスコアは合成例。Android実装の検証状況はissue #46へ記録する。
+
+## Issue #48 タグ解析の進捗
+
+[Claudeの補足HTML](loupe-tag-analysis-progress.html)を解析中の印と解析済み/対象枚数の視認性の参照とする。320dp・文字1.3倍の表示と20354/32541の桁数をブラウザで確認した。周辺配置・状態遷移は模擬で、採用範囲は[契約](../tag-analysis-progress-contract.md)に限定する。Androidの配置・中止・完了・失敗の仕様は既存どおり。

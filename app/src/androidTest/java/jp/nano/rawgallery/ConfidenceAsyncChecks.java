@@ -56,7 +56,7 @@ final class ConfidenceAsyncChecks {
     try(TagStore store=new TagStore(context,db)){require(new TagScores(store).hasModel(insufficient.id),"insufficient fit preserves completed result");}
 
     useTag(t,a,missing);CountDownLatch first=blockAnalysis(a);
-    try{ui(t,()->click(a,"写真を解析"));idle(t,a);ui(t,()->click(a,"写真を追加"));idle(t,a);require(get(a,"assignmentStatus")==null,"analysis notification view detached");finishAnalysis(t,a,first);require(!(boolean)get(a,"autoPending"),"missing examples finish safely outside overview");}finally{first.countDown();}
+    try{ui(t,()->click(a,"写真を解析"));idle(t,a);TagAnalysisProgressChecks.verify(t,a);ui(t,()->click(a,"写真を追加"));idle(t,a);require(get(a,"assignmentStatus")==null,"analysis notification view detached");finishAnalysis(t,a,first);require(!(boolean)get(a,"autoPending"),"missing examples finish safely outside overview");}finally{first.countDown();}
     ui(t,()->call(a,"stopAnalysis"));
 
     useTag(t,a,finishing);CountDownLatch second=blockAnalysis(a);
