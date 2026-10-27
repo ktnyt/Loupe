@@ -109,6 +109,7 @@ public final class MainActivity extends DiagnosticActivity {
   private final android.database.ContentObserver mediaObserver =
       new android.database.ContentObserver(main) {
         public void onChange(boolean selfChange) {
+          DiagnosticLog.event("media.changed", 0);
           // Bound the wait from the first notification even during a long import.
           if (!main.hasCallbacks(mediaChanged)) main.postDelayed(mediaChanged, 300);
         }
@@ -1059,6 +1060,7 @@ public final class MainActivity extends DiagnosticActivity {
                   rankCache.clear();
                   photos = snapshot.photos;
                   bundles = snapshot.bundles;
+                  DiagnosticLog.event("screen.index_applied", 0, "count", photos.size());
                   burstMembers = null;
                   if (pendingRestore != null) {
                     Bundle restored = pendingRestore;
