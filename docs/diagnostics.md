@@ -115,3 +115,5 @@ frame commitの意味: [Android公式API](https://developer.android.com/referenc
 索引の入力署名はMediaStoreの世代とArchiveStoreの写真レコード変更世代を使う。派生metadataの保存とDB/WALのcheckpointは再走査の理由にしない。走査中の入力変更は次の確認で検出する。前面の確認が変更なしでも、先行する背景更新で完成した索引を表示し、連写・選択・拡大・ソート中の反映は通常の一覧へ戻るまで保留する。
 
 `index-signature`モードは一時DBだけを使い、ArchiveStoreのschema1/2から3への移行と新規作成、既存記録の保全、metadata/checkpointで署名が変わらないこと、写真レコードの変更とrollbackを検査する。`import-deferred`は合成画像の拡大中に新規取り込みを行い、更新結果が保留され、戻る操作で一覧へ反映されることを検査する。
+
+更新の保留は非同期読込の依頼時には解除せず、同じ更新世代のデータを一覧へ適用できた時点で解除する。`index-apply-race`は読込を止めて拡大へ移り、破棄された結果の保留が残ることと、古い読込が新しい更新の保留を解除しないことを合成データで検査する。

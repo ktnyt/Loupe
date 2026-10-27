@@ -104,6 +104,7 @@ public final class MainActivity extends DiagnosticActivity {
   private boolean albumHome = true, resumed;
   private final IndexRefreshRequests refreshRequests = new IndexRefreshRequests();
   private boolean pendingIndexUpdate;
+  private long indexUpdateVersion;
   private final long startedAt = SystemClock.elapsedRealtime();
   private boolean reportedAlbums, reportedCover;
   private final Runnable mediaChanged = () -> refresh();
@@ -952,6 +953,7 @@ public final class MainActivity extends DiagnosticActivity {
   private void loadAlbums() {
     DiagnosticLog.event("screen.loadAlbums", burstRequest);
     int token = generation;
+    long updateVersion = indexUpdateVersion;
     scans.execute(
         () -> {
           try (GalleryIndex catalog = new GalleryIndex(this)) {
@@ -1019,6 +1021,7 @@ public final class MainActivity extends DiagnosticActivity {
                         loadIndexedPhotos();
                       });
                   body.addView(albumGrid, new LinearLayout.LayoutParams(-1, -1));
+                  if (updateVersion == indexUpdateVersion) pendingIndexUpdate = false;
                   if (!albums.isEmpty() && !reportedAlbums) {
                     reportedAlbums = true;
                     albumGrid.postOnAnimation(
@@ -1043,6 +1046,7 @@ public final class MainActivity extends DiagnosticActivity {
   private void loadIndexedPhotos() {
     DiagnosticLog.event("screen.loadIndexedPhotos", burstRequest);
     int token = generation;
+    long updateVersion = indexUpdateVersion;
     if(listStatus!=null)listStatus.begin("写真の一覧を読み込んでいます");
     String folder = albumFolder, selected = filter;
     scans.execute(
@@ -1062,6 +1066,7 @@ public final class MainActivity extends DiagnosticActivity {
                   rankCache.clear();
                   photos = snapshot.photos;
                   bundles = snapshot.bundles;
+                  if (updateVersion == indexUpdateVersion) pendingIndexUpdate = false;
                   DiagnosticLog.event("screen.index_applied", 0, "count", photos.size());
                   burstMembers = null;
                   if (pendingRestore != null) {
@@ -1132,6 +1137,7 @@ public final class MainActivity extends DiagnosticActivity {
                 if (!failed) {
                   // A preceding background job may have published the current index.
                   pendingIndexUpdate = true;
+                  indexUpdateVersion++;
                   applyPendingIndexUpdate();
                 }
                 if (next != IndexRefreshRequests.NONE)
@@ -1142,7 +1148,6 @@ public final class MainActivity extends DiagnosticActivity {
 
   private void applyPendingIndexUpdate() {
     if (!pendingIndexUpdate || detail || selecting || burstMembers != null || rankingScreen) return;
-    pendingIndexUpdate = false;
     if (albumHome) loadAlbums();
     else loadIndexedPhotos();
   }
