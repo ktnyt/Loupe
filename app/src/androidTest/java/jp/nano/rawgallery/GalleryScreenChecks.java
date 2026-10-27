@@ -27,6 +27,29 @@ final class GalleryScreenChecks {
       }finally{without.recycle();with.recycle();}
     });
   }
+  private static void photoGeometry(MainActivity a,View root){
+    TagDetailChecks.inspect(root);
+    ThumbnailCell first=firstPhoto(root);
+    TagDetailChecks.require(first!=null,"first photo exists");
+    TagDetailChecks.require(first.getHeight()==GalleryUi.dp(a,96),"96dp photos");
+    for(String name:new String[]{"すべて","1位","順位が未決定","順位決定済み"}){
+      Button filter=TagDetailChecks.button(root,name);
+      TagDetailChecks.require(filter!=null,"filter exists");
+      android.graphics.Rect visible=new android.graphics.Rect();
+      TagDetailChecks.require(filter.getGlobalVisibleRect(visible),"filter visible");
+      TagDetailChecks.require(visible.width()==filter.getWidth(),"filter fully visible");
+      TagDetailChecks.require(filter.getPaddingLeft()>=GalleryUi.dp(a,16)&&filter.getPaddingRight()>=GalleryUi.dp(a,16),"filter interior spacing");
+    }
+  }
+  private static void headingGeometry(MainActivity a,View root){
+    TextView count=(TextView)RankingResultChecks.get(a,"subtitle");
+    View status=(View)RankingResultChecks.get(a,"listStatus");
+    TagDetailChecks.require(status.getWidth()==0&&status.getHeight()==0,"idle status consumes no heading space");
+    TagDetailChecks.require(count.getRight()==((View)count.getParent()).getWidth(),"count right aligned");
+    TagDetailChecks.require(TagDetailChecks.button(root,"選択").getHeight()==GalleryUi.dp(a,64),"64dp gallery dock");
+    Button firstFilter=TagDetailChecks.button(root,"すべて"),lastFilter=TagDetailChecks.button(root,"順位決定済み");
+    TagDetailChecks.require(lastFilter.getTop()>firstFilter.getTop(),"filters wrap with interior spacing");
+  }
   static void finishInitialIndex(Instrumentation t,MainActivity a)throws Exception{
     TagDetailChecks.ui(t,()->{a.getContentResolver().unregisterContentObserver((android.database.ContentObserver)RankingResultChecks.get(a,"mediaObserver"));((android.os.Handler)RankingResultChecks.get(a,"main")).removeCallbacks((Runnable)RankingResultChecks.get(a,"mediaChanged"));});
     java.lang.reflect.Field running=IndexRefreshRequests.class.getDeclaredField("running");running.setAccessible(true);
@@ -90,8 +113,12 @@ final class GalleryScreenChecks {
         TagDetailChecks.ui(t,()->{a.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);RankingResultChecks.set(a,"photos",photos);RankingResultChecks.set(a,"bundles",groups);RankingResultChecks.set(a,"selecting",false);RankingResultChecks.set(a,"rankFilter",0);RankingResultChecks.set(a,"burstMembers",null);RankingResultChecks.set(a,"albumFolder",state.equals("all")?null:"/synthetic/"+(state.equals("long")?"旅先で見つけた夕暮れの空と長い名前のアルバム":"嵐山 10.18"));RankingResultChecks.call(a,"gallery");});
         syntheticCarousel(t,a);
         View root=(View)RankingResultChecks.get(a,"root");File dir=new File(a.getCacheDir(),"consistency-checks");dir.mkdirs();
-        TagDetailChecks.ui(t,()->{TagDetailChecks.inspect(root);ThumbnailCell first=firstPhoto(root);TagDetailChecks.require(first!=null&&first.getHeight()==GalleryUi.dp(a,96),"96dp photos actual="+(first==null?"none":first.getWidth()+"x"+first.getHeight()+" fixed="+first.fixedHeight)+" expected="+GalleryUi.dp(a,96)+" root="+root.getWidth()+"x"+root.getHeight()+" density="+a.getResources().getDisplayMetrics().density+" font="+a.getResources().getConfiguration().fontScale);for(String name:new String[]{"すべて","1位","順位が未決定","順位決定済み"}){Button filter=TagDetailChecks.button(root,name);android.graphics.Rect visible=new android.graphics.Rect();TagDetailChecks.require(filter!=null&&filter.getGlobalVisibleRect(visible)&&visible.width()==filter.getWidth(),"filter fully visible: "+name);TagDetailChecks.require(filter.getPaddingLeft()>=GalleryUi.dp(a,16)&&filter.getPaddingRight()>=GalleryUi.dp(a,16),"filter interior spacing: "+name);}});
-        TagDetailChecks.ui(t,()->{TextView count=(TextView)RankingResultChecks.get(a,"subtitle");View status=(View)RankingResultChecks.get(a,"listStatus");TagDetailChecks.require(status.getWidth()==0&&status.getHeight()==0,"idle status consumes no heading space");TagDetailChecks.require(count.getRight()==((View)count.getParent()).getWidth(),"count right aligned");TagDetailChecks.require(TagDetailChecks.button(root,"選択").getHeight()==GalleryUi.dp(a,64),"64dp gallery dock");Button firstFilter=TagDetailChecks.button(root,"すべて"),lastFilter=TagDetailChecks.button(root,"順位決定済み");TagDetailChecks.require(lastFilter.getTop()>firstFilter.getTop(),"filters wrap with interior spacing");});
+        ConsistencyLayoutChecks.frame(t,root);
+        try{TagDetailChecks.ui(t,()->{photoGeometry(a,root);headingGeometry(a,root);});}
+        catch(AssertionError e){
+          TagDetailChecks.ui(t,()->{ThumbnailCell photo=firstPhoto(root);TextView count=(TextView)RankingResultChecks.get(a,"subtitle");View status=(View)RankingResultChecks.get(a,"listStatus");Button dock=TagDetailChecks.button(root,"選択");android.util.Log.e("LoupeFixtureGeometry","root="+root.getWidth()+"x"+root.getHeight()+" photoH="+(photo==null?-1:photo.getHeight())+" countRight="+count.getRight()+" countParentW="+((View)count.getParent()).getWidth()+" status="+status.getWidth()+"x"+status.getHeight()+" dockH="+(dock==null?-1:dock.getHeight()));});
+          ConsistencyLayoutChecks.captureHardware(t,a,root,dir,"gallery-geometry-failed-"+width+"-"+a.getResources().getConfiguration().fontScale+"-"+state);throw e;
+        }
         ConsistencyLayoutChecks.captureHardware(t,a,root,dir,"gallery-"+width+"-"+a.getResources().getConfiguration().fontScale+"-"+state);
         TagDetailChecks.ui(t,()->TagDetailChecks.button((View)RankingResultChecks.get(a,"root"),"1位").performClick());syntheticCarousel(t,a);
         TagDetailChecks.ui(t,()->{TagDetailChecks.require((int)RankingResultChecks.get(a,"rankFilter")==1&&((List<?>)RankingResultChecks.get(a,"displayed")).size()==40,"best filter preserves singleton photos state="+state+" filter="+RankingResultChecks.get(a,"rankFilter")+" displayed="+((List<?>)RankingResultChecks.get(a,"displayed")).size()+" fixtureIdentity="+(RankingResultChecks.get(a,"photos")==photos));TagDetailChecks.button((View)RankingResultChecks.get(a,"root"),"選択").performClick();});syntheticCarousel(t,a);

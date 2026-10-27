@@ -161,6 +161,7 @@ public final class SyncActivity extends DiagnosticActivity {
     other.setOnClickListener(v->refresh());
     retention=SyncSettingsUi.populate(this,root,screen,info,collection,permissionState,progress,progressTime,
         syncState,cleanupState,allFiles,location,keep,settings,other);
+    retention.setText(retentionLabel(getSharedPreferences("settings",0)));
     lastSync=root.findViewWithTag("last-sync");
     verificationStatus=new StatusView(this);
     Button verify=new SyncSettingsUi.ActionButton(this,"確認する",()->startActivity(new Intent(this,CloudActivity.class).putExtra("verify-on-open",true)));
@@ -168,6 +169,8 @@ public final class SyncActivity extends DiagnosticActivity {
 
 
   }
+
+  static String retentionLabel(SharedPreferences settings){return "撮影日から"+settings.getInt("retentionDays",7)+"日";}
 
   private void changeSetting(boolean cleanup,boolean checked){
     if(updatingSwitches)return;
@@ -206,7 +209,7 @@ public final class SyncActivity extends DiagnosticActivity {
                 if (isDestroyed()) return;
                 SharedPreferences s = getSharedPreferences("settings", 0);
                 updatingSwitches=true;syncState.setChecked(s.getBoolean("syncEnabled",false));cleanupState.setChecked(s.getBoolean("cleanupEnabled",false));updatingSwitches=false;
-                retention.setText("撮影日から"+s.getInt("retentionDays",30)+"日");
+                retention.setText(retentionLabel(s));
                 permissionState.show(Environment.isExternalStorageManager()?StatusView.Symbol.COMPLETE:StatusView.Symbol.PERMISSION,Environment.isExternalStorageManager()?"自動管理の権限は許可済み":"自動管理の権限は未許可。必要なアクセスを許可する操作を選んでください");
                 info.setText(collected?message:"—");
                 if(collected)collection.finish();else collection.show(StatusView.Symbol.FAILED,"","写真の情報を取得できませんでした。アクセス許可を確認してください",this::refresh,"再試行");
