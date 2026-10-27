@@ -48,11 +48,12 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean jpegTest;
   private boolean jpegCloudTest;
   private boolean jpegCleanupTest;
-  private boolean importLatencyTest;
+  private boolean importLatencyTest, importInterruptionTest;
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
-    importLatencyTest = args != null && "import-latency".equals(args.getString("mode"));
+    importInterruptionTest = args != null && "import-interruption".equals(args.getString("mode"));
+    importLatencyTest = importInterruptionTest || (args != null && "import-latency".equals(args.getString("mode")));
     sortTest = args != null && "sort-naming".equals(args.getString("mode"));
     shareScreenTest=args!=null&&"share-screen".equals(args.getString("mode"));
     viewerScreenTest=args!=null&&"viewer-screen".equals(args.getString("mode"));
@@ -107,7 +108,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       String report=failureReport(new AssertionError(new java.io.IOException("PRIVATE_VALUE")));
       if(report.contains("PRIVATE_VALUE")||!report.contains("java.io.IOException")||!report.contains("ArchiveInstrumentation.java:"))throw new AssertionError();
       Context context = getTargetContext();
-      if (importLatencyTest) { results.putString("stream", ImportLatencyChecks.run(this)); finish(-1, results); return; }
+      if (importLatencyTest) { results.putString("stream", ImportLatencyChecks.run(this, importInterruptionTest)); finish(-1, results); return; }
       if(sortDimensionsSpecified)validateSortDimensions(context);
       if(shareScreenTest){results.putString("stream",ShareScreenChecks.run(this,tagWidth));finish(-1,results);return;}
       if(viewerScreenTest){results.putString("stream",ViewerScreenChecks.run(this,tagWidth));finish(-1,results);return;}
