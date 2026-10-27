@@ -72,7 +72,8 @@ final class ConfidenceUiChecks {
       require((int)get(a,"teachingIndex")==-1&&(int)get(a,"teachingCount")==10,"completion reaches ten candidates");
       ui(t,()->{TagDetailChecks.set(a,"busy",true);a.onBackPressed();require((int)get(a,"browseMode")==3,"busy Back guard");TagDetailChecks.set(a,"busy",false);a.onBackPressed();});idle(t,a);
       ui(t,()->{TagDetailChecks.set(a,"tag",new TagStore.Tag(selected.id,"旅先で見つけたミカヅキインコと長い名前のタグ"));call(a,"renderTag");});idle(t,a);ui(t,()->TagDetailChecks.inspect((View)get(a,"root")));ConsistencyLayoutChecks.captureHardware(t,a,(View)get(a,"root"),dir,prefix+"-long");
-      return "PASS tag confidence UI with generated photos and disposable databases: threshold persists without training; all scores retained; teaching pass/save failure/retry/undo failure/retry and correct completion count; cached learning and current-image stability; busy Back guard; real layout and PixelCopy. No user judgments modified.\n";
+      ConfidenceAsyncChecks.run(t,a,selected,photos,ids,db,cache);
+      return "PASS tag confidence UI with generated photos and disposable databases: threshold persists without training; all scores retained; teaching pass/save failure/retry/undo failure/retry and correct completion count; cached learning and current-image stability; pending-threshold race, human conflict retry, insufficient undo, detached analysis notifications, save/analysis completion, DB result reload and fresh Activity restoration; busy Back guard; real layout and PixelCopy. No user judgments modified.\n";
     }finally{ui(t,()->{a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);a.finish();});for(File f:files)f.delete();context.deleteDatabase(db);context.deleteDatabase(cache);}
   }
 }

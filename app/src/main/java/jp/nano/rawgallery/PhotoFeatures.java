@@ -37,10 +37,12 @@ final class PhotoFeatures implements AutoCloseable {
     }
   }
 
-  RelatedPhotos.Vector cached(PhotoRepository.Photo photo) {
+  RelatedPhotos.Vector cached(PhotoRepository.Photo photo) { return cachedSource(TagStore.source(photo)); }
+
+  RelatedPhotos.Vector cachedSource(String source) {
     try (Cursor c = cache.getReadableDatabase().rawQuery(
         "SELECT vector FROM features WHERE source=? AND pipeline=?",
-        new String[] {TagStore.source(photo), PIPELINE})) {
+        new String[] {source, PIPELINE})) {
       if (!c.moveToFirst()) return null;
       byte[] bytes = c.getBlob(0);
       if (bytes.length != 1024) return null;

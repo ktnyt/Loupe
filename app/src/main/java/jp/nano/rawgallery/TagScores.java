@@ -126,6 +126,16 @@ final class TagScores {
     return labels;
   }
 
+  /** Counts compatible human examples without extracting images or changing cached features. */
+  int[] exampleCounts(String tag,PhotoFeatures features){
+    int[] counts=new int[2];
+    for(Map.Entry<String,TagJudgments.Value> entry:labels(tag).entrySet()){
+      if(entry.getValue()==TagJudgments.Value.UNDECIDED||features.cachedSource(entry.getKey())==null)continue;
+      counts[entry.getValue()==TagJudgments.Value.ASSIGNED?0:1]++;
+    }
+    return counts;
+  }
+
   /** The exact human revision and learning generation are checked before publishing all scores. */
   boolean publish(String tag,long epoch,long revision,TagConfidence.Model model,Map<String,Double> scores,BooleanSupplier cancelled) {
     Objects.requireNonNull(model);
