@@ -408,6 +408,8 @@ public final class TagActivity extends DiagnosticActivity {
     selectionActions.addView(GalleryUi.adaptiveDock(this,selectionButton,button("すべて選択",()->{if(busy)return;selectedPhotos.addAll(browsePhotos);refreshSelection();})));
     root.addView(selectionActions);savingStatus=new StatusView(this);savingStatus.collapseWhenIdle();root.addView(savingStatus);refreshSelection();
     TagDetailUi.footer(root, controlsStart);
+    // Start the delayed status after footer reparenting, which detaches its children.
+    if(autoRunning)updateProgress();
     refreshConfidenceCounts();grid.restoreCell(scrollPosition,scrollOffset,headerVisible);
   }
 
@@ -438,7 +440,7 @@ public final class TagActivity extends DiagnosticActivity {
     if(autoRunning){
       LinearLayout progress=new LinearLayout(this);analysisStatus=new StatusView(this);analysisStatus.asCompact();assignmentStatus=new StatusView(this);assignmentStatus.asCompact();failureCount=new StatusView(this);failureCount.asCompact();failureCount.collapseWhenIdle();
       progress.addView(analysisStatus);progress.addView(assignmentStatus);progress.addView(failureCount);box.addView(progress);
-      resultButton=button("中止",this::loadResults);box.addView(resultButton);updateProgress();
+      resultButton=button("中止",this::loadResults);box.addView(resultButton);
     }
     return box;
   }
