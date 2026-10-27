@@ -93,6 +93,7 @@ final class RankingUi {
     for(int i=0;i<views.length;i++){LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-2,1);if(i>0)lp.leftMargin=dp(c,8);row.addView(views[i],lp);}return row;
   }
   static void add(LinearLayout column,View child,int gap){LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.topMargin=dp(column.getContext(),gap);column.addView(child,lp);}
+  static void addDock(LinearLayout column,View dock,int gap){LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.leftMargin=lp.rightMargin=-dp(column.getContext(),8);lp.topMargin=dp(column.getContext(),gap);column.addView(dock,lp);}
   static View dock(Context c,Button...buttons){
     for(Button b:buttons){b.setTextSize(12);b.setIncludeFontPadding(false);b.setElevation(0);b.setStateListAnimator(null);b.setPadding(dp(c,2),dp(c,6),dp(c,2),dp(c,6));}
     View dock=GalleryUi.adaptiveDock(c,buttons);dock.setBackgroundColor(BG);dock.setPadding(0,0,0,0);return dock;

@@ -74,11 +74,18 @@ final class SortNamingChecks {
       if(screen.footer.getScrollY()<=0)throw new AssertionError("short ranking actions cannot scroll");
     }
   }
+  private static ImageView burstHero(View view){
+    if(view instanceof RankingUi.Screen&&((RankingUi.Screen)view).burst)return (ImageView)((FrameLayout)((RankingUi.Screen)view).stage).getChildAt(0);
+    if(view instanceof ViewGroup)for(int i=0;i<((ViewGroup)view).getChildCount();i++){ImageView found=burstHero(((ViewGroup)view).getChildAt(i));if(found!=null)return found;}return null;
+  }
   private static void capture(Instrumentation t,MainActivity a,int width,float font,String name)throws Exception{
+    if(name.equals("idle")||name.equals("resume")||name.equals("done"))waitFor(t,()->{ImageView hero=burstHero(a.getWindow().getDecorView());return hero!=null&&hero.getDrawable() instanceof android.graphics.drawable.BitmapDrawable&&!((android.graphics.drawable.BitmapDrawable)hero.getDrawable()).getBitmap().isRecycled();});
     Thread.sleep(350);t.waitForIdleSync();
     View root=(View)field(a,"root");ConsistencyLayoutChecks.frame(t,root);
     main(t,()->{if(width>0){Configuration actual=a.getResources().getConfiguration();int pixels=GalleryUi.dp(a,width);if(root.getWidth()!=pixels || a.getWindow().getDecorView().getWidth()!=pixels || actual.screenWidthDp!=width || Math.abs(actual.fontScale-font)>.001f)throw new AssertionError("requested sort dimensions do not match rendered window");}});
-    main(t,()->checkModeDiagrams(root));
+    main(t,()->{checkModeDiagrams(root);
+      if(name.equals("comparison")){TextView heading=require(a,"ソート");if((heading.getGravity()&Gravity.HORIZONTAL_GRAVITY_MASK)!=Gravity.CENTER_HORIZONTAL)throw new AssertionError("comparison heading not centered");}
+    });
     File dir=new File(a.getCacheDir(),"consistency-checks");dir.mkdirs();
     ConsistencyLayoutChecks.captureHardware(t,a,(View)field(a,"root"),dir,"sort-test-"+a.getResources().getConfiguration().screenWidthDp+"-"+a.getResources().getConfiguration().fontScale+"-"+name);
   }

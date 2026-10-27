@@ -426,7 +426,7 @@ public final class MainActivity extends DiagnosticActivity {
 
     LinearLayout heading = vertical();
     TextView title=label("連写 "+burstMembers.size()+"枚",20,TEXT);
-    title.setAccessibilityHeading(true); heading.addView(title);
+    title.setAccessibilityHeading(true);title.setIncludeFontPadding(false);title.setTypeface(android.graphics.Typeface.create("sans-serif-medium",android.graphics.Typeface.NORMAL));title.setMinHeight(dp(28));heading.addView(title);
     subtitle = label("", 12, MUTED);
     header.addView(heading, new LinearLayout.LayoutParams(0, -2, 1));
 
@@ -496,7 +496,7 @@ public final class MainActivity extends DiagnosticActivity {
       shareMenu(selected);
     }),false,48,14,"共有");
     RankingUi.add(controls,RankingUi.pair(this,best,share),8);
-    RankingUi.add(controls,RankingUi.dock(this,
+    RankingUi.addDock(controls,RankingUi.dock(this,
         button("前の写真", () -> { burstPosition = (burstPosition + burstMembers.size() - 1) % burstMembers.size(); update.run(); }),
         button("次の写真", () -> { burstPosition = (burstPosition + 1) % burstMembers.size(); update.run(); }),
         button("拡大", () -> showPhoto(burstMembers.get(burstPosition))),
@@ -1469,15 +1469,9 @@ public final class MainActivity extends DiagnosticActivity {
     top.setPadding(dp(16),0,dp(16),0);top.setMinimumHeight(dp(52));
 
     TextView sortHeading = label(ranking.done() ? "ソート結果" : "ソート", 17, TEXT);
-    sortHeading.setAccessibilityHeading(true);
+    sortHeading.setAccessibilityHeading(true);sortHeading.setGravity(Gravity.CENTER);sortHeading.setIncludeFontPadding(false);sortHeading.setMinHeight(dp(22));sortHeading.setTypeface(android.graphics.Typeface.create("sans-serif-medium",android.graphics.Typeface.NORMAL));
     top.addView(sortHeading);
-    top.addView(
-        label(
-            ranking.done()
-                ? ranking.ids.size() + "枚"
-                : "比較 " + (ranking.decisions() + 1) + "回目",
-            12,
-            MUTED));
+    TextView comparisonCount=label("比較 "+(ranking.decisions()+1)+"回目",12,MUTED);comparisonCount.setGravity(Gravity.CENTER);comparisonCount.setIncludeFontPadding(false);comparisonCount.setMinHeight(dp(16));top.addView(comparisonCount);
     LinearLayout modes = RankingModes.create(this, ranking.bestOnly(),
         () -> changeRankingMode(true), () -> changeRankingMode(false));
 
@@ -1528,7 +1522,7 @@ public final class MainActivity extends DiagnosticActivity {
     RankingUi.add(controls,RankingUi.zooms(this,zoomA,ranking.bestOnly()?null:tie,zoomB),8);
     modes.setPadding(0,0,0,0);modes.setBackgroundColor(RankingUi.BG);
     RankingUi.add(controls,modes,8);
-    RankingUi.add(controls,RankingUi.dock(this,undo,button("その他",this::rankingMenu)),8);
+    RankingUi.addDock(controls,RankingUi.dock(this,undo,button("その他",this::rankingMenu)),8);
     root.addView(new RankingUi.Screen(this,top,comparison,controls,false),new LinearLayout.LayoutParams(-1,0,1));
   }
 

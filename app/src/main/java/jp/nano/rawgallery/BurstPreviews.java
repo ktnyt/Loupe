@@ -42,7 +42,8 @@ final class BurstPreviews {
       final int n=i;
       FrameLayout cell = new FrameLayout(c);
       ImageView image = new ImageView(c); image.setScaleType(ImageView.ScaleType.CENTER_CROP);
-      image.setBackground(GalleryUi.shape(c, GalleryUi.PANEL,6));
+      image.setBackground(GalleryUi.shape(c, GalleryUi.PANEL,4));
+      image.setClipToOutline(true);
       cell.addView(image,new FrameLayout.LayoutParams(dp(c,52),dp(c,35),Gravity.CENTER)); images.add(image);
       TextView text = new TextView(c); text.setGravity(Gravity.CENTER); text.setTextColor(Color.WHITE);
       cell.addView(text,new FrameLayout.LayoutParams(-1,-1)); labels.add(text);
@@ -57,6 +58,10 @@ final class BurstPreviews {
       if (heroFailed) { selected=-1; select(currentPosition()); } else pump();
       render();
     });
+    {strip.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->{
+      int gap=(photos.size()*dp(c,56)+Math.max(0,photos.size()-1)*dp(c,4)<=(strip.getParent() instanceof View?((View)strip.getParent()).getWidth():r-l))?dp(c,4):0;
+      for(int i=0;i<strip.getChildCount();i++){View child=strip.getChildAt(i);LinearLayout.LayoutParams lp=(LinearLayout.LayoutParams)child.getLayoutParams();int margin=i==0?0:gap;if(lp.leftMargin!=margin){lp.leftMargin=margin;child.setLayoutParams(lp);}}
+    });}
     render();
   }
   private int currentPosition() { return Integer.parseInt(position.getTag().toString()); }
@@ -122,9 +127,9 @@ final class BurstPreviews {
       cell.setContentDescription((i+1)+"枚目、"+status+(i==selected?"、表示中":""));
       android.graphics.drawable.GradientDrawable border=GalleryUi.shape(cell.getContext(),Color.TRANSPARENT,6);
       border.setStroke(dp(cell.getContext(),2),i==selected?Color.WHITE:state==3?0xffff8a7a:Color.TRANSPARENT);
-      ((FrameLayout)cell).setForeground(border);
+      ((FrameLayout)cell).setForeground(new android.graphics.drawable.InsetDrawable(border,0,dp(cell.getContext(),4),0,dp(cell.getContext(),4)));
     }
-    if(failed>0)progress.show(StatusView.Symbol.FAILED,Integer.toString(failed),ready+"/"+states.length+"枚を読み込み、"+failed+"枚失敗",()->retry.performClick(),"再試行");
+    if(failed>0)progress.show(StatusView.Symbol.FAILED,Integer.toString(failed),ready+"/"+states.length+"枚を読み込み、"+failed+"枚失敗",null,"");
     else if(ready<states.length)progress.observe(StatusView.Symbol.RUNNING,ready+" / "+states.length+"枚",states.length+"枚中"+ready+"枚を読み込みました");
     else progress.clear();
     retry.setVisibility(failed>0||heroFailed?View.VISIBLE:View.GONE);
