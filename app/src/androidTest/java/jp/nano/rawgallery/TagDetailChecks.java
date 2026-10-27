@@ -38,7 +38,7 @@ final class TagDetailChecks {
   static PhotoViewerUi viewer(TagActivity a){return (PhotoViewerUi)((ViewGroup)get(a,"root")).getChildAt(0);}
   static void viewerCapture(Instrumentation t,TagActivity a,File dir,String state)throws Exception{
     int[] position=new int[2];ui(t,()->{ScrollingGrid grid=(ScrollingGrid)get(a,"photoGrid");position[0]=grid.getFirstVisiblePosition();position[1]=grid.getChildAt(0)==null?0:grid.getChildAt(0).getTop();});
-    ui(t,()->button((View)get(a,"root"),"1枚ずつ確認する").performClick());idle(t,a);
+    ui(t,()->{try{Method m=TagActivity.class.getDeclaredMethod("showAssignedPhoto",int.class);m.setAccessible(true);m.invoke(a,0);}catch(Exception e){throw new RuntimeException(e);}});idle(t,a);
     String name="tag-viewer-"+width+"-"+a.getResources().getConfiguration().fontScale+"-"+state;
     ui(t,()->{PhotoViewerUi v=viewer(a);require((int)get(a,"browseMode")==2&&v.dock.getChildCount()==4,"four-action tag viewer");require(((android.graphics.drawable.ColorDrawable)v.getBackground()).getColor()==Color.BLACK,"black tag viewer");require(button(v,"共有")==null&&button(v,"情報")==null,"tag viewer has no share/info");require(button(v,"assigned".equals(state)?"タグを外す":"タグを付ける")!=null,"current tag action");require(!button(v,"前の写真").isEnabled()&&button(v,"次の写真").isEnabled(),"first endpoint");inspect(v);});
     ConsistencyLayoutChecks.captureHardware(t,a,(View)get(a,"root"),dir,name);
@@ -75,8 +75,8 @@ final class TagDetailChecks {
   }
   static String run(Instrumentation t,int requestedWidth)throws Exception{
     width=requestedWidth;
-    TagActivity a=(TagActivity)t.startActivitySync(new Intent(t.getTargetContext(),TagActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));File file=new File(a.getCacheDir(),"tag-detail-synthetic.jpg");
-    try{idle(t,a);
+    String uiDb="tag-detail-ui-"+UUID.randomUUID()+".db",featureDb="tag-detail-features-"+UUID.randomUUID()+".db";TagActivity a=(TagActivity)t.startActivitySync(TagFixtureIsolation.intent(t.getTargetContext(),uiDb,featureDb));File file=new File(a.getCacheDir(),"tag-detail-synthetic.jpg");
+    try{idle(t,a);TagFixtureIsolation.assertGuard(a);
       ui(t,()->{TextView clipped=new TextView(a);clipped.setText("Horizontal clipping must fail");clipped.setSingleLine(true);clipped.measure(View.MeasureSpec.makeMeasureSpec(30,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(300,View.MeasureSpec.EXACTLY));clipped.layout(0,0,30,300);boolean caught=false;try{inspect(clipped);}catch(AssertionError expected){caught=expected.getMessage().startsWith("text width:");}require(caught,"horizontal clipping detector");});
       Bitmap photo=Bitmap.createBitmap(240,160,Bitmap.Config.ARGB_8888);require(photo.getWidth()==240&&photo.getHeight()==160,"3:2 fixture dimensions");photo.eraseColor(0xff718774);try(FileOutputStream out=new FileOutputStream(file)){photo.compress(Bitmap.CompressFormat.JPEG,90,out);}photo.recycle();
       isolatedSave(t,file);
@@ -84,7 +84,7 @@ final class TagDetailChecks {
       File dir=new File(a.getCacheDir(),"consistency-checks");dir.mkdirs();ConsistencyLayoutChecks.captureHardware(t,a,(View)get(a,"root"),dir,"tag-detail-"+width+"-"+a.getResources().getConfiguration().fontScale+"-normal");
       ui(t,()->inspect((View)get(a,"root")));
       viewerCapture(t,a,dir,"assigned");
-      ui(t,()->{View root=(View)get(a,"root");require(((List<?>)get(a,"browsePhotos")).size()==6,"attached filter");require(button(root,"似た写真にもタグを付ける").isEnabled(),"automatic entry");button(root,"該当しない 2").performClick();});idle(t,a);
+      ui(t,()->{View root=(View)get(a,"root");require(((List<?>)get(a,"browsePhotos")).size()==6,"attached filter");require(button(root,"写真を解析").isEnabled(),"automatic entry");button(root,"該当しない 2").performClick();});idle(t,a);
       viewerCapture(t,a,dir,"excluded");
       ui(t,()->{require(((List<?>)get(a,"browsePhotos")).size()==2,"excluded filter");button((View)get(a,"root"),"一括訂正").performClick();require((boolean)get(a,"selecting"),"bulk entry");button((View)get(a,"root"),"すべて選択").performClick();require(((Set<?>)get(a,"selectedPhotos")).size()==2,"select all");require(button((View)get(a,"root"),"タグ付きにする").isEnabled(),"batch action");set(a,"busy",true);a.onBackPressed();require((boolean)get(a,"selecting"),"busy guard");set(a,"busy",false);a.onBackPressed();require(!(boolean)get(a,"selecting")&&((Set<?>)get(a,"selectedPhotos")).isEmpty(),"selection Back");button((View)get(a,"root"),"写真を追加").performClick();});idle(t,a);
       ui(t,()->{require(!(boolean)get(a,"tagOverview")&&(boolean)get(a,"selecting"),"add-photo entry");require(((List<?>)get(a,"browsePhotos")).size()==40,"all filter");require(!button((View)get(a,"root"),"タグ付きにする").isEnabled(),"empty selection disabled");a.onBackPressed();require(!(boolean)get(a,"selecting"),"add selection Back");});
@@ -95,6 +95,6 @@ final class TagDetailChecks {
       ui(t,()->inspect((View)get(a,"root")));
       ConsistencyLayoutChecks.captureHardware(t,a,(View)get(a,"root"),dir,"tag-detail-"+width+"-"+a.getResources().getConfiguration().fontScale+"-long");
       return "PASS actual TagActivity with synthetic photos and in-memory judgments: attached/excluded filters, bulk/select-all, busy Back guard, selection cancellation, add-photo entry, empty selection disabled, tag viewer four-action layout/pinch/swipe/paging/Back/grid position, actual missing-image retry and busy/failure presentation fixtures; PixelCopy of synthetic root. No writes to the user tag database, inference or automatic removal. Separate disposable database exercised save, unavailable automatic read, idempotency, conflict and retry.\n";
-    }finally{ui(t,()->{a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);a.finish();});file.delete();}
+    }finally{ui(t,()->{a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);a.finish();});TagFixtureIsolation.cleanup(a);file.delete();t.getTargetContext().deleteDatabase(uiDb);t.getTargetContext().deleteDatabase(featureDb);}
   }
 }

@@ -16,9 +16,12 @@ final class AutomaticTagChecks {
         tagId = store.create("test").id;
         seedId = store.photoId(seed, true);
         store.record("seed", tagId, seedId, 0, TagJudgments.Value.ASSIGNED);
-        // Recreate a genuine v1 schema before opening the v2 helper again.
+        // Recreate a genuine v1 schema before opening the current helper again.
         store.getWritableDatabase().execSQL("DROP TABLE automatic_tags");
         store.getWritableDatabase().execSQL("DROP TABLE automation");
+        store.getWritableDatabase().execSQL("DROP TABLE confidence_preferences");
+        store.getWritableDatabase().execSQL("DROP TABLE confidence_models");
+        store.getWritableDatabase().execSQL("DROP TABLE confidence_scores");
         store.getWritableDatabase().setVersion(1);
       }
       try (TagStore store = new TagStore(context, database)) {

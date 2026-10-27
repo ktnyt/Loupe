@@ -121,3 +121,7 @@ Android実装は[#39](https://github.com/ktnyt/Loupe/issues/39)で導入済み�
 ## その他メニュー（Issue #8）
 
 [loupe-more-menu.html](loupe-more-menu.html)は元の18その他と、photoMenu/galleryMenuの既存項目・遷移を保持した縦画面の補足設計。見出し・矢印・全幅の閉じるを元に揃え、window幅・角20dp・高さ48%上限は#13を維持する。元アーティファクトを直接表示して確認し、単体HTMLの表示と2段の遷移を確認。写真、キーボード高さと下端距離は合成例。APK122で縦320/400dp・文字1/1.3の実機比較と独立UI評価を確認。取消・2段遷移・末尾到達、初回/再表示の寸法安定と低い領域での操作到達も確認。実キーボード・指スワイプ・音声は未検査。
+
+## Issue #46 タグConfidence
+
+[loupe-tag-confidence.html](loupe-tag-confidence.html) はタグ詳細と基準を教える画面の現行参照。ClaudeのLoupe UIブラッシュアップから出力し、ブラウザ表示と閾値変更・基準を教える画面への遷移を確認した。上部の説明文1か所を、判断後のキャッシュによる再学習と明示的な写真解析を区別する文へ補正した。写真とスコアは合成例。Android実装の検証状況はissue #46へ記録する。

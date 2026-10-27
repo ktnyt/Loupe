@@ -28,25 +28,38 @@ def standby_video(shell, enabled):
         return
     # Pause before instrumentation; resume even if the test fails. Never unlock.
     shell('input', 'keyevent', '127')
+    primary_error = None
     try:
         # Pausing plus Home can leave a paused picture-in-picture window over the test.
         shell('am', 'force-stop', 'com.google.android.youtube')
         shell('input', 'keyevent', '3')
         yield
+    except BaseException as error:
+        primary_error = error
+        raise
     finally:
-        require_unlocked(shell)
-        shell('am', 'start', '-n', 'com.google.android.youtube/com.google.android.apps.youtube.app.watchwhile.WatchWhileActivity')
-        shell('input', 'keyevent', '126')
-        wait_for_standby(shell)
-        require_unlocked(shell)
-        print('YouTube window is focused and holds the screen on; recheck lock before the next device operation.', flush=True)
+        try:
+            require_unlocked(shell)
+            shell('am', 'start', '-n', 'com.google.android.youtube/com.google.android.apps.youtube.app.watchwhile.WatchWhileActivity')
+            wait_for_standby(shell, play_when_focused=True)
+            require_unlocked(shell)
+            print('YouTube window is focused and holds the screen on; recheck lock before the next device operation.', flush=True)
+        except Exception as restore_error:
+            if primary_error is None:
+                raise
+            print('Standby restoration also failed: ' + str(restore_error), file=sys.stderr, flush=True)
 
 
-def wait_for_standby(shell, attempts=10, interval=0.5):
+def wait_for_standby(shell, attempts=30, interval=0.5, play_when_focused=False):
     # Read only the current YouTube focus/hold lines; do not expose window contents.
     query = "dumpsys window | awk '/mCurrentFocus=|mHoldScreenWindow=/{if(index($0,\" com.google.android.youtube/\")) print}'"
+    played = False
     for attempt in range(attempts):
         windows = shell('sh', '-c', query)
+        focused = re.search(r'(?m)^\s*mCurrentFocus=Window\{[^\n]* com\.google\.android\.youtube/', windows)
+        if play_when_focused and focused and not played:
+            shell('input', 'keyevent', '126')
+            played = True
         if all(re.search(r'(?m)^\s*' + key + r'=Window\{[^\n]* com\.google\.android\.youtube/', windows)
                for key in ('mCurrentFocus', 'mHoldScreenWindow')):
             return
@@ -58,7 +71,7 @@ def wait_for_standby(shell, attempts=10, interval=0.5):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--serial', required=True)
-    parser.add_argument('--mode', required=True, choices=('share-screen', 'viewer-screen', 'gallery-screen', 'ranking-result', 'tag-detail', 'sort-naming', 'consistency-layout'))
+    parser.add_argument('--mode', required=True, choices=('share-screen', 'viewer-screen', 'gallery-screen', 'ranking-result', 'tag-detail', 'tag-confidence', 'confidence-store', 'sort-naming', 'consistency-layout'))
     parser.add_argument('--width', default='400')
     parser.add_argument('--font', default='1.0')
     parser.add_argument('--adb', default='/opt/homebrew/share/android-commandlinetools/platform-tools/adb')

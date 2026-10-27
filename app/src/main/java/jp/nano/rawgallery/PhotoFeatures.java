@@ -37,16 +37,31 @@ final class PhotoFeatures implements AutoCloseable {
     }
   }
 
-  RelatedPhotos.Vector cached(PhotoRepository.Photo photo) {
+  RelatedPhotos.Vector cached(PhotoRepository.Photo photo) { return cachedSource(TagStore.source(photo)); }
+
+  RelatedPhotos.Vector cachedSource(String source) {
     try (Cursor c = cache.getReadableDatabase().rawQuery(
         "SELECT vector FROM features WHERE source=? AND pipeline=?",
-        new String[] {TagStore.source(photo), PIPELINE})) {
+        new String[] {source, PIPELINE})) {
       if (!c.moveToFirst()) return null;
       byte[] bytes = c.getBlob(0);
       if (bytes.length != 1024) return null;
       try { return new RelatedPhotos.Vector(bytes); }
       catch (IllegalArgumentException invalid) { return null; }
     }
+  }
+
+  /** Reuses completed features across albums without reading images or starting inference. */
+  java.util.Map<String,RelatedPhotos.Vector> allCached() {
+    java.util.Map<String,RelatedPhotos.Vector> result=new java.util.HashMap<>();
+    try(Cursor c=cache.getReadableDatabase().rawQuery("SELECT source,vector FROM features WHERE pipeline=?",new String[]{PIPELINE})) {
+      while(c.moveToNext()) {
+        byte[] bytes=c.getBlob(1);if(bytes.length!=1024)continue;
+        try{result.put(c.getString(0),new RelatedPhotos.Vector(bytes));}
+        catch(IllegalArgumentException invalid){ /* Regenerable invalid features are not judgments. */ }
+      }
+    }
+    return result;
   }
 
   RelatedPhotos.Vector obtain(PhotoRepository.Photo photo) throws Exception {

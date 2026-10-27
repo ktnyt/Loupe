@@ -31,10 +31,20 @@ final class ActionIcon extends Drawable {
     canvas.translate(bounds.exactCenterX() - size / 2, bounds.exactCenterY() - size / 2);
     canvas.scale(size / 24, size / 24);
     switch (action) {
+      case "写真を解析":
+        line(canvas,4,8,4,4,8,4);line(canvas,16,4,20,4,20,8);line(canvas,20,16,20,20,16,20);line(canvas,8,20,4,20,4,16);canvas.drawCircle(12,12,3.2f,paint);break;
       case "似た写真にもタグを付ける":
         canvas.drawRoundRect(3.5f,7,11.5f,17,1.5f,1.5f,paint);canvas.drawRoundRect(13.5f,4,20.5f,11,1.5f,1.5f,paint);canvas.drawRoundRect(13.5f,13,20.5f,20,1.5f,1.5f,paint);break;
+      case "基準を教える":
+        canvas.drawRoundRect(4,4,20,20,2.5f,2.5f,paint);line(canvas,8.3f,12.3f,10.9f,14.9f,15.8f,9.7f);break;
       case "1枚ずつ確認する":
         canvas.drawRoundRect(5,4,19,20,2,2,paint);line(canvas,9,12,15,12);break;
+      case "含める":
+        canvas.drawCircle(12,12,9,paint);line(canvas,7,12,11,16,17,8);break;
+      case "含めない":
+        canvas.drawCircle(12,12,9,paint);line(canvas,6,18,18,6);break;
+      case "保留":
+        canvas.drawCircle(12,12,9,paint);line(canvas,7,12,17,12);break;
       case "写真を追加":
         canvas.drawRoundRect(3.5f,5,16.5f,18,2,2,paint);line(canvas,18.5f,9,18.5f,17);line(canvas,14.5f,13,22.5f,13);break;
       case "一括訂正":
@@ -76,6 +86,7 @@ final class ActionIcon extends Drawable {
         canvas.drawRoundRect(3, 5, 10, 19, 1, 1, paint);
         canvas.drawRoundRect(14, 5, 21, 19, 1, 1, paint);
         break;
+      case "取り消し":
       case "直前の操作を取り消す":
       case "一つ戻す":
         line(canvas, 8, 4, 3, 9, 8, 14);

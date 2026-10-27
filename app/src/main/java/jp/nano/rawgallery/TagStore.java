@@ -19,7 +19,7 @@ final class TagStore extends SQLiteOpenHelper {
   }
 
   TagStore(Context context) { this(context, "tags.db"); }
-  TagStore(Context context, String databaseName) { super(context, databaseName, null, 2); }
+  TagStore(Context context, String databaseName) { super(context, databaseName, null, 3); }
 
   public void onCreate(SQLiteDatabase db) {
     db.execSQL("CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE)");
@@ -28,11 +28,13 @@ final class TagStore extends SQLiteOpenHelper {
     db.execSQL("CREATE TABLE judgments (tag TEXT NOT NULL, photo TEXT NOT NULL, revision INTEGER NOT NULL, value TEXT NOT NULL, PRIMARY KEY(tag,photo))");
     db.execSQL("CREATE TABLE reevaluation (tag TEXT PRIMARY KEY, revision INTEGER NOT NULL)");
     createAutomaticTables(db);
+    TagScores.createTables(db);
   }
 
   public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-    if (oldVersion == 1 && newVersion == 2) createAutomaticTables(db);
-    else throw new IllegalStateException("Unsupported tag database version");
+    if (oldVersion < 1 || newVersion > 3) throw new IllegalStateException("Unsupported tag database version");
+    if (oldVersion < 2) createAutomaticTables(db);
+    if (oldVersion < 3) TagScores.createTables(db);
   }
 
   private static void createAutomaticTables(SQLiteDatabase db) {
@@ -56,7 +58,14 @@ final class TagStore extends SQLiteOpenHelper {
       requireReference(db, "tags", tag);
       db.execSQL("INSERT OR IGNORE INTO automation(tag,enabled,epoch) VALUES(?,0,0)", new Object[] {tag});
       db.execSQL("UPDATE automation SET enabled=?,epoch=epoch+1 WHERE tag=?", new Object[] {enabled ? 1 : 0, tag});
-      if (clear) db.delete("automatic_tags", "tag=?", new String[] {tag});
+      if (clear) {
+        db.delete("automatic_tags", "tag=?", new String[] {tag});
+        db.delete("confidence_scores", "tag=?", new String[] {tag});
+        db.delete("confidence_models", "tag=?", new String[] {tag});
+        db.execSQL("UPDATE confidence_preferences SET enabled=0,epoch=epoch+1 WHERE tag=?",new Object[]{tag});
+      } else if (!enabled) {
+        db.execSQL("UPDATE confidence_preferences SET epoch=epoch+1 WHERE tag=?",new Object[]{tag});
+      }
       long epoch;
       try (Cursor c = db.rawQuery("SELECT epoch FROM automation WHERE tag=?", new String[] {tag})) {
         c.moveToFirst(); epoch = c.getLong(0);
@@ -68,6 +77,8 @@ final class TagStore extends SQLiteOpenHelper {
 
   /** Effective automatic assignments, keyed by versioned source. Human decisions always win. */
   Map<String, AutomaticTags.Decision> automatic(String tag) {
+    TagScores scores=new TagScores(this);
+    if(scores.hasModel(tag))return scores.effective(tag);
     Map<String, AutomaticTags.Decision> result = new HashMap<>();
     try (Cursor c = getReadableDatabase().rawQuery(
         "SELECT p.source,a.positive,a.negative,a.threshold FROM automatic_tags a JOIN photos p ON p.id=a.photo "
@@ -149,8 +160,11 @@ final class TagStore extends SQLiteOpenHelper {
         + "WHERE j.value IN ('ASSIGNED','EXCLUDED') UNION ALL "
         + "SELECT a.tag,p.source,'ASSIGNED' FROM automatic_tags a JOIN photos p ON p.id=a.photo "
         + "LEFT JOIN judgments j ON j.tag=a.tag AND j.photo=a.photo "
-        + "WHERE a.pipeline=? AND j.photo IS NULL";
-    try (Cursor c = getReadableDatabase().rawQuery(sql, new String[] {automaticVersion()})) {
+        + "WHERE a.pipeline=? AND j.photo IS NULL AND NOT EXISTS(SELECT 1 FROM confidence_models m WHERE m.tag=a.tag AND m.pipeline=?) UNION ALL "
+        + "SELECT s.tag,p.source,'ASSIGNED' FROM confidence_scores s JOIN photos p ON p.id=s.photo "
+        + "JOIN confidence_models m ON m.tag=s.tag JOIN confidence_preferences c ON c.tag=s.tag "
+        + "LEFT JOIN judgments j ON j.tag=s.tag AND j.photo=s.photo WHERE m.pipeline=? AND j.photo IS NULL AND s.score>=c.threshold";
+    try (Cursor c = getReadableDatabase().rawQuery(sql, new String[] {automaticVersion(),TagScores.pipeline(),TagScores.pipeline()})) {
       while (c.moveToNext()) {
         Summary summary = byTag.get(c.getString(0));
         Integer position = positions.get(c.getString(1));

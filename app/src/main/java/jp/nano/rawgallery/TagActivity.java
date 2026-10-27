@@ -28,6 +28,42 @@ import java.util.concurrent.Executors;
 
 /** Human judgments and separately stored, correctable automatic assignments. */
 public final class TagActivity extends DiagnosticActivity {
+  String tagDatabaseName="tags.db", featureDatabaseName="photo-features.db";
+  boolean isolatedPhotos;
+  android.content.Context photoContext=this;
+  int rejectedFixtureAccess;
+  private void requireDatabase(String name){
+    if(isolatedPhotos&&!name.equals(tagDatabaseName)&&!name.equals(featureDatabaseName)){rejectedFixtureAccess++;throw new SecurityException("Fixture database only");}
+  }
+  @Override public java.io.File getDatabasePath(String name){requireDatabase(name);return super.getDatabasePath(name);}
+  @Override public android.database.sqlite.SQLiteDatabase openOrCreateDatabase(String name,int mode,android.database.sqlite.SQLiteDatabase.CursorFactory factory){requireDatabase(name);return super.openOrCreateDatabase(name,mode,factory);}
+  @Override public android.database.sqlite.SQLiteDatabase openOrCreateDatabase(String name,int mode,android.database.sqlite.SQLiteDatabase.CursorFactory factory,android.database.DatabaseErrorHandler handler){requireDatabase(name);return super.openOrCreateDatabase(name,mode,factory,handler);}
+  private void requireFixturePhoto(PhotoRepository.Photo photo)throws java.io.IOException{
+    if(!isolatedPhotos)return;
+    java.io.File file="file".equals(photo.uri.getScheme())?new java.io.File(photo.uri.getPath()).getCanonicalFile():null;
+    if(file==null||!getCacheDir().getCanonicalFile().equals(file.getParentFile())||!(file.getName().startsWith("confidence-synthetic-")||file.getName().equals("tag-detail-synthetic.jpg")||file.getName().equals("tag-viewer-intentionally-missing.jpg"))){rejectedFixtureAccess++;throw new SecurityException("Fixture photo only");}
+  }
+  private PhotoRepository.Preview photoPreview(PhotoRepository.Photo photo)throws java.io.IOException{requireFixturePhoto(photo);return new PhotoRepository(photoContext).preview(photo);}
+
+  private TagStore openStore(){return new TagStore(this,tagDatabaseName);}
+  private TagScores.Snapshot confidence, pendingConfidence;
+  private volatile int learningGeneration;
+  private TextView confidenceSummary;
+  private Button attachedState;
+  private StatusView emptyPhotos;
+  private double displayThreshold=TagConfidence.DEFAULT_THRESHOLD, persistedThreshold=TagConfidence.DEFAULT_THRESHOLD;
+  private final Set<Integer> teachingSeen=new HashSet<>();
+  private final List<String> teachingUndo=new ArrayList<>();
+  private int teachingIndex=-1, teachingCount, teachingTotal;
+  private TagJudgments indexedJudgments;
+  private String indexedTag;
+  private final Map<String,TagJudgments.Entry> latestJudgments=new HashMap<>();
+  private final List<Button> teachingButtons=new ArrayList<>();
+  private StatusView teachingStatus, learningStatus;
+  private Button analysisAction;
+  private boolean learning, examplesKnown, learningUnavailable, resultPrepared;
+  private int examplePositive, exampleNegative;
+  private int teachingChoice=-1;
   private final ExecutorService worker = new DiagnosticExecutor("TagActivity.worker", 1);
   private final Handler main = new Handler(Looper.getMainLooper());
   private final List<PhotoRepository.Photo> photos = new ArrayList<>();
@@ -47,7 +83,6 @@ public final class TagActivity extends DiagnosticActivity {
   private String automaticError = "";
   private Map<String, AutomaticTags.Decision> automatic = new HashMap<>();
   private boolean autoRunning, autoPending, autoAgain;
-  private long autoEpoch;
   private TagJudgments judgments = new TagJudgments();
   private TagStore.Tag tag;
   private LinearLayout root;
@@ -87,6 +122,7 @@ public final class TagActivity extends DiagnosticActivity {
 
   private int screen(String title) {
     generation++;
+    confidenceSummary=null;attachedState=null;emptyPhotos=null;learningStatus=null;analysisAction=null;
     photoViewer=null;photoPrevious=null;photoNext=null;photoTag=null;
     analysisStatus = null; assignmentStatus=null;failureCount=null;savingStatus=null;jobTitle = null; resultButton = null;
     root = new LinearLayout(this);
@@ -109,7 +145,7 @@ public final class TagActivity extends DiagnosticActivity {
   private void showTags() {
     if (busy) return;
     stopAnalysis();
-    reviewing = false; tag = null; browseMode = 0;
+    learning=false;reviewing = false; tag = null; browseMode = 0;
     selecting = false; selectedPhotos.clear();
     int token = screen("タグ");
     root.removeViewAt(0);
@@ -123,11 +159,12 @@ public final class TagActivity extends DiagnosticActivity {
     root.addView(line,new LinearLayout.LayoutParams(-1,GalleryUi.dp(this,1)));
     root.addView(TagListUi.footer(this,this::createTag));
     worker.execute(() -> {
-      try (TagStore store = new TagStore(this)) {
+      try (TagStore store = openStore()) {
         List<TagStore.Summary> loaded;
         boolean countsAvailable;
         List<TagStore.Tag> names=store.tags();
-        try(GalleryIndex index=new GalleryIndex(this)){
+        if(isolatedPhotos){loaded=store.summaries(java.util.Collections.emptyList());countsAvailable=true;}
+        else try(GalleryIndex index=new GalleryIndex(this)){
           GalleryIndex.Snapshot snapshot=index.load(getIntent().getStringExtra("folder"),getIntent().getStringExtra("camera")==null?"すべて":getIntent().getStringExtra("camera"));
           loaded=store.summaries(snapshot.photos);countsAvailable=true;
         }catch(Exception readFailure){loaded=new ArrayList<>();for(TagStore.Tag name:names)loaded.add(new TagStore.Summary(name));countsAvailable=false;}
@@ -141,7 +178,7 @@ public final class TagActivity extends DiagnosticActivity {
             Button row=TagListUi.row(this,item.name,()->openTag(item));if(haveCounts)TagListUi.summary(row,item.name,summary.attached,summary.excluded);else {row.setText(item.name+"\nタグ付き — · 該当しない —");row.setContentDescription(item.name+"。写真と枚数を読み込めませんでした。タグを開く");TagListUi.photoFailure(row);}
             list.addView(row,new LinearLayout.LayoutParams(-1,-2));
             if(summary.cover!=null) worker.execute(()->{
-              try{Bitmap bitmap=new PhotoRepository(this).thumbnail(summary.cover,GalleryUi.dp(this,56),()->!current(token));
+              try{requireFixturePhoto(summary.cover);Bitmap bitmap=new PhotoRepository(photoContext).thumbnail(summary.cover,GalleryUi.dp(this,56),()->!current(token));
                 main.post(()->{if(current(token))TagListUi.photo(row,bitmap);else bitmap.recycle();});
               }catch(Exception error){main.post(()->{if(current(token)){TagListUi.photoFailure(row);row.setContentDescription(row.getContentDescription()+"。代表の写真を読み込めませんでした");}});}
             });
@@ -171,7 +208,7 @@ public final class TagActivity extends DiagnosticActivity {
       dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
       int token = generation;
       worker.execute(() -> {
-        try (TagStore store = new TagStore(this)) {
+        try (TagStore store = openStore()) {
           TagStore.Tag created = store.create(name);
           main.post(() -> { if (current(token)) { dialog.dismiss(); openTag(created); } });
         } catch (Exception error) {
@@ -183,13 +220,14 @@ public final class TagActivity extends DiagnosticActivity {
   }
 
   private void openTag(TagStore.Tag selected) {
+    if(isolatedPhotos)throw new SecurityException("Fixture scope must be supplied explicitly");
     stopAnalysis();
     if (tag == null && tagScroll != null) tagScrollY = tagScroll.getScrollY();
-    tag = selected; reviewing = false; browseMode = 0;
+    learning=false;tag = selected; reviewing = false; browseMode = 0;
     int token = screen(tag.name);
     loading("写真と判断を読み込み中");
     worker.execute(() -> {
-      try (TagStore store = new TagStore(this); GalleryIndex index = new GalleryIndex(this)) {
+      try (TagStore store = openStore(); GalleryIndex index = new GalleryIndex(this)) {
         GalleryIndex.Snapshot snapshot = index.load(getIntent().getStringExtra("folder"),
             getIntent().getStringExtra("camera") == null ? "すべて" : getIntent().getStringExtra("camera"));
         List<PhotoRepository.Photo> local = new ArrayList<>();
@@ -201,9 +239,10 @@ public final class TagActivity extends DiagnosticActivity {
         }
         TagJudgments loaded = store.load();
         Map<String, AutomaticTags.Decision> inferred = store.automatic(selected.id);
+        TagScores.Snapshot learned=new TagScores(store).snapshot(selected.id);
         main.post(() -> {
           if (!current(token)) return;
-          photos.clear(); photos.addAll(local); photoIds.clear(); photoIds.addAll(ids); judgments = loaded; automatic = inferred;
+          photos.clear(); photos.addAll(local); photoIds.clear(); photoIds.addAll(ids); judgments = loaded; automatic = inferred; confidence=learned;displayThreshold=learned.preferences.threshold;persistedThreshold=displayThreshold;
           showTag();
         });
       } catch (Exception error) {
@@ -212,12 +251,27 @@ public final class TagActivity extends DiagnosticActivity {
     });
   }
 
+  private Map<String,TagJudgments.Entry> latestJudgments(){
+    if(indexedJudgments!=judgments||!tag.id.equals(indexedTag)){
+      latestJudgments.clear();for(TagJudgments.Entry entry:judgments.history)if(entry.tagId.equals(tag.id))latestJudgments.put(entry.photoId,entry);
+      indexedJudgments=judgments;indexedTag=tag.id;
+    }
+    return latestJudgments;
+  }
+
   private TagJudgments.Value value(int photo) {
     String id = photoIds.get(photo);
-    return id == null ? TagJudgments.Value.UNDECIDED : judgments.value(tag.id, id);
+    TagJudgments.Entry entry=id==null?null:latestJudgments().get(id);
+    return entry==null?TagJudgments.Value.UNDECIDED:entry.value;
   }
 
   private boolean isAutomatic(int photo) {
+    if(confidence!=null&&confidence.model!=null){
+      String id=photoIds.get(photo);
+      if(id!=null&&latestJudgments().containsKey(id))return false;
+      Double score=confidence.scores.get(TagStore.source(photos.get(photo)));
+      return score!=null&&score>=displayThreshold;
+    }
     return value(photo) == TagJudgments.Value.UNDECIDED
         && automatic.containsKey(TagStore.source(photos.get(photo)));
   }
@@ -230,13 +284,15 @@ public final class TagActivity extends DiagnosticActivity {
     loading("タグを読み込み中");
     String tagId = tag.id;
     worker.execute(() -> {
-      try (TagStore store = new TagStore(this)) {
+      try (TagStore store = openStore()) {
         TagJudgments loaded = store.load();
         Map<String, AutomaticTags.Decision> inferred = store.automatic(tagId);
+        TagScores.Snapshot learned=new TagScores(store).snapshot(tagId);
+        int[] examples;try(PhotoFeatures cached=new PhotoFeatures(this,featureDatabaseName)){examples=new TagScores(store).exampleCounts(tagId,cached);}
         Map<String, String> ids = store.photoIds();
         main.post(() -> {
           if (!current(token)) return;
-          judgments = loaded; automatic = inferred;
+          judgments = loaded; automatic = inferred;examplesKnown=true;examplePositive=examples[0];exampleNegative=examples[1];learningUnavailable=examples[0]==0||examples[1]==0;confidence=learned;pendingConfidence=null;displayThreshold=learned.preferences.threshold;persistedThreshold=displayThreshold;
           for (int i = 0; i < photos.size(); i++) photoIds.set(i, ids.get(TagStore.source(photos.get(i))));
           renderTag();
         });
@@ -254,6 +310,7 @@ public final class TagActivity extends DiagnosticActivity {
   }
 
   private void tagMenu(){
+    if(busy)return;
     new GalleryUi.Sheet(this).setTitle("その他").setItems(new String[]{"自動で付いた写真","自動で付いたタグをすべて外す"},(d,which)->{if(which==0){selecting=false;selectedPhotos.clear();tagOverview=true;renderPhotos(Filter.AUTOMATIC,0,0);}else clearAutomatic();}).show();
   }
 
@@ -269,14 +326,9 @@ public final class TagActivity extends DiagnosticActivity {
 
   private void renderPhotos(Filter filter,int scrollPosition,int scrollOffset,boolean headerVisible) {
     if (busy) return;
-    stopAnalysis(); reviewing = true; browseMode = 1; browseFilter = filter;
-    browsePhotos.clear();
-    for (int i = 0; i < photos.size(); i++) {
-      boolean attached = isAutomatic(i) || value(i) == TagJudgments.Value.ASSIGNED;
-      if (filter == Filter.ALL || filter == Filter.ATTACHED && attached
-          || filter == Filter.AUTOMATIC && isAutomatic(i)
-          || filter == Filter.REMOVED && value(i) == TagJudgments.Value.EXCLUDED) browsePhotos.add(i);
-    }
+    reviewing = true; browseMode = 1; browseFilter = filter;
+    if(pendingConfidence!=null){confidence=pendingConfidence;pendingConfidence=null;resultPrepared=false;}
+    filterPhotos(filter);
     String title = filter == Filter.ALL ? "写真を追加" : filter == Filter.REMOVED ? "外した写真"
         : filter == Filter.AUTOMATIC ? "自動で付いた写真" : "タグ付きの写真";
     int token = screen(tag.name + " · " + title);
@@ -284,7 +336,7 @@ public final class TagActivity extends DiagnosticActivity {
     if(tagOverview){
       root.removeAllViews();int attachedCount=0,autoCount=0,excludedCount=0;
       for(int i=0;i<photos.size();i++){if(value(i)==TagJudgments.Value.EXCLUDED)excludedCount++;else if(value(i)==TagJudgments.Value.ASSIGNED)attachedCount++;else if(isAutomatic(i)){attachedCount++;autoCount++;}}
-      root.addView(TagDetailUi.heading(this,scope(),tag.name,attachedCount,autoCount,excludedCount,photos.size()-attachedCount-excludedCount));
+      LinearLayout detailHeading=TagDetailUi.heading(this,scope(),tag.name,attachedCount,autoCount,excludedCount,photos.size()-attachedCount-excludedCount);confidenceSummary=(TextView)detailHeading.getChildAt(detailHeading.getChildCount()-1);root.addView(detailHeading);
       if(filter==Filter.AUTOMATIC)root.addView(button("自動で付いた写真 ×",()->{selecting=false;selectedPhotos.clear();renderPhotos(Filter.ATTACHED,0,0);}));
     }else root.addView(text(scope() + " · " + browsePhotos.size() + "枚", 14));
     selectionButton = button(selecting ? "選択を終了" : "選択", () -> {
@@ -307,7 +359,9 @@ public final class TagActivity extends DiagnosticActivity {
         boolean reload = cell.image.getTag() != photo;
         Object binding = reload ? new Object() : cell.getTag();
         if (reload) { cell.setTag(binding); cell.image.setTag(photo); cell.image.setImageDrawable(null); }
-        String tagDescription=isAutomatic(index)?"タグあり、自動":value(index)==TagJudgments.Value.ASSIGNED?"タグあり":"タグなし";
+        Double rawScore=confidence==null?null:confidence.scores.get(TagStore.source(photo));
+        String scoreDescription=rawScore==null?"、適合スコア未計算":String.format(java.util.Locale.ROOT,"、未校正の適合スコア %.2f",rawScore);
+        String tagDescription=isAutomatic(index)?"タグあり、推定"+scoreDescription:value(index)==TagJudgments.Value.ASSIGNED?"タグあり":"タグなし";
         cell.badges.rank="";cell.badges.tagState=isAutomatic(index)?StatusView.Symbol.AUTO_TAG:tagOverview?null:value(index)==TagJudgments.Value.ASSIGNED?StatusView.Symbol.TAG:StatusView.Symbol.NO_TAG;if(reload)cell.badges.failed=false;cell.badges.invalidate();
         cell.badges.selectionMode = selecting;
         cell.badges.selected = selectedPhotos.contains(index);
@@ -315,7 +369,7 @@ public final class TagActivity extends DiagnosticActivity {
         if (reload) worker.execute(() -> {
           if (!current(token)) return;
           try {
-            Bitmap bitmap = PhotoRepository.bitmap(new PhotoRepository(TagActivity.this).preview(photo), 360);
+            Bitmap bitmap = PhotoRepository.bitmap(photoPreview(photo), 360);
             main.post(() -> {
               if (!current(token) || cell.getTag() != binding) { bitmap.recycle(); return; }
               cell.image.setImageBitmap(bitmap);
@@ -337,16 +391,16 @@ public final class TagActivity extends DiagnosticActivity {
       return true;
     });
     root.addView(grid, new LinearLayout.LayoutParams(-1, 0, 1));
-    if (browsePhotos.isEmpty()) root.addView(state(StatusView.Symbol.EMPTY,"","この範囲に該当する写真はありません"));
+    emptyPhotos=state(StatusView.Symbol.EMPTY,"","この範囲に該当する写真はありません");emptyPhotos.setVisibility(browsePhotos.isEmpty()?android.view.View.VISIBLE:android.view.View.GONE);root.addView(emptyPhotos);
     int controlsStart = root.getChildCount();
     if(tagOverview){
       tagActions=new LinearLayout(this);tagActions.setOrientation(LinearLayout.VERTICAL);
       int attached=0,excluded=0,assigned=0;for(int i=0;i<photos.size();i++){if(value(i)==TagJudgments.Value.EXCLUDED)excluded++;else if(value(i)==TagJudgments.Value.ASSIGNED){attached++;assigned++;}else if(isAutomatic(i))attached++;}
       LinearLayout states=new LinearLayout(this);states.setBackground(GalleryUi.shape(this,0xff1c1c1f,24));
-      states.addView(TagDetailUi.state(this,"タグ付き "+attached,filter!=Filter.REMOVED,()->{selectedPhotos.clear();renderPhotos(Filter.ATTACHED,0,0);}),new LinearLayout.LayoutParams(0,-2,1));
-      states.addView(TagDetailUi.state(this,"該当しない "+excluded,filter==Filter.REMOVED,()->{selectedPhotos.clear();renderPhotos(Filter.REMOVED,0,0);}),new LinearLayout.LayoutParams(0,-2,1));((LinearLayout.LayoutParams)states.getChildAt(1).getLayoutParams()).leftMargin=GalleryUi.dp(this,4);tagActions.addView(states);
-      Button related=TagDetailUi.action(this,"似た写真にもタグを付ける",true,this::startAutomatic);related.setEnabled(assigned>0);tagActions.addView(related);
-      Button manual=TagDetailUi.action(this,"1枚ずつ確認する",false,()->{if(!browsePhotos.isEmpty())showAssignedPhoto(0);});manual.setEnabled(!browsePhotos.isEmpty());tagActions.addView(manual);
+      attachedState=TagDetailUi.state(this,"タグ付き "+attached,filter!=Filter.REMOVED,()->{selectedPhotos.clear();renderPhotos(Filter.ATTACHED,0,0);});states.addView(attachedState,new LinearLayout.LayoutParams(0,-2,1));
+      states.addView(TagDetailUi.state(this,"該当しない "+excluded,filter==Filter.REMOVED,()->{selectedPhotos.clear();renderPhotos(Filter.REMOVED,0,0);}),new LinearLayout.LayoutParams(0,-2,1));((LinearLayout.LayoutParams)states.getChildAt(1).getLayoutParams()).leftMargin=GalleryUi.dp(this,4);tagActions.addView(states);tagActions.addView(confidenceControl());
+      Button related=TagDetailUi.action(this,"写真を解析",true,this::startAutomatic);related.setEnabled(!photos.isEmpty()&&(!autoRunning||analysisFinished&&!autoPending));analysisAction=related;tagActions.addView(related);
+      Button manual=TagDetailUi.action(this,"基準を教える",false,this::startTeaching);manual.setEnabled(!photos.isEmpty());tagActions.addView(manual);
       tagActions.addView(TagDetailUi.dock(this,TagDetailUi.dockButton(this,"写真を追加",()->showPhotos(Filter.ALL)),TagDetailUi.dockButton(this,"一括訂正",()->{selecting=true;selectedPhotos.clear();refreshSelection();}),TagDetailUi.dockButton(this,"その他",this::tagMenu)));TagDetailUi.gaps(tagActions);root.addView(tagActions);
     }
     selectionActions=new LinearLayout(this);selectionActions.setOrientation(LinearLayout.VERTICAL);
@@ -354,7 +408,136 @@ public final class TagActivity extends DiagnosticActivity {
     selectionActions.addView(GalleryUi.adaptiveDock(this,selectionButton,button("すべて選択",()->{if(busy)return;selectedPhotos.addAll(browsePhotos);refreshSelection();})));
     root.addView(selectionActions);savingStatus=new StatusView(this);savingStatus.collapseWhenIdle();root.addView(savingStatus);refreshSelection();
     TagDetailUi.footer(root, controlsStart);
-    grid.restoreCell(scrollPosition,scrollOffset,headerVisible);
+    refreshConfidenceCounts();grid.restoreCell(scrollPosition,scrollOffset,headerVisible);
+  }
+
+  private void filterPhotos(Filter filter){
+    browsePhotos.clear();
+    for(int i=0;i<photos.size();i++){
+      boolean attached=isAutomatic(i)||value(i)==TagJudgments.Value.ASSIGNED;
+      if(filter==Filter.ALL||filter==Filter.ATTACHED&&attached||filter==Filter.AUTOMATIC&&isAutomatic(i)||filter==Filter.REMOVED&&value(i)==TagJudgments.Value.EXCLUDED)browsePhotos.add(i);
+    }
+  }
+
+  private LinearLayout confidenceControl(){
+    LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(0,0,0,0);
+    StatusView status=new StatusView(this);status.asCompact();learningStatus=status;box.addView(status,new LinearLayout.LayoutParams(-2,GalleryUi.dp(this,28)));
+    TextView label=text("",14);label.setPadding(0,0,0,0);box.addView(label);
+    android.widget.SeekBar slider=new android.widget.SeekBar(this);slider.setMax(100);slider.setKeyProgressIncrement(1);slider.setProgress((int)Math.round(displayThreshold*100));slider.setMinHeight(GalleryUi.dp(this,48));
+    slider.setProgressTintList(android.content.res.ColorStateList.valueOf(GalleryUi.TEXT));slider.setThumbTintList(android.content.res.ColorStateList.valueOf(GalleryUi.TEXT));
+    box.addView(slider,new LinearLayout.LayoutParams(-1,GalleryUi.dp(this,48)));
+    LinearLayout ends=new LinearLayout(this);TextView broad=text("広く拾う",12),strict=text("絞り込む",12);broad.setPadding(0,0,0,0);strict.setPadding(0,0,0,0);strict.setGravity(Gravity.RIGHT);ends.addView(broad,new LinearLayout.LayoutParams(0,-2,1));ends.addView(strict,new LinearLayout.LayoutParams(0,-2,1));box.addView(ends);
+    updateLearningStatus();
+    Runnable describe=()->{label.setText(String.format(java.util.Locale.ROOT,"表示の基準    %.2f · %d枚",displayThreshold,browsePhotos.size()));slider.setContentDescription(String.format(java.util.Locale.ROOT,"表示の基準 %.2f。%d枚。未校正の適合スコアで、正解率ではありません。自分の判断を優先します",displayThreshold,browsePhotos.size()));};describe.run();
+    slider.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener(){
+      boolean dragging;
+      public void onStartTrackingTouch(android.widget.SeekBar s){dragging=true;}
+      public void onProgressChanged(android.widget.SeekBar s,int progress,boolean user){if(!user)return;if(busy){s.setProgress((int)Math.round(displayThreshold*100));return;}displayThreshold=progress/100d;filterPhotos(browseFilter);refreshConfidenceCounts();if(photoAdapter!=null)photoAdapter.notifyDataSetChanged();describe.run();DiagnosticLog.event("tag.threshold.preview",0,"threshold",progress,"visible",browsePhotos.size());if(!dragging)persistThreshold(slider,describe);}
+      public void onStopTrackingTouch(android.widget.SeekBar s){dragging=false;persistThreshold(slider,describe);}
+    });
+    if(autoRunning){
+      LinearLayout progress=new LinearLayout(this);analysisStatus=new StatusView(this);analysisStatus.asCompact();assignmentStatus=new StatusView(this);assignmentStatus.asCompact();failureCount=new StatusView(this);failureCount.asCompact();failureCount.collapseWhenIdle();
+      progress.addView(analysisStatus);progress.addView(assignmentStatus);progress.addView(failureCount);box.addView(progress);
+      resultButton=button("中止",this::loadResults);box.addView(resultButton);updateProgress();
+    }
+    return box;
+  }
+
+  private void updateLearningStatus(){
+    if(learningStatus==null)return;
+    int yes=examplePositive,no=exampleNegative;
+    if(!examplesKnown){yes=0;no=0;for(TagJudgments.Entry e:latestJudgments().values()){if(e.value==TagJudgments.Value.ASSIGNED)yes++;if(e.value==TagJudgments.Value.EXCLUDED)no++;}}
+    String counts="含めるの見本"+yes+"枚、含めないの見本"+no+"枚";
+    if(confidence!=null&&!confidence.preferences.enabled)learningStatus.show(StatusView.Symbol.UNKNOWN,"＋"+yes+" −"+no,"学習は停止しています。写真を解析を押すと、保存済みの判断から学習を開始します。"+counts,null,"");
+    else if(learning)learningStatus.show(StatusView.Symbol.WAITING,"＋"+yes+" −"+no,"前回の結果を表示しています。保存した判断から計算しています。"+counts,null,"");
+    else if(pendingConfidence!=null&&resultPrepared&&!learningUnavailable)learningStatus.show(StatusView.Symbol.WAITING,"＋"+yes+" −"+no,"新しい結果を用意しました。一覧を表示し直すと反映します。"+counts,null,"");
+    else if((confidence==null||confidence.model==null)&&examplesKnown&&yes>0&&no>0)learningStatus.show(StatusView.Symbol.WAITING,"＋"+yes+" −"+no,(autoRunning?"適合スコアを計算しています。":"まだ学習結果がありません。写真を解析で計算します。")+counts,null,"");
+    else if(learningUnavailable||confidence==null||confidence.model==null)learningStatus.show(StatusView.Symbol.UNKNOWN,"＋"+yes+" −"+no,"互換な特徴を持つ含める・含めないの見本が不足しているため更新できません。写真を解析で特徴を取り出せます。"+(confidence!=null&&confidence.model!=null?"前回の完成結果を表示しています。":"")+counts,null,"");
+    else learningStatus.show(confidence.stale||pendingConfidence!=null?StatusView.Symbol.WAITING:StatusView.Symbol.COMPLETE,"＋"+yes+" −"+no,(pendingConfidence!=null&&resultPrepared?"新しい結果を用意しました。一覧を表示し直すと反映します。":confidence.stale||pendingConfidence!=null?"前回の結果を表示しています。":"暫定の適合スコア。")+counts,null,"");
+  }
+
+  private void refreshConfidenceCounts(){
+    int attached=0,inferred=0,excluded=0;
+    for(int i=0;i<photos.size();i++){if(value(i)==TagJudgments.Value.EXCLUDED)excluded++;else if(value(i)==TagJudgments.Value.ASSIGNED)attached++;else if(isAutomatic(i)){attached++;inferred++;}}
+    if(confidenceSummary!=null)confidenceSummary.setText("タグ付き "+attached+"枚"+(inferred>0?"（推定 "+inferred+"枚）":"")+" · 該当しない "+excluded+"枚 · 未確認 "+(photos.size()-attached-excluded)+"枚");
+    if(attachedState!=null){attachedState.setText((browseFilter==Filter.REMOVED?"   ":"✓  ")+"タグ付き "+attached);attachedState.setContentDescription("タグ付き "+attached);}
+    if(emptyPhotos!=null)emptyPhotos.setVisibility(browsePhotos.isEmpty()?android.view.View.VISIBLE:android.view.View.GONE);
+  }
+
+  private void persistThreshold(android.widget.SeekBar slider,Runnable describe){
+    if(busy)return;busy=true;slider.setEnabled(false);int token=generation;String tagId=tag.id;double target=displayThreshold;
+    worker.execute(()->{try(TagStore store=openStore()){
+      TagScores scores=new TagScores(store);scores.threshold(tagId,target);
+      main.post(()->{busy=false;if(current(token)){persistedThreshold=target;slider.setEnabled(true);}});
+    }catch(Exception error){main.post(()->{busy=false;if(current(token)){displayThreshold=persistedThreshold;slider.setProgress((int)Math.round(displayThreshold*100));filterPhotos(browseFilter);refreshConfidenceCounts();photoAdapter.notifyDataSetChanged();describe.run();slider.setEnabled(true);StatusFeedback.show(this,StatusView.Symbol.FAILED,"表示の基準を保存できませんでした。もう一度操作してください",null,"");}});}});
+  }
+
+  /** Saving a judgment never extracts a new image. Results wait until the next list render. */
+  private void relearnCached(){
+    int epoch=++learningGeneration;String tagId=tag.id;learning=true;
+    if(learningStatus!=null)learningStatus.show(StatusView.Symbol.WAITING,"保存した判断から計算しています。前回の結果を表示しています");
+    worker.execute(()->{try(TagStore store=openStore();PhotoFeatures cached=new PhotoFeatures(this,featureDatabaseName)){
+      TagScores scores=new TagScores(store);if(!scores.preferences(tagId).enabled){main.post(()->{if(epoch==learningGeneration){learning=false;updateLearningStatus();}});return;}
+      boolean applied=scores.recompute(tagId,cached,()->isDestroyed()||epoch!=learningGeneration);
+      int[] examples=scores.exampleCounts(tagId,cached);TagScores.Snapshot saved=scores.snapshot(tagId);
+      main.post(()->{if(!isDestroyed()&&epoch==learningGeneration&&tag!=null&&tag.id.equals(tagId)){pendingConfidence=saved;resultPrepared=applied;learning=false;examplesKnown=true;examplePositive=examples[0];exampleNegative=examples[1];learningUnavailable=!applied&&(examples[0]==0||examples[1]==0);updateLearningStatus();}});
+    }catch(java.util.concurrent.CancellationException cancelled){}
+    catch(Exception error){main.post(()->{if(!isDestroyed()&&epoch==learningGeneration){learning=false;StatusFeedback.show(this,StatusView.Symbol.FAILED,"判断は保存しましたが、スコアを更新できませんでした。写真を解析から再試行できます",null,"");}});}});
+  }
+
+  private void startTeaching(){
+    if(busy)return;stopAnalysis();teachingSeen.clear();teachingUndo.clear();teachingCount=0;teachingTotal=0;for(TagJudgments.Value value:labels())if(value==TagJudgments.Value.UNDECIDED)teachingTotal++;nextTeaching();
+  }
+
+  private void nextTeaching(){
+    Map<Integer,Double> scores=new HashMap<>();
+    if(confidence!=null)for(int i=0;i<photos.size();i++){Double score=confidence.scores.get(TagStore.source(photos.get(i)));if(score!=null)scores.put(i,score);}
+    teachingIndex=TagConfidence.next(labels(),scores,teachingSeen,displayThreshold,teachingCount);
+    showTeaching();
+  }
+
+  private void showTeaching(){
+    browseMode=3;reviewing=true;int token=screen(tag.name);root.removeAllViews();root.setBackgroundColor(android.graphics.Color.BLACK);teachingButtons.clear();
+    LinearLayout heading=new LinearLayout(this);heading.setOrientation(LinearLayout.VERTICAL);heading.setPadding(GalleryUi.dp(this,20),GalleryUi.dp(this,40),GalleryUi.dp(this,20),GalleryUi.dp(this,12));
+    TextView name=text(tag.name,17);name.setPadding(0,0,0,0);name.setTypeface(android.graphics.Typeface.DEFAULT,android.graphics.Typeface.BOLD);heading.addView(name);TextView context=text(scope()+" · "+Math.min(teachingCount+1,teachingTotal)+" / "+teachingTotal,13);context.setPadding(0,0,0,0);heading.addView(context);root.addView(heading);
+    ZoomImageView image=new ZoomImageView(this);root.addView(image,new LinearLayout.LayoutParams(-1,0,1));
+    teachingStatus=new StatusView(this);teachingStatus.collapseWhenIdle();root.addView(teachingStatus);
+    if(teachingIndex<0){image.setContentDescription("未判断の写真はありません");teachingStatus.show(StatusView.Symbol.COMPLETE,"未判断の写真はありません");}
+    else{
+      PhotoRepository.Photo photo=photos.get(teachingIndex);image.setContentDescription("写真。「"+tag.name+"」が写っているか判断してください。適合スコアは未校正で、正解率ではありません");
+      worker.execute(()->{try{Bitmap bitmap=PhotoRepository.bitmap(photoPreview(photo),1600);main.post(()->{if(current(token))image.setBitmap(bitmap);else bitmap.recycle();});}catch(Exception error){main.post(()->{if(current(token))teachingStatus.show(StatusView.Symbol.FAILED,"写真を読み込めませんでした。保留で次へ進めます");});}});
+    }
+    int controls=root.getChildCount();
+    LinearLayout actions=new LinearLayout(this);actions.setOrientation(getResources().getConfiguration().screenWidthDp<360||getResources().getConfiguration().fontScale>1.15?LinearLayout.VERTICAL:LinearLayout.HORIZONTAL);
+    String[] titles={"含めない","保留","含める"};
+    for(int i=0;i<3;i++){final int choice=i;Button b=TagDetailUi.action(this,titles[i],i==2,()->{if(choice==1){teachingSeen.add(teachingIndex);teachingCount++;nextTeaching();}else saveTeaching(choice==2?TagJudgments.Value.ASSIGNED:TagJudgments.Value.EXCLUDED,false);});b.setContentDescription(titles[i]+"。"+(i==1?"判断せず次へ。学習には使いません":"この写真を「"+tag.name+"」に"+titles[i]));b.setEnabled(teachingIndex>=0);teachingButtons.add(b);actions.addView(b,new LinearLayout.LayoutParams(actions.getOrientation()==LinearLayout.HORIZONTAL?0:-1,-2,actions.getOrientation()==LinearLayout.HORIZONTAL?1:0));}
+    root.addView(actions);Button undo=TagDetailUi.action(this,"取り消し",false,()->saveTeaching(null,true));undo.setBackgroundColor(android.graphics.Color.TRANSPARENT);undo.setTextSize(12);undo.setContentDescription("直前の判断を取り消す");undo.setEnabled(!teachingUndo.isEmpty());teachingButtons.add(undo);root.addView(undo);TagDetailUi.footer(root,controls);
+    if(actions.getOrientation()==LinearLayout.VERTICAL)TagDetailUi.gaps(actions);else for(int i=1;i<actions.getChildCount();i++)((LinearLayout.LayoutParams)actions.getChildAt(i).getLayoutParams()).leftMargin=GalleryUi.dp(this,8);
+  }
+
+  private void saveTeaching(TagJudgments.Value choice,boolean undo){
+    if(busy||undo&&teachingUndo.isEmpty()||!undo&&teachingIndex<0)return;
+    busy=true;teachingChoice=undo?3:choice==TagJudgments.Value.ASSIGNED?2:0;for(Button b:teachingButtons)b.setEnabled(false);teachingButtons.get(teachingChoice).setTag(StatusView.Symbol.RUNNING);teachingButtons.get(teachingChoice).setStateDescription("保存中");teachingButtons.get(teachingChoice).invalidate();teachingStatus.clear();int token=generation,index=teachingIndex;String tagId=tag.id;
+    String target=undo?teachingUndo.get(teachingUndo.size()-1):null,operation=UUID.randomUUID().toString();
+    String id=index<0?null:photoIds.get(index);TagJudgments.Entry entry=id==null?null:judgments.latest(tagId,id);long revision=entry==null?0:entry.revision;
+    worker.execute(()->{try(TagStore store=openStore()){
+      String savedId=undo?null:store.photoId(photos.get(index),true);
+      TagJudgments loaded;boolean conflict=false;
+      try{loaded=undo?store.undo(operation,target):store.record(operation,tagId,savedId,revision,choice);}
+      catch(IllegalStateException error){
+        loaded=store.load();
+        String changedId=savedId;long expected=revision;
+        if(undo){TagJudgments.Entry targetEntry=null;for(TagJudgments.Entry e:judgments.history)if(e.operationId.equals(target))targetEntry=e;if(targetEntry==null)throw error;changedId=targetEntry.photoId;expected=targetEntry.revision;}
+        TagJudgments.Entry latest=loaded.latest(tagId,changedId);if((latest==null?0:latest.revision)==expected)throw error;conflict=true;
+      }
+      TagJudgments saved=loaded;boolean changed=conflict;
+      main.post(()->{busy=false;if(!current(token))return;judgments=saved;
+        if(changed){if(!undo)photoIds.set(index,savedId);else teachingUndo.remove(teachingUndo.size()-1);showTeaching();teachingStatus.show(StatusView.Symbol.FAILED,"ほかの操作で判断が更新されました。最新の判断を読み込みました。写真を確認してもう一度操作してください");return;}
+        relearnCached();
+        if(undo){TagJudgments.Entry undone=saved.history.get(saved.history.size()-1);teachingUndo.remove(teachingUndo.size()-1);for(int i=0;i<photoIds.size();i++)if(undone.photoId.equals(photoIds.get(i))){teachingIndex=i;teachingSeen.remove(i);break;}teachingCount=Math.max(0,teachingCount-1);showTeaching();}
+        else{photoIds.set(index,savedId);teachingUndo.add(operation);teachingSeen.add(index);teachingCount++;nextTeaching();}
+      });
+    }catch(Exception error){main.post(()->{busy=false;if(current(token)){for(int i=0;i<teachingButtons.size();i++)teachingButtons.get(i).setEnabled(i==3?!teachingUndo.isEmpty():teachingIndex>=0);Button failed=teachingButtons.get(teachingChoice);failed.setTag(StatusView.Symbol.FAILED);failed.invalidate();failed.setStateDescription("保存できませんでした。写真と判断はそのままです。もう一度押して再試行できます");failed.announceForAccessibility(failed.getStateDescription());}});}});
   }
 
   private void toggleSelection(int position) {
@@ -389,7 +572,7 @@ public final class TagActivity extends DiagnosticActivity {
         ? TagJudgments.Value.EXCLUDED : TagJudgments.Value.ASSIGNED;
     int token = generation; busy = true; refreshSelection();
     worker.execute(() -> {
-      try (TagStore store = new TagStore(this)) {
+      try (TagStore store = openStore()) {
         Map<String, Long> expected = new java.util.LinkedHashMap<>();
         Map<Integer, String> ids = new HashMap<>();
         for (int index : selected) {
@@ -399,9 +582,11 @@ public final class TagActivity extends DiagnosticActivity {
         }
         TagJudgments saved = store.recordBatch(operation, tagId, expected, value);
         Map<String, AutomaticTags.Decision> inferred = store.automatic(tagId);
+        TagScores.Snapshot learned=new TagScores(store).snapshot(tagId);
         main.post(() -> {
           busy = false; if (!current(token)) return;
           judgments = saved; automatic = inferred;
+          relearnCached();
           for (Map.Entry<Integer, String> entry : ids.entrySet()) photoIds.set(entry.getKey(), entry.getValue());
           selectedPhotos.clear();selecting=false;
           int target = 0;
@@ -446,7 +631,7 @@ public final class TagActivity extends DiagnosticActivity {
     StatusView loading=new StatusView(this);loading.asPhotoOverlay();viewer.status(loading);loading.begin("写真を読み込んでいます");
     worker.execute(()->{
       try{
-        Bitmap bitmap=PhotoRepository.bitmap(new PhotoRepository(this).preview(photo),1600);
+        Bitmap bitmap=PhotoRepository.bitmap(photoPreview(photo),1600);
         main.post(()->{if(current(token)){viewer.image.setBitmap(bitmap);loading.finish();viewer.refreshStatus();}else bitmap.recycle();});
       }catch(Exception error){main.post(()->{if(current(token)){
         viewer.failed();viewer.stage.removeView(loading);
@@ -471,13 +656,14 @@ public final class TagActivity extends DiagnosticActivity {
   }
 
   private void clearAutomatic() {
+    if(busy)return;
     new GalleryUi.Sheet(this).setTitle("自動で付いたタグをすべて外しますか？")
         .setMessage("「" + tag.name + "」が対象です。全アルバムの自動で付いた分を外します。自分で付けたタグは残ります。")
         .setPositiveButton("すべて外す", (d, w) -> {
-          stopAnalysis(); busy = true;
+          stopAnalysis();learningGeneration++;learning=false;pendingConfidence=null; busy = true;
           String tagId = tag.id;
           worker.execute(() -> {
-            try (TagStore store = new TagStore(this)) {
+            try (TagStore store = openStore()) {
               store.automation(tagId, false, true);
               main.post(() -> { busy = false; if (!isDestroyed()) showTag(); });
             } catch (Exception error) { main.post(() -> { busy = false; failure(error); }); }
@@ -508,11 +694,12 @@ public final class TagActivity extends DiagnosticActivity {
     TagJudgments.Entry entry = id == null ? null : judgments.latest(tagId, id);
     long revision = entry == null ? 0 : entry.revision;
     worker.execute(() -> {
-      try (TagStore store = new TagStore(this)) {
+      try (TagStore store = openStore()) {
         PhotoTagSave saved=savePhotoTag(store,photos.get(index),UUID.randomUUID().toString(),tagId,revision,value);
         main.post(() -> {
           busy = false; if (!current(token)) return;
           photoIds.set(index,saved.photoId);judgments=saved.judgments;
+          if(!saved.conflict)relearnCached();
           showAssignedPhoto(position);
           if(saved.conflict){
             refreshPhotoSave(true);
@@ -529,7 +716,7 @@ public final class TagActivity extends DiagnosticActivity {
       String tagId = tag.id;
       autoRunning = false;
       worker.execute(() -> {
-        try (TagStore store = new TagStore(this)) { store.automation(tagId, false, false); }
+        try (TagStore store = openStore()) { store.automation(tagId, false, false); }
         catch (Exception error) { main.post(() -> { if (!isDestroyed()) failure(error); }); }
       });
     }
@@ -565,7 +752,8 @@ public final class TagActivity extends DiagnosticActivity {
       assignmentStatus.observe(autoPending?StatusView.Symbol.RUNNING:StatusView.Symbol.AUTO_TAG,Integer.toString(automaticCount),"自動付与"+automaticCount+"枚"+(autoPending?"、保存中":""));
       if(analysisFailures>0)failureCount.show(StatusView.Symbol.FAILED,Integer.toString(analysisFailures),"取得失敗"+analysisFailures+"枚",null,"");else failureCount.clear();
     }
-    if (resultButton != null) resultButton.setText(done ? "結果を見る" : "停止して写真を見る");
+    if (resultButton != null) resultButton.setText(done ? "結果を見る" : "中止");
+    if(analysisAction!=null)analysisAction.setEnabled(!busy&&(!autoRunning||done));
   }
 
   private void startRelated() {
@@ -575,17 +763,21 @@ public final class TagActivity extends DiagnosticActivity {
   }
 
   private void startAutomatic() {
+    if(busy)return;
     stopAnalysis();
     busy = true;
     int token = generation;
     String tagId = tag.id;
     worker.execute(() -> {
-      try (TagStore store = new TagStore(this)) {
-        long epoch = store.automation(tagId, true, false);
+      try (TagStore store = openStore()) {
+        TagScores scores=new TagScores(store);scores.enable(tagId);TagScores.Preferences enabled=scores.preferences(tagId);
         main.post(() -> {
           busy = false;
           if (!current(token)) return;
-          automaticError = ""; autoEpoch = epoch; autoRunning = true; related = true;
+          if(confidence!=null)confidence=new TagScores.Snapshot(enabled,confidence.model,confidence.revision,confidence.stale,confidence.scores);
+          else confidence=new TagScores.Snapshot(enabled,null,-1,false,java.util.Collections.emptyMap());
+          if(pendingConfidence!=null)pendingConfidence=new TagScores.Snapshot(enabled,pendingConfidence.model,pendingConfidence.revision,pendingConfidence.stale,pendingConfidence.scores);
+          automaticError = ""; autoRunning = true; related = true;
           beginAnalysis();
           showAutomaticProgress();
         });
@@ -593,18 +785,7 @@ public final class TagActivity extends DiagnosticActivity {
     });
   }
 
-  private void showAutomaticProgress() {
-    reviewing = true; browseMode = 0;
-    screen(tag.name);
-    jobTitle = text("タグの解析・自動付与", 20); root.addView(jobTitle);
-    root.addView(text("一枚ずつ判断しなくてもタグが付きます。間違いを含む可能性がある結果として保存します。", 14));
-    analysisStatus=new StatusView(this);root.addView(analysisStatus);
-    assignmentStatus=new StatusView(this);root.addView(assignmentStatus);failureCount=new StatusView(this);root.addView(failureCount);
-    root.addView(text(scope(), 13));
-    root.addView(new android.view.View(this), new LinearLayout.LayoutParams(-1, 0, 1));
-    resultButton = button("停止して写真を見る", this::loadResults);
-    root.addView(resultButton);updateProgress();
-  }
+  private void showAutomaticProgress(){tagOverview=true;selecting=false;selectedPhotos.clear();renderPhotos(Filter.ATTACHED,0,0);}
 
   private void loadResults() {
     if (busy) return;
@@ -612,12 +793,14 @@ public final class TagActivity extends DiagnosticActivity {
     String tagId = tag.id;
     int token = generation;
     worker.execute(() -> {
-      try (TagStore store = new TagStore(this)) {
+      try (TagStore store = openStore()) {
         Map<String, AutomaticTags.Decision> saved = store.automatic(tagId);
+        TagScores.Snapshot learned=new TagScores(store).snapshot(tagId);
+        int[] examples;try(PhotoFeatures cached=new PhotoFeatures(this,featureDatabaseName)){examples=new TagScores(store).exampleCounts(tagId,cached);}
         Map<String, String> ids = store.photoIds();
         main.post(() -> {
           busy = false; if (!current(token)) return;
-          automatic = saved;
+          automatic = saved;confidence=learned;pendingConfidence=null;displayThreshold=learned.preferences.threshold;persistedThreshold=displayThreshold;examplesKnown=true;examplePositive=examples[0];exampleNegative=examples[1];learningUnavailable=examples[0]==0||examples[1]==0;
           for (int i = 0; i < photos.size(); i++) photoIds.set(i, ids.get(TagStore.source(photos.get(i))));
           showPhotos(Filter.ATTACHED);
         });
@@ -626,53 +809,27 @@ public final class TagActivity extends DiagnosticActivity {
   }
 
   private void requestAutomatic() {
-    if (!autoRunning || busy) return;
+    if (!autoRunning) return;
     if (autoPending) { autoAgain = true; return; }
     autoPending = true; autoAgain = false;
     int token = analysisGeneration;
-    long epoch = autoEpoch;
     String tagId = tag.id;
-    List<PhotoRepository.Photo> sources = new ArrayList<>(photos);
-    Map<Integer, RelatedPhotos.Vector> vectors = new HashMap<>(features);
     worker.execute(() -> {
-      try (TagStore store = new TagStore(this)) {
-        long revision = store.judgmentRevision(tagId);
-        TagJudgments human = store.load();
-        // A concurrent human update either causes applyAutomatic to reject, or is read consistently.
-        Map<String, String> ids = store.photoIds();
-        List<TagJudgments.Value> values = new ArrayList<>();
-        Set<Integer> blocked = new HashSet<>();
-        for (int i = 0; i < sources.size(); i++) {
-          String id = ids.get(TagStore.source(sources.get(i)));
-          TagJudgments.Entry entry = id == null ? null : human.latest(tagId, id);
-          values.add(entry == null ? TagJudgments.Value.UNDECIDED : entry.value);
-          if (entry != null && entry.value == TagJudgments.Value.UNDECIDED) blocked.add(i);
-        }
-        Map<Integer, AutomaticTags.Decision> predictions = AutomaticTags.predict(vectors, values, blocked);
-        boolean applied = store.applyAutomatic(tagId, epoch, revision, sources, vectors.keySet(), predictions,
-            () -> token != analysisGeneration);
-        Map<String, AutomaticTags.Decision> saved = store.automatic(tagId);
-        Map<String, String> savedIds = store.photoIds();
-        main.post(() -> {
-          if (isDestroyed() || token != analysisGeneration || !autoRunning) return;
-          autoPending = false;
-          if (applied) {
-            automatic = saved;
-            for (int i = 0; i < photos.size(); i++) photoIds.set(i, savedIds.get(TagStore.source(photos.get(i))));
-          }
-          updateAutomaticCount();
-          automaticError = applied ? "" : "判断が更新されたため保存を見送りました。再実行してください。";
-          updateProgress();
-          if (autoAgain) requestAutomatic();
+      try (TagStore store = openStore();PhotoFeatures cached=new PhotoFeatures(this,featureDatabaseName)) {
+        TagScores scores=new TagScores(store);
+        boolean applied=scores.recompute(tagId,cached,()->token!=analysisGeneration||isDestroyed());
+        int[] examples=scores.exampleCounts(tagId,cached);
+        TagScores.Snapshot learned=scores.snapshot(tagId);Map<String,String> ids=store.photoIds();
+        main.post(()->{
+          if(isDestroyed()||token!=analysisGeneration||!autoRunning)return;
+          autoPending=false;pendingConfidence=learned;resultPrepared=applied;examplesKnown=true;examplePositive=examples[0];exampleNegative=examples[1];learningUnavailable=!applied&&(examples[0]==0||examples[1]==0);updateLearningStatus();
+          for(int i=0;i<photos.size();i++)photoIds.set(i,ids.get(TagStore.source(photos.get(i))));
+          updateAutomaticCount();automaticError="";updateProgress();
+          if(learningUnavailable&&analysisFinished&&assignmentStatus!=null)assignmentStatus.show(StatusView.Symbol.EMPTY,"含める・含めないの特徴がそれぞれ1枚以上必要です");
+          if(autoAgain)requestAutomatic();
         });
-      } catch (Exception error) {
-        main.post(() -> {
-          if (isDestroyed() || token != analysisGeneration) return;
-          autoPending = false; failure(error);
-          automaticError = "自動付与を保存できませんでした。終了して再試行してください。";
-          updateProgress();
-        });
-      }
+      }catch(java.util.concurrent.CancellationException cancelled){/* Stopped jobs retain the last complete result. */}
+      catch(Exception error){main.post(()->{if(!isDestroyed()&&token==analysisGeneration){autoPending=false;automaticError="スコアを保存できませんでした。前回の結果は保持しています。";updateProgress();}});}
     });
   }
 
@@ -699,11 +856,11 @@ public final class TagActivity extends DiagnosticActivity {
       for (int i = offset; i < sources.size(); i += stride) order.add(i);
     order.removeAll(processed);
     analyzing = analysis.submit(() -> {
-      try (PhotoFeatures extractor = new PhotoFeatures(this)) {
+      try (PhotoFeatures extractor = new PhotoFeatures(this,featureDatabaseName)) {
         for (int i : order) {
           if (epoch != analysisGeneration || analysisPaused || Thread.currentThread().isInterrupted()) return;
           RelatedPhotos.Vector vector = null;
-          try { vector = extractor.obtain(sources.get(i)); }
+          try { requireFixturePhoto(sources.get(i));vector = extractor.obtain(sources.get(i)); }
           catch (Exception error) { /* Missing/failed analysis is not a negative judgment. */ }
           RelatedPhotos.Vector completed = vector;
           main.post(() -> {
@@ -733,6 +890,7 @@ public final class TagActivity extends DiagnosticActivity {
     DiagnosticLog.event("action.back", 0, "screen", "TagActivity");
     if (busy) return;
     if (browseMode == 1 && selecting) { selecting = false; selectedPhotos.clear(); refreshSelection(); }
+    else if (browseMode == 3) {showTag();}
     else if (browseMode == 2) {
       renderPhotos(browseFilter, 0, 0);
       if (photoGridState != null) photoGrid.onRestoreInstanceState(photoGridState);
@@ -744,7 +902,7 @@ public final class TagActivity extends DiagnosticActivity {
   }
 
   protected void onDestroy() {
-    stopAnalysis(); generation++; worker.shutdown(); analysis.shutdownNow(); super.onDestroy();
+    learningGeneration++;stopAnalysis(); generation++; worker.shutdown(); analysis.shutdownNow(); super.onDestroy();
   }
 
   protected void onStop() {
