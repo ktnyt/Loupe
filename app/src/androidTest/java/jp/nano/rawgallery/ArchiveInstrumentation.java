@@ -23,6 +23,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       // Test process resources only; never writes system settings.
       activity.getResources().updateConfiguration(config, activity.getResources().getDisplayMetrics());
     }
+    if((confidenceUiTest||tagDetailTest)&&activity instanceof TagActivity)TagFixtureIsolation.install((TagActivity)activity);
     super.callActivityOnCreate(activity, state);
     if ((tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
   }

@@ -5,6 +5,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import contextlib
+import io
 
 SCRIPT = pathlib.Path(__file__).with_name('device-check.py')
 YOUTUBE = 'Window{fixture u0 com.google.android.youtube/Player}'
@@ -97,6 +99,25 @@ class DeviceCheckTests(unittest.TestCase):
         m.wait_for_standby(shell, interval=0)
         self.assertEqual(len(calls), 12)
         self.assertTrue(all(c[:2] == ('sh', '-c') for c in calls))
+
+    def test_resume_is_sent_once_after_youtube_is_focused(self):
+        m = module(); calls = []; replies = iter(['', 'mCurrentFocus=' + YOUTUBE, HELD])
+        def shell(*parts):
+            calls.append(parts)
+            return next(replies) if parts[0] == 'sh' else ''
+        m.wait_for_standby(shell, attempts=3, interval=0, play_when_focused=True)
+        self.assertEqual(calls[2], ('input', 'keyevent', '126'))
+        self.assertEqual(calls.count(('input', 'keyevent', '126')), 1)
+
+    def test_restore_failure_does_not_hide_original_test_failure(self):
+        m = module()
+        def fail_restore(*args, **kwargs): raise RuntimeError('restore failed')
+        m.wait_for_standby = fail_restore
+        def shell(*parts): return 'showing=false'
+        with contextlib.redirect_stderr(io.StringIO()) as report:
+            with self.assertRaisesRegex(ValueError, 'original fixture failure'):
+                with m.standby_video(shell, True): raise ValueError('original fixture failure')
+        self.assertIn('restore failed', report.getvalue())
 
     def test_stale_hold_or_another_app_never_counts_as_standby(self):
         for windows in ('mCurrentFocus=' + YOUTUBE,

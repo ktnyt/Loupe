@@ -75,8 +75,8 @@ final class TagDetailChecks {
   }
   static String run(Instrumentation t,int requestedWidth)throws Exception{
     width=requestedWidth;
-    TagActivity a=(TagActivity)t.startActivitySync(new Intent(t.getTargetContext(),TagActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));File file=new File(a.getCacheDir(),"tag-detail-synthetic.jpg");
-    try{idle(t,a);
+    String uiDb="tag-detail-ui-"+UUID.randomUUID()+".db",featureDb="tag-detail-features-"+UUID.randomUUID()+".db";TagActivity a=(TagActivity)t.startActivitySync(TagFixtureIsolation.intent(t.getTargetContext(),uiDb,featureDb));File file=new File(a.getCacheDir(),"tag-detail-synthetic.jpg");
+    try{idle(t,a);TagFixtureIsolation.assertGuard(a);
       ui(t,()->{TextView clipped=new TextView(a);clipped.setText("Horizontal clipping must fail");clipped.setSingleLine(true);clipped.measure(View.MeasureSpec.makeMeasureSpec(30,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(300,View.MeasureSpec.EXACTLY));clipped.layout(0,0,30,300);boolean caught=false;try{inspect(clipped);}catch(AssertionError expected){caught=expected.getMessage().startsWith("text width:");}require(caught,"horizontal clipping detector");});
       Bitmap photo=Bitmap.createBitmap(240,160,Bitmap.Config.ARGB_8888);require(photo.getWidth()==240&&photo.getHeight()==160,"3:2 fixture dimensions");photo.eraseColor(0xff718774);try(FileOutputStream out=new FileOutputStream(file)){photo.compress(Bitmap.CompressFormat.JPEG,90,out);}photo.recycle();
       isolatedSave(t,file);
@@ -95,6 +95,6 @@ final class TagDetailChecks {
       ui(t,()->inspect((View)get(a,"root")));
       ConsistencyLayoutChecks.captureHardware(t,a,(View)get(a,"root"),dir,"tag-detail-"+width+"-"+a.getResources().getConfiguration().fontScale+"-long");
       return "PASS actual TagActivity with synthetic photos and in-memory judgments: attached/excluded filters, bulk/select-all, busy Back guard, selection cancellation, add-photo entry, empty selection disabled, tag viewer four-action layout/pinch/swipe/paging/Back/grid position, actual missing-image retry and busy/failure presentation fixtures; PixelCopy of synthetic root. No writes to the user tag database, inference or automatic removal. Separate disposable database exercised save, unavailable automatic read, idempotency, conflict and retry.\n";
-    }finally{ui(t,()->{a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);a.finish();});file.delete();}
+    }finally{ui(t,()->{a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);a.finish();});TagFixtureIsolation.cleanup(a);file.delete();t.getTargetContext().deleteDatabase(uiDb);t.getTargetContext().deleteDatabase(featureDb);}
   }
 }

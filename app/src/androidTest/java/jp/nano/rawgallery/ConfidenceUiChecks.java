@@ -33,10 +33,10 @@ final class ConfidenceUiChecks {
       new TagScores(store).enable(tag.id);try(PhotoFeatures cached=new PhotoFeatures(context,cache)){require(new TagScores(store).recompute(tag.id,cached,()->false),"seed learned snapshot");}
       initial=store.load();snapshot=new TagScores(store).snapshot(tag.id);
     }
-    TagActivity a=(TagActivity)t.startActivitySync(new Intent(context,TagActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));TagDetailChecks.width=width;
+    TagActivity a=(TagActivity)t.startActivitySync(TagFixtureIsolation.intent(context,db,cache));TagDetailChecks.width=width;
     try{
-      idle(t,a);TagStore.Tag selected=tag;TagJudgments labels=initial;TagScores.Snapshot learned=snapshot;
-      ui(t,()->{a.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);a.tagDatabaseName=db;a.featureDatabaseName=cache;TagDetailChecks.set(a,"tag",selected);((List<PhotoRepository.Photo>)get(a,"photos")).clear();((List<PhotoRepository.Photo>)get(a,"photos")).addAll(photos);((List<String>)get(a,"photoIds")).clear();((List<String>)get(a,"photoIds")).addAll(ids);TagDetailChecks.set(a,"judgments",labels);TagDetailChecks.set(a,"confidence",learned);call(a,"renderTag");});idle(t,a);
+      idle(t,a);TagFixtureIsolation.assertGuard(a);TagStore.Tag selected=tag;TagJudgments labels=initial;TagScores.Snapshot learned=snapshot;
+      ui(t,()->{a.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);TagDetailChecks.set(a,"tag",selected);((List<PhotoRepository.Photo>)get(a,"photos")).clear();((List<PhotoRepository.Photo>)get(a,"photos")).addAll(photos);((List<String>)get(a,"photoIds")).clear();((List<String>)get(a,"photoIds")).addAll(ids);TagDetailChecks.set(a,"judgments",labels);TagDetailChecks.set(a,"confidence",learned);call(a,"renderTag");});idle(t,a);
       File dir=new File(a.getCacheDir(),"consistency-checks");dir.mkdirs();String prefix="tag-confidence-"+width+"-"+a.getResources().getConfiguration().fontScale;
       ui(t,()->{require(((List<?>)get(a,"browsePhotos")).size()==6,"threshold seeded membership");TagDetailChecks.inspect((View)get(a,"root"));});
       ConsistencyLayoutChecks.captureHardware(t,a,(View)get(a,"root"),dir,prefix+"-normal");
@@ -74,6 +74,6 @@ final class ConfidenceUiChecks {
       ui(t,()->{TagDetailChecks.set(a,"tag",new TagStore.Tag(selected.id,"旅先で見つけたミカヅキインコと長い名前のタグ"));call(a,"renderTag");});idle(t,a);ui(t,()->TagDetailChecks.inspect((View)get(a,"root")));ConsistencyLayoutChecks.captureHardware(t,a,(View)get(a,"root"),dir,prefix+"-long");
       ConfidenceAsyncChecks.run(t,a,selected,photos,ids,db,cache);
       return "PASS tag confidence UI with generated photos and disposable databases: threshold persists without training; all scores retained; teaching pass/save failure/retry/undo failure/retry and correct completion count; cached learning and current-image stability; pending-threshold race, human conflict retry, insufficient undo, detached analysis notifications, save/analysis completion, DB result reload and fresh Activity restoration; busy Back guard; real layout and PixelCopy. No user judgments modified.\n";
-    }finally{ui(t,()->{a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);a.finish();});for(File f:files)f.delete();context.deleteDatabase(db);context.deleteDatabase(cache);}
+    }finally{ui(t,()->{a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);a.finish();});TagFixtureIsolation.cleanup(a);for(File f:files)f.delete();context.deleteDatabase(db);context.deleteDatabase(cache);}
   }
 }

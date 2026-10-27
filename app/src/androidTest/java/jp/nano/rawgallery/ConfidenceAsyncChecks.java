@@ -65,8 +65,8 @@ final class ConfidenceAsyncChecks {
       ui(t,()->{set(a,"busy",false);set(a,"pendingConfidence",null);call(a,"loadResults");});idle(t,a);require(((TagScores.Snapshot)get(a,"confidence")).model!=null,"results reload completed DB model even without callback snapshot");
     }finally{second.countDown();ui(t,()->set(a,"busy",false));}
 
-    TagActivity restarted=(TagActivity)t.startActivitySync(new Intent(context,TagActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-    try{idle(t,restarted);ui(t,()->{restarted.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);restarted.tagDatabaseName=db;restarted.featureDatabaseName=cache;set(restarted,"tag",original);((List<PhotoRepository.Photo>)get(restarted,"photos")).addAll(photos);((List<String>)get(restarted,"photoIds")).addAll(ids);call(restarted,"showTag");});idle(t,restarted);require((double)get(restarted,"displayThreshold")==threshold,"new Activity restores persisted threshold");require(((TagScores.Snapshot)get(restarted,"confidence")).model!=null,"new Activity restores saved scores");}
-    finally{ui(t,()->{restarted.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);restarted.finish();});}
+    TagActivity restarted=(TagActivity)t.startActivitySync(TagFixtureIsolation.intent(context,db,cache));
+    try{idle(t,restarted);TagFixtureIsolation.assertGuard(restarted);ui(t,()->{restarted.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);set(restarted,"tag",original);((List<PhotoRepository.Photo>)get(restarted,"photos")).addAll(photos);((List<String>)get(restarted,"photoIds")).addAll(ids);call(restarted,"showTag");});idle(t,restarted);require((double)get(restarted,"displayThreshold")==threshold,"new Activity restores persisted threshold");require(((TagScores.Snapshot)get(restarted,"confidence")).model!=null,"new Activity restores saved scores");}
+    finally{ui(t,()->{restarted.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);restarted.finish();});TagFixtureIsolation.cleanup(restarted);}
   }
 }

@@ -29,6 +29,22 @@ import java.util.concurrent.Executors;
 /** Human judgments and separately stored, correctable automatic assignments. */
 public final class TagActivity extends DiagnosticActivity {
   String tagDatabaseName="tags.db", featureDatabaseName="photo-features.db";
+  boolean isolatedPhotos;
+  android.content.Context photoContext=this;
+  int rejectedFixtureAccess;
+  private void requireDatabase(String name){
+    if(isolatedPhotos&&!name.equals(tagDatabaseName)&&!name.equals(featureDatabaseName)){rejectedFixtureAccess++;throw new SecurityException("Fixture database only");}
+  }
+  @Override public java.io.File getDatabasePath(String name){requireDatabase(name);return super.getDatabasePath(name);}
+  @Override public android.database.sqlite.SQLiteDatabase openOrCreateDatabase(String name,int mode,android.database.sqlite.SQLiteDatabase.CursorFactory factory){requireDatabase(name);return super.openOrCreateDatabase(name,mode,factory);}
+  @Override public android.database.sqlite.SQLiteDatabase openOrCreateDatabase(String name,int mode,android.database.sqlite.SQLiteDatabase.CursorFactory factory,android.database.DatabaseErrorHandler handler){requireDatabase(name);return super.openOrCreateDatabase(name,mode,factory,handler);}
+  private void requireFixturePhoto(PhotoRepository.Photo photo)throws java.io.IOException{
+    if(!isolatedPhotos)return;
+    java.io.File file="file".equals(photo.uri.getScheme())?new java.io.File(photo.uri.getPath()).getCanonicalFile():null;
+    if(file==null||!getCacheDir().getCanonicalFile().equals(file.getParentFile())||!(file.getName().startsWith("confidence-synthetic-")||file.getName().equals("tag-detail-synthetic.jpg")||file.getName().equals("tag-viewer-intentionally-missing.jpg"))){rejectedFixtureAccess++;throw new SecurityException("Fixture photo only");}
+  }
+  private PhotoRepository.Preview photoPreview(PhotoRepository.Photo photo)throws java.io.IOException{requireFixturePhoto(photo);return new PhotoRepository(photoContext).preview(photo);}
+
   private TagStore openStore(){return new TagStore(this,tagDatabaseName);}
   private TagScores.Snapshot confidence, pendingConfidence;
   private volatile int learningGeneration;
@@ -147,7 +163,8 @@ public final class TagActivity extends DiagnosticActivity {
         List<TagStore.Summary> loaded;
         boolean countsAvailable;
         List<TagStore.Tag> names=store.tags();
-        try(GalleryIndex index=new GalleryIndex(this)){
+        if(isolatedPhotos){loaded=store.summaries(java.util.Collections.emptyList());countsAvailable=true;}
+        else try(GalleryIndex index=new GalleryIndex(this)){
           GalleryIndex.Snapshot snapshot=index.load(getIntent().getStringExtra("folder"),getIntent().getStringExtra("camera")==null?"すべて":getIntent().getStringExtra("camera"));
           loaded=store.summaries(snapshot.photos);countsAvailable=true;
         }catch(Exception readFailure){loaded=new ArrayList<>();for(TagStore.Tag name:names)loaded.add(new TagStore.Summary(name));countsAvailable=false;}
@@ -161,7 +178,7 @@ public final class TagActivity extends DiagnosticActivity {
             Button row=TagListUi.row(this,item.name,()->openTag(item));if(haveCounts)TagListUi.summary(row,item.name,summary.attached,summary.excluded);else {row.setText(item.name+"\nタグ付き — · 該当しない —");row.setContentDescription(item.name+"。写真と枚数を読み込めませんでした。タグを開く");TagListUi.photoFailure(row);}
             list.addView(row,new LinearLayout.LayoutParams(-1,-2));
             if(summary.cover!=null) worker.execute(()->{
-              try{Bitmap bitmap=new PhotoRepository(this).thumbnail(summary.cover,GalleryUi.dp(this,56),()->!current(token));
+              try{requireFixturePhoto(summary.cover);Bitmap bitmap=new PhotoRepository(photoContext).thumbnail(summary.cover,GalleryUi.dp(this,56),()->!current(token));
                 main.post(()->{if(current(token))TagListUi.photo(row,bitmap);else bitmap.recycle();});
               }catch(Exception error){main.post(()->{if(current(token)){TagListUi.photoFailure(row);row.setContentDescription(row.getContentDescription()+"。代表の写真を読み込めませんでした");}});}
             });
@@ -203,6 +220,7 @@ public final class TagActivity extends DiagnosticActivity {
   }
 
   private void openTag(TagStore.Tag selected) {
+    if(isolatedPhotos)throw new SecurityException("Fixture scope must be supplied explicitly");
     stopAnalysis();
     if (tag == null && tagScroll != null) tagScrollY = tagScroll.getScrollY();
     learning=false;tag = selected; reviewing = false; browseMode = 0;
@@ -350,7 +368,7 @@ public final class TagActivity extends DiagnosticActivity {
         if (reload) worker.execute(() -> {
           if (!current(token)) return;
           try {
-            Bitmap bitmap = PhotoRepository.bitmap(new PhotoRepository(TagActivity.this).preview(photo), 360);
+            Bitmap bitmap = PhotoRepository.bitmap(photoPreview(photo), 360);
             main.post(() -> {
               if (!current(token) || cell.getTag() != binding) { bitmap.recycle(); return; }
               cell.image.setImageBitmap(bitmap);
@@ -483,7 +501,7 @@ public final class TagActivity extends DiagnosticActivity {
     if(teachingIndex<0){image.setContentDescription("未判断の写真はありません");teachingStatus.show(StatusView.Symbol.COMPLETE,"未判断の写真はありません");}
     else{
       PhotoRepository.Photo photo=photos.get(teachingIndex);image.setContentDescription("写真。「"+tag.name+"」が写っているか判断してください。適合スコアは未校正で、正解率ではありません");
-      worker.execute(()->{try{Bitmap bitmap=PhotoRepository.bitmap(new PhotoRepository(this).preview(photo),1600);main.post(()->{if(current(token))image.setBitmap(bitmap);else bitmap.recycle();});}catch(Exception error){main.post(()->{if(current(token))teachingStatus.show(StatusView.Symbol.FAILED,"写真を読み込めませんでした。保留で次へ進めます");});}});
+      worker.execute(()->{try{Bitmap bitmap=PhotoRepository.bitmap(photoPreview(photo),1600);main.post(()->{if(current(token))image.setBitmap(bitmap);else bitmap.recycle();});}catch(Exception error){main.post(()->{if(current(token))teachingStatus.show(StatusView.Symbol.FAILED,"写真を読み込めませんでした。保留で次へ進めます");});}});
     }
     int controls=root.getChildCount();
     LinearLayout actions=new LinearLayout(this);actions.setOrientation(getResources().getConfiguration().screenWidthDp<360||getResources().getConfiguration().fontScale>1.15?LinearLayout.VERTICAL:LinearLayout.HORIZONTAL);
@@ -609,7 +627,7 @@ public final class TagActivity extends DiagnosticActivity {
     StatusView loading=new StatusView(this);loading.asPhotoOverlay();viewer.status(loading);loading.begin("写真を読み込んでいます");
     worker.execute(()->{
       try{
-        Bitmap bitmap=PhotoRepository.bitmap(new PhotoRepository(this).preview(photo),1600);
+        Bitmap bitmap=PhotoRepository.bitmap(photoPreview(photo),1600);
         main.post(()->{if(current(token)){viewer.image.setBitmap(bitmap);loading.finish();viewer.refreshStatus();}else bitmap.recycle();});
       }catch(Exception error){main.post(()->{if(current(token)){
         viewer.failed();viewer.stage.removeView(loading);
@@ -833,7 +851,7 @@ public final class TagActivity extends DiagnosticActivity {
         for (int i : order) {
           if (epoch != analysisGeneration || analysisPaused || Thread.currentThread().isInterrupted()) return;
           RelatedPhotos.Vector vector = null;
-          try { vector = extractor.obtain(sources.get(i)); }
+          try { requireFixturePhoto(sources.get(i));vector = extractor.obtain(sources.get(i)); }
           catch (Exception error) { /* Missing/failed analysis is not a negative judgment. */ }
           RelatedPhotos.Vector completed = vector;
           main.post(() -> {
