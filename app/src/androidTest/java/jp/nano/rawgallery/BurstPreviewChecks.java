@@ -50,6 +50,7 @@ final class BurstPreviewChecks {
       if(edges.size()!=3)throw new AssertionError("strip continued while hero waiting");
       replies.get(2).accept(false);
       if(retry[0].getVisibility()!=android.view.View.VISIBLE)throw new AssertionError("missing retry");
+      try{Field f=BurstPreviews.class.getDeclaredField("progress");f.setAccessible(true);StatusView status=(StatusView)f.get(controller[0]);if(status.isClickable())throw new AssertionError("compact failure status must not be a small retry target");}catch(ReflectiveOperationException e){throw new RuntimeException(e);}
       int beforeRetry=edges.size();
       retry[0].performClick();
       if(edges.size()!=beforeRetry+1 || edges.get(edges.size()-1)!=1600)

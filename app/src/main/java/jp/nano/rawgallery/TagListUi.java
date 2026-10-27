@@ -1,0 +1,114 @@
+package jp.nano.rawgallery;
+
+import android.content.Context;
+import android.content.res.ColorStateList;
+import android.graphics.*;
+import android.graphics.drawable.*;
+import android.view.Gravity;
+import android.widget.*;
+
+/** Presentation of tag navigation; never reads photos or changes tag data. */
+final class TagListUi {
+  private static int dp(Context c,float n){return GalleryUi.dp(c,n);}
+  static Button row(Context c,String name,Runnable open){
+    Button b=GalleryUi.button(c,name,open);
+    b.setTextSize(16);b.setTypeface(Typeface.create(Typeface.create("sans-serif",Typeface.NORMAL),500,false));b.setIncludeFontPadding(false);b.setLineHeight(Math.round(b.getTextSize()*1.45f));
+    b.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);b.setSingleLine(false);b.setEllipsize(null);
+    b.setPadding(dp(c,20),dp(c,8),dp(c,16),dp(c,8));
+    b.setMinHeight(dp(c,72));b.setMinimumHeight(dp(c,72));
+    b.setCompoundDrawables(cover(c,null),null,new Mark(c,1),null);
+    b.setCompoundDrawablePadding(dp(c,16));b.setContentDescription(name+"。タグを開く");
+    b.setBackground(background(c,false,0));return b;
+  }
+  static void summary(Button row,String name,int attached,int excluded){
+    String detail="タグ付き "+attached+"枚 · 該当しない "+excluded+"枚";
+    android.text.SpannableString text=new android.text.SpannableString(name+"\n"+detail);
+    text.setSpan(new android.text.style.AbsoluteSizeSpan(Math.round(13*row.getResources().getDisplayMetrics().scaledDensity)),name.length()+1,text.length(),0);
+    text.setSpan(new android.text.style.ForegroundColorSpan(0xffa9a9a4),name.length()+1,text.length(),0);
+    row.setText(text);row.setContentDescription(name+"、タグ付き "+attached+"枚、該当しない "+excluded+"枚");
+  }
+  static void photo(Button row,Bitmap bitmap){
+    row.setCompoundDrawables(cover(row.getContext(),bitmap),null,new Mark(row.getContext(),1),null);
+  }
+  static void photoFailure(Button row){ row.setCompoundDrawables(cover(row.getContext(),null,true),null,new Mark(row.getContext(),1),null); }
+  private static Drawable cover(Context c,Bitmap bitmap){return cover(c,bitmap,false);}
+  private static Drawable cover(Context c,Bitmap bitmap,boolean failed){
+    Drawable drawable=new Drawable(){
+      final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG|Paint.FILTER_BITMAP_FLAG);
+      public void draw(Canvas canvas){Rect b=getBounds();int save=canvas.save();Path clip=new Path();clip.addRoundRect(new RectF(b),dp(c,8),dp(c,8),Path.Direction.CW);canvas.clipPath(clip);
+        paint.setColor(0xff26262a);canvas.drawRect(b,paint);
+        if(bitmap!=null){float scale=Math.max(b.width()/(float)bitmap.getWidth(),b.height()/(float)bitmap.getHeight());float w=bitmap.getWidth()*scale,h=bitmap.getHeight()*scale;canvas.drawBitmap(bitmap,null,new RectF(b.centerX()-w/2,b.centerY()-h/2,b.centerX()+w/2,b.centerY()+h/2),paint);}
+        if(failed){paint.setStyle(Paint.Style.STROKE);paint.setColor(0xff8a8a85);paint.setStrokeWidth(dp(c,1.5f));float x=b.centerX(),y=b.centerY(),u=dp(c,10);canvas.drawRect(x-u,y-u,x+u,y+u,paint);Path broken=new Path();broken.moveTo(x-u,y+u/2);broken.lineTo(x-u/3,y-u/3);broken.lineTo(x+u/3,y+u/2);broken.lineTo(x+u,y);canvas.drawPath(broken,paint);canvas.drawCircle(x+u/3,y-u/2,dp(c,1.5f),paint);paint.setStyle(Paint.Style.FILL);}
+        canvas.restoreToCount(save);
+      }
+      public void setAlpha(int value){paint.setAlpha(value);}public void setColorFilter(ColorFilter f){paint.setColorFilter(f);}public int getOpacity(){return PixelFormat.TRANSLUCENT;}
+    };drawable.setBounds(0,0,dp(c,56),dp(c,56));return drawable;
+  }
+  static LinearLayout footer(Context c,Runnable create){
+    LinearLayout box=new LinearLayout(c);box.setOrientation(LinearLayout.VERTICAL);
+    box.setPadding(dp(c,16),dp(c,10),dp(c,16),dp(c,20));
+    Button b=new CenteredPlusButton(c);b.setText("新しいタグ");b.setAllCaps(false);b.setOnClickListener(v->create.run());b.setTextSize(15);b.setTypeface(Typeface.create(Typeface.create("sans-serif",Typeface.NORMAL),600,false));
+    b.setIncludeFontPadding(false);b.setLineHeight(Math.round(b.getTextSize()*1.35f));
+    b.setMinHeight(dp(c,52));b.setMinimumHeight(dp(c,52));
+    b.setPadding(dp(c,20),dp(c,12),dp(c,20),dp(c,12));
+    b.setTextColor(0xff111111);b.setGravity(Gravity.CENTER);b.setPadding(dp(c,48),dp(c,12),dp(c,20),dp(c,12));
+    b.setCompoundDrawablePadding(dp(c,8));b.setBackground(background(c,true,26));
+    box.addView(b,new LinearLayout.LayoutParams(-1,-2));return box;
+  }
+  static TextView title(Context c){
+    TextView t=new TextView(c);t.setText("タグ");t.setTextSize(28);t.setTextColor(GalleryUi.TEXT);
+    t.setTypeface(Typeface.create(Typeface.create("sans-serif",Typeface.NORMAL),600,false));t.setIncludeFontPadding(false);
+    t.setLineHeight(Math.round(t.getTextSize()*36f/28));t.setAccessibilityHeading(true);
+    t.setPadding(dp(c,20),dp(c,40),dp(c,20),dp(c,4));return t;
+  }
+  static TextView scope(Context c){
+    TextView t=new TextView(c);t.setText("すべての写真");
+    t.setTextSize(14);t.setTextColor(0xffa9a9a4);t.setIncludeFontPadding(false);
+    t.setLineHeight(Math.round(t.getTextSize()*20f/14));t.setPadding(dp(c,20),0,dp(c,20),dp(c,20));return t;
+  }
+  static android.view.View empty(Context c){
+    LinearLayout box=new LinearLayout(c);box.setGravity(Gravity.CENTER);box.setPadding(dp(c,20),dp(c,32),dp(c,20),dp(c,32));
+    ImageView mark=new ImageView(c);mark.setImageDrawable(new Mark(c,0));mark.setContentDescription("タグはまだありません");box.addView(mark,new LinearLayout.LayoutParams(dp(c,40),dp(c,40)));return box;
+  }
+  static android.view.View failure(Context c,Runnable retry){
+    LinearLayout box=new LinearLayout(c);box.setGravity(Gravity.CENTER);box.setPadding(dp(c,20),dp(c,48),dp(c,20),dp(c,48));
+    Button button=new RetryButton(c);button.setOnClickListener(v->retry.run());box.addView(button,new LinearLayout.LayoutParams(-2,-2));return box;
+  }
+  private static final class CenteredPlusButton extends Button {
+    private final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
+    CenteredPlusButton(Context c){super(c);}
+    @Override protected void onDraw(Canvas c){super.onDraw(c);android.text.Layout l=getLayout();if(l==null)return;
+      float left=getCompoundPaddingLeft()+l.getLineLeft(0)-dp(getContext(),28);float y=getHeight()/2f;
+      p.setColor(0xff111111);p.setStrokeWidth(dp(getContext(),1.8f));p.setStrokeCap(Paint.Cap.ROUND);
+      c.drawLine(left+dp(getContext(),10),y-dp(getContext(),6),left+dp(getContext(),10),y+dp(getContext(),6),p);c.drawLine(left+dp(getContext(),4),y,left+dp(getContext(),16),y,p);
+    }
+  }
+  private static final class RetryButton extends Button {
+    private final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
+    RetryButton(Context c){super(c);setText("再読み込み");setAllCaps(false);setTextColor(GalleryUi.TEXT);setTextSize(14);setIncludeFontPadding(false);setGravity(Gravity.CENTER);setPadding(dp(c,42),dp(c,76),dp(c,16),dp(c,20));setMinHeight(dp(c,128));setMinimumWidth(dp(c,120));setBackground(background(c,false,16));setContentDescription("タグを読み込めませんでした。再読み込み");}
+    @Override protected void onDraw(Canvas c){float d=getResources().getDisplayMetrics().density;int save=c.save();c.scale(d,d);float w=getWidth()/d;
+      StatusView.glyph(c,p,StatusView.Symbol.FAILED,w/2-24,12,48,0xffff8a7a,0);
+      p.setStyle(Paint.Style.FILL);p.setColor(0xff26262a);c.drawRoundRect(0,68,w,getHeight()/d-12,20,20,p);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1);p.setColor(0xff3a3a3f);c.drawRoundRect(.5f,68.5f,w-.5f,getHeight()/d-12.5f,20,20,p);
+      p.setColor(GalleryUi.TEXT);p.setStrokeWidth(1.8f);c.drawArc(18,78,34,94,30,300,false,p);c.drawLine(18,78,18,84,p);c.drawLine(18,84,24,84,p);c.restoreToCount(save);super.onDraw(c);
+    }
+  }
+  private static Drawable background(Context c,boolean primary,int radius){
+    StateListDrawable states=new StateListDrawable();
+    GradientDrawable focus=GalleryUi.shape(c,primary?GalleryUi.TEXT:GalleryUi.BG,radius);
+    focus.setStroke(dp(c,2),primary?0xff111111:GalleryUi.TEXT);
+    states.addState(new int[]{android.R.attr.state_focused},focus);
+    states.addState(new int[]{},GalleryUi.shape(c,primary?GalleryUi.TEXT:Color.TRANSPARENT,radius));
+    return new RippleDrawable(ColorStateList.valueOf(primary?0x22000000:0x33ffffff),states,GalleryUi.shape(c,Color.WHITE,radius));
+  }
+  private static final class Mark extends Drawable {
+    final int kind;final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
+    Mark(Context c,int kind){this.kind=kind;int size=dp(c,kind==0?40:20);setBounds(0,0,size,size);}
+    public void draw(Canvas canvas){int save=canvas.save();Rect r=getBounds();canvas.translate(r.left,r.top);canvas.scale(r.width()/(kind==0?40f:20f),r.height()/(kind==0?40f:20f));
+      if(kind==0){p.setStyle(Paint.Style.FILL);p.setColor(GalleryUi.PANEL);canvas.drawRoundRect(0,0,40,40,12,12,p);p.setStyle(Paint.Style.STROKE);p.setColor(0xffa0a0a4);p.setStrokeWidth(1.8f);p.setStrokeJoin(Paint.Join.ROUND);Path tag=new Path();tag.moveTo(12,11);tag.lineTo(21,11);tag.lineTo(30,20);tag.lineTo(20,30);tag.lineTo(11,21);tag.close();canvas.drawPath(tag,p);canvas.drawCircle(16,16,1.8f,p);}
+      else{p.setStyle(Paint.Style.STROKE);p.setColor(kind==2?0xff111111:0xffa0a0a4);p.setStrokeWidth(1.8f);p.setStrokeCap(Paint.Cap.ROUND);p.setStrokeJoin(Paint.Join.ROUND);Path path=new Path();if(kind==1){path.moveTo(7,4);path.lineTo(13,10);path.lineTo(7,16);}else{path.moveTo(10,4);path.lineTo(10,16);path.moveTo(4,10);path.lineTo(16,10);}canvas.drawPath(path,p);}canvas.restoreToCount(save);
+    }
+    public void setAlpha(int alpha){p.setAlpha(alpha);invalidateSelf();}
+    public void setColorFilter(ColorFilter filter){p.setColorFilter(filter);invalidateSelf();}
+    public int getOpacity(){return PixelFormat.TRANSLUCENT;}
+  }
+}

@@ -45,8 +45,40 @@ final class TagStoreChecks {
           check(c.moveToFirst() && c.getLong(0) == 3, "Reevaluation not atomic");
         }
       }
+      try (TagStore store = new TagStore(context, database)) {
+        PhotoRepository.Photo other = new PhotoRepository.Photo(Uri.parse("content://test/photo/other"), "two.jpg", "test", 200, 20, 0);
+        PhotoRepository.Photo outside = new PhotoRepository.Photo(Uri.parse("content://test/photo/outside"), "outside.jpg", "other", 300, 30, 0);
+        String otherId = store.photoId(other, true), outsideId = store.photoId(outside, true);
+        store.record("outside", tagId, outsideId, 0, TagJudgments.Value.ASSIGNED);
+        TagStore.Tag empty = store.create("未分類");
+        long epoch = store.automation(tagId, true, false);
+        java.util.Map<Integer, AutomaticTags.Decision> inferred = new java.util.HashMap<>();
+        inferred.put(0, new AutomaticTags.Decision(.9, .1, .7));
+        check(store.applyAutomatic(tagId, epoch, store.judgmentRevision(tagId), java.util.Arrays.asList(other),
+            java.util.Collections.singleton(0), inferred, () -> false), "Automatic fixture failed");
+        int before = store.load().history.size();
+        java.util.List<PhotoRepository.Photo> scope = java.util.Arrays.asList(other, photo, other);
+        TagStore.Summary summary = summary(store, scope, tagId);
+        check(summary.attached == 2 && summary.excluded == 0 && summary.cover == other, "Scope/automatic/cover order");
+        check(summary(store, scope, empty.id).attached == 0 && summary(store, scope, empty.id).cover == null, "Empty tag summary");
+        store.record("exclude", tagId, otherId, 0, TagJudgments.Value.EXCLUDED);
+        summary = summary(store, scope, tagId);
+        check(summary.attached == 1 && summary.excluded == 1 && summary.cover == photo, "Human exclusion must override automatic");
+        store.record("clear", tagId, otherId, 1, TagJudgments.Value.UNDECIDED);
+        check(summary(store, scope, tagId).attached == 1, "Explicit cancellation must suppress automation");
+        PhotoRepository.Photo changed = new PhotoRepository.Photo(photo.uri, photo.name, photo.folder, 101, 10, 0);
+        summary = summary(store, java.util.Arrays.asList(changed), tagId);
+        check(summary.attached == 0 && summary.excluded == 0 && summary.cover == null, "Old source included");
+        check(store.load().history.size() == before + 2, "Summary mutated judgments");
+        check(store.photoId(changed, false) == null, "Summary created photo identity");
+      }
       return "Tag storage passed: identity separation, idempotency, transaction rollback, reopen, undo, reevaluation\n";
     } finally { context.deleteDatabase(database); }
+  }
+
+  private static TagStore.Summary summary(TagStore store, java.util.List<PhotoRepository.Photo> scope, String id) {
+    for (TagStore.Summary result : store.summaries(scope)) if (result.tag.id.equals(id)) return result;
+    throw new AssertionError("Missing tag summary");
   }
 
   private static void check(boolean condition, String message) {

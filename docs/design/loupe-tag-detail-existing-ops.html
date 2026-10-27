@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loupe タグ詳細（合算・既存の入口）</title>
+<style>
+:root{--ink:#EDEDEA;--muted:#A9A9A4;--k:1;--w:400px;--h:844px}
+*{box-sizing:border-box}
+body{margin:0;background:#1E1E20;color:var(--ink);font-family:'Noto Sans JP',system-ui,sans-serif;font-size:15px;line-height:1.6}
+.wrap{max-width:1500px;padding:28px 24px 64px}
+h1.pg{margin:0;font-size:24px;line-height:1.4}
+.lead{margin:6px 0 0;color:#D6D6D2;font-size:14px}
+.note{margin:10px 0 0;padding:10px 14px;border-radius:10px;border:1px solid #4A4A50;background:#161618;font-size:13.5px}
+.controls{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin:10px 0 0}
+.lb{color:var(--muted);font-size:12.5px;margin-right:6px}
+.seg{display:inline-flex;flex-wrap:wrap;background:#2A2A2E;border-radius:22px;padding:2px}
+.seg button{background:none;border:0;color:var(--ink);font:inherit;font-size:13px;min-height:44px;padding:0 12px;border-radius:20px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:#EDEDEA;color:#111}
+.hw{background:#2A2A2E;border:1px solid #4A4A50;color:var(--ink);font:inherit;font-size:13px;font-weight:600;min-height:44px;padding:0 14px;border-radius:22px;cursor:pointer}
+.hw[aria-pressed="true"]{background:#EDEDEA;color:#111}
+.wrap :focus-visible{outline:2px solid #8AB4F8;outline-offset:2px}
+.stage{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start;margin-top:14px}
+.col>h2{margin:0 0 8px;font-size:14px;font-weight:600}
+.col>h2 small{color:var(--muted);font-weight:400}
+.side{flex:1;min-width:300px;display:flex;flex-direction:column;gap:10px}
+.box{background:#141416;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.6;overflow-wrap:anywhere}
+.okc{color:#9FE0B5}.ngc{color:#F2A7AB}
+table.t{border-collapse:collapse;width:100%;font-size:13.5px;line-height:1.6}
+table.t th,table.t td{border-bottom:1px solid #2E2E32;padding:6px 10px 6px 0;text-align:left;vertical-align:top}
+table.t th{color:var(--muted);font-weight:500;font-size:12px}
+h2.sec{margin:32px 0 8px;font-size:19px}
+.spec ul{margin:0;padding-left:20px}.spec li{margin:3px 0;font-size:14px}
+.tscroll{overflow-x:auto}
+.tg{display:inline-block;padding:0 8px;border-radius:10px;font-size:12px;color:#111;background:#F5A623;white-space:nowrap;margin:0 2px 2px 0}
+.tg.q{background:#8AB4F8}.tg.k{background:#9FE0B5}
+.orig,.dev{position:relative;overflow:hidden;transform:translateZ(0);outline:1px solid #3A3A3F;background:#0F0F10;color:#EDEDEA}
+.orig{width:390px;height:844px}
+.dev{width:var(--w);height:var(--h);font-family:'Noto Sans JP',system-ui,sans-serif;font-size:calc(15px*var(--k));line-height:calc(22px*var(--k));-webkit-font-smoothing:antialiased}
+.dev button{font-family:inherit;color:inherit}
+.dev *{text-overflow:clip}
+.dev :focus{outline:none}
+.dev :focus-visible{outline:2px solid #EDEDEA;outline-offset:2px}
+.dev.showchg [data-chg]{outline:2px solid #F5A623;outline-offset:-2px}
+.dev.showchg [data-chg="new"]{outline:2px dashed #F5A623}
+.spin{animation:spin 1s linear infinite;transform-origin:50% 50%}
+@keyframes spin{to{transform:rotate(360deg)}}
+.rm .spin{animation:none}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}}
+.caller{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:20px;color:#A9A9A4;text-align:center;background:#0F0F10;z-index:9;font-size:calc(14px*var(--k));line-height:1.5}
+.caller button{min-height:48px;padding:10px 18px;border-radius:24px;background:#26262A;border:1px solid #3A3A3F;color:#EDEDEA;font:inherit;cursor:pointer}
+.synth{position:absolute;right:8px;top:6px;font-size:10px;color:#8A8A85;border:1px dashed #3A3A3F;border-radius:6px;padding:0 6px;z-index:8;line-height:1.6;pointer-events:none;background:#0F0F10}
+.f12{font-size:calc(12px*var(--k));line-height:calc(16px*var(--k))}
+.f13{font-size:calc(13px*var(--k));line-height:calc(18px*var(--k))}
+.f14{font-size:calc(14px*var(--k));line-height:calc(20px*var(--k))}
+.f15{font-size:calc(15px*var(--k));line-height:calc(22px*var(--k))}
+.f28{font-size:calc(28px*var(--k));line-height:calc(36px*var(--k))}
+.mut{color:#A9A9A4}.num{font-variant-numeric:tabular-nums}
+.scr{position:absolute;inset:0;overflow-y:auto}
+.scr::-webkit-scrollbar{width:0}
+.panel{position:absolute;left:0;right:0;bottom:0;background:#0F0F10;border-top:1px solid #222226;padding:10px 16px 20px;display:flex;flex-direction:column;gap:8px;z-index:3}
+.pri{background:#EDEDEA;border:0;padding:6px 16px;margin:0;color:#111 !important;cursor:pointer;min-height:52px;border-radius:26px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:calc(15px*var(--k));line-height:calc(20px*var(--k));font-weight:600;text-align:center}
+.out{background:none;border:1px solid #3A3A3F;padding:4px 16px;margin:0;cursor:pointer;min-height:48px;border-radius:24px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:calc(14px*var(--k));line-height:calc(18px*var(--k));font-weight:500;text-align:center}
+.dock{display:grid;margin:0 -8px}
+.db{background:none;border:0;padding:6px 4px;margin:0;cursor:pointer;min-height:64px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:calc(12px*var(--k));line-height:calc(16px*var(--k));font-weight:500;text-align:center}
+.db[aria-disabled="true"]{color:#626B72}
+.db svg{width:24px;height:24px;flex-shrink:0}
+.dim{position:absolute;inset:0;background:rgba(0,0,0,.64);border:0;padding:0;margin:0;width:100%;cursor:default;z-index:5}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:#1C1C1F;border-radius:28px 28px 0 0;padding:8px 0 20px;display:flex;flex-direction:column;z-index:6}
+.sheet .hdl{display:block;width:32px;height:4px;border-radius:2px;background:#4A4A50;margin:4px auto 12px}
+.sheet h2{margin:0;padding:0 24px 4px;font-size:calc(20px*var(--k));line-height:calc(28px*var(--k));font-weight:600}
+.sheet .body{margin:4px 24px 0;font-size:calc(14px*var(--k));line-height:calc(21px*var(--k))}
+.sheet .acts{display:flex;flex-direction:column;gap:8px;padding:16px 16px 0}
+.sheet .it{background:none;border:0;padding:4px 24px;margin:0;cursor:pointer;width:100%;min-height:48px;display:flex;align-items:center;gap:16px;text-align:left;font-size:calc(15px*var(--k));line-height:calc(22px*var(--k))}
+.danger{background:none;border:1px solid #FF8A7A;padding:6px 16px;margin:0;color:#FF8A7A !important;cursor:pointer;min-height:52px;border-radius:26px;font-size:calc(15px*var(--k));line-height:calc(22px*var(--k));font-weight:600}
+.cancel{background:#EDEDEA;border:0;padding:6px 16px;margin:0;color:#111 !important;cursor:pointer;min-height:48px;border-radius:24px;font-size:calc(14px*var(--k));line-height:calc(20px*var(--k));font-weight:600}
+body.solo .wrap>*:not(.stage),body.solo .side,body.solo .col.o,body.solo .col>h2{display:none}
+#soloExit{display:none}
+body.solo #soloExit{display:inline-flex;position:fixed;right:16px;top:16px;z-index:20}
+</style>
+</head>
+<body>
+<button class="hw" id="soloExit" type="button">単独表示をやめる</button>
+<div class="wrap">
+<h1 class="pg">Loupe — タグ詳細：人と自動の判断の合算表示と、既存の入口・一括訂正の置き場所</h1>
+<p class="lead">左は元のデザインのV05、右は元の4列の写真と2つの主操作を保ったまま、既存の機能の入口を足した画面です。［変更箇所の枠］で、元から変えた部分にオレンジの枠（足した部分は破線）を出します。</p>
+<div class="note">保持する既存の機能：人と自動の判断の合算、人が外した写真（該当しない）と未確認の数、写真の追加、一括訂正（タグ付き・自動の一覧から「該当しない」へ／外した写真・すべての写真の一覧から「タグ付き」へ）、選択の保持と保存の失敗の再試行、自動で付いた写真、自動で付いたタグをすべて外す（確認あり）。未確認への一括変更は足しません。推論のアルゴリズムは変えません。写真は合成の色面です。Androidには<b>まだ実装していません</b>。</div>
+<div class="controls" role="group" aria-label="タグ詳細の状態（合成）">
+<span><span class="lb">一覧</span><span class="seg" id="oS"><button data-v="pos" aria-pressed="true">タグ付き</button><button data-v="neg" aria-pressed="false">該当しない（外した写真）</button><button data-v="all" aria-pressed="false">写真を追加（既存の写真一覧の画面）</button></span></span>
+<span><span class="lb">自動で付いた写真だけ</span><span class="seg" id="oA"><button data-v="0" aria-pressed="true">オフ</button><button data-v="1" aria-pressed="false">オン</button></span></span>
+<span><span class="lb">一括訂正</span><span class="seg" id="oB"><button data-v="0" aria-pressed="true">オフ</button><button data-v="1" aria-pressed="false">選択中</button></span></span>
+<span><span class="lb">保存の結果（合成）</span><span class="seg" id="oF"><button data-v="0" aria-pressed="true">成功</button><button data-v="1" aria-pressed="false">失敗</button></span></span>
+<span><span class="lb">自動のタグ</span><span class="seg" id="oN"><button data-v="1" aria-pressed="true">あり</button><button data-v="0" aria-pressed="false">すべて外した後</button></span></span>
+<span><span class="lb">タグ名</span><span class="seg" id="oL"><button data-v="0" aria-pressed="true">空</button><button data-v="1" aria-pressed="false">長い名前</button></span></span>
+</div>
+<div class="controls"><span><span class="lb">幅</span><span class="seg" id="oW"><button data-v="320" aria-pressed="false">320dp</button><button data-v="390" aria-pressed="false">390dp（元と同じ）</button><button data-v="400" aria-pressed="true">400dp</button></span></span><span><span class="lb">高さ</span><span class="seg" id="oH"><button data-v="844" aria-pressed="true">844dp</button><button data-v="640" aria-pressed="false">640dp</button></span></span><span><span class="lb">文字</span><span class="seg" id="oK"><button data-v="1" aria-pressed="true">1.0倍</button><button data-v="1.3" aria-pressed="false">1.3倍</button></span></span><button class="hw" id="oChg" aria-pressed="true">変更箇所の枠</button><button class="hw" id="oRM" aria-pressed="false">減らす動き</button><button class="hw" id="hwBack" type="button">Android Back（OSのシミュレータ・画面の外）</button><button class="hw" id="reset" type="button" style="background:none;font-weight:500">最初から</button><button class="hw" id="solo" type="button">変更後の画面だけを表示</button></div>
+<div class="stage">
+<div class="col o"><h2>元のデザイン <small id="origName"></small></h2><div class="orig" id="orig"></div></div>
+<div class="col"><h2>変更後 <small id="devName"></small></h2><div class="dev showchg" id="dev"></div></div>
+<div class="side"><div class="box" id="ax"></div><div class="box" id="chk"></div><div class="box" id="log"></div></div>
+</div>
+<div id="live" aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)"></div>
+<section class="spec" aria-label="差分と仕様">
+<h2 class="sec">1. 判断の合算（推論のアルゴリズムは変えない）</h2>
+<ul>
+<li>写真ごとに「人の判断」（タグ付き／該当しない／なし）と「自動の判断」（タグ付き／なし）がある。表示する判断は、<b>人の判断があればそれ、なければ自動の判断、どちらもなければ未確認</b>。</li>
+<li>件数の行は「タグ付き {人＋自動}枚（自動 {人の判断がない自動}枚）· 該当しない {人が外した}枚 · 未確認 {残り}枚」。このHTMLの例：人のタグ付き3枚・自動5枚・人が外した1枚（その1枚は自動でも付いているが、人の判断が優先）。</li>
+<li>［自動で付いたタグをすべて外す］は自動の判断だけを外す。人の判断はそのまま残り、有効な人の判断がない写真は未確認に戻る（例：タグ付き 8→3、該当しない 1→1、未確認 42→47）。対象は全アルバム。</li>
+</ul>
+
+<h2 class="sec">2. 元のデザイン（V05）からの変更</h2>
+<div class="tscroll"><table class="t">
+<tr><th>場所</th><th>元のデザイン</th><th>変更後</th><th>理由</th></tr>
+<tr><td>件数の行</td><td>「タグ付き 3枚 · 該当しない 0枚 · 未確認 48枚」</td><td>上の合算で「タグ付き 8枚（自動 5枚）· 該当しない 1枚 · 未確認 42枚」</td><td><span class="tg k">既存の情報</span></td></tr>
+<tr><td>4列の写真</td><td>高さ96dp・間2dp</td><td>そのまま。人の判断がなく自動で付いた写真だけ、右下に自動の印の札（既存の StatusView.AUTO_TAG：タグの形＋小さな十字。札は高さ20dp・rgba(0,0,0,.62)。順位の星とは形で区別）</td><td><span class="tg k">既存の情報</span></td></tr>
+<tr><td>切り替え</td><td>「タグ付き 3｜該当しない 0」</td><td>同じ形で合算の数「タグ付き 8｜該当しない 1」</td><td><span class="tg k">既存の情報</span></td></tr>
+<tr><td>2つの主操作</td><td>［似た写真にもタグを付ける］［1枚ずつ確認する］</td><td>そのまま</td><td>元のデザイン</td></tr>
+<tr><td>下の dock</td><td>［タグ一覧］だけ</td><td>［写真を追加］［一括訂正］［その他］（元の dock と同じ64dp・12sp・24dpのアイコン、3列）。［タグ一覧］は外し、Backでタグ一覧へ</td><td><span class="tg">#5</span><span class="tg k">既存の入口</span></td></tr>
+<tr><td>［その他］</td><td>—</td><td>元の「その他」と同じ形のシートに［自動で付いた写真］（オンの間は右に印）と［自動で付いたタグをすべて外す］（#FF8A7A。自動の判断がないときは無効）</td><td><span class="tg k">既存の入口</span></td></tr>
+<tr><td>自動で付いた写真</td><td>—</td><td>オンの間は、見出しの下に札「自動で付いた写真 ×」（48dp以上・押すと解除）。一覧はタグ付きのうち人の判断がない自動の写真だけ</td><td><span class="tg k">既存の入口</span></td></tr>
+<tr><td>すべて外すの確認</td><td>—</td><td>見出し「自動で付いたタグをすべて外しますか？」、本文「「{タグ名}」が対象です。全アルバムの自動で付いた分を外します。自分で付けたタグは残ります。」、実行［すべて外す］（赤の枠）、否定［外さない］</td><td><span class="tg k">既存の確認</span></td></tr>
+<tr><td>一括訂正（タグ付き・自動で付いた写真の一覧）</td><td>—</td><td>［一括訂正］で選択に入る（S03と同じ22dpの丸）。下に［該当しないにする］1つと dock［選択を終了］［すべて選択］。選んだ写真の人の判断を「該当しない」にする</td><td><span class="tg k">既存の操作</span></td></tr>
+<tr><td>一括訂正（該当しない＝外した写真の一覧）</td><td>—</td><td>同じ形で［タグ付きにする］1つ。選んだ写真の人の判断を「タグ付き」にする。この一覧は既存の［その他］の「外した写真」と同じで、下の切り替え［該当しない］から開く（読み上げ「該当しない 1。外した写真の一覧」）。［その他］には重ねて置かない</td><td><span class="tg k">既存の操作</span></td></tr>
+<tr><td>写真を追加</td><td>—</td><td>［写真を追加］で既存の写真一覧の画面へ移る（今の遷移のまま）。写真は4列（高さ96dp・間2dp、写真グリッドと同じ）で選択に入り、見出し「嵐山 10.18」の右に「{n}件選択」。下は［タグ付きにする］（読み上げ「選んだ写真を「{タグ名}」のタグ付きにする」）と dock［選択を終了］［すべて選択］。今の判断は写真の右下の札（自分で付けたタグ・自動・該当しない）で分かる。Backでタグ詳細へ</td><td><span class="tg k">既存の操作</span></td></tr>
+<tr><td>選択の保持と保存の失敗</td><td>—</td><td>0枚のときは操作を無効（#626B72）。保存に成功したら選択を終えて一覧を更新。<b>失敗したら選択はそのまま</b>残し、押した操作の右上に失敗の印（#17・18dpの三角）を付ける。同じ操作をもう一度押すと再試行。読み上げ「保存できませんでした。選んだ写真はそのままです。もう一度押すと保存します」</td><td><span class="tg">#17</span><span class="tg k">既存の再試行</span></td></tr>
+<tr><td colspan="2">変えないもの</td><td colspan="2">アルバム名・タグ名（28dp・折り返し）・上の余白40dp、4列の写真、2つの主操作、推論のアルゴリズム、写真の原本。未確認への一括変更は足さない（新機能のため）。</td></tr>
+</table></div>
+
+<h2 class="sec">3. 決まったこと（既存の操作を基準に確定）</h2>
+<div class="tscroll"><table class="t">
+<tr><th>点</th><th>決定</th></tr>
+<tr><td>dock の名前</td><td>［写真を追加］［一括訂正］</td></tr>
+<tr><td>写真を追加</td><td>既存の写真一覧の画面への遷移を維持し、4列で表示</td></tr>
+<tr><td>自動の印</td><td>既存の StatusView.AUTO_TAG（タグの形＋小さな十字）。順位の星とは区別</td></tr>
+<tr><td>すべて外すの確認</td><td>見出し「自動で付いたタグをすべて外しますか？」、本文「「{タグ名}」が対象です。全アルバムの自動で付いた分を外します。自分で付けたタグは残ります。」、実行［すべて外す］、否定［外さない］</td></tr>
+<tr><td>その他の「外した写真」</td><td>上部の「該当しない」の切り替えから同じ一覧へ届く。［その他］には［自動で付いた写真］［自動で付いたタグをすべて外す］だけを置く</td></tr>
+<tr><td>一括訂正</td><td>タグ付き・自動の一覧からは「該当しない」へ、外した写真・写真一覧からは「タグ付き」へ。未確認への一括変更は足さない。失敗時は選択を保持して再試行</td></tr>
+</table></div>
+<ul>
+<li>Back：確認・シート → 選択を終了（選択はそこで終わる）→ 写真を追加の一覧からはタグ詳細へ → タグ一覧。</li>
+<li>文字1.3倍では元の固定の高さを最低の高さとして扱い、伸びても切れない。フォントは Noto Sans JP を指定（ない環境では system-ui）。外枠は outline。</li>
+</ul>
+</section>
+</div>
+<script id="origData" type="application/json">{"V05": "<div class=\"sc-host\" data-sc-name=\"V05-Tag-Detail\"><div data-dc-tpl=\"3\" style=\"width: 390px; height: 844px; background: rgb(15, 15, 16);\"><div class=\"sc-host\" data-sc-name=\"Main\" data-dc-tpl=\"4\"><div data-dc-tpl=\"3\" style=\"width: 390px; height: 844px; position: relative; overflow: hidden; background: rgb(15, 15, 16); color: rgb(237, 237, 234); font-family: &quot;Noto Sans JP&quot;, system-ui, sans-serif; font-size: 15px; line-height: 22px; -webkit-font-smoothing: antialiased;\"><div data-dc-tpl=\"451\" style=\"position: absolute; inset: 0px; overflow-y: auto;\"><div data-dc-tpl=\"452\" style=\"box-sizing: border-box; padding: 40px 20px 20px; display: flex; flex-direction: column; gap: 4px;\"><span data-dc-tpl=\"453\" style=\"font-size: 13px; line-height: 18px; color: rgb(169, 169, 164);\"><span class=\"sc-interp\">嵐山 10.18<\/span><\/span><h1 data-dc-tpl=\"454\" style=\"margin: 0px; font-size: 28px; line-height: 36px; font-weight: 600; overflow-wrap: anywhere;\"><span class=\"sc-interp\">空<\/span><\/h1><span data-dc-tpl=\"455\" style=\"font-size: 14px; line-height: 20px; color: rgb(169, 169, 164); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">タグ付き 3枚 · 該当しない 0枚 · 未確認 48枚<\/span><\/span><\/div><div data-dc-tpl=\"456\" style=\"display: grid; grid-template-columns: repeat(4, minmax(0px, 1fr)); gap: 2px;\"><button data-dc-tpl=\"458\" aria-label=\"タグ付きの写真、変更する\" style=\"background: radial-gradient(11% 17% at 35% 72%, rgb(93, 107, 88) 0px, rgb(93, 107, 88) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(169, 195, 216) 0%, rgb(228, 234, 236) 62%, rgb(151, 161, 151) 63%, rgb(105, 115, 106) 100%); border: 0px; padding: 0px; margin: 0px; cursor: pointer; position: relative; display: block; height: 96px;\"><\/button><button data-dc-tpl=\"458\" aria-label=\"タグ付きの写真、変更する\" style=\"background: radial-gradient(11% 17% at 40% 30%, rgb(47, 53, 64) 0px, rgb(47, 53, 64) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(169, 195, 216) 0%, rgb(228, 234, 236) 62%, rgb(151, 161, 151) 63%, rgb(105, 115, 106) 100%); border: 0px; padding: 0px; margin: 0px; cursor: pointer; position: relative; display: block; height: 96px;\"><\/button><button data-dc-tpl=\"458\" aria-label=\"タグ付きの写真、変更する\" style=\"background: radial-gradient(11% 17% at 66% 74%, rgb(95, 108, 90) 0px, rgb(95, 108, 90) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(169, 195, 216) 0%, rgb(228, 234, 236) 62%, rgb(151, 161, 151) 63%, rgb(105, 115, 106) 100%); border: 0px; padding: 0px; margin: 0px; cursor: pointer; position: relative; display: block; height: 96px;\"><\/button><\/div><div data-dc-tpl=\"461\" style=\"height: 440px;\"><\/div><\/div><div data-dc-tpl=\"462\" style=\"position: absolute; left: 0px; right: 0px; bottom: 0px; background: rgb(15, 15, 16); border-top: 1px solid rgb(34, 34, 38); padding: 10px 16px 20px; display: flex; flex-direction: column; gap: 8px;\"><div data-dc-tpl=\"463\" role=\"group\" aria-label=\"表示する写真\" style=\"display: grid; grid-template-columns: repeat(2, minmax(0px, 1fr)); padding: 0px; gap: 4px; border-radius: 24px; background: rgb(28, 28, 31);\"><button data-dc-tpl=\"465\" aria-pressed=\"true\" style=\"background: rgb(237, 237, 234); border: 0px; padding: 4px 8px; margin: 0px; color: rgb(17, 17, 17); font-style: inherit; font-variant-ligatures: inherit; font-variant-caps: inherit; font-variant-east-asian: inherit; font-variant-alternates: inherit; font-variant-position: inherit; font-variant-emoji: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; min-height: 48px; border-radius: 24px; display: flex; align-items: center; justify-content: center; gap: 4px; font-size: 13px; line-height: 18px; font-weight: 500; text-align: center; font-variant-numeric: tabular-nums;\"><span data-dc-tpl=\"466\" style=\"width: 16px; height: 16px; display: flex; align-items: center; justify-content: center;\"><svg data-dc-tpl=\"468\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"469\" d=\"M5 12.5l4.5 4.5L19 7.5\"><\/path><\/svg><\/span><span data-dc-tpl=\"470\"><span class=\"sc-interp\">タグ付き 3<\/span><\/span><\/button><button data-dc-tpl=\"465\" aria-pressed=\"false\" style=\"background: transparent; border: 0px; padding: 4px 8px; margin: 0px; color: rgb(237, 237, 234); font-style: inherit; font-variant-ligatures: inherit; font-variant-caps: inherit; font-variant-east-asian: inherit; font-variant-alternates: inherit; font-variant-position: inherit; font-variant-emoji: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; min-height: 48px; border-radius: 24px; display: flex; align-items: center; justify-content: center; gap: 4px; font-size: 13px; line-height: 18px; font-weight: 500; text-align: center; font-variant-numeric: tabular-nums;\"><span data-dc-tpl=\"466\" style=\"width: 16px; height: 16px; display: flex; align-items: center; justify-content: center;\"><\/span><span data-dc-tpl=\"470\"><span class=\"sc-interp\">該当しない 0<\/span><\/span><\/button><\/div><button data-dc-tpl=\"471\" style=\"background: rgb(237, 237, 234); border: 0px; padding: 0px 12px; margin: 0px; color: rgb(17, 17, 17); font-style: inherit; font-variant: inherit; font-stretch: inherit; line-height: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 52px; border-radius: 26px; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 15px; font-weight: 600;\"><svg data-dc-tpl=\"472\" width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.9\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect data-dc-tpl=\"473\" x=\"3.5\" y=\"7\" width=\"8\" height=\"10\" rx=\"1.5\"><\/rect><rect data-dc-tpl=\"474\" x=\"13.5\" y=\"4\" width=\"7\" height=\"7\" rx=\"1.5\"><\/rect><rect data-dc-tpl=\"475\" x=\"13.5\" y=\"13\" width=\"7\" height=\"7\" rx=\"1.5\"><\/rect><\/svg><span data-dc-tpl=\"476\">似た写真にもタグを付ける<\/span><\/button><button data-dc-tpl=\"477\" style=\"background: none; border: 1px solid rgb(58, 58, 63); padding: 4px 12px; margin: 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; min-height: 48px; box-sizing: border-box; border-radius: 24px; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 14px; line-height: 18px; font-weight: 500; text-align: center;\"><svg data-dc-tpl=\"478\" width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect data-dc-tpl=\"479\" x=\"5\" y=\"4\" width=\"14\" height=\"16\" rx=\"2\"><\/rect><path data-dc-tpl=\"480\" d=\"M9 12h6\"><\/path><\/svg><span data-dc-tpl=\"481\">1枚ずつ確認する<\/span><\/button><nav data-dc-tpl=\"482\" aria-label=\"タグの操作\" style=\"display: grid; grid-template-columns: repeat(1, minmax(0px, 1fr)); margin: 0px -8px;\"><button data-dc-tpl=\"483\" style=\"background: none; border: 0px; padding: 0px; margin: 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 500;\"><svg data-dc-tpl=\"484\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"485\" d=\"M19 12H5M11 18l-6-6 6-6\"><\/path><\/svg><span data-dc-tpl=\"486\">タグ一覧<\/span><\/button><\/nav><\/div><\/div><\/div><\/div><\/div>"}</script>
+<script>
+(function () {
+
+  function check(extra) {
+    const dev = document.getElementById('dev'); const d = dev.getBoundingClientRect();
+    const vis = (e) => e.offsetParent !== null && !e.closest('.caller') && !e.classList.contains('synth');
+    const labs = [...dev.querySelectorAll('button,[role=img],[role=text],[role=radio],[role=checkbox]')].filter((e) => vis(e) && !e.closest('[aria-hidden="true"]') && !e.classList.contains('dim')).map((e) => '[' + (e.getAttribute('role') || 'button') + '] ' + (e.getAttribute('aria-label') || e.textContent.replace(/\s+/g, ' ').trim()) + (e.getAttribute('aria-pressed') === 'true' || e.getAttribute('aria-checked') === 'true' ? '（オン）' : '') + (e.getAttribute('aria-disabled') === 'true' ? '（無効）' : ''));
+    document.getElementById('ax').innerHTML = '<b>読み上げ（AX名）</b><br>' + ([...new Set(labs)].slice(0, 48).map((x) => '・' + x).join('<br>') || '—');
+    const small = [...dev.querySelectorAll('button')].filter((b) => vis(b) && !b.classList.contains('dim')).filter((b) => { const r = b.getBoundingClientRect(); return r.height < 47.5 || r.width < 47.5; });
+    const ov = [...dev.querySelectorAll('*')].filter(vis).filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && (r.right > d.right + 0.5 || r.left < d.left - 0.5); }).length;
+    const trunc = [...dev.querySelectorAll('*')].filter((e) => vis(e) && e.children.length === 0 && e.textContent.trim() && getComputedStyle(e).display !== 'inline' && (e.scrollWidth > e.clientWidth + 1) && getComputedStyle(e).overflow !== 'visible').length + [...dev.querySelectorAll('*')].filter((e) => vis(e) && getComputedStyle(e).textOverflow === 'ellipsis').length;
+    const clipBtn = [...dev.querySelectorAll('button')].filter(vis).filter((b) => { const r = b.getBoundingClientRect(); return [...b.querySelectorAll('span')].some((s) => { const q = s.getBoundingClientRect(); return q.height > 0 && s.textContent.trim() && (q.bottom > r.bottom + 1 || q.top < r.top - 1 || q.right > r.right + 1 || q.left < r.left - 1); }); }).length;
+    const minF = Math.min(...[...dev.querySelectorAll('*')].filter((e) => vis(e) && [...e.childNodes].some((c) => c.nodeType === 3 && c.textContent.trim())).map((e) => parseFloat(getComputedStyle(e).fontSize)));
+    const sc = dev.querySelector('.scr'), panel = dev.querySelector('.panel');
+    let cover = true;
+    if (sc && panel) { const keep = sc.scrollTop; sc.scrollTop = 1e6; const items = [...sc.querySelectorAll('button,span,h1,p')].filter((e) => e.getBoundingClientRect().height > 0 && (e.textContent.trim() || e.tagName === 'BUTTON')); const last = items.reduce((m, e) => Math.max(m, e.getBoundingClientRect().bottom), 0); cover = last <= panel.getBoundingClientRect().top + 0.5; sc.scrollTop = keep; }
+    const back = [...dev.querySelectorAll('button')].filter((b) => vis(b) && ['戻る', 'タグ一覧', '連写一覧', '選択へ戻る'].includes(b.textContent.trim())).length;
+    const okc = (b) => b ? '<span class="okc">なし</span>' : '<span class="ngc">あり</span>';
+    let html = '<b>検査（' + O.w + 'dp・文字' + O.k + '倍）</b><br>48dp未満のボタン：' + (small.length ? '<span class="ngc">' + small.length + '</span>' : '<span class="okc">なし</span>') + '<br>はみ出し：' + okc(!ov) + '<br>省略・切れ：' + okc(!trunc) + '<br>ボタンの中身の切れ：' + okc(!clipBtn) + '<br>文字の縮小：' + (minF >= 11.9 * O.k ? '<span class="okc">なし</span>' : '<span class="ngc">' + minF + 'px</span>') + '<br>下部と内容の重なり：' + okc(cover) + '<br>専用の戻る：' + okc(!back);
+    if (extra) html += extra();
+    document.getElementById('chk').innerHTML = html;
+  }
+
+  const ORIG = JSON.parse(document.getElementById('origData').textContent);
+  const BG = ["radial-gradient(11% 17% at 40% 60%, rgb(201, 162, 126) 0px, rgb(201, 162, 126) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(165deg, rgb(52, 68, 58) 0%, rgb(88, 112, 79) 52%, rgb(28, 36, 25) 100%)", "radial-gradient(11% 17% at 28% 52%, rgb(236, 232, 222) 0px, rgb(236, 232, 222) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(125, 143, 160) 0%, rgb(192, 199, 196) 46%, rgb(85, 88, 74) 47%, rgb(44, 45, 38) 100%)", "radial-gradient(11% 17% at 60% 70%, rgb(107, 122, 98) 0px, rgb(107, 122, 98) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(169, 195, 216) 0%, rgb(228, 234, 236) 62%, rgb(151, 161, 151) 63%, rgb(105, 115, 106) 100%)", "radial-gradient(11% 17% at 50% 62%, rgb(200, 176, 138) 0px, rgb(200, 176, 138) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(195deg, rgb(141, 147, 153) 0%, rgb(91, 97, 104) 58%, rgb(42, 45, 49) 100%)", "radial-gradient(11% 17% at 30% 35%, rgb(58, 63, 69) 0px, rgb(58, 63, 69) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(169, 195, 216) 0%, rgb(228, 234, 236) 62%, rgb(151, 161, 151) 63%, rgb(105, 115, 106) 100%)", "radial-gradient(11% 17% at 45% 48%, rgb(124, 106, 85) 0px, rgb(124, 106, 85) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(205, 189, 164) 0%, rgb(238, 229, 213) 52%, rgb(168, 154, 131) 100%)", "radial-gradient(11% 17% at 66% 58%, rgb(63, 58, 51) 0px, rgb(63, 58, 51) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(125, 143, 160) 0%, rgb(192, 199, 196) 46%, rgb(85, 88, 74) 47%, rgb(44, 45, 38) 100%)", "radial-gradient(11% 17% at 50% 58%, rgb(217, 201, 176) 0px, rgb(217, 201, 176) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(150deg, rgb(61, 48, 42) 0%, rgb(123, 91, 69) 52%, rgb(42, 32, 27) 100%)", "radial-gradient(11% 17% at 52% 40%, rgb(240, 211, 138) 0px, rgb(240, 211, 138) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(28, 36, 52) 0%, rgb(52, 66, 93) 52%, rgb(16, 19, 26) 53%, rgb(7, 8, 11) 100%)", "radial-gradient(11% 17% at 38% 68%, rgb(36, 26, 23) 0px, rgb(36, 26, 23) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(224, 173, 114) 0%, rgb(184, 104, 75) 42%, rgb(61, 43, 42) 43%, rgb(24, 19, 20) 100%)", "radial-gradient(11% 17% at 25% 62%, rgb(42, 28, 24) 0px, rgb(42, 28, 24) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(224, 173, 114) 0%, rgb(184, 104, 75) 42%, rgb(61, 43, 42) 43%, rgb(24, 19, 20) 100%)", "radial-gradient(11% 17% at 58% 55%, rgb(192, 160, 128) 0px, rgb(192, 160, 128) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(150deg, rgb(61, 48, 42) 0%, rgb(123, 91, 69) 52%, rgb(42, 32, 27) 100%)", "radial-gradient(11% 17% at 35% 72%, rgb(93, 107, 88) 0px, rgb(93, 107, 88) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(169, 195, 216) 0%, rgb(228, 234, 236) 62%, rgb(151, 161, 151) 63%, rgb(105, 115, 106) 100%)", "radial-gradient(11% 17% at 62% 58%, rgb(215, 178, 140) 0px, rgb(215, 178, 140) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(165deg, rgb(52, 68, 58) 0%, rgb(88, 112, 79) 52%, rgb(28, 36, 25) 100%)", "radial-gradient(11% 17% at 45% 67%, rgb(182, 70, 60) 0px, rgb(182, 70, 60) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(195deg, rgb(141, 147, 153) 0%, rgb(91, 97, 104) 58%, rgb(42, 45, 49) 100%)", "radial-gradient(11% 17% at 48% 50%, rgb(139, 119, 96) 0px, rgb(139, 119, 96) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(205, 189, 164) 0%, rgb(238, 229, 213) 52%, rgb(168, 154, 131) 100%)", "radial-gradient(11% 17% at 30% 45%, rgb(233, 196, 106) 0px, rgb(233, 196, 106) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(28, 36, 52) 0%, rgb(52, 66, 93) 52%, rgb(16, 19, 26) 53%, rgb(7, 8, 11) 100%)", "radial-gradient(11% 17% at 50% 56%, rgb(239, 233, 223) 0px, rgb(239, 233, 223) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(125, 143, 160) 0%, rgb(192, 199, 196) 46%, rgb(85, 88, 74) 47%, rgb(44, 45, 38) 100%)", "radial-gradient(11% 17% at 42% 60%, rgb(163, 59, 48) 0px, rgb(163, 59, 48) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(195deg, rgb(141, 147, 153) 0%, rgb(91, 97, 104) 58%, rgb(42, 45, 49) 100%)", "radial-gradient(11% 17% at 60% 66%, rgb(30, 21, 19) 0px, rgb(30, 21, 19) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(224, 173, 114) 0%, rgb(184, 104, 75) 42%, rgb(61, 43, 42) 43%, rgb(24, 19, 20) 100%)", "radial-gradient(11% 17% at 46% 52%, rgb(216, 180, 140) 0px, rgb(216, 180, 140) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(150deg, rgb(61, 48, 42) 0%, rgb(123, 91, 69) 52%, rgb(42, 32, 27) 100%)", "radial-gradient(11% 17% at 55% 64%, rgb(185, 142, 106) 0px, rgb(185, 142, 106) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(165deg, rgb(52, 68, 58) 0%, rgb(88, 112, 79) 52%, rgb(28, 36, 25) 100%)", "radial-gradient(11% 17% at 40% 30%, rgb(47, 53, 64) 0px, rgb(47, 53, 64) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(169, 195, 216) 0%, rgb(228, 234, 236) 62%, rgb(151, 161, 151) 63%, rgb(105, 115, 106) 100%)", "radial-gradient(11% 17% at 52% 46%, rgb(110, 93, 74) 0px, rgb(110, 93, 74) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(205, 189, 164) 0%, rgb(238, 229, 213) 52%, rgb(168, 154, 131) 100%)", "radial-gradient(11% 17% at 36% 60%, rgb(217, 211, 199) 0px, rgb(217, 211, 199) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(125, 143, 160) 0%, rgb(192, 199, 196) 46%, rgb(85, 88, 74) 47%, rgb(44, 45, 38) 100%)", "radial-gradient(11% 17% at 64% 42%, rgb(246, 220, 154) 0px, rgb(246, 220, 154) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(28, 36, 52) 0%, rgb(52, 66, 93) 52%, rgb(16, 19, 26) 53%, rgb(7, 8, 11) 100%)", "radial-gradient(11% 17% at 58% 58%, rgb(201, 179, 143) 0px, rgb(201, 179, 143) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(195deg, rgb(141, 147, 153) 0%, rgb(91, 97, 104) 58%, rgb(42, 45, 49) 100%)", "radial-gradient(11% 17% at 44% 70%, rgb(43, 29, 25) 0px, rgb(43, 29, 25) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(224, 173, 114) 0%, rgb(184, 104, 75) 42%, rgb(61, 43, 42) 43%, rgb(24, 19, 20) 100%)", "radial-gradient(11% 17%, rgb(180, 140, 106) 0px, rgb(180, 140, 106) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(150deg, rgb(61, 48, 42) 0%, rgb(123, 91, 69) 52%, rgb(42, 32, 27) 100%)", "radial-gradient(11% 17% at 34% 62%, rgb(202, 160, 122) 0px, rgb(202, 160, 122) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(165deg, rgb(52, 68, 58) 0%, rgb(88, 112, 79) 52%, rgb(28, 36, 25) 100%)", "radial-gradient(11% 17% at 66% 74%, rgb(95, 108, 90) 0px, rgb(95, 108, 90) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(169, 195, 216) 0%, rgb(228, 234, 236) 62%, rgb(151, 161, 151) 63%, rgb(105, 115, 106) 100%)", "radial-gradient(11% 17% at 40% 52%, rgb(133, 112, 89) 0px, rgb(133, 112, 89) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(205, 189, 164) 0%, rgb(238, 229, 213) 52%, rgb(168, 154, 131) 100%)"];
+  const HP = { 0: 'pos', 1: 'pos', 2: 'pos', 12: 'neg' };
+  const AUTO = [3, 4, 5, 6, 7, 12];
+  const O = { w: 400, h: 844, k: 1, chg: true, rm: false, s: 'pos', a: 0, b: 0, f: 0, n: 1, l: 0 };
+  let N = { sheet: null, caller: null, left: false, sel: [], fail: false }, H = Object.assign({}, HP), A = AUTO.slice(), log = [];
+  const add = (x) => { log.unshift(x); log = log.slice(0, 12); };
+  const say = (x) => { const l = document.getElementById('live'); l.textContent = ''; setTimeout(() => { l.textContent = x; }, 30); };
+  const G = {
+    auto: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M3.8 12.2V4.8a1 1 0 0 1 1-1h7.4l8 8a1.4 1.4 0 0 1 0 2l-6.2 6.2a1.4 1.4 0 0 1-2 0z"></path><path d="M8 6.5v3M6.5 8h3" stroke-linecap="round"></path></svg>',
+    tag: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M3.8 12.2V4.8a1 1 0 0 1 1-1h7.4l8 8a1.4 1.4 0 0 1 0 2l-6.2 6.2a1.4 1.4 0 0 1-2 0z"></path><circle cx="8.3" cy="8.3" r="1.4"></circle></svg>',
+    neg: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M6.5 17.5l11-11"></path></svg>',
+    check16: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>',
+    rel: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="7" width="8" height="10" rx="1.5"></rect><rect x="13.5" y="4" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="13" width="7" height="7" rx="1.5"></rect></svg>',
+    man: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="4" width="14" height="16" rx="2"></rect><path d="M9 12h6"></path></svg>',
+    add: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="13" height="13" rx="2"></rect><path d="M18.5 9v8M14.5 13h8"></path></svg>',
+    bulk: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"></rect><path d="M14 17l2 2 4-4.5"></path></svg>',
+    more: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5.5" r="1.7"></circle><circle cx="12" cy="12" r="1.7"></circle><circle cx="12" cy="18.5" r="1.7"></circle></svg>',
+    x: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>',
+    end: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>',
+    all: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2.5"></rect><path d="M8.5 12.3l2.5 2.5 4.8-5"></path></svg>',
+    on: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#EDEDEA" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>',
+    failB: '<span aria-hidden="true" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:9px;background:#0F0F10;color:#FF8A7A;display:flex;align-items:center;justify-content:center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l9 15.5H3z"></path><path d="M12 10v4.5M12 17.2v.1"></path></svg></span>'
+  };
+  const eff = (i) => H[i] || (A.includes(i) ? 'auto' : 'none');
+  function lists() {
+    const ids = Array.from({ length: 51 }, (_, i) => i);
+    const pos = ids.filter((i) => eff(i) === 'pos' || eff(i) === 'auto'), neg = ids.filter((i) => eff(i) === 'neg');
+    return { pos: pos, neg: neg, auto: pos.filter((i) => eff(i) === 'auto'), all: ids, unk: ids.filter((i) => eff(i) === 'none') };
+  }
+  const curList = () => { const L = lists(); return O.s === 'all' ? L.all : O.s === 'neg' ? L.neg : (O.a ? L.auto : L.pos); };
+  const action = () => (O.s === 'neg' || O.s === 'all') ? 'タグ付きにする' : '該当しないにする';
+  const tname = () => (O.l ? '二〇二六年の秋に京都と奈良をめぐった家族旅行の空' : '空');
+  function screen() {
+    const L = lists(), list = curList();
+    const selOn = O.b || O.s === 'all';
+    const sel = N.sel.filter((i) => list.includes(i));
+    const badge = (i) => { const e = eff(i); if (O.s === 'all') { const g = e === 'pos' ? G.tag : e === 'auto' ? G.auto : e === 'neg' ? G.neg : ''; return g ? '<span aria-hidden="true" data-chg="new" style="position:absolute;right:6px;bottom:6px;height:20px;padding:0 5px;border-radius:10px;background:rgba(0,0,0,0.62);color:#fff;display:flex;align-items:center">' + g + '</span>' : ''; } return e === 'auto' && O.s === 'pos' ? '<span aria-hidden="true" data-chg="new" style="position:absolute;right:6px;bottom:6px;height:20px;padding:0 5px;border-radius:10px;background:rgba(0,0,0,0.62);color:#fff;display:flex;align-items:center">' + G.auto + '</span>' : ''; };
+    const stateAX = (i) => ({ pos: '自分で付けたタグ', auto: '自動で付いたタグ', neg: '該当しない', none: '未確認' })[eff(i)];
+    const tiles = list.map((i) => { const on = sel.includes(i); return '<button data-tile="' + i + '" aria-label="写真、' + stateAX(i) + (selOn ? (on ? '、選択中' : '、未選択') : '') + '" style="background:' + (on ? 'rgb(30,43,66)' : '#151517') + ';border:0;padding:0;margin:0;cursor:pointer;position:relative;display:block;height:96px;overflow:hidden">' +
+      '<span style="position:absolute;inset:' + (on ? '10px' : '0') + ';border-radius:' + (on ? '6px' : '0') + ';background:' + BG[i % BG.length] + '"></span>' + badge(i) +
+      (selOn ? (on ? '<span aria-hidden="true" style="position:absolute;top:6px;left:6px;width:22px;height:22px;border-radius:11px;background:#4C8DF6;color:#fff;display:flex;align-items:center;justify-content:center">' + G.check16 + '</span>' : '<span aria-hidden="true" style="position:absolute;top:6px;left:6px;width:22px;height:22px;box-sizing:border-box;border-radius:11px;border:2px solid rgba(255,255,255,0.92);background:rgba(0,0,0,0.28)"></span>') : '') + '</button>'; }).join('');
+    if (O.s === 'all') {
+      const hd = '<div style="padding:40px 20px 16px;display:flex;align-items:baseline;justify-content:space-between;gap:12px"><h1 style="margin:0;font-weight:600;font-size:calc(24px*var(--k));line-height:calc(32px*var(--k))">嵐山 10.18</h1><span class="f14 mut num" style="text-align:right">' + sel.length + '件選択</span></div>';
+      const ax = '選んだ写真を「' + tname() + '」のタグ付きにする' + (N.fail ? '。保存できませんでした。選んだ写真はそのままです。もう一度押すと保存します' : '');
+      const dis = sel.length ? '' : ' aria-disabled="true"';
+      const pn = '<div class="panel"><button class="out" data-act="bulkSet" aria-label="' + ax + '"' + dis + ' style="position:relative' + (sel.length ? '' : ';color:#626B72') + '"><span>タグ付きにする</span>' + (N.fail ? G.failB : '') + '</button><nav aria-label="選択の操作" class="dock" style="grid-template-columns:repeat(2,minmax(0,1fr))"><button class="db" data-act="endBulk">' + G.end + '<span>選択を終了</span></button><button class="db" data-act="selAll">' + G.all + '<span>すべて選択</span></button></nav></div>';
+      return '<div class="scr" data-scroll>' + hd + '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px">' + tiles + '</div><div class="sp"></div></div>' + pn;
+    }
+    const head = '<div style="padding:40px 20px 20px;display:flex;flex-direction:column;gap:4px"><div style="display:flex;align-items:baseline;gap:12px"><span class="f13 mut" style="flex:1;min-width:0">嵐山 10.18</span>' + (selOn ? '<span class="f13 num" data-chg="new">' + sel.length + '枚選択</span>' : '') + '</div>' +
+      '<h1 class="f28" style="margin:0;font-weight:600;overflow-wrap:anywhere">' + tname() + '</h1>' +
+      '<span class="f14 mut num" data-chg="cnt">タグ付き ' + L.pos.length + '枚' + (L.auto.length ? '（自動 ' + L.auto.length + '枚）' : '') + ' · 該当しない ' + L.neg.length + '枚 · 未確認 ' + L.unk.length + '枚</span></div>' +
+      (O.a && O.s === 'pos' ? '<div style="padding:0 16px 12px"><button data-act="clearAuto" data-chg="new" aria-label="自動で付いた写真だけを表示中。押すとタグ付きの写真をすべて表示" class="out" style="display:inline-flex;gap:6px;padding:4px 12px 4px 10px;border-radius:24px;background:#1C1C1F;justify-content:flex-start">' + G.auto + '<span>自動で付いた写真</span>' + G.x + '</button></div>' : '');
+    const grid = '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px">' + tiles + '</div>';
+    const segB = (v, label, n) => '<button data-seg="' + v + '" aria-label="' + label + ' ' + n + (v === 'neg' ? '。外した写真の一覧' : '') + '" aria-pressed="' + (O.s === v) + '" style="background:' + (O.s === v ? '#EDEDEA' : 'none') + ';border:0;padding:4px 8px;margin:0;color:' + (O.s === v ? '#111111' : '#EDEDEA') + ';cursor:pointer;min-height:48px;border-radius:24px;display:flex;align-items:center;justify-content:center;gap:4px;font-weight:500;text-align:center" class="f13 num"><span style="width:16px;height:16px;display:flex;align-items:center;justify-content:center">' + (O.s === v ? G.check16 : '') + '</span><span>' + label + ' ' + n + '</span></button>';
+    let panel;
+    if (selOn) {
+      const dis = sel.length ? '' : ' aria-disabled="true"';
+      const ax = action() + (N.fail ? '。保存できませんでした。選んだ写真はそのままです。もう一度押すと保存します' : '');
+      panel = '<div class="panel"><button class="out" data-act="bulkSet" data-chg="new" aria-label="' + ax + '"' + dis + ' style="position:relative' + (sel.length ? '' : ';color:#626B72') + '"><span>' + action() + '</span>' + (N.fail ? G.failB : '') + '</button>' +
+        '<nav aria-label="選択の操作" class="dock" style="grid-template-columns:repeat(2,minmax(0,1fr))"><button class="db" data-act="endBulk">' + G.end + '<span>選択を終了</span></button><button class="db" data-act="selAll">' + G.all + '<span>すべて選択</span></button></nav></div>';
+    } else {
+      panel = '<div class="panel"><div role="group" aria-label="表示する写真" data-chg="cnt" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;border-radius:24px;background:#1C1C1F">' + segB('pos', 'タグ付き', L.pos.length) + segB('neg', '該当しない', L.neg.length) + '</div>' +
+        '<button class="pri" data-act="related">' + G.rel + '<span>似た写真にもタグを付ける</span></button>' +
+        '<button class="out" data-act="manual">' + G.man + '<span>1枚ずつ確認する</span></button>' +
+        '<nav aria-label="タグの操作" class="dock" data-chg="dock" style="grid-template-columns:repeat(3,minmax(0,1fr))"><button class="db" data-act="addPhotos">' + G.add + '<span>写真を追加</span></button><button class="db" data-act="bulk">' + G.bulk + '<span>一括訂正</span></button><button class="db" data-act="more">' + G.more + '<span>その他</span></button></nav></div>';
+    }
+    return '<div class="scr" data-scroll>' + head + grid + '<div class="sp"></div></div>' + panel + sheet();
+  }
+  function sheet() {
+    const L = lists();
+    if (N.sheet === 'more') return '<button class="dim" data-act="close" aria-label="閉じる" tabindex="-1"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="その他"><span class="hdl" aria-hidden="true"></span><h2>その他</h2><div style="display:flex;flex-direction:column">' +
+      '<button class="it" data-act="toggleAuto" aria-pressed="' + (O.a ? 'true' : 'false') + '"><span style="flex:1">自動で付いた写真</span>' + (O.a ? G.on : '') + '</button>' +
+      '<button class="it" data-act="askRemove"' + (L.auto.length || A.length ? ' style="color:#FF8A7A"' : ' aria-disabled="true" style="color:#626B72"') + '><span style="flex:1">自動で付いたタグをすべて外す</span></button></div><div class="acts"><button class="out" data-act="close">閉じる</button></div></div>';
+    if (N.sheet === 'remove') return '<button class="dim" data-act="close" aria-label="閉じる" tabindex="-1"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="自動で付いたタグをすべて外す"><span class="hdl" aria-hidden="true"></span><h2>自動で付いたタグをすべて外しますか？</h2><p class="body" style="margin-top:4px">「' + tname() + '」が対象です。全アルバムの自動で付いた分を外します。自分で付けたタグは残ります。</p><div class="acts"><button class="danger" data-act="doRemove">すべて外す</button><button class="cancel" data-act="close">外さない</button></div></div>';
+    return '';
+  }
+  const dev = document.getElementById('dev'), orig = document.getElementById('orig');
+  orig.innerHTML = ORIG.V05; document.getElementById('origName').textContent = 'V05 タグ詳細';
+  function render() {
+    document.documentElement.style.setProperty('--k', O.k);
+    dev.style.setProperty('--w', O.w + 'px'); dev.style.setProperty('--h', O.h + 'px');
+    dev.classList.toggle('showchg', O.chg); dev.classList.toggle('rm', O.rm);
+    document.getElementById('devName').textContent = ({ pos: O.a ? '自動で付いた写真' : 'タグ付き', neg: '該当しない（外した写真）', all: '写真を追加（既存の写真一覧の画面）' })[O.s] + (O.b ? '・一括訂正' : '') + '・' + O.w + 'dp・文字' + O.k + '倍';
+    let h = '<span class="synth" aria-hidden="true">合成の画面</span>' + screen();
+    if (N.caller) h += '<div class="caller"><span>（' + N.caller + '・ダミー）</span><button data-act="reopen">タグ詳細へ戻る</button></div>';
+    if (N.left) h += '<div class="caller" style="background:#000"><span>（タグ一覧へ戻った状態・デモ）</span><button data-act="reopen">開き直す（デモ）</button></div>';
+    dev.innerHTML = h;
+    const sp = dev.querySelector('.sp'), pn = dev.querySelector('.panel'); if (sp && pn) sp.style.height = (pn.offsetHeight + 24) + 'px';
+    check(() => '<br>未確認への一括変更：' + ([...dev.querySelectorAll('button')].some((b) => b.textContent.includes('未確認に戻す')) ? '<span class="ngc">あり</span>' : '<span class="okc">なし</span>'));
+    document.getElementById('log').innerHTML = '<b>操作の記録</b><br>' + (log.map((x) => '・' + x).join('<br>') || '—');
+  }
+  function resetData() { H = Object.assign({}, HP); A = AUTO.slice(); }
+  dev.addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.getAttribute('aria-disabled') === 'true') { add('（無効のため何もしない）'); return render(); }
+    const a = b.dataset.act, was = N.sheet;
+    if (b.dataset.seg) { O.s = b.dataset.seg; if (O.s === 'neg') O.a = 0; N.sel = []; N.fail = false; add('表示：' + (O.s === 'pos' ? 'タグ付き' : '該当しない')); }
+    else if (b.dataset.tile != null) { if (O.b || O.s === 'all') { const i = +b.dataset.tile; N.sel = N.sel.includes(i) ? N.sel.filter((x) => x !== i) : N.sel.concat([i]); } else add('写真 → 既存の写真の画面'); }
+    else if (a === 'related') add('［似た写真にもタグを付ける］→ 既存（推論は変えない）');
+    else if (a === 'manual') add('［1枚ずつ確認する］→ 既存');
+    else if (a === 'addPhotos') { O.s = 'all'; O.a = 0; O.b = 0; N.sel = []; N.fail = false; add('［写真を追加］→ 既存の写真一覧の画面へ（4列・選択）'); }
+    else if (a === 'bulk') { O.b = 1; N.sel = []; N.fail = false; add('［一括訂正］→ 選択に入る（' + action() + '）'); }
+    else if (a === 'endBulk') { if (O.s === 'all') O.s = 'pos'; O.b = 0; N.sel = []; N.fail = false; add('［選択を終了］'); }
+    else if (a === 'selAll') { N.sel = curList().slice(); add('［すべて選択］'); }
+    else if (a === 'bulkSet') {
+      if (O.f) { N.fail = true; add('保存に失敗：選択（' + N.sel.length + '枚）はそのまま。もう一度押すと再試行'); say('保存できませんでした。選んだ写真はそのままです'); }
+      else { const v = action() === 'タグ付きにする' ? 'pos' : 'neg'; N.sel.forEach((i) => { H[i] = v; }); add(N.sel.length + '枚の人の判断を「' + (v === 'pos' ? 'タグ付き' : '該当しない') + '」にした（既存の操作）'); say(N.sel.length + '枚を' + (v === 'pos' ? 'タグ付き' : '該当しない') + 'にしました'); N.sel = []; N.fail = false; O.b = 0; if (O.s === 'all') O.s = 'pos'; }
+    }
+    else if (a === 'more') { N.sheet = 'more'; add('［その他］'); }
+    else if (a === 'toggleAuto') { O.a = O.a ? 0 : 1; if (O.a) O.s = 'pos'; N.sheet = null; add(O.a ? '［自動で付いた写真］→ 絞り込み' : '［自動で付いた写真］→ 解除'); }
+    else if (a === 'clearAuto') { O.a = 0; add('絞り込みを解除'); }
+    else if (a === 'askRemove') { N.sheet = 'remove'; add('［自動で付いたタグをすべて外す］→ 確認'); }
+    else if (a === 'doRemove') { N.sheet = null; A = []; O.a = 0; O.n = 0; add('自動の判断だけを外した（全アルバム）。人の判断は残り、ない写真は未確認へ'); say('自動で付いたタグを外しました'); }
+    else if (a === 'close') { N.sheet = null; add(was === 'remove' ? '外さない' : '閉じる'); }
+    else if (a === 'reopen') { N.caller = null; N.left = false; }
+    syncSeg(); render();
+    const f = (a === 'close' && was) ? dev.querySelector('[data-act=more]') : (a === 'more' || a === 'askRemove') ? dev.querySelector('.sheet button:not(.dim)') : null;
+    if (f) f.focus();
+  });
+  document.getElementById('hwBack').addEventListener('click', () => {
+    if (N.left) return;
+    if (N.sheet) { N.sheet = null; add('Back：シート・確認を閉じる'); }
+    else if (N.caller) { N.caller = null; add('Back：タグ詳細へ'); }
+    else if (O.b) { O.b = 0; N.sel = []; N.fail = false; add('Back：選択を終了'); }
+    else if (O.s === 'all') { O.s = 'pos'; N.sel = []; N.fail = false; add('Back：写真一覧の画面 → タグ詳細'); }
+    else { N.left = true; add('Back：タグ詳細 → タグ一覧'); }
+    syncSeg(); render();
+  });
+  document.getElementById('reset').addEventListener('click', () => { N = { sheet: null, caller: null, left: false, sel: [], fail: false }; resetData(); O.n = 1; log = []; syncSeg(); render(); });
+  function seg(id, fn) { const el = document.getElementById(id); el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; fn(b.dataset.v); N.sheet = null; N.caller = null; N.left = false; syncSeg(); render(); }); }
+  function syncSeg() { [['oW', O.w], ['oH', O.h], ['oK', O.k], ['oS', O.s], ['oA', O.a], ['oB', O.b], ['oF', O.f], ['oN', O.n], ['oL', O.l]].forEach(([id, v]) => document.querySelectorAll('#' + id + ' button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.v == String(v)))); }
+  const preset = () => { if (O.b && O.s !== 'all') N.sel = curList().slice(0, 3); if (O.s === 'all') N.sel = [8, 9, 12]; };
+  seg('oW', (v) => { O.w = +v; }); seg('oH', (v) => { O.h = +v; }); seg('oK', (v) => { O.k = +v; });
+  seg('oS', (v) => { O.s = v; if (v !== 'pos') O.a = 0; N.fail = false; preset(); }); seg('oA', (v) => { O.a = +v; if (O.a) O.s = 'pos'; preset(); }); seg('oB', (v) => { O.b = +v; N.fail = false; preset(); });
+  seg('oF', (v) => { O.f = +v; N.fail = false; }); seg('oN', (v) => { O.n = +v; if (O.n) A = AUTO.slice(); else { A = []; O.a = 0; } }); seg('oL', (v) => { O.l = +v; });
+  const tg = (id, key) => { const b = document.getElementById(id); b.addEventListener('click', () => { O[key] = !O[key]; b.setAttribute('aria-pressed', O[key]); render(); }); };
+  tg('oChg', 'chg'); tg('oRM', 'rm');
+  document.getElementById('solo').addEventListener('click', () => document.body.classList.add('solo'));
+  document.getElementById('soloExit').addEventListener('click', () => document.body.classList.remove('solo'));
+  window.__g = { O: O, set: (o) => { Object.assign(O, o); N = { sheet: null, caller: null, left: false, sel: [], fail: !!o.failShown }; resetData(); if (!O.n) A = []; preset(); syncSeg(); render(); }, sheet: (s) => { N.sheet = s; render(); } };
+  render();
+
+})();
+</script>
+</body>
+</html>

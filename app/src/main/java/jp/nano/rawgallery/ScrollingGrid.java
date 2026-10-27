@@ -7,7 +7,7 @@ import android.widget.*;
 
 /** A recycled grid of rows with a normal, non-sticky full-width list header. */
 final class ScrollingGrid extends ListView {
-  private int columns = 1, gap;
+  private int columns = 1, gap, cellInset, rowGap;
   private AdapterView.OnItemClickListener click;
   private AdapterView.OnItemLongClickListener longClick;
   private BaseAdapter cells;
@@ -21,6 +21,8 @@ final class ScrollingGrid extends ListView {
   }
 
   void setNumColumns(int count) { columns = count; }
+  void setCellInset(int inset) { cellInset = inset; }
+  void setCellRowGap(int spacing) { rowGap = spacing; setDividerHeight(0); }
   void setHorizontalSpacing(int spacing) { gap = spacing; }
   void setVerticalSpacing(int spacing) { setDividerHeight(spacing); }
   void onCellClick(AdapterView.OnItemClickListener listener) { click = listener; }
@@ -49,6 +51,7 @@ final class ScrollingGrid extends ListView {
       public View getView(int position, View recycled, ViewGroup parent) {
         LinearLayout row = recycled instanceof LinearLayout ? (LinearLayout) recycled : new LinearLayout(getContext());
         row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setPadding(cellInset,0,cellInset,position+1<getCount()?rowGap:0);
         for (int column = 0; column < columns; column++) {
           final int index = position * columns + column;
           View previous = column < row.getChildCount() ? row.getChildAt(column) : null;

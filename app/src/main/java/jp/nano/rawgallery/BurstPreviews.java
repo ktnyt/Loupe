@@ -35,20 +35,21 @@ final class BurstPreviews {
     FrameLayout.LayoutParams indicator=new FrameLayout.LayoutParams(-2,dp(c,48),Gravity.TOP|Gravity.END);
     indicator.setMargins(0,dp(c,8),dp(c,8),0);stage.addView(heroState,indicator);
     position = new TextView(c); position.setTextColor(Color.WHITE); position.setPadding(dp(c, 8),dp(c, 4),dp(c, 8),dp(c, 4));
-    position.setBackgroundColor(0xcc19191b);
+    position.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);position.setTextSize(12);position.setMinHeight(dp(c,24));position.setGravity(Gravity.CENTER);position.setIncludeFontPadding(false);position.setBackground(GalleryUi.shape(c,0x9e000000,12));
     FrameLayout.LayoutParams badge = new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM | Gravity.END);
-    badge.setMargins(dp(c,16),0,dp(c,16),dp(c,16)); stage.addView(position,badge);
+    badge.setMargins(dp(c,12),0,dp(c,12),dp(c,12)); stage.addView(position,badge);
     for (int i=0; i<photos.size(); i++) {
       final int n=i;
       FrameLayout cell = new FrameLayout(c);
       ImageView image = new ImageView(c); image.setScaleType(ImageView.ScaleType.CENTER_CROP);
-      image.setBackground(GalleryUi.shape(c, GalleryUi.PANEL,6));
-      cell.addView(image,new FrameLayout.LayoutParams(-1,-1)); images.add(image);
+      image.setBackground(GalleryUi.shape(c, GalleryUi.PANEL,4));
+      image.setClipToOutline(true);
+      cell.addView(image,new FrameLayout.LayoutParams(dp(c,52),dp(c,35),Gravity.CENTER)); images.add(image);
       TextView text = new TextView(c); text.setGravity(Gravity.CENTER); text.setTextColor(Color.WHITE);
       cell.addView(text,new FrameLayout.LayoutParams(-1,-1)); labels.add(text);
       StatusView spin = new StatusView(c);
       cell.addView(spin,new FrameLayout.LayoutParams(dp(c,48),dp(c,48),Gravity.CENTER)); spinners.add(spin);
-      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(c,64),dp(c,56)); lp.setMargins(dp(c,3),0,dp(c,3),0);
+      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(c,56),dp(c,48)); lp.setMargins(0,0,0,0);
       strip.addView(cell,lp); cell.setOnClickListener(v -> choose.accept(n));
       cell.setFocusable(true);
     }
@@ -57,6 +58,10 @@ final class BurstPreviews {
       if (heroFailed) { selected=-1; select(currentPosition()); } else pump();
       render();
     });
+    {strip.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->{
+      int gap=(photos.size()*dp(c,56)+Math.max(0,photos.size()-1)*dp(c,4)<=(strip.getParent() instanceof View?((View)strip.getParent()).getWidth():r-l))?dp(c,4):0;
+      for(int i=0;i<strip.getChildCount();i++){View child=strip.getChildAt(i);LinearLayout.LayoutParams lp=(LinearLayout.LayoutParams)child.getLayoutParams();int margin=i==0?0:gap;if(lp.leftMargin!=margin){lp.leftMargin=margin;child.setLayoutParams(lp);}}
+    });}
     render();
   }
   private int currentPosition() { return Integer.parseInt(position.getTag().toString()); }
@@ -64,7 +69,7 @@ final class BurstPreviews {
     if (!active.getAsBoolean() || selected==index) return;
     selected=index; position.setTag(index); heroReady=false; heroFailed=false;
     int request=++version;
-    position.setText((index+1)+"/"+photos.size());
+    position.setText(photos.size()+"枚中"+(index+1)+"枚目");
     heroState.begin("写真を読み込んでいます");
     render();
     loader.load(hero,photos.get(index),1600,success -> {
@@ -121,10 +126,11 @@ final class BurstPreviews {
       View cell=(View)images.get(i).getParent();
       cell.setContentDescription((i+1)+"枚目、"+status+(i==selected?"、表示中":""));
       android.graphics.drawable.GradientDrawable border=GalleryUi.shape(cell.getContext(),Color.TRANSPARENT,6);
-      border.setStroke(dp(cell.getContext(),2),i==selected?GalleryUi.ACCENT:state==3?0xffff8a7a:Color.TRANSPARENT);
-      ((FrameLayout)cell).setForeground(border);
+      border.setStroke(dp(cell.getContext(),2),i==selected?Color.WHITE:state==3?0xffff8a7a:Color.TRANSPARENT);
+      ((FrameLayout)cell).setForeground(new android.graphics.drawable.InsetDrawable(border,0,dp(cell.getContext(),4),0,dp(cell.getContext(),4)));
     }
-    if(failed>0)progress.show(StatusView.Symbol.FAILED,Integer.toString(failed),ready+"/"+states.length+"枚を読み込み、"+failed+"枚失敗",()->retry.performClick(),"再試行");
+    if(failed>0)progress.show(StatusView.Symbol.FAILED,Integer.toString(failed),ready+"/"+states.length+"枚を読み込み、"+failed+"枚失敗",null,"");
+    else if(ready<states.length)progress.observe(StatusView.Symbol.RUNNING,ready+" / "+states.length+"枚",states.length+"枚中"+ready+"枚を読み込みました");
     else progress.clear();
     retry.setVisibility(failed>0||heroFailed?View.VISIBLE:View.GONE);
   }

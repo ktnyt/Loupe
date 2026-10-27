@@ -13,6 +13,21 @@ import org.json.JSONObject;
  * source.
  */
 public final class ArchiveInstrumentation extends Instrumentation {
+  private int tagWidth;
+  private boolean sortDimensionsSpecified;
+  private float tagFont;
+  @Override public void callActivityOnCreate(android.app.Activity activity, Bundle state) {
+    if ((tagDetailTest || resultTest || galleryScreenTest || sortTest) && (activity instanceof TagActivity || activity instanceof MainActivity) && tagWidth > 0) {
+      android.content.res.Configuration config = new android.content.res.Configuration(activity.getBaseContext().getResources().getConfiguration());
+      config.fontScale = tagFont; config.screenWidthDp = tagWidth;
+      // Test process resources only; never writes system settings.
+      activity.getResources().updateConfiguration(config, activity.getResources().getDisplayMetrics());
+    }
+    super.callActivityOnCreate(activity, state);
+    if ((tagDetailTest || resultTest || galleryScreenTest || sortTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+  }
+  private boolean galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest;
+  private boolean consistencyTest, syncControlsTest, tagDetailTest, resultTest, resultTalkBack;
   private boolean dashboardTalkBackTest;
   private boolean dashboardLayoutTest;
   private boolean dashboardTest;
@@ -36,6 +51,18 @@ public final class ArchiveInstrumentation extends Instrumentation {
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    sortTest = args != null && "sort-naming".equals(args.getString("mode"));
+    shareScreenTest=args!=null&&"share-screen".equals(args.getString("mode"));
+    viewerScreenTest=args!=null&&"viewer-screen".equals(args.getString("mode"));
+    galleryTalkBack=args!=null&&"gallery-screen-talkback".equals(args.getString("mode"));
+    galleryScreenTest=shareScreenTest||viewerScreenTest||galleryTalkBack||(args!=null&&"gallery-screen".equals(args.getString("mode")));
+    resultTalkBack=args!=null&&"ranking-result-talkback".equals(args.getString("mode"));
+    resultTest=resultTalkBack||(args!=null&&"ranking-result".equals(args.getString("mode")));
+    tagDetailTest=args!=null&&"tag-detail".equals(args.getString("mode"));
+    if((tagDetailTest || resultTest || galleryScreenTest || sortTest) && args.containsKey("width")){tagWidth=Integer.parseInt(args.getString("width"));tagFont=Float.parseFloat(args.getString("font","1.0"));}
+    sortDimensionsSpecified=sortTest && args.containsKey("width");
+    syncControlsTest=args!=null&&"sync-controls".equals(args.getString("mode"));
+    consistencyTest=args!=null&&"consistency-layout".equals(args.getString("mode"));
     dashboardTalkBackTest=args!=null&&"dashboard-talkback".equals(args.getString("mode"));
     dashboardLayoutTest=args!=null&&"dashboard-layout".equals(args.getString("mode"));
     dashboardTest=args!=null&&"dashboard".equals(args.getString("mode"));
@@ -49,7 +76,6 @@ public final class ArchiveInstrumentation extends Instrumentation {
     comparisonLabelsTest = args != null && "comparison-labels".equals(args.getString("mode"));
     albumTagsTest = args != null && "album-tags".equals(args.getString("mode"));
     tabsTest = args != null && "library-tabs".equals(args.getString("mode"));
-    sortTest = args != null && "sort-naming".equals(args.getString("mode"));
     positionTest = args != null && "gallery-position".equals(args.getString("mode"));
     burstTest = args != null && "burst".equals(args.getString("mode"));
     realBurstTest = args != null && "burst-real".equals(args.getString("mode"));
@@ -67,11 +93,26 @@ public final class ArchiveInstrumentation extends Instrumentation {
     start();
   }
 
+  private void validateSortDimensions(Context context){
+    if(tagWidth<=0 || !Float.isFinite(tagFont) || tagFont<=0)throw new IllegalArgumentException("sort dimensions must be finite and positive");
+    if(GalleryUi.dp(context,tagWidth)>context.getResources().getDisplayMetrics().widthPixels)throw new IllegalArgumentException("sort width exceeds device");
+  }
+
   public void onStart() {
     Bundle results = new Bundle();
     File restored = null;
     try {
+      String report=failureReport(new AssertionError(new java.io.IOException("PRIVATE_VALUE")));
+      if(report.contains("PRIVATE_VALUE")||!report.contains("java.io.IOException")||!report.contains("ArchiveInstrumentation.java:"))throw new AssertionError();
       Context context = getTargetContext();
+      if(sortDimensionsSpecified)validateSortDimensions(context);
+      if(shareScreenTest){results.putString("stream",ShareScreenChecks.run(this,tagWidth));finish(-1,results);return;}
+      if(viewerScreenTest){results.putString("stream",ViewerScreenChecks.run(this,tagWidth));finish(-1,results);return;}
+      if(galleryScreenTest){results.putString("stream",GalleryScreenChecks.run(this,tagWidth,galleryTalkBack));finish(-1,results);return;}
+      if(resultTest){results.putString("stream",RankingResultChecks.run(this,tagWidth,resultTalkBack));finish(-1,results);return;}
+      if(tagDetailTest){results.putString("stream",TagDetailChecks.run(this,tagWidth));finish(-1,results);return;}
+      if(syncControlsTest){results.putString("stream",SyncControlChecks.run(this));finish(-1,results);return;}
+      if(consistencyTest){results.putString("stream",ConsistencyLayoutChecks.run(this));finish(-1,results);return;}
       if(dashboardTalkBackTest){results.putString("stream",DashboardTalkBackChecks.run(this));finish(-1,results);return;}
       if(dashboardLayoutTest){results.putString("stream",DashboardLayoutChecks.run(this));finish(-1,results);return;}
       if(dashboardTest){results.putString("stream",DashboardChecks.run(this));finish(-1,results);return;}
@@ -85,7 +126,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if (comparisonLabelsTest) { results.putString("stream", ComparisonLabelChecks.run(this)); finish(-1, results); return; }
       if (albumTagsTest) { results.putString("stream", AlbumTagEntryChecks.run(this)); finish(-1, results); return; }
       if (tabsTest) { results.putString("stream", LibraryTabsChecks.run(this)); finish(-1, results); return; }
-      if (sortTest) { results.putString("stream", SortNamingChecks.run(this)); finish(-1, results); return; }
+      if (sortTest) { results.putString("stream", SortNamingChecks.run(this,tagWidth,tagFont)); finish(-1, results); return; }
       if (positionTest) { results.putString("stream", GalleryPositionChecks.run(this)); finish(-1, results); return; }
       if (burstTest || realBurstTest) { results.putString("stream", BurstPreviewChecks.run(this, realBurstTest)); finish(-1, results); return; }
       if (sheetTest) { results.putString("stream", SheetChecks.run(this)); finish(-1, results); return; }
@@ -193,16 +234,26 @@ public final class ArchiveInstrumentation extends Instrumentation {
               + " original download, source unchanged\n");
       finish(-1, results);
     } catch (Throwable failure) {
-      results.putString(
-          "stream",
-          (affordancesTest || visualStatusTest ? android.util.Log.getStackTraceString(failure) : "") + "Archive device checks failed: "
-              + failure.getClass().getSimpleName()
-              + (failure instanceof AssertionError ? ": " + failure.getMessage() : "")
-              + "\n");
+      results.putString("stream",failureReport(failure));
       finish(0, results);
     } finally {
       if (restored != null) restored.delete();
     }
+  }
+
+  private static String failureReport(Throwable failure){
+    return failureLocations(failure)+"Archive device checks failed: "+failure.getClass().getSimpleName()+"\n";
+  }
+  /** Source locations aid synthetic checks without printing file paths or other exception values. */
+  private static String failureLocations(Throwable failure) {
+    StringBuilder result=new StringBuilder();
+    java.util.Set<Throwable> seen=java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    while(failure!=null&&seen.add(failure)){
+      result.append(failure.getClass().getName()).append('\n');
+      for(StackTraceElement frame:failure.getStackTrace())result.append("  at ").append(frame).append('\n');
+      failure=failure.getCause();
+    }
+    return result.toString();
   }
 
   private String testCompact(Context context) throws Exception {

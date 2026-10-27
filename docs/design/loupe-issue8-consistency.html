@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loupe Issue #8 画面横断の整合（タグ一覧・同期設定）</title>
+<style>
+:root{--bg:#0F0F10;--panel:#19191B;--text:#EDEDEA;--muted:#A0A0A4;--line:#26262A;--fail:#FF8A7A;--ok:#9FE0B5;--ng:#F2A7AB;--k:1;--w:400px;--h:760px}
+*{box-sizing:border-box}
+body{margin:0;background:#0B0B0C;color:var(--text);font-family:"Noto Sans JP",system-ui,-apple-system,"Hiragino Sans",sans-serif;font-size:15px;line-height:1.6}
+.wrap{max-width:1360px;margin:0 auto;padding:28px 20px 64px}
+h1{margin:0;font-size:24px;line-height:1.4;font-weight:600}
+h2.sec{margin:32px 0 6px;font-size:19px;font-weight:600}
+h3.sub{margin:18px 0 6px;font-size:15px;font-weight:600}
+.lead{margin:6px 0 0;color:var(--muted);font-size:14px}
+.warnbox{margin:12px 0 0;padding:10px 14px;border-radius:10px;border:1px solid #4A4A50;background:#141416;font-size:13.5px}
+.controls{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;margin:12px 0 0}
+.controls .lb{color:var(--muted);font-size:13px;margin-right:6px}
+.seg{display:inline-flex;flex-wrap:wrap;background:#1C1C1F;border-radius:22px;padding:2px}
+.seg button{background:none;border:0;color:var(--text);font:inherit;font-size:13px;min-height:44px;padding:0 12px;border-radius:20px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:#EDEDEA;color:#111}
+.hw{background:#2A2A2E;border:1px solid #4A4A50;color:var(--text);font:inherit;font-size:13px;font-weight:600;min-height:44px;padding:0 14px;border-radius:22px;cursor:pointer}
+.hw[aria-pressed="true"]{background:#EDEDEA;color:#111}
+.wrap :focus-visible{outline:2px solid #8AB4F8;outline-offset:2px}
+.box{background:#141416;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.6;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.okc{color:var(--ok)}.ngc{color:var(--ng)}
+table.t{border-collapse:collapse;width:100%;font-size:13.5px}
+table.t th,table.t td{border-bottom:1px solid #2A2A2E;padding:7px 10px 7px 0;text-align:left;vertical-align:top}
+table.t th{color:var(--muted);font-weight:500;font-size:12px}
+table.t code{background:#1C1C1F;padding:1px 5px;border-radius:4px;font-size:12px}
+.sw-c{display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:-2px;box-shadow:0 0 0 1px #4A4A50;margin-right:4px}
+.spec ul{margin:0;padding-left:20px}.spec li{margin:3px 0}
+.tscroll{overflow-x:auto}
+
+/* ===== 端末（1px = 1dp） ===== */
+.stage{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;margin-top:14px}
+.side{display:flex;flex-direction:column;gap:10px;flex:1;min-width:300px}
+.dev{position:relative;width:var(--w);height:var(--h);background:var(--bg);outline:1px solid #3A3A3F;overflow:hidden;display:flex;flex-direction:column;font-family:Roboto,"Noto Sans JP","Noto Sans CJK JP",system-ui,sans-serif;color:var(--text);flex-shrink:0;line-height:1.4}
+.dev *{text-overflow:clip}
+.dev button{font-family:inherit;color:inherit}
+.dev :focus{outline:none}
+.dev :focus-visible{outline:2px solid #EDEDEA;outline-offset:2px}
+.dev .cta:focus-visible{outline:2px solid #EDEDEA;outline-offset:3px;box-shadow:inset 0 0 0 2px #111}
+.synth{position:absolute;right:8px;top:6px;font-size:10px;color:#8A8A85;border:1px dashed #3A3A3F;border-radius:6px;padding:0 6px;z-index:3;line-height:1.6}
+.scroll{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+.scroll::-webkit-scrollbar{width:0}
+.ttl{padding:24px 20px 4px;margin:0;font-size:calc(22px*var(--k));line-height:1.35;font-weight:600}
+.scope{padding:0 20px 12px;margin:0;font-size:calc(14px*var(--k));line-height:1.5;color:var(--muted)}
+
+/* 印（#17） */
+.gl{display:inline-flex;width:24px;height:24px;align-items:center;justify-content:center;flex-shrink:0;color:var(--text)}
+.gl svg{width:20px;height:20px}
+.gl.fail{color:var(--fail)}.gl.muted{color:var(--muted)}
+.spin{animation:spin 1s linear infinite;transform-origin:50% 50%}
+@keyframes spin{to{transform:rotate(360deg)}}
+.rm .spin{animation:none}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}}
+.mk{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 8px 0 4px;border-radius:14px;background:#1F1F22;box-shadow:inset 0 0 0 1px #3A3A3F;font-size:calc(13px*var(--k));font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap}
+.mk.fail{box-shadow:inset 0 0 0 1.5px var(--fail)}
+.mk .gl{width:20px;height:20px}.mk .gl svg{width:18px;height:18px}
+
+/* タグ一覧 */
+.tlist{list-style:none;margin:0;padding:0 0 8px}
+.trow{display:flex;align-items:center;gap:16px;width:100%;min-height:72px;padding:12px 16px 12px 20px;background:none;border:0;text-align:left;cursor:pointer;position:relative}
+.trow::after{content:"";position:absolute;left:76px;right:0;bottom:0;height:1px;background:var(--line)}
+.tlist li:last-child .trow::after{display:none}
+.tmark{width:40px;height:40px;border-radius:12px;background:var(--panel);display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--muted)}
+.tname{flex:1;min-width:0;font-size:calc(16px*var(--k));line-height:1.45;font-weight:500;overflow-wrap:anywhere;word-break:normal}
+.chev{width:20px;height:20px;color:var(--muted);flex-shrink:0}
+.chev svg{width:20px;height:20px}
+.center{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:48px 20px}
+.center .big{width:48px;height:48px;color:var(--muted)}
+.center .big svg{width:48px;height:48px}
+.retryMk{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:120px;min-height:104px;padding:12px 16px;border-radius:16px;background:none;border:0;cursor:pointer}
+.retryMk .rl{display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:8px 16px;border-radius:20px;background:#26262A;box-shadow:inset 0 0 0 1px #3A3A3F;font-size:calc(14px*var(--k));font-weight:500;line-height:1.35}
+.retryMk .rl svg{width:20px;height:20px;flex-shrink:0}
+.foot{flex-shrink:0;padding:12px 16px 16px;background:var(--bg);box-shadow:0 -1px 0 var(--line)}
+.cta{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:52px;padding:12px 20px;border:0;border-radius:26px;background:#EDEDEA;color:#111 !important;font-size:calc(16px*var(--k));font-weight:500;line-height:1.35;cursor:pointer;text-align:center}
+.cta svg{width:20px;height:20px;flex-shrink:0}
+[aria-disabled="true"]{cursor:default}
+.trow[aria-disabled="true"],.cta[aria-disabled="true"],.btn[aria-disabled="true"],.op[aria-disabled="true"]{opacity:.38}
+
+/* 同期設定 */
+.cards{padding:4px 16px 16px;display:flex;flex-direction:column;gap:12px}
+.card{background:var(--panel);border-radius:16px;padding:16px}
+.card h3{margin:0 0 8px;font-size:calc(13px*var(--k));font-weight:500;color:var(--muted);line-height:1.4}
+.srow{display:flex;align-items:center;gap:12px;min-height:48px}
+.srow+.srow{border-top:1px solid var(--line)}
+.srow .lab{flex:1;min-width:0;font-size:calc(16px*var(--k));line-height:1.45;overflow-wrap:anywhere}
+.srow .r{display:flex;align-items:center;gap:6px;flex-shrink:0;font-size:calc(13px*var(--k));color:var(--muted);font-variant-numeric:tabular-nums}
+.tog{width:36px;height:20px;border-radius:10px;background:#3A3A3F;position:relative;flex-shrink:0}
+.tog::after{content:"";position:absolute;left:3px;top:3px;width:14px;height:14px;border-radius:7px;background:#8A8A8E}
+.tog.on{background:#EDEDEA}.tog.on::after{left:19px;background:#111}
+.tog.off{background:transparent;box-shadow:inset 0 0 0 1.5px #6B6B70}
+.lockic{width:16px;height:16px;color:var(--muted)}
+.hint{margin:8px 0 0;font-size:calc(13px*var(--k));color:var(--muted);line-height:1.5}
+.desc{margin:0;font-size:calc(14px*var(--k));line-height:1.6;color:#C9C9C4}
+.dt{margin:12px 0 2px;font-size:calc(14px*var(--k));font-weight:500;color:var(--text);line-height:1.45}
+.dt:first-of-type{margin-top:0}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:48px;min-width:48px;margin-top:12px;padding:10px 16px;border-radius:24px;background:#26262A;border:0;box-shadow:inset 0 0 0 1px #3A3A3F;font-size:calc(14px*var(--k));font-weight:500;line-height:1.35;cursor:pointer;text-align:center;max-width:100%}
+.btn svg{width:20px;height:20px;flex-shrink:0}
+.ops{flex-shrink:0;display:grid;grid-template-columns:1fr auto;gap:8px;padding:12px 16px 16px;background:var(--bg);box-shadow:0 -1px 0 var(--line)}
+.op{display:flex;align-items:center;justify-content:center;gap:8px;min-height:52px;min-width:52px;padding:10px 16px;border:0;border-radius:26px;font-size:calc(15px*var(--k));font-weight:500;line-height:1.35;cursor:pointer;text-align:center}
+.op svg{width:20px;height:20px;flex-shrink:0}
+.op.main{background:#EDEDEA;color:#111 !important}
+.op.main:focus-visible{outline-offset:3px;box-shadow:inset 0 0 0 2px #111}
+.op.sec{background:#26262A;box-shadow:inset 0 0 0 1px #3A3A3F}
+
+/* その他（既存のメニューの代わり） */
+.dim{position:absolute;inset:0;background:rgba(0,0,0,.5);border:0;z-index:4;cursor:pointer}
+.sheet{position:absolute;left:50%;transform:translateX(-50%);bottom:12px;width:min(calc(var(--w) - 24px),560px);background:#19191B;border-radius:20px;padding:8px 0 12px;z-index:5}
+.sheet .hdl{display:block;width:32px;height:4px;border-radius:2px;background:#4A4A50;margin:4px auto 8px}
+.sheet p{margin:0;padding:8px 20px 12px;font-size:calc(14px*var(--k));color:var(--muted);line-height:1.5}
+.sheet .it{display:flex;align-items:center;gap:16px;width:100%;min-height:56px;padding:8px 20px;background:none;border:0;text-align:left;font-size:calc(16px*var(--k));line-height:1.4;cursor:pointer}
+.sheet .it svg{width:24px;height:24px;flex-shrink:0;color:var(--muted)}
+.rd{width:20px;height:20px;border-radius:10px;box-shadow:inset 0 0 0 2px var(--muted);flex-shrink:0}
+.rd.on{box-shadow:inset 0 0 0 2px var(--text),inset 0 0 0 5px var(--bg),inset 0 0 0 10px var(--text)}
+.sheet .cl{display:flex;justify-content:flex-end;padding:0 12px}
+.sheet .cl button{min-height:48px;min-width:64px;padding:0 16px;background:none;border:0;font-size:calc(15px*var(--k));font-weight:500;cursor:pointer;border-radius:24px}
+
+/* 呼び出し元のダミー画面 */
+.caller{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:20px;color:var(--muted);font-size:calc(14px*var(--k));text-align:center}
+.os{position:absolute;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:#8A8A85;font-size:13px;z-index:8}
+
+/* 単独表示 */
+body.solo .wrap>*:not(.stage){display:none}
+body.solo .stage{margin:0}
+body.solo .side{display:none}
+body.solo .wrap{padding:16px}
+#soloExit{display:none}
+body.solo #soloExit{display:inline-flex;position:fixed;right:16px;top:16px;z-index:20}
+</style>
+</head>
+<body>
+<button class="hw" id="soloExit">単独表示をやめる</button>
+<div class="wrap">
+<h1>Loupe Issue #8 — 画面横断の整合（タグ一覧・同期設定）</h1>
+<p class="lead">版29の方向性に合わせた配置の案です。<b>現行の機能は変えません</b>（タグの作成・削除・推論、同期の認証・送信・削除・権限の条件は不変）。Androidには<b>まだ実装していません</b>。このファイルは外部のスクリプトやCDNに依存しない単一のHTMLで、ローカルで開けば動きます。共有の画面は次の比較で扱います。</p>
+<div class="warnbox">データはすべて合成です（写真・利用者のタグ・秘密情報は含みません）。同期設定の説明文（権限・削除の安全の説明を含む）とタグの対象範囲の説明は、<b>現行の全文</b>です。省略や言い換えはしていません。状態は#17の印とAX名で示し、状態の文は出しません。</div>
+
+<div class="controls" role="group" aria-label="画面">
+<span><span class="lb">画面</span><span class="seg" id="oS"><button data-v="tags" aria-pressed="true">タグ一覧</button><button data-v="sync" aria-pressed="false">同期設定</button></span></span>
+<span><span class="lb">幅</span><span class="seg" id="oW"><button data-v="320" aria-pressed="false">320dp</button><button data-v="400" aria-pressed="true">400dp</button></span></span>
+<span><span class="lb">高さ</span><span class="seg" id="oH"><button data-v="760" aria-pressed="true">760dp</button><button data-v="560" aria-pressed="false">560dp（スクロール確認）</button></span></span>
+<span><span class="lb">文字</span><span class="seg" id="oK"><button data-v="1" aria-pressed="true">1.0倍</button><button data-v="1.3" aria-pressed="false">1.3倍</button></span></span>
+</div>
+<div class="controls" role="group" aria-label="状態">
+<span><span class="lb">状態</span><span class="seg" id="oT"><button data-v="normal" aria-pressed="true">通常</button><button data-v="empty" aria-pressed="false">空</button><button data-v="long" aria-pressed="false">長いタグ名</button><button data-v="fail" aria-pressed="false">失敗</button><button data-v="off" aria-pressed="false">無効</button></span></span>
+</div>
+<div class="controls" role="group" aria-label="同期設定の観測値（合成fixture・それぞれ独立）" id="syncCtl">
+<span><span class="lb">collection（写真情報の読み取り）</span><span class="seg" id="oC"><button data-v="ok" aria-pressed="true">完了</button><button data-v="reading" aria-pressed="false">読み取り中（busy）</button><button data-v="fail" aria-pressed="false">失敗</button><button data-v="none" aria-pressed="false">未実行</button></span></span>
+<span><span class="lb">info（写真の集計）</span><span class="seg" id="oI"><button data-v="1" aria-pressed="true">1,180枚</button><button data-v="0" aria-pressed="false">—</button></span></span>
+<span><span class="lb">permissionState（自動管理の権限）</span><span class="seg" id="oPm"><button data-v="granted" aria-pressed="true">許可あり</button><button data-v="denied" aria-pressed="false">許可なし</button></span></span>
+<span><span class="lb">progress（バックグラウンド同期）</span><span class="seg" id="oG"><button data-v="complete" aria-pressed="true">完了</button><button data-v="waiting" aria-pressed="false">待機</button><button data-v="running" aria-pressed="false">実行中</button><button data-v="failed" aria-pressed="false">失敗</button><button data-v="none" aria-pressed="false">未実行</button></span></span>
+<span><span class="lb">isExternalStorageManager</span><span class="seg" id="oX"><button data-v="1" aria-pressed="true">true</button><button data-v="0" aria-pressed="false">false</button></span></span>
+<span><span class="lb">位置情報の読み取り</span><span class="seg" id="oL"><button data-v="1" aria-pressed="false">許可済み</button><button data-v="0" aria-pressed="true">未許可</button></span></span>
+<span><span class="lb">保存済みの値</span><button class="hw" id="oA" aria-pressed="true">自動同期 オン</button> <button class="hw" id="oD" aria-pressed="true">端末から自動で削除 オン</button></span>
+</div>
+<div class="controls">
+<button class="hw" id="hwBack">Android Back（OSのシミュレータ・画面の外）</button>
+<button class="hw" style="background:none;font-weight:500" id="reset">最初から</button>
+<button class="hw" id="oRM" aria-pressed="false">減らす動き</button>
+<button class="hw" id="solo">この画面だけを表示（Androidとの同寸法比較）</button>
+</div>
+
+<div class="stage">
+<div class="dev" id="dev"></div>
+<div class="side"><div class="box" id="ax" aria-live="off"></div><div class="box" id="chk"></div><div class="box" id="log"></div></div>
+</div>
+<div id="live" aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)"></div>
+
+<section class="spec" aria-label="仕様">
+<h2 class="sec">1. 範囲と変えないこと</h2>
+<table class="t">
+<tr><th>対象</th><th>変えるもの（見た目・配置）</th><th>変えないもの</th></tr>
+<tr><td>タグ一覧</td><td>中央の48dpの文字行 → 左寄せの行（印・名前・進む印）。装飾のない「新しいタグ」→ 最下部の白い角丸の主CTA。空・失敗の印</td><td>見出し、対象範囲の説明（文言そのまま）、タグの作成・削除・推論、開いた先、標準Back。写真のサムネイルと件数は今は取得していないので<b>新しい走査を足さない</b>（固定のタグの印を使う）</td></tr>
+<tr><td>同期設定</td><td>カードに分けて上から並べる、見出し下の大きな空白をなくす、下部2操作を固定、状態の文を#17の印へ</td><td>開き方（Amazon Photosのログイン画面の［同期の設定］から）、2つのスイッチが<b>保存済みの値の表示のみ</b>であること（権限がなくてもオフに見せない）、設定の変更は下部の［同期・端末からの削除］から、［その他］の中身（［同期を予約する］［状態を更新］）、説明と操作名、認証・送信・削除・権限の条件。同期の開始や削除の操作は新設しない。読み取りの更新中も操作を無効にしない</td></tr>
+</table>
+
+<h2 class="sec">2. タグ一覧の寸法・色・余白</h2>
+<div class="tscroll"><table class="t">
+<tr><th>部品</th><th>寸法</th><th>文字</th><th>色</th></tr>
+<tr><td>画面</td><td>背景いっぱい。上から：見出し → 対象範囲の説明 → 一覧（スクロール）→ 下部の主CTA（固定）</td><td>—</td><td>背景 <span class="sw-c" style="background:#0F0F10"></span>#0F0F10</td></tr>
+<tr><td>見出し「タグ」</td><td>余白 上24 左右20 下4dp</td><td>22sp・600・行1.35</td><td>#EDEDEA</td></tr>
+<tr><td>対象範囲の説明（既存）</td><td>現行の文言「現在のアルバム・絞り込み内の端末写真が対象です」。余白 左右20 下12dp。省略しない・折り返す</td><td>14sp・行1.5</td><td>#A0A0A4</td></tr>
+<tr><td>タグの行（ボタン全体）</td><td>最低72dp、余白 左20・右16・上下12dp、間16dp。区切り1dp（左76dpから）</td><td>—</td><td>区切り #26262A</td></tr>
+<tr><td>タグの印（固定）</td><td>40×40dp・角丸12dp、中に24dpの枠・20dpの描画</td><td>—</td><td>枠 #19191B、線 #A0A0A4</td></tr>
+<tr><td>タグ名</td><td>残りの幅いっぱい。<b>省略しない・行数の上限なし</b>（長い日本語名は行を伸ばす）</td><td>16sp・500・行1.45</td><td>#EDEDEA</td></tr>
+<tr><td>進む印 ›</td><td>20dp・右端</td><td>—</td><td>#A0A0A4</td></tr>
+<tr><td>下部の主CTA「＋ 新しいタグ」</td><td>帯：余白 上12 左右16 下16dp、上に1dpの線。ボタン：幅いっぱい・最低52dp・角丸26dp・余白 上下12 左右20dp・＋印20dp・間8dp</td><td>16sp・500</td><td>背景 #EDEDEA、文字と印 #111111、帯 #0F0F10・線 #26262A</td></tr>
+<tr><td>空の印・失敗のボタン</td><td>「タグはまだありません」／「タグを読み込めませんでした。再読み込み」（ボタン）／読み込み中「タグを読み込んでいます」</td></tr>
+</table></div>
+
+<h2 class="sec">3. 同期設定の寸法・色・余白</h2>
+<div class="tscroll"><table class="t">
+<tr><th>部品</th><th>寸法</th><th>文字</th><th>色</th></tr>
+<tr><td>画面</td><td>上から：見出し → カードの列（スクロール）→ 下部の2操作（固定）。見出しの下に大きな空白を置かない</td><td>—</td><td>背景 #0F0F10</td></tr>
+<tr><td>見出し「同期と端末容量」</td><td>余白 上24 左右20 下4dp。そのあとカードの列の上4dp</td><td>22sp・600</td><td>#EDEDEA</td></tr>
+<tr><td>カード</td><td>左右16dp・<b>角丸16dp・内側16dp・間12dp</b></td><td>カードの小見出し13sp・500</td><td><span class="sw-c" style="background:#19191B"></span>#19191B、小見出し #A0A0A4</td></tr>
+<tr><td>行（スイッチ・状態）</td><td>最低48dp、行の間に1dpの線</td><td>項目名16sp</td><td>線 #26262A</td></tr>
+<tr><td>表示のみのスイッチ</td><td>36×20dp（つまみ14dp）＋左に鍵の印16dp。押せない（フォーカスしない）。<b>保存済みの値</b>をそのまま出し、権限の有無・失敗・更新中で変えない</td><td>下に「変更は［同期・端末からの削除］から」13sp</td><td>オン：#EDEDEA の地・#111 のつまみ。オフ：枠1.5dp #6B6B70・つまみ左。形でも区別</td></tr>
+<tr><td>状態の列（4行）</td><td>上から「写真情報の読み取り」（collection）「写真の集計」（info：数値または「—」）「自動管理の権限」（permissionState）「バックグラウンド同期」（progress・右に時刻）。印は24dpの枠・20dpの描画、失敗は28dpの札。<b>それぞれ別の観測値で、ほかの行から推測して変えない</b></td><td>集計の値15sp・時刻13sp</td><td>#17のとおり</td></tr>
+<tr><td>説明（原本の保存・モバイル通信・削除の条件・日付の条件・アプリの削除・原本の位置情報）</td><td>項目名の下に説明。<b>省略しない</b></td><td>項目名14sp・500、説明14sp・行1.6</td><td>項目名 #EDEDEA、説明 #C9C9C4</td></tr>
+<tr><td>保持期間の行</td><td>最低48dp。値は 7／30／90日 のいずれか</td><td>項目名16sp・値15sp</td><td>#EDEDEA</td></tr>
+<tr><td>保持期間の選択（既存の操作）</td><td>［保持期間を変更］で 7／30／90日 の選択を開く（下部のシート・各項目56dp・ラジオ20dp）。<b>どれかを選ぶと、同じ日数でも既存のコードどおり <code>cleanupEnabled=false</code> を保存する</b>（端末から自動で削除のスイッチはオフで表示）。Backで閉じる</td><td>16sp</td><td>シート #19191B・角丸20dp</td></tr>
+<tr><td>カードの中のボタン（既存）</td><td>［写真の自動削除に必要なアクセスを許可］は削除のカードの「削除の条件」の下に置き、<code>Environment.isExternalStorageManager()</code> が true のときだけ隠す。［位置情報の読み取りを許可］は許可済みなら隠す。［保持期間を変更］はいつも出す。各 最低48dp・角丸24dp・余白 上下10 左右16dp・印20dp。長い名前は折り返す</td><td>14sp・500</td><td>#26262A・枠1dp #3A3A3F</td></tr>
+<tr><td>下部の2操作</td><td>帯：余白 上12 左右16 下16dp。左「同期・端末からの削除」は残りの幅、右「その他」は内容の幅。各 最低52dp・角丸26dp・間8dp。長いときは名前を折り返す（縮小・省略しない）</td><td>15sp・500</td><td>左：#EDEDEA／#111。右：#26262A・枠 #3A3A3F</td></tr>
+</table></div>
+
+<h2 class="sec">4. 状態の割り当て（このHTMLの切り替え）</h2>
+<div class="tscroll"><table class="t">
+<tr><th>状態</th><th>タグ一覧</th><th>同期設定</th></tr>
+<tr><td>保存済みの値（別の切り替え）</td><td>—</td><td>2つのスイッチは、どの状態でも保存済みの値（このHTMLでは［保存済みの値］で切り替え）</td></tr>
+<tr><td>通常</td><td>タグ5件の行</td><td>collection＝完了、info＝1,180枚、permissionState＝許可あり、progress＝完了＋時刻</td></tr>
+<tr><td>空</td><td>空の印（点線の枠48dp）＋主CTA。文は出さない</td><td>collection＝未実行、info＝「—」、permissionState＝許可あり、progress＝未実行・時刻「—」</td></tr>
+<tr><td>長いタグ名</td><td>とても長い名前を含む5件。折り返して行を伸ばす</td><td>（通常と同じ）</td></tr>
+<tr><td>失敗</td><td>タグを読み込めない：失敗の印（三角48dp）と［再読み込み］を1つのボタンにまとめる（既存の再読み込み操作。最低104×120dp）。押すと読み込み中の印のあと一覧へ。主CTAは今の仕様のまま押せる</td><td>collection＝失敗の札、info＝「—」、progress＝失敗の札、permissionState＝許可あり</td></tr>
+<tr><td>無効</td><td>今は操作できない（タグの処理中など）：行と主CTAを aria-disabled、薄くする。AX名に「今は操作できません」</td><td>permissionState＝許可なし（盾に斜線）。ほかの行は通常のまま（<b>権限から推測して progress を一時停止などにしない</b>）。スイッチは保存済みの値のまま</td></tr>
+<tr><td>読み取りの更新中（busy）</td><td>—</td><td>collection＝回る弧。［その他］→［状態を更新］でも同じ表示。<b>操作は無効にしない</b>。始まりと終わりを polite で1回ずつ読み上げ</td></tr>
+<tr><td colspan="3">同期設定の状態の切り替えは、4つの観測値（collection・info・permissionState・progress）の組み合わせを一度に入れるだけの<b>合成fixture</b>です。あとから各行を独立に変えられます。外側の切り替え isExternalStorageManager と位置情報の許可も独立で、ボタンの出し分けだけに使います。</td></tr>
+</table></div>
+
+<h2 class="sec">5. 読み上げ（AX名）</h2>
+<div class="tscroll"><table class="t">
+<tr><th>対象</th><th>AX名</th></tr>
+<tr><td>タグの行</td><td>「{タグ名}。タグを開く」。無効のとき「…。今は操作できません」</td></tr>
+<tr><td>主CTA</td><td>「新しいタグ」（無効のとき「新しいタグ。今は操作できません」）</td></tr>
+<tr><td>空・失敗の印</td><td>「タグはまだありません」／「タグを読み込めませんでした」</td></tr>
+<tr><td>表示のみのスイッチ</td><td>role=switch・aria-readonly。「自動同期、オン。表示のみ。変更は［同期・端末からの削除］から」（値は保存済みの値）</td></tr>
+<tr><td>写真情報の読み取り</td><td>「写真情報の読み取り、完了」／「…、読み取っています」／「…、失敗しました」／「…、まだ読み取っていません」</td></tr>
+<tr><td>写真の集計</td><td>「写真の集計、1,180枚」／「写真の集計、記録がありません」</td></tr>
+<tr><td>自動管理の権限</td><td>「自動管理の権限、許可されています」／「…、許可されていません」</td></tr>
+<tr><td>バックグラウンド同期</td><td>「バックグラウンド同期、10時42分に完了」／「…、10時42分の記録で次の実行を待っています」／「…、10時42分の記録で同期しています」／「…、10時42分に失敗しました」／「…、まだ実行していません」</td></tr>
+<tr><td>カードの中のボタン</td><td>「写真の自動削除に必要なアクセスを許可」「保持期間を変更」「位置情報の読み取りを許可」（出ているときだけ）</td></tr>
+<tr><td>下部の操作</td><td>「同期・端末からの削除」（設定の変更へ）「その他」。読み取りの更新中も同じ名前で、無効にしない</td></tr>
+<tr><td>［その他］の項目</td><td>「同期を予約する」「状態を更新」「閉じる」</td></tr>
+</table></div>
+
+<h2 class="sec">6. Back・動き・フォーカス</h2>
+<ul>
+<li>どちらの画面も標準のBackだけで戻ります。アプリ内の戻るボタンは置きません。タグ一覧 → 呼び出し元、同期設定 → Amazon Photosのログイン画面。［その他］が開いていれば、先にそれを閉じます。</li>
+<li>減らす動きの設定では、回る弧を止めます（形はそのまま）。このHTMLでは OS の設定と［減らす動き］の切り替えの両方に従います。</li>
+<li>フォーカス：暗い地では2dpの #EDEDEA の輪（外へ2dp）。白い主CTAでは外の輪（3dp）に加えて内側に2dpの #111 の輪。</li>
+<li>48dp以上：すべての押せる部品は最低48dp（タグの行72dp、主CTAと下部の操作52dp）。</li>
+</ul>
+
+<h2 class="sec">7. 範囲外・注記</h2>
+<ul>
+<li>このHTMLは新しい機能を足していません。［再読み込み］、［写真の自動削除に必要なアクセスを許可］、位置情報の許可のボタン、保持期間を選ぶと <code>cleanupEnabled=false</code> になる動きは、どれも現行のコードの条件をそのまま残したものです。</li>
+<li>共有の画面（次の比較）。タグの作成・削除・推論の仕様。同期の条件。［同期・端末からの削除］の先の設定画面と、［同期を予約する］の先（このHTMLでは記録だけ）。</li>
+<li>外枠は outline で描いているので、寸法の外側にあります。フォントはブラウザとAndroidで数%ずれることがあります。</li>
+<li>単独表示（［この画面だけを表示］）は、Androidの画面の写しと1dp＝1pxで並べるためのものです。</li>
+</ul>
+</section>
+</div>
+
+<script>
+(function () {
+  const S = (p) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + p + '</svg>';
+  const G = {
+    run: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke-opacity=".22"></circle><path class="spin" d="M12 4a8 8 0 0 1 8 8"></path></svg>',
+    wait: S('<circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"></path>'),
+    pause: S('<circle cx="12" cy="12" r="8.5"></circle><path d="M10 9v6M14 9v6"></path>'),
+    done: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.5" fill="#EDEDEA"></circle><path d="M7.8 12.3l2.8 2.8 5.6-5.8" fill="none" stroke="#111" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg>',
+    fail: S('<path d="M12 4l9 15.5H3z"></path><path d="M12 10v4.5M12 17.2v.1"></path>'),
+    perm: S('<path d="M12 3.5l7 3v5c0 4.2-3 7.4-7 9-4-1.6-7-4.8-7-9v-5z"></path><path d="M7 7l10 10"></path>'),
+    notyet: S('<circle cx="12" cy="12" r="8.5" stroke-dasharray="2.2 2.2"></circle>'),
+    empty: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="4 4" aria-hidden="true"><rect x="7" y="9" width="34" height="30" rx="6"></rect></svg>',
+    failBig: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M24 7l18 31H6z"></path><path d="M24 19v9M24 33.5v.1"></path></svg>',
+    tag: S('<path d="M3.8 12.2V4.8a1 1 0 0 1 1-1h7.4l8 8a1.4 1.4 0 0 1 0 2l-6.2 6.2a1.4 1.4 0 0 1-2 0z"></path><circle cx="8.3" cy="8.3" r="1.4"></circle>'),
+    chev: S('<path d="M9 6l6 6-6 6"></path>'),
+    plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>',
+    more: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5.5" r="1.7"></circle><circle cx="12" cy="12" r="1.7"></circle><circle cx="12" cy="18.5" r="1.7"></circle></svg>',
+    sync: S('<path d="M19 8.5A7.5 7.5 0 0 0 5.6 7.4"></path><path d="M19 4v4.5h-4.5"></path><path d="M5 15.5a7.5 7.5 0 0 0 13.4 1.1"></path><path d="M5 20v-4.5h4.5"></path>'),
+    lock: S('<rect x="5.5" y="10.5" width="13" height="9.5" rx="2"></rect><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"></path>'),
+    retry: S('<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"></path><path d="M19.5 4.5v4h-4"></path>'),
+    pin: S('<path d="M12 21s-6.5-6.1-6.5-11a6.5 6.5 0 0 1 13 0c0 4.9-6.5 11-6.5 11z"></path><circle cx="12" cy="10" r="2.3"></circle>'),
+    cal: S('<rect x="4" y="5.5" width="16" height="14.5" rx="2"></rect><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"></path>')
+  };
+  const gl = (k, cls, ax) => '<span class="gl' + (cls ? ' ' + cls : '') + '"' + (ax ? ' role="img" aria-label="' + ax + '"' : ' aria-hidden="true"') + '>' + G[k] + '</span>';
+  const mk = (inner, cls, ax) => '<span class="mk' + (cls ? ' ' + cls : '') + '" role="img" aria-label="' + ax + '">' + inner + '</span>';
+
+  const O = { s: 'tags', w: 400, h: 760, k: 1, t: 'normal', rm: false, a: true, d: true, keep: 30, col: 'ok', info: 1, perm: 'granted', prog: 'complete', x: 1, loc: 0 };
+  /* 状態の切り替え（通常・空・失敗・無効）は、同期設定では独立した観測値の組み合わせを一度に入れるだけ（推測で連動させない） */
+  const PRESET = { normal: ['ok', 1, 'granted', 'complete'], long: ['ok', 1, 'granted', 'complete'], empty: ['none', 0, 'granted', 'none'], fail: ['fail', 0, 'granted', 'failed'], off: ['ok', 1, 'denied', 'complete'] };
+  let rt = null;
+  function syncSeg() { [['oS', O.s], ['oW', O.w], ['oH', O.h], ['oK', O.k], ['oT', O.t], ['oC', O.col], ['oI', O.info], ['oPm', O.perm], ['oG', O.prog], ['oX', O.x], ['oL', O.loc]].forEach(([id, v]) => document.querySelectorAll('#' + id + ' button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.v == String(v)))); }
+  const sync = syncSeg;
+  function startRefresh() { const prev = O.col === 'reading' ? 'ok' : O.col; O.col = 'reading'; syncSeg(); say('写真情報を読み取っています'); clearTimeout(rt); rt = setTimeout(() => { O.col = prev; syncSeg(); say('写真情報の読み取りが終わりました'); render(); }, 1600); }
+  let N = { scr: 'tags', sheet: false, left: false, scroll: 0 }, log = [];
+  const add = (x) => { log.unshift(x); log = log.slice(0, 10); };
+  const say = (x) => { const l = document.getElementById('live'); l.textContent = ''; setTimeout(() => { l.textContent = x; }, 30); };
+
+  const TAGS = {
+    normal: ['空', '夕景', '紅葉', '家族', '旅行'],
+    long: ['空', '二〇二六年の秋に京都と奈良をめぐった家族旅行で撮った、あとで写真集にまとめたい写真', '夕景', 'スクラムフェスの会場と登壇のようす（ダミーの長い名前）', '紅葉']
+  };
+
+  function tagsHTML() {
+    const dis = O.t === 'off';
+    const dAttr = dis ? ' aria-disabled="true"' : '';
+    let mid;
+    if (O.t === 'empty') mid = '<div class="center"><span class="big" role="img" aria-label="タグはまだありません">' + G.empty + '</span></div>';
+    else if (O.t === 'fail') mid = '<div class="center"><button class="retryMk" data-act="retryTags" aria-label="タグを読み込めませんでした。再読み込み"><span class="big" style="color:var(--fail)" aria-hidden="true">' + G.failBig + '</span><span class="rl" aria-hidden="true">' + G.retry + '<span>再読み込み</span></span></button></div>';
+    else if (N.tload) mid = '<div class="center"><span class="big" role="img" aria-label="タグを読み込んでいます">' + G.run + '</span></div>';
+    else mid = '<ul class="tlist" aria-label="タグ">' + (TAGS[O.t] || TAGS.normal).map((n, i) =>
+      '<li><button class="trow" data-tag="' + i + '"' + dAttr + ' aria-label="' + n + '。タグを開く' + (dis ? '。今は操作できません' : '') + '"><span class="tmark" aria-hidden="true">' + G.tag + '</span><span class="tname" aria-hidden="true">' + n + '</span><span class="chev" aria-hidden="true">' + G.chev + '</span></button></li>').join('') + '</ul>';
+    return '<div class="scroll" data-scroll><h2 class="ttl">タグ</h2><p class="scope">現在のアルバム・絞り込み内の端末写真が対象です</p>' + mid + '</div>' +
+      '<div class="foot"><button class="cta" data-act="newtag"' + dAttr + ' aria-label="新しいタグ' + (dis ? '。今は操作できません' : '') + '">' + G.plus + '<span aria-hidden="true">新しいタグ</span></button></div>';
+  }
+
+  function syncHTML() {
+    const dAttr = '', busyAX = ''; /* 読み取りの更新中も操作は無効にしない */
+    const tog = (name, v) => '<div class="srow" role="switch" aria-checked="' + v + '" aria-readonly="true" aria-label="' + name + '、' + (v ? 'オン' : 'オフ') + '。表示のみ。変更は［同期・端末からの削除］から"><span class="lab" aria-hidden="true">' + name + '</span><span class="r" aria-hidden="true"><span class="lockic">' + G.lock.replace('<svg', '<svg style="width:16px;height:16px"') + '</span><span class="tog ' + (v ? 'on' : 'off') + '"></span></span></div>';
+    const col = { ok: gl('done', '', '写真情報の読み取り、完了'), reading: gl('run', '', '写真情報の読み取り、読み取っています'), fail: mk(gl('fail', 'fail'), 'fail', '写真情報の読み取り、失敗しました'), none: gl('notyet', 'muted', '写真情報の読み取り、まだ読み取っていません') }[O.col];
+    const info = O.info ? '<span role="text" aria-label="写真の集計、1,180枚" style="color:var(--text);font-size:calc(15px*var(--k))">1,180枚</span>' : '<span role="text" aria-label="写真の集計、記録がありません" style="color:var(--text);font-size:calc(15px*var(--k))">—</span>';
+    const perm = O.perm === 'denied' ? gl('perm', 'fail', '自動管理の権限、許可されていません') : gl('done', '', '自動管理の権限、許可されています');
+    let prog, time = '10:42';
+    if (O.prog === 'waiting') prog = gl('wait', '', 'バックグラウンド同期、10時42分の記録で次の実行を待っています');
+    else if (O.prog === 'running') prog = gl('run', '', 'バックグラウンド同期、10時42分の記録で同期しています');
+    else if (O.prog === 'failed') prog = mk(gl('fail', 'fail'), 'fail', 'バックグラウンド同期、10時42分に失敗しました');
+    else if (O.prog === 'none') { prog = gl('notyet', 'muted', 'バックグラウンド同期、まだ実行していません'); time = '—'; }
+    else prog = gl('done', '', 'バックグラウンド同期、10時42分に完了');
+    const srow = (name, glyph, tm) => '<div class="srow"><span class="lab">' + name + '</span><span class="r">' + glyph + (tm ? '<span aria-hidden="true">' + tm + '</span>' : '') + '</span></div>';
+    return '<div class="scroll" data-scroll><h2 class="ttl">同期と端末容量</h2><div class="cards">' +
+      '<section class="card" aria-label="設定"><h3 aria-hidden="true">設定</h3>' + tog('自動同期', O.a) + tog('端末から自動で削除', O.d) + '<p class="hint">変更は［同期・端末からの削除］から</p></section>' +
+      '<section class="card" aria-label="状態"><h3 aria-hidden="true">状態</h3>' + srow('写真情報の読み取り', col) + srow('写真の集計', info) + srow('自動管理の権限', perm) + srow('バックグラウンド同期', prog, time) + '</section>' +
+      '<section class="card" aria-label="保存と通信"><h3 aria-hidden="true">保存と通信</h3>' +
+        '<p class="dt">原本の保存</p><p class="desc">フォルダ選択は不要です。すべてのJPEGと、RAW内の機種情報からGR IV（Monochrome含む）、OM-1 Mark II、E-P7、LeitzphoneのRAWを自動で見つけます。</p>' +
+        '<p class="dt">モバイル通信</p><p class="desc">モバイル通信でも同期します。実行時刻はAndroidの省電力制御などにより遅れる場合があります。</p></section>' +
+      '<section class="card" aria-label="端末からの削除"><h3 aria-hidden="true">端末からの削除</h3>' +
+        '<p class="dt">削除の条件</p><p class="desc">端末の写真の自動削除には「すべてのファイルへのアクセス」が必要です。端末から削除するのは対象機種のRAWとすべてのJPEGで、クラウドから同じ内容で戻せることを確認し、プレビューを保存した元のファイルに限ります。</p>' +
+        (O.x ? '' : '<button class="btn" data-act="allfiles" aria-label="写真の自動削除に必要なアクセスを許可">' + G.lock + '<span aria-hidden="true">写真の自動削除に必要なアクセスを許可</span></button>') +
+        '<p class="dt">日付の条件</p><p class="desc">撮影日から数えます。JPEGで撮影日がない場合は追加日、作成日の順に使います。日付がすべて不明のJPEGは保存確認後に削除対象になり、撮影日不明のRAWは残します。</p>' +
+        '<p class="dt">アプリを削除したとき</p><p class="desc">アプリを削除すると端末のプレビューと管理記録も消えます。クラウドの元のファイルはAmazon Photosに残ります。</p>' +
+        '<div class="srow" style="margin-top:12px;border-top:1px solid var(--line)"><span class="lab">保持期間</span><span class="r" style="color:var(--text);font-size:calc(15px*var(--k))">' + O.keep + '日</span></div>' +
+        '<button class="btn" data-act="keep"' + dAttr + ' aria-label="保持期間を変更' + busyAX + '">' + G.cal + '<span aria-hidden="true">保持期間を変更</span></button></section>' +
+      '<section class="card" aria-label="原本の位置情報"><h3 aria-hidden="true">原本の位置情報</h3>' +
+        '<p class="desc">撮影時の位置情報も含め、元のファイルを変更せず保存するための許可です。端末の現在位置は取得しません。</p>' +
+        (O.loc ? '' : '<button class="btn" data-act="loc" aria-label="位置情報の読み取りを許可">' + G.pin + '<span aria-hidden="true">位置情報の読み取りを許可</span></button>') + '</section>' +
+      '</div></div>' +
+      '<div class="ops"><button class="op main" data-act="syncdel"' + dAttr + ' aria-label="同期・端末からの削除' + busyAX + '">' + G.sync + '<span aria-hidden="true">同期・端末からの削除</span></button>' +
+      '<button class="op sec" data-act="more"' + dAttr + ' aria-label="その他' + busyAX + '">' + G.more + '<span aria-hidden="true">その他</span></button></div>' +
+      (N.keep ? '<button class="dim" data-act="keepClose" aria-label="閉じる" tabindex="-1"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="保持期間"><span class="hdl" aria-hidden="true"></span><div role="radiogroup" aria-label="保持期間">' + [7, 30, 90].map((d) => '<button class="it" role="radio" aria-checked="' + (O.keep === d) + '" data-keep="' + d + '"><span class="rd' + (O.keep === d ? ' on' : '') + '" aria-hidden="true"></span><span>' + d + '日</span></button>').join('') + '</div><div class="cl"><button data-act="keepClose">閉じる</button></div></div>' : '') +
+      (N.sheet ? '<button class="dim" data-act="close" aria-label="閉じる" tabindex="-1"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="その他"><span class="hdl" aria-hidden="true"></span><button class="it" data-act="reserve">' + G.cal + '<span>同期を予約する</span></button><button class="it" data-act="refresh">' + G.retry + '<span>状態を更新</span></button><div class="cl"><button data-act="close">閉じる</button></div></div>' : '');
+  }
+
+  function callerHTML(kind) {
+    return kind === 'tags'
+      ? '<div class="caller"><span>（呼び出し元：アルバムの画面・ダミー）</span><button class="btn" data-act="openTags">タグ</button></div>'
+      : '<div class="caller"><span>（Amazon Photos のログインの画面・ダミー）</span><button class="btn" data-act="openSync">' + G.sync + '<span>同期の設定</span></button></div>';
+  }
+
+  const dev = document.getElementById('dev');
+  function render() {
+    document.documentElement.style.setProperty('--k', O.k);
+    dev.style.setProperty('--w', O.w + 'px'); dev.style.setProperty('--h', O.h + 'px');
+    dev.classList.toggle('rm', O.rm);
+    document.getElementById('syncCtl').hidden = O.s !== 'sync';
+    let h = '<span class="synth" aria-hidden="true">合成の画面</span>';
+    if (N.scr === 'tags') h += tagsHTML();
+    else if (N.scr === 'sync') h += syncHTML();
+    else h += callerHTML(N.scr === 'callerTags' ? 'tags' : 'sync');
+    if (N.left) h += '<div class="os"><span>（OSへ戻った状態・デモ）</span><button class="hw" data-act="reopen">開き直す（デモ）</button></div>';
+    dev.innerHTML = h;
+    const sc = dev.querySelector('[data-scroll]');
+    if (sc) { sc.scrollTop = N.scroll; sc.addEventListener('scroll', () => { N.scroll = sc.scrollTop; }, { passive: true }); }
+    side();
+  }
+
+  function side() {
+    const labs = [...dev.querySelectorAll('[aria-label]')].filter((e) => !e.closest('[aria-hidden="true"]')).map((e) => (e.getAttribute('role') ? '[' + e.getAttribute('role') + '] ' : (e.tagName === 'BUTTON' ? '[button] ' : '')) + e.getAttribute('aria-label') + (e.getAttribute('aria-disabled') === 'true' ? '（disabled）' : ''));
+    document.getElementById('ax').innerHTML = '<b>読み上げ（AX名）</b><br>' + ([...new Set(labs)].map((x) => '・' + x).join('<br>') || '—');
+    const d = dev.getBoundingClientRect();
+    const BAN = /実行中|待機中|完了|失敗しました|できませんでした|許可されています|許可されていません|同期しています|一時停止|オン$|オフ$|有効|無効|処理中/;
+    const vis = [...dev.querySelectorAll('*')].filter((e) => e.children.length === 0 && e.offsetParent !== null && !e.closest('.desc') && !e.closest('.synth') && e.textContent.trim()).map((e) => e.textContent.trim());
+    const bad = vis.filter((t) => BAN.test(t));
+    const small = [...dev.querySelectorAll('button')].filter((b) => b.offsetParent !== null && !b.classList.contains('dim') && !b.closest('.os')).filter((b) => { const r = b.getBoundingClientRect(); return r.height < 47.5 || r.width < 47.5; });
+    const ov = [...dev.querySelectorAll('*')].filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && !e.closest('.os') && !e.classList.contains('synth') && (r.right > d.right + 0.5 || r.left < d.left - 0.5); }).length;
+    const clip = [...dev.querySelectorAll('.tname,.lab,.desc,.dt,.cta span,.op span,.btn span,.scope,.ttl,.hint')].filter((e) => e.scrollWidth > e.clientWidth + 1 || getComputedStyle(e).textOverflow === 'ellipsis' || getComputedStyle(e).webkitLineClamp !== 'none').length;
+    const minFont = Math.min(...[...dev.querySelectorAll('.tname,.lab,.desc,.cta,.op,.btn')].map((e) => parseFloat(getComputedStyle(e).fontSize)).concat([99]));
+    let cover = 'なし';
+    const sc = dev.querySelector('[data-scroll]'), ft = dev.querySelector('.foot,.ops');
+    if (sc && ft) { const a = sc.getBoundingClientRect(), b = ft.getBoundingClientRect(); cover = a.bottom <= b.top + 0.5 ? 'なし' : '重なりあり'; }
+    const spinning = dev.querySelectorAll('.spin').length;
+    const rmOK = !(O.rm && [...dev.querySelectorAll('.spin')].some((e) => getComputedStyle(e).animationName !== 'none'));
+    const ok = (b) => b ? '<span class="okc">なし</span>' : '<span class="ngc">あり</span>';
+    document.getElementById('chk').innerHTML = '<b>検査（' + O.w + 'dp・文字' + O.k + '倍）</b><br>状態の文（説明文以外）：' + (bad.length ? '<span class="ngc">' + bad.join(' / ') + '</span>' : '<span class="okc">なし</span>') +
+      '<br>48dp未満のボタン：' + (small.length ? '<span class="ngc">' + small.length + '</span>' : '<span class="okc">なし</span>') +
+      '<br>はみ出し：' + ok(!ov) + '<br>省略・切れ：' + ok(!clip) + '<br>文字の縮小：' + (minFont >= 13 * O.k - 0.1 ? '<span class="okc">なし</span>' : '<span class="ngc">' + minFont + 'px</span>') +
+      '<br>固定の帯と内容の重なり：' + (cover === 'なし' ? '<span class="okc">なし</span>' : '<span class="ngc">' + cover + '</span>') +
+      '<br>回る弧：' + spinning + (rmOK ? '' : ' <span class="ngc">（減らす動きで回っている）</span>') +
+      '<br>新しい操作（同期の開始・削除・戻る）：<span class="okc">なし</span>';
+    document.getElementById('log').innerHTML = '<b>操作の記録</b><br>' + (log.map((x) => '・' + x).join('<br>') || '—');
+  }
+
+  dev.addEventListener('click', (e) => {
+    const a = e.target.closest('[data-act],[data-tag],[data-keep]');
+    if (!a) return;
+    if (a.getAttribute('aria-disabled') === 'true') { add('（無効のため何もしない）'); return side(); }
+    const v = a.dataset.act;
+    if (a.dataset.tag != null) add('タグの行 → 既存のタグの画面へ（変更なし）');
+    else if (v === 'newtag') add('［新しいタグ］→ 既存の作成の流れ（変更なし）');
+    else if (v === 'more') { N.sheet = true; add('［その他］→ 既存のメニュー'); }
+    else if (v === 'close') { N.sheet = false; add('メニューを閉じる'); }
+    else if (v === 'syncdel') add('［同期・端末からの削除］→ 既存の設定の変更（自動同期・端末から自動で削除）');
+    else if (v === 'reserve') { N.sheet = false; add('［同期を予約する］→ 既存の予約（変更なし）'); }
+    else if (v === 'refresh') { N.sheet = false; add('［状態を更新］→ 保存済みの状態を読み直す'); startRefresh(); }
+    else if (v === 'keep') { N.keep = true; add('［保持期間を変更］→ 既存の選択（7／30／90日）'); }
+    else if (v === 'keepClose') { N.keep = false; add('保持期間の選択を閉じる'); }
+    else if (a.dataset.keep) { const d = +a.dataset.keep; N.keep = false; const same = d === O.keep; O.keep = d; O.d = false; const b = document.getElementById('oD'); b.setAttribute('aria-pressed', 'false'); b.textContent = '端末から自動で削除 オフ'; add('保持期間 → ' + d + '日' + (same ? '（同じ日数）' : '') + '。cleanupEnabled=false を保存（端末から自動で削除はオフ）'); }
+    else if (v === 'allfiles') add('［写真の自動削除に必要なアクセスを許可］→ 既存の「すべてのファイルへのアクセス」の設定へ（変更なし）');
+    else if (v === 'retryTags') { O.t = 'normal'; N.tload = true; syncSeg(); add('［再読み込み］→ 既存のタグの読み込み（変更なし）'); say('タグを読み込んでいます'); clearTimeout(rt); rt = setTimeout(() => { N.tload = false; say('タグを読み込みました'); render(); }, 900); }
+    else if (v === 'loc') add('［位置情報の読み取りを許可］→ 既存の許可の流れ（変更なし）');
+    else if (v === 'openTags') { N.scr = 'tags'; N.scroll = 0; add('［タグ］→ タグ一覧'); }
+    else if (v === 'openSync') { N.scr = 'sync'; N.scroll = 0; add('［同期の設定］→ 同期設定'); }
+    else if (v === 'reopen') { N.left = false; }
+    render();
+    const f = v === 'close' ? dev.querySelector('[data-act=more]') : v === 'keepClose' || a.dataset.keep ? dev.querySelector('[data-act=keep]') : v === 'more' ? dev.querySelector('.sheet button') : v === 'keep' ? dev.querySelector('.sheet [aria-checked=true]') : null;
+    if (f) f.focus();
+  });
+  document.getElementById('hwBack').addEventListener('click', () => {
+    if (N.left) return;
+    if (N.scr === 'sync' && N.keep) { N.keep = false; add('Back：保持期間の選択を閉じる'); }
+    else if (N.scr === 'sync' && N.sheet) { N.sheet = false; add('Back：［その他］を閉じる'); }
+    else if (N.scr === 'tags') { N.scr = 'callerTags'; add('Back：タグ一覧 → 呼び出し元'); }
+    else if (N.scr === 'sync') { N.scr = 'callerSync'; add('Back：同期設定 → Amazon Photos のログインの画面'); }
+    else { N.left = true; add('Back：ルートなのでOSへ'); }
+    render();
+  });
+  document.getElementById('reset').addEventListener('click', () => { N = { scr: O.s, sheet: false, left: false, scroll: 0 }; log = []; render(); });
+  function seg(id, fn) {
+    const el = document.getElementById(id);
+    el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; el.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', x === b ? 'true' : 'false')); fn(b.dataset.v); render(); });
+  }
+  seg('oS', (v) => { O.s = v; N = { scr: v, sheet: false, left: false, scroll: 0 }; });
+  seg('oW', (v) => { O.w = +v; }); seg('oH', (v) => { O.h = +v; }); seg('oK', (v) => { O.k = +v; });
+  seg('oT', (v) => { O.t = v; N.sheet = false; N.tload = false; const P = PRESET[v]; O.col = P[0]; O.info = P[1]; O.perm = P[2]; O.prog = P[3]; syncSeg(); add('状態：' + v + (N.scr === 'sync' ? '（観測値の組み合わせを入れる）' : '')); });
+  const tg = (id, key, fn) => { const b = document.getElementById(id); b.addEventListener('click', () => { O[key] = !O[key]; b.setAttribute('aria-pressed', O[key]); if (fn) fn(); render(); }); };
+  seg('oC', (v) => { clearTimeout(rt); O.col = v; add('collection：' + v); }); seg('oI', (v) => { O.info = +v; add('info：' + (O.info ? '1,180' : '—')); });
+  seg('oPm', (v) => { O.perm = v; add('permissionState：' + v); }); seg('oG', (v) => { O.prog = v; add('progress：' + v); });
+  seg('oX', (v) => { O.x = +v; add('isExternalStorageManager：' + (O.x ? 'true' : 'false')); }); seg('oL', (v) => { O.loc = +v; add('位置情報の読み取り：' + (O.loc ? '許可済み' : '未許可')); });
+  const sv = (id, key, name) => { const b = document.getElementById(id); b.addEventListener('click', () => { O[key] = !O[key]; b.setAttribute('aria-pressed', O[key]); b.textContent = name + (O[key] ? ' オン' : ' オフ'); add('保存済みの値：' + b.textContent); render(); }); };
+  sv('oA', 'a', '自動同期'); sv('oD', 'd', '端末から自動で削除');
+  tg('oRM', 'rm');
+  const soloSet = (on) => { document.body.classList.toggle('solo', on); };
+  document.getElementById('solo').addEventListener('click', () => soloSet(true));
+  document.getElementById('soloExit').addEventListener('click', () => soloSet(false));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.body.classList.contains('solo')) soloSet(false); });
+  /* URL で単独表示：#solo&s=sync&w=320&k=1.3&t=normal&h=760 */
+  const q = new URLSearchParams(location.hash.slice(1));
+  if (q.has('s')) { O.s = q.get('s') === 'sync' ? 'sync' : 'tags'; N.scr = O.s; }
+  ['w', 'h', 'k'].forEach((x) => { if (q.has(x)) O[x] = +q.get(x); });
+  if (q.has('t')) O.t = q.get('t');
+  sync();
+  if (q.has('solo')) soloSet(true);
+  window.__l8 = { O: O, get N() { return N; }, render: render, go: (s) => { N = { scr: s, sheet: false, left: false, scroll: 0 }; render(); } };
+  render();
+})();
+</script>
+</body>
+</html>

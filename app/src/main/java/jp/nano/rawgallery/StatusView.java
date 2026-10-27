@@ -14,10 +14,15 @@ final class StatusView extends View {
   private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
   private Symbol symbol=Symbol.UNKNOWN, companion;
   private String numbers="", spoken="";
-  private boolean shown, loading, marker, transientResult;
+  private boolean shown, loading, marker, transientResult, collapseWhenIdle;
   private long started, visibleAt;
   private final Typeface numberTypeface=Typeface.create("sans-serif-medium",Typeface.NORMAL);
   private int revision;
+  private boolean suppressElapsed, photoOverlay, photoFailure,compact;
+  void asCompact(){compact=true;suppressElapsed=true;requestLayout();}
+  void asPhotoOverlay(){photoOverlay=true;suppressElapsed=true;requestLayout();}
+  void asPhotoFailure(){photoOverlay=false;photoFailure=true;requestLayout();}
+  int photoRightInset(){return companion==null||isClickable()?2:12;}
   private Runnable recovery;
   private String recoveryName="";
   StatusView(Context c) {
@@ -26,6 +31,7 @@ final class StatusView extends View {
     setVisibility(INVISIBLE);
   }
   private int dp(float n){return GalleryUi.dp(getContext(),n);}
+  void collapseWhenIdle(){collapseWhenIdle=true;requestLayout();}
   void show(Symbol value,String numeric,String description,Runnable action,String actionName) {
     revision++;animate().cancel();setAlpha(1);loading=false;transientResult=false;
     symbol=value;numbers=numeric==null?"":numeric;spoken=description;recovery=action;
@@ -39,7 +45,7 @@ final class StatusView extends View {
     clear();loading=true;started=SystemClock.uptimeMillis();spoken=description;symbol=Symbol.RUNNING;requestLayout();
     int token=revision;
     postDelayed(()->{if(token!=revision||!loading)return;shown=true;visibleAt=SystemClock.uptimeMillis();setVisibility(VISIBLE);publish();invalidate();},400);
-    postDelayed(()->{if(token!=revision||!loading)return;marker=true;requestLayout();invalidate();},8000);
+    postDelayed(()->{if(token!=revision||!loading||suppressElapsed)return;marker=true;requestLayout();invalidate();},8000);
   }
   void observe(Symbol value,String numeric,String description) {
     if(value==Symbol.RUNNING){if(!loading)begin(description);else describe(description);counts(numeric);}
@@ -59,18 +65,31 @@ final class StatusView extends View {
   void clear() {
     revision++;animate().cancel();setAlpha(1);loading=false;shown=false;marker=false;transientResult=false;recoveryName="";companion=null;numbers="";
     recovery=null;setOnClickListener(null);setClickable(false);setFocusable(false);
-    setContentDescription(null);setVisibility(INVISIBLE);invalidate();
+    setContentDescription(null);setVisibility(INVISIBLE);requestLayout();invalidate();
+  }
+  private void drawPhotoOverlay(Canvas canvas){
+    float d=getResources().getDisplayMetrics().density;int saved=canvas.save();canvas.scale(d,d);
+    float width=companion==null?28:50,left=(getWidth()/d-width)/2,top=(getHeight()/d-28)/2;
+    paint.setStyle(Paint.Style.FILL);paint.setColor(0x9e000000);canvas.drawRoundRect(left,top,left+width,top+28,14,14,paint);
+    if(error(symbol)){paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1.5f);paint.setColor(0xffff8a7a);canvas.drawRoundRect(left+.75f,top+.75f,left+width-.75f,top+27.25f,13.25f,13.25f,paint);}
+    float angle=symbol==Symbol.RUNNING&&android.animation.ValueAnimator.areAnimatorsEnabled()?(SystemClock.uptimeMillis()%1000)*.36f:0;
+    if(companion!=null){glyph(canvas,paint,companion,left+6,top+5,18,GalleryUi.TEXT,0);glyph(canvas,paint,symbol,left+26,top+5,18,error(symbol)?0xffff8a7a:GalleryUi.TEXT,angle);}
+    else glyph(canvas,paint,symbol,left+4,top+4,20,error(symbol)?0xffff8a7a:GalleryUi.TEXT,angle);
+    canvas.restoreToCount(saved);if(symbol==Symbol.RUNNING&&isShown()&&android.animation.ValueAnimator.areAnimatorsEnabled())postInvalidateDelayed(50);
   }
   private void publish(){String value=spoken+(recoveryName.isEmpty()?"":"。"+recoveryName);if(!android.text.TextUtils.equals(getContentDescription(),value))setContentDescription(value);}
   @Override public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info){super.onInitializeAccessibilityNodeInfo(info);if(recovery!=null){info.setClassName("android.widget.Button");info.addAction(new AccessibilityNodeInfo.AccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK,recoveryName));}}
   @Override protected void onDetachedFromWindow(){revision++;animate().cancel();super.onDetachedFromWindow();}
-  @Override protected void onMeasure(int w,int h){paint.setTypeface(numberTypeface);paint.setTextSize(13*getResources().getDisplayMetrics().scaledDensity);String measured=numbers.isEmpty()&&loading?"999分":numbers;int width=dp(companion==null?48:68)+(measured.isEmpty()?0:(int)paint.measureText(measured)+dp(8));setMeasuredDimension(resolveSize(width,w),resolveSize(dp(48),h));}
+  @Override protected void onMeasure(int w,int h){if(photoFailure){setMeasuredDimension(resolveSize(dp(32),w),resolveSize(dp(32),h));return;}if(photoOverlay){setMeasuredDimension(resolveSize(dp(companion==null?48:50),w),resolveSize(dp(48),h));return;}if(collapseWhenIdle&&!loading&&!shown){setMeasuredDimension(0,0);return;}paint.setTypeface(numberTypeface);paint.setTextSize(13*getResources().getDisplayMetrics().scaledDensity);String measured=numbers.isEmpty()&&loading&&!suppressElapsed?"999分":numbers;int width=dp(companion==null?48:68)+(measured.isEmpty()?0:(int)paint.measureText(measured)+dp(8));setMeasuredDimension(resolveSize(width,w),resolveSize(dp(compact?28:48),h));}
   @Override protected void onDraw(Canvas original){
-    if(!shown)return;float density=getResources().getDisplayMetrics().density;
+    if(!shown)return;
+    if(photoFailure){glyph(original,paint,Symbol.FAILED,(getWidth()-dp(32))/2f,(getHeight()-dp(32))/2f,dp(32),0xffff8a7a,0);return;}
+    if(photoOverlay){drawPhotoOverlay(original);return;}
+    float density=getResources().getDisplayMetrics().density;
     Canvas c=original;int save=c.save();c.scale(density,density);
     float w=getWidth()/density,h=getHeight()/density;
     String value=numbers;
-    if(loading&&marker&&value.isEmpty()){long mins=(SystemClock.uptimeMillis()-started)/60000;value=mins==0?"<1分":mins+"分";}
+    if(loading&&!suppressElapsed&&marker&&value.isEmpty()){long mins=(SystemClock.uptimeMillis()-started)/60000;value=mins==0?"<1分":mins+"分";}
     paint.setTextSize(13*getResources().getConfiguration().fontScale);paint.setTypeface(numberTypeface);
     float textWidth=value.isEmpty()?0:paint.measureText(value)+4;
     float content=20+(companion==null?0:24)+textWidth;

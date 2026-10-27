@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loupe ソート結果（1組・全順位・同率・既存操作）</title>
+<style>
+:root{--ink:#EDEDEA;--muted:#A9A9A4;--k:1;--w:400px;--h:844px}
+*{box-sizing:border-box}
+body{margin:0;background:#1E1E20;color:var(--ink);font-family:'Noto Sans JP',system-ui,sans-serif;font-size:15px;line-height:1.6}
+.wrap{max-width:1500px;padding:28px 24px 64px}
+h1.pg{margin:0;font-size:24px;line-height:1.4}
+.lead{margin:6px 0 0;color:#D6D6D2;font-size:14px}
+.note{margin:10px 0 0;padding:10px 14px;border-radius:10px;border:1px solid #4A4A50;background:#161618;font-size:13.5px}
+.controls{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin:10px 0 0}
+.lb{color:var(--muted);font-size:12.5px;margin-right:6px}
+.seg{display:inline-flex;flex-wrap:wrap;background:#2A2A2E;border-radius:22px;padding:2px}
+.seg button{background:none;border:0;color:var(--ink);font:inherit;font-size:13px;min-height:44px;padding:0 12px;border-radius:20px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:#EDEDEA;color:#111}
+.hw{background:#2A2A2E;border:1px solid #4A4A50;color:var(--ink);font:inherit;font-size:13px;font-weight:600;min-height:44px;padding:0 14px;border-radius:22px;cursor:pointer}
+.hw[aria-pressed="true"]{background:#EDEDEA;color:#111}
+.wrap :focus-visible{outline:2px solid #8AB4F8;outline-offset:2px}
+.stage{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start;margin-top:14px}
+.col>h2{margin:0 0 8px;font-size:14px;font-weight:600}
+.col>h2 small{color:var(--muted);font-weight:400}
+.side{flex:1;min-width:300px;display:flex;flex-direction:column;gap:10px}
+.box{background:#141416;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.6;overflow-wrap:anywhere}
+.okc{color:#9FE0B5}.ngc{color:#F2A7AB}
+table.t{border-collapse:collapse;width:100%;font-size:13.5px;line-height:1.6}
+table.t th,table.t td{border-bottom:1px solid #2E2E32;padding:6px 10px 6px 0;text-align:left;vertical-align:top}
+table.t th{color:var(--muted);font-weight:500;font-size:12px}
+h2.sec{margin:32px 0 8px;font-size:19px}
+.spec ul{margin:0;padding-left:20px}.spec li{margin:3px 0;font-size:14px}
+.tscroll{overflow-x:auto}
+.tg{display:inline-block;padding:0 8px;border-radius:10px;font-size:12px;color:#111;background:#F5A623;white-space:nowrap;margin:0 2px 2px 0}
+.tg.q{background:#8AB4F8}.tg.k{background:#9FE0B5}
+.orig,.dev{position:relative;overflow:hidden;transform:translateZ(0);outline:1px solid #3A3A3F;background:#0F0F10;color:#EDEDEA}
+.orig{width:390px;height:844px}
+.dev{width:var(--w);height:var(--h);font-family:'Noto Sans JP',system-ui,sans-serif;font-size:calc(15px*var(--k));line-height:calc(22px*var(--k));-webkit-font-smoothing:antialiased}
+.dev button{font-family:inherit;color:inherit}
+.dev *{text-overflow:clip}
+.dev :focus{outline:none}
+.dev :focus-visible{outline:2px solid #EDEDEA;outline-offset:2px}
+.dev.showchg [data-chg]{outline:2px solid #F5A623;outline-offset:-2px}
+.dev.showchg [data-chg="new"]{outline:2px dashed #F5A623}
+.spin{animation:spin 1s linear infinite;transform-origin:50% 50%}
+@keyframes spin{to{transform:rotate(360deg)}}
+.rm .spin{animation:none}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}}
+.caller{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:20px;color:#A9A9A4;text-align:center;background:#0F0F10;z-index:9;font-size:calc(14px*var(--k));line-height:1.5}
+.caller button{min-height:48px;padding:10px 18px;border-radius:24px;background:#26262A;border:1px solid #3A3A3F;color:#EDEDEA;font:inherit;cursor:pointer}
+.synth{position:absolute;right:8px;top:6px;font-size:10px;color:#8A8A85;border:1px dashed #3A3A3F;border-radius:6px;padding:0 6px;z-index:8;line-height:1.6;pointer-events:none;background:#0F0F10}
+.f12{font-size:calc(12px*var(--k));line-height:calc(16px*var(--k))}
+.f13{font-size:calc(13px*var(--k));line-height:calc(18px*var(--k))}
+.f14{font-size:calc(14px*var(--k));line-height:calc(20px*var(--k))}
+.f15{font-size:calc(15px*var(--k));line-height:calc(22px*var(--k))}
+.f28{font-size:calc(28px*var(--k));line-height:calc(36px*var(--k))}
+.mut{color:#A9A9A4}.num{font-variant-numeric:tabular-nums}
+.scr{position:absolute;inset:0;overflow-y:auto}
+.scr::-webkit-scrollbar{width:0}
+.panel{position:absolute;left:0;right:0;bottom:0;background:#0F0F10;border-top:1px solid #222226;padding:10px 16px 20px;display:flex;flex-direction:column;gap:8px;z-index:3}
+.pri{background:#EDEDEA;border:0;padding:6px 16px;margin:0;color:#111 !important;cursor:pointer;min-height:52px;border-radius:26px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:calc(15px*var(--k));line-height:calc(20px*var(--k));font-weight:600;text-align:center}
+.out{background:none;border:1px solid #3A3A3F;padding:4px 16px;margin:0;cursor:pointer;min-height:48px;border-radius:24px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:calc(14px*var(--k));line-height:calc(18px*var(--k));font-weight:500;text-align:center}
+.dock{display:grid;margin:0 -8px}
+.db{background:none;border:0;padding:6px 4px;margin:0;cursor:pointer;min-height:64px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:calc(12px*var(--k));line-height:calc(16px*var(--k));font-weight:500;text-align:center}
+.db[aria-disabled="true"]{color:#626B72}
+.db svg{width:24px;height:24px;flex-shrink:0}
+.dim{position:absolute;inset:0;background:rgba(0,0,0,.64);border:0;padding:0;margin:0;width:100%;cursor:default;z-index:5}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:#1C1C1F;border-radius:28px 28px 0 0;padding:8px 0 20px;display:flex;flex-direction:column;z-index:6}
+.sheet .hdl{display:block;width:32px;height:4px;border-radius:2px;background:#4A4A50;margin:4px auto 12px}
+.sheet h2{margin:0;padding:0 24px 4px;font-size:calc(20px*var(--k));line-height:calc(28px*var(--k));font-weight:600}
+.sheet .body{margin:4px 24px 0;font-size:calc(14px*var(--k));line-height:calc(21px*var(--k))}
+.sheet .acts{display:flex;flex-direction:column;gap:8px;padding:16px 16px 0}
+.sheet .it{background:none;border:0;padding:4px 24px;margin:0;cursor:pointer;width:100%;min-height:48px;display:flex;align-items:center;gap:16px;text-align:left;font-size:calc(15px*var(--k));line-height:calc(22px*var(--k))}
+.danger{background:none;border:1px solid #FF8A7A;padding:6px 16px;margin:0;color:#FF8A7A !important;cursor:pointer;min-height:52px;border-radius:26px;font-size:calc(15px*var(--k));line-height:calc(22px*var(--k));font-weight:600}
+.cancel{background:#EDEDEA;border:0;padding:6px 16px;margin:0;color:#111 !important;cursor:pointer;min-height:48px;border-radius:24px;font-size:calc(14px*var(--k));line-height:calc(20px*var(--k));font-weight:600}
+body.solo .wrap>*:not(.stage),body.solo .side,body.solo .col.o,body.solo .col>h2{display:none}
+#soloExit{display:none}
+body.solo #soloExit{display:inline-flex;position:fixed;right:16px;top:16px;z-index:20}
+</style>
+</head>
+<body>
+<button class="hw" id="soloExit" type="button">単独表示をやめる</button>
+<div class="wrap">
+<h1 class="pg">Loupe — ソート結果：1組の場合・すべての順位と同率・既存の操作の置き場所</h1>
+<p class="lead">左は元のデザインのS07（3組の一覧）、右は今の機能（1つの連写）に合わせ、元の行の形を保ったまま既存の操作の入口を足した画面です。［変更箇所の枠］で、元から変えた部分にオレンジの枠を出します。</p>
+<div class="note">保持する既存の機能：すべての写真の拡大（大きな写真と小さな順位の写真のどれからでも）、すべての順位の方式の全部の写真、同率の順位（=の表記）、取り消し、方式の切り替え（確認あり）、再ソート（確認あり）、共有（既存の選択画面へ戻って選択・形式を確定）。順位のロジックは変えません。写真は合成の色面です。Androidには<b>まだ実装していません</b>。</div>
+<div class="controls" role="group" aria-label="結果の状態（合成）">
+<span><span class="lb">方式</span><span class="seg" id="oM"><button data-v="best" aria-pressed="true">1位を決める</button><button data-v="rank" aria-pressed="false">すべての順位を決める</button></span></span>
+<span id="tieCtl" hidden><span class="lb">同率</span><span class="seg" id="oT"><button data-v="none" aria-pressed="true">なし</button><button data-v="t2" aria-pressed="false">2位が同率</button><button data-v="t1" aria-pressed="false">1位が同率</button></span></span>
+<span><span class="lb">連写の枚数</span><span class="seg" id="oN"><button data-v="5" aria-pressed="true">5枚</button><button data-v="12" aria-pressed="false">12枚</button></span></span>
+<span><span class="lb">取り消せる操作</span><span class="seg" id="oU"><button data-v="1" aria-pressed="true">あり</button><button data-v="0" aria-pressed="false">なし</button></span></span>
+<span><span class="lb">写真</span><span class="seg" id="oP"><button data-v="normal" aria-pressed="true">通常</button><button data-v="long" aria-pressed="false">長いファイル名</button><button data-v="fail" aria-pressed="false">プレビューを読み込めない</button></span></span>
+</div>
+<div class="controls"><span><span class="lb">幅</span><span class="seg" id="oW"><button data-v="320" aria-pressed="false">320dp</button><button data-v="390" aria-pressed="false">390dp（元と同じ）</button><button data-v="400" aria-pressed="true">400dp</button></span></span><span><span class="lb">高さ</span><span class="seg" id="oH"><button data-v="844" aria-pressed="true">844dp</button><button data-v="640" aria-pressed="false">640dp</button></span></span><span><span class="lb">文字</span><span class="seg" id="oK"><button data-v="1" aria-pressed="true">1.0倍</button><button data-v="1.3" aria-pressed="false">1.3倍</button></span></span><button class="hw" id="oChg" aria-pressed="true">変更箇所の枠</button><button class="hw" id="oRM" aria-pressed="false">減らす動き</button><button class="hw" id="hwBack" type="button">Android Back（OSのシミュレータ・画面の外）</button><button class="hw" id="reset" type="button" style="background:none;font-weight:500">最初から</button><button class="hw" id="solo" type="button">変更後の画面だけを表示</button></div>
+<div class="stage">
+<div class="col o"><h2>元のデザイン <small id="origName"></small></h2><div class="orig" id="orig"></div></div>
+<div class="col"><h2>変更後 <small id="devName"></small></h2><div class="dev showchg" id="dev"></div></div>
+<div class="side"><div class="box" id="ax"></div><div class="box" id="chk"></div><div class="box" id="log"></div></div>
+</div>
+<div id="live" aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)"></div>
+<section class="spec" aria-label="差分と仕様">
+<h2 class="sec">1. 対象と前提</h2>
+<ul>
+<li>今のソート結果は<b>1つの連写</b>が対象。元のデザインは3組の一覧（S07）だったが、1組の場合は<b>同じ行の形（210×140dpの写真・1位の札・順位の小さな写真の列・余白 左16 右8 上8 下12dp）を1つだけ</b>置く。上の大きな領域（424dp）と見出し28dpも元のまま。</li>
+<li>順位・方式・取り消し・再ソートのロジック、共有の選択・形式の条件は変えない。このHTMLの順位と写真は合成。</li>
+</ul>
+
+<h2 class="sec">2. 元のデザイン（S07）からの変更</h2>
+<div class="tscroll"><table class="t">
+<tr><th>場所</th><th>元のデザイン</th><th>変更後</th><th>理由</th></tr>
+<tr><td>見出し</td><td>「順位の結果」</td><td>「ソート結果」</td><td><span class="tg">#7</span></td></tr>
+<tr><td>上の領域</td><td>高さ424dp</td><td>元のまま（844dpでは順位の列と［再ソート］はスクロールで届く。重なりはない）</td><td>元のデザイン</td></tr>
+<tr><td>見出しの下</td><td>「3組 · 順位決定済み」</td><td>完了の印＋「{N}枚」（その連写の枚数）。読み上げ「{N}枚、{方式}で順位決定済み」</td><td><span class="tg">#17</span><span class="tg q">1組</span></td></tr>
+<tr><td>行の数</td><td>3組</td><td>1組（今の機能の対象）。行の形・寸法は同じ</td><td><span class="tg q">1組</span></td></tr>
+<tr><td>大きな写真</td><td>210×140dp・1位の札（押せない）</td><td>寸法・札はそのまま。写真とファイル名を1つのボタンにし、右下に拡大の印、下に「1位 · {ファイル名}」。押すと写真詳細（S08）の拡大へ（順位と共有の状態を保持）。1位が同率のときは、連写の順で最初の1位の写真を出し、札を「=1位」にする</td><td><span class="tg">#14</span></td></tr>
+<tr><td>順位の小さな写真の列</td><td>33×22dp・1位は枠2dp #F5B947・ほかは不透明度60%、下に「1位」「2位」（押せない）</td><td><b>見た目（33×22dp・枠・不透明度・下の順位）はそのまま</b>。1位方式は元と同じ順位（選んだ1枚が1位、残りは2位）、すべての順位の方式は全部の写真を連写の順に並べてそれぞれの順位。同率は「=2位」。<b>どの写真も押すと写真詳細（S08）の拡大へ</b>（既存の全写真の拡大を保つ）。1枚ごとの押せる領域は48×48dp以上（写真は領域の左上、余白 上5dp）。そのため写真どうしの間隔は元の5dpから約15dpに広がる。入らないときだけ次の行へ折り返し、文字1.3倍でも順位の文字と写真は重ならない</td><td><span class="tg k">既存の全写真の拡大</span><span class="tg q">全順位・同率</span></td></tr>
+<tr><td>大きな写真以外のファイル名</td><td>—</td><td>結果の画面には並べない（元の構成を保つ）。①読み上げ名に入れる（「2枚目、2位、P5120081.ORF。拡大」）、②押して開く写真詳細で、既存の［情報］から確認できる。写真詳細の前へ・次へで、連写のほかの写真へも移れる。Backで結果へ戻ると、順位・共有の状態・スクロールの位置・押した写真へのフォーカスはそのまま</td><td><span class="tg k">既存の情報</span></td></tr>
+<tr><td>［付け直す］</td><td>押すとすぐやり直し</td><td>［再ソート］。押すと既存の確認「この連写を再ソートしますか？」（本文「この連写の選択履歴を消して、最初から比較します。写真は変更しません。」、実行［再ソート］、否定［キャンセル］）</td><td><span class="tg">#7</span><span class="tg k">既存の確認</span></td></tr>
+<tr><td>主CTA</td><td>［3枚を共有］</td><td>［共有］（名前に枚数を出さない）。押すと既存の選択画面へ戻り、そこで共有する写真と形式を確定する（選択・形式の条件は変えない）</td><td><span class="tg k">既存の動き</span></td></tr>
+<tr><td>2つ目のボタン</td><td>［すべての順位を決める］</td><td>方式の切り替え。1位方式のときは［すべての順位を決める］、すべての順位の方式のときは［1位を決める］。押すと既存の確認「ソート方式を変更しますか？」（本文「この連写の結果と途中の判断を置き換え、最初から比較します。」、実行［変更］、否定［キャンセル］）</td><td><span class="tg k">既存の方式切替</span></td></tr>
+<tr><td>下の dock</td><td>［戻る］</td><td>［取り消し］だけ（元の dock と同じ64dp・12sp・24dpのアイコン、1列）。［戻る］は外す。既存の［その他］の中身は再ソートだけで、行の［再ソート］と重なるので置かない。［取り消し］の読み上げ名とツールチップは「直前の操作を取り消す」。取り消せる操作がないときは無効（#626B72）</td><td><span class="tg">#5</span><span class="tg">#9</span><span class="tg k">既存の取り消し</span></td></tr>
+</table></div>
+
+<h2 class="sec">3. 読み上げ（AX名）</h2>
+<div class="tscroll"><table class="t">
+<tr><th>対象</th><th>AX名</th></tr>
+<tr><td>小さな写真のボタン</td><td>「{n}枚目、{順位}位（同率）、{ファイル名}。拡大」</td></tr>
+<tr><td>大きな写真のボタン</td><td>1位方式「5枚の順位を決めました。1位は3枚目、ほかの4枚は2位。1位の写真：{ファイル名}。拡大」／すべての順位「5枚の順位：1位は3枚目、2位は1枚目、…。1位の写真：{ファイル名}。拡大」。同率は「2位（同率）は1枚目と4枚目」。読み込めないときは「プレビューを読み込めませんでした」を足す</td></tr>
+<tr><td>［再ソート］</td><td>「再ソート」</td></tr>
+<tr><td>［取り消し］</td><td>「直前の操作を取り消す」（無効のときは「無効」と読まれる）</td></tr>
+<tr><td>方式の切り替え</td><td>見えている名前と同じ</td></tr>
+<tr><td>確認</td><td>見出し → 本文 → 実行 → キャンセルの順</td></tr>
+</table></div>
+
+<h2 class="sec">4. 決まったこと（確認した現行の仕様）</h2>
+<div class="tscroll"><table class="t">
+<tr><th>点</th><th>決定</th></tr>
+<tr><td>共有</td><td>名前は「共有」のまま。既存の選択画面へ戻って、選択と形式を確定する入口</td></tr>
+<tr><td>その他</td><td>既存の中身は再ソートだけ。行の［再ソート］と重なるので置かない</td></tr>
+<tr><td>取り消し</td><td>残す（短い表示名「取り消し」・読み上げ名「直前の操作を取り消す」）</td></tr>
+<tr><td>同率</td><td>「=」の表記（例「=2位」「=1位」）を採用</td></tr>
+<tr><td>上の領域</td><td>424dpのまま保持</td></tr>
+<tr><td>見出しの下の「{N}枚」</td><td>その連写の枚数（連写の日時は出さない）</td></tr>
+<tr><td>共有から来たとき</td><td>#5で［選択へ戻る］は廃止済み。Backで共有の選択へ戻る（選択はそのまま）</td></tr>
+</table></div>
+<ul>
+<li>Back：確認・シート → ソート結果 → 開いた元（連写の詳細／共有の選択）→ … 。写真詳細から戻ると、ソート結果の位置と状態はそのまま。</li>
+<li>文字1.3倍では元の固定の高さを最低の高さとして扱い、伸びても切れない（1.0倍の寸法は元と同じ）。</li>
+<li>フォントは Noto Sans JP を指定。入っていない環境では system-ui になり、数%ずれることがある。外枠は outline。</li>
+</ul>
+</section>
+</div>
+<script id="origData" type="application/json">{"S07": "<div class=\"sc-host\" data-sc-name=\"S07-Result\"><div data-dc-tpl=\"3\" style=\"width: 390px; height: 844px; background: rgb(15, 15, 16);\"><div class=\"sc-host\" data-sc-name=\"Main\" data-dc-tpl=\"4\"><div data-dc-tpl=\"3\" style=\"width: 390px; height: 844px; position: relative; overflow: hidden; background: rgb(15, 15, 16); color: rgb(237, 237, 234); font-family: &quot;Noto Sans JP&quot;, system-ui, sans-serif; font-size: 15px; line-height: 22px; -webkit-font-smoothing: antialiased;\"><div data-dc-tpl=\"338\" style=\"position: absolute; inset: 0px; overflow-y: auto;\"><div data-dc-tpl=\"339\" style=\"height: 424px; box-sizing: border-box; padding: 0px 20px 16px; display: flex; flex-direction: column; justify-content: flex-end; gap: 4px;\"><h1 data-dc-tpl=\"340\" style=\"margin: 0px; font-size: 28px; line-height: 36px; font-weight: 600;\">順位の結果<\/h1><span data-dc-tpl=\"341\" style=\"font-size: 14px; line-height: 20px; color: rgb(169, 169, 164); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">3組 · 順位決定済み<\/span><\/span><\/div><div data-dc-tpl=\"343\" style=\"padding: 8px 8px 12px 16px; display: flex; flex-direction: column; gap: 6px;\"><span data-dc-tpl=\"344\" role=\"img\" aria-label=\"1組目、5枚の順位を決めました。1位は5枚目、ほかの4枚は2位\" style=\"position: relative; display: block; width: 210px; height: 140px; border-radius: 6px; flex-shrink: 0; background: radial-gradient(11% 17% at 64% 52%, rgb(236, 232, 222) 0px, rgb(236, 232, 222) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(125, 143, 160) 0%, rgb(192, 199, 196) 46%, rgb(85, 88, 74) 47%, rgb(44, 45, 38) 100%);\"><span data-dc-tpl=\"345\" style=\"position: absolute; left: 6px; top: 6px; height: 24px; padding: 0px 8px 0px 6px; border-radius: 12px; background: rgb(245, 185, 71); color: rgb(36, 24, 0); display: flex; align-items: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 600;\"><svg data-dc-tpl=\"346\" width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><path data-dc-tpl=\"347\" d=\"M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z\"><\/path><\/svg><span data-dc-tpl=\"348\">1位<\/span><\/span><\/span><div data-dc-tpl=\"349\" style=\"display: flex; align-items: flex-end; gap: 8px;\"><div data-dc-tpl=\"350\" aria-hidden=\"true\" style=\"flex: 1 1 0%; display: flex; gap: 5px; min-width: 0px;\"><span data-dc-tpl=\"352\" style=\"display: flex; flex-direction: column; align-items: center; gap: 3px; flex-shrink: 0;\"><span data-dc-tpl=\"353\" style=\"display: block; width: 33px; height: 22px; border-radius: 3px; background: radial-gradient(11% 17% at 64% 52%, rgb(236, 232, 222) 0px, rgb(236, 232, 222) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(125, 143, 160) 0%, rgb(192, 199, 196) 46%, rgb(85, 88, 74) 47%, rgb(44, 45, 38) 100%); opacity: 1; outline: rgb(245, 185, 71) solid 2px; outline-offset: 1px;\"><\/span><span data-dc-tpl=\"354\" style=\"font-size: 12px; line-height: 14px; color: rgb(245, 185, 71); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">1位<\/span><\/span><\/span><span data-dc-tpl=\"352\" style=\"display: flex; flex-direction: column; align-items: center; gap: 3px; flex-shrink: 0;\"><span data-dc-tpl=\"353\" style=\"display: block; width: 33px; height: 22px; border-radius: 3px; background: radial-gradient(11% 17% at 28% 52%, rgb(236, 232, 222) 0px, rgb(236, 232, 222) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(125, 143, 160) 0%, rgb(192, 199, 196) 46%, rgb(85, 88, 74) 47%, rgb(44, 45, 38) 100%); opacity: 0.6; outline: transparent solid 2px; outline-offset: 1px;\"><\/span><span data-dc-tpl=\"354\" style=\"font-size: 12px; line-height: 14px; color: rgb(169, 169, 164); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">2位<\/span><\/span><\/span><span data-dc-tpl=\"352\" style=\"display: flex; flex-direction: column; align-items: center; gap: 3px; flex-shrink: 0;\"><span data-dc-tpl=\"353\" style=\"display: block; width: 33px; height: 22px; border-radius: 3px; background: radial-gradient(11% 17% at 37% 55%, rgb(236, 232, 222) 0px, rgb(236, 232, 222) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(125, 143, 160) 0%, rgb(192, 199, 196) 46%, rgb(85, 88, 74) 47%, rgb(44, 45, 38) 100%); opacity: 0.6; outline: transparent solid 2px; outline-offset: 1px;\"><\/span><span data-dc-tpl=\"354\" style=\"font-size: 12px; line-height: 14px; color: rgb(169, 169, 164); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">2位<\/span><\/span><\/span><span data-dc-tpl=\"352\" style=\"display: flex; flex-direction: column; align-items: center; gap: 3px; flex-shrink: 0;\"><span data-dc-tpl=\"353\" style=\"display: block; width: 33px; height: 22px; border-radius: 3px; background: radial-gradient(11% 17% at 46% 52%, rgb(236, 232, 222) 0px, rgb(236, 232, 222) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(125, 143, 160) 0%, rgb(192, 199, 196) 46%, rgb(85, 88, 74) 47%, rgb(44, 45, 38) 100%); opacity: 0.6; outline: transparent solid 2px; outline-offset: 1px;\"><\/span><span data-dc-tpl=\"354\" style=\"font-size: 12px; line-height: 14px; color: rgb(169, 169, 164); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">2位<\/span><\/span><\/span><span data-dc-tpl=\"352\" style=\"display: flex; flex-direction: column; align-items: center; gap: 3px; flex-shrink: 0;\"><span data-dc-tpl=\"353\" style=\"display: block; width: 33px; height: 22px; border-radius: 3px; background: radial-gradient(11% 17% at 55% 55%, rgb(236, 232, 222) 0px, rgb(236, 232, 222) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(125, 143, 160) 0%, rgb(192, 199, 196) 46%, rgb(85, 88, 74) 47%, rgb(44, 45, 38) 100%); opacity: 0.6; outline: transparent solid 2px; outline-offset: 1px;\"><\/span><span data-dc-tpl=\"354\" style=\"font-size: 12px; line-height: 14px; color: rgb(169, 169, 164); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">2位<\/span><\/span><\/span><\/div><button data-dc-tpl=\"355\" aria-label=\"1組目、順位を付け直す\" style=\"background: none; border: 1px solid rgb(58, 58, 63); padding: 0px 14px; margin: 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; line-height: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 48px; box-sizing: border-box; border-radius: 24px; font-size: 14px; font-weight: 500; white-space: nowrap;\">付け直す<\/button><\/div><\/div><div data-dc-tpl=\"343\" style=\"padding: 8px 8px 12px 16px; display: flex; flex-direction: column; gap: 6px;\"><span data-dc-tpl=\"344\" role=\"img\" aria-label=\"2組目、4枚の順位を決めました。1位は3枚目、ほかの3枚は2位\" style=\"position: relative; display: block; width: 210px; height: 140px; border-radius: 6px; flex-shrink: 0; background: radial-gradient(11% 17% at 54% 35%, rgb(58, 63, 69) 0px, rgb(58, 63, 69) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(169, 195, 216) 0%, rgb(228, 234, 236) 62%, rgb(151, 161, 151) 63%, rgb(105, 115, 106) 100%);\"><span data-dc-tpl=\"345\" style=\"position: absolute; left: 6px; top: 6px; height: 24px; padding: 0px 8px 0px 6px; border-radius: 12px; background: rgb(245, 185, 71); color: rgb(36, 24, 0); display: flex; align-items: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 600;\"><svg data-dc-tpl=\"346\" width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><path data-dc-tpl=\"347\" d=\"M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z\"><\/path><\/svg><span data-dc-tpl=\"348\">1位<\/span><\/span><\/span><div data-dc-tpl=\"349\" style=\"display: flex; align-items: flex-end; gap: 8px;\"><div data-dc-tpl=\"350\" aria-hidden=\"true\" style=\"flex: 1 1 0%; display: flex; gap: 5px; min-width: 0px;\"><span data-dc-tpl=\"352\" style=\"display: flex; flex-direction: column; align-items: center; gap: 3px; flex-shrink: 0;\"><span data-dc-tpl=\"353\" style=\"display: block; width: 33px; height: 22px; border-radius: 3px; background: radial-gradient(11% 17% at 54% 35%, rgb(58, 63, 69) 0px, rgb(58, 63, 69) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(169, 195, 216) 0%, rgb(228, 234, 236) 62%, rgb(151, 161, 151) 63%, rgb(105, 115, 106) 100%); opacity: 1; outline: rgb(245, 185, 71) solid 2px; outline-offset: 1px;\"><\/span><span data-dc-tpl=\"354\" style=\"font-size: 12px; line-height: 14px; color: rgb(245, 185, 71); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">1位<\/span><\/span><\/span><span data-dc-tpl=\"352\" style=\"display: flex; flex-direction: column; align-items: center; gap: 3px; flex-shrink: 0;\"><span data-dc-tpl=\"353\" style=\"display: block; width: 33px; height: 22px; border-radius: 3px; background: radial-gradient(11% 17% at 30% 35%, rgb(58, 63, 69) 0px, rgb(58, 63, 69) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(169, 195, 216) 0%, rgb(228, 234, 236) 62%, rgb(151, 161, 151) 63%, rgb(105, 115, 106) 100%); opacity: 0.6; outline: transparent solid 2px; outline-offset: 1px;\"><\/span><span data-dc-tpl=\"354\" style=\"font-size: 12px; line-height: 14px; color: rgb(169, 169, 164); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">2位<\/span><\/span><\/span><span data-dc-tpl=\"352\" style=\"display: flex; flex-direction: column; align-items: center; gap: 3px; flex-shrink: 0;\"><span data-dc-tpl=\"353\" style=\"display: block; width: 33px; height: 22px; border-radius: 3px; background: radial-gradient(11% 17% at 42% 38%, rgb(58, 63, 69) 0px, rgb(58, 63, 69) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(169, 195, 216) 0%, rgb(228, 234, 236) 62%, rgb(151, 161, 151) 63%, rgb(105, 115, 106) 100%); opacity: 0.6; outline: transparent solid 2px; outline-offset: 1px;\"><\/span><span data-dc-tpl=\"354\" style=\"font-size: 12px; line-height: 14px; color: rgb(169, 169, 164); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">2位<\/span><\/span><\/span><span data-dc-tpl=\"352\" style=\"display: flex; flex-direction: column; align-items: center; gap: 3px; flex-shrink: 0;\"><span data-dc-tpl=\"353\" style=\"display: block; width: 33px; height: 22px; border-radius: 3px; background: radial-gradient(11% 17% at 66% 38%, rgb(58, 63, 69) 0px, rgb(58, 63, 69) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(169, 195, 216) 0%, rgb(228, 234, 236) 62%, rgb(151, 161, 151) 63%, rgb(105, 115, 106) 100%); opacity: 0.6; outline: transparent solid 2px; outline-offset: 1px;\"><\/span><span data-dc-tpl=\"354\" style=\"font-size: 12px; line-height: 14px; color: rgb(169, 169, 164); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">2位<\/span><\/span><\/span><\/div><button data-dc-tpl=\"355\" aria-label=\"2組目、順位を付け直す\" style=\"background: none; border: 1px solid rgb(58, 58, 63); padding: 0px 14px; margin: 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; line-height: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 48px; box-sizing: border-box; border-radius: 24px; font-size: 14px; font-weight: 500; white-space: nowrap;\">付け直す<\/button><\/div><\/div><div data-dc-tpl=\"343\" style=\"padding: 8px 8px 12px 16px; display: flex; flex-direction: column; gap: 6px;\"><span data-dc-tpl=\"344\" role=\"img\" aria-label=\"3組目、6枚の順位を決めました。1位は5枚目、ほかの5枚は2位\" style=\"position: relative; display: block; width: 210px; height: 140px; border-radius: 6px; flex-shrink: 0; background: radial-gradient(11% 17% at 61% 62%, rgb(42, 28, 24) 0px, rgb(42, 28, 24) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(224, 173, 114) 0%, rgb(184, 104, 75) 42%, rgb(61, 43, 42) 43%, rgb(24, 19, 20) 100%);\"><span data-dc-tpl=\"345\" style=\"position: absolute; left: 6px; top: 6px; height: 24px; padding: 0px 8px 0px 6px; border-radius: 12px; background: rgb(245, 185, 71); color: rgb(36, 24, 0); display: flex; align-items: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 600;\"><svg data-dc-tpl=\"346\" width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><path data-dc-tpl=\"347\" d=\"M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z\"><\/path><\/svg><span data-dc-tpl=\"348\">1位<\/span><\/span><\/span><div data-dc-tpl=\"349\" style=\"display: flex; align-items: flex-end; gap: 8px;\"><div data-dc-tpl=\"350\" aria-hidden=\"true\" style=\"flex: 1 1 0%; display: flex; gap: 5px; min-width: 0px;\"><span data-dc-tpl=\"352\" style=\"display: flex; flex-direction: column; align-items: center; gap: 3px; flex-shrink: 0;\"><span data-dc-tpl=\"353\" style=\"display: block; width: 33px; height: 22px; border-radius: 3px; background: radial-gradient(11% 17% at 61% 62%, rgb(42, 28, 24) 0px, rgb(42, 28, 24) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(224, 173, 114) 0%, rgb(184, 104, 75) 42%, rgb(61, 43, 42) 43%, rgb(24, 19, 20) 100%); opacity: 1; outline: rgb(245, 185, 71) solid 2px; outline-offset: 1px;\"><\/span><span data-dc-tpl=\"354\" style=\"font-size: 12px; line-height: 14px; color: rgb(245, 185, 71); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">1位<\/span><\/span><\/span><span data-dc-tpl=\"352\" style=\"display: flex; flex-direction: column; align-items: center; gap: 3px; flex-shrink: 0;\"><span data-dc-tpl=\"353\" style=\"display: block; width: 33px; height: 22px; border-radius: 3px; background: radial-gradient(11% 17% at 25% 62%, rgb(42, 28, 24) 0px, rgb(42, 28, 24) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(224, 173, 114) 0%, rgb(184, 104, 75) 42%, rgb(61, 43, 42) 43%, rgb(24, 19, 20) 100%); opacity: 0.6; outline: transparent solid 2px; outline-offset: 1px;\"><\/span><span data-dc-tpl=\"354\" style=\"font-size: 12px; line-height: 14px; color: rgb(169, 169, 164); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">2位<\/span><\/span><\/span><span data-dc-tpl=\"352\" style=\"display: flex; flex-direction: column; align-items: center; gap: 3px; flex-shrink: 0;\"><span data-dc-tpl=\"353\" style=\"display: block; width: 33px; height: 22px; border-radius: 3px; background: radial-gradient(11% 17% at 34% 65%, rgb(42, 28, 24) 0px, rgb(42, 28, 24) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(224, 173, 114) 0%, rgb(184, 104, 75) 42%, rgb(61, 43, 42) 43%, rgb(24, 19, 20) 100%); opacity: 0.6; outline: transparent solid 2px; outline-offset: 1px;\"><\/span><span data-dc-tpl=\"354\" style=\"font-size: 12px; line-height: 14px; color: rgb(169, 169, 164); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">2位<\/span><\/span><\/span><span data-dc-tpl=\"352\" style=\"display: flex; flex-direction: column; align-items: center; gap: 3px; flex-shrink: 0;\"><span data-dc-tpl=\"353\" style=\"display: block; width: 33px; height: 22px; border-radius: 3px; background: radial-gradient(11% 17% at 43% 62%, rgb(42, 28, 24) 0px, rgb(42, 28, 24) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(224, 173, 114) 0%, rgb(184, 104, 75) 42%, rgb(61, 43, 42) 43%, rgb(24, 19, 20) 100%); opacity: 0.6; outline: transparent solid 2px; outline-offset: 1px;\"><\/span><span data-dc-tpl=\"354\" style=\"font-size: 12px; line-height: 14px; color: rgb(169, 169, 164); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">2位<\/span><\/span><\/span><span data-dc-tpl=\"352\" style=\"display: flex; flex-direction: column; align-items: center; gap: 3px; flex-shrink: 0;\"><span data-dc-tpl=\"353\" style=\"display: block; width: 33px; height: 22px; border-radius: 3px; background: radial-gradient(11% 17% at 52% 65%, rgb(42, 28, 24) 0px, rgb(42, 28, 24) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(224, 173, 114) 0%, rgb(184, 104, 75) 42%, rgb(61, 43, 42) 43%, rgb(24, 19, 20) 100%); opacity: 0.6; outline: transparent solid 2px; outline-offset: 1px;\"><\/span><span data-dc-tpl=\"354\" style=\"font-size: 12px; line-height: 14px; color: rgb(169, 169, 164); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">2位<\/span><\/span><\/span><span data-dc-tpl=\"352\" style=\"display: flex; flex-direction: column; align-items: center; gap: 3px; flex-shrink: 0;\"><span data-dc-tpl=\"353\" style=\"display: block; width: 33px; height: 22px; border-radius: 3px; background: radial-gradient(11% 17% at 70% 65%, rgb(42, 28, 24) 0px, rgb(42, 28, 24) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(224, 173, 114) 0%, rgb(184, 104, 75) 42%, rgb(61, 43, 42) 43%, rgb(24, 19, 20) 100%); opacity: 0.6; outline: transparent solid 2px; outline-offset: 1px;\"><\/span><span data-dc-tpl=\"354\" style=\"font-size: 12px; line-height: 14px; color: rgb(169, 169, 164); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">2位<\/span><\/span><\/span><\/div><button data-dc-tpl=\"355\" aria-label=\"3組目、順位を付け直す\" style=\"background: none; border: 1px solid rgb(58, 58, 63); padding: 0px 14px; margin: 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; line-height: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 48px; box-sizing: border-box; border-radius: 24px; font-size: 14px; font-weight: 500; white-space: nowrap;\">付け直す<\/button><\/div><\/div><div data-dc-tpl=\"356\" style=\"height: 360px;\"><\/div><\/div><div data-dc-tpl=\"357\" style=\"position: absolute; left: 0px; right: 0px; bottom: 0px; background: rgb(15, 15, 16); border-top: 1px solid rgb(34, 34, 38); padding: 10px 16px 20px; display: flex; flex-direction: column; gap: 8px;\"><button data-dc-tpl=\"358\" style=\"background: rgb(237, 237, 234); border: 0px; padding: 6px 16px; margin: 0px; color: rgb(17, 17, 17); font-style: inherit; font-variant-ligatures: inherit; font-variant-caps: inherit; font-variant-east-asian: inherit; font-variant-alternates: inherit; font-variant-position: inherit; font-variant-emoji: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; min-height: 52px; border-radius: 26px; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 15px; line-height: 20px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: center;\"><svg data-dc-tpl=\"360\" width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.9\" aria-hidden=\"true\"><circle data-dc-tpl=\"361\" cx=\"18\" cy=\"5.5\" r=\"2.5\"><\/circle><circle data-dc-tpl=\"362\" cx=\"6\" cy=\"12\" r=\"2.5\"><\/circle><circle data-dc-tpl=\"363\" cx=\"18\" cy=\"18.5\" r=\"2.5\"><\/circle><path data-dc-tpl=\"364\" d=\"M8.2 10.8l7.6-4.1M8.2 13.2l7.6 4.1\"><\/path><\/svg><span data-dc-tpl=\"365\"><span class=\"sc-interp\">3枚を共有<\/span><\/span><\/button><button data-dc-tpl=\"366\" style=\"background: none; border: 1px solid rgb(58, 58, 63); padding: 0px 16px; margin: 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; line-height: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 48px; box-sizing: border-box; border-radius: 24px; font-size: 14px; font-weight: 500;\">すべての順位を決める<\/button><nav data-dc-tpl=\"367\" aria-label=\"順位の結果の操作\" style=\"display: grid; grid-template-columns: repeat(1, minmax(0px, 1fr)); margin: 0px -8px;\"><button data-dc-tpl=\"368\" style=\"background: none; border: 0px; padding: 0px; margin: 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 500;\"><svg data-dc-tpl=\"369\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"370\" d=\"M19 12H5M11 18l-6-6 6-6\"><\/path><\/svg><span data-dc-tpl=\"371\">戻る<\/span><\/button><\/nav><\/div><\/div><\/div><\/div><\/div>"}</script>
+<script>
+(function () {
+
+  function check(extra) {
+    const dev = document.getElementById('dev'); const d = dev.getBoundingClientRect();
+    const vis = (e) => e.offsetParent !== null && !e.closest('.caller') && !e.classList.contains('synth');
+    const labs = [...dev.querySelectorAll('button,[role=img],[role=text],[role=radio],[role=checkbox]')].filter((e) => vis(e) && !e.closest('[aria-hidden="true"]') && !e.classList.contains('dim')).map((e) => '[' + (e.getAttribute('role') || 'button') + '] ' + (e.getAttribute('aria-label') || e.textContent.replace(/\s+/g, ' ').trim()) + (e.getAttribute('aria-pressed') === 'true' || e.getAttribute('aria-checked') === 'true' ? '（オン）' : '') + (e.getAttribute('aria-disabled') === 'true' ? '（無効）' : ''));
+    document.getElementById('ax').innerHTML = '<b>読み上げ（AX名）</b><br>' + ([...new Set(labs)].slice(0, 48).map((x) => '・' + x).join('<br>') || '—');
+    const small = [...dev.querySelectorAll('button')].filter((b) => vis(b) && !b.classList.contains('dim')).filter((b) => { const r = b.getBoundingClientRect(); return r.height < 47.5 || r.width < 47.5; });
+    const ov = [...dev.querySelectorAll('*')].filter(vis).filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && (r.right > d.right + 0.5 || r.left < d.left - 0.5); }).length;
+    const trunc = [...dev.querySelectorAll('*')].filter((e) => vis(e) && e.children.length === 0 && e.textContent.trim() && getComputedStyle(e).display !== 'inline' && (e.scrollWidth > e.clientWidth + 1) && getComputedStyle(e).overflow !== 'visible').length + [...dev.querySelectorAll('*')].filter((e) => vis(e) && getComputedStyle(e).textOverflow === 'ellipsis').length;
+    const clipBtn = [...dev.querySelectorAll('button')].filter(vis).filter((b) => { const r = b.getBoundingClientRect(); return [...b.querySelectorAll('span')].some((s) => { const q = s.getBoundingClientRect(); return q.height > 0 && s.textContent.trim() && (q.bottom > r.bottom + 1 || q.top < r.top - 1 || q.right > r.right + 1 || q.left < r.left - 1); }); }).length;
+    const minF = Math.min(...[...dev.querySelectorAll('*')].filter((e) => vis(e) && [...e.childNodes].some((c) => c.nodeType === 3 && c.textContent.trim())).map((e) => parseFloat(getComputedStyle(e).fontSize)));
+    const sc = dev.querySelector('.scr'), panel = dev.querySelector('.panel');
+    let cover = true;
+    if (sc && panel) { const keep = sc.scrollTop; sc.scrollTop = 1e6; const items = [...sc.querySelectorAll('button,span,h1,p')].filter((e) => e.getBoundingClientRect().height > 0 && (e.textContent.trim() || e.tagName === 'BUTTON')); const last = items.reduce((m, e) => Math.max(m, e.getBoundingClientRect().bottom), 0); cover = last <= panel.getBoundingClientRect().top + 0.5; sc.scrollTop = keep; }
+    const back = [...dev.querySelectorAll('button')].filter((b) => vis(b) && ['戻る', 'タグ一覧', '連写一覧', '選択へ戻る'].includes(b.textContent.trim())).length;
+    const okc = (b) => b ? '<span class="okc">なし</span>' : '<span class="ngc">あり</span>';
+    let html = '<b>検査（' + O.w + 'dp・文字' + O.k + '倍）</b><br>48dp未満のボタン：' + (small.length ? '<span class="ngc">' + small.length + '</span>' : '<span class="okc">なし</span>') + '<br>はみ出し：' + okc(!ov) + '<br>省略・切れ：' + okc(!trunc) + '<br>ボタンの中身の切れ：' + okc(!clipBtn) + '<br>文字の縮小：' + (minF >= 11.9 * O.k ? '<span class="okc">なし</span>' : '<span class="ngc">' + minF + 'px</span>') + '<br>下部と内容の重なり：' + okc(cover) + '<br>専用の戻る：' + okc(!back);
+    if (extra) html += extra();
+    document.getElementById('chk').innerHTML = html;
+  }
+
+  const ORIG = JSON.parse(document.getElementById('origData').textContent);
+  const O = { w: 400, h: 844, k: 1, chg: true, rm: false, m: 'best', t: 'none', n: 5, u: 1, p: 'normal' };
+  let N = { sheet: null, caller: null, left: false }, log = [];
+  const add = (x) => { log.unshift(x); log = log.slice(0, 12); };
+  const say = (x) => { const l = document.getElementById('live'); l.textContent = ''; setTimeout(() => { l.textContent = x; }, 30); };
+  const ph = (i, w) => { const xs = [64, 28, 37, 52, 45, 70, 33, 58, 41, 66, 24, 50]; const ys = [52, 52, 55, 50, 58, 54, 49, 56, 53, 51, 57, 50]; return 'radial-gradient(11% 17% at ' + xs[i % 12] + '% ' + ys[i % 12] + '%, rgb(236, 232, 222) 0px, rgb(236, 232, 222) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(125, 143, 160) 0%, rgb(192, 199, 196) 46%, rgb(85, 88, 74) 47%, rgb(44, 45, 38) 100%)'; };
+  const FN = (i) => O.p === 'long' && i === firstIdx() ? 'Arashiyama_bamboo-path_burst_2026-10-18_141502_' + String(i + 1).padStart(4, '0') + '.ORF' : 'P51200' + String(80 + i).padStart(2, '0') + '.ORF';
+  function ranks() {
+    const n = O.n;
+    if (O.m === 'best') { const best = 2 % n; return Array.from({ length: n }, (_, i) => (i === best ? 1 : 2)); }
+    const order = n === 5 ? [3, 1, 5, 2, 4] : [5, 2, 9, 1, 12, 7, 3, 10, 4, 11, 6, 8];
+    const r = order.slice(0, n);
+    if (O.t === 't2') { /* 2位が2枚 */ const a = r.indexOf(2), b = r.indexOf(3); r[b] = 2; for (let i = 0; i < n; i++) if (r[i] > 3) r[i] = r[i]; }
+    if (O.t === 't1') { const b = r.indexOf(2); r[b] = 1; for (let i = 0; i < n; i++) if (r[i] === 3) r[i] = 3; }
+    return r;
+  }
+  const tieSet = (r) => { const c = {}; r.forEach((x) => { c[x] = (c[x] || 0) + 1; }); return c; };
+  function firstIdx() { const r = ranks(); return r.indexOf(1); }
+  const G = {
+    done: '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="9.5" fill="#EDEDEA"></circle><path d="M7.8 12.3l2.8 2.8 5.6-5.8" fill="none" stroke="#111" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg>',
+    star: '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z"></path></svg>',
+    zoom: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"></circle><path d="M15 15l5 5M10.5 8v5M8 10.5h5"></path></svg>',
+    broken: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#8A8A85" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"></rect><path d="M3.5 15l4.5-4 3 3"></path><path d="M14 4.5l-2 6 3 2-2 7"></path></svg>',
+    share: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="18" cy="5.5" r="2.5"></circle><circle cx="6" cy="12" r="2.5"></circle><circle cx="18" cy="18.5" r="2.5"></circle><path d="M8.2 10.8l7.6-4.1M8.2 13.2l7.6 4.1"></path></svg>',
+    undo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14L4 9l5-5"></path><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"></path></svg>',
+    more: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5.5" r="1.7"></circle><circle cx="12" cy="12" r="1.7"></circle><circle cx="12" cy="18.5" r="1.7"></circle></svg>'
+  };
+  const MODE = () => (O.m === 'best' ? '1位を決める方式' : 'すべての順位を決める方式');
+  function rowAX(r, ties) {
+    const n = r.length, fi = r.indexOf(1);
+    if (O.m === 'best') return n + '枚の順位を決めました。1位は' + (fi + 1) + '枚目、ほかの' + (n - 1) + '枚は2位';
+    const by = {}; r.forEach((x, i) => { (by[x] = by[x] || []).push(i + 1); });
+    return n + '枚の順位：' + Object.keys(by).map(Number).sort((a, b) => a - b).map((k) => k + '位' + (by[k].length > 1 ? '（同率）' : '') + 'は' + by[k].map((x) => x + '枚目').join('と')).join('、');
+  }
+  function screen() {
+    const r = ranks(), ties = tieSet(r), fi = r.indexOf(1), bad = O.p === 'fail';
+    const tie1 = ties[1] > 1;
+    const big = '<button data-act="zoom" data-chg="14" aria-label="' + rowAX(r, ties) + '。1位の写真：' + FN(fi) + (bad ? '。プレビューを読み込めませんでした' : '') + '。拡大" style="background:none;border:0;padding:0;margin:0;cursor:pointer;display:flex;flex-direction:column;gap:6px;text-align:left;width:100%">' +
+      '<span aria-hidden="true" style="position:relative;display:block;width:210px;height:140px;border-radius:6px;flex-shrink:0;background:' + (bad ? '#26262A' : ph(fi)) + '">' +
+      (bad ? '<span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center">' + G.broken + '</span>' : '') +
+      '<span style="position:absolute;left:6px;top:6px;min-height:24px;padding:0 8px 0 6px;border-radius:12px;background:#F5B947;color:#241800;display:flex;align-items:center;gap:4px;font-weight:600" class="f12">' + G.star + '<span>' + (tie1 ? '=1位' : '1位') + '</span></span>' +
+      '<span style="position:absolute;right:6px;bottom:6px;width:32px;height:32px;border-radius:16px;background:rgba(0,0,0,0.55);color:#fff;display:flex;align-items:center;justify-content:center">' + G.zoom + '</span></span>' +
+      '<span aria-hidden="true" class="f14" style="overflow-wrap:anywhere;padding-right:8px">' + (tie1 ? '=1位' : '1位') + ' · ' + FN(fi) + '</span></button>';
+    const by = {}; r.forEach((x, i) => { (by[x] = by[x] || []).push(i); });
+    const frames = r.map((x, i) => { const top = x === 1; const tie = O.m === 'rank' && ties[x] > 1; const lab = (tie ? '=' : '') + x + '位';
+      return '<button data-act="zoomSmall" data-i="' + i + '" data-chg="zoomAll" aria-label="' + (i + 1) + '枚目、' + x + '位' + (tie ? '（同率）' : '') + '、' + FN(i) + '。拡大" style="background:none;border:0;padding:5px 0 4px;margin:0;cursor:pointer;min-width:48px;min-height:48px;display:flex;flex-direction:column;align-items:flex-start;flex-shrink:0;border-radius:6px">' +
+        '<span aria-hidden="true" style="display:flex;flex-direction:column;align-items:center;gap:3px;min-width:33px"><span style="display:block;width:33px;height:22px;border-radius:3px;background:' + ph(i) + ';opacity:' + (top ? 1 : 0.6) + ';outline:' + (top ? '#F5B947' : 'transparent') + ' solid 2px;outline-offset:1px"></span><span class="num" style="font-size:calc(12px*var(--k));line-height:calc(14px*var(--k));color:' + (top ? '#F5B947' : '#A9A9A4') + ';white-space:nowrap">' + lab + '</span></span></button>'; }).join('');
+    const row = '<div style="padding:8px 8px 12px 16px;display:flex;flex-direction:column;gap:6px">' + big +
+      '<div style="display:flex;align-items:flex-end;gap:8px"><div role="group" aria-label="連写のすべての写真と順位" style="flex:1;display:flex;flex-wrap:wrap;gap:0;min-width:0"' + (O.m === 'rank' ? ' data-chg="rank"' : '') + '>' + frames + '</div>' +
+      '<button class="out" data-act="resort" data-chg="7" style="padding:4px 14px;flex-shrink:0">再ソート</button></div></div>';
+    const panel = '<div class="panel"><button class="pri" data-act="share" data-chg="share">' + G.share + '<span>共有</span></button>' +
+      '<button class="out" data-act="method" data-chg="method">' + (O.m === 'best' ? 'すべての順位を決める' : '1位を決める') + '</button>' +
+      '<nav aria-label="ソート結果の操作" class="dock" data-chg="dock" style="grid-template-columns:repeat(1,minmax(0,1fr))"><button class="db" data-act="undo" title="直前の操作を取り消す" aria-label="直前の操作を取り消す"' + (O.u ? '' : ' aria-disabled="true"') + '>' + G.undo + '<span aria-hidden="true">取り消し</span></button></nav></div>';
+    const head = '<div style="min-height:424px;padding:0 20px 16px;display:flex;flex-direction:column;justify-content:flex-end;gap:4px"><h1 class="f28" style="margin:0;font-weight:600" data-chg="7">ソート結果</h1><span class="f14 mut num" role="text" data-chg="17" aria-label="' + O.n + '枚、' + MODE() + 'で順位決定済み" style="display:inline-flex;align-items:center;gap:6px"><span aria-hidden="true" style="display:inline-flex">' + G.done + '</span><span aria-hidden="true">' + O.n + '枚</span></span></div>';
+    return '<div class="scr" data-scroll>' + head + row + '<div class="sp"></div></div>' + panel + sheet();
+  }
+  function sheet() {
+    const dlg = (label, h, body, exec, act) => '<button class="dim" data-act="close" aria-label="閉じる" tabindex="-1"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="' + label + '"><span class="hdl" aria-hidden="true"></span><h2>' + h + '</h2><p class="body" style="margin-top:4px">' + body + '</p><div class="acts"><button class="danger" data-act="' + act + '">' + exec + '</button><button class="cancel" data-act="close">キャンセル</button></div></div>';
+    if (N.sheet === 'resort') return dlg('再ソートの確認', 'この連写を再ソートしますか？', 'この連写の選択履歴を消して、最初から比較します。写真は変更しません。', '再ソート', 'doResort');
+    if (N.sheet === 'method') return dlg('ソート方式の変更の確認', 'ソート方式を変更しますか？', 'この連写の結果と途中の判断を置き換え、最初から比較します。', '変更', 'doMethod');
+    if (N.sheet === 'more') return '<button class="dim" data-act="close" aria-label="閉じる" tabindex="-1"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="その他"><span class="hdl" aria-hidden="true"></span><h2>その他</h2><p class="body mut">（既存の項目のまま。このHTMLでは中身を再現しません）</p><div class="acts"><button class="out" data-act="close">閉じる</button></div></div>';
+    return '';
+  }
+  const dev = document.getElementById('dev'), orig = document.getElementById('orig');
+  orig.innerHTML = ORIG.S07; document.getElementById('origName').textContent = 'S07 順位の結果（3組）';
+  function render() {
+    document.documentElement.style.setProperty('--k', O.k);
+    dev.style.setProperty('--w', O.w + 'px'); dev.style.setProperty('--h', O.h + 'px');
+    dev.classList.toggle('showchg', O.chg); dev.classList.toggle('rm', O.rm);
+    document.getElementById('tieCtl').hidden = O.m !== 'rank';
+    document.getElementById('devName').textContent = '1組・' + (O.m === 'best' ? '1位方式' : 'すべての順位' + (O.t === 'none' ? '' : '・同率あり')) + '・' + O.w + 'dp・文字' + O.k + '倍';
+    let h = '<span class="synth" aria-hidden="true">合成の画面</span>' + screen();
+    if (N.caller) h += '<div class="caller"><span>（' + N.caller + '・ダミー）</span><button data-act="reopen">ソート結果へ戻る</button></div>';
+    if (N.left) h += '<div class="caller" style="background:#000"><span>（OSへ戻った状態・デモ）</span><button data-act="reopen">開き直す（デモ）</button></div>';
+    dev.innerHTML = h;
+    const scr = dev.querySelector('.scr'); if (scr) { scr.scrollTop = N.scroll || 0; scr.addEventListener('scroll', () => { N.scroll = scr.scrollTop; }, { passive: true }); }
+    const sp = dev.querySelector('.sp'), pn = dev.querySelector('.panel'); if (sp && pn) sp.style.height = (pn.offsetHeight + 24) + 'px';
+    check(() => '<br>旧名（順位の結果・付け直す）：' + ([...dev.querySelectorAll('h1,button')].some((b) => ['順位の結果', '付け直す'].includes(b.textContent.trim())) ? '<span class="ngc">あり</span>' : '<span class="okc">なし</span>') + '<br>共有の名前の枚数の固定：' + ([...dev.querySelectorAll('button')].some((b) => /\d+枚を共有/.test(b.textContent)) ? '<span class="ngc">あり</span>' : '<span class="okc">なし</span>'));
+    document.getElementById('log').innerHTML = '<b>操作の記録</b><br>' + (log.map((x) => '・' + x).join('<br>') || '—');
+  }
+  dev.addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.getAttribute('aria-disabled') === 'true') { add('（取り消せる操作がないので何もしない）'); return render(); }
+    const a = b.dataset.act, was = N.sheet;
+    if (a === 'zoom' || a === 'zoomSmall') { const r = ranks(), i = a === 'zoom' ? r.indexOf(1) : +b.dataset.i, t = O.m === 'rank' && tieSet(r)[r[i]] > 1; N.back = a === 'zoom' ? '[data-act=zoom]' : '[data-act=zoomSmall][data-i="' + i + '"]'; N.caller = '写真詳細（S08）の拡大：' + (i + 1) + '枚目・' + (t ? '=' : '') + r[i] + '位。ファイル名「' + FN(i) + '」は既存の［情報］で確認。前へ・次へで連写のほかの写真へ。順位と共有の状態・結果の位置はそのまま。Backでソート結果へ'; add('写真（' + (i + 1) + '枚目・' + r[i] + '位）→ 写真詳細の拡大'); }
+    else if (a === 'resort') { N.sheet = 'resort'; add('［再ソート］→ 確認'); }
+    else if (a === 'method') { N.sheet = 'method'; add('方式の切り替え → 確認'); }
+    else if (a === 'more') { N.sheet = 'more'; add('［その他］→ 既存の項目'); }
+    else if (a === 'close') { N.sheet = null; add('キャンセル'); }
+    else if (a === 'doResort') { N.sheet = null; N.caller = '比較（この連写を最初から）'; add('再ソート → 選択履歴を消して最初から比較（写真は変更しない）'); }
+    else if (a === 'doMethod') { N.sheet = null; O.m = O.m === 'best' ? 'rank' : 'best'; syncSeg(); N.caller = '比較（' + MODE() + 'で最初から）'; add('方式を変更 → 結果と途中の判断を置き換えて最初から比較'); }
+    else if (a === 'undo') { N.caller = '比較（直前の判断を取り消した状態）'; add('取り消し → 既存の動き（直前の判断を取り消す）'); say('直前の操作を取り消しました'); }
+    else if (a === 'share') { N.caller = '既存の選択画面：共有する写真と形式をここで確定する（選択・形式の条件は変えない）。Backでソート結果へ'; add('［共有］→ 既存の選択画面へ戻る（そこで選択と形式を確定）'); }
+    else if (a === 'reopen') { N.caller = null; N.left = false; render(); const f = N.back && dev.querySelector(N.back); if (f) f.focus(); return; }
+    render();
+    const f = (a === 'close' && was) ? dev.querySelector('[data-act=' + (was === 'resort' ? 'resort' : was === 'method' ? 'method' : 'more') + ']') : (['resort', 'method', 'more'].includes(a) ? dev.querySelector('.sheet button:not(.dim)') : null);
+    if (f) f.focus();
+  });
+  document.getElementById('hwBack').addEventListener('click', () => {
+    if (N.left) return;
+    if (N.sheet) { N.sheet = null; add('Back：確認・シートを閉じる（キャンセルと同じ）'); }
+    else if (N.caller) { N.caller = null; add('Back：ソート結果へ（位置 ' + Math.round(N.scroll || 0) + 'dp と状態はそのまま）'); render(); const f = N.back && dev.querySelector(N.back); if (f) f.focus(); return; }
+    else { N.left = true; add('Back：ソート結果 → 開いた元（連写の詳細／共有の選択）'); }
+    render();
+  });
+  document.getElementById('reset').addEventListener('click', () => { N = { sheet: null, caller: null, left: false }; log = []; render(); });
+  function seg(id, fn) { const el = document.getElementById(id); el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; fn(b.dataset.v); N.sheet = null; N.caller = null; N.left = false; syncSeg(); render(); }); }
+  function syncSeg() { [['oW', O.w], ['oH', O.h], ['oK', O.k], ['oM', O.m], ['oT', O.t], ['oN', O.n], ['oU', O.u], ['oP', O.p]].forEach(([id, v]) => document.querySelectorAll('#' + id + ' button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.v == String(v)))); }
+  seg('oW', (v) => { O.w = +v; }); seg('oH', (v) => { O.h = +v; }); seg('oK', (v) => { O.k = +v; });
+  seg('oM', (v) => { O.m = v; }); seg('oT', (v) => { O.t = v; }); seg('oN', (v) => { O.n = +v; }); seg('oU', (v) => { O.u = +v; }); seg('oP', (v) => { O.p = v; });
+  const tg = (id, key) => { const b = document.getElementById(id); b.addEventListener('click', () => { O[key] = !O[key]; b.setAttribute('aria-pressed', O[key]); render(); }); };
+  tg('oChg', 'chg'); tg('oRM', 'rm');
+  document.getElementById('solo').addEventListener('click', () => document.body.classList.add('solo'));
+  document.getElementById('soloExit').addEventListener('click', () => document.body.classList.remove('solo'));
+  window.__r = { O: O, set: (o) => { Object.assign(O, o); N = { sheet: null, caller: null, left: false }; syncSeg(); render(); }, sheet: (s) => { N.sheet = s; render(); } };
+  render();
+
+})();
+</script>
+</body>
+</html>

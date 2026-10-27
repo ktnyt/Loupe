@@ -29,7 +29,7 @@ python3 scripts/issue-progress.py report --issue 42 --run 20261025-issue42-featu
 | device-test | 実機操作直前／結果の確認直後 |
 | additional | 追加修正の着手直前／実装と必要なローカル検証の完了直後 |
 
-各工程のstatusは `start` → `complete` / `fail` / `cancel`。未実施の工程は `skip` と理由を記す。失敗・中断後や同じ工程を繰り返す場合、`--attempt 2`、`--attempt 3` と増やす。開始と結果は同じ試行番号にする。作業を中断するときに閉じ、再開を別の試行にする。監視を継続する応答待ちは工程に含める。
+各工程のstatusは `start` → `complete` / `fail` / `cancel`。未実施の工程は `skip` と理由を記す。失敗・中断後や同じ工程を繰り返す場合、`--attempt 2`、`--attempt 3` と増やす。開始と結果は同じ試行番号にする。 CLI工程は開始記録の `--then` で本体コマンドを実行し、投稿・再取得確認が成功するまで本体操作を実行させない。GUI操作などは別のtool callで開始記録を行い、終了コード0と投稿URLを確認してから進む。結果記録も独立実行する。失敗した記録と後続操作を改行だけで同じシェルへ連結しない。作業を中断するときに閉じ、再開を別の試行にする。監視を継続する応答待ちは工程に含める。
 
 `--dry-run`は投稿本文の確認専用で、GitHubへのアクセスも遷移検査もしない。通常実行は既存コメントを取得して二重開始・二重終了・開始なしの終了を拒否する。同時投稿の排他制御はないため、一つの作業IDの記録は一人が担当する。
 
@@ -56,3 +56,13 @@ python3 scripts/issue-progress.py report --issue 42 --run 20261025-issue42-featu
 レビューのcompleteは結果受領を意味し、合格を意味しない。本文に合否・指摘・後続issueを残す。修正はadditional、再評価は同じレビュー工程の新しいattemptとする。Claudeを監視しながら作業を続けている間はclaude-designを開いたままにし、作業自体を中断するときだけcancelにする。
 
 PR作成前にdelivery以外の工程をreportで確認し、その後deliveryを開始する。マージ直前のreportではdeliveryの未終了1件だけが予定内で、他の未終了は解消する。マージ・自動クローズを確認後、閉じたissueへdeliveryの結果を追記し、最終reportで未終了がないことを確認する。reportの成功はレビュー合格・必要工程充足・マージ可否を保証しない。
+
+## 開始記録と操作を続けて実行する
+
+開始記録には `--then` を最後に付け、続けて実行するコマンドを指定できる。投稿と再取得による本文一致の確認が成功した場合だけコマンドを実行する。入力誤り、投稿失敗、本文不一致、dry-runでは実行しない。
+
+```sh
+python3 scripts/issue-progress.py record --issue 8 --run WORK_ID --phase device-test --status start --attempt 1 --note '対象と期待結果' --then python3 scripts/device-check.py --serial SERIAL --mode share-screen --standby-youtube
+```
+
+コマンドの終了コードを返す。工程の結果記録は操作の実測結果を確認して別途投稿する。`--then` の後ろはshellを通さないため、リダイレクトなどが必要なら明示したスクリプトへまとめる。

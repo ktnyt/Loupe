@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loupe T1タグ一覧・T11クラウドと同期（元のデザイン基準の反映）</title>
+<style>
+:root{--ink:#EDEDEA;--muted:#A9A9A4;--k:1;--w:400px;--h:844px}
+*{box-sizing:border-box}
+body{margin:0;background:#1E1E20;color:var(--ink);font-family:'Noto Sans JP',system-ui,sans-serif;font-size:15px;line-height:1.6}
+.wrap{max-width:1500px;padding:28px 24px 64px}
+h1.pg{margin:0;font-size:24px;line-height:1.4}
+.lead{margin:6px 0 0;color:#D6D6D2;font-size:14px}
+.note{margin:10px 0 0;padding:10px 14px;border-radius:10px;border:1px solid #4A4A50;background:#161618;font-size:13.5px}
+.controls{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin:10px 0 0}
+.lb{color:var(--muted);font-size:12.5px;margin-right:6px}
+.seg{display:inline-flex;flex-wrap:wrap;background:#2A2A2E;border-radius:22px;padding:2px}
+.seg button{background:none;border:0;color:var(--ink);font:inherit;font-size:13px;min-height:44px;padding:0 12px;border-radius:20px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:#EDEDEA;color:#111}
+.hw{background:#2A2A2E;border:1px solid #4A4A50;color:var(--ink);font:inherit;font-size:13px;font-weight:600;min-height:44px;padding:0 14px;border-radius:22px;cursor:pointer}
+.hw[aria-pressed="true"]{background:#EDEDEA;color:#111}
+.wrap :focus-visible{outline:2px solid #8AB4F8;outline-offset:2px}
+.stage{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start;margin-top:14px}
+.col h2{margin:0 0 8px;font-size:14px;font-weight:600}
+.col h2 small{color:var(--muted);font-weight:400}
+.side{flex:1;min-width:300px;display:flex;flex-direction:column;gap:10px}
+.box{background:#141416;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.6;overflow-wrap:anywhere}
+.okc{color:#9FE0B5}.ngc{color:#F2A7AB}
+table.t{border-collapse:collapse;width:100%;font-size:13.5px;line-height:1.6}
+table.t th,table.t td{border-bottom:1px solid #2E2E32;padding:6px 10px 6px 0;text-align:left;vertical-align:top}
+table.t th{color:var(--muted);font-weight:500;font-size:12px}
+h2.sec{margin:32px 0 8px;font-size:19px}
+.spec ul{margin:0;padding-left:20px}.spec li{margin:3px 0;font-size:14px}
+.tscroll{overflow-x:auto}
+
+/* 元（静止画） */
+.orig{position:relative;width:390px;height:844px;overflow:hidden;transform:translateZ(0);outline:1px solid #3A3A3F;background:#0F0F10;color:#EDEDEA}
+
+/* 変更後の端末（1px = 1dp） */
+.dev{position:relative;width:var(--w);height:var(--h);overflow:hidden;transform:translateZ(0);outline:1px solid #3A3A3F;background:#0F0F10;color:#EDEDEA;font-family:'Noto Sans JP',system-ui,sans-serif;font-size:calc(15px*var(--k));line-height:calc(22px*var(--k));-webkit-font-smoothing:antialiased;display:flex;flex-direction:column}
+.dev *{text-overflow:clip}
+.dev button{font-family:inherit;color:inherit}
+.dev :focus{outline:none}
+.dev :focus-visible{outline:2px solid #EDEDEA;outline-offset:2px}
+.dev .pri:focus-visible{outline-offset:3px;box-shadow:inset 0 0 0 2px #111}
+.dev.showchg [data-chg]{outline:2px solid #F5A623;outline-offset:1px}
+.dev.showchg [data-chg="del"]{outline:none}
+.scroll{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+.scroll::-webkit-scrollbar{width:0}
+.f12{font-size:calc(12px*var(--k));line-height:calc(16px*var(--k))}
+.f13{font-size:calc(13px*var(--k));line-height:calc(20px*var(--k))}
+.f13s{font-size:calc(13px*var(--k));line-height:calc(18px*var(--k))}
+.f14{font-size:calc(14px*var(--k));line-height:calc(20px*var(--k))}
+.f15{font-size:calc(15px*var(--k));line-height:calc(22px*var(--k))}
+.f16{font-size:calc(16px*var(--k));line-height:calc(22px*var(--k))}
+.f28{font-size:calc(28px*var(--k));line-height:calc(36px*var(--k))}
+.mut{color:#A9A9A4}
+.num{font-variant-numeric:tabular-nums}
+
+/* 印（#17） */
+.gl{display:inline-flex;width:24px;height:24px;align-items:center;justify-content:center;flex-shrink:0;color:#EDEDEA}
+.gl svg{width:20px;height:20px}
+.gl.fail{color:#FF8A7A}.gl.muted{color:#A9A9A4}
+.spin{animation:spin 1s linear infinite;transform-origin:50% 50%}
+@keyframes spin{to{transform:rotate(360deg)}}
+.rm .spin{animation:none}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}}
+.mk{display:inline-flex;align-items:center;gap:4px;min-height:28px;padding:0 8px 0 4px;border-radius:14px;background:#1F1F22;box-shadow:inset 0 0 0 1.5px #FF8A7A;font-size:calc(13px*var(--k));font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap}
+.mk .gl{width:20px;height:20px}.mk .gl svg{width:18px;height:18px}
+
+/* T1 */
+.trow{font-size:inherit;background:none;border:0;padding:8px 16px 8px 20px;margin:0;cursor:pointer;width:100%;min-height:72px;display:flex;align-items:center;gap:16px;text-align:left}
+.thumb{display:flex;align-items:center;justify-content:center;width:56px;height:56px;border-radius:8px;flex-shrink:0}
+.thumb.bad{background:#26262A;color:#8A8A85}
+.thumb.bad svg{width:24px;height:24px}
+.bar{flex-shrink:0;background:#0F0F10;border-top:1px solid #222226;padding:10px 16px 20px;display:flex;flex-direction:column;gap:8px}
+.pri{background:#EDEDEA;border:0;padding:12px 16px;margin:0;color:#111 !important;cursor:pointer;min-height:52px;border-radius:26px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:calc(15px*var(--k));line-height:calc(22px*var(--k));font-weight:600;text-align:center}
+.pri svg{width:20px;height:20px;flex-shrink:0}
+.sec2{background:none;border:1px solid #3A3A3F;padding:12px 16px;margin:0;cursor:pointer;min-height:48px;border-radius:24px;font-size:calc(14px*var(--k));line-height:calc(20px*var(--k));font-weight:500;display:inline-flex;align-items:center;justify-content:center;gap:8px;text-align:center}
+.sec2 svg{width:20px;height:20px;flex-shrink:0}
+.sec2[aria-disabled="true"]{color:#7C7C77}
+
+/* T11 */
+.card{background:#19191B;border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:8px}
+.card h2{margin:0;flex:1;min-width:0;font-size:calc(16px*var(--k));line-height:calc(22px*var(--k));font-weight:600}
+.hrow{display:flex;align-items:center;gap:12px;min-height:22px}
+.obs{display:flex;align-items:center;gap:8px;min-height:32px}
+.obs .l{flex:1;min-width:0}
+.obs .r{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.btns{display:flex;flex-direction:column;gap:8px;margin-top:4px}
+.sw{font-size:inherit;background:none;border:0;padding:0;margin:0;cursor:pointer;width:64px;height:48px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.sw .tr{position:relative;display:block;width:52px;height:32px;border-radius:16px;border:2px solid #8C8C86;background:transparent}
+.sw .kn{position:absolute;top:4px;left:4px;width:20px;height:20px;border-radius:10px;background:#8C8C86}
+.sw[aria-checked="true"] .tr{background:#EDEDEA;border-color:#EDEDEA}
+.sw[aria-checked="true"] .kn{left:24px;background:#111}
+.sup{margin-top:4px;padding-top:10px;border-top:1px solid #2A2A2E;display:flex;flex-direction:column;gap:6px}
+.sup .dt{margin:6px 0 0;font-weight:500;color:#D6D6D2}
+.sup .dt:first-child{margin-top:0}
+.sup p{margin:0}
+.keepRow{display:flex;align-items:center;gap:12px;padding-top:4px}
+
+/* シート */
+.dim{position:absolute;inset:0;background:rgba(0,0,0,.64);border:0;z-index:4;cursor:default;width:100%}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:#1C1C1F;border-radius:28px 28px 0 0;padding:8px 0 20px;display:flex;flex-direction:column;z-index:5}
+.sheet .hdl{display:block;width:32px;height:4px;border-radius:2px;background:#4A4A50;margin:4px auto 12px}
+.sheet h2{margin:0;padding:0 24px;font-size:calc(20px*var(--k));line-height:calc(28px*var(--k));font-weight:600}
+.sheet ul{margin:8px 24px 0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:calc(14px*var(--k));line-height:calc(21px*var(--k))}
+.sheet .acts{display:flex;flex-direction:column;gap:8px;padding:16px 16px 0}
+.danger{background:none;border:1px solid #FF8A7A;padding:12px 16px;margin:0;color:#FF8A7A !important;cursor:pointer;min-height:52px;border-radius:26px;font-size:calc(15px*var(--k));line-height:calc(22px*var(--k));font-weight:600}
+.cancel{background:#EDEDEA;border:0;padding:12px 16px;margin:0;color:#111 !important;cursor:pointer;min-height:48px;border-radius:24px;font-size:calc(14px*var(--k));line-height:calc(20px*var(--k));font-weight:600}
+.opt{display:flex;align-items:center;gap:16px;width:100%;min-height:56px;padding:8px 24px;background:none;border:0;text-align:left;cursor:pointer;font-size:calc(16px*var(--k));line-height:calc(22px*var(--k))}
+.rd{width:20px;height:20px;border-radius:10px;box-shadow:inset 0 0 0 2px #A9A9A4;flex-shrink:0}
+.rd.on{box-shadow:inset 0 0 0 2px #EDEDEA,inset 0 0 0 5px #1C1C1F,inset 0 0 0 10px #EDEDEA}
+.caller{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:20px;color:#A9A9A4;text-align:center}
+.os{position:absolute;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:#8A8A85;font-size:13px;z-index:8}
+.synth{position:absolute;right:8px;top:6px;font-size:10px;color:#8A8A85;border:1px dashed #3A3A3F;border-radius:6px;padding:0 6px;z-index:3;line-height:1.6;pointer-events:none}
+body.solo .wrap>*:not(.stage),body.solo .side,body.solo .col.o{display:none}
+body.solo .col>h2{display:none}
+#soloExit{display:none}
+body.solo #soloExit{display:inline-flex;position:fixed;right:16px;top:16px;z-index:20}
+</style>
+</head>
+<body>
+<button class="hw" id="soloExit" type="button">単独表示をやめる</button>
+<div class="wrap">
+<h1 class="pg">Loupe — T1 タグ一覧（V01・V02）と T11 クラウドと同期：元のデザインに依頼済みの変更を当てた版</h1>
+<p class="lead">左が元のデザインの画面（復元版と同じ静止画・390dp）、右が変更を当てた画面です。変更を当てた画面は 320／400dp・文字1.0／1.3倍で確かめられます。［変更箇所の枠］で、元から変えた部分にオレンジの枠を出します。枠のない部分は元のデザインのままです（現行のAndroidの配置には寄せていません）。</p>
+<div class="note">データは元のデザインの合成の例です（写真・利用者のタグ・秘密情報は含みません）。Androidには<b>まだ実装していません</b>。原本の保存・送信・削除の条件は変えていません。</div>
+
+<div class="controls" role="group" aria-label="画面と表示">
+<span><span class="lb">画面</span><span class="seg" id="oS"><button data-v="tags" aria-pressed="true">T1 タグ一覧</button><button data-v="cloud" aria-pressed="false">T11 クラウドと同期</button></span></span>
+<span><span class="lb">幅</span><span class="seg" id="oW"><button data-v="320" aria-pressed="false">320dp</button><button data-v="390" aria-pressed="false">390dp（元と同じ）</button><button data-v="400" aria-pressed="true">400dp</button></span></span>
+<span><span class="lb">高さ</span><span class="seg" id="oH"><button data-v="844" aria-pressed="true">844dp</button><button data-v="640" aria-pressed="false">640dp</button></span></span>
+<span><span class="lb">文字</span><span class="seg" id="oK"><button data-v="1" aria-pressed="true">1.0倍</button><button data-v="1.3" aria-pressed="false">1.3倍</button></span></span>
+<button class="hw" id="oChg" aria-pressed="true">変更箇所の枠</button>
+<button class="hw" id="oRM" aria-pressed="false">減らす動き</button>
+</div>
+<div class="controls" role="group" aria-label="T1の状態" id="tagCtl">
+<span><span class="lb">T1の状態</span><span class="seg" id="oT"><button data-v="normal" aria-pressed="true">通常（V01）</button><button data-v="empty" aria-pressed="false">まだない（V02）</button><button data-v="long" aria-pressed="false">長いタグ名</button><button data-v="thumbFail" aria-pressed="false">写真を読み込めない行</button><button data-v="fail" aria-pressed="false">一覧を読み込めない</button></span></span>
+<span><span class="lb">開いた入口</span><span class="seg" id="oE"><button data-v="grid" aria-pressed="true">写真一覧の［タグ］（嵐山 10.18）</button><button data-v="albums" aria-pressed="false">アルバム一覧の［タグ］（#11・全写真）</button></span></span>
+</div>
+<div class="controls" role="group" aria-label="T11の観測値（合成・それぞれ独立）" id="cloudCtl" hidden>
+<span><span class="lb">同期の予約</span><span class="seg" id="oQ"><button data-v="1" aria-pressed="true">予約済み</button><button data-v="0" aria-pressed="false">未予約</button></span></span>
+<span><span class="lb">保存した写真の確認</span><span class="seg" id="oV"><button data-v="ok" aria-pressed="true">確認済み</button><button data-v="none" aria-pressed="false">未確認</button><button data-v="checking" aria-pressed="false">確認中</button></span></span>
+<span><span class="lb">collection（写真情報の読み取り）</span><span class="seg" id="oC"><button data-v="ok" aria-pressed="true">完了</button><button data-v="reading" aria-pressed="false">読み取り中</button><button data-v="fail" aria-pressed="false">失敗</button><button data-v="none" aria-pressed="false">未実行</button></span></span>
+<span><span class="lb">info（写真の集計）</span><span class="seg" id="oI"><button data-v="1" aria-pressed="true">1,180枚</button><button data-v="0" aria-pressed="false">—</button></span></span>
+<span><span class="lb">progress（バックグラウンド同期）</span><span class="seg" id="oG"><button data-v="complete" aria-pressed="true">完了</button><button data-v="waiting" aria-pressed="false">待機</button><button data-v="running" aria-pressed="false">実行中</button><button data-v="failed" aria-pressed="false">失敗</button><button data-v="none" aria-pressed="false">未実行</button></span></span>
+<span><span class="lb">permissionState（自動管理の権限）</span><span class="seg" id="oP"><button data-v="granted" aria-pressed="true">許可あり</button><button data-v="denied" aria-pressed="false">許可なし</button></span></span>
+<span><span class="lb">isExternalStorageManager</span><span class="seg" id="oX"><button data-v="1" aria-pressed="true">true</button><button data-v="0" aria-pressed="false">false</button></span></span>
+<span><span class="lb">位置情報の読み取り</span><span class="seg" id="oL"><button data-v="1" aria-pressed="false">許可済み</button><button data-v="0" aria-pressed="true">未許可</button></span></span>
+</div>
+<div class="controls">
+<button class="hw" id="hwBack" type="button">Android Back（OSのシミュレータ・画面の外）</button>
+<button class="hw" id="reset" type="button" style="background:none;font-weight:500">最初から</button>
+<button class="hw" id="solo" type="button">変更後の画面だけを表示</button>
+</div>
+
+<div class="stage">
+<div class="col o"><h2>元のデザイン <small id="origName">V01 タグ一覧</small></h2><div class="orig" id="orig"></div></div>
+<div class="col"><h2>変更後 <small id="devName"></small></h2><div class="dev showchg" id="dev"></div></div>
+<div class="side"><div class="box" id="ax"></div><div class="box" id="chk"></div><div class="box" id="log"></div></div>
+</div>
+<div id="live" aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)"></div>
+
+<section class="spec" aria-label="差分と仕様">
+<h2 class="sec">1. T1 タグ一覧（V01・V02）の差分</h2>
+<div class="tscroll"><table class="t">
+<tr><th>場所</th><th>元のデザイン</th><th>変更後</th><th>理由</th></tr>
+<tr><td>下部</td><td>［新しいタグ］の主CTA＋その下に［戻る］だけの dock</td><td>［戻る］の dock を外す。［新しいタグ］の主CTAはそのまま（背景 #0F0F10・上の線1px #222226・余白 上10 左右16 下20dp、高さ52dp・角丸26dp・15sp 600）</td><td>#5 標準のBack</td></tr>
+<tr><td>見出しの下の行</td><td>「嵐山 10.18 · 2個」（開いたアルバムの名前と数）</td><td>写真一覧から開いたときは元のまま。アルバム一覧の［タグ］から開いたときは対象が全写真なので「すべての写真 · 2個」</td><td>#11（全写真が対象）</td></tr>
+<tr><td>空のとき（V02）</td><td>タグの印40dp＋「タグはまだありません」</td><td>タグの印40dpだけにし、文は読み上げ（「タグはまだありません」）に残す。復帰の操作［新しいタグ］はそのまま</td><td>#17（空の文も印へ）</td></tr>
+<tr><td>一覧を読み込めないとき（新しい状態）</td><td>—</td><td>一覧の位置に失敗の印（三角40dp）と、既存の再読み込みの操作［再読み込み］（48dp以上）。文は読み上げ「タグを読み込めませんでした。再読み込み」</td><td>#17／既存の再読み込みを残す</td></tr>
+<tr><td>写真を読み込めない行（新しい状態）</td><td>—</td><td>56dpの枠は残し、#26262A の地に壊れた画像の印24dp（#8A8A85）。行は押せる。読み上げに「代表の写真を読み込めませんでした」を足す</td><td>#14の失敗の表し方</td></tr>
+<tr><td>変えないもの</td><td colspan="2">見出し「タグ」28dp・上の余白40dp・左右20dp、行（最低72dp・余白 左20 右16 上下8dp・間16dp）、56dpの代表の写真（角丸8dp）、名前16sp 500・折り返し（省略しない）、件数「タグ付き 3枚 · 該当しない 0枚」13sp、進む印20dp、行の読み上げ名</td><td>元のデザイン</td></tr>
+</table></div>
+<ul>
+<li>読み取りの追加（認められた範囲）：各タグの代表の写真1枚（タグ付きの写真のうち最初の1枚）と、タグ付き・該当しないの枚数を、タグの保存先から読む。原本は読み込まない（表示用プレビューを使う）。タグの作成・削除・推論は変えない。</li>
+<li>長い日本語の名前は省略せず、行の高さを伸ばす（文字1.3倍でも縮めない）。</li>
+</ul>
+
+<h2 class="sec">2. T11 クラウドと同期の差分</h2>
+<div class="tscroll"><table class="t">
+<tr><th>場所</th><th>元のデザイン</th><th>変更後</th><th>理由</th></tr>
+<tr><td>下部</td><td>［戻る］だけの dock</td><td>dock ごと外す</td><td>#5</td></tr>
+<tr><td>「同期」のカード</td><td>説明の文＋［同期を予約する］（予約後は無効の「同期を予約しました」）</td><td>見出しの行の右に、バックグラウンド同期（progress）の印と時刻、自動同期の保存済みの値のスイッチ。本文の下に観測の2行「写真情報の読み取り」（collection の印）と「写真の集計」（数または「—」）。ボタンは［同期を予約する］（予約後は無効・完了の印を添え、文字は操作名のまま）と、既存の［状態を更新］。補足の領域に原本の保存・モバイル通信・原本の位置情報の説明と、未許可のときだけ［位置情報の読み取りを許可］</td><td>#17・#8の既存の条件（観測値は別々に出す）</td></tr>
+<tr><td>「保存した写真の確認」のカード</td><td>説明＋結果の文「確認した写真はすべて元どおりダウンロードできました」＋［確認する］</td><td>結果の文を印（完了＝塗りのチェック、未確認＝点線の丸、確認中＝回る弧）にし、文は読み上げへ。［確認する］はそのまま（確認中は無効・回る弧）</td><td>#17</td></tr>
+<tr><td>「端末の写真を自動で削除」のカード</td><td>見出し＋スイッチ（オンで確認21）、要約の2文、「端末に残す期間 ［基準日］から30日」＋［変更］</td><td>スイッチと要約の2文はそのまま。観測の行「自動管理の権限」（permissionState の印）。期間は「撮影日から30日」（7／30／90日）。［変更］で選ぶと、同じ日数でも端末からの自動削除はオフになる（cleanupEnabled=false）。補足の領域に削除の条件・日付の条件・アプリを削除したときの現行の全文と、isExternalStorageManager が false のときだけ［写真の自動削除に必要なアクセスを許可］</td><td>#8の既存の条件・#17</td></tr>
+<tr><td>見出し</td><td colspan="2">上の大きな領域（高さ424dp）・「クラウドと同期」28dp・「最後の同期：10月18日 14:05」は元のまま</td><td>元のデザイン</td></tr>
+</table></div>
+<ul>
+<li>観測値（collection・info・permissionState・progress）はそれぞれ別の値で、ほかの値から推測して変えない（権限がないことから同期を一時停止などにしない）。</li>
+<li>読み取りの更新中も、どの操作も無効にしない（［同期を予約する］の予約済み・［確認する］の確認中は、元のデザインの無効のまま）。</li>
+<li>5枚の別カードや、下部の設定の入口（［同期・端末からの削除］［その他］）には戻さない。設定の変更はカードの中のスイッチと［変更］から直接行い、オンにするときは元の確認（21）を出す。</li>
+<li>確認21の本文の「［基準日］から30日」は「撮影日から30日」（選んだ期間）にした。21の画面のほかの見直しは次の作業で扱う。</li>
+</ul>
+
+<h2 class="sec">3. 読み上げ（AX名）</h2>
+<div class="tscroll"><table class="t">
+<tr><th>対象</th><th>AX名</th></tr>
+<tr><td>タグの行</td><td>元のまま「空、タグ付き 3枚、該当しない 0枚」。写真を読み込めないとき「…。代表の写真を読み込めませんでした」</td></tr>
+<tr><td>空の印</td><td>「タグはまだありません」</td></tr>
+<tr><td>一覧の失敗</td><td>ボタン「タグを読み込めませんでした。再読み込み」</td></tr>
+<tr><td>同期の予約</td><td>未予約「同期を予約する」／予約済み「同期を予約する。予約済み」（無効）</td></tr>
+<tr><td>バックグラウンド同期</td><td>「バックグラウンド同期、10時42分に完了」など（#8と同じ）</td></tr>
+<tr><td>写真情報の読み取り・写真の集計・自動管理の権限</td><td>#8と同じ（例「写真の集計、1,180枚」「自動管理の権限、許可されていません」）</td></tr>
+<tr><td>保存した写真の確認</td><td>「確認した写真はすべて元どおりダウンロードできました」／「まだ確認していません」／「クラウドから写真をダウンロードして確認しています」</td></tr>
+<tr><td>スイッチ</td><td>元のまま「クラウドに保存済みの写真を端末から自動で削除」。自動同期は「自動同期」</td></tr>
+</table></div>
+
+<h2 class="sec">4. 確認の観点・注記</h2>
+<ul>
+<li>320／390／400dp・文字1.0／1.3倍で、省略・切れ・文字の縮小・はみ出し・下部と内容の重なりがないこと、押せる部品が48dp以上であることを右の検査で確かめる。</li>
+<li>Back：シート → 画面 → 呼び出し元 → OS。アプリの中に戻るボタンは置かない。</li>
+<li>減らす動き：回る弧を止める（形はそのまま）。</li>
+<li>フォントは Noto Sans JP を指定。入っていない環境では system-ui になり、文字の幅が数%ずれることがある。外枠は outline で、寸法の外側にある。</li>
+</ul>
+</section>
+</div>
+
+<script id="origData" type="application/json">{"V01-Tags": "<div class=\"sc-host\" data-sc-name=\"V01-Tags\"><div data-dc-tpl=\"3\" style=\"width: 390px; height: 844px; background: rgb(15, 15, 16);\"><div class=\"sc-host\" data-sc-name=\"Main\" data-dc-tpl=\"4\"><div data-dc-tpl=\"3\" style=\"width: 390px; height: 844px; position: relative; overflow: hidden; background: rgb(15, 15, 16); color: rgb(237, 237, 234); font-family: &quot;Noto Sans JP&quot;, system-ui, sans-serif; font-size: 15px; line-height: 22px; -webkit-font-smoothing: antialiased;\"><div data-dc-tpl=\"421\" style=\"position: absolute; inset: 0px; overflow-y: auto;\"><div data-dc-tpl=\"422\" style=\"box-sizing: border-box; padding: 40px 20px 20px; display: flex; flex-direction: column; gap: 4px;\"><h1 data-dc-tpl=\"423\" style=\"margin: 0px; font-size: 28px; line-height: 36px; font-weight: 600;\">タグ<\/h1><span data-dc-tpl=\"424\" style=\"font-size: 14px; line-height: 20px; color: rgb(169, 169, 164); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">嵐山 10.18 · 2個<\/span><\/span><\/div><button data-dc-tpl=\"432\" aria-label=\"空、タグ付き 3枚、該当しない 0枚\" style=\"background: none; border: 0px; padding: 8px 16px 8px 20px; margin: 0px; color: inherit; font: inherit; cursor: pointer; width: 100%; min-height: 72px; display: flex; align-items: center; gap: 16px; text-align: left;\"><span data-dc-tpl=\"433\" style=\"display: block; width: 56px; height: 56px; border-radius: 8px; flex-shrink: 0; background: radial-gradient(11% 17% at 35% 72%, rgb(93, 107, 88) 0px, rgb(93, 107, 88) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(169, 195, 216) 0%, rgb(228, 234, 236) 62%, rgb(151, 161, 151) 63%, rgb(105, 115, 106) 100%);\"><\/span><span data-dc-tpl=\"434\" style=\"flex: 1 1 0%; min-width: 0px; display: flex; flex-direction: column;\"><span data-dc-tpl=\"435\" style=\"font-size: 16px; line-height: 22px; font-weight: 500; overflow-wrap: anywhere;\"><span class=\"sc-interp\">空<\/span><\/span><span data-dc-tpl=\"436\" style=\"font-size: 13px; line-height: 18px; color: rgb(169, 169, 164); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">タグ付き 3枚 · 該当しない 0枚<\/span><\/span><\/span><svg data-dc-tpl=\"437\" width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#A9A9A4\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"438\" d=\"M9 6l6 6-6 6\"><\/path><\/svg><\/button><button data-dc-tpl=\"432\" aria-label=\"夕景、タグ付き 2枚、該当しない 1枚\" style=\"background: none; border: 0px; padding: 8px 16px 8px 20px; margin: 0px; color: inherit; font: inherit; cursor: pointer; width: 100%; min-height: 72px; display: flex; align-items: center; gap: 16px; text-align: left;\"><span data-dc-tpl=\"433\" style=\"display: block; width: 56px; height: 56px; border-radius: 8px; flex-shrink: 0; background: radial-gradient(11% 17% at 38% 68%, rgb(36, 26, 23) 0px, rgb(36, 26, 23) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(224, 173, 114) 0%, rgb(184, 104, 75) 42%, rgb(61, 43, 42) 43%, rgb(24, 19, 20) 100%);\"><\/span><span data-dc-tpl=\"434\" style=\"flex: 1 1 0%; min-width: 0px; display: flex; flex-direction: column;\"><span data-dc-tpl=\"435\" style=\"font-size: 16px; line-height: 22px; font-weight: 500; overflow-wrap: anywhere;\"><span class=\"sc-interp\">夕景<\/span><\/span><span data-dc-tpl=\"436\" style=\"font-size: 13px; line-height: 18px; color: rgb(169, 169, 164); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">タグ付き 2枚 · 該当しない 1枚<\/span><\/span><\/span><svg data-dc-tpl=\"437\" width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#A9A9A4\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"438\" d=\"M9 6l6 6-6 6\"><\/path><\/svg><\/button><div data-dc-tpl=\"439\" style=\"height: 420px;\"><\/div><\/div><div data-dc-tpl=\"440\" style=\"position: absolute; left: 0px; right: 0px; bottom: 0px; background: rgb(15, 15, 16); border-top: 1px solid rgb(34, 34, 38); padding: 10px 16px 20px; display: flex; flex-direction: column; gap: 8px;\"><button data-dc-tpl=\"441\" style=\"background: rgb(237, 237, 234); border: 0px; padding: 0px 16px; margin: 0px; color: rgb(17, 17, 17); font-style: inherit; font-variant: inherit; font-stretch: inherit; line-height: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 52px; border-radius: 26px; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 15px; font-weight: 600;\"><svg data-dc-tpl=\"442\" width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"443\" d=\"M12 5v14M5 12h14\"><\/path><\/svg><span data-dc-tpl=\"444\">新しいタグ<\/span><\/button><nav data-dc-tpl=\"445\" aria-label=\"タグ一覧の操作\" style=\"display: grid; grid-template-columns: repeat(1, minmax(0px, 1fr)); margin: 0px -8px;\"><button data-dc-tpl=\"446\" style=\"background: none; border: 0px; padding: 0px; margin: 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 500;\"><svg data-dc-tpl=\"447\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"448\" d=\"M19 12H5M11 18l-6-6 6-6\"><\/path><\/svg><span data-dc-tpl=\"449\">戻る<\/span><\/button><\/nav><\/div><\/div><\/div><\/div><\/div>", "V02-Tags-Empty": "<div class=\"sc-host\" data-sc-name=\"V02-Tags-Empty\"><div data-dc-tpl=\"3\" style=\"width: 390px; height: 844px; background: rgb(15, 15, 16);\"><div class=\"sc-host\" data-sc-name=\"Main\" data-dc-tpl=\"4\"><div data-dc-tpl=\"3\" style=\"width: 390px; height: 844px; position: relative; overflow: hidden; background: rgb(15, 15, 16); color: rgb(237, 237, 234); font-family: &quot;Noto Sans JP&quot;, system-ui, sans-serif; font-size: 15px; line-height: 22px; -webkit-font-smoothing: antialiased;\"><div data-dc-tpl=\"421\" style=\"position: absolute; inset: 0px; overflow-y: auto;\"><div data-dc-tpl=\"422\" style=\"box-sizing: border-box; padding: 40px 20px 20px; display: flex; flex-direction: column; gap: 4px;\"><h1 data-dc-tpl=\"423\" style=\"margin: 0px; font-size: 28px; line-height: 36px; font-weight: 600;\">タグ<\/h1><span data-dc-tpl=\"424\" style=\"font-size: 14px; line-height: 20px; color: rgb(169, 169, 164); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">嵐山 10.18 · 0個<\/span><\/span><\/div><div data-dc-tpl=\"426\" style=\"padding: 32px 24px; display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center;\"><svg data-dc-tpl=\"427\" width=\"40\" height=\"40\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#6B6B67\" stroke-width=\"1.5\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"428\" d=\"M3.8 12.2V4.8a1 1 0 0 1 1-1h7.4l8 8a1.4 1.4 0 0 1 0 2l-6.2 6.2a1.4 1.4 0 0 1-2 0z\"><\/path><circle data-dc-tpl=\"429\" cx=\"8.3\" cy=\"8.3\" r=\"1.4\"><\/circle><\/svg><span data-dc-tpl=\"430\" style=\"font-size: 15px; line-height: 22px;\">タグはまだありません<\/span><\/div><div data-dc-tpl=\"439\" style=\"height: 420px;\"><\/div><\/div><div data-dc-tpl=\"440\" style=\"position: absolute; left: 0px; right: 0px; bottom: 0px; background: rgb(15, 15, 16); border-top: 1px solid rgb(34, 34, 38); padding: 10px 16px 20px; display: flex; flex-direction: column; gap: 8px;\"><button data-dc-tpl=\"441\" style=\"background: rgb(237, 237, 234); border: 0px; padding: 0px 16px; margin: 0px; color: rgb(17, 17, 17); font-style: inherit; font-variant: inherit; font-stretch: inherit; line-height: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 52px; border-radius: 26px; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 15px; font-weight: 600;\"><svg data-dc-tpl=\"442\" width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"443\" d=\"M12 5v14M5 12h14\"><\/path><\/svg><span data-dc-tpl=\"444\">新しいタグ<\/span><\/button><nav data-dc-tpl=\"445\" aria-label=\"タグ一覧の操作\" style=\"display: grid; grid-template-columns: repeat(1, minmax(0px, 1fr)); margin: 0px -8px;\"><button data-dc-tpl=\"446\" style=\"background: none; border: 0px; padding: 0px; margin: 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 500;\"><svg data-dc-tpl=\"447\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"448\" d=\"M19 12H5M11 18l-6-6 6-6\"><\/path><\/svg><span data-dc-tpl=\"449\">戻る<\/span><\/button><\/nav><\/div><\/div><\/div><\/div><\/div>", "T11-Cloud": "<div class=\"sc-host\" data-sc-name=\"T11-Cloud\"><div data-dc-tpl=\"3\" style=\"width: 390px; height: 844px; background: rgb(15, 15, 16);\"><div class=\"sc-host\" data-sc-name=\"Main\" data-dc-tpl=\"4\"><div data-dc-tpl=\"3\" style=\"width: 390px; height: 844px; position: relative; overflow: hidden; background: rgb(15, 15, 16); color: rgb(237, 237, 234); font-family: &quot;Noto Sans JP&quot;, system-ui, sans-serif; font-size: 15px; line-height: 22px; -webkit-font-smoothing: antialiased;\"><div data-dc-tpl=\"594\" style=\"position: absolute; inset: 0px; overflow-y: auto;\"><div data-dc-tpl=\"595\" style=\"height: 424px; box-sizing: border-box; padding: 0px 20px 20px; display: flex; flex-direction: column; justify-content: flex-end; gap: 4px;\"><h1 data-dc-tpl=\"596\" style=\"margin: 0px; font-size: 28px; line-height: 36px; font-weight: 600;\">クラウドと同期<\/h1><span data-dc-tpl=\"597\" style=\"font-size: 14px; line-height: 20px; color: rgb(169, 169, 164); font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">最後の同期：10月18日 14:05<\/span><\/span><\/div><div data-dc-tpl=\"598\" style=\"display: flex; flex-direction: column; gap: 12px; padding: 0px 16px;\"><section data-dc-tpl=\"599\" style=\"background: rgb(25, 25, 27); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 8px;\"><h2 data-dc-tpl=\"600\" style=\"margin: 0px; font-size: 16px; line-height: 22px; font-weight: 600;\">同期<\/h2><p data-dc-tpl=\"601\" style=\"margin: 0px; font-size: 13px; line-height: 20px; color: rgb(169, 169, 164);\"><span class=\"sc-interp\">通信やバッテリーの状態によって、始まるまで時間がかかることがあります<\/span><\/p><button data-dc-tpl=\"602\" disabled=\"\" style=\"background: none; border: 1px solid rgb(58, 58, 63); padding: 0px 16px; margin: 4px 0px 0px; color: rgb(124, 124, 119); font-style: inherit; font-variant: inherit; font-stretch: inherit; line-height: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 48px; box-sizing: border-box; border-radius: 24px; font-size: 14px; font-weight: 500;\"><span class=\"sc-interp\">同期を予約しました<\/span><\/button><\/section><section data-dc-tpl=\"603\" style=\"background: rgb(25, 25, 27); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 8px;\"><h2 data-dc-tpl=\"604\" style=\"margin: 0px; font-size: 16px; line-height: 22px; font-weight: 600;\">保存した写真の確認<\/h2><p data-dc-tpl=\"605\" style=\"margin: 0px; font-size: 13px; line-height: 20px; color: rgb(169, 169, 164);\">クラウドに保存した写真を、元どおりダウンロードできるか確認します<\/p><p data-dc-tpl=\"606\" role=\"status\" style=\"margin: 0px; font-size: 13px; line-height: 20px; color: rgb(237, 237, 234);\"><span class=\"sc-interp\">確認した写真はすべて元どおりダウンロードできました<\/span><\/p><button data-dc-tpl=\"607\" style=\"background: none; border: 1px solid rgb(58, 58, 63); padding: 0px 16px; margin: 4px 0px 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; line-height: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 48px; box-sizing: border-box; border-radius: 24px; font-size: 14px; font-weight: 500;\"><span class=\"sc-interp\">確認する<\/span><\/button><\/section><section data-dc-tpl=\"608\" style=\"background: rgb(25, 25, 27); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 8px;\"><div data-dc-tpl=\"609\" style=\"display: flex; align-items: center; gap: 12px;\"><h2 data-dc-tpl=\"610\" style=\"margin: 0px; flex: 1 1 0%; font-size: 16px; line-height: 22px; font-weight: 600;\">端末の写真を自動で削除<\/h2><button data-dc-tpl=\"611\" role=\"switch\" aria-checked=\"false\" aria-label=\"クラウドに保存済みの写真を端末から自動で削除\" style=\"background: none; border: 0px; padding: 0px; margin: 0px; cursor: pointer; width: 64px; height: 48px; display: flex; align-items: center; justify-content: center;\"><span data-dc-tpl=\"612\" style=\"position: relative; display: block; width: 52px; height: 32px; border-radius: 16px; background: transparent; border: 2px solid rgb(140, 140, 134); box-sizing: border-box;\"><span data-dc-tpl=\"613\" style=\"position: absolute; top: 4px; left: 4px; width: 20px; height: 20px; border-radius: 10px; background: rgb(140, 140, 134);\"><\/span><\/span><\/button><\/div><p data-dc-tpl=\"614\" style=\"margin: 0px; font-size: 13px; line-height: 20px; color: rgb(237, 237, 234);\">クラウドに保存済みの写真を、この端末から削除します。クラウドの写真は残ります。<\/p><p data-dc-tpl=\"615\" style=\"margin: 0px; font-size: 13px; line-height: 20px; color: rgb(169, 169, 164);\">保存内容の確認とプレビューの保存が済んだ写真だけが対象です。<\/p><div data-dc-tpl=\"616\" style=\"display: flex; align-items: center; gap: 12px; padding-top: 4px;\"><span data-dc-tpl=\"617\" style=\"flex: 1 1 0%; display: flex; flex-direction: column;\"><span data-dc-tpl=\"618\" style=\"font-size: 14px; line-height: 20px;\">端末に残す期間<\/span><span data-dc-tpl=\"619\" style=\"font-size: 13px; line-height: 18px; color: rgb(169, 169, 164);\">［基準日］から30日<\/span><\/span><button data-dc-tpl=\"620\" style=\"background: none; border: 1px solid rgb(58, 58, 63); padding: 0px 16px; margin: 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; line-height: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 48px; box-sizing: border-box; border-radius: 24px; font-size: 14px; font-weight: 500;\">変更<\/button><\/div><\/section><\/div><div data-dc-tpl=\"621\" style=\"height: 300px;\"><\/div><\/div><div data-dc-tpl=\"622\" style=\"position: absolute; left: 0px; right: 0px; bottom: 0px; background: rgb(15, 15, 16); border-top: 1px solid rgb(34, 34, 38); padding: 0px 8px 20px;\"><nav data-dc-tpl=\"623\" aria-label=\"クラウドと同期の操作\" style=\"display: grid; grid-template-columns: repeat(1, minmax(0px, 1fr));\"><button data-dc-tpl=\"624\" style=\"background: none; border: 0px; padding: 0px; margin: 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 500;\"><svg data-dc-tpl=\"625\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"626\" d=\"M19 12H5M11 18l-6-6 6-6\"><\/path><\/svg><span data-dc-tpl=\"627\">戻る<\/span><\/button><\/nav><\/div><\/div><\/div><\/div><\/div>"}</script>
+<script>
+(function () {
+  const ORIG = JSON.parse(document.getElementById('origData').textContent);
+  const S = (p) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + p + '</svg>';
+  const G = {
+    run: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke-opacity=".22"></circle><path class="spin" d="M12 4a8 8 0 0 1 8 8"></path></svg>',
+    wait: S('<circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"></path>'),
+    done: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.5" fill="#EDEDEA"></circle><path d="M7.8 12.3l2.8 2.8 5.6-5.8" fill="none" stroke="#111" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg>',
+    fail: S('<path d="M12 4l9 15.5H3z"></path><path d="M12 10v4.5M12 17.2v.1"></path>'),
+    perm: S('<path d="M12 3.5l7 3v5c0 4.2-3 7.4-7 9-4-1.6-7-4.8-7-9v-5z"></path><path d="M7 7l10 10"></path>'),
+    notyet: S('<circle cx="12" cy="12" r="8.5" stroke-dasharray="2.2 2.2"></circle>'),
+    broken: S('<rect x="3.5" y="4.5" width="17" height="15" rx="2"></rect><path d="M3.5 15l4.5-4 3 3"></path><path d="M14 4.5l-2 6 3 2-2 7"></path>'),
+    tag: '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#6B6B67" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M3.8 12.2V4.8a1 1 0 0 1 1-1h7.4l8 8a1.4 1.4 0 0 1 0 2l-6.2 6.2a1.4 1.4 0 0 1-2 0z"></path><circle cx="8.3" cy="8.3" r="1.4"></circle></svg>',
+    failBig: '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#FF8A7A" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4l9 15.5H3z"></path><path d="M12 10v4.5M12 17.2v.1"></path></svg>',
+    chev: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#A9A9A4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink:0"><path d="M9 6l6 6-6 6"></path></svg>',
+    plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>',
+    retry: S('<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"></path><path d="M19.5 4.5v4h-4"></path>'),
+    lock: S('<rect x="5.5" y="10.5" width="13" height="9.5" rx="2"></rect><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"></path>'),
+    pin: S('<path d="M12 21s-6.5-6.1-6.5-11a6.5 6.5 0 0 1 13 0c0 4.9-6.5 11-6.5 11z"></path><circle cx="12" cy="10" r="2.3"></circle>')
+  };
+  const gl = (k, cls, ax) => '<span class="gl' + (cls ? ' ' + cls : '') + '"' + (ax ? ' role="img" aria-label="' + ax + '"' : ' aria-hidden="true"') + '>' + G[k] + '</span>';
+  const mk = (k, ax) => '<span class="mk" role="img" aria-label="' + ax + '">' + gl(k, 'fail') + '</span>';
+
+  const O = { s: 'tags', w: 400, h: 844, k: 1, t: 'normal', e: 'grid', chg: true, rm: false, q: 1, v: 'ok', col: 'ok', info: 1, prog: 'complete', perm: 'granted', x: 1, loc: 0, a: true, d: false, keep: 30 };
+  let N = { scr: 'tags', sheet: null, left: false, scroll: 0 }, log = [];
+  const add = (x) => { log.unshift(x); log = log.slice(0, 12); };
+  const say = (x) => { const l = document.getElementById('live'); l.textContent = ''; setTimeout(() => { l.textContent = x; }, 30); };
+  const SKY = 'radial-gradient(11% 17% at 35% 72%, rgb(93, 107, 88) 0px, rgb(93, 107, 88) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(169, 195, 216) 0%, rgb(228, 234, 236) 62%, rgb(151, 161, 151) 63%, rgb(105, 115, 106) 100%)';
+  const DUSK = 'radial-gradient(11% 17% at 38% 68%, rgb(36, 26, 23) 0px, rgb(36, 26, 23) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(rgb(224, 173, 114) 0%, rgb(184, 104, 75) 42%, rgb(61, 43, 42) 43%, rgb(24, 19, 20) 100%)';
+  const TAGS = {
+    normal: [['空', SKY, 3, 0], ['夕景', DUSK, 2, 1]],
+    long: [['空', SKY, 3, 0], ['二〇二六年の秋に京都と奈良をめぐった家族旅行で撮った、あとで写真集にまとめたい写真', DUSK, 12, 2], ['夕景', DUSK, 2, 1]]
+  };
+
+  function tagsHTML() {
+    const t = O.t;
+    const rows = t === 'empty' || t === 'fail' ? [] : (TAGS[t] || TAGS.normal);
+    const n = t === 'fail' ? null : rows.length;
+    const scope = O.e === 'albums' ? 'すべての写真' : '嵐山 10.18';
+    let mid = '';
+    if (t === 'empty') mid = '<div style="padding:32px 24px;display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center" data-chg="1"><span role="img" aria-label="タグはまだありません" style="display:inline-flex">' + G.tag + '</span></div>';
+    else if (t === 'fail') mid = '<div style="padding:32px 24px;display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center"><button class="sec2" data-act="retryTags" data-chg="2" aria-label="タグを読み込めませんでした。再読み込み" style="flex-direction:column;padding:12px 20px;border:0;gap:10px"><span aria-hidden="true" style="display:inline-flex">' + G.failBig + '</span><span aria-hidden="true" style="display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:8px 16px;border-radius:20px;border:1px solid #3A3A3F">' + G.retry + '<span>再読み込み</span></span></button></div>';
+    else if (N.tload) mid = '<div style="padding:32px 24px;display:flex;justify-content:center"><span class="gl" role="img" aria-label="タグを読み込んでいます" style="width:40px;height:40px">' + G.run.replace('<svg', '<svg style="width:32px;height:32px"') + '</span></div>';
+    else mid = rows.map((r, i) => {
+      const bad = t === 'thumbFail' && i === 0;
+      return '<button class="trow" data-tag="' + i + '" aria-label="' + r[0] + '、タグ付き ' + r[2] + '枚、該当しない ' + r[3] + '枚' + (bad ? '。代表の写真を読み込めませんでした' : '') + '">' +
+        (bad ? '<span class="thumb bad" aria-hidden="true" data-chg="3">' + G.broken + '</span>' : '<span class="thumb" aria-hidden="true" style="background:' + r[1] + '"></span>') +
+        '<span style="flex:1;min-width:0;display:flex;flex-direction:column" aria-hidden="true"><span class="f16 tn" style="font-weight:500;overflow-wrap:anywhere">' + r[0] + '</span><span class="f13s mut num tm">タグ付き ' + r[2] + '枚 · 該当しない ' + r[3] + '枚</span></span>' + G.chev + '</button>';
+    }).join('');
+    return '<div class="scroll" data-scroll><div style="padding:40px 20px 20px;display:flex;flex-direction:column;gap:4px"><h1 class="f28 tt" style="margin:0;font-weight:600">タグ</h1><span class="f14 mut num st"' + (O.e === 'albums' ? ' data-chg="4"' : '') + '>' + scope + ' · ' + (n == null ? '—' : n) + '個</span></div>' + mid + '<div style="height:24px"></div></div>' +
+      '<div class="bar" data-chg="5"><button class="pri" data-act="newtag">' + G.plus + '<span>新しいタグ</span></button></div>';
+  }
+
+  function cloudHTML() {
+    const queued = !!O.q;
+    const colG = { ok: gl('done', '', '写真情報の読み取り、完了'), reading: gl('run', '', '写真情報の読み取り、読み取っています'), fail: mk('fail', '写真情報の読み取り、失敗しました'), none: gl('notyet', 'muted', '写真情報の読み取り、まだ読み取っていません') }[O.col];
+    const info = O.info ? '<span class="f14 num" role="text" aria-label="写真の集計、1,180枚">1,180枚</span>' : '<span class="f14 num" role="text" aria-label="写真の集計、記録がありません">—</span>';
+    const perm = O.perm === 'denied' ? gl('perm', 'fail', '自動管理の権限、許可されていません') : gl('done', '', '自動管理の権限、許可されています');
+    const P = { complete: ['done', '', '10時42分に完了'], waiting: ['wait', '', '10時42分の記録で次の実行を待っています'], running: ['run', '', '10時42分の記録で同期しています'], failed: ['fail', 'fail', '10時42分に失敗しました'], none: ['notyet', 'muted', 'まだ実行していません'] }[O.prog];
+    const prog = (O.prog === 'failed' ? mk('fail', 'バックグラウンド同期、' + P[2]) : gl(P[0], P[1], 'バックグラウンド同期、' + P[2])) + '<span class="f13s mut num" aria-hidden="true">' + (O.prog === 'none' ? '—' : '10:42') + '</span>';
+    const ver = { ok: gl('done', '', '確認した写真はすべて元どおりダウンロードできました'), none: gl('notyet', 'muted', 'まだ確認していません'), checking: gl('run', '', 'クラウドから写真をダウンロードして確認しています') }[O.v];
+    const sw = (name, on, act, chg) => '<button class="sw" role="switch" aria-checked="' + on + '" aria-label="' + name + '" data-act="' + act + '"' + (chg ? ' data-chg="' + chg + '"' : '') + '><span class="tr" aria-hidden="true"><span class="kn"></span></span></button>';
+    return '<div class="scroll" data-scroll>' +
+      '<div style="min-height:424px;padding:0 20px 20px;display:flex;flex-direction:column;justify-content:flex-end;gap:4px"><h1 class="f28" style="margin:0;font-weight:600">クラウドと同期</h1><span class="f14 mut num">最後の同期：10月18日 14:05</span></div>' +
+      '<div style="display:flex;flex-direction:column;gap:12px;padding:0 16px">' +
+      /* 同期 */
+      '<section class="card" aria-label="同期"><div class="hrow"><h2>同期</h2><span class="obs" style="min-height:0" data-chg="1">' + prog + '</span>' + sw('自動同期', O.a, 'autoSync', '2') + '</div>' +
+        '<p class="f13 mut" style="margin:0">' + (queued ? '通信やバッテリーの状態によって、始まるまで時間がかかることがあります' : '次の同期を予約します。すぐに始まるとは限りません') + '</p>' +
+        '<div data-chg="3"><div class="obs"><span class="l f13 mut">写真情報の読み取り</span><span class="r">' + colG + '</span></div><div class="obs"><span class="l f13 mut">写真の集計</span><span class="r">' + info + '</span></div></div>' +
+        '<div class="btns"><button class="sec2" data-act="sync"' + (queued ? ' aria-disabled="true" aria-label="同期を予約する。予約済み"' : '') + ' data-chg="4">' + (queued ? gl('done') : '') + '<span>同期を予約する</span></button><button class="sec2" data-act="refresh" data-chg="5">' + G.retry + '<span>状態を更新</span></button></div>' +
+        '<div class="sup f13 mut" data-chg="6"><p class="dt">原本の保存</p><p>フォルダ選択は不要です。すべてのJPEGと、RAW内の機種情報からGR IV（Monochrome含む）、OM-1 Mark II、E-P7、LeitzphoneのRAWを自動で見つけます。</p><p class="dt">モバイル通信</p><p>モバイル通信でも同期します。実行時刻はAndroidの省電力制御などにより遅れる場合があります。</p><p class="dt">原本の位置情報</p><p>撮影時の位置情報も含め、元のファイルを変更せず保存するための許可です。端末の現在位置は取得しません。</p>' +
+          (O.loc ? '' : '<button class="sec2" data-act="loc" style="align-self:flex-start;color:#EDEDEA">' + G.pin + '<span>位置情報の読み取りを許可</span></button>') + '</div></section>' +
+      /* 保存した写真の確認 */
+      '<section class="card" aria-label="保存した写真の確認"><div class="hrow"><h2>保存した写真の確認</h2><span data-chg="7" style="display:inline-flex">' + ver + '</span></div>' +
+        '<p class="f13 mut" style="margin:0">クラウドに保存した写真を、元どおりダウンロードできるか確認します</p>' +
+        '<button class="sec2" data-act="verify"' + (O.v === 'checking' ? ' aria-disabled="true"' : '') + ' style="margin-top:4px">' + (O.v === 'checking' ? gl('run') : '') + '<span>確認する</span></button></section>' +
+      /* 端末の写真を自動で削除 */
+      '<section class="card" aria-label="端末の写真を自動で削除"><div class="hrow"><h2>端末の写真を自動で削除</h2>' + sw('クラウドに保存済みの写真を端末から自動で削除', O.d, 'autoDel') + '</div>' +
+        '<p class="f13" style="margin:0">クラウドに保存済みの写真を、この端末から削除します。クラウドの写真は残ります。</p>' +
+        '<p class="f13 mut" style="margin:0">保存内容の確認とプレビューの保存が済んだ写真だけが対象です。</p>' +
+        '<div class="obs" data-chg="8"><span class="l f13 mut">自動管理の権限</span><span class="r">' + perm + '</span></div>' +
+        '<div class="keepRow"><span style="flex:1;min-width:0;display:flex;flex-direction:column"><span class="f14">端末に残す期間</span><span class="f13s mut num" data-chg="9">撮影日から' + O.keep + '日</span></span><button class="sec2" data-act="keep">変更</button></div>' +
+        '<div class="sup f13 mut" data-chg="10"><p class="dt">削除の条件</p><p>端末の写真の自動削除には「すべてのファイルへのアクセス」が必要です。端末から削除するのは対象機種のRAWとすべてのJPEGで、クラウドから同じ内容で戻せることを確認し、プレビューを保存した元のファイルに限ります。</p>' +
+          (O.x ? '' : '<button class="sec2" data-act="allfiles" style="align-self:flex-start;color:#EDEDEA">' + G.lock + '<span>写真の自動削除に必要なアクセスを許可</span></button>') +
+          '<p class="dt">日付の条件</p><p>撮影日から数えます。JPEGで撮影日がない場合は追加日、作成日の順に使います。日付がすべて不明のJPEGは保存確認後に削除対象になり、撮影日不明のRAWは残します。</p><p class="dt">アプリを削除したとき</p><p>アプリを削除すると端末のプレビューと管理記録も消えます。クラウドの元のファイルはAmazon Photosに残ります。</p></div></section>' +
+      '</div><div style="height:32px"></div></div>' + sheetHTML();
+  }
+  function sheetHTML() {
+    if (N.sheet === 'confirm') return '<button class="dim" data-act="close" aria-label="閉じる" tabindex="-1"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="自動削除の確認"><span class="hdl" aria-hidden="true"></span><h2>端末の写真を自動で削除しますか？</h2><ul><li>クラウドに保存済みで、保存内容の確認とプレビューの保存が済んだ写真が対象です</li><li><span data-chg="11">撮影日から' + O.keep + '日</span>たった写真を、この端末から削除します</li><li>クラウドの写真は残ります</li></ul><div class="acts"><button class="danger" data-act="confirmOn">端末からの自動削除をオンにする</button><button class="cancel" data-act="close">キャンセル</button></div></div>';
+    if (N.sheet === 'keep') return '<button class="dim" data-act="close" aria-label="閉じる" tabindex="-1"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="端末に残す期間"><span class="hdl" aria-hidden="true"></span><h2>端末に残す期間</h2><div role="radiogroup" aria-label="端末に残す期間" style="margin-top:8px">' + [7, 30, 90].map((d) => '<button class="opt" role="radio" aria-checked="' + (O.keep === d) + '" data-keep="' + d + '"><span class="rd' + (O.keep === d ? ' on' : '') + '" aria-hidden="true"></span><span>' + d + '日</span></button>').join('') + '</div><div class="acts"><button class="cancel" data-act="close">キャンセル</button></div></div>';
+    return '';
+  }
+  function callerHTML() { return '<div class="caller f14"><span>（呼び出し元の画面・ダミー）</span><button class="sec2" data-act="reopen1" style="color:#EDEDEA">' + (N.from === 'tags' ? 'タグ一覧を開き直す' : 'クラウドと同期を開き直す') + '</button></div>'; }
+
+  const dev = document.getElementById('dev'), orig = document.getElementById('orig');
+  function render() {
+    document.documentElement.style.setProperty('--k', O.k);
+    dev.style.setProperty('--w', O.w + 'px'); dev.style.setProperty('--h', O.h + 'px');
+    dev.classList.toggle('rm', O.rm); dev.classList.toggle('showchg', O.chg);
+    document.getElementById('tagCtl').hidden = O.s !== 'tags'; document.getElementById('cloudCtl').hidden = O.s !== 'cloud';
+    const ok = O.s === 'tags' ? (O.t === 'empty' ? 'V02-Tags-Empty' : 'V01-Tags') : 'T11-Cloud';
+    if (orig.dataset.k !== ok) { orig.innerHTML = ORIG[ok]; orig.dataset.k = ok; }
+    document.getElementById('origName').textContent = ok + (O.s === 'tags' && O.t !== 'normal' && O.t !== 'empty' ? '（この状態は元にないので通常の画面）' : '');
+    document.getElementById('devName').textContent = O.w + 'dp・文字' + O.k + '倍';
+    let h = '<span class="synth" aria-hidden="true">合成の画面</span>';
+    h += N.scr === 'tags' ? tagsHTML() : N.scr === 'cloud' ? cloudHTML() : callerHTML();
+    if (N.left) h += '<div class="os"><span>（OSへ戻った状態・デモ）</span><button class="hw" data-act="reopen">開き直す（デモ）</button></div>';
+    dev.innerHTML = h;
+    const sc = dev.querySelector('[data-scroll]');
+    if (sc) { sc.scrollTop = N.scroll; sc.addEventListener('scroll', () => { N.scroll = sc.scrollTop; }, { passive: true }); }
+    side();
+  }
+  function side() {
+    const labs = [...dev.querySelectorAll('[aria-label],button,[role=text]')].filter((e) => !e.closest('[aria-hidden="true"]') && e.offsetParent !== null).map((e) => (e.getAttribute('role') ? '[' + e.getAttribute('role') + '] ' : (e.tagName === 'BUTTON' ? '[button] ' : '')) + (e.getAttribute('aria-label') || e.textContent.trim()) + (e.getAttribute('aria-disabled') === 'true' ? '（無効）' : '') + (e.getAttribute('aria-checked') ? '（' + (e.getAttribute('aria-checked') === 'true' ? 'オン' : 'オフ') + '）' : ''));
+    document.getElementById('ax').innerHTML = '<b>読み上げ（AX名）</b><br>' + ([...new Set(labs)].map((x) => '・' + x).join('<br>') || '—');
+    const d = dev.getBoundingClientRect();
+    const BAN = /タグはまだありません|読み込めませんでした|予約しました|確認しています|元どおりダウンロードできました|まだ確認していません|失敗しました|許可されていません|同期しています|待っています/;
+    const vis = [...dev.querySelectorAll('*')].filter((e) => e.children.length === 0 && e.offsetParent !== null && !e.closest('.sup') && !e.closest('.sheet') && !e.classList.contains('synth') && e.textContent.trim()).map((e) => e.textContent.trim());
+    const bad = vis.filter((t) => BAN.test(t));
+    const small = [...dev.querySelectorAll('button')].filter((b) => b.offsetParent !== null && !b.classList.contains('dim') && !b.closest('.os')).filter((b) => { const r = b.getBoundingClientRect(); return r.height < 47.5 || r.width < 47.5; });
+    const ov = [...dev.querySelectorAll('*')].filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && !e.closest('.os') && !e.classList.contains('synth') && (r.right > d.right + 0.5 || r.left < d.left - 0.5); }).length;
+    const clip = [...dev.querySelectorAll('span,p,h1,h2,li')].filter((e) => e.offsetParent !== null && e.children.length === 0 && (e.scrollWidth > e.clientWidth + 1 && getComputedStyle(e).display !== 'inline') || getComputedStyle(e).textOverflow === 'ellipsis').length;
+    const minF = Math.min(...[...dev.querySelectorAll('span,p,h1,h2,li,button')].filter((e) => e.offsetParent !== null && [...e.childNodes].some((c) => c.nodeType === 3 && c.textContent.trim()) && !e.classList.contains('synth')).map((e) => parseFloat(getComputedStyle(e).fontSize)));
+    let cover = true; const sc = dev.querySelector('[data-scroll]'), bar = dev.querySelector('.bar');
+    if (sc && bar) cover = sc.getBoundingClientRect().bottom <= bar.getBoundingClientRect().top + 0.5;
+    /* ボタンどうしの重なり */
+    const bs = [...dev.querySelectorAll('button')].filter((b) => b.offsetParent !== null && !b.classList.contains('dim') && !b.closest('.sheet') && !b.closest('.os')).map((b) => b.getBoundingClientRect());
+    let olap = 0; for (let i = 0; i < bs.length; i++) for (let j = i + 1; j < bs.length; j++) { const a = bs[i], b = bs[j]; if (a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5) olap++; }
+    const rmOK = !(O.rm && [...dev.querySelectorAll('.spin')].some((e) => getComputedStyle(e).animationName !== 'none'));
+    const okc = (b) => b ? '<span class="okc">なし</span>' : '<span class="ngc">あり</span>';
+    document.getElementById('chk').innerHTML = '<b>検査（' + O.w + 'dp・文字' + O.k + '倍）</b><br>状態の文（補足と確認の文以外）：' + (bad.length ? '<span class="ngc">' + bad.join(' / ') + '</span>' : '<span class="okc">なし</span>') +
+      '<br>48dp未満のボタン：' + (small.length ? '<span class="ngc">' + small.length + '</span>' : '<span class="okc">なし</span>') + '<br>はみ出し：' + okc(!ov) + '<br>省略・切れ：' + okc(!clip) +
+      '<br>文字の縮小：' + (minF >= 12 * O.k - 0.1 ? '<span class="okc">なし</span>' : '<span class="ngc">' + minF + 'px</span>') + '<br>ボタンの重なり：' + okc(!olap) + '<br>下部と内容の重なり：' + okc(cover) + (rmOK ? '' : '<br><span class="ngc">減らす動きで回っている</span>') +
+      '<br>専用の戻る：' + ([...dev.querySelectorAll('button')].some((b) => b.textContent.trim() === '戻る') ? '<span class="ngc">あり</span>' : '<span class="okc">なし</span>');
+    document.getElementById('log').innerHTML = '<b>操作の記録</b><br>' + (log.map((x) => '・' + x).join('<br>') || '—');
+  }
+  let rt = null;
+  dev.addEventListener('click', (e) => {
+    const a = e.target.closest('[data-act],[data-tag],[data-keep]'); if (!a) return;
+    if (a.getAttribute('aria-disabled') === 'true') { add('（無効のため何もしない）'); return side(); }
+    const v = a.dataset.act; const was = N.sheet;
+    if (a.dataset.tag != null) add('タグの行 → 既存のタグ詳細（変更なし）');
+    else if (a.dataset.keep) { const d = +a.dataset.keep; const same = d === O.keep; O.keep = d; O.d = false; N.sheet = null; add('期間 → ' + d + '日' + (same ? '（同じ日数）' : '') + '。cleanupEnabled=false を保存（自動削除はオフ）'); say('端末に残す期間を' + d + '日にしました。端末からの自動削除はオフです'); }
+    else if (v === 'newtag') add('［新しいタグ］→ 既存の作成（T3）');
+    else if (v === 'retryTags') { O.t = 'normal'; N.tload = true; syncSeg(); add('［再読み込み］→ 既存のタグの読み込み'); say('タグを読み込んでいます'); clearTimeout(rt); rt = setTimeout(() => { N.tload = false; say('タグを読み込みました'); render(); }, 900); }
+    else if (v === 'sync') { O.q = 1; syncSeg(); add('［同期を予約する］→ 既存の予約'); say('同期を予約しました'); }
+    else if (v === 'refresh') { const prev = O.col === 'reading' ? 'ok' : O.col; O.col = 'reading'; syncSeg(); add('［状態を更新］→ 保存済みの状態を読み直す（操作は無効にしない）'); say('写真情報を読み取っています'); clearTimeout(rt); rt = setTimeout(() => { O.col = prev; syncSeg(); say('写真情報の読み取りが終わりました'); render(); }, 1600); }
+    else if (v === 'verify') { O.v = 'checking'; syncSeg(); add('［確認する］→ 既存の確認'); say('クラウドから写真をダウンロードして確認しています'); clearTimeout(rt); rt = setTimeout(() => { O.v = 'ok'; syncSeg(); say('確認した写真はすべて元どおりダウンロードできました'); render(); }, 1600); }
+    else if (v === 'autoSync') { O.a = !O.a; add('自動同期 → ' + (O.a ? 'オン' : 'オフ') + '（既存の設定の変更・条件は不変）'); }
+    else if (v === 'autoDel') { if (O.d) { O.d = false; add('自動削除 → オフ'); } else { N.sheet = 'confirm'; add('自動削除をオンに → 確認（21）'); } }
+    else if (v === 'confirmOn') { O.d = true; N.sheet = null; add('確認 → 自動削除をオン' + (O.x ? '' : '（アクセスがないので既存の許可の流れへ）')); }
+    else if (v === 'keep') { N.sheet = 'keep'; add('［変更］→ 期間の選択（7／30／90日）'); }
+    else if (v === 'close') { N.sheet = null; add('キャンセル'); }
+    else if (v === 'loc') add('［位置情報の読み取りを許可］→ 既存の許可の流れ');
+    else if (v === 'allfiles') add('［写真の自動削除に必要なアクセスを許可］→ 既存の「すべてのファイルへのアクセス」の設定');
+    else if (v === 'reopen1') { N.scr = N.from; N.scroll = 0; add('開き直す'); }
+    else if (v === 'reopen') { N.left = false; }
+    render();
+    const f = (v === 'close' || a.dataset.keep || v === 'confirmOn') && was ? dev.querySelector(was === 'keep' ? '[data-act=keep]' : '[data-act=autoDel]') : (v === 'keep' || v === 'autoDel') ? dev.querySelector('.sheet button:not(.dim)') : null;
+    if (f) f.focus();
+  });
+  document.getElementById('hwBack').addEventListener('click', () => {
+    if (N.left) return;
+    if (N.sheet) { N.sheet = null; add('Back：シートを閉じる（キャンセルと同じ）'); }
+    else if (N.scr === 'tags' || N.scr === 'cloud') { N.from = N.scr; N.scr = 'caller'; add('Back：' + (N.from === 'tags' ? 'タグ一覧' : 'クラウドと同期') + ' → 呼び出し元'); }
+    else { N.left = true; add('Back：ルートなのでOSへ'); }
+    render();
+  });
+  document.getElementById('reset').addEventListener('click', () => { N = { scr: O.s, sheet: null, left: false, scroll: 0 }; log = []; render(); });
+  function seg(id, fn) { const el = document.getElementById(id); el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; fn(b.dataset.v); syncSeg(); render(); }); }
+  function syncSeg() { [['oS', O.s], ['oW', O.w], ['oH', O.h], ['oK', O.k], ['oT', O.t], ['oE', O.e], ['oQ', O.q], ['oV', O.v], ['oC', O.col], ['oI', O.info], ['oG', O.prog], ['oP', O.perm], ['oX', O.x], ['oL', O.loc]].forEach(([id, v]) => document.querySelectorAll('#' + id + ' button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.v == String(v)))); }
+  seg('oS', (v) => { O.s = v; N = { scr: v, sheet: null, left: false, scroll: 0 }; });
+  seg('oW', (v) => { O.w = +v; }); seg('oH', (v) => { O.h = +v; }); seg('oK', (v) => { O.k = +v; });
+  seg('oT', (v) => { O.t = v; N.tload = false; add('T1：' + v); }); seg('oE', (v) => { O.e = v; add('入口：' + v); });
+  seg('oQ', (v) => { O.q = +v; }); seg('oV', (v) => { clearTimeout(rt); O.v = v; }); seg('oC', (v) => { clearTimeout(rt); O.col = v; }); seg('oI', (v) => { O.info = +v; });
+  seg('oG', (v) => { O.prog = v; }); seg('oP', (v) => { O.perm = v; }); seg('oX', (v) => { O.x = +v; }); seg('oL', (v) => { O.loc = +v; });
+  const tg = (id, key) => { const b = document.getElementById(id); b.addEventListener('click', () => { O[key] = !O[key]; b.setAttribute('aria-pressed', O[key]); render(); }); };
+  tg('oChg', 'chg'); tg('oRM', 'rm');
+  document.getElementById('solo').addEventListener('click', () => document.body.classList.add('solo'));
+  document.getElementById('soloExit').addEventListener('click', () => document.body.classList.remove('solo'));
+  window.__t = { O: O, get N() { return N; }, render: render, go: (s) => { O.s = s; N = { scr: s, sheet: null, left: false, scroll: 0 }; render(); }, set sheet(v) { N.sheet = v; render(); } };
+  render();
+})();
+</script>
+</body>
+</html>

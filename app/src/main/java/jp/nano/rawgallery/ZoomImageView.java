@@ -12,6 +12,11 @@ public final class ZoomImageView extends View {
     pageListener = listener;
   }
 
+  private java.util.function.Consumer<Boolean> zoomListener;
+  void setZoomListener(java.util.function.Consumer<Boolean> listener) { zoomListener=listener; }
+  private void zoomChanged(){if(zoomListener!=null)zoomListener.accept(zoom>1);}
+  boolean isZoomed(){return zoom>1;}
+  RectF photoBounds(){if(bitmap==null)return null;float fit=Math.min(getWidth()/(float)bitmap.getWidth(),getHeight()/(float)bitmap.getHeight());float w=bitmap.getWidth()*fit*zoom,h=bitmap.getHeight()*fit*zoom;return new RectF((getWidth()-w)/2+dx,(getHeight()-h)/2+dy,(getWidth()+w)/2+dx,(getHeight()+h)/2+dy);}
   private boolean multiTouch;
   private float zoom = 1, dx = 0, dy = 0, lastX, lastY;
   private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
@@ -31,6 +36,7 @@ public final class ZoomImageView extends View {
                   dx = 0;
                   dy = 0;
                 }
+                zoomChanged();
                 invalidate();
                 return true;
               }
@@ -57,6 +63,7 @@ public final class ZoomImageView extends View {
                 zoom = zoom > 1 ? 1 : 2.5f;
                 dx = 0;
                 dy = 0;
+                zoomChanged();
                 invalidate();
                 return true;
               }
@@ -64,7 +71,7 @@ public final class ZoomImageView extends View {
   }
 
   public void toggleZoom() {
-    zoom = zoom > 1 ? 1 : 2.5f; dx = 0; dy = 0; invalidate();
+    zoom = zoom > 1 ? 1 : 2.5f; dx = 0; dy = 0; zoomChanged(); invalidate();
   }
 
   public void setBitmap(Bitmap b) {
@@ -72,6 +79,7 @@ public final class ZoomImageView extends View {
     zoom = 1;
     dx = 0;
     dy = 0;
+    zoomChanged();
     invalidate();
   }
 

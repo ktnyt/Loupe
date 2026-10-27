@@ -52,17 +52,17 @@ final class SystemBackChecks {
         call(a,"showPhotos",new Class<?>[]{filter},all);
       });drain(t,a);
       long deadline=android.os.SystemClock.uptimeMillis()+5000;
-      while(true){boolean[] ready={false};ui(t,()->{GridView grid=(GridView)get(a,"photoGrid");ready[0]=grid.getChildCount()>0&&grid.getHeight()>0;});if(ready[0])break;if(android.os.SystemClock.uptimeMillis()>deadline)throw new AssertionError("grid layout timeout");Thread.sleep(50);}
-      ui(t,()->{GridView grid=(GridView)get(a,"photoGrid");grid.scrollListBy(1800);});
+      while(true){boolean[] ready={false};ui(t,()->{ScrollingGrid grid=(ScrollingGrid)get(a,"photoGrid");ready[0]=grid.getChildCount()>0&&grid.getHeight()>0;});if(ready[0])break;if(android.os.SystemClock.uptimeMillis()>deadline)throw new AssertionError("grid layout timeout");Thread.sleep(50);}
+      ui(t,()->{ScrollingGrid grid=(ScrollingGrid)get(a,"photoGrid");grid.scrollListBy(1800);});
       Thread.sleep(200);t.waitForIdleSync();
       Bitmap shot=t.getUiAutomation().takeScreenshot();try(FileOutputStream out=new FileOutputStream(new File(a.getCacheDir(),"system-back-grid.png"))){shot.compress(Bitmap.CompressFormat.PNG,100,out);}shot.recycle();
       int[] position=new int[2];
-      ui(t,()->{GridView grid=(GridView)get(a,"photoGrid");position[0]=grid.getFirstVisiblePosition();position[1]=grid.getChildAt(0).getTop();check(position[0]>0,"fixture did not scroll: count="+grid.getCount()+" children="+grid.getChildCount()+" height="+grid.getHeight()+" firstHeight="+grid.getChildAt(0).getHeight()+" firstTop="+position[1]);noBack(a.getWindow().getDecorView());call(a,"showAssignedPhoto",new Class<?>[]{int.class},25);});
+      ui(t,()->{ScrollingGrid grid=(ScrollingGrid)get(a,"photoGrid");position[0]=grid.getFirstVisiblePosition();position[1]=grid.getChildAt(0).getTop();check(position[0]>0,"fixture did not scroll: count="+grid.getCount()+" children="+grid.getChildCount()+" height="+grid.getHeight()+" firstHeight="+grid.getChildAt(0).getHeight()+" firstTop="+position[1]);noBack(a.getWindow().getDecorView());call(a,"showAssignedPhoto",new Class<?>[]{int.class},25);});
       drain(t,a);back(t);Thread.sleep(200);
-      ui(t,()->{GridView grid=(GridView)get(a,"photoGrid");check((int)get(a,"browseMode")==1,"photo Back destination");check(get(a,"browseFilter")==all,"filter lost");check(position[0]==grid.getFirstVisiblePosition()&&position[1]==grid.getChildAt(0).getTop(),"scroll lost");set(a,"selecting",true);((Set<Integer>)get(a,"selectedPhotos")).add(25);});
+      ui(t,()->{ScrollingGrid grid=(ScrollingGrid)get(a,"photoGrid");check((int)get(a,"browseMode")==1,"photo Back destination");check(get(a,"browseFilter")==all,"filter lost");check(position[0]==grid.getFirstVisiblePosition()&&position[1]==grid.getChildAt(0).getTop(),"scroll lost");set(a,"selecting",true);((Set<Integer>)get(a,"selectedPhotos")).add(25);});
       back(t);ui(t,()->check(!(boolean)get(a,"selecting")&&(int)get(a,"browseMode")==1&&((Set<?>)get(a,"selectedPhotos")).isEmpty(),"selection Back"));
       ui(t,()->set(a,"busy",true));back(t);ui(t,()->{check((int)get(a,"browseMode")==1,"busy Back escaped");set(a,"busy",false);});
-      back(t);drain(t,a);ui(t,()->{check((int)get(a,"browseMode")==0&&get(a,"tag")!=null&&!a.isFinishing(),"tag detail Back");noBack(a.getWindow().getDecorView());});
+      back(t);drain(t,a);ui(t,()->{check((int)get(a,"browseMode")==1&&(boolean)get(a,"tagOverview")&&get(a,"tag")!=null&&!a.isFinishing(),"tag detail Back");noBack(a.getWindow().getDecorView());});
       back(t);drain(t,a);ui(t,()->{check(get(a,"tag")==null&&!a.isFinishing(),"tag list Back");noBack(a.getWindow().getDecorView());});
       back(t);exited(t,a);
     } finally { ui(t,a::finish);file.delete(); }

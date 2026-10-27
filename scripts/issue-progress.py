@@ -75,7 +75,10 @@ def main():
     parser.add_argument('--attempt', type=int, default=1)
     parser.add_argument('--note', help='作業内容・結果・根拠。秘密情報を含めない')
     parser.add_argument('--dry-run', action='store_true', help='投稿内容のみ生成。認証・遷移の検証はしない')
+    parser.add_argument('--then', dest='after', nargs=argparse.REMAINDER, help='開始記録の投稿・再取得確認後だけ実行するコマンド。最後に指定。終了記録は別途行う')
     args = parser.parse_args()
+    if args.after is not None and (not args.after or args.command != 'record' or args.status != 'start' or args.dry_run):
+        parser.error('--then は dry-run 以外の開始記録だけに使い、実行するコマンドを指定してください')
     if args.issue < 1 or args.attempt < 1:
         parser.error('issue と attempt は正の整数です')
     if args.command == 'report':
@@ -100,7 +103,9 @@ def main():
     verified = api(f'repos/{REPO}/issues/comments/{posted["id"]}')
     if verified['body'] != body:
         raise ValueError('投稿後の再取得で本文が一致しません。issueを確認してください。')
-    print(verified['html_url'])
+    print(verified['html_url'], flush=True)
+    if args.after is not None:
+        return subprocess.run(args.after).returncode
     return 0
 
 
