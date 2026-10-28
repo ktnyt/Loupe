@@ -44,6 +44,7 @@ final class PhotoEditor {
     this.worker=worker; this.preparation=preparation;
     button=viewer.action("編集","編集","編集。端末の写真編集アプリで開きます",this::activate);
     button.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    viewer.editFocusLost=()->cancel(false);
     viewer.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener(){
       public void onViewAttachedToWindow(View view) {}
       public void onViewDetachedFromWindow(View view) { cancel(false); }

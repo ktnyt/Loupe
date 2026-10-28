@@ -66,7 +66,7 @@ final class PhotoEditChecks {
       Intent raw=PhotoEditor.intent(Uri.parse("content://jp.nano.rawgallery.share/synthetic.dng"),RawFormats.mime("synthetic.dng"));
       TagDetailChecks.require("image/x-adobe-dng".equals(raw.getType()),"RAW MIME stays RAW");
       int initial=launches.get();
-      for(boolean navigate:new boolean[]{false,true}){
+      for(int scenario:new int[]{0,1,2}){
         CountDownLatch started=new CountDownLatch(1),release=new CountDownLatch(1);AtomicInteger writes=new AtomicInteger();AtomicReference<File> made=new AtomicReference<>();
         SharePreparation slow=new SharePreparation(new File(a.getCacheDir(),"shares"),(p,rawFormat,destination)->{
           writes.incrementAndGet();made.set(destination);started.countDown();
@@ -76,7 +76,8 @@ final class PhotoEditChecks {
         Fixture f=fixture(t,a,photo,worker,slow);click(t,f);click(t,f);
         TagDetailChecks.require(started.await(3,TimeUnit.SECONDS),"copy started");
         try{
-          if(navigate)TagDetailChecks.ui(t,()->a.setContentView(new FrameLayout(a)));
+          if(scenario==1)TagDetailChecks.ui(t,()->a.setContentView(new FrameLayout(a)));
+          else if(scenario==2)TagDetailChecks.ui(t,()->{f.viewer.onWindowFocusChanged(false);f.viewer.onWindowFocusChanged(true);});
           else{
             long until=android.os.SystemClock.uptimeMillis()+3000;
             while(!"中止".equals(label(t,f))){if(android.os.SystemClock.uptimeMillis()>until)throw new AssertionError("cancel label");Thread.sleep(20);}
@@ -84,7 +85,7 @@ final class PhotoEditChecks {
           }
         }finally{release.countDown();}
         worker.submit(()->{}).get(5,TimeUnit.SECONDS);t.waitForIdleSync();
-        TagDetailChecks.require(writes.get()==1&&launches.get()==initial&&!made.get().exists(),"cancel or detach prevents late launch and discards copy");
+        TagDetailChecks.require(writes.get()==1&&launches.get()==initial&&!made.get().exists(),"cancel/detach/focus loss-return prevents late launch and discards copy");
       }
       AtomicInteger attempts=new AtomicInteger();
       SharePreparation failing=new SharePreparation(new File(a.getCacheDir(),"shares"),(p,rawFormat,destination)->{
@@ -96,7 +97,7 @@ final class PhotoEditChecks {
       click(t,retry);await(()->launches.get()==initial+1);
       Intent retried=chosen.get().getParcelableExtra(Intent.EXTRA_INTENT);copies.add(new File(a.getCacheDir(),"shares/"+retried.getData().getLastPathSegment()));
       TagDetailChecks.require(attempts.get()==2&&Arrays.equals(before,Files.readAllBytes(original.toPath())),"retry succeeds without original mutation");
-      return "PASS original-format copy/unchanged original, read-only data+ClipData grant, RAW MIME, intercepted chooser, duplicate prevention, inline cancel, detach/late completion cleanup, prepare failure/retry. No external editor launched; actual editor/save compatibility is separate.\n";
+      return "PASS original-format copy/unchanged original, read-only data+ClipData grant, RAW MIME, intercepted chooser, duplicate prevention, inline cancel, detach/focus loss-return/late completion cleanup, prepare failure/retry. No external editor launched; actual editor/save compatibility is separate.\n";
     }finally{
       t.removeMonitor(monitor);worker.shutdownNow();
       TagDetailChecks.ui(t,()->a.finish());original.delete();for(File copy:copies)copy.delete();

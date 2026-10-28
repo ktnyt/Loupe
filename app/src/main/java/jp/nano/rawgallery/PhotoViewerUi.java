@@ -15,6 +15,7 @@ final class PhotoViewerUi extends ViewGroup {
   final ViewGroup dock;
   final TextView date;
   private Button zoom;
+  Runnable editFocusLost;
   private final View cloud, placeholder;
   private StatusView status;
   private boolean failed;
@@ -75,6 +76,11 @@ final class PhotoViewerUi extends ViewGroup {
       cloud.invalidate();
       refreshStatus();
     });
+  }
+
+  @Override public void onWindowFocusChanged(boolean focused) {
+    super.onWindowFocusChanged(focused);
+    if(!focused && editFocusLost!=null)editFocusLost.run();
   }
 
   RectF photoRect(){RectF loaded=image.photoBounds();if(loaded!=null)return loaded;float width=stage.getWidth(),height=width*2/3f;if(height>stage.getHeight()){height=stage.getHeight();width=height*1.5f;}return new RectF((stage.getWidth()-width)/2,(stage.getHeight()-height)/2,(stage.getWidth()+width)/2,(stage.getHeight()+height)/2);}
