@@ -11,7 +11,8 @@ import java.util.*;
 final class PhotoViewerUi extends ViewGroup {
   final FrameLayout stage;
   final ZoomImageView image;
-  final LinearLayout footer, dock;
+  final LinearLayout footer;
+  final ViewGroup dock;
   final TextView date;
   private Button zoom;
   private final View cloud, placeholder;
@@ -60,8 +61,7 @@ final class PhotoViewerUi extends ViewGroup {
     footer.setOrientation(LinearLayout.VERTICAL);
     footer.setPadding(0, 0, 0, dp(20));
     footer.setBackgroundColor(Color.BLACK);
-    dock = new LinearLayout(context);
-    dock.setBaselineAligned(false);
+    dock = new ViewerDock(context);
     footer.addView(dock, new LinearLayout.LayoutParams(-1,-2));
     addView(footer);
     image.setZoomListener(expanded -> {
@@ -89,6 +89,7 @@ final class PhotoViewerUi extends ViewGroup {
       case "拡大": resource=R.drawable.ic_viewer_zoom_in;break;
       case "全体": resource=R.drawable.ic_viewer_zoom_out;break;
       case "共有": resource=R.drawable.ic_viewer_share;break;
+      case "編集": resource=R.drawable.ic_viewer_edit;break;
       case "情報": resource=R.drawable.ic_viewer_info;break;
       case "タグ": resource=R.drawable.ic_viewer_tag;break;
       default: throw new IllegalArgumentException(action);
@@ -131,7 +132,8 @@ final class PhotoViewerUi extends ViewGroup {
   /** Each column centers its own icon and label, including wrapped labels. */
   static final class DockButton extends Button {
     private android.graphics.drawable.Drawable glyph;
-    private boolean saveFailed;
+    private boolean saveFailed, running;
+    String[] widthLabels;
     private final Paint badge=new Paint(Paint.ANTI_ALIAS_FLAG);
     DockButton(Context c){super(c);}
     private int dp(float value){return GalleryUi.dp(getContext(),value);}
@@ -153,7 +155,12 @@ final class PhotoViewerUi extends ViewGroup {
       android.text.Layout layout=getLayout();if(layout==null)return;
       float lineHeight=getTextSize()*16/12;
       float top=(getHeight()-dp(28)-layout.getLineCount()*lineHeight)/2f;
-      if(glyph!=null){
+      if(running){
+        int saved=canvas.save();canvas.translate((getWidth()-dp(24))/2f,top);
+        StatusView.glyph(canvas,badge,StatusView.Symbol.RUNNING,0,0,dp(24),getCurrentTextColor(),android.animation.ValueAnimator.areAnimatorsEnabled()?(android.os.SystemClock.uptimeMillis()%1000)*.36f:0);
+        canvas.restoreToCount(saved);
+        if(isShown()&&android.animation.ValueAnimator.areAnimatorsEnabled())postInvalidateDelayed(50);
+      }else if(glyph!=null){
         glyph.setTint(getCurrentTextColor());
         int left=(getWidth()-dp(24))/2;
         glyph.setBounds(left,Math.round(top),left+dp(24),Math.round(top)+dp(24));
@@ -175,7 +182,11 @@ final class PhotoViewerUi extends ViewGroup {
 
   Button action(String icon,String label,String spoken,Runnable action) {
     Button b = button(getContext(),icon,label,spoken,action);
-    dock.addView(b,new LinearLayout.LayoutParams(0,-1,1));
+    DockButton cell=(DockButton)b;
+    if("拡大".equals(icon))cell.widthLabels=new String[]{"拡大","全体"};
+    else if("編集".equals(icon))cell.widthLabels=new String[]{"編集","中止"};
+    else if("タグ".equals(icon)&&label.startsWith("タグを"))cell.widthLabels=new String[]{"タグを付ける","タグを外す"};
+    dock.addView(b,new ViewGroup.LayoutParams(-2,-2));
     return b;
   }
   static void tagState(Button button,boolean attached,boolean busy,boolean failed){
@@ -193,6 +204,44 @@ final class PhotoViewerUi extends ViewGroup {
     ((DockButton)button).saveFailed=failed;
     state.setBounds(0,0,GalleryUi.dp(c,24),GalleryUi.dp(c,24));button.setCompoundDrawables(null,state,null,null);button.invalidate();
   }
+  static void editState(Button button,boolean running,boolean failed,String reason) {
+    DockButton cell=(DockButton)button;cell.running=running;cell.saveFailed=failed;
+    button.setText(running?"中止":"編集");
+    button.setContentDescription(running?"編集の準備をしています。押すと中止":"編集。端末の写真編集アプリで開きます"+(failed?"。"+reason+"。もう一度押すと再試行":""));
+    button.setStateDescription(running?"準備中":failed?"失敗、再試行できます":null);
+    icon(button,"編集");button.invalidate();
+  }
+
+  /** At most two balanced rows; the last row keeps the same cell width and is centered. */
+  private static final class ViewerDock extends ViewGroup {
+    private int columns=1,rowHeight;
+    ViewerDock(Context c){super(c);}
+    protected void onMeasure(int ws,int hs){
+      int width=MeasureSpec.getSize(ws),count=getChildCount();
+      int need=GalleryUi.dp(getContext(),48);
+      for(int i=0;i<count;i++){
+        DockButton button=(DockButton)getChildAt(i);
+        String[] labels=button.widthLabels==null?new String[]{button.getText().toString()}:button.widthLabels;
+        for(String label:labels)need=Math.max(need,(int)Math.ceil(android.text.Layout.getDesiredWidth(label,button.getPaint()))+button.getPaddingLeft()+button.getPaddingRight());
+      }
+      columns=count==0?1:width/count>=need?count:(count+1)/2;
+      int cell=width/columns;rowHeight=0;
+      for(int i=0;i<count;i++){
+        getChildAt(i).measure(MeasureSpec.makeMeasureSpec(cell,MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(0,MeasureSpec.UNSPECIFIED));
+        rowHeight=Math.max(rowHeight,getChildAt(i).getMeasuredHeight());
+      }
+      setMeasuredDimension(width,resolveSize(rowHeight*((count+columns-1)/columns),hs));
+    }
+    protected void onLayout(boolean changed,int l,int t,int r,int b){
+      int count=getChildCount(),cell=getWidth()/columns;
+      for(int i=0;i<count;i++){
+        int row=i/columns,col=i%columns,inRow=Math.min(columns,count-row*columns);
+        int x=(getWidth()-cell*inRow)/2+col*cell,y=row*rowHeight;
+        getChildAt(i).layout(x,y,x+cell,y+rowHeight);
+      }
+    }
+  }
+
   void zoom() {
     zoom = action("拡大","拡大","拡大",image::toggleZoom);
     zoom.setAccessibilityDelegate(new View.AccessibilityDelegate(){

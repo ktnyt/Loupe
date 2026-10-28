@@ -28,6 +28,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     if ((tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
   }
   private boolean galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest;
+  private boolean photoEditTest;
   private boolean consistencyTest, syncControlsTest, tagDetailTest, resultTest, resultTalkBack;
   private boolean dashboardTalkBackTest;
   private boolean dashboardLayoutTest;
@@ -78,6 +79,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     sortTest = args != null && "sort-naming".equals(args.getString("mode"));
     shareScreenTest=args!=null&&"share-screen".equals(args.getString("mode"));
     viewerScreenTest=args!=null&&"viewer-screen".equals(args.getString("mode"));
+    photoEditTest=args!=null&&"photo-edit".equals(args.getString("mode"));
     galleryTalkBack=args!=null&&"gallery-screen-talkback".equals(args.getString("mode"));
     galleryScreenTest=shareScreenTest||viewerScreenTest||galleryTalkBack||(args!=null&&"gallery-screen".equals(args.getString("mode")));
     resultTalkBack=args!=null&&"ranking-result-talkback".equals(args.getString("mode"));
@@ -136,6 +138,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if (importLatencyTest) { results.putString("stream", ImportLatencyChecks.run(this, importInterruptionTest, importPauseTest, importDeferredTest)); finish(-1, results); return; }
       if(sortDimensionsSpecified)validateSortDimensions(context);
       if(shareScreenTest){results.putString("stream",ShareScreenChecks.run(this,tagWidth));finish(-1,results);return;}
+      if(photoEditTest){results.putString("stream",PhotoEditChecks.run(this));finish(-1,results);return;}
       if(viewerScreenTest){results.putString("stream",ViewerScreenChecks.run(this,tagWidth));finish(-1,results);return;}
       if(galleryScreenTest){results.putString("stream",GalleryScreenChecks.run(this,tagWidth,galleryTalkBack));finish(-1,results);return;}
       if(resultTest){results.putString("stream",RankingResultChecks.run(this,tagWidth,resultTalkBack));finish(-1,results);return;}

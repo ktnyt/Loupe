@@ -1330,6 +1330,7 @@ public final class MainActivity extends DiagnosticActivity {
       previous.setEnabled(within>0);next.setEnabled(within+1<count);
     }
     viewer.zoom();
+    PhotoEditor.add(this,viewer,photo,actions);
     viewer.action("共有","共有","共有",()->shareMenu(photo));
     if(!fromRanking&&"content".equals(photo.uri.getScheme()))viewer.action("タグ","タグ","タグ",()->openTags(photo));
     viewer.action("情報","情報","写真の情報",()->new GalleryUi.Sheet(this).setTitle(photo.name)
