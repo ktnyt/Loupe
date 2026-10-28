@@ -89,7 +89,7 @@ public final class TagActivity extends DiagnosticActivity {
   private volatile int generation;
   private boolean busy, reviewing;
   private PhotoViewerUi photoViewer;
-  private Button photoPrevious, photoNext, photoTag;
+  private Button photoPrevious, photoNext, photoTag, photoEdit;
   private int photoPosition;
   private boolean photoAttached;
   private int browseMode;
@@ -123,7 +123,7 @@ public final class TagActivity extends DiagnosticActivity {
   private int screen(String title) {
     generation++;
     confidenceSummary=null;attachedState=null;emptyPhotos=null;learningStatus=null;analysisAction=null;
-    photoViewer=null;photoPrevious=null;photoNext=null;photoTag=null;
+    photoViewer=null;photoPrevious=null;photoNext=null;photoTag=null;photoEdit=null;
     analysisStatus = null; assignmentStatus=null;failureCount=null;savingStatus=null;jobTitle = null; resultButton = null;
     root = new LinearLayout(this);
     root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(GalleryUi.BG);
@@ -626,6 +626,7 @@ public final class TagActivity extends DiagnosticActivity {
     photoPrevious=viewer.action("前の写真","前へ","前の写真",previous);
     photoNext=viewer.action("次の写真","次へ","次の写真",next);
     viewer.zoom();
+    photoEdit=PhotoEditor.add(this,viewer,photo,worker);
     photoTag=viewer.action("タグ",photoAttached?"タグを外す":"タグを付ける",photoAttached?"タグを外す":"タグを付ける",
         ()->changeTag(index,position,photoAttached?TagJudgments.Value.EXCLUDED:TagJudgments.Value.ASSIGNED));
     photoTag.setAccessibilityLiveRegion(android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE);
@@ -650,7 +651,7 @@ public final class TagActivity extends DiagnosticActivity {
 
   private void refreshPhotoSave(boolean failed){
     if(photoViewer==null||browseMode!=2)return;
-    photoPrevious.setEnabled(!busy&&photoPosition>0);photoNext.setEnabled(!busy&&photoPosition+1<browsePhotos.size());photoTag.setEnabled(!busy);
+    photoPrevious.setEnabled(!busy&&photoPosition>0);photoNext.setEnabled(!busy&&photoPosition+1<browsePhotos.size());photoTag.setEnabled(!busy);photoEdit.setEnabled(!busy);
     String label=photoAttached?"タグを外す":"タグを付ける";
     photoTag.setContentDescription(label+"、タグ「"+tag.name+"」"+(busy?"。保存しています":failed?"。保存できませんでした。判断はそのままです。もう一度押すと保存します":""));
     photoTag.setStateDescription(busy?"保存中":failed?"保存失敗、再試行できます":photoAttached?"タグあり":"タグなし");

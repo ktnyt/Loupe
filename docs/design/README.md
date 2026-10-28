@@ -129,3 +129,7 @@ Android実装は[#39](https://github.com/ktnyt/Loupe/issues/39)で導入済み�
 ## Issue #48 タグ解析の進捗
 
 [Claudeの補足HTML](loupe-tag-analysis-progress.html)を解析中の印と解析済み/対象枚数の視認性の参照とする。320dp・文字1.3倍の表示と20354/32541の桁数をブラウザで確認した。周辺配置・状態遷移は模擬で、採用範囲は[契約](../tag-analysis-progress-contract.md)に限定する。Androidの配置・中止・完了・失敗の仕様は既存どおり。
+
+## Issue #51 個別写真の編集入口
+
+[Claudeの編集ボタン設計](loupe-photo-edit-toolbar.html)と[契約](../photo-edit-contract.md)。元S08と既存写真表示に編集を追加した比較HTML。通常は共有の直前、Tagはタグ操作の直前。24dpの鉛筆・12sp/16sp・最低64dp高、必要幅48dp以上。幅が足りなければceil(n/2)列の二段、二段目を中央へ配置する。400ms後の同セル中止・失敗印と読み上げを含む。320dpでMainの4+3、文字拡大時のTagと編集開始/中止/失敗の合成操作をローカル表示で確認。元S08からの既存変更以外の配置を保持している。実機のフォント幅・編集アプリ・保存動作は別途検証する。
