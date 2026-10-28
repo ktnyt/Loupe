@@ -17,3 +17,6 @@ __pycache__/
 # Local design drafts and device reports
 outputs/branding/
 docs/*-test-results.txt
+
+# Android native build intermediates
+**/.cxx/

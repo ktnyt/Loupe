@@ -43,6 +43,11 @@ final class PhotoEditor {
     this.activity=activity; this.viewer=viewer; this.photo=photo;
     this.worker=worker; this.preparation=preparation;
     button=viewer.action("編集","編集","編集。端末の写真編集アプリで開きます",this::activate);
+    button.setContentDescription("編集。端末の写真編集アプリで開きます。長押しで現像（実験）");
+    button.setOnLongClickListener(v->{
+      if(active!=null||activity.isFinishing()||activity.isDestroyed())return true;
+      RawEditActivity.open(activity,photo.uri);return true;
+    });
     button.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
     viewer.editFocusLost=()->cancel(false);
     viewer.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener(){

@@ -1335,6 +1335,7 @@ public final class MainActivity extends DiagnosticActivity {
     if(!fromRanking&&"content".equals(photo.uri.getScheme()))viewer.action("タグ","タグ","タグ",()->openTags(photo));
     viewer.action("情報","情報","写真の情報",()->new GalleryUi.Sheet(this).setTitle(photo.name)
         .setMessage(model.getText()+"\n"+dimensions.getText()+"\n"+photo.folder)
+        .setNeutralButton("現像（実験）",(dialog,which)->RawEditActivity.open(this,photo.uri))
         .setPositiveButton("閉じる",null).show());
     if(fromRanking&&!ranking.done())viewer.choose(()->saveRanking(ranking.choose(rankingMembers.get(ranking.upper())==position)));
     viewing =
