@@ -30,6 +30,7 @@ public final class RawEditInstrumentation extends Instrumentation {
     Bundle result=new Bundle();
     try{
       core();pad();
+      if(arguments!=null&&Boolean.parseBoolean(arguments.getString("guides","false")))RawEditGuidesChecks.run(this);
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("ui","false")))RawEditUiChecks.run(this);
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("real","false")))real();
       result.putString("stream","PASS raw-editor GPU neutral/orientation/brightness/saturation/comparison; XY/edge independent; native\n");finish(Activity.RESULT_OK,result);

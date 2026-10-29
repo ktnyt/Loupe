@@ -112,7 +112,7 @@ public final class RawEditActivity extends Activity {
     if(size!=padSize){padSize=size;renderControls();}
   }
   private void renderControls(){
-    if(controls==null)return;controls.removeAllViews();if(pad!=null)picture.removeView(pad);
+    if(controls==null)return;controls.removeAllViews();if(pad!=null){pad.cancelGuides();picture.removeView(pad);}
     for(int i=0;i<7;i++){Button t=(Button)tabs.getChildAt(i);t.setTextColor(tab==i?INK:0xff8a8a85);Drawable glyph=t.getCompoundDrawables()[1];if(glyph instanceof Icon)((Icon)glyph).color=tab==i?INK:0xff8a8a85;t.setTypeface(Typeface.create(Typeface.DEFAULT,tab==i?600:500,false));t.setSelected(tab==i);t.setBackground(new TabBackground(tab==i));t.setContentDescription(tabNames[i]+(tab==i?"、選択中":""));}
     pad=new RawEditPad(this,padSize,state,pairs[tab][0],pairs[tab][1],axes[tab][0],axes[tab][1],new RawEditPad.Listener(){public void changed(RawEditState value){RawEditActivity.this.changed(value);}public void tracking(boolean active){interacting=active||((PhotoSurface)picture).pinch;updateBadge();}});
     picture.addView(pad,new FrameLayout.LayoutParams(dp(padSize+56),dp(padSize+56),Gravity.CENTER));
@@ -124,11 +124,26 @@ public final class RawEditActivity extends Activity {
   private void updateZoom(){if(zoom!=null){zoom.setContentDescription(image.zoom>1?"全体を表示":"拡大");zoom.setCompoundDrawablesWithIntrinsicBounds(null,new Icon(image.zoom>1?"zoomOut":"zoomIn",24),null,null);}}
   private void addSingle(int key,String name){
     TextView label=text(name,12,MUTED);controls.addView(label,new LinearLayout.LayoutParams(-2,dp(48)));
-    SeekBar bar=new SeekBar(this);bar.setMax(200);bar.setProgress(Math.round((state.get(key)+1)*100));bar.setContentDescription(key==4?"かすみの除去":name);bar.setStateDescription(RawEditPad.value(key,state.get(key)));bar.setSplitTrack(false);bar.setPadding(dp(8),0,dp(8),0);bar.setProgressDrawable(new SliderTrack());GradientDrawable thumb=rounded(INK,8);thumb.setSize(dp(16),dp(16));bar.setThumb(thumb);bar.setThumbOffset(dp(8));LinearLayout.LayoutParams pp=new LinearLayout.LayoutParams(0,dp(48),1);pp.leftMargin=dp(10);controls.addView(bar,pp);
+    SeekBar bar=new ResetSeekBar(key,name);bar.setMax(200);bar.setProgress(Math.round((state.get(key)+1)*100));bar.setContentDescription(key==4?"かすみの除去":name);bar.setStateDescription(RawEditPad.value(key,state.get(key)));bar.setSplitTrack(false);bar.setPadding(dp(8),0,dp(8),0);bar.setProgressDrawable(new SliderTrack());GradientDrawable thumb=rounded(INK,8);thumb.setSize(dp(16),dp(16));bar.setThumb(thumb);bar.setThumbOffset(dp(8));LinearLayout.LayoutParams pp=new LinearLayout.LayoutParams(0,dp(48),1);pp.leftMargin=dp(10);controls.addView(bar,pp);
     bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
       public void onProgressChanged(SeekBar v,int n,boolean user){if(user){changed(state.with(key,n/100f-1));bar.setStateDescription(RawEditPad.value(key,state.get(key)));}}
       public void onStartTrackingTouch(SeekBar v){interacting=true;updateBadge();}public void onStopTrackingTouch(SeekBar v){interacting=false;updateBadge();}
     });
+  }
+  private final class ResetSeekBar extends SeekBar {
+    private final int key;private final String name;private final RawEditPad.DoubleTapReset taps;
+    ResetSeekBar(int key,String name){super(RawEditActivity.this);this.key=key;this.name=name;taps=new RawEditPad.DoubleTapReset(RawEditActivity.this);}
+    private boolean resetValue(){
+      if(!isEnabled()||!ready||saving)return false;
+      changed(state.reset(key));setProgress(Math.round((state.get(key)+1)*100));setStateDescription(RawEditPad.value(key,state.get(key)));announceForAccessibility(name+"を初期値に戻しました");return true;
+    }
+    public boolean onTouchEvent(MotionEvent event){if(!isEnabled())return false;boolean reset=taps.completed(event);boolean handled=super.onTouchEvent(event);if(reset)resetValue();return handled;}
+    public void setEnabled(boolean enabled){super.setEnabled(enabled);if(!enabled&&taps!=null)taps.cancel();}
+    protected void onWindowVisibilityChanged(int visibility){super.onWindowVisibilityChanged(visibility);if(visibility!=VISIBLE&&taps!=null)taps.cancel();}
+    protected void onDetachedFromWindow(){taps.cancel();super.onDetachedFromWindow();}
+    public boolean onKeyDown(int code,KeyEvent event){if((code==KeyEvent.KEYCODE_DEL||code==KeyEvent.KEYCODE_FORWARD_DEL)&&resetValue())return true;return super.onKeyDown(code,event);}
+    public void onInitializeAccessibilityNodeInfo(android.view.accessibility.AccessibilityNodeInfo info){super.onInitializeAccessibilityNodeInfo(info);if(isEnabled())info.addAction(new android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction(RawEditPad.RESET_ACTION,"初期値に戻す"));}
+    public boolean performAccessibilityAction(int action,Bundle args){if(action==RawEditPad.RESET_ACTION)return resetValue();return super.performAccessibilityAction(action,args);}
   }
   private void updateBadge(){boolean show=ready&&!saving&&!interacting&&(displayBefore||displayMax);badge.setText(displayBefore?"補正前":"彩度MAX");badge.setVisibility(show?View.VISIBLE:View.GONE);}
   private void changed(RawEditState value){state=value;before=false;compare.setSelected(false);if(pad!=null)pad.update(value);requestRender();}
@@ -138,14 +153,14 @@ public final class RawEditActivity extends Activity {
   }
   private void showHelp(){
     String value=axes[tab][0]+"　"+RawEditPad.value(pairs[tab][0],state.get(pairs[tab][0]))+"\n"+axes[tab][1]+"　"+RawEditPad.value(pairs[tab][1],state.get(pairs[tab][1]));
-    new AlertDialog.Builder(this).setTitle(tabNames[tab]).setMessage("写真の中央の面を1本の指で動かすと、横と縦の値が変わります。右の端は縦だけ、下の端は横だけ。\n2本の指で拡大・移動できます。\n\n"+value+(tab==6?"\nモノクロ：色相260・彩度11・輝度+2":"")).setPositiveButton("閉じる",null).show();
+    new AlertDialog.Builder(this).setTitle(tabNames[tab]).setMessage("写真の中央の面を1本の指で動かすと、横と縦の値が変わります。右の端は縦だけ、下の端は横だけ。\n2本の指で拡大・移動できます。\nガイドは指を離して3秒後に消えます。面は両軸、右・下の端とかすみ・コントラストはその値だけ、ダブルタップで初期値に戻せます。\n\n"+value+(tab==6?"\nモノクロ：色相260・彩度11・輝度+2":"")).setPositiveButton("閉じる",null).show();
   }
   private final class PhotoSurface extends FrameLayout {
     boolean pinch;RawEditState start;boolean startBefore;
     PhotoSurface(){super(RawEditActivity.this);}
     public boolean dispatchTouchEvent(MotionEvent e){
       int action=e.getActionMasked();if(action==MotionEvent.ACTION_DOWN){pinch=false;start=state;startBefore=before;}
-      if(e.getPointerCount()>=2&&!pinch){pinch=true;if(start!=null&&ready&&!saving){state=start;before=startBefore;compare.setSelected(before);if(pad!=null)pad.update(state);requestRender();}interacting=true;updateBadge();}
+      if(e.getPointerCount()>=2&&!pinch){pinch=true;if(pad!=null)pad.cancelGuides();if(start!=null&&ready&&!saving){state=start;before=startBefore;compare.setSelected(before);if(pad!=null)pad.update(state);requestRender();}interacting=true;updateBadge();}
       if(image!=null)image.multi(e);
       boolean handled=super.dispatchTouchEvent(e);
       if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL){pinch=false;interacting=false;updateBadge();updateZoom();}return handled;
@@ -260,8 +275,8 @@ public final class RawEditActivity extends Activity {
   }
   protected void onSaveInstanceState(Bundle b){super.onSaveInstanceState(b);b.putFloatArray("values",state.snapshot());b.putFloatArray("saved",saved.snapshot());b.putInt("tab",tab);b.putInt("uiVersion",2);b.putFloat("zoom",image.zoom);b.putFloat("panX",image.dx);b.putFloat("panY",image.dy);if(input!=null)b.putString("input",input.toString());}
   protected void onStart(){super.onStart();visible=true;if(root!=null&&(input!=null||synthetic())&&!ready&&!loading)load();else if(ready){save.setText("保存");save.setStateDescription(null);enabled(true);requestRender();}}
-  protected void onStop(){visible=false;++epoch;maxSaturation=false;before=false;main.removeCallbacks(busy);if(loadFuture!=null&&loading)loadFuture.cancel(true);loading=false;saving=false;ready=false;image.clear();worker.execute(()->{if(renderer!=null){renderer.close();renderer=null;}});super.onStop();}
-  protected void onDestroy(){dead=true;ready=false;main.removeCallbacksAndMessages(null);if(loadFuture!=null)loadFuture.cancel(true);worker.execute(()->{if(renderer!=null){renderer.close();renderer=null;}});worker.shutdown();image.clear();super.onDestroy();}
+  protected void onStop(){if(pad!=null)pad.cancelGuides();visible=false;++epoch;maxSaturation=false;before=false;main.removeCallbacks(busy);if(loadFuture!=null&&loading)loadFuture.cancel(true);loading=false;saving=false;ready=false;image.clear();worker.execute(()->{if(renderer!=null){renderer.close();renderer=null;}});super.onStop();}
+  protected void onDestroy(){if(pad!=null)pad.cancelGuides();dead=true;ready=false;main.removeCallbacksAndMessages(null);if(loadFuture!=null)loadFuture.cancel(true);worker.execute(()->{if(renderer!=null){renderer.close();renderer=null;}});worker.shutdown();image.clear();super.onDestroy();}
 
   private final class Icon extends Drawable {
     final String type;final int size;int color,alpha=255;final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
