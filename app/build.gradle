@@ -16,7 +16,7 @@ android {
         versionName '0.19.0'
         testInstrumentationRunner 'jp.nano.rawgallery.ArchiveInstrumentation'
     }
-    sourceSets { main { assets.srcDir rootProject.file('third-party/libraw') } }
+    sourceSets { main { assets.srcDir rootProject.file('third-party/libraw'); assets.srcDir rootProject.file('third-party/libjpeg-turbo') } }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }
 dependencies { implementation 'com.google.mediapipe:tasks-vision:0.10.35' }

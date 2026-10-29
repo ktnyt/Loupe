@@ -140,4 +140,6 @@ Android実装は[#39](https://github.com/ktnyt/Loupe/issues/39)で導入済み�
 
 [Claudeの重ね合わせ案](loupe-raw-editor-overlay.html)は7タブと写真上の2D操作を収録する。400dpでは操作面328dp、右・下の片軸帯48dp、間隔8dp。カーソル以外の2D要素は操作中も非表示。写真外の補助行にMAX・かすみ・コントラスト・モノクロを配置し、タブは各幅約57dpで横スクロールなし。Monoは色相260・彩度11・輝度+2で保存対象、MAXと補正前比較は表示専用。合成写真と状態の模擬であり、実際のRAW処理やAndroid実機の確認を示さない。Claude内のプレビューで400×844dp・文字1倍のWB待機とカラーのモノクロ切替を表示確認し、元S08も直接表示した。描画済みClaude原本とAndroidのWB実機キャプチャを独立比較済み。通常windowと高さ640dp window/文字1.3倍で7タブ固定配置・ラベル欠けなし・透明面・Mono・ピンチを合成実機検査済み。実TalkBack音声、全状態の見た目、ローカルHTMLの描画は未確認。
 
+[原寸処理の状態案](loupe-raw-editor-full-resolution.html)は、既存の配置を保ち、原寸準備・拡大・保存待ち・失敗と再試行を合成状態で示す。Claude内プレビューで元S08の存在と現像画面の失敗状態を確認した。HTMLの精細表示と保存は模擬で、実RAW処理やAndroid実機での動作は未確認。
+
 [WBの参照比較](loupe-raw-editor-overlay-comparison.png)と[7タブの実機キャプチャ](loupe-raw-editor-overlay-matrix.png)は合成画像のみ。Androidは通常window・文字1.0倍と高さ640dp window・文字1.3倍。PixelCopyで選択中のタブの画素を確認して撮影し、独立レビューで14画面と選択線の修正を確認した。参照と実機のviewport・OS領域は異なり、全画素の完全一致やdrag中の外観・音声確認を示さない。

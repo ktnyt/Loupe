@@ -17,7 +17,7 @@ android {
     sourceSets {
         main {
             java.srcDirs = [layout.buildDirectory.dir('generated/raw-editor/java')]
-            assets.srcDir rootProject.file('third-party/libraw')
+            assets.srcDir rootProject.file('third-party/libraw'); assets.srcDir rootProject.file('third-party/libjpeg-turbo')
         }
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
@@ -26,7 +26,7 @@ android {
 // Give javac and lint the same bounded source tree; includes alone is ignored by lint.
 def syncRawEditorSources = tasks.register('syncRawEditorSources', Sync) {
     from('../app/src/main/java') {
-        include 'jp/nano/rawgallery/RawEdit*.java', 'jp/nano/rawgallery/NativeRaw.java'
+        include 'jp/nano/rawgallery/RawEdit*.java', 'jp/nano/rawgallery/NativeRaw.java', 'jp/nano/rawgallery/NativeJpeg.java'
     }
     into layout.buildDirectory.dir('generated/raw-editor/java')
 }

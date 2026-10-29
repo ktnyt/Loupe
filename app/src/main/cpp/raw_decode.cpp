@@ -33,7 +33,7 @@ RawImage::RawImage(const char* path, int maxSide, progress_callback callback, vo
     if (callback) raw_->set_progress_handler(callback, context);
     raw_->imgdata.rawparams.max_raw_memory_mb = 256;
     auto& p = raw_->imgdata.params;
-    p.half_size = 1;
+    p.half_size = 0; // Identify the full active image before enabling the lightweight decode.
     p.use_camera_wb = 1;
     p.use_auto_wb = 0;
     p.no_auto_bright = 1;
@@ -46,6 +46,12 @@ RawImage::RawImage(const char* path, int maxSide, progress_callback callback, vo
     const auto& sizes = raw_->imgdata.sizes;
     checkDimensions(sizes.raw_width, sizes.raw_height);
     checkDimensions(sizes.width, sizes.height);
+    int metadataColors, metadataBits;
+    raw_->get_mem_image_format(&originalWidth_, &originalHeight_, &metadataColors, &metadataBits);
+    checkDimensions(originalWidth_, originalHeight_);
+    // No pixel work or second LibRaw: get_mem_image_format computes active dimensions,
+    // including orientation/Fuji rotation/pixel aspect, directly from identified metadata.
+    p.half_size = 1;
     check(raw_->unpack());
     if (raw_->error_count()) throw std::runtime_error("Corrupt RAW input");
     check(raw_->dcraw_process());
