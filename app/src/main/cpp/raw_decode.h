@@ -13,10 +13,13 @@ public:
     RawImage& operator=(const RawImage&) = delete;
     int width() const { return width_; }
     int height() const { return height_; }
+    int originalWidth() const { return originalWidth_; }
+    int originalHeight() const { return originalHeight_; }
     void write(float* output) const;
 private:
     std::unique_ptr<LibRaw> raw_;
     libraw_processed_image_t* image_ = nullptr;
     int width_ = 0, height_ = 0;
+    int originalWidth_ = 0, originalHeight_ = 0;
 };
 }

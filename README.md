@@ -287,3 +287,7 @@ ANDROID_HOME=/path/to/android-sdk sh tests/preparation-storage.sh
 表示と新しい写真の解析は現在のアルバム・カメラ範囲を対象とし、学習は全アルバムの当該タグの判断と互換な特徴を使います。写真の送信や原本・EXIFの変更はしません。RAW・JPEG・別保存先のコピーは別写真です。旧方式の自動結果は、新しい学習結果ができるまで保持し、スコアを推測で付けません。
 
 契約は[タグConfidence](docs/tag-confidence-contract.md)、[タグUI](docs/tag-ui-contract.md)、[保存と互換性](docs/automatic-tag-contract.md)を参照してください。`sh tests/tag-confidence.sh`、instrumentation mode `confidence-store` / `tag-confidence` が学習・保存・新UIを検証します。鳥種の識別精度、部分画像、確率校正、大量ライブラリでの負荷は親issue #1の評価範囲です。
+
+## JPEG acknowledgment
+
+This software is based in part on the work of the Independent JPEG Group.

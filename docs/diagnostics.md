@@ -131,3 +131,20 @@ python3 scripts/raw-editor-profile.py --serial SERIAL --output /tmp/loupe-edit-r
 独立実験アプリを終了・起動し、通常は1200x800の合成写真、URI指定時はその入力を使う。質感の同じ面を1.8秒往復×3で操作し、入力からframe commitまでの中央値/p95、各ドラッグ中の反映回数、最後の入力の反映時間を記録する。URIファイルはリポジトリへ追加しない。前景の動画とPiPを止め、ロック状態を確認する。ロック設定や認証を変更しない。CLIは画面を保持する設定を変更せず、検証中は連続操作を行う。終了後の長い待機前に別途端末の状態を確認する。
 
 表示された要求の中央値だけでは、描画破棄による飢餓を検知できない。入力要求数・反映回数・操作中の反映回数を合わせて判断し、合成写真の改善を実写真の性能の証明にしない。frame commitはディスプレイ走査完了を表さない。
+
+
+## 原寸準備と競合中の調整応答（Issue #55）
+
+`full.prepare.start/complete` は原寸キャッシュの準備区間、`full.detail.complete` は現在領域の精細画像組立完了を示す。固定イベントには `ns` を付け、同じ端末の `adjust.input/frame` と対応づける。`full.detail.complete` 自体は画面への反映完了を表さない。準備時間、連続操作の応答、保存時間を混ぜない。
+
+```sh
+# 起動から記録し、原寸準備と重なったドラッグ入力が100件以上・反映が1件以上あることを要求する。
+python3 scripts/raw-editor-full-profile.py --serial SERIAL --output /tmp/loupe-full-overlap-new --uri-file /tmp/selected-raw-uri.txt --require-preparation-overlap
+# 同じ入力・同じ6ドラッグを、原寸準備完了後に測る。
+python3 scripts/raw-editor-full-profile.py --serial SERIAL --output /tmp/loupe-full-ready-new --uri-file /tmp/selected-raw-uri.txt --wait-prepared
+python3 scripts/test-raw-editor-full-profile.py
+```
+
+出力先は毎回新規ディレクトリ。URI指定を省略すると合成画像を使う。開始前に実験アプリだけを終了し、動画・PiPを止め、ロックと前景を確認する。ログは対象タグだけを収集し、端末全体のログを消去しない。各1.8秒のドラッグ6回について入力数・反映数・最終入力の反映時間を出し、準備中と完了後の中央値/p95を別々に示す。起動やタブ切替の入力はドラッグ計測から分ける。準備との重複が足りなければ失敗とし、準備後の結果で代用しない。
+
+電池温度を前後で記録し、RSS/HWM/PSSは入力計測終了後に取得する。取得できない値や反映のない区間はnullを残す。終了後のPSSは準備中のピークではなく、HWMもOSから取得できた場合のプロセス全体の値である。LibRaw内部のピークをタイル用メモリの上限と同一視しない。画質、原寸の保存寸法、原本hash、ズーム時の見え方は別の実機検査で確認する。

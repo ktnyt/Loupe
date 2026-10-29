@@ -7,7 +7,7 @@ import android.util.Log;
 final class RawEditLog {
   static boolean enabled;
   static void event(String event,long ms,int width,int height){
-    if(enabled)Log.i("LoupeRawEdit",event+" ms="+ms+" width="+width+" height="+height);
+    if(enabled)Log.i("LoupeRawEdit",event+" ms="+ms+" width="+width+" height="+height+" ns="+SystemClock.elapsedRealtimeNanos());
   }
   static void frame(long ticket,long inputNs){
     if(enabled)Log.i("LoupeRawEdit","adjust.frame ticket="+ticket+" input_ns="+inputNs+" commit_ns="+SystemClock.elapsedRealtimeNanos());

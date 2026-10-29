@@ -13,13 +13,15 @@ import java.util.concurrent.atomic.AtomicReference;
 /** Core GPU/native and real UI gesture contracts; no user photo contents are emitted. */
 public final class RawEditInstrumentation extends Instrumentation {
   private Bundle arguments;
-  public void onCreate(Bundle args){arguments=args;start();}
+  private RawEditFullUiChecks.Gate fullUiGate;
+  public void onCreate(Bundle args){arguments=args;if(args!=null&&(Boolean.parseBoolean(args.getString("fullui","false"))||Boolean.parseBoolean(args.getString("fullstates","false"))))fullUiGate=new RawEditFullUiChecks.Gate();start();}
   public void callActivityOnCreate(Activity activity,Bundle saved){
     if(arguments!=null&&arguments.containsKey("font")&&activity instanceof RawEditActivity){
       android.content.res.Configuration config=new android.content.res.Configuration(activity.getResources().getConfiguration());
       config.fontScale=Float.parseFloat(arguments.getString("font"));activity.getResources().updateConfiguration(config,activity.getResources().getDisplayMetrics());
     }
     super.callActivityOnCreate(activity,saved);
+    if(fullUiGate!=null)fullUiGate.afterCreate(activity);
     if(arguments!=null&&arguments.containsKey("height")&&activity instanceof RawEditActivity){
       int h=Integer.parseInt(arguments.getString("height"));activity.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT,Math.round(h*activity.getResources().getDisplayMetrics().density));
     }
@@ -27,15 +29,18 @@ public final class RawEditInstrumentation extends Instrumentation {
 
   private static void require(boolean ok,String message){if(!ok)throw new AssertionError(message);}
   public void onStart(){
-    Bundle result=new Bundle();
+    Bundle result=new Bundle();String phase="core";
     try{
       core();pad();
+      if(arguments!=null&&Boolean.parseBoolean(arguments.getString("full","false"))){phase="full.source";RawEditSourceChecks.run(this);phase="full.tiles";RawEditTileChecks.run(this);phase="full.session";RawEditFullSessionChecks.run(this);phase="full.publish";RawEditPublishChecks.run(this);}
+      if(fullUiGate!=null){if(Boolean.parseBoolean(arguments.getString("fullstates","false"))){phase="full.states";RawEditFullUiChecks.runStates(this,fullUiGate);}else{phase="full.ui";RawEditFullUiChecks.run(this,fullUiGate);}}
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("guides","false")))RawEditGuidesChecks.run(this);
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("guidecaptures","false")))RawEditGuidesChecks.capture(this);
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("ui","false")))RawEditUiChecks.run(this);
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("real","false")))real();
+      if(arguments!=null&&arguments.containsKey("viewportUri")){phase="full.viewport";RawEditFullViewportChecks.run(this,android.net.Uri.parse(arguments.getString("viewportUri")));}
       result.putString("stream","PASS raw-editor GPU neutral/orientation/brightness/saturation/comparison; XY/edge independent; native\n");finish(Activity.RESULT_OK,result);
-    }catch(Throwable error){result.putString("stream","FAIL "+error.getClass().getSimpleName()+": "+(error instanceof AssertionError?error.getMessage():"core execution")+"\n");finish(Activity.RESULT_CANCELED,result);}
+    }catch(Throwable error){if("full.viewport".equals(phase))phase+="."+RawEditFullViewportChecks.diagnosticStage();result.putString("stream","FAIL "+phase+" "+error.getClass().getSimpleName()+": "+(error instanceof AssertionError?error.getMessage():"core execution")+"\n");finish(Activity.RESULT_CANCELED,result);}
   }
   private void core()throws Exception{
     ByteBuffer buffer=ByteBuffer.allocateDirect(4*4*4).order(ByteOrder.nativeOrder());

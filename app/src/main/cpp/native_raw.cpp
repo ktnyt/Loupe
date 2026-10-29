@@ -71,8 +71,8 @@ Java_jp_nano_rawgallery_NativeRaw_decodeNative(JNIEnv* env, jclass, jstring path
         }
         jclass imageClass = env->FindClass("jp/nano/rawgallery/NativeRaw$Image");
         if (!imageClass) return nullptr;
-        jmethodID ctor = env->GetMethodID(imageClass, "<init>", "(IILjava/nio/ByteBuffer;)V");
-        return ctor ? env->NewObject(imageClass, ctor, raw.width(), raw.height(), buffer) : nullptr;
+        jmethodID ctor = env->GetMethodID(imageClass, "<init>", "(IIIILjava/nio/ByteBuffer;)V");
+        return ctor ? env->NewObject(imageClass, ctor, raw.width(), raw.height(), raw.originalWidth(), raw.originalHeight(), buffer) : nullptr;
     } catch (const std::bad_alloc&) {
         fail(env, "java/lang/OutOfMemoryError", "RAW decoding memory limit exceeded");
     } catch (const std::invalid_argument&) {
@@ -84,4 +84,25 @@ Java_jp_nano_rawgallery_NativeRaw_decodeNative(JNIEnv* env, jclass, jstring path
         fail(env, "java/io/IOException", "RAW decoding failed");
     }
     return nullptr;
+}
+
+#include "raw_full.h"
+namespace {
+struct FullCancellation { JNIEnv* env; jobject cancellation; jmethodID method; };
+int fullCancelled(void* opaque, LibRaw_progress, int, int) {
+ auto* c=static_cast<FullCancellation*>(opaque);
+ return c->env->CallBooleanMethod(c->cancellation,c->method) || c->env->ExceptionCheck();
+}
+}
+extern "C" JNIEXPORT void JNICALL
+Java_jp_nano_rawgallery_NativeRaw_prepareFullNative(JNIEnv* env,jclass,jstring input,jstring output,jobject cancellation) {
+ if(!input || !output || !cancellation) { fail(env,"java/lang/IllegalArgumentException","Invalid RAW preparation request"); return; }
+ try {
+  UtfPath in(env,input), out(env,output); if(!in.get() || !out.get()) return;
+  jclass cls=env->GetObjectClass(cancellation); if(!cls) return;
+  jmethodID method=env->GetMethodID(cls,"isCancelled","()Z"); if(!method) return;
+  FullCancellation c{env,cancellation,method};
+  loupe::prepareFull(in.get(),out.get(),fullCancelled,&c);
+ } catch(const std::bad_alloc&) { fail(env,"java/lang/OutOfMemoryError","RAW preparation memory limit exceeded"); }
+ catch(...) { fail(env,"java/io/IOException","RAW preparation failed or cancelled"); }
 }
