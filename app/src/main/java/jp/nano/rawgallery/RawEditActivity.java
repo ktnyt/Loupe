@@ -123,7 +123,7 @@ public final class RawEditActivity extends Activity {
     if(size!=padSize){padSize=size;renderControls();}
   }
   private void renderControls(){
-    if(controls==null)return;controls.removeAllViews();if(pad!=null)picture.removeView(pad);
+    if(controls==null)return;controls.removeAllViews();if(pad!=null){pad.cancelGuides();picture.removeView(pad);}
     for(int i=0;i<7;i++){Button t=(Button)tabs.getChildAt(i);t.setTextColor(tab==i?INK:0xff8a8a85);Drawable glyph=t.getCompoundDrawables()[1];if(glyph instanceof Icon)((Icon)glyph).color=tab==i?INK:0xff8a8a85;t.setTypeface(Typeface.create(Typeface.DEFAULT,tab==i?600:500,false));t.setSelected(tab==i);t.setBackground(new TabBackground(tab==i));t.setContentDescription(tabNames[i]+(tab==i?"、選択中":""));}
     pad=new RawEditPad(this,padSize,state,pairs[tab][0],pairs[tab][1],axes[tab][0],axes[tab][1],new RawEditPad.Listener(){public void changed(RawEditState value){RawEditActivity.this.changed(value);}public void tracking(boolean active){interacting=active||((PhotoSurface)picture).pinch;updateBadge();}});
     picture.addView(pad,new FrameLayout.LayoutParams(dp(padSize+56),dp(padSize+56),Gravity.CENTER));
@@ -135,11 +135,26 @@ public final class RawEditActivity extends Activity {
   private void updateZoom(){if(zoom!=null){zoom.setContentDescription(image.zoom>1?"全体を表示":"拡大");zoom.setCompoundDrawablesWithIntrinsicBounds(null,new Icon(image.zoom>1?"zoomOut":"zoomIn",24),null,null);}}
   private void addSingle(int key,String name){
     TextView label=text(name,12,MUTED);controls.addView(label,new LinearLayout.LayoutParams(-2,dp(48)));
-    SeekBar bar=new SeekBar(this);bar.setMax(200);bar.setProgress(Math.round((state.get(key)+1)*100));bar.setContentDescription(key==4?"かすみの除去":name);bar.setStateDescription(RawEditPad.value(key,state.get(key)));bar.setSplitTrack(false);bar.setPadding(dp(8),0,dp(8),0);bar.setProgressDrawable(new SliderTrack());GradientDrawable thumb=rounded(INK,8);thumb.setSize(dp(16),dp(16));bar.setThumb(thumb);bar.setThumbOffset(dp(8));LinearLayout.LayoutParams pp=new LinearLayout.LayoutParams(0,dp(48),1);pp.leftMargin=dp(10);controls.addView(bar,pp);
+    SeekBar bar=new ResetSeekBar(key,name);bar.setMax(200);bar.setProgress(Math.round((state.get(key)+1)*100));bar.setContentDescription(key==4?"かすみの除去":name);bar.setStateDescription(RawEditPad.value(key,state.get(key)));bar.setSplitTrack(false);bar.setPadding(dp(8),0,dp(8),0);bar.setProgressDrawable(new SliderTrack());GradientDrawable thumb=rounded(INK,8);thumb.setSize(dp(16),dp(16));bar.setThumb(thumb);bar.setThumbOffset(dp(8));LinearLayout.LayoutParams pp=new LinearLayout.LayoutParams(0,dp(48),1);pp.leftMargin=dp(10);controls.addView(bar,pp);
     bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
       public void onProgressChanged(SeekBar v,int n,boolean user){if(user){changed(state.with(key,n/100f-1));bar.setStateDescription(RawEditPad.value(key,state.get(key)));}}
       public void onStartTrackingTouch(SeekBar v){interacting=true;updateBadge();}public void onStopTrackingTouch(SeekBar v){interacting=false;updateBadge();}
     });
+  }
+  private final class ResetSeekBar extends SeekBar {
+    private final int key;private final String name;private final RawEditPad.DoubleTapReset taps;
+    ResetSeekBar(int key,String name){super(RawEditActivity.this);this.key=key;this.name=name;taps=new RawEditPad.DoubleTapReset(RawEditActivity.this);}
+    private boolean resetValue(){
+      if(!isEnabled()||!ready||saving)return false;
+      changed(state.reset(key));setProgress(Math.round((state.get(key)+1)*100));setStateDescription(RawEditPad.value(key,state.get(key)));announceForAccessibility(name+"を初期値に戻しました");return true;
+    }
+    public boolean onTouchEvent(MotionEvent event){if(!isEnabled())return false;boolean reset=taps.completed(event);boolean handled=super.onTouchEvent(event);if(reset)resetValue();return handled;}
+    public void setEnabled(boolean enabled){super.setEnabled(enabled);if(!enabled&&taps!=null)taps.cancel();}
+    protected void onWindowVisibilityChanged(int visibility){super.onWindowVisibilityChanged(visibility);if(visibility!=VISIBLE&&taps!=null)taps.cancel();}
+    protected void onDetachedFromWindow(){taps.cancel();super.onDetachedFromWindow();}
+    public boolean onKeyDown(int code,KeyEvent event){if((code==KeyEvent.KEYCODE_DEL||code==KeyEvent.KEYCODE_FORWARD_DEL)&&resetValue())return true;return super.onKeyDown(code,event);}
+    public void onInitializeAccessibilityNodeInfo(android.view.accessibility.AccessibilityNodeInfo info){super.onInitializeAccessibilityNodeInfo(info);if(isEnabled())info.addAction(new android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction(RawEditPad.RESET_ACTION,"初期値に戻す"));}
+    public boolean performAccessibilityAction(int action,Bundle args){if(action==RawEditPad.RESET_ACTION)return resetValue();return super.performAccessibilityAction(action,args);}
   }
   private void updateBadge(){boolean show=ready&&!saving&&!interacting&&(displayBefore||displayMax);badge.setText(displayBefore?"補正前":"彩度MAX");badge.setVisibility(show?View.VISIBLE:View.GONE);}
   private void changed(RawEditState value){state=value;before=false;compare.setSelected(false);if(pad!=null)pad.update(value);requestRender();}
@@ -149,14 +164,14 @@ public final class RawEditActivity extends Activity {
   }
   private void showHelp(){
     String value=axes[tab][0]+"　"+RawEditPad.value(pairs[tab][0],state.get(pairs[tab][0]))+"\n"+axes[tab][1]+"　"+RawEditPad.value(pairs[tab][1],state.get(pairs[tab][1]));
-    new AlertDialog.Builder(this).setTitle(tabNames[tab]).setMessage("写真の中央の面を1本の指で動かすと、横と縦の値が変わります。右の端は縦だけ、下の端は横だけ。\n2本の指で拡大・移動できます。\n\n"+value+(tab==6?"\nモノクロ：色相260・彩度11・輝度+2":"")+"\n\n精細な表示と保存は原寸の準備のあと。準備中も編集できます。\n右上の格子に三角の印は原寸の準備の失敗。押すと再試行。\n原寸 "+width+" × "+height+"："+(fullSession!=null&&fullSession.isPrepared()?"完了":preparationFailed?"失敗":"準備中")+"\n拡大の上限 "+String.format(java.util.Locale.ROOT,"%.2f",image.maxZoom())+"倍").setPositiveButton("閉じる",null).show();
+    new AlertDialog.Builder(this).setTitle(tabNames[tab]).setMessage("写真の中央の面を1本の指で動かすと、横と縦の値が変わります。右の端は縦だけ、下の端は横だけ。\n2本の指で拡大・移動できます。\nガイドは指を離して3秒後に消えます。面は両軸、右・下の端とかすみ・コントラストはその値だけ、ダブルタップで初期値に戻せます。\n\n"+value+(tab==6?"\nモノクロ：色相260・彩度11・輝度+2":"")+"\n\n精細な表示と保存は原寸の準備のあと。準備中も編集できます。\n右上の格子に三角の印は原寸の準備の失敗。押すと再試行。\n原寸 "+width+" × "+height+"："+(fullSession!=null&&fullSession.isPrepared()?"完了":preparationFailed?"失敗":"準備中")+"\n拡大の上限 "+String.format(java.util.Locale.ROOT,"%.2f",image.maxZoom())+"倍").setPositiveButton("閉じる",null).show();
   }
   private final class PhotoSurface extends FrameLayout {
     boolean pinch;RawEditState start;boolean startBefore;
     PhotoSurface(){super(RawEditActivity.this);}
     public boolean dispatchTouchEvent(MotionEvent e){
       int action=e.getActionMasked();if(action==MotionEvent.ACTION_DOWN){pinch=false;start=state;startBefore=before;}
-      if(e.getPointerCount()>=2&&!pinch){pinch=true;if(start!=null&&ready&&!saving){state=start;before=startBefore;compare.setSelected(before);if(pad!=null)pad.update(state);requestRender();}interacting=true;updateBadge();}
+      if(e.getPointerCount()>=2&&!pinch){pinch=true;if(pad!=null)pad.cancelGuides();if(start!=null&&ready&&!saving){state=start;before=startBefore;compare.setSelected(before);if(pad!=null)pad.update(state);requestRender();}interacting=true;updateBadge();}
       if(image!=null)image.multi(e);
       boolean handled=super.dispatchTouchEvent(e);
       if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL){pinch=false;interacting=false;updateBadge();updateZoom();}return handled;
@@ -273,6 +288,7 @@ public final class RawEditActivity extends Activity {
     if(save==null||fullBadge==null)return;
     boolean show=ready&&fullBadgeShown&&fullSession!=null&&!fullSession.isPrepared();fullBadge.setVisibility(show?View.VISIBLE:View.GONE);fullBadge.setEnabled(preparationFailed&&!saving);
     fullBadge.setContentDescription(preparationFailed?"原寸を準備できませんでした。低い解像度で表示と編集を続けられます。拡大はプレビューの等倍まで、保存は原寸の準備のあとです。押すと再試行":"精細な表示を準備しています。編集はそのまま続けられます");fullBadge.invalidate();
+    FrameLayout.LayoutParams fp=(FrameLayout.LayoutParams)fullBadge.getLayoutParams();int fullMargin=dp(preparationFailed?2:11);if(fp.rightMargin!=fullMargin){fp.rightMargin=fullMargin;fullBadge.setLayoutParams(fp);}
     FrameLayout.LayoutParams ip=(FrameLayout.LayoutParams)busyIcon.getLayoutParams();ip.rightMargin=dp(show?64:12);busyIcon.setLayoutParams(ip);
     save.setText("保存");save.setPadding(0,0,0,0);save.setCompoundDrawablePadding(dp(4));save.setBackground(rounded(saveWaiting||saving?0xff2a2a2e:INK,24));save.setTextColor(saveWaiting||saving?0xffc9c9c4:0xff111111);
     save.setCompoundDrawablesWithIntrinsicBounds(saveWaiting||saving?new Icon("spinner",16):null,null,preparationFailed?new Icon("warning",12,0xffff8a7a):null,null);
@@ -360,6 +376,7 @@ public final class RawEditActivity extends Activity {
   protected void onSaveInstanceState(Bundle b){super.onSaveInstanceState(b);b.putFloatArray("values",state.snapshot());b.putFloatArray("saved",saved.snapshot());b.putInt("tab",tab);b.putInt("uiVersion",2);b.putFloat("zoom",image.zoom);b.putFloat("panX",image.dx);b.putFloat("panY",image.dy);if(input!=null)b.putString("input",input.toString());}
   protected void onStart(){super.onStart();visible=true;if(root!=null&&(input!=null||synthetic())&&!ready&&!loading)load();else if(ready){save.setText("保存");save.setStateDescription(null);enabled(true);requestRender();}}
   protected void onStop(){
+    if(pad!=null)pad.cancelGuides();
     visible=false;++epoch;maxSaturation=false;before=false;saveWaiting=false;
     main.removeCallbacks(busy);main.removeCallbacks(showFullBadge);main.removeCallbacks(replaceFullPreview);
     if(saveDialog!=null){saveDialog.dismiss();saveDialog=null;}
@@ -370,6 +387,7 @@ public final class RawEditActivity extends Activity {
     worker.execute(()->{if(renderer!=null){renderer.close();renderer=null;}});super.onStop();
   }
   protected void onDestroy(){
+    if(pad!=null)pad.cancelGuides();
     dead=true;ready=false;main.removeCallbacksAndMessages(null);if(loadFuture!=null)loadFuture.cancel(true);
     if(fullSession!=null){fullSession.close();fullSession=null;}for(RawEditSource pending:pendingSources)pending.close();pendingSources.clear();pendingFullPreview=null;
     worker.execute(()->{if(renderer!=null){renderer.close();renderer=null;}});worker.shutdown();image.clear();super.onDestroy();
@@ -378,12 +396,12 @@ public final class RawEditActivity extends Activity {
     private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
     FullBadge(){super(RawEditActivity.this);setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);}
     protected void onDraw(Canvas canvas){
-      super.onDraw(canvas);float cx=getWidth()/2f,cy=getHeight()/2f;RectF bg=new RectF(cx-dp(20),cy-dp(14),cx+dp(20),cy+dp(14));
+      super.onDraw(canvas);float cx=getWidth()/2f,cy=getHeight()/2f;RectF bg=new RectF(cx-dp(23),cy-dp(14),cx+dp(23),cy+dp(14));
       paint.setStyle(Paint.Style.FILL);paint.setColor(0x9e000000);canvas.drawRoundRect(bg,dp(14),dp(14),paint);
       if(preparationFailed){paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(1.5f));paint.setColor(0xffff8a7a);canvas.drawRoundRect(bg,dp(14),dp(14),paint);}
-      canvas.save();canvas.translate(cx-dp(17),cy-dp(8));Icon grid=new Icon("tab1",16);grid.draw(canvas);canvas.restore();
+      canvas.save();canvas.translate(cx-dp(17),cy-dp(8));canvas.scale(dp(16)/24f,dp(16)/24f);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1.8f);paint.setColor(INK);for(float gx:new float[]{4,13})for(float gy:new float[]{4,13})canvas.drawRoundRect(gx,gy,gx+7,gy+7,1,1,paint);canvas.restore();
       if(preparationFailed){canvas.save();canvas.translate(cx+dp(1),cy-dp(8));new Icon("warning",16,0xffff8a7a).draw(canvas);canvas.restore();}
-      else{paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(1.5f));paint.setColor(INK);canvas.save();canvas.rotate((SystemClock.uptimeMillis()%1000)*.36f,cx+dp(9),cy);canvas.drawArc(cx+dp(3),cy-dp(6),cx+dp(15),cy+dp(6),-90,270,false,paint);canvas.restore();postInvalidateOnAnimation();}
+      else{float radius=dp(16f/3);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(1.6f));paint.setStrokeCap(Paint.Cap.ROUND);paint.setColor(0x2effffff);canvas.drawCircle(cx+dp(9),cy,radius,paint);paint.setColor(INK);canvas.save();canvas.rotate((SystemClock.uptimeMillis()%1000)*.36f,cx+dp(9),cy);canvas.drawArc(cx+dp(9)-radius,cy-radius,cx+dp(9)+radius,cy+radius,-90,90,false,paint);canvas.restore();postInvalidateOnAnimation();}
     }
     public boolean performClick(){super.performClick();return true;}
   }
@@ -395,7 +413,7 @@ public final class RawEditActivity extends Activity {
     public void draw(Canvas canvas){
       canvas.save();canvas.translate(getBounds().left,getBounds().top);canvas.scale(getBounds().width()/24f,getBounds().height()/24f);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1.8f);p.setStrokeCap(Paint.Cap.ROUND);p.setStrokeJoin(Paint.Join.ROUND);p.setColor(color);p.setAlpha(alpha);
       if(type.equals("spinner")){canvas.rotate((SystemClock.uptimeMillis()%1000)*.36f,12,12);canvas.drawArc(4,4,20,20,-90,270,false,p);scheduleSelf(this::invalidateSelf,SystemClock.uptimeMillis()+16);}
-      else if(type.equals("warning")){Path q=new Path();q.moveTo(12,3);q.lineTo(22,21);q.lineTo(2,21);q.close();canvas.drawPath(q,p);canvas.drawLine(12,9,12,14,p);canvas.drawLine(12,17,12,17.1f,p);}
+      else if(type.equals("warning")){Path q=new Path();q.moveTo(12,4);q.lineTo(21,19.5f);q.lineTo(3,19.5f);q.close();canvas.drawPath(q,p);canvas.drawLine(12,10,12,14.5f,p);canvas.drawLine(12,17.2f,12,17.3f,p);}
       else if(type.equals("compare")){canvas.drawRoundRect(4,5,20,19,2,2,p);canvas.drawLine(12,5,12,19,p);p.setStyle(Paint.Style.FILL);p.setAlpha(Math.round(alpha*.35f));canvas.drawRect(12,5,19,19,p);}
       else if(type.equals("reset")){canvas.drawArc(4.5f,4.5f,19.5f,19.5f,180,315,false,p);canvas.drawLine(4.5f,4.5f,4.5f,8.5f,p);canvas.drawLine(4.5f,8.5f,8.5f,8.5f,p);}
       else if(type.equals("help")){canvas.drawCircle(12,12,9,p);Path q=new Path();q.moveTo(9.6f,9.3f);q.cubicTo(9.5f,5.7f,16.1f,6.3f,14.8f,10.4f);q.cubicTo(14.3f,12,12,11.3f,12,13.5f);canvas.drawPath(q,p);canvas.drawLine(12,16.6f,12,16.7f,p);}

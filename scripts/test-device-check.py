@@ -104,10 +104,76 @@ class DeviceCheckTests(unittest.TestCase):
         m = module(); calls = []; replies = iter(['', 'mCurrentFocus=' + YOUTUBE, HELD])
         def shell(*parts):
             calls.append(parts)
-            return next(replies) if parts[0] == 'sh' else ''
+            return next(replies) if parts[0] == 'sh' else 'showing=false' if parts[0] == 'dumpsys' else ''
         m.wait_for_standby(shell, attempts=3, interval=0, play_when_focused=True)
-        self.assertEqual(calls[2], ('input', 'keyevent', '126'))
+        self.assertGreater(calls.index(('input', 'keyevent', '126')), calls.index(('dumpsys', 'window', 'policy')))
         self.assertEqual(calls.count(('input', 'keyevent', '126')), 1)
+
+    def test_stuck_miniplayer_uses_exact_play_control_once_then_confirms_hold(self):
+        m = module(); calls = []; held = False
+        xml = '<hierarchy><node package="com.google.android.youtube" resource-id="com.google.android.youtube:id/modern_miniplayer_overlay_action_button" content-desc="動画を再生" clickable="true" enabled="true" bounds="[600,2068][744,2212]"/><node text="private fixture title"/></hierarchy>'
+        def shell(*parts):
+            nonlocal held
+            calls.append(parts)
+            if parts[0] == 'dumpsys': return 'showing=false'
+            if parts[0] == 'sh': return HELD if held else 'mCurrentFocus=' + YOUTUBE
+            if parts[0] == 'cat': return xml
+            if parts[:2] == ('input', 'tap'): held = True
+            return ''
+        with contextlib.redirect_stdout(io.StringIO()) as output, contextlib.redirect_stderr(io.StringIO()) as error:
+            m.wait_for_standby(shell, attempts=8, interval=0, play_when_focused=True)
+        self.assertEqual(calls.count(('input', 'keyevent', '126')), 1)
+        self.assertEqual(calls.count(('input', 'tap', '672', '2140')), 1)
+        self.assertEqual(sum(c[0] == 'uiautomator' for c in calls), 1)
+        tap = calls.index(('input', 'tap', '672', '2140'))
+        self.assertEqual(calls[tap-2], ('dumpsys', 'window', 'policy'))
+        self.assertEqual(calls[tap-1][:2], ('sh', '-c'))
+        self.assertTrue(any(c[:2] == ('sh', '-c') for c in calls[tap+1:]))
+        self.assertNotIn('private fixture title', output.getvalue() + error.getvalue())
+
+    def test_miniplayer_fallback_rejects_wrong_app_lock_and_stale_ui(self):
+        for scenario in ('wrong_app', 'locked', 'locked_after_dump', 'focus_changed_after_dump', 'already_held'):
+            with self.subTest(scenario=scenario):
+                m = module(); calls = []; dumped = False
+                def shell(*parts):
+                    nonlocal dumped
+                    calls.append(parts)
+                    if parts[0] == 'dumpsys': return 'showing=true' if scenario == 'locked' or (scenario == 'locked_after_dump' and dumped) else 'showing=false'
+                    if parts[0] == 'sh':
+                        if scenario == 'already_held': return HELD
+                        if scenario == 'wrong_app' or (scenario == 'focus_changed_after_dump' and dumped): return 'mCurrentFocus=Window{fixture u0 another.app/Main}'
+                        return 'mCurrentFocus=' + YOUTUBE
+                    if parts[0] == 'uiautomator': dumped = True
+                    if parts[0] == 'cat': return '<hierarchy><node package="com.google.android.youtube" resource-id="com.google.android.youtube:id/modern_miniplayer_overlay_action_button" content-desc="動画を再生" clickable="true" enabled="true" bounds="[600,2068][744,2212]"/></hierarchy>'
+                    return ''
+                if scenario == 'already_held': m.wait_for_standby(shell, attempts=8, interval=0, play_when_focused=True)
+                else:
+                    with self.assertRaises(RuntimeError): m.wait_for_standby(shell, attempts=8, interval=0, play_when_focused=True)
+                self.assertFalse(any(c[:2] == ('input', 'tap') for c in calls))
+                if scenario in ('wrong_app', 'locked', 'already_held'):
+                    self.assertFalse(any(c[0] == 'uiautomator' for c in calls))
+                if scenario in ('wrong_app', 'locked'):
+                    self.assertFalse(any(c[0] == 'input' for c in calls))
+
+    def test_miniplayer_fallback_does_not_guess_a_control_or_repeat_dump(self):
+        node = '<node package="com.google.android.youtube" resource-id="com.google.android.youtube:id/modern_miniplayer_overlay_action_button" content-desc="動画を再生" clickable="true" enabled="true" bounds="[600,2068][744,2212]"/>'
+        for xml in ('<hierarchy/>', '<broken', '<hierarchy>' + node.replace('動画を再生', '動画を一時停止') + '</hierarchy>',
+                    '<hierarchy>' + node.replace('clickable="true"', 'clickable="false"') + '</hierarchy>',
+                    '<hierarchy>' + node.replace('[600,2068][744,2212]', '[744,2212][600,2068]') + '</hierarchy>',
+                    '<hierarchy>' + node.replace('package="com.google.android.youtube"', 'package="another.app"') + '</hierarchy>',
+                    '<hierarchy>' + node + node + '</hierarchy>'):
+            with self.subTest(xml=xml):
+                calls = []
+                def shell(*parts):
+                    calls.append(parts)
+                    if parts[0] == 'dumpsys': return 'showing=false'
+                    if parts[0] == 'sh': return 'mCurrentFocus=' + YOUTUBE
+                    if parts[0] == 'cat': return xml
+                    return ''
+                with self.assertRaisesRegex(RuntimeError, 'not confirmed'):
+                    module().wait_for_standby(shell, attempts=8, interval=0, play_when_focused=True)
+                self.assertFalse(any(c[:2] == ('input', 'tap') for c in calls))
+                self.assertEqual(sum(c[0] == 'uiautomator' for c in calls), 1)
 
     def test_restore_failure_does_not_hide_original_test_failure(self):
         m = module()

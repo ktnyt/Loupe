@@ -34,6 +34,8 @@ public final class RawEditInstrumentation extends Instrumentation {
       core();pad();
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("full","false"))){phase="full.source";RawEditSourceChecks.run(this);phase="full.tiles";RawEditTileChecks.run(this);phase="full.session";RawEditFullSessionChecks.run(this);phase="full.publish";RawEditPublishChecks.run(this);}
       if(fullUiGate!=null){phase="full.ui";RawEditFullUiChecks.run(this,fullUiGate);}
+      if(arguments!=null&&Boolean.parseBoolean(arguments.getString("guides","false")))RawEditGuidesChecks.run(this);
+      if(arguments!=null&&Boolean.parseBoolean(arguments.getString("guidecaptures","false")))RawEditGuidesChecks.capture(this);
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("ui","false")))RawEditUiChecks.run(this);
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("real","false")))real();
       if(arguments!=null&&arguments.containsKey("viewportUri")){phase="full.viewport";RawEditFullViewportChecks.run(this,android.net.Uri.parse(arguments.getString("viewportUri")));}
