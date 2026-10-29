@@ -3,3 +3,5 @@ Source: https://github.com/libjpeg-turbo/libjpeg-turbo/releases/tag/3.2.1
 Archive SHA256: c27ad72a68da151177929aa969ae773a2da5ac2af9ce946079314fdac8cece7f
 Built as a static library for JPEG scanline encoding. See LICENSE.md and README.ijg.
 The source archive includes the complete corresponding source and notices.
+
+This software is based in part on the work of the Independent JPEG Group.
