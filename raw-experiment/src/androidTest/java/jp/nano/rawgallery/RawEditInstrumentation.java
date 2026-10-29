@@ -36,8 +36,9 @@ public final class RawEditInstrumentation extends Instrumentation {
       if(fullUiGate!=null){phase="full.ui";RawEditFullUiChecks.run(this,fullUiGate);}
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("ui","false")))RawEditUiChecks.run(this);
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("real","false")))real();
+      if(arguments!=null&&arguments.containsKey("viewportUri")){phase="full.viewport";RawEditFullViewportChecks.run(this,android.net.Uri.parse(arguments.getString("viewportUri")));}
       result.putString("stream","PASS raw-editor GPU neutral/orientation/brightness/saturation/comparison; XY/edge independent; native\n");finish(Activity.RESULT_OK,result);
-    }catch(Throwable error){result.putString("stream","FAIL "+phase+" "+error.getClass().getSimpleName()+": "+(error instanceof AssertionError?error.getMessage():"core execution")+"\n");finish(Activity.RESULT_CANCELED,result);}
+    }catch(Throwable error){if("full.viewport".equals(phase))phase+="."+RawEditFullViewportChecks.diagnosticStage();result.putString("stream","FAIL "+phase+" "+error.getClass().getSimpleName()+": "+(error instanceof AssertionError?error.getMessage():"core execution")+"\n");finish(Activity.RESULT_CANCELED,result);}
   }
   private void core()throws Exception{
     ByteBuffer buffer=ByteBuffer.allocateDirect(4*4*4).order(ByteOrder.nativeOrder());
