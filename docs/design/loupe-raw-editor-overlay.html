@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loupe 現像（重ねる2DUI）</title>
+<style>
+:root{--ink:#EDEDEA;--muted:#A9A9A4;--k:1;--w:400px;--h:844px}
+*{box-sizing:border-box}
+body{margin:0;background:#1E1E20;color:var(--ink);font-family:'Noto Sans JP',system-ui,sans-serif;font-size:15px;line-height:1.6}
+.wrap{max-width:1500px;padding:28px 24px 64px}
+h1.pg{margin:0;font-size:24px;line-height:1.4}
+.lead{margin:6px 0 0;color:#D6D6D2;font-size:14px}
+.note{margin:10px 0 0;padding:10px 14px;border-radius:10px;border:1px solid #4A4A50;background:#161618;font-size:13.5px}
+.controls{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin:10px 0 0}
+.lb{color:var(--muted);font-size:12.5px;margin-right:6px}
+.seg{display:inline-flex;flex-wrap:wrap;background:#2A2A2E;border-radius:22px;padding:2px}
+.seg button{background:none;border:0;color:var(--ink);font:inherit;font-size:13px;min-height:44px;padding:0 12px;border-radius:20px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:#EDEDEA;color:#111}
+.hw{background:#2A2A2E;border:1px solid #4A4A50;color:var(--ink);font:inherit;font-size:13px;font-weight:600;min-height:44px;padding:0 14px;border-radius:22px;cursor:pointer}
+.hw[aria-pressed="true"]{background:#EDEDEA;color:#111}
+.wrap :focus-visible{outline:2px solid #8AB4F8;outline-offset:2px}
+.stage{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start;margin-top:14px}
+.col>h2{margin:0 0 8px;font-size:14px;font-weight:600}
+.col>h2 small{color:var(--muted);font-weight:400}
+.side{flex:1;min-width:300px;display:flex;flex-direction:column;gap:10px}
+.box{background:#141416;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.6;overflow-wrap:anywhere}
+.okc{color:#9FE0B5}.ngc{color:#F2A7AB}
+table.t{border-collapse:collapse;width:100%;font-size:13.5px;line-height:1.6}
+table.t th,table.t td{border-bottom:1px solid #2E2E32;padding:6px 10px 6px 0;text-align:left;vertical-align:top}
+table.t th{color:var(--muted);font-weight:500;font-size:12px}
+h2.sec{margin:32px 0 8px;font-size:19px}
+.spec ul{margin:0;padding-left:20px}.spec li{margin:3px 0;font-size:14px}
+.tscroll{overflow-x:auto}
+.tg{display:inline-block;padding:0 8px;border-radius:10px;font-size:12px;color:#111;background:#F5A623;white-space:nowrap;margin:0 2px 2px 0}
+.tg.q{background:#8AB4F8}.tg.k{background:#9FE0B5}
+.orig,.dev{position:relative;overflow:hidden;transform:translateZ(0);outline:1px solid #3A3A3F;background:#0F0F10;color:#EDEDEA}
+.orig{width:390px;height:844px}
+.dev{width:var(--w);height:var(--h);font-family:'Noto Sans JP',system-ui,sans-serif;font-size:calc(15px*var(--k));line-height:calc(22px*var(--k));-webkit-font-smoothing:antialiased}
+.dev button{font-family:inherit;color:inherit}
+.dev *{text-overflow:clip}
+.dev :focus{outline:none}
+.dev :focus-visible{outline:2px solid #EDEDEA;outline-offset:2px}
+.dev.showchg [data-chg]{outline:2px solid #F5A623;outline-offset:-2px}
+.dev.showchg [data-chg="new"]{outline:2px dashed #F5A623}
+.spin{animation:spin 1s linear infinite;transform-origin:50% 50%}
+@keyframes spin{to{transform:rotate(360deg)}}
+.rm .spin{animation:none}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}}
+.caller{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:20px;color:#A9A9A4;text-align:center;background:#0F0F10;z-index:9;font-size:calc(14px*var(--k));line-height:1.5}
+.caller button{min-height:48px;padding:10px 18px;border-radius:24px;background:#26262A;border:1px solid #3A3A3F;color:#EDEDEA;font:inherit;cursor:pointer}
+.synth{position:absolute;right:8px;top:6px;font-size:10px;color:#8A8A85;border:1px dashed #3A3A3F;border-radius:6px;padding:0 6px;z-index:8;line-height:1.6;pointer-events:none;background:#0F0F10}
+.f12{font-size:calc(12px*var(--k));line-height:calc(16px*var(--k))}
+.f13{font-size:calc(13px*var(--k));line-height:calc(18px*var(--k))}
+.f14{font-size:calc(14px*var(--k));line-height:calc(20px*var(--k))}
+.f15{font-size:calc(15px*var(--k));line-height:calc(22px*var(--k))}
+.f28{font-size:calc(28px*var(--k));line-height:calc(36px*var(--k))}
+.mut{color:#A9A9A4}.num{font-variant-numeric:tabular-nums}
+.scr{position:absolute;inset:0;overflow-y:auto}
+.scr::-webkit-scrollbar{width:0}
+.panel{position:absolute;left:0;right:0;bottom:0;background:#0F0F10;border-top:1px solid #222226;padding:10px 16px 20px;display:flex;flex-direction:column;gap:8px;z-index:3}
+.pri{background:#EDEDEA;border:0;padding:6px 16px;margin:0;color:#111 !important;cursor:pointer;min-height:52px;border-radius:26px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:calc(15px*var(--k));line-height:calc(20px*var(--k));font-weight:600;text-align:center}
+.out{background:none;border:1px solid #3A3A3F;padding:4px 16px;margin:0;cursor:pointer;min-height:48px;border-radius:24px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:calc(14px*var(--k));line-height:calc(18px*var(--k));font-weight:500;text-align:center}
+.dock{display:grid;margin:0 -8px}
+.db{background:none;border:0;padding:6px 4px;margin:0;cursor:pointer;min-height:64px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:calc(12px*var(--k));line-height:calc(16px*var(--k));font-weight:500;text-align:center}
+.db[aria-disabled="true"]{color:#626B72}
+.db svg{width:24px;height:24px;flex-shrink:0}
+.dim{position:absolute;inset:0;background:rgba(0,0,0,.64);border:0;padding:0;margin:0;width:100%;cursor:default;z-index:5}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:#1C1C1F;border-radius:28px 28px 0 0;padding:8px 0 20px;display:flex;flex-direction:column;z-index:6}
+.sheet .hdl{display:block;width:32px;height:4px;border-radius:2px;background:#4A4A50;margin:4px auto 12px}
+.sheet h2{margin:0;padding:0 24px 4px;font-size:calc(20px*var(--k));line-height:calc(28px*var(--k));font-weight:600}
+.sheet .body{margin:4px 24px 0;font-size:calc(14px*var(--k));line-height:calc(21px*var(--k))}
+.sheet .acts{display:flex;flex-direction:column;gap:8px;padding:16px 16px 0}
+.sheet .it{background:none;border:0;padding:4px 24px;margin:0;cursor:pointer;width:100%;min-height:48px;display:flex;align-items:center;gap:16px;text-align:left;font-size:calc(15px*var(--k));line-height:calc(22px*var(--k))}
+.danger{background:none;border:1px solid #FF8A7A;padding:6px 16px;margin:0;color:#FF8A7A !important;cursor:pointer;min-height:52px;border-radius:26px;font-size:calc(15px*var(--k));line-height:calc(22px*var(--k));font-weight:600}
+.cancel{background:#EDEDEA;border:0;padding:6px 16px;margin:0;color:#111 !important;cursor:pointer;min-height:48px;border-radius:24px;font-size:calc(14px*var(--k));line-height:calc(20px*var(--k));font-weight:600}
+body.solo .wrap>*:not(.stage),body.solo .side,body.solo .col.o,body.solo .col>h2{display:none}
+#soloExit{display:none}
+body.solo #soloExit{display:inline-flex;position:fixed;right:16px;top:16px;z-index:20}
+
+.dev .sheet h2{color:#EDEDEA}
+.dev [role=slider]:focus-visible{outline:2px solid #EDEDEA;outline-offset:2px}
+.dev [data-tabs]::-webkit-scrollbar{height:0}
+</style>
+</head>
+<body>
+<button class="hw" id="soloExit" type="button">単独表示をやめる</button>
+<div class="wrap">
+<h1 class="pg">Loupe — 現像（実験）：写真いっぱい＋写真に重ねる2DUI（Issue #53）</h1>
+<p class="lead">左は元のアートボード S08「08 写真詳細」、右は loupe-raw-editor.html の2DUIを写真に重ねた版です。写真の上を1本の指（マウス）でなぞると横と縦の値、右の端は縦だけ、下の端は横だけが変わります。2本の指（ここではホイール・［拡大］）で拡大と移動。指を離すと丸い印だけが半透明で残ります。［編集］の通常のタップで現像、長押しと［情報］で外部のアプリで編集です。</p>
+<div class="note">原本は上書きせず、長辺2048px以下のプレビューから別のJPEGとして保存する実験版です。写真は合成の色面と図形、値も合成です。Androidには<b>まだ反映していません</b>。</div>
+<div class="controls" role="group" aria-label="画面と状態（合成）"><span><span class="lb">画面</span><span class="seg" id="oV"><button data-v="view" aria-pressed="true">写真の画面（入口）</button><button data-v="dev" aria-pressed="false">現像（実験）</button></span></span><span><span class="lb">タブ</span><span class="seg" id="oTab"><button data-v="wb" aria-pressed="true">WB</button><button data-v="tex" aria-pressed="false">質感</button><button data-v="tone" aria-pressed="false">トーン</button><button data-v="l1" aria-pressed="false">明るさ</button><button data-v="l2" aria-pressed="false">明暗</button><button data-v="l3" aria-pressed="false">白黒</button><button data-v="color" aria-pressed="false">カラー</button></span></span></div><div class="controls" role="group" aria-label="状態の模擬"><span><span class="lb">状態（模擬）</span><span class="seg" id="oMode"><button data-v="idle" aria-pressed="true">待機</button><button data-v="drag" aria-pressed="false">1本指で操作中</button><button data-v="pinch" aria-pressed="false">2本指で拡大中</button><button data-v="max" aria-pressed="false">彩度MAX</button><button data-v="mono" aria-pressed="false">モノクロ</button><button data-v="save" aria-pressed="false">保存中</button><button data-v="fail" aria-pressed="false">保存の失敗</button><button data-v="back" aria-pressed="false">Back（未保存）</button></span></span></div><div class="controls" role="group" aria-label="結果（合成）"><span><span class="lb">読み込み</span><span class="seg" id="oLd"><button data-v="ok" aria-pressed="true">成功</button><button data-v="slow" aria-pressed="false">時間がかかる（中止）</button><button data-v="unsup" aria-pressed="false">未対応のRAW</button><button data-v="fail" aria-pressed="false">失敗</button></span></span><span><span class="lb">保存</span><span class="seg" id="oSv"><button data-v="ok" aria-pressed="true">成功</button><button data-v="fail" aria-pressed="false">失敗</button></span></span><span><span class="lb">反映</span><span class="seg" id="oSp"><button data-v="fast" aria-pressed="true">速い</button><button data-v="slow" aria-pressed="false">遅い（印を確認）</button></span></span></div>
+<div class="controls"><span><span class="lb">幅</span><span class="seg" id="oW"><button data-v="320" aria-pressed="false">320dp</button><button data-v="390" aria-pressed="false">390dp（元と同じ）</button><button data-v="400" aria-pressed="true">400dp</button></span></span><span><span class="lb">高さ</span><span class="seg" id="oH"><button data-v="844" aria-pressed="true">844dp</button><button data-v="640" aria-pressed="false">640dp</button></span></span><span><span class="lb">文字</span><span class="seg" id="oK"><button data-v="1" aria-pressed="true">1.0倍</button><button data-v="1.3" aria-pressed="false">1.3倍</button></span></span><button class="hw" id="oChg" aria-pressed="true">変更箇所の枠</button><button class="hw" id="oRM" aria-pressed="false">減らす動き</button><button class="hw" id="hwBack" type="button">Android Back（OSのシミュレータ・画面の外）</button><button class="hw" id="reset" type="button" style="background:none;font-weight:500">最初から</button><button class="hw" id="solo" type="button">変更後の画面だけを表示</button></div>
+<div class="stage">
+<div class="col o"><h2>元のデザイン <small id="origName"></small></h2><div class="orig" id="orig"></div></div>
+<div class="col"><h2>変更後 <small id="devName"></small></h2><div class="dev showchg" id="dev"></div></div>
+<div class="side"><div class="box" id="ax"></div><div class="box" id="chk"></div><div class="box" id="log"></div></div>
+</div>
+<div id="live" aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)"></div>
+<section class="spec" aria-label="差分と仕様">
+<h2 class="sec">1. 変えたことと保つこと</h2>
+<div class="tscroll"><table class="t">
+<tr><th>#</th><th>場所</th><th>loupe-raw-editor.html（承認済み）</th><th>この版</th></tr>
+<tr><td>1</td><td>写真</td><td>上の行と調整のあいだ</td><td>上の行（56dp）・補助の行（56dp）・下のタブ（64＋20dp）を除いた<b>残りすべて</b>（400×844dpで400×648dp、400×640dpで400×444dp）。全体を表示して切り取らない（fit）。拡大したときだけ、はみ出した部分を切る</td></tr>
+<tr><td>2</td><td>2DUI</td><td>写真の下に正方形の面・右と下の辺のスライダー（目に見える）</td><td><b>写真の上に重ねる</b>。面・縦の帯・横の帯は目に見えない操作域で、見えるのは<b>カーソル（丸い印）だけ</b>。指を離すと半透明、操作中ははっきり（ほかの要素は操作中も出さない）。軸名と数値は常に出さず、読み上げ名とヘルプで分かる</td></tr>
+<tr><td>3</td><td>下のタブ</td><td>WB・質感・トーン・ライト（3つのサブタブ）・カラー</td><td><b>7つ</b>：WB・質感・トーン・明るさ・明暗・白黒・カラー（ライトのサブタブを昇格）</td></tr>
+<tr><td>4</td><td>タブごとの操作</td><td>2DUIの下にトグルやスライダー</td><td>写真とタブのあいだの<b>補助の行</b>（高さ56dp・どのタブでも同じ高さ）に置く：WB［彩度MAX］、質感「かすみ」のスライダー、明暗「コントラスト」のスライダー、カラー［モノクロ］。右端に［拡大］／［全体］。写真の上には置かない</td></tr>
+<tr><td>5</td><td>モノクロ</td><td>—</td><td>カラーに［モノクロ］。白黒にしたあと、色相260・彩度11・輝度+2 を付けて、ごくわずかなマゼンタ寄りの色調にする（この数値は変えない）。<b>保存の対象</b></td></tr>
+<tr><td>6</td><td>写真の画面の［編集］</td><td>通常のタップ＝外部の編集、長押し＝現像</td><td><b>通常のタップ＝内蔵の現像（実験）</b>。外部のアプリでの編集は、長押し（0.5秒）・読み上げのカスタム操作「外部のアプリで編集」・［情報］の行で残す。読み上げ名「編集。現像（実験）を開きます。長押しで外部のアプリで編集」</td></tr>
+<tr><td>7</td><td>ヘルプ</td><td>—</td><td>上の行に［ヘルプ］（?）。開くと短い使い方と、今のタブの値（軸名と数値）。常には出さない</td></tr>
+</table></div>
+<p class="lead" style="font-size:13.5px">保つもの：絶対座標の面の操作（指を置いた位置がそのまま値）、辺の片軸の操作、WB の彩度MAX（表示だけ）、質感のかすみの除去、明暗のコントラスト、トーンの1点のカーブ（端点固定・最初は中央の1点）、ピンチの拡大と移動、補正前の比較（表示だけ）、今のタブだけの初期化、長辺2048px以下のプレビュー、JPEGの別保存（原本は上書きしない）、保存の前の画素数と実験版の表示、読み込み中・中止・未対応のRAW（カメラのJPEGに置き換えない）・失敗・再試行、保存中・保存の失敗・成功、反映の印（400msを超えたときだけ）、標準の Back と未保存の破棄の確認。</p>
+
+<h2 class="sec">2. 2DUIの座標（7つのタブで同じ）</h2>
+<div class="tscroll"><table class="t">
+<tr><th>項目</th><th>値</th></tr>
+<tr><td>基準の領域</td><td>写真の領域（拡大しても動かない画面の座標。写真の位置とは別）</td></tr>
+<tr><td>配置</td><td>外側の余白8dp。正方形の面（一辺 S）、その右に縦の帯（48dp × S）、下に横の帯（S × 48dp）、面と帯の間8dp。面＋間＋帯の全体を写真の領域の中央に置く。<b>3つは重ならない</b></td></tr>
+<tr><td>一辺 S</td><td>S = min(幅 − 16 − 56, 写真の領域の高さ − 16 − 56)。400dp では 844dp・640dp とも <b>328dp</b>（写真の領域の中の位置は (8, 132)／(8, 30)）。320dp では248dp</td></tr>
+<tr><td>値の対応</td><td>面：左右の位置 → 横の値、上下の位置 → 縦の値（上が大きい）。縦の帯は縦の値だけ、横の帯は横の値だけ。帯の外へ指が出ても範囲の端で止める</td></tr>
+<tr><td>カーソル</td><td>直径28dp、線2dp。待機中は線 rgba(237,237,234,.55)・中 rgba(15,15,16,.12)・外側1dp rgba(0,0,0,.3)。操作中は線 .95・中 .25・外側 .5。触れる操作域ではない（指は面と帯で受ける）</td></tr>
+<tr><td>読み上げとキー</td><td>面は role=slider「{横}と{縦}の面。左右で{横}、上下で{縦}」と値の文。縦の帯「{縦}（縦だけ）」、横の帯「{横}（横だけ）」。矢印キー（Shift で10倍）。フォーカスしたときだけ2dpの白い枠を出す</td></tr>
+</table></div>
+
+<h2 class="sec">3. 指の扱い</h2>
+<div class="tscroll"><table class="t">
+<tr><th>操作</th><th>動き</th></tr>
+<tr><td>1本の指（面）</td><td>置いた位置からすぐ両方の値を変える（絶対座標）。動かすあいだ写真を更新し、離すとカーソルが半透明に戻る</td></tr>
+<tr><td>1本の指（帯）</td><td>その軸だけを変える。もう片方の値は動かない</td></tr>
+<tr><td>2本目の指</td><td>2D の値を、1本目を置く前の値に戻し、ピンチの拡大（1〜4倍）と移動へ切り替える。<b>2本の指では2D の値を変えない</b>。すべての指を離すまでピンチのまま</td></tr>
+<tr><td>拡大中の移動</td><td>2本の指の中点の移動で写真を動かす（1本の指は2D の操作のまま）。はみ出しの範囲で止める。［拡大］／［全体］でも切り替え</td></tr>
+<tr><td>反映待ち</td><td>操作中も近似ですぐ更新。本処理が400msを超えるときだけ右上に28dpの印（2DUI ではない状態の印）</td></tr>
+</table></div>
+
+<h2 class="sec">4. 7つのタブ</h2>
+<div class="tscroll"><table class="t">
+<tr><th>タブ</th><th>横の軸／縦の軸</th><th>補助の行</th></tr>
+<tr><td>WB</td><td>色温度（撮影時が基準）／色かぶり補正</td><td>［彩度MAX］（表示だけ。WB を離れる・初期化・保存・画面を離れるとオフ。保存する彩度は変えない）</td></tr>
+<tr><td>質感</td><td>テクスチャ／明瞭度</td><td>かすみ（かすみの除去のスライダー）</td></tr>
+<tr><td>トーン</td><td>1点のカーブの入力／出力（端点固定。カーブの線は出さず、写真で確かめる）</td><td>—</td></tr>
+<tr><td>明るさ</td><td>露出（±5EV）／明度</td><td>—</td></tr>
+<tr><td>明暗</td><td>ハイライト／シャドウ</td><td>コントラストのスライダー</td></tr>
+<tr><td>白黒</td><td>ホワイトポイント／ブラックポイント</td><td>—</td></tr>
+<tr><td>カラー</td><td>彩度／バイブランス</td><td>［モノクロ］（保存の対象）</td></tr>
+</table></div>
+<ul>
+<li><b>押しやすさと横スクロールの判断</b>：1つのタブの幅 = max(56dp, 画面の幅 ÷ 7)。400dp では57dp で7つが1行に入るので<b>横スクロールなし</b>。392dp より狭い画面（320dp など）だけ、56dp のまま横にスクロールし、選んだタブを中央へ寄せる。高さ64dp・アイコン24dp・12sp・下20dp。文字1.3倍でも一番長い「トーン」「明るさ」「カラー」（3文字）が57dp に収まる。</li>
+<li>タブを切り替えても、値・2DUIの座標・拡大の位置はそのまま。［初期化］は今のタブだけ（明暗はコントラストを含み、カラーはモノクロを含む）。</li>
+</ul>
+
+<h2 class="sec">5. 寸法と色</h2>
+<div class="tscroll"><table class="t">
+<tr><th>部品</th><th>値</th></tr>
+<tr><td>上の行</td><td>高さ56dp。「現像」15sp・600＋「実験」12sp・#A9A9A4。［ヘルプ］［比較］［初期化］（アイコン20dp＋12sp、48×48dp以上）、［保存］（#EDEDEA・#111111・14sp・600・最小48×64dp・角丸24dp）</td></tr>
+<tr><td>補助の行</td><td>高さ56dp、上の線1dp #1A1A1D、余白 左16・右8dp。トグル：最小48dp・角丸24dp・線1dp #3A3A3F（オンは #EDEDEA の地に #111111）・アイコン20dp・13sp。スライダー：名前12sp・#A9A9A4、押せる高さ48dp、線2dp #3A3A3F、中央の目印2dp #6B6B70、つまみ16dp #EDEDEA。［拡大］48×48dp</td></tr>
+<tr><td>写真の上の札</td><td>補正前・彩度MAX のときだけ左上に「補正前」「彩度MAX」（12sp・高さ24dp・rgba(0,0,0,.62)）。操作中は隠す</td></tr>
+<tr><td>下のタブ</td><td>上の線1dp #222226、選択中 #EDEDEA・600と上の2dpの線、ほかは #8A8A85</td></tr>
+<tr><td>モノクロの色調</td><td>grayscale のあと hsl(260, 11%, 50%) を color で重ね、輝度 +2%</td></tr>
+</table></div>
+
+<h2 class="sec">6. 確認の観点と未確認の範囲</h2>
+<ul>
+<li>400×844dp・400×640dp（ほかに320・390dp も）× 文字1.0・1.3倍で、7つのタブと 待機・1本指で操作中・2本指で拡大中・彩度MAX・モノクロ・保存中・保存の失敗・Back（未保存）の状態、読み込みの各状態を上の切り替えで確かめられます。右の検査で、写真の上に見える2DUIがカーソルだけであること、軸名と数値を出していないこと、写真が切り取られていないこと、2DUIの座標がタブで変わらないこと、押せるものが48dp以上であることを確かめています。</li>
+<li>このHTMLの「2本指」はマウスでは再現できないため、ホイール・［拡大］と「2本指で拡大中」の模擬で確かめます（タッチの端末では2本の指がそのまま動きます）。</li>
+<li>未確認：実機での指の大きさと絶対座標のずれ、端の帯の見つけやすさ（ヘルプと読み上げで補う）、ジェスチャーナビゲーションの端との競合、実際のRAWの処理の速さ、モノクロの色調の実際の見え方、TalkBack の読み上げの順、非線形の文字の拡大（Android 14以降）。</li>
+<li>プレビューは CSS で近似した合成です。元のアートボードとこれまでのHTMLは変えていません。Androidには<b>まだ反映していません</b>。</li>
+</ul>
+</section>
+</div>
+<script id="origData" type="application/json">{"S08-Viewer": "<div class=\"sc-host\" data-sc-name=\"S08-Viewer\"><div data-dc-tpl=\"3\" style=\"width: 390px; height: 844px; background: rgb(15, 15, 16);\"><div class=\"sc-host\" data-sc-name=\"Main\" data-dc-tpl=\"4\"><div data-dc-tpl=\"3\" style=\"width: 390px; height: 844px; position: relative; overflow: hidden; background: rgb(15, 15, 16); color: rgb(237, 237, 234); font-family: &quot;Noto Sans JP&quot;, system-ui, sans-serif; font-size: 15px; line-height: 22px; -webkit-font-smoothing: antialiased;\"><div data-dc-tpl=\"373\" style=\"position: absolute; inset: 0px; background: rgb(0, 0, 0);\"><div data-dc-tpl=\"374\" style=\"height: 64px; display: flex; align-items: flex-end; justify-content: center;\"><span data-dc-tpl=\"375\" style=\"font-size: 15px; line-height: 22px; font-weight: 500; font-variant-numeric: tabular-nums;\"><span class=\"sc-interp\">10月18日 13:34<\/span><\/span><\/div><div data-dc-tpl=\"376\" style=\"position: absolute; inset: 72px 0px 100px; display: flex; align-items: center; justify-content: center;\"><div data-dc-tpl=\"377\" role=\"img\" aria-label=\"写真、10月18日 13:34\" style=\"position: relative; width: 390px; height: 260px; background: radial-gradient(11% 17% at 50% 62%, rgb(200, 176, 138) 0px, rgb(200, 176, 138) 96%, rgba(0, 0, 0, 0) 100%), linear-gradient(195deg, rgb(141, 147, 153) 0%, rgb(91, 97, 104) 58%, rgb(42, 45, 49) 100%);\"><\/div><\/div><nav data-dc-tpl=\"382\" aria-label=\"写真の操作\" style=\"position: absolute; left: 0px; right: 0px; bottom: 0px; padding: 0px 0px 20px; background: rgb(0, 0, 0); display: grid; grid-template-columns: repeat(6, minmax(0px, 1fr));\"><button data-dc-tpl=\"383\" style=\"background: none; border: 0px; padding: 0px; margin: 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 500;\"><svg data-dc-tpl=\"384\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"385\" d=\"M19 12H5M11 18l-6-6 6-6\"><\/path><\/svg><span data-dc-tpl=\"386\">戻る<\/span><\/button><button data-dc-tpl=\"387\" aria-label=\"前の写真\" style=\"background: none; border: 0px; padding: 0px; margin: 0px; color: rgb(237, 237, 234); font-style: inherit; font-variant: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 500;\"><svg data-dc-tpl=\"388\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"389\" d=\"M15 6l-6 6 6 6\"><\/path><\/svg><span data-dc-tpl=\"390\">前へ<\/span><\/button><button data-dc-tpl=\"391\" aria-label=\"次の写真\" style=\"background: none; border: 0px; padding: 0px; margin: 0px; color: rgb(237, 237, 234); font-style: inherit; font-variant: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 500;\"><svg data-dc-tpl=\"392\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"393\" d=\"M9 6l6 6-6 6\"><\/path><\/svg><span data-dc-tpl=\"394\">次へ<\/span><\/button><button data-dc-tpl=\"395\" style=\"background: none; border: 0px; padding: 0px; margin: 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 500;\"><svg data-dc-tpl=\"396\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" aria-hidden=\"true\"><circle data-dc-tpl=\"397\" cx=\"18\" cy=\"5.5\" r=\"2.5\"><\/circle><circle data-dc-tpl=\"398\" cx=\"6\" cy=\"12\" r=\"2.5\"><\/circle><circle data-dc-tpl=\"399\" cx=\"18\" cy=\"18.5\" r=\"2.5\"><\/circle><path data-dc-tpl=\"400\" d=\"M8.2 10.8l7.6-4.1M8.2 13.2l7.6 4.1\"><\/path><\/svg><span data-dc-tpl=\"401\">共有<\/span><\/button><button data-dc-tpl=\"402\" style=\"background: none; border: 0px; padding: 0px; margin: 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 500;\"><svg data-dc-tpl=\"403\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path data-dc-tpl=\"404\" d=\"M3.8 12.2V4.8a1 1 0 0 1 1-1h7.4l8 8a1.4 1.4 0 0 1 0 2l-6.2 6.2a1.4 1.4 0 0 1-2 0z\"><\/path><circle data-dc-tpl=\"405\" cx=\"8.3\" cy=\"8.3\" r=\"1.4\"><\/circle><\/svg><span data-dc-tpl=\"406\">タグ<\/span><\/button><button data-dc-tpl=\"407\" style=\"background: none; border: 0px; padding: 0px; margin: 0px; color: inherit; font-style: inherit; font-variant: inherit; font-stretch: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; cursor: pointer; height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 500;\"><svg data-dc-tpl=\"408\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" aria-hidden=\"true\"><circle data-dc-tpl=\"409\" cx=\"12\" cy=\"12\" r=\"9\"><\/circle><path data-dc-tpl=\"410\" d=\"M12 11v5.5M12 7.8v.01\"><\/path><\/svg><span data-dc-tpl=\"411\">情報<\/span><\/button><\/nav><\/div><\/div><\/div><\/div><\/div>"}</script>
+<script>
+(function () {
+
+  function check(extra) {
+    const dev = document.getElementById('dev'); const d = dev.getBoundingClientRect();
+    const vis = (e) => e.offsetParent !== null && !e.closest('.caller') && !e.classList.contains('synth');
+    const labs = [...dev.querySelectorAll('button,[role=img],[role=text],[role=radio],[role=checkbox]')].filter((e) => vis(e) && !e.closest('[aria-hidden="true"]') && !e.classList.contains('dim')).map((e) => '[' + (e.getAttribute('role') || 'button') + '] ' + (e.getAttribute('aria-label') || e.textContent.replace(/\s+/g, ' ').trim()) + (e.getAttribute('aria-pressed') === 'true' || e.getAttribute('aria-checked') === 'true' ? '（オン）' : '') + (e.getAttribute('aria-disabled') === 'true' ? '（無効）' : ''));
+    document.getElementById('ax').innerHTML = '<b>読み上げ（AX名）</b><br>' + ([...new Set(labs)].slice(0, 48).map((x) => '・' + x).join('<br>') || '—');
+    const small = [...dev.querySelectorAll('button')].filter((b) => vis(b) && !b.classList.contains('dim')).filter((b) => { const r = b.getBoundingClientRect(); return r.height < 47.5 || r.width < 47.5; });
+    const ov = [...dev.querySelectorAll('*')].filter((e) => vis(e) && !e.closest('[data-img]') && !e.closest('[data-tabs] > div')).filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && (r.right > d.right + 0.5 || r.left < d.left - 0.5); }).length;
+    const trunc = [...dev.querySelectorAll('*')].filter((e) => vis(e) && e.children.length === 0 && e.textContent.trim() && getComputedStyle(e).display !== 'inline' && (e.scrollWidth > e.clientWidth + 1) && getComputedStyle(e).overflow !== 'visible').length + [...dev.querySelectorAll('*')].filter((e) => vis(e) && getComputedStyle(e).textOverflow === 'ellipsis').length;
+    const clipBtn = [...dev.querySelectorAll('button')].filter(vis).filter((b) => { const r = b.getBoundingClientRect(); return [...b.querySelectorAll('span')].some((s) => { const q = s.getBoundingClientRect(); return q.height > 0 && s.textContent.trim() && (q.bottom > r.bottom + 1 || q.top < r.top - 1 || q.right > r.right + 1 || q.left < r.left - 1); }); }).length;
+    const minF = Math.min(...[...dev.querySelectorAll('*')].filter((e) => vis(e) && [...e.childNodes].some((c) => c.nodeType === 3 && c.textContent.trim())).map((e) => parseFloat(getComputedStyle(e).fontSize)));
+    const sc = dev.querySelector('.scr'), panel = dev.querySelector('.panel');
+    let cover = true;
+    if (sc && panel) { const keep = sc.scrollTop; sc.scrollTop = 1e6; const items = [...sc.querySelectorAll('button,span,h1,p')].filter((e) => e.getBoundingClientRect().height > 0 && (e.textContent.trim() || e.tagName === 'BUTTON')); const last = items.reduce((m, e) => Math.max(m, e.getBoundingClientRect().bottom), 0); cover = last <= panel.getBoundingClientRect().top + 0.5; sc.scrollTop = keep; }
+    const back = [...dev.querySelectorAll('button')].filter((b) => vis(b) && ['戻る', 'タグ一覧', '連写一覧', '選択へ戻る'].includes(b.textContent.trim())).length;
+    const okc = (b) => b ? '<span class="okc">なし</span>' : '<span class="ngc">あり</span>';
+    let html = '<b>検査（' + O.w + 'dp・文字' + O.k + '倍）</b><br>48dp未満のボタン：' + (small.length ? '<span class="ngc">' + small.length + '</span>' : '<span class="okc">なし</span>') + '<br>はみ出し：' + okc(!ov) + '<br>省略・切れ：' + okc(!trunc) + '<br>ボタンの中身の切れ：' + okc(!clipBtn) + '<br>文字の縮小：' + (minF >= 11.9 * O.k ? '<span class="okc">なし</span>' : '<span class="ngc">' + minF + 'px</span>') + '<br>下部と内容の重なり：' + okc(cover) + '<br>専用の戻る：' + okc(!back);
+    if (extra) html += extra();
+    document.getElementById('chk').innerHTML = html;
+  }
+  const ORIG = JSON.parse(document.getElementById('origData').textContent);
+  const O = { w: 400, h: 844, k: 1, chg: true, rm: false, v: 'view', ld: 'ok', sv: 'ok', sp: 'fast' };
+  const P = {
+    temp: { min: -100, max: 100, st: 1, d: 0, nm: '色温度', ends: ['寒', '暖'] }, tint: { min: -100, max: 100, st: 1, d: 0, nm: '色かぶり', ends: ['緑', 'マゼンタ'] },
+    texture: { min: -100, max: 100, st: 1, d: 0, nm: 'テクスチャ', ends: ['−', '＋'] }, clarity: { min: -100, max: 100, st: 1, d: 0, nm: '明瞭度', ends: ['−', '＋'] }, dehaze: { min: -100, max: 100, st: 1, d: 0, nm: 'かすみの除去' },
+    cx: { min: 5, max: 95, st: 1, d: 50, nm: '入力', ends: ['暗部', '明部'] }, cy: { min: 0, max: 100, st: 1, d: 50, nm: '出力', ends: ['暗く', '明るく'] },
+    exposure: { min: -5, max: 5, st: 0.05, d: 0, nm: '露出', ends: ['−', '＋'], u: 'EV' }, lightness: { min: -100, max: 100, st: 1, d: 0, nm: '明度', ends: ['−', '＋'] },
+    highlights: { min: -100, max: 100, st: 1, d: 0, nm: 'ハイライト', ends: ['−', '＋'] }, shadows: { min: -100, max: 100, st: 1, d: 0, nm: 'シャドウ', ends: ['−', '＋'] }, contrast: { min: -100, max: 100, st: 1, d: 0, nm: 'コントラスト' },
+    whites: { min: -100, max: 100, st: 1, d: 0, nm: 'ホワイトポイント', ends: ['−', '＋'] }, blacks: { min: -100, max: 100, st: 1, d: 0, nm: 'ブラックポイント', ends: ['−', '＋'] },
+    saturation: { min: -100, max: 100, st: 1, d: 0, nm: '彩度', ends: ['−', '＋'] }, vibrance: { min: -100, max: 100, st: 1, d: 0, nm: 'バイブランス', ends: ['−', '＋'] }
+  };
+
+  P.mono = { min: 0, max: 1, st: 1, d: 0, nm: 'モノクロ' };
+  const PADS = { wb: ['temp', 'tint'], tex: ['texture', 'clarity'], tone: ['cx', 'cy'], l1: ['exposure', 'lightness'], l2: ['highlights', 'shadows'], l3: ['whites', 'blacks'], color: ['saturation', 'vibrance'] };
+  const TABS = [['wb', 'WB', 'wb'], ['tex', '質感', 'tex'], ['tone', 'トーン', 'tone'], ['l1', '明るさ', 'light'], ['l2', '明暗', 'l2'], ['l3', '白黒', 'l3'], ['color', 'カラー', 'color']];
+  const GROUP = { wb: ['temp', 'tint'], tex: ['texture', 'clarity', 'dehaze'], tone: ['cx', 'cy'], l1: ['exposure', 'lightness'], l2: ['highlights', 'shadows', 'contrast'], l3: ['whites', 'blacks'], color: ['saturation', 'vibrance', 'mono'] };
+  const MONO = { hue: 260, sat: 11, lum: 2 };
+  const def = () => Object.fromEntries(Object.keys(P).map((k) => [k, P[k].d]));
+  let V, SAVED, R, log = [], tLoad = null, tProc = null, tSave = null, tPip = null, lpT = null;
+  function fresh() { V = def(); SAVED = def(); R = { tab: 'wb', satMax: false, cmp: false, z: 1, px: 0, py: 0, ld: 'idle', ld0: 0, proc: false, proc0: 0, save: 'idle', sheet: null, pip: false, left: null, info: false, ext: null, saved: false, mode: 'idle' }; }
+  const add = (x) => { log.unshift(x); log = log.slice(0, 16); };
+  const say = (x) => { const l = document.getElementById('live'); l.textContent = ''; setTimeout(() => { l.textContent = x; }, 30); };
+  const fmt = (k, v) => { const p = P[k]; if (k === 'mono') return v ? 'オン' : 'オフ'; if (k === 'cx' || k === 'cy') return String(Math.round(v)); const s = p.st < 1 ? Math.abs(v).toFixed(2) : String(Math.abs(Math.round(v))); return (v > 0 ? '+' : v < 0 ? '−' : '±') + s + (p.u ? ' ' + p.u : ''); };
+  const fmtAX = (k, v) => P[k].nm + ' ' + fmt(k, v).replace('−', 'マイナス').replace('+', 'プラス').replace('±', '');
+  const clamp = (k, v) => { const p = P[k]; v = Math.max(p.min, Math.min(p.max, v)); return Math.round(Math.round(v / p.st) * p.st * 100) / 100; };
+  const frac = (k, v) => (v - P[k].min) / (P[k].max - P[k].min);
+  const dirty = () => Object.keys(P).some((k) => V[k] !== SAVED[k]);
+  const S_ = (p, w) => '<svg width="' + (w || 24) + '" height="' + (w || 24) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + p + '</svg>';
+  const G = {
+    prev: S_('<path d="M15 6l-6 6 6 6"></path>'), next: S_('<path d="M9 6l6 6-6 6"></path>'), zin: S_('<circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4.4-4.4M11 8.5v5M8.5 11h5"></path>'), zout: S_('<circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4.4-4.4M8.5 11h5"></path>'),
+    edit: S_('<path d="M4.5 19.5l1-4.2L15.8 5a1.8 1.8 0 0 1 2.5 0l.7.7a1.8 1.8 0 0 1 0 2.5L8.7 18.5z"></path><path d="M13.8 7l3.2 3.2"></path>'), share: S_('<circle cx="18" cy="5.5" r="2.5"></circle><circle cx="6" cy="12" r="2.5"></circle><circle cx="18" cy="18.5" r="2.5"></circle><path d="M8.2 10.8l7.6-4.1M8.2 13.2l7.6 4.1"></path>'),
+    tag: S_('<path d="M3.8 12.2V4.8a1 1 0 0 1 1-1h7.4l8 8a1.4 1.4 0 0 1 0 2l-6.2 6.2a1.4 1.4 0 0 1-2 0z"></path><circle cx="8.3" cy="8.3" r="1.4"></circle>'), info: S_('<circle cx="12" cy="12" r="9"></circle><path d="M12 11v5.5M12 7.8v.01"></path>'),
+    spin: (w) => '<svg width="' + w + '" height="' + w + '" viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke="rgba(255,255,255,0.18)"></circle><path class="spin" d="M12 4a8 8 0 0 1 8 8" stroke="currentColor"></path></svg>',
+    fail: (w) => S_('<path d="M12 4l9 15.5H3z"></path><path d="M12 10v4.5M12 17.2v.1"></path>', w), done: '<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><circle cx="12" cy="12" r="9.5" fill="#EDEDEA"></circle><path d="M7.8 12.3l2.8 2.8 5.6-5.8" fill="none" stroke="#111" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg>',
+    cmp: S_('<rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M12 5v14"></path><path d="M12 5h6a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-6z" fill="currentColor" stroke="none" opacity=".35"></path>', 20), reset: S_('<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"></path><path d="M4.5 4.5v4h4"></path>', 20),
+    wb: S_('<circle cx="12" cy="12" r="7.5"></circle><path d="M12 4.5v15"></path><path d="M12 4.5a7.5 7.5 0 0 1 0 15z" fill="currentColor" stroke="none" opacity=".45"></path>'), tex: S_('<rect x="4" y="4" width="16" height="16" rx="2.5"></rect><path d="M4 9h16M4 15h16M9 4v16M15 4v16" stroke-width="1.2"></path>'),
+    tone: S_('<rect x="4" y="4" width="16" height="16" rx="2.5"></rect><path d="M5.5 18.5C9 18 9 8 12 9.5s3.5-4 6.5-4"></path>'), light: S_('<circle cx="12" cy="12" r="3.8"></circle><path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6L18 18M6 18l1.4-1.4M16.6 7.4L18 6"></path>'), color: S_('<circle cx="9" cy="10" r="5"></circle><circle cx="15" cy="10" r="5"></circle><circle cx="12" cy="15" r="5"></circle>'),
+    dev: S_('<path d="M4 7.5h3l1.5-2h7l1.5 2h3v11H4z"></path><circle cx="12" cy="13" r="3.5"></circle><path d="M17.5 4.5l2 2M19.5 4.5l-2 2" stroke-width="1.4"></path>', 22),
+    failB: '<span aria-hidden="true" style="position:absolute;top:-4px;right:-4px;width:18px;height:18px;border-radius:9px;background:#000;color:#FF8A7A;display:flex;align-items:center;justify-content:center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l9 15.5H3z"></path><path d="M12 10v4.5M12 17.2v.1"></path></svg></span>'
+  };
+
+  G.mono = S_('<circle cx="12" cy="12" r="7.5"></circle><path d="M12 4.5a7.5 7.5 0 0 0 0 15z" fill="currentColor" stroke="none"></path>', 20);
+  G.max = S_('<path d="M4 18L9 9l4 6 3-4 4 7z"></path>', 20); G.help = S_('<circle cx="12" cy="12" r="9"></circle><path d="M9.6 9.3a2.5 2.5 0 1 1 3.4 2.3c-.7.3-1 .8-1 1.5v.4M12 16.6v.1"></path>', 20);
+  G.l1 = G.light; G.l2 = S_('<circle cx="12" cy="12" r="7.5"></circle><path d="M12 4.5v15"></path><path d="M12 4.5a7.5 7.5 0 0 0 0 15z" fill="currentColor" stroke="none" opacity=".8"></path>'); G.l3 = S_('<rect x="4" y="6" width="7" height="12" rx="1.5" fill="currentColor" stroke="none"></rect><rect x="13" y="6" width="7" height="12" rx="1.5"></rect>');
+  const PHOTO = 'radial-gradient(14% 20% at 36% 58%,#E8D2B0 0,#E8D2B0 96%,rgba(0,0,0,0) 100%),radial-gradient(9% 12% at 70% 34%,#C9573E 0,#C9573E 96%,rgba(0,0,0,0) 100%),linear-gradient(180deg,#86A8C8 0%,#C9D6DE 52%,#7D8F6A 53%,#4E5D40 100%)';
+
+  /* ===== 合成のプレビュー ===== */
+  function look() {
+    if (R.cmp) return { f: 'none', warm: 0, cool: 0, mag: 0, grn: 0, haze: 0, mono: 0 };
+    const v = V, br = Math.max(0.2, 1 + v.exposure * 0.16 + v.lightness / 400 + v.whites / 600 + v.blacks / 800 + (v.cy - v.cx) / 220) * (v.mono ? 1 + MONO.lum / 100 : 1);
+    const ct = Math.max(0.3, 1 + v.contrast / 220 + v.clarity / 400 + v.dehaze / 300 + v.texture / 900 - v.highlights / 900 + v.shadows / 900 - v.blacks / 600);
+    const sat = R.satMax ? 3 : Math.max(0, 1 + v.saturation / 100 + v.vibrance / 220 + v.dehaze / 500);
+    return { f: (v.mono ? 'grayscale(1) ' : '') + 'brightness(' + br.toFixed(3) + ') contrast(' + ct.toFixed(3) + ') saturate(' + (v.mono ? 1 : sat).toFixed(3) + ')', warm: v.mono ? 0 : Math.max(0, v.temp) / 260, cool: v.mono ? 0 : Math.max(0, -v.temp) / 260, mag: v.mono ? 0 : Math.max(0, v.tint) / 300, grn: v.mono ? 0 : Math.max(0, -v.tint) / 300, haze: Math.max(0, -v.dehaze) / 250, mono: v.mono ? 1 : 0 };
+  }
+  function applyLook() { const p = dev.querySelector('[data-img]'); if (!p) return; const L = look(); p.style.filter = L.f; ['warm', 'cool', 'mag', 'grn', 'haze', 'mono'].forEach((k) => { p.querySelector('[data-' + k + ']').style.opacity = L[k]; }); }
+  /* ===== 写真の画面（編集の通常のタップ＝内蔵の現像） ===== */
+  function viewer() {
+    const items = [['vprev', G.prev, '前へ', '前の写真'], ['vnext', G.next, '次へ', '次の写真'], ['vzoom', G.zin, '拡大', '拡大'], ['edit', G.edit, '編集', '編集。現像（実験）を開きます。長押しで外部のアプリで編集'], ['share', G.share, '共有', '共有'], ['tags', G.tag, 'タグ', 'タグ'], ['info', G.info, '情報', '情報']];
+    const cv = document.createElement('canvas').getContext('2d'); cv.font = '500 ' + 12 * O.k + 'px "Noto Sans JP", system-ui';
+    const need = Math.max(48, Math.max(...items.map((b) => cv.measureText(b[2]).width)) + 4), one = O.w / 7 >= need, cols = one ? 7 : 4, cw = O.w / cols;
+    const cell = (b) => '<button data-act="' + b[0] + '" aria-label="' + b[3] + '"' + (b[0] === 'edit' ? ' data-chg="tap"' : '') + ' style="width:' + cw + 'px;flex:none;background:none;border:0;padding:4px 2px;margin:0;color:#EDEDEA;cursor:pointer;min-height:64px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-weight:500;text-align:center;touch-action:manipulation;-webkit-user-select:none;user-select:none" class="f12">' + b[1] + '<span aria-hidden="true" style="white-space:nowrap">' + b[2] + '</span></button>';
+    const rows = one ? [items] : [items.slice(0, 4), items.slice(4)];
+    const dock = '<nav aria-label="写真の操作" style="position:absolute;left:0;right:0;bottom:0;padding:0 0 20px;background:#000;display:flex;flex-direction:column">' + rows.map((r) => '<div style="display:flex;justify-content:center">' + r.map(cell).join('') + '</div>').join('') + '</nav>';
+    const info = R.info ? '<button class="dim" data-act="closeInfo" aria-label="閉じる" tabindex="-1"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="情報"><span class="hdl" aria-hidden="true"></span><h2>情報</h2><dl class="f14" style="margin:4px 24px 0;display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 16px"><dt class="mut">形式</dt><dd style="margin:0">RAW（合成）</dd><dt class="mut">大きさ</dt><dd style="margin:0" class="num">5184 × 3888</dd></dl><div style="padding-top:8px"><button class="it" data-act="extEdit" data-chg="new">' + G.edit + '<span style="flex:1">外部のアプリで編集</span></button></div><div class="acts"><button class="out" data-act="closeInfo">閉じる</button></div></div>' : '';
+    const ext = R.ext ? '<div class="caller"><span>（' + R.ext + '・ダミー）</span><button data-act="extBack">写真の画面へ戻る（デモ）</button></div>' : '';
+    return '<div data-screen="view" style="position:absolute;inset:0;background:#000"><div style="height:64px;display:flex;align-items:flex-end;justify-content:center"><span class="f15 num" style="font-weight:500">10月18日 13:34</span></div><div style="position:absolute;left:0;right:0;top:72px;bottom:' + (one ? 100 : 164) + 'px;display:flex;align-items:center;justify-content:center"><div role="img" data-vimg aria-label="写真、合成" style="flex:none;background:' + PHOTO + '"></div></div>' + dock + info + ext + '</div>';
+  }
+  /* ===== 現像：写真いっぱい＋重ねる2DUI ===== */
+  const TOP = 56, ACC = 56, TABH = 64 + 20;
+  function geo() {
+    const vw = O.w, vh = O.h - TOP - ACC - TABH, m = 8, band = 48, gap = 8;
+    const S = Math.floor(Math.min(vw - 2 * m - band - gap, vh - 2 * m - band - gap));
+    const ox = Math.round((vw - (S + gap + band)) / 2), oy = Math.round((vh - (S + gap + band)) / 2);
+    return { vw: vw, vh: vh, S: S, sq: { x: ox, y: oy, w: S, h: S }, vb: { x: ox + S + gap, y: oy, w: band, h: S }, hb: { x: ox, y: oy + S + gap, w: S, h: band } };
+  }
+  const padOf = () => PADS[R.tab];
+  function cursorPos() { const g = geo(), [xk, yk] = padOf(); return { x: g.sq.x + frac(xk, V[xk]) * g.S, y: g.sq.y + (1 - frac(yk, V[yk])) * g.S }; }
+  function overlay() {
+    const g = geo(), [xk, yk] = padOf(), dis = R.ld !== 'ok' || R.save === 'saving';
+    const c = cursorPos(), active = R.mode === 'drag';
+    const box = (r) => 'left:' + r.x + 'px;top:' + r.y + 'px;width:' + r.w + 'px;height:' + r.h + 'px';
+    const ax = (dis ? ' aria-disabled="true" tabindex="-1"' : ' tabindex="0"');
+    return '<div data-ov aria-label="調整の面" style="position:absolute;inset:0;pointer-events:none" data-chg="ov">' +
+      '<div data-sq role="slider"' + ax + ' aria-label="' + P[xk].nm + 'と' + P[yk].nm + 'の面。左右で' + P[xk].nm + '、上下で' + P[yk].nm + '" aria-valuetext="' + fmtAX(xk, V[xk]) + '、' + fmtAX(yk, V[yk]) + '" style="position:absolute;' + box(g.sq) + ';pointer-events:auto;touch-action:none;border-radius:8px"></div>' +
+      '<div data-vb role="slider"' + ax + ' aria-label="' + P[yk].nm + '（縦だけ）" aria-valuemin="' + P[yk].min + '" aria-valuemax="' + P[yk].max + '" aria-valuenow="' + V[yk] + '" aria-valuetext="' + fmtAX(yk, V[yk]) + '" style="position:absolute;' + box(g.vb) + ';pointer-events:auto;touch-action:none;border-radius:8px"></div>' +
+      '<div data-hb role="slider"' + ax + ' aria-label="' + P[xk].nm + '（横だけ）" aria-valuemin="' + P[xk].min + '" aria-valuemax="' + P[xk].max + '" aria-valuenow="' + V[xk] + '" aria-valuetext="' + fmtAX(xk, V[xk]) + '" style="position:absolute;' + box(g.hb) + ';pointer-events:auto;touch-action:none;border-radius:8px"></div>' +
+      (dis ? '' : '<span data-cursor aria-hidden="true" style="position:absolute;left:' + (c.x - 14) + 'px;top:' + (c.y - 14) + 'px;width:28px;height:28px;border-radius:14px;box-sizing:border-box;border:2px solid rgba(237,237,234,' + (active ? 0.95 : 0.55) + ');background:rgba(15,15,16,' + (active ? 0.25 : 0.12) + ');box-shadow:0 0 0 1px rgba(0,0,0,' + (active ? 0.5 : 0.3) + ');pointer-events:none;transition:' + (O.rm ? 'none' : 'border-color .12s,background .12s') + '"></span>') + '</div>';
+  }
+  function slim(k, short) {
+    const v = V[k], f = frac(k, v), dis = R.ld !== 'ok' || R.save === 'saving';
+    return '<div style="flex:1;min-width:0;display:flex;align-items:center;gap:10px"><span class="f12 mut" aria-hidden="true" style="white-space:nowrap">' + short + '</span><div data-s1="' + k + '" role="slider" tabindex="' + (dis ? -1 : 0) + '" aria-label="' + P[k].nm + '" aria-valuemin="' + P[k].min + '" aria-valuemax="' + P[k].max + '" aria-valuenow="' + v + '" aria-valuetext="' + fmtAX(k, v) + '"' + (dis ? ' aria-disabled="true"' : '') + ' style="position:relative;flex:1;min-width:96px;height:48px;touch-action:none;cursor:ew-resize;opacity:' + (dis ? 0.45 : 1) + '"><span aria-hidden="true" style="position:absolute;top:23px;height:2px;left:0;right:0;border-radius:1px;background:#3A3A3F"></span><span aria-hidden="true" style="position:absolute;top:18px;bottom:18px;left:calc(50% - 1px);width:2px;background:#6B6B70"></span><span aria-hidden="true" data-thumb style="position:absolute;top:16px;left:calc(' + f * 100 + '% - 8px);width:16px;height:16px;border-radius:8px;background:#EDEDEA"></span></div></div>';
+  }
+  function chip(act, icon, label, ax, on, dis) { return '<button data-act="' + act + '" aria-pressed="' + on + '" aria-label="' + ax + '"' + (dis ? ' aria-disabled="true"' : '') + ' data-chg="acc" class="f13" style="display:flex;align-items:center;gap:6px;min-height:48px;padding:0 14px 0 10px;border-radius:24px;border:1px solid ' + (on ? '#EDEDEA' : '#3A3A3F') + ';background:' + (on ? '#EDEDEA' : 'none') + ';color:' + (dis ? '#626B72' : on ? '#111' : '#EDEDEA') + ' !important;font-weight:500;cursor:pointer;flex:none">' + icon + '<span>' + label + '</span></button>'; }
+  function accessory() {
+    const t = R.tab, dis = R.ld !== 'ok' || R.save === 'saving';
+    let left = '';
+    if (t === 'wb') left = chip('satMax', G.max, '彩度MAX', '彩度MAX。色を見るための一時表示。保存する彩度は変わりません', R.satMax, dis);
+    else if (t === 'tex') left = slim('dehaze', 'かすみ');
+    else if (t === 'l2') left = slim('contrast', 'コントラスト');
+    else if (t === 'color') left = chip('mono', G.mono, 'モノクロ', 'モノクロ。保存に含まれます', !!V.mono, dis);
+    const zb = '<button data-act="zoom" aria-label="' + (R.z > 1 ? '全体を表示' : '拡大') + '" aria-pressed="' + (R.z > 1) + '" style="flex:none;min-width:48px;min-height:48px;border:0;background:none;padding:0;margin:0;cursor:pointer;display:flex;align-items:center;justify-content:center;color:' + (R.ld === 'ok' ? '#EDEDEA' : '#626B72') + '"' + (R.ld === 'ok' ? '' : ' aria-disabled="true"') + '>' + (R.z > 1 ? G.zout : G.zin) + '</button>';
+    return '<div data-acc style="height:' + ACC + 'px;flex-shrink:0;display:flex;align-items:center;gap:8px;padding:0 8px 0 16px;border-top:1px solid #1A1A1D">' + (left || '<span style="flex:1"></span>') + (left && t !== 'tex' && t !== 'l2' ? '<span style="flex:1"></span>' : '') + zb + '</div>';
+  }
+  function editor() {
+    const g = geo(), Lk = look(), ok = R.ld === 'ok', saving = R.save === 'saving';
+    let photo;
+    if (R.ld === 'loading') photo = '<div role="img" aria-label="写真を読み込んでいます" style="display:flex;flex-direction:column;align-items:center;gap:12px;color:#A9A9A4">' + (Date.now() - R.ld0 >= 400 ? G.spin(28) : '<span style="width:28px;height:28px"></span>') + '<button class="out" data-act="ldCancel" style="color:#EDEDEA;visibility:' + (Date.now() - R.ld0 >= 400 ? 'visible' : 'hidden') + '">中止</button></div>';
+    else if (R.ld === 'unsup') photo = '<div role="img" aria-label="このRAW形式にはまだ対応していません。カメラのJPEGには置き換えません。端末のBackで写真の画面へ戻ります" data-chg="17" style="display:flex;flex-direction:column;align-items:center;gap:8px;color:#FF8A7A">' + G.fail(32) + '<span class="f14" style="color:#EDEDEA">未対応のRAW</span></div>';
+    else if (R.ld === 'fail') photo = '<div style="display:flex;flex-direction:column;align-items:center;gap:12px;color:#FF8A7A" data-chg="17"><span role="img" aria-label="写真を読み込めませんでした" style="display:flex">' + G.fail(32) + '</span><button class="out" data-act="ldRetry" style="color:#EDEDEA">再試行</button></div>';
+    else photo = '<div data-viewport style="position:absolute;inset:0;overflow:hidden;display:flex;align-items:center;justify-content:center"><div data-img role="img" aria-label="現像のプレビュー（合成）' + (R.cmp ? '、補正前' : '') + (R.satMax ? '、彩度MAXで表示中' : '') + (R.z > 1 ? '、拡大中' : '') + '" style="position:relative;flex:none;background:' + PHOTO + ';filter:' + Lk.f + ';transform:translate(' + R.px + 'px,' + R.py + 'px) scale(' + R.z + ');transform-origin:50% 50%;transition:' + (O.rm ? 'none' : 'transform .12s') + '">' +
+      '<span data-warm style="position:absolute;inset:0;background:#FF9A3C;mix-blend-mode:soft-light;opacity:' + Lk.warm + '"></span><span data-cool style="position:absolute;inset:0;background:#3C7BFF;mix-blend-mode:soft-light;opacity:' + Lk.cool + '"></span><span data-mag style="position:absolute;inset:0;background:#E040C0;mix-blend-mode:soft-light;opacity:' + Lk.mag + '"></span><span data-grn style="position:absolute;inset:0;background:#40D060;mix-blend-mode:soft-light;opacity:' + Lk.grn + '"></span><span data-haze style="position:absolute;inset:0;background:#DDE3E8;opacity:' + Lk.haze + '"></span><span data-mono style="position:absolute;inset:0;background:hsl(' + MONO.hue + ',' + MONO.sat + '%,50%);mix-blend-mode:color;opacity:' + Lk.mono + '"></span></div></div>' + overlay() +
+      (R.cmp || R.satMax ? '<span class="f12" aria-hidden="true" style="position:absolute;left:12px;top:12px;min-height:24px;padding:0 10px;border-radius:12px;background:rgba(0,0,0,0.62);display:flex;align-items:center;pointer-events:none;visibility:' + (R.mode === 'idle' ? 'visible' : 'hidden') + '" data-chg="new">' + (R.cmp ? '補正前' : '彩度MAX') + '</span>' : '') +
+      '<span data-proc role="img" aria-label="反映しています" style="position:absolute;right:12px;top:12px;width:28px;height:28px;border-radius:14px;background:rgba(0,0,0,0.62);display:flex;align-items:center;justify-content:center;color:#EDEDEA;pointer-events:none;visibility:' + (R.proc && Date.now() - R.proc0 >= 400 ? 'visible' : 'hidden') + '">' + G.spin(18) + '</span>';
+    const tb = (act, icon, lab, ax, extra) => '<button data-act="' + act + '" aria-label="' + ax + '" ' + (extra || '') + ' class="f12" style="background:none;border:0;margin:0;padding:4px 4px;min-width:48px;min-height:48px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:' + (ok && !saving ? '#EDEDEA' : '#626B72') + ';cursor:pointer;position:relative;font-weight:500">' + icon + '<span aria-hidden="true" style="white-space:nowrap">' + lab + '</span></button>';
+    const en = ok && !saving ? '' : 'aria-disabled="true"';
+    const tabName = TABS.find((x) => x[0] === R.tab)[1];
+    const top = '<div data-top style="height:' + TOP + 'px;display:flex;align-items:center;gap:2px;padding:0 8px 0 16px;flex-shrink:0"><span class="f15" style="flex:1;min-width:0;font-weight:600;white-space:nowrap" role="text" aria-label="現像（実験）">現像<span class="f12 mut" style="font-weight:500;margin-left:6px">実験</span></span>' +
+      tb('help', G.help, 'ヘルプ', '使い方と今の値', '') + tb('cmp', G.cmp, '比較', '補正前と比べる。表示だけ', 'aria-pressed="' + R.cmp + '" ' + en) + tb('resetTab', G.reset, '初期化', '「' + tabName + '」だけを初期化', en) +
+      '<button data-act="save" aria-label="' + (saving ? 'JPEGで保存しています' : 'JPEGで別に保存。原本は変わりません') + (R.save === 'fail' ? '。保存できませんでした。もう一度押すと再試行' : '') + '"' + (ok && !saving ? '' : ' aria-disabled="true"') + ' class="f14" style="position:relative;margin-left:4px;min-height:48px;min-width:64px;padding:0 16px;border-radius:24px;border:0;background:' + (ok && !saving ? '#EDEDEA' : '#2A2A2E') + ';color:' + (ok && !saving ? '#111' : '#8A8A85') + ' !important;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px" data-chg="save">' + (saving ? G.spin(16) : '') + '<span>保存</span>' + (R.save === 'fail' ? G.failB : '') + '</button></div>';
+    const cw = Math.max(56, O.w / 7), scroll = cw * 7 > O.w + 0.5;
+    const tabs = '<nav aria-label="調整の種類" data-tabs data-chg="tabs" style="flex-shrink:0;padding:0 0 20px;background:#000;border-top:1px solid #222226;overflow-x:' + (scroll ? 'auto' : 'hidden') + '"' + (scroll ? ' data-fit' : '') + '><div style="display:flex;width:' + (cw * 7) + 'px">' + TABS.map(([k, n, ic]) => '<button data-tab="' + k + '" aria-pressed="' + (R.tab === k) + '" aria-label="' + n + '" class="f12" style="flex:none;width:' + cw + 'px;background:none;border:0;margin:0;padding:4px 2px;min-height:64px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:' + (R.tab === k ? '#EDEDEA' : '#8A8A85') + ';cursor:pointer;font-weight:' + (R.tab === k ? 600 : 500) + ';position:relative">' + G[ic] + '<span aria-hidden="true" style="white-space:nowrap">' + n + '</span>' + (R.tab === k ? '<span aria-hidden="true" style="position:absolute;top:0;left:25%;right:25%;height:2px;border-radius:1px;background:#EDEDEA"></span>' : '') + '</button>').join('') + '</div></nav>';
+    return '<div data-screen="dev" style="position:absolute;inset:0;background:#000;display:flex;flex-direction:column">' + top + '<div data-photo style="position:relative;height:' + g.vh + 'px;flex-shrink:0;display:flex;align-items:center;justify-content:center;overflow:hidden">' + photo + '<span class="synth" aria-hidden="true" style="left:8px;right:auto;top:auto;bottom:8px;z-index:1">合成の画面</span>' + (R.pip ? '<span role="img" aria-label="保存しました" style="position:absolute;left:50%;bottom:12px;transform:translateX(-50%);width:40px;height:40px;border-radius:20px;background:#26262A;box-shadow:inset 0 0 0 1px #3A3A3F;display:flex;align-items:center;justify-content:center">' + G.done + '</span>' : '') + '</div>' + accessory() + tabs + sheet() + '</div>';
+  }
+  function sheet() {
+    if (R.sheet === 'save') return '<button class="dim" data-act="close" aria-label="閉じる" tabindex="-1"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="JPEGで保存"><span class="hdl" aria-hidden="true"></span><h2>JPEGで保存</h2><p class="body num" style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px 12px"><span>2048 × 1536 px</span><span>JPEG</span><span class="mut">実験版・別のファイル</span>' + (V.mono ? '<span class="mut">モノクロ</span>' : '') + '</p><div class="acts"><button class="cancel" data-act="doSave" style="min-height:52px">保存</button><button class="out" data-act="close">キャンセル</button></div></div>';
+    if (R.sheet === 'discard') return '<button class="dim" data-act="close" aria-label="閉じる" tabindex="-1"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="変更の破棄の確認"><span class="hdl" aria-hidden="true"></span><h2>変更を破棄しますか？</h2><div class="acts"><button class="danger" data-act="doDiscard">破棄</button><button class="cancel" data-act="close">編集を続ける</button></div></div>';
+    if (R.sheet === 'help') { const [xk, yk] = padOf(); const rows = [[P[xk].nm + '（横）', fmt(xk, V[xk])], [P[yk].nm + '（縦）', fmt(yk, V[yk])]].concat(R.tab === 'tex' ? [[P.dehaze.nm, fmt('dehaze', V.dehaze)]] : R.tab === 'l2' ? [[P.contrast.nm, fmt('contrast', V.contrast)]] : R.tab === 'color' ? [['モノクロ', fmt('mono', V.mono)]] : []);
+      return '<button class="dim" data-act="close" aria-label="閉じる" tabindex="-1"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="使い方" style="max-height:' + Math.round(O.h * 0.85) + 'px;overflow-y:auto"><span class="hdl" aria-hidden="true"></span><h2>使い方</h2><ul class="body" style="margin:4px 24px 0;padding-left:18px;display:flex;flex-direction:column;gap:6px"><li>写真の上を1本の指でなぞると、横と縦の2つの値が変わります</li><li>右の端は縦の値だけ、下の端は横の値だけ</li><li>2本の指で拡大と移動（値は変わりません）</li><li>指を離すと、丸い印だけが残ります</li></ul><h2 style="margin-top:16px;font-size:calc(15px*var(--k));line-height:calc(22px*var(--k))">今の値（' + TABS.find((x) => x[0] === R.tab)[1] + '）</h2><dl class="f14 num" style="margin:4px 24px 0;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 16px">' + rows.map(([a, b]) => '<dt class="mut" style="margin:0">' + a + '</dt><dd style="margin:0;text-align:right">' + b + '</dd>').join('') + '</dl><div class="acts"><button class="out" data-act="close">閉じる</button></div></div>'; }
+    return '';
+  }
+  /* ===== 描画 ===== */
+  const dev = document.getElementById('dev'), orig = document.getElementById('orig');
+  orig.innerHTML = ORIG['S08-Viewer']; document.getElementById('origName').textContent = 'S08-Viewer（08 写真詳細）';
+  function fitImg() { const im = dev.querySelector('[data-img],[data-vimg]'); if (!im) return; const box = im.parentElement, W = box.clientWidth, H = box.clientHeight; let w = W, h = W / 1.5; if (h > H) { h = H; w = H * 1.5; } im.style.width = Math.floor(w) + 'px'; im.style.height = Math.floor(h) + 'px'; }
+  function render(f) {
+    document.documentElement.style.setProperty('--k', O.k);
+    dev.style.setProperty('--w', O.w + 'px'); dev.style.setProperty('--h', O.h + 'px');
+    dev.classList.toggle('showchg', O.chg); dev.classList.toggle('rm', O.rm);
+    document.getElementById('devName').textContent = (O.v === 'dev' ? '現像（実験）・' + TABS.find((x) => x[0] === R.tab)[1] : '写真の画面') + '・' + O.w + 'dp・文字' + O.k + '倍・高さ' + O.h + 'dp';
+    let h = (O.v === 'dev' ? '' : '<span class="synth" aria-hidden="true">合成の画面</span>') + (O.v === 'dev' ? editor() : viewer());
+    if (R.left) h += '<div class="caller" style="background:#000"><span>（' + R.left + '・デモ）</span><button data-act="reopen">写真の画面を開き直す（デモ）</button></div>';
+    dev.innerHTML = h;
+    if (R.sheet || R.info) dev.querySelectorAll('[data-top],[data-photo],[data-acc],[data-tabs],nav[aria-label=写真の操作]').forEach((e) => { e.inert = true; });
+    fitImg(); bind();
+    const tn = dev.querySelector('[data-tabs]'); if (tn) { const a = tn.querySelector('[aria-pressed=true]'); if (a) tn.scrollLeft = Math.max(0, a.offsetLeft - (tn.clientWidth - a.offsetWidth) / 2); }
+    if (f) { const e = dev.querySelector(f); if (e) e.focus(); }
+    check(extra);
+    document.getElementById('log').innerHTML = '<b>操作の記録</b><br>' + (log.map((x) => '・' + x).join('<br>') || '—');
+  }
+  function extra() {
+    if (O.v !== 'dev') return '<br>写真の画面：［編集］の通常のタップで現像（実験）、長押し（0.5秒）と［情報］の行で外部のアプリで編集';
+    const g = geo(); let s = '<br>状態：' + R.mode + '・読み込み ' + ({ idle: '—', loading: '読み込み中', ok: '表示中', unsup: '未対応のRAW', fail: '失敗' })[R.ld] + '・保存 ' + (R.save === 'saving' ? '保存中' : R.save === 'fail' ? '失敗' : R.saved ? '保存済み' : '—') + '・未保存の変更 ' + (dirty() ? 'あり' : 'なし') + '・彩度MAX ' + (R.satMax ? 'オン（表示だけ）' : 'オフ') + '・保存する彩度 ' + fmt('saturation', V.saturation) + '・モノクロ ' + fmt('mono', V.mono) + '（保存する値）';
+    s += '<br>2DUIの座標（全タブ共通）：面 ' + g.S + '×' + g.S + 'dp（' + g.sq.x + ',' + g.sq.y + '）・縦の帯 ' + g.vb.w + '×' + g.vb.h + '・横の帯 ' + g.hb.w + '×' + g.hb.h + '・間 8dp（重ならない）';
+    const ov = dev.querySelector('[data-ov]'); if (ov) { const shown = [...ov.querySelectorAll('*')].filter((e) => e.offsetParent !== null && getComputedStyle(e).visibility !== 'hidden' && (getComputedStyle(e).backgroundColor !== 'rgba(0, 0, 0, 0)' || getComputedStyle(e).borderTopWidth !== '0px' || e.textContent.trim())).map((e) => e.hasAttribute('data-cursor') ? 'cursor' : 'other'); s += '<br>写真の上に見える2DUI：' + (shown.length === 1 && shown[0] === 'cursor' ? '<span class="okc">カーソルだけ</span>（' + (R.mode === 'drag' ? '操作中・はっきり' : '半透明') + '）' : shown.length ? '<span class="ngc">' + shown.join(',') + '</span>' : 'なし'); const vis = [...ov.querySelectorAll('[data-sq],[data-vb],[data-hb]')].every((e) => !e.textContent.trim()); s += '・軸名と数値 ' + (vis ? '<span class="okc">表示しない（読み上げ名にはある）</span>' : '<span class="ngc">表示</span>'); }
+    const im = dev.querySelector('[data-img]'), ph = dev.querySelector('[data-photo]'); if (im) { const a = im.getBoundingClientRect(), b = ph.getBoundingClientRect(); s += '<br>写真：' + Math.round(a.width) + '×' + Math.round(a.height) + 'dp（領域 ' + Math.round(b.width) + '×' + Math.round(b.height) + 'dp）・' + (R.z > 1 ? '拡大中（はみ出した部分だけ切る）' : (a.width <= b.width + 0.5 && a.height <= b.height + 0.5 ? '<span class="okc">全体を表示・切り取りなし</span>' : '<span class="ngc">切れている</span>')); }
+    const tn = dev.querySelector('[data-tabs]'); s += '<br>下のタブ：7つ・各 ' + Math.round(tn.querySelector('button').getBoundingClientRect().width) + 'dp × 64dp・' + (tn.scrollWidth > tn.clientWidth + 1 ? '横スクロールあり' : '横スクロールなし');
+    return s;
+  }
+  function processing() { if (!R.proc) { R.proc = true; R.proc0 = Date.now(); setTimeout(() => { if (R.proc) { const m = dev.querySelector('[data-proc]'); if (m && Date.now() - R.proc0 >= 400) m.style.visibility = 'visible'; } }, 410); } clearTimeout(tProc); tProc = setTimeout(() => { R.proc = false; const m = dev.querySelector('[data-proc]'); if (m) m.style.visibility = 'hidden'; }, O.sp === 'slow' ? 1200 : 150); }
+  function setVal(k, v) { const nv = clamp(k, v); if (nv === V[k]) return false; V[k] = nv; if (R.cmp) R.cmp = false; return true; }
+  function refresh() {
+    const c = cursorPos(), cu = dev.querySelector('[data-cursor]'), [xk, yk] = padOf();
+    if (cu) { cu.style.left = (c.x - 14) + 'px'; cu.style.top = (c.y - 14) + 'px'; const a = R.mode === 'drag'; cu.style.borderColor = 'rgba(237,237,234,' + (a ? 0.95 : 0.55) + ')'; cu.style.background = 'rgba(15,15,16,' + (a ? 0.25 : 0.12) + ')'; cu.style.visibility = R.mode === 'pinch' ? 'hidden' : 'visible'; }
+    const sq = dev.querySelector('[data-sq]'); if (sq) { sq.setAttribute('aria-valuetext', fmtAX(xk, V[xk]) + '、' + fmtAX(yk, V[yk])); const vb = dev.querySelector('[data-vb]'), hb = dev.querySelector('[data-hb]'); vb.setAttribute('aria-valuenow', V[yk]); vb.setAttribute('aria-valuetext', fmtAX(yk, V[yk])); hb.setAttribute('aria-valuenow', V[xk]); hb.setAttribute('aria-valuetext', fmtAX(xk, V[xk])); }
+    dev.querySelectorAll('[data-s1]').forEach((s) => { const k = s.dataset.s1; s.querySelector('[data-thumb]').style.left = 'calc(' + frac(k, V[k]) * 100 + '% - 8px)'; s.setAttribute('aria-valuenow', V[k]); s.setAttribute('aria-valuetext', fmtAX(k, V[k])); });
+    const tag = dev.querySelector('[data-photo] > span.f12'); if (tag) tag.style.visibility = R.mode === 'idle' ? 'visible' : 'hidden';
+    applyLook();
+  }
+  function setZoom() { const im = dev.querySelector('[data-img]'); if (!im) return; const vp = dev.querySelector('[data-viewport]'); const mx = vp.clientWidth * (R.z - 1) / 2 + Math.max(0, im.offsetWidth * R.z - vp.clientWidth) / 2 * 0, my = vp.clientHeight * (R.z - 1) / 2; const lim = (v, m) => Math.max(-m, Math.min(m, v)); const wx = Math.max(0, (im.offsetWidth * R.z - vp.clientWidth) / 2), wy = Math.max(0, (im.offsetHeight * R.z - vp.clientHeight) / 2); R.px = lim(R.px, wx); R.py = lim(R.py, wy); if (R.z <= 1) { R.px = R.py = 0; } im.style.transition = 'none'; im.style.transform = 'translate(' + R.px + 'px,' + R.py + 'px) scale(' + R.z + ')'; }
+  function bind() {
+    const ph = dev.querySelector('[data-photo]');
+    if (ph && dev.querySelector('[data-viewport]') && R.ld === 'ok' && R.save !== 'saving') {
+      const pts = new Map(); let target = null, start = null, d0 = 0, z0 = 1, mid0 = null, p0 = null;
+      const g = () => geo();
+      const local = (e) => { const r = ph.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+      const apply = (e) => { const [x, y] = local(e), G2 = g(), [xk, yk] = padOf(); let ch = false;
+        if (target === 'sq' || target === 'hb') { const fx = Math.max(0, Math.min(1, (x - G2.sq.x) / G2.S)); ch = setVal(xk, P[xk].min + fx * (P[xk].max - P[xk].min)) || ch; }
+        if (target === 'sq' || target === 'vb') { const fy = Math.max(0, Math.min(1, 1 - (y - G2.sq.y) / G2.S)); ch = setVal(yk, P[yk].min + fy * (P[yk].max - P[yk].min)) || ch; }
+        if (ch) { refresh(); processing(); } };
+      ph.addEventListener('pointerdown', (e) => {
+        if (e.target.closest('button')) return;
+        try { ph.setPointerCapture(e.pointerId); } catch (err) {} pts.set(e.pointerId, local(e));
+        if (pts.size === 1) { const t = e.target.closest('[data-sq],[data-vb],[data-hb]'); target = t ? (t.hasAttribute('data-sq') ? 'sq' : t.hasAttribute('data-vb') ? 'vb' : 'hb') : null; if (target) { start = Object.assign({}, V); R.mode = 'drag'; refresh(); apply(e); } e.preventDefault(); }
+        else if (pts.size === 2) { if (target && start) { const [xk, yk] = padOf(); V[xk] = start[xk]; V[yk] = start[yk]; add('2本目の指 → 面の値を指を置く前に戻し、拡大と移動へ（2D の値は変えない）'); } target = null; R.mode = 'pinch'; const [a, b] = [...pts.values()]; d0 = Math.hypot(a[0] - b[0], a[1] - b[1]); z0 = R.z; mid0 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; p0 = [R.px, R.py]; refresh(); }
+      });
+      ph.addEventListener('pointermove', (e) => { if (!pts.has(e.pointerId)) return; pts.set(e.pointerId, local(e));
+        if (R.mode === 'pinch' && pts.size >= 2) { const [a, b] = [...pts.values()]; R.z = Math.max(1, Math.min(4, z0 * Math.hypot(a[0] - b[0], a[1] - b[1]) / d0)); const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; R.px = p0[0] + mid[0] - mid0[0]; R.py = p0[1] + mid[1] - mid0[1]; setZoom(); }
+        else if (R.mode === 'drag' && target) apply(e); });
+      const up = (e) => { if (!pts.has(e.pointerId)) return; pts.delete(e.pointerId); if (!pts.size) { const was = R.mode; R.mode = 'idle'; if (was === 'drag' && target) { const [xk, yk] = padOf(); add((target === 'sq' ? '面：' + P[xk].nm + 'と' + P[yk].nm : target === 'vb' ? '右の端：' + P[yk].nm + 'だけ' : '下の端：' + P[xk].nm + 'だけ') + ' → ' + fmt(xk, V[xk]) + '・' + fmt(yk, V[yk])); } if (was === 'pinch') add('2本の指：拡大 ' + R.z.toFixed(2) + '倍（値は変えない）'); target = null; start = null; refresh(); document.getElementById('log').innerHTML = '<b>操作の記録</b><br>' + log.map((x) => '・' + x).join('<br>'); check(extra); } };
+      ph.addEventListener('pointerup', up); ph.addEventListener('pointercancel', up);
+      ph.addEventListener('wheel', (e) => { e.preventDefault(); R.z = Math.max(1, Math.min(4, R.z * (e.deltaY < 0 ? 1.1 : 0.9))); setZoom(); }, { passive: false });
+      dev.querySelectorAll('[data-sq],[data-vb],[data-hb]').forEach((el) => el.addEventListener('keydown', (e) => { const [xk, yk] = padOf(), kind = el.hasAttribute('data-sq') ? 'sq' : el.hasAttribute('data-vb') ? 'vb' : 'hb'; const step = (k) => Math.max(P[k].st, (P[k].max - P[k].min) / (e.shiftKey ? 10 : 100)); let ch = false;
+        if ((kind === 'sq' || kind === 'hb') && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) ch = setVal(xk, V[xk] + (e.key === 'ArrowRight' ? 1 : -1) * step(xk));
+        if ((kind === 'sq' || kind === 'vb') && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) ch = setVal(yk, V[yk] + (e.key === 'ArrowUp' ? 1 : -1) * step(yk));
+        if (ch) { e.preventDefault(); refresh(); processing(); } }));
+    }
+    dev.querySelectorAll('[data-s1]').forEach((el) => { if (el.getAttribute('aria-disabled') === 'true') return; const k = el.dataset.s1;
+      const upd = (e) => { const r = el.getBoundingClientRect(); if (setVal(k, P[k].min + Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * (P[k].max - P[k].min))) { refresh(); processing(); } };
+      el.addEventListener('pointerdown', (e) => { try { el.setPointerCapture(e.pointerId); } catch (err) {} el.dataset.drag = '1'; R.mode = 'drag'; upd(e); });
+      el.addEventListener('pointermove', (e) => { if (el.dataset.drag) upd(e); });
+      const end = () => { if (!el.dataset.drag) return; delete el.dataset.drag; R.mode = 'idle'; add(P[k].nm + ' → ' + fmt(k, V[k])); refresh(); check(extra); };
+      el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+      el.addEventListener('keydown', (e) => { if (!/Arrow/.test(e.key)) return; const d = (e.key === 'ArrowRight' || e.key === 'ArrowUp') ? 1 : -1; if (setVal(k, V[k] + d * Math.max(P[k].st, (P[k].max - P[k].min) / (e.shiftKey ? 10 : 100)))) { e.preventDefault(); refresh(); processing(); } }); });
+    const eb = dev.querySelector('[data-act=edit]');
+    if (eb) { eb.addEventListener('pointerdown', () => { eb.dataset.lp = ''; clearTimeout(lpT); lpT = setTimeout(() => { eb.dataset.lp = '1'; R.ext = 'Android の ACTION_EDIT の選択画面（外部のアプリで編集）'; add('［編集］を長押し → 外部のアプリで編集'); render(); }, 500); }); ['pointerup', 'pointerleave', 'pointercancel'].forEach((t) => eb.addEventListener(t, () => clearTimeout(lpT))); eb.addEventListener('contextmenu', (e) => e.preventDefault()); }
+  }
+  /* ===== 開く・離れる ===== */
+  function openDev() { O.v = 'dev'; R.info = false; R.ext = null; R.ld = 'loading'; R.ld0 = Date.now(); R.save = 'idle'; R.saved = false; R.z = 1; R.px = R.py = 0; R.mode = 'idle'; syncSeg(); clearTimeout(tLoad); render(); setTimeout(() => { if (R.ld === 'loading') render(); }, 410);
+    tLoad = setTimeout(() => { if (O.v !== 'dev' || R.ld !== 'loading') return; R.ld = O.ld === 'unsup' ? 'unsup' : O.ld === 'fail' ? 'fail' : 'ok'; add(R.ld === 'ok' ? '長辺2048px以下のプレビューを読み込んだ' : R.ld === 'unsup' ? '未対応のRAW → カメラのJPEGには置き換えない' : '読み込みに失敗'); say(R.ld === 'ok' ? '現像の画面を開きました' : R.ld === 'unsup' ? 'このRAW形式にはまだ対応していません' : '写真を読み込めませんでした'); render(R.ld === 'ok' ? '[data-tab=' + R.tab + ']' : R.ld === 'fail' ? '[data-act=ldRetry]' : null); }, O.ld === 'slow' ? 5000 : 600); }
+  function leave(why) { clearTimeout(tLoad); clearTimeout(tSave); R.satMax = false; R.cmp = false; O.v = 'view'; R.sheet = null; add(why); syncSeg(); render('[data-act=edit]'); }
+  dev.addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.getAttribute('aria-disabled') === 'true') { add('（無効のため何もしない）'); return render(); }
+    const a = b.dataset.act; let f = null;
+    if (b.dataset.tab) { const was = R.tab; R.tab = b.dataset.tab; if (was === 'wb' && R.tab !== 'wb' && R.satMax) { R.satMax = false; add('WBを離れた → 彩度MAXをオフ（表示を元の彩度へ）'); } add('タブ：' + b.textContent.trim() + '（値と2DUIの座標はそのまま）'); f = '[data-tab=' + R.tab + ']'; }
+    else if (a === 'edit') { if (b.dataset.lp === '1') { b.dataset.lp = ''; return; } add('［編集］の通常のタップ → 現像（実験）'); return openDev(); }
+    else if (a === 'extEdit') { R.info = false; R.ext = 'Android の ACTION_EDIT の選択画面（外部のアプリで編集）'; add('［情報］→［外部のアプリで編集］'); }
+    else if (a === 'extBack') { R.ext = null; f = '[data-act=edit]'; }
+    else if (a === 'info') { R.info = true; add('［情報］'); f = '.sheet .it'; }
+    else if (a === 'closeInfo') { R.info = false; f = '[data-act=info]'; }
+    else if (a === 'vzoom' || a === 'vprev' || a === 'vnext' || a === 'share' || a === 'tags') add('（写真の画面の既存の操作：' + b.textContent.trim() + '）');
+    else if (a === 'ldCancel') return leave('読み込みを中止 → 写真の画面へ（現像は開かない）');
+    else if (a === 'ldRetry') { add('再試行'); return openDev(); }
+    else if (a === 'zoom') { R.z = R.z > 1 ? 1 : 2.5; R.px = R.py = 0; add(R.z > 1 ? '［拡大］2.5倍（はみ出した部分だけ切る）' : '［全体］へ戻す（切り取りなし）'); f = '[data-act=zoom]'; }
+    else if (a === 'cmp') { R.cmp = !R.cmp; add(R.cmp ? '［比較］→ 補正前を表示（表示だけ）' : '［比較］→ 補正後へ'); f = '[data-act=cmp]'; }
+    else if (a === 'help') { R.sheet = 'help'; add('［ヘルプ］'); f = '.sheet .out'; }
+    else if (a === 'resetTab') { GROUP[R.tab].forEach((k) => { V[k] = P[k].d; }); if (R.tab === 'wb') R.satMax = false; add('［初期化］→「' + TABS.find((x) => x[0] === R.tab)[1] + '」だけ初期値へ'); processing(); f = '[data-act=resetTab]'; }
+    else if (a === 'satMax') { R.satMax = !R.satMax; add(R.satMax ? '［彩度MAX］オン：表示だけ（保存する彩度 ' + fmt('saturation', V.saturation) + ' は変えない）' : '［彩度MAX］オフ'); processing(); f = '[data-act=satMax]'; }
+    else if (a === 'mono') { V.mono = V.mono ? 0 : 1; add(V.mono ? '［モノクロ］オン：白黒にしてから 色相260・彩度11・輝度+2 の色調（保存に含む）' : '［モノクロ］オフ'); processing(); f = '[data-act=mono]'; }
+    else if (a === 'save') { if (R.satMax) { R.satMax = false; add('保存の前に彩度MAXをオフ（保存には残さない）'); } if (R.cmp) { R.cmp = false; add('保存の前に比較をやめて補正後へ'); } R.sheet = 'save'; add('［保存］→ 出力の大きさと実験版の表示'); f = '.sheet .cancel'; }
+    else if (a === 'doSave') { R.sheet = null; R.save = 'saving'; add('JPEG（2048 × 1536 px）を別のファイルとして保存中（原本は変えない）'); clearTimeout(tSave); tSave = setTimeout(() => { if (O.v !== 'dev') return; if (O.sv === 'fail') { R.save = 'fail'; add('保存に失敗 → 調整はそのまま。もう一度押すと再試行'); say('保存できませんでした'); } else { R.save = 'idle'; R.saved = true; SAVED = Object.assign({}, V); R.pip = true; add('保存した（別のJPEG）。モノクロは含む・彩度MAXと比較は含まない'); say('保存しました'); clearTimeout(tPip); tPip = setTimeout(() => { R.pip = false; render(); }, 900); } render('[data-act=save]'); }, 1100); }
+    else if (a === 'close') { const was = R.sheet; R.sheet = null; add(was === 'discard' ? '［編集を続ける］' : '閉じる'); f = was === 'discard' ? '[data-tab=' + R.tab + ']' : was === 'help' ? '[data-act=help]' : '[data-act=save]'; }
+    else if (a === 'doDiscard') { V = Object.assign({}, SAVED); return leave('［破棄］→ 未保存の変更を捨てて写真の画面へ'); }
+    else if (a === 'reopen') { R.left = null; O.v = 'view'; }
+    render(f);
+  });
+  document.getElementById('hwBack').addEventListener('click', () => {
+    if (R.left) return;
+    if (O.v === 'view') { if (R.ext) { R.ext = null; add('Back：写真の画面へ'); return render('[data-act=edit]'); } if (R.info) { R.info = false; add('Back：情報を閉じる'); return render('[data-act=info]'); } R.left = '写真一覧へ戻った'; add('Back：写真の画面 → 写真一覧'); return render(); }
+    if (R.sheet) { const was = R.sheet; R.sheet = null; add('Back：' + (was === 'discard' ? '確認を閉じて編集を続ける' : 'シートを閉じる')); return render(was === 'help' ? '[data-act=help]' : was === 'discard' ? '[data-tab=' + R.tab + ']' : '[data-act=save]'); }
+    if (R.save === 'saving') { add('Back：保存中は戻らない'); return render(); }
+    if (R.ld === 'loading') return leave('Back：読み込みを取り消して写真の画面へ');
+    if (R.ld === 'ok' && dirty()) { R.sheet = 'discard'; add('Back：未保存の変更がある → 破棄の確認'); return render('.sheet .cancel'); }
+    leave('Back：' + (R.saved ? '保存済み' : '変更なし') + ' → 写真の画面へ（確認なし）');
+  });
+  document.getElementById('reset').addEventListener('click', () => { clearTimeout(tLoad); clearTimeout(tSave); fresh(); O.v = 'view'; log = []; syncSeg(); render(); });
+  function seg(id, fn) { const el = document.getElementById(id); el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; fn(b.dataset.v); syncSeg(); render(); }); }
+  function syncSeg() { [['oW', O.w], ['oH', O.h], ['oK', O.k], ['oV', O.v], ['oLd', O.ld], ['oSv', O.sv], ['oSp', O.sp], ['oTab', R.tab], ['oMode', R.mode]].forEach(([id, v]) => document.querySelectorAll('#' + id + ' button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.v == String(v)))); }
+  seg('oW', (v) => { O.w = +v; }); seg('oH', (v) => { O.h = +v; }); seg('oK', (v) => { O.k = +v; });
+  document.getElementById('oV').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.v === 'dev') { R.left = null; openDev(); } else leave('（切り替え）写真の画面'); });
+  seg('oLd', (v) => { O.ld = v; }); seg('oSv', (v) => { O.sv = v; }); seg('oSp', (v) => { O.sp = v; });
+  document.getElementById('oTab').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; if (O.v !== 'dev' || R.ld !== 'ok') { O.v = 'dev'; R.ld = 'ok'; } R.tab = b.dataset.v; if (R.tab !== 'wb') R.satMax = false; syncSeg(); render(); });
+  document.getElementById('oMode').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; if (O.v !== 'dev' || R.ld !== 'ok') { O.v = 'dev'; R.ld = 'ok'; } const m = b.dataset.v; R.mode = m === 'pinch' ? 'pinch' : m === 'drag' ? 'drag' : 'idle'; if (m === 'pinch') R.z = 2; if (m === 'max') { R.tab = 'wb'; R.satMax = true; } if (m === 'mono') { R.tab = 'color'; V.mono = 1; } if (m === 'save') { R.save = 'saving'; } if (m === 'fail') { R.save = 'fail'; } if (m === 'back') { V.temp = 30; R.sheet = 'discard'; } if (m === 'idle') { R.save = 'idle'; R.sheet = null; } add('（模擬）状態：' + b.textContent.trim()); syncSeg(); render(); });
+  const tg = (id, key) => { const b = document.getElementById(id); b.addEventListener('click', () => { O[key] = !O[key]; b.setAttribute('aria-pressed', O[key]); render(); }); };
+  tg('oChg', 'chg'); tg('oRM', 'rm');
+  document.getElementById('solo').addEventListener('click', () => document.body.classList.add('solo'));
+  document.getElementById('soloExit').addEventListener('click', () => document.body.classList.remove('solo'));
+  window.__r = { O: O, get R() { return R; }, get V() { return V; }, get SAVED() { return SAVED; }, geo: geo, dirty: dirty, set: (o, r, v) => { clearTimeout(tLoad); clearTimeout(tSave); Object.assign(O, o); fresh(); Object.assign(R, { ld: O.v === 'dev' ? 'ok' : 'idle' }, r || {}); if (R.ld === 'loading') R.ld0 = Date.now() - 1000; if (v) Object.assign(V, v); syncSeg(); render(); }, render: render };
+  fresh(); syncSeg(); render();
+
+})();
+</script>
+</body>
+</html>
