@@ -294,7 +294,7 @@ public final class RawEditActivity extends Activity {
         try {
           previewWidth=source.width;previewHeight=source.height;width=source.originalWidth();height=source.originalHeight();
           image.setFullDimensions(width,height);image.replace(frame);displayBefore=displayMax=false;
-          status.setText("");status.setClickable(false);status.setOnClickListener(null);loading=false;ready=true;rendered=-1;
+          status.setText("");status.setOnClickListener(null);status.setClickable(false);loading=false;ready=true;rendered=-1;
           attachFullSession(source,token);zoom.setVisibility(View.VISIBLE);enabled(true);renderControls();requestRender();
           RawEditLog.event(source.raw?"raw.load.complete":"jpeg.load.complete",SystemClock.elapsedRealtime()-started,source.width,source.height);
         }catch(RuntimeException|OutOfMemoryError failure){if(fullSession!=null){fullSession.close();fullSession=null;}source.close();ready=false;image.clear();try{worker.execute(()->{if(renderer==uploaded){uploaded.close();renderer=null;}});}catch(RejectedExecutionException ignored){}loadFailed(token,started,failure);}

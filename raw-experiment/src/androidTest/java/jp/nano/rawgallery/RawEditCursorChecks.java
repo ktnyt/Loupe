@@ -24,10 +24,10 @@ final class RawEditCursorChecks {
   private static <T> T find(View v,Class<T> type){if(type.isInstance(v))return type.cast(v);if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++){T next=find(((ViewGroup)v).getChildAt(i),type);if(next!=null)return next;}return null;}
   private static Button button(View v,String label){if(v instanceof Button&&label.contentEquals(((Button)v).getText()))return (Button)v;if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++){Button next=button(((ViewGroup)v).getChildAt(i),label);if(next!=null)return next;}return null;}
   private static float[] values(RawEditActivity a){Bundle b=new Bundle();a.onSaveInstanceState(b);return b.getFloatArray("values");}
-  private static void event(View view,long down,long time,int action,float... xy){
+  private static boolean event(View view,long down,long time,int action,float... xy){
     int count=xy.length/2;MotionEvent.PointerProperties[] ids=new MotionEvent.PointerProperties[count];MotionEvent.PointerCoords[] coords=new MotionEvent.PointerCoords[count];
     for(int i=0;i<count;i++){ids[i]=new MotionEvent.PointerProperties();ids[i].id=i;ids[i].toolType=MotionEvent.TOOL_TYPE_FINGER;coords[i]=new MotionEvent.PointerCoords();coords[i].x=xy[2*i];coords[i].y=xy[2*i+1];coords[i].size=coords[i].pressure=1;}
-    MotionEvent e=MotionEvent.obtain(down,time,action,count,ids,coords,0,0,1,1,0,0,InputDevice.SOURCE_TOUCHSCREEN,0);try{view.dispatchTouchEvent(e);}finally{e.recycle();}
+    MotionEvent e=MotionEvent.obtain(down,time,action,count,ids,coords,0,0,1,1,0,0,InputDevice.SOURCE_TOUCHSCREEN,0);try{return view.dispatchTouchEvent(e);}finally{e.recycle();}
   }
   private static float[] cursor(RawEditPad p,float[] v,int xKey,int yKey,int which){
     View s=p.getChildAt(which);float x=(v[xKey]-RawEditState.min(xKey))/(RawEditState.max(xKey)-RawEditState.min(xKey)),y=1-(v[yKey]-RawEditState.min(yKey))/(RawEditState.max(yKey)-RawEditState.min(yKey));
@@ -71,8 +71,10 @@ final class RawEditCursorChecks {
       float sx=sliderLocation[0]-origin[0]+bar.getPaddingLeft()+(bar.getWidth()-bar.getPaddingLeft()-bar.getPaddingRight())*bar.getProgress()/bar.getMax(),sy=sliderLocation[1]-origin[1]+bar.getHeight()/2f;
       float[] old=values(a),pc=cursor(p,old,2,3,0);float px=padLocation[0]-origin[0]+pc[0]-p.getLeft(),py=padLocation[1]-origin[1]+pc[1]-p.getTop();
       float x=sliderFirst?sx:px,y=sliderFirst?sy:py,secondX=sliderFirst?px:sx,secondY=sliderFirst?py:sy,d=15*a.getResources().getDisplayMetrics().density;
-      require(bar.getWidth()>0&&bar.getHeight()>0&&x>=0&&y>=0&&x<decor.getWidth()&&y<decor.getHeight(),"root gesture starts inside actual laid-out window");long now=SystemClock.uptimeMillis();event(decor,now,now,MotionEvent.ACTION_DOWN,x,y);event(decor,now,now+20,MotionEvent.ACTION_MOVE,x+d,y-(sliderFirst?0:d));
-      require(!Arrays.equals(old,values(a)),"root-dispatched first sibling gesture actually edits; sliderFirst="+sliderFirst+" bar="+bar.getWidth()+"x"+bar.getHeight()+" start="+x+","+y);float firstX=x+d,firstY=y-(sliderFirst?0:d);
+      require(bar.getWidth()>0&&bar.getHeight()>0&&x>=0&&y>=0&&x<decor.getWidth()&&y<decor.getHeight(),"root gesture starts inside actual laid-out window");View picture=(View)image.getParent();int[] pictureLocation=new int[2];picture.getLocationOnScreen(pictureLocation);float localX=x-pictureLocation[0]+origin[0],localY=y-pictureLocation[1]+origin[1];int hit=p.hitCursor(localX,localY,picture.getWidth(),picture.getHeight());View plane=p.getChildAt(0);
+      require(sliderFirst||(plane.getWidth()>0&&plane.getHeight()>0&&plane.isEnabled()&&hit==0),"reverse cursor preflight hit="+hit+" plane="+plane.getWidth()+"x"+plane.getHeight()+" enabled="+plane.isEnabled()+" pad="+p.getWidth()+"x"+p.getHeight()+" local="+localX+","+localY);
+      long now=SystemClock.uptimeMillis();boolean downHandled=event(decor,now,now,MotionEvent.ACTION_DOWN,x,y),moveHandled=event(decor,now,now+20,MotionEvent.ACTION_MOVE,x+d,y-(sliderFirst?0:d));
+      require(!Arrays.equals(old,values(a)),"root-dispatched first sibling gesture actually edits; sliderFirst="+sliderFirst+" bar="+bar.getWidth()+"x"+bar.getHeight()+" start="+x+","+y+" hit="+hit+" handled="+downHandled+","+moveHandled+" texture="+old[2]+"->"+values(a)[2]+" clarity="+old[3]+"->"+values(a)[3]);float firstX=x+d,firstY=y-(sliderFirst?0:d);
       event(decor,now,now+40,MotionEvent.ACTION_POINTER_DOWN|(1<<MotionEvent.ACTION_POINTER_INDEX_SHIFT),firstX,firstY,secondX,secondY);
       require(Arrays.equals(old,values(a)),"cross-sibling second pointer rolls back original adjustment");float zoom=image.zoom;
       event(decor,now,now+60,MotionEvent.ACTION_MOVE,firstX,firstY,firstX+(secondX-firstX)*1.2f,firstY+(secondY-firstY)*1.2f);
@@ -82,6 +84,15 @@ final class RawEditCursorChecks {
       require(Arrays.equals(old,values(a)),"cross-sibling remaining finger cannot resume editing");
     });
   }
+  private static void loadedOverlay(Instrumentation t,RawEditActivity a){onMain(t,()->{
+    RawEditImageView image=find(a.getWindow().getDecorView(),RawEditImageView.class);ViewGroup picture=(ViewGroup)image.getParent();boolean found=false;
+    for(int i=0;i<picture.getChildCount();i++){View child=picture.getChildAt(i);
+      if(child instanceof TextView&&child.getWidth()==picture.getWidth()&&child.getHeight()==picture.getHeight()){
+        found=true;require(((TextView)child).getText().length()==0&&!child.isClickable(),"loaded status overlay is empty and cannot consume photo cursor gestures");
+      }
+    }
+    require(found,"loaded photo status overlay is present in actual window");
+  });}
   private static void zoomButton(Instrumentation t,RawEditActivity a)throws Exception{
     onMain(t,()->find(a.getWindow().getDecorView(),RawEditImageView.class).resetPose());t.waitForIdleSync();
     onMain(t,()->{View decor=a.getWindow().getDecorView();RawEditImageView image=find(decor,RawEditImageView.class);float fit=Math.min(image.getWidth()/6000f,image.getHeight()/4000f);
@@ -93,7 +104,7 @@ final class RawEditCursorChecks {
   static void run(Instrumentation t)throws Exception{
     isolatedZoom(t);
     RawEditActivity a=(RawEditActivity)t.startActivitySync(new Intent(t.getTargetContext(),RawEditActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("rawEditSynthetic",true));
-    try{ready(t,a);zoomButton(t,a);siblingPinch(t,a,true);siblingPinch(t,a,false);onMain(t,()->button(a.getWindow().getDecorView(),"WB").performClick());t.waitForIdleSync();RawEditPad[] pad={null};RawEditImageView[] image={null};View[] picture={null};
+    try{ready(t,a);loadedOverlay(t,a);zoomButton(t,a);siblingPinch(t,a,true);siblingPinch(t,a,false);onMain(t,()->button(a.getWindow().getDecorView(),"WB").performClick());t.waitForIdleSync();RawEditPad[] pad={null};RawEditImageView[] image={null};View[] picture={null};
       onMain(t,()->{pad[0]=find(a.getWindow().getDecorView(),RawEditPad.class);image[0]=find(a.getWindow().getDecorView(),RawEditImageView.class);picture[0]=(View)image[0].getParent();RawEditPad p=pad[0];float[] start=values(a),c=cursor(p,start,0,1,0);float offset=8*a.getResources().getDisplayMetrics().density;long now=SystemClock.uptimeMillis();
         event(picture[0],now,now,MotionEvent.ACTION_DOWN,c[0]+offset,c[1]+offset);require(Arrays.equals(start,values(a)),"off-center grab never jumps onDOWN");event(picture[0],now,now+20,MotionEvent.ACTION_MOVE,c[0]+offset+p.getChildAt(0).getWidth()*.3f,c[1]+offset-p.getChildAt(0).getHeight()*.3f);require(Math.abs(values(a)[0]-.6f)<.001f&&Math.abs(values(a)[1]-.6f)<.001f,"relative grab movement follows both axes");event(picture[0],now,now+40,MotionEvent.ACTION_UP,c[0]+offset+p.getChildAt(0).getWidth()*.3f,c[1]+offset-p.getChildAt(0).getHeight()*.3f);
         p.cancelGuides();handles(p,values(a));
