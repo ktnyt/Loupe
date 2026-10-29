@@ -67,6 +67,16 @@ final class RawEditFullViewportChecks {
     MotionEvent event=MotionEvent.obtain(down,SystemClock.uptimeMillis(),action,count,properties,coords,0,0,1,1,0,0,android.view.InputDevice.SOURCE_TOUCHSCREEN,0);
     try{picture.dispatchTouchEvent(event);}finally{event.recycle();}
   }
+  private static void doubleTap(View picture,float x,float y){
+    long first=SystemClock.uptimeMillis();
+    for(int tap=0;tap<2;tap++){
+      long down=first+tap*150;
+      for(int action:new int[]{MotionEvent.ACTION_DOWN,MotionEvent.ACTION_UP}){
+        MotionEvent event=MotionEvent.obtain(down,down+(action==MotionEvent.ACTION_UP?25:0),action,x,y,0);
+        try{picture.dispatchTouchEvent(event);}finally{event.recycle();}
+      }
+    }
+  }
   private static void panTo(RawEditImageView image,float left,float top){
     View picture=(View)image.getParent();float cx=image.getWidth()*.5f,cy=image.getHeight()*.5f;
     // Every finger remains inside the picture. Repeated fixed-span gestures move
@@ -222,7 +232,9 @@ final class RawEditFullViewportChecks {
           touch(picture,down,MotionEvent.ACTION_MOVE,cx-250,cy,cx+250,cy);
           touch(picture,down,MotionEvent.ACTION_POINTER_UP|(1<<MotionEvent.ACTION_POINTER_INDEX_SHIFT),cx-250,cy,cx+250,cy);
           touch(picture,down,MotionEvent.ACTION_UP,cx-250,cy);
-          require(image[0].maxZoom()>1&&Math.abs(image[0].zoom-image[0].maxZoom())<.002,"pinch reaches native 1:1 maximum zoom");
+          require(image[0].maxZoom()>1&&Math.abs(image[0].zoom-image[0].maxZoom())<.002,"pinch reaches the fit-aware 150 percent maximum");
+          doubleTap(picture,cx,cy);float fit=Math.min(image[0].getWidth()/(float)full.width,image[0].getHeight()/(float)full.height),nativeZoom=1f/fit;
+          require(Math.abs(image[0].zoom-nativeZoom)<.002,"double tap from an arbitrary pinch pose selects native 100 percent for the detail comparison");
           region[0]=image[0].visibleSource();
           require(Math.abs(region[0].width()-image[0].getWidth())<.1&&Math.abs(region[0].height()-image[0].getHeight())<.1,"native viewport pixels correspond one-to-one to view pixels");
           Bundle after=new Bundle();a.onSaveInstanceState(after);require(Arrays.equals(values,after.getFloatArray("values")),"two-finger routing preserves edit values");
@@ -244,7 +256,8 @@ final class RawEditFullViewportChecks {
               long previous=image[0].viewportRevision();
               panTo(image[0],Math.max(0,full.width-image[0].getWidth())*horizontal,Math.max(0,full.height-image[0].getHeight())*vertical);
               require(image[0].viewportRevision()>previous,"candidate pan changes viewport");
-              require(Math.abs(image[0].zoom-image[0].maxZoom())<.002,"candidate pan preserves native 1:1 zoom");
+              float candidateFit=Math.min(image[0].getWidth()/(float)full.width,image[0].getHeight()/(float)full.height);
+              require(Math.abs(image[0].zoom-1f/candidateFit)<.002,"candidate pan preserves native 1:1 zoom");
               region[0]=image[0].visibleSource();
               require(Math.abs(region[0].width()-image[0].getWidth())<.1&&Math.abs(region[0].height()-image[0].getHeight())<.1,"candidate ROI remains one-to-one");
               Bundle afterPan=new Bundle();a.onSaveInstanceState(afterPan);

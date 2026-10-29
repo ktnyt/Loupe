@@ -19,6 +19,7 @@ final class RawEditImageView extends View {
   private final RectF destination=new RectF();
   private final GestureDetector gesture;
   private boolean singleDragging,multiSession;
+  private int zoomStage;
   private int firstPointer=-1,secondPointer=-1;
   private float span,midX,midY;
   RawEditImageView(Context c){
@@ -30,18 +31,23 @@ final class RawEditImageView extends View {
       }
       return true;
     });
-    setContentDescription("写真。ピンチで拡大、ダブルタップで全体へ切り替え");
+    setContentDescription("写真。ピンチで拡大、ダブルタップで原寸100%、150%、全体表示の順に切り替え");
     gesture=new GestureDetector(c,new GestureDetector.SimpleOnGestureListener(){
       public boolean onDown(MotionEvent e){return true;}
-      public boolean onDoubleTap(MotionEvent e){toggle();return true;}
+      public boolean onDoubleTap(MotionEvent e){toggle(e.getX(),e.getY());return true;}
     });
   }
+  void cancelTouch(){
+    singleDragging=false;
+    if(gesture!=null){long now=android.os.SystemClock.uptimeMillis();MotionEvent e=MotionEvent.obtain(now,now,MotionEvent.ACTION_CANCEL,0,0,0);gesture.onTouchEvent(e);e.recycle();}
+  }
+  public void setEnabled(boolean enabled){super.setEnabled(enabled);if(!enabled){cancelTouch();multiSession=false;firstPointer=secondPointer=-1;span=0;}}
   void replace(Bitmap next){image=next;invalidate();}
   void replace(Bitmap next,long ticket,long inputNs){pendingTicket=ticket;pendingInput=inputNs;replace(next);}
   void setViewportListener(Runnable listener){viewportListener=listener;}
   /** Apply saved pose only once the original dimensions and the actual viewport are both available. */
   void restorePose(float savedZoom,float savedX,float savedY){
-    zoom=Float.isFinite(savedZoom)?Math.max(1,savedZoom):1;
+    zoomStage=0;zoom=Float.isFinite(savedZoom)?Math.max(.0001f,savedZoom):1;
     dx=Float.isFinite(savedX)?savedX:0;dy=Float.isFinite(savedY)?savedY:0;
     restoredPosePending=true;clamp();viewportChanged();
   }
@@ -49,12 +55,12 @@ final class RawEditImageView extends View {
     float z=zoom,x=dx,y=dy;restoredPosePending=false;clamp();changed(z,x,y);
   }
   void resetPose(){
-    float z=zoom,x=dx,y=dy;restoredPosePending=false;zoom=1;dx=dy=0;changed(z,x,y);
+    float z=zoom,x=dx,y=dy;restoredPosePending=false;zoomStage=0;zoom=1;dx=dy=0;changed(z,x,y);
   }
   void setFullDimensions(int w,int h){
     if(w<1||h<1)throw new IllegalArgumentException("Invalid full image dimensions");
     if(w==fullWidth&&h==fullHeight)return;
-    fullWidth=w;fullHeight=h;clamp();viewportChanged();
+    fullWidth=w;fullHeight=h;zoomStage=0;clamp();viewportChanged();
   }
   private int sourceWidth(){return fullWidth>0?fullWidth:image!=null&&!image.isRecycled()?image.getWidth():0;}
   private int sourceHeight(){return fullHeight>0?fullHeight:image!=null&&!image.isRecycled()?image.getHeight():0;}
@@ -62,10 +68,9 @@ final class RawEditImageView extends View {
     int w=sourceWidth(),h=sourceHeight();
     return w>0&&h>0&&getWidth()>0&&getHeight()>0?Math.min(getWidth()/(float)w,getHeight()/(float)h):0;
   }
-  float maxZoom(){
-    if(fullWidth<=0||fullHeight<=0)return 4;
-    float fit=fitScale();return fit>0?Math.max(1,1/fit):1;
-  }
+  private float nativeZoom(){float fit=fitScale();return fit>0?1/fit:1;}
+  private float minZoom(){return Math.min(1,nativeZoom());}
+  float maxZoom(){return Math.max(1,1.5f*nativeZoom());}
   long viewportRevision(){return viewportRevision;}
   RectF visibleSource(){
     float scale=fitScale()*zoom;int w=sourceWidth(),h=sourceHeight();
@@ -99,24 +104,34 @@ final class RawEditImageView extends View {
   private void changed(float previousZoom,float previousX,float previousY){
     if(zoom!=previousZoom||dx!=previousX||dy!=previousY)viewportChanged();
   }
-  void toggle(){
+  int nextZoomStage(){return zoomStage;}
+  void toggle(){toggle(getWidth()/2f,getHeight()/2f);}
+  private void toggle(float tapX,float tapY){
     restoredPosePending=false;
-    float z=zoom,x=dx,y=dy;
-    zoom=zoom>1?1:Math.min(2.5f,maxZoom());dx=dy=0;clamp();changed(z,x,y);invalidate();
+    float z=zoom,x=dx,y=dy;zoomStage=(zoomStage+1)%3;
+    zoom=zoomStage==0?1:nativeZoom()*(zoomStage==2?1.5f:1);
+    if(zoomStage==0){dx=dy=0;}
+    else if(zoomStage==1){
+      // Keep the tapped image point beneath the same physical screen point.
+      float ratio=zoom/z;
+      dx=tapX-getWidth()/2f+(x-(tapX-getWidth()/2f))*ratio;
+      dy=tapY-getHeight()/2f+(y-(tapY-getHeight()/2f))*ratio;
+    }else{dx=x*zoom/z;dy=y*zoom/z;}
+    clamp();changed(z,x,y);invalidate();
   }
-  void clear(){clearDetail();replace(null);}
+  void clear(){cancelTouch();multiSession=false;firstPointer=secondPointer=-1;span=0;clearDetail();replace(null);}
   private void clamp(){
     if(restoredPosePending){
       if(fullWidth<=0||fullHeight<=0||getWidth()<=0||getHeight()<=0)return;
       restoredPosePending=false;
     }
-    zoom=Math.max(1,Math.min(maxZoom(),zoom));
+    zoom=Math.max(minZoom(),Math.min(maxZoom(),zoom));
     float fit=fitScale();if(fit<=0)return;
     float maxX=Math.max(0,(sourceWidth()*fit*zoom-getWidth())/2),maxY=Math.max(0,(sourceHeight()*fit*zoom-getHeight())/2);
     dx=Math.max(-maxX,Math.min(maxX,dx));dy=Math.max(-maxY,Math.min(maxY,dy));
   }
   protected void onSizeChanged(int w,int h,int oldw,int oldh){
-    super.onSizeChanged(w,h,oldw,oldh);clamp();if(w!=oldw||h!=oldh)viewportChanged();
+    super.onSizeChanged(w,h,oldw,oldh);zoomStage=0;clamp();if(w!=oldw||h!=oldh)viewportChanged();
   }
   protected void onDraw(Canvas c){
     c.drawColor(Color.BLACK);if(image==null||image.isRecycled())return;
@@ -131,6 +146,7 @@ final class RawEditImageView extends View {
   }
   /** Parent picture dispatch passes its coordinates; this view fills that same picture frame. */
   boolean multi(MotionEvent e){
+    if(!isEnabled())return false;
     int action=e.getActionMasked();
     if(action==MotionEvent.ACTION_DOWN){multiSession=false;firstPointer=secondPointer=-1;span=0;return false;}
     if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL){
@@ -139,7 +155,8 @@ final class RawEditImageView extends View {
     int excluded=action==MotionEvent.ACTION_POINTER_UP?e.getActionIndex():-1;
     int count=e.getPointerCount()-(excluded>=0?1:0);
     if(count<2){firstPointer=secondPointer=-1;span=0;return multiSession;}
-    restoredPosePending=false;multiSession=true;singleDragging=false;
+    restoredPosePending=false;zoomStage=0;multiSession=true;singleDragging=false;
+    MotionEvent cancel=MotionEvent.obtain(e);cancel.setAction(MotionEvent.ACTION_CANCEL);gesture.onTouchEvent(cancel);cancel.recycle();
     int a=e.findPointerIndex(firstPointer),b=e.findPointerIndex(secondPointer);
     boolean reset=action==MotionEvent.ACTION_POINTER_DOWN||action==MotionEvent.ACTION_POINTER_UP||a<0||b<0||a==excluded||b==excluded;
     if(reset){
@@ -151,7 +168,7 @@ final class RawEditImageView extends View {
     float distance=(float)Math.hypot(e.getX(a)-e.getX(b),e.getY(a)-e.getY(b));
     if(!reset&&span>0&&distance>0&&image!=null&&!image.isRecycled()){
       float previousZoom=zoom,previousX=dx,previousY=dy;
-      float next=Math.max(1,Math.min(maxZoom(),zoom*distance/span)),ratio=next/zoom;
+      float next=Math.max(minZoom(),Math.min(maxZoom(),zoom*distance/span)),ratio=next/zoom;
       dx=x-getWidth()*.5f+(dx-(midX-getWidth()*.5f))*ratio;
       dy=y-getHeight()*.5f+(dy-(midY-getHeight()*.5f))*ratio;
       zoom=next;clamp();changed(previousZoom,previousX,previousY);invalidate();
@@ -160,12 +177,13 @@ final class RawEditImageView extends View {
     return true;
   }
   public boolean onTouchEvent(MotionEvent e){
+    if(!isEnabled())return false;
     int action=e.getActionMasked();
     if(action==MotionEvent.ACTION_CANCEL){gesture.onTouchEvent(e);singleDragging=false;return true;}
     if(multiSession||e.getPointerCount()!=1){singleDragging=false;return true;}
     gesture.onTouchEvent(e);
     if(action==MotionEvent.ACTION_DOWN){discardRestoredPose();singleDragging=true;lastX=e.getX();lastY=e.getY();}
-    if(action==MotionEvent.ACTION_MOVE&&singleDragging&&zoom>1){
+    if(action==MotionEvent.ACTION_MOVE&&singleDragging){
       float previousZoom=zoom,previousX=dx,previousY=dy;
       dx+=e.getX()-lastX;dy+=e.getY()-lastY;clamp();changed(previousZoom,previousX,previousY);invalidate();
     }

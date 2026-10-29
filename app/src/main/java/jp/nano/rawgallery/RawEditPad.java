@@ -17,7 +17,7 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.FrameLayout;
 import java.util.Locale;
 
-/** Transparent absolute XY area and separate, invisible single-axis touch bands. */
+/** Transparent cursor controls; physical gestures are captured at their initial handle. */
 final class RawEditPad extends FrameLayout {
   interface Listener {
     void changed(RawEditState value);
@@ -30,6 +30,7 @@ final class RawEditPad extends FrameLayout {
   private final Surface plane,vertical,horizontal;
   static final int RESET_ACTION=0x7f0f0056;
   private boolean tracking;
+  private int activeAxis=-1;
   private float guideOpacity;
   private ValueAnimator guideAnimation;
   private final Runnable fadeGuides=()->animateGuides(0,400);
@@ -67,7 +68,7 @@ final class RawEditPad extends FrameLayout {
   private void releaseGuides(){removeCallbacks(fadeGuides);postDelayed(fadeGuides,3000);}
   void cancelGuides(){
     removeCallbacks(fadeGuides);if(guideAnimation!=null){guideAnimation.cancel();guideAnimation=null;}guideOpacity=0;
-    plane.cancelGesture();vertical.cancelGesture();horizontal.cancelGesture();tracking(false);invalidateGuides();
+    plane.cancelGesture();vertical.cancelGesture();horizontal.cancelGesture();tracking(false);activeAxis=-1;invalidateGuides();
   }
   protected void onDetachedFromWindow(){cancelGuides();super.onDetachedFromWindow();}
   protected void onWindowVisibilityChanged(int visibility){super.onWindowVisibilityChanged(visibility);if(visibility!=VISIBLE&&plane!=null)cancelGuides();}
@@ -92,6 +93,28 @@ final class RawEditPad extends FrameLayout {
     state=next;
     if(moved)invalidateGuides();
   }
+  // PhotoSurface owns physical dispatch so targets may extend beyond a child's bounds.
+  public boolean dispatchTouchEvent(MotionEvent event){return false;}
+  int hitCursor(float x,float y,int viewportWidth,int viewportHeight){
+    Surface[] surfaces={plane,vertical,horizontal};int best=-1;float distance=Float.MAX_VALUE;
+    float hit=px(48);
+    for(int i=0;i<surfaces.length;i++){
+      Surface v=surfaces[i];if(!v.isEnabled())continue;
+      float cx=getLeft()+v.getLeft()+v.cursorX(),cy=getTop()+v.getTop()+v.cursorY();
+      float left=Math.max(0,Math.min(viewportWidth-hit,cx-hit/2)),top=Math.max(0,Math.min(viewportHeight-hit,cy-hit/2));
+      float d=(x-cx)*(x-cx)+(y-cy)*(y-cy);
+      if(x>=left&&x<=left+hit&&y>=top&&y<=top+hit&&d<distance){best=i;distance=d;}
+    }
+    return best;
+  }
+  void cancelCursorTaps(){plane.taps.cancel();vertical.taps.cancel();horizontal.taps.cancel();}
+  boolean touchCursor(int index,MotionEvent event){
+    Surface[] surfaces={plane,vertical,horizontal};Surface v=surfaces[index];
+    if(event.getActionMasked()==MotionEvent.ACTION_DOWN)for(Surface other:surfaces)if(other!=v)other.taps.cancel();
+    MotionEvent local=MotionEvent.obtain(event);
+    local.offsetLocation(-getLeft()-v.getLeft(),-getTop()-v.getTop());
+    try{return v.touch(local,true);}finally{local.recycle();}
+  }
   private float normalized(int key){return (state.get(key)-RawEditState.min(key))/(RawEditState.max(key)-RawEditState.min(key));}
   private void tracking(boolean next){
     if(tracking==next)return;
@@ -112,6 +135,7 @@ final class RawEditPad extends FrameLayout {
     private final int axis;
     private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
     private int pointer=-1;
+    private float downX,downY,startX,startY;
     private final DoubleTapReset taps;
     Surface(Context c,int axis){
       super(c);this.axis=axis;taps=new DoubleTapReset(c);setFocusable(true);setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_YES);
@@ -136,34 +160,42 @@ final class RawEditPad extends FrameLayout {
           if(axis==2)c.drawLine(w/2,0,w/2,h,paint);else c.drawLine(0,h/2,w,h/2,paint);
           paint.setStrokeCap(Paint.Cap.BUTT);paint.setAlpha(Math.round(153*guideOpacity));float center=axis==2?(1-defaultNormalized(yKey))*h:defaultNormalized(xKey)*w;
           if(axis==2)c.drawLine(w/2-px(6),center,w/2+px(6),center,paint);else c.drawLine(center,h/2-px(6),center,h/2+px(6),paint);
-          float x=axis==2?w/2:normalized(xKey)*w,y=axis==2?(1-normalized(yKey))*h:h/2;
-          paint.setColor(0xff000000);paint.setAlpha(Math.round(89*guideOpacity));paint.setStrokeWidth(px(1));c.drawCircle(x,y,px(6.5f),paint);
-          paint.setStyle(Paint.Style.FILL);paint.setColor(0xffededea);paint.setAlpha(Math.round(191*guideOpacity));c.drawCircle(x,y,px(6),paint);
         }
       }
       paint.setAlpha(255);
-      if(axis!=0)return;
-      float x=normalized(xKey)*getWidth(),y=(1-normalized(yKey))*getHeight();
-      paint.setStyle(Paint.Style.FILL);paint.setColor(tracking?0x400f0f10:0x1f0f0f10);c.drawCircle(x,y,px(13),paint);
-      paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(px(1));paint.setColor(tracking?0x80000000:0x4d000000);c.drawCircle(x,y,px(14.5f),paint);
-      paint.setStrokeWidth(px(2));paint.setColor(tracking?0xf2ededea:0x8cededea);c.drawCircle(x,y,px(13),paint);
+      boolean active=tracking&&activeAxis==axis;float radius=px(axis==0?13:11);
+      float x=cursorX(),y=cursorY();
+      paint.setStyle(Paint.Style.FILL);paint.setColor(active?0x400f0f10:0x1f0f0f10);c.drawCircle(x,y,radius,paint);
+      paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(px(1));paint.setColor(active?0x80000000:0x4d000000);c.drawCircle(x,y,radius+px(1.5f),paint);
+      paint.setStrokeWidth(px(2));paint.setColor(active?0xf2ededea:0x8cededea);c.drawCircle(x,y,radius,paint);
+    }
+    private float cursorX(){return axis==2?getWidth()/2f:normalized(xKey)*getWidth();}
+    private float cursorY(){return axis==1?getHeight()/2f:(1-normalized(yKey))*getHeight();}
+    private boolean hit(float x,float y){
+      float size=px(48),left=Math.max(0,Math.min(getWidth()-size,cursorX()-size/2)),top=Math.max(0,Math.min(getHeight()-size,cursorY()-size/2));
+      return x>=left&&x<=left+size&&y>=top&&y<=top+size;
     }
     protected void onFocusChanged(boolean focused,int direction,Rect previous){super.onFocusChanged(focused,direction,previous);invalidate();}
     void cancelGesture(){pointer=-1;taps.cancel();}
     protected void onDetachedFromWindow(){cancelGesture();super.onDetachedFromWindow();}
     public void setEnabled(boolean enabled){super.setEnabled(enabled);if(!enabled&&taps!=null)cancelGuides();}
-    public boolean onTouchEvent(MotionEvent e){
+    public boolean onTouchEvent(MotionEvent e){return touch(e,false);}
+    private boolean touch(MotionEvent e,boolean captured){
       if(!isEnabled())return false;
       int action=e.getActionMasked();
       if(action==MotionEvent.ACTION_CANCEL||e.getPointerCount()!=1){cancelGuides();return true;}
-      if(action==MotionEvent.ACTION_DOWN){pointer=e.getPointerId(0);tracking(true);showGuides();}
-      if(pointer!=e.getPointerId(0))return true;
+      if(action==MotionEvent.ACTION_DOWN){
+        if(!captured&&!hit(e.getX(),e.getY())){taps.cancel();return false;}
+        pointer=e.getPointerId(0);downX=e.getX();downY=e.getY();startX=normalized(xKey);startY=normalized(yKey);
+        activeAxis=axis;tracking(true);invalidateGuides();showGuides();
+      }
+      if(pointer!=e.getPointerId(0))return false;
       boolean reset=taps.completed(e);
       if(reset){RawEditPad.this.reset(axis);announceForAccessibility((axis==0?xName+"と"+yName:axis==1?xName:yName)+"を初期値に戻しました");}
-      else if(action==MotionEvent.ACTION_DOWN||action==MotionEvent.ACTION_MOVE||action==MotionEvent.ACTION_UP){
-        if(getWidth()>0&&getHeight()>0)change(axis,e.getX()/getWidth(),1-e.getY()/getHeight());
+      else if(action==MotionEvent.ACTION_MOVE||action==MotionEvent.ACTION_UP){
+        if(getWidth()>0&&getHeight()>0)change(axis,startX+(e.getX()-downX)/getWidth(),startY-(e.getY()-downY)/getHeight());
       }
-      if(action==MotionEvent.ACTION_UP){pointer=-1;tracking(false);releaseGuides();performClick();}
+      if(action==MotionEvent.ACTION_UP){pointer=-1;tracking(false);activeAxis=-1;invalidateGuides();releaseGuides();performClick();}
       return true;
     }
     public boolean performClick(){super.performClick();return true;}

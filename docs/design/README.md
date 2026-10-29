@@ -150,3 +150,9 @@ Android実装は[#39](https://github.com/ktnyt/Loupe/issues/39)で導入済み�
 Issue #56のAndroid実機確認では、通常window/文字1.0と高さ640dp/文字1.3のガイド表示・離した直後・fade途中・消去を撮影した。[参照と実機の表示中](loupe56-comparison-drag.png)、[消去後](loupe56-comparison-hidden.png)、[4状態](loupe56-states-matrix.png)、[写真とカーソルの画素を確認した7タブ](loupe56-tabs-confirmed.png)を独立評価し、静止画の必須修正なし。参照400×844と実機1200×2608/density3はOS領域とviewportが異なり、合成素材・代替フォント差もあるため、全画素の厳密一致を示さない。実指/TalkBack音声/実写真での視認性は未確認。確認済みと未完了は[契約](../raw-editor-guides-contract.md)を参照。
 
 Issue #55の[4状態の参照・実機比較](loupe55-fullstates-comparison.png)は、完成したガイドHTMLを変えずにClaudeが400×844で描画した準備中・保存待ち・失敗・完了と、Androidの合成実Windowを並べたもの。独立レビューでは静止画範囲に必須修正なし。保存待ちの暗い表現は中止可能と分かりにくい懸念があり、警告印の位置に軽微差がある。実操作の中止・失敗再試行・原寸保存は別の実機検査で確認した。原寸状態の確認済み/未確認は[契約](../raw-full-resolution-contract.md)を参照。
+
+## カーソルをつかむ現像操作（Issue #59）
+
+[現在の参照HTML](loupe-raw-editor-cursor-navigation.html)は面28dp・右/下24dpの半透明カーソル3点を常時表示し、48dpの操作域をつかんだ相対移動だけで値を変える。空白からのドラッグはパン、ダブルタップは原寸100%→150%→fit。カーソル上のダブルタップ初期化、7タブ、原寸準備/待ち/失敗の状態を保持する。[操作中](loupe59-reference-drag.png)と[消去後](loupe59-reference-hidden.png)はClaudeが完成HTMLから書き出した400×844・文字1.0・WB+60/+60の合成画面。代替フォント、1dp=1px。元ガイドHTMLは不変。Androidへ反映し、[操作中](loupe59-comparison-drag.png)と[消去後](loupe59-comparison-hidden.png)を独立比較済み。比較の根拠と残る差は[契約](../raw-editor-cursor-contract.md)を参照。
+
+同contentの追加参照は[操作中](loupe59-reference-content-drag.png)と[消去後](loupe59-reference-content-hidden.png)。HTMLの実行時高さ805⅓dp/DPR3/文字1.0で描き、ブラウザ丸めで1200×2415px、実機アプリ領域は1200×2416px。OS領域を除き同じ物理幅で比較する。

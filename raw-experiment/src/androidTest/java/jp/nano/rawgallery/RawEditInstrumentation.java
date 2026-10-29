@@ -34,6 +34,7 @@ public final class RawEditInstrumentation extends Instrumentation {
       core();pad();
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("full","false"))){phase="full.source";RawEditSourceChecks.run(this);phase="full.tiles";RawEditTileChecks.run(this);phase="full.session";RawEditFullSessionChecks.run(this);phase="full.publish";RawEditPublishChecks.run(this);}
       if(fullUiGate!=null){if(Boolean.parseBoolean(arguments.getString("fullstates","false"))){phase="full.states";RawEditFullUiChecks.runStates(this,fullUiGate);}else{phase="full.ui";RawEditFullUiChecks.run(this,fullUiGate);}}
+      if(arguments!=null&&Boolean.parseBoolean(arguments.getString("cursor","false"))){phase="cursor";RawEditCursorChecks.run(this);}
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("guides","false")))RawEditGuidesChecks.run(this);
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("guidecaptures","false")))RawEditGuidesChecks.capture(this);
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("ui","false")))RawEditUiChecks.run(this);
@@ -76,13 +77,14 @@ public final class RawEditInstrumentation extends Instrumentation {
       pad.measure(View.MeasureSpec.makeMeasureSpec(size,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(0,View.MeasureSpec.UNSPECIFIED));pad.layout(0,0,size,pad.getMeasuredHeight());
       FrameLayout frame=pad;View plane=frame.getChildAt(0),vertical=frame.getChildAt(1),horizontal=frame.getChildAt(2);
       require(plane.getRight()<vertical.getLeft()&&plane.getBottom()<horizontal.getTop(),"non-overlapping input bounds");
-      touch(plane,.8f,.2f);require(current.get().get(2)>0&&current.get().get(3)>0,"plane changes both axes");
-      float y=current.get().get(3);touch(horizontal,.2f,.5f);require(current.get().get(2)<0&&current.get().get(3)==y,"horizontal leaves vertical unchanged");
-      float x=current.get().get(2);touch(vertical,.5f,.8f);require(current.get().get(2)==x&&current.get().get(3)<0,"vertical leaves horizontal unchanged");
+      touch(plane,.5f,.5f,.8f,.2f);require(current.get().get(2)>0&&current.get().get(3)>0,"plane changes both axes");
+      float y=current.get().get(3);touch(horizontal,.8f,.5f,.2f,.5f);require(current.get().get(2)<0&&current.get().get(3)==y,"horizontal leaves vertical unchanged");
+      float x=current.get().get(2);touch(vertical,.5f,.2f,.5f,.8f);require(current.get().get(2)==x&&current.get().get(3)<0,"vertical leaves horizontal unchanged");
     });
   }
-  private static void touch(View view,float x,float y){
-    long time=android.os.SystemClock.uptimeMillis();MotionEvent down=MotionEvent.obtain(time,time,MotionEvent.ACTION_DOWN,view.getWidth()*x,view.getHeight()*y,0);view.dispatchTouchEvent(down);down.recycle();
+  private static void touch(View view,float sx,float sy,float x,float y){
+    long time=android.os.SystemClock.uptimeMillis();MotionEvent down=MotionEvent.obtain(time,time,MotionEvent.ACTION_DOWN,view.getWidth()*sx,view.getHeight()*sy,0);view.dispatchTouchEvent(down);down.recycle();
+    MotionEvent move=MotionEvent.obtain(time,time+5,MotionEvent.ACTION_MOVE,view.getWidth()*x,view.getHeight()*y,0);view.dispatchTouchEvent(move);move.recycle();
     MotionEvent up=MotionEvent.obtain(time,time+10,MotionEvent.ACTION_UP,view.getWidth()*x,view.getHeight()*y,0);view.dispatchTouchEvent(up);up.recycle();
   }
   private void real()throws Exception{
