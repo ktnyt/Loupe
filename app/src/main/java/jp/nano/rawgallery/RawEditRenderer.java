@@ -10,12 +10,13 @@ final class RawEditRenderer implements AutoCloseable {
   private EGLDisplay display=EGL14.EGL_NO_DISPLAY;
   private EGLContext context=EGL14.EGL_NO_CONTEXT;
   private EGLSurface surface=EGL14.EGL_NO_SURFACE;
-  private int program,source,output,fbo,width,height;
+  private int program,source,output,fbo,width,height,outputWidth,outputHeight;
+  private ByteBuffer readback;
   private final FloatBuffer vertices=ByteBuffer.allocateDirect(8*4).order(ByteOrder.nativeOrder())
       .asFloatBuffer().put(new float[]{-1,-1,1,-1,-1,1,1,1});
   private final String fragment=
       "#version 300 es\nprecision highp float;\nin vec2 uv;out vec4 result;\n"+
-      "uniform sampler2D photo;uniform vec2 pixel;uniform float p[16];uniform int mode;\n"+
+      "uniform sampler2D photo;uniform vec2 pixel;uniform float p[17];uniform int mode;\n"+
       "float lum(vec3 c){return dot(c,vec3(.2126,.7152,.0722));}\n"+
       "vec3 gammaRGB(vec3 c){c=max(c,vec3(0));return mix(12.92*c,1.055*pow(c,vec3(1./2.4))-.055,step(vec3(.0031308),c));}\n"+
       "vec3 sampleRGB(vec2 q){vec3 c=texture(photo,clamp(q,vec2(0),vec2(1))).rgb;"+
@@ -42,6 +43,8 @@ final class RawEditRenderer implements AutoCloseable {
         "float hi=smoothstep(.4,1.,l),sh=1.-smoothstep(0.,.65,l);"+
         "c=relight(c,l+p[9]*.28*hi*(.4+.6*(1.-l))+p[10]*.25*sh*l*3.);"+
         "l=clamp(lum(c),0.,1.);c=relight(c,l+p[12]*.2*l*l+p[13]*.15*(1.-l)*(1.-l));"+
+        // Global HSL tint after monochrome: hue 260°, saturation 11%, lightness +2 points.
+        "if(p[16]>.5){float ml=clamp(lum(c)+.02,0.,1.);float mc=(1.-abs(2.*ml-1.))*.11;c=vec3(mc/3.,0.,mc)+ml-mc*.5;}"+
         "l=lum(c);float chroma=clamp(max(c.r,max(c.g,c.b))-min(c.r,min(c.g,c.b)),0.,1.);"+
         "float sat=(1.+p[14])*(1.+p[15]*(1.-chroma)*.8)*(1.+haze*.12);"+
         "if(mode==2)sat=4.;c=vec3(l)+(c-vec3(l))*sat;"+
@@ -94,7 +97,11 @@ final class RawEditRenderer implements AutoCloseable {
     float scale=Math.min(1,maxSide/(float)Math.max(width,height));
     int w=Math.max(1,Math.round(width*scale)),h=Math.max(1,Math.round(height*scale));
     GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,output);textureOptions();
-    GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D,0,GLES30.GL_RGBA8,w,h,0,GLES30.GL_RGBA,GLES30.GL_UNSIGNED_BYTE,null);
+    if(w!=outputWidth||h!=outputHeight){
+      GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D,0,GLES30.GL_RGBA8,w,h,0,GLES30.GL_RGBA,GLES30.GL_UNSIGNED_BYTE,null);
+      outputWidth=w;outputHeight=h;
+      readback=ByteBuffer.allocateDirect(w*h*4).order(ByteOrder.nativeOrder());
+    }
     GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER,fbo);
     GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER,GLES30.GL_COLOR_ATTACHMENT0,GLES30.GL_TEXTURE_2D,output,0);
     if(GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER)!=GLES30.GL_FRAMEBUFFER_COMPLETE)
@@ -108,7 +115,7 @@ final class RawEditRenderer implements AutoCloseable {
     int pos=GLES30.glGetAttribLocation(program,"position");vertices.position(0);
     GLES30.glEnableVertexAttribArray(pos);GLES30.glVertexAttribPointer(pos,2,GLES30.GL_FLOAT,false,0,vertices);
     GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP,0,4);
-    ByteBuffer bytes=ByteBuffer.allocateDirect(w*h*4).order(ByteOrder.nativeOrder());
+    ByteBuffer bytes=readback;bytes.clear();
     GLES30.glReadPixels(0,0,w,h,GLES30.GL_RGBA,GLES30.GL_UNSIGNED_BYTE,bytes);check();
     Bitmap image=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);bytes.position(0);image.copyPixelsFromBuffer(bytes);
     return image;

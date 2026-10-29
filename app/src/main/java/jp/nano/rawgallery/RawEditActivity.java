@@ -28,7 +28,7 @@ public final class RawEditActivity extends Activity {
   private RawEditState saved=new RawEditState();
   private volatile boolean visible=true,dead,ready,before,maxSaturation,saving;
   private volatile int epoch;
-  private volatile long rendered=-1;
+  private volatile long rendered=-1,inputNs;
   private boolean loading;
   private Uri input;
   private int tab,sub,width,height,padSize=180;
@@ -47,7 +47,7 @@ public final class RawEditActivity extends Activity {
 
   public static void open(Activity from,Uri source){from.startActivity(new Intent(from,RawEditActivity.class).setData(source));}
   protected void onCreate(Bundle bundle){
-    super.onCreate(bundle);setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+    super.onCreate(bundle);RawEditLog.enabled=(getApplicationInfo().flags&ApplicationInfo.FLAG_DEBUGGABLE)!=0;setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
     getWindow().setStatusBarColor(BG);getWindow().setNavigationBarColor(BG);getWindow().setDecorFitsSystemWindows(false);
     if(bundle!=null){
       try{state=new RawEditState(bundle.getFloatArray("values"));saved=new RawEditState(bundle.getFloatArray("saved"));}catch(IllegalArgumentException ignored){}
@@ -164,21 +164,26 @@ public final class RawEditActivity extends Activity {
       }
     });
   }
-  private void requestRender(){revision.incrementAndGet();main.removeCallbacks(busy);main.postDelayed(busy,400);scheduleRender();}
+  private void requestRender(){inputNs=SystemClock.elapsedRealtimeNanos();long requested=revision.incrementAndGet();RawEditLog.input(requested,inputNs);main.removeCallbacks(busy);main.postDelayed(busy,400);scheduleRender();}
   private void scheduleRender(){
     if(!ready||dead||!visible||saving||!queued.compareAndSet(false,true))return;
     worker.execute(()->{
-      int token=epoch;
+      int token=epoch;long ticket=revision.get(),requestedAt=inputNs,start=SystemClock.elapsedRealtime();
+      RawEditState snapshot=state;boolean original=before,boost=maxSaturation;
       try{
-        while(!dead&&visible&&ready&&!saving&&token==epoch){
-          long ticket=revision.get(),start=SystemClock.elapsedRealtime();RawEditState snapshot=state;boolean original=before,boost=maxSaturation;
-          Bitmap b=renderer.render(snapshot,original,boost,1024);rendered=ticket;
-          RawEditLog.event("adjust.render",SystemClock.elapsedRealtime()-start,b.getWidth(),b.getHeight());
-          main.post(()->{if(!dead&&visible&&token==epoch&&ticket==revision.get()){image.replace(b);status.setText(original?"補正前":"");}else b.recycle();});
-          if(ticket==revision.get())break;
-        }
-      }catch(IOException|RuntimeException|OutOfMemoryError e){rendered=revision.get();main.post(()->{if(!dead&&visible&&token==epoch)status.setText("反映できませんでした。値を動かすと再試行します");});}
-      finally{queued.set(false);if(rendered!=revision.get())scheduleRender();}
+        Bitmap b=renderer.render(snapshot,original,boost,1024);
+        RawEditLog.event("adjust.render",SystemClock.elapsedRealtime()-start,b.getWidth(),b.getHeight());
+        main.post(()->{
+          // Present completed work even while a newer request is pending. The single worker
+          // and UI handoff preserve order; equality with the newest input would starve drags.
+          if(!dead&&visible&&token==epoch){image.replace(b,ticket,requestedAt);status.setText(original?"補正前":"");}
+          else b.recycle();
+          rendered=ticket;queued.set(false);
+          if(rendered!=revision.get())image.postOnAnimation(this::scheduleRender);
+        });
+      }catch(IOException|RuntimeException|OutOfMemoryError e){
+        main.post(()->{rendered=ticket;queued.set(false);if(!dead&&visible&&token==epoch)status.setText("反映できませんでした。値を動かすと再試行します");if(rendered!=revision.get())image.postOnAnimation(this::scheduleRender);});
+      }
     });
   }
   private void confirmSave(){

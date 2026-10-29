@@ -6,14 +6,14 @@ import java.util.Arrays;
 public final class RawEditState {
   public static final int TEMP=0,TINT=1,TEXTURE=2,CLARITY=3,DEHAZE=4,CURVE_X=5,CURVE_Y=6,
       EXPOSURE=7,BRIGHTNESS=8,HIGHLIGHTS=9,SHADOWS=10,CONTRAST=11,WHITES=12,BLACKS=13,
-      SATURATION=14,VIBRANCE=15,COUNT=16;
+      SATURATION=14,VIBRANCE=15,MONO=16,COUNT=17;
   private final float[] values;
   public RawEditState() { values=new float[COUNT];values[CURVE_X]=values[CURVE_Y]=.5f; }
   public RawEditState(float[] input) {
-    if(input==null||input.length!=COUNT)throw new IllegalArgumentException("Invalid edit state");
-    values=input.clone();
+    if(input==null||(input.length!=COUNT&&input.length!=16))throw new IllegalArgumentException("Invalid edit state");
+    values=Arrays.copyOf(input,COUNT);
     for(int i=0;i<COUNT;i++) {
-      if(!Float.isFinite(values[i])||values[i]<min(i)||values[i]>max(i))
+      if(!Float.isFinite(values[i])||values[i]<min(i)||values[i]>max(i)||(i==MONO&&values[i]!=0&&values[i]!=1))
         throw new IllegalArgumentException("Invalid edit value");
     }
   }
@@ -21,7 +21,7 @@ public final class RawEditState {
   public float[] snapshot() { return values.clone(); }
   public RawEditState with(int key,float value) {
     if(!Float.isFinite(value))throw new IllegalArgumentException("Non-finite edit value");
-    float[] next=values.clone();next[key]=Math.max(min(key),Math.min(max(key),value));
+    float[] next=values.clone();next[key]=key==MONO?(value>=.5f?1:0):Math.max(min(key),Math.min(max(key),value));
     return new RawEditState(next);
   }
   public RawEditState pair(int x,int y,float xv,float yv) {return with(x,xv).with(y,yv);}
@@ -32,7 +32,7 @@ public final class RawEditState {
   }
   public static float min(int key) {
     if(key<0||key>=COUNT)throw new IllegalArgumentException("Invalid edit key");
-    return key==CURVE_X?.05f:key==CURVE_Y?0f:key==EXPOSURE?-5f:-1f;
+    return key==MONO?0:key==CURVE_X?.05f:key==CURVE_Y?0f:key==EXPOSURE?-5f:-1f;
   }
   public static float max(int key) { min(key);return key==CURVE_X?.95f:key==EXPOSURE?5f:1f; }
   public boolean equals(Object o){return o instanceof RawEditState&&Arrays.equals(values,((RawEditState)o).values);}

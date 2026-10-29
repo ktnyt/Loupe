@@ -11,6 +11,8 @@ public final class RawEditStateTest {
       check(Math.abs(s.curve(x)-y)<.000001,"curve passes through selected point");
       check(s.curve(0)==0&&s.curve(1)==1,"fixed endpoints");
     }
+    check(new RawEditState(new float[]{0,0,0,0,0,.5f,.5f,0,0,0,0,0,0,0,0,0}).get(RawEditState.MONO)==0,"legacy state defaults to color");
+    check(initial.with(RawEditState.MONO,1).with(14,.3f).with(RawEditState.MONO,0).get(14)==.3f,"Mono preserves color edits");
     RawEditState edited=initial.with(2,.33f).with(3,-.52f).with(7,1.2f).with(14,.4f);
     check(edited.with(2,.8f).get(3)==edited.get(3),"single axis independent");
     check(edited.with(2,.8f).with(3,.1f).equals(edited.with(3,.1f).with(2,.8f)),"operation order does not change state");

@@ -7,12 +7,21 @@ import android.view.*;
 /** An edit preview retains its viewport when the rendered bitmap is replaced. */
 final class RawEditImageView extends View {
   private Bitmap image;
+  private long pendingTicket=-1,pendingInput;
   float zoom=1,dx,dy,lastX,lastY;
   private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG|Paint.FILTER_BITMAP_FLAG);
   private final ScaleGestureDetector scale;
   private final GestureDetector gesture;
   RawEditImageView(Context c){
-    super(c);setContentDescription("写真。ピンチで拡大、ダブルタップで全体へ切り替え");
+    super(c);
+    getViewTreeObserver().addOnPreDrawListener(()->{
+      if(pendingTicket>=0&&isHardwareAccelerated()){
+        long ticket=pendingTicket,started=pendingInput;pendingTicket=-1;
+        getViewTreeObserver().registerFrameCommitCallback(()->RawEditLog.frame(ticket,started));
+      }
+      return true;
+    });
+    setContentDescription("写真。ピンチで拡大、ダブルタップで全体へ切り替え");
     scale=new ScaleGestureDetector(c,new ScaleGestureDetector.SimpleOnScaleGestureListener(){
       public boolean onScale(ScaleGestureDetector d){zoom=Math.max(1,Math.min(4,zoom*d.getScaleFactor()));invalidate();return true;}
     });
@@ -22,6 +31,7 @@ final class RawEditImageView extends View {
     });
   }
   void replace(Bitmap next){image=next;invalidate();}
+  void replace(Bitmap next,long ticket,long inputNs){pendingTicket=ticket;pendingInput=inputNs;replace(next);}
   void toggle(){zoom=zoom>1?1:2.5f;dx=dy=0;invalidate();}
   void clear(){replace(null);}
   protected void onDraw(Canvas c){

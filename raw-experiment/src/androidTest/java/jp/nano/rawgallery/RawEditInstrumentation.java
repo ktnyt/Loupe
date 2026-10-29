@@ -19,7 +19,7 @@ public final class RawEditInstrumentation extends Instrumentation {
     Bundle result=new Bundle();
     try{
       core();pad();
-      if(arguments!=null&&arguments.getBoolean("real",false))real();
+      if(arguments!=null&&Boolean.parseBoolean(arguments.getString("real","false")))real();
       result.putString("stream","PASS raw-editor GPU neutral/orientation/brightness/saturation/comparison; XY/edge independent; native\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable error){result.putString("stream","FAIL "+error.getClass().getSimpleName()+": "+(error instanceof AssertionError?error.getMessage():"core execution")+"\n");finish(Activity.RESULT_CANCELED,result);}
   }
@@ -40,6 +40,11 @@ public final class RawEditInstrumentation extends Instrumentation {
       Bitmap saved=render.render(edit,false,false,256),shown=render.render(edit,false,true,256);
       require(!saved.sameAs(shown),"MAX is a distinct transient display");
       require(saved.sameAs(render.render(new RawEditState(edit.snapshot()),false,false,256)),"export depends only on edit values");
+      Bitmap mono=render.render(new RawEditState().with(RawEditState.MONO,1),false,false,256);
+      int tint=mono.getPixel(1,1),red=(tint>>16)&255,green=(tint>>8)&255,blue=tint&255;
+      require(blue>red&&red>green,"Mono hue 260 tint order");
+      Bitmap monoBefore=render.render(new RawEditState().with(RawEditState.MONO,1),true,false,256);
+      require(monoBefore.sameAs(neutral),"before bypasses Mono");mono.recycle();monoBefore.recycle();
       neutral.recycle();grey.recycle();brighter.recycle();original.recycle();saved.recycle();shown.recycle();
     }
     try{NativeRaw.decode("/unreadable-test-input",2048);throw new AssertionError("native missing file accepted");}catch(IOException expected){require(!expected.getMessage().contains("unreadable"),"private native error");}
