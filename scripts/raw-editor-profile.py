@@ -54,6 +54,6 @@ for ticket,ns in inputs.items():
  if not groups or ns-groups[-1][-1][1]>100_000_000:groups.append([])
  groups[-1].append((ticket,ns))
 result['drags']=[{'input_count':len(g),'duration_ms':(g[-1][1]-g[0][1])/1e6,'frames_while_dragging':sum(g[0][1]<=c<=g[-1][1] for a,b,c in frames),'final_ms':next(((c-g[-1][1])/1e6 for a,b,c in frames if a==g[-1][0]),None)} for g in groups]
-result['source']='selected RAW' if args.uri_file else 'synthetic 1200x900'
+result['source']='selected RAW' if args.uri_file else 'synthetic 1200x800'
 result['boundary']='input to frame commit; not display scanout'
 print(json.dumps(result));(args.output/'summary.json').write_text(json.dumps(result,indent=2))

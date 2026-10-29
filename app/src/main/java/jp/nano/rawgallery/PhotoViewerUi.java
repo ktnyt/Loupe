@@ -213,7 +213,7 @@ final class PhotoViewerUi extends ViewGroup {
   static void editState(Button button,boolean running,boolean failed,String reason) {
     DockButton cell=(DockButton)button;cell.running=running;cell.saveFailed=failed;
     button.setText(running?"中止":"編集");
-    button.setContentDescription(running?"編集の準備をしています。押すと中止":"編集。端末の写真編集アプリで開きます"+(failed?"。"+reason+"。もう一度押すと再試行":""));
+    button.setContentDescription(running?"編集の準備をしています。押すと中止":"編集。現像（実験）を開きます。長押しで外部のアプリで編集"+(failed?"。"+reason+"。もう一度押すと再試行":""));
     button.setStateDescription(running?"準備中":failed?"失敗、再試行できます":null);
     icon(button,"編集");button.invalidate();
   }

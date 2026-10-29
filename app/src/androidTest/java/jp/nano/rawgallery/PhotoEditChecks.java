@@ -32,16 +32,17 @@ final class PhotoEditChecks {
       f.editor=new PhotoEditor(a,f.viewer,photo,worker,preparation);a.setContentView(f.viewer);});
     t.waitForIdleSync();await(()->f.viewer.hasWindowFocus());return f;
   }
-  static void click(Instrumentation t,Fixture f)throws Exception{TagDetailChecks.ui(t,()->f.editor.button.performClick());}
+  static void click(Instrumentation t,Fixture f)throws Exception{TagDetailChecks.ui(t,()->f.editor.button.performLongClick());}
   static String label(Instrumentation t,Fixture f)throws Exception{
     String[] result={""};TagDetailChecks.ui(t,()->result[0]=f.editor.button.getText().toString());return result[0];
   }
   static String run(Instrumentation t)throws Exception{
     MainActivity a=(MainActivity)t.startActivitySync(new Intent(t.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     ExecutorService worker=Executors.newSingleThreadExecutor();
-    AtomicReference<Intent> chosen=new AtomicReference<>();AtomicInteger launches=new AtomicInteger();
+    AtomicReference<Intent> chosen=new AtomicReference<>(),nativeChosen=new AtomicReference<>();AtomicInteger launches=new AtomicInteger(),nativeLaunches=new AtomicInteger();
     Instrumentation.ActivityMonitor monitor=new Instrumentation.ActivityMonitor(){
       public Instrumentation.ActivityResult onStartActivity(Intent intent){
+        if(intent.getComponent()!=null&&RawEditActivity.class.getName().equals(intent.getComponent().getClassName())){nativeChosen.set(intent);nativeLaunches.incrementAndGet();return new Instrumentation.ActivityResult(Activity.RESULT_CANCELED,null);}
         if(!Intent.ACTION_CHOOSER.equals(intent.getAction()))return null;
         chosen.set(intent);launches.incrementAndGet();return new Instrumentation.ActivityResult(Activity.RESULT_CANCELED,null);
       }
@@ -65,6 +66,9 @@ final class PhotoEditChecks {
       try{a.getContentResolver().openFileDescriptor(edit.getData(),"w");throw new AssertionError("copy must reject write");}catch(FileNotFoundException expected){}
       Intent raw=PhotoEditor.intent(Uri.parse("content://jp.nano.rawgallery.share/synthetic.dng"),RawFormats.mime("synthetic.dng"));
       TagDetailChecks.require("image/x-adobe-dng".equals(raw.getType()),"RAW MIME stays RAW");
+      TagDetailChecks.ui(t,()->real.editor.button.performClick());await(()->nativeLaunches.get()==1);
+      Uri nativeUri=nativeChosen.get().getData();TagDetailChecks.require("jp.nano.rawgallery.share".equals(nativeUri.getAuthority()),"normal tap opens internal editor with prepared copy");
+      File nativeCopy=new File(a.getCacheDir(),"shares/"+nativeUri.getLastPathSegment());copies.add(nativeCopy);TagDetailChecks.require(Arrays.equals(before,Files.readAllBytes(nativeCopy.toPath()))&&Arrays.equals(before,Files.readAllBytes(original.toPath())),"internal editor gets identical separate copy");
       int initial=launches.get();
       for(int scenario:new int[]{0,1,2}){
         CountDownLatch started=new CountDownLatch(1),release=new CountDownLatch(1);AtomicInteger writes=new AtomicInteger();AtomicReference<File> made=new AtomicReference<>();
@@ -81,7 +85,7 @@ final class PhotoEditChecks {
           else{
             long until=android.os.SystemClock.uptimeMillis()+3000;
             while(!"中止".equals(label(t,f))){if(android.os.SystemClock.uptimeMillis()>until)throw new AssertionError("cancel label");Thread.sleep(20);}
-            click(t,f);
+            TagDetailChecks.ui(t,()->f.editor.button.performClick());
           }
         }finally{release.countDown();}
         worker.submit(()->{}).get(5,TimeUnit.SECONDS);t.waitForIdleSync();
@@ -97,7 +101,7 @@ final class PhotoEditChecks {
       click(t,retry);await(()->launches.get()==initial+1);
       Intent retried=chosen.get().getParcelableExtra(Intent.EXTRA_INTENT);copies.add(new File(a.getCacheDir(),"shares/"+retried.getData().getLastPathSegment()));
       TagDetailChecks.require(attempts.get()==2&&Arrays.equals(before,Files.readAllBytes(original.toPath())),"retry succeeds without original mutation");
-      return "PASS original-format copy/unchanged original, read-only data+ClipData grant, RAW MIME, intercepted chooser, duplicate prevention, inline cancel, detach/focus loss-return/late completion cleanup, prepare failure/retry. No external editor launched; actual editor/save compatibility is separate.\n";
+      return "PASS normal-tap internal editor and long-press external chooser; original-format copy/unchanged original, read-only data+ClipData grant, RAW MIME, intercepted chooser, duplicate prevention, inline cancel, detach/focus loss-return/late completion cleanup, prepare failure/retry. No external editor launched; actual editor/save compatibility is separate.\n";
     }finally{
       t.removeMonitor(monitor);worker.shutdownNow();
       TagDetailChecks.ui(t,()->a.finish());original.delete();for(File copy:copies)copy.delete();

@@ -19,6 +19,7 @@ public final class RawEditInstrumentation extends Instrumentation {
     Bundle result=new Bundle();
     try{
       core();pad();
+      if(arguments!=null&&Boolean.parseBoolean(arguments.getString("ui","false")))RawEditUiChecks.run(this);
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("real","false")))real();
       result.putString("stream","PASS raw-editor GPU neutral/orientation/brightness/saturation/comparison; XY/edge independent; native\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable error){result.putString("stream","FAIL "+error.getClass().getSimpleName()+": "+(error instanceof AssertionError?error.getMessage():"core execution")+"\n");finish(Activity.RESULT_CANCELED,result);}
@@ -55,7 +56,7 @@ public final class RawEditInstrumentation extends Instrumentation {
       RawEditPad pad=new RawEditPad(getTargetContext(),180,current.get(),RawEditState.TEXTURE,RawEditState.CLARITY,"テクスチャ","明瞭度",current::set);
       float density=getTargetContext().getResources().getDisplayMetrics().density;int size=Math.round(236*density);
       pad.measure(View.MeasureSpec.makeMeasureSpec(size,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(0,View.MeasureSpec.UNSPECIFIED));pad.layout(0,0,size,pad.getMeasuredHeight());
-      FrameLayout frame=(FrameLayout)pad.getChildAt(1);View plane=frame.getChildAt(0),vertical=frame.getChildAt(1),horizontal=frame.getChildAt(2);
+      FrameLayout frame=pad;View plane=frame.getChildAt(0),vertical=frame.getChildAt(1),horizontal=frame.getChildAt(2);
       require(plane.getRight()<vertical.getLeft()&&plane.getBottom()<horizontal.getTop(),"non-overlapping input bounds");
       touch(plane,.8f,.2f);require(current.get().get(2)>0&&current.get().get(3)>0,"plane changes both axes");
       float y=current.get().get(3);touch(horizontal,.2f,.5f);require(current.get().get(2)<0&&current.get().get(3)==y,"horizontal leaves vertical unchanged");
