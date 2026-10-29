@@ -6,8 +6,8 @@ android {
         applicationId 'jp.nano.rawgallery.rawexperiment'
         minSdk 30
         targetSdk 35
-        versionCode 5
-        versionName '0.3.0'
+        versionCode 6
+        versionName '0.4.0'
         testInstrumentationRunner 'jp.nano.rawgallery.RawEditInstrumentation'
         ndk { abiFilters 'arm64-v8a' }
         externalNativeBuild { cmake { arguments '-DANDROID_STL=c++_static', '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON' } }

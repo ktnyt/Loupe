@@ -22,7 +22,7 @@
 
 - GL資源は単一GL workerが所有する。要求は軽量preview、現在viewportのdetail、export tileの順に扱う。処理済みpreviewの提示を最新入力との一致で飢餓にしない。
 - 連続操作中はdetailを開始せず、入力後の短い静止期間にviewportのdetailを進める。少なくとも各tile境界で最新previewと取消を再確認する。GLの単一draw/readback中の中断は保証しない。
-- 原寸detailは小さいtileから画面相当の領域へ組み立てる。軽量previewの上に描き、view内の全画像のfit/zoom/pan座標を変えない。1:1へ到達できる最大倍率を有効寸法とviewサイズから計算する。
+- 原寸detailは小さいtileから画面相当の領域へ組み立てる。軽量previewの上に描き、view内の全画像のfit/zoom/pan座標を変えない。有効寸法とviewサイズから原寸100%と150%を計算し、上限は150%とfitの大きい方とする。写真/空白のダブルタップは100%→150%→fitを循環する。詳細は[カーソルの契約](raw-editor-cursor-contract.md)。
 - preview・detail・exportは同じRawEditState/shaderを使う。空間フィルターは長辺min(2048,原寸長辺)の基準格子で定義し、原寸でも同じ画像内の範囲を参照する。各tileは最大radiusのceil+1pxのhaloを持ち、内部境界でclampせず実画像の端だけclampする。
 - detailのcommitにはセッション、編集revision、viewport revision、before/MAXの全一致を必要とする。編集・比較・MAX・zoom/panが変わればdetailを直ちに無効化し、古い精細像を後から重ねない。
 - previewと原寸はdownsample/非線形処理の順序が異なるため完全な画素一致を保証しない。同じ解像度でのtiled/untiledはJPEG前に許容差で比較する。
