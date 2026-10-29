@@ -35,6 +35,9 @@ final class RawEditUiChecks {
           require(pad.getChildAt(0).getWidth()==pad.getChildAt(0).getHeight(),"square control");
           Button selected=button(a.getWindow().getDecorView(),tab);require(selected.getLayout()!=null&&selected.getLayout().getLineCount()==1&&selected.getLayout().getEllipsisCount(0)==0,"tab label remains visible without wrapping or ellipsis");
           require(pad.getWidth()<=image.getWidth()&&pad.getHeight()<=image.getHeight(),"overlay fits the photo viewport");});
+        java.util.concurrent.CountDownLatch frame=new java.util.concurrent.CountDownLatch(1);
+        t.runOnMainSync(()->{View decor=a.getWindow().getDecorView();decor.getViewTreeObserver().registerFrameCommitCallback(frame::countDown);decor.invalidate();});
+        require(frame.await(3,java.util.concurrent.TimeUnit.SECONDS),"new tab frame committed before capture");
         Bitmap capture=t.getUiAutomation().takeScreenshot();require(capture!=null,"synthetic UI capture");
         java.io.File folder=new java.io.File(a.getCacheDir(),"raw-ui-"+a.getResources().getConfiguration().fontScale+"-"+a.getWindow().getDecorView().getHeight());folder.mkdirs();
         try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(folder,tab+".png"))){capture.compress(Bitmap.CompressFormat.PNG,100,out);}finally{capture.recycle();}

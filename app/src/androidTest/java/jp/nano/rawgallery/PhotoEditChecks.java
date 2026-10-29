@@ -95,11 +95,23 @@ final class PhotoEditChecks {
     }
     return result;
   }
-  private static void cancelInternalSave(Instrumentation t,MainActivity main,ExecutorService worker,File source,byte[] before,List<File> copies)throws Exception{
+  private static void cancelInternalSave(Instrumentation t,MainActivity main,ExecutorService worker,List<File> copies)throws Exception{
     ContentResolver resolver=main.getContentResolver();String owner=main.getPackageName();Set<Long> baseline=outputs(resolver,owner);
     Instrumentation.ActivityMonitor live=t.addMonitor(RawEditActivity.class.getName(),null,false);
-    RawEditActivity current=null;Uri ownPending=null;boolean ambiguous=false;Throwable primary=null;
+    RawEditActivity current=null;Uri ownPending=null;boolean ambiguous=false;Throwable primary=null;File source=null;
     try{
+      // Separate fixture: enough real rendering/encoding work to observe saving,
+      // without delaying production code or changing the small export/tint test.
+      source=File.createTempFile("edit-cancel-large-",".jpg",main.getCacheDir());
+      Bitmap large=Bitmap.createBitmap(2048,1536,Bitmap.Config.ARGB_8888);int[] row=new int[2048];
+      try{
+        for(int y=0;y<1536;y++){
+          for(int x=0;x<2048;x++)row[x]=Color.rgb((x*13+y*7)&255,(x*3+y*11)&255,(x*5+y*17)&255);
+          large.setPixels(row,0,2048,0,y,2048,1);
+        }
+        try(OutputStream stream=new FileOutputStream(source)){TagDetailChecks.require(large.compress(Bitmap.CompressFormat.JPEG,95,stream),"large synthetic cancel JPEG encoded");}
+      }finally{large.recycle();}
+      byte[] before=Files.readAllBytes(source.toPath());
       PhotoRepository.Photo photo=new PhotoRepository.Photo(Uri.fromFile(source),"edit-integration-cancel.jpg","/synthetic",source.length(),0,0);
       Fixture viewer=fixture(t,main,photo,worker,new SharePreparation(main,new PhotoRepository(main)));
       TagDetailChecks.ui(t,()->viewer.editor.button.performClick());Activity opened=live.waitForActivityWithTimeout(10000);
@@ -109,13 +121,18 @@ final class PhotoEditChecks {
       awaitUi(t,15000,()->button(editor,"保存")!=null&&button(editor,"保存").isEnabled(),"cancel test preview ready");
       TagDetailChecks.ui(t,()->button(editor,"保存").performClick());
       awaitUi(t,5000,()->dialogButton("JPEGで保存","保存")!=null,"cancel test save confirmation visible");
+      TagDetailChecks.ui(t,()->dialogButton("JPEGで保存","保存").performClick());
+      // AlertDialog posts its listener through a Handler. A later UI callback
+      // must observe saving before Back; a completed/unstarted save is a failure.
       TagDetailChecks.ui(t,()->{
-        dialogButton("JPEGで保存","保存").performClick();editor.onBackPressed();
-        TagDetailChecks.require(editor.isFinishing(),"Back immediately after confirming save leaves Activity");
+        Button savingButton=button(editor,"保存");
+        TagDetailChecks.require(savingButton!=null&&!savingButton.isEnabled()&&"保存中".contentEquals(savingButton.getStateDescription()==null?"":savingButton.getStateDescription()),"must observe disabled save button with saving state before cancellation");
+        editor.onBackPressed();
+        TagDetailChecks.require(editor.isFinishing(),"Back during observed saving leaves Activity");
       });
       awaitUi(t,10000,editor::isDestroyed,"cancelled saving Activity destroyed");
-      // No hook forces the background worker beyond insert(). This is immediate
-      // save-start cancellation, not a claim of cancellation after pending creation.
+      // Saving was observed through UI, but no hook forces the worker beyond
+      // insert(). This does not claim cancellation after pending-row creation.
       long until=android.os.SystemClock.uptimeMillis()+3000;Set<Long> remaining=Collections.emptySet();
       while(android.os.SystemClock.uptimeMillis()<until){
         remaining=outputs(resolver,owner);remaining.removeAll(baseline);
@@ -134,8 +151,13 @@ final class PhotoEditChecks {
         if(current==null&&live.getLastActivity() instanceof RawEditActivity)current=(RawEditActivity)live.getLastActivity();
         if(current!=null){RawEditActivity closing=current;TagDetailChecks.ui(t,closing::finish);}
       }catch(Exception|Error failure){cleanup=failure;}finally{t.removeMonitor(live);}
-      try{if(ownPending!=null&&!ambiguous)resolver.delete(ownPending,null,null);}
-      catch(Exception|Error failure){if(cleanup==null)cleanup=failure;else cleanup.addSuppressed(failure);}
+      try{
+        // Also clean a single output if saving finished too fast for the required
+        // observation. That case fails above rather than passing cancellation.
+        if(ownPending==null&&!ambiguous){Set<Long> made=outputs(resolver,owner);made.removeAll(baseline);if(made.size()==1)ownPending=ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,made.iterator().next());else if(made.size()>1)ambiguous=true;}
+        if(ownPending!=null&&!ambiguous)resolver.delete(ownPending,null,null);
+      }catch(Exception|Error failure){if(cleanup==null)cleanup=failure;else cleanup.addSuppressed(failure);}
+      finally{if(source!=null&&source.exists()&&!source.delete()){IOException failure=new IOException("large synthetic cancel fixture cleanup failed");if(cleanup==null)cleanup=failure;else cleanup.addSuppressed(failure);}}
       if(cleanup!=null){if(primary!=null)primary.addSuppressed(cleanup);else if(cleanup instanceof Error)throw (Error)cleanup;else throw (Exception)cleanup;}
     }
   }
@@ -209,7 +231,7 @@ final class PhotoEditChecks {
       TagDetailChecks.require(Arrays.equals(before,Files.readAllBytes(source.toPath()))&&Arrays.equals(before,Files.readAllBytes(copy.toPath())),"full editor/save leaves synthetic original and input copy unchanged");
       t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
       awaitUi(t,5000,current::isFinishing,"Back after saved state exits without discard dialog");
-      cancelInternalSave(t,main,worker,source,before,copies);
+      cancelInternalSave(t,main,worker,copies);
     }catch(Exception|Error failure){primary=failure;throw failure;}
     finally{
       Throwable cleanup=null;
@@ -295,7 +317,7 @@ final class PhotoEditChecks {
       Intent retried=chosen.get().getParcelableExtra(Intent.EXTRA_INTENT);copies.add(new File(a.getCacheDir(),"shares/"+retried.getData().getLastPathSegment()));
       TagDetailChecks.require(attempts.get()==2&&Arrays.equals(before,Files.readAllBytes(original.toPath())),"retry succeeds without original mutation");
       allowNative.set(true);internalEditor(t,a,worker,copies);
-      return "PASS real normal-tap internal Activity load, Mono dirty-Back cancel/recreation, confirmed MediaStore JPEG dimensions/tint/original unchanged, immediate save-start Back cancellation/no remaining owned output (pending-stage cancellation not forced), scoped cleanup; long-press external chooser; original-format copy/unchanged original, read-only data+ClipData grant, RAW MIME, intercepted chooser, duplicate prevention, inline cancel, detach/focus loss-return/late completion cleanup, prepare failure/retry. No external editor launched; external editor/save compatibility is separate.\n";
+      return "PASS real normal-tap internal Activity load, Mono dirty-Back cancel/recreation, confirmed MediaStore JPEG dimensions/tint/original unchanged, UI-observed saving Back cancellation/no remaining owned output (pending-stage cancellation not forced), scoped cleanup; long-press external chooser; original-format copy/unchanged original, read-only data+ClipData grant, RAW MIME, intercepted chooser, duplicate prevention, inline cancel, detach/focus loss-return/late completion cleanup, prepare failure/retry. No external editor launched; external editor/save compatibility is separate.\n";
     }finally{
       t.removeMonitor(monitor);worker.shutdownNow();
       TagDetailChecks.ui(t,()->a.finish());original.delete();for(File copy:copies)copy.delete();

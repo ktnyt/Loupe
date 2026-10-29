@@ -230,7 +230,7 @@ public final class RawEditActivity extends Activity {
         .setNegativeButton("キャンセル",null).setPositiveButton("保存",(d,w)->saveImage()).show();
   }
   private void saveImage(){
-    if(!ready||saving)return;saving=true;enabled(false);save.setStateDescription("保存中");busyIcon.setVisibility(View.VISIBLE);RawEditState snapshot=state;int token=epoch;long started=SystemClock.elapsedRealtime();
+    if(!ready||saving||dead||!visible||isFinishing())return;saving=true;enabled(false);save.setStateDescription("保存中");busyIcon.setVisibility(View.VISIBLE);RawEditState snapshot=state;int token=epoch;long started=SystemClock.elapsedRealtime();
     worker.execute(()->{
       Uri pending=null;Bitmap output=null;
       try{
