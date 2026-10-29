@@ -1330,11 +1330,12 @@ public final class MainActivity extends DiagnosticActivity {
       previous.setEnabled(within>0);next.setEnabled(within+1<count);
     }
     viewer.zoom();
-    PhotoEditor.add(this,viewer,photo,actions);
+    Button editPhoto=PhotoEditor.add(this,viewer,photo,actions);
     viewer.action("共有","共有","共有",()->shareMenu(photo));
     if(!fromRanking&&"content".equals(photo.uri.getScheme()))viewer.action("タグ","タグ","タグ",()->openTags(photo));
     viewer.action("情報","情報","写真の情報",()->new GalleryUi.Sheet(this).setTitle(photo.name)
         .setMessage(model.getText()+"\n"+dimensions.getText()+"\n"+photo.folder)
+        .setNeutralButton("外部のアプリで編集",(dialog,which)->{dialog.dismiss();editPhoto.post(()->editPhoto.performLongClick());})
         .setPositiveButton("閉じる",null).show());
     if(fromRanking&&!ranking.done())viewer.choose(()->saveRanking(ranking.choose(rankingMembers.get(ranking.upper())==position)));
     viewing =

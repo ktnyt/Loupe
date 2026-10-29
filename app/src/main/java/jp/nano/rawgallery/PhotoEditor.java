@@ -25,6 +25,7 @@ final class PhotoEditor {
 
   private static final class Request {
     volatile boolean cancelled;
+    boolean internal;
     boolean visible;
     Future<?> task;
     final long event = DiagnosticLog.id();
@@ -42,7 +43,11 @@ final class PhotoEditor {
       ExecutorService worker, SharePreparation preparation) {
     this.activity=activity; this.viewer=viewer; this.photo=photo;
     this.worker=worker; this.preparation=preparation;
-    button=viewer.action("編集","編集","編集。端末の写真編集アプリで開きます",this::activate);
+    button=viewer.action("編集","編集","編集。現像（実験）を開きます。長押しで外部のアプリで編集",()->activate(true));
+    button.setOnLongClickListener(v->{activate(false);return true;});
+    button.setAccessibilityDelegate(new View.AccessibilityDelegate(){
+      public void onInitializeAccessibilityNodeInfo(View host,android.view.accessibility.AccessibilityNodeInfo info){super.onInitializeAccessibilityNodeInfo(host,info);info.addAction(new android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_LONG_CLICK,"外部のアプリで編集"));}
+    });
     button.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
     viewer.editFocusLost=()->cancel(false);
     viewer.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener(){
@@ -63,9 +68,9 @@ final class PhotoEditor {
         && !activity.isDestroyed() && viewer.isAttachedToWindow();
   }
 
-  private void activate() {
+  private void activate(boolean internal) {
     if(active!=null){if(active.visible)cancel(true);return;}
-    Request request=new Request();active=request;
+    Request request=new Request();request.internal=internal;active=request;
     PhotoViewerUi.editState(button,false,false,"");
     DiagnosticLog.event("photo.edit.prepare.start",request.event,"format",photo.isJpeg()?"JPEG":"RAW");
     request.show=()->{
@@ -108,6 +113,7 @@ final class PhotoEditor {
     File file=prepared.files.get(0);
     Intent edit=intent(Uri.parse("content://jp.nano.rawgallery.share/"+file.getName()),prepared.mimeType);
     try {
+      if(request.internal){RawEditActivity.open(activity,edit.getData());DiagnosticLog.event("photo.edit.internal.open",request.event);return;}
       if(edit.resolveActivity(activity.getPackageManager())==null)throw new ActivityNotFoundException();
       button.requestFocus();
       activity.startActivity(Intent.createChooser(edit,"写真を編集"));

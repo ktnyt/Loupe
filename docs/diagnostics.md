@@ -117,3 +117,17 @@ frame commitの意味: [Android公式API](https://developer.android.com/referenc
 `index-signature`モードは一時DBだけを使い、ArchiveStoreのschema1/2から3への移行と新規作成、既存記録の保全、metadata/checkpointで署名が変わらないこと、写真レコードの変更とrollbackを検査する。`import-deferred`は合成画像の拡大中に新規取り込みを行い、更新結果が保留され、戻る操作で一覧へ反映されることを検査する。
 
 更新の保留は非同期読込の依頼時には解除せず、同じ更新世代のデータを一覧へ適用できた時点で解除する。`index-apply-race`は読込を止めて拡大へ移り、破棄された結果の保留が残ることと、古い読込が新しい更新の保留を解除しないことを合成データで検査する。
+
+## 内蔵現像の調整応答（Issue #53）
+
+`LoupeRawEdit` のdebugログは `adjust.input ticket/ns` と `adjust.frame ticket/input_ns/commit_ns` を対応づける。要求IDは現像画面内だけの匿名IDで、写真名・URI・座標・例外本文は記録しない。状態・入力時刻・IDは1つの不変スナップショットへまとめる。`adjust.render` はGPU描画とreadbackの時間であり、入力からの応答時間ではない。`source.copy` / `source.raw` / `load.failed.*` は選択入力のコピーとRAW展開と固定の失敗分類を区別する。
+
+```sh
+python3 scripts/raw-editor-profile.py --serial SERIAL --output /tmp/loupe-edit-new-run
+# 同じ実写真を明示的に再利用する場合だけ、許可済みcontent URIをローカルファイルで指定する。
+python3 scripts/raw-editor-profile.py --serial SERIAL --output /tmp/loupe-edit-real-run --uri-file /tmp/selected-raw-uri.txt
+```
+
+独立実験アプリを終了・起動し、通常は1200x800の合成写真、URI指定時はその入力を使う。質感の同じ面を1.8秒往復×3で操作し、入力からframe commitまでの中央値/p95、各ドラッグ中の反映回数、最後の入力の反映時間を記録する。URIファイルはリポジトリへ追加しない。前景の動画とPiPを止め、ロック状態を確認する。ロック設定や認証を変更しない。CLIは画面を保持する設定を変更せず、検証中は連続操作を行う。終了後の長い待機前に別途端末の状態を確認する。
+
+表示された要求の中央値だけでは、描画破棄による飢餓を検知できない。入力要求数・反映回数・操作中の反映回数を合わせて判断し、合成写真の改善を実写真の性能の証明にしない。frame commitはディスプレイ走査完了を表さない。
