@@ -53,7 +53,7 @@ RawImage::RawImage(const char* path, int maxSide, progress_callback callback, vo
     int sourceWidth, sourceHeight, colors, bits;
     raw_->get_mem_image_format(&sourceWidth, &sourceHeight, &colors, &bits);
     checkDimensions(sourceWidth, sourceHeight);
-    if (colors != 3 || bits != 16) throw std::runtime_error("Unsupported RAW color format");
+    if ((colors != 1 && colors != 3) || bits != 16) throw std::runtime_error("Unsupported RAW color format");
     int error = 0;
     image_ = raw_->dcraw_make_mem_image(&error);
     if (error || !image_) {
@@ -61,9 +61,9 @@ RawImage::RawImage(const char* path, int maxSide, progress_callback callback, vo
         image_ = nullptr;
         throw std::runtime_error("RAW pixel conversion failed");
     }
-    if (image_->type != LIBRAW_IMAGE_BITMAP || image_->colors != 3 || image_->bits != 16 ||
+    if (image_->type != LIBRAW_IMAGE_BITMAP || image_->colors != colors || image_->bits != 16 ||
         image_->width != sourceWidth || image_->height != sourceHeight ||
-        uint64_t(image_->data_size) != uint64_t(sourceWidth) * sourceHeight * 6) {
+        uint64_t(image_->data_size) != uint64_t(sourceWidth) * sourceHeight * colors * sizeof(uint16_t)) {
         LibRaw::dcraw_clear_mem(image_);
         image_ = nullptr;
         throw std::runtime_error("Unsupported RAW pixel layout");
@@ -79,6 +79,7 @@ void RawImage::write(float* output) const {
     if (!output) throw std::invalid_argument("Missing RAW pixel buffer");
     const auto* source = reinterpret_cast<const uint16_t*>(image_->data);
     const int sw = image_->width, sh = image_->height;
+    const int channels = image_->colors;
     for (int y = 0; y < height_; ++y) {
         const double sy = std::max(0.0, (y + 0.5) * sh / height_ - 0.5);
         const int y0 = int(sy), y1 = std::min(sh - 1, y0 + 1);
@@ -88,8 +89,10 @@ void RawImage::write(float* output) const {
             const int x0 = int(sx), x1 = std::min(sw - 1, x0 + 1);
             const float fx = float(sx - x0);
             for (int c = 0; c < 3; ++c) {
-                const float top = source[(y0 * sw + x0) * 3 + c] * (1 - fx) + source[(y0 * sw + x1) * 3 + c] * fx;
-                const float bottom = source[(y1 * sw + x0) * 3 + c] * (1 - fx) + source[(y1 * sw + x1) * 3 + c] * fx;
+                // Replicate monochrome linear intensity into neutral RGB.
+                const int sc = channels == 1 ? 0 : c;
+                const float top = source[(y0 * sw + x0) * channels + sc] * (1 - fx) + source[(y0 * sw + x1) * channels + sc] * fx;
+                const float bottom = source[(y1 * sw + x0) * channels + sc] * (1 - fx) + source[(y1 * sw + x1) * channels + sc] * fx;
                 *output++ = std::clamp((top * (1 - fy) + bottom * fy) / 65535.0f, 0.0f, 1.0f);
             }
             *output++ = 1.0f;

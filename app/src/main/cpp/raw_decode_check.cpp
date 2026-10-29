@@ -18,6 +18,7 @@ int main(int argc, char** argv) {
     try {
         bool cancel = argc == 3 && std::string(argv[2]) == "--cancel";
         auto cancelCallback = +[](void*, LibRaw_progress, int, int) -> int { return 1; };
+        const bool mono = argc == 3 && std::string(argv[2]) == "--mono";
         loupe::RawImage image(argv[1], 2048, cancel ? cancelCallback : nullptr);
         if (cancel) return 8;
         std::vector<float> pixels(size_t(image.width()) * image.height() * 4);
@@ -27,11 +28,13 @@ int main(int argc, char** argv) {
         for (size_t i = 0; i < pixels.size(); ++i) {
             if (!std::isfinite(pixels[i]) || pixels[i] < 0 || pixels[i] > 1) return 3;
             if (i % 4 == 3) { if (pixels[i] != 1) return 4; continue; }
+            if (mono && pixels[i] != pixels[i - i % 4]) return 9;
             minimum = std::min(minimum, pixels[i]); maximum = std::max(maximum, pixels[i]); sum += pixels[i];
         }
         if (maximum <= minimum || image.width() > 2048 || image.height() > 2048) return 5;
         std::cout << "decoded " << image.width() << 'x' << image.height() << " linear RGB range " << minimum << ".." << maximum
-                  << " mean " << sum / (pixels.size() / 4 * 3) << '\n';
+                  << " mean " << sum / (pixels.size() / 4 * 3)
+                  << (mono ? " neutral RGB verified" : "") << '\n';
     } catch (const std::exception& e) {
         if (argc == 3 && std::string(argv[2]) == "--cancel" && std::string(e.what()) == "RAW decoding cancelled") {
             std::cout << "cancelled through LibRaw callback\n"; return 0;

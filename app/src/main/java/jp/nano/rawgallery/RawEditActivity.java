@@ -28,7 +28,12 @@ public final class RawEditActivity extends Activity {
   private RawEditState saved=new RawEditState();
   private volatile boolean visible=true,dead,ready,before,maxSaturation,saving;
   private volatile int epoch;
-  private volatile long rendered=-1,inputNs;
+  private volatile long rendered=-1;
+  private volatile RenderRequest latest;
+  private static final class RenderRequest {
+    final long ticket,inputNs;final RawEditState state;final boolean before,max;
+    RenderRequest(long id,long ns,RawEditState values,boolean original,boolean boost){ticket=id;inputNs=ns;state=values;before=original;max=boost;}
+  }
   private boolean loading;
   private Uri input;
   private int tab,sub,width,height,padSize=180;
@@ -159,17 +164,18 @@ public final class RawEditActivity extends Activity {
         main.post(()->{if(dead||token!=epoch||!visible){initial.recycle();return;}width=source.width;height=source.height;image.replace(initial);status.setText("");status.setClickable(false);status.setOnClickListener(null);loading=false;ready=true;zoom.setVisibility(View.VISIBLE);enabled(true);renderControls();});
       }catch(IOException|RuntimeException|LinkageError|OutOfMemoryError e){
         if(renderer!=null){renderer.close();renderer=null;}
-        RawEditLog.event("load.failed",SystemClock.elapsedRealtime()-started,0,0);
+        RawEditLog.event(e instanceof SecurityException?"load.failed.permission":e instanceof OutOfMemoryError?"load.failed.memory":e instanceof LinkageError?"load.failed.native":e instanceof IOException?"load.failed.io":"load.failed.runtime",SystemClock.elapsedRealtime()-started,0,0);
         main.post(()->{if(dead||token!=epoch||!visible)return;loading=false;ready=false;status.setText("読み込めませんでした\nタップで再試行");status.setClickable(true);status.setOnClickListener(v->load());});
       }
     });
   }
-  private void requestRender(){inputNs=SystemClock.elapsedRealtimeNanos();long requested=revision.incrementAndGet();RawEditLog.input(requested,inputNs);main.removeCallbacks(busy);main.postDelayed(busy,400);scheduleRender();}
+  private void requestRender(){long inputNs=SystemClock.elapsedRealtimeNanos(),requested=revision.incrementAndGet();latest=new RenderRequest(requested,inputNs,state,before,maxSaturation);RawEditLog.input(requested,inputNs);main.removeCallbacks(busy);main.postDelayed(busy,400);scheduleRender();}
   private void scheduleRender(){
-    if(!ready||dead||!visible||saving||!queued.compareAndSet(false,true))return;
+    if(!ready||dead||!visible||saving||latest==null||!queued.compareAndSet(false,true))return;
+    int token=epoch;
     worker.execute(()->{
-      int token=epoch;long ticket=revision.get(),requestedAt=inputNs,start=SystemClock.elapsedRealtime();
-      RawEditState snapshot=state;boolean original=before,boost=maxSaturation;
+      RenderRequest request=latest;long ticket=request.ticket,requestedAt=request.inputNs,start=SystemClock.elapsedRealtime();
+      RawEditState snapshot=request.state;boolean original=request.before,boost=request.max;
       try{
         Bitmap b=renderer.render(snapshot,original,boost,1024);
         RawEditLog.event("adjust.render",SystemClock.elapsedRealtime()-start,b.getWidth(),b.getHeight());

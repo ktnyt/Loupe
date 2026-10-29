@@ -15,6 +15,7 @@ final class RawEditSource {
   RawEditSource(int w,int h,ByteBuffer p,boolean r){width=w;height=h;pixels=p;raw=r;}
   static RawEditSource load(Context c,Uri uri)throws IOException {
     if(uri==null||!"content".equals(uri.getScheme()))throw new IOException("写真を選び直してください");
+    RawEditLog.event("source.copy.start",0,0,0);
     File temp=File.createTempFile("raw-edit-",".input",c.getCacheDir());
     try {
       try(InputStream in=c.getContentResolver().openInputStream(uri);OutputStream out=new FileOutputStream(temp)){
@@ -25,10 +26,13 @@ final class RawEditSource {
           total+=n;if(total>256L*1024*1024)throw new IOException("256MB以下の写真を選んでください");out.write(chunk,0,n);
         }
       }
+      RawEditLog.event("source.copy.complete",0,0,0);
       boolean jpeg;
       try(InputStream in=new FileInputStream(temp)){jpeg=in.read()==255&&in.read()==216&&in.read()==255;}
       if(jpeg)return jpeg(temp);
+      RawEditLog.event("source.raw.start",0,0,0);
       NativeRaw.Image image=NativeRaw.decode(temp.getAbsolutePath(),2048);
+      RawEditLog.event("source.raw.complete",0,image.width,image.height);
       return new RawEditSource(image.width,image.height,image.pixels,true);
     } catch(SecurityException failure){throw new IOException("写真を選び直してください");}
     finally {if(!temp.delete())temp.deleteOnExit();}

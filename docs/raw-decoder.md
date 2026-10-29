@@ -16,7 +16,7 @@ OpenMP, LCMS, RawSpeed, DNG SDK, GoPro SDK, JasPer, and external JPEG are disabl
 
 ## Pixels and limits
 
-Camera white balance, `half_size=1`, `no_auto_bright=1`, sRGB primaries, linear gamma (`gamm[0]=gamm[1]=1`), RGB16 output. LibRaw applies orientation once when producing its memory image. A bilinear resize in linear space produces RGBA FLOAT32 with alpha=1. RGB is normalized to 0..1; interpolation roundoff is clamped to that range. LibRaw's 16-bit processing clips highlights before this buffer, so later adjustments cannot recover those highlights.
+Camera white balance, `half_size=1`, `no_auto_bright=1`, sRGB primaries, linear gamma (`gamm[0]=gamm[1]=1`), RGB16 output for color sensors; monochrome LibRaw output is accepted as one-channel 16-bit and replicated equally into R/G/B after the same linear resize. Other channel counts are rejected. LibRaw applies orientation once when producing its memory image. A bilinear resize in linear space produces RGBA FLOAT32 with alpha=1. RGB is normalized to 0..1; interpolation roundoff is clamped to that range. LibRaw's 16-bit processing clips highlights before this buffer, so later adjustments cannot recover those highlights.
 
 `maxSide` must be 256..2048; the result never enlarges the decoded image. Input must be a regular file, >0 and <=256 MiB. Both raw sensor and visible dimensions must be positive, <=16384 per axis and <=80 million pixels. LibRaw's raw allocation limit is 256 MiB; this is not a total process-memory cap. The oriented RGB16 copy and up to 64 MiB Java direct buffer exist briefly together with native processing buffers.
 
@@ -32,8 +32,9 @@ cmake --build /tmp/loupe-raw-host
 /tmp/loupe-raw-host/raw_decode_check --self-test
 /tmp/loupe-raw-host/raw_decode_check /path/to/local/sample.raw
 /tmp/loupe-raw-host/raw_decode_check /path/to/local/sample.raw --cancel
+/tmp/loupe-raw-host/raw_decode_check /path/to/local/monochrome.raw --mono
 ```
 
-It emits dimensions and aggregate pixel range only. Local photo fixtures remain outside Git. Host core checks passed on eight local DNG and six ORF files (finite RGB, alpha=1, bounded dimensions). A host JVM check of the exact JNI bridge passed direct-buffer layout/native byte order and pixels for one DNG and one ORF, interrupted-thread cancellation and path-free error text. Invalid maxSide/non-regular input and native progress-callback cancellation were also checked. Android arm64 native shared-library compilation passed.
+It emits dimensions and aggregate pixel range only. Local photo fixtures remain outside Git. Host core checks passed on eight local DNG and six ORF files (finite RGB, alpha=1, bounded dimensions). A host JVM check of the exact JNI bridge passed direct-buffer layout/native byte order and pixels for one DNG and one ORF, interrupted-thread cancellation and path-free error text. Invalid maxSide/non-regular input and native progress-callback cancellation were also checked. Android arm64 native shared-library compilation passed. The monochrome follow-up passed a local one-channel RAW decode with exact R=G=B, alpha=1 and bounded finite pixels; the previous eight DNG/six ORF checks also passed. Truncated monochrome input still failed, callback cancellation passed, and the source hash stayed unchanged. Android verification of this follow-up is separate.
 
 Host checks do not establish Android JNI behavior, physical-device performance, display color accuracy, visual orientation correctness, or commercial RAW quality; those need separate on-device checks.
