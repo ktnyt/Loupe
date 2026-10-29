@@ -14,6 +14,17 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class RawEditInstrumentation extends Instrumentation {
   private Bundle arguments;
   public void onCreate(Bundle args){arguments=args;start();}
+  public void callActivityOnCreate(Activity activity,Bundle saved){
+    if(arguments!=null&&arguments.containsKey("font")&&activity instanceof RawEditActivity){
+      android.content.res.Configuration config=new android.content.res.Configuration(activity.getResources().getConfiguration());
+      config.fontScale=Float.parseFloat(arguments.getString("font"));activity.getResources().updateConfiguration(config,activity.getResources().getDisplayMetrics());
+    }
+    super.callActivityOnCreate(activity,saved);
+    if(arguments!=null&&arguments.containsKey("height")&&activity instanceof RawEditActivity){
+      int h=Integer.parseInt(arguments.getString("height"));activity.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT,Math.round(h*activity.getResources().getDisplayMetrics().density));
+    }
+  }
+
   private static void require(boolean ok,String message){if(!ok)throw new AssertionError(message);}
   public void onStart(){
     Bundle result=new Bundle();

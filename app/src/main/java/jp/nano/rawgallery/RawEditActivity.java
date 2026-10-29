@@ -157,7 +157,7 @@ public final class RawEditActivity extends Activity {
     final Paint p=new Paint();public void draw(Canvas c){p.setColor(BG);c.drawRect(getBounds(),p);p.setColor(0xff1a1a1d);c.drawRect(0,0,getBounds().width(),dp(1),p);}public void setAlpha(int a){}public void setColorFilter(ColorFilter f){}public int getOpacity(){return PixelFormat.OPAQUE;}
   }
   private final class TabBackground extends RowBackground {
-    final boolean selected;TabBackground(boolean s){selected=s;}public void draw(Canvas c){super.draw(c);p.setColor(selected?INK:0xff222226);c.drawRect(0,0,getBounds().width(),dp(selected?2:1),p);}
+    final boolean selected;TabBackground(boolean s){selected=s;}public void draw(Canvas c){super.draw(c);p.setColor(selected?INK:0xff222226);float w=getBounds().width();c.drawRect(selected?w*.25f:0,0,selected?w*.75f:w,dp(selected?2:1),p);}
   }
   private final class SliderTrack extends Drawable {
     final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);public void draw(Canvas c){float y=getBounds().exactCenterY();p.setColor(0xff3a3a3f);p.setStrokeWidth(dp(2));c.drawLine(0,y,getBounds().width(),y,p);p.setColor(0xff6b6b70);c.drawLine(getBounds().exactCenterX(),y-dp(6),getBounds().exactCenterX(),y+dp(6),p);}public int getIntrinsicHeight(){return dp(48);}public void setAlpha(int a){}public void setColorFilter(ColorFilter f){}public int getOpacity(){return PixelFormat.TRANSLUCENT;}
@@ -254,13 +254,13 @@ public final class RawEditActivity extends Activity {
     });
   }
   public void onBackPressed(){
-    if(saving)return;
+    if(saving){visible=false;++epoch;finish();return;}
     if(!state.equals(saved)){new AlertDialog.Builder(this).setTitle("変更を破棄しますか？").setNegativeButton("編集を続ける",null).setPositiveButton("破棄",(d,w)->finish()).show();}
     else finish();
   }
   protected void onSaveInstanceState(Bundle b){super.onSaveInstanceState(b);b.putFloatArray("values",state.snapshot());b.putFloatArray("saved",saved.snapshot());b.putInt("tab",tab);b.putInt("uiVersion",2);b.putFloat("zoom",image.zoom);b.putFloat("panX",image.dx);b.putFloat("panY",image.dy);if(input!=null)b.putString("input",input.toString());}
   protected void onStart(){super.onStart();visible=true;if(root!=null&&(input!=null||synthetic())&&!ready&&!loading)load();else if(ready){save.setText("保存");save.setStateDescription(null);enabled(true);requestRender();}}
-  protected void onStop(){visible=false;++epoch;maxSaturation=false;before=false;main.removeCallbacks(busy);if(loadFuture!=null&&loading)loadFuture.cancel(true);loading=false;saving=false;super.onStop();}
+  protected void onStop(){visible=false;++epoch;maxSaturation=false;before=false;main.removeCallbacks(busy);if(loadFuture!=null&&loading)loadFuture.cancel(true);loading=false;saving=false;ready=false;image.clear();worker.execute(()->{if(renderer!=null){renderer.close();renderer=null;}});super.onStop();}
   protected void onDestroy(){dead=true;ready=false;main.removeCallbacksAndMessages(null);if(loadFuture!=null)loadFuture.cancel(true);worker.execute(()->{if(renderer!=null){renderer.close();renderer=null;}});worker.shutdown();image.clear();super.onDestroy();}
 
   private final class Icon extends Drawable {

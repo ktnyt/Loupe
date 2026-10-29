@@ -32,7 +32,12 @@ final class RawEditUiChecks {
         t.runOnMainSync(()->{RawEditPad pad=find(a.getWindow().getDecorView(),RawEditPad.class);Rect r=bounds(pad);if(original[0]==null)original[0]=r;require(original[0].equals(r),"all seven tabs preserve control geometry");
           RawEditImageView image=find(a.getWindow().getDecorView(),RawEditImageView.class);ViewGroup root=(ViewGroup)image.getParent().getParent();int available=root.getHeight()-root.getPaddingTop()-root.getPaddingBottom();float density=a.getResources().getDisplayMetrics().density;
           require(Math.abs(image.getHeight()-(available-Math.round(196*density)))<=2,"photo takes all space except 56+56+84 rows");
-          require(pad.getChildAt(0).getWidth()==pad.getChildAt(0).getHeight(),"square control");});
+          require(pad.getChildAt(0).getWidth()==pad.getChildAt(0).getHeight(),"square control");
+          Button selected=button(a.getWindow().getDecorView(),tab);require(selected.getLayout()!=null&&selected.getLayout().getLineCount()==1&&selected.getLayout().getEllipsisCount(0)==0,"tab label remains visible without wrapping or ellipsis");
+          require(pad.getWidth()<=image.getWidth()&&pad.getHeight()<=image.getHeight(),"overlay fits the photo viewport");});
+        Bitmap capture=t.getUiAutomation().takeScreenshot();require(capture!=null,"synthetic UI capture");
+        java.io.File folder=new java.io.File(a.getCacheDir(),"raw-ui-"+a.getResources().getConfiguration().fontScale+"-"+a.getWindow().getDecorView().getHeight());folder.mkdirs();
+        try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(folder,tab+".png"))){capture.compress(Bitmap.CompressFormat.PNG,100,out);}finally{capture.recycle();}
       }
       t.runOnMainSync(()->{
         float[] before=values(a);button(a.getWindow().getDecorView(),"モノクロ").performClick();require(values(a)[RawEditState.MONO]==1,"Mono persists in edit state");

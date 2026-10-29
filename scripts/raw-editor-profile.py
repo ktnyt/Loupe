@@ -18,9 +18,17 @@ if args.uri_file:
  shell('am','start','-n','jp.nano.rawgallery.rawexperiment/jp.nano.rawgallery.RawEditActivity','-d',uri,'--grant-read-uri-permission')
 else:
  shell('am','start','-n','jp.nano.rawgallery.rawexperiment/jp.nano.rawgallery.RawEditActivity','--ez','rawEditSynthetic','true')
-time.sleep(3)
-shell('uiautomator','dump','/data/local/tmp/loupe53-ui.xml')
-xml=shell('cat','/data/local/tmp/loupe53-ui.xml')
+# Wait for actual edit readiness, not a fixed delay after potentially slow RAW decoding.
+import xml.etree.ElementTree as ET
+until=time.monotonic()+45
+while True:
+ policy=shell('dumpsys','window','policy')
+ if 'showing=false' not in policy or 'showing=true' in policy:raise SystemExit('Device locked; stop')
+ shell('uiautomator','dump','/data/local/tmp/loupe53-ui.xml')
+ xml=shell('cat','/data/local/tmp/loupe53-ui.xml')
+ if any(n.attrib.get('text')=='保存' and n.attrib.get('enabled')=='true' for n in ET.fromstring(xml).iter('node')):break
+ if time.monotonic()>until:raise SystemExit('RAW edit preview did not become ready')
+ time.sleep(.2)
 
 # Coordinates derive from UI bounds, not guessed layout.
 import xml.etree.ElementTree as ET
