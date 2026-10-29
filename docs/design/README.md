@@ -153,4 +153,6 @@ Issue #55の[4状態の参照・実機比較](loupe55-fullstates-comparison.png)
 
 ## カーソルをつかむ現像操作（Issue #59）
 
-[現在の参照HTML](loupe-raw-editor-cursor-navigation.html)は面28dp・右/下24dpの半透明カーソル3点を常時表示し、48dpの操作域をつかんだ相対移動だけで値を変える。空白からのドラッグはパン、ダブルタップは原寸100%→150%→fit。カーソル上のダブルタップ初期化、7タブ、原寸準備/待ち/失敗の状態を保持する。[操作中](loupe59-reference-drag.png)と[消去後](loupe59-reference-hidden.png)はClaudeが完成HTMLから書き出した400×844・文字1.0・WB+60/+60の合成画面。代替フォント、1dp=1px。元ガイドHTMLは不変。Androidへの反映・変更後実機比較は未完了。
+[現在の参照HTML](loupe-raw-editor-cursor-navigation.html)は面28dp・右/下24dpの半透明カーソル3点を常時表示し、48dpの操作域をつかんだ相対移動だけで値を変える。空白からのドラッグはパン、ダブルタップは原寸100%→150%→fit。カーソル上のダブルタップ初期化、7タブ、原寸準備/待ち/失敗の状態を保持する。[操作中](loupe59-reference-drag.png)と[消去後](loupe59-reference-hidden.png)はClaudeが完成HTMLから書き出した400×844・文字1.0・WB+60/+60の合成画面。代替フォント、1dp=1px。元ガイドHTMLは不変。Androidへ反映し、[操作中](loupe59-comparison-drag.png)と[消去後](loupe59-comparison-hidden.png)を独立比較済み。比較の根拠と残る差は[契約](../raw-editor-cursor-contract.md)を参照。
+
+同contentの追加参照は[操作中](loupe59-reference-content-drag.png)と[消去後](loupe59-reference-content-hidden.png)。HTMLの実行時高さ805⅓dp/DPR3/文字1.0で描き、ブラウザ丸めで1200×2415px、実機アプリ領域は1200×2416px。OS領域を除き同じ物理幅で比較する。

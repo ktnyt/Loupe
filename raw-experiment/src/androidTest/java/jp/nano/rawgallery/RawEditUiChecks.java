@@ -15,6 +15,7 @@ import java.util.concurrent.TimeUnit;
 /** Synthetic data only: real View dispatch, fixed geometry, cursor-only pixels and two pointers. */
 final class RawEditUiChecks {
   private static void require(boolean ok,String text){if(!ok)throw new AssertionError(text);}
+  private static void onMain(Instrumentation t,Runnable action){Throwable[] failure={null};t.runOnMainSync(()->{try{action.run();}catch(Throwable thrown){failure[0]=thrown;}});if(failure[0] instanceof Error)throw (Error)failure[0];if(failure[0] instanceof RuntimeException)throw (RuntimeException)failure[0];if(failure[0]!=null)throw new AssertionError("UI check failed",failure[0]);}
   private static <T> T find(View v,Class<T> type){if(type.isInstance(v))return type.cast(v);if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++){T result=find(((ViewGroup)v).getChildAt(i),type);if(result!=null)return result;}return null;}
   private static Button button(View v,String text){if(v instanceof Button&&text.contentEquals(((Button)v).getText()))return (Button)v;if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++){Button b=button(((ViewGroup)v).getChildAt(i),text);if(b!=null)return b;}return null;}
   private static Rect bounds(View v){int[] p=new int[2];v.getLocationOnScreen(p);return new Rect(p[0],p[1],p[0]+v.getWidth(),p[1]+v.getHeight());}
@@ -32,18 +33,18 @@ final class RawEditUiChecks {
   private static Rect windowBounds(View view){int[] xy=new int[2];view.getLocationInWindow(xy);return new Rect(xy[0],xy[1],xy[0]+view.getWidth(),xy[1]+view.getHeight());}
   private static void confirmedCapture(Instrumentation t,RawEditActivity activity,String tab)throws Exception {
     int[] size=new int[2];float[] font={0};
-    t.runOnMainSync(()->{View decor=activity.getWindow().getDecorView();size[0]=decor.getWidth();size[1]=decor.getHeight();font[0]=activity.getResources().getConfiguration().fontScale;});
+    onMain(t,()->{View decor=activity.getWindow().getDecorView();size[0]=decor.getWidth();size[1]=decor.getHeight();font[0]=activity.getResources().getConfiguration().fontScale;});
     java.io.File folder=new java.io.File(activity.getCacheDir(),"raw-ui-confirmed-"+font[0]+"-"+size[1]);require(folder.isDirectory()||folder.mkdirs(),"confirmed synthetic capture folder");
     long started=SystemClock.uptimeMillis(),deadline=started+5000;JSONArray attempts=new JSONArray();boolean confirmed=false;int attempt=0;
     try {
       while(SystemClock.uptimeMillis()<deadline&&!confirmed){
         attempt++;CountDownLatch frame=new CountDownLatch(1);long[] committed={0};
-        t.runOnMainSync(()->{View decor=activity.getWindow().getDecorView();RawEditImageView image=find(decor,RawEditImageView.class);RawEditPad pad=find(decor,RawEditPad.class);decor.getViewTreeObserver().registerFrameCommitCallback(()->{committed[0]=SystemClock.uptimeMillis();frame.countDown();});image.invalidate();pad.invalidate();decor.invalidate();});
+        onMain(t,()->{View decor=activity.getWindow().getDecorView();RawEditImageView image=find(decor,RawEditImageView.class);RawEditPad pad=find(decor,RawEditPad.class);decor.getViewTreeObserver().registerFrameCommitCallback(()->{committed[0]=SystemClock.uptimeMillis();frame.countDown();});image.invalidate();pad.invalidate();decor.invalidate();});
         JSONObject record=new JSONObject();record.put("attempt",attempt);
         if(!frame.await(Math.max(1,deadline-SystemClock.uptimeMillis()),TimeUnit.MILLISECONDS)){record.put("failure","frame commit timeout");record.put("elapsedMs",SystemClock.uptimeMillis()-started);attempts.put(record);break;}
         Bitmap capture=Bitmap.createBitmap(size[0],size[1],Bitmap.Config.ARGB_8888);CountDownLatch copied=new CountDownLatch(1);int[] status={-1},probe=new int[5],coordinates=new int[10];boolean[] copyDone={false},abandoned={false};Object lock=new Object();boolean ownsBitmap=true;long[] copyAt={0};
         try {
-          t.runOnMainSync(()->{
+          onMain(t,()->{
             View decor=activity.getWindow().getDecorView();RawEditImageView image=find(decor,RawEditImageView.class);RawEditPad pad=find(decor,RawEditPad.class);View picture=(View)image.getParent(),planeView=pad.getChildAt(0);Rect selected=windowBounds(button(decor,tab)),photo=windowBounds(image);float density=activity.getResources().getDisplayMetrics().density;int tabIndex=Arrays.asList(TAB_NAMES).indexOf(tab);require(tabIndex>=0,"known tab selected for cursor probe");float[] cursor=cursorOnPicture(pad,planeView,picture,values(activity),TAB_KEYS[tabIndex]);int cursorX=photo.left+Math.round(cursor[0]),cursorY=photo.top+Math.round(cursor[1]);
             coordinates[0]=selected.centerX();coordinates[1]=selected.top+Math.max(1,Math.round(density));coordinates[2]=photo.centerX();coordinates[3]=photo.centerY();
             coordinates[4]=cursorX+Math.round(13*density);coordinates[5]=cursorY;coordinates[6]=cursorX+Math.round(9*density);coordinates[7]=cursorY;coordinates[8]=cursorX+Math.round(17*density);coordinates[9]=cursorY;
@@ -78,12 +79,12 @@ final class RawEditUiChecks {
     RawEditActivity a=(RawEditActivity)t.startActivitySync(new Intent(t.getTargetContext(),RawEditActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("rawEditSynthetic",true));
     try{
       boolean[] loaded={false};long until=SystemClock.uptimeMillis()+10000;
-      while(!loaded[0]&&SystemClock.uptimeMillis()<until){t.runOnMainSync(()->{Button b=button(a.getWindow().getDecorView(),"保存");loaded[0]=b!=null&&b.isEnabled();});Thread.sleep(25);}
+      while(!loaded[0]&&SystemClock.uptimeMillis()<until){onMain(t,()->{Button b=button(a.getWindow().getDecorView(),"保存");loaded[0]=b!=null&&b.isEnabled();});Thread.sleep(25);}
       require(loaded[0],"synthetic preview loaded");t.waitForIdleSync();
       Rect[] original={null};
       for(String tab:new String[]{"WB","質感","トーン","明るさ","明暗","白黒","カラー"}){
-        t.runOnMainSync(()->button(a.getWindow().getDecorView(),tab).performClick());t.waitForIdleSync();
-        t.runOnMainSync(()->{RawEditPad pad=find(a.getWindow().getDecorView(),RawEditPad.class);Rect r=bounds(pad);if(original[0]==null)original[0]=r;require(original[0].equals(r),"all seven tabs preserve control geometry");
+        onMain(t,()->button(a.getWindow().getDecorView(),tab).performClick());t.waitForIdleSync();
+        onMain(t,()->{RawEditPad pad=find(a.getWindow().getDecorView(),RawEditPad.class);Rect r=bounds(pad);if(original[0]==null)original[0]=r;require(original[0].equals(r),"all seven tabs preserve control geometry");
           RawEditImageView image=find(a.getWindow().getDecorView(),RawEditImageView.class);ViewGroup root=(ViewGroup)image.getParent().getParent();int available=root.getHeight()-root.getPaddingTop()-root.getPaddingBottom();float density=a.getResources().getDisplayMetrics().density;
           require(Math.abs(image.getHeight()-(available-Math.round(196*density)))<=2,"photo takes all space except 56+56+84 rows");
           require(pad.getChildAt(0).getWidth()==pad.getChildAt(0).getHeight(),"square control");
@@ -91,14 +92,14 @@ final class RawEditUiChecks {
           require(pad.getWidth()<=image.getWidth()&&pad.getHeight()<=image.getHeight(),"overlay fits the photo viewport");});
         confirmedCapture(t,a,tab);
       }
-      t.runOnMainSync(()->{
+      onMain(t,()->{
         float[] before=values(a);button(a.getWindow().getDecorView(),"モノクロ").performClick();require(values(a)[RawEditState.MONO]==1,"Mono persists in edit state");
         for(int i=0;i<RawEditState.MONO;i++)require(values(a)[i]==before[i],"Mono does not replace other parameters");
         button(a.getWindow().getDecorView(),"初期化").performClick();require(values(a)[RawEditState.MONO]==0,"color reset includes Mono");
         button(a.getWindow().getDecorView(),"WB").performClick();before=values(a);button(a.getWindow().getDecorView(),"彩度MAX").performClick();require(Arrays.equals(before,values(a)),"MAX never enters saved state");
         button(a.getWindow().getDecorView(),"質感").performClick();
       });t.waitForIdleSync();
-      t.runOnMainSync(()->{
+      onMain(t,()->{
         RawEditPad pad=find(a.getWindow().getDecorView(),RawEditPad.class);RawEditImageView image=find(a.getWindow().getDecorView(),RawEditImageView.class);View picture=(View)image.getParent();
         float[] before=values(a);int[] keys={2,3};float[] cursor=cursorOnPicture(pad,pad.getChildAt(0),picture,before,keys);float cx=cursor[0],cy=cursor[1],w=pad.getChildAt(0).getWidth();long time=SystemClock.uptimeMillis();
         touch(picture,time,MotionEvent.ACTION_DOWN,cx,cy);require(Arrays.equals(before,values(a)),"cursor DOWN selects the handle without changing values");
@@ -109,8 +110,11 @@ final class RawEditUiChecks {
         touch(picture,time,MotionEvent.ACTION_POINTER_UP|(1<<MotionEvent.ACTION_POINTER_INDEX_SHIFT),pcx-span,pcy,pcx+span,pcy);
         touch(picture,time,MotionEvent.ACTION_MOVE,pcx,pcy);touch(picture,time,MotionEvent.ACTION_UP,pcx,pcy);require(Arrays.equals(before,values(a)),"remaining finger does not resume parameter editing");require(original[0].equals(bounds(pad)),"pinch leaves overlay at fixed screen coordinates");
         RawEditPad isolated=new RawEditPad(a,180,new RawEditState(),2,3,"テクスチャ","明瞭度",v->{});int size=Math.round(236*a.getResources().getDisplayMetrics().density);isolated.measure(View.MeasureSpec.makeMeasureSpec(size,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(size,View.MeasureSpec.EXACTLY));isolated.layout(0,0,size,size);
-        Bitmap bitmap=Bitmap.createBitmap(size,size,Bitmap.Config.ARGB_8888);isolated.draw(new Canvas(bitmap));require(Color.alpha(bitmap.getPixel(size/5,size/5))==0,"control plane has no background or grid");int[] pixels=new int[size*size];bitmap.getPixels(pixels,0,size,0,0,size,size);long colored=0;for(int pixel:pixels)if(Color.alpha(pixel)>0)colored++;float density=a.getResources().getDisplayMetrics().density;require(colored>100*density*density&&colored<900*density*density,"only the 28dp cursor draws pixels");bitmap.recycle();
+        Bitmap bitmap=Bitmap.createBitmap(size,size,Bitmap.Config.ARGB_8888);isolated.draw(new Canvas(bitmap));require(Color.alpha(bitmap.getPixel(size/5,size/5))==0,"control plane has no background or grid");int[] pixels=new int[size*size];bitmap.getPixels(pixels,0,size,0,0,size,size);float cursorDensity=a.getResources().getDisplayMetrics().density;long[] colored=new long[3];float[][] centers=new float[3][2];
+        for(int i=0;i<3;i++){View surface=isolated.getChildAt(i);centers[i][0]=surface.getLeft()+surface.getWidth()/2f;centers[i][1]=surface.getTop()+surface.getHeight()/2f;}
+        for(int row=0;row<size;row++)for(int col=0;col<size;col++)if(Color.alpha(pixels[row*size+col])>0){int owner=-1;for(int i=0;i<3;i++)if(Math.hypot(col+.5f-centers[i][0],row+.5f-centers[i][1])<=(i==0?16:14)*cursorDensity){owner=i;break;}require(owner>=0,"no visible idle pixels outside the three cursor bounds");colored[owner]++;}
+        for(int i=0;i<3;i++)require(colored[i]>100*cursorDensity*cursorDensity&&colored[i]<900*cursorDensity*cursorDensity,"each of the three idle cursors draws its own bounded ring and fill");bitmap.recycle();
       });
-    }finally{t.runOnMainSync(()->a.finish());}
+    }finally{onMain(t,()->a.finish());}
   }
 }

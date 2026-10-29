@@ -10,6 +10,8 @@ import android.widget.*;
 import java.io.*;
 import java.util.*;
 import java.util.concurrent.*;
+import org.json.JSONObject;
+import org.json.JSONArray;
 
 /** Synthetic input through the actual picture dispatcher; no user image is loaded. */
 final class RawEditCursorChecks {
@@ -36,10 +38,19 @@ final class RawEditCursorChecks {
   private static void drag(View picture,float x,float y,float dx,float dy){long t=SystemClock.uptimeMillis();event(picture,t,t,MotionEvent.ACTION_DOWN,x,y);event(picture,t,t+40,MotionEvent.ACTION_MOVE,x+dx,y+dy);event(picture,t,t+80,MotionEvent.ACTION_UP,x+dx,y+dy);}
   private static void doubleTap(View picture,float x,float y){long t=SystemClock.uptimeMillis();for(int i=0;i<2;i++){long d=t+i*120;event(picture,d,d,MotionEvent.ACTION_DOWN,x,y);event(picture,d,d+30,MotionEvent.ACTION_UP,x,y);}}
   private static void ready(Instrumentation t,RawEditActivity a)throws Exception{boolean[] ready={false};long limit=SystemClock.uptimeMillis()+15000;while(!ready[0]&&SystemClock.uptimeMillis()<limit){onMain(t,()->{Button b=button(a.getWindow().getDecorView(),"保存");ready[0]=b!=null&&b.isEnabled();});Thread.sleep(25);}require(ready[0],"synthetic cursor activity ready");t.waitForIdleSync();}
+  private static JSONArray windowBounds(View view)throws org.json.JSONException{int[] xy=new int[2];view.getLocationInWindow(xy);return new JSONArray(new int[]{xy[0],xy[1],xy[0]+view.getWidth(),xy[1]+view.getHeight()});}
+  private static JSONObject captureMetadata(RawEditActivity a,String phase){
+    try{
+      JSONObject m=new JSONObject();View decor=a.getWindow().getDecorView();RawEditImageView image=find(decor,RawEditImageView.class);View root=(View)image.getParent().getParent();int[] xy=new int[2];root.getLocationInWindow(xy);
+      android.content.pm.PackageInfo info=a.getPackageManager().getPackageInfo(a.getPackageName(),0);
+      m.put("input","debug synthetic 6000x4000 only");m.put("phase",phase);m.put("versionCode",info.getLongVersionCode());m.put("versionName",info.versionName);m.put("fontScale",a.getResources().getConfiguration().fontScale);m.put("density",a.getResources().getDisplayMetrics().density);m.put("uptimeMs",SystemClock.uptimeMillis());
+      m.put("window",windowBounds(decor));m.put("content",new JSONArray(new int[]{xy[0]+root.getPaddingLeft(),xy[1]+root.getPaddingTop(),xy[0]+root.getWidth()-root.getPaddingRight(),xy[1]+root.getHeight()-root.getPaddingBottom()}));m.put("photo",windowBounds(image));m.put("pad",windowBounds(find(decor,RawEditPad.class)));m.put("values",new JSONArray(values(a)));m.put("zoom",image.zoom);return m;
+    }catch(Exception failure){throw new AssertionError("synthetic capture metadata",failure);}
+  }
   private static void capture(Instrumentation t,RawEditActivity a,File folder,String name)throws Exception{
-    Bitmap[] bitmap={null};CountDownLatch done=new CountDownLatch(1);int[] result={-1};
-    onMain(t,()->{View decor=a.getWindow().getDecorView();bitmap[0]=Bitmap.createBitmap(decor.getWidth(),decor.getHeight(),Bitmap.Config.ARGB_8888);PixelCopy.request(a.getWindow(),bitmap[0],n->{result[0]=n;done.countDown();},new Handler(Looper.getMainLooper()));});
-    try{require(done.await(5,TimeUnit.SECONDS)&&result[0]==PixelCopy.SUCCESS,"synthetic cursor window copied");try(OutputStream out=new FileOutputStream(new File(folder,name+".png"))){require(bitmap[0].compress(Bitmap.CompressFormat.PNG,100,out),"synthetic cursor PNG");}}finally{if(bitmap[0]!=null)bitmap[0].recycle();}
+    Bitmap[] bitmap={null};JSONObject[] metadata={null};CountDownLatch done=new CountDownLatch(1);int[] result={-1};
+    onMain(t,()->{View decor=a.getWindow().getDecorView();metadata[0]=captureMetadata(a,name);bitmap[0]=Bitmap.createBitmap(decor.getWidth(),decor.getHeight(),Bitmap.Config.ARGB_8888);PixelCopy.request(a.getWindow(),bitmap[0],n->{result[0]=n;done.countDown();},new Handler(Looper.getMainLooper()));});
+    try{require(done.await(5,TimeUnit.SECONDS)&&result[0]==PixelCopy.SUCCESS,"synthetic cursor window copied");try(OutputStream out=new FileOutputStream(new File(folder,name+".png"))){require(bitmap[0].compress(Bitmap.CompressFormat.PNG,100,out),"synthetic cursor PNG");}metadata[0].put("pixelCopy",result[0]);metadata[0].put("completedUptimeMs",SystemClock.uptimeMillis());try(Writer out=new OutputStreamWriter(new FileOutputStream(new File(folder,name+".json")),java.nio.charset.StandardCharsets.UTF_8)){out.write(metadata[0].toString(2));}}finally{if(bitmap[0]!=null)bitmap[0].recycle();}
   }
   private static void handles(RawEditPad p,float[] v){
     Bitmap b=Bitmap.createBitmap(p.getWidth()+64,p.getHeight()+64,Bitmap.Config.ARGB_8888);
