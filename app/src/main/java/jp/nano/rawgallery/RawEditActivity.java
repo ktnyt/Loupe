@@ -8,12 +8,10 @@ import android.graphics.*;
 import android.graphics.drawable.*;
 import android.net.Uri;
 import android.os.*;
-import android.provider.MediaStore;
 import android.view.*;
 import android.widget.*;
 import java.io.*;
 import java.nio.*;
-import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 
@@ -39,6 +37,17 @@ public final class RawEditActivity extends Activity {
   private int tab,width,height,padSize=180;
   private RawEditRenderer renderer; // Worker-owned EGL resources.
   private Future<?> loadFuture;
+  private final java.util.Set<RawEditSource> pendingSources=ConcurrentHashMap.newKeySet();
+  private RawEditFullSession fullSession;
+  private RawEditFullSource.Preview pendingFullPreview;
+  private volatile boolean previewSwapQueued;
+  private boolean saveWaiting,preparationFailed,fullBadgeShown;
+  private int previewWidth,previewHeight;
+  private long lastInputMs;
+  private FullBadge fullBadge;
+  private AlertDialog saveDialog;
+  private final Runnable showFullBadge=()->{if(ready&&fullSession!=null&&!fullSession.isPrepared()){fullBadgeShown=true;updateFullUi();}};
+  private final Runnable replaceFullPreview=this::replacePreparedPreview;
   private LinearLayout root,controls,tabs;
   private HorizontalScrollView tabScroll;
   private FrameLayout picture;
@@ -65,7 +74,7 @@ public final class RawEditActivity extends Activity {
       String source=bundle.getString("input");if(source!=null)input=Uri.parse(source);
     }else input=getIntent().getData();
     build();
-    if(bundle!=null){image.zoom=Math.max(1,Math.min(4,bundle.getFloat("zoom",1)));image.dx=bundle.getFloat("panX",0);image.dy=bundle.getFloat("panY",0);updateZoom();}
+    if(bundle!=null){image.zoom=Math.max(1,Math.min(Float.MAX_VALUE,bundle.getFloat("zoom",1)));image.dx=bundle.getFloat("panX",0);image.dy=bundle.getFloat("panY",0);updateZoom();}
     if(input!=null||synthetic())load();else showPicker();
   }
   private boolean synthetic(){return (getApplicationInfo().flags&ApplicationInfo.FLAG_DEBUGGABLE)!=0&&getIntent().getBooleanExtra("rawEditSynthetic",false);}
@@ -91,10 +100,11 @@ public final class RawEditActivity extends Activity {
     reset=topButton("初期化","reset",this::resetTab);reset.setContentDescription("現在のタブだけ初期化");top.addView(reset,new LinearLayout.LayoutParams(dp(48),-1));
     save=button("保存",this::confirmSave);save.setTextColor(0xff111111);save.setTextSize(14);save.setTypeface(Typeface.create(Typeface.DEFAULT,600,false));save.setPadding(0,0,0,0);save.setBackground(rounded(INK,24));LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(dp(64),dp(48));sp.leftMargin=dp(4);top.addView(save,sp);
     picture=new PhotoSurface();picture.setClipChildren(false);picture.setBackgroundColor(Color.BLACK);root.addView(picture,new LinearLayout.LayoutParams(-1,0,1));
-    image=new RawEditImageView(this);picture.addView(image,new FrameLayout.LayoutParams(-1,-1));
+    image=new RawEditImageView(this);picture.addView(image,new FrameLayout.LayoutParams(-1,-1));image.setViewportListener(this::viewportChanged);
     status=text("",14,INK);status.setGravity(Gravity.CENTER);status.setPadding(dp(16),dp(8),dp(16),dp(8));status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);picture.addView(status,new FrameLayout.LayoutParams(-1,-1));status.setClickable(false);
     badge=text("",12,INK);badge.setGravity(Gravity.CENTER);badge.setPadding(dp(10),0,dp(10),0);badge.setBackground(rounded(0x9e000000,12));badge.setVisibility(View.GONE);badge.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);FrameLayout.LayoutParams bp=new FrameLayout.LayoutParams(-2,dp(24),Gravity.TOP|Gravity.LEFT);bp.leftMargin=bp.topMargin=dp(12);picture.addView(badge,bp);
     busyIcon=new ProgressBar(this);busyIcon.setIndeterminateTintList(ColorStateList.valueOf(INK));busyIcon.setBackground(rounded(0x9e000000,14));busyIcon.setPadding(dp(5),dp(5),dp(5),dp(5));busyIcon.setVisibility(View.GONE);busyIcon.setContentDescription("反映しています");FrameLayout.LayoutParams ip=new FrameLayout.LayoutParams(dp(28),dp(28),Gravity.TOP|Gravity.RIGHT);ip.rightMargin=ip.topMargin=dp(12);picture.addView(busyIcon,ip);
+    fullBadge=new FullBadge();fullBadge.setVisibility(View.GONE);fullBadge.setOnClickListener(v->retryPreparation());FrameLayout.LayoutParams fp=new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.TOP|Gravity.RIGHT);fp.rightMargin=dp(4);fp.topMargin=dp(2);picture.addView(fullBadge,fp);
     controls=new LinearLayout(this);controls.setGravity(Gravity.CENTER_VERTICAL);controls.setPadding(dp(16),0,dp(8),0);controls.setBackground(new RowBackground());root.addView(controls,new LinearLayout.LayoutParams(-1,dp(56)));
     zoom=button("",()->{image.toggle();updateZoom();});zoom.setContentDescription("拡大");zoom.setPadding(0,0,0,0);
     tabScroll=new HorizontalScrollView(this);tabScroll.setHorizontalScrollBarEnabled(false);tabScroll.setFillViewport(true);root.addView(tabScroll,new LinearLayout.LayoutParams(-1,dp(84)));
@@ -138,7 +148,7 @@ public final class RawEditActivity extends Activity {
   }
   private void showHelp(){
     String value=axes[tab][0]+"　"+RawEditPad.value(pairs[tab][0],state.get(pairs[tab][0]))+"\n"+axes[tab][1]+"　"+RawEditPad.value(pairs[tab][1],state.get(pairs[tab][1]));
-    new AlertDialog.Builder(this).setTitle(tabNames[tab]).setMessage("写真の中央の面を1本の指で動かすと、横と縦の値が変わります。右の端は縦だけ、下の端は横だけ。\n2本の指で拡大・移動できます。\n\n"+value+(tab==6?"\nモノクロ：色相260・彩度11・輝度+2":"")).setPositiveButton("閉じる",null).show();
+    new AlertDialog.Builder(this).setTitle(tabNames[tab]).setMessage("写真の中央の面を1本の指で動かすと、横と縦の値が変わります。右の端は縦だけ、下の端は横だけ。\n2本の指で拡大・移動できます。\n\n"+value+(tab==6?"\nモノクロ：色相260・彩度11・輝度+2":"")+"\n\n精細な表示と保存は原寸の準備のあと。準備中も編集できます。\n右上の格子に三角の印は原寸の準備の失敗。押すと再試行。\n原寸 "+width+" × "+height+"："+(fullSession!=null&&fullSession.isPrepared()?"完了":preparationFailed?"失敗":"準備中")+"\n拡大の上限 "+String.format(java.util.Locale.ROOT,"%.2f",image.maxZoom())+"倍").setPositiveButton("閉じる",null).show();
   }
   private final class PhotoSurface extends FrameLayout {
     boolean pinch;RawEditState start;boolean startBefore;
@@ -163,8 +173,8 @@ public final class RawEditActivity extends Activity {
     final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);public void draw(Canvas c){float y=getBounds().exactCenterY();p.setColor(0xff3a3a3f);p.setStrokeWidth(dp(2));c.drawLine(0,y,getBounds().width(),y,p);p.setColor(0xff6b6b70);c.drawLine(getBounds().exactCenterX(),y-dp(6),getBounds().exactCenterX(),y+dp(6),p);}public int getIntrinsicHeight(){return dp(48);}public void setAlpha(int a){}public void setColorFilter(ColorFilter f){}public int getOpacity(){return PixelFormat.TRANSLUCENT;}
   }
   private static void setChildrenEnabled(View v,boolean enabled){v.setEnabled(enabled);if(v instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++)setChildrenEnabled(((android.view.ViewGroup)v).getChildAt(i),enabled);}
-  private void enabled(boolean value){compare.setEnabled(value);reset.setEnabled(value);save.setEnabled(value);zoom.setEnabled(value);setChildrenEnabled(controls,value);if(pad!=null)setChildrenEnabled(pad,value);help.setEnabled(!saving);updateBadge();}
-  private void showPicker(){status.setText("RAW / JPEGを選択\n実験版・長辺2048pxまで");status.setOnClickListener(v->pick());status.setClickable(true);zoom.setVisibility(View.GONE);}
+  private void enabled(boolean value){compare.setEnabled(value);reset.setEnabled(value);save.setEnabled(value);zoom.setEnabled(value);setChildrenEnabled(controls,value);if(pad!=null)setChildrenEnabled(pad,value);help.setEnabled(!saving);setChildrenEnabled(tabs,value);updateBadge();}
+  private void showPicker(){status.setText("RAW / JPEGを選択\n実験版・原寸で別保存");status.setOnClickListener(v->pick());status.setClickable(true);zoom.setVisibility(View.GONE);}
   private void pick(){
     Intent choose=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
     try{startActivityForResult(choose,53);}catch(ActivityNotFoundException e){status.setText("写真を選択できるアプリがありません");}
@@ -180,32 +190,125 @@ public final class RawEditActivity extends Activity {
       float a=Math.max(0,Math.min(1,(1-small)/.04f)),c=Math.max(0,Math.min(1,(1-large)/.04f));
       for(int k=0;k<3;k++){float srgb=(lo[k]+(hi[k]-lo[k])*amount)/255f;srgb=srgb*(1-a)+red[k]/255f*a;srgb=srgb*(1-c)+beige[k]/255f*c;f.put(srgb<=.04045f?srgb/12.92f:(float)Math.pow((srgb+.055f)/1.055f,2.4));}f.put(1);
     }
-    return new RawEditSource(w,h,b,false);
+    return RawEditSource.synthetic(w,h,b,6000,4000);
   }
+  private boolean current(int token){return !dead&&visible&&token==epoch;}
+  private boolean current(RawEditFullSession session,int token){return current(token)&&fullSession==session;}
   private void load(){
-    if(dead||loading)return;loading=true;ready=false;int token=++epoch;enabled(false);status.setText("読み込み中…\nタップで中止");status.setClickable(true);status.setOnClickListener(v->onBackPressed());zoom.setVisibility(View.GONE);
-    long started=SystemClock.elapsedRealtime();loadFuture=worker.submit(()->{
-      try{
-        if(renderer!=null){renderer.close();renderer=null;}
-        RawEditSource source=synthetic()?syntheticSource():RawEditSource.load(this,input);
-        if(dead||token!=epoch||!visible)return;
-        renderer=new RawEditRenderer(source.width,source.height,source.pixels);
-        Bitmap initial=renderer.render(state,false,false,1024);
-        if(dead||token!=epoch||!visible){initial.recycle();renderer.close();renderer=null;return;}
-        RawEditLog.event(source.raw?"raw.load.complete":"jpeg.load.complete",SystemClock.elapsedRealtime()-started,source.width,source.height);
-        main.post(()->{if(dead||token!=epoch||!visible){initial.recycle();return;}width=source.width;height=source.height;image.replace(initial);displayBefore=displayMax=false;status.setText("");status.setClickable(false);status.setOnClickListener(null);loading=false;ready=true;zoom.setVisibility(View.VISIBLE);enabled(true);renderControls();requestRender();});
-      }catch(IOException|RuntimeException|LinkageError|OutOfMemoryError e){
-        if(renderer!=null){renderer.close();renderer=null;}
-        RawEditLog.event(e instanceof SecurityException?"load.failed.permission":e instanceof OutOfMemoryError?"load.failed.memory":e instanceof LinkageError?"load.failed.native":e instanceof IOException?"load.failed.io":"load.failed.runtime",SystemClock.elapsedRealtime()-started,0,0);
-        main.post(()->{if(dead||token!=epoch||!visible)return;loading=false;ready=false;status.setText("読み込めませんでした\nタップで再試行");status.setClickable(true);status.setOnClickListener(v->load());});
+    if(dead||loading)return;
+    if(fullSession!=null){fullSession.close();fullSession=null;}
+    pendingFullPreview=null;previewSwapQueued=false;saveWaiting=false;preparationFailed=false;fullBadgeShown=false;
+    main.removeCallbacks(showFullBadge);main.removeCallbacks(replaceFullPreview);updateFullUi();
+    loading=true;ready=false;int token=++epoch;enabled(false);status.setText("読み込み中…\nタップで中止");status.setClickable(true);status.setOnClickListener(v->onBackPressed());zoom.setVisibility(View.GONE);
+    long started=SystemClock.elapsedRealtime();
+    loadFuture=RawEditFullSession.initial(()->{
+      RawEditSource loaded=null;
+      try {
+        loaded=synthetic()?syntheticSource():RawEditSource.load(this,input);
+        if(!current(token)||Thread.currentThread().isInterrupted()){loaded.close();return;}
+        RawEditSource source=loaded;loaded=null;pendingSources.add(source);
+        try{worker.execute(()->uploadInitial(source,token,started));}catch(RejectedExecutionException rejected){pendingSources.remove(source);source.close();}
+      }catch(IOException|RuntimeException|LinkageError|OutOfMemoryError failure){
+        if(loaded!=null)loaded.close();loadFailed(token,started,failure);
       }
     });
   }
-  private void requestRender(){long inputNs=SystemClock.elapsedRealtimeNanos(),requested=revision.incrementAndGet();latest=new RenderRequest(requested,inputNs,state,before,maxSaturation);RawEditLog.input(requested,inputNs);main.removeCallbacks(busy);main.postDelayed(busy,400);scheduleRender();}
+  private void uploadInitial(RawEditSource source,int token,long started){
+    RawEditRenderer created=null;Bitmap initial=null;boolean handedOff=false;
+    try {
+      if(!current(token)||Thread.currentThread().isInterrupted())return;
+      if(renderer!=null){renderer.close();renderer=null;}
+      created=new RawEditRenderer(source.width,source.height,source.pixels);initial=created.render(state,false,false,1024);
+      if(!current(token))return;
+      RawEditRenderer uploaded=created;Bitmap frame=initial;renderer=created;
+      handedOff=main.post(()->{
+        pendingSources.remove(source);
+        if(!current(token)){frame.recycle();source.close();try{worker.execute(()->{if(renderer==uploaded){uploaded.close();renderer=null;}});}catch(RejectedExecutionException ignored){}return;}
+        try {
+          previewWidth=source.width;previewHeight=source.height;width=source.originalWidth();height=source.originalHeight();
+          image.setFullDimensions(width,height);image.replace(frame);displayBefore=displayMax=false;
+          status.setText("");status.setClickable(false);status.setOnClickListener(null);loading=false;ready=true;rendered=-1;
+          attachFullSession(source,token);zoom.setVisibility(View.VISIBLE);enabled(true);renderControls();requestRender();
+          RawEditLog.event(source.raw?"raw.load.complete":"jpeg.load.complete",SystemClock.elapsedRealtime()-started,source.width,source.height);
+        }catch(RuntimeException|OutOfMemoryError failure){if(fullSession!=null){fullSession.close();fullSession=null;}source.close();ready=false;image.clear();try{worker.execute(()->{if(renderer==uploaded){uploaded.close();renderer=null;}});}catch(RejectedExecutionException ignored){}loadFailed(token,started,failure);}
+      });
+    }catch(IOException|RuntimeException|LinkageError|OutOfMemoryError failure){loadFailed(token,started,failure);}
+    finally{if(!handedOff){pendingSources.remove(source);if(initial!=null)initial.recycle();if(created!=null){created.close();if(renderer==created)renderer=null;}source.close();}}
+  }
+  private void loadFailed(int token,long started,Throwable failure){
+    RawEditLog.event(failure instanceof OutOfMemoryError?"load.failed.memory":failure instanceof LinkageError?"load.failed.native":failure instanceof IOException?"load.failed.io":"load.failed.runtime",SystemClock.elapsedRealtime()-started,0,0);
+    main.post(()->{if(!current(token))return;loading=false;ready=false;status.setText("読み込めませんでした\nタップで再試行");status.setClickable(true);status.setOnClickListener(v->load());});
+  }
+  private void attachFullSession(RawEditSource source,int token){
+    final RawEditFullSession[] holder=new RawEditFullSession[1];
+    RawEditFullSession session=new RawEditFullSession(this,source,worker,main,
+        ()->queued.get()||rendered!=revision.get()||previewSwapQueued,
+        new RawEditFullSession.Listener(){
+          public void prepared(int w,int h,RawEditFullSource.Preview preview){
+            if(!current(holder[0],token))return;
+            width=w;height=h;preparationFailed=false;fullBadgeShown=false;main.removeCallbacks(showFullBadge);
+            image.setFullDimensions(w,h);pendingFullPreview=preview;main.removeCallbacks(replaceFullPreview);main.postDelayed(replaceFullPreview,120);updateFullUi();
+            if(saveWaiting){saveWaiting=false;updateFullUi();actualConfirmSave();}
+          }
+          public void prepareFailed(){
+            if(!current(holder[0],token))return;preparationFailed=true;fullBadgeShown=true;saveWaiting=false;image.setFullDimensions(previewWidth,previewHeight);updateFullUi();
+          }
+          public void detail(Bitmap bitmap,RectF region,long edit,long viewport,boolean original,boolean max){
+            if(current(holder[0],token)&&ready&&!saving&&edit==revision.get()&&viewport==image.viewportRevision()&&original==before&&max==maxSaturation)image.setDetail(bitmap,region);else bitmap.recycle();
+          }
+          public void saved(RawEditState snapshot){
+            if(!current(holder[0],token))return;saving=false;saved=snapshot;busyIcon.setVisibility(View.GONE);status.setText("");enabled(true);updateFullUi();save.setText("✓");save.announceForAccessibility("保存しました");main.postDelayed(()->{if(current(holder[0],token)&&!saving&&!saveWaiting)updateFullUi();},900);requestDetailForCurrent();
+          }
+          public void saveFailed(){if(!current(holder[0],token))return;finishSaveUi();status.setText("保存できませんでした。もう一度保存できます");}
+          public void saveCancelled(){if(!current(holder[0],token))return;finishSaveUi();status.setText("");}
+        });
+    holder[0]=session;fullSession=session;session.start();main.postDelayed(showFullBadge,400);
+  }
+  private void retryPreparation(){
+    if(!ready||fullSession==null||!fullSession.hasFailed())return;
+    preparationFailed=false;fullBadgeShown=false;image.setFullDimensions(width,height);fullSession.retry();main.removeCallbacks(showFullBadge);main.postDelayed(showFullBadge,400);updateFullUi();
+  }
+  private void updateFullUi(){
+    if(save==null||fullBadge==null)return;
+    boolean show=ready&&fullBadgeShown&&fullSession!=null&&!fullSession.isPrepared();fullBadge.setVisibility(show?View.VISIBLE:View.GONE);fullBadge.setEnabled(preparationFailed&&!saving);
+    fullBadge.setContentDescription(preparationFailed?"原寸を準備できませんでした。低い解像度で表示と編集を続けられます。拡大はプレビューの等倍まで、保存は原寸の準備のあとです。押すと再試行":"精細な表示を準備しています。編集はそのまま続けられます");fullBadge.invalidate();
+    FrameLayout.LayoutParams ip=(FrameLayout.LayoutParams)busyIcon.getLayoutParams();ip.rightMargin=dp(show?64:12);busyIcon.setLayoutParams(ip);
+    save.setText("保存");save.setPadding(0,0,0,0);save.setCompoundDrawablePadding(dp(4));save.setBackground(rounded(saveWaiting||saving?0xff2a2a2e:INK,24));save.setTextColor(saveWaiting||saving?0xffc9c9c4:0xff111111);
+    save.setCompoundDrawablesWithIntrinsicBounds(saveWaiting||saving?new Icon("spinner",16):null,null,preparationFailed?new Icon("warning",12,0xffff8a7a):null,null);
+    save.setStateDescription(saveWaiting?"原寸の準備を待っています。押すと中止":saving?"保存中":preparationFailed?"原寸の準備を再試行":null);
+  }
+  private void viewportChanged(){
+    if(!ready)return;image.clearDetail();if(fullSession!=null)fullSession.input();updateZoom();requestDetailForCurrent();
+  }
+  private void requestDetailForCurrent(){
+    RawEditFullSession session=fullSession;
+    if(!ready||saving||session==null||!session.isPrepared()||image.zoom<=1||queued.get()||rendered!=revision.get()||pendingFullPreview!=null||previewSwapQueued)return;
+    RectF region=image.visibleSource();int[] size=image.detailSize(region);if(region.isEmpty()||size[0]<1||size[1]<1)return;
+    session.requestDetail(state,revision.get(),image.viewportRevision(),before,maxSaturation,region,size[0],size[1]);
+  }
+  private void replacePreparedPreview(){
+    RawEditFullSource.Preview preview=pendingFullPreview;
+    if(preview==null||!ready||dead||!visible||previewSwapQueued)return;
+    if(queued.get()||rendered!=revision.get()||SystemClock.elapsedRealtime()-lastInputMs<120){main.postDelayed(replaceFullPreview,120);return;}
+    int token=epoch;previewSwapQueued=true;
+    worker.execute(()->{
+      RawEditRenderer next=null;boolean adopted=false;
+      try {
+        if(!current(token))return;
+        next=new RawEditRenderer(preview.width,preview.height,preview.pixels);
+        if(!current(token))return;
+        RawEditRenderer previous=renderer;renderer=next;adopted=true;if(previous!=null)previous.close();
+        main.post(()->{if(!current(token))return;previewSwapQueued=false;if(pendingFullPreview==preview)pendingFullPreview=null;requestRender();});
+      }catch(IOException|RuntimeException|OutOfMemoryError failure){main.post(()->{if(!current(token))return;previewSwapQueued=false;pendingFullPreview=null;requestDetailForCurrent();});}
+      finally{if(next!=null&&!adopted)next.close();}
+    });
+  }
+  private void requestRender(){lastInputMs=SystemClock.elapsedRealtime();image.clearDetail();if(fullSession!=null)fullSession.input();long inputNs=SystemClock.elapsedRealtimeNanos(),requested=revision.incrementAndGet();latest=new RenderRequest(requested,inputNs,state,before,maxSaturation);RawEditLog.input(requested,inputNs);main.removeCallbacks(busy);main.postDelayed(busy,400);scheduleRender();}
   private void scheduleRender(){
-    if(!ready||dead||!visible||saving||latest==null||!queued.compareAndSet(false,true))return;
+    if(!ready||dead||!visible||latest==null||!queued.compareAndSet(false,true))return;
     int token=epoch;
     worker.execute(()->{
+      if(!current(token))return;
       RenderRequest request=latest;long ticket=request.ticket,requestedAt=request.inputNs,start=SystemClock.elapsedRealtime();
       RawEditState snapshot=request.state;boolean original=request.before,boost=request.max;
       try{
@@ -214,54 +317,75 @@ public final class RawEditActivity extends Activity {
         main.post(()->{
           // Present completed work even while a newer request is pending. The single worker
           // and UI handoff preserve order; equality with the newest input would starve drags.
-          if(!dead&&visible&&token==epoch){image.replace(b,ticket,requestedAt);displayBefore=original;displayMax=boost;status.setText("");updateBadge();}
-          else b.recycle();
-          rendered=ticket;if(ticket==revision.get())busyIcon.setVisibility(View.GONE);queued.set(false);
-          if(rendered!=revision.get())image.postOnAnimation(this::scheduleRender);
+          if(!current(token)){b.recycle();return;}
+          image.replace(b,ticket,requestedAt);displayBefore=original;displayMax=boost;status.setText("");updateBadge();
+          rendered=ticket;if(ticket==revision.get()&&!saving)busyIcon.setVisibility(View.GONE);queued.set(false);
+          if(rendered!=revision.get())image.postOnAnimation(this::scheduleRender);else {requestDetailForCurrent();if(pendingFullPreview!=null){main.removeCallbacks(replaceFullPreview);main.postDelayed(replaceFullPreview,120);}}
         });
       }catch(IOException|RuntimeException|OutOfMemoryError e){
-        main.post(()->{rendered=ticket;if(ticket==revision.get())busyIcon.setVisibility(View.GONE);queued.set(false);if(!dead&&visible&&token==epoch)status.setText("反映できませんでした。値を動かすと再試行します");if(rendered!=revision.get())image.postOnAnimation(this::scheduleRender);});
+        main.post(()->{if(!current(token))return;rendered=ticket;if(ticket==revision.get()&&!saving)busyIcon.setVisibility(View.GONE);queued.set(false);if(!dead&&visible&&token==epoch)status.setText("反映できませんでした。値を動かすと再試行します");if(rendered!=revision.get())image.postOnAnimation(this::scheduleRender);});
       }
     });
   }
   private void confirmSave(){
-    if(!ready||saving)return;maxSaturation=false;before=false;renderControls();requestRender();
-    new AlertDialog.Builder(this).setTitle("JPEGで保存").setMessage(width+" × "+height+" px\n実験版・別のファイルとして保存")
-        .setNegativeButton("キャンセル",null).setPositiveButton("保存",(d,w)->saveImage()).show();
+    if(!ready||saving||fullSession==null)return;
+    if(saveWaiting){saveWaiting=false;updateFullUi();return;}
+    maxSaturation=false;before=false;compare.setSelected(false);renderControls();requestRender();
+    if(!fullSession.isPrepared()){
+      saveWaiting=true;if(fullSession.hasFailed())retryPreparation();updateFullUi();return;
+    }
+    actualConfirmSave();
+  }
+  private void actualConfirmSave(){
+    RawEditFullSession session=fullSession;int token=epoch;
+    if(!ready||saving||session==null||!session.isPrepared()||!current(token)||isFinishing()||saveDialog!=null)return;
+    if(before||maxSaturation){before=false;maxSaturation=false;compare.setSelected(false);renderControls();requestRender();}
+    saveDialog=new AlertDialog.Builder(this).setTitle("JPEGで保存").setMessage(width+" × "+height+" px　JPEG\n実験版・別のファイルとして保存"+(state.get(RawEditState.MONO)==1?"\nモノクロ":""))
+      .setNegativeButton("キャンセル",null).setPositiveButton("保存",(d,w)->{if(current(session,token))saveImage();}).create();
+    saveDialog.setOnDismissListener(d->saveDialog=null);saveDialog.show();
   }
   private void saveImage(){
-    if(!ready||saving||dead||!visible||isFinishing())return;saving=true;enabled(false);save.setStateDescription("保存中");busyIcon.setVisibility(View.VISIBLE);RawEditState snapshot=state;int token=epoch;long started=SystemClock.elapsedRealtime();
-    worker.execute(()->{
-      Uri pending=null;Bitmap output=null;
-      try{
-        if(dead||!visible||token!=epoch)throw new IOException("中止");
-        output=renderer.render(snapshot,false,false,2048);
-        ContentValues v=new ContentValues();v.put(MediaStore.Images.Media.DISPLAY_NAME,"Loupe-"+UUID.randomUUID()+".jpg");v.put(MediaStore.Images.Media.MIME_TYPE,"image/jpeg");v.put(MediaStore.Images.Media.RELATIVE_PATH,"Pictures/LoupeDevelop");v.put(MediaStore.Images.Media.IS_PENDING,1);
-        pending=getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,v);if(pending==null)throw new IOException("保存先");
-        ParcelFileDescriptor fd=getContentResolver().openFileDescriptor(pending,"w");
-        if(fd==null)throw new IOException("保存先");
-        try(FileOutputStream stream=new ParcelFileDescriptor.AutoCloseOutputStream(fd)){
-          if(!output.compress(Bitmap.CompressFormat.JPEG,95,stream))throw new IOException("圧縮");
-          stream.flush();fd.getFileDescriptor().sync();
-        }
-        if(dead||!visible||token!=epoch)throw new IOException("中止");
-        ContentValues publish=new ContentValues();publish.put(MediaStore.Images.Media.IS_PENDING,0);
-        if(getContentResolver().update(pending,publish,null,null)!=1)throw new IOException("公開");pending=null;
-        RawEditLog.event("save.complete",SystemClock.elapsedRealtime()-started,width,height);
-        main.post(()->{if(dead||!visible||token!=epoch)return;saving=false;saved=snapshot;save.setStateDescription(null);save.setText("✓");busyIcon.setVisibility(View.GONE);enabled(true);save.announceForAccessibility("保存しました");main.postDelayed(()->{if(!dead&&!saving)save.setText("保存");},900);});
-      }catch(IOException|RuntimeException|OutOfMemoryError e){RawEditLog.event("save.failed",SystemClock.elapsedRealtime()-started,0,0);main.post(()->{if(dead||!visible||token!=epoch)return;saving=false;save.setText("保存");save.setStateDescription(null);busyIcon.setVisibility(View.GONE);enabled(true);status.setText("保存できませんでした。もう一度保存できます");});}
-      finally{if(output!=null)output.recycle();if(pending!=null)try{getContentResolver().delete(pending,null,null);}catch(RuntimeException ignored){RawEditLog.event("save.cleanup.failed",0,0,0);}}
-    });
+    if(!ready||saving||dead||!visible||isFinishing()||fullSession==null||!fullSession.isPrepared())return;
+    if(before||maxSaturation){before=false;maxSaturation=false;compare.setSelected(false);renderControls();requestRender();}
+    saveWaiting=false;saving=true;image.clearDetail();fullSession.input();enabled(false);updateFullUi();busyIcon.setVisibility(View.VISIBLE);fullSession.save(state);
   }
+  private void finishSaveUi(){saving=false;busyIcon.setVisibility(View.GONE);enabled(true);updateFullUi();scheduleRender();requestDetailForCurrent();}
   public void onBackPressed(){
-    if(saving){visible=false;++epoch;finish();return;}
+    if(saveWaiting){saveWaiting=false;updateFullUi();return;}
+    if(saving){if(fullSession!=null)fullSession.cancelSave();return;}
     if(!state.equals(saved)){new AlertDialog.Builder(this).setTitle("変更を破棄しますか？").setNegativeButton("編集を続ける",null).setPositiveButton("破棄",(d,w)->finish()).show();}
     else finish();
   }
   protected void onSaveInstanceState(Bundle b){super.onSaveInstanceState(b);b.putFloatArray("values",state.snapshot());b.putFloatArray("saved",saved.snapshot());b.putInt("tab",tab);b.putInt("uiVersion",2);b.putFloat("zoom",image.zoom);b.putFloat("panX",image.dx);b.putFloat("panY",image.dy);if(input!=null)b.putString("input",input.toString());}
   protected void onStart(){super.onStart();visible=true;if(root!=null&&(input!=null||synthetic())&&!ready&&!loading)load();else if(ready){save.setText("保存");save.setStateDescription(null);enabled(true);requestRender();}}
-  protected void onStop(){visible=false;++epoch;maxSaturation=false;before=false;main.removeCallbacks(busy);if(loadFuture!=null&&loading)loadFuture.cancel(true);loading=false;saving=false;ready=false;image.clear();worker.execute(()->{if(renderer!=null){renderer.close();renderer=null;}});super.onStop();}
-  protected void onDestroy(){dead=true;ready=false;main.removeCallbacksAndMessages(null);if(loadFuture!=null)loadFuture.cancel(true);worker.execute(()->{if(renderer!=null){renderer.close();renderer=null;}});worker.shutdown();image.clear();super.onDestroy();}
+  protected void onStop(){
+    visible=false;++epoch;maxSaturation=false;before=false;saveWaiting=false;
+    main.removeCallbacks(busy);main.removeCallbacks(showFullBadge);main.removeCallbacks(replaceFullPreview);
+    if(saveDialog!=null){saveDialog.dismiss();saveDialog=null;}
+    if(loadFuture!=null&&loading)loadFuture.cancel(true);
+    if(fullSession!=null){fullSession.close();fullSession=null;}
+    for(RawEditSource pending:pendingSources)pending.close();pendingSources.clear();
+    pendingFullPreview=null;previewSwapQueued=false;loading=false;saving=false;ready=false;fullBadgeShown=false;queued.set(false);image.clear();updateFullUi();
+    worker.execute(()->{if(renderer!=null){renderer.close();renderer=null;}});super.onStop();
+  }
+  protected void onDestroy(){
+    dead=true;ready=false;main.removeCallbacksAndMessages(null);if(loadFuture!=null)loadFuture.cancel(true);
+    if(fullSession!=null){fullSession.close();fullSession=null;}for(RawEditSource pending:pendingSources)pending.close();pendingSources.clear();pendingFullPreview=null;
+    worker.execute(()->{if(renderer!=null){renderer.close();renderer=null;}});worker.shutdown();image.clear();super.onDestroy();
+  }
+  private final class FullBadge extends View {
+    private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
+    FullBadge(){super(RawEditActivity.this);setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);}
+    protected void onDraw(Canvas canvas){
+      super.onDraw(canvas);float cx=getWidth()/2f,cy=getHeight()/2f;RectF bg=new RectF(cx-dp(20),cy-dp(14),cx+dp(20),cy+dp(14));
+      paint.setStyle(Paint.Style.FILL);paint.setColor(0x9e000000);canvas.drawRoundRect(bg,dp(14),dp(14),paint);
+      if(preparationFailed){paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(1.5f));paint.setColor(0xffff8a7a);canvas.drawRoundRect(bg,dp(14),dp(14),paint);}
+      canvas.save();canvas.translate(cx-dp(17),cy-dp(8));Icon grid=new Icon("tab1",16);grid.draw(canvas);canvas.restore();
+      if(preparationFailed){canvas.save();canvas.translate(cx+dp(1),cy-dp(8));new Icon("warning",16,0xffff8a7a).draw(canvas);canvas.restore();}
+      else{paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(1.5f));paint.setColor(INK);canvas.save();canvas.rotate((SystemClock.uptimeMillis()%1000)*.36f,cx+dp(9),cy);canvas.drawArc(cx+dp(3),cy-dp(6),cx+dp(15),cy+dp(6),-90,270,false,paint);canvas.restore();postInvalidateOnAnimation();}
+    }
+    public boolean performClick(){super.performClick();return true;}
+  }
 
   private final class Icon extends Drawable {
     final String type;final int size;int color,alpha=255;final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -269,7 +393,9 @@ public final class RawEditActivity extends Activity {
     public int getIntrinsicWidth(){return dp(size);}public int getIntrinsicHeight(){return dp(size);}
     public void draw(Canvas canvas){
       canvas.save();canvas.translate(getBounds().left,getBounds().top);canvas.scale(getBounds().width()/24f,getBounds().height()/24f);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1.8f);p.setStrokeCap(Paint.Cap.ROUND);p.setStrokeJoin(Paint.Join.ROUND);p.setColor(color);p.setAlpha(alpha);
-      if(type.equals("compare")){canvas.drawRoundRect(4,5,20,19,2,2,p);canvas.drawLine(12,5,12,19,p);p.setStyle(Paint.Style.FILL);p.setAlpha(Math.round(alpha*.35f));canvas.drawRect(12,5,19,19,p);}
+      if(type.equals("spinner")){canvas.rotate((SystemClock.uptimeMillis()%1000)*.36f,12,12);canvas.drawArc(4,4,20,20,-90,270,false,p);scheduleSelf(this::invalidateSelf,SystemClock.uptimeMillis()+16);}
+      else if(type.equals("warning")){Path q=new Path();q.moveTo(12,3);q.lineTo(22,21);q.lineTo(2,21);q.close();canvas.drawPath(q,p);canvas.drawLine(12,9,12,14,p);canvas.drawLine(12,17,12,17.1f,p);}
+      else if(type.equals("compare")){canvas.drawRoundRect(4,5,20,19,2,2,p);canvas.drawLine(12,5,12,19,p);p.setStyle(Paint.Style.FILL);p.setAlpha(Math.round(alpha*.35f));canvas.drawRect(12,5,19,19,p);}
       else if(type.equals("reset")){canvas.drawArc(4.5f,4.5f,19.5f,19.5f,180,315,false,p);canvas.drawLine(4.5f,4.5f,4.5f,8.5f,p);canvas.drawLine(4.5f,8.5f,8.5f,8.5f,p);}
       else if(type.equals("help")){canvas.drawCircle(12,12,9,p);Path q=new Path();q.moveTo(9.6f,9.3f);q.cubicTo(9.5f,5.7f,16.1f,6.3f,14.8f,10.4f);q.cubicTo(14.3f,12,12,11.3f,12,13.5f);canvas.drawPath(q,p);canvas.drawLine(12,16.6f,12,16.7f,p);}
       else if(type.equals("zoomIn")||type.equals("zoomOut")){canvas.drawCircle(10.5f,10.5f,6.5f,p);canvas.drawLine(15.5f,15.5f,21,21,p);canvas.drawLine(7.5f,10.5f,13.5f,10.5f,p);if(type.equals("zoomIn"))canvas.drawLine(10.5f,7.5f,10.5f,13.5f,p);}

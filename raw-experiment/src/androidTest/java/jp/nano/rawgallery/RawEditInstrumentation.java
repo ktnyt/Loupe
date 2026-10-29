@@ -27,13 +27,14 @@ public final class RawEditInstrumentation extends Instrumentation {
 
   private static void require(boolean ok,String message){if(!ok)throw new AssertionError(message);}
   public void onStart(){
-    Bundle result=new Bundle();
+    Bundle result=new Bundle();String phase="core";
     try{
       core();pad();
+      if(arguments!=null&&Boolean.parseBoolean(arguments.getString("full","false"))){phase="full.source";RawEditSourceChecks.run(this);phase="full.tiles";RawEditTileChecks.run(this);phase="full.session";RawEditFullSessionChecks.run(this);}
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("ui","false")))RawEditUiChecks.run(this);
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("real","false")))real();
       result.putString("stream","PASS raw-editor GPU neutral/orientation/brightness/saturation/comparison; XY/edge independent; native\n");finish(Activity.RESULT_OK,result);
-    }catch(Throwable error){result.putString("stream","FAIL "+error.getClass().getSimpleName()+": "+(error instanceof AssertionError?error.getMessage():"core execution")+"\n");finish(Activity.RESULT_CANCELED,result);}
+    }catch(Throwable error){result.putString("stream","FAIL "+phase+" "+error.getClass().getSimpleName()+": "+(error instanceof AssertionError?error.getMessage():"core execution")+"\n");finish(Activity.RESULT_CANCELED,result);}
   }
   private void core()throws Exception{
     ByteBuffer buffer=ByteBuffer.allocateDirect(4*4*4).order(ByteOrder.nativeOrder());

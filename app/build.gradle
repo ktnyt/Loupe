@@ -12,8 +12,8 @@ android {
         externalNativeBuild { cmake { arguments '-DANDROID_STL=c++_static', '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON' } }
         minSdk 30
         targetSdk 35
-        versionCode 139
-        versionName '0.19.0'
+        versionCode 140
+        versionName '0.20.0'
         testInstrumentationRunner 'jp.nano.rawgallery.ArchiveInstrumentation'
     }
     sourceSets { main { assets.srcDir rootProject.file('third-party/libraw'); assets.srcDir rootProject.file('third-party/libjpeg-turbo') } }

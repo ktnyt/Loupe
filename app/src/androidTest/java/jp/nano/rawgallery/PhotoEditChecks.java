@@ -120,7 +120,7 @@ final class PhotoEditChecks {
       File copy=new File(main.getCacheDir(),"shares/"+input.getLastPathSegment());copies.add(copy);
       awaitUi(t,15000,()->button(editor,"保存")!=null&&button(editor,"保存").isEnabled(),"cancel test preview ready");
       TagDetailChecks.ui(t,()->button(editor,"保存").performClick());
-      awaitUi(t,5000,()->dialogButton("JPEGで保存","保存")!=null,"cancel test save confirmation visible");
+      awaitUi(t,30000,()->dialogButton("JPEGで保存","保存")!=null,"cancel test full-resolution confirmation visible");
       TagDetailChecks.ui(t,()->dialogButton("JPEGで保存","保存").performClick());
       // AlertDialog posts its listener through a Handler. A later UI callback
       // must observe saving before Back; a completed/unstarted save is a failure.
@@ -128,9 +128,9 @@ final class PhotoEditChecks {
         Button savingButton=button(editor,"保存");
         TagDetailChecks.require(savingButton!=null&&!savingButton.isEnabled()&&"保存中".contentEquals(savingButton.getStateDescription()==null?"":savingButton.getStateDescription()),"must observe disabled save button with saving state before cancellation");
         editor.onBackPressed();
-        TagDetailChecks.require(editor.isFinishing(),"Back during observed saving leaves Activity");
+        TagDetailChecks.require(!editor.isFinishing(),"Back during observed saving cancels into the same editor");
       });
-      awaitUi(t,10000,editor::isDestroyed,"cancelled saving Activity destroyed");
+      awaitUi(t,10000,()->button(editor,"保存")!=null&&button(editor,"保存").isEnabled()&&button(editor,"保存").getStateDescription()==null,"cancelled saving returns to editing after cleanup");
       // Saving was observed through UI, but no hook forces the worker beyond
       // insert(). This does not claim cancellation after pending-row creation.
       long until=android.os.SystemClock.uptimeMillis()+3000;Set<Long> remaining=Collections.emptySet();
