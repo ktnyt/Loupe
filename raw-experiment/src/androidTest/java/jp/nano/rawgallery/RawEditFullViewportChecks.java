@@ -74,18 +74,38 @@ final class RawEditFullViewportChecks {
   }
   private static Bitmap capture(Instrumentation t,RawEditImageView image){Bitmap[] result={null};t.runOnMainSync(()->result[0]=capture(image));return result[0];}
   private static final class Difference {
-    long samples,above2,above8,total;
+    long samples,above2,above8;
     boolean matches(){return samples>0&&above2==0;}
-    boolean distinguishes(){return samples>0&&above8>=Math.max(1,samples/100)&&total/(double)(samples*3)>.5;}
+    // Require multiple spatially distinct witnesses, not a textured fraction of the photo.
+    // Flat areas may agree exactly without weakening the native-detail evidence elsewhere.
+    boolean distinguishes(){return above8>=100;}
   }
   private static Difference difference(Bitmap a,Bitmap b){
     require(a.getWidth()==b.getWidth()&&a.getHeight()==b.getHeight(),"comparison dimensions match");
     Difference result=new Difference();int w=a.getWidth();int[] left=new int[w],right=new int[w];
     // A dense deterministic grid, excluding a 4px boundary affected by Canvas edge coverage.
     for(int y=4;y<a.getHeight()-4;y+=3){a.getPixels(left,0,w,0,y,w,1);b.getPixels(right,0,w,0,y,w,1);
-      for(int x=4;x<w-4;x+=3){int max=0;for(int shift=0;shift<=16;shift+=8){int error=Math.abs(((left[x]>>shift)&255)-((right[x]>>shift)&255));result.total+=error;max=Math.max(max,error);}result.samples++;if(max>2)result.above2++;if(max>8)result.above8++;}
+      for(int x=4;x<w-4;x+=3){int max=0;for(int shift=0;shift<=16;shift+=8){int error=Math.abs(((left[x]>>shift)&255)-((right[x]>>shift)&255));max=Math.max(max,error);}result.samples++;if(max>2)result.above2++;if(max>8)result.above8++;}
     }
     return result;
+  }
+  private static void requireFallbackSeparation(Bitmap actual,Bitmap reference,Bitmap fallback,long expectedWitnesses){
+    require(actual.getWidth()==fallback.getWidth()&&actual.getHeight()==fallback.getHeight(),"fallback comparison dimensions match");
+    int w=actual.getWidth();int[] shown=new int[w],nativeRow=new int[w],preview=new int[w];long witnesses=0,separated=0;
+    // Revisit exactly the same 3px-spaced grid. Integer native/fallback error >8 means
+    // at least 9 levels in one channel. With actual/native <=2, that channel must
+    // remain at least 7 levels from the fallback (the reverse triangle inequality).
+    for(int y=4;y<actual.getHeight()-4;y+=3){
+      actual.getPixels(shown,0,w,0,y,w,1);reference.getPixels(nativeRow,0,w,0,y,w,1);fallback.getPixels(preview,0,w,0,y,w,1);
+      for(int x=4;x<w-4;x+=3){boolean witness=false,distinct=false;
+        for(int shift=0;shift<=16;shift+=8){int original=(nativeRow[x]>>shift)&255,low=(preview[x]>>shift)&255,current=(shown[x]>>shift)&255;
+          if(Math.abs(original-low)>8){witness=true;if(Math.abs(current-low)>=7)distinct=true;}
+        }
+        if(witness){witnesses++;if(distinct)separated++;}
+      }
+    }
+    require(witnesses==expectedWitnesses&&witnesses>=100&&separated==witnesses,
+        "committed native detail differs from fallback at every witness; aggregate separated="+separated+"/"+witnesses);
   }
   private static Bitmap expected(RawEditFullSource full,RawEditState state,RectF region,int w,int h)throws Exception{
     Bitmap result=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);boolean complete=false;
@@ -98,24 +118,52 @@ final class RawEditFullViewportChecks {
       complete=true;return result;
     }finally{if(!complete)result.recycle();}
   }
-  private static String quote(String value){return "'"+value.replace("'","'\"'\"'")+"'";}
+  private static String readLaunchOutput(ParcelFileDescriptor descriptor)throws IOException{
+    try(InputStream stream=new ParcelFileDescriptor.AutoCloseInputStream(descriptor)){
+      ByteArrayOutputStream kept=new ByteArrayOutputStream();byte[] buffer=new byte[1024];int count;
+      while((count=stream.read(buffer))!=-1){int remaining=65536-kept.size();if(remaining>0)kept.write(buffer,0,Math.min(count,remaining));}
+      return kept.toString("UTF-8"); // Bounded, process-local, never included in diagnostics.
+    }
+  }
+  private static String launchResult(String stdout,String stderr){
+    String text=(stdout+"\n"+stderr).toLowerCase(Locale.ROOT);
+    if(text.contains("permission denial")||text.contains("securityexception")||text.contains("permission denied"))return "permission";
+    if(text.contains("error type 3")||text.contains("does not exist")||text.contains("unable to resolve intent"))return "class-missing";
+    if(text.contains("error")||text.contains("exception")||text.contains("status: timeout")||text.contains("background activity start denied"))return "error";
+    return text.contains("status: ok")?"success":"error";
+  }
   private static RawEditActivity startByShell(Instrumentation t,Uri input,Instrumentation.ActivityMonitor monitor)throws Exception{
     stage="activity.shell-start";
     String component=t.getTargetContext().getPackageName()+"/jp.nano.rawgallery.RawEditActivity";
-    // Shell owns the existing temporary read-grant route. The app does not grant a URI to itself.
-    String command="am start -W -n "+quote(component)+" -d "+quote(input.toString())+" --grant-read-uri-permission";
-    try(ParcelFileDescriptor output=t.getUiAutomation().executeShellCommand(command);
-        InputStream stream=new ParcelFileDescriptor.AutoCloseInputStream(output)){
-      byte[] ignored=new byte[1024];while(stream.read(ignored)!=-1){} // URI-bearing shell output is never retained or logged.
+    // UiAutomationConnection uses Runtime.exec(String), not a shell: quotes are literal.
+    // run() admits only a whole URI made of safe, whitespace-free token characters.
+    // NEW_TASK | MULTIPLE_TASK guarantees a fresh instance instead of an existing task.
+    String command="am start -W -f 0x18000000 -n "+component+" -d "+input.toString()+" --grant-read-uri-permission";
+    ParcelFileDescriptor[] pipes=t.getUiAutomation().executeShellCommandRwe(command);
+    ExecutorService readers=Executors.newFixedThreadPool(2);
+    try{
+      require(pipes!=null&&pipes.length==3&&pipes[0]!=null&&pipes[1]!=null&&pipes[2]!=null,"shell result pipes available");
+      pipes[1].close();
+      Future<String> stdout=readers.submit(()->readLaunchOutput(pipes[0]));
+      Future<String> stderr=readers.submit(()->readLaunchOutput(pipes[2]));
+      String result=launchResult(stdout.get(30,TimeUnit.SECONDS),stderr.get(30,TimeUnit.SECONDS));
+      stage="activity.shell-"+result;
+      require("success".equals(result),"experimental Activity launch result="+result);
+    }finally{
+      if(pipes!=null)for(ParcelFileDescriptor pipe:pipes)if(pipe!=null)try{pipe.close();}catch(IOException ignored){}
+      readers.shutdownNow();
     }
+    // AOSP Instrumentation matches monitors after onCreate and onResume, including
+    // externally initiated launches; no in-app startActivity interception is required.
     stage="activity.monitor-wait";
     Activity activity=monitor.waitForActivityWithTimeout(30000);
     require(activity instanceof RawEditActivity,"shell launch reaches monitored experimental Activity");
+    require(input.equals(activity.getIntent().getData()),"monitored Activity receives authorized input");
     return (RawEditActivity)activity;
   }
   static void run(Instrumentation t,Uri input)throws Exception{
     stage="validate-input";
-    require(input!=null&&"content".equals(input.getScheme())&&"media".equals(input.getAuthority())
+    require(input!=null&&input.toString().matches("content://media/[A-Za-z0-9_-]+/(?:images/media|file)/[0-9]+")&&"content".equals(input.getScheme())&&"media".equals(input.getAuthority())
         &&input.getPath()!=null&&input.getPath().matches("/[A-Za-z0-9_-]+/(?:images/media|file)/[0-9]+")
         &&input.getQuery()==null&&input.getFragment()==null,"authorized MediaStore content input required");
     Context context=t.getTargetContext();require("jp.nano.rawgallery.rawexperiment".equals(context.getPackageName()),"viewport check targets experimental package only");
@@ -173,7 +221,7 @@ final class RawEditFullViewportChecks {
         stage="detail-frame-commit";CountDownLatch committed=new CountDownLatch(1);
         t.runOnMainSync(()->{a.getWindow().getDecorView().getViewTreeObserver().registerFrameCommitCallback(committed::countDown);view.invalidate();});
         require(committed.await(5,TimeUnit.SECONDS),"native viewport commits a real window frame");
-        Bitmap finalImage=capture(t,view);try{require(difference(finalImage,reference).matches(),"committed viewport retains original detail");}finally{finalImage.recycle();}
+        Bitmap finalImage=capture(t,view);try{require(difference(finalImage,reference).matches(),"committed viewport retains original detail");requireFallbackSeparation(finalImage,reference,fallback,initial.above8);}finally{finalImage.recycle();}
         RawEditLog.event("full.viewport.check",SystemClock.elapsedRealtime()-started,view.getWidth(),view.getHeight());
       }
     }catch(Exception|AssertionError error){failedStage=stage;throw error;}
@@ -181,6 +229,7 @@ final class RawEditFullViewportChecks {
       if(failedStage==null)stage="cleanup";
       try{
         if(fallback!=null)fallback.recycle();if(reference!=null)reference.recycle();
+        if(activity==null&&monitor!=null&&monitor.getLastActivity() instanceof RawEditActivity)activity=(RawEditActivity)monitor.getLastActivity();
         if(activity!=null){RawEditActivity closing=activity;t.runOnMainSync(closing::finish);t.waitForIdleSync();}
         RawEditFullSession.initial(()->{}).get(20,TimeUnit.SECONDS);
         if(owned!=null){File cache=owned;await(()->!cache.exists(),20,"Activity releases its own full cache after finish");}
