@@ -23,11 +23,47 @@ final class RawEditFullSessionChecks {
   }
   private static Map<Long,Integer> outputs(Context c){
     Map<Long,Integer> result=new HashMap<>();
+    Bundle query=new Bundle();query.putInt(MediaStore.QUERY_ARG_MATCH_PENDING,MediaStore.MATCH_INCLUDE);
+    query.putString(ContentResolver.QUERY_ARG_SQL_SELECTION,"owner_package_name=? AND relative_path IN (?,?) AND _display_name LIKE ?");
+    query.putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS,new String[]{c.getPackageName(),"Pictures/LoupeDevelop/","Pictures/LoupeDevelop","Loupe-%.jpg"});
     try(Cursor rows=c.getContentResolver().query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-        new String[]{"_id","is_pending"},"owner_package_name=? AND relative_path IN (?,?) AND _display_name LIKE ?",
-        new String[]{c.getPackageName(),"Pictures/LoupeDevelop/","Pictures/LoupeDevelop","Loupe-%.jpg"},null)){
+        new String[]{"_id","is_pending"},query,null)){
       require(rows!=null,"owned output query");while(rows.moveToNext())result.put(rows.getLong(0),rows.getInt(1));
     }return result;
+  }
+  /** Public local-provider adapter; every operation still reaches the real target MediaStore. */
+  private static final class InsertGate extends ContentProvider {
+    final ContentResolver real;final AtomicBoolean busy,armed=new AtomicBoolean();
+    final CountDownLatch inserted=new CountDownLatch(1);final AtomicReference<Uri> pending=new AtomicReference<>();
+    InsertGate(Context context,AtomicBoolean busy){
+      real=context.getContentResolver();this.busy=busy;
+      android.content.pm.ProviderInfo info=new android.content.pm.ProviderInfo();info.authority=MediaStore.AUTHORITY;info.exported=false;
+      attachInfo(context,info);
+    }
+    public boolean onCreate(){return true;}
+    public String getType(Uri uri){return real.getType(uri);}
+    public Cursor query(Uri uri,String[] projection,String selection,String[] args,String sort){return real.query(uri,projection,selection,args,sort);}
+    public Cursor query(Uri uri,String[] projection,Bundle args,CancellationSignal signal){return real.query(uri,projection,args,signal);}
+    public Uri insert(Uri uri,ContentValues values){
+      Uri result=real.insert(uri,values);
+      if(armed.compareAndSet(true,false)){
+        // This runs synchronously before the Session receives the actual inserted URI.
+        // Its current tile can finish, then preview priority deterministically holds later tiles.
+        busy.set(true);pending.set(result);inserted.countDown();
+      }
+      return result;
+    }
+    public int update(Uri uri,ContentValues values,String selection,String[] args){return real.update(uri,values,selection,args);}
+    public int delete(Uri uri,String selection,String[] args){return real.delete(uri,selection,args);}
+    public ParcelFileDescriptor openFile(Uri uri,String mode)throws FileNotFoundException{return real.openFileDescriptor(uri,mode);}
+    public ParcelFileDescriptor openFile(Uri uri,String mode,CancellationSignal signal)throws FileNotFoundException{return real.openFileDescriptor(uri,mode,signal);}
+  }
+  private static Context gatedContext(Context context,InsertGate gate){
+    ContentResolver resolver=ContentResolver.wrap(gate);
+    return new ContextWrapper(context){
+      public Context getApplicationContext(){return this;}
+      public ContentResolver getContentResolver(){return resolver;}
+    };
   }
   private static Set<String> caches(Context c){Set<String> result=new HashSet<>();File[] files=c.getCacheDir().listFiles();if(files!=null)for(File f:files)if(f.getName().startsWith("raw-full-"))result.add(f.getName());return result;}
   private static void waitFor(CountDownLatch latch,int seconds,String message)throws Exception{require(latch.await(seconds,TimeUnit.SECONDS),message);}
@@ -36,6 +72,7 @@ final class RawEditFullSessionChecks {
     Set<Long> baseline=outputs(c).keySet();Set<String> cacheBefore=caches(c);RawEditFullSession[] session={null};
     AtomicBoolean busy=new AtomicBoolean(true);CountDownLatch prepared=new CountDownLatch(1),detailed=new CountDownLatch(1),saved=new CountDownLatch(1),cancelled=new CountDownLatch(1);
     AtomicReference<Throwable> failure=new AtomicReference<>();AtomicInteger detailCount=new AtomicInteger(),saveCount=new AtomicInteger();AtomicReference<Bitmap> detailBitmap=new AtomicReference<>();
+    InsertGate insertGate=new InsertGate(c,busy);Context sessionContext=gatedContext(c,insertGate);
     Uri testOutput=null;
     try{
       RawEditFullSession.Listener listener=new RawEditFullSession.Listener(){
@@ -47,7 +84,7 @@ final class RawEditFullSessionChecks {
         public void saveFailed(){failure.set(new AssertionError("synthetic save failed"));saved.countDown();}
         public void saveCancelled(){cancelled.countDown();}
       };
-      t.runOnMainSync(()->{session[0]=new RawEditFullSession(c,source(),gl,main,busy::get,listener);session[0].start();});
+      t.runOnMainSync(()->{session[0]=new RawEditFullSession(sessionContext,source(),gl,main,busy::get,listener);session[0].start();});
       waitFor(prepared,30,"background preparation finishes");if(failure.get()!=null)throw new AssertionError(failure.get());
       t.runOnMainSync(()->{session[0].requestDetail(new RawEditState(),1,6,false,true,new RectF(10,10,1200,808),603,407);session[0].requestDetail(new RawEditState(),2,7,true,false,new RectF(10,10,1200,808),603,407);});
       Thread.sleep(220);require(detailCount.get()==0,"preview gate has priority over detail");busy.set(false);
@@ -61,14 +98,12 @@ final class RawEditFullSessionChecks {
         try{int pixel=image.getPixel(600,400);require(Color.blue(pixel)>Color.red(pixel)&&Color.red(pixel)>Color.green(pixel),"full export includes Mono tint");}finally{image.recycle();}
       }
       require(c.getContentResolver().delete(testOutput,null,null)==1,"remove exactly the produced test JPEG");testOutput=null;
-      // Pause after a pending row has appeared, then cancel on the next tile boundary.
-      t.runOnMainSync(()->session[0].save(new RawEditState()));
-      long until=SystemClock.uptimeMillis()+10000;Uri pending=null;
-      while(SystemClock.uptimeMillis()<until){
-        Map<Long,Integer> rows=outputs(c);for(Map.Entry<Long,Integer> row:rows.entrySet())if(!baseline.contains(row.getKey())&&row.getValue()==1){pending=ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,row.getKey());break;}
-        if(pending!=null){busy.set(true);break;}Thread.sleep(2);
-      }
-      require(pending!=null,"observe pending output before cancellation");testOutput=pending;
+      // Observe the real insert through the public provider adapter, without racing a fast export.
+      insertGate.armed.set(true);t.runOnMainSync(()->session[0].save(new RawEditState()));
+      waitFor(insertGate.inserted,10,"real pending insertion reached deterministic preview gate");
+      Uri pending=insertGate.pending.get();require(pending!=null,"real MediaStore returned pending output");
+      Map<Long,Integer> pendingRows=outputs(c);Set<Long> newPending=new HashSet<>(pendingRows.keySet());newPending.removeAll(baseline);
+      require(newPending.size()==1&&newPending.contains(ContentUris.parseId(pending))&&pendingRows.get(ContentUris.parseId(pending))==1,"explicit query includes exactly the inserted owned pending JPEG");testOutput=pending;
       t.runOnMainSync(()->session[0].cancelSave());waitFor(cancelled,10,"pending export cancellation completes");require(saveCount.get()==1,"cancelled export did not publish completion");
       Set<Long> remain=new HashSet<>(outputs(c).keySet());remain.removeAll(baseline);require(remain.isEmpty(),"cancelled pending output removed");testOutput=null;
     }finally{

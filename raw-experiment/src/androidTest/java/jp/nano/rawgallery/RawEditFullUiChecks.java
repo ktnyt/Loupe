@@ -69,9 +69,10 @@ final class RawEditFullUiChecks {
   }
   private static Map<Long,Integer> outputs(Context context){
     Map<Long,Integer> result=new HashMap<>();
-    try(Cursor rows=context.getContentResolver().query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,new String[]{"_id","is_pending"},
-        "owner_package_name=? AND relative_path IN (?,?) AND _display_name LIKE ?",
-        new String[]{context.getPackageName(),"Pictures/LoupeDevelop/","Pictures/LoupeDevelop","Loupe-%.jpg"},null)){
+    Bundle query=new Bundle();query.putInt(MediaStore.QUERY_ARG_MATCH_PENDING,MediaStore.MATCH_INCLUDE);
+    query.putString(ContentResolver.QUERY_ARG_SQL_SELECTION,"owner_package_name=? AND relative_path IN (?,?) AND _display_name LIKE ?");
+    query.putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS,new String[]{context.getPackageName(),"Pictures/LoupeDevelop/","Pictures/LoupeDevelop","Loupe-%.jpg"});
+    try(Cursor rows=context.getContentResolver().query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,new String[]{"_id","is_pending"},query,null)){
       require(rows!=null,"owned synthetic output query");while(rows.moveToNext())result.put(rows.getLong(0),rows.getInt(1));
     }
     return result;

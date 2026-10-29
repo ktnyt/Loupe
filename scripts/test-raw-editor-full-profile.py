@@ -18,6 +18,13 @@ def sample(ticket, ns, latency=1000000):
 
 
 class ParserChecks(unittest.TestCase):
+    def test_focus_states_do_not_expose_window_contents(self):
+        self.assertEqual(profile.parse_focus('  mCurrentFocus=Window{abc u0 jp.nano.rawgallery.rawexperiment/jp.nano.rawgallery.RawEditActivity}'), 'experimental-editor')
+        self.assertEqual(profile.parse_focus('  mCurrentFocus=Window{abc u0 example.other/example.other.Activity private title}'), 'other-app')
+        self.assertEqual(profile.parse_focus('mCurrentFocus=null'), 'unavailable')
+        self.assertEqual(profile.parse_focus('windows diagnostic without focus'), 'unavailable')
+        self.assertEqual(profile.parse_focus('mCurrentFocus=Window{abc private title}'), 'unavailable')
+
     def test_modes(self):
         self.assertEqual(profile.select_mode(), 'initial-preparation')
         self.assertEqual(profile.select_mode(True), 'after-prepared')

@@ -184,6 +184,17 @@ class Device:
             raise RuntimeError('Experimental UI state unavailable') from None
 
 
+def parse_focus(text):
+    """Return a fixed state only; never retain a window title or another app's identifier."""
+    match = re.search(r'(?m)^\s*mCurrentFocus\s*=\s*(.*)$', text)
+    if match is None or match.group(1).strip() in ('', 'null', 'None'):
+        return 'unavailable'
+    component = re.search(r'\b([A-Za-z][A-Za-z0-9_.]*)/[A-Za-z0-9_.$]+', match.group(1))
+    if component is None:
+        return 'unavailable'
+    return 'experimental-editor' if component.group(1) == PACKAGE else 'other-app'
+
+
 def bounds(node):
     values = list(map(int, re.findall(r'-?\d+', node.attrib.get('bounds', ''))))
     if len(values) != 4 or values[2] <= values[0] or values[3] <= values[1]:
@@ -273,8 +284,10 @@ def main(argv=None):
         y1, y2 = int(b[1] + .7 * (b[3] - b[1])), int(b[1] + .2 * (b[3] - b[1]))
         for index in range(6):
             device.unlocked()
-            focused = device.shell('dumpsys', 'window', 'windows')
-            if not re.search(r'mCurrentFocus=[^\n]*\b' + re.escape(PACKAGE) + r'/', focused):
+            focus = parse_focus(device.shell('dumpsys', 'window'))
+            if focus == 'unavailable':
+                raise RuntimeError('Current focus diagnostic unavailable; measurement stopped')
+            if focus != 'experimental-editor':
                 raise RuntimeError('Experimental editor lost focus; measurement stopped')
             start = device.clock()
             points = (x1, y1, x2, y2) if index % 2 == 0 else (x2, y2, x1, y1)
