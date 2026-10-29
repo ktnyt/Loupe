@@ -8,6 +8,11 @@ import android.view.*;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.*;
 import java.util.*;
+import java.io.*;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import org.json.JSONObject;
+import org.json.JSONArray;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** Synthetic Activity and real View dispatch; no photo or production test hook. */
@@ -44,6 +49,13 @@ final class RawEditGuidesChecks {
       p.cancelGuides();long now=SystemClock.uptimeMillis();tap(plane,now,.8f,.2f);float x=state.get().get(0);doubleTap(vertical,.5f,.1f);require(state.get().get(0)==x&&state.get().get(1)==0,"right reset changes only y");
       p.cancelGuides();tap(plane,SystemClock.uptimeMillis(),.8f,.2f);float y=state.get().get(1);doubleTap(horizontal,.9f,.5f);require(state.get().get(0)==0&&state.get().get(1)==y,"bottom reset changes only x");
       p.cancelGuides();now=SystemClock.uptimeMillis();tap(plane,now,.8f,.2f);long second=now+120;event(plane,second,second,MotionEvent.ACTION_DOWN,.8f,.2f);event(plane,second,second+20,MotionEvent.ACTION_MOVE,.2f,.8f);event(plane,second,second+40,MotionEvent.ACTION_UP,.2f,.8f);require(state.get().get(0)<-.3f&&state.get().get(1)<-.3f,"second-tap drag adjusts without reset");
+      for(boolean smallMove:new boolean[]{false,true}){
+        p.cancelGuides();now=SystemClock.uptimeMillis();tap(plane,now,.8f,.2f);second=now+120;
+        event(plane,second,second,MotionEvent.ACTION_DOWN,.8f,.2f);
+        if(smallMove)event(plane,second,second+10,MotionEvent.ACTION_MOVE,.801f,.201f);
+        event(plane,second,second+40,MotionEvent.ACTION_UP,.2f,.8f);
+        require(state.get().get(0)<-.3f&&state.get().get(1)<-.3f,"distant final UP adjusts without reset even when MOVE is absent or within slop");
+      }
       p.cancelGuides();now=SystemClock.uptimeMillis();tap(plane,now,.8f,.2f);second=now+120;event(plane,second,second,MotionEvent.ACTION_DOWN,.8f,.2f);event(plane,second,second+ViewConfiguration.getLongPressTimeout()+10,MotionEvent.ACTION_UP,.8f,.2f);require(state.get().get(0)>.3f&&state.get().get(1)>.3f,"long second touch does not reset");
       p.cancelGuides();now=SystemClock.uptimeMillis();tap(plane,now,.8f,.2f);tap(plane,now+ViewConfiguration.getDoubleTapTimeout()+100,.7f,.3f);require(state.get().get(0)>.2f,"late second tap does not reset");
       p.cancelGuides();now=SystemClock.uptimeMillis();tap(plane,now,.1f,.1f);tap(plane,now+120,.9f,.9f);require(state.get().get(0)>.5f&&state.get().get(1)<-.5f,"distant second tap does not reset");
@@ -53,6 +65,51 @@ final class RawEditGuidesChecks {
       plane.setEnabled(false);old=state.get().snapshot();doubleTap(plane,.8f,.2f);require(Arrays.equals(old,state.get().snapshot()),"disabled control does not edit");p.cancelGuides();
       AtomicReference<RawEditState> curve=new AtomicReference<>(new RawEditState());RawEditPad curves=new RawEditPad(activity,180,curve.get(),5,6,"入力","出力",curve::set);curves.measure(View.MeasureSpec.makeMeasureSpec(size,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(size,View.MeasureSpec.EXACTLY));curves.layout(0,0,size,size);doubleTap(curves.getChildAt(0),.8f,.2f);require(curve.get().get(5)==.5f&&curve.get().get(6)==.5f,"curve uses 0.5 defaults");curves.cancelGuides();
     });
+  }
+  private static Rect windowBounds(View view){int[] xy=new int[2];view.getLocationInWindow(xy);return new Rect(xy[0],xy[1],xy[0]+view.getWidth(),xy[1]+view.getHeight());}
+  private static JSONArray rectangle(Rect r)throws org.json.JSONException{return new JSONArray(new int[]{r.left,r.top,r.right,r.bottom});}
+  private static JSONObject captureWindow(Instrumentation t,RawEditActivity activity,File folder,String phase,long down,long released,int fullAlpha)throws Exception {
+    int[] size=new int[2],guideAlpha={0};float[][] current={null};Rect[] geometry=new Rect[4];long[] committed={0},requested={0},copied={0};
+    CountDownLatch frame=new CountDownLatch(1);
+    t.runOnMainSync(()->{
+      View decor=activity.getWindow().getDecorView();size[0]=decor.getWidth();size[1]=decor.getHeight();
+      decor.getViewTreeObserver().registerFrameCommitCallback(()->{committed[0]=SystemClock.uptimeMillis();frame.countDown();});decor.invalidate();
+    });
+    require(frame.await(3,TimeUnit.SECONDS),"requested guide frame committed before capture");
+    Bitmap pixels=Bitmap.createBitmap(size[0],size[1],Bitmap.Config.ARGB_8888);CountDownLatch copy=new CountDownLatch(1);int[] result={-1};
+    try {
+      t.runOnMainSync(()->{
+        RawEditPad p=pad(activity);guideAlpha[0]=alpha(p);current[0]=values(activity);geometry[0]=windowBounds(p);geometry[1]=windowBounds(p.getChildAt(0));geometry[2]=windowBounds(p.getChildAt(1));geometry[3]=windowBounds(p.getChildAt(2));requested[0]=SystemClock.uptimeMillis();
+        PixelCopy.request(activity.getWindow(),pixels,status->{result[0]=status;copied[0]=SystemClock.uptimeMillis();copy.countDown();},new Handler(Looper.getMainLooper()));
+      });
+      require(copy.await(3,TimeUnit.SECONDS)&&result[0]==PixelCopy.SUCCESS,"actual synthetic window pixels copied");
+      t.runOnMainSync(()->{Button wb=button(activity.getWindow().getDecorView(),"WB");Rect r=windowBounds(wb);int y=r.top+Math.max(1,Math.round(activity.getResources().getDisplayMetrics().density));require((pixels.getPixel(r.centerX(),y)&0xffffff)==0xededea,"capture contains current WB selection line");});
+      require(Math.abs(current[0][0]-.6f)<.001f&&Math.abs(current[0][1]-.6f)<.001f,"capture WB is relative +0.6/+0.6");
+      if("drag".equals(phase)||"release".equals(phase))require(guideAlpha[0]>=25,"capture shows held guide");
+      if("fading".equals(phase))require(guideAlpha[0]>0&&guideAlpha[0]<fullAlpha&&copied[0]-released<3400,"capture observes the fade before it ends");
+      if("hidden".equals(phase))require(guideAlpha[0]==0,"capture shows hidden guide and retained cursor");
+      try(OutputStream out=new FileOutputStream(new File(folder,phase+".png"))){require(pixels.compress(Bitmap.CompressFormat.PNG,100,out),"synthetic guide PNG written");}
+      JSONObject record=new JSONObject();record.put("file",phase+".png");record.put("phase",phase);record.put("frameCommitUptimeMs",committed[0]);record.put("copyRequestUptimeMs",requested[0]);record.put("copyCompleteUptimeMs",copied[0]);record.put("sinceDownMs",requested[0]-down);record.put("sinceUpMs",released==0?JSONObject.NULL:requested[0]-released);record.put("guideProbeAlphaAtRequest",guideAlpha[0]);record.put("temp",current[0][0]);record.put("tint",current[0][1]);
+      record.put("pad",rectangle(geometry[0]));record.put("plane",rectangle(geometry[1]));record.put("right",rectangle(geometry[2]));record.put("bottom",rectangle(geometry[3]));return record;
+    }finally{pixels.recycle();}
+  }
+  /** Dedicated screenshot scenario, kept separate so file IO cannot shift functional timing assertions. */
+  static void capture(Instrumentation t)throws Exception {
+    RawEditActivity activity=(RawEditActivity)t.startActivitySync(new Intent(t.getTargetContext(),RawEditActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("rawEditSynthetic",true));
+    try {
+      boolean[] ready={false};long deadline=SystemClock.uptimeMillis()+15000;
+      while(!ready[0]&&SystemClock.uptimeMillis()<deadline){t.runOnMainSync(()->{Button save=button(activity.getWindow().getDecorView(),"保存");ready[0]=save!=null&&save.isEnabled();});Thread.sleep(25);}require(ready[0],"synthetic capture preview ready");select(t,activity,"WB");
+      int[] size=new int[2];float[] configuration=new float[2];long[] down={0},released={0};
+      t.runOnMainSync(()->{size[0]=activity.getWindow().getDecorView().getWidth();size[1]=activity.getWindow().getDecorView().getHeight();configuration[0]=activity.getResources().getConfiguration().fontScale;configuration[1]=activity.getResources().getDisplayMetrics().density;View plane=pad(activity).getChildAt(0);down[0]=SystemClock.uptimeMillis();event(plane,down[0],down[0],MotionEvent.ACTION_DOWN,.8f,.2f);});
+      File folder=new File(activity.getCacheDir(),"raw-guides-"+configuration[0]+"-"+size[1]);require(folder.isDirectory()||folder.mkdirs(),"synthetic guide capture folder");
+      JSONArray images=new JSONArray();until(down[0]+500);int fullAlpha=sample(t,pad(activity));images.put(captureWindow(t,activity,folder,"drag",down[0],0,fullAlpha));
+      t.runOnMainSync(()->{released[0]=SystemClock.uptimeMillis();event(pad(activity).getChildAt(0),down[0],released[0],MotionEvent.ACTION_UP,.8f,.2f);});
+      images.put(captureWindow(t,activity,folder,"release",down[0],released[0],fullAlpha));
+      until(released[0]+3150);images.put(captureWindow(t,activity,folder,"fading",down[0],released[0],fullAlpha));
+      until(released[0]+3550);images.put(captureWindow(t,activity,folder,"hidden",down[0],released[0],fullAlpha));
+      JSONObject manifest=new JSONObject();manifest.put("input","debug synthetic analytic preview only");manifest.put("tab","WB");manifest.put("fontScale",configuration[0]);manifest.put("density",configuration[1]);manifest.put("windowWidth",size[0]);manifest.put("windowHeight",size[1]);manifest.put("images",images);
+      try(Writer out=new OutputStreamWriter(new FileOutputStream(new File(folder,"manifest.json")),java.nio.charset.StandardCharsets.UTF_8)){out.write(manifest.toString(2));}
+    }finally{t.runOnMainSync(activity::finish);}
   }
   static void run(Instrumentation t)throws Exception{
     RawEditActivity activity=(RawEditActivity)t.startActivitySync(new Intent(t.getTargetContext(),RawEditActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("rawEditSynthetic",true));

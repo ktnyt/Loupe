@@ -143,3 +143,6 @@ Android実装は[#39](https://github.com/ktnyt/Loupe/issues/39)で導入済み�
 [ガイドと初期化の案](loupe-raw-editor-guides.html)は原寸処理の参照を引き継ぎ、操作中の面と右下の片軸レールを半透明で示し、写真上に数値や軸名は表示しない。面の枠は1dp・白35%と黒25%、格子は白12%、基準線は白32%、レールは2dp・白35%。表示開始120ms、指を離して3秒後に400msで消え、カーソルは残る。面のダブルタップで両軸、各帯と補助行のスライダーは自分の値だけ初期化する。Claude内プレビューで元S08、WBのdrag・hidden・右軸resetの模擬、原寸状態の選択肢を確認した。HTMLは合成表示であり、実機操作・TalkBack・実写真上の視認性は未確認。
 
 [WBの参照比較](loupe-raw-editor-overlay-comparison.png)と[7タブの実機キャプチャ](loupe-raw-editor-overlay-matrix.png)は合成画像のみ。Androidは通常window・文字1.0倍と高さ640dp window・文字1.3倍。PixelCopyで選択中のタブの画素を確認して撮影し、独立レビューで14画面と選択線の修正を確認した。参照と実機のviewport・OS領域は異なり、全画素の完全一致やdrag中の外観・音声確認を示さない。
+
+
+Issue #56のAndroid実機確認では、通常window/文字1.0と高さ640dp/文字1.3のガイド表示・離した直後・fade途中・消去を撮影した。[参照と実機の表示中](loupe56-comparison-drag.png)、[消去後](loupe56-comparison-hidden.png)、[4状態](loupe56-states-matrix.png)、[写真とカーソルの画素を確認した7タブ](loupe56-tabs-confirmed.png)を独立評価し、静止画の必須修正なし。参照400×844と実機1200×2608/density3はOS領域とviewportが異なり、合成素材・代替フォント差もあるため、全画素の厳密一致を示さない。実指/TalkBack音声/実写真での視認性は未確認。確認済みと未完了は[契約](../raw-editor-guides-contract.md)を参照。

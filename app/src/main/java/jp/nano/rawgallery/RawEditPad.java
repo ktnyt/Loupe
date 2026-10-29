@@ -48,7 +48,7 @@ final class RawEditPad extends FrameLayout {
       int action=event.getActionMasked();
       if((accessibility!=null&&accessibility.isTouchExplorationEnabled())||event.getPointerCount()!=1||action==MotionEvent.ACTION_CANCEL){cancel();return false;}
       if(action==MotionEvent.ACTION_DOWN){candidate=false;moved=false;downX=event.getX();downY=event.getY();downTime=event.getEventTime();}
-      if(action==MotionEvent.ACTION_MOVE&&Math.hypot(event.getX()-downX,event.getY()-downY)>slop)moved=true;
+      if((action==MotionEvent.ACTION_MOVE||action==MotionEvent.ACTION_UP)&&Math.hypot(event.getX()-downX,event.getY()-downY)>slop)moved=true;
       if(action==MotionEvent.ACTION_UP&&(moved||event.getEventTime()-downTime>=ViewConfiguration.getLongPressTimeout())){cancel();return false;}
       detector.onTouchEvent(event);
       if(action==MotionEvent.ACTION_UP){boolean reset=candidate&&!moved;candidate=false;return reset;}
