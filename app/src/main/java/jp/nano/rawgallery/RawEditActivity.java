@@ -54,7 +54,8 @@ public final class RawEditActivity extends Activity {
   private RawEditImageView image;
   private TextView status,title,badge;
   private ProgressBar busyIcon;
-  private boolean interacting,displayBefore,displayMax;
+  private volatile boolean interacting;
+  private boolean displayBefore,displayMax;
   private Button compare,reset,save,zoom,help;
   private RawEditPad pad;
   private final String[] tabNames={"WB","質感","トーン","明るさ","明暗","白黒","カラー"};
@@ -242,7 +243,7 @@ public final class RawEditActivity extends Activity {
   private void attachFullSession(RawEditSource source,int token){
     final RawEditFullSession[] holder=new RawEditFullSession[1];
     RawEditFullSession session=new RawEditFullSession(this,source,worker,main,
-        ()->queued.get()||rendered!=revision.get()||previewSwapQueued,
+        ()->interacting||queued.get()||rendered!=revision.get()||previewSwapQueued,
         new RawEditFullSession.Listener(){
           public void prepared(int w,int h,RawEditFullSource.Preview preview){
             if(!current(holder[0],token))return;
@@ -289,7 +290,7 @@ public final class RawEditActivity extends Activity {
   private void replacePreparedPreview(){
     RawEditFullSource.Preview preview=pendingFullPreview;
     if(preview==null||!ready||dead||!visible||previewSwapQueued)return;
-    if(queued.get()||rendered!=revision.get()||SystemClock.elapsedRealtime()-lastInputMs<120){main.postDelayed(replaceFullPreview,120);return;}
+    if(interacting||queued.get()||rendered!=revision.get()||SystemClock.elapsedRealtime()-lastInputMs<120){main.postDelayed(replaceFullPreview,120);return;}
     int token=epoch;previewSwapQueued=true;
     worker.execute(()->{
       RawEditRenderer next=null;boolean adopted=false;

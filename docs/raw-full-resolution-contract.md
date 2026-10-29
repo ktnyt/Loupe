@@ -1,6 +1,6 @@
 # プレビュー優先の原寸現像
 
-対象: Issue #55。基点7c5bab8。#53の長辺2048px制限を、原寸の観察と別保存に必要な範囲で置き換える。実装・実機検証は未実施。
+対象: Issue #55。基点7c5bab8。#53の長辺2048px制限を、原寸の観察と別保存に必要な範囲で置き換える。実装とhost/ビルド検証済み。原寸機能のAndroid実機検証は未実施。
 
 ## 目的と機能
 
@@ -32,7 +32,7 @@
 - 保存開始時の編集値をsnapshotし、確認画面は原寸キャッシュの有効寸法を使う。原寸準備中の保存要求は中止可能に待ち、2048pxへ黙ってfallbackしない。
 - pinned libjpeg-turbo 3.2.1（公式source/digestを確認）による一つのscanline encoderへ、短いRGB8 stripを順に渡す。tileごとのJPEGを結合しない。全画像Bitmapは作らない。
 - 新規MediaStore pending URIだけへ書き、全行のJPEG終了・flush/sync後に公開する。中止/失敗は今回の未完成出力だけ削除する。EXIF個人情報は継承せず、画素の向きは適用済み。
-- 保存/原寸準備待ちのBack、background、終了は取消する。終了後にダイアログlistenerから保存を開始しない。process kill時のfinally実行は保証しない。
+- 原寸準備待ちのBackは待ちを取り消し、編集中の画面へ戻る。保存中Backは公開確定前なら取消し、cleanup後に編集へ戻る。公開確定と取消受付はatomicな排他状態遷移で決め、公開が先なら完了/失敗を一度だけ通知してUIを復帰させる。background/終了も同じ境界で取消する。終了後にダイアログlistenerから保存を開始しない。process kill時のfinally実行は保証しない。
 
 ## 検証と受入
 
