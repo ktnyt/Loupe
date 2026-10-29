@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class RawEditInstrumentation extends Instrumentation {
   private Bundle arguments;
   private RawEditFullUiChecks.Gate fullUiGate;
-  public void onCreate(Bundle args){arguments=args;if(args!=null&&Boolean.parseBoolean(args.getString("fullui","false")))fullUiGate=new RawEditFullUiChecks.Gate();start();}
+  public void onCreate(Bundle args){arguments=args;if(args!=null&&(Boolean.parseBoolean(args.getString("fullui","false"))||Boolean.parseBoolean(args.getString("fullstates","false"))))fullUiGate=new RawEditFullUiChecks.Gate();start();}
   public void callActivityOnCreate(Activity activity,Bundle saved){
     if(arguments!=null&&arguments.containsKey("font")&&activity instanceof RawEditActivity){
       android.content.res.Configuration config=new android.content.res.Configuration(activity.getResources().getConfiguration());
@@ -33,7 +33,7 @@ public final class RawEditInstrumentation extends Instrumentation {
     try{
       core();pad();
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("full","false"))){phase="full.source";RawEditSourceChecks.run(this);phase="full.tiles";RawEditTileChecks.run(this);phase="full.session";RawEditFullSessionChecks.run(this);phase="full.publish";RawEditPublishChecks.run(this);}
-      if(fullUiGate!=null){phase="full.ui";RawEditFullUiChecks.run(this,fullUiGate);}
+      if(fullUiGate!=null){if(Boolean.parseBoolean(arguments.getString("fullstates","false"))){phase="full.states";RawEditFullUiChecks.runStates(this,fullUiGate);}else{phase="full.ui";RawEditFullUiChecks.run(this,fullUiGate);}}
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("guides","false")))RawEditGuidesChecks.run(this);
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("guidecaptures","false")))RawEditGuidesChecks.capture(this);
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("ui","false")))RawEditUiChecks.run(this);

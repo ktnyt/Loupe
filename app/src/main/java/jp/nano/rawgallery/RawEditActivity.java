@@ -75,7 +75,7 @@ public final class RawEditActivity extends Activity {
       String source=bundle.getString("input");if(source!=null)input=Uri.parse(source);
     }else input=getIntent().getData();
     build();
-    if(bundle!=null){image.zoom=Math.max(1,Math.min(Float.MAX_VALUE,bundle.getFloat("zoom",1)));image.dx=bundle.getFloat("panX",0);image.dy=bundle.getFloat("panY",0);updateZoom();}
+    if(bundle!=null){image.restorePose(bundle.getFloat("zoom",1),bundle.getFloat("panX",0),bundle.getFloat("panY",0));updateZoom();}
     if(input!=null||synthetic())load();else showPicker();
   }
   private boolean synthetic(){return (getApplicationInfo().flags&ApplicationInfo.FLAG_DEBUGGABLE)!=0&&getIntent().getBooleanExtra("rawEditSynthetic",false);}
@@ -195,7 +195,7 @@ public final class RawEditActivity extends Activity {
     Intent choose=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
     try{startActivityForResult(choose,53);}catch(ActivityNotFoundException e){status.setText("写真を選択できるアプリがありません");}
   }
-  protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==53&&result==RESULT_OK&&data!=null&&data.getData()!=null){input=data.getData();state=new RawEditState();saved=state;load();}}
+  protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==53&&result==RESULT_OK&&data!=null&&data.getData()!=null){input=data.getData();image.resetPose();state=new RawEditState();saved=state;load();}}
   private RawEditSource syntheticSource(){
     int w=1200,h=800;ByteBuffer b=ByteBuffer.allocateDirect(w*h*16).order(ByteOrder.nativeOrder());FloatBuffer f=b.asFloatBuffer();
     int[] top={134,168,200},sky={201,214,222},ground={125,143,106},bottom={78,93,64},red={201,87,62},beige={232,210,176};
@@ -253,7 +253,7 @@ public final class RawEditActivity extends Activity {
   }
   private void loadFailed(int token,long started,Throwable failure){
     RawEditLog.event(failure instanceof OutOfMemoryError?"load.failed.memory":failure instanceof LinkageError?"load.failed.native":failure instanceof IOException?"load.failed.io":"load.failed.runtime",SystemClock.elapsedRealtime()-started,0,0);
-    main.post(()->{if(!current(token))return;loading=false;ready=false;status.setText("読み込めませんでした\nタップで再試行");status.setClickable(true);status.setOnClickListener(v->load());});
+    main.post(()->{if(!current(token))return;loading=false;ready=false;image.discardRestoredPose();status.setText("読み込めませんでした\nタップで再試行");status.setClickable(true);status.setOnClickListener(v->load());});
   }
   private void attachFullSession(RawEditSource source,int token){
     final RawEditFullSession[] holder=new RawEditFullSession[1];

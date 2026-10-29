@@ -67,6 +67,26 @@ final class RawEditFullViewportChecks {
     MotionEvent event=MotionEvent.obtain(down,SystemClock.uptimeMillis(),action,count,properties,coords,0,0,1,1,0,0,android.view.InputDevice.SOURCE_TOUCHSCREEN,0);
     try{picture.dispatchTouchEvent(event);}finally{event.recycle();}
   }
+  private static void panTo(RawEditImageView image,float left,float top){
+    View picture=(View)image.getParent();float cx=image.getWidth()*.5f,cy=image.getHeight()*.5f;
+    // Every finger remains inside the picture. Repeated fixed-span gestures move
+    // to the requested ROI through the real parent routing without changing zoom.
+    for(int gesture=0;gesture<64;gesture++){
+      RectF current=image.visibleSource();float dx=current.left-left,dy=current.top-top;
+      if(Math.abs(dx)<.1f&&Math.abs(dy)<.1f)return;
+      float stepX=Math.max(-image.getWidth()*.6f,Math.min(image.getWidth()*.6f,dx));
+      float stepY=Math.max(-image.getHeight()*.6f,Math.min(image.getHeight()*.6f,dy));
+      float x=cx-stepX*.5f,y=cy-stepY*.5f,nextX=x+stepX,nextY=y+stepY;
+      long down=SystemClock.uptimeMillis();
+      touch(picture,down,MotionEvent.ACTION_DOWN,x-30,y);
+      touch(picture,down,MotionEvent.ACTION_POINTER_DOWN|(1<<MotionEvent.ACTION_POINTER_INDEX_SHIFT),x-30,y,x+30,y);
+      touch(picture,down,MotionEvent.ACTION_MOVE,nextX-30,nextY,nextX+30,nextY);
+      touch(picture,down,MotionEvent.ACTION_POINTER_UP|(1<<MotionEvent.ACTION_POINTER_INDEX_SHIFT),nextX-30,nextY,nextX+30,nextY);
+      touch(picture,down,MotionEvent.ACTION_UP,nextX-30,nextY);
+    }
+    RectF finalRegion=image.visibleSource();
+    require(Math.abs(finalRegion.left-left)<.1f&&Math.abs(finalRegion.top-top)<.1f,"bounded pan reaches candidate viewport");
+  }
   private static Bitmap capture(RawEditImageView image){
     require(image.getWidth()>0&&image.getHeight()>0&&image.getWidth()<=4096&&image.getHeight()<=4096&&(long)image.getWidth()*image.getHeight()<=12000000,"bounded laid-out viewport");
     Bitmap result=Bitmap.createBitmap(image.getWidth(),image.getHeight(),Bitmap.Config.ARGB_8888);
@@ -210,9 +230,36 @@ final class RawEditFullViewportChecks {
           // Same main-thread turn: the delayed detail job cannot have started for this viewport yet.
           before[0]=capture(image[0]);
         });
-        stage="native-reference-render";fallback=before[0];reference=expected(full,state[0],region[0],fallback.getWidth(),fallback.getHeight());
-        Difference initial=difference(fallback,reference);
-        require(initial.distinguishes(),"selected viewport must distinguish native detail from preview; aggregate differing samples="+initial.above8+"/"+initial.samples);
+        // Center first, then edge midpoints and corners: at most nine real viewports.
+        // Selection establishes that this input can discriminate detail; it never
+        // selects according to the actual final image or relaxes its match tolerance.
+        float[][] candidates={{.5f,.5f},{0,.5f},{1,.5f},{.5f,0},{.5f,1},{0,0},{1,0},{0,1},{1,1}};
+        Difference initial=null;long bestWitnesses=0;int tried=0;
+        for(int candidate=0;candidate<candidates.length;candidate++){
+          tried++;
+          if(candidate>0){
+            fallback.recycle();fallback=null;reference.recycle();reference=null;
+            final float horizontal=candidates[candidate][0],vertical=candidates[candidate][1];
+            stage="pan-and-fallback";t.runOnMainSync(()->{
+              long previous=image[0].viewportRevision();
+              panTo(image[0],Math.max(0,full.width-image[0].getWidth())*horizontal,Math.max(0,full.height-image[0].getHeight())*vertical);
+              require(image[0].viewportRevision()>previous,"candidate pan changes viewport");
+              require(Math.abs(image[0].zoom-image[0].maxZoom())<.002,"candidate pan preserves native 1:1 zoom");
+              region[0]=image[0].visibleSource();
+              require(Math.abs(region[0].width()-image[0].getWidth())<.1&&Math.abs(region[0].height()-image[0].getHeight())<.1,"candidate ROI remains one-to-one");
+              Bundle afterPan=new Bundle();a.onSaveInstanceState(afterPan);
+              require(Arrays.equals(state[0].snapshot(),afterPan.getFloatArray("values")),"candidate pan preserves edit values");
+              viewport[0]=image[0].viewportRevision();
+              // Main-thread callbacks cannot install detail between the pan and capture.
+              before[0]=capture(image[0]);
+            });
+          }
+          fallback=before[0];stage="native-reference-render";
+          reference=expected(full,state[0],region[0],fallback.getWidth(),fallback.getHeight());
+          initial=difference(fallback,reference);bestWitnesses=Math.max(bestWitnesses,initial.above8);
+          if(initial.distinguishes())break;
+        }
+        require(initial!=null&&initial.distinguishes(),"bounded viewport search must distinguish native detail; aggregate candidates="+tried+" best differing samples="+bestWitnesses+"/"+(initial==null?0:initial.samples));
         final Bitmap expected=reference;final RawEditImageView view=image[0];
         stage="detail-pixel-comparison";await(()->{
           require(onMain(t,()->view.viewportRevision()==viewport[0]),"viewport remains unchanged while awaiting original detail");

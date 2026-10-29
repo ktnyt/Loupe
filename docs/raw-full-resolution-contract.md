@@ -45,7 +45,7 @@
 
 ## 方式の根拠と工程
 
-26MPの全画像FloatRGBAは約397MiB、GL RGBA16Fは約198MiBで、全画像readback/Bitmapを重ねる方式は採らない。linear RGB16 cacheは約149MiBのdisk。GL tileとRGB stripはboundedに保つ。LibRaw内部peakと最長取消gapは実機で未測定。
+26MPの全画像FloatRGBAは約397MiB、GL RGBA16Fは約198MiBで、全画像readback/Bitmapを重ねる方式は採らない。linear RGB16 cacheは約149MiBのdisk。GL tileとRGB stripはboundedに保つ。LibRaw内部だけのpeakと最長取消gapは未測定。プロセス全体のHWMは下記の条件で計測済み。
 
 LibRawのPPM writerとlinear設定を利用して向き/色変換の独自実装を避ける。JPEGはAndroid private libraryへリンクせず、公式libjpeg-turbo 3.2.1 sourceとlicensesをpinして同梱する。新しい責務を追加する機能実装であり、必須の先行リファクタリングは現時点では不要。既存UI配置は保持し、原寸準備・倍率・保存確認の仕様だけClaude参照を更新する。
 
@@ -62,4 +62,4 @@ hostでは実GR DNGの有効寸法6224×4160、実OM ORFの6132×8172につい�
 
 実GR準備後は中央値19.50ms/p9521.65ms・694反映/1302入力（36.8℃）。旧版を現在の条件で再測定すると18.82/22.05ms・707反映/1298入力（35.8℃）で、最初の旧baseline9.85msとの差を原寸追加だけに帰因できない。温度も完全一致ではない。不要invalidateの抑制では速度改善を確認していない。前景検出CLIの初回停止はdumpsysの対象指定を修正してから再計測した。
 
-実写真の1:1拡大表示と原寸期待画素の比較、変更後UIの独立比較、本体APK導入は未完了。#53の2048px実機検証や合成のTile検査だけを、実写真の精細表示の検証として扱わない。最終修正後のCold/Security Reviewは別工程で確認する。
+統合実験版0.3.0/5でGR実写真の1:1拡大を実Windowと原寸タイル参照で比較し、全サンプルのRGB誤差2以内と縮小表示との差を確認済み。OM中央領域は区別点不足で検査未成立のため、複数の表示位置で再検査する。合成6000×4000の準備・保存待ち・実書込失敗・元mode復元・再試行成功の4状態を実機確認済み。Claudeの完成HTML（SHA-256 `19bc7f2c9c5a87d69d7fad95bc907a3863ea289dcae4cd1e3f51e5648f6bc56d`）を変更せず書き出した4状態と実機を[並べて比較](design/loupe55-fullstates-comparison.png)し、独立UIレビューで静止画範囲の必須修正なし。保存待ちが暗く中止可能と分かりにくい懸念、保存警告の位置に軽微差あり。実操作は別の合成実機検査で確認する。本体APK導入と、最終修正後のCold/Security Reviewは未完了。

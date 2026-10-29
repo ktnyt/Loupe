@@ -9,6 +9,7 @@ final class RawEditImageView extends View {
   private Bitmap image,detail;
   private RectF detailSource;
   private int fullWidth,fullHeight;
+  private boolean restoredPosePending;
   private long viewportRevision;
   private Runnable viewportListener;
   private boolean listenerPosted;
@@ -38,6 +39,18 @@ final class RawEditImageView extends View {
   void replace(Bitmap next){image=next;invalidate();}
   void replace(Bitmap next,long ticket,long inputNs){pendingTicket=ticket;pendingInput=inputNs;replace(next);}
   void setViewportListener(Runnable listener){viewportListener=listener;}
+  /** Apply saved pose only once the original dimensions and the actual viewport are both available. */
+  void restorePose(float savedZoom,float savedX,float savedY){
+    zoom=Float.isFinite(savedZoom)?Math.max(1,savedZoom):1;
+    dx=Float.isFinite(savedX)?savedX:0;dy=Float.isFinite(savedY)?savedY:0;
+    restoredPosePending=true;clamp();viewportChanged();
+  }
+  void discardRestoredPose(){
+    float z=zoom,x=dx,y=dy;restoredPosePending=false;clamp();changed(z,x,y);
+  }
+  void resetPose(){
+    float z=zoom,x=dx,y=dy;restoredPosePending=false;zoom=1;dx=dy=0;changed(z,x,y);
+  }
   void setFullDimensions(int w,int h){
     if(w<1||h<1)throw new IllegalArgumentException("Invalid full image dimensions");
     if(w==fullWidth&&h==fullHeight)return;
@@ -87,11 +100,16 @@ final class RawEditImageView extends View {
     if(zoom!=previousZoom||dx!=previousX||dy!=previousY)viewportChanged();
   }
   void toggle(){
+    restoredPosePending=false;
     float z=zoom,x=dx,y=dy;
     zoom=zoom>1?1:Math.min(2.5f,maxZoom());dx=dy=0;clamp();changed(z,x,y);invalidate();
   }
   void clear(){clearDetail();replace(null);}
   private void clamp(){
+    if(restoredPosePending){
+      if(fullWidth<=0||fullHeight<=0||getWidth()<=0||getHeight()<=0)return;
+      restoredPosePending=false;
+    }
     zoom=Math.max(1,Math.min(maxZoom(),zoom));
     float fit=fitScale();if(fit<=0)return;
     float maxX=Math.max(0,(sourceWidth()*fit*zoom-getWidth())/2),maxY=Math.max(0,(sourceHeight()*fit*zoom-getHeight())/2);
@@ -121,7 +139,7 @@ final class RawEditImageView extends View {
     int excluded=action==MotionEvent.ACTION_POINTER_UP?e.getActionIndex():-1;
     int count=e.getPointerCount()-(excluded>=0?1:0);
     if(count<2){firstPointer=secondPointer=-1;span=0;return multiSession;}
-    multiSession=true;singleDragging=false;
+    restoredPosePending=false;multiSession=true;singleDragging=false;
     int a=e.findPointerIndex(firstPointer),b=e.findPointerIndex(secondPointer);
     boolean reset=action==MotionEvent.ACTION_POINTER_DOWN||action==MotionEvent.ACTION_POINTER_UP||a<0||b<0||a==excluded||b==excluded;
     if(reset){
@@ -146,7 +164,7 @@ final class RawEditImageView extends View {
     if(action==MotionEvent.ACTION_CANCEL){gesture.onTouchEvent(e);singleDragging=false;return true;}
     if(multiSession||e.getPointerCount()!=1){singleDragging=false;return true;}
     gesture.onTouchEvent(e);
-    if(action==MotionEvent.ACTION_DOWN){singleDragging=true;lastX=e.getX();lastY=e.getY();}
+    if(action==MotionEvent.ACTION_DOWN){discardRestoredPose();singleDragging=true;lastX=e.getX();lastY=e.getY();}
     if(action==MotionEvent.ACTION_MOVE&&singleDragging&&zoom>1){
       float previousZoom=zoom,previousX=dx,previousY=dy;
       dx+=e.getX()-lastX;dy+=e.getY()-lastY;clamp();changed(previousZoom,previousX,previousY);invalidate();
