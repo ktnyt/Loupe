@@ -74,9 +74,9 @@ final class RawEditImageView extends View {
     }
     detail=bitmap;detailSource=new RectF(source);invalidate();
   }
-  void clearDetail(){detail=null;detailSource=null;invalidate();}
+  void clearDetail(){boolean visible=detail!=null;detail=null;detailSource=null;if(visible)invalidate();}
   private void viewportChanged(){
-    viewportRevision++;clearDetail();
+    viewportRevision++;clearDetail();invalidate();
     // Scheduling outside drawing and coalescing avoids recursive render/listener dispatch.
     if(!listenerPosted&&viewportListener!=null){
       listenerPosted=true;
