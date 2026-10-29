@@ -7,6 +7,10 @@ import android.os.*;
 import android.view.*;
 import android.widget.*;
 import java.util.*;
+import org.json.JSONObject;
+import org.json.JSONArray;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 /** Synthetic data only: real View dispatch, fixed geometry, cursor-only pixels and two pointers. */
 final class RawEditUiChecks {
@@ -19,6 +23,52 @@ final class RawEditUiChecks {
     int count=xy.length/2;MotionEvent.PointerProperties[] properties=new MotionEvent.PointerProperties[count];MotionEvent.PointerCoords[] coords=new MotionEvent.PointerCoords[count];
     for(int i=0;i<count;i++){properties[i]=new MotionEvent.PointerProperties();properties[i].id=i;properties[i].toolType=MotionEvent.TOOL_TYPE_FINGER;coords[i]=new MotionEvent.PointerCoords();coords[i].x=xy[2*i];coords[i].y=xy[2*i+1];coords[i].pressure=coords[i].size=1;}
     MotionEvent e=MotionEvent.obtain(time,SystemClock.uptimeMillis(),action,count,properties,coords,0,0,1,1,0,0,android.view.InputDevice.SOURCE_TOUCHSCREEN,0);picture.dispatchTouchEvent(e);e.recycle();
+  }
+  private static int brightness(int color){return (Color.red(color)+Color.green(color)+Color.blue(color))/3;}
+  private static Rect windowBounds(View view){int[] xy=new int[2];view.getLocationInWindow(xy);return new Rect(xy[0],xy[1],xy[0]+view.getWidth(),xy[1]+view.getHeight());}
+  private static void confirmedCapture(Instrumentation t,RawEditActivity activity,String tab)throws Exception {
+    int[] size=new int[2];float[] font={0};
+    t.runOnMainSync(()->{View decor=activity.getWindow().getDecorView();size[0]=decor.getWidth();size[1]=decor.getHeight();font[0]=activity.getResources().getConfiguration().fontScale;});
+    java.io.File folder=new java.io.File(activity.getCacheDir(),"raw-ui-confirmed-"+font[0]+"-"+size[1]);require(folder.isDirectory()||folder.mkdirs(),"confirmed synthetic capture folder");
+    long started=SystemClock.uptimeMillis(),deadline=started+5000;JSONArray attempts=new JSONArray();boolean confirmed=false;int attempt=0;
+    try {
+      while(SystemClock.uptimeMillis()<deadline&&!confirmed){
+        attempt++;CountDownLatch frame=new CountDownLatch(1);long[] committed={0};
+        t.runOnMainSync(()->{View decor=activity.getWindow().getDecorView();RawEditImageView image=find(decor,RawEditImageView.class);RawEditPad pad=find(decor,RawEditPad.class);decor.getViewTreeObserver().registerFrameCommitCallback(()->{committed[0]=SystemClock.uptimeMillis();frame.countDown();});image.invalidate();pad.invalidate();decor.invalidate();});
+        JSONObject record=new JSONObject();record.put("attempt",attempt);
+        if(!frame.await(Math.max(1,deadline-SystemClock.uptimeMillis()),TimeUnit.MILLISECONDS)){record.put("failure","frame commit timeout");record.put("elapsedMs",SystemClock.uptimeMillis()-started);attempts.put(record);break;}
+        Bitmap capture=Bitmap.createBitmap(size[0],size[1],Bitmap.Config.ARGB_8888);CountDownLatch copied=new CountDownLatch(1);int[] status={-1},probe=new int[5],coordinates=new int[10];boolean[] copyDone={false},abandoned={false};Object lock=new Object();boolean ownsBitmap=true;long[] copyAt={0};
+        try {
+          t.runOnMainSync(()->{
+            View decor=activity.getWindow().getDecorView();RawEditImageView image=find(decor,RawEditImageView.class);RawEditPad pad=find(decor,RawEditPad.class);Rect selected=windowBounds(button(decor,tab)),photo=windowBounds(image),plane=windowBounds(pad.getChildAt(0));float density=activity.getResources().getDisplayMetrics().density;
+            coordinates[0]=selected.centerX();coordinates[1]=selected.top+Math.max(1,Math.round(density));coordinates[2]=photo.centerX();coordinates[3]=photo.centerY();
+            coordinates[4]=plane.centerX()+Math.round(13*density);coordinates[5]=plane.centerY();coordinates[6]=plane.centerX()+Math.round(9*density);coordinates[7]=plane.centerY();coordinates[8]=plane.centerX()+Math.round(17*density);coordinates[9]=plane.centerY();
+            PixelCopy.request(activity.getWindow(),capture,result->{synchronized(lock){status[0]=result;copyAt[0]=SystemClock.uptimeMillis();copyDone[0]=true;if(abandoned[0])capture.recycle();}copied.countDown();},new Handler(Looper.getMainLooper()));
+          });
+          if(!copied.await(Math.max(1,deadline-SystemClock.uptimeMillis()),TimeUnit.MILLISECONDS)){
+            synchronized(lock){if(!copyDone[0]){abandoned[0]=true;ownsBitmap=false;}}
+            record.put("failure","PixelCopy timeout");record.put("elapsedMs",SystemClock.uptimeMillis()-started);attempts.put(record);break;
+          }
+          record.put("frameCommitElapsedMs",committed[0]-started);record.put("copyElapsedMs",copyAt[0]-started);record.put("pixelCopyStatus",status[0]);record.put("probeCoordinates",new JSONArray(coordinates));
+          if(status[0]==PixelCopy.SUCCESS){
+            for(int p=0;p<probe.length;p++)probe[p]=capture.getPixel(coordinates[p*2],coordinates[p*2+1]);
+            int photo=probe[1],border=probe[2];boolean selected=(probe[0]&0xffffff)==0xededea;
+            boolean photoVisible=Color.red(photo)>32&&Color.green(photo)>32&&Color.blue(photo)>32;
+            boolean cursorVisible=Color.red(border)>96&&Color.green(border)>96&&Color.blue(border)>96
+                &&brightness(border)-Math.max(brightness(probe[3]),brightness(probe[4]))>=15;
+            confirmed=selected&&photoVisible&&cursorVisible;
+            record.put("tabSelectionVisible",selected);record.put("photoVisible",photoVisible);record.put("cursorBorderVisible",cursorVisible);record.put("probeArgb",new JSONArray(probe));
+            if(confirmed||deadline-SystemClock.uptimeMillis()<100){java.io.File output=new java.io.File(folder,tab+(confirmed?"":"-failed")+".png");try(java.io.FileOutputStream stream=new java.io.FileOutputStream(output)){require(capture.compress(Bitmap.CompressFormat.PNG,100,stream),"confirmed synthetic PNG written");}record.put("file",output.getName());}
+          }
+          record.put("confirmed",confirmed);attempts.put(record);
+        }finally{if(ownsBitmap)capture.recycle();}
+        if(!confirmed)Thread.sleep(Math.min(50,Math.max(1,deadline-SystemClock.uptimeMillis())));
+      }
+    }finally{
+      JSONObject manifest=new JSONObject();manifest.put("input","debug synthetic only");manifest.put("tab",tab);manifest.put("fontScale",font[0]);manifest.put("windowWidth",size[0]);manifest.put("windowHeight",size[1]);manifest.put("confirmed",confirmed);manifest.put("attemptCount",attempt);manifest.put("elapsedMs",SystemClock.uptimeMillis()-started);manifest.put("probeOrder",new JSONArray(new String[]{"tab line","photo center","cursor border +13dp","cursor inside +9dp","cursor outside +17dp"}));manifest.put("attempts",attempts);
+      try(java.io.Writer output=new java.io.OutputStreamWriter(new java.io.FileOutputStream(new java.io.File(folder,tab+".json")),java.nio.charset.StandardCharsets.UTF_8)){output.write(manifest.toString(2));}
+    }
+    require(confirmed,"actual window must contain current tab, visible synthetic photo and cursor border within 5 seconds");
   }
   static void run(Instrumentation t)throws Exception{
     RawEditActivity a=(RawEditActivity)t.startActivitySync(new Intent(t.getTargetContext(),RawEditActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("rawEditSynthetic",true));
@@ -35,17 +85,7 @@ final class RawEditUiChecks {
           require(pad.getChildAt(0).getWidth()==pad.getChildAt(0).getHeight(),"square control");
           Button selected=button(a.getWindow().getDecorView(),tab);require(selected.getLayout()!=null&&selected.getLayout().getLineCount()==1&&selected.getLayout().getEllipsisCount(0)==0,"tab label remains visible without wrapping or ellipsis");
           require(pad.getWidth()<=image.getWidth()&&pad.getHeight()<=image.getHeight(),"overlay fits the photo viewport");});
-        java.util.concurrent.CountDownLatch frame=new java.util.concurrent.CountDownLatch(1);
-        t.runOnMainSync(()->{View decor=a.getWindow().getDecorView();decor.getViewTreeObserver().registerFrameCommitCallback(frame::countDown);decor.invalidate();});
-        require(frame.await(3,java.util.concurrent.TimeUnit.SECONDS),"new tab frame committed before capture");
-        Bitmap capture=Bitmap.createBitmap(a.getWindow().getDecorView().getWidth(),a.getWindow().getDecorView().getHeight(),Bitmap.Config.ARGB_8888);
-        java.util.concurrent.CountDownLatch copied=new java.util.concurrent.CountDownLatch(1);int[] result={-1};
-        t.runOnMainSync(()->PixelCopy.request(a.getWindow(),capture,r->{result[0]=r;copied.countDown();},new Handler(Looper.getMainLooper())));
-        require(copied.await(3,java.util.concurrent.TimeUnit.SECONDS)&&result[0]==PixelCopy.SUCCESS,"current window pixels copied");
-        t.runOnMainSync(()->{Button selected=button(a.getWindow().getDecorView(),tab);int[] location=new int[2];selected.getLocationInWindow(location);int x=location[0]+selected.getWidth()/2,y=location[1]+Math.max(1,Math.round(a.getResources().getDisplayMetrics().density));
-          require((capture.getPixel(x,y)&0xffffff)==0xededea,"capture must show the requested tab selection line, not a previous compositor frame");});
-        java.io.File folder=new java.io.File(a.getCacheDir(),"raw-ui-"+a.getResources().getConfiguration().fontScale+"-"+a.getWindow().getDecorView().getHeight());folder.mkdirs();
-        try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(folder,tab+".png"))){capture.compress(Bitmap.CompressFormat.PNG,100,out);}finally{capture.recycle();}
+        confirmedCapture(t,a,tab);
       }
       t.runOnMainSync(()->{
         float[] before=values(a);button(a.getWindow().getDecorView(),"モノクロ").performClick();require(values(a)[RawEditState.MONO]==1,"Mono persists in edit state");

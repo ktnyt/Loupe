@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import time
+import xml.etree.ElementTree as ET
 
 
 def require_pass(output):
@@ -50,19 +51,67 @@ def standby_video(shell, enabled):
             print('Standby restoration also failed: ' + str(restore_error), file=sys.stderr, flush=True)
 
 
+def youtube_window(windows, key):
+    return bool(re.search(r'(?m)^\s*' + key + r'=Window\{[^\n]* com\.google\.android\.youtube/', windows))
+
+
+def play_current_miniplayer(shell, query):
+    # Only the previously identified Play control is eligible. Never print XML or video metadata.
+    require_unlocked(shell)
+    windows = shell('sh', '-c', query)
+    if not youtube_window(windows, 'mCurrentFocus') or youtube_window(windows, 'mHoldScreenWindow'):
+        return False
+    path = '/data/local/tmp/loupe-standby-ui.xml'
+    shell('rm', '-f', path)
+    try:
+        shell('uiautomator', 'dump', path)
+        xml = shell('cat', path)
+    finally:
+        shell('rm', '-f', path)
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return False
+    matches = [node for node in root.iter('node')
+               if node.get('package') == 'com.google.android.youtube'
+               and node.get('resource-id') == 'com.google.android.youtube:id/modern_miniplayer_overlay_action_button'
+               and node.get('content-desc') == '動画を再生'
+               and node.get('clickable') == 'true' and node.get('enabled') == 'true']
+    if len(matches) != 1:
+        return False
+    bounds = re.fullmatch(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', matches[0].get('bounds', ''))
+    if bounds is None:
+        return False
+    left, top, right, bottom = map(int, bounds.groups())
+    if right <= left or bottom <= top:
+        return False
+    # Dumping can take time: recheck both lock and foreground immediately before the single tap.
+    require_unlocked(shell)
+    windows = shell('sh', '-c', query)
+    if not youtube_window(windows, 'mCurrentFocus') or youtube_window(windows, 'mHoldScreenWindow'):
+        return False
+    shell('input', 'tap', str((left + right) // 2), str((top + bottom) // 2))
+    return True
+
+
 def wait_for_standby(shell, attempts=30, interval=0.5, play_when_focused=False):
     # Read only the current YouTube focus/hold lines; do not expose window contents.
     query = "dumpsys window | awk '/mCurrentFocus=|mHoldScreenWindow=/{if(index($0,\" com.google.android.youtube/\")) print}'"
-    played = False
+    play_attempt = None
+    fallback_tried = False
     for attempt in range(attempts):
         windows = shell('sh', '-c', query)
-        focused = re.search(r'(?m)^\s*mCurrentFocus=Window\{[^\n]* com\.google\.android\.youtube/', windows)
-        if play_when_focused and focused and not played:
+        focused = youtube_window(windows, 'mCurrentFocus')
+        if play_when_focused and focused and play_attempt is None:
+            require_unlocked(shell)
             shell('input', 'keyevent', '126')
-            played = True
-        if all(re.search(r'(?m)^\s*' + key + r'=Window\{[^\n]* com\.google\.android\.youtube/', windows)
-               for key in ('mCurrentFocus', 'mHoldScreenWindow')):
+            play_attempt = attempt
+        if all(youtube_window(windows, key) for key in ('mCurrentFocus', 'mHoldScreenWindow')):
             return
+        if (play_when_focused and focused and play_attempt is not None
+                and attempt - play_attempt >= 4 and attempt + 1 < attempts and not fallback_tried):
+            fallback_tried = True
+            play_current_miniplayer(shell, query)
         if attempt + 1 < attempts:
             time.sleep(interval)
     raise RuntimeError('YouTube screen hold was not confirmed; check device before waiting')
