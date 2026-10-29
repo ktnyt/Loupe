@@ -38,7 +38,12 @@ final class RawEditUiChecks {
         java.util.concurrent.CountDownLatch frame=new java.util.concurrent.CountDownLatch(1);
         t.runOnMainSync(()->{View decor=a.getWindow().getDecorView();decor.getViewTreeObserver().registerFrameCommitCallback(frame::countDown);decor.invalidate();});
         require(frame.await(3,java.util.concurrent.TimeUnit.SECONDS),"new tab frame committed before capture");
-        Bitmap capture=t.getUiAutomation().takeScreenshot();require(capture!=null,"synthetic UI capture");
+        Bitmap capture=Bitmap.createBitmap(a.getWindow().getDecorView().getWidth(),a.getWindow().getDecorView().getHeight(),Bitmap.Config.ARGB_8888);
+        java.util.concurrent.CountDownLatch copied=new java.util.concurrent.CountDownLatch(1);int[] result={-1};
+        t.runOnMainSync(()->PixelCopy.request(a.getWindow(),capture,r->{result[0]=r;copied.countDown();},new Handler(Looper.getMainLooper())));
+        require(copied.await(3,java.util.concurrent.TimeUnit.SECONDS)&&result[0]==PixelCopy.SUCCESS,"current window pixels copied");
+        t.runOnMainSync(()->{Button selected=button(a.getWindow().getDecorView(),tab);int[] location=new int[2];selected.getLocationInWindow(location);int x=location[0]+selected.getWidth()/2,y=location[1]+Math.max(1,Math.round(a.getResources().getDisplayMetrics().density));
+          require((capture.getPixel(x,y)&0xffffff)==0xededea,"capture must show the requested tab selection line, not a previous compositor frame");});
         java.io.File folder=new java.io.File(a.getCacheDir(),"raw-ui-"+a.getResources().getConfiguration().fontScale+"-"+a.getWindow().getDecorView().getHeight());folder.mkdirs();
         try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(folder,tab+".png"))){capture.compress(Bitmap.CompressFormat.PNG,100,out);}finally{capture.recycle();}
       }
