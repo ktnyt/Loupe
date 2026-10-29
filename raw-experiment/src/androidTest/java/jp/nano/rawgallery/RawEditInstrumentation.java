@@ -13,13 +13,15 @@ import java.util.concurrent.atomic.AtomicReference;
 /** Core GPU/native and real UI gesture contracts; no user photo contents are emitted. */
 public final class RawEditInstrumentation extends Instrumentation {
   private Bundle arguments;
-  public void onCreate(Bundle args){arguments=args;start();}
+  private RawEditFullUiChecks.Gate fullUiGate;
+  public void onCreate(Bundle args){arguments=args;if(args!=null&&Boolean.parseBoolean(args.getString("fullui","false")))fullUiGate=new RawEditFullUiChecks.Gate();start();}
   public void callActivityOnCreate(Activity activity,Bundle saved){
     if(arguments!=null&&arguments.containsKey("font")&&activity instanceof RawEditActivity){
       android.content.res.Configuration config=new android.content.res.Configuration(activity.getResources().getConfiguration());
       config.fontScale=Float.parseFloat(arguments.getString("font"));activity.getResources().updateConfiguration(config,activity.getResources().getDisplayMetrics());
     }
     super.callActivityOnCreate(activity,saved);
+    if(fullUiGate!=null)fullUiGate.afterCreate(activity);
     if(arguments!=null&&arguments.containsKey("height")&&activity instanceof RawEditActivity){
       int h=Integer.parseInt(arguments.getString("height"));activity.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT,Math.round(h*activity.getResources().getDisplayMetrics().density));
     }
@@ -31,6 +33,7 @@ public final class RawEditInstrumentation extends Instrumentation {
     try{
       core();pad();
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("full","false"))){phase="full.source";RawEditSourceChecks.run(this);phase="full.tiles";RawEditTileChecks.run(this);phase="full.session";RawEditFullSessionChecks.run(this);phase="full.publish";RawEditPublishChecks.run(this);}
+      if(fullUiGate!=null){phase="full.ui";RawEditFullUiChecks.run(this,fullUiGate);}
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("ui","false")))RawEditUiChecks.run(this);
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("real","false")))real();
       result.putString("stream","PASS raw-editor GPU neutral/orientation/brightness/saturation/comparison; XY/edge independent; native\n");finish(Activity.RESULT_OK,result);

@@ -1,6 +1,6 @@
 # プレビュー優先の原寸現像
 
-対象: Issue #55。基点7c5bab8。#53の長辺2048px制限を、原寸の観察と別保存に必要な範囲で置き換える。実装とhost/ビルド検証済み。原寸機能のAndroid実機検証は未実施。
+対象: Issue #55。基点7c5bab8。#53の長辺2048px制限を、原寸の観察と別保存に必要な範囲で置き換える。実装とhost/ビルド検証済み。Cold Reviewは保存の公開/取消競合を修正して再確認し、Security Reviewとともに修正必須指摘なし。原寸機能のAndroid実機検証は未実施。
 
 ## 目的と機能
 
@@ -48,3 +48,10 @@
 26MPの全画像FloatRGBAは約397MiB、GL RGBA16Fは約198MiBで、全画像readback/Bitmapを重ねる方式は採らない。linear RGB16 cacheは約149MiBのdisk。GL tileとRGB stripはboundedに保つ。LibRaw内部peakと最長取消gapは実機で未測定。
 
 LibRawのPPM writerとlinear設定を利用して向き/色変換の独自実装を避ける。JPEGはAndroid private libraryへリンクせず、公式libjpeg-turbo 3.2.1 sourceとlicensesをpinして同梱する。新しい責務を追加する機能実装であり、必須の先行リファクタリングは現時点では不要。既存UI配置は保持し、原寸準備・倍率・保存確認の仕様だけClaude参照を更新する。
+
+
+## 現在の検証状況
+
+hostでは実GR DNGの有効寸法6224×4160、実OM ORFの6132×8172について、初回metadataと原寸準備の寸法一致、キャッシュ整合・取消・cleanup、JPEGの分割行入力・寸法・境界・FD所有の検査を通過。合成原寸Sourceと状態モデル、性能ログparser7件のhost検査も通過した。APK4種とlint2種をビルド済み。
+
+Android用のSource/Tile/Session検査、公開/取消を固定するラッチ検査、準備待ちの編集と保存・中止を実Activityで確認する合成検査を用意している。端末への新APK導入・これらの実行・実写真の拡大表示と原寸保存・準備中/後の性能とメモリ・変更後UIの独立比較は未実施。#53の2048px実機検証を原寸機能の検証として扱わない。
