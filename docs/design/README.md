@@ -156,3 +156,7 @@ Issue #55の[4状態の参照・実機比較](loupe55-fullstates-comparison.png)
 [現在の参照HTML](loupe-raw-editor-cursor-navigation.html)は面28dp・右/下24dpの半透明カーソル3点を常時表示し、48dpの操作域をつかんだ相対移動だけで値を変える。空白からのドラッグはパン、ダブルタップは原寸100%→150%→fit。カーソル上のダブルタップ初期化、7タブ、原寸準備/待ち/失敗の状態を保持する。[操作中](loupe59-reference-drag.png)と[消去後](loupe59-reference-hidden.png)はClaudeが完成HTMLから書き出した400×844・文字1.0・WB+60/+60の合成画面。代替フォント、1dp=1px。元ガイドHTMLは不変。Androidへ反映し、[操作中](loupe59-comparison-drag.png)と[消去後](loupe59-comparison-hidden.png)を独立比較済み。比較の根拠と残る差は[契約](../raw-editor-cursor-contract.md)を参照。
 
 同contentの追加参照は[操作中](loupe59-reference-content-drag.png)と[消去後](loupe59-reference-content-hidden.png)。HTMLの実行時高さ805⅓dp/DPR3/文字1.0で描き、ブラウザ丸めで1200×2415px、実機アプリ領域は1200×2416px。OS領域を除き同じ物理幅で比較する。
+
+## 現像の下部タブ（Issue #61）
+
+[loupe-raw-editor-footer-v2.html](loupe-raw-editor-footer-v2.html)が現行の下部配置参照。旧footer.htmlは基準版。上56dp・写真は残り・下80dp。補助行と拡大ボタンを削除し、必要4タブだけ高さ48dp/下8dpの補助操作を写真へ重ねる。7タブでviewportと2DUI座標を固定。参照PNG: [WB](loupe61-reference-wb.png)、[トーン](loupe61-reference-tone.png)。400×(2416/3)dp・密度3・文字1.0・初期値・fit、実出力1200×2415px（丸め1px差）。短いcontentの面サイズはmin(幅−72,写真高さ−176)で契約と統一。[短い参照](loupe61-v2-reference-short.png)は400×576dp/密度3/文字1.3、実寸1200×1728px。通常PNGはv1/v2で同一ハッシュを確認。Android実装・通常/短Windowの実機検査と独立比較を完了。[実測短Windowの参照](loupe61-v2-reference-short640.png)はcontent400×640dp/font1.3、実寸1200×1920px。[通常WB比較](loupe61-comparison-wb.png)・[トーン比較](loupe61-comparison-tone.png)・[短いWB比較](loupe61-comparison-short.png)（左参照/右実機）。576dpの参照は設計上の参考寸法。字体・合成注記/斜線・既存ヘッダー・chip幅・線端には差があり、全画素一致とは扱わない。

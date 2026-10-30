@@ -87,7 +87,7 @@ final class RawEditCursorChecks {
       long now=SystemClock.uptimeMillis();boolean downHandled=event(decor,now,now,MotionEvent.ACTION_DOWN,x,y),moveHandled=event(decor,now,now+20,MotionEvent.ACTION_MOVE,x+d,y-(sliderFirst?0:d));
       require(!Arrays.equals(old,values(a)),"root-dispatched first sibling gesture actually edits; sliderFirst="+sliderFirst+" bar="+bar.getWidth()+"x"+bar.getHeight()+" start="+x+","+y+" hit="+hit+" handled="+downHandled+","+moveHandled+" texture="+old[2]+"->"+values(a)[2]+" clarity="+old[3]+"->"+values(a)[3]);float firstX=x+d,firstY=y-(sliderFirst?0:d);
       event(decor,now,now+40,MotionEvent.ACTION_POINTER_DOWN|(1<<MotionEvent.ACTION_POINTER_INDEX_SHIFT),firstX,firstY,secondX,secondY);
-      require(Arrays.equals(old,values(a)),"cross-sibling second pointer rolls back original adjustment");float zoom=image.zoom;
+      require(Arrays.equals(old,values(a)),"cross-sibling second pointer rolls back original adjustment; sliderFirst="+sliderFirst+" before="+Arrays.toString(old)+" after="+Arrays.toString(values(a)));float zoom=image.zoom;
       event(decor,now,now+60,MotionEvent.ACTION_MOVE,firstX,firstY,firstX+(secondX-firstX)*1.2f,firstY+(secondY-firstY)*1.2f);
       require(image.zoom>zoom,"cross-sibling pointer stream reaches picture pinch");
       event(decor,now,now+80,MotionEvent.ACTION_POINTER_UP|(1<<MotionEvent.ACTION_POINTER_INDEX_SHIFT),firstX,firstY,secondX,secondY);
@@ -104,18 +104,24 @@ final class RawEditCursorChecks {
     }
     require(found,"loaded photo status overlay is present in actual window");
   });}
-  private static void zoomButton(Instrumentation t,RawEditActivity a)throws Exception{
+  private static void zoomAccessibility(Instrumentation t,RawEditActivity a)throws Exception{
     onMain(t,()->find(a.getWindow().getDecorView(),RawEditImageView.class).resetPose());t.waitForIdleSync();
     onMain(t,()->{View decor=a.getWindow().getDecorView();RawEditImageView image=find(decor,RawEditImageView.class);float fit=Math.min(image.getWidth()/6000f,image.getHeight()/4000f);
-      Button hundred=described(decor,"原寸100%で表示");require(hundred!=null,"zoom button announces next100 transition");hundred.performClick();require(Math.abs(image.zoom*fit-1)<.001f,"zoom button actually selects physical100");
-      Button hundredFifty=described(decor,"原寸150%で表示");require(hundredFifty!=null,"100 button announces next150 transition");hundredFifty.performClick();require(Math.abs(image.zoom*fit-1.5f)<.001f,"zoom button actually selects physical150");
-      Button fitButton=described(decor,"全体を表示");require(fitButton!=null,"150 button announces nextfit transition");fitButton.performClick();require(image.zoom==1&&described(decor,"原寸100%で表示")!=null,"fit button actually selects fit and announces100");
+      String[] labels={"原寸100%で表示","原寸150%で表示","全体を表示"};float[] scales={1,1.5f,fit};
+      for(int i=0;i<labels.length;i++){
+        require(described(decor,labels[i])==null,"visible zoom button is removed");
+        android.view.accessibility.AccessibilityNodeInfo info=image.createAccessibilityNodeInfo();int action=-1;
+        for(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction candidate:info.getActionList())if(candidate.getLabel()!=null&&labels[i].contentEquals(candidate.getLabel()))action=candidate.getId();
+        require(action!=-1,"photo exposes next zoom accessibility action "+labels[i]);require(image.performAccessibilityAction(action,null),"zoom accessibility action handled");
+        require(Math.abs(image.zoom*fit-scales[i])<.001f,"photo accessibility action selects physical stage "+i);
+      }
+      require(image.zoom==1,"zoom accessibility cycle returns fit");
     });
   }
   static void run(Instrumentation t)throws Exception{
     isolatedZoom(t);
     RawEditActivity a=(RawEditActivity)t.startActivitySync(new Intent(t.getTargetContext(),RawEditActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("rawEditSynthetic",true));
-    try{ready(t,a);loadedOverlay(t,a);zoomButton(t,a);siblingPinch(t,a,true);siblingPinch(t,a,false);onMain(t,()->button(a.getWindow().getDecorView(),"WB").performClick());t.waitForIdleSync();RawEditPad[] pad={null};RawEditImageView[] image={null};View[] picture={null};
+    try{ready(t,a);loadedOverlay(t,a);zoomAccessibility(t,a);siblingPinch(t,a,true);siblingPinch(t,a,false);onMain(t,()->button(a.getWindow().getDecorView(),"WB").performClick());t.waitForIdleSync();RawEditPad[] pad={null};RawEditImageView[] image={null};View[] picture={null};
       onMain(t,()->{pad[0]=find(a.getWindow().getDecorView(),RawEditPad.class);image[0]=find(a.getWindow().getDecorView(),RawEditImageView.class);picture[0]=(View)image[0].getParent();RawEditPad p=pad[0];float[] start=values(a),c=cursor(p,start,0,1,0);float offset=8*a.getResources().getDisplayMetrics().density;long now=SystemClock.uptimeMillis();
         event(picture[0],now,now,MotionEvent.ACTION_DOWN,c[0]+offset,c[1]+offset);require(Arrays.equals(start,values(a)),"off-center grab never jumps onDOWN");event(picture[0],now,now+20,MotionEvent.ACTION_MOVE,c[0]+offset+p.getChildAt(0).getWidth()*.3f,c[1]+offset-p.getChildAt(0).getHeight()*.3f);require(Math.abs(values(a)[0]-.6f)<.001f&&Math.abs(values(a)[1]-.6f)<.001f,"relative grab movement follows both axes");event(picture[0],now,now+40,MotionEvent.ACTION_UP,c[0]+offset+p.getChildAt(0).getWidth()*.3f,c[1]+offset-p.getChildAt(0).getHeight()*.3f);
         p.cancelGuides();handles(p,values(a));
