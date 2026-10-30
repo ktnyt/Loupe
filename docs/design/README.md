@@ -159,4 +159,4 @@ Issue #55の[4状態の参照・実機比較](loupe55-fullstates-comparison.png)
 
 ## 現像の下部タブ（Issue #61）
 
-[loupe-raw-editor-footer.html](loupe-raw-editor-footer.html)が下部配置の参照。上56dp・写真は残り・下80dp。補助行と拡大ボタンを削除し、必要4タブだけ高さ48dp/下8dpの補助操作を写真へ重ねる。7タブでviewportと2DUI座標を固定。参照PNG: [WB](loupe61-reference-wb.png)、[トーン](loupe61-reference-tone.png)。400×(2416/3)dp・密度3・文字1.0・初期値・fit、実出力1200×2415px（丸め1px差）。Android実装と実機比較は未完了。
+[loupe-raw-editor-footer-v2.html](loupe-raw-editor-footer-v2.html)が現行の下部配置参照。旧footer.htmlは基準版。上56dp・写真は残り・下80dp。補助行と拡大ボタンを削除し、必要4タブだけ高さ48dp/下8dpの補助操作を写真へ重ねる。7タブでviewportと2DUI座標を固定。参照PNG: [WB](loupe61-reference-wb.png)、[トーン](loupe61-reference-tone.png)。400×(2416/3)dp・密度3・文字1.0・初期値・fit、実出力1200×2415px（丸め1px差）。短いcontentの面サイズはmin(幅−72,写真高さ−176)で契約と統一。[短い参照](loupe61-v2-reference-short.png)は400×576dp/密度3/文字1.3、実寸1200×1728px。通常PNGはv1/v2で同一ハッシュを確認。Android実装は完了、実機比較は未完了。

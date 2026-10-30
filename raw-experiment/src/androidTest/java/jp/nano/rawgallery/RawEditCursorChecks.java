@@ -87,7 +87,7 @@ final class RawEditCursorChecks {
       long now=SystemClock.uptimeMillis();boolean downHandled=event(decor,now,now,MotionEvent.ACTION_DOWN,x,y),moveHandled=event(decor,now,now+20,MotionEvent.ACTION_MOVE,x+d,y-(sliderFirst?0:d));
       require(!Arrays.equals(old,values(a)),"root-dispatched first sibling gesture actually edits; sliderFirst="+sliderFirst+" bar="+bar.getWidth()+"x"+bar.getHeight()+" start="+x+","+y+" hit="+hit+" handled="+downHandled+","+moveHandled+" texture="+old[2]+"->"+values(a)[2]+" clarity="+old[3]+"->"+values(a)[3]);float firstX=x+d,firstY=y-(sliderFirst?0:d);
       event(decor,now,now+40,MotionEvent.ACTION_POINTER_DOWN|(1<<MotionEvent.ACTION_POINTER_INDEX_SHIFT),firstX,firstY,secondX,secondY);
-      require(Arrays.equals(old,values(a)),"cross-sibling second pointer rolls back original adjustment");float zoom=image.zoom;
+      require(Arrays.equals(old,values(a)),"cross-sibling second pointer rolls back original adjustment; sliderFirst="+sliderFirst+" before="+Arrays.toString(old)+" after="+Arrays.toString(values(a)));float zoom=image.zoom;
       event(decor,now,now+60,MotionEvent.ACTION_MOVE,firstX,firstY,firstX+(secondX-firstX)*1.2f,firstY+(secondY-firstY)*1.2f);
       require(image.zoom>zoom,"cross-sibling pointer stream reaches picture pinch");
       event(decor,now,now+80,MotionEvent.ACTION_POINTER_UP|(1<<MotionEvent.ACTION_POINTER_INDEX_SHIFT),firstX,firstY,secondX,secondY);

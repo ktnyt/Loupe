@@ -210,7 +210,7 @@ public final class RawEditActivity extends Activity {
   }
   private final class PhotoSurface extends FrameLayout {
     boolean pinch;RawEditState start;boolean startBefore;private int cursor=-1;private boolean accessoryGesture;
-    PhotoSurface(){super(RawEditActivity.this);}
+    PhotoSurface(){super(RawEditActivity.this);setMotionEventSplittingEnabled(false);}
     private void begin(MotionEvent e){
       if(e.getActionMasked()==MotionEvent.ACTION_DOWN){pinch=false;start=state;startBefore=before;}
       if(e.getPointerCount()>=2&&!pinch){
