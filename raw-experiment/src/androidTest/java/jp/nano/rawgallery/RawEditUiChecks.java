@@ -56,6 +56,10 @@ final class RawEditUiChecks {
           }
           record.put("frameCommitElapsedMs",committed[0]-started);record.put("copyElapsedMs",copyAt[0]-started);record.put("pixelCopyStatus",status[0]);record.put("probeCoordinates",new JSONArray(coordinates));
           if(status[0]==PixelCopy.SUCCESS){
+            Rect cellBounds=new Rect();float[] scale={0};onMain(t,()->{Rect r=windowBounds(button(activity.getWindow().getDecorView(),tab));cellBounds.set(r);scale[0]=activity.getResources().getDisplayMetrics().density;});
+            int first=cellBounds.bottom,last=cellBounds.top;
+            for(int y=cellBounds.top+Math.round(3*scale[0]);y<cellBounds.bottom;y++)for(int x=cellBounds.left;x<cellBounds.right;x++){int color=capture.getPixel(x,y);if(Color.red(color)>110&&Color.green(color)>110&&Color.blue(color)>110){first=Math.min(first,y);last=Math.max(last,y);}}
+            require(first<last,"selected tab icon and label render in actual window");require(first-cellBounds.top>=Math.round(10*scale[0])&&cellBounds.bottom-last>=Math.round(10*scale[0]),"tab icon and label have visible top and bottom space");require(Math.abs((first+last)/2f-cellBounds.exactCenterY())<=5*scale[0],"tab visible content centered vertically");
             for(int p=0;p<probe.length;p++)probe[p]=capture.getPixel(coordinates[p*2],coordinates[p*2+1]);
             int photo=probe[1],border=probe[2];boolean selected=(probe[0]&0xffffff)==0xededea;
             boolean photoVisible=Color.red(photo)>32&&Color.green(photo)>32&&Color.blue(photo)>32;
@@ -71,6 +75,12 @@ final class RawEditUiChecks {
       }
     }finally{
       JSONObject manifest=new JSONObject();manifest.put("input","debug synthetic only");manifest.put("tab",tab);manifest.put("fontScale",font[0]);manifest.put("windowWidth",size[0]);manifest.put("windowHeight",size[1]);manifest.put("confirmed",confirmed);manifest.put("attemptCount",attempt);manifest.put("elapsedMs",SystemClock.uptimeMillis()-started);manifest.put("probeOrder",new JSONArray(new String[]{"tab line","photo center","cursor border +13dp","cursor inside +9dp","cursor outside +17dp"}));manifest.put("attempts",attempts);
+      onMain(t,()->{try{
+        View decor=activity.getWindow().getDecorView();RawEditImageView image=find(decor,RawEditImageView.class);ViewGroup root=(ViewGroup)image.getParent().getParent();Rect content=windowBounds(root);content.left+=root.getPaddingLeft();content.top+=root.getPaddingTop();content.right-=root.getPaddingRight();content.bottom-=root.getPaddingBottom();
+        android.content.pm.PackageInfo version=activity.getPackageManager().getPackageInfo(activity.getPackageName(),0);manifest.put("versionCode",version.getLongVersionCode());manifest.put("versionName",version.versionName);manifest.put("density",activity.getResources().getDisplayMetrics().density);
+        Rect[] rectangles={content,windowBounds(image),windowBounds(find(decor,RawEditPad.class)),windowBounds(button(decor,tab))};String[] names={"content","photo","pad","tabCell"};for(int i=0;i<names.length;i++){Rect r=rectangles[i];manifest.put(names[i],new JSONArray(new int[]{r.left,r.top,r.right,r.bottom}));}
+        manifest.put("values",new JSONArray(values(activity)));manifest.put("zoom",image.zoom);
+      }catch(Exception e){throw new AssertionError("synthetic capture metadata",e);}});
       try(java.io.Writer output=new java.io.OutputStreamWriter(new java.io.FileOutputStream(new java.io.File(folder,tab+".json")),java.nio.charset.StandardCharsets.UTF_8)){output.write(manifest.toString(2));}
     }
     require(confirmed,"actual window must contain current tab, visible synthetic photo and cursor border within 5 seconds");
@@ -86,7 +96,13 @@ final class RawEditUiChecks {
         onMain(t,()->button(a.getWindow().getDecorView(),tab).performClick());t.waitForIdleSync();
         onMain(t,()->{RawEditPad pad=find(a.getWindow().getDecorView(),RawEditPad.class);Rect r=bounds(pad);if(original[0]==null)original[0]=r;require(original[0].equals(r),"all seven tabs preserve control geometry");
           RawEditImageView image=find(a.getWindow().getDecorView(),RawEditImageView.class);ViewGroup root=(ViewGroup)image.getParent().getParent();int available=root.getHeight()-root.getPaddingTop()-root.getPaddingBottom();float density=a.getResources().getDisplayMetrics().density;
-          require(Math.abs(image.getHeight()-(available-Math.round(196*density)))<=2,"photo takes all space except 56+56+84 rows");
+          require(Math.abs(image.getHeight()-(available-Math.round(136*density)))<=2,"photo takes all space except 56+80 rows");
+          ViewGroup extra;
+          try{java.lang.reflect.Field field=RawEditActivity.class.getDeclaredField("controls");field.setAccessible(true);extra=(ViewGroup)field.get(a);}catch(ReflectiveOperationException e){throw new AssertionError("footer controls accessible to contract check",e);}
+          boolean hasExtra=tab.equals("WB")||tab.equals("質感")||tab.equals("明暗")||tab.equals("カラー");
+          require((extra.getVisibility()==View.VISIBLE)==hasExtra,"auxiliary control exists only on four tabs");
+          if(hasExtra){Rect auxiliary=bounds(extra),photo=bounds(image);require(Math.abs(auxiliary.height()-Math.round(48*density))<=1,"auxiliary hit row remains48dp");require(Math.abs(photo.bottom-auxiliary.bottom-Math.round(8*density))<=1,"auxiliary bottom gap8dp");require(Math.abs(auxiliary.centerX()-photo.centerX())<=1,"auxiliary control centered");require(r.bottom+Math.round(4*density)<=auxiliary.top+1,"2DUI and auxiliary hit regions have4dp gap");}
+          Button cell=button(a.getWindow().getDecorView(),tab);require(Math.abs(cell.getHeight()-Math.round(80*density))<=1,"tab cell80dp");
           require(pad.getChildAt(0).getWidth()==pad.getChildAt(0).getHeight(),"square control");
           Button selected=button(a.getWindow().getDecorView(),tab);require(selected.getLayout()!=null&&selected.getLayout().getLineCount()==1&&selected.getLayout().getEllipsisCount(0)==0,"tab label remains visible without wrapping or ellipsis");
           require(pad.getWidth()<=image.getWidth()&&pad.getHeight()<=image.getHeight(),"overlay fits the photo viewport");});

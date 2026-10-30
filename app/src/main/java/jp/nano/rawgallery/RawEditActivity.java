@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.*;
 
 /** Experimental, local, non-destructive RAW editor; same activity is used by the isolated test app. */
 public final class RawEditActivity extends Activity {
+  static final int ZOOM_ACTION=0x7f0f0061;
   private static final int BG=0xff0f0f10,INK=0xffededea,MUTED=0xffa9a9a4;
   private final Handler main=new Handler(Looper.getMainLooper());
   private final ExecutorService worker=Executors.newSingleThreadExecutor(r->new Thread(r,"loupe-raw-editor"));
@@ -56,7 +57,8 @@ public final class RawEditActivity extends Activity {
   private ProgressBar busyIcon;
   private volatile boolean interacting;
   private boolean displayBefore,displayMax;
-  private Button compare,reset,save,zoom,help;
+  private Button compare,reset,save,help;
+  private int accessibilityZoomStage=-1;
   private RawEditPad pad;
   private final String[] tabNames={"WB","質感","トーン","明るさ","明暗","白黒","カラー"};
   private final int[][] pairs={{0,1},{2,3},{5,6},{7,8},{9,10},{12,13},{14,15}};
@@ -75,7 +77,7 @@ public final class RawEditActivity extends Activity {
       String source=bundle.getString("input");if(source!=null)input=Uri.parse(source);
     }else input=getIntent().getData();
     build();
-    if(bundle!=null){image.restorePose(bundle.getFloat("zoom",1),bundle.getFloat("panX",0),bundle.getFloat("panY",0));updateZoom();}
+    if(bundle!=null){image.restorePose(bundle.getFloat("zoom",1),bundle.getFloat("panX",0),bundle.getFloat("panY",0));}
     if(input!=null||synthetic())load();else showPicker();
   }
   private boolean synthetic(){return (getApplicationInfo().flags&ApplicationInfo.FLAG_DEBUGGABLE)!=0&&getIntent().getBooleanExtra("rawEditSynthetic",false);}
@@ -106,33 +108,49 @@ public final class RawEditActivity extends Activity {
     badge=text("",12,INK);badge.setGravity(Gravity.CENTER);badge.setPadding(dp(10),0,dp(10),0);badge.setBackground(rounded(0x9e000000,12));badge.setVisibility(View.GONE);badge.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);FrameLayout.LayoutParams bp=new FrameLayout.LayoutParams(-2,dp(24),Gravity.TOP|Gravity.LEFT);bp.leftMargin=bp.topMargin=dp(12);picture.addView(badge,bp);
     busyIcon=new ProgressBar(this);busyIcon.setIndeterminateTintList(ColorStateList.valueOf(INK));busyIcon.setBackground(rounded(0x9e000000,14));busyIcon.setPadding(dp(5),dp(5),dp(5),dp(5));busyIcon.setVisibility(View.GONE);busyIcon.setContentDescription("反映しています");FrameLayout.LayoutParams ip=new FrameLayout.LayoutParams(dp(28),dp(28),Gravity.TOP|Gravity.RIGHT);ip.rightMargin=ip.topMargin=dp(12);picture.addView(busyIcon,ip);
     fullBadge=new FullBadge();fullBadge.setVisibility(View.GONE);fullBadge.setOnClickListener(v->retryPreparation());FrameLayout.LayoutParams fp=new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.TOP|Gravity.RIGHT);fp.rightMargin=dp(4);fp.topMargin=dp(2);picture.addView(fullBadge,fp);
-    controls=new LinearLayout(this);controls.setMotionEventSplittingEnabled(false);controls.setGravity(Gravity.CENTER_VERTICAL);controls.setPadding(dp(16),0,dp(8),0);controls.setBackground(new RowBackground());root.addView(controls,new LinearLayout.LayoutParams(-1,dp(56)));
-    zoom=button("",()->{image.toggle();updateZoom();});zoom.setContentDescription("拡大");zoom.setPadding(0,0,0,0);
-    tabScroll=new HorizontalScrollView(this);tabScroll.setHorizontalScrollBarEnabled(false);tabScroll.setFillViewport(true);root.addView(tabScroll,new LinearLayout.LayoutParams(-1,dp(84)));
-    tabs=new LinearLayout(this);tabs.setPadding(0,0,0,dp(20));tabs.setBackgroundColor(BG);tabScroll.addView(tabs,new HorizontalScrollView.LayoutParams(-2,-1));
-    for(int i=0;i<7;i++){final int index=i;Button t=button(tabNames[i],()->selectTab(index));t.setTextSize(12);t.setIncludeFontPadding(false);t.setPadding(0,0,0,0);t.setCompoundDrawablesWithIntrinsicBounds(null,new Icon("tab"+i,24),null,null);t.setCompoundDrawablePadding(dp(4));tabs.addView(t,new LinearLayout.LayoutParams(dp(56),dp(64)));}
+    image.setAccessibilityDelegate(new View.AccessibilityDelegate(){
+      public void onInitializeAccessibilityNodeInfo(View host,android.view.accessibility.AccessibilityNodeInfo info){
+        super.onInitializeAccessibilityNodeInfo(host,info);
+        if(ready&&!saving)info.addAction(new android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction(ZOOM_ACTION,nextZoomLabel()));
+      }
+      public boolean performAccessibilityAction(View host,int action,Bundle args){
+        if(action==ZOOM_ACTION){if(!ready||saving)return false;image.toggle();syncPhotoZoomAction();return true;}
+        return super.performAccessibilityAction(host,action,args);
+      }
+    });
+    controls=new LinearLayout(this);controls.setMotionEventSplittingEnabled(false);controls.setGravity(Gravity.CENTER_VERTICAL);controls.setClickable(true);
+    FrameLayout.LayoutParams cp=new FrameLayout.LayoutParams(-2,dp(48),Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);cp.bottomMargin=dp(8);picture.addView(controls,cp);
+    tabScroll=new HorizontalScrollView(this);tabScroll.setHorizontalScrollBarEnabled(false);tabScroll.setFillViewport(true);root.addView(tabScroll,new LinearLayout.LayoutParams(-1,dp(80)));
+    tabs=new LinearLayout(this);tabs.setBackgroundColor(Color.BLACK);tabScroll.addView(tabs,new HorizontalScrollView.LayoutParams(-2,-1));
+    for(int i=0;i<7;i++){final int index=i;Button t=new TabButton(tabNames[i],i);t.setOnClickListener(v->selectTab(index));tabs.addView(t,new LinearLayout.LayoutParams(dp(56),dp(80)));}
     renderControls();enabled(false);
   }
   private void selectTab(int index){tab=index;maxSaturation=false;renderControls();requestRender();tabScroll.post(()->{View t=tabs.getChildAt(tab);tabScroll.smoothScrollTo(Math.max(0,t.getLeft()-(tabScroll.getWidth()-t.getWidth())/2),0);});}
   private void layoutControls(){
     int w=picture.getWidth(),h=picture.getHeight();if(w<=0||h<=0)return;
     float density=getResources().getDisplayMetrics().density;
-    int size=Math.max(48,(int)Math.floor(Math.min(w/density-72,h/density-72)));
+    int size=Math.max(48,(int)Math.floor(Math.min(w/density-72,h/density-176)));
     int cell=Math.max(dp(56),w/7);
     for(int i=0;i<7;i++){View t=tabs.getChildAt(i);LinearLayout.LayoutParams lp=(LinearLayout.LayoutParams)t.getLayoutParams();int next=w>=dp(392)&&i==6?w-cell*6:cell;if(lp.width!=next){lp.width=next;t.setLayoutParams(lp);}}
     if(size!=padSize){padSize=size;renderControls();}
+    if(tab==1||tab==4){FrameLayout.LayoutParams lp=(FrameLayout.LayoutParams)controls.getLayoutParams();int width=Math.min(w-dp(16),dp(320));if(lp.width!=width){lp.width=width;controls.setLayoutParams(lp);}}
   }
   private void renderControls(){
     if(controls==null)return;controls.removeAllViews();if(pad!=null){pad.cancelGuides();picture.removeView(pad);}
     for(int i=0;i<7;i++){Button t=(Button)tabs.getChildAt(i);t.setTextColor(tab==i?INK:0xff8a8a85);Drawable glyph=t.getCompoundDrawables()[1];if(glyph instanceof Icon)((Icon)glyph).color=tab==i?INK:0xff8a8a85;t.setTypeface(Typeface.create(Typeface.DEFAULT,tab==i?600:500,false));t.setSelected(tab==i);t.setBackground(new TabBackground(tab==i));t.setContentDescription(tabNames[i]+(tab==i?"、選択中":""));}
     pad=new RawEditPad(this,padSize,state,pairs[tab][0],pairs[tab][1],axes[tab][0],axes[tab][1],new RawEditPad.Listener(){public void changed(RawEditState value){RawEditActivity.this.changed(value);}public void tracking(boolean active){interacting=active||((PhotoSurface)picture).pinch;updateBadge();}});
     picture.addView(pad,new FrameLayout.LayoutParams(dp(padSize+56),dp(padSize+56),Gravity.CENTER));
+    controls.bringToFront();controls.setVisibility((tab==0||tab==1||tab==4||tab==6)&&ready?View.VISIBLE:View.GONE);
+    boolean slider=tab==1||tab==4;controls.setPadding(slider?dp(16):0,0,slider?dp(16):0,0);controls.setBackground(slider?rounded(0x9e000000,24):null);
+    FrameLayout.LayoutParams accessory=(FrameLayout.LayoutParams)controls.getLayoutParams();accessory.width=slider?Math.min(Math.max(dp(48),picture.getWidth()-dp(16)),dp(320)):-2;controls.setLayoutParams(accessory);
     if(tab==0||tab==6){boolean mono=tab==6,on=mono?state.get(RawEditState.MONO)==1:maxSaturation;Button toggle=button(mono?"モノクロ":"彩度MAX",()->{if(mono)changed(state.with(RawEditState.MONO,state.get(RawEditState.MONO)==1?0:1));else{maxSaturation=!maxSaturation;requestRender();}renderControls();});
-      toggle.setPadding(dp(10),0,dp(14),0);toggle.setContentDescription(mono?"モノクロ。保存に含まれます":"彩度MAX。色を見るための一時表示。保存する彩度は変わりません");toggle.setStateDescription(on?"オン":"オフ");toggle.setSelected(on);GradientDrawable bg=rounded(on?INK:Color.TRANSPARENT,24);bg.setStroke(dp(1),on?INK:0xff3a3a3f);toggle.setBackground(bg);toggle.setTextColor(on?0xff111111:INK);toggle.setCompoundDrawablesWithIntrinsicBounds(new Icon(mono?"mono":"max",20,on?0xff111111:INK),null,null,null);toggle.setCompoundDrawablePadding(dp(6));controls.addView(toggle,new LinearLayout.LayoutParams(-2,dp(48)));}
-    if(tab==1)addSingle(4,"かすみ");else if(tab==4)addSingle(11,"コントラスト");else controls.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
-    LinearLayout.LayoutParams zp=new LinearLayout.LayoutParams(dp(48),dp(48));zp.leftMargin=dp(8);controls.addView(zoom,zp);updateZoom();enabled(ready&&!saving);root.post(this::layoutControls);
+      toggle.setPadding(dp(10),0,dp(14),0);toggle.setContentDescription(mono?"モノクロ。保存に含まれます":"彩度MAX。色を見るための一時表示。保存する彩度は変わりません");toggle.setStateDescription(on?"オン":"オフ");toggle.setSelected(on);GradientDrawable bg=rounded(on?INK:0x9e000000,24);bg.setStroke(dp(1),on?INK:0xff3a3a3f);toggle.setBackground(bg);toggle.setTextColor(on?0xff111111:INK);toggle.setCompoundDrawablesWithIntrinsicBounds(new Icon(mono?"mono":"max",20,on?0xff111111:INK),null,null,null);toggle.setCompoundDrawablePadding(dp(6));controls.addView(toggle,new LinearLayout.LayoutParams(-2,dp(48)));}
+    if(tab==1)addSingle(4,"かすみ");else if(tab==4)addSingle(11,"コントラスト");
+    enabled(ready&&!saving);root.post(this::layoutControls);
   }
-  private void updateZoom(){if(zoom!=null){int next=image.nextZoomStage();zoom.setContentDescription(next==0?"原寸100%で表示":next==1?"原寸150%で表示":"全体を表示");zoom.setCompoundDrawablesWithIntrinsicBounds(null,new Icon(next==2?"zoomOut":"zoomIn",24),null,null);}}
+  private void syncPhotoZoomAction(){int next=image.nextZoomStage();if(next!=accessibilityZoomStage){accessibilityZoomStage=next;image.sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED);}}
+  private String nextZoomLabel(){int next=image.nextZoomStage();return next==0?"原寸100%で表示":next==1?"原寸150%で表示":"全体を表示";}
+
   private void addSingle(int key,String name){
     TextView label=text(name,12,MUTED);controls.addView(label,new LinearLayout.LayoutParams(-2,dp(48)));
     SeekBar bar=new ResetSeekBar(key,name);bar.setMax(200);bar.setProgress(Math.round((state.get(key)+1)*100));bar.setContentDescription(key==4?"かすみの除去":name);bar.setStateDescription(RawEditPad.value(key,state.get(key)));bar.setSplitTrack(false);bar.setPadding(dp(8),0,dp(8),0);bar.setProgressDrawable(new SliderTrack());GradientDrawable thumb=rounded(INK,8);thumb.setSize(dp(16),dp(16));bar.setThumb(thumb);bar.setThumbOffset(dp(8));LinearLayout.LayoutParams pp=new LinearLayout.LayoutParams(0,dp(48),1);pp.leftMargin=dp(10);controls.addView(bar,pp);
@@ -191,7 +209,7 @@ public final class RawEditActivity extends Activity {
     new AlertDialog.Builder(this).setTitle(tabNames[tab]).setMessage("写真の中央のカーソルをつかむと、横と縦の値が変わります。右は縦だけ、下は横だけ。カーソル以外の場所は写真を移動します。\n2本の指で拡大・移動できます。\nガイドは指を離して3秒後に消え、カーソルは残ります。カーソルのダブルタップは初期値へ戻します。写真のダブルタップは原寸100%、150%、全体表示の順に切り替えます。\n\n"+value+(tab==6?"\nモノクロ：色相260・彩度11・輝度+2":"")+"\n\n精細な表示と保存は原寸の準備のあと。準備中も編集できます。\n右上の格子に三角の印は原寸の準備の失敗。押すと再試行。\n原寸 "+width+" × "+height+"："+(fullSession!=null&&fullSession.isPrepared()?"完了":preparationFailed?"失敗":"準備中")+"\n拡大の上限 "+String.format(java.util.Locale.ROOT,"%.2f",image.maxZoom())+"倍").setPositiveButton("閉じる",null).show();
   }
   private final class PhotoSurface extends FrameLayout {
-    boolean pinch;RawEditState start;boolean startBefore;private int cursor=-1;
+    boolean pinch;RawEditState start;boolean startBefore;private int cursor=-1;private boolean accessoryGesture;
     PhotoSurface(){super(RawEditActivity.this);}
     private void begin(MotionEvent e){
       if(e.getActionMasked()==MotionEvent.ACTION_DOWN){pinch=false;start=state;startBefore=before;}
@@ -203,9 +221,9 @@ public final class RawEditActivity extends Activity {
       image.multi(e);
     }
     private void finish(MotionEvent e){
-      if(e.getActionMasked()==MotionEvent.ACTION_UP||e.getActionMasked()==MotionEvent.ACTION_CANCEL){cursor=-1;pinch=false;interacting=false;updateBadge();updateZoom();}
+      if(e.getActionMasked()==MotionEvent.ACTION_UP||e.getActionMasked()==MotionEvent.ACTION_CANCEL){cursor=-1;pinch=false;interacting=false;updateBadge();}
     }
-    // Auxiliary sliders live outside this frame but share the same photo gesture session.
+    // Auxiliary sliders share the photo session while their overlay retains the full pointer stream.
     boolean external(MotionEvent event,View source,boolean navigation){
       if(!ready||saving)return true;
       MotionEvent e=MotionEvent.obtain(event);int[] from=new int[2],to=new int[2];source.getLocationOnScreen(from);getLocationOnScreen(to);e.offsetLocation(from[0]-to[0],from[1]-to[1]);
@@ -213,7 +231,10 @@ public final class RawEditActivity extends Activity {
     }
     public boolean dispatchTouchEvent(MotionEvent e){
       if(!ready||saving){if(pad!=null)pad.cancelGuides();cursor=-1;return super.dispatchTouchEvent(e);}
-      int action=e.getActionMasked();begin(e);
+      int action=e.getActionMasked();
+      if(action==MotionEvent.ACTION_DOWN)accessoryGesture=controls.getVisibility()==View.VISIBLE&&e.getX()>=controls.getLeft()&&e.getX()<=controls.getRight()&&e.getY()>=controls.getTop()&&e.getY()<=controls.getBottom();
+      if(accessoryGesture){boolean handled=super.dispatchTouchEvent(e);if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL)accessoryGesture=false;return handled;}
+      begin(e);
       if(action==MotionEvent.ACTION_DOWN){
         boolean foreground=false;
         for(int i=0;i<getChildCount();i++){View child=getChildAt(i);if(child!=pad&&child!=image&&child.getVisibility()==View.VISIBLE&&child.isClickable()&&e.getX()>=child.getLeft()&&e.getX()<=child.getRight()&&e.getY()>=child.getTop()&&e.getY()<=child.getBottom()){foreground=true;break;}}
@@ -227,11 +248,22 @@ public final class RawEditActivity extends Activity {
       else handled=super.dispatchTouchEvent(e);
       finish(e);return handled;
     }
-    public boolean onInterceptTouchEvent(MotionEvent e){return pinch||e.getPointerCount()>=2;}
+    public boolean onInterceptTouchEvent(MotionEvent e){return !accessoryGesture&&(pinch||e.getPointerCount()>=2);}
     public boolean onTouchEvent(MotionEvent e){return pinch||super.onTouchEvent(e);}
   }
+  private final class TabButton extends Button {
+    TabButton(String label,int index){
+      super(RawEditActivity.this);setAllCaps(false);setText(label);setTextSize(12);setLetterSpacing(0);setIncludeFontPadding(false);setPadding(0,0,0,0);setMinWidth(0);setMinimumWidth(0);setMinHeight(0);setMinimumHeight(0);setCompoundDrawablesWithIntrinsicBounds(null,new Icon("tab"+index,24),null,null);setCompoundDrawablePadding(dp(4));
+    }
+    protected void onDraw(Canvas canvas){
+      float line=dp(16)*getResources().getConfiguration().fontScale,top=(getHeight()-dp(28)-line)/2f;
+      Drawable icon=getCompoundDrawables()[1];int left=(getWidth()-dp(24))/2;icon.setBounds(left,Math.round(top),left+dp(24),Math.round(top)+dp(24));icon.draw(canvas);
+      Paint paint=getPaint();paint.setColor(getCurrentTextColor());Paint.FontMetrics metrics=paint.getFontMetrics();String label=getText().toString();
+      canvas.drawText(label,(getWidth()-paint.measureText(label))/2f,top+dp(28)+line/2f-(metrics.ascent+metrics.descent)/2f,paint);
+    }
+  }
   private class RowBackground extends Drawable {
-    final Paint p=new Paint();public void draw(Canvas c){p.setColor(BG);c.drawRect(getBounds(),p);p.setColor(0xff1a1a1d);c.drawRect(0,0,getBounds().width(),dp(1),p);}public void setAlpha(int a){}public void setColorFilter(ColorFilter f){}public int getOpacity(){return PixelFormat.OPAQUE;}
+    final Paint p=new Paint();public void draw(Canvas c){p.setColor(Color.BLACK);c.drawRect(getBounds(),p);p.setColor(0xff222226);c.drawRect(0,0,getBounds().width(),dp(1),p);}public void setAlpha(int a){}public void setColorFilter(ColorFilter f){}public int getOpacity(){return PixelFormat.OPAQUE;}
   }
   private final class TabBackground extends RowBackground {
     final boolean selected;TabBackground(boolean s){selected=s;}public void draw(Canvas c){super.draw(c);p.setColor(selected?INK:0xff222226);float w=getBounds().width();c.drawRect(selected?w*.25f:0,0,selected?w*.75f:w,dp(selected?2:1),p);}
@@ -240,8 +272,8 @@ public final class RawEditActivity extends Activity {
     final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);public void draw(Canvas c){float y=getBounds().exactCenterY();p.setColor(0xff3a3a3f);p.setStrokeWidth(dp(2));c.drawLine(0,y,getBounds().width(),y,p);p.setColor(0xff6b6b70);c.drawLine(getBounds().exactCenterX(),y-dp(6),getBounds().exactCenterX(),y+dp(6),p);}public int getIntrinsicHeight(){return dp(48);}public void setAlpha(int a){}public void setColorFilter(ColorFilter f){}public int getOpacity(){return PixelFormat.TRANSLUCENT;}
   }
   private static void setChildrenEnabled(View v,boolean enabled){v.setEnabled(enabled);if(v instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++)setChildrenEnabled(((android.view.ViewGroup)v).getChildAt(i),enabled);}
-  private void enabled(boolean value){image.setEnabled(value);compare.setEnabled(value);reset.setEnabled(value);save.setEnabled(value);zoom.setEnabled(value);setChildrenEnabled(controls,value);if(pad!=null)setChildrenEnabled(pad,value);help.setEnabled(!saving);setChildrenEnabled(tabs,value);updateBadge();}
-  private void showPicker(){status.setText("RAW / JPEGを選択\n実験版・原寸で別保存");status.setOnClickListener(v->pick());status.setClickable(true);zoom.setVisibility(View.GONE);}
+  private void enabled(boolean value){controls.setVisibility(ready&&(tab==0||tab==1||tab==4||tab==6)?View.VISIBLE:View.GONE);image.setEnabled(value);compare.setEnabled(value);reset.setEnabled(value);save.setEnabled(value);setChildrenEnabled(controls,value);if(pad!=null)setChildrenEnabled(pad,value);help.setEnabled(!saving);setChildrenEnabled(tabs,value);updateBadge();}
+  private void showPicker(){status.setText("RAW / JPEGを選択\n実験版・原寸で別保存");status.setOnClickListener(v->pick());status.setClickable(true);}
   private void pick(){
     Intent choose=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
     try{startActivityForResult(choose,53);}catch(ActivityNotFoundException e){status.setText("写真を選択できるアプリがありません");}
@@ -266,7 +298,7 @@ public final class RawEditActivity extends Activity {
     if(fullSession!=null){fullSession.close();fullSession=null;}
     pendingFullPreview=null;previewSwapQueued=false;saveWaiting=false;preparationFailed=false;fullBadgeShown=false;
     main.removeCallbacks(showFullBadge);main.removeCallbacks(replaceFullPreview);updateFullUi();
-    loading=true;ready=false;int token=++epoch;enabled(false);status.setText("読み込み中…\nタップで中止");status.setClickable(true);status.setOnClickListener(v->onBackPressed());zoom.setVisibility(View.GONE);
+    loading=true;ready=false;int token=++epoch;enabled(false);status.setText("読み込み中…\nタップで中止");status.setClickable(true);status.setOnClickListener(v->onBackPressed());
     long started=SystemClock.elapsedRealtime();
     loadFuture=RawEditFullSession.initial(()->{
       RawEditSource loaded=null;
@@ -295,7 +327,7 @@ public final class RawEditActivity extends Activity {
           previewWidth=source.width;previewHeight=source.height;width=source.originalWidth();height=source.originalHeight();
           image.setFullDimensions(width,height);image.replace(frame);displayBefore=displayMax=false;
           status.setText("");status.setOnClickListener(null);status.setClickable(false);loading=false;ready=true;rendered=-1;
-          attachFullSession(source,token);zoom.setVisibility(View.VISIBLE);enabled(true);renderControls();requestRender();
+          attachFullSession(source,token);enabled(true);renderControls();requestRender();
           RawEditLog.event(source.raw?"raw.load.complete":"jpeg.load.complete",SystemClock.elapsedRealtime()-started,source.width,source.height);
         }catch(RuntimeException|OutOfMemoryError failure){if(fullSession!=null){fullSession.close();fullSession=null;}source.close();ready=false;image.clear();try{worker.execute(()->{if(renderer==uploaded){uploaded.close();renderer=null;}});}catch(RejectedExecutionException ignored){}loadFailed(token,started,failure);}
       });
@@ -346,7 +378,7 @@ public final class RawEditActivity extends Activity {
     save.setStateDescription(saveWaiting?"原寸の準備を待っています。押すと中止":saving?"保存中":preparationFailed?"原寸の準備を再試行":null);
   }
   private void viewportChanged(){
-    if(!ready)return;image.clearDetail();if(fullSession!=null)fullSession.input();updateZoom();requestDetailForCurrent();
+    if(!ready)return;image.clearDetail();if(fullSession!=null)fullSession.input();syncPhotoZoomAction();requestDetailForCurrent();
   }
   private void requestDetailForCurrent(){
     RawEditFullSession session=fullSession;
@@ -468,7 +500,6 @@ public final class RawEditActivity extends Activity {
       else if(type.equals("compare")){canvas.drawRoundRect(4,5,20,19,2,2,p);canvas.drawLine(12,5,12,19,p);p.setStyle(Paint.Style.FILL);p.setAlpha(Math.round(alpha*.35f));canvas.drawRect(12,5,19,19,p);}
       else if(type.equals("reset")){canvas.drawArc(4.5f,4.5f,19.5f,19.5f,180,315,false,p);canvas.drawLine(4.5f,4.5f,4.5f,8.5f,p);canvas.drawLine(4.5f,8.5f,8.5f,8.5f,p);}
       else if(type.equals("help")){canvas.drawCircle(12,12,9,p);Path q=new Path();q.moveTo(9.6f,9.3f);q.cubicTo(9.5f,5.7f,16.1f,6.3f,14.8f,10.4f);q.cubicTo(14.3f,12,12,11.3f,12,13.5f);canvas.drawPath(q,p);canvas.drawLine(12,16.6f,12,16.7f,p);}
-      else if(type.equals("zoomIn")||type.equals("zoomOut")){canvas.drawCircle(10.5f,10.5f,6.5f,p);canvas.drawLine(15.5f,15.5f,21,21,p);canvas.drawLine(7.5f,10.5f,13.5f,10.5f,p);if(type.equals("zoomIn"))canvas.drawLine(10.5f,7.5f,10.5f,13.5f,p);}
       else if(type.equals("mono")||type.equals("tab4")||type.equals("tab0")){canvas.drawCircle(12,12,7.5f,p);if(!type.equals("mono"))canvas.drawLine(12,4.5f,12,19.5f,p);p.setStyle(Paint.Style.FILL);p.setAlpha(Math.round(alpha*(type.equals("tab0")?.45f:type.equals("tab4")?.8f:1f)));canvas.drawArc(4.5f,4.5f,19.5f,19.5f,type.equals("tab0")?-90:90,180,true,p);}
       else if(type.equals("max")){Path path=new Path();path.moveTo(4,18);path.lineTo(9,9);path.lineTo(13,15);path.lineTo(16,11);path.lineTo(20,18);path.close();canvas.drawPath(path,p);}
       else if(type.equals("tab1")){canvas.drawRoundRect(4,4,20,20,2.5f,2.5f,p);p.setStrokeWidth(1.2f);canvas.drawLine(4,9,20,9,p);canvas.drawLine(4,15,20,15,p);canvas.drawLine(9,4,9,20,p);canvas.drawLine(15,4,15,20,p);}
