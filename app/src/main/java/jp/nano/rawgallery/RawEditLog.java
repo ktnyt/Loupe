@@ -12,6 +12,10 @@ final class RawEditLog {
   static void frame(long ticket,long inputNs){
     if(enabled)Log.i("LoupeRawEdit","adjust.frame ticket="+ticket+" input_ns="+inputNs+" commit_ns="+SystemClock.elapsedRealtimeNanos());
   }
+  static void worker(long ticket){if(enabled)Log.i("LoupeRawEdit","adjust.worker ticket="+ticket+" ns="+SystemClock.elapsedRealtimeNanos());}
+  static void continuation(long ticket,long next){if(enabled)Log.i("LoupeRawEdit","adjust.continuation ticket="+ticket+" next="+next+" ns="+SystemClock.elapsedRealtimeNanos());}
+  static void stages(long lut,long upload,long draw){if(enabled)Log.i("LoupeRawEdit","adjust.stage lut_ns="+lut+" upload_ns="+upload+" draw_ns="+draw+" ns="+SystemClock.elapsedRealtimeNanos());}
+  static void begin(long ticket,long ns){if(enabled)Log.i("LoupeRawEdit","adjust.begin ticket="+ticket+" ns="+ns);}
   static void input(long ticket,long ns){
     if(enabled)Log.i("LoupeRawEdit","adjust.input ticket="+ticket+" ns="+ns);
   }

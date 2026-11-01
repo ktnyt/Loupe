@@ -1,0 +1,15 @@
+{
+  "curve_samples": 1048640,
+  "LUT_samples": 8193,
+  "min_x_gap": 0.0078125,
+  "max_LUT_error": 0.00012017413973808289,
+  "max_error_in_8bit_codes": 0.030644405633211136,
+  "rolloff_domain": [
+    0,
+    32
+  ],
+  "gamut_samples": 10000,
+  "gamut_iterations": 16,
+  "max_out_of_gamut": 0,
+  "max_hue_angle_error_radians": 4.440892098500626e-16
+}

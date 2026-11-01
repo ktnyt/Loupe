@@ -18,12 +18,32 @@ def sample(ticket, ns, latency=1000000):
 
 
 class ParserChecks(unittest.TestCase):
+    def test_callback_latency_includes_synchronous_controls_and_rejects_bad_ownership(self):
+        logs = sample(1, 2000000, 1000000) + '\nI/LoupeRawEdit: adjust.begin ticket=1 ns=1000000\nI/LoupeRawEdit: adjust.begin ticket=9 ns=500000'
+        result = profile.summarize(logs, 'initial-preparation', 'synthetic')
+        self.assertEqual(result['all']['median_ms'], 1)
+        self.assertEqual(result['edit_callback']['median_ms'], 2)
+        self.assertEqual(result['edit_callback']['input_count'], 1)
+        bad = sample(1, 2000000) + '\nI/LoupeRawEdit: adjust.begin ticket=1 ns=4000000'
+        self.assertEqual(profile.summarize(bad, 'initial-preparation', 'synthetic')['edit_callback']['input_count'], 0)
+
     def test_focus_states_do_not_expose_window_contents(self):
         self.assertEqual(profile.parse_focus('  mCurrentFocus=Window{abc u0 jp.nano.rawgallery.rawexperiment/jp.nano.rawgallery.RawEditActivity}'), 'experimental-editor')
         self.assertEqual(profile.parse_focus('  mCurrentFocus=Window{abc u0 example.other/example.other.Activity private title}'), 'other-app')
         self.assertEqual(profile.parse_focus('mCurrentFocus=null'), 'unavailable')
         self.assertEqual(profile.parse_focus('windows diagnostic without focus'), 'unavailable')
         self.assertEqual(profile.parse_focus('mCurrentFocus=Window{abc private title}'), 'unavailable')
+
+    def test_relative_cursor_drags_always_grab_the_current_cursor(self):
+        rect = [20, 40, 1020, 840]
+        drags = profile.cursor_drags(rect)
+        self.assertEqual(len(drags), 6)
+        self.assertEqual(drags[0][:2], (520, 440))
+        for previous, current in zip(drags, drags[1:]):
+            self.assertEqual(previous[2:], current[:2])
+        for sx, sy, ex, ey in drags:
+            self.assertNotEqual((sx, sy), (ex, ey))
+            self.assertTrue(rect[0] <= ex <= rect[2] and rect[1] <= ey <= rect[3])
 
     def test_modes(self):
         self.assertEqual(profile.select_mode(), 'initial-preparation')

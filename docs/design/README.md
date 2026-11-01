@@ -160,3 +160,9 @@ Issue #55の[4状態の参照・実機比較](loupe55-fullstates-comparison.png)
 ## 現像の下部タブ（Issue #61）
 
 [loupe-raw-editor-footer-v2.html](loupe-raw-editor-footer-v2.html)が現行の下部配置参照。旧footer.htmlは基準版。上56dp・写真は残り・下80dp。補助行と拡大ボタンを削除し、必要4タブだけ高さ48dp/下8dpの補助操作を写真へ重ねる。7タブでviewportと2DUI座標を固定。参照PNG: [WB](loupe61-reference-wb.png)、[トーン](loupe61-reference-tone.png)。400×(2416/3)dp・密度3・文字1.0・初期値・fit、実出力1200×2415px（丸め1px差）。短いcontentの面サイズはmin(幅−72,写真高さ−176)で契約と統一。[短い参照](loupe61-v2-reference-short.png)は400×576dp/密度3/文字1.3、実寸1200×1728px。通常PNGはv1/v2で同一ハッシュを確認。Android実装・通常/短Windowの実機検査と独立比較を完了。[実測短Windowの参照](loupe61-v2-reference-short640.png)はcontent400×640dp/font1.3、実寸1200×1920px。[通常WB比較](loupe61-comparison-wb.png)・[トーン比較](loupe61-comparison-tone.png)・[短いWB比較](loupe61-comparison-short.png)（左参照/右実機）。576dpの参照は設計上の参考寸法。字体・合成注記/斜線・既存ヘッダー・chip幅・線端には差があり、全画素一致とは扱わない。
+
+## 多点トーンカーブ（Issue #63）
+
+[Claude完成参照](loupe-tone-curve.html)。トーンだけ写真領域の下端8dp、左右8dpに高さ264dpの半透明パネルを重ねる。内側8dp、行間4dp。上段48dpは明度/RGB/R/G/Bと選択カーブのリセット、中段144dpはグラフ（パネル内幅−176dp）と右152dpの入力/出力・Undo/Redo/削除、下段48dpはロールオフ。グラフの内側8dp、線2dp、点は5dp/選択7dp、操作域48dp。既存7タブ/写真viewport/他6タブ/比較/保存/準備状態は維持する。
+
+[既定](loupe63-reference-default.png)、[5点S字](loupe63-reference-scurve.png)は400×805⅓dp・密度3・文字1.0、[短い画面](loupe63-reference-short640.png)は400×640dp・文字1.3。合成写真のみ。Claudeの画面で元footer-v2と修正版を確認し、ダウンロードと保存先のSHA一致を確認。プレビュー写真の色はSVG近似なのでAndroidの画質比較の基準にはしない。点・線・数値・パネル配置を比較する。数値契約は[tone-curve-contract](../tone-curve-contract.md)。Android実装後、400dp通常/font1.0、400×640dp/font1.3、320×640dp/font1.3の端末captureと操作回帰を確認。[通常比較](loupe63-comparison-normal.png)・[短い比較](loupe63-comparison-short.png)は左参照/右実機。独立UI評価を反映し、選択端点には外側リングを追加した。再評価で対応必須の不一致・切れなし。[検証範囲](../tone-curve-verification.md)を参照。

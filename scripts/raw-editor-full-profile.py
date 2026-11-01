@@ -25,16 +25,17 @@ def select_mode(wait_prepared=False, require_preparation_overlap=False):
 def parse_events(logs, minimum_ns=0, maximum_ns=None):
     """Parse only fixed anonymous fields; paths and arbitrary log text never enter results."""
     inputs = {}
+    begins = {}
     frames = []
     events = []
     def within(ns):
         return ns >= minimum_ns and (maximum_ns is None or ns <= maximum_ns)
     for line in logs.splitlines():
-        match = re.search(r'adjust\.input ticket=(\d+) ns=(\d+)', line)
+        match = re.search(r'adjust\.(input|begin) ticket=(\d+) ns=(\d+)', line)
         if match:
-            ticket, ns = map(int, match.groups())
+            kind, ticket, ns = match.groups(); ticket, ns = int(ticket), int(ns)
             if within(ns):
-                inputs[ticket] = ns
+                (inputs if kind == 'input' else begins)[ticket] = ns
             continue
         match = re.search(r'adjust\.frame ticket=(\d+) input_ns=(\d+) commit_ns=(\d+)', line)
         if match:
@@ -49,7 +50,7 @@ def parse_events(logs, minimum_ns=0, maximum_ns=None):
                 events.append({'name': name, 'ms': int(ms), 'width': int(width), 'height': int(height), 'ns': int(ns)})
     # A commit for a skipped or unrelated ticket is not a measured input sample.
     frames = [f for f in frames if inputs.get(f['ticket']) == f['input_ns']]
-    return {'inputs': inputs, 'frames': frames, 'events': events}
+    return {'inputs': inputs, 'begins': begins, 'frames': frames, 'events': events}
 
 
 def latency_metrics(inputs, frames):
@@ -93,6 +94,8 @@ def summarize(logs, mode, source, launch_ns=0, end_ns=None, drags=None):
         selected = {ticket: ns for ticket, ns in inputs.items() if predicate(ns)}
         return latency_metrics(selected, [f for f in frames if f['ticket'] in selected])
     metrics = latency_metrics(inputs, frames)
+    callback_inputs = {t: ns for t, ns in parsed['begins'].items() if t in inputs and ns <= inputs[t]}
+    callback_metrics = latency_metrics(callback_inputs, [{**f, 'input_ns': callback_inputs[f['ticket']]} for f in frames if f['ticket'] in callback_inputs])
     overlap = subset(during)
     groups = []
     for bounds in drags or []:
@@ -118,7 +121,8 @@ def summarize(logs, mode, source, launch_ns=0, end_ns=None, drags=None):
         failures.append('After-prepared mode requires every measured input after preparation completion')
     return {
         'status': 'FAIL' if failures else 'PASS', 'failures': failures, 'mode': mode, 'source': source,
-        'boundary': 'input to frame commit; not display scanout',
+        'boundary': 'render request after synchronous controls to frame commit; not display scanout',
+        'edit_callback': {'boundary': 'graph MOVE callback entry to frame commit; excludes hardware/event delivery', **callback_metrics},
         'measurement': {'launch_ns': launch_ns, 'end_ns': end_ns},
         'preparation_classification': 'input timestamp inside preparation interval; frame commit may occur later',
         'preparation': {'start_ns': start_ns, 'complete_ns': complete_ns, 'observed_end_ns': overlap_end,
@@ -202,11 +206,26 @@ def bounds(node):
     return values
 
 
+def cursor_drags(rect):
+    """Six relative drags: grab the initial center, then the previous drag's cursor endpoint."""
+    left, top, right, bottom = rect
+    current = ((left + right) // 2, (top + bottom) // 2)
+    targets = ((int(left + .8 * (right-left)), int(top + .2 * (bottom-top))),
+               (int(left + .2 * (right-left)), int(top + .7 * (bottom-top))))
+    drags = []
+    for index in range(6):
+        end = targets[index % 2]
+        drags.append((*current, *end))
+        current = end
+    return drags
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--serial', required=True)
     parser.add_argument('--adb', default=ADB)
     parser.add_argument('--output', required=True, type=Path, help='New local output directory')
+    parser.add_argument('--control', choices=('texture','tone'), default='texture')
     parser.add_argument('--uri-file', type=Path, help='Local authorized content URI; omit for synthetic')
     group = parser.add_mutually_exclusive_group()
     group.add_argument('--wait-prepared', action='store_true')
@@ -249,7 +268,7 @@ def main(argv=None):
                                      stdout=log_file, stderr=subprocess.DEVNULL)
         device.unlocked()
         launch_ns = device.clock()
-        command = ['am', 'start', '-n', PACKAGE + '/jp.nano.rawgallery.RawEditActivity']
+        command = ['am', 'start', '-f', '0x10008000', '-n', PACKAGE + '/jp.nano.rawgallery.RawEditActivity']
         command += ['-d', uri, '--grant-read-uri-permission'] if uri else ['--ez', 'rawEditSynthetic', 'true']
         device.shell(*command)
         until = time.monotonic() + 90
@@ -262,15 +281,20 @@ def main(argv=None):
             if time.monotonic() >= until:
                 raise RuntimeError('Experimental preview did not become ready within 90 seconds')
             time.sleep(.2)
-        texture = next((n for n in xml.iter('node') if n.attrib.get('package') == PACKAGE and n.attrib.get('text') == '質感'), None)
+        label = '質感' if args.control == 'texture' else 'トーン'
+        texture = next((n for n in xml.iter('node') if n.attrib.get('package') == PACKAGE and n.attrib.get('text') == label), None)
         if texture is None:
             raise RuntimeError('Experimental texture tab unavailable')
         b = bounds(texture)
         device.shell('input', 'tap', str((b[0] + b[2]) // 2), str((b[1] + b[3]) // 2))
-        plane = next((n for n in device.xml().iter('node') if n.attrib.get('package') == PACKAGE and 'の面。' in n.attrib.get('content-desc', '')), None)
+        nodes = list(device.xml().iter('node'))
+        graph = next((n for n in nodes if n.attrib.get('package') == PACKAGE and n.attrib.get('content-desc', '').startswith('トーンカーブ。')), None) if args.control == 'tone' else None
+        plane = graph if graph is not None else next((n for n in nodes if n.attrib.get('package') == PACKAGE and 'の面。' in n.attrib.get('content-desc', '')), None)
         if plane is None:
             raise RuntimeError('Experimental edit plane unavailable')
         b = bounds(plane)
+        if graph is not None:
+            device.shell("input", "tap", str((b[0]+b[2])//2), str((b[1]+b[3])//2))
         if args.wait_prepared:
             until = time.monotonic() + 120
             while not any(e['name'] == 'full.prepare.complete' for e in parse_events((args.output / 'events.log').read_text(), launch_ns)['events']):
@@ -280,9 +304,7 @@ def main(argv=None):
                 if time.monotonic() >= until:
                     raise RuntimeError('Original preparation did not complete within 120 seconds')
                 time.sleep(.2)
-        x1, x2 = int(b[0] + .2 * (b[2] - b[0])), int(b[0] + .8 * (b[2] - b[0]))
-        y1, y2 = int(b[1] + .7 * (b[3] - b[1])), int(b[1] + .2 * (b[3] - b[1]))
-        for index in range(6):
+        for points in cursor_drags(b):
             device.unlocked()
             focus = parse_focus(device.shell('dumpsys', 'window'))
             if focus == 'unavailable':
@@ -290,7 +312,6 @@ def main(argv=None):
             if focus != 'experimental-editor':
                 raise RuntimeError('Experimental editor lost focus; measurement stopped')
             start = device.clock()
-            points = (x1, y1, x2, y2) if index % 2 == 0 else (x2, y2, x1, y1)
             device.shell('input', 'swipe', *(str(v) for v in points), '1800')
             drags.append({'start_ns': start, 'end_ns': device.clock()})
             time.sleep(.6)
@@ -311,6 +332,7 @@ def main(argv=None):
             log_file.close()
     # Memory collection intentionally begins after the input/frame measurement boundary.
     result = summarize((args.output / 'events.log').read_text(), mode, 'selected RAW' if uri else 'synthetic', launch_ns, end_ns, drags)
+    result['control'] = args.control
     result['temperature_c'] = {'start': start_temperature, 'end': parse_temperature(device.shell('dumpsys', 'battery'))}
     result['kernel_memory_kb'] = {'rss_kb': None, 'hwm_kb': None}
     try:

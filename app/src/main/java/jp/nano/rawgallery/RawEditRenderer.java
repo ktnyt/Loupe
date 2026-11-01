@@ -20,42 +20,20 @@ final class RawEditRenderer implements AutoCloseable {
   private int maxTextureSize,uploadWidth,uploadHeight;
   private final FloatBuffer vertices=ByteBuffer.allocateDirect(8*4).order(ByteOrder.nativeOrder())
       .asFloatBuffer().put(new float[]{-1,-1,1,-1,-1,1,1,1});
+  private int lutTexture;
+  private RawEditState lutState;
+  private ByteBuffer lutData;
   private final String fragment=
       "#version 300 es\nprecision highp float;\nin vec2 uv;out vec4 result;\n"+
-      "uniform sampler2D photo;uniform vec2 pixel;uniform vec4 sourceRect;uniform vec4 outputRect;uniform float p[17];uniform int mode;\n"+
+      "uniform highp sampler2D photo;uniform vec2 pixel;uniform vec4 sourceRect;uniform vec4 outputRect;uniform float p[16];uniform int mode;\n"+
+      RawEditTone.GLSL+
       "float lum(vec3 c){return dot(c,vec3(.2126,.7152,.0722));}\n"+
-      "vec3 gammaRGB(vec3 c){c=max(c,vec3(0));return mix(12.92*c,1.055*pow(c,vec3(1./2.4))-.055,step(vec3(.0031308),c));}\n"+
-      "vec3 linearRGB(vec2 q){return texture(photo,(clamp(q,vec2(0),vec2(1))-sourceRect.xy)/sourceRect.zw).rgb;}\n"+
-      "vec3 sampleRGB(vec2 q){vec3 c=linearRGB(q);"+
-        "c*=exp2(vec3(p[0]*.6+p[1]*.12,-p[1]*.24,-p[0]*.6+p[1]*.12));return gammaRGB(c*exp2(p[7]));}\n"+
-      "vec3 blur(vec2 q,float radius){vec3 c=vec3(0);float total=0.;"+
-        "for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++){float w=(x==0?2.:1.)*(y==0?2.:1.);"+
-        "c+=sampleRGB(q+vec2(float(x),float(y))*pixel*radius)*w;total+=w;}return c/total;}\n"+
-      "float curve(float z){float x=p[5],y=p[6],a=y/x,b=(1.-y)/(1.-x);"+
-        "float m=min(3.*min(a,b),2.*a*b/(a+b));float t,h,u,v,du,dv;"+
-        "if(z<=x){t=max(0.,z)/x;h=x;u=0.;v=y;du=a;dv=m;}"+
-        "else{t=(min(1.,z)-x)/(1.-x);h=1.-x;u=y;v=1.;du=m;dv=b;}"+
-        "return (2.*t*t*t-3.*t*t+1.)*u+(t*t*t-2.*t*t+t)*h*du+"+
-        "(-2.*t*t*t+3.*t*t)*v+(t*t*t-t*t)*h*dv;}\n"+
-      "vec3 relight(vec3 c,float target){float l=lum(c);return l>.00001?c*(max(0.,target)/l):c;}\n"+
-      "void main(){vec2 q=outputRect.xy+uv*outputRect.zw;if(mode==1){result=vec4(clamp(gammaRGB(linearRGB(q)),0.,1.),1.);return;}"+
-        "vec3 c=sampleRGB(q);float l=clamp(lum(c),0.,1.);"+
-        "if(abs(p[2])>.00001)c+=p[2]*.8*(c-blur(q,2.));"+
-        "if(abs(p[3])>.00001)c+=vec3(p[3]*.7*(l-lum(blur(q,20.)))*4.*l*(1.-l));"+
-        // Experimental dehaze is a bounded contrast/chroma adjustment, not Adobe's algorithm.
-        "float haze=p[4];c=(c-vec3(.06*haze))/(1.-.12*haze);"+
-        "l=clamp(lum(c),0.,1.);c=relight(c,curve(l));l=clamp(lum(c),0.,1.);"+
-        "c=relight(c,l+p[8]*.28*4.*l*(1.-l));"+
-        "c=(c-.5)*exp2(p[11]*.8)+.5;l=clamp(lum(c),0.,1.);"+
-        "float hi=smoothstep(.4,1.,l),sh=1.-smoothstep(0.,.65,l);"+
-        "c=relight(c,l+p[9]*.28*hi*(.4+.6*(1.-l))+p[10]*.25*sh*l*3.);"+
-        "l=clamp(lum(c),0.,1.);c=relight(c,l+p[12]*.2*l*l+p[13]*.15*(1.-l)*(1.-l));"+
-        // Global HSL tint after monochrome: hue 260°, saturation 11%, lightness +2 points.
-        "if(p[16]>.5){float ml=clamp(lum(c)+.02,0.,1.);float mc=(1.-abs(2.*ml-1.))*.11;c=vec3(mc/3.,0.,mc)+ml-mc*.5;}"+
-        "l=lum(c);float chroma=clamp(max(c.r,max(c.g,c.b))-min(c.r,min(c.g,c.b)),0.,1.);"+
-        "float sat=(1.+p[14])*(1.+p[15]*(1.-chroma)*.8)*(1.+haze*.12);"+
-        "if(mode==2)sat=4.;c=vec3(l)+(c-vec3(l))*sat;"+
-        "result=vec4(clamp(c,0.,1.),1.);}\n";
+      "vec3 linearRGB(vec2 q){vec2 v=(clamp(q,vec2(0),vec2(1))-sourceRect.xy)/sourceRect.zw;ivec2 sz=textureSize(photo,0);vec2 z=clamp(v*vec2(sz)-.5,vec2(0),vec2(sz-1));ivec2 a=ivec2(floor(z)),b=min(a+1,sz-1);vec2 f=fract(z);return mix(mix(texelFetch(photo,a,0).rgb,texelFetch(photo,ivec2(b.x,a.y),0).rgb,f.x),mix(texelFetch(photo,ivec2(a.x,b.y),0).rgb,texelFetch(photo,b,0).rgb,f.x),f.y); }\n"+
+      "vec3 sampleRGB(vec2 q){return linearRGB(q)*exp2(vec3(p[0]*.6+p[1]*.12,-p[1]*.24,-p[0]*.6+p[1]*.12)+p[6]);}\n"+
+      "vec3 blur(vec2 q,float radius){vec3 c=vec3(0);float total=0.;for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++){float w=(x==0?2.:1.)*(y==0?2.:1.);c+=sampleRGB(q+vec2(float(x),float(y))*pixel*radius)*w;total+=w;}return c/total;}\n"+
+      "float noise(vec2 q){const int b[16]=int[16](0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5);ivec2 v=ivec2(floor(q/pixel));return ((float(b[(v.y&3)*4+(v.x&3)])+.5)/16.-.5)/255.;}\n"+
+      "void main(){vec2 q=outputRect.xy+uv*outputRect.zw;if(mode==1){result=vec4(clamp(srgb(linearRGB(q)),0.,1.),1.);return;}vec3 c=sampleRGB(q);float l=clamp(lum(c),0.,1.);"+
+      "if(abs(p[2])>.00001)c+=p[2]*.8*(c-blur(q,2.));if(abs(p[3])>.00001)c+=vec3(p[3]*.7*(l-lum(blur(q,20.)))*4.*l*(1.-l));c=(c-vec3(.06*p[4]))/(1.-.12*p[4]);result=vec4(clamp(globalTone(c)+noise(q),0.,1.),1.); }\n";
 
   RawEditRenderer() throws IOException {this(0,0,null);}
 
@@ -85,7 +63,7 @@ final class RawEditRenderer implements AutoCloseable {
       GLES30.glLinkProgram(program);GLES30.glDeleteShader(vs);GLES30.glDeleteShader(fs);
       int[] ok=new int[1];GLES30.glGetProgramiv(program,GLES30.GL_LINK_STATUS,ok,0);
       if(ok[0]==0)throw new IOException("画像処理の構成に失敗しました");
-      int[] ids=new int[2];GLES30.glGenTextures(2,ids,0);source=ids[0];output=ids[1];
+      int[] ids=new int[3];GLES30.glGenTextures(3,ids,0);source=ids[0];output=ids[1];lutTexture=ids[2];
       GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,source);textureOptions();
       int[] limit=new int[1];GLES30.glGetIntegerv(GLES30.GL_MAX_TEXTURE_SIZE,limit,0);maxTextureSize=limit[0];
       if(rgba!=null)upload(w,h,rgba);
@@ -100,8 +78,8 @@ final class RawEditRenderer implements AutoCloseable {
     return shader;
   }
   private static void textureOptions(){
-    GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_MIN_FILTER,GLES30.GL_LINEAR);
-    GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_MAG_FILTER,GLES30.GL_LINEAR);
+    GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_MIN_FILTER,GLES30.GL_NEAREST);
+    GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_MAG_FILTER,GLES30.GL_NEAREST);
     GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_WRAP_S,GLES30.GL_CLAMP_TO_EDGE);
     GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_WRAP_T,GLES30.GL_CLAMP_TO_EDGE);
   }
@@ -114,7 +92,7 @@ final class RawEditRenderer implements AutoCloseable {
     if(w<1||h<1||w>maxTextureSize||h>maxTextureSize||w>2048||h>2048)throw new IOException("画像の範囲が大きすぎます");
     GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,source);textureOptions();rgba.position(0);
     if(w!=uploadWidth||h!=uploadHeight){
-      GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D,0,GLES30.GL_RGBA16F,w,h,0,GLES30.GL_RGBA,GLES30.GL_FLOAT,rgba);
+      GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D,0,GLES30.GL_RGBA32F,w,h,0,GLES30.GL_RGBA,GLES30.GL_FLOAT,rgba);
       uploadWidth=w;uploadHeight=h;
     }else GLES30.glTexSubImage2D(GLES30.GL_TEXTURE_2D,0,0,0,w,h,GLES30.GL_RGBA,GLES30.GL_FLOAT,rgba);
     check();
@@ -170,13 +148,28 @@ final class RawEditRenderer implements AutoCloseable {
     GLES30.glUniform2f(GLES30.glGetUniformLocation(program,"pixel"),pixelX,pixelY);
     GLES30.glUniform4f(GLES30.glGetUniformLocation(program,"sourceRect"),sourceBounds.left,sourceBounds.top,sourceBounds.width(),sourceBounds.height());
     GLES30.glUniform4f(GLES30.glGetUniformLocation(program,"outputRect"),outputBounds.left,outputBounds.top,outputBounds.width(),outputBounds.height());
-    GLES30.glUniform1fv(GLES30.glGetUniformLocation(program,"p[0]"),RawEditState.COUNT,state.snapshot(),0);
+    GLES30.glUniform1fv(GLES30.glGetUniformLocation(program,"p[0]"),RawEditState.COUNT,state.parameters(),0);
     GLES30.glUniform1i(GLES30.glGetUniformLocation(program,"mode"),before?1:maxSaturation?2:0);
+    GLES30.glActiveTexture(GLES30.GL_TEXTURE1);GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,lutTexture);textureOptions();
+    long lutNs=0,uploadNs=0;
+    if(!RawEditTone.sameLut(lutState,state)){
+      long begin=android.os.SystemClock.elapsedRealtimeNanos();
+      if(lutData==null)lutData=RawEditTone.lut(state);else RawEditTone.updateLut(state,lutState,lutData);
+      lutNs=android.os.SystemClock.elapsedRealtimeNanos()-begin;begin=android.os.SystemClock.elapsedRealtimeNanos();
+      GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D,0,GLES30.GL_RGBA32F,RawEditTone.LUT_WIDTH,RawEditTone.LUT_HEIGHT,0,GLES30.GL_RGBA,GLES30.GL_FLOAT,lutData);
+      uploadNs=android.os.SystemClock.elapsedRealtimeNanos()-begin;lutState=state;
+    }
+    GLES30.glUniform1i(GLES30.glGetUniformLocation(program,"toneLut"),1);
+    int mask=0;for(int i=0;i<5;i++)if(!state.curve(i).identity())mask|=1<<i;
+    GLES30.glUniform1i(GLES30.glGetUniformLocation(program,"curveMask"),mask);
+    GLES30.glActiveTexture(GLES30.GL_TEXTURE0);
     int pos=GLES30.glGetAttribLocation(program,"position");vertices.position(0);
     GLES30.glEnableVertexAttribArray(pos);GLES30.glVertexAttribPointer(pos,2,GLES30.GL_FLOAT,false,0,vertices);
+    long drawBegin=android.os.SystemClock.elapsedRealtimeNanos();
     GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP,0,4);
     ByteBuffer bytes=readback;bytes.clear();
     GLES30.glReadPixels(0,0,w,h,GLES30.GL_RGBA,GLES30.GL_UNSIGNED_BYTE,bytes);check();
+    RawEditLog.stages(lutNs,uploadNs,android.os.SystemClock.elapsedRealtimeNanos()-drawBegin);
     bytes.position(0);bytes.limit(w*h*4);return bytes;
   }
   private static void check()throws IOException{
@@ -187,7 +180,7 @@ final class RawEditRenderer implements AutoCloseable {
     if(context!=EGL14.EGL_NO_CONTEXT&&surface!=EGL14.EGL_NO_SURFACE){
       EGL14.eglMakeCurrent(display,surface,surface,context);
       if(program!=0)GLES30.glDeleteProgram(program);
-      GLES30.glDeleteTextures(2,new int[]{source,output},0);GLES30.glDeleteFramebuffers(1,new int[]{fbo},0);
+      GLES30.glDeleteTextures(3,new int[]{source,output,lutTexture},0);GLES30.glDeleteFramebuffers(1,new int[]{fbo},0);
     }
     EGL14.eglMakeCurrent(display,EGL14.EGL_NO_SURFACE,EGL14.EGL_NO_SURFACE,EGL14.EGL_NO_CONTEXT);
     if(surface!=EGL14.EGL_NO_SURFACE)EGL14.eglDestroySurface(display,surface);
