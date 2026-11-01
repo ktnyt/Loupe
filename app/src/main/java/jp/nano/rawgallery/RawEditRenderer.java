@@ -152,13 +152,8 @@ final class RawEditRenderer implements AutoCloseable {
     GLES30.glUniform1i(GLES30.glGetUniformLocation(program,"mode"),before?1:maxSaturation?2:0);
     GLES30.glActiveTexture(GLES30.GL_TEXTURE1);GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,lutTexture);textureOptions();
     if(!RawEditTone.sameLut(lutState,state)){
-      if(lutData==null){
-        lutData=RawEditTone.lut(state);
-        GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D,0,GLES30.GL_RGBA32F,RawEditTone.LUT_WIDTH,RawEditTone.LUT_HEIGHT,0,GLES30.GL_RGBA,GLES30.GL_FLOAT,lutData);
-      }else{
-        RawEditTone.updateLut(state,lutState,lutData);
-        GLES30.glTexSubImage2D(GLES30.GL_TEXTURE_2D,0,0,0,RawEditTone.LUT_WIDTH,RawEditTone.LUT_HEIGHT,GLES30.GL_RGBA,GLES30.GL_FLOAT,lutData);
-      }
+      if(lutData==null)lutData=RawEditTone.lut(state);else RawEditTone.updateLut(state,lutState,lutData);
+      GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D,0,GLES30.GL_RGBA32F,RawEditTone.LUT_WIDTH,RawEditTone.LUT_HEIGHT,0,GLES30.GL_RGBA,GLES30.GL_FLOAT,lutData);
       lutState=state;
     }
     GLES30.glUniform1i(GLES30.glGetUniformLocation(program,"toneLut"),1);

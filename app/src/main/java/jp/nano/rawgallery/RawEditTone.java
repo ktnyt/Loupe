@@ -45,11 +45,16 @@ final class RawEditTone {
   /** Global reference starts at WB/exposure-adjusted linear RGB, after optional spatial details. */
   static double[] apply(RawEditState state,double[] input){
     double[] c=lab(input);c[0]=basic(state).at((float)shoulder(c[0],state.get(RawEditState.ROLLOFF)));
-    if(!state.curve(0).identity())c[0]=state.curve(0).at((float)c[0]);c=rgb(c);
-    for(int i=0;i<3;i++)if(!state.curve(1).identity()||!state.curve(i+2).identity()){
-      double v=encode(c[i]);if(!state.curve(1).identity())v=state.curve(1).at((float)v);if(!state.curve(i+2).identity())v=state.curve(i+2).at((float)v);c[i]=decode(v);
+    if(!state.curve(0).identity())c[0]=state.curve(0).at((float)c[0]);
+    boolean rgbCurves=false;for(int i=1;i<5;i++)rgbCurves|=!state.curve(i).identity();
+    if(rgbCurves){
+      c=rgb(c);
+      for(int i=0;i<3;i++)if(!state.curve(1).identity()||!state.curve(i+2).identity()){
+        double v=encode(c[i]);if(!state.curve(1).identity())v=state.curve(1).at((float)v);if(!state.curve(i+2).identity())v=state.curve(i+2).at((float)v);c[i]=decode(v);
+      }
+      c=lab(c);
     }
-    c=lab(c);double chroma=Math.hypot(c[1],c[2]);double sat=(1+state.get(RawEditState.SATURATION))*(1+state.get(RawEditState.VIBRANCE)*(1-Math.min(1,chroma*4))*.8)*(1+state.get(RawEditState.DEHAZE)*.12);c[1]*=sat;c[2]*=sat;
+    double chroma=Math.hypot(c[1],c[2]);double sat=(1+state.get(RawEditState.SATURATION))*(1+state.get(RawEditState.VIBRANCE)*(1-Math.min(1,chroma*4))*.8)*(1+state.get(RawEditState.DEHAZE)*.12);c[1]*=sat;c[2]*=sat;
     c=gamut(c);for(int i=0;i<3;i++)c[i]=Math.max(0,Math.min(1,encode(c[i])));
     if(state.get(RawEditState.MONO)==1){double l=Math.max(0,Math.min(1,.2126*c[0]+.7152*c[1]+.0722*c[2]+.02)),mc=(1-Math.abs(2*l-1))*.11;c=new double[]{mc/3+l-mc*.5,l-mc*.5,mc+l-mc*.5};}
     return c;
@@ -81,9 +86,9 @@ final class RawEditTone {
     }
     float shoulder(float x,float r){x=max(0.,x);if(r==0.)return min(1.,x);float k=1.-.3*r;return x<=k?x:k+(1.-k)*(1.-exp(-(x-k)/(1.-k)));}
     vec3 globalTone(vec3 c){
-      vec3 lab=toLab(c);lab.x=lookup(shoulder(lab.x,p[5]),0);if((curveMask&1)!=0)lab.x=lookup(lab.x,1);c=fromLab(lab);
-      if((curveMask&30)!=0){vec3 v=srgb(c);for(int i=0;i<3;i++){if((curveMask&2)!=0)v[i]=lookup(v[i],2);if((curveMask&(1<<(i+2)))!=0)v[i]=lookup(v[i],i+3);}c=unSrgb(v);}
-      lab=toLab(c);float sat=(1.+p[13])*(1.+p[14]*(1.-min(1.,length(lab.yz)*4.))*.8)*(1.+p[4]*.12);if(mode==2)sat=4.;lab.yz*=sat;
+      vec3 lab=toLab(c);lab.x=lookup(shoulder(lab.x,p[5]),0);if((curveMask&1)!=0)lab.x=lookup(lab.x,1);
+      if((curveMask&30)!=0){vec3 v=srgb(fromLab(lab));for(int i=0;i<3;i++){if((curveMask&2)!=0)v[i]=lookup(v[i],2);if((curveMask&(1<<(i+2)))!=0)v[i]=lookup(v[i],i+3);}lab=toLab(unSrgb(v));}
+      float sat=(1.+p[13])*(1.+p[14]*(1.-min(1.,length(lab.yz)*4.))*.8)*(1.+p[4]*.12);if(mode==2)sat=4.;lab.yz*=sat;
       c=srgb(gamut(lab));
       if(p[15]>.5){float l=clamp(dot(c,vec3(.2126,.7152,.0722))+.02,0.,1.);float mc=(1.-abs(2.*l-1.))*.11;c=vec3(mc/3.,0.,mc)+l-mc*.5;}
       return c;
