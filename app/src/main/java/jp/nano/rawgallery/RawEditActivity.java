@@ -187,7 +187,7 @@ public final class RawEditActivity extends Activity {
         float center=getPaddingLeft()+width*getProgress()/getMax(),size=dp(48);
         float left=Math.max(0,Math.min(getWidth()-size,center-size/2));
         editing=event.getX()>=left&&event.getX()<=left+size;downX=event.getX();startProgress=getProgress();
-        if(!editing)taps.cancel();else {interacting=true;updateBadge();}
+        if(!editing)taps.cancel();else {beginEdit();interacting=true;updateBadge();}
       }
       boolean pinch=((PhotoSurface)picture).external(event,this,!editing);
       if(pinch){editing=false;taps.cancel();setProgress(Math.round((state.get(key)+1)*100));setStateDescription(RawEditPad.value(key,state.get(key)));}
@@ -200,7 +200,7 @@ public final class RawEditActivity extends Activity {
           setProgress(next);changed(state.with(key,next/100f-1));setStateDescription(RawEditPad.value(key,state.get(key)));
         }
       }
-      if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL){editing=false;interacting=false;updateBadge();if(action==MotionEvent.ACTION_UP)performClick();}
+      if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL){endEdit(action==MotionEvent.ACTION_CANCEL);if(action==MotionEvent.ACTION_CANCEL){setProgress(Math.round((state.get(key)+1)*100));setStateDescription(RawEditPad.value(key,state.get(key)));}editing=false;interacting=false;updateBadge();if(action==MotionEvent.ACTION_UP)performClick();}
       return true;
     }
     public void setEnabled(boolean enabled){super.setEnabled(enabled);if(!enabled&&taps!=null){editing=false;taps.cancel();}}
@@ -251,11 +251,12 @@ public final class RawEditActivity extends Activity {
     boolean external(MotionEvent event,View source,boolean navigation){
       if(!ready||saving)return true;
       MotionEvent e=MotionEvent.obtain(event);int[] from=new int[2],to=new int[2];source.getLocationOnScreen(from);getLocationOnScreen(to);e.offsetLocation(from[0]-to[0],from[1]-to[1]);
-      try{begin(e);if(e.getActionMasked()==MotionEvent.ACTION_DOWN&&!navigation)image.cancelTouch();boolean wasPinch=pinch;if(!pinch&&navigation)image.onTouchEvent(e);finish(e);return wasPinch;}finally{e.recycle();}
+      try{if(e.getActionMasked()==MotionEvent.ACTION_CANCEL)endEdit(true);begin(e);if(e.getActionMasked()==MotionEvent.ACTION_DOWN&&!navigation)image.cancelTouch();boolean wasPinch=pinch;if(!pinch&&navigation)image.onTouchEvent(e);if(e.getActionMasked()==MotionEvent.ACTION_UP||e.getActionMasked()==MotionEvent.ACTION_CANCEL){cursor=-1;pinch=false;if(navigation)interacting=false;updateBadge();}return wasPinch;}finally{e.recycle();}
     }
     public boolean dispatchTouchEvent(MotionEvent e){
       if(!ready||saving){if(pad!=null)pad.cancelGuides();cursor=-1;return super.dispatchTouchEvent(e);}
       int action=e.getActionMasked();
+      if(action==MotionEvent.ACTION_CANCEL)endEdit(true);
       if(action==MotionEvent.ACTION_DOWN)curveGesture=curvePanel!=null&&curvePanel.getVisibility()==View.VISIBLE&&e.getX()>=curvePanel.getLeft()&&e.getX()<=curvePanel.getRight()&&e.getY()>=curvePanel.getTop()&&e.getY()<=curvePanel.getBottom();
       if(curveGesture){boolean handled=super.dispatchTouchEvent(e);if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL)curveGesture=false;return handled;}
       if(action==MotionEvent.ACTION_DOWN)accessoryGesture=controls.getVisibility()==View.VISIBLE&&e.getX()>=controls.getLeft()&&e.getX()<=controls.getRight()&&e.getY()>=controls.getTop()&&e.getY()<=controls.getBottom();

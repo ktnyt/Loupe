@@ -19,7 +19,7 @@ final class RawEditCurvePanel extends FrameLayout {
   private static final int[] COLORS={INK,0xffc9c9c4,0xffff7a6b,0xff6fd08a,0xff7fb0ff};
   private static final int ADD=0x7f0f6301,DELETE=0x7f0f6302,X_MINUS=0x7f0f6303,X_PLUS=0x7f0f6304,Y_MINUS=0x7f0f6305,Y_PLUS=0x7f0f6306;
   private final Listener listener;private RawEditState state;private int bank,selected=-1;
-  private boolean undoAvailable,redoAvailable,updating,multi,gesture;
+  private boolean undoAvailable,redoAvailable,updating,multi,gesture,inputDirty,outputDirty;
   private final Button[] banks=new Button[5];private final Glyph reset,undo,redo,delete;
   private final TextView inLabel,outLabel,rollLabel;private final EditText input,output;private final SeekBar roll;
   final Graph graph;
@@ -27,7 +27,7 @@ final class RawEditCurvePanel extends FrameLayout {
     super(context);this.state=state;this.bank=Math.max(0,Math.min(4,bank));this.listener=listener;
     setMotionEventSplittingEnabled(false);setClickable(true);setBackground(background(0xb8101012,16,0x14ededea));
     for(int i=0;i<5;i++){final int k=i;banks[i]=new Button(context);Button b=banks[i];b.setAllCaps(false);b.setTextSize(13);b.setPadding(0,0,0,0);b.setMinWidth(0);b.setMinimumWidth(0);b.setMinHeight(0);b.setMinimumHeight(0);b.setIncludeFontPadding(false);b.setOnClickListener(v->{commitFields();this.bank=k;selected=-1;refresh();});addView(b);}
-    reset=new Glyph(3,"選択中のカーブをリセット",()->edit(state.withCurve(this.bank,new RawEditCurve())));addView(reset);
+    reset=new Glyph(3,"選択中のカーブをリセット",()->edit(RawEditCurvePanel.this.state.withCurve(this.bank,new RawEditCurve())));addView(reset);
     graph=new Graph(context);addView(graph);
     inLabel=label("入力",12);outLabel=label("出力",12);rollLabel=label("ロールオフ",12);addView(inLabel);addView(outLabel);addView(rollLabel);
     input=field("入力");output=field("出力");addView(input);addView(output);
@@ -41,7 +41,8 @@ final class RawEditCurvePanel extends FrameLayout {
   private TextView label(String name,int size){TextView t=new TextView(getContext());t.setText(name);t.setTextSize(size);t.setTextColor(MUTED);t.setGravity(Gravity.CENTER_VERTICAL);t.setIncludeFontPadding(false);return t;}
   private EditText field(String name){
     EditText f=new EditText(getContext());f.setSingleLine(true);f.setTextSize(14);f.setTextColor(INK);f.setHintTextColor(0xff77777b);f.setHint("—");f.setGravity(Gravity.CENTER);f.setPadding(0,0,0,0);f.setIncludeFontPadding(false);f.setBackground(background(0x38000000,8,0xff414146));f.setSelectAllOnFocus(true);f.setInputType(InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL);f.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);f.setContentDescription("選択中の点の"+name+"、0から100");
-    f.setOnFocusChangeListener((v,focus)->{if(!focus)commitFields();});f.setOnEditorActionListener((v,action,event)->{commitFields();f.clearFocus();((android.view.inputmethod.InputMethodManager)getContext().getSystemService(Context.INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(f.getWindowToken(),0);return true;});return f;
+    f.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int start,int count,int after){}public void onTextChanged(CharSequence s,int start,int before,int count){if(!updating){if(name.equals("入力"))inputDirty=true;else outputDirty=true;}}public void afterTextChanged(android.text.Editable e){}});
+    f.setOnFocusChangeListener((v,focus)->{if(!focus){commitFields();refresh();}});f.setOnEditorActionListener((v,action,event)->{commitFields();f.clearFocus();((android.view.inputmethod.InputMethodManager)getContext().getSystemService(Context.INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(f.getWindowToken(),0);return true;});return f;
   }
   private static String number(float n){return String.format(Locale.ROOT,"%.1f",n*100).replaceAll("\\.0$","");}
   int bank(){return bank;}int selected(){return selected;}
@@ -50,9 +51,9 @@ final class RawEditCurvePanel extends FrameLayout {
   private void edit(RawEditState next){if(!isEnabled()||state.equals(next))return;listener.begin();listener.changed(next);listener.end(false);}
   private void delete(){if(selected>0&&selected<state.curve(bank).size()-1){edit(state.withCurve(bank,state.curve(bank).delete(selected)));selected=Math.min(selected,state.curve(bank).size()-1);refresh();}}
   private void commitFields(){
-    if(updating||!isEnabled()||selected<0)return;
-    try{float x=Float.parseFloat(input.getText().toString())/100,y=Float.parseFloat(output.getText().toString())/100;edit(state.withCurve(bank,state.curve(bank).move(selected,x,y)));}
-    catch(IllegalArgumentException ignored){announceForAccessibility("0から100の数値を入力してください");}refresh();
+    if(updating||!isEnabled()||selected<0||!inputDirty&&!outputDirty)return;
+    try{RawEditCurve c=state.curve(bank);float x=inputDirty?Float.parseFloat(input.getText().toString())/100:c.x(selected),y=outputDirty?Float.parseFloat(output.getText().toString())/100:c.y(selected);inputDirty=outputDirty=false;edit(state.withCurve(bank,c.move(selected,x,y)));}
+    catch(IllegalArgumentException ignored){inputDirty=outputDirty=false;announceForAccessibility("0から100の数値を入力してください");}refresh();
   }
   private void refresh(){
     if(graph==null)return;updating=true;RawEditCurve c=state.curve(bank);boolean has=selected>=0&&selected<c.size(),enabled=isEnabled();
@@ -106,7 +107,7 @@ final class RawEditCurvePanel extends FrameLayout {
     public boolean onKeyDown(int key,KeyEvent event){if(!isEnabled())return false;float step=event.isShiftPressed()?.1f:.01f;if(event.isCtrlPressed()&&key==KeyEvent.KEYCODE_Z){listener.undo();return true;}if(event.isCtrlPressed()&&key==KeyEvent.KEYCODE_Y){listener.redo();return true;}switch(key){case KeyEvent.KEYCODE_DPAD_LEFT:moveSelected(-step,0);break;case KeyEvent.KEYCODE_DPAD_RIGHT:moveSelected(step,0);break;case KeyEvent.KEYCODE_DPAD_UP:moveSelected(0,step);break;case KeyEvent.KEYCODE_DPAD_DOWN:moveSelected(0,-step);break;case KeyEvent.KEYCODE_PAGE_UP:select(selected-1);break;case KeyEvent.KEYCODE_PAGE_DOWN:select(selected+1);break;case KeyEvent.KEYCODE_MOVE_HOME:select(0);break;case KeyEvent.KEYCODE_MOVE_END:select(state.curve(bank).size()-1);break;case KeyEvent.KEYCODE_INSERT:addMiddle();break;case KeyEvent.KEYCODE_DEL:case KeyEvent.KEYCODE_FORWARD_DEL:delete();break;default:return super.onKeyDown(key,event);}return true;}
     public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info){super.onInitializeAccessibilityNodeInfo(info);info.setClassName("android.view.ViewGroup");for(int i=0;i<state.curve(bank).size();i++)info.addChild(this,i+1);info.addAction(new AccessibilityNodeInfo.AccessibilityAction(ADD,"点を追加"));}
     public boolean performAccessibilityAction(int action,Bundle args){if(action==ADD&&isEnabled()){addMiddle();return true;}return super.performAccessibilityAction(action,args);}
-    private void event(int id,int type){AccessibilityEvent e=AccessibilityEvent.obtain(type);e.setSource(this,id);e.setPackageName(getContext().getPackageName());getParent().requestSendAccessibilityEvent(this,e);}
+    private void event(int id,int type){AccessibilityManager manager=(AccessibilityManager)getContext().getSystemService(Context.ACCESSIBILITY_SERVICE);if(manager==null||!manager.isEnabled())return;AccessibilityEvent e=AccessibilityEvent.obtain(type);e.setSource(this,id);e.setPackageName(getContext().getPackageName());getParent().requestSendAccessibilityEvent(this,e);}
     public AccessibilityNodeProvider getAccessibilityNodeProvider(){return new AccessibilityNodeProvider(){
       public AccessibilityNodeInfo createAccessibilityNodeInfo(int id){if(id==View.NO_ID){AccessibilityNodeInfo n=AccessibilityNodeInfo.obtain(Graph.this);onInitializeAccessibilityNodeInfo(n);return n;}RawEditCurve c=state.curve(bank);int i=id-1;if(i<0||i>=c.size())return null;
         AccessibilityNodeInfo n=AccessibilityNodeInfo.obtain();n.setSource(Graph.this,id);n.setParent(Graph.this);n.setPackageName(getContext().getPackageName());n.setClassName("android.widget.SeekBar");n.setContentDescription(NAMES[bank]+"、点"+(i+1)+"、入力"+number(c.x(i))+"、出力"+number(c.y(i))+(i==0||i==c.size()-1?"、端点":""));n.setEnabled(isEnabled());n.setVisibleToUser(isShown());n.setFocusable(true);n.setAccessibilityFocused(focus==id);n.setClickable(true);n.setRangeInfo(AccessibilityNodeInfo.RangeInfo.obtain(AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_FLOAT,0,100,c.y(i)*100));

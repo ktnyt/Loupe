@@ -22,8 +22,8 @@ public final class RawEditInstrumentation extends Instrumentation {
     }
     super.callActivityOnCreate(activity,saved);
     if(fullUiGate!=null)fullUiGate.afterCreate(activity);
-    if(arguments!=null&&arguments.containsKey("height")&&activity instanceof RawEditActivity){
-      int h=Integer.parseInt(arguments.getString("height"));activity.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT,Math.round(h*activity.getResources().getDisplayMetrics().density));
+    if(arguments!=null&&(arguments.containsKey("height")||arguments.containsKey("width"))&&activity instanceof RawEditActivity){
+      float density=activity.getResources().getDisplayMetrics().density;int h=arguments.containsKey("height")?Math.round(Integer.parseInt(arguments.getString("height"))*density):ViewGroup.LayoutParams.MATCH_PARENT,w=arguments.containsKey("width")?Math.round(Integer.parseInt(arguments.getString("width"))*density):ViewGroup.LayoutParams.MATCH_PARENT;activity.getWindow().setLayout(w,h);
     }
   }
 
