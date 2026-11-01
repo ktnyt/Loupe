@@ -68,7 +68,7 @@ final class RawEditCurveUiChecks {
         named(a.getWindow().getDecorView(),"初期化").performClick();require(state(a).equals(original),"tone reset restores all curves/rolloff");
       });
       scalarGestureHistory(t,a);
-      main(t,()->{RawEditCurvePanel p=panel(a);tap(p,.25f,.18f);tap(p,.5f,.5f);tap(p,.75f,.82f);p.select(2);history(a).clear();p.update(state(a),false,false);});Thread.sleep(300);capture(t,a,"scurve");
+      main(t,()->{RawEditCurvePanel p=panel(a);tap(p,.25f,.18f);tap(p,.5f,.5f);tap(p,.75f,.82f);p.select(2);history(a).clear();p.update(state(a),false,false);});Thread.sleep(300);capture(t,a,"scurve");main(t,()->panel(a).select(0));capture(t,a,"endpoint");
       Bundle[] saved={null};main(t,()->{saved[0]=new Bundle();a.onSaveInstanceState(saved[0]);RawEditState prior=state(a);require(new RawEditState(saved[0].getFloatArray("values")).equals(prior),"Bundle retains full recipe");});
       // Recreate through the actual Activity lifecycle and verify the restored selected bank/recipe.
       Instrumentation.ActivityMonitor monitor=t.addMonitor(RawEditActivity.class.getName(),null,false);main(t,a::recreate);RawEditActivity restored=(RawEditActivity)monitor.waitForActivityWithTimeout(15000);t.removeMonitor(monitor);require(restored!=null&&restored!=a,"Activity recreated");

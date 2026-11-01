@@ -264,7 +264,7 @@ def main(argv=None):
                                      stdout=log_file, stderr=subprocess.DEVNULL)
         device.unlocked()
         launch_ns = device.clock()
-        command = ['am', 'start', '--activity-clear-task', '--activity-new-task', '-n', PACKAGE + '/jp.nano.rawgallery.RawEditActivity']
+        command = ['am', 'start', '-f', '0x10008000', '-n', PACKAGE + '/jp.nano.rawgallery.RawEditActivity']
         command += ['-d', uri, '--grant-read-uri-permission'] if uri else ['--ez', 'rawEditSynthetic', 'true']
         device.shell(*command)
         until = time.monotonic() + 90
