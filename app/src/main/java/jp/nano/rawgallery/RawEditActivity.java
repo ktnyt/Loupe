@@ -434,12 +434,12 @@ public final class RawEditActivity extends Activity {
   private void requestRender(){requestRender(0);}
   private void requestRender(long editNs){lastInputMs=SystemClock.elapsedRealtime();image.clearDetail();if(fullSession!=null)fullSession.input();long inputNs=SystemClock.elapsedRealtimeNanos(),requested=revision.incrementAndGet();latest=new RenderRequest(requested,inputNs,state,before,maxSaturation);RawEditLog.input(requested,inputNs);if(editNs>0)RawEditLog.begin(requested,editNs);main.removeCallbacks(busy);main.postDelayed(busy,400);scheduleRender();}
   private void scheduleRender(){
-    if(!ready||dead||!visible||latest==null||!queued.compareAndSet(false,true))return;
+    if(!ready||dead||!visible||latest==null||rendered==latest.ticket||!queued.compareAndSet(false,true))return;
     int token=epoch;
     worker.execute(()->{
       if(!current(token))return;
       RenderRequest request=latest;long ticket=request.ticket,requestedAt=request.inputNs,start=SystemClock.elapsedRealtime();
-      RawEditState snapshot=request.state;boolean original=request.before,boost=request.max;
+      RawEditLog.worker(ticket);RawEditState snapshot=request.state;boolean original=request.before,boost=request.max;
       try{
         Bitmap b=renderer.render(snapshot,original,boost,1024);
         RawEditLog.event("adjust.render",SystemClock.elapsedRealtime()-start,b.getWidth(),b.getHeight());
@@ -449,7 +449,7 @@ public final class RawEditActivity extends Activity {
           if(!current(token)){b.recycle();return;}
           image.replace(b,ticket,requestedAt);displayBefore=original;displayMax=boost;status.setText("");updateBadge();
           rendered=ticket;if(ticket==revision.get()&&!saving)busyIcon.setVisibility(View.GONE);queued.set(false);
-          if(rendered!=revision.get())image.postOnAnimation(this::scheduleRender);else {requestDetailForCurrent();if(pendingFullPreview!=null){main.removeCallbacks(replaceFullPreview);main.postDelayed(replaceFullPreview,120);}}
+          if(rendered!=revision.get()){RawEditLog.continuation(ticket,latest.ticket);scheduleRender();}else {requestDetailForCurrent();if(pendingFullPreview!=null){main.removeCallbacks(replaceFullPreview);main.postDelayed(replaceFullPreview,120);}}
         });
       }catch(IOException|RuntimeException|OutOfMemoryError e){
         main.post(()->{if(!current(token))return;rendered=ticket;if(ticket==revision.get()&&!saving)busyIcon.setVisibility(View.GONE);queued.set(false);if(!dead&&visible&&token==epoch)status.setText("反映できませんでした。値を動かすと再試行します");if(rendered!=revision.get())image.postOnAnimation(this::scheduleRender);});
