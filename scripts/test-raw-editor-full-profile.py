@@ -25,6 +25,17 @@ class ParserChecks(unittest.TestCase):
         self.assertEqual(profile.parse_focus('windows diagnostic without focus'), 'unavailable')
         self.assertEqual(profile.parse_focus('mCurrentFocus=Window{abc private title}'), 'unavailable')
 
+    def test_relative_cursor_drags_always_grab_the_current_cursor(self):
+        rect = [20, 40, 1020, 840]
+        drags = profile.cursor_drags(rect)
+        self.assertEqual(len(drags), 6)
+        self.assertEqual(drags[0][:2], (520, 440))
+        for previous, current in zip(drags, drags[1:]):
+            self.assertEqual(previous[2:], current[:2])
+        for sx, sy, ex, ey in drags:
+            self.assertNotEqual((sx, sy), (ex, ey))
+            self.assertTrue(rect[0] <= ex <= rect[2] and rect[1] <= ey <= rect[3])
+
     def test_modes(self):
         self.assertEqual(profile.select_mode(), 'initial-preparation')
         self.assertEqual(profile.select_mode(True), 'after-prepared')

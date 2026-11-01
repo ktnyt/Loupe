@@ -141,7 +141,7 @@ public final class RawEditActivity extends Activity {
   }
   private void renderControls(){
     if(controls==null)return;controls.removeAllViews();if(pad!=null){pad.cancelGuides();picture.removeView(pad);pad=null;}
-    if(curvePanel!=null){curveBank=curvePanel.bank();curvePanel.cancelGesture();picture.removeView(curvePanel);curvePanel=null;}
+    if(curvePanel!=null){curvePanel.finishFields();curveBank=curvePanel.bank();curvePanel.cancelGesture();picture.removeView(curvePanel);curvePanel=null;}
     for(int i=0;i<7;i++){Button t=(Button)tabs.getChildAt(i);t.setTextColor(tab==i?INK:0xff8a8a85);Drawable glyph=t.getCompoundDrawables()[1];if(glyph instanceof Icon)((Icon)glyph).color=tab==i?INK:0xff8a8a85;t.setTypeface(Typeface.create(Typeface.DEFAULT,tab==i?600:500,false));t.setSelected(tab==i);t.setBackground(new TabBackground(tab==i));t.setContentDescription(tabNames[i]+(tab==i?"、選択中":""));}
     if(tab==2){
       curvePanel=new RawEditCurvePanel(this,state,curveBank,new RawEditCurvePanel.Listener(){
@@ -316,7 +316,7 @@ public final class RawEditActivity extends Activity {
       float a=Math.max(0,Math.min(1,(1-small)/.04f)),c=Math.max(0,Math.min(1,(1-large)/.04f));
       for(int k=0;k<3;k++){float srgb=(lo[k]+(hi[k]-lo[k])*amount)/255f;srgb=srgb*(1-a)+red[k]/255f*a;srgb=srgb*(1-c)+beige[k]/255f*c;f.put(srgb<=.04045f?srgb/12.92f:(float)Math.pow((srgb+.055f)/1.055f,2.4));}f.put(1);
     }
-    return RawEditSource.synthetic(w,h,b,6000,4000);
+    boolean small=getIntent().getBooleanExtra("rawEditSmallSynthetic",false);return RawEditSource.synthetic(w,h,b,small?2400:6000,small?1600:4000);
   }
   private boolean current(int token){return !dead&&visible&&token==epoch;}
   private boolean current(RawEditFullSession session,int token){return current(token)&&fullSession==session;}
