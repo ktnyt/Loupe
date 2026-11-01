@@ -21,6 +21,11 @@ public final class RawEditToneTest {
     RawEditCurve c=new RawEditCurve(new float[]{0,0,1f/128,1,1,1});RawEditState s=neutral.withCurve(0,c);ByteBuffer lut=RawEditTone.lut(s).order(ByteOrder.nativeOrder());
     for(int i=0;i<=65536;i++){float x=i/65536f,q=x*8192;int k=Math.min(8191,(int)q);float a=lut.getFloat(k*16+4),b=lut.getFloat((k+1)*16+4);worst=Math.max(worst,Math.abs(c.at(x)-(a+(b-a)*(q-k))));}
     require(worst<.0003,"LUT error budget");
+    RawEditState previous=neutral;ByteBuffer reused=RawEditTone.lut(previous);
+    for(int i=0;i<30;i++){
+      RawEditState next=i%7==0?neutral:i%7==1?previous.with(RawEditState.SHADOWS,(i%3-1)*.3f):previous.withCurve(i%5,new RawEditCurve(new float[]{0,0,.4f,.2f+(i%3)*.1f,1,1}));
+      RawEditTone.updateLut(next,previous,reused);require(reused.equals(RawEditTone.lut(next)),"incremental LUT equals fresh sampling: "+i);previous=next;
+    }
     Random r=new Random(63);double maxHue=0;
     for(int i=0;i<10000;i++){
       double[] lab={r.nextDouble(),r.nextDouble()*2-1,r.nextDouble()*2-1};double[] rgb=RawEditTone.gamut(lab);for(double v:rgb)require(v>=-1e-7&&v<=1+1e-7,"gamut limit");double[] mapped=RawEditTone.lab(rgb);
@@ -29,6 +34,6 @@ public final class RawEditToneTest {
     require(maxHue<.003,"hue direction");
     double[] black=RawEditTone.apply(neutral.withCurve(0,new RawEditCurve(new float[]{0,.1f,1,1})),new double[3]);require(black[0]>.01&&Math.abs(black[0]-black[1])<1e-5,"lift exact black neutrally");
     RawEditHistory history=new RawEditHistory();history.push(neutral,s);require(history.undo(s).equals(neutral)&&history.redo(neutral).equals(s),"undo redo");history.undo(s);history.push(neutral,neutral.with(RawEditState.EXPOSURE,1));require(!history.canRedo(),"new edit drops redo");
-    System.out.println("PASS 6 tone fixtures; rolloff [0,32]; 10000 gamut colors; hue error="+maxHue+"; LUT max error="+worst+"; undo/redo");
+    System.out.println("PASS 6 tone fixtures; rolloff [0,32]; 10000 gamut colors; hue error="+maxHue+"; LUT max error="+worst+"; incremental LUT; undo/redo");
   }
 }

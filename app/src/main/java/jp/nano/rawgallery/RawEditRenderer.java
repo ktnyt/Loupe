@@ -22,6 +22,7 @@ final class RawEditRenderer implements AutoCloseable {
       .asFloatBuffer().put(new float[]{-1,-1,1,-1,-1,1,1,1});
   private int lutTexture;
   private RawEditState lutState;
+  private ByteBuffer lutData;
   private final String fragment=
       "#version 300 es\nprecision highp float;\nin vec2 uv;out vec4 result;\n"+
       "uniform highp sampler2D photo;uniform vec2 pixel;uniform vec4 sourceRect;uniform vec4 outputRect;uniform float p[16];uniform int mode;\n"+
@@ -151,8 +152,14 @@ final class RawEditRenderer implements AutoCloseable {
     GLES30.glUniform1i(GLES30.glGetUniformLocation(program,"mode"),before?1:maxSaturation?2:0);
     GLES30.glActiveTexture(GLES30.GL_TEXTURE1);GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,lutTexture);textureOptions();
     if(!RawEditTone.sameLut(lutState,state)){
-      ByteBuffer data=RawEditTone.lut(state);
-      GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D,0,GLES30.GL_RGBA32F,RawEditTone.LUT_WIDTH,RawEditTone.LUT_HEIGHT,0,GLES30.GL_RGBA,GLES30.GL_FLOAT,data);lutState=state;
+      if(lutData==null){
+        lutData=RawEditTone.lut(state);
+        GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D,0,GLES30.GL_RGBA32F,RawEditTone.LUT_WIDTH,RawEditTone.LUT_HEIGHT,0,GLES30.GL_RGBA,GLES30.GL_FLOAT,lutData);
+      }else{
+        RawEditTone.updateLut(state,lutState,lutData);
+        GLES30.glTexSubImage2D(GLES30.GL_TEXTURE_2D,0,0,0,RawEditTone.LUT_WIDTH,RawEditTone.LUT_HEIGHT,GLES30.GL_RGBA,GLES30.GL_FLOAT,lutData);
+      }
+      lutState=state;
     }
     GLES30.glUniform1i(GLES30.glGetUniformLocation(program,"toneLut"),1);
     int mask=0;for(int i=0;i<5;i++)if(!state.curve(i).identity())mask|=1<<i;

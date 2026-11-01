@@ -13,10 +13,15 @@ final class RawEditTone {
   }
   static boolean sameLut(RawEditState a,RawEditState b){if(a==null)return false;for(int i=RawEditState.BRIGHTNESS;i<=RawEditState.BLACKS;i++)if(a.get(i)!=b.get(i))return false;for(int i=0;i<5;i++)if(!a.curve(i).equals(b.curve(i)))return false;return true;}
   static ByteBuffer lut(RawEditState s){
+    ByteBuffer data=ByteBuffer.allocateDirect(LUT_WIDTH*LUT_HEIGHT*16).order(ByteOrder.nativeOrder());updateLut(s,null,data);return data;
+  }
+  static void updateLut(RawEditState s,RawEditState previous,ByteBuffer data){
     RawEditCurve[] curves={basic(s),s.curve(0),s.curve(1),s.curve(2),s.curve(3),s.curve(4)};
-    ByteBuffer b=ByteBuffer.allocateDirect(LUT_WIDTH*LUT_HEIGHT*16).order(ByteOrder.nativeOrder());
-    for(int k=0;k<curves.length;k++)for(int i=0;i<=STEPS;i++)b.putFloat((((k/4)*LUT_ROWS+i/LUT_WIDTH)*LUT_WIDTH+i%LUT_WIDTH)*16+(k%4)*4,curves[k].at(i/(float)STEPS));
-    return b;
+    for(int k=0;k<curves.length;k++){
+      RawEditCurve old=previous==null?null:k==0?basic(previous):previous.curve(k-1);
+      if(curves[k].equals(old))continue;
+      for(int i=0;i<=STEPS;i++)data.putFloat((((k/4)*LUT_ROWS+i/LUT_WIDTH)*LUT_WIDTH+i%LUT_WIDTH)*16+(k%4)*4,curves[k].at(i/(float)STEPS));
+    }
   }
   static double shoulder(double x,double rolloff){x=Math.max(0,x);if(rolloff==0)return Math.min(1,x);double k=1-.3*rolloff;return x<=k?x:k+(1-k)*(-Math.expm1(-(x-k)/(1-k)));}
   static double encode(double x){return x<=.0031308?12.92*x:1.055*Math.pow(x,1/2.4)-.055;}
