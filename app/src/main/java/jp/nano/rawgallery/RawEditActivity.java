@@ -145,7 +145,7 @@ public final class RawEditActivity extends Activity {
     for(int i=0;i<7;i++){Button t=(Button)tabs.getChildAt(i);t.setTextColor(tab==i?INK:0xff8a8a85);Drawable glyph=t.getCompoundDrawables()[1];if(glyph instanceof Icon)((Icon)glyph).color=tab==i?INK:0xff8a8a85;t.setTypeface(Typeface.create(Typeface.DEFAULT,tab==i?600:500,false));t.setSelected(tab==i);t.setBackground(new TabBackground(tab==i));t.setContentDescription(tabNames[i]+(tab==i?"、選択中":""));}
     if(tab==2){
       curvePanel=new RawEditCurvePanel(this,state,curveBank,new RawEditCurvePanel.Listener(){
-        public void begin(){beginEdit();}public void changed(RawEditState next){RawEditActivity.this.changed(next);}
+        public void begin(){beginEdit();}public void changed(RawEditState next){RawEditActivity.this.changed(next);}public void changed(RawEditState next,long editNs){RawEditActivity.this.changed(next,editNs);}
         public void end(boolean cancel){endEdit(cancel);}public void undo(){if(ready&&!saving)applyHistory(false);}public void redo(){if(ready&&!saving)applyHistory(true);}
       });
       FrameLayout.LayoutParams cp=new FrameLayout.LayoutParams(-1,dp(264),Gravity.BOTTOM);cp.leftMargin=cp.rightMargin=cp.bottomMargin=dp(8);picture.addView(curvePanel,cp);controls.setVisibility(View.GONE);updateCurvePanel();enabled(ready&&!saving);return;
@@ -218,7 +218,8 @@ public final class RawEditActivity extends Activity {
     interacting=false;updateCurvePanel();updateBadge();
   }
   private void applyHistory(boolean redo){endEdit(false);state=redo?history.redo(state):history.undo(state);before=false;compare.setSelected(false);if(pad!=null)pad.update(state);updateCurvePanel();requestRender();}
-  private void changed(RawEditState value){RawEditState old=state;state=value;if(editStart==null)history.push(old,value);before=false;compare.setSelected(false);if(pad!=null)pad.update(value);updateCurvePanel();requestRender();}
+  private void changed(RawEditState value){changed(value,0);}
+  private void changed(RawEditState value,long editNs){RawEditState old=state;state=value;if(editStart==null)history.push(old,value);before=false;compare.setSelected(false);if(pad!=null)pad.update(value);updateCurvePanel();requestRender(editNs);}
   private void resetTab(){
     if(!ready||saving)return;int[][] keys={{0,1},{2,3,4},{5},{6,7},{8,9,10},{11,12},{13,14,15}};
     changed(tab==2?state.resetCurves():state.reset(keys[tab]));maxSaturation=false;before=false;renderControls();requestRender();
@@ -430,7 +431,8 @@ public final class RawEditActivity extends Activity {
       finally{if(next!=null&&!adopted)next.close();}
     });
   }
-  private void requestRender(){lastInputMs=SystemClock.elapsedRealtime();image.clearDetail();if(fullSession!=null)fullSession.input();long inputNs=SystemClock.elapsedRealtimeNanos(),requested=revision.incrementAndGet();latest=new RenderRequest(requested,inputNs,state,before,maxSaturation);RawEditLog.input(requested,inputNs);main.removeCallbacks(busy);main.postDelayed(busy,400);scheduleRender();}
+  private void requestRender(){requestRender(0);}
+  private void requestRender(long editNs){lastInputMs=SystemClock.elapsedRealtime();image.clearDetail();if(fullSession!=null)fullSession.input();long inputNs=SystemClock.elapsedRealtimeNanos(),requested=revision.incrementAndGet();latest=new RenderRequest(requested,inputNs,state,before,maxSaturation);RawEditLog.input(requested,inputNs);if(editNs>0)RawEditLog.begin(requested,editNs);main.removeCallbacks(busy);main.postDelayed(busy,400);scheduleRender();}
   private void scheduleRender(){
     if(!ready||dead||!visible||latest==null||!queued.compareAndSet(false,true))return;
     int token=epoch;

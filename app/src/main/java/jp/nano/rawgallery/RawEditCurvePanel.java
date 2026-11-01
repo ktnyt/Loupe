@@ -13,12 +13,13 @@ import java.util.Locale;
 
 /** Photo-overlay point editor. Touch gestures, keys, numeric fields and AX share the same model. */
 final class RawEditCurvePanel extends FrameLayout {
-  interface Listener {void begin();void changed(RawEditState s);void end(boolean cancel);void undo();void redo();}
+  interface Listener {void begin();void changed(RawEditState s);default void changed(RawEditState s,long editNs){changed(s);}void end(boolean cancel);void undo();void redo();}
   private static final int INK=0xffededea,MUTED=0xffa9a9a4;
   private static final String[] NAMES={"明度","RGB","R","G","B"};
   private static final int[] COLORS={INK,0xffc9c9c4,0xffff7a6b,0xff6fd08a,0xff7fb0ff};
   private static final int ADD=0x7f0f6301,DELETE=0x7f0f6302,X_MINUS=0x7f0f6303,X_PLUS=0x7f0f6304,Y_MINUS=0x7f0f6305,Y_PLUS=0x7f0f6306;
   private final Listener listener;private RawEditState state;private int bank,selected=-1;
+  private int styledBank=-1,editedFlags=-1;private float displayedRoll=Float.NaN;
   private RawEditCurve draftCurve;private int draftBank=-1,draftPoint=-1;
   private boolean undoAvailable,redoAvailable,updating,multi,gesture,inputDirty,outputDirty;
   private final Button[] banks=new Button[5];private final Glyph reset,undo,redo,delete;
@@ -27,7 +28,7 @@ final class RawEditCurvePanel extends FrameLayout {
   RawEditCurvePanel(Context context,RawEditState state,int bank,Listener listener){
     super(context);this.state=state;this.bank=Math.max(0,Math.min(4,bank));this.listener=listener;
     setMotionEventSplittingEnabled(false);setClipChildren(false);setClipToPadding(false);setClickable(true);setBackground(background(0xb8101012,16,0x14ededea));
-    for(int i=0;i<5;i++){final int k=i;banks[i]=new Button(context){private final Paint dot=new Paint(3);protected void onDraw(Canvas c){super.onDraw(c);if(!RawEditCurvePanel.this.state.curve(k).identity()){dot.setColor(k==RawEditCurvePanel.this.bank?0xff111111:COLORS[k]);c.drawCircle(getWidth()-dp(8.5f),dp(10.5f),dp(2.5f),dot);}}};Button b=banks[i];b.setAllCaps(false);b.setTextSize(13);b.setPadding(0,0,0,0);b.setMinWidth(0);b.setMinimumWidth(0);b.setMinHeight(0);b.setMinimumHeight(0);b.setIncludeFontPadding(false);b.setOnClickListener(v->{finishFields();this.bank=k;selected=-1;refresh();});addView(b);}
+    for(int i=0;i<5;i++){final int k=i;banks[i]=new Button(context){private final Paint dot=new Paint(3);protected void onDraw(Canvas c){super.onDraw(c);if(!RawEditCurvePanel.this.state.curve(k).identity()){dot.setColor(k==RawEditCurvePanel.this.bank?0xff111111:COLORS[k]);c.drawCircle(getWidth()-dp(8.5f),dp(10.5f),dp(2.5f),dot);}}};Button b=banks[i];b.setText(NAMES[i]);b.setAllCaps(false);b.setTextSize(13);b.setPadding(0,0,0,0);b.setMinWidth(0);b.setMinimumWidth(0);b.setMinHeight(0);b.setMinimumHeight(0);b.setIncludeFontPadding(false);b.setOnClickListener(v->{finishFields();this.bank=k;selected=-1;refresh();});addView(b);}
     reset=new Glyph(3,"選択中のカーブをリセット",()->edit(RawEditCurvePanel.this.state.withCurve(this.bank,new RawEditCurve())));addView(reset);
     graph=new Graph(context);addView(graph);
     inLabel=label("入力",12);outLabel=label("出力",12);rollLabel=label("ロールオフ",12);addView(inLabel);addView(outLabel);addView(rollLabel);
@@ -61,11 +62,14 @@ final class RawEditCurvePanel extends FrameLayout {
   }
   private void refresh(){
     if(graph==null)return;updating=true;RawEditCurve c=state.curve(bank);boolean has=selected>=0&&selected<c.size(),enabled=isEnabled();
-    for(int i=0;i<5;i++){Button b=banks[i];b.setText(NAMES[i]);b.setTextColor(i==bank?0xff111111:COLORS[i]);b.setBackground(background(i==bank?INK:Color.TRANSPARENT,8,0));b.setSelected(i==bank);b.setTypeface(Typeface.create(Typeface.DEFAULT,i==bank?600:500,false));b.setContentDescription(NAMES[i]+"のカーブを編集"+(!state.curve(i).identity()?"、編集済み":""));b.setEnabled(enabled);}
-    input.setEnabled(enabled&&has);output.setEnabled(enabled&&has);if(!input.hasFocus())input.setText(has?number(c.x(selected)):"");if(!output.hasFocus())output.setText(has?number(c.y(selected)):"");
+    if(styledBank!=bank){for(int i=0;i<5;i++){Button b=banks[i];b.setTextColor(i==bank?0xff111111:COLORS[i]);b.setBackground(background(i==bank?INK:Color.TRANSPARENT,8,0));b.setSelected(i==bank);b.setTypeface(Typeface.create(Typeface.DEFAULT,i==bank?600:500,false));}styledBank=bank;}
+    int flags=0;for(int i=0;i<5;i++){Button b=banks[i];b.setEnabled(enabled);if(!state.curve(i).identity())flags|=1<<i;}
+    if(flags!=editedFlags){for(int i=0;i<5;i++){banks[i].setContentDescription(NAMES[i]+"のカーブを編集"+((flags&(1<<i))!=0?"、編集済み":""));banks[i].invalidate();}editedFlags=flags;}
+    input.setEnabled(enabled&&has);output.setEnabled(enabled&&has);setDisplay(input,has?number(c.x(selected)):"");setDisplay(output,has?number(c.y(selected)):"");
     reset.setEnabled(enabled&&!c.identity());undo.setEnabled(enabled&&undoAvailable);redo.setEnabled(enabled&&redoAvailable);delete.setEnabled(enabled&&has&&selected>0&&selected<c.size()-1);
-    graph.setEnabled(enabled);roll.setEnabled(enabled);roll.setProgress(Math.round(state.get(RawEditState.ROLLOFF)*1000));roll.setStateDescription(number(state.get(RawEditState.ROLLOFF)));updating=false;graph.invalidate();
+    graph.setEnabled(enabled);roll.setEnabled(enabled);if(displayedRoll!=state.get(RawEditState.ROLLOFF)){displayedRoll=state.get(RawEditState.ROLLOFF);roll.setProgress(Math.round(displayedRoll*1000));roll.setStateDescription(number(displayedRoll));}updating=false;graph.invalidate();
   }
+  private void setDisplay(EditText field,String text){if(!field.hasFocus()&&!field.getText().toString().equals(text))field.setText(text);}
   public void setEnabled(boolean enabled){super.setEnabled(enabled);if(!enabled)cancelGesture();refresh();}
   private void beginGesture(){if(!gesture){gesture=true;listener.begin();}}
   private void endGesture(boolean cancel){if(gesture){gesture=false;listener.end(cancel);}}
@@ -108,7 +112,7 @@ final class RawEditCurvePanel extends FrameLayout {
     private int hit(float x,float y){RawEditCurve c=state.curve(bank);int best=-1;float distance=Float.MAX_VALUE;for(int i=0;i<c.size();i++){float dx=x-sx(c.x(i)),dy=y-sy(c.y(i)),d=dx*dx+dy*dy;if(Math.abs(dx)<=dp(24)&&Math.abs(dy)<=dp(24)&&d<distance){distance=d;best=i;}}return best;}
     public boolean onTouchEvent(MotionEvent e){if(!isEnabled())return false;int a=e.getActionMasked();if(a==MotionEvent.ACTION_DOWN){finishFields();requestFocus();beginGesture();pointer=e.getPointerId(0);downX=e.getX();downY=e.getY();startCurve=state.curve(bank);selected=hit(downX,downY);added=selected<0;if(selected>=0){startX=startCurve.x(selected);startY=startCurve.y(selected);}refresh();return true;}
       if(pointer<0)return true;int ix=e.findPointerIndex(pointer);if(ix<0){endGesture(true);pointer=-1;return true;}
-      if(a==MotionEvent.ACTION_MOVE&&selected>=0){listener.changed(state.withCurve(bank,state.curve(bank).move(selected,startX+(e.getX(ix)-downX)/(getWidth()-dp(16)),startY-(e.getY(ix)-downY)/(getHeight()-dp(16)))));}
+      if(a==MotionEvent.ACTION_MOVE&&selected>=0){long editNs=android.os.SystemClock.elapsedRealtimeNanos();listener.changed(state.withCurve(bank,state.curve(bank).move(selected,startX+(e.getX(ix)-downX)/(getWidth()-dp(16)),startY-(e.getY(ix)-downY)/(getHeight()-dp(16)))),editNs);}
       if(a==MotionEvent.ACTION_UP){if(added&&Math.hypot(e.getX()-downX,e.getY()-downY)<ViewConfiguration.get(getContext()).getScaledTouchSlop()){
           float x=Math.max(0,Math.min(1,(downX-dp(8))/(getWidth()-dp(16)))),y=Math.max(0,Math.min(1,1-(downY-dp(8))/(getHeight()-dp(16))));RawEditCurve next=state.curve(bank).add(x,y);if(next.size()!=state.curve(bank).size()){listener.changed(state.withCurve(bank,next));selected=0;while(selected<next.size()-1&&next.x(selected)<x)selected++;}}
         pointer=-1;endGesture(false);performClick();refresh();}
