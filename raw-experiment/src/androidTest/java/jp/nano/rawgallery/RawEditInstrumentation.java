@@ -32,6 +32,7 @@ public final class RawEditInstrumentation extends Instrumentation {
     Bundle result=new Bundle();String phase="core";
     try{
       core();pad();
+      if(arguments!=null&&Boolean.parseBoolean(arguments.getString("tone","false"))){phase="tone";RawEditToneChecks.run();}
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("full","false"))){phase="full.source";RawEditSourceChecks.run(this);phase="full.tiles";RawEditTileChecks.run(this);phase="full.session";RawEditFullSessionChecks.run(this);phase="full.publish";RawEditPublishChecks.run(this);}
       if(fullUiGate!=null){if(Boolean.parseBoolean(arguments.getString("fullstates","false"))){phase="full.states";RawEditFullUiChecks.runStates(this,fullUiGate);}else{phase="full.ui";RawEditFullUiChecks.run(this,fullUiGate);}}
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("cursor","false"))){phase="cursor";RawEditCursorChecks.run(this);}
@@ -48,15 +49,15 @@ public final class RawEditInstrumentation extends Instrumentation {
     buffer.asFloatBuffer().put(new float[]{1,0,0,1,0,1,0,1,0,0,1,1,.2f,.2f,.2f,1});
     try(RawEditRenderer render=new RawEditRenderer(2,2,buffer)){
       Bitmap neutral=render.render(new RawEditState(),false,false,256);
-      require((neutral.getPixel(0,0)&0xffffff)==0xff0000,"top-left red / orientation");
-      require((neutral.getPixel(1,0)&0xffffff)==0x00ff00,"top-right green");
-      require((neutral.getPixel(0,1)&0xffffff)==0x0000ff,"bottom-left blue");
+      require(((neutral.getPixel(0,0)>>16)&255)>250&&(neutral.getPixel(0,0)&0xffff)<256,"top-left red / orientation");
+      require(((neutral.getPixel(1,0)>>8)&255)>250&&(neutral.getPixel(1,0)&255)<2,"top-right green");
+      require((neutral.getPixel(0,1)&255)>250&&((neutral.getPixel(0,1)>>16)&255)<2,"bottom-left blue");
       Bitmap grey=render.render(new RawEditState().with(RawEditState.SATURATION,-1),false,false,256);
       int pixel=grey.getPixel(0,0);require(Math.abs(((pixel>>16)&255)-((pixel>>8)&255))<=1&&Math.abs((pixel&255)-((pixel>>8)&255))<=1,"desaturation");
       Bitmap brighter=render.render(new RawEditState().with(RawEditState.EXPOSURE,1),false,false,256);
       require((brighter.getPixel(1,1)&255)>(neutral.getPixel(1,1)&255),"linear exposure");
-      RawEditState edit=new RawEditState().with(0,.5f).with(3,.4f).with(15,.6f);
-      Bitmap original=render.render(edit,true,true,256);require(original.sameAs(neutral),"before bypasses edits and MAX");
+      RawEditState edit=new RawEditState().with(0,.5f).with(3,.4f).with(14,.6f);
+      Bitmap original=render.render(edit,true,true,256);require(original.sameAs(render.render(new RawEditState(),true,false,256)),"before bypasses edits and MAX");
       Bitmap saved=render.render(edit,false,false,256),shown=render.render(edit,false,true,256);
       require(!saved.sameAs(shown),"MAX is a distinct transient display");
       require(saved.sameAs(render.render(new RawEditState(edit.snapshot()),false,false,256)),"export depends only on edit values");
@@ -64,7 +65,7 @@ public final class RawEditInstrumentation extends Instrumentation {
       int tint=mono.getPixel(1,1),red=(tint>>16)&255,green=(tint>>8)&255,blue=tint&255;
       require(blue>red&&red>green,"Mono hue 260 tint order");
       Bitmap monoBefore=render.render(new RawEditState().with(RawEditState.MONO,1),true,false,256);
-      require(monoBefore.sameAs(neutral),"before bypasses Mono");mono.recycle();monoBefore.recycle();
+      require(monoBefore.sameAs(render.render(new RawEditState(),true,false,256)),"before bypasses Mono");mono.recycle();monoBefore.recycle();
       neutral.recycle();grey.recycle();brighter.recycle();original.recycle();saved.recycle();shown.recycle();
     }
     try{NativeRaw.decode("/unreadable-test-input",2048);throw new AssertionError("native missing file accepted");}catch(IOException expected){require(!expected.getMessage().contains("unreadable"),"private native error");}

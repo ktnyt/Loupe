@@ -19,7 +19,7 @@ final class RawEditUiChecks {
   private static <T> T find(View v,Class<T> type){if(type.isInstance(v))return type.cast(v);if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++){T result=find(((ViewGroup)v).getChildAt(i),type);if(result!=null)return result;}return null;}
   private static Button button(View v,String text){if(v instanceof Button&&text.contentEquals(((Button)v).getText()))return (Button)v;if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++){Button b=button(((ViewGroup)v).getChildAt(i),text);if(b!=null)return b;}return null;}
   private static Rect bounds(View v){int[] p=new int[2];v.getLocationOnScreen(p);return new Rect(p[0],p[1],p[0]+v.getWidth(),p[1]+v.getHeight());}
-  private static float[] values(RawEditActivity a){Bundle b=new Bundle();a.onSaveInstanceState(b);return b.getFloatArray("values");}
+  private static float[] values(RawEditActivity a){Bundle b=new Bundle();a.onSaveInstanceState(b);return new RawEditState(b.getFloatArray("values")).parameters();}
   private static final String[] TAB_NAMES={"WB","質感","トーン","明るさ","明暗","白黒","カラー"};
   private static final int[][] TAB_KEYS={{0,1},{2,3},{5,6},{7,8},{9,10},{12,13},{14,15}};
   private static float normalized(float[] values,int key){return (values[key]-RawEditState.min(key))/(RawEditState.max(key)-RawEditState.min(key));}

@@ -85,7 +85,7 @@ final class RawEditPad extends FrameLayout {
   private float px(float n){return n*getResources().getDisplayMetrics().density;}
   static String value(int key,float n){
     if(key==RawEditState.EXPOSURE)return String.format(Locale.ROOT,"%+.2f EV",n);
-    if(key==RawEditState.CURVE_X||key==RawEditState.CURVE_Y)return Integer.toString(Math.round(n*100));
+    if(key==RawEditState.ROLLOFF)return Integer.toString(Math.round(n*100));
     return n==0?"±0":String.format(Locale.ROOT,"%+d",Math.round(n*100));
   }
   void update(RawEditState next){

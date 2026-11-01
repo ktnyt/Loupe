@@ -61,7 +61,7 @@ public final class RawEditActivity extends Activity {
   private int accessibilityZoomStage=-1;
   private RawEditPad pad;
   private final String[] tabNames={"WB","質感","トーン","明るさ","明暗","白黒","カラー"};
-  private final int[][] pairs={{0,1},{2,3},{5,6},{7,8},{9,10},{12,13},{14,15}};
+  private final int[][] pairs={{0,1},{2,3},{5,5},{6,7},{8,9},{11,12},{13,14}};
   private final String[][] axes={{"色温度","色かぶり"},{"テクスチャ","明瞭度"},{"入力","出力"},{"露出","明度"},{"ハイライト","シャドウ"},{"ホワイトポイント","ブラックポイント"},{"彩度","バイブランス"}};
   private final Runnable busy=()->{if(ready&&rendered!=revision.get())busyIcon.setVisibility(View.VISIBLE);};
 
@@ -145,7 +145,7 @@ public final class RawEditActivity extends Activity {
     FrameLayout.LayoutParams accessory=(FrameLayout.LayoutParams)controls.getLayoutParams();accessory.width=slider?Math.min(Math.max(dp(48),picture.getWidth()-dp(16)),dp(320)):-2;controls.setLayoutParams(accessory);
     if(tab==0||tab==6){boolean mono=tab==6,on=mono?state.get(RawEditState.MONO)==1:maxSaturation;Button toggle=button(mono?"モノクロ":"彩度MAX",()->{if(mono)changed(state.with(RawEditState.MONO,state.get(RawEditState.MONO)==1?0:1));else{maxSaturation=!maxSaturation;requestRender();}renderControls();});
       toggle.setPadding(dp(10),0,dp(14),0);toggle.setContentDescription(mono?"モノクロ。保存に含まれます":"彩度MAX。色を見るための一時表示。保存する彩度は変わりません");toggle.setStateDescription(on?"オン":"オフ");toggle.setSelected(on);GradientDrawable bg=rounded(on?INK:0x9e000000,24);bg.setStroke(dp(1),on?INK:0xff3a3a3f);toggle.setBackground(bg);toggle.setTextColor(on?0xff111111:INK);toggle.setCompoundDrawablesWithIntrinsicBounds(new Icon(mono?"mono":"max",20,on?0xff111111:INK),null,null,null);toggle.setCompoundDrawablePadding(dp(6));controls.addView(toggle,new LinearLayout.LayoutParams(-2,dp(48)));}
-    if(tab==1)addSingle(4,"かすみ");else if(tab==4)addSingle(11,"コントラスト");
+    if(tab==1)addSingle(4,"かすみ");else if(tab==4)addSingle(RawEditState.CONTRAST,"コントラスト");
     enabled(ready&&!saving);root.post(this::layoutControls);
   }
   private void syncPhotoZoomAction(){int next=image.nextZoomStage();if(next!=accessibilityZoomStage){accessibilityZoomStage=next;image.sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED);}}
@@ -201,7 +201,7 @@ public final class RawEditActivity extends Activity {
   private void updateBadge(){boolean show=ready&&!saving&&!interacting&&(displayBefore||displayMax);badge.setText(displayBefore?"補正前":"彩度MAX");badge.setVisibility(show?View.VISIBLE:View.GONE);}
   private void changed(RawEditState value){state=value;before=false;compare.setSelected(false);if(pad!=null)pad.update(value);requestRender();}
   private void resetTab(){
-    if(!ready||saving)return;int[][] keys={{0,1},{2,3,4},{5,6},{7,8},{9,10,11},{12,13},{14,15,16}};
+    if(!ready||saving)return;int[][] keys={{0,1},{2,3,4},{5},{6,7},{8,9,10},{11,12},{13,14,15}};
     state=state.reset(keys[tab]);maxSaturation=false;before=false;renderControls();requestRender();
   }
   private void showHelp(){

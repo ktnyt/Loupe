@@ -33,7 +33,7 @@ final class RawEditTileChecks {
           RawEditRenderer tiles=new RawEditRenderer()){
         // Closing a sibling renderer must not terminate the shared EGLDisplay.
         new RawEditRenderer().close();
-        for(RawEditState state:new RawEditState[]{new RawEditState(),new RawEditState().with(2,1).with(3,1),new RawEditState().with(16,1)})
+        for(RawEditState state:new RawEditState[]{new RawEditState(),new RawEditState().with(2,1).with(3,1),new RawEditState().with(15,1)})
           for(int mode=0;mode<3;mode++){
             Bitmap expected=reference.render(state,mode==1,mode==2,2048);
             try {

@@ -25,7 +25,7 @@ final class RawEditCursorChecks {
   }
   private static <T> T find(View v,Class<T> type){if(type.isInstance(v))return type.cast(v);if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++){T next=find(((ViewGroup)v).getChildAt(i),type);if(next!=null)return next;}return null;}
   private static Button button(View v,String label){if(v instanceof Button&&label.contentEquals(((Button)v).getText()))return (Button)v;if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++){Button next=button(((ViewGroup)v).getChildAt(i),label);if(next!=null)return next;}return null;}
-  private static float[] values(RawEditActivity a){Bundle b=new Bundle();a.onSaveInstanceState(b);return b.getFloatArray("values");}
+  private static float[] values(RawEditActivity a){Bundle b=new Bundle();a.onSaveInstanceState(b);return new RawEditState(b.getFloatArray("values")).parameters();}
   private static boolean event(View view,long down,long time,int action,float... xy){
     int count=xy.length/2;MotionEvent.PointerProperties[] ids=new MotionEvent.PointerProperties[count];MotionEvent.PointerCoords[] coords=new MotionEvent.PointerCoords[count];
     for(int i=0;i<count;i++){ids[i]=new MotionEvent.PointerProperties();ids[i].id=i;ids[i].toolType=MotionEvent.TOOL_TYPE_FINGER;coords[i]=new MotionEvent.PointerCoords();coords[i].x=xy[2*i];coords[i].y=xy[2*i+1];coords[i].size=coords[i].pressure=1;}
