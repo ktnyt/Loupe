@@ -67,7 +67,7 @@ final class RawEditFullUiChecks {
     View picture=(View)pad.getParent();int[] xy={0,0},origin={0,0};picture.getLocationInWindow(xy);plane.getLocationInWindow(origin);int[] keys=selectedKeys(activity);float[] old=state(activity).getFloatArray("values");float sx=origin[0]-xy[0]+normalized(old,keys[0])*plane.getWidth(),sy=origin[1]-xy[1]+(1-normalized(old,keys[1]))*plane.getHeight();float ex=origin[0]-xy[0]+x*plane.getWidth(),ey=origin[1]-xy[1]+y*plane.getHeight();long now=SystemClock.uptimeMillis();
     send(picture,now,now,MotionEvent.ACTION_DOWN,sx,sy);require(Arrays.equals(old,state(activity).getFloatArray("values")),"cursor DOWN leaves current values unchanged");
     send(picture,now,now+20,MotionEvent.ACTION_MOVE,ex,ey);send(picture,now,now+30,MotionEvent.ACTION_UP,ex,ey);float[] next=state(activity).getFloatArray("values");
-    require(!Arrays.equals(old,next),"relative drag from the visible cursor changes current values");require(next[keys[0]]!=old[keys[0]]&&next[keys[1]]!=old[keys[1]],"plane drag changes both selected axes");
+    require(!Arrays.equals(old,next),"relative drag from the visible cursor changes current values");RawEditState previous=new RawEditState(old),current=new RawEditState(next);require(current.get(keys[0])!=previous.get(keys[0])&&current.get(keys[1])!=previous.get(keys[1]),"plane drag changes both selected axes");
   }
   private static boolean onMain(Instrumentation t,BooleanSupplier condition){boolean[] value={false};t.runOnMainSync(()->value[0]=condition.getAsBoolean());return value[0];}
   private static void await(BooleanSupplier condition,int seconds,String message)throws Exception {

@@ -1,0 +1,292 @@
+{
+  "device": "android-test-device-A",
+  "source": "synthetic 6000x4000, six prepared tone drags, one run per version",
+  "baseline_commit": "b705bf9",
+  "implementation_commit": "6847990",
+  "baseline": {
+    "status": "PASS",
+    "failures": [],
+    "mode": "after-prepared",
+    "source": "synthetic",
+    "boundary": "render request after synchronous controls to frame commit; not display scanout",
+    "measurement": {
+      "launch_ns": 457541640000000,
+      "end_ns": 457575920000000
+    },
+    "preparation_classification": "input timestamp inside preparation interval; frame commit may occur later",
+    "preparation": {
+      "start_ns": 457542953713163,
+      "complete_ns": 457558161781334,
+      "observed_end_ns": 457558161781334,
+      "completion_observed": true
+    },
+    "input_scope": "six recorded drag windows",
+    "collected_interval": {
+      "input_count": 659,
+      "frame_count": 644,
+      "skipped_input_tickets": 15,
+      "median_ms": 21.078646,
+      "p95_ms": 25.515469,
+      "commits_with_newer_input_during_latency": 635
+    },
+    "drag_boundary_clock": "/proc/uptime, 10ms resolution; input/frame timestamps use elapsedRealtimeNanos",
+    "all": {
+      "input_count": 656,
+      "frame_count": 641,
+      "skipped_input_tickets": 15,
+      "median_ms": 21.077188,
+      "p95_ms": 25.458802,
+      "commits_with_newer_input_during_latency": 635
+    },
+    "preparation_overlap": {
+      "input_count": 0,
+      "frame_count": 0,
+      "skipped_input_tickets": 0,
+      "median_ms": null,
+      "p95_ms": null,
+      "commits_with_newer_input_during_latency": 0
+    },
+    "after_prepared": {
+      "input_count": 656,
+      "frame_count": 641,
+      "skipped_input_tickets": 15,
+      "median_ms": 21.077188,
+      "p95_ms": 25.458802,
+      "commits_with_newer_input_during_latency": 635
+    },
+    "drags": [
+      {
+        "start_ns": 457558620000000,
+        "end_ns": 457560560000000,
+        "input_count": 109,
+        "frame_count": 107,
+        "final_ms": 46.56224,
+        "frames_while_dragging": 107
+      },
+      {
+        "start_ns": 457561380000000,
+        "end_ns": 457563310000000,
+        "input_count": 109,
+        "frame_count": 108,
+        "final_ms": 47.025208,
+        "frames_while_dragging": 108
+      },
+      {
+        "start_ns": 457564120000000,
+        "end_ns": 457566060000000,
+        "input_count": 109,
+        "frame_count": 105,
+        "final_ms": 48.7925,
+        "frames_while_dragging": 105
+      },
+      {
+        "start_ns": 457566880000000,
+        "end_ns": 457568820000000,
+        "input_count": 110,
+        "frame_count": 107,
+        "final_ms": 49.733541,
+        "frames_while_dragging": 107
+      },
+      {
+        "start_ns": 457569640000000,
+        "end_ns": 457571590000000,
+        "input_count": 109,
+        "frame_count": 108,
+        "final_ms": 49.785208,
+        "frames_while_dragging": 108
+      },
+      {
+        "start_ns": 457572420000000,
+        "end_ns": 457574380000000,
+        "input_count": 110,
+        "frame_count": 106,
+        "final_ms": 43.633802,
+        "frames_while_dragging": 106
+      }
+    ],
+    "raw.load.complete": null,
+    "full.prepare.complete": {
+      "name": "full.prepare.complete",
+      "ms": 15208,
+      "width": 6000,
+      "height": 4000,
+      "ns": 457558161781334
+    },
+    "render_count": 644,
+    "control": "tone",
+    "temperature_c": {
+      "start": 32.2,
+      "end": 32.2
+    },
+    "kernel_memory_kb": {
+      "rss_kb": 327276,
+      "hwm_kb": 471112
+    },
+    "memory_pss_kb": {
+      "native_heap_pss_kb": 120560,
+      "graphics_pss_kb": 59260,
+      "total_pss_kb": 218871
+    }
+  },
+  "current": {
+    "status": "PASS",
+    "failures": [],
+    "mode": "after-prepared",
+    "source": "synthetic",
+    "boundary": "render request after synchronous controls to frame commit; not display scanout",
+    "edit_callback": {
+      "boundary": "graph MOVE callback entry to frame commit; excludes hardware/event delivery",
+      "input_count": 652,
+      "frame_count": 647,
+      "skipped_input_tickets": 5,
+      "median_ms": 40.44302,
+      "p95_ms": 44.03724,
+      "commits_with_newer_input_during_latency": 641
+    },
+    "measurement": {
+      "launch_ns": 459991140000000,
+      "end_ns": 460038490000000
+    },
+    "preparation_classification": "input timestamp inside preparation interval; frame commit may occur later",
+    "preparation": {
+      "start_ns": 459992253484520,
+      "complete_ns": 460020933117634,
+      "observed_end_ns": 460020933117634,
+      "completion_observed": true
+    },
+    "input_scope": "six recorded drag windows",
+    "collected_interval": {
+      "input_count": 656,
+      "frame_count": 651,
+      "skipped_input_tickets": 5,
+      "median_ms": 38.421303,
+      "p95_ms": 42.1475,
+      "commits_with_newer_input_during_latency": 641
+    },
+    "drag_boundary_clock": "/proc/uptime, 10ms resolution; input/frame timestamps use elapsedRealtimeNanos",
+    "all": {
+      "input_count": 652,
+      "frame_count": 647,
+      "skipped_input_tickets": 5,
+      "median_ms": 38.421511,
+      "p95_ms": 42.103334,
+      "commits_with_newer_input_during_latency": 641
+    },
+    "preparation_overlap": {
+      "input_count": 0,
+      "frame_count": 0,
+      "skipped_input_tickets": 0,
+      "median_ms": null,
+      "p95_ms": null,
+      "commits_with_newer_input_during_latency": 0
+    },
+    "after_prepared": {
+      "input_count": 652,
+      "frame_count": 647,
+      "skipped_input_tickets": 5,
+      "median_ms": 38.421511,
+      "p95_ms": 42.103334,
+      "commits_with_newer_input_during_latency": 641
+    },
+    "drags": [
+      {
+        "start_ns": 460021180000000,
+        "end_ns": 460023130000000,
+        "input_count": 109,
+        "frame_count": 108,
+        "final_ms": 36.364375,
+        "frames_while_dragging": 108
+      },
+      {
+        "start_ns": 460023940000000,
+        "end_ns": 460025890000000,
+        "input_count": 109,
+        "frame_count": 108,
+        "final_ms": 33.872292,
+        "frames_while_dragging": 108
+      },
+      {
+        "start_ns": 460026710000000,
+        "end_ns": 460028650000000,
+        "input_count": 108,
+        "frame_count": 108,
+        "final_ms": 48.535781,
+        "frames_while_dragging": 108
+      },
+      {
+        "start_ns": 460029470000000,
+        "end_ns": 460031430000000,
+        "input_count": 109,
+        "frame_count": 109,
+        "final_ms": 34.807084,
+        "frames_while_dragging": 109
+      },
+      {
+        "start_ns": 460032260000000,
+        "end_ns": 460034190000000,
+        "input_count": 108,
+        "frame_count": 106,
+        "final_ms": 34.639271,
+        "frames_while_dragging": 106
+      },
+      {
+        "start_ns": 460035020000000,
+        "end_ns": 460036950000000,
+        "input_count": 109,
+        "frame_count": 108,
+        "final_ms": 34.632343,
+        "frames_while_dragging": 108
+      }
+    ],
+    "raw.load.complete": null,
+    "full.prepare.complete": {
+      "name": "full.prepare.complete",
+      "ms": 28680,
+      "width": 6000,
+      "height": 4000,
+      "ns": 460020933117634
+    },
+    "render_count": 651,
+    "control": "tone",
+    "temperature_c": {
+      "start": 32.0,
+      "end": 32.0
+    },
+    "kernel_memory_kb": {
+      "rss_kb": 359780,
+      "hwm_kb": 449408
+    },
+    "memory_pss_kb": {
+      "native_heap_pss_kb": 149908,
+      "graphics_pss_kb": 83044,
+      "total_pss_kb": 273930
+    }
+  },
+  "current_handoff": {
+    "worker_duplicate_tickets": 0,
+    "last_input_ticket": 656,
+    "last_committed_ticket": 656,
+    "last_worker_ticket": 656,
+    "last_input_to_final_commit_ms": 34.632343,
+    "worker_starts_after_last_input_plus_100ms": 0,
+    "frame_spacing_median_ms": 16.6025,
+    "continuation_to_worker_median_ms": 0.201719,
+    "continuation_to_worker_p95_ms": 0.347292
+  },
+  "current_stages": {
+    "count": 647,
+    "boundary": "LUT CPU / upload call / draw+readback, filtered by six drag windows; deferred driver work may be charged to draw",
+    "lut_cpu": {
+      "median_ms": 3.207135,
+      "p95_ms": 3.426979
+    },
+    "lut_upload": {
+      "median_ms": 0.151666,
+      "p95_ms": 0.466614
+    },
+    "draw_readback": {
+      "median_ms": 5.598542,
+      "p95_ms": 10.692864
+    }
+  }
+}
