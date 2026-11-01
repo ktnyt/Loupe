@@ -33,7 +33,7 @@ final class RawEditTone {
   }
   static boolean inGamut(double[] c){for(double v:c)if(v<0||v>1)return false;return true;}
   static double[] gamut(double[] c){
-    c=c.clone();c[0]=Math.max(0,Math.min(1,c[0]));double[] out=rgb(c);if(inGamut(out))return out;
+    c=c.clone();c[0]=Math.max(0,Math.min(1,c[0]));double[] out=rgb(c);boolean near=true;for(double v:out)near&=v>=-2e-6&&v<=1+2e-6;if(near){for(int i=0;i<3;i++)out[i]=Math.max(0,Math.min(1,out[i]));return out;}
     double lo=0,hi=1;for(int i=0;i<16;i++){double t=(lo+hi)/2;out=rgb(new double[]{c[0],c[1]*t,c[2]*t});if(inGamut(out))lo=t;else hi=t;}
     return rgb(new double[]{c[0],c[1]*lo,c[2]*lo});
   }
@@ -70,7 +70,7 @@ final class RawEditTone {
     }
     bool inGamut(vec3 c){return all(greaterThanEqual(c,vec3(0)))&&all(lessThanEqual(c,vec3(1)));}
     vec3 gamut(vec3 lab){
-      lab.x=clamp(lab.x,0.,1.);vec3 c=fromLab(lab);if(inGamut(c))return c;
+      lab.x=clamp(lab.x,0.,1.);vec3 c=fromLab(lab);if(all(greaterThanEqual(c,vec3(-.000002)))&&all(lessThanEqual(c,vec3(1.000002))))return clamp(c,0.,1.);
       float lo=0.,hi=1.;for(int i=0;i<16;i++){float t=(lo+hi)*.5;if(inGamut(fromLab(vec3(lab.x,lab.yz*t))))lo=t;else hi=t;}
       return fromLab(vec3(lab.x,lab.yz*lo));
     }

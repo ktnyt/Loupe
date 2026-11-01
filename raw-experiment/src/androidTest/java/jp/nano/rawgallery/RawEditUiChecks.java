@@ -21,7 +21,7 @@ final class RawEditUiChecks {
   private static Rect bounds(View v){int[] p=new int[2];v.getLocationOnScreen(p);return new Rect(p[0],p[1],p[0]+v.getWidth(),p[1]+v.getHeight());}
   private static float[] values(RawEditActivity a){Bundle b=new Bundle();a.onSaveInstanceState(b);return new RawEditState(b.getFloatArray("values")).parameters();}
   private static final String[] TAB_NAMES={"WB","質感","トーン","明るさ","明暗","白黒","カラー"};
-  private static final int[][] TAB_KEYS={{0,1},{2,3},{5,6},{7,8},{9,10},{12,13},{14,15}};
+  private static final int[][] TAB_KEYS={{0,1},{2,3},{5,5},{6,7},{8,9},{11,12},{13,14}};
   private static float normalized(float[] values,int key){return (values[key]-RawEditState.min(key))/(RawEditState.max(key)-RawEditState.min(key));}
   private static float[] cursorOnPicture(RawEditPad pad,View plane,View picture,float[] values,int[] keys){int[] p={0,0},q={0,0};picture.getLocationOnScreen(p);plane.getLocationOnScreen(q);return new float[]{q[0]-p[0]+normalized(values,keys[0])*plane.getWidth(),q[1]-p[1]+(1-normalized(values,keys[1]))*plane.getHeight()};}
   private static void touch(View picture,long time,int action,float... xy){
@@ -92,9 +92,9 @@ final class RawEditUiChecks {
       while(!loaded[0]&&SystemClock.uptimeMillis()<until){onMain(t,()->{Button b=button(a.getWindow().getDecorView(),"保存");loaded[0]=b!=null&&b.isEnabled();});Thread.sleep(25);}
       require(loaded[0],"synthetic preview loaded");t.waitForIdleSync();
       Rect[] original={null};
-      for(String tab:new String[]{"WB","質感","トーン","明るさ","明暗","白黒","カラー"}){
+      for(String tab:new String[]{"WB","質感","明るさ","明暗","白黒","カラー"}){
         onMain(t,()->button(a.getWindow().getDecorView(),tab).performClick());t.waitForIdleSync();
-        onMain(t,()->{RawEditPad pad=find(a.getWindow().getDecorView(),RawEditPad.class);Rect r=bounds(pad);if(original[0]==null)original[0]=r;require(original[0].equals(r),"all seven tabs preserve control geometry");
+        onMain(t,()->{RawEditPad pad=find(a.getWindow().getDecorView(),RawEditPad.class);Rect r=bounds(pad);if(original[0]==null)original[0]=r;require(original[0].equals(r),"six XY tabs preserve control geometry");
           RawEditImageView image=find(a.getWindow().getDecorView(),RawEditImageView.class);ViewGroup root=(ViewGroup)image.getParent().getParent();int available=root.getHeight()-root.getPaddingTop()-root.getPaddingBottom();float density=a.getResources().getDisplayMetrics().density;
           require(Math.abs(image.getHeight()-(available-Math.round(136*density)))<=2,"photo takes all space except 56+80 rows");
           ViewGroup extra;

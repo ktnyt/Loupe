@@ -50,8 +50,8 @@ final class RawEditFullUiChecks {
   private static Button save(RawEditActivity activity){Button b=button(activity.getWindow().getDecorView(),"保存");if(b==null)b=button(activity.getWindow().getDecorView(),"✓");require(b!=null,"Save button is present");return b;}
   private static Bundle state(RawEditActivity activity){Bundle bundle=new Bundle();activity.onSaveInstanceState(bundle);return bundle;}
   private static final String[] TAB_NAMES={"WB","質感","トーン","明るさ","明暗","白黒","カラー"};
-  private static final int[][] TAB_KEYS={{0,1},{2,3},{5,6},{7,8},{9,10},{12,13},{14,15}};
-  private static float normalized(float[] values,int key){return (values[key]-RawEditState.min(key))/(RawEditState.max(key)-RawEditState.min(key));}
+  private static final int[][] TAB_KEYS={{0,1},{2,3},{5,5},{6,7},{8,9},{11,12},{13,14}};
+  private static float normalized(float[] values,int key){return (new RawEditState(values).get(key)-RawEditState.min(key))/(RawEditState.max(key)-RawEditState.min(key));}
   private static int[] selectedKeys(RawEditActivity activity){for(int i=0;i<TAB_NAMES.length;i++){Button tab=button(activity.getWindow().getDecorView(),TAB_NAMES[i]);if(tab!=null&&tab.isSelected())return TAB_KEYS[i];}throw new AssertionError("selected edit tab has an axis pair");}
   private static void send(View target,long down,long time,int action,float x,float y){MotionEvent event=MotionEvent.obtain(down,time,action,x,y,0);event.setSource(InputDevice.SOURCE_TOUCHSCREEN);try{target.dispatchTouchEvent(event);}finally{event.recycle();}}
   private static boolean waiting(RawEditActivity activity){CharSequence description=save(activity).getStateDescription();return description!=null&&description.toString().contains("原寸の準備を待っています");}
@@ -185,7 +185,7 @@ final class RawEditFullUiChecks {
       t.runOnMainSync(()->{editable(a);height[0]=a.getWindow().getDecorView().getHeight();font[0]=a.getResources().getConfiguration().fontScale;initial[0]=state(a).getFloatArray("values");});
       folder=new File(cache,"full-ui-states-"+font[0]+"-"+height[0]);require(folder.isDirectory()||folder.mkdirs(),"synthetic full-state capture directory");
       captures.put(captureState(t,a,folder,"fullprepare",started));
-      t.runOnMainSync(()->{save(a).performClick();require(waiting(a),"Save waits for full preparation");editable(a);View plane=find(a.getWindow().getDecorView(),RawEditPad.class).getChildAt(0);Bundle progress=new Bundle();progress.putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE,.2f);require(plane.performAccessibilityAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.getId(),progress),"waiting pad remains editable");require(state(a).getFloatArray("values")[0]>.19f,"waiting edit applied");require(plane.performAccessibilityAction(RawEditPad.RESET_ACTION,null),"WB returns to default without touching Mono or MAX");require(Arrays.equals(initial[0],state(a).getFloatArray("values")),"default WB capture state restored");});
+      t.runOnMainSync(()->{save(a).performClick();require(waiting(a),"Save waits for full preparation");editable(a);View plane=find(a.getWindow().getDecorView(),RawEditPad.class).getChildAt(0);Bundle progress=new Bundle();progress.putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE,.2f);require(plane.performAccessibilityAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.getId(),progress),"waiting pad remains editable");require(new RawEditState(state(a).getFloatArray("values")).get(RawEditState.TEMP)>.19f,"waiting edit applied");require(plane.performAccessibilityAction(RawEditPad.RESET_ACTION,null),"WB returns to default without touching Mono or MAX");require(Arrays.equals(initial[0],state(a).getFloatArray("values")),"default WB capture state restored");});
       t.waitForIdleSync();captures.put(captureState(t,a,folder,"savewait",started));
       // Only permission bits on this isolated synthetic test's private cache change, for the failed write.
       try {
@@ -237,7 +237,7 @@ final class RawEditFullUiChecks {
       t.waitForIdleSync();
       t.runOnMainSync(()->{
         changePad(a,.61f,.42f);
-        button(a.getWindow().getDecorView(),"モノクロ").performClick();latest[0]=state(a).getFloatArray("values");require(latest[0][RawEditState.MONO]==1,"latest waiting edit includes Mono");
+        button(a.getWindow().getDecorView(),"モノクロ").performClick();latest[0]=state(a).getFloatArray("values");require(new RawEditState(latest[0]).get(RawEditState.MONO)==1,"latest waiting edit includes Mono");
         require(waiting(a),"latest edits leave wait active");
       });
       gate.close();

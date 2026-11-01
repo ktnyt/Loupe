@@ -5,6 +5,7 @@ public final class RawEditToneTest {
   static void require(boolean c,String why){if(!c)throw new AssertionError(why);}
   public static void main(String[] args){
     RawEditState neutral=new RawEditState();double worst=0;
+    for(double[] primary:new double[][]{{1,0,0},{0,1,0},{0,0,1}}){double[] out=RawEditTone.apply(neutral,primary);for(int k=0;k<3;k++)require(Math.abs(out[k]-primary[k])<.002,"primary roundtrip/gamut tolerance");}
     for(double roll:new double[]{0,.01,.5,1}){double previous=-1;for(int i=0;i<=32000;i++){double x=RawEditTone.shoulder(i/1000.,roll);require(x>=previous&&x>=0&&x<=1,"shoulder monotone");previous=x;}}
     for(int count=0;count<6;count++){
       RawEditState edit=neutral.with(RawEditState.SHADOWS,.5f).with(RawEditState.HIGHLIGHTS,-.7f).with(RawEditState.BLACKS,-.4f).withCurve(0,new RawEditCurve(new float[]{0,0,.2f,.15f,.5f,.5f,.8f,.86f,1,1}));

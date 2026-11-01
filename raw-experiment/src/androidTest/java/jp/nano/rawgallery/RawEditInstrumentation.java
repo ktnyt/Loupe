@@ -33,6 +33,7 @@ public final class RawEditInstrumentation extends Instrumentation {
     try{
       core();pad();
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("tone","false"))){phase="tone";RawEditToneChecks.run();}
+      if(arguments!=null&&Boolean.parseBoolean(arguments.getString("curve","false"))){phase="curve.ui";RawEditCurveUiChecks.run(this);}
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("full","false"))){phase="full.source";RawEditSourceChecks.run(this);phase="full.tiles";RawEditTileChecks.run(this);phase="full.session";RawEditFullSessionChecks.run(this);phase="full.publish";RawEditPublishChecks.run(this);}
       if(fullUiGate!=null){if(Boolean.parseBoolean(arguments.getString("fullstates","false"))){phase="full.states";RawEditFullUiChecks.runStates(this,fullUiGate);}else{phase="full.ui";RawEditFullUiChecks.run(this,fullUiGate);}}
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("cursor","false"))){phase="cursor";RawEditCursorChecks.run(this);}
@@ -51,7 +52,7 @@ public final class RawEditInstrumentation extends Instrumentation {
       Bitmap neutral=render.render(new RawEditState(),false,false,256);
       require(((neutral.getPixel(0,0)>>16)&255)>250&&(neutral.getPixel(0,0)&0xffff)<256,"top-left red / orientation");
       require(((neutral.getPixel(1,0)>>8)&255)>250&&(neutral.getPixel(1,0)&255)<2,"top-right green");
-      require((neutral.getPixel(0,1)&255)>250&&((neutral.getPixel(0,1)>>16)&255)<2,"bottom-left blue");
+      require((neutral.getPixel(0,1)&255)>250&&((neutral.getPixel(0,1)>>16)&255)<2,"bottom-left blue value="+Integer.toHexString(neutral.getPixel(0,1)));
       Bitmap grey=render.render(new RawEditState().with(RawEditState.SATURATION,-1),false,false,256);
       int pixel=grey.getPixel(0,0);require(Math.abs(((pixel>>16)&255)-((pixel>>8)&255))<=1&&Math.abs((pixel&255)-((pixel>>8)&255))<=1,"desaturation");
       Bitmap brighter=render.render(new RawEditState().with(RawEditState.EXPOSURE,1),false,false,256);
