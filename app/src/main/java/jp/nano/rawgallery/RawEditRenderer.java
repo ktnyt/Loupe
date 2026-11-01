@@ -151,10 +151,13 @@ final class RawEditRenderer implements AutoCloseable {
     GLES30.glUniform1fv(GLES30.glGetUniformLocation(program,"p[0]"),RawEditState.COUNT,state.parameters(),0);
     GLES30.glUniform1i(GLES30.glGetUniformLocation(program,"mode"),before?1:maxSaturation?2:0);
     GLES30.glActiveTexture(GLES30.GL_TEXTURE1);GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,lutTexture);textureOptions();
+    long lutNs=0,uploadNs=0;
     if(!RawEditTone.sameLut(lutState,state)){
+      long begin=android.os.SystemClock.elapsedRealtimeNanos();
       if(lutData==null)lutData=RawEditTone.lut(state);else RawEditTone.updateLut(state,lutState,lutData);
+      lutNs=android.os.SystemClock.elapsedRealtimeNanos()-begin;begin=android.os.SystemClock.elapsedRealtimeNanos();
       GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D,0,GLES30.GL_RGBA32F,RawEditTone.LUT_WIDTH,RawEditTone.LUT_HEIGHT,0,GLES30.GL_RGBA,GLES30.GL_FLOAT,lutData);
-      lutState=state;
+      uploadNs=android.os.SystemClock.elapsedRealtimeNanos()-begin;lutState=state;
     }
     GLES30.glUniform1i(GLES30.glGetUniformLocation(program,"toneLut"),1);
     int mask=0;for(int i=0;i<5;i++)if(!state.curve(i).identity())mask|=1<<i;
@@ -162,9 +165,11 @@ final class RawEditRenderer implements AutoCloseable {
     GLES30.glActiveTexture(GLES30.GL_TEXTURE0);
     int pos=GLES30.glGetAttribLocation(program,"position");vertices.position(0);
     GLES30.glEnableVertexAttribArray(pos);GLES30.glVertexAttribPointer(pos,2,GLES30.GL_FLOAT,false,0,vertices);
+    long drawBegin=android.os.SystemClock.elapsedRealtimeNanos();
     GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP,0,4);
     ByteBuffer bytes=readback;bytes.clear();
     GLES30.glReadPixels(0,0,w,h,GLES30.GL_RGBA,GLES30.GL_UNSIGNED_BYTE,bytes);check();
+    RawEditLog.stages(lutNs,uploadNs,android.os.SystemClock.elapsedRealtimeNanos()-drawBegin);
     bytes.position(0);bytes.limit(w*h*4);return bytes;
   }
   private static void check()throws IOException{

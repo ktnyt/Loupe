@@ -26,17 +26,16 @@ def parse_events(logs, minimum_ns=0, maximum_ns=None):
     """Parse only fixed anonymous fields; paths and arbitrary log text never enter results."""
     inputs = {}
     begins = {}
-    releases = {}
     frames = []
     events = []
     def within(ns):
         return ns >= minimum_ns and (maximum_ns is None or ns <= maximum_ns)
     for line in logs.splitlines():
-        match = re.search(r'adjust\.(input|begin|release) ticket=(\d+) ns=(\d+)', line)
+        match = re.search(r'adjust\.(input|begin) ticket=(\d+) ns=(\d+)', line)
         if match:
             kind, ticket, ns = match.groups(); ticket, ns = int(ticket), int(ns)
             if within(ns):
-                (inputs if kind == 'input' else begins if kind == 'begin' else releases)[ticket] = ns
+                (inputs if kind == 'input' else begins)[ticket] = ns
             continue
         match = re.search(r'adjust\.frame ticket=(\d+) input_ns=(\d+) commit_ns=(\d+)', line)
         if match:
@@ -51,7 +50,7 @@ def parse_events(logs, minimum_ns=0, maximum_ns=None):
                 events.append({'name': name, 'ms': int(ms), 'width': int(width), 'height': int(height), 'ns': int(ns)})
     # A commit for a skipped or unrelated ticket is not a measured input sample.
     frames = [f for f in frames if inputs.get(f['ticket']) == f['input_ns']]
-    return {'inputs': inputs, 'begins': begins, 'releases': releases, 'frames': frames, 'events': events}
+    return {'inputs': inputs, 'begins': begins, 'frames': frames, 'events': events}
 
 
 def latency_metrics(inputs, frames):
@@ -97,8 +96,6 @@ def summarize(logs, mode, source, launch_ns=0, end_ns=None, drags=None):
     metrics = latency_metrics(inputs, frames)
     callback_inputs = {t: ns for t, ns in parsed['begins'].items() if t in inputs and ns <= inputs[t]}
     callback_metrics = latency_metrics(callback_inputs, [{**f, 'input_ns': callback_inputs[f['ticket']]} for f in frames if f['ticket'] in callback_inputs])
-    release_inputs = {t: ns for t, ns in parsed['releases'].items() if t in parsed['inputs'] and ns <= parsed['inputs'][t]}
-    refinement = latency_metrics(release_inputs, [{**f, 'input_ns': release_inputs[f['ticket']]} for f in parsed['frames'] if f['ticket'] in release_inputs])
     overlap = subset(during)
     groups = []
     for bounds in drags or []:
@@ -125,9 +122,7 @@ def summarize(logs, mode, source, launch_ns=0, end_ns=None, drags=None):
     return {
         'status': 'FAIL' if failures else 'PASS', 'failures': failures, 'mode': mode, 'source': source,
         'boundary': 'render request after synchronous controls to frame commit; not display scanout',
-        'edit_callback': {'boundary': 'pointer edit callback entry to frame commit; excludes hardware/event delivery', **callback_metrics},
-        'refinement': {'boundary': 'edit end callback to committed 1024 preview', **refinement},
-        'render_sizes': [{'width': w, 'height': h, 'count': sum(e['name'] == 'adjust.render' and e['width'] == w and e['height'] == h for e in events)} for w, h in sorted({(e['width'], e['height']) for e in events if e['name'] == 'adjust.render'})],
+        'edit_callback': {'boundary': 'graph MOVE callback entry to frame commit; excludes hardware/event delivery', **callback_metrics},
         'measurement': {'launch_ns': launch_ns, 'end_ns': end_ns},
         'preparation_classification': 'input timestamp inside preparation interval; frame commit may occur later',
         'preparation': {'start_ns': start_ns, 'complete_ns': complete_ns, 'observed_end_ns': overlap_end,

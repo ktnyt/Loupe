@@ -18,14 +18,6 @@ def sample(ticket, ns, latency=1000000):
 
 
 class ParserChecks(unittest.TestCase):
-    def test_refinement_keeps_release_outside_rounded_drag_window(self):
-        logs = sample(1, 2000000, 1000000) + '\nI/LoupeRawEdit: adjust.release ticket=1 ns=1000000'
-        result = profile.summarize(logs, 'initial-preparation', 'synthetic', drags=[])
-        self.assertEqual(result['all']['frame_count'], 0)
-        self.assertEqual(result['refinement']['median_ms'], 2)
-        bad = sample(1, 2000000) + '\nI/LoupeRawEdit: adjust.release ticket=1 ns=4000000'
-        self.assertEqual(profile.summarize(bad, 'initial-preparation', 'synthetic')['refinement']['input_count'], 0)
-
     def test_callback_latency_includes_synchronous_controls_and_rejects_bad_ownership(self):
         logs = sample(1, 2000000, 1000000) + '\nI/LoupeRawEdit: adjust.begin ticket=1 ns=1000000\nI/LoupeRawEdit: adjust.begin ticket=9 ns=500000'
         result = profile.summarize(logs, 'initial-preparation', 'synthetic')
