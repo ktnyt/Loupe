@@ -30,8 +30,8 @@ public final class RawEditActivity extends Activity {
   private volatile long rendered=-1;
   private volatile RenderRequest latest;
   private static final class RenderRequest {
-    final long ticket,inputNs;final RawEditState state;final boolean before,max;
-    RenderRequest(long id,long ns,RawEditState values,boolean original,boolean boost){ticket=id;inputNs=ns;state=values;before=original;max=boost;}
+    final long ticket,inputNs;final RawEditState state;final boolean before,max;final int previewSide;
+    RenderRequest(long id,long ns,RawEditState values,boolean original,boolean boost,int side){ticket=id;inputNs=ns;state=values;before=original;max=boost;previewSide=side;}
   }
   private boolean loading;
   private Uri input;
@@ -214,8 +214,10 @@ public final class RawEditActivity extends Activity {
   private void updateCurvePanel(){if(curvePanel!=null)curvePanel.update(state,history.canUndo(),history.canRedo());}
   private void beginEdit(){if(editStart==null)editStart=state;interacting=true;updateBadge();}
   private void endEdit(boolean cancel){
-    RawEditState start=editStart;editStart=null;if(start!=null){if(cancel){state=start;if(pad!=null)pad.update(state);requestRender();}else history.push(start,state);}
+    long releasedAt=SystemClock.elapsedRealtimeNanos();boolean refine=latest!=null&&latest.previewSide<1024;
+    RawEditState start=editStart;editStart=null;if(start!=null){if(cancel){state=start;if(pad!=null)pad.update(state);}else history.push(start,state);}
     interacting=false;updateCurvePanel();updateBadge();
+    if(start!=null&&(cancel||refine))requestRender(0,refine?releasedAt:0);
   }
   private void applyHistory(boolean redo){endEdit(false);state=redo?history.redo(state):history.undo(state);before=false;compare.setSelected(false);if(pad!=null)pad.update(state);updateCurvePanel();requestRender();}
   private void changed(RawEditState value){changed(value,0);}
@@ -432,7 +434,8 @@ public final class RawEditActivity extends Activity {
     });
   }
   private void requestRender(){requestRender(0);}
-  private void requestRender(long editNs){lastInputMs=SystemClock.elapsedRealtime();image.clearDetail();if(fullSession!=null)fullSession.input();long inputNs=SystemClock.elapsedRealtimeNanos(),requested=revision.incrementAndGet();latest=new RenderRequest(requested,inputNs,state,before,maxSaturation);RawEditLog.input(requested,inputNs);if(editNs>0)RawEditLog.begin(requested,editNs);main.removeCallbacks(busy);main.postDelayed(busy,400);scheduleRender();}
+  private void requestRender(long editNs){requestRender(editNs,0);}
+  private void requestRender(long editNs,long releasedAt){lastInputMs=SystemClock.elapsedRealtime();image.clearDetail();if(fullSession!=null)fullSession.input();long inputNs=SystemClock.elapsedRealtimeNanos(),requested=revision.incrementAndGet();latest=new RenderRequest(requested,inputNs,state,before,maxSaturation,editNs>0&&editStart!=null?768:1024);RawEditLog.input(requested,inputNs);if(editNs>0)RawEditLog.begin(requested,editNs);if(releasedAt>0)RawEditLog.release(requested,releasedAt);main.removeCallbacks(busy);main.postDelayed(busy,400);scheduleRender();}
   private void scheduleRender(){
     if(!ready||dead||!visible||latest==null||!queued.compareAndSet(false,true))return;
     int token=epoch;
@@ -441,7 +444,7 @@ public final class RawEditActivity extends Activity {
       RenderRequest request=latest;long ticket=request.ticket,requestedAt=request.inputNs,start=SystemClock.elapsedRealtime();
       RawEditState snapshot=request.state;boolean original=request.before,boost=request.max;
       try{
-        Bitmap b=renderer.render(snapshot,original,boost,1024);
+        Bitmap b=renderer.render(snapshot,original,boost,request.previewSide);
         RawEditLog.event("adjust.render",SystemClock.elapsedRealtime()-start,b.getWidth(),b.getHeight());
         main.post(()->{
           // Present completed work even while a newer request is pending. The single worker
