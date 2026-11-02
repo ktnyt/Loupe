@@ -2,7 +2,7 @@
 
 ## 目的と範囲
 
-Leica Contemporaryに近づけるため、写真を比較しながら曲線・LUT・粒子を独立に差し替えられる基盤を既存の現像へ追加する。CNTの内部処理や参照ペアを取得していないため、CNT-likeは仮説のプリセットであり、再現精度の保証ではない。合意済み要件はissue #65。以下の契約は依頼の範囲で具体化したもの。
+Leica Contemporaryに近づけるため、写真を比較しながら曲線・LUT・周辺光量・粒子を独立に差し替えられる基盤を既存の現像へ追加する。CNT-likeは同一入力にGalleryのCNTを適用した参照から校正する。撮影時CNTとの等価性や、すべての写真で同等の画質となることは保証しない。合意済み要件はissue #65・#67。以下の契約は依頼の範囲で具体化したもの。
 
 ## 既存経路の調査
 
@@ -30,14 +30,15 @@ Leica Contemporaryに近づけるため、写真を比較しながら曲線・LU
 2. 既存の現像（露出/質感/基本階調/既存曲線/彩度/色域圧縮）。
 3. 表示参照の符号化sRGBに、追加lookのOklab L曲線→RGB合成→R/G/B曲線。
 4. `.cube` 3D LUT（符号化sRGB入出力）。
-5. seed付き共通チャンネル粒子。
-6. 既存の出力ディザ、clamp、RGBA8/JPEG。
+5. 全画像の正規化座標による周辺光量（ハイライト保護付き）。
+6. seed付き共通チャンネル粒子。
+7. 既存の出力ディザ、clamp、RGBA8/JPEG。
 
 追加lookはすでに表示参照へ変換された画像のカラーグレーディングなので、独自のHDR shoulderやRAWトーンマッピングを追加しない。Oklab曲線に入るときだけsRGBをlinearへ戻し、Oklab→色域圧縮→sRGBへ戻す。LUTの前後で誤ってガンマを二重適用しない。中間画像の8bit化は追加しない。
 
 ### 曲線
 
-既存 `RawEditCurve` のPCHIP契約を再利用する。5曲線を追加lookの値として独立保持し、toneスイッチは5曲線全体をbypassする。identity曲線は数学的な往復変換も省く。黒/暗部/中間/明部の制御点を持つ仮プリセットは、最暗部を締め、暗部を残し、中間をわずかに柔らかく、明部を圧縮する。効果の主観評価は参照ペアが揃ってから行う。
+既存 `RawEditCurve` のPCHIP契約を再利用する。5曲線を追加lookの値として独立保持し、toneスイッチは5曲線全体をbypassする。identity曲線は数学的な往復変換も省く。CNT-likeの曲線は5本ともidentity。測定した色・階調変換を組込みLUTに保持し、曲線による二重補正を避ける。手動の多点調整は独立して使用できる。
 
 ### LUT
 
@@ -46,6 +47,13 @@ Leica Contemporaryに近づけるため、写真を比較しながら曲線・LU
 - 正確なN³要素、有限値、正の有限DOMAIN幅、directiveの重複/未知/1D shaperを検証。テキスト32MiB上限、1行4096字上限、出力絶対値65504上限。範囲外の有限LUT出力は粒子後の最終出力でclampする。
 - CPUとGPUの双方が三線形補間。GPUはRGBA32F・NEARESTから8頂点をfetchして手動補間し、float linear filter拡張への依存を避ける。
 - strength=0はbypass、1は完全適用。identity表は同じ入力の変化をfloat誤差内に収める。読み込み失敗時に有効LUTを失わない。
+
+### 周辺光量
+
+- ON/OFFと強度0〜1をLUT・粒子と別に保持する。外部LUTを読み込んでも変更しない。
+- LUT後の符号化RGBへ共通倍率を掛ける。明るさの判定はclampした符号化RGBの加重値であり、線形輝度ではない。測定モデルは[校正データ](calibration/gallery-cnt-v1.json)を正とする。
+- 座標は向きを適用した画像全体のu/v。crop・拡大・原寸タイルで中心を取り直さない。CPU参照は`applyAt`で粒子座標とu/vを明示する。旧`apply`は周辺光量が有効なら誤用を防ぐため失敗する。
+- ハイライト保護の計算用のclampと、画素の最終clampを分ける。LUTの範囲外出力を周辺光量の前に切り捨てない。
 
 ### グレイン
 
@@ -56,9 +64,9 @@ Leica Contemporaryに近づけるため、写真を比較しながら曲線・LU
 
 ## UI
 
-Claude完成参照 `docs/design/loupe-cnt-look-layout-fixed.html` をUIの基準とする。現像▾の48dp入口、下付きスクロールシート（高さmin(content×.46,384dp)、地#1C1C1F、上角丸28dp、dimなし）、プリセット/独立ON/OFF/外部cube/強度/粒子/暗部/seed/リセットを持つ。既存ワンタップBefore/After、原寸保存を利用。カーブパネルは下行を現像/ルック切替とし264dpを保つ。左右分割は今回省略。
+Claude完成参照 `docs/design/loupe-cnt-quality-final.html` をUIの基準とする。現像▾の48dp入口、下付きスクロールシート（高さmin(content×.46,384dp)、地#1C1C1F、上角丸28dp、dimなし）、プリセット/独立ON/OFF/外部cube/強度/周辺光量/粒子/暗部/seed/リセットを持つ。既存ワンタップBefore/After、原寸保存を利用。カーブパネルは下行を現像/ルック切替とし264dpを保つ。左右分割は今回省略。
 
-Customの調整と最後に読み込んだ外部LUTを別々に保持する。既存現像の既定補正が残る初期状態は「追加なし」とし、Neutralを選択済みと表示しない。Neutral選択は現像も中立にする操作、リセットは追加lookだけを戻す操作として分ける。Customの基準プリセットはimmutable lookのbasePresetとしてUndo/Redo・binaryに含め、プリセット往復で書き換えない。look binaryは6502へ更新し、6501はbase0として既存値を読み込む。CNT-likeは既存現像を変えず組込みLUTを使い、Neutralは確認後に既存現像を含め中立へ戻す。Neutral後もCustomと外部LUTは保持する。外部入力の失敗/中断は有効なrecipeを変えず、再読込を提示する。古い非同期結果はrequest世代で破棄する。Activity停止時は読み込みを中断し、復元ではURIを再読せずprivate recipeを読む。Store v2はcurrent/saved/custom/外部cubeを最大13,214,784 bytesで原子的に保存し、Bundleにはtokenだけを入れる。同期保存時間とimport完了時間をmsでログへ残す。
+Customの調整と最後に読み込んだ外部LUTを別々に保持する。既存現像の既定補正が残る初期状態は「追加なし」とし、Neutralを選択済みと表示しない。Neutral選択は現像も中立にする操作、リセットは追加lookだけを戻す操作として分ける。Customの基準プリセットはimmutable lookのbasePresetとしてUndo/Redo・binaryに含め、プリセット往復で書き換えない。look binaryは6503。6501はbase0、6501/6502は周辺光量を無効にして既存値を読み込み、既存の画素を保つ。CNT-likeは既存現像を変えず組込みLUTを使い、Neutralは確認後に既存現像を含め中立へ戻す。Neutral後もCustomと外部LUTは保持する。外部入力の失敗/中断は有効なrecipeを変えず、再読込を提示する。古い非同期結果はrequest世代で破棄する。Activity停止時は読み込みを中断し、復元ではURIを再読せずprivate recipeを読む。Store v2はcurrent/saved/custom/外部cubeを最大13,214,784 bytesで原子的に保存し、Bundleにはtokenだけを入れる。同期保存時間とimport完了時間をmsでログへ残す。
 
 ## 検証
 

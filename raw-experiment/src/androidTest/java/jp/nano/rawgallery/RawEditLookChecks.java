@@ -43,20 +43,22 @@ final class RawEditLookChecks {
       require(grainA.sameAs(grainB),"same seed GPU output must be exact");require(!grainA.sameAs(grainOther),"different seed must change GPU grain");
       for(int x=0;x<width;x++){int p=grainA.getPixel(x,4);require(Math.abs(code(p,0)-code(p,1))<=1&&Math.abs(code(p,0)-code(p,2))<=1,"grain must remain achromatic on neutral gray");}
       grainA.recycle();grainB.recycle();grainOther.recycle();
-      RawEditLook disabled=cnt.withToneEnabled(false).withLutEnabled(false).withGrainEnabled(false);Bitmap off=renderer.render(neutral.withLook(disabled),false,false,2048);require(off.sameAs(unprocessed),"disabled look must preserve old path exactly");off.recycle();
-      Bitmap graded=renderer.render(neutral.withLook(cnt.withGrainEnabled(false)),false,false,2048);boolean[] levels=new boolean[256];int previous=-1,unique=0;
-      for(int x=0;x<width;x++){int v=code(graded.getPixel(x,0),0);require(v>=previous-1,"CNT gray ramp must not reverse beyond final dither");levels[v]=true;previous=v;}for(boolean present:levels)if(present)unique++;require(unique>225,"gradient has too few final 8-bit levels");require(code(graded.getPixel(0,0),0)<=1&&code(graded.getPixel(width-1,0),0)<255,"black endpoint / highlight compression");graded.recycle();unprocessed.recycle();
+      RawEditLook disabled=cnt.withToneEnabled(false).withLutEnabled(false).withGrainEnabled(false).withVignetteEnabled(false);Bitmap off=renderer.render(neutral.withLook(disabled),false,false,2048);require(off.sameAs(unprocessed),"disabled look must preserve old path exactly");off.recycle();
+      // This explicit luminance fixture checks precision and endpoint behavior independently of measured CNT colors.
+      RawEditLook precision=RawEditLook.neutral().withToneEnabled(true).withCurve(0,new RawEditCurve(new float[]{0,0,.025f,.014f,.13f,.14f,.45f,.46f,.75f,.74f,1,.96f}));
+      Bitmap graded=renderer.render(neutral.withLook(precision),false,false,2048);boolean[] levels=new boolean[256];int previous=-1,unique=0;
+      for(int x=0;x<width;x++){int v=code(graded.getPixel(x,0),0);require(v>=previous-1,"luminance fixture gray ramp must not reverse beyond final dither");levels[v]=true;previous=v;}for(boolean present:levels)if(present)unique++;require(unique>225,"gradient has too few final 8-bit levels");require(code(graded.getPixel(0,0),0)<=1&&code(graded.getPixel(width-1,0),0)<255,"black endpoint / highlight compression");graded.recycle();unprocessed.recycle();
     }
     File recipe=File.createTempFile("synthetic-look-",".recipe",instrumentation.getTargetContext().getCacheDir());
-    try{RawEditLook expected=RawEditLook.cntLike().withCube(table(65,true)).withSeed(-319);try(DataOutputStream out=new DataOutputStream(new BufferedOutputStream(new FileOutputStream(recipe)))){expected.write(out);}try(DataInputStream in=new DataInputStream(new BufferedInputStream(new FileInputStream(recipe)))){require(expected.equals(RawEditLook.read(in))&&in.read()==-1,"private look recipe round trip");}}finally{recipe.delete();}
-    tiles(instrumentation);gridStability(instrumentation);resize();store(instrumentation);RawEditPublishChecks.runLook(instrumentation);
+    try{RawEditLook expected=RawEditLook.cntLike().withCube(table(65,true)).withSeed(-319).withVignetteEnabled(true).withVignetteStrength(.63f);try(DataOutputStream out=new DataOutputStream(new BufferedOutputStream(new FileOutputStream(recipe)))){expected.write(out);}try(DataInputStream in=new DataInputStream(new BufferedInputStream(new FileInputStream(recipe)))){require(expected.equals(RawEditLook.read(in))&&in.read()==-1,"private look recipe round trip");}}finally{recipe.delete();}
+    calibratedAnchors();spatial();tiles(instrumentation);gridStability(instrumentation);resize();store(instrumentation);RawEditPublishChecks.runLook(instrumentation);
     android.util.Log.i("LoupeRawEdit","look.check max_code_error="+maxCpuGpu+" ms="+(android.os.SystemClock.elapsedRealtime()-started));
   }
   private static void store(Instrumentation instrumentation)throws Exception {
     File directory=new File(instrumentation.getTargetContext().getCacheDir(),"synthetic-look-store-"+java.util.UUID.randomUUID());
     require(directory.mkdir(),"create isolated look store");String token=null;
     try {
-      RawEditLook current=RawEditLook.cntLike().withCube(table(65,true)),saved=current.withSeed(71),custom=current.withGrainStrength(.3f);
+      RawEditLook current=RawEditLook.cntLike().withCube(table(65,true)).withVignetteEnabled(true).withVignetteStrength(.37f),saved=current.withSeed(71),custom=current.withGrainStrength(.3f);
       long start=android.os.SystemClock.elapsedRealtime();token=RawEditLookStore.save(directory,null,current,saved,custom);
       long saveMs=android.os.SystemClock.elapsedRealtime()-start;start=android.os.SystemClock.elapsedRealtime();
       RawEditLook[] loaded=RawEditLookStore.load(directory,token);long loadMs=android.os.SystemClock.elapsedRealtime()-start;
@@ -68,19 +70,48 @@ final class RawEditLookChecks {
   private static int reference(RawEditRenderer renderer,RawEditState state,double[][][] input)throws Exception {
     Bitmap actual=renderer.render(state,false,false,2048);int max=0;
     try{for(int y=0;y<input.length;y++)for(int x=0;x<input[0].length;x++){
-      double[] expected=state.look().apply(RawEditTone.apply(state,input[y][x]),(x+.5)*2,(y+.5)*2,2,2);int pixel=actual.getPixel(x,y);
+      double grid=2048./Math.max(input[0].length,input.length);double[] expected=state.look().applyAt(RawEditTone.apply(state,input[y][x]),(x+.5)*grid,(y+.5)*grid,grid,grid,(x+.5)/input[0].length,(y+.5)/input.length);int pixel=actual.getPixel(x,y);
       for(int c=0;c<3;c++){int difference=Math.abs(code(pixel,c)-(int)Math.round(expected[c]*255));max=Math.max(max,difference);require(difference<=2,"look CPU/GPU row="+y+" x="+x+" channel="+c+" error="+difference);}
     }}finally{actual.recycle();}return max;
+  }
+  private static void calibratedAnchors()throws Exception {
+    // These constants freeze model RGB, not just agreement between implementations.
+    // Corner is the center of pixel (0,0) on the full 65^2 upright image: q=(.5/65,.5/65).
+    double[][] input={{0,0,0},{.18,.18,.18},{.5,.5,.5},{.9,.9,.9},{1,1,1},{.8,.2,.1},{.1,.7,.3}},center={{0,0,0},{.17347894085216523,.18607647852230072,.1818952338256836},{.5936646461486816,.6071571707725525,.5989733934402466},{.9200371122360229,.9301710448265075,.9260049095153808},{.9882687330245972,.9974678754806519,.9932222962379456},{.854177093029022,.2561441124677658,.22324134373664858},{.11555686318874357,.787363278388977,.41770423674583423}},corner={{0,0,0},{.12439399439578258,.13342712557955494,.1304289418991414},{.4343675950038363,.44423969284463144,.43825185492815505},{.8323814216409241,.8415498531142807,.8377806425173342},{.9310723750951195,.9397391143424331,.9357392493086957},{.6124922137598573,.18366949402798521,.1600763892451274},{.08506053555029708,.5795721715205571,.30746893865746383}};
+    for(int i=0;i<input.length;i++){
+      ByteBuffer pixels=ByteBuffer.allocateDirect(65*65*16).order(ByteOrder.nativeOrder());for(int n=0;n<65*65;n++){for(int k=0;k<3;k++)pixels.putFloat((float)RawEditTone.decode(input[i][k]));pixels.putFloat(1);}pixels.flip();
+      try(RawEditRenderer renderer=new RawEditRenderer(65,65,pixels)){
+        Bitmap actual=renderer.render(RawEditState.neutral().withLook(RawEditLook.cntLike()),false,false,2048);
+        try{for(int k=0;k<3;k++){require(Math.abs(code(actual.getPixel(32,32),k)-(int)Math.round(center[i][k]*255))<=2,"frozen measured GPU center RGB anchor="+i+" channel="+k);require(Math.abs(code(actual.getPixel(0,0),k)-(int)Math.round(corner[i][k]*255))<=2,"frozen measured GPU corner RGB anchor="+i+" channel="+k);}}finally{actual.recycle();}
+      }
+    }
+  }
+  private static void spatial()throws Exception {
+    for(int[] size:new int[][]{{193,127},{127,193}}){
+      int width=size[0],height=size[1];double[][][] input=new double[height][width][];
+      ByteBuffer pixels=ByteBuffer.allocateDirect(width*height*16).order(ByteOrder.nativeOrder());
+      for(int y=0;y<height;y++)for(int x=0;x<width;x++){double[] c={.72,.42,.19};input[y][x]=new double[3];for(int k=0;k<3;k++){float value=(float)RawEditTone.decode(c[k]);pixels.putFloat(value);input[y][x][k]=value;}pixels.putFloat(1);}pixels.flip();
+      try(RawEditRenderer renderer=new RawEditRenderer(width,height,pixels)){
+        RawEditLook spatial=RawEditLook.neutral().withVignetteEnabled(true);RawEditState state=RawEditState.neutral();
+        reference(renderer,state.withLook(spatial),input);
+        StringBuilder cubeText=new StringBuilder("LUT_3D_SIZE 2\n");for(int i=0;i<8;i++)cubeText.append("1.1 1.1 1.1\n");RawEditCube unbounded=RawEditCube.read(new ByteArrayInputStream(cubeText.toString().getBytes(StandardCharsets.UTF_8)));reference(renderer,state.withLook(spatial.withCube(unbounded).withLutEnabled(true)),input);
+        reference(renderer,state.withLook(spatial.withVignetteStrength(.41f).withGrainEnabled(true).withGrainStrength(.7f).withSeed(-319)),input);
+        Bitmap baseline=renderer.render(state,false,false,2048),zero=renderer.render(state.withLook(spatial.withVignetteStrength(0)),false,false,2048),off=renderer.render(state.withLook(spatial.withVignetteEnabled(false)),false,false,2048),on=renderer.render(state.withLook(spatial),false,false,2048);
+        try{require(baseline.sameAs(zero)&&baseline.sameAs(off),"vignette zero/disabled exact GPU identity");require(code(on.getPixel(0,0),0)<code(on.getPixel(width/2,height/2),0)-20,"vignette corner visibly below center");require(Math.abs(code(on.getPixel(0,0),0)-code(on.getPixel(width-1,height-1),0))<=1,"vignette opposite corners symmetric");}finally{baseline.recycle();zero.recycle();off.recycle();on.recycle();}
+      }
+    }
   }
   private static void tiles(Instrumentation instrumentation)throws Exception {
     File cache=File.createTempFile("synthetic-look-tiles-",".ppm",instrumentation.getTargetContext().getCacheDir());
     try{
       // Uses the existing validated RGB16 fixture path, including genuine 16-bit source quantization.
-      RawEditTileChecks.fixture(cache,193,127,3);
+      for(int[] size:new int[][]{{193,127},{127,193}}){
+      int width=size[0],height=size[1];RawEditTileChecks.fixture(cache,width,height,3);
       try(RawEditFullSource full=RawEditFullSource.open(cache);RawEditRenderer reference=new RawEditRenderer(full.width,full.height,full.region(new Rect(0,0,full.width,full.height)));RawEditRenderer tiled=new RawEditRenderer()){
-        RawEditState state=RawEditState.neutral().withLook(RawEditLook.cntLike().withGrainStrength(.8f));Bitmap expected=reference.render(state,false,false,2048);int max=0;
-        try{for(int y=0;y<127;y+=31)for(int x=0;x<193;x+=47){int w=Math.min(47,193-x),h=Math.min(31,127-y);Bitmap tile=tiled.renderRegionBitmap(full,state,false,false,new RectF(x,y,x+w,y+h),w,h);try{for(int j=0;j<h;j++)for(int i=0;i<w;i++)for(int c=0;c<3;c++){int difference=Math.abs(code(tile.getPixel(i,j),c)-code(expected.getPixel(x+i,y+j),c));max=Math.max(max,difference);require(difference<=2,"look tile seam mismatch x="+(x+i)+" y="+(y+j)+" error="+difference);}}finally{tile.recycle();}}}finally{expected.recycle();}
-        android.util.Log.i("LoupeRawEdit","look.tiles max_code_error="+max+" tiles=25");
+        RawEditState state=RawEditState.neutral().withLook(RawEditLook.cntLike().withGrainEnabled(true).withGrainStrength(.8f).withVignetteEnabled(true));Bitmap expected=reference.render(state,false,false,2048);int max=0;
+        try{for(int y=0;y<height;y+=31)for(int x=0;x<width;x+=47){int w=Math.min(47,width-x),h=Math.min(31,height-y);Bitmap tile=tiled.renderRegionBitmap(full,state,false,false,new RectF(x,y,x+w,y+h),w,h);try{for(int j=0;j<h;j++)for(int i=0;i<w;i++)for(int c=0;c<3;c++){int difference=Math.abs(code(tile.getPixel(i,j),c)-code(expected.getPixel(x+i,y+j),c));max=Math.max(max,difference);require(difference<=2,"look tile seam mismatch x="+(x+i)+" y="+(y+j)+" error="+difference);}}finally{tile.recycle();}}}finally{expected.recycle();}
+        android.util.Log.i("LoupeRawEdit","look.tiles max_code_error="+max+" width="+width+" height="+height);
+      }
       }
     }finally{cache.delete();}
   }

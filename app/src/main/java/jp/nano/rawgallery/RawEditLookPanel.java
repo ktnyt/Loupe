@@ -17,10 +17,10 @@ final class RawEditLookPanel extends ScrollView {
   private final Listener listener;
   private final LinearLayout body;
   private final Button[] presets=new Button[3];
-  private final Toggle tone,lut,grain;
+  private final Toggle tone,lut,vignette,grain;
   private final Button edit,pick,retry,reset,close;
   private final TextView unsaved,lutStatus,retained;
-  private final Slider lutStrength,grainStrength,grainShadows;
+  private final Slider lutStrength,vignetteStrength,grainStrength,grainShadows;
   private final EditText seed;
   private RawEditLook look=RawEditLook.neutral();
   private boolean updating,loading,seedDirty;
@@ -35,7 +35,7 @@ final class RawEditLookPanel extends ScrollView {
     LinearLayout heading=row(24,8);LinearLayout label=new LinearLayout(context);label.setGravity(Gravity.CENTER_VERTICAL);TextView title=text("ルック",20,INK);title.setTypeface(Typeface.create(Typeface.DEFAULT,600,false));label.addView(title);TextView research=text("研究用",12,MUTED);LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(-2,-2);rp.leftMargin=dp(8);label.addView(research,rp);heading.addView(label,new LinearLayout.LayoutParams(0,-2,1));
     unsaved=text("未保存",12,0xffffd48a);unsaved.setGravity(Gravity.CENTER);unsaved.setPadding(dp(8),dp(2),dp(8),dp(2));unsaved.setBackground(shape(0xff2a2a2e,10,0));LinearLayout.LayoutParams up=new LinearLayout.LayoutParams(-2,-2);up.rightMargin=dp(8);heading.addView(unsaved,up);
     close=button("閉じる",listener::close);close.setTag("look-close");heading.addView(close,new LinearLayout.LayoutParams(-2,dp(48)));body.addView(heading);
-    TextView note=text("Leica CNT の再現ではありません。仮説の CNT-like を比べるための研究用です。この画面の色は近似です。",12,MUTED);LinearLayout.LayoutParams np=new LinearLayout.LayoutParams(-1,-2);np.setMargins(dp(24),dp(4),dp(24),dp(8));body.addView(note,np);
+    TextView note=text("Gallery の CNT を参照して調整したルックです。撮影時CNTとの比較・調整に使えます。",12,MUTED);LinearLayout.LayoutParams np=new LinearLayout.LayoutParams(-1,-2);np.setMargins(dp(24),dp(4),dp(24),dp(8));body.addView(note,np);
     LinearLayout presetRow=row(16,16);for(int i=0;i<3;i++){final int p=i;Button b=button(PRESETS[i],()->{finishFields();listener.preset(p);});b.setTag("look-preset-"+i);b.setTextSize(13);b.setPadding(dp(6),dp(4),dp(6),dp(4));b.setContentDescription(PRESETS[i]+(i==0?"。現像の補正も中立に戻す、確認あり":i==1?"。追加のルックだけを置き換える":"。保持した手動調整に戻る"));b.setAccessibilityDelegate(new View.AccessibilityDelegate(){public void onInitializeAccessibilityNodeInfo(View host,AccessibilityNodeInfo info){super.onInitializeAccessibilityNodeInfo(host,info);info.setClassName("android.widget.RadioButton");info.setCheckable(true);info.setChecked(host.isSelected());}});presets[i]=b;LinearLayout.LayoutParams pp=new LinearLayout.LayoutParams(0,-2,1);if(i>0)pp.leftMargin=dp(4);presetRow.addView(b,pp);}body.addView(presetRow);
     separator();LinearLayout tr=row(8,8);tone=new Toggle(context,"トーン","ルックのトーン",()->change(look.withToneEnabled(!look.toneEnabled())));tone.setTag("look-tone");tr.addView(tone,new LinearLayout.LayoutParams(0,dp(48),1));edit=button("カーブを編集",()->{finishFields();listener.editCurves();});edit.setTag("look-edit-curves");tr.addView(edit,new LinearLayout.LayoutParams(-2,dp(48)));body.addView(tr);
     separator();LinearLayout lr=row(8,8);lut=new Toggle(context,"LUT","LUT",()->change(look.withCube(look.cube()==null?retainedExternal:look.cube()).withLutEnabled(!look.lutEnabled())));lut.setTag("look-lut");lr.addView(lut,new LinearLayout.LayoutParams(0,dp(48),1));pick=button(".cube を読み込む",()->{finishFields();listener.pickCube();});pick.setTag("look-pick");lr.addView(pick,new LinearLayout.LayoutParams(-2,dp(48)));body.addView(lr);
@@ -44,6 +44,8 @@ final class RawEditLookPanel extends ScrollView {
     retry=button("再読込",()->{finishFields();listener.retryCube();});retry.setTag("look-retry");addInset(retry,16,0,16,0);((LinearLayout.LayoutParams)retry.getLayoutParams()).width=-2;
     TextView space=text("sRGB で符号化した値用・2〜65・32MiB まで",12,MUTED);addInset(space,16,4,16,0);
     lutStrength=sliderRow("強度","LUTの強度","look-lut-strength",v->look.withLutStrength(v));
+    separator();LinearLayout vr=row(8,8);vignette=new Toggle(context,"周辺光量","周辺光量",()->change(look.withVignetteEnabled(!look.vignetteEnabled())));vignette.setTag("look-vignette");vr.addView(vignette,new LinearLayout.LayoutParams(-2,dp(48)));body.addView(vr);
+    vignetteStrength=sliderRow("強度","周辺光量の強度","look-vignette-strength",v->look.withVignetteStrength(v));
     separator();LinearLayout gr=row(8,8);grain=new Toggle(context,"粒子","粒子",()->change(look.withGrainEnabled(!look.grainEnabled())));grain.setTag("look-grain");gr.addView(grain,new LinearLayout.LayoutParams(-2,dp(48)));body.addView(gr);
     grainStrength=sliderRow("強度","粒子の強度","look-grain-strength",v->look.withGrainStrength(v));grainShadows=sliderRow("暗部寄り","粒子の暗部寄り","look-grain-shadows",v->look.withGrainShadows(v));
     LinearLayout sr=row(16,16);TextView sl=text("固定 seed",12,MUTED);sr.addView(sl,new LinearLayout.LayoutParams(-2,dp(48)));seed=new EditText(context);seed.setTag("look-seed");seed.setTextSize(14);seed.setTextColor(INK);seed.setIncludeFontPadding(false);seed.setSingleLine(true);seed.setGravity(Gravity.CENTER);seed.setPadding(dp(4),0,dp(4),0);seed.setSelectAllOnFocus(true);seed.setInputType(InputType.TYPE_CLASS_NUMBER);seed.setFilters(new InputFilter[]{new InputFilter.LengthFilter(6)});seed.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);seed.setBackground(shape(0x59000000,8,0xff3a3a3f));seed.setContentDescription("粒子の固定 seed、0から999999");LinearLayout.LayoutParams se=new LinearLayout.LayoutParams(dp(96),dp(48));se.leftMargin=dp(8);sr.addView(seed,se);body.addView(sr);
@@ -85,13 +87,14 @@ final class RawEditLookPanel extends ScrollView {
     this.look=look;this.retainedExternal=retainedExternal;this.loading=loading;this.basePreset=Math.max(0,Math.min(1,basePreset));updating=true;
     unsaved.setVisibility(dirty?VISIBLE:GONE);
     for(int i=0;i<3;i++){boolean selected=i==preset;Button b=presets[i];b.setSelected(selected);b.setTypeface(Typeface.create(Typeface.DEFAULT,selected?600:500,false));b.setTextColor(selected?0xff111111:INK);b.setBackground(shape(selected?INK:Color.TRANSPARENT,12,selected?INK:0xff3a3a3f));b.setEnabled(!loading);}
-    tone.on=look.toneEnabled();lut.on=look.lutEnabled();grain.on=look.grainEnabled();tone.setEnabled(!loading);lut.setEnabled(!loading&&(look.cube()!=null||retainedExternal!=null));grain.setEnabled(!loading);tone.invalidate();lut.invalidate();grain.invalidate();
-    tone.setStateDescription(tone.on?"オン":"オフ");lut.setStateDescription(lut.on?"オン":"オフ");grain.setStateDescription(grain.on?"オン":"オフ");
+    tone.on=look.toneEnabled();lut.on=look.lutEnabled();vignette.on=look.vignetteEnabled();grain.on=look.grainEnabled();tone.setEnabled(!loading);lut.setEnabled(!loading&&(look.cube()!=null||retainedExternal!=null));vignette.setEnabled(!loading);grain.setEnabled(!loading);tone.invalidate();lut.invalidate();vignette.invalidate();grain.invalidate();
+    tone.setStateDescription(tone.on?"オン":"オフ");lut.setStateDescription(lut.on?"オン":"オフ");vignette.setStateDescription(vignette.on?"オン":"オフ");grain.setStateDescription(grain.on?"オン":"オフ");
     edit.setEnabled(!loading);pick.setEnabled(!loading);reset.setEnabled(!loading);seed.setEnabled(!loading);lutStrength.setEnabled(!loading);grainStrength.setEnabled(!loading);grainShadows.setEnabled(!loading);
-    RawEditLook defaults=this.basePreset==1?RawEditLook.cntLike():RawEditLook.neutral();lutStrength.resetProgress=Math.round(defaults.lutStrength()*100);grainStrength.resetProgress=Math.round(defaults.grainStrength()*100);grainShadows.resetProgress=Math.round(defaults.grainShadows()*100);
-    lutStrength.setValue(look.lutStrength());grainStrength.setValue(look.grainStrength());grainShadows.setValue(look.grainShadows());
+    vignetteStrength.setEnabled(!loading);
+    RawEditLook defaults=this.basePreset==1?RawEditLook.cntLike():RawEditLook.neutral();lutStrength.resetProgress=Math.round(defaults.lutStrength()*100);vignetteStrength.resetProgress=Math.round(defaults.vignetteStrength()*100);grainStrength.resetProgress=Math.round(defaults.grainStrength()*100);grainShadows.resetProgress=Math.round(defaults.grainShadows()*100);
+    lutStrength.setValue(look.lutStrength());vignetteStrength.setValue(look.vignetteStrength());grainStrength.setValue(look.grainStrength());grainShadows.setValue(look.grainShadows());
     if(!seed.hasFocus()&&!seedDirty)seed.setText(Integer.toString(look.seed()));
-    String current=look.cube()==null?"未読込（.cube の 3D LUT）":"使用中："+(RawEditLook.cntLike().cube().equals(look.cube())?"組込みの仮説LUT":look.cube().title())+"・"+look.cube().size()+"³";
+    String current=look.cube()==null?"未読込（.cube の 3D LUT）":"使用中："+(RawEditLook.cntLike().cube().equals(look.cube())?"組込みの測定LUT（CNT）":look.cube().title())+"・"+look.cube().size()+"³";
     lutStatus.setText(loading?"読み込み中…":status!=null&&!status.isEmpty()?status:current);lutStatus.setTextColor(!loading&&status!=null&&!status.isEmpty()?0xffffb4a8:look.cube()==null?MUTED:INK);
     retained.setVisibility(retainedExternal==null?GONE:VISIBLE);if(retainedExternal!=null)retained.setText("読み込み済み："+retainedExternal.title()+"・"+retainedExternal.size()+"³（保持）");
     retry.setVisibility(!loading&&status!=null&&!status.isEmpty()?VISIBLE:GONE);retry.setEnabled(!loading);reset.setText(PRESETS[preset==2?this.basePreset:Math.max(0,Math.min(1,preset))]+" へリセット");

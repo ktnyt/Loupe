@@ -1,0 +1,4 @@
+# Offline research tools only; not Android runtime dependencies.
+numpy>=2.0,<3
+Pillow>=11,<14
+scipy>=1.14,<2

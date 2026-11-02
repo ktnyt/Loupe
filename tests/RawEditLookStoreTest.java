@@ -13,7 +13,7 @@ public final class RawEditLookStoreTest {
   public static void main(String[] args)throws Exception {
     Path root=Files.createTempDirectory("loupe-look-store-");File directory=root.resolve("private-session").toFile();
     try {
-      RawEditLook current=RawEditLook.cntLike().withLutStrength(.67f).withGrainStrength(.83f).withGrainShadows(.45f).withSeed(-314159).withCurve(4,new RawEditCurve(new float[]{0,.02f,.4f,.45f,1,.98f}));
+      RawEditLook current=RawEditLook.cntLike().withVignetteEnabled(true).withVignetteStrength(.37f).withLutStrength(.67f).withGrainStrength(.83f).withGrainShadows(.45f).withSeed(-314159).withCurve(4,new RawEditCurve(new float[]{0,.02f,.4f,.45f,1,.98f}));
       RawEditLook saved=RawEditLook.neutral();
       RawEditLook custom=current.withCube(RawEditCube.identity(65)).withToneEnabled(false).withLutEnabled(false).withGrainEnabled(false).withSeed(Integer.MIN_VALUE);
       RawEditCube external=RawEditCube.identity(65);
