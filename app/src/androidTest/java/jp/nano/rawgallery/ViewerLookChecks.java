@@ -43,6 +43,32 @@ final class ViewerLookChecks {
   private static PhotoLookController makeController(Activity a,PhotoRepository.Photo p,ZoomImageView v){try{return new PhotoLookController(a,p,v,()->{});}catch(IOException e){throw new RuntimeException(e);}}
   private static boolean differs(Bitmap a,Bitmap b){if(a==null||b==null||a.getWidth()!=b.getWidth()||a.getHeight()!=b.getHeight())return false;int differences=0;for(int y=2;y<a.getHeight()-2;y+=3)for(int x=2;x<a.getWidth()-2;x+=3)if(a.getPixel(x,y)!=b.getPixel(x,y)&&++differences>=20)return true;return false;}
 
+  private static Set<Long> ownedOutputs(Activity a) {
+    Set<Long> ids=new HashSet<>();
+    String where=android.provider.MediaStore.Images.Media.OWNER_PACKAGE_NAME+"=? AND "+android.provider.MediaStore.Images.Media.RELATIVE_PATH+" IN (?,?) AND "+android.provider.MediaStore.Images.Media.DISPLAY_NAME+" LIKE ?";
+    try(android.database.Cursor rows=a.getContentResolver().query(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,new String[]{"_id"},where,new String[]{a.getPackageName(),"Pictures/LoupeDevelop","Pictures/LoupeDevelop/","Loupe-%.jpg"},null)){
+      require(rows!=null,"owned output query");while(rows.moveToNext())ids.add(rows.getLong(0));
+    }
+    return ids;
+  }
+  private static void cancelledExports(Instrumentation t,Activity a,PhotoRepository.Photo photo,ZoomImageView image,PhotoLookController[] current,LookPresetStore store,String key,String id)throws Exception {
+    Set<Long> baseline=ownedOutputs(a);
+    TagDetailChecks.ui(t,()->{require(current[0].readyToSave(),"export ready");current[0].saveJpeg();require(current[0].saving(),"save operation started");current[0].cancel();});
+    long end=android.os.SystemClock.uptimeMillis()+30000;boolean[] done={false};
+    while(android.os.SystemClock.uptimeMillis()<end){TagDetailChecks.ui(t,()->done[0]=!current[0].saving());if(done[0])break;Thread.sleep(30);}
+    require(done[0],"explicit cancellation completed");
+    TagDetailChecks.ui(t,()->require(current[0].message().contains("中止")&&current[0].applied().id.equals(id),"cancel outcome and display retained"));
+    require(store.loadSelection(key).id.equals(id)&&ownedOutputs(a).equals(baseline),"cancel keeps selection and leaves no output");
+    PhotoLookController closing=current[0];
+    java.lang.reflect.Field worker=PhotoLookController.class.getDeclaredField("gl");worker.setAccessible(true);java.util.concurrent.ExecutorService gl=(java.util.concurrent.ExecutorService)worker.get(closing);
+    TagDetailChecks.ui(t,()->{closing.saveJpeg();require(closing.saving(),"background-close save started");closing.close();});
+    end=android.os.SystemClock.uptimeMillis()+30000;
+    while(!gl.isTerminated()&&android.os.SystemClock.uptimeMillis()<end)Thread.sleep(30);
+    require(gl.isTerminated(),"background close awaits outcome and releases EGL worker");
+    require(ownedOutputs(a).equals(baseline),"background cancellation leaves no output");
+    TagDetailChecks.ui(t,()->{current[0]=makeController(a,photo,image);current[0].original(fixture(480,320));});waitFor(t,current[0],id,90000);
+    TagDetailChecks.ui(t,()->require(current[0].message().contains("中止"),"background-close outcome restored on next viewer"));
+  }
   static String run(Instrumentation t,int width,float font)throws Exception {
     rawEditActivityLaunches=0;
     Intent launch=new Intent(t.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -79,6 +105,8 @@ final class ViewerLookChecks {
       TagDetailChecks.ui(t,()->{controller[0]=makeController(a,testPhoto,image[0]);controller[0].original(fixture(480,320));});waitFor(t,controller[0],named.id,90000);
       TagDetailChecks.ui(t,()->require(controller[0].applied().look.equals(namedLook),"deleted preset recipe survives in photo selection snapshot"));
 
+      cancelledExports(t,a,testPhoto,image[0],controller,store,key,named.id);
+
       // Restore must fail closed on corrupt bytes, and retry must load the repaired snapshot without clearing it.
       PathHolder selectionFile=new PathHolder(new File(a.getFilesDir(),"look-library/photo-"+hash(key)+".look"));
       committedBytes[0]=java.nio.file.Files.readAllBytes(selectionFile.file.toPath());
@@ -91,7 +119,7 @@ final class ViewerLookChecks {
       TagDetailChecks.ui(t,()->controller[0].select(null));long until=android.os.SystemClock.uptimeMillis()+30000;while(android.os.SystemClock.uptimeMillis()<until){final boolean[] done={false};TagDetailChecks.ui(t,()->done[0]=!controller[0].busy()&&controller[0].applied()==null);if(done[0])break;Thread.sleep(100);}
       TagDetailChecks.ui(t,()->require(controller[0].applied()==null&&shown(image[0])==restoreOriginal[0],"clear restores current original pixels"));require(store.loadSelection(key)==null,"clear removes only fixture selection");
       require(rawEditActivityLaunches==0,"viewer Look flow never opened RawEditActivity");
-      return "PASS actual MainActivity window width="+width+" font="+font+"; named imported LUT and CNT rendered; rapid selection last-wins; late original callback gated; Before retained durable selection; controller close/recreate restored recipe after library deletion; corrupt restore preserved saved bytes and Retry recovered; clear removed fixture selection; RawEditActivity launches="+rawEditActivityLaunches+". Synthetic private JPEG only; no MediaStore export or other photo selection touched.\n";
+      return "PASS actual MainActivity window width="+width+" font="+font+"; named imported LUT and CNT rendered; rapid selection last-wins; late original callback gated; Before retained durable selection; controller close/recreate restored recipe after library deletion; corrupt restore preserved saved bytes and Retry recovered; clear removed fixture selection; explicit and background-close JPEG cancellations preserved selection/no owned output/EGL shutdown/outcome restored; RawEditActivity launches="+rawEditActivityLaunches+". Synthetic private JPEG only; cancelled MediaStore export checks; other photo selections untouched.\n";
     } finally {
       if(controller[0]!=null)TagDetailChecks.ui(t,()->controller[0].close());
       awaitStorage();

@@ -1,0 +1,34 @@
+{
+  "transient_feedback_wait_ms": 2500,
+  "density": 3,
+  "font": 1.2999999523162842,
+  "activity_content_screen_px": [
+    0,
+    344,
+    1200,
+    2264
+  ],
+  "dialog_before_screen_px": [
+    0,
+    1677,
+    1200,
+    2560
+  ],
+  "dialog_before_window_y_px": 0,
+  "dialog_fixture_delta_y_px": -296,
+  "fixture_short_window": true,
+  "composition": "actual windows, screen-coordinate alignment",
+  "window_pixelcopy_dim_limitation": "system compositor dim may not appear in individual window copies",
+  "dialog_dim_amount": 0.6000000238418579,
+  "dialog_dim_flag": false,
+  "dialog_after_screen_px": [
+    0,
+    1381,
+    1200,
+    2264
+  ],
+  "dialog_after_window_y_px": 296,
+  "scroll_y": 0,
+  "primary_capture": "actual compositor screenshot cropped to Activity content; includes system dim",
+  "pixelcopy_artifact": "short-viewer-windows.png"
+}

@@ -28,7 +28,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     if ((tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || viewerLookTest || viewerLookUiTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
     if(viewerLookTest&&activity instanceof RawEditActivity)ViewerLookChecks.rawEditActivityLaunches++;
   }
-  private boolean galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest, viewerLookTest, viewerLookUiTest;
+  private boolean galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest, viewerLookTest, viewerLookUiTest, viewerRawLookTest;
   private boolean photoEditTest;
   private boolean consistencyTest, syncControlsTest, tagDetailTest, resultTest, resultTalkBack;
   private boolean dashboardTalkBackTest;
@@ -82,6 +82,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     viewerScreenTest=args!=null&&"viewer-screen".equals(args.getString("mode"));
     viewerLookTest=args!=null&&"viewer-look".equals(args.getString("mode"));
     viewerLookUiTest=args!=null&&"viewer-look-ui".equals(args.getString("mode"));
+    viewerRawLookTest=args!=null&&"viewer-look-raw".equals(args.getString("mode"));
     photoEditTest=args!=null&&"photo-edit".equals(args.getString("mode"));
     galleryTalkBack=args!=null&&"gallery-screen-talkback".equals(args.getString("mode"));
     galleryScreenTest=shareScreenTest||viewerScreenTest||galleryTalkBack||(args!=null&&"gallery-screen".equals(args.getString("mode")));
@@ -142,6 +143,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if(sortDimensionsSpecified)validateSortDimensions(context);
       if(shareScreenTest){results.putString("stream",ShareScreenChecks.run(this,tagWidth));finish(-1,results);return;}
       if(photoEditTest){results.putString("stream",PhotoEditChecks.run(this));finish(-1,results);return;}
+      if(viewerRawLookTest){results.putString("stream",ViewerRawLookChecks.run(this));finish(-1,results);return;}
       if(viewerLookUiTest){results.putString("stream",ViewerLookUiChecks.run(this,tagWidth,tagFont));finish(-1,results);return;}
       if(viewerLookTest){results.putString("stream",ViewerLookChecks.run(this,tagWidth,tagFont));finish(-1,results);return;}
       if(viewerScreenTest){results.putString("stream",ViewerScreenChecks.run(this,tagWidth));finish(-1,results);return;}
