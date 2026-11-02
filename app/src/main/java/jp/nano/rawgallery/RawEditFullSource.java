@@ -53,13 +53,15 @@ final class RawEditFullSource implements AutoCloseable {
     if(out==null||out.capacity()<size){out=ByteBuffer.allocateDirect(size).order(ByteOrder.nativeOrder());regionBuffers.put(Thread.currentThread(),out);}
     out.clear();out.limit(size);
     byte[] row=new byte[r.width()*channels*2];
+    float[] rgba=new float[r.width()*4];FloatBuffer floats=out.asFloatBuffer();
     try(RandomAccessFile in=new RandomAccessFile(file,"r")){
       for(int y=r.top;y<r.bottom;y++) {check();in.seek(offset+((long)y*width+r.left)*channels*2);in.readFully(row);
-        for(int x=0;x<r.width();x++){int i=x*channels*2;float red=value(row,i);out.putFloat(red);
-          out.putFloat(channels==1?red:value(row,i+2));out.putFloat(channels==1?red:value(row,i+4));out.putFloat(1);}
+        for(int x=0;x<r.width();x++){int i=x*channels*2,k=x*4;float red=value(row,i);rgba[k]=red;
+          rgba[k+1]=channels==1?red:value(row,i+2);rgba[k+2]=channels==1?red:value(row,i+4);rgba[k+3]=1;}
+        floats.put(rgba);
       }
     }catch(IOException e){throw failure();}
-    check();out.flip();return out;
+    check();out.position(0);return out;
   }
   Preview preview(int maxSide)throws IOException {
     check();if(maxSide<1||maxSide>2048)throw failure();

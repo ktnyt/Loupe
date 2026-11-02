@@ -17,6 +17,21 @@ public final class RawEditFullSourceTest {
         boolean bad=false;try{s.region(new Rect(0,0,2049,1));}catch(IOException e){bad=true;}require(bad,"bounded region");
         Thread.currentThread().interrupt();bad=false;try{s.preview(16);}catch(IOException e){bad=true;}finally{Thread.interrupted();}require(bad,"cancellation");
       }
+      // Non-endpoint channel values and a smaller reused buffer catch bulk-write position/limit errors.
+      for(int channels:new int[]{1,3}){
+        try(DataOutputStream out=new DataOutputStream(new FileOutputStream(f))){out.writeBytes((channels==1?"P5":"P6")+"\n31 19\n65535\n");for(int y=0;y<19;y++)for(int x=0;x<31;x++)for(int c=0;c<channels;c++)out.writeShort((y*3791+x*1277+c*19231)&65535);}
+        try(RawEditFullSource source=RawEditFullSource.open(f)){
+          for(Rect rect:new Rect[]{new Rect(0,0,31,19),new Rect(7,3,18,12),new Rect(30,18,31,19)}){
+            ByteBuffer values=source.region(rect);require(values.position()==0&&values.remaining()==rect.width()*rect.height()*16,"exact output position/limit after reuse");
+            for(int y=rect.top;y<rect.bottom;y++)for(int x=rect.left;x<rect.right;x++){
+              for(int c=0;c<3;c++){float expected=((y*3791+x*1277+(channels==1?0:c)*19231)&65535)/65535f;require(Float.floatToIntBits(values.getFloat())==Float.floatToIntBits(expected),"RGB16 bit-exact float normalization");}
+              require(values.getFloat()==1,"opaque alpha");
+            }
+            require(!values.hasRemaining(),"complete bounded payload");
+          }
+          Thread.currentThread().interrupt();boolean cancelled=false;try{source.region(new Rect(0,0,1,1));}catch(IOException e){cancelled=true;}finally{Thread.interrupted();}require(cancelled,"region cancellation");
+        }
+      }
       fixture(f,9,7,1);try(RawEditFullSource s=RawEditFullSource.open(f)){ByteBuffer b=s.region(new Rect(1,0,2,1));require(b.getFloat(0)==1&&b.getFloat(4)==1&&b.getFloat(8)==1&&b.getFloat(12)==1,"PGM replication");}
       try(RandomAccessFile out=new RandomAccessFile(f,"rw")){out.setLength(out.length()-1);}boolean bad=false;try{RawEditFullSource.open(f);}catch(IOException e){bad=true;}require(bad,"payload exactness");
       try(FileOutputStream out=new FileOutputStream(f)){out.write("P6\n16385 2\n65535\n".getBytes("US-ASCII"));}bad=false;try{RawEditFullSource.open(f);}catch(IOException e){bad=true;}require(bad,"dimension limit");

@@ -43,11 +43,11 @@ final class RawEditSourceChecks {
   }
   static void run(Instrumentation instrumentation)throws Exception {
     File dir=instrumentation.getTargetContext().getCacheDir();
-    for(int orientation=1;orientation<=8;orientation++){
+    for(boolean fullOnly:new boolean[]{false,true})for(int orientation=1;orientation<=8;orientation++){
       int w=513,h=323;File input=jpeg(dir,w,h,orientation),output=unused(dir);Bitmap expected=BitmapFactory.decodeFile(input.getPath());
       RawEditSource owner=null,work=null;
       try {
-        owner=RawEditSource.fromPrivateCopy(input);require(owner.originalWidth()==(orientation>=5?h:w)&&owner.originalHeight()==(orientation>=5?w:h),"initial metadata dimensions");work=owner.retain();owner.close();owner.close();require(input.exists(),"owner double-close preserves retained input");
+        owner=fullOnly?RawEditSource.forFullResolution(input):RawEditSource.fromPrivateCopy(input);require(!fullOnly||owner.pixels==null,"viewer does not decode discarded preview");require(owner.originalWidth()==(orientation>=5?h:w)&&owner.originalHeight()==(orientation>=5?w:h),"initial metadata dimensions");work=owner.retain();owner.close();owner.close();require(input.exists(),"owner double-close preserves retained input");
         work.prepareFull(output,new NativeRaw.Cancellation());require(work.pixels==null,"prepare releases preview reference");
         try(RawEditFullSource full=RawEditFullSource.open(output)){
           require(full.width==(orientation>=5?h:w)&&full.height==(orientation>=5?w:h),"oriented original dimensions");
@@ -67,14 +67,16 @@ final class RawEditSourceChecks {
     }finally{wide.delete();wideOut.delete();}
     File rejected=File.createTempFile("synthetic-source-limit-",".input",dir);
     try {try(RandomAccessFile file=new RandomAccessFile(rejected,"rw")){file.setLength(256L*1024*1024+1);}boolean failed=false;try{RawEditSource.fromPrivateCopy(rejected);}catch(IOException expected){failed=true;}require(failed&&!rejected.exists(),"oversize private copy rejected and removed");}finally{rejected.delete();}
-    for(int[] size:new int[][]{{16385,2},{10000,9000}}){
+    for(boolean fullOnly:new boolean[]{false,true})for(int[] size:new int[][]{{16385,2},{10000,9000}}){
       File dimensions=jpeg(dir,17,13,1);patchDimensions(dimensions,size[0],size[1]);boolean rejectedBounds=false;
-      try{RawEditSource.fromPrivateCopy(dimensions);}catch(IOException expected){rejectedBounds=true;}
+      try{if(fullOnly)RawEditSource.forFullResolution(dimensions);else RawEditSource.fromPrivateCopy(dimensions);}catch(IOException expected){rejectedBounds=true;}
       require(rejectedBounds&&!dimensions.exists(),"dimension/80MP limit rejects before allocation and cleans input");
     }
     // Invalid/failed decode transfers cleanup ownership too.
     File invalid=File.createTempFile("synthetic-source-invalid-",".input",dir);try(FileOutputStream out=new FileOutputStream(invalid)){out.write(new byte[]{(byte)255,(byte)216,(byte)255,0});}
     boolean failed=false;try{RawEditSource.fromPrivateCopy(invalid);}catch(IOException expected){failed=true;}require(failed&&!invalid.exists(),"failed JPEG decode cleans private input");
+    File invalidFull=File.createTempFile("synthetic-source-invalid-full-",".input",dir);try(FileOutputStream out=new FileOutputStream(invalidFull)){out.write(new byte[]{1,2,3,4});}
+    failed=false;try{RawEditSource.forFullResolution(invalidFull);}catch(IOException expected){failed=true;require(!expected.getMessage().contains(invalidFull.getName()),"private RAW identify error");}require(failed&&!invalidFull.exists(),"failed RAW identify cleans owned input");
     ByteBuffer preview=ByteBuffer.allocateDirect(2*2*16).order(ByteOrder.nativeOrder());File analytic=unused(dir);
     try(RawEditSource source=RawEditSource.synthetic(2,2,preview,101,73)){
       source.prepareFull(analytic,new NativeRaw.Cancellation());

@@ -165,6 +165,23 @@ final class RawEditSource implements AutoCloseable {
     }catch(IOException|SecurityException failure){throw new IOException("写真を選び直してください");}
     finally{if(!keep&&temp!=null&&temp.exists()&&!temp.delete())RawEditLog.event("source.cleanup.failed",0,0,0);}
   }
+  /** Transfers a viewer-owned copy without decoding pixels that FullSession would discard. */
+  static RawEditSource forFullResolution(File temp)throws IOException {
+    boolean keep=false;
+    try {
+      if(temp==null||!temp.isFile()||temp.length()<1||temp.length()>256L*1024*1024)throw new IOException("Invalid private image");
+      check(new NativeRaw.Cancellation());
+      boolean jpeg;try(InputStream in=new FileInputStream(temp)){jpeg=in.read()==255&&in.read()==216&&in.read()==255;}
+      int w,h,o=1;
+      if(jpeg){
+        BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;BitmapFactory.decodeFile(temp.getPath(),bounds);
+        checkSize(bounds.outWidth,bounds.outHeight);o=new ExifInterface(temp.getPath()).getAttributeInt(ExifInterface.TAG_ORIENTATION,1);
+        w=o>=5&&o<=8?bounds.outHeight:bounds.outWidth;h=o>=5&&o<=8?bounds.outWidth:bounds.outHeight;
+      }else{int[] size=NativeRaw.identify(temp.getAbsolutePath());w=size[0];h=size[1];checkSize(w,h);}
+      check(new NativeRaw.Cancellation());
+      RawEditSource result=new RawEditSource(w,h,null,!jpeg,temp,w,h,o,false,null);keep=true;return result;
+    }finally{if(!keep&&temp!=null&&temp.exists()&&!temp.delete())RawEditLog.event("source.cleanup.failed",0,0,0);}
+  }
   private static RawEditSource jpeg(File file)throws IOException {
     BitmapFactory.Options o=new BitmapFactory.Options();o.inJustDecodeBounds=true;BitmapFactory.decodeFile(file.getPath(),o);
     if(o.outWidth<=0||o.outHeight<=0||o.outWidth>16384||o.outHeight>16384||(long)o.outWidth*o.outHeight>80000000)

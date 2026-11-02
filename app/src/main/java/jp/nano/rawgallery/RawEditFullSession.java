@@ -24,12 +24,15 @@ final class RawEditFullSession implements AutoCloseable {
     void saved(RawEditState snapshot);
     void saveFailed();
     void saveCancelled();
+    /** Worker-side fixed-label timing; default keeps the editor independent of viewer diagnostics. */
+    default void timing(String event,long ns) {}
   }
   private final Context context;
   private final Handler main;
   private final ExecutorService gl;
   private final Listener listener;
   private final BooleanSupplier previewBusy;
+  private final boolean editorPreview;
   private final RawEditSource source;
   private final File cacheFile;
   private NativeRaw.Cancellation preparationCancel=new NativeRaw.Cancellation();
@@ -46,7 +49,11 @@ final class RawEditFullSession implements AutoCloseable {
   private final Runnable wake=this::enqueue;
 
   RawEditFullSession(Context c,RawEditSource input,ExecutorService worker,Handler handler,BooleanSupplier busy,Listener callbacks){
-    context=c.getApplicationContext();source=input;gl=worker;main=handler;previewBusy=busy;listener=callbacks;
+    this(c,input,worker,handler,busy,callbacks,true);
+  }
+  /** Viewer mode omits the editor preview and debounce; work still yields after each bounded tile. */
+  RawEditFullSession(Context c,RawEditSource input,ExecutorService worker,Handler handler,BooleanSupplier busy,Listener callbacks,boolean editorPreview){
+    context=c.getApplicationContext();source=input;gl=worker;main=handler;previewBusy=busy;listener=callbacks;this.editorPreview=editorPreview;
     cacheFile=new File(c.getCacheDir(),"raw-full-"+UUID.randomUUID()+".ppm");
   }
   boolean isPrepared(){return prepared&&!closed;}
@@ -62,9 +69,13 @@ final class RawEditFullSession implements AutoCloseable {
       try{
         if(closed||cancellation.isCancelled())throw new IOException("中止");
         RawEditLog.event("full.prepare.start",0,retained.originalWidth(),retained.originalHeight());
+        long stage=SystemClock.elapsedRealtimeNanos();
         retained.prepareFull(cacheFile,cancellation);
+        listener.timing("viewer.pipeline.prepare",SystemClock.elapsedRealtimeNanos()-stage);
         result=RawEditFullSource.open(cacheFile);
-        RawEditFullSource.Preview preview=result.preview(2048);
+        stage=SystemClock.elapsedRealtimeNanos();
+        RawEditFullSource.Preview preview=editorPreview?result.preview(2048):null;
+        listener.timing("viewer.pipeline.preview",SystemClock.elapsedRealtimeNanos()-stage);
         if(closed||cancellation.isCancelled())throw new IOException("中止");
         synchronized(this){
           if(closed)throw new IOException("中止");
@@ -87,7 +98,7 @@ final class RawEditFullSession implements AutoCloseable {
   void requestDetail(RawEditState state,long edit,long viewport,boolean before,boolean max,RectF region,int w,int h){
     if(closed||!prepared||region==null||w<1||h<1||w>4096||h>4096||(long)w*h>12000000)return;
     desired=new DetailRequest(detailSequence.incrementAndGet(),state,edit,viewport,before,max,new RectF(region),w,h);
-    main.removeCallbacks(wake);main.postDelayed(wake,130);
+    main.removeCallbacks(wake);main.postDelayed(wake,editorPreview?130:0);
   }
   void save(RawEditState snapshot){
     if(closed||!prepared||export!=null){main.post(()->{if(!closed)listener.saveFailed();});return;}
@@ -102,7 +113,7 @@ final class RawEditFullSession implements AutoCloseable {
     }
   }
   private void step(){
-    boolean work=false;int delay=16;
+    boolean work=false;int delay=editorPreview?16:0;
     try{
       if(closed)return;
       Export current=export;
@@ -110,7 +121,7 @@ final class RawEditFullSession implements AutoCloseable {
       if(previewBusy.getAsBoolean()){work=true;return;}
       DetailRequest request=desired;
       if(request==null)discardDetail();
-      boolean idle=SystemClock.elapsedRealtimeNanos()-lastInput>=120000000L;
+      boolean idle=!editorPreview||SystemClock.elapsedRealtimeNanos()-lastInput>=120000000L;
       if(request!=null&&request.id!=completedDetail&&idle){
         if(detail==null||detail.request!=request){discardDetail();detail=new DetailJob(request,full.width,full.height);}
         renderDetail(detail);work=hasWork();
@@ -136,6 +147,7 @@ final class RawEditFullSession implements AutoCloseable {
     if(!job.plan.hasNext()){
       Bitmap bitmap=job.bitmap;job.bitmap=null;detail=null;completedDetail=r.id;
       RawEditLog.event("full.detail.complete",SystemClock.elapsedRealtime()-job.started,r.width,r.height);
+      listener.timing("viewer.pipeline.detail",(SystemClock.elapsedRealtime()-job.started)*1000000);
       main.post(()->{if(!closed&&desired==r&&detailSequence.get()==r.id)listener.detail(bitmap,r.region,r.edit,r.viewport,r.before,r.max);else bitmap.recycle();});
     }
   }

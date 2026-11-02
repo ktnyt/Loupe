@@ -29,7 +29,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     if(viewerLookTest&&activity instanceof RawEditActivity)ViewerLookChecks.rawEditActivityLaunches++;
   }
   private boolean galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest, viewerLookTest, viewerLookUiTest, viewerRawLookTest;
-  private boolean photoEditTest;
+  private boolean photoEditTest, lookTimingRaw, lookTimingJpeg;
   private boolean consistencyTest, syncControlsTest, tagDetailTest, resultTest, resultTalkBack;
   private boolean dashboardTalkBackTest;
   private boolean dashboardLayoutTest;
@@ -84,6 +84,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
     viewerLookUiTest=args!=null&&"viewer-look-ui".equals(args.getString("mode"));
     viewerRawLookTest=args!=null&&"viewer-look-raw".equals(args.getString("mode"));
     photoEditTest=args!=null&&"photo-edit".equals(args.getString("mode"));
+    lookTimingRaw=args!=null&&"viewer-look-timing-raw".equals(args.getString("mode"));
+    lookTimingJpeg=args!=null&&"viewer-look-timing-jpeg".equals(args.getString("mode"));
     galleryTalkBack=args!=null&&"gallery-screen-talkback".equals(args.getString("mode"));
     galleryScreenTest=shareScreenTest||viewerScreenTest||galleryTalkBack||(args!=null&&"gallery-screen".equals(args.getString("mode")));
     resultTalkBack=args!=null&&"ranking-result-talkback".equals(args.getString("mode"));
@@ -144,6 +146,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if(shareScreenTest){results.putString("stream",ShareScreenChecks.run(this,tagWidth));finish(-1,results);return;}
       if(photoEditTest){results.putString("stream",PhotoEditChecks.run(this));finish(-1,results);return;}
       if(viewerRawLookTest){results.putString("stream",ViewerRawLookChecks.run(this));finish(-1,results);return;}
+      if(lookTimingRaw||lookTimingJpeg){results.putString("stream",ViewerLookTimingChecks.run(this,lookTimingRaw));finish(-1,results);return;}
       if(viewerLookUiTest){results.putString("stream",ViewerLookUiChecks.run(this,tagWidth,tagFont));finish(-1,results);return;}
       if(viewerLookTest){results.putString("stream",ViewerLookChecks.run(this,tagWidth,tagFont));finish(-1,results);return;}
       if(viewerScreenTest){results.putString("stream",ViewerScreenChecks.run(this,tagWidth));finish(-1,results);return;}

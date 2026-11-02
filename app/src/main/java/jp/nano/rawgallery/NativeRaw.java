@@ -62,5 +62,11 @@ public final class NativeRaw {
     }
     private static native void prepareFullNative(String input, String cachePath, Cancellation cancellation) throws IOException;
 
+    /** Oriented full dimensions from LibRaw identification only; no unpack/demosaic or pixel allocation. */
+    static int[] identify(String path) throws IOException {
+        if(path==null)throw new IllegalArgumentException("Missing RAW input");
+        return identifyNative(path);
+    }
+    private static native int[] identifyNative(String path) throws IOException;
     private static native Image decodeNative(String path, int maxSide) throws IOException;
 }
