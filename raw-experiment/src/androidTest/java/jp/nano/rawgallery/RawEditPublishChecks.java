@@ -51,19 +51,86 @@ final class RawEditPublishChecks {
     final CountDownLatch ready=new CountDownLatch(1),terminal=new CountDownLatch(1);
     final AtomicInteger prepared=new AtomicInteger(),prepareFailed=new AtomicInteger(),saved=new AtomicInteger(),failed=new AtomicInteger(),cancelled=new AtomicInteger();
     final AtomicReference<String> callbackProblem=new AtomicReference<>();
+    final AtomicReference<RawEditState> savedSnapshot=new AtomicReference<>();
     public void prepared(int w,int h,RawEditFullSource.Preview preview){
       if(w!=65||h!=43||preview.width!=65||preview.height!=43)callbackProblem.set("Unexpected synthetic full cache dimensions");
       prepared.incrementAndGet();ready.countDown();
     }
     public void prepareFailed(){prepareFailed.incrementAndGet();ready.countDown();}
     public void detail(Bitmap bitmap,RectF source,long edit,long viewport,boolean before,boolean max){bitmap.recycle();callbackProblem.set("Unexpected detail callback");terminal.countDown();}
-    public void saved(RawEditState snapshot){saved.incrementAndGet();terminal.countDown();}
+    public void saved(RawEditState snapshot){savedSnapshot.compareAndSet(null,snapshot);saved.incrementAndGet();terminal.countDown();}
     public void saveFailed(){failed.incrementAndGet();terminal.countDown();}
     public void saveCancelled(){cancelled.incrementAndGet();terminal.countDown();}
   }
   static void run(Instrumentation instrumentation)throws Exception {
     runCase(instrumentation,true);
     runCase(instrumentation,false);
+  }
+  /** Runs the actual session -> native JPEG -> pending publication path without MediaStore writes. */
+  static void runLook(Instrumentation instrumentation)throws Exception {
+    long started=SystemClock.elapsedRealtime();Context base=instrumentation.getTargetContext();
+    File folder=new File(base.getCacheDir(),"synthetic-look-publish-"+java.util.UUID.randomUUID());
+    require(folder.mkdir(),"create isolated look publish cache directory");
+    FakeProvider provider=new FakeProvider(new File(folder,"synthetic-look-output.jpg"),true);
+    ProviderInfo info=new ProviderInfo();info.authority="media";info.exported=false;provider.attachInfo(base,info);
+    ContentResolver resolver=ContentResolver.wrap(provider);
+    Context isolated=new ContextWrapper(base){
+      public Context getApplicationContext(){return this;}
+      public ContentResolver getContentResolver(){return resolver;}
+      public File getCacheDir(){return folder;}
+    };
+    ExecutorService gl=Executors.newSingleThreadExecutor(r->new Thread(r,"synthetic-look-publish-gl"));
+    Handler main=new Handler(Looper.getMainLooper());Events events=new Events();
+    ByteBuffer pixels=ByteBuffer.allocateDirect(3*2*16).order(ByteOrder.nativeOrder());
+    for(int i=0;i<6;i++)pixels.putFloat(.2f).putFloat(.4f).putFloat(.6f).putFloat(1);pixels.flip();
+    RawEditSource source=RawEditSource.synthetic(3,2,pixels,65,43);RawEditFullSession session=null;
+    RawEditState snapshot=RawEditState.neutral().withLook(RawEditLook.cntLike().withSeed(650043));
+    require(snapshot.look().toneEnabled()&&snapshot.look().lutEnabled()&&snapshot.look().grainEnabled(),"all look stages enabled for actual JPEG save");
+    try {
+      session=new RawEditFullSession(isolated,source,gl,main,()->false,events);RawEditFullSession active=session;
+      main.post(active::start);await(events.ready,"look full preparation callback arrived");
+      require(events.callbackProblem.get()==null&&events.prepared.get()==1&&events.prepareFailed.get()==0,"look full preparation succeeded");
+      main.post(()->active.save(snapshot));await(provider.entered,"look pending publication update entered");provider.release.countDown();
+      await(events.terminal,"look terminal save callback arrived");gl.submit(()->{}).get(10,TimeUnit.SECONDS);instrumentation.waitForIdleSync();
+      require(events.callbackProblem.get()==null&&events.saved.get()==1&&events.failed.get()==0&&events.cancelled.get()==0,"one successful look save callback");
+      require(events.savedSnapshot.get()==snapshot&&events.savedSnapshot.get().look()==snapshot.look(),"saved callback retains the exact immutable look snapshot");
+      require(provider.updates.get()==1&&provider.deletes.get()==0&&provider.jpeg.isFile(),"look output published once in isolated provider");
+      BitmapFactory.Options options=new BitmapFactory.Options();options.inPreferredConfig=Bitmap.Config.ARGB_8888;options.inPreferredColorSpace=ColorSpace.get(ColorSpace.Named.SRGB);
+      Bitmap actual=BitmapFactory.decodeFile(provider.jpeg.getAbsolutePath(),options);require(actual!=null,"published look JPEG decodes");
+      try {
+        require(actual.getWidth()==65&&actual.getHeight()==43&&"image/jpeg".equals(options.outMimeType),"look JPEG retains original dimensions and format");
+        File referenceCache=new File(folder,"synthetic-look-reference.ppm");
+        // Reproduce the same analytic full-resolution scene independently of the session's cache.
+        try(RawEditSource referenceSource=RawEditSource.synthetic(3,2,pixels.duplicate().order(ByteOrder.nativeOrder()),65,43)){
+          referenceSource.prepareFull(referenceCache,new NativeRaw.Cancellation());
+          try(RawEditFullSource full=RawEditFullSource.open(referenceCache);RawEditRenderer renderer=new RawEditRenderer(full.width,full.height,full.region(new Rect(0,0,full.width,full.height)))){
+            renderer.grainDimensions(full.width,full.height);
+            Bitmap expected=renderer.render(snapshot,false,false,2048),neutral=renderer.render(RawEditState.neutral(),false,false,2048);
+            try{compareLookJpeg(actual,expected,neutral);}finally{expected.recycle();neutral.recycle();}
+          }
+        }finally{require(!referenceCache.exists()||referenceCache.delete(),"look reference cache cleanup");}
+      }finally{actual.recycle();}
+      android.util.Log.i("LoupeRawEdit","look.publish ms="+(SystemClock.elapsedRealtime()-started)+" width=65 height=43 isolated=true");
+    }finally{
+      provider.release.countDown();if(session!=null)session.close();else source.close();RawEditFullSession.initial(()->{}).get(10,TimeUnit.SECONDS);
+      try{gl.submit(()->{}).get(10,TimeUnit.SECONDS);}finally{gl.shutdown();require(gl.awaitTermination(10,TimeUnit.SECONDS),"look publish GL worker terminated");}
+      File[] remaining=folder.listFiles();if(remaining!=null)for(File file:remaining){require(!file.getName().startsWith("raw-full-"),"look session full cache removed after GL barrier");require(file.delete(),"look publish private file cleanup");}
+      require(folder.delete(),"look publish isolated directory cleanup");provider.shutdown();
+    }
+  }
+  private static void compareLookJpeg(Bitmap actual,Bitmap expected,Bitmap neutral){
+    require(actual.getWidth()==expected.getWidth()&&actual.getHeight()==expected.getHeight(),"equal look JPEG/reference dimensions");
+    double absolute=0,squared=0,neutralError=0,signal=0;double[] bias=new double[3];int count=actual.getWidth()*actual.getHeight();
+    for(int y=0;y<actual.getHeight();y++)for(int x=0;x<actual.getWidth();x++){
+      int a=actual.getPixel(x,y),e=expected.getPixel(x,y),n=neutral.getPixel(x,y);
+      for(int c=0;c<3;c++){int shift=16-c*8,av=a>>shift&255,ev=e>>shift&255,nv=n>>shift&255,d=av-ev;absolute+=Math.abs(d);squared+=d*d;bias[c]+=d;neutralError+=Math.abs(av-nv);signal+=Math.abs(ev-nv);}
+    }
+    double samples=count*3.,mae=absolute/samples,rms=Math.sqrt(squared/samples),neutralMae=neutralError/samples,signalMae=signal/samples,maxBias=0;
+    for(int c=0;c<3;c++){bias[c]/=count;maxBias=Math.max(maxBias,Math.abs(bias[c]));}
+    // JPEG 95 uses chroma subsampling: tolerate localized edge loss while bounding aggregate error/bias.
+    require(mae<=4&&rms<=9&&maxBias<=1.5,"published look JPEG/reference mismatch MAE="+mae+" RMS="+rms+" maxBias="+maxBias);
+    require(signalMae>1&&mae<neutralMae,"published output must contain the look signal, not Neutral: referenceSignal="+signalMae+" lookMAE="+mae+" neutralMAE="+neutralMae);
+    android.util.Log.i("LoupeRawEdit","look.jpeg mae_code="+mae+" rms_code="+rms+" bias_rgb="+bias[0]+","+bias[1]+","+bias[2]+" neutral_mae_code="+neutralMae+" look_signal_mae_code="+signalMae+" jpeg_quality=95 width="+actual.getWidth()+" height="+actual.getHeight());
   }
   private static void runCase(Instrumentation instrumentation,boolean publishWins)throws Exception {
     Context base=instrumentation.getTargetContext();

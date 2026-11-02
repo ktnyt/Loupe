@@ -166,3 +166,15 @@ Issue #55の[4状態の参照・実機比較](loupe55-fullstates-comparison.png)
 [Claude完成参照](loupe-tone-curve.html)。トーンだけ写真領域の下端8dp、左右8dpに高さ264dpの半透明パネルを重ねる。内側8dp、行間4dp。上段48dpは明度/RGB/R/G/Bと選択カーブのリセット、中段144dpはグラフ（パネル内幅−176dp）と右152dpの入力/出力・Undo/Redo/削除、下段48dpはロールオフ。グラフの内側8dp、線2dp、点は5dp/選択7dp、操作域48dp。既存7タブ/写真viewport/他6タブ/比較/保存/準備状態は維持する。
 
 [既定](loupe63-reference-default.png)、[5点S字](loupe63-reference-scurve.png)は400×805⅓dp・密度3・文字1.0、[短い画面](loupe63-reference-short640.png)は400×640dp・文字1.3。合成写真のみ。Claudeの画面で元footer-v2と修正版を確認し、ダウンロードと保存先のSHA一致を確認。プレビュー写真の色はSVG近似なのでAndroidの画質比較の基準にはしない。点・線・数値・パネル配置を比較する。数値契約は[tone-curve-contract](../tone-curve-contract.md)。Android実装後、400dp通常/font1.0、400×640dp/font1.3、320×640dp/font1.3の端末captureと操作回帰を確認。[通常比較](loupe63-comparison-normal.png)・[短い比較](loupe63-comparison-short.png)は左参照/右実機。独立UI評価を反映し、選択端点には外側リングを追加した。再評価で対応必須の不一致・切れなし。[検証範囲](../tone-curve-verification.md)を参照。
+
+## CNT-like研究用ルック（Issue #65）
+
+[Claude完成参照](loupe-cnt-look-layout-fixed.html)は既存7タブ/写真viewportを維持し、ヘッダーの現像▾から高さmin(content×.46,384dp)の下付きスクロールシートを開く。地#1C1C1F、上角丸28dp、背景dimなし、操作48dp以上。プリセット、独立ON/OFF、cube読込/状態/強度、粒子/暗部寄り/seed、基準プリセットへのリセットを持つ。トーンパネルの3行目は現像/ルック切替+現像rolloffまたはlook toneスイッチとし、高さ264dpを維持する。
+
+[通常参照](loupe65-final-reference-normal.png)はcontent400×805⅓dp/density3/font1.0、[短画面](loupe65-final-reference-short.png)は400×640dp/font1.3。完成HTMLの数値契約を実装のCNT-like値（明度6点、組込み33³ LUT、粒子18/80/seed65、Neutral rolloff0、cube32MiB/行4096）へ整合した。色はHTML近似で、写真・粒子の画質基準には使わない。Android実装と操作/独立比較は別途確認する。[画像処理契約](../cnt-look-contract.md)を参照。
+
+### #65の比較条件
+
+現行の比較基準はClaude作成の[レイアウト修正版](loupe-cnt-look-layout-fixed.html)と[通常PNG](loupe65-layout-fixed-reference-normal.png)・[短画面PNG](loupe65-layout-fixed-reference-short.png)。シートの直下の子を`flex-shrink:0`とし、ハンドル4dpと区切り線1dp、状態の行を縮めず、シート内でスクロールする。プリセット・動作・シート高の契約は維持する。元の`loupe-cnt-look-final.html`とPNGも保管するが、その版のハンドル等はflex縮小で高さ0になるため現行の寸法比較には使わない。
+
+実機UIの通常400dp/font1.0と短画面400×640dp/font1.3の操作検査は通過した。[通常比較](loupe65-comparison-normal.png)と[短画面比較](loupe65-comparison-short.png)は左が参照、右が実機。独立評価では追加修正が必要な重大UI/UX差なし。[通常座標](loupe65-capture-normal.json)・[短画面座標](loupe65-capture-short.json)に物理Window座標とcropを残す。短画面は制約付きActivityと独立Dialogの条件を合わせるためtest-onlyでWindow.yを296px変更し、シート全883pxをcontent内へ配置した結果であり、実際の短い端末そのものではない。全画面は補正しない。合成写真の入力・現像条件、HTMLのSVGノイズとGPU粒子、代替フォントの違いを含むため、UI参照から画質一致を判定しない。字形・改行・行間等の小差、実指/実IME/TalkBackの未確認を区別する。
