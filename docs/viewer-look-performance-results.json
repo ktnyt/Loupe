@@ -1,0 +1,59 @@
+{
+  "before": {
+    "fresh": {
+      "seconds": [
+        21.965,
+        18.77,
+        18.687
+      ],
+      "median_seconds": 18.77
+    },
+    "repeat": {
+      "seconds": [
+        7.217,
+        7.191,
+        7.123
+      ],
+      "median_seconds": 7.191
+    }
+  },
+  "after": {
+    "fresh": {
+      "seconds": [
+        4.064,
+        2.739,
+        2.749
+      ],
+      "median_seconds": 2.749
+    },
+    "repeat": {
+      "seconds": [
+        1.358,
+        1.449,
+        1.386
+      ],
+      "median_seconds": 1.386
+    }
+  },
+  "exact_full_bitmap_equality": true,
+  "width": 3005,
+  "height": 3992,
+  "fresh_median_reduction_percent": 85.4,
+  "repeat_median_reduction_percent": 80.7,
+  "device": "25128PNA1G",
+  "before_version": "0.25.0/code147 measurement-only",
+  "after_version": "0.25.1/code148",
+  "input": "one private14MB portrait DNG",
+  "look": "unchanged CNT-like",
+  "samples_per_condition": 3,
+  "cache_condition": "fresh controller with owned OriginalCache entry removed; OS cache and JIT not reset; repeats reuse same controller",
+  "endpoint": "selection call to Android GPU frame commit; not physical scanout",
+  "before_battery_celsius": [
+    30.4,
+    30.4
+  ],
+  "after_battery_celsius": [
+    30.6,
+    30.7
+  ]
+}
