@@ -11,6 +11,7 @@ import java.util.concurrent.*;
 
 /** One viewer photograph. Public operations and display ownership belong to the main thread. */
 final class PhotoLookController implements AutoCloseable {
+  private static final java.util.Map<String,String> OUTCOMES=java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<String,String>(){protected boolean removeEldestEntry(java.util.Map.Entry<String,String> e){return size()>32;}});
   private static final long INPUT_LIMIT=256L*1024*1024;
   private final Activity activity;
   private final PhotoRepository.Photo photo;
@@ -55,9 +56,10 @@ final class PhotoLookController implements AutoCloseable {
     });
   }
   LookPresetStore.Entry applied(){return applied;}
-  String message(){return message;}
+  String message(){if(!busy()&&!saving){String outcome=OUTCOMES.remove(key);if(outcome!=null)message=outcome;}return message;}
   boolean busy(){return restoring||loading||rendering||committing;}
   boolean saving(){return saving;}
+  boolean canRetry(){return failedRestore||failedSelection||failedSave;}
   boolean before(){return before;}
   boolean readyToSave(){return !closed&&!busy()&&!saving&&applied!=null&&prepared&&full!=null;}
 
@@ -155,9 +157,9 @@ final class PhotoLookController implements AutoCloseable {
         if(!current(token)||!rendering||edit!=revision||candidate==null){recycle(bitmap);return;}
         cancelDetail();commit(candidate,bitmap,edit);
       }
-      public void saved(RawEditState snapshot){if(current(token))finishSave("JPEGを保存しました",false);}
-      public void saveFailed(){if(current(token))finishSave("JPEGを保存できませんでした。もう一度お試しください",true);}
-      public void saveCancelled(){if(current(token))finishSave("保存を中止しました",false);}
+      public void saved(RawEditState snapshot){if(engine==token)finishSave("JPEGを保存しました",false);}
+      public void saveFailed(){if(engine==token)finishSave("JPEGを保存できませんでした。もう一度お試しください",true);}
+      public void saveCancelled(){if(engine==token)finishSave("保存を中止しました",false);}
     });
     full=session;session.start();
   }
@@ -196,6 +198,7 @@ final class PhotoLookController implements AutoCloseable {
     cancelDetail();rendering=false;failedSelection=true;failedEntry=candidate;message=text;notifyChanged();
   }
   private void finishSave(String text,boolean failed){
+    if(closed){saving=false;OUTCOMES.put(key,text);stopEngine();gl.shutdown();return;}
     saving=false;failedSave=failed;message=text;notifyChanged();
     if(queuedAfterSave){LookPresetStore.Entry next=afterSave;queuedAfterSave=false;afterSave=null;select(next);}
   }
@@ -206,9 +209,10 @@ final class PhotoLookController implements AutoCloseable {
     if(full!=null){full.close();full=null;}
   }
   public void close(){
-    if(closed)return;closed=true;revision++;cancelDetail();stopEngine();
+    if(closed)return;closed=true;revision++;cancelDetail();
     image.setBitmap(null,true);recycle(original);recycle(developed);original=null;developed=null;
-    gl.shutdown();
+    if(saving&&full!=null){full.cancelSave();return;}
+    stopEngine();gl.shutdown();
   }
   private static void recycle(Bitmap bitmap){if(bitmap!=null&&!bitmap.isRecycled())bitmap.recycle();}
 }

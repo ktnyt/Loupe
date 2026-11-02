@@ -33,6 +33,7 @@ public final class RawEditActivity extends Activity {
   private Dialog lookDialog;
   private Dialog neutralDialog;
   private RawEditLookPanel lookPanel;
+  private Dialog presetDialog;
   private final ExecutorService lookIo=Executors.newSingleThreadExecutor(r->new Thread(r,"loupe-look-io"));
   private final AtomicLong lookImport=new AtomicLong();
   private Future<?> lookFuture;
@@ -293,6 +294,7 @@ public final class RawEditActivity extends Activity {
       public void editCurves(){closeLookSheet(false);lookCurves=true;selectTab(2);}
       public void pickCube(){pickLookCube();}public void retryCube(){if(lookRetryUri==null)pickLookCube();else loadLookCube(lookRetryUri);}
       public void resetPreset(){resetLookPreset();}
+      public void savePreset(){if(!ready||saving||lookLoading)return;endEdit(false);presetDialog=LookPresetSaveDialog.show(RawEditActivity.this,state.look());}
       public void close(){closeLookSheet(false);}
     });
     lookDialog=dialog;lookPanel=panel;dialog.setContentView(panel);dialog.setCanceledOnTouchOutside(true);
@@ -635,6 +637,7 @@ public final class RawEditActivity extends Activity {
   }
   protected void onStart(){super.onStart();visible=true;if(lookRestoreFailed)return;if(pendingLookUri!=null){Uri uri=pendingLookUri;pendingLookUri=null;loadLookCube(uri);}if(root!=null&&(input!=null||synthetic())&&!ready&&!loading)load();else if(ready){save.setText("保存");save.setStateDescription(null);enabled(true);requestRender();}}
   protected void onStop(){
+    if(presetDialog!=null){presetDialog.dismiss();presetDialog=null;}
     endEdit(true);if(curvePanel!=null)curvePanel.cancelGesture();
     if(pad!=null)pad.cancelGuides();
     visible=false;++epoch;maxSaturation=false;before=false;saveWaiting=false;

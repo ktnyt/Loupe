@@ -30,8 +30,12 @@ Host tests: full recipe/LUT roundtrip, bounds/corruption/atomic replacement, quo
 
 ## Status
 
-Contract recorded before implementation. Baseline normal0.24.0/code146 viewer instrumentation passed. Implementation/device/UI/review results pending.
+Contract recorded before implementation. Baseline normal0.24.0/code146 viewer instrumentation passed. Implementation builds as normal0.25.0/code147 and experimental0.8.0/code11; all four APKs are installed with device/host SHA256 matches. New LookPresetStore, existing look/temporary-store/state/PCHIP/tone and144 structure host checks pass. App/experimental lint has0errors (109/49warnings, including existing and Japanese-only text/RTL warnings). Independent Cold review2 and Security review1 have no outstanding scoped findings. Runtime viewer-look and viewer-look-ui tests, actual UI reference comparison and export/cancellation verification remain pending because the device is locked. This is an implementation checkpoint, not feature completion; do not merge before those gates.
 
 ## Completed UI reference (before UI implementation)
 
 Claude completed loupe-viewer-look-presets.html (SHA256 00c3297cc099337109098e87db3ccb2f2046b793c89b03e7ee64ead31a8402f2). New Look control is top-right, preserving the existing dock; Before top-left. Selector dimensions, name dialog, loading/retry/delete and save/navigation confirmation are defined in that HTML. Original S08 and current source artifact were directly viewed before requesting and before implementation; only requested additions alter the new screen. Four matched-size reference PNGs are in docs/design. This establishes UI design, not Android validation.
+
+## Use after runtime verification
+
+In the editor open the Look sheet and choose プリセットとして保存. Only the current Look is saved; cancelling the name sheet leaves edits unchanged. In a photo viewer select the upper-right ルック control, choose built-in CNT-like or a saved entry; 補正前 temporarily displays the original. The selector offers JPEGで別に保存 for a separate full-resolution export. Existing share still shares the original. A deleted library entry leaves each photograph's independent applied snapshot intact. Runtime confirmation of these flows is still pending.

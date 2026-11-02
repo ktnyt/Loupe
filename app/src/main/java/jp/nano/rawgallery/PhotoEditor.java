@@ -43,8 +43,8 @@ final class PhotoEditor {
       ExecutorService worker, SharePreparation preparation) {
     this.activity=activity; this.viewer=viewer; this.photo=photo;
     this.worker=worker; this.preparation=preparation;
-    button=viewer.action("編集","編集","編集。現像（実験）を開きます。長押しで外部のアプリで編集",()->activate(true));
-    button.setOnLongClickListener(v->{activate(false);return true;});
+    button=viewer.action("編集","編集","編集。現像（実験）を開きます。長押しで外部のアプリで編集",()->guardedActivate(true));
+    button.setOnLongClickListener(v->{guardedActivate(false);return true;});
     button.setAccessibilityDelegate(new View.AccessibilityDelegate(){
       public void onInitializeAccessibilityNodeInfo(View host,android.view.accessibility.AccessibilityNodeInfo info){super.onInitializeAccessibilityNodeInfo(host,info);info.addAction(new android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_LONG_CLICK,"外部のアプリで編集"));}
     });
@@ -66,6 +66,10 @@ final class PhotoEditor {
   private boolean current(Request request) {
     return active==request && !request.cancelled && !activity.isFinishing()
         && !activity.isDestroyed() && viewer.isAttachedToWindow();
+  }
+
+  private void guardedActivate(boolean internal) {
+    if(viewer.lookUi!=null)viewer.lookUi.runWhenReady("編集",()->activate(internal));else activate(internal);
   }
 
   private void activate(boolean internal) {

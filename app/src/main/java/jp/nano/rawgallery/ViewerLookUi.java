@@ -1,0 +1,73 @@
+package jp.nano.rawgallery;
+
+import android.app.*;
+import android.graphics.*;
+import android.graphics.drawable.GradientDrawable;
+import android.view.*;
+import android.widget.*;
+import java.io.*;
+import java.util.*;
+import java.util.concurrent.*;
+
+/** Viewer controls and library operations; image and export ownership remains in the controller. */
+final class ViewerLookUi implements AutoCloseable {
+  final Activity activity; final PhotoViewerUi viewer; final PhotoLookController controller;
+  private final LookPresetStore store; private final ExecutorService io=Executors.newSingleThreadExecutor();
+  private final Button chip,before; private Dialog sheet,confirmation; private LinearLayout body; private java.util.List<LookPresetStore.Entry> entries=Collections.emptyList();
+  private String libraryStatus="";private boolean closed;private Runnable pending;
+  ViewerLookUi(Activity a,PhotoRepository.Photo p,PhotoViewerUi v)throws IOException{
+    activity=a;viewer=v;store=new LookPresetStore(new File(a.getFilesDir(),"look-library"));
+    chip=button("ルック",false);chip.setCompoundDrawablePadding(dp(6));chip.setCompoundDrawables(new LookIcon(),null,null,null);chip.setTag("viewer-look");before=button("補正前",false);before.setTag("viewer-before");
+    v.addView(chip);v.addView(before);chip.setOnClickListener(x->open());
+    controller=new PhotoLookController(a,p,v.image,()->v.post(this::changed));before.setOnClickListener(x->controller.toggleBefore());
+    v.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener(){public void onViewAttachedToWindow(View x){}public void onViewDetachedFromWindow(View x){close();}});changed();
+  }
+  void original(Bitmap bitmap){controller.original(bitmap);}
+  boolean back(){if(sheet!=null&&sheet.isShowing()){sheet.dismiss();return true;}return false;}
+  void runWhenReady(String label,Runnable action){
+    if(closed)return;if(!controller.saving()&&!controller.busy()){action.run();return;}
+    if(!controller.saving()){if(controller.leave())action.run();else pending=action;return;}
+    confirm("JPEGを保存しています",label+"は、保存が終わってから行います。待つか、保存を中止して続けてください。",new String[]{"保存を待って続ける","保存を中止して続ける","戻る（保存を続ける）"},new Runnable[]{()->{pending=action;if(!controller.saving())changed();},()->{pending=action;controller.cancel();},()->{}});
+
+  }
+  private void changed(){if(closed)return;boolean applied=controller.applied()!=null;chip.setTextColor(applied?0xff111111:0xffededea);chip.setBackground(shape(applied?0xffededea:0x9e000000,24,applied?0xffededea:0xff3a3a3f));chip.setContentDescription("ルック："+(applied?controller.applied().name+"をこの写真の表示に適用中":"なし（元の表示）")+"。押すと選ぶ");before.setVisibility(applied?View.VISIBLE:View.GONE);before.setTextColor(controller.before()?0xff111111:0xffededea);before.setBackground(shape(controller.before()?0xffededea:0x9e000000,24,controller.before()?0xffededea:0xff3a3a3f));before.setSelected(controller.before());chip.invalidate();View recovery=viewer.stage.findViewWithTag("viewer-original-recovery");if(recovery!=null)recovery.setVisibility(applied?View.GONE:View.VISIBLE);viewer.requestLayout();if(sheet!=null&&sheet.isShowing())render();if(pending!=null&&!controller.saving()&&!controller.busy()){Runnable r=pending;pending=null;viewer.post(r);}}
+  private void open(){if(closed)return;sheet=new Dialog(activity);sheet.requestWindowFeature(Window.FEATURE_NO_TITLE);ScrollView scroll=new ScrollView(activity);scroll.setTag("viewer-look-sheet");scroll.setVerticalScrollBarEnabled(false);scroll.setBackground(shape(0xff1c1c1f,28,0));body=new LinearLayout(activity);body.setOrientation(LinearLayout.VERTICAL);body.setPadding(dp(16),dp(12),dp(16),dp(16));scroll.addView(body);sheet.setContentView(scroll);sheet.setOnDismissListener(d->{sheet=null;body=null;});sheet.show();Window w=sheet.getWindow();if(w!=null){w.setBackgroundDrawableResource(android.R.color.transparent);w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);w.setGravity(Gravity.BOTTOM);w.setLayout(-1,Math.max(dp(160),Math.min(dp(384),Math.round(viewer.getHeight()*.46f))));}render();refresh();}
+  private void refresh(){if(closed)return;libraryStatus="読み込み中…";render();io.execute(()->{try{java.util.List<LookPresetStore.Entry> result=store.list();activity.runOnUiThread(()->{if(closed)return;entries=result;libraryStatus="";render();});}catch(Exception e){activity.runOnUiThread(()->{if(closed)return;libraryStatus="プリセットを読み込めませんでした";render();});}});}
+  private void render(){if(body==null)return;body.removeAllViews();View grip=new View(activity);grip.setBackground(shape(0xff4a4a50,2,0));LinearLayout.LayoutParams gp=new LinearLayout.LayoutParams(dp(32),dp(4));gp.gravity=Gravity.CENTER;gp.bottomMargin=dp(12);body.addView(grip,gp);
+    LinearLayout heading=new LinearLayout(activity);heading.setGravity(Gravity.CENTER_VERTICAL);TextView title=text("ルック",20,0xffededea);title.setTypeface(Typeface.DEFAULT,Typeface.BOLD);heading.addView(title,new LinearLayout.LayoutParams(0,dp(48),1));Button close=button("閉じる",false);close.setOnClickListener(v->sheet.dismiss());heading.addView(close,new LinearLayout.LayoutParams(-2,dp(48)));body.addView(heading);
+    addText("この写真の表示にかけます。原本は変えません。共有は元のファイルのままです。",12,0xffa9a9a4);
+    if(!viewer.photo.isJpeg())addText("RAW：ルックをかけると元の RAW から現像します（現像は中立・ロールオフ 0、露出は変えない）。「なし」は RAW に入っている JPEG を表示します。",12,0xffc9c9c4);
+    row(null,"なし","元の表示に戻す",false);LookPresetStore.Entry builtin=new LookPresetStore.Entry("cnt-like","CNT-like（仮）",RawEditLook.cntLike());row(builtin,builtin.name,"組込み",false);
+    LookPresetStore.Entry applied=controller.applied();boolean found=applied==null||"cnt-like".equals(applied.id);for(LookPresetStore.Entry e:entries)if(applied!=null&&e.id.equals(applied.id))found=true;
+    if(!found)row(applied,applied.name,"この写真のルック（ライブラリから削除済み）",false);for(LookPresetStore.Entry e:entries)row(e,e.name,"保存したプリセット",true);
+    if(!libraryStatus.isEmpty()){addText(libraryStatus,13,0xffffb4a8);Button retry=button("再試行",false);retry.setOnClickListener(v->refresh());body.addView(retry);}
+    if(!controller.message().isEmpty()){addText(controller.message(),13,0xffededea);if(controller.busy()||controller.saving()||controller.canRetry()){Button act=button(controller.busy()||controller.saving()?"中止":"再試行",false);act.setTag(controller.busy()||controller.saving()?"viewer-look-cancel":"viewer-look-retry");act.setOnClickListener(v->{if(controller.busy()||controller.saving())controller.cancel();else controller.retry();});body.addView(act);}}
+    Button save=button("JPEGで別に保存",false);save.setTag("viewer-look-save");save.setEnabled(controller.readyToSave());save.setOnClickListener(v->controller.saveJpeg());LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(-1,dp(48));sp.topMargin=dp(12);body.addView(save,sp);addText("保存したプリセット "+entries.size()+"／32。プリセットは現像の画面の「ルック」から保存します。",12,0xffa9a9a4);
+  }
+  private void row(LookPresetStore.Entry e,String name,String sub,boolean delete){
+    LinearLayout line=new LinearLayout(activity);line.setGravity(Gravity.CENTER_VERTICAL);
+    LookPresetStore.Entry active=controller.applied();boolean selected=e==null?active==null:active!=null&&e.id.equals(active.id);
+    LinearLayout pick=new LinearLayout(activity);pick.setOrientation(LinearLayout.HORIZONTAL);pick.setGravity(Gravity.CENTER_VERTICAL);pick.setPadding(dp(8),dp(6),dp(8),dp(6));pick.setMinimumHeight(dp(56));pick.setFocusable(true);pick.setClickable(true);
+    pick.setTag(e==null?"viewer-look-none":"cnt-like".equals(e.id)?"viewer-look-cnt-like":"viewer-look-entry-"+e.id);pick.setBackground(shape(selected?0xff2a2a2e:Color.TRANSPARENT,12,0));pick.setContentDescription(name+"。"+sub);pick.setAccessibilityDelegate(new View.AccessibilityDelegate(){public void onInitializeAccessibilityNodeInfo(View host,android.view.accessibility.AccessibilityNodeInfo info){super.onInitializeAccessibilityNodeInfo(host,info);info.setClassName("android.widget.RadioButton");info.setCheckable(true);info.setChecked(selected);}});
+    View radio=new View(activity){Paint p=new Paint(3);protected void onDraw(Canvas c){float x=getWidth()/2f,y=getHeight()/2f;p.setColor(selected?0xffededea:0xff6b6b70);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(dp(2));c.drawCircle(x,y,dp(9),p);if(selected){p.setStyle(Paint.Style.FILL);c.drawCircle(x,y,dp(5),p);}}};radio.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);pick.addView(radio,new LinearLayout.LayoutParams(dp(20),dp(20)));
+    LinearLayout labels=new LinearLayout(activity);labels.setOrientation(LinearLayout.VERTICAL);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-2,1);lp.leftMargin=dp(12);pick.addView(labels,lp);TextView title=text(name,14,0xffededea);title.setTypeface(Typeface.DEFAULT,Typeface.BOLD);labels.addView(title);labels.addView(text(sub,12,0xffa9a9a4));
+    pick.setOnClickListener(v->runWhenReady("ルックの選択",()->controller.select(e)));line.addView(pick,new LinearLayout.LayoutParams(0,-2,1));
+    if(delete){View remove=new View(activity){Paint p=new Paint(3);protected void onDraw(Canvas c){float x=getWidth()/2f,y=getHeight()/2f;p.setColor(0xffa9a9a4);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(dp(1.5f));p.setStrokeCap(Paint.Cap.ROUND);c.drawLine(x-dp(6),y-dp(5),x+dp(6),y-dp(5),p);c.drawLine(x-dp(3),y-dp(7),x+dp(3),y-dp(7),p);c.drawLine(x-dp(5),y-dp(5),x-dp(4),y+dp(7),p);c.drawLine(x+dp(5),y-dp(5),x+dp(4),y+dp(7),p);c.drawLine(x-dp(4),y+dp(7),x+dp(4),y+dp(7),p);}};remove.setFocusable(true);remove.setClickable(true);remove.setContentDescription("「"+name+"」をライブラリから削除");remove.setEnabled(!controller.saving());remove.setOnClickListener(v->confirm("「"+name+"」を削除しますか？","ライブラリから消します。この写真や、ほかの写真にかけたルックはそのまま残ります。",new String[]{"削除","キャンセル"},new Runnable[]{()->io.execute(()->{try{store.delete(e.id);activity.runOnUiThread(this::refresh);}catch(Exception failure){activity.runOnUiThread(()->{libraryStatus="削除できませんでした";render();});}}),()->{}}));line.addView(remove,new LinearLayout.LayoutParams(dp(48),dp(48)));}body.addView(line);
+  }
+  private void confirm(String title,String message,String[] labels,Runnable[] actions){
+    if(closed)return;if(confirmation!=null)confirmation.dismiss();
+    Dialog d=new Dialog(activity);confirmation=d;d.setOnDismissListener(x->{if(confirmation==d)confirmation=null;});d.requestWindowFeature(Window.FEATURE_NO_TITLE);ScrollView scroll=new ScrollView(activity);scroll.setBackground(shape(0xff1c1c1f,28,0));LinearLayout content=new LinearLayout(activity);content.setOrientation(LinearLayout.VERTICAL);content.setPadding(dp(24),dp(12),dp(24),dp(20));scroll.addView(content);View grip=new View(activity);grip.setBackground(shape(0xff4a4a50,2,0));LinearLayout.LayoutParams gp=new LinearLayout.LayoutParams(dp(32),dp(4));gp.gravity=Gravity.CENTER;gp.bottomMargin=dp(12);content.addView(grip,gp);TextView t=text(title,20,0xffededea);t.setTypeface(Typeface.DEFAULT,Typeface.BOLD);content.addView(t);TextView m=text(message,14,0xffededea);LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(-1,-2);mp.topMargin=dp(8);content.addView(m,mp);
+    for(int i=0;i<labels.length;i++){final int index=i;Button b=button(labels[i],i==0);if(title.endsWith("削除しますか？")){if(i==0){b.setTextColor(0xffff8a7a);b.setBackground(shape(Color.TRANSPARENT,24,0xffff8a7a));}else{b.setTextColor(0xff111111);b.setBackground(shape(0xffededea,24,0));}}else if(i==0){b.setTextColor(0xff111111);b.setBackground(shape(0xffededea,24,0));}LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-1,dp(i==0?52:48));bp.topMargin=dp(i==0?16:8);content.addView(b,bp);b.setOnClickListener(v->{d.dismiss();if(!closed)actions[index].run();});}
+    d.setContentView(scroll);d.show();Window w=d.getWindow();if(w!=null){w.setBackgroundDrawableResource(android.R.color.transparent);w.setGravity(Gravity.BOTTOM);w.setLayout(-1,WindowManager.LayoutParams.WRAP_CONTENT);}
+  }
+  private final class LookIcon extends android.graphics.drawable.Drawable {
+    private final Paint p=new Paint(3);
+    LookIcon(){setBounds(0,0,dp(20),dp(20));}
+    public void draw(Canvas c){android.graphics.Rect b=getBounds();float x=b.exactCenterX(),y=b.exactCenterY(),r=dp(7);p.setColor(controller.applied()!=null?0xff111111:0xffededea);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(dp(1.5f));if(controller.busy()){c.drawArc(x-r,y-r,x+r,y+r,(android.os.SystemClock.uptimeMillis()%1000)*.36f,260,false,p);chip.postInvalidateDelayed(80);}else{c.drawCircle(x,y,r,p);p.setStyle(Paint.Style.FILL);c.drawArc(x-r,y-r,x+r,y+r,90,180,true,p);}}
+    public void setAlpha(int a){}public void setColorFilter(android.graphics.ColorFilter f){}public int getOpacity(){return android.graphics.PixelFormat.TRANSLUCENT;}
+  }
+  private int dp(float n){return Math.round(n*activity.getResources().getDisplayMetrics().density);}private GradientDrawable shape(int color,int radius,int border){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));if(border!=0)d.setStroke(dp(1),border);return d;}
+  private TextView text(String s,int size,int color){TextView t=new TextView(activity);t.setText(s);t.setTextSize(size);t.setTextColor(color);return t;}private void addText(String s,int size,int color){TextView t=text(s,size,color);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.setMargins(dp(8),dp(8),dp(8),dp(4));body.addView(t,p);}
+  private Button button(String s,boolean filled){Button b=new Button(activity);b.setText(s);b.setAllCaps(false);b.setTextSize(13);b.setTextColor(0xffededea);b.setMinWidth(dp(48));b.setMinHeight(dp(48));b.setPadding(dp(12),0,dp(12),0);b.setBackground(shape(filled?0xff2a2a2e:Color.TRANSPARENT,24,0xff3a3a3f));return b;}
+  public void close(){if(closed)return;closed=true;pending=null;if(confirmation!=null)confirmation.dismiss();if(sheet!=null)sheet.dismiss();controller.close();io.shutdown();}
+}
