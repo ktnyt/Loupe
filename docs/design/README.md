@@ -172,3 +172,9 @@ Issue #55の[4状態の参照・実機比較](loupe55-fullstates-comparison.png)
 [Claude完成参照](loupe-cnt-look-final.html)は既存7タブ/写真viewportを維持し、ヘッダーの現像▾から高さmin(content×.46,384dp)の下付きスクロールシートを開く。地#1C1C1F、上角丸28dp、背景dimなし、操作48dp以上。プリセット、独立ON/OFF、cube読込/状態/強度、粒子/暗部寄り/seed、基準プリセットへのリセットを持つ。トーンパネルの3行目は現像/ルック切替+現像rolloffまたはlook toneスイッチとし、高さ264dpを維持する。
 
 [通常参照](loupe65-final-reference-normal.png)はcontent400×805⅓dp/density3/font1.0、[短画面](loupe65-final-reference-short.png)は400×640dp/font1.3。完成HTMLの数値契約を実装のCNT-like値（明度6点、組込み33³ LUT、粒子18/80/seed65、Neutral rolloff0、cube32MiB/行4096）へ整合した。色はHTML近似で、写真・粒子の画質基準には使わない。Android実装と操作/独立比較は別途確認する。[画像処理契約](../cnt-look-contract.md)を参照。
+
+### #65の比較条件
+
+`loupe-cnt-look-final.html`の記述ではハンドル4dpと区切り線1dpを指定する。一方、制限された縦flex内で`flex-shrink:1`のため、実DOMでは双方の高さが0になる。参照PNGでも見えず、記述と描画が一致していない。Androidは記述の寸法を実装しており、この差を画素一致と扱わない。参照の追加修正版は未取得。
+
+実機UIの通常400dp/font1.0と短画面400×640dp/font1.3の操作検査は通過した。短いActivity Windowに対する独立Dialogの位置と、キャプチャの可視範囲はgeometry診断で追加確認する。合成写真の入力・現像条件、HTMLのSVGノイズとGPU粒子、代替フォントの違いを含むため、UI参照から画質一致を判定しない。

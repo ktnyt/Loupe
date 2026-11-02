@@ -16,6 +16,7 @@ issue #65 の画像処理エンジンと研究用UIを既存の現像へ組み�
 
 ```sh
 sh tests/raw-edit-look.sh
+sh tests/raw-edit-look-store.sh
 sh tests/raw-edit-state.sh
 sh tests/raw-structure.sh
 ANDROID_HOME=/opt/homebrew/share/android-commandlinetools JAVA_HOME=$(/usr/libexec/java_home) ./gradlew :raw-experiment:assembleDebug :raw-experiment:assembleDebugAndroidTest :app:assembleDebug :raw-experiment:lintDebug
@@ -64,7 +65,11 @@ sips -s format jpeg /tmp/loupe-look-fixtures/look-ramp-patches.png --out /tmp/lo
 - ビルド: 通常APK・実験APK・実験テストAPKをビルド。Android lintを実施。
 - GPU: b1454f51（25128PNA1G）/実験0.5.0 code8でPASS。CPU/GPU最大差1 code、25タイル最大差1 code、1024→512の粒子比較MAE .795715 code / RMS 1.073757 code。テスト全体18986msで、操作レイテンシの計測ではない。
 - 保存: FullSession→NativeJpeg95→private provider→JPEG decodeを65×43合成写真で比較。MAE 2.109720 code/RMS 4.522125 code、RGB平均偏り .06619/−.00859/−.05045 code。原寸/固定seed/保存snapshot/pending解除を確認。
-- UI/外部ファイル選択: 実装済み。実機操作とActivity再生成は検証中。
+- UI: 実験0.6.0/code9、400dp/font1.0と400×640dp/font1.3で、実View操作・AX progress・seed確定・Neutral確認/取消・プリセット往復・曲線Undo/Redo・Activity再生成を確認。Customの基準プリセットと現像のWB/曲線、保持外部LUTの復元も確認。各操作域48dp以上、文字の高さと省略、スクロールによる到達を検査した。外部LUTはこのUI検査内では合成fixtureを設定しており、OSピッカーの検査とは区別する。
+- UI診断: 1回の描画完了待ちtimeoutは診断追加後の通常/短画面で再現しなかった。待機条件・制限時間は緩めていない。呼出stageと描画状態の診断を検査に保持する。
+- 外部ファイル選択: 実装済みだが、OSピッカーの補助操作の検査は未完了。端末再ロック後は操作を止めている。通常版0.23.0/code145の最終インストールも未実施。
+- UI比較: 選択プリセット文字を参照の600へ修正し、ビルド済み。更新版の再撮影は未実施。短いActivity Windowと独立Dialogの座標が同じ条件かを確認するgeometry診断を追加したが未実測。短画面のスクリーンショットだけからシート高さの一致を判断しない。
+- lint: 両モジュールでErrorなし。Warningは実験42件、通常101件（既存を含む）。今回追加のprogrammatic Viewのconstructor、SliderのperformClick、固定日本語、RTL等の警告は残っている。全件解消やアプリ全体の無警告を主張しない。
 - 経過時間はissue-progressコメントで計測。入力→表示の実測、実写真の主観評価、完了までの利用量は未計測。
 
 最新の結果と工程状態はissue #65を正とする。
@@ -75,6 +80,7 @@ sips -s format jpeg /tmp/loupe-look-fixtures/look-ramp-patches.png --out /tmp/lo
 - 現行RAW初期プレビューはhalf-sizeデモザイク、原寸cacheはfull-size。画像入力が違うので、同じshaderでも細部の完全一致は保証しない。
 - 出力はSDR sRGB相当の8bit JPEG。HDR/Log/Display P3 LUTの自動判別、HDRの保存、16bit PNG/TIFF書き出しは未実装。既存JPEGデコードの8bit制約を引き継ぐ。
 - グレインは長辺2048の写真座標を基準にし、縮小時は4点サンプルでaliasを抑える。実機とJPEG後の印象は未確認。粒子の物理モデルや任意縮小率での厳密な面積積分ではない。
+- Customと保持LUTは開いている編集セッション内の設定で、写真をまたぐ永続的なユーザープリセット管理ではない。
 - 入力画像にすでにあるノイズ、スマホの局所トーンマッピング、シャープニング、WBはlookだけでは取り除けない。
 
 次は同一シーン・同一露出/WB・同じ画角の元画像/CNT適用画像のペアが必要。まず肌色、ニュートラルグレー、空、緑、赤、暗部のある逆光、明部飽和のある場面を揃える。比較のために顔や位置情報を外部へ送る必要はない。

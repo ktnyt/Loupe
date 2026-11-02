@@ -84,7 +84,7 @@ final class RawEditLookPanel extends ScrollView {
   void update(RawEditLook look,int preset,int basePreset,boolean dirty,boolean loading,String status,RawEditCube retainedExternal){
     this.look=look;this.retainedExternal=retainedExternal;this.loading=loading;this.basePreset=Math.max(0,Math.min(1,basePreset));updating=true;
     unsaved.setVisibility(dirty?VISIBLE:GONE);
-    for(int i=0;i<3;i++){boolean selected=i==preset;Button b=presets[i];b.setSelected(selected);b.setTextColor(selected?0xff111111:INK);b.setBackground(shape(selected?INK:Color.TRANSPARENT,12,selected?INK:0xff3a3a3f));b.setEnabled(!loading);}
+    for(int i=0;i<3;i++){boolean selected=i==preset;Button b=presets[i];b.setSelected(selected);b.setTypeface(Typeface.create(Typeface.DEFAULT,selected?600:500,false));b.setTextColor(selected?0xff111111:INK);b.setBackground(shape(selected?INK:Color.TRANSPARENT,12,selected?INK:0xff3a3a3f));b.setEnabled(!loading);}
     tone.on=look.toneEnabled();lut.on=look.lutEnabled();grain.on=look.grainEnabled();tone.setEnabled(!loading);lut.setEnabled(!loading&&(look.cube()!=null||retainedExternal!=null));grain.setEnabled(!loading);tone.invalidate();lut.invalidate();grain.invalidate();
     tone.setStateDescription(tone.on?"オン":"オフ");lut.setStateDescription(lut.on?"オン":"オフ");grain.setStateDescription(grain.on?"オン":"オフ");
     edit.setEnabled(!loading);pick.setEnabled(!loading);reset.setEnabled(!loading);seed.setEnabled(!loading);lutStrength.setEnabled(!loading);grainStrength.setEnabled(!loading);grainShadows.setEnabled(!loading);
