@@ -2,6 +2,7 @@
 #include <jni.h>
 #include <new>
 #include <stdexcept>
+#include <sys/stat.h>
 
 namespace {
 struct InterruptContext {
@@ -105,4 +106,36 @@ Java_jp_nano_rawgallery_NativeRaw_prepareFullNative(JNIEnv* env,jclass,jstring i
   loupe::prepareFull(in.get(),out.get(),fullCancelled,&c);
  } catch(const std::bad_alloc&) { fail(env,"java/lang/OutOfMemoryError","RAW preparation memory limit exceeded"); }
  catch(...) { fail(env,"java/io/IOException","RAW preparation failed or cancelled"); }
+}
+
+extern "C" JNIEXPORT jintArray JNICALL
+Java_jp_nano_rawgallery_NativeRaw_identifyNative(JNIEnv* env,jclass,jstring input) {
+ if(!input){fail(env,"java/lang/IllegalArgumentException","Missing RAW input");return nullptr;}
+ try {
+  UtfPath path(env,input);if(!path.get())return nullptr;
+  struct stat st{};
+  if(stat(path.get(),&st)!=0||!S_ISREG(st.st_mode)||st.st_size<=0||uint64_t(st.st_size)>256ULL*1024*1024)
+   throw std::runtime_error("Invalid RAW input");
+  jclass threadClass=env->FindClass("java/lang/Thread");if(!threadClass)return nullptr;
+  jmethodID current=env->GetStaticMethodID(threadClass,"currentThread","()Ljava/lang/Thread;");
+  jmethodID isInterrupted=env->GetMethodID(threadClass,"isInterrupted","()Z");
+  if(!current||!isInterrupted)return nullptr;
+  jobject thread=env->CallStaticObjectMethod(threadClass,current);if(!thread||env->ExceptionCheck())return nullptr;
+  InterruptContext cancellation{env,thread,isInterrupted};
+  if(interrupted(&cancellation,LIBRAW_PROGRESS_START,0,0))throw std::runtime_error("Cancelled RAW identification");
+  LibRaw raw;raw.set_dataerror_handler([](void*,const char*,INT64){},nullptr);
+  raw.set_progress_handler(interrupted,&cancellation);
+  raw.imgdata.rawparams.max_raw_memory_mb=256;
+  auto& p=raw.imgdata.params;p.half_size=0;p.output_color=1;p.output_bps=16;
+  if(raw.open_file(path.get())!=LIBRAW_SUCCESS)throw std::runtime_error("RAW identification failed");
+  auto valid=[](int w,int h){return w>0&&h>0&&w<=16384&&h<=16384&&uint64_t(w)*h<=80000000;};
+  const auto& z=raw.imgdata.sizes;
+  if(!valid(z.raw_width,z.raw_height)||!valid(z.width,z.height))throw std::runtime_error("Invalid RAW dimensions");
+  int w,h,c,b;raw.get_mem_image_format(&w,&h,&c,&b);
+  if(!valid(w,h))throw std::runtime_error("Invalid RAW output dimensions");
+  jint values[]={w,h};jintArray result=env->NewIntArray(2);
+  if(result)env->SetIntArrayRegion(result,0,2,values);return result;
+ }catch(const std::bad_alloc&){fail(env,"java/lang/OutOfMemoryError","RAW identification memory limit exceeded");}
+ catch(...){fail(env,"java/io/IOException","RAW identification failed");}
+ return nullptr;
 }

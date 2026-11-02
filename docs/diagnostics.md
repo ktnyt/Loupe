@@ -148,3 +148,11 @@ python3 scripts/test-raw-editor-full-profile.py
 出力先は毎回新規ディレクトリ。URI指定を省略すると合成画像を使う。開始前に実験アプリだけを終了し、動画・PiPを止め、ロックと前景を確認する。ログは対象タグだけを収集し、端末全体のログを消去しない。各1.8秒のドラッグ6回について入力数・反映数・最終入力の反映時間を出し、準備中と完了後の中央値/p95を別々に示す。起動やタブ切替の入力はドラッグ計測から分ける。準備との重複が足りなければ失敗とし、準備後の結果で代用しない。
 
 電池温度を前後で記録し、RSS/HWM/PSSは入力計測終了後に取得する。取得できない値や反映のない区間はnullを残す。終了後のPSSは準備中のピークではなく、HWMもOSから取得できた場合のプロセス全体の値である。LibRaw内部のピークをタイル用メモリの上限と同一視しない。画質、原寸の保存寸法、原本hash、ズーム時の見え方は別の実機検査で確認する。
+
+## 閲覧時のLook適用（Issue #71）
+
+`viewer.look.input` のrequestを `viewer.look.committed`（適用設定・bitmap反映）と `viewer.look.frame_committed`（Androidのframe commit callback）へ結ぶ。後者は描画したフレームのGPU送出を示し、ディスプレイ走査完了は示さない。旧 `viewer.look.frame_callback` はpostOnAnimationであり、反映済みフレームの根拠に使わない。
+
+`viewer.look.original/copy/decode` と `viewer.pipeline.prepare/preview/detail` は処理内の数値計測。`decode` は元のpreview decodeとの比較用ラベルで、現行viewerではmetadata-onlyのsource openを計測する。内部stageはrequest0であり、重なった処理を任意の選択requestへ推測で結ばない。session/thread/順序と検査条件を確認し、選択全体の時間は対応するframe_committedで判断する。写真名・URI・例外本文は記録しない。
+
+同じ実RAWの比較条件、各3回の値、温度、元画像不変・全画素一致、キャッシュ条件と未計測の範囲は [viewer-look-performance.md](viewer-look-performance.md) に記録する。タイミング検査の画素hashは明示起動した検査の私有ログだけに残し、issueや成果物へ写真やhashを添付しない。

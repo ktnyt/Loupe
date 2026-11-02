@@ -49,3 +49,7 @@ In the editor open the Look sheet and choose プリセットとして保存. Onl
 ## Test process boundary
 
 The opt-in RAW check supplies its image after APK installation; image bytes are never APK assets or committed artifacts. Its controlled Look input is that private fixture. It starts the normal MainActivity, so existing startup behavior may enumerate MediaStore metadata and refresh the local gallery-index.db (and normal browsing caches). It is not a fully isolated fixture-only application process. This existing authorized browsing behavior is accepted for the runtime check; source media are not edited and the test does not send/upload the photograph. Fixture input, original cache, embedded-preview .jpg/.json/.part and selection snapshot are independently removed and their absence verified after worker barriers. Native termination/cleanup failures prevent PASS and are reported rather than deleting files still in use.
+
+## Viewer response (#71)
+
+Normal0.25.1/code148 retains these rendering/storage/UI contracts and omits discarded previews, bulk-transfers float rows and optimizes native Debug pixel work. Viewer requests do not use editor gesture debounce/tile pacing; editor defaults remain unchanged. [Same-input frame timings, output equality and limits](viewer-look-performance.md) supersede the earlier single12.84s sample as performance evidence.

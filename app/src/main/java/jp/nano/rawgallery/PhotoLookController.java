@@ -25,6 +25,7 @@ final class PhotoLookController implements AutoCloseable {
   private volatile boolean closed;
   private volatile int engine;
   private long revision,inputNs,request;
+  private volatile long frameCommittedNs;
   private int width,height;
   private boolean loading,prepared,rendering,committing,saving,before,restoring=true;
   private LookPresetStore.Entry applied,candidate,failedEntry,afterSave;
@@ -119,7 +120,10 @@ final class PhotoLookController implements AutoCloseable {
       RawEditSource source=null;File copy=null;
       try{
         if(!current(token))return;
+        long stage=SystemClock.elapsedRealtimeNanos();
         PhotoRepository.Photo cached=OriginalCache.obtain(activity,photo);
+        DiagnosticLog.event("viewer.look.original",0,"elapsed_ns",SystemClock.elapsedRealtimeNanos()-stage);
+        stage=SystemClock.elapsedRealtimeNanos();
         if(!current(token)||Thread.currentThread().isInterrupted())return;
         copy=File.createTempFile("viewer-look-",".input",activity.getCacheDir());
         try(InputStream in=PhotoRepository.original(activity,cached);FileOutputStream out=new FileOutputStream(copy)){
@@ -130,7 +134,10 @@ final class PhotoLookController implements AutoCloseable {
           }
           if(count==0)throw new IOException("Empty input");out.getFD().sync();
         }
-        File owned=copy;copy=null;source=RawEditSource.fromPrivateCopy(owned);
+        DiagnosticLog.event("viewer.look.copy",0,"elapsed_ns",SystemClock.elapsedRealtimeNanos()-stage);
+        stage=SystemClock.elapsedRealtimeNanos();
+        File owned=copy;copy=null;source=RawEditSource.forFullResolution(owned);
+        DiagnosticLog.event("viewer.look.decode",0,"elapsed_ns",SystemClock.elapsedRealtimeNanos()-stage);
         if(!current(token))return;
         RawEditSource loaded=source;source=null;
         try{gl.execute(()->upload(loaded,token));}catch(RejectedExecutionException failure){loaded.close();}
@@ -146,6 +153,7 @@ final class PhotoLookController implements AutoCloseable {
   }
   private void attach(RawEditSource source,int token){
     RawEditFullSession session=new RawEditFullSession(activity,source,gl,main,()->false,new RawEditFullSession.Listener(){
+      public void timing(String event,long ns){DiagnosticLog.event(event,0,"elapsed_ns",ns);}
       public void prepared(int w,int h,RawEditFullSource.Preview preview){
         if(!current(token))return;
         width=w;height=h;
@@ -160,7 +168,7 @@ final class PhotoLookController implements AutoCloseable {
       public void saved(RawEditState snapshot){if(engine==token)finishSave("JPEGを保存しました",false);}
       public void saveFailed(){if(engine==token)finishSave("JPEGを保存できませんでした。もう一度お試しください",true);}
       public void saveCancelled(){if(engine==token)finishSave("保存を中止しました",false);}
-    });
+    },false);
     full=session;session.start();
   }
   private void requestDetail(){
@@ -187,6 +195,11 @@ final class PhotoLookController implements AutoCloseable {
         if(!persisted){recycle(bitmap);candidate=entry;selectionFailed("Lookを保存できませんでした。もう一度お試しください");return;}
         Bitmap previous=developed;developed=bitmap;applied=entry;candidate=entry;before=false;message="";
         show(entry==null?original:developed);if(previous!=bitmap)recycle(previous);
+        long frameRequest=request,frameStart=inputNs;
+        image.getViewTreeObserver().registerFrameCommitCallback(()->{
+          long ns=SystemClock.elapsedRealtimeNanos();
+          main.post(()->{if(!closed&&revision==ticket){frameCommittedNs=ns;DiagnosticLog.event("viewer.look.frame_committed",frameRequest,"revision",ticket,"elapsed_ns",ns-frameStart);}});
+        });
         DiagnosticLog.event("viewer.look.committed",request,"revision",ticket,"elapsed_ns",SystemClock.elapsedRealtimeNanos()-inputNs);
         long committedRequest=request,started=inputNs;
         image.postOnAnimation(()->{if(!closed&&revision==ticket)DiagnosticLog.event("viewer.look.frame_callback",committedRequest,"elapsed_ns",SystemClock.elapsedRealtimeNanos()-started);});
