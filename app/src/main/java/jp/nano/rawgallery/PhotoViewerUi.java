@@ -9,6 +9,8 @@ import java.util.*;
 
 /** The photo-first S08 layout; navigation and data changes belong to the activity. */
 final class PhotoViewerUi extends ViewGroup {
+  final PhotoRepository.Photo photo;
+  ViewerLookUi lookUi;
   final FrameLayout stage;
   final ZoomImageView image;
   final LinearLayout footer;
@@ -22,6 +24,7 @@ final class PhotoViewerUi extends ViewGroup {
 
   PhotoViewerUi(Context context, PhotoRepository.Photo photo) {
     super(context);
+    this.photo=photo;
     setBackgroundColor(Color.BLACK);
     date = PhotoListUi.text(context, date(photo, false), 15, 22, GalleryUi.TEXT);
     date.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
@@ -276,14 +279,18 @@ final class PhotoViewerUi extends ViewGroup {
     int width=MeasureSpec.getSize(widthSpec),height=MeasureSpec.getSize(heightSpec);
     date.measure(MeasureSpec.makeMeasureSpec(Math.max(0,width-dp(32)),MeasureSpec.AT_MOST),MeasureSpec.makeMeasureSpec(0,MeasureSpec.UNSPECIFIED));
     footer.measure(MeasureSpec.makeMeasureSpec(width,MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(height,MeasureSpec.AT_MOST));
-    int top=Math.max(dp(72),date.getMeasuredHeight()+dp(8));
+    boolean two=lookUi!=null && date.getMeasuredWidth()+dp(224)>width;
+    int top=Math.max(two?dp(100):dp(72),date.getMeasuredHeight()+dp(8));
     int bottom=Math.max(dp(100),footer.getMeasuredHeight()+dp(16));
     stage.measure(MeasureSpec.makeMeasureSpec(width,MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(Math.max(0,height-top-bottom),MeasureSpec.EXACTLY));
+    if(lookUi!=null){for(String tag:new String[]{"viewer-look","viewer-before"}){View v=findViewWithTag(tag);if(v!=null)v.measure(MeasureSpec.makeMeasureSpec(width,MeasureSpec.AT_MOST),MeasureSpec.makeMeasureSpec(dp(48),MeasureSpec.EXACTLY));}}
     setMeasuredDimension(width,height);
   }
   protected void onLayout(boolean changed,int l,int t,int r,int b) {
     int width=getWidth(),height=getHeight();
-    int dateBottom=Math.max(dp(64),date.getMeasuredHeight());
+    boolean two=lookUi!=null && date.getMeasuredWidth()+dp(224)>width;
+    int dateBottom=Math.max(dp(two?92:64),date.getMeasuredHeight());
+    if(lookUi!=null){View chip=findViewWithTag("viewer-look"),before=findViewWithTag("viewer-before");if(chip!=null)chip.layout(width-dp(8)-chip.getMeasuredWidth(),dp(8),width-dp(8),dp(56));if(before!=null)before.layout(dp(8),dp(8),dp(8)+before.getMeasuredWidth(),dp(56));}
     int top=Math.max(dp(72),dateBottom+dp(8));
     date.layout((width-date.getMeasuredWidth())/2,dateBottom-date.getMeasuredHeight(),(width+date.getMeasuredWidth())/2,dateBottom);
     stage.layout(0,top,width,top+stage.getMeasuredHeight());

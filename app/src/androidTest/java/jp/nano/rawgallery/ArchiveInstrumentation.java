@@ -17,7 +17,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean sortDimensionsSpecified;
   private float tagFont;
   @Override public void callActivityOnCreate(android.app.Activity activity, Bundle state) {
-    if ((tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest) && (activity instanceof TagActivity || activity instanceof MainActivity) && tagWidth > 0) {
+    if ((tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || viewerLookTest || viewerLookUiTest) && (activity instanceof TagActivity || activity instanceof MainActivity || viewerLookUiTest && activity instanceof RawEditActivity) && tagWidth > 0) {
       android.content.res.Configuration config = new android.content.res.Configuration(activity.getBaseContext().getResources().getConfiguration());
       config.fontScale = tagFont; config.screenWidthDp = tagWidth;
       // Test process resources only; never writes system settings.
@@ -25,9 +25,10 @@ public final class ArchiveInstrumentation extends Instrumentation {
     }
     if((confidenceUiTest||tagDetailTest)&&activity instanceof TagActivity)TagFixtureIsolation.install((TagActivity)activity);
     super.callActivityOnCreate(activity, state);
-    if ((tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+    if ((tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || viewerLookTest || viewerLookUiTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+    if(viewerLookTest&&activity instanceof RawEditActivity)ViewerLookChecks.rawEditActivityLaunches++;
   }
-  private boolean galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest;
+  private boolean galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest, viewerLookTest, viewerLookUiTest, viewerRawLookTest;
   private boolean photoEditTest;
   private boolean consistencyTest, syncControlsTest, tagDetailTest, resultTest, resultTalkBack;
   private boolean dashboardTalkBackTest;
@@ -79,13 +80,16 @@ public final class ArchiveInstrumentation extends Instrumentation {
     sortTest = args != null && "sort-naming".equals(args.getString("mode"));
     shareScreenTest=args!=null&&"share-screen".equals(args.getString("mode"));
     viewerScreenTest=args!=null&&"viewer-screen".equals(args.getString("mode"));
+    viewerLookTest=args!=null&&"viewer-look".equals(args.getString("mode"));
+    viewerLookUiTest=args!=null&&"viewer-look-ui".equals(args.getString("mode"));
+    viewerRawLookTest=args!=null&&"viewer-look-raw".equals(args.getString("mode"));
     photoEditTest=args!=null&&"photo-edit".equals(args.getString("mode"));
     galleryTalkBack=args!=null&&"gallery-screen-talkback".equals(args.getString("mode"));
     galleryScreenTest=shareScreenTest||viewerScreenTest||galleryTalkBack||(args!=null&&"gallery-screen".equals(args.getString("mode")));
     resultTalkBack=args!=null&&"ranking-result-talkback".equals(args.getString("mode"));
     resultTest=resultTalkBack||(args!=null&&"ranking-result".equals(args.getString("mode")));
     tagDetailTest=args!=null&&"tag-detail".equals(args.getString("mode"));
-    if((tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest) && args.containsKey("width")){tagWidth=Integer.parseInt(args.getString("width"));tagFont=Float.parseFloat(args.getString("font","1.0"));}
+    if((tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || viewerLookTest || viewerLookUiTest) && args.containsKey("width")){tagWidth=Integer.parseInt(args.getString("width"));tagFont=Float.parseFloat(args.getString("font","1.0"));}
     sortDimensionsSpecified=sortTest && args.containsKey("width");
     syncControlsTest=args!=null&&"sync-controls".equals(args.getString("mode"));
     consistencyTest=args!=null&&"consistency-layout".equals(args.getString("mode"));
@@ -139,6 +143,9 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if(sortDimensionsSpecified)validateSortDimensions(context);
       if(shareScreenTest){results.putString("stream",ShareScreenChecks.run(this,tagWidth));finish(-1,results);return;}
       if(photoEditTest){results.putString("stream",PhotoEditChecks.run(this));finish(-1,results);return;}
+      if(viewerRawLookTest){results.putString("stream",ViewerRawLookChecks.run(this));finish(-1,results);return;}
+      if(viewerLookUiTest){results.putString("stream",ViewerLookUiChecks.run(this,tagWidth,tagFont));finish(-1,results);return;}
+      if(viewerLookTest){results.putString("stream",ViewerLookChecks.run(this,tagWidth,tagFont));finish(-1,results);return;}
       if(viewerScreenTest){results.putString("stream",ViewerScreenChecks.run(this,tagWidth));finish(-1,results);return;}
       if(galleryScreenTest){results.putString("stream",GalleryScreenChecks.run(this,tagWidth,galleryTalkBack));finish(-1,results);return;}
       if(resultTest){results.putString("stream",RankingResultChecks.run(this,tagWidth,resultTalkBack));finish(-1,results);return;}

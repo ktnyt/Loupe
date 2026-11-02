@@ -74,11 +74,16 @@ public final class ZoomImageView extends View {
     zoom = zoom > 1 ? 1 : 2.5f; dx = 0; dy = 0; zoomChanged(); invalidate();
   }
 
-  public void setBitmap(Bitmap b) {
+  public void setBitmap(Bitmap b) { setBitmap(b, false); }
+
+  /** A same-photo presentation change can retain its normalized zoom pose. */
+  public void setBitmap(Bitmap b, boolean preservePose) {
     bitmap = b;
-    zoom = 1;
-    dx = 0;
-    dy = 0;
+    if (!preservePose) {
+      zoom = 1;
+      dx = 0;
+      dy = 0;
+    }
     zoomChanged();
     invalidate();
   }

@@ -1172,6 +1172,7 @@ public final class MainActivity extends DiagnosticActivity {
 
   protected void onResume() {
     super.onResume();
+    if(restoreViewerLook&&detail){restoreViewerLook=false;showPhoto(index,returnToRanking);}
     if (repository != null) {
       if (resumed) refresh();
       else {
@@ -1298,6 +1299,8 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private boolean returnToRanking, recentPhoto;
+  private ViewerLookUi viewerLook;
+  private boolean restoreViewerLook;
 
   private void showPhoto(int position, boolean fromRanking) {
     DiagnosticLog.event("screen.photo", 0, "position", position);
@@ -1314,10 +1317,12 @@ public final class MainActivity extends DiagnosticActivity {
     base();
     root.setBackgroundColor(Color.BLACK);
     PhotoViewerUi viewer=new PhotoViewerUi(this,photo);
+    try{viewerLook=new ViewerLookUi(this,photo,viewer);viewer.lookUi=viewerLook;}catch(java.io.IOException error){viewerLook=null;}
+    final ViewerLookUi look=viewerLook;
     root.addView(viewer,new LinearLayout.LayoutParams(-1,0,1));
     FrameLayout photoFrame=viewer.stage;
     ZoomImageView image=viewer.image;
-    image.setPageListener(direction->{if(!fromRanking)adjacentPhoto(direction);});
+    image.setPageListener(direction->{if(!fromRanking){if(look!=null)look.runWhenReady("写真の移動",()->adjacentPhoto(direction));else adjacentPhoto(direction);}});
     StatusView loadStatus=new StatusView(this);
     loadStatus.asPhotoOverlay();viewer.status(loadStatus);
     loadStatus.begin("元のファイルを読み込んでいます");
@@ -1325,19 +1330,19 @@ public final class MainActivity extends DiagnosticActivity {
     if(!fromRanking){
       int within=burstMembers==null?position:burstMembers.indexOf(position);
       int count=burstMembers==null?photos.size():burstMembers.size();
-      Button previous=viewer.action("前の写真","前へ","前の写真",()->adjacentPhoto(-1));
-      Button next=viewer.action("次の写真","次へ","次の写真",()->adjacentPhoto(1));
+      Button previous=viewer.action("前の写真","前へ","前の写真",()->{if(look!=null)look.runWhenReady("前の写真へ移動",()->adjacentPhoto(-1));else adjacentPhoto(-1);});
+      Button next=viewer.action("次の写真","次へ","次の写真",()->{if(look!=null)look.runWhenReady("次の写真へ移動",()->adjacentPhoto(1));else adjacentPhoto(1);});
       previous.setEnabled(within>0);next.setEnabled(within+1<count);
     }
     viewer.zoom();
     Button editPhoto=PhotoEditor.add(this,viewer,photo,actions);
-    viewer.action("共有","共有","共有",()->shareMenu(photo));
+    viewer.action("共有","共有","共有（元のファイルを共有します）",()->shareMenu(photo));
     if(!fromRanking&&"content".equals(photo.uri.getScheme()))viewer.action("タグ","タグ","タグ",()->openTags(photo));
     viewer.action("情報","情報","写真の情報",()->new GalleryUi.Sheet(this).setTitle(photo.name)
         .setMessage(model.getText()+"\n"+dimensions.getText()+"\n"+photo.folder)
         .setNeutralButton("外部のアプリで編集",(dialog,which)->{dialog.dismiss();editPhoto.post(()->editPhoto.performLongClick());})
         .setPositiveButton("閉じる",null).show());
-    if(fromRanking&&!ranking.done())viewer.choose(()->saveRanking(ranking.choose(rankingMembers.get(ranking.upper())==position)));
+    if(fromRanking&&!ranking.done())viewer.choose(()->{Runnable choose=()->saveRanking(ranking.choose(rankingMembers.get(ranking.upper())==position));if(look!=null)look.runWhenReady("写真の選択",choose);else choose.run();});
     viewing =
         actions.submit(
             () -> {
@@ -1351,7 +1356,7 @@ public final class MainActivity extends DiagnosticActivity {
                         return;
                       }
                       activePreview = preview;
-                      image.setBitmap(bitmap);
+                      if(look!=null)look.original(bitmap);else image.setBitmap(bitmap);
                       model.setText(preview.model);
                       dimensions.setText(photo.name);
                       loadStatus.companion(StatusView.Symbol.PREVIEW);viewer.refreshStatus();
@@ -1381,7 +1386,7 @@ public final class MainActivity extends DiagnosticActivity {
                       loadStatus.companion(null);loadStatus.finish();viewer.refreshStatus();
                       image.setStateDescription("元のファイルを表示しています");
                       activePreview = full;
-                      image.setBitmap(high);
+                      if(look!=null)look.original(high);else image.setBitmap(high);
                       model.setText(
                           full.model
                               .replace("RICOH IMAGING COMPANY, LTD.", "RICOH")
@@ -1402,14 +1407,14 @@ public final class MainActivity extends DiagnosticActivity {
                         if(activePreview==null){
                           viewer.failed();
                           photoFrame.removeView(loadStatus);
-                          LinearLayout recovery=new LinearLayout(this);recovery.setOrientation(LinearLayout.VERTICAL);recovery.setGravity(Gravity.CENTER);
+                          LinearLayout recovery=new LinearLayout(this);recovery.setTag("viewer-original-recovery");recovery.setOrientation(LinearLayout.VERTICAL);recovery.setGravity(Gravity.CENTER);
                           loadStatus.asPhotoFailure();loadStatus.show(StatusView.Symbol.FAILED,failure);recovery.addView(loadStatus,new LinearLayout.LayoutParams(dp(32),dp(32)));
                           Button retry=button("再試行",()->showPhoto(position,fromRanking));retry.setContentDescription(failure+"。再試行");retry.setTextSize(14);retry.setPadding(dp(18),0,dp(18),0);
                           android.graphics.drawable.GradientDrawable outline=GalleryUi.shape(this,Color.TRANSPARENT,24);outline.setStroke(dp(1),0xff3a3a3f);retry.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x33c7d8e4),outline,GalleryUi.shape(this,Color.WHITE,24)));
                           ActionIcon retryIcon=new ActionIcon("再試行",getResources().getDisplayMetrics().density*20/26);retryIcon.setBounds(0,0,dp(20),dp(20));retry.setCompoundDrawables(retryIcon,null,null,null);retry.setCompoundDrawablePadding(dp(6));recovery.addView(retry,new LinearLayout.LayoutParams(-2,dp(48)));
                           android.graphics.drawable.GradientDrawable retryBackground=GalleryUi.shape(this,Color.BLACK,24);retryBackground.setStroke(dp(1),0xff3a3a3f);retry.setBackground(retryBackground);
                           LinearLayout.LayoutParams retryPosition=(LinearLayout.LayoutParams)retry.getLayoutParams();retryPosition.topMargin=dp(12);retry.setLayoutParams(retryPosition);
-                          photoFrame.addView(recovery,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER));
+                          photoFrame.addView(recovery,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER));if(look!=null&&look.controller.applied()!=null)recovery.setVisibility(View.GONE);
                         }else loadStatus.show(StatusView.Symbol.FAILED,"",failure,()->showPhoto(position,fromRanking),"再試行");
                         viewer.refreshStatus();
                         image.setStateDescription(failure);
@@ -1423,6 +1428,7 @@ public final class MainActivity extends DiagnosticActivity {
 
   public void onBackPressed() {
     DiagnosticLog.event("action.back", 0, "screen", "MainActivity");
+    if(detail&&viewerLook!=null){if(viewerLook.back())return;ViewerLookUi look=viewerLook;look.runWhenReady("戻る",()->{viewerLook=null;onBackPressed();});return;}
     if (rankingScreen) leaveRanking();
     else if (selecting && !detail) endSelection();
     else if (detail) {
@@ -1815,6 +1821,11 @@ public final class MainActivity extends DiagnosticActivity {
         .setNegativeButton("キャンセル", (d, w) -> editTargets())
         .setOnCancelListener(d -> editTargets())
         .show();
+  }
+
+  protected void onStop() {
+    if(detail&&viewerLook!=null){restoreViewerLook=true;viewerLook.close();viewerLook=null;}
+    super.onStop();
   }
 
   protected void onDestroy() {

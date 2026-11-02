@@ -11,14 +11,14 @@ import android.widget.*;
 
 /** Scrollable research controls. The Activity owns recipes, imports, dialogs and persistence. */
 final class RawEditLookPanel extends ScrollView {
-  interface Listener {void changed(RawEditLook look);void begin();void end();void preset(int preset);void editCurves();void pickCube();void retryCube();void resetPreset();void close();}
+  interface Listener {void changed(RawEditLook look);void begin();void end();void preset(int preset);void editCurves();void pickCube();void retryCube();void resetPreset();void savePreset();void close();}
   private static final int INK=0xffededea,MUTED=0xffa9a9a4;
   private static final String[] PRESETS={"Neutral","CNT-like（仮）","Custom"};
   private final Listener listener;
   private final LinearLayout body;
   private final Button[] presets=new Button[3];
   private final Toggle tone,lut,vignette,grain;
-  private final Button edit,pick,retry,reset,close;
+  private final Button edit,pick,retry,reset,close,savePreset;
   private final TextView unsaved,lutStatus,retained;
   private final Slider lutStrength,vignetteStrength,grainStrength,grainShadows;
   private final EditText seed;
@@ -51,6 +51,7 @@ final class RawEditLookPanel extends ScrollView {
     LinearLayout sr=row(16,16);TextView sl=text("固定 seed",12,MUTED);sr.addView(sl,new LinearLayout.LayoutParams(-2,dp(48)));seed=new EditText(context);seed.setTag("look-seed");seed.setTextSize(14);seed.setTextColor(INK);seed.setIncludeFontPadding(false);seed.setSingleLine(true);seed.setGravity(Gravity.CENTER);seed.setPadding(dp(4),0,dp(4),0);seed.setSelectAllOnFocus(true);seed.setInputType(InputType.TYPE_CLASS_NUMBER);seed.setFilters(new InputFilter[]{new InputFilter.LengthFilter(6)});seed.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);seed.setBackground(shape(0x59000000,8,0xff3a3a3f));seed.setContentDescription("粒子の固定 seed、0から999999");LinearLayout.LayoutParams se=new LinearLayout.LayoutParams(dp(96),dp(48));se.leftMargin=dp(8);sr.addView(seed,se);body.addView(sr);
     seed.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int c,int f){}public void onTextChanged(CharSequence s,int a,int b,int c){if(!updating)seedDirty=true;}public void afterTextChanged(android.text.Editable e){}});
     seed.setOnFocusChangeListener((v,focus)->{if(!focus)commitSeed();});seed.setOnEditorActionListener((v,a,e)->{finishFields();((android.view.inputmethod.InputMethodManager)context.getSystemService(Context.INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(seed.getWindowToken(),0);return true;});
+    savePreset=button("プリセットとして保存",()->{finishFields();listener.savePreset();});savePreset.setTag("look-preset-save");LinearLayout.LayoutParams sv=new LinearLayout.LayoutParams(-1,dp(48));sv.setMargins(dp(16),dp(12),dp(16),0);body.addView(savePreset,sv);
     reset=button("Neutral へリセット",()->{finishFields();listener.resetPreset();});reset.setTag("look-reset");LinearLayout.LayoutParams re=new LinearLayout.LayoutParams(-1,dp(48));re.setMargins(dp(16),dp(12),dp(16),0);body.addView(reset,re);
     update(look,0,0,false,false,null,null);
   }
@@ -89,7 +90,7 @@ final class RawEditLookPanel extends ScrollView {
     for(int i=0;i<3;i++){boolean selected=i==preset;Button b=presets[i];b.setSelected(selected);b.setTypeface(Typeface.create(Typeface.DEFAULT,selected?600:500,false));b.setTextColor(selected?0xff111111:INK);b.setBackground(shape(selected?INK:Color.TRANSPARENT,12,selected?INK:0xff3a3a3f));b.setEnabled(!loading);}
     tone.on=look.toneEnabled();lut.on=look.lutEnabled();vignette.on=look.vignetteEnabled();grain.on=look.grainEnabled();tone.setEnabled(!loading);lut.setEnabled(!loading&&(look.cube()!=null||retainedExternal!=null));vignette.setEnabled(!loading);grain.setEnabled(!loading);tone.invalidate();lut.invalidate();vignette.invalidate();grain.invalidate();
     tone.setStateDescription(tone.on?"オン":"オフ");lut.setStateDescription(lut.on?"オン":"オフ");vignette.setStateDescription(vignette.on?"オン":"オフ");grain.setStateDescription(grain.on?"オン":"オフ");
-    edit.setEnabled(!loading);pick.setEnabled(!loading);reset.setEnabled(!loading);seed.setEnabled(!loading);lutStrength.setEnabled(!loading);grainStrength.setEnabled(!loading);grainShadows.setEnabled(!loading);
+    edit.setEnabled(!loading);pick.setEnabled(!loading);reset.setEnabled(!loading);savePreset.setEnabled(!loading);seed.setEnabled(!loading);lutStrength.setEnabled(!loading);grainStrength.setEnabled(!loading);grainShadows.setEnabled(!loading);
     vignetteStrength.setEnabled(!loading);
     RawEditLook defaults=this.basePreset==1?RawEditLook.cntLike():RawEditLook.neutral();lutStrength.resetProgress=Math.round(defaults.lutStrength()*100);vignetteStrength.resetProgress=Math.round(defaults.vignetteStrength()*100);grainStrength.resetProgress=Math.round(defaults.grainStrength()*100);grainShadows.resetProgress=Math.round(defaults.grainShadows()*100);
     lutStrength.setValue(look.lutStrength());vignetteStrength.setValue(look.vignetteStrength());grainStrength.setValue(look.grainStrength());grainShadows.setValue(look.grainShadows());
