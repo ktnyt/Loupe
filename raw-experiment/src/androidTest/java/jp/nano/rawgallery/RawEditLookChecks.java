@@ -49,8 +49,21 @@ final class RawEditLookChecks {
     }
     File recipe=File.createTempFile("synthetic-look-",".recipe",instrumentation.getTargetContext().getCacheDir());
     try{RawEditLook expected=RawEditLook.cntLike().withCube(table(65,true)).withSeed(-319);try(DataOutputStream out=new DataOutputStream(new BufferedOutputStream(new FileOutputStream(recipe)))){expected.write(out);}try(DataInputStream in=new DataInputStream(new BufferedInputStream(new FileInputStream(recipe)))){require(expected.equals(RawEditLook.read(in))&&in.read()==-1,"private look recipe round trip");}}finally{recipe.delete();}
-    tiles(instrumentation);gridStability(instrumentation);resize();
+    tiles(instrumentation);gridStability(instrumentation);resize();store(instrumentation);RawEditPublishChecks.runLook(instrumentation);
     android.util.Log.i("LoupeRawEdit","look.check max_code_error="+maxCpuGpu+" ms="+(android.os.SystemClock.elapsedRealtime()-started));
+  }
+  private static void store(Instrumentation instrumentation)throws Exception {
+    File directory=new File(instrumentation.getTargetContext().getCacheDir(),"synthetic-look-store-"+java.util.UUID.randomUUID());
+    require(directory.mkdir(),"create isolated look store");String token=null;
+    try {
+      RawEditLook current=RawEditLook.cntLike().withCube(table(65,true)),saved=current.withSeed(71),custom=current.withGrainStrength(.3f);
+      long start=android.os.SystemClock.elapsedRealtime();token=RawEditLookStore.save(directory,null,current,saved,custom);
+      long saveMs=android.os.SystemClock.elapsedRealtime()-start;start=android.os.SystemClock.elapsedRealtime();
+      RawEditLook[] loaded=RawEditLookStore.load(directory,token);long loadMs=android.os.SystemClock.elapsedRealtime()-start;
+      require(current.equals(loaded[0])&&saved.equals(loaded[1])&&custom.equals(loaded[2]),"Android private store round trip all slots");
+      String replaced=RawEditLookStore.save(directory,token,custom,saved,current);require(token.equals(replaced)&&RawEditLookStore.load(directory,token)[0].equals(custom),"Android atomic store replacement");
+      android.util.Log.i("LoupeRawEdit","look.store save_ms="+saveMs+" load_ms="+loadMs+" bytes="+new File(directory,token+".look").length()+" slots=3 cube_size=65");
+    } finally {if(token!=null)RawEditLookStore.delete(directory,token);require(directory.delete(),"isolated look store cleanup");}
   }
   private static int reference(RawEditRenderer renderer,RawEditState state,double[][][] input)throws Exception {
     Bitmap actual=renderer.render(state,false,false,2048);int max=0;

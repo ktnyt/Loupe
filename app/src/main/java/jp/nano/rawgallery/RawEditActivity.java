@@ -25,6 +25,21 @@ public final class RawEditActivity extends Activity {
   private final AtomicBoolean queued=new AtomicBoolean();
   private volatile RawEditState state=new RawEditState();
   private RawEditState saved=new RawEditState();
+  private RawEditLook customLook=RawEditLook.neutral();
+  private RawEditCube retainedCube;
+  private int lookPreset=-1,lookBase;
+  private boolean lookCurves,lookLoading,lookSheetWanted,lookRestoreFailed,hasCustom;
+  private String lookToken,lookMessage="";
+  private Dialog lookDialog;
+  private Dialog neutralDialog;
+  private RawEditLookPanel lookPanel;
+  private final ExecutorService lookIo=Executors.newSingleThreadExecutor(r->new Thread(r,"loupe-look-io"));
+  private final AtomicLong lookImport=new AtomicLong();
+  private Future<?> lookFuture;
+  private CancellationSignal lookCancellation;
+  private final AtomicReference<InputStream> lookStream=new AtomicReference<>();
+  private Uri lookRetryUri;
+  private Uri pendingLookUri;
   private volatile boolean visible=true,dead,ready,before,maxSaturation,saving;
   private volatile int epoch;
   private volatile long rendered=-1;
@@ -64,6 +79,9 @@ public final class RawEditActivity extends Activity {
   private int curveBank;
   private final RawEditHistory history=new RawEditHistory();
   private RawEditState editStart;
+  private RawEditLook customBeforeEdit;
+  private boolean hadCustomBeforeEdit;
+  private int presetBeforeEdit,baseBeforeEdit;
   private final String[] tabNames={"WB","質感","トーン","明るさ","明暗","白黒","カラー"};
   private final int[][] pairs={{0,1},{2,3},{5,5},{6,7},{8,9},{11,12},{13,14}};
   private final String[][] axes={{"色温度","色かぶり"},{"テクスチャ","明瞭度"},{"入力","出力"},{"露出","明度"},{"ハイライト","シャドウ"},{"ホワイトポイント","ブラックポイント"},{"彩度","バイブランス"}};
@@ -79,10 +97,20 @@ public final class RawEditActivity extends Activity {
       if(bundle.getInt("uiVersion",1)<2){if(tab==4)tab=6;else if(tab==3)tab+=Math.max(0,Math.min(2,bundle.getInt("sub")));}
       tab=Math.max(0,Math.min(6,tab));
       String source=bundle.getString("input");if(source!=null)input=Uri.parse(source);
+      lookPreset=bundle.getInt("lookPreset",-1);lookBase=bundle.getInt("lookBase",0);lookCurves=bundle.getBoolean("lookCurves",false);hasCustom=bundle.getBoolean("hasCustom",false);
+      lookToken=bundle.getString("lookToken");lookRestoreFailed=bundle.getBoolean("lookSaveFailed",false);
+      if(lookToken!=null&&!lookRestoreFailed)try{
+        RawEditLookStore.Session session=RawEditLookStore.loadSession(lookDirectory(),lookToken);
+        state=state.withLook(lookPreset==2?session.current.withBasePreset(lookBase):session.current);saved=saved.withLook(session.saved);customLook=session.custom.withBasePreset(lookBase);retainedCube=session.external;
+      }catch(IOException|RuntimeException|OutOfMemoryError failure){lookRestoreFailed=true;}
     }else input=getIntent().getData();
+    if(lookPreset==0&&!state.equals(RawEditState.neutral()))lookPreset=-1;
     build();
     if(bundle!=null){image.restorePose(bundle.getFloat("zoom",1),bundle.getFloat("panX",0),bundle.getFloat("panY",0));}
-    if(input!=null||synthetic())load();else showPicker();
+    if(lookRestoreFailed){new AlertDialog.Builder(this).setTitle("ルックを復元できません")
+        .setMessage("前回の調整値を読み込めませんでした。編集画面を開き直してください。")
+        .setCancelable(false).setPositiveButton("閉じる",(d,w)->finish()).show();}
+    else if(input!=null||synthetic())load();else showPicker();
   }
   private boolean synthetic(){return (getApplicationInfo().flags&ApplicationInfo.FLAG_DEBUGGABLE)!=0&&getIntent().getBooleanExtra("rawEditSynthetic",false);}
   private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
@@ -100,12 +128,16 @@ public final class RawEditActivity extends Activity {
     root.setOrientation(LinearLayout.VERTICAL);root.setMotionEventSplittingEnabled(false);root.setBackgroundColor(BG);
     root.setOnApplyWindowInsetsListener((v,insets)->{android.graphics.Insets b=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());v.setPadding(b.left,b.top,b.right,b.bottom);return insets;});setContentView(root);
     LinearLayout top=new LinearLayout(this);top.setGravity(Gravity.CENTER_VERTICAL);top.setPadding(dp(16),0,dp(8),0);root.addView(top,new LinearLayout.LayoutParams(-1,dp(56)));
-    LinearLayout heading=new LinearLayout(this);heading.setGravity(Gravity.CENTER_VERTICAL);title=text("現像",15,INK);title.setTypeface(Typeface.create(Typeface.DEFAULT,600,false));heading.addView(title);
-    TextView experiment=text("実験",12,MUTED);LinearLayout.LayoutParams ep=new LinearLayout.LayoutParams(-2,-2);ep.leftMargin=dp(6);heading.addView(experiment,ep);top.addView(heading,new LinearLayout.LayoutParams(0,-1,1));
+    LinearLayout heading=new LinearLayout(this);heading.setGravity(Gravity.CENTER_VERTICAL);heading.setMinimumHeight(dp(48));heading.setMinimumWidth(dp(48));heading.setTag("look-open");heading.setClickable(true);heading.setFocusable(true);heading.setContentDescription("現像。ルックを調整");heading.setOnClickListener(v->showLookSheet());
+    title=text("現像",15,INK);title.setTypeface(Typeface.create(Typeface.DEFAULT,600,false));
+    LinearLayout words=new LinearLayout(this);words.setGravity(Gravity.CENTER_VERTICAL);if(getResources().getConfiguration().screenWidthDp<360||getResources().getConfiguration().screenWidthDp/getResources().getConfiguration().fontScale<300)words.setOrientation(LinearLayout.VERTICAL);words.addView(title);
+    TextView experiment=text("実験",12,MUTED);LinearLayout.LayoutParams ep=new LinearLayout.LayoutParams(-2,-2);if(words.getOrientation()==LinearLayout.HORIZONTAL)ep.leftMargin=dp(4);words.addView(experiment,ep);heading.addView(words);
+    View arrow=new View(this){final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);protected void onDraw(Canvas canvas){paint.setColor(INK);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(1.5f));paint.setStrokeCap(Paint.Cap.ROUND);paint.setStrokeJoin(Paint.Join.ROUND);Path p=new Path();p.moveTo(dp(4.5f),getHeight()/2f-dp(1.5f));p.lineTo(dp(8),getHeight()/2f+dp(2));p.lineTo(dp(11.5f),getHeight()/2f-dp(1.5f));canvas.drawPath(p,paint);}};LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(dp(16),dp(48));ap.leftMargin=dp(2);heading.addView(arrow,ap);top.addView(heading,new LinearLayout.LayoutParams(0,-1,1));
+    View lookDot=new View(this);lookDot.setTag("look-indicator");lookDot.setBackground(rounded(INK,3));LinearLayout.LayoutParams dotp=new LinearLayout.LayoutParams(dp(6),dp(6));dotp.leftMargin=dp(4);heading.addView(lookDot,dotp);lookDot.setVisibility(state.look().active()?View.VISIBLE:View.GONE);
     help=topButton("ヘルプ","help",this::showHelp);top.addView(help,new LinearLayout.LayoutParams(dp(48),-1));
     compare=topButton("比較","compare",()->{if(ready&&!saving){before=!before;compare.setSelected(before);requestRender();}});compare.setContentDescription("補正前と比べる");top.addView(compare,new LinearLayout.LayoutParams(dp(48),-1));
     reset=topButton("初期化","reset",this::resetTab);reset.setContentDescription("現在のタブだけ初期化");top.addView(reset,new LinearLayout.LayoutParams(dp(48),-1));
-    save=button("保存",this::confirmSave);save.setTextColor(0xff111111);save.setTextSize(14);save.setTypeface(Typeface.create(Typeface.DEFAULT,600,false));save.setPadding(0,0,0,0);save.setBackground(rounded(INK,24));LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(dp(64),dp(48));sp.leftMargin=dp(4);top.addView(save,sp);
+    save=button("保存",this::confirmSave);save.setSingleLine(true);save.setTextColor(0xff111111);save.setTextSize(14);save.setTypeface(Typeface.create(Typeface.DEFAULT,600,false));save.setPadding(0,0,0,0);save.setBackground(rounded(INK,24));LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(dp(64),dp(48));sp.leftMargin=dp(4);top.addView(save,sp);
     picture=new PhotoSurface();picture.setClipChildren(false);picture.setBackgroundColor(Color.BLACK);root.addView(picture,new LinearLayout.LayoutParams(-1,0,1));
     image=new RawEditImageView(this);picture.addView(image,new FrameLayout.LayoutParams(-1,-1));image.setViewportListener(this::viewportChanged);
     status=text("",14,INK);status.setGravity(Gravity.CENTER);status.setPadding(dp(16),dp(8),dp(16),dp(8));status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);picture.addView(status,new FrameLayout.LayoutParams(-1,-1));status.setClickable(false);
@@ -144,8 +176,8 @@ public final class RawEditActivity extends Activity {
     if(curvePanel!=null){curvePanel.finishFields();curveBank=curvePanel.bank();curvePanel.cancelGesture();picture.removeView(curvePanel);curvePanel=null;}
     for(int i=0;i<7;i++){Button t=(Button)tabs.getChildAt(i);t.setTextColor(tab==i?INK:0xff8a8a85);Drawable glyph=t.getCompoundDrawables()[1];if(glyph instanceof Icon)((Icon)glyph).color=tab==i?INK:0xff8a8a85;t.setTypeface(Typeface.create(Typeface.DEFAULT,tab==i?600:500,false));t.setSelected(tab==i);t.setBackground(new TabBackground(tab==i));t.setContentDescription(tabNames[i]+(tab==i?"、選択中":""));}
     if(tab==2){
-      curvePanel=new RawEditCurvePanel(this,state,curveBank,new RawEditCurvePanel.Listener(){
-        public void begin(){beginEdit();}public void changed(RawEditState next){RawEditActivity.this.changed(next);}public void changed(RawEditState next,long editNs){RawEditActivity.this.changed(next,editNs);}
+      curvePanel=new RawEditCurvePanel(this,curveDisplayState(),curveBank,new RawEditCurvePanel.Listener(){
+        public void begin(){beginEdit();}public void changed(RawEditState next){curveChanged(next,0);}public void changed(RawEditState next,long editNs){curveChanged(next,editNs);}
         public void end(boolean cancel){endEdit(cancel);}public void undo(){if(ready&&!saving)applyHistory(false);}public void redo(){if(ready&&!saving)applyHistory(true);}
       });
       FrameLayout.LayoutParams cp=new FrameLayout.LayoutParams(-1,dp(264),Gravity.BOTTOM);cp.leftMargin=cp.rightMargin=cp.bottomMargin=dp(8);picture.addView(curvePanel,cp);controls.setVisibility(View.GONE);updateCurvePanel();enabled(ready&&!saving);return;
@@ -211,18 +243,119 @@ public final class RawEditActivity extends Activity {
     public boolean performAccessibilityAction(int action,Bundle args){if(action==RawEditPad.RESET_ACTION)return resetValue();return super.performAccessibilityAction(action,args);}
   }
   private void updateBadge(){boolean show=ready&&!saving&&!interacting&&(displayBefore||displayMax);badge.setText(displayBefore?"補正前":"彩度MAX");badge.setVisibility(show?View.VISIBLE:View.GONE);}
-  private void updateCurvePanel(){if(curvePanel!=null)curvePanel.update(state,history.canUndo(),history.canRedo());}
-  private void beginEdit(){if(editStart==null)editStart=state;interacting=true;updateBadge();}
-  private void endEdit(boolean cancel){
-    RawEditState start=editStart;editStart=null;if(start!=null){if(cancel){state=start;if(pad!=null)pad.update(state);requestRender();}else history.push(start,state);}
-    interacting=false;updateCurvePanel();updateBadge();
+  private RawEditState curveDisplayState(){
+    if(!lookCurves)return state;RawEditState display=RawEditState.neutral();
+    for(int i=0;i<RawEditState.CURVES;i++)display=display.withCurve(i,state.look().curve(i));return display;
   }
-  private void applyHistory(boolean redo){endEdit(false);state=redo?history.redo(state):history.undo(state);before=false;compare.setSelected(false);if(pad!=null)pad.update(state);updateCurvePanel();requestRender();}
+  private void curveChanged(RawEditState next,long editNs){
+    if(!lookCurves){changed(next,editNs);return;}
+    RawEditLook look=state.look();for(int i=0;i<RawEditState.CURVES;i++)look=look.withCurve(i,next.curve(i));changedLook(look,editNs);
+  }
+  private void updateCurvePanel(){if(curvePanel!=null){curvePanel.update(curveDisplayState(),history.canUndo(),history.canRedo());
+    curvePanel.setTarget(lookCurves,state.look().toneEnabled(),target->{curvePanel.finishFields();endEdit(false);lookCurves=target;updateCurvePanel();},on->changedLook(state.look().withToneEnabled(on),0));}}
+  private void beginEdit(){if(editStart==null){editStart=state;customBeforeEdit=customLook;hadCustomBeforeEdit=hasCustom;presetBeforeEdit=lookPreset;baseBeforeEdit=lookBase;}interacting=true;updateBadge();}
+  private void endEdit(boolean cancel){
+    RawEditState start=editStart;editStart=null;if(start!=null){if(cancel){state=start;customLook=customBeforeEdit;hasCustom=hadCustomBeforeEdit;lookPreset=presetBeforeEdit;lookBase=baseBeforeEdit;if(pad!=null)pad.update(state);requestRender();}else history.push(start,state);}
+    interacting=false;updateCurvePanel();updateBadge();updateLookUi();
+  }
+  private void applyHistory(boolean redo){endEdit(false);state=redo?history.redo(state):history.undo(state);syncLookIdentity();before=false;compare.setSelected(false);if(pad!=null)pad.update(state);updateCurvePanel();updateLookUi();requestRender();}
   private void changed(RawEditState value){changed(value,0);}
-  private void changed(RawEditState value,long editNs){RawEditState old=state;state=value;if(editStart==null)history.push(old,value);before=false;compare.setSelected(false);if(pad!=null)pad.update(value);updateCurvePanel();requestRender(editNs);}
+  private void changed(RawEditState value,long editNs){RawEditState old=state;state=value;if(lookPreset==0&&!state.equals(RawEditState.neutral()))lookPreset=-1;if(editStart==null)history.push(old,value);before=false;compare.setSelected(false);if(pad!=null)pad.update(value);updateCurvePanel();updateLookUi();requestRender(editNs);}
   private void resetTab(){
     if(!ready||saving)return;int[][] keys={{0,1},{2,3,4},{5},{6,7},{8,9,10},{11,12},{13,14,15}};
-    changed(tab==2?state.resetCurves():state.reset(keys[tab]));maxSaturation=false;before=false;renderControls();requestRender();
+    if(tab==2&&lookCurves){RawEditLook look=state.look();for(int i=0;i<5;i++)look=look.withCurve(i,new RawEditCurve());changedLook(look,0);}
+    else changed(tab==2?state.resetCurves():state.reset(keys[tab]));maxSaturation=false;before=false;renderControls();requestRender();
+  }
+  private File lookDirectory(){return new File(getFilesDir(),"look-sessions");}
+  private String lookName(){return lookPreset==1?"CNT-like（仮）":lookPreset==2?"Custom":lookPreset==0?"Neutral":"追加なし";}
+  private void syncLookIdentity(){
+    lookPreset=state.look().equals(RawEditLook.cntLike())?1:state.equals(RawEditState.neutral())?0:state.look().equals(RawEditLook.neutral())?-1:2;
+    if(lookPreset==2){customLook=state.look();lookBase=customLook.basePreset();hasCustom=true;}
+  }
+  private void changedLook(RawEditLook look,long editNs){
+    if(lookLoading||saving)return;if(lookPreset!=2){lookBase=lookPreset==1?1:0;look=look.withBasePreset(lookBase);}lookPreset=2;hasCustom=true;customLook=look;changed(state.withLook(look),editNs);
+  }
+  private void updateLookUi(){
+    if(root==null)return;View entry=root.findViewWithTag("look-open"),dot=root.findViewWithTag("look-indicator");
+    if(save!=null)save.setEnabled(ready&&!saving&&!lookLoading);
+    if(entry!=null){entry.setEnabled(ready&&!saving&&!lookRestoreFailed);entry.setContentDescription("現像（実験）。ルック："+lookName()+"。ルックを調整");}
+    if(dot!=null)dot.setVisibility(state.look().active()?View.VISIBLE:View.GONE);
+    if(lookPanel!=null)lookPanel.update(state.look(),lookPreset,lookPreset==2?lookBase:lookPreset,!state.equals(saved),lookLoading,lookMessage,retainedCube);
+  }
+  private void showLookSheet(){
+    if(!ready||saving||lookRestoreFailed||lookDialog!=null)return;lookSheetWanted=false;
+    if(curvePanel!=null)curvePanel.finishFields();endEdit(false);
+    Dialog dialog=new Dialog(this);dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+    RawEditLookPanel panel=new RawEditLookPanel(this,new RawEditLookPanel.Listener(){
+      public void begin(){beginEdit();}public void end(){endEdit(false);}
+      public void changed(RawEditLook look){changedLook(look,0);}
+      public void preset(int preset){selectLookPreset(preset);}
+      public void editCurves(){closeLookSheet(false);lookCurves=true;selectTab(2);}
+      public void pickCube(){pickLookCube();}public void retryCube(){if(lookRetryUri==null)pickLookCube();else loadLookCube(lookRetryUri);}
+      public void resetPreset(){resetLookPreset();}
+      public void close(){closeLookSheet(false);}
+    });
+    lookDialog=dialog;lookPanel=panel;dialog.setContentView(panel);dialog.setCanceledOnTouchOutside(true);
+    dialog.setOnDismissListener(d->{panel.finishFields();endEdit(false);if(lookDialog==dialog){lookDialog=null;lookPanel=null;}});
+    updateLookUi();dialog.show();Window window=dialog.getWindow();if(window!=null){
+      window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+      window.setGravity(Gravity.BOTTOM);window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+      int content=root.getHeight()-root.getPaddingTop()-root.getPaddingBottom();window.setLayout(-1,Math.max(dp(160),Math.min(dp(384),Math.round(content*.46f))));
+    }
+  }
+  private void closeLookSheet(boolean reopen){
+    lookSheetWanted=reopen;if(lookDialog!=null){if(lookPanel!=null)lookPanel.finishFields();lookDialog.dismiss();}
+  }
+  private void selectLookPreset(int preset){
+    if(lookLoading||saving)return;if(lookPanel!=null)lookPanel.finishFields();endEdit(false);
+    if(preset==0){showNeutralConfirmation();return;}
+    if(lookPreset==2)customLook=state.look();
+    if(preset==1){lookPreset=1;changed(state.withLook(RawEditLook.cntLike()));}
+    else {if(!hasCustom){lookBase=lookPreset==1?1:0;customLook=state.look().withBasePreset(lookBase);hasCustom=true;}lookPreset=2;lookBase=customLook.basePreset();changed(state.withLook(customLook));}
+  }
+  private void resetLookPreset(){
+    if(lookLoading||saving)return;if(lookPanel!=null)lookPanel.finishFields();endEdit(false);
+    int target=lookPreset==2?lookBase:lookPreset;if(lookPreset==2)customLook=state.look();
+    lookPreset=target;changed(state.withLook(target==1?RawEditLook.cntLike():RawEditLook.neutral()));
+  }
+  private void showNeutralConfirmation(){
+    if(neutralDialog!=null)return;Dialog dialog=new Dialog(this);dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);neutralDialog=dialog;
+    dialog.setContentView(RawEditLookPanel.neutralConfirmation(this,()->{
+      dialog.dismiss();if(!ready||saving||lookLoading)return;
+      if(lookPreset==2)customLook=state.look();lookPreset=0;changed(RawEditState.neutral());history.clear();lookCurves=false;renderControls();updateLookUi();
+    },dialog::dismiss));dialog.setCanceledOnTouchOutside(true);dialog.setOnDismissListener(d->{if(neutralDialog==dialog)neutralDialog=null;});dialog.show();
+    Window window=dialog.getWindow();if(window!=null){window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));window.setGravity(Gravity.BOTTOM);window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);window.setDimAmount(.6f);window.setLayout(-1,-2);}
+  }
+  private void pickLookCube(){
+    if(lookLoading||saving)return;if(lookPanel!=null)lookPanel.finishFields();lookSheetWanted=true;
+    Intent choose=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
+    try{startActivityForResult(choose,65);}catch(ActivityNotFoundException failure){lookMessage="ファイルを選択できるアプリがありません";updateLookUi();}
+  }
+  private void loadLookCube(Uri uri){
+    if(uri==null||!"content".equals(uri.getScheme())){lookMessage="ファイルを選び直してください";updateLookUi();return;}
+    cancelLookRead();long request=lookImport.incrementAndGet();CancellationSignal cancellation=new CancellationSignal();lookCancellation=cancellation;lookRetryUri=uri;lookLoading=true;lookMessage="";updateLookUi();
+    long started=SystemClock.elapsedRealtimeNanos();RawEditLog.event("look.import.start",0,0,0);
+    lookFuture=lookIo.submit(()->{
+      InputStream opened=null;
+      try(android.content.res.AssetFileDescriptor descriptor=getContentResolver().openAssetFileDescriptor(uri,"r",cancellation)){
+        if(descriptor==null)throw new IOException("Missing LUT input");opened=descriptor.createInputStream();
+        try(InputStream stream=opened){
+        if(lookImport.get()!=request||Thread.currentThread().isInterrupted())return;lookStream.set(stream);RawEditCube cube=RawEditCube.read(stream);
+        main.post(()->{if(dead||!visible||lookImport.get()!=request)return;lookLoading=false;retainedCube=cube;
+          lookMessage="";
+          changedLook(state.look().withCube(cube).withLutEnabled(true),0);updateLookUi();
+          RawEditLog.event("look.import.complete",(SystemClock.elapsedRealtimeNanos()-started)/1000000,cube.size(),0);
+        });}
+      }catch(IOException|RuntimeException|OutOfMemoryError failure){main.post(()->{
+        if(dead||!visible||lookImport.get()!=request)return;lookLoading=false;
+        lookMessage="読み込めませんでした。sRGB用の3D .cube（2〜65、32MiB以下）を選び直してください。前のLUTは保持しています。";updateLookUi();
+        RawEditLog.event("look.import.failed",(SystemClock.elapsedRealtimeNanos()-started)/1000000,0,0);
+      });}finally{if(opened!=null)lookStream.compareAndSet(opened,null);}
+    });
+  }
+  private void cancelLookRead(){
+    lookImport.incrementAndGet();if(lookCancellation!=null)lookCancellation.cancel();if(lookFuture!=null)lookFuture.cancel(true);
+    InputStream stream=lookStream.getAndSet(null);if(stream!=null)try{stream.close();}catch(IOException failure){RawEditLog.event("look.import.close.failed",0,0,0);}
   }
   private void showHelp(){
     if(tab==2){new AlertDialog.Builder(this).setTitle("トーンカーブ").setMessage("グラフの空白をタップして点を追加し、点をドラッグして動かします。入力と出力は0〜100。点の順序は入れ替わりません。端点も動かせますが削除できません。\n明度・RGB・R・G・Bの5本はすべて重ねて適用します。明度はOklabの明るさ、RGBは各色へ同じ変換を適用します。\nロールオフはカーブの前でハイライトを滑らかに圧縮します。失ったRAW情報は復元しません。\n矢印キーで移動、PageUp/Downで点選択、Insertで追加、Deleteで削除。2本指では編集を取り消して写真を拡大・移動します。").setPositiveButton("閉じる",null).show();return;}
@@ -300,13 +433,17 @@ public final class RawEditActivity extends Activity {
     final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);public void draw(Canvas c){float y=getBounds().exactCenterY();p.setColor(0xff3a3a3f);p.setStrokeWidth(dp(2));c.drawLine(0,y,getBounds().width(),y,p);p.setColor(0xff6b6b70);c.drawLine(getBounds().exactCenterX(),y-dp(6),getBounds().exactCenterX(),y+dp(6),p);}public int getIntrinsicHeight(){return dp(48);}public void setAlpha(int a){}public void setColorFilter(ColorFilter f){}public int getOpacity(){return PixelFormat.TRANSLUCENT;}
   }
   private static void setChildrenEnabled(View v,boolean enabled){v.setEnabled(enabled);if(v instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++)setChildrenEnabled(((android.view.ViewGroup)v).getChildAt(i),enabled);}
-  private void enabled(boolean value){controls.setVisibility(ready&&(tab==0||tab==1||tab==4||tab==6)?View.VISIBLE:View.GONE);image.setEnabled(value);compare.setEnabled(value);reset.setEnabled(value);save.setEnabled(value);setChildrenEnabled(controls,value);if(pad!=null)setChildrenEnabled(pad,value);if(curvePanel!=null)curvePanel.setEnabled(value);help.setEnabled(!saving);setChildrenEnabled(tabs,value);updateBadge();}
+  private void enabled(boolean value){controls.setVisibility(ready&&(tab==0||tab==1||tab==4||tab==6)?View.VISIBLE:View.GONE);image.setEnabled(value);compare.setEnabled(value);reset.setEnabled(value);save.setEnabled(value&&!lookLoading);setChildrenEnabled(controls,value);if(pad!=null)setChildrenEnabled(pad,value);if(curvePanel!=null)curvePanel.setEnabled(value);help.setEnabled(!saving);setChildrenEnabled(tabs,value);updateBadge();updateLookUi();if(value&&lookSheetWanted&&visible)main.post(this::showLookSheet);}
   private void showPicker(){status.setText("RAW / JPEGを選択\n実験版・原寸で別保存");status.setOnClickListener(v->pick());status.setClickable(true);}
   private void pick(){
     Intent choose=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
     try{startActivityForResult(choose,53);}catch(ActivityNotFoundException e){status.setText("写真を選択できるアプリがありません");}
   }
-  protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==53&&result==RESULT_OK&&data!=null&&data.getData()!=null){input=data.getData();image.resetPose();state=new RawEditState();saved=state;history.clear();load();}}
+  protected void onActivityResult(int request,int result,Intent data){
+    super.onActivityResult(request,result,data);
+    if(request==65){if(result==RESULT_OK&&data!=null&&data.getData()!=null){if(visible)loadLookCube(data.getData());else pendingLookUri=data.getData();}lookSheetWanted=true;if(ready)showLookSheet();return;}
+    if(request==53&&result==RESULT_OK&&data!=null&&data.getData()!=null){cancelLookRead();lookLoading=false;lookMessage="";lookPreset=-1;lookBase=0;hasCustom=false;customLook=RawEditLook.neutral();retainedCube=null;lookCurves=false;input=data.getData();image.resetPose();state=new RawEditState();saved=state;history.clear();load();}
+  }
   private RawEditSource syntheticSource(){
     int w=1200,h=800;ByteBuffer b=ByteBuffer.allocateDirect(w*h*16).order(ByteOrder.nativeOrder());FloatBuffer f=b.asFloatBuffer();
     int[] top={134,168,200},sky={201,214,222},ground={125,143,106},bottom={78,93,64},red={201,87,62},beige={232,210,176};
@@ -459,7 +596,7 @@ public final class RawEditActivity extends Activity {
     });
   }
   private void confirmSave(){
-    if(!ready||saving||fullSession==null)return;
+    if(!ready||saving||lookLoading||fullSession==null)return;
     if(saveWaiting){saveWaiting=false;updateFullUi();return;}
     maxSaturation=false;before=false;compare.setSelected(false);renderControls();requestRender();
     if(!fullSession.isPrepared()){
@@ -471,7 +608,7 @@ public final class RawEditActivity extends Activity {
     RawEditFullSession session=fullSession;int token=epoch;
     if(!ready||saving||session==null||!session.isPrepared()||!current(token)||isFinishing()||saveDialog!=null)return;
     if(before||maxSaturation){before=false;maxSaturation=false;compare.setSelected(false);renderControls();requestRender();}
-    saveDialog=new AlertDialog.Builder(this).setTitle("JPEGで保存").setMessage(width+" × "+height+" px　JPEG\n実験版・別のファイルとして保存"+(state.get(RawEditState.MONO)==1?"\nモノクロ":""))
+    saveDialog=new AlertDialog.Builder(this).setTitle("JPEGで保存").setMessage(width+" × "+height+" px　JPEG\n実験版・別のファイルとして保存"+(state.get(RawEditState.MONO)==1?"\nモノクロ":"")+(state.look().active()?"\nルック："+lookName():""))
       .setNegativeButton("キャンセル",null).setPositiveButton("保存",(d,w)->{if(current(session,token))saveImage();}).create();
     saveDialog.setOnDismissListener(d->saveDialog=null);saveDialog.show();
   }
@@ -487,12 +624,23 @@ public final class RawEditActivity extends Activity {
     if(!state.equals(saved)){new AlertDialog.Builder(this).setTitle("変更を破棄しますか？").setNegativeButton("編集を続ける",null).setPositiveButton("破棄",(d,w)->finish()).show();}
     else finish();
   }
-  protected void onSaveInstanceState(Bundle b){super.onSaveInstanceState(b);b.putFloatArray("values",state.snapshot());b.putFloatArray("saved",saved.snapshot());b.putInt("tab",tab);b.putInt("uiVersion",3);b.putInt("curveBank",curvePanel==null?curveBank:curvePanel.bank());b.putFloat("zoom",image.zoom);b.putFloat("panX",image.dx);b.putFloat("panY",image.dy);if(input!=null)b.putString("input",input.toString());}
-  protected void onStart(){super.onStart();visible=true;if(root!=null&&(input!=null||synthetic())&&!ready&&!loading)load();else if(ready){save.setText("保存");save.setStateDescription(null);enabled(true);requestRender();}}
+  protected void onSaveInstanceState(Bundle b){
+    if(lookPanel!=null)lookPanel.finishFields();if(curvePanel!=null)curvePanel.finishFields();endEdit(false);super.onSaveInstanceState(b);
+    b.putFloatArray("values",state.snapshot());b.putFloatArray("saved",saved.snapshot());b.putInt("tab",tab);b.putInt("uiVersion",3);b.putInt("curveBank",curvePanel==null?curveBank:curvePanel.bank());b.putFloat("zoom",image.zoom);b.putFloat("panX",image.dx);b.putFloat("panY",image.dy);if(input!=null)b.putString("input",input.toString());
+    b.putInt("lookPreset",lookPreset);b.putInt("lookBase",lookBase);b.putBoolean("lookCurves",lookCurves);b.putBoolean("hasCustom",hasCustom);
+    long started=SystemClock.elapsedRealtime();try{
+      lookToken=RawEditLookStore.save(lookDirectory(),lookToken,state.look(),saved.look(),customLook,retainedCube);b.putString("lookToken",lookToken);
+      RawEditLog.event("look.persist.complete",SystemClock.elapsedRealtime()-started,0,0);
+    }catch(IOException|RuntimeException failure){b.putBoolean("lookSaveFailed",true);RawEditLog.event("look.persist.failed",SystemClock.elapsedRealtime()-started,0,0);}
+  }
+  protected void onStart(){super.onStart();visible=true;if(lookRestoreFailed)return;if(pendingLookUri!=null){Uri uri=pendingLookUri;pendingLookUri=null;loadLookCube(uri);}if(root!=null&&(input!=null||synthetic())&&!ready&&!loading)load();else if(ready){save.setText("保存");save.setStateDescription(null);enabled(true);requestRender();}}
   protected void onStop(){
     endEdit(true);if(curvePanel!=null)curvePanel.cancelGesture();
     if(pad!=null)pad.cancelGuides();
     visible=false;++epoch;maxSaturation=false;before=false;saveWaiting=false;
+    if(neutralDialog!=null)neutralDialog.dismiss();
+    closeLookSheet(lookDialog!=null||lookSheetWanted);
+    if(lookLoading){cancelLookRead();lookLoading=false;lookMessage="読み込みを中断しました。前のLUTは保持しています。";}
     main.removeCallbacks(busy);main.removeCallbacks(showFullBadge);main.removeCallbacks(replaceFullPreview);
     if(saveDialog!=null){saveDialog.dismiss();saveDialog=null;}
     if(loadFuture!=null&&loading)loadFuture.cancel(true);
@@ -503,7 +651,8 @@ public final class RawEditActivity extends Activity {
   }
   protected void onDestroy(){
     if(pad!=null)pad.cancelGuides();
-    dead=true;ready=false;main.removeCallbacksAndMessages(null);if(loadFuture!=null)loadFuture.cancel(true);
+    dead=true;ready=false;main.removeCallbacksAndMessages(null);if(loadFuture!=null)loadFuture.cancel(true);cancelLookRead();lookIo.shutdownNow();
+    if(isFinishing()&&lookToken!=null)try{RawEditLookStore.delete(lookDirectory(),lookToken);}catch(IOException|RuntimeException failure){RawEditLog.event("look.persist.cleanup.failed",0,0,0);}
     if(fullSession!=null){fullSession.close();fullSession=null;}for(RawEditSource pending:pendingSources)pending.close();pendingSources.clear();pendingFullPreview=null;
     worker.execute(()->{if(renderer!=null){renderer.close();renderer=null;}});worker.shutdown();image.clear();super.onDestroy();
   }

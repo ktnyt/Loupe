@@ -9,42 +9,45 @@ import java.util.Objects;
 public final class RawEditLook {
   private final boolean tone,lut,grain;
   private final float mix,amount,shadows;
-  private final int seed;
+  private final int seed,basePreset;
   private final RawEditCurve[] curves;
   private final RawEditCube cube;
-  private RawEditLook(boolean tone,boolean lut,boolean grain,float mix,float amount,float shadows,int seed,RawEditCurve[] curves,RawEditCube cube){
-    if(!valid(mix)||!valid(amount)||!valid(shadows)||curves==null||curves.length!=5)throw new IllegalArgumentException("Invalid look");for(RawEditCurve c:curves)Objects.requireNonNull(c);
-    this.tone=tone;this.lut=lut;this.grain=grain;this.mix=mix==0?0:mix;this.amount=amount==0?0:amount;this.shadows=shadows==0?0:shadows;this.seed=seed;this.curves=curves.clone();this.cube=cube;
+  private RawEditLook(boolean tone,boolean lut,boolean grain,float mix,float amount,float shadows,int seed,int basePreset,RawEditCurve[] curves,RawEditCube cube){
+    if(!valid(mix)||!valid(amount)||!valid(shadows)||basePreset<0||basePreset>1||curves==null||curves.length!=5)throw new IllegalArgumentException("Invalid look");for(RawEditCurve c:curves)Objects.requireNonNull(c);
+    this.tone=tone;this.lut=lut;this.grain=grain;this.mix=mix==0?0:mix;this.amount=amount==0?0:amount;this.shadows=shadows==0?0:shadows;this.seed=seed;this.basePreset=basePreset;this.curves=curves.clone();this.cube=cube;
   }
   private static boolean valid(float v){return Float.isFinite(v)&&v>=0&&v<=1;}
   private static RawEditCurve[] identityCurves(){RawEditCurve[] c=new RawEditCurve[5];Arrays.fill(c,new RawEditCurve());return c;}
-  public static RawEditLook neutral(){return new RawEditLook(false,false,false,1,0,1,65,identityCurves(),null);}
+  public static RawEditLook neutral(){return new RawEditLook(false,false,false,1,0,1,65,0,identityCurves(),null);}
   private static final class Preset {
-    static final RawEditLook CNT=new RawEditLook(true,true,true,1,.18f,.8f,65,new RawEditCurve[]{new RawEditCurve(new float[]{0,0,.025f,.014f,.13f,.14f,.45f,.46f,.75f,.74f,1,.96f}),new RawEditCurve(),new RawEditCurve(),new RawEditCurve(),new RawEditCurve()},RawEditCube.cntLike());
+    static final RawEditLook CNT=new RawEditLook(true,true,true,1,.18f,.8f,65,1,new RawEditCurve[]{new RawEditCurve(new float[]{0,0,.025f,.014f,.13f,.14f,.45f,.46f,.75f,.74f,1,.96f}),new RawEditCurve(),new RawEditCurve(),new RawEditCurve(),new RawEditCurve()},RawEditCube.cntLike());
   }
   /** Hypothesis preset only; no Leica reference images or proprietary transform are embedded. */
   public static RawEditLook cntLike(){return Preset.CNT;}
   public boolean toneEnabled(){return tone;} public boolean lutEnabled(){return lut;} public boolean grainEnabled(){return grain;}
   public float lutStrength(){return mix;} public float grainStrength(){return amount;} public float grainShadows(){return shadows;} public int seed(){return seed;}
+  /** Immutable reset origin, retained through edits, undo/redo and persistence. */
+  public int basePreset(){return basePreset;}
+  public RawEditLook withBasePreset(int value){return new RawEditLook(tone,lut,grain,mix,amount,shadows,seed,value,curves,cube);}
   public RawEditCurve curve(int bank){return curves[bank];} public RawEditCube cube(){return cube;}
   public boolean hasTone(){if(!tone)return false;for(RawEditCurve c:curves)if(!c.identity())return true;return false;}
   public boolean active(){return hasTone()||lut&&cube!=null&&mix>0||grain&&amount>0;}
-  public RawEditLook withToneEnabled(boolean v){return new RawEditLook(v,lut,grain,mix,amount,shadows,seed,curves,cube);}
-  public RawEditLook withLutEnabled(boolean v){return new RawEditLook(tone,v,grain,mix,amount,shadows,seed,curves,cube);}
-  public RawEditLook withGrainEnabled(boolean v){return new RawEditLook(tone,lut,v,mix,amount,shadows,seed,curves,cube);}
-  public RawEditLook withLutStrength(float v){return new RawEditLook(tone,lut,grain,v,amount,shadows,seed,curves,cube);}
-  public RawEditLook withGrainStrength(float v){return new RawEditLook(tone,lut,grain,mix,v,shadows,seed,curves,cube);}
-  public RawEditLook withGrainShadows(float v){return new RawEditLook(tone,lut,grain,mix,amount,v,seed,curves,cube);}
-  public RawEditLook withSeed(int v){return new RawEditLook(tone,lut,grain,mix,amount,shadows,v,curves,cube);}
-  public RawEditLook withCube(RawEditCube v){return new RawEditLook(tone,lut,grain,mix,amount,shadows,seed,curves,v);}
-  public RawEditLook withCurve(int bank,RawEditCurve v){RawEditCurve[] c=curves.clone();c[bank]=Objects.requireNonNull(v);return new RawEditLook(tone,lut,grain,mix,amount,shadows,seed,c,cube);}
-  public void write(DataOutput out)throws IOException {out.writeInt(6501);out.writeBoolean(tone);out.writeBoolean(lut);out.writeBoolean(grain);out.writeFloat(mix);out.writeFloat(amount);out.writeFloat(shadows);out.writeInt(seed);for(RawEditCurve c:curves){float[] p=c.points();out.writeInt(p.length);for(float v:p)out.writeFloat(v);}out.writeBoolean(cube!=null);if(cube!=null)cube.write(out);}
+  public RawEditLook withToneEnabled(boolean v){return new RawEditLook(v,lut,grain,mix,amount,shadows,seed,basePreset,curves,cube);}
+  public RawEditLook withLutEnabled(boolean v){return new RawEditLook(tone,v,grain,mix,amount,shadows,seed,basePreset,curves,cube);}
+  public RawEditLook withGrainEnabled(boolean v){return new RawEditLook(tone,lut,v,mix,amount,shadows,seed,basePreset,curves,cube);}
+  public RawEditLook withLutStrength(float v){return new RawEditLook(tone,lut,grain,v,amount,shadows,seed,basePreset,curves,cube);}
+  public RawEditLook withGrainStrength(float v){return new RawEditLook(tone,lut,grain,mix,v,shadows,seed,basePreset,curves,cube);}
+  public RawEditLook withGrainShadows(float v){return new RawEditLook(tone,lut,grain,mix,amount,v,seed,basePreset,curves,cube);}
+  public RawEditLook withSeed(int v){return new RawEditLook(tone,lut,grain,mix,amount,shadows,v,basePreset,curves,cube);}
+  public RawEditLook withCube(RawEditCube v){return new RawEditLook(tone,lut,grain,mix,amount,shadows,seed,basePreset,curves,v);}
+  public RawEditLook withCurve(int bank,RawEditCurve v){RawEditCurve[] c=curves.clone();c[bank]=Objects.requireNonNull(v);return new RawEditLook(tone,lut,grain,mix,amount,shadows,seed,basePreset,c,cube);}
+  public void write(DataOutput out)throws IOException {out.writeInt(6502);out.writeBoolean(tone);out.writeBoolean(lut);out.writeBoolean(grain);out.writeFloat(mix);out.writeFloat(amount);out.writeFloat(shadows);out.writeInt(seed);out.writeInt(basePreset);for(RawEditCurve c:curves){float[] p=c.points();out.writeInt(p.length);for(float v:p)out.writeFloat(v);}out.writeBoolean(cube!=null);if(cube!=null)cube.write(out);}
   public static RawEditLook read(DataInput in)throws IOException {
-    if(in.readInt()!=6501)throw new IOException("Invalid look recipe");boolean tone=in.readBoolean(),lut=in.readBoolean(),grain=in.readBoolean();float mix=in.readFloat(),amount=in.readFloat(),shadows=in.readFloat();int seed=in.readInt();RawEditCurve[] curves=new RawEditCurve[5];
-    try {for(int k=0;k<5;k++){int n=in.readInt();if(n<4||n>64||n%2!=0)throw new IOException("Invalid curve length");float[] p=new float[n];for(int j=0;j<n;j++)p[j]=in.readFloat();curves[k]=new RawEditCurve(p);}RawEditCube cube=in.readBoolean()?RawEditCube.read(in):null;return new RawEditLook(tone,lut,grain,mix,amount,shadows,seed,curves,cube);}catch(IllegalArgumentException failure){throw new IOException("Invalid look recipe",failure);}
+    int format=in.readInt();if(format!=6501&&format!=6502)throw new IOException("Invalid look recipe");boolean tone=in.readBoolean(),lut=in.readBoolean(),grain=in.readBoolean();float mix=in.readFloat(),amount=in.readFloat(),shadows=in.readFloat();int seed=in.readInt(),basePreset=format==6502?in.readInt():0;RawEditCurve[] curves=new RawEditCurve[5];
+    try {for(int k=0;k<5;k++){int n=in.readInt();if(n<4||n>64||n%2!=0)throw new IOException("Invalid curve length");float[] p=new float[n];for(int j=0;j<n;j++)p[j]=in.readFloat();curves[k]=new RawEditCurve(p);}RawEditCube cube=in.readBoolean()?RawEditCube.read(in):null;return new RawEditLook(tone,lut,grain,mix,amount,shadows,seed,basePreset,curves,cube);}catch(IllegalArgumentException failure){throw new IOException("Invalid look recipe",failure);}
   }
-  public boolean equals(Object other){if(this==other)return true;if(!(other instanceof RawEditLook))return false;RawEditLook l=(RawEditLook)other;return tone==l.tone&&lut==l.lut&&grain==l.grain&&mix==l.mix&&amount==l.amount&&shadows==l.shadows&&seed==l.seed&&Arrays.equals(curves,l.curves)&&Objects.equals(cube,l.cube);}
-  public int hashCode(){return Objects.hash(tone,lut,grain,mix,amount,shadows,seed,Arrays.hashCode(curves),cube);}
+  public boolean equals(Object other){if(this==other)return true;if(!(other instanceof RawEditLook))return false;RawEditLook l=(RawEditLook)other;return tone==l.tone&&lut==l.lut&&grain==l.grain&&mix==l.mix&&amount==l.amount&&shadows==l.shadows&&seed==l.seed&&basePreset==l.basePreset&&Arrays.equals(curves,l.curves)&&Objects.equals(cube,l.cube);}
+  public int hashCode(){return Objects.hash(tone,lut,grain,mix,amount,shadows,seed,basePreset,Arrays.hashCode(curves),cube);}
   /** CPU reference. RGB is encoded sRGB [0,1]; coordinates are continuous on a common reference grid. */
   public double[] apply(double[] input,double x,double y){return apply(input,x,y,0,0);}
   /** Four subpixel samples approximate a pixel footprint for preview/export consistency. */

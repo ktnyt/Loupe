@@ -2,7 +2,7 @@
 
 ## 現在の状態
 
-issue #65 の画像処理エンジンを実装したチェックポイント。研究用UIは未実装で、通常の現像画面からCNT-likeや外部LUTを選ぶことはまだできない。既存画面の起動だけでは新しいルックを試せない。ClaudeへのUI設計依頼、Activityでのlook永続化、実機操作・保存・画質確認が残る。PoC全体の完了ではない。
+issue #65 の画像処理エンジンと研究用UIを既存の現像へ組み込んだ。調整・比較・外部LUT・原寸保存を同じ現像画面から使う。実装済みの範囲と実機検証済みの範囲は下記とissueの結果で区別する。
 
 ## 実装した経路
 
@@ -31,7 +31,9 @@ adb -s SERIAL shell am instrument -w -e look true jp.nano.rawgallery.rawexperime
 
 `PASS`本文を確認し、`LoupeRawEdit`の`look.check`、`look.tiles`、`look.resize`を取得する。coreのPASSだけをlook品質の証明にしない。`-e tone true`、`-e full true`は既存回帰検査。look検査は合成画像のみで、実写真の主観品質を検査しない。
 
-APIからの設定例（UI実装後も同じ状態を使用）:
+画面ではRAW/JPEGを開き、ヘッダーの「現像 ▾」からルックの調整シートを開く。CNT-like（仮）、各処理のON/OFF、LUT読込/強度、粒子/暗部寄り/seedを調整する。「カーブを編集」はトーンタブを開き、パネル下段の「現像／ルック」で編集対象を切り替える。Neutralは確認後に既存補正とrolloffも中立に戻す。Customは手動設定を保持し、プリセット間を移って戻せる。通常の比較は全補正を一時的に外す。保存は元画像と別の原寸JPEG。
+
+APIからの設定例（画面と同じ状態を使用）:
 
 ```java
 RawEditState neutral = RawEditState.neutral();
@@ -43,7 +45,7 @@ RawEditLook custom = cnt.look().withCube(external).withLutEnabled(true)
 RawEditState adjusted = cnt.withLook(custom);
 ```
 
-`RawEditLook.neutral()`は追加lookだけを無効にする。`RawEditState.neutral()`は既存の肩も含めた無加工用。既存float snapshotにはlookを含めないので、Activity復元時には`RawEditLook.write/read`によるprivate file保存も必要。最大65³表をBundleへ直接入れない。
+`RawEditLook.neutral()`は追加lookだけを無効にする。`RawEditState.neutral()`は既存の肩も含めた無加工用。既存float snapshotにはlookを含めないので、Activity復元は`RawEditLookStore`によるprivate fileとBundle内のUUID tokenで行う。current/saved/custom/保持外部LUTを含め、最大4個の65³表を13,214,784 bytes以下のファイルへ保存する。BundleへLUTを直接入れない。保存は同期処理で時間を診断ログへ残す。失敗した復元を無加工と偽って再開せず、エラーを表示する。
 
 ## 比較用の合成素材
 
@@ -61,7 +63,8 @@ sips -s format jpeg /tmp/loupe-look-fixtures/look-ramp-patches.png --out /tmp/lo
 - 既存純Java: 128曲線/128万サンプル、階調・色域・Undo/Redo、およびRAW構造144項目を確認。
 - ビルド: 通常APK・実験APK・実験テストAPKをビルド。Android lintを実施。
 - GPU: b1454f51（25128PNA1G）/実験0.5.0 code8でPASS。CPU/GPU最大差1 code、25タイル最大差1 code、1024→512の粒子比較MAE .795715 code / RMS 1.073757 code。テスト全体18986msで、操作レイテンシの計測ではない。
-- UI/画像選択/実保存: 新UI未実装のため未確認。端末は利用者が解除し、既存tone回帰と新lookの合成GPU検査を実施した。
+- 保存: FullSession→NativeJpeg95→private provider→JPEG decodeを65×43合成写真で比較。MAE 2.109720 code/RMS 4.522125 code、RGB平均偏り .06619/−.00859/−.05045 code。原寸/固定seed/保存snapshot/pending解除を確認。
+- UI/外部ファイル選択: 実装済み。実機操作とActivity再生成は検証中。
 - 経過時間はissue-progressコメントで計測。入力→表示の実測、実写真の主観評価、完了までの利用量は未計測。
 
 最新の結果と工程状態はissue #65を正とする。
