@@ -31,3 +31,7 @@ Host tests: full recipe/LUT roundtrip, bounds/corruption/atomic replacement, quo
 ## Status
 
 Contract recorded before implementation. Baseline normal0.24.0/code146 viewer instrumentation passed. Implementation/device/UI/review results pending.
+
+## Completed UI reference (before UI implementation)
+
+Claude completed loupe-viewer-look-presets.html (SHA256 00c3297cc099337109098e87db3ccb2f2046b793c89b03e7ee64ead31a8402f2). New Look control is top-right, preserving the existing dock; Before top-left. Selector dimensions, name dialog, loading/retry/delete and save/navigation confirmation are defined in that HTML. Original S08 and current source artifact were directly viewed before requesting and before implementation; only requested additions alter the new screen. Four matched-size reference PNGs are in docs/design. This establishes UI design, not Android validation.
