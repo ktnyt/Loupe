@@ -33,6 +33,7 @@ public final class RawEditInstrumentation extends Instrumentation {
     try{
       core();pad();
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("tone","false"))){phase="tone";RawEditToneChecks.run();}
+      if(arguments!=null&&Boolean.parseBoolean(arguments.getString("look","false"))){phase="look";RawEditLookChecks.run(this);}
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("curve","false"))){phase="curve.ui";RawEditCurveUiChecks.run(this);}
       if(arguments!=null&&Boolean.parseBoolean(arguments.getString("full","false"))){phase="full.source";RawEditSourceChecks.run(this);phase="full.tiles";RawEditTileChecks.run(this);phase="full.session";RawEditFullSessionChecks.run(this);phase="full.publish";RawEditPublishChecks.run(this);}
       if(fullUiGate!=null){if(Boolean.parseBoolean(arguments.getString("fullstates","false"))){phase="full.states";RawEditFullUiChecks.runStates(this,fullUiGate);}else{phase="full.ui";RawEditFullUiChecks.run(this,fullUiGate);}}

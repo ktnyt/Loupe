@@ -345,7 +345,8 @@ public final class RawEditActivity extends Activity {
     try {
       if(!current(token)||Thread.currentThread().isInterrupted())return;
       if(renderer!=null){renderer.close();renderer=null;}
-      created=new RawEditRenderer(source.width,source.height,source.pixels);initial=created.render(state,false,false,1024);
+      created=new RawEditRenderer(source.width,source.height,source.pixels);
+      created.grainDimensions(source.originalWidth(),source.originalHeight());initial=created.render(state,false,false,1024);
       if(!current(token))return;
       RawEditRenderer uploaded=created;Bitmap frame=initial;renderer=created;
       handedOff=main.post(()->{
@@ -424,6 +425,7 @@ public final class RawEditActivity extends Activity {
       try {
         if(!current(token))return;
         next=new RawEditRenderer(preview.width,preview.height,preview.pixels);
+        next.grainDimensions(width,height);
         if(!current(token))return;
         RawEditRenderer previous=renderer;renderer=next;adopted=true;if(previous!=null)previous.close();
         main.post(()->{if(!current(token))return;previewSwapQueued=false;if(pendingFullPreview==preview)pendingFullPreview=null;requestRender();});
