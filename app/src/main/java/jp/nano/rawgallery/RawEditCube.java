@@ -80,10 +80,10 @@ public final class RawEditCube {
     if(size<2||size>MAX_SIZE)throw new IllegalArgumentException("Invalid cube size");float[] data=new float[size*size*size*3];int i=0;
     for(int b=0;b<size;b++)for(int g=0;g<size;g++)for(int r=0;r<size;r++){
       double[] c={r/(double)(size-1),g/(double)(size-1),b/(double)(size-1)};
-      if(grade){double l=.2126*c[0]+.7152*c[1]+.0722*c[2],warm=Math.max(0,Math.min(1,(c[0]-c[2])*4));double shadow=Math.pow(1-l,3)*(1-warm)*l*4;double saturation=1-.07*(1-warm)*(1-l);for(int k=0;k<3;k++)c[k]=l+(c[k]-l)*saturation;c[0]-=.012*shadow;c[1]+=.003*shadow;c[2]+=.016*shadow;}
-      for(int k=0;k<3;k++)data[i++]=(float)Math.max(0,Math.min(1,c[k]));
+      if(grade)c=RawEditCntCalibration.sample(c[0],c[1],c[2]);
+      for(int k=0;k<3;k++)data[i++]=(float)c[k];
     }
-    return new RawEditCube(size,new float[]{0,0,0},new float[]{1,1,1},data,grade?"CNT-like hypothesis":"Identity");
+    return new RawEditCube(size,new float[]{0,0,0},new float[]{1,1,1},data,grade?"Gallery CNT measured v1":"Identity");
   }
   public void write(DataOutput out)throws IOException {out.writeInt(size);out.writeUTF(title);for(float v:min)out.writeFloat(v);for(float v:max)out.writeFloat(v);for(float v:values)out.writeFloat(v);}
   public static RawEditCube read(DataInput in)throws IOException {int size=in.readInt();if(size<2||size>MAX_SIZE)throw new IOException("Invalid cube size");String title=in.readUTF();if(title.length()>256)throw new IOException("Invalid cube title");float[] min=new float[3],max=new float[3],values=new float[size*size*size*3];for(int c=0;c<3;c++)min[c]=in.readFloat();for(int c=0;c<3;c++)max[c]=in.readFloat();for(int i=0;i<values.length;i++)values[i]=in.readFloat();try{return new RawEditCube(size,min,max,values,title);}catch(IllegalArgumentException failure){throw new IOException("Invalid cube",failure);}}

@@ -84,7 +84,7 @@ final class RawEditPublishChecks {
     ByteBuffer pixels=ByteBuffer.allocateDirect(3*2*16).order(ByteOrder.nativeOrder());
     for(int i=0;i<6;i++)pixels.putFloat(.2f).putFloat(.4f).putFloat(.6f).putFloat(1);pixels.flip();
     RawEditSource source=RawEditSource.synthetic(3,2,pixels,65,43);RawEditFullSession session=null;
-    RawEditState snapshot=RawEditState.neutral().withLook(RawEditLook.cntLike().withSeed(650043));
+    RawEditState snapshot=RawEditState.neutral().withLook(RawEditLook.cntLike().withGrainEnabled(true).withSeed(650043));
     require(snapshot.look().toneEnabled()&&snapshot.look().lutEnabled()&&snapshot.look().grainEnabled(),"all look stages enabled for actual JPEG save");
     try {
       session=new RawEditFullSession(isolated,source,gl,main,()->false,events);RawEditFullSession active=session;

@@ -122,6 +122,7 @@ final class RawEditRenderer implements AutoCloseable {
     upload(input.width(),input.height(),full.region(input));
     RectF sourceBounds=new RectF(input.left/(float)full.width,input.top/(float)full.height,
         input.right/(float)full.width,input.bottom/(float)full.height);
+    // Output bounds remain in the full upright image: applyLook(q) must never see tile-local UV.
     RectF outputBounds=new RectF(region.left/full.width,region.top/full.height,region.right/full.width,region.bottom/full.height);
     float factor=Math.max(full.width,full.height)/ref;
     return draw(state,before,maxSaturation,w,h,sourceBounds,outputBounds,factor/full.width,factor/full.height,full.width,full.height);
@@ -193,9 +194,10 @@ final class RawEditRenderer implements AutoCloseable {
     GLES30.glUniform1i(GLES30.glGetUniformLocation(program,"lookCube"),3);
     GLES30.glUniform3fv(GLES30.glGetUniformLocation(program,"cubeMin"),1,cube.domainMin(),0);GLES30.glUniform3fv(GLES30.glGetUniformLocation(program,"cubeMax"),1,cube.domainMax(),0);
     GLES30.glUniform1f(GLES30.glGetUniformLocation(program,"cubeMix"),look.lutStrength());
+    GLES30.glUniform1f(GLES30.glGetUniformLocation(program,"vignetteStrength"),look.vignetteStrength());
     GLES30.glUniform1f(GLES30.glGetUniformLocation(program,"grainAmount"),look.grainStrength());GLES30.glUniform1f(GLES30.glGetUniformLocation(program,"grainShadows"),look.grainShadows());
     GLES30.glUniform1ui(GLES30.glGetUniformLocation(program,"grainSeed"),look.seed());
-    int mask=(look.hasTone()?1:0)|(look.lutEnabled()&&look.cube()!=null&&look.lutStrength()>0?2:0)|(look.grainEnabled()&&look.grainStrength()>0?4:0);
+    int mask=(look.hasTone()?1:0)|(look.lutEnabled()&&look.cube()!=null&&look.lutStrength()>0?2:0)|(look.grainEnabled()&&look.grainStrength()>0?4:0)|(look.vignetteEnabled()&&look.vignetteStrength()>0?8:0);
     GLES30.glUniform1i(GLES30.glGetUniformLocation(program,"lookMask"),mask);
     int curveMask=0;for(int bank=0;bank<5;bank++)if(!look.curve(bank).identity())curveMask|=1<<bank;
     GLES30.glUniform1i(GLES30.glGetUniformLocation(program,"lookCurveMask"),curveMask);check();
