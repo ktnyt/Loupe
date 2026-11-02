@@ -178,3 +178,13 @@ Issue #55の[4状態の参照・実機比較](loupe55-fullstates-comparison.png)
 現行の比較基準はClaude作成の[レイアウト修正版](loupe-cnt-look-layout-fixed.html)と[通常PNG](loupe65-layout-fixed-reference-normal.png)・[短画面PNG](loupe65-layout-fixed-reference-short.png)。シートの直下の子を`flex-shrink:0`とし、ハンドル4dpと区切り線1dp、状態の行を縮めず、シート内でスクロールする。プリセット・動作・シート高の契約は維持する。元の`loupe-cnt-look-final.html`とPNGも保管するが、その版のハンドル等はflex縮小で高さ0になるため現行の寸法比較には使わない。
 
 実機UIの通常400dp/font1.0と短画面400×640dp/font1.3の操作検査は通過した。[通常比較](loupe65-comparison-normal.png)と[短画面比較](loupe65-comparison-short.png)は左が参照、右が実機。独立評価では追加修正が必要な重大UI/UX差なし。[通常座標](loupe65-capture-normal.json)・[短画面座標](loupe65-capture-short.json)に物理Window座標とcropを残す。短画面は制約付きActivityと独立Dialogの条件を合わせるためtest-onlyでWindow.yを296px変更し、シート全883pxをcontent内へ配置した結果であり、実際の短い端末そのものではない。全画面は補正しない。合成写真の入力・現像条件、HTMLのSVGノイズとGPU粒子、代替フォントの違いを含むため、UI参照から画質一致を判定しない。字形・改行・行間等の小差、実指/実IME/TalkBackの未確認を区別する。
+
+## CNT-likeの校正と周辺光量（Issue #67）
+
+[現在のClaude参照](loupe-cnt-quality-final.html)はLUTと粒子の間へ独立した周辺光量のスイッチと強度0〜100を追加する。既存のシート高、48dp操作域、スクロール、Custom・外部LUT・曲線編集・保存の契約を維持する。CNT-likeは測定した33³カラーLUT、identity曲線、周辺光量オン100、粒子オフ（値18/80/seed65を保持）。注記はGalleryのCNTを参照した調整用ルックであることを伝える。
+
+[通常・上端](loupe67-final-reference-normal.png)、[短画面・上端](loupe67-final-reference-short.png)、[通常・周辺光量](loupe67-final-reference-normal-scrolled.png)、[短画面・周辺光量](loupe67-final-reference-short-scrolled.png)は密度3、content400×805⅓dp/font1.0または400×640dp/font1.3。HTMLと保存先のSHA一致を確認し、周辺光量の参照PNGを表示確認した。周辺光量の行はシート内スクロール406dp/439dpの位置で、スイッチと強度を両方表示する。
+
+参照HTMLには測定LUTが入っておらず、色は無変換、周辺光量は放射状の近似。HTMLだけに必要な未同梱の説明は実装画面へ移さない。AndroidのLUT状態の行は実際の測定LUT名と33³を表示するため、説明行の長さとスクロール量はデータの条件に合わせて比較する。実写真の画質はHTMLと比較せず、同じ入力から得たGallery CNT参照と比較する。[校正と評価](../cnt-quality.md)を参照。
+
+このHTMLの完成はUI設計の完成を示す。端末上の操作・保存・新しい周辺光量の独立評価はissue #67の結果で別に確認する。古い#65参照は旧プリセットの記録として保持する。

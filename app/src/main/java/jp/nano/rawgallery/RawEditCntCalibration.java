@@ -2,7 +2,7 @@ package jp.nano.rawgallery;
 
 /** Measured SDR sRGB Gallery CNT color model; generated, not a camera/vendor LUT.
  * Regenerate with scripts/export-cnt-calibration.py and docs/calibration/gallery-cnt-v1.json.
- * Model SHA-256: ae9dda29ef67361073cc29c642b84ab995a12cced6e500a4b2d8776130589dc8
+ * Model SHA-256: 8047760670c7a63294ec63aefa61302f908a03b6ca06cbe6220f3964b140c58f
  * Red-fastest 7^3 control lattice. Preserve out-of-gamut values until final spatial/output clamp.
  */
 final class RawEditCntCalibration {

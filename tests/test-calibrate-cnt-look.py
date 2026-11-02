@@ -4,9 +4,11 @@
 import importlib.util
 import json
 import pathlib
+import shutil
 import tempfile
 import unittest
 import warnings
+from unittest import mock
 
 import numpy as np
 from PIL import Image
@@ -31,6 +33,7 @@ class CalibrateCntLookTests(unittest.TestCase):
             "format": "loupe-cnt-look-chart-v1",
             "seed": 117,
             "chart": "chart.jpg",
+            "chart_sha256": calibration.hashlib.sha256(self.chart_path.read_bytes()).hexdigest(),
             "width": width,
             "height": height,
             "orientation": 1,
@@ -39,6 +42,7 @@ class CalibrateCntLookTests(unittest.TestCase):
             "interior_inset": calibration.INTERIOR_INSET,
             "samples": samples,
         }
+        self.manifest["sample_layout_sha256"] = calibration.sample_layout_sha256(samples)
         self.manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
 
     def tearDown(self):
@@ -102,6 +106,33 @@ class CalibrateCntLookTests(unittest.TestCase):
         with Image.open(first / "chart.jpg") as chart:
             self.assertTrue(chart.info.get("icc_profile"))
 
+    def test_manifest_binding_rejects_mutated_sample_labels_even_with_rehashed_layout(self):
+        bad = json.loads(json.dumps(self.manifest))
+        train_index = next(i for i, sample in enumerate(bad["samples"]) if sample["kind"] == "train")
+        validation_index = next(i for i, sample in enumerate(bad["samples"]) if sample["kind"] == "validation")
+        bad["samples"][train_index]["kind"], bad["samples"][validation_index]["kind"] = "validation", "train"
+        bad["sample_layout_sha256"] = calibration.sample_layout_sha256(bad["samples"])
+        with self.assertRaisesRegex(ValueError, "manifest validation sample key is invalid"):
+            calibration.validate_manifest(bad)
+
+    def test_chart_binding_hash_rejects_other_seed_chart_even_if_sizes_match(self):
+        other = self.root / "other-seed"
+        calibration.command_generate(type("Args", (), {"output": other, "seed": 118})())
+        mismatch_dir = self.root / "mismatched-binding"
+        mismatch_dir.mkdir()
+        mismatch_manifest = json.loads(json.dumps(self.manifest))
+        mismatch_manifest["chart"] = "chart.jpg"
+        mismatch_path = mismatch_dir / "manifest.json"
+        mismatch_path.write_text(json.dumps(mismatch_manifest), encoding="utf-8")
+        shutil.copyfile(other / "chart.jpg", mismatch_dir / "chart.jpg")
+        model_path = self.root / "identity-spatial.json"
+        model_path.write_text(json.dumps(self._spatial_model(strength=0)), encoding="utf-8")
+        args = type("Args", (), {"model": model_path, "manifest": mismatch_path,
+                                  "reference": other / "chart.jpg", "output": self.root / "must-not-evaluate"})()
+        with self.assertRaisesRegex(ValueError, "SHA-256 does not match manifest binding"):
+            calibration.command_evaluate(args)
+        self.assertFalse(args.output.exists())
+
     def test_identity_roundtrip_has_low_heldout_error_and_valid_cube_order(self):
         output = self._fit(self.chart_path, "identity-fit")
         report = json.loads((output / "report.json").read_text(encoding="utf-8"))
@@ -158,9 +189,35 @@ class CalibrateCntLookTests(unittest.TestCase):
             "reference": wrong_size,
             "output": output,
         })()
-        with self.assertRaisesRegex(ValueError, "dimensions must match manifest"):
+        with self.assertRaisesRegex(ValueError, "dimensions .* do not match expected"):
             calibration.command_fit(args)
         self.assertFalse(output.exists())
+
+    def test_apply_rejects_oversized_header_before_exif_or_icc_decode(self):
+        opened = mock.MagicMock()
+        opened.__enter__.return_value = opened
+        opened.size = (10001, 10000)
+        opened.info = {}
+        with mock.patch.object(calibration.Image, "open", return_value=opened), \
+                mock.patch.object(calibration.ImageOps, "exif_transpose") as transpose, \
+                mock.patch.object(calibration.ImageCms, "profileToProfile") as profile_convert:
+            with self.assertRaisesRegex(ValueError, "100 megapixel decode limit"):
+                calibration.load_apply_image(self.root / "oversized.jpg")
+        opened.getexif.assert_not_called()
+        transpose.assert_not_called()
+        profile_convert.assert_not_called()
+
+    def test_manifest_dimension_mismatch_rejects_header_before_exif_or_icc_decode(self):
+        opened = mock.MagicMock()
+        opened.__enter__.return_value = opened
+        opened.size = (12, 10)
+        opened.info = {}
+        with mock.patch.object(calibration.Image, "open", return_value=opened), \
+                mock.patch.object(calibration.ImageCms, "profileToProfile") as profile_convert:
+            with self.assertRaisesRegex(ValueError, "dimensions .* do not match expected"):
+                calibration.load_srgb_image(self.root / "wrong-chart.jpg", expected_size=(10, 10))
+        opened.getexif.assert_not_called()
+        profile_convert.assert_not_called()
 
     def test_baked_predictions_are_bounded_and_overshoots_are_reported_without_warnings(self):
         control = np.empty((5, 5, 5, 3), dtype=np.float64)
@@ -241,6 +298,44 @@ class CalibrateCntLookTests(unittest.TestCase):
         bad = dict(model, grid_size=5)
         with self.assertRaisesRegex(ValueError, r"7\^3"):
             calibration.validate_model(bad)
+
+    def test_spatial_selection_chart_changes_selection_metrics_not_training_fit(self):
+        selection_dir = self.root / "selection"
+        calibration.command_generate(type("Args", (), {"output": selection_dir, "seed": 118})())
+        selection_manifest = selection_dir / "manifest.json"
+        selection_chart = selection_dir / "chart.jpg"
+        selection_ref_a = selection_dir / "selection-a.jpg"
+        selection_ref_b = selection_dir / "selection-b.jpg"
+        with Image.open(selection_chart) as image:
+            pixels = np.asarray(image.convert("RGB"))
+        Image.fromarray(pixels, "RGB").save(selection_ref_a, quality=100, subsampling=0, icc_profile=calibration.srgb_profile_bytes())
+        shifted = np.clip(pixels.astype(np.int16) + 18, 0, 255).astype(np.uint8)
+        Image.fromarray(shifted, "RGB").save(selection_ref_b, quality=100, subsampling=0, icc_profile=calibration.srgb_profile_bytes())
+        identity7 = np.array([(r / 6, g / 6, b / 6) for b in range(7) for g in range(7) for r in range(7)]).reshape((7, 7, 7, 3))
+
+        def run(reference, output):
+            args = type("Args", (), {"manifest": self.manifest_path, "neutral": self.chart_path,
+                                      "reference": self.chart_path, "output": output, "selection_manifest": selection_manifest,
+                                      "selection_reference": reference})()
+            with mock.patch.object(calibration, "fit_lattice", return_value=identity7.copy()):
+                calibration.command_fit_spatial(args)
+            return json.loads((output / "model.json").read_text(encoding="utf-8")), json.loads((output / "report.json").read_text(encoding="utf-8"))
+
+        model_a, report_a = run(selection_ref_a, self.root / "spatial-selection-a")
+        model_b, report_b = run(selection_ref_b, self.root / "spatial-selection-b")
+        self.assertEqual(model_a["training_chart"], model_b["training_chart"])
+        np.testing.assert_array_equal(model_a["control_lattice_rgb"], model_b["control_lattice_rgb"])
+        self.assertEqual(model_a["selection_charts"][1]["seed"], 118)
+        self.assertEqual(model_a["selection_charts"][1]["validation_sample_count"], 8**3)
+        self.assertNotEqual(report_a["candidate_selection"][0]["validation"]["mean_delta_e76"],
+                            report_b["candidate_selection"][0]["validation"]["mean_delta_e76"])
+
+    def test_spatial_selection_arguments_must_be_paired(self):
+        args = type("Args", (), {"manifest": self.manifest_path, "neutral": self.chart_path,
+                                  "reference": self.chart_path, "output": self.root / "unpaired",
+                                  "selection_manifest": self.manifest_path, "selection_reference": None})()
+        with self.assertRaisesRegex(ValueError, "must be supplied together"):
+            calibration.command_fit_spatial(args)
 
     def test_evaluate_uses_baked_cube_without_refitting(self):
         model = self._spatial_model(strength=0.0)

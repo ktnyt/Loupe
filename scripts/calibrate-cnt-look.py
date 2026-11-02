@@ -38,6 +38,7 @@ CHART_COLUMNS = 64
 IDENTITY_PENALTY = 0.03
 SMOOTHNESS_PENALTY = 1.5
 MEAN_DELTA_E_MEANINGFUL = 0.15
+MAX_DECODE_PIXELS = 100_000_000
 
 
 def srgb_profile_bytes() -> bytes:
@@ -104,6 +105,11 @@ def make_samples(seed: int) -> list[dict]:
     return samples
 
 
+def sample_layout_sha256(samples: list[dict]) -> str:
+    payload = json.dumps(samples, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def render_chart(samples: list[dict], output: pathlib.Path, seed: int) -> tuple[int, int]:
     columns = CHART_COLUMNS
     rows = math.ceil(len(samples) / columns)
@@ -139,11 +145,14 @@ def command_generate(args: argparse.Namespace) -> int:
     samples = make_samples(args.seed)
     chart_path = output / "chart.jpg"
     width, height = render_chart(samples, chart_path, args.seed)
+    chart_sha256 = hashlib.sha256(chart_path.read_bytes()).hexdigest()
     manifest = {
         "format": "loupe-cnt-look-chart-v1",
         "purpose": "Gallery CNT-like look calibration; no raw-base modification",
         "seed": args.seed,
         "chart": "chart.jpg",
+        "chart_sha256": chart_sha256,
+        "sample_layout_sha256": sample_layout_sha256(samples),
         "width": width,
         "height": height,
         "orientation": 1,
@@ -165,8 +174,19 @@ def command_generate(args: argparse.Namespace) -> int:
     return 0
 
 
-def load_srgb_image(path: pathlib.Path) -> tuple[np.ndarray, dict]:
+def validate_image_header(path: pathlib.Path, size: tuple[int, int], expected_size: list[int] | tuple[int, int] | None = None) -> None:
+    width, height = size
+    if not isinstance(width, int) or not isinstance(height, int) or width <= 0 or height <= 0:
+        raise ValueError(f"{path}: invalid image dimensions {size}")
+    if width * height > MAX_DECODE_PIXELS:
+        raise ValueError(f"{path}: image exceeds the 100 megapixel decode limit")
+    if expected_size is not None and [width, height] != list(expected_size):
+        raise ValueError(f"{path}: image dimensions {width}x{height} do not match expected {list(expected_size)}")
+
+
+def load_srgb_image(path: pathlib.Path, expected_size: list[int] | tuple[int, int] | None = None) -> tuple[np.ndarray, dict]:
     with Image.open(path) as source:
+        validate_image_header(path, source.size, expected_size)
         orientation = source.getexif().get(274, 1)
         if orientation != 1:
             raise ValueError(f"{path}: EXIF orientation {orientation} is not upright (1)")
@@ -240,6 +260,15 @@ def validate_manifest(manifest: dict) -> None:
         raise ValueError("manifest dimensions must be positive integers")
     if manifest.get("orientation") != 1:
         raise ValueError("manifest orientation must be upright (1)")
+    seed = manifest.get("seed")
+    if not isinstance(seed, int) or isinstance(seed, bool) or not 0 <= seed <= 0xFFFFFFFF:
+        raise ValueError("manifest seed must be an unsigned 32-bit integer")
+    chart_hash = manifest.get("chart_sha256")
+    if not isinstance(chart_hash, str) or len(chart_hash) != 64 or any(c not in "0123456789abcdef" for c in chart_hash):
+        raise ValueError("manifest chart_sha256 is required and must be lowercase SHA-256 hex")
+    layout_hash = manifest.get("sample_layout_sha256")
+    if not isinstance(layout_hash, str) or len(layout_hash) != 64 or any(c not in "0123456789abcdef" for c in layout_hash):
+        raise ValueError("manifest sample_layout_sha256 is required and must be lowercase SHA-256 hex")
     patch_size, gutter, inset = (manifest.get(key) for key in ("patch_size", "gutter", "interior_inset"))
     if not all(isinstance(value, int) for value in (patch_size, gutter, inset)):
         raise ValueError("manifest patch geometry must use integer values")
@@ -258,6 +287,8 @@ def validate_manifest(manifest: dict) -> None:
     seen_indices, seen_keys, seen_rects = set(), set(), set()
     intended_colors = {"train": set(), "validation": set()}
     by_index = [None] * len(samples)
+    repeat_colors: dict[str, tuple[float, float, float]] = {}
+    repeat_indices: dict[str, set[int]] = defaultdict(set)
     cell = patch_size + gutter
     for sample in samples:
         if not isinstance(sample, dict) or sample.get("kind") not in valid_kinds:
@@ -276,6 +307,44 @@ def validate_manifest(manifest: dict) -> None:
             raise ValueError("manifest sample RGB values must be finite and in [0,1]")
         if kind in intended_colors:
             intended_colors[kind].add(tuple(color.tolist()))
+        if kind == "train":
+            parts = key.split("-")
+            if len(parts) != 4 or parts[0] != "train" or not all(part.isdigit() for part in parts[1:]):
+                raise ValueError("manifest train sample key is invalid")
+            r, g, b = map(int, parts[1:])
+            if any(v > 16 for v in (r, g, b)) or not np.array_equal(color, np.array([r, g, b]) / 16.0):
+                raise ValueError("manifest train sample key/color mismatch")
+        elif kind == "validation":
+            parts = key.split("-")
+            if len(parts) != 4 or parts[0] != "validation" or not all(part.isdigit() for part in parts[1:]):
+                raise ValueError("manifest validation sample key is invalid")
+            r, g, b = map(int, parts[1:])
+            expected = np.array([2 * r + 0.5, 2 * g + 0.5, 2 * b + 0.5]) / 16.0
+            if any(v > 7 for v in (r, g, b)) or not np.array_equal(color, expected):
+                raise ValueError("manifest validation sample key/color mismatch")
+        elif kind == "grayscale":
+            parts = key.split("-")
+            level = sample.get("level")
+            if (len(parts) != 2 or parts[0] != "gray" or not parts[1].isdigit()
+                    or not isinstance(level, int) or isinstance(level, bool)
+                    or int(parts[1]) != level or not 0 <= level < GRAYSCALE_COUNT
+                    or not np.array_equal(color, np.full(3, level / 255.0))):
+                raise ValueError("manifest grayscale key/level/color mismatch")
+        else:
+            parts = key.split("-")
+            group = sample.get("repeat_group")
+            if (len(parts) != 3 or parts[0] != "repeat" or not parts[1].isdigit() or not parts[2].isdigit()
+                    or group != f"repeat-{parts[1]}" or int(parts[2]) >= REPEAT_COUNT):
+                raise ValueError("manifest repeat key/group is invalid")
+            repeat_color = tuple(color.tolist())
+            if not np.equal(color * 16.0, np.rint(color * 16.0)).all():
+                raise ValueError("manifest repeat color must be on the training lattice")
+            if group in repeat_colors and repeat_colors[group] != repeat_color:
+                raise ValueError("manifest repeat group has inconsistent colors")
+            if int(parts[2]) in repeat_indices[group]:
+                raise ValueError("manifest repeat index is duplicated")
+            repeat_colors[group] = repeat_color
+            repeat_indices[group].add(int(parts[2]))
         if not isinstance(rect, list) or len(rect) != 4 or not all(isinstance(v, int) for v in rect):
             raise ValueError("manifest sample rectangle must contain four integers")
         x, y, rect_width, rect_height = rect
@@ -284,6 +353,9 @@ def validate_manifest(manifest: dict) -> None:
         if (x - gutter) % cell or (y - gutter) % cell or x + rect_width > width or y + rect_height > height:
             raise ValueError("manifest sample rectangle is outside chart cells")
         cell_position = ((y - gutter) // cell, (x - gutter) // cell)
+        row, column = divmod(index, CHART_COLUMNS)
+        if cell_position != (row, column):
+            raise ValueError("manifest sample rectangle does not match its layout index")
         if cell_position in seen_rects:
             raise ValueError("manifest contains overlapping or duplicate patch rectangles")
         seen_indices.add(index)
@@ -298,6 +370,22 @@ def validate_manifest(manifest: dict) -> None:
         raise ValueError("manifest training and validation colors overlap")
     if any(sample is None for sample in by_index):
         raise ValueError("manifest sample indices are not contiguous")
+    if len(repeat_colors) != REPEATED_COLOR_COUNT or any(indices != set(range(REPEAT_COUNT)) for indices in repeat_indices.values()):
+        raise ValueError("manifest repeat group counts are invalid")
+    if sample_layout_sha256(samples) != layout_hash:
+        raise ValueError("manifest sample layout hash does not match samples")
+
+
+def verify_chart_binding(manifest: dict, chart_path: pathlib.Path, chart: np.ndarray) -> None:
+    actual_hash = hashlib.sha256(chart_path.read_bytes()).hexdigest()
+    if actual_hash != manifest["chart_sha256"]:
+        raise ValueError(f"chart SHA-256 does not match manifest binding: {chart_path}")
+    tolerance = 2.0 / 255.0
+    for sample in manifest["samples"]:
+        measured = patch_median(chart, sample["rect"], manifest["interior_inset"])
+        intended = np.rint(np.asarray(sample["rgb"], dtype=np.float64) * 255.0) / 255.0
+        if np.max(np.abs(measured - intended)) > tolerance:
+            raise ValueError(f"chart patch {sample['index']} does not match its rounded manifest color within {tolerance:.6f}")
 
 
 def interpolation_matrix(inputs: np.ndarray, grid_size: int):
@@ -515,9 +603,15 @@ def command_fit(args: argparse.Namespace) -> int:
     manifest_path = args.manifest.expanduser()
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     validate_manifest(manifest)
-    neutral, neutral_info = load_srgb_image(args.neutral.expanduser())
-    reference, reference_info = load_srgb_image(args.reference.expanduser())
+    chart_name = manifest.get("chart")
+    if not isinstance(chart_name, str) or pathlib.Path(chart_name).name != chart_name:
+        raise ValueError("manifest chart must be a filename in the manifest directory")
+    chart_path = manifest_path.parent / chart_name
     expected_size = [manifest["width"], manifest["height"]]
+    chart, _ = load_srgb_image(chart_path, expected_size)
+    verify_chart_binding(manifest, chart_path, chart)
+    neutral, neutral_info = load_srgb_image(args.neutral.expanduser(), expected_size)
+    reference, reference_info = load_srgb_image(args.reference.expanduser(), expected_size)
     if neutral_info["size"] != expected_size or reference_info["size"] != expected_size:
         raise ValueError(f"image dimensions must match manifest {expected_size}; neutral={neutral_info['size']}, reference={reference_info['size']}")
     if neutral_info["size"] != reference_info["size"] or neutral_info["orientation"] != reference_info["orientation"]:
@@ -654,10 +748,11 @@ def command_fit_spatial(args: argparse.Namespace) -> int:
     if not isinstance(chart_name, str) or pathlib.Path(chart_name).name != chart_name:
         raise ValueError("manifest chart must be a filename in the manifest directory")
     chart_path = manifest_path.parent / chart_name
-    chart, chart_info = load_srgb_image(chart_path)
-    neutral, neutral_info = load_srgb_image(args.neutral.expanduser())
-    reference, reference_info = load_srgb_image(args.reference.expanduser())
     expected_size = [manifest["width"], manifest["height"]]
+    chart, chart_info = load_srgb_image(chart_path, expected_size)
+    verify_chart_binding(manifest, chart_path, chart)
+    neutral, neutral_info = load_srgb_image(args.neutral.expanduser(), expected_size)
+    reference, reference_info = load_srgb_image(args.reference.expanduser(), expected_size)
     if any(info["size"] != expected_size for info in (chart_info, neutral_info, reference_info)):
         raise ValueError(f"chart, neutral, and reference must match manifest dimensions {expected_size}")
 
@@ -682,6 +777,42 @@ def command_fit_spatial(args: argparse.Namespace) -> int:
     validation = kind == "validation"
     if not all(np.isfinite(a).all() for a in (intended, source_chart, source_neutral, target, uv, radial_squared)):
         raise ValueError("spatial fit chart measurements contain non-finite values")
+
+    selection_manifest_path = getattr(args, "selection_manifest", None)
+    selection_reference_path = getattr(args, "selection_reference", None)
+    if (selection_manifest_path is None) != (selection_reference_path is None):
+        raise ValueError("--selection-manifest and --selection-reference must be supplied together")
+    selection_chart_hash = None
+    selection_seed = None
+    selection_count = 0
+    selection_x = selection_y = None
+    if selection_manifest_path is not None:
+        selection_manifest_path = selection_manifest_path.expanduser()
+        selection_manifest = json.loads(selection_manifest_path.read_text(encoding="utf-8"))
+        validate_manifest(selection_manifest)
+        if selection_manifest["seed"] == manifest["seed"]:
+            raise ValueError("selection chart must use a different seed from the fitting chart")
+        selection_chart_name = selection_manifest.get("chart")
+        if not isinstance(selection_chart_name, str) or pathlib.Path(selection_chart_name).name != selection_chart_name:
+            raise ValueError("selection manifest chart must be a filename in its manifest directory")
+        selection_chart_path = selection_manifest_path.parent / selection_chart_name
+        selection_size = [selection_manifest["width"], selection_manifest["height"]]
+        selection_chart, selection_chart_info = load_srgb_image(selection_chart_path, selection_size)
+        selection_reference, selection_reference_info = load_srgb_image(selection_reference_path.expanduser(), selection_size)
+        if selection_chart_info["size"] != selection_size or selection_reference_info["size"] != selection_size:
+            raise ValueError(f"selection chart and reference must match selection manifest dimensions {selection_size}")
+        verify_chart_binding(selection_manifest, selection_chart_path, selection_chart)
+        selection_samples = selection_manifest["samples"]
+        selection_validation = [sample for sample in selection_samples if sample["kind"] == "validation"]
+        selection_x = np.asarray([patch_median(selection_chart, sample["rect"], selection_manifest["interior_inset"])
+                                  for sample in selection_validation])
+        selection_y = np.asarray([patch_median(selection_reference, sample["rect"], selection_manifest["interior_inset"])
+                                  for sample in selection_validation])
+        if not np.isfinite(selection_x).all() or not np.isfinite(selection_y).all():
+            raise ValueError("selection chart measurements contain non-finite values")
+        selection_chart_hash = selection_manifest["chart_sha256"]
+        selection_seed = selection_manifest["seed"]
+        selection_count = len(selection_validation)
 
     # Predeclared candidates: encoded-channel luma or max RGB highlight protection.
     # Validation colors are evaluated only after each fit and never enter LSQR.
@@ -717,7 +848,22 @@ def command_fit_spatial(args: argparse.Namespace) -> int:
             {"format": "gallery-cnt-spatial-v3", "input_domain": "encoded SDR sRGB", "spatial_domain": "encoded", "spatial_family": "plateau_power_highlight", "brightness": brightness_kind, "grid_size": 7, "control_lattice_rgb": control.tolist(), "strength": float(parameters[0]), "start_radius_squared": float(parameters[1]), "power": float(parameters[2]), "highlight_low": float(parameters[3]), "highlight_high": float(parameters[4])},
             source_chart[validation], uv[validation], lut=baked_cube,
         )
-        validation_error = summarize_errors(source_chart[validation], target[validation], deployed_validation)
+        candidate_validation_x = source_chart[validation]
+        candidate_validation_y = target[validation]
+        candidate_validation_predicted = deployed_validation
+        if selection_x is not None:
+            selection_uv = np.asarray([[(sample["rect"][0] + sample["rect"][2] / 2) / selection_manifest["width"],
+                                        (sample["rect"][1] + sample["rect"][3] / 2) / selection_manifest["height"]]
+                                       for sample in selection_validation])
+            selection_radial_squared = 2.0 * np.sum((selection_uv - 0.5) ** 2, axis=1)
+            selection_prediction = apply_model(
+                {"format": "gallery-cnt-spatial-v3", "input_domain": "encoded SDR sRGB", "spatial_domain": "encoded", "spatial_family": "plateau_power_highlight", "brightness": brightness_kind, "grid_size": 7, "control_lattice_rgb": control.tolist(), "strength": float(parameters[0]), "start_radius_squared": float(parameters[1]), "power": float(parameters[2]), "highlight_low": float(parameters[3]), "highlight_high": float(parameters[4])},
+                selection_x, selection_uv, lut=baked_cube,
+            )
+            candidate_validation_x = np.concatenate((candidate_validation_x, selection_x))
+            candidate_validation_y = np.concatenate((candidate_validation_y, selection_y))
+            candidate_validation_predicted = np.concatenate((candidate_validation_predicted, selection_prediction))
+        validation_error = summarize_errors(candidate_validation_x, candidate_validation_y, candidate_validation_predicted)
         train_base = evaluate_lattice(baked_cube, source_chart[train])
         train_gain = spatial_gain(train_base, radial_squared[train], parameters, brightness_kind)
         train_error = summarize_errors(source_chart[train], target[train], np.clip(train_base * train_gain, 0.0, 1.0))
@@ -755,7 +901,11 @@ def command_fit_spatial(args: argparse.Namespace) -> int:
         "grain": "none",
         "fit_input": "manifest chart JPEG decoded with ICC into encoded sRGB",
         "fit_samples": "train and grayscale only; validation colors used for candidate selection, not fit",
+        "training_chart": {"seed": manifest["seed"], "sha256": manifest["chart_sha256"], "fit_sample_count": int(np.count_nonzero(train))},
+        "selection_charts": [{"seed": manifest["seed"], "sha256": manifest["chart_sha256"], "validation_sample_count": int(np.count_nonzero(validation))}],
     }
+    if selection_manifest_path is not None:
+        model["selection_charts"].append({"seed": selection_seed, "sha256": selection_chart_hash, "validation_sample_count": selection_count})
     output = args.output.expanduser()
     ensure_new_directory(output)
     cube_path = output / "GalleryCNTSpatial.cube"
@@ -774,6 +924,8 @@ def command_fit_spatial(args: argparse.Namespace) -> int:
             for item in candidates
         ],
         "selected_brightness": selected_candidate["brightness"],
+        "training_chart": {"seed": manifest["seed"], "sha256": manifest["chart_sha256"], "fit_sample_count": int(np.count_nonzero(train))},
+        "selection_charts": model["selection_charts"],
         "neutral_export_roundtrip_vs_chart_input": neutral_roundtrip,
         "outputs": {"model": model_path.name, "cube": cube_path.name},
     }
@@ -795,9 +947,10 @@ def command_evaluate(args: argparse.Namespace) -> int:
         raise ValueError("manifest chart must be a filename in the manifest directory")
     model = json.loads(args.model.expanduser().read_text(encoding="utf-8"))
     control = validate_model(model)
-    chart, chart_info = load_srgb_image(manifest_path.parent / chart_name)
-    reference, reference_info = load_srgb_image(args.reference.expanduser())
     expected_size = [manifest["width"], manifest["height"]]
+    chart, chart_info = load_srgb_image(manifest_path.parent / chart_name, expected_size)
+    verify_chart_binding(manifest, manifest_path.parent / chart_name, chart)
+    reference, reference_info = load_srgb_image(args.reference.expanduser(), expected_size)
     if chart_info["size"] != expected_size or reference_info["size"] != expected_size:
         raise ValueError(f"chart and reference must match manifest dimensions {expected_size}")
     if model["format"] == "gallery-cnt-spatial-v3":
@@ -855,6 +1008,7 @@ def command_evaluate(args: argparse.Namespace) -> int:
 
 def load_apply_image(path: pathlib.Path) -> tuple[Image.Image, bytes, dict]:
     with Image.open(path) as opened:
+        validate_image_header(path, opened.size)
         icc = opened.info.get("icc_profile")
         if not icc:
             raise ValueError(f"{path}: embedded ICC profile is required")
@@ -868,8 +1022,6 @@ def load_apply_image(path: pathlib.Path) -> tuple[Image.Image, bytes, dict]:
             oriented = oriented.convert("RGB")
         srgb_profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB"))
         converted = ImageCms.profileToProfile(oriented, ImageCms.ImageCmsProfile(io.BytesIO(icc)), srgb_profile, outputMode="RGB")
-        if converted.width * converted.height > 100_000_000:
-            raise ValueError("image exceeds the 100 megapixel offline apply limit")
         return converted.copy(), srgb_profile.tobytes(), {"size": [converted.width, converted.height], "source_orientation": orientation, "icc_bytes": len(icc)}
 
 
@@ -929,6 +1081,8 @@ def build_parser() -> argparse.ArgumentParser:
     fit.add_argument("--reference", type=pathlib.Path, required=True, help="same-size intended-result export")
     fit.add_argument("--output", type=pathlib.Path, required=True, help="new output directory")
     fit.add_argument("--spatial", action="store_true", help="fit the predeclared Gallery-only spatial v3 candidates")
+    fit.add_argument("--selection-manifest", type=pathlib.Path, help="optional independent chart used only for spatial model selection")
+    fit.add_argument("--selection-reference", type=pathlib.Path, help="matched reference export for --selection-manifest")
     fit.set_defaults(func=command_fit)
     evaluate = commands.add_parser("evaluate", help="evaluate a frozen model against held-out chart patches without refitting")
     evaluate.add_argument("--model", type=pathlib.Path, required=True)

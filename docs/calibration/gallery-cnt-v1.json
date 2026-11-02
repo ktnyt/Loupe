@@ -1846,16 +1846,22 @@
   "fit_input": "original chart JPEG decoded with ICC",
   "selection_data": "charts A/B development; chart C and photos untouched",
   "measurement_source": "Same-input generated sRGB chart / Gallery CNT strength100; no APK LUT data used",
-  "training_charts": {
-    "seeds": [
-      67,
-      6702
-    ],
+  "quality_status": "Candidate; photographic/Camera CNT quality parity not established",
+  "fitting_chart": {
+    "seed": 67,
     "dimensions": [
       2178,
       3096
     ],
-    "rgb_lattice": 17
+    "rgb_lattice": 17,
+    "samples": "train+grayscale"
   },
-  "quality_status": "Candidate; photographic/Camera CNT quality parity not established"
+  "selection_charts": {
+    "seeds": [
+      67,
+      6702
+    ],
+    "samples": "off-grid validation only",
+    "criterion": "mean of per-chart mean DeltaE76 for predeclared luma/maxRGB candidates"
+  }
 }

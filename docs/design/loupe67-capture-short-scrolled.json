@@ -1,0 +1,162 @@
+{
+  "density": 3,
+  "font": 1.2999999523162842,
+  "width": 1200,
+  "height": 1920,
+  "content_dp_width": 400,
+  "content_dp_height": 640,
+  "dialog": true,
+  "scroll": 1233,
+  "external_document_picker": "unverified",
+  "app_window": {
+    "decor_bounds_screen_px": [
+      0,
+      344,
+      1200,
+      2264
+    ],
+    "decor_size_px": [
+      1200,
+      1920
+    ],
+    "decor_global_visible_px": [
+      0,
+      0,
+      1200,
+      1920
+    ],
+    "decor_visible": true,
+    "requested_size_px": [
+      1200,
+      1920
+    ],
+    "layout_offset_xy_px": [
+      0,
+      0
+    ],
+    "gravity": 0,
+    "window_metrics_bounds_px": [
+      0,
+      0,
+      1200,
+      2608
+    ],
+    "test_fixture_alignment": null
+  },
+  "app_root_bounds_screen_px": [
+    0,
+    344,
+    1200,
+    2264
+  ],
+  "app_root_padding_px": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "app_content_crop_window_px": [
+    0,
+    0,
+    1200,
+    1920
+  ],
+  "app_content_bounds_screen_px": [
+    0,
+    344,
+    1200,
+    2264
+  ],
+  "capture_composition": "actual_window_screen_coordinates_no_pixel_reposition",
+  "owned_dialog_test_alignment_enabled": true,
+  "display_size_px": [
+    1200,
+    2608
+  ],
+  "dialog_window": {
+    "decor_bounds_screen_px": [
+      0,
+      1381,
+      1200,
+      2264
+    ],
+    "decor_size_px": [
+      1200,
+      883
+    ],
+    "decor_global_visible_px": [
+      0,
+      0,
+      1200,
+      883
+    ],
+    "decor_visible": true,
+    "requested_size_px": [
+      -1,
+      883
+    ],
+    "layout_offset_xy_px": [
+      0,
+      296
+    ],
+    "gravity": 80,
+    "window_metrics_bounds_px": [
+      0,
+      0,
+      1200,
+      2608
+    ],
+    "test_fixture_alignment": {
+      "test_only": true,
+      "reason": "constrained_activity_window_bottom_alignment",
+      "first_before_bounds_screen_px": [
+        0,
+        1677,
+        1200,
+        2560
+      ],
+      "last_before_bounds_screen_px": [
+        0,
+        1381,
+        1200,
+        2264
+      ],
+      "after_bounds_screen_px": [
+        0,
+        1381,
+        1200,
+        2264
+      ],
+      "host_content_bounds_screen_px": [
+        0,
+        344,
+        1200,
+        2264
+      ],
+      "first_window_y_px": 0,
+      "window_y_px": 296,
+      "last_fixture_delta_y_px": 0,
+      "total_fixture_delta_y_px": 296,
+      "updates": 1
+    }
+  },
+  "dialog_panel_bounds_screen_px": [
+    0,
+    1381,
+    1200,
+    2264
+  ],
+  "dialog_panel_size_px": [
+    1200,
+    883
+  ],
+  "dialog_panel_intersects_content": true,
+  "dialog_panel_intersection_content_px": [
+    0,
+    1381,
+    1200,
+    2264
+  ],
+  "dialog_panel_visible_height_in_capture_px": 883,
+  "dialog_panel_clipped_by_capture": false
+}

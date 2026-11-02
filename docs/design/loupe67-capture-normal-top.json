@@ -1,0 +1,130 @@
+{
+  "density": 3,
+  "font": 1,
+  "width": 1200,
+  "height": 2416,
+  "content_dp_width": 400,
+  "content_dp_height": 805.3333129882812,
+  "dialog": true,
+  "scroll": 0,
+  "external_document_picker": "unverified",
+  "app_window": {
+    "decor_bounds_screen_px": [
+      0,
+      0,
+      1200,
+      2608
+    ],
+    "decor_size_px": [
+      1200,
+      2608
+    ],
+    "decor_global_visible_px": [
+      0,
+      0,
+      1200,
+      2608
+    ],
+    "decor_visible": true,
+    "requested_size_px": [
+      1200,
+      -1
+    ],
+    "layout_offset_xy_px": [
+      0,
+      0
+    ],
+    "gravity": 0,
+    "window_metrics_bounds_px": [
+      0,
+      0,
+      1200,
+      2608
+    ],
+    "test_fixture_alignment": null
+  },
+  "app_root_bounds_screen_px": [
+    0,
+    0,
+    1200,
+    2608
+  ],
+  "app_root_padding_px": [
+    0,
+    144,
+    0,
+    48
+  ],
+  "app_content_crop_window_px": [
+    0,
+    144,
+    1200,
+    2560
+  ],
+  "app_content_bounds_screen_px": [
+    0,
+    144,
+    1200,
+    2560
+  ],
+  "capture_composition": "actual_window_screen_coordinates_no_pixel_reposition",
+  "owned_dialog_test_alignment_enabled": false,
+  "display_size_px": [
+    1200,
+    2608
+  ],
+  "dialog_window": {
+    "decor_bounds_screen_px": [
+      0,
+      1449,
+      1200,
+      2560
+    ],
+    "decor_size_px": [
+      1200,
+      1111
+    ],
+    "decor_global_visible_px": [
+      0,
+      0,
+      1200,
+      1111
+    ],
+    "decor_visible": true,
+    "requested_size_px": [
+      -1,
+      1111
+    ],
+    "layout_offset_xy_px": [
+      0,
+      0
+    ],
+    "gravity": 80,
+    "window_metrics_bounds_px": [
+      0,
+      0,
+      1200,
+      2608
+    ],
+    "test_fixture_alignment": null
+  },
+  "dialog_panel_bounds_screen_px": [
+    0,
+    1449,
+    1200,
+    2560
+  ],
+  "dialog_panel_size_px": [
+    1200,
+    1111
+  ],
+  "dialog_panel_intersects_content": true,
+  "dialog_panel_intersection_content_px": [
+    0,
+    1449,
+    1200,
+    2560
+  ],
+  "dialog_panel_visible_height_in_capture_px": 1111,
+  "dialog_panel_clipped_by_capture": false
+}
