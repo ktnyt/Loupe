@@ -63,12 +63,14 @@ sips -s format jpeg /tmp/loupe-look-fixtures/look-ramp-patches.png --out /tmp/lo
 - 純Java: Identity LUT 17/33/65、非自明な三線形補間、DOMAIN、端点、異常入力、Neutral、seed、共通チャンネルノイズ、floatランプ、値の保存/復元を確認。
 - 既存純Java: 128曲線/128万サンプル、階調・色域・Undo/Redo、およびRAW構造144項目を確認。
 - ビルド: 通常APK・実験APK・実験テストAPKをビルド。Android lintを実施。
-- GPU: b1454f51（25128PNA1G）/実験0.5.0 code8でPASS。CPU/GPU最大差1 code、25タイル最大差1 code、1024→512の粒子比較MAE .795715 code / RMS 1.073757 code。テスト全体18986msで、操作レイテンシの計測ではない。
+- GPU: b1454f51（25128PNA1G）/実験0.6.0 code9で最終再検査PASS。CPU/GPU最大差1 code、25タイル最大差1 code、1024→512の粒子比較MAE .795715 code / RMS 1.073757 code。最終8bit灰色ランプは225階調超、最終ディザの1 code以内で単調、黒端点/ハイライト圧縮を確認。lookテスト全体26970msで、操作レイテンシの計測ではない。
 - 保存: FullSession→NativeJpeg95→private provider→JPEG decodeを65×43合成写真で比較。MAE 2.109720 code/RMS 4.522125 code、RGB平均偏り .06619/−.00859/−.05045 code。原寸/固定seed/保存snapshot/pending解除を確認。
 - UI: 実験0.6.0/code9、400dp/font1.0と400×640dp/font1.3で、実View操作・AX progress・seed確定・Neutral確認/取消・プリセット往復・曲線Undo/Redo・Activity再生成を確認。Customの基準プリセットと現像のWB/曲線、保持外部LUTの復元も確認。各操作域48dp以上、文字の高さと省略、スクロールによる到達を検査した。外部LUTはこのUI検査内では合成fixtureを設定しており、OSピッカーの検査とは区別する。
 - UI診断: 1回の描画完了待ちtimeoutは診断追加後の通常/短画面で再現しなかった。待機条件・制限時間は緩めていない。呼出stageと描画状態の診断を検査に保持する。
-- 外部ファイル選択: 実装済みだが、OSピッカーの補助操作の検査は未完了。端末再ロック後は操作を止めている。通常版0.23.0/code145の最終インストールも未実施。
-- UI比較: 選択プリセット文字を参照の600へ修正し、ビルド済み。更新版の再撮影は未実施。短いActivity Windowと独立Dialogの座標が同じ条件かを確認するgeometry診断を追加したが未実測。短画面のスクリーンショットだけからシート高さの一致を判断しない。
+- 外部ファイル選択: 実際のOS ACTION_OPEN_DOCUMENTから合成17³/65³ cubeを選び、使用中の名前・寸法とCustom適用を確認。無効cubeではエラー/再読込と前の65³保持を確認。専用fixtureを削除し、写真原本は使用していない。通常版0.23.0/code145を導入し端末からversionを読み返した。
+- UI比較: 選択文字600の最新版を通常/短画面で再撮影し、Claudeのレイアウト修正版と独立評価した。追加修正が必要な重大UI/UX差なし。短画面はActivityだけを640dpへ縮める検査条件に合わせ、test-onlyで独立Dialogの実Windowを296px移動した。Dialogの実高883pxがすべてcontent内へ入り、補正前後の座標をJSONへ明記する。PixelCopy後の画素移動は行わない。実際の短い端末のWindow配置そのものや全画素一致を示すものではない。字形・改行・行間などの小差と、実指/実IME/TalkBackの未確認は残る。
+- 通常版の結合: 0.23.0/code145の既存PhotoEditChecksで、viewerから合成JPEGを内部現像へ読み込み、Mono編集/再生成、MediaStore JPEGの寸法・tint・原本byte不変、保存中Back取消と専用出力のcleanupを確認。非公開Activityの権限を変えずにapp内経路を使う。外部editor/save互換は未検査。
+- 端末の私有store: 3個の65³表（9,887,142 bytes）のsave 215ms/load 333ms、round tripとatomic replacementを確認。保存/復元は同期I/Oのため、大きなLUTを持つ画面再生成時にはこの待ちが発生し得る。4個の65³表はhostで検査済み、端末上の最大構成の時間は未計測。
 - lint: 両モジュールでErrorなし。Warningは実験42件、通常101件（既存を含む）。今回追加のprogrammatic Viewのconstructor、SliderのperformClick、固定日本語、RTL等の警告は残っている。全件解消やアプリ全体の無警告を主張しない。
 - 経過時間はissue-progressコメントで計測。入力→表示の実測、実写真の主観評価、完了までの利用量は未計測。
 

@@ -56,7 +56,7 @@ Leica Contemporaryに近づけるため、写真を比較しながら曲線・LU
 
 ## UI
 
-Claude完成参照 `docs/design/loupe-cnt-look-final.html` を取得してから実装した。現像▾の48dp入口、下付きスクロールシート（高さmin(content×.46,384dp)、地#1C1C1F、上角丸28dp、dimなし）、プリセット/独立ON/OFF/外部cube/強度/粒子/暗部/seed/リセットを持つ。既存ワンタップBefore/After、原寸保存を利用。カーブパネルは下行を現像/ルック切替とし264dpを保つ。左右分割は今回省略。
+Claude完成参照 `docs/design/loupe-cnt-look-layout-fixed.html` をUIの基準とする。現像▾の48dp入口、下付きスクロールシート（高さmin(content×.46,384dp)、地#1C1C1F、上角丸28dp、dimなし）、プリセット/独立ON/OFF/外部cube/強度/粒子/暗部/seed/リセットを持つ。既存ワンタップBefore/After、原寸保存を利用。カーブパネルは下行を現像/ルック切替とし264dpを保つ。左右分割は今回省略。
 
 Customの調整と最後に読み込んだ外部LUTを別々に保持する。既存現像の既定補正が残る初期状態は「追加なし」とし、Neutralを選択済みと表示しない。Neutral選択は現像も中立にする操作、リセットは追加lookだけを戻す操作として分ける。Customの基準プリセットはimmutable lookのbasePresetとしてUndo/Redo・binaryに含め、プリセット往復で書き換えない。look binaryは6502へ更新し、6501はbase0として既存値を読み込む。CNT-likeは既存現像を変えず組込みLUTを使い、Neutralは確認後に既存現像を含め中立へ戻す。Neutral後もCustomと外部LUTは保持する。外部入力の失敗/中断は有効なrecipeを変えず、再読込を提示する。古い非同期結果はrequest世代で破棄する。Activity停止時は読み込みを中断し、復元ではURIを再読せずprivate recipeを読む。Store v2はcurrent/saved/custom/外部cubeを最大13,214,784 bytesで原子的に保存し、Bundleにはtokenだけを入れる。同期保存時間とimport完了時間をmsでログへ残す。
 
