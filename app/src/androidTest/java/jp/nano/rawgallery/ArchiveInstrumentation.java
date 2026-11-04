@@ -48,6 +48,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean automaticTest, confidenceStoreTest, confidenceUiTest;
   private boolean cleanupTest;
   private boolean compactTest;
+  private boolean e2ArchiveTest;
+  private String e2RunId;
   private boolean jpegTest;
   private boolean jpegCloudTest;
   private boolean jpegCleanupTest;
@@ -121,6 +123,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
     jpegCloudTest = args != null && "jpeg-cloud".equals(args.getString("mode"));
     jpegCleanupTest = args != null && "jpeg-cleanup".equals(args.getString("mode"));
     compactTest = args != null && "compact".equals(args.getString("mode"));
+    e2ArchiveTest = args != null && "e2-archive".equals(args.getString("mode"));
+    if (e2ArchiveTest) e2RunId = args.getString("e2-run");
     sheetTest = args != null && "sheets".equals(args.getString("mode"));
     start();
   }
@@ -137,6 +141,11 @@ public final class ArchiveInstrumentation extends Instrumentation {
       String report=failureReport(new AssertionError(new java.io.IOException("PRIVATE_VALUE")));
       if(report.contains("PRIVATE_VALUE")||!report.contains("java.io.IOException")||!report.contains("ArchiveInstrumentation.java:"))throw new AssertionError();
       Context context = getTargetContext();
+      if (e2ArchiveTest) {
+        results.putString("stream", E2DeviceChecks.run(context, e2RunId));
+        finish(-1, results);
+        return;
+      }
       if(confidenceUiTest){results.putString("stream",ConfidenceUiChecks.run(this,tagWidth));finish(-1,results);return;}
       if(confidenceStoreTest){results.putString("stream",ConfidenceStoreChecks.run(context));finish(-1,results);return;}
       if (indexSignatureTest) { results.putString("stream", IndexSignatureChecks.run(context)); finish(-1, results); return; }
