@@ -13,7 +13,11 @@ final class ArchiveStore extends SQLiteOpenHelper {
   private final Context context;
 
   ArchiveStore(Context c) {
-    super(c, "archive.db", null, 3);
+    this(c, "archive.db");
+  }
+
+  ArchiveStore(Context c, String databaseName) {
+    super(c, databaseName, null, 3);
     context = c.getApplicationContext();
   }
 
