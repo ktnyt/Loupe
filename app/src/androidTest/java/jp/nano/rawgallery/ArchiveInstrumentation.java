@@ -28,7 +28,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     if ((tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || viewerLookTest || viewerLookUiTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
     if(viewerLookTest&&activity instanceof RawEditActivity)ViewerLookChecks.rawEditActivityLaunches++;
   }
-  private boolean galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest, viewerLookTest, viewerLookUiTest, viewerRawLookTest;
+  private boolean shareToggleTest, galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest, viewerLookTest, viewerLookUiTest, viewerRawLookTest;
   private boolean photoEditTest, lookTimingRaw, lookTimingJpeg;
   private boolean consistencyTest, syncControlsTest, tagDetailTest, resultTest, resultTalkBack;
   private boolean dashboardTalkBackTest;
@@ -88,8 +88,9 @@ public final class ArchiveInstrumentation extends Instrumentation {
     photoEditTest=args!=null&&"photo-edit".equals(args.getString("mode"));
     lookTimingRaw=args!=null&&"viewer-look-timing-raw".equals(args.getString("mode"));
     lookTimingJpeg=args!=null&&"viewer-look-timing-jpeg".equals(args.getString("mode"));
+    shareToggleTest=args!=null&&"share-toggle".equals(args.getString("mode"));
     galleryTalkBack=args!=null&&"gallery-screen-talkback".equals(args.getString("mode"));
-    galleryScreenTest=shareScreenTest||viewerScreenTest||galleryTalkBack||(args!=null&&"gallery-screen".equals(args.getString("mode")));
+    galleryScreenTest=shareToggleTest||shareScreenTest||viewerScreenTest||galleryTalkBack||(args!=null&&"gallery-screen".equals(args.getString("mode")));
     resultTalkBack=args!=null&&"ranking-result-talkback".equals(args.getString("mode"));
     resultTest=resultTalkBack||(args!=null&&"ranking-result".equals(args.getString("mode")));
     tagDetailTest=args!=null&&"tag-detail".equals(args.getString("mode"));
@@ -159,7 +160,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if(viewerLookUiTest){results.putString("stream",ViewerLookUiChecks.run(this,tagWidth,tagFont));finish(-1,results);return;}
       if(viewerLookTest){results.putString("stream",ViewerLookChecks.run(this,tagWidth,tagFont));finish(-1,results);return;}
       if(viewerScreenTest){results.putString("stream",ViewerScreenChecks.run(this,tagWidth));finish(-1,results);return;}
-      if(galleryScreenTest){results.putString("stream",GalleryScreenChecks.run(this,tagWidth,galleryTalkBack));finish(-1,results);return;}
+      if(galleryScreenTest){results.putString("stream",GalleryScreenChecks.run(this,tagWidth,galleryTalkBack,shareToggleTest));finish(-1,results);return;}
       if(resultTest){results.putString("stream",RankingResultChecks.run(this,tagWidth,resultTalkBack));finish(-1,results);return;}
       if(tagDetailTest){results.putString("stream",TagDetailChecks.run(this,tagWidth));finish(-1,results);return;}
       if(syncControlsTest){results.putString("stream",SyncControlChecks.run(this));finish(-1,results);return;}

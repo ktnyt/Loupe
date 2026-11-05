@@ -26,6 +26,6 @@
 
 実機タップ、アプリ内で呼び出す `performClick`、アクセシビリティ属性の検査は別の証拠として報告する。
 
-## 実装・検証の状態
+## 実装と検証の参照
 
-契約を定義した段階。修正実装、修正版のビルド・インストール・実機検証、独立レビューは未実施。調査と工程の記録は [Issue #79](https://github.com/ktnyt/Loupe/issues/79) を参照。
+`SelectionUi.BestSwitch.setChecked` が状態変更時の再描画を保証し、`onDraw` がチェック状態に対応する形を描く。`BestSwitchChecks` は他の画面更新を伴わない状態変更と実画素を検査する。実機条件・結果・未確認事項と工程の記録は [Issue #79](https://github.com/ktnyt/Loupe/issues/79) を参照。
