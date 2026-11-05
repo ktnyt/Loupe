@@ -25,6 +25,12 @@ final class SelectionUi {
     private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
     BestSwitch(Context c){super(c);setText("連写は1位だけ共有（同率を含む）");setTextSize(14);setTextColor(GalleryUi.TEXT);setIncludeFontPadding(false);setButtonDrawable((Drawable)null);setGravity(Gravity.START|Gravity.CENTER_VERTICAL);setPadding(0,GalleryUi.dp(c,6),GalleryUi.dp(c,76),GalleryUi.dp(c,6));setMinHeight(GalleryUi.dp(c,48));setMinimumHeight(GalleryUi.dp(c,48));setBackgroundColor(GalleryUi.BG);}
     public CharSequence getAccessibilityClassName(){return Switch.class.getName();}
+    @Override public void setChecked(boolean checked){
+      boolean changed=isChecked()!=checked;
+      super.setChecked(checked);
+      // The custom track has no stateful Drawable to invalidate this view.
+      if(changed)invalidate();
+    }
     protected void onDraw(Canvas canvas){super.onDraw(canvas);float d=getResources().getDisplayMetrics().density,w=getWidth()/d,h=getHeight()/d;int save=canvas.save();canvas.scale(d,d);paint.setColor(isChecked()?GalleryUi.TEXT:0xff8c8c86);paint.setStyle(isChecked()?Paint.Style.FILL:Paint.Style.STROKE);paint.setStrokeWidth(2);canvas.drawRoundRect(w-58,h/2-16,w-6,h/2+16,16,16,paint);paint.setStyle(Paint.Style.FILL);paint.setColor(isChecked()?0xff111111:0xff8c8c86);canvas.drawCircle(w-(isChecked()?24:44),h/2,10,paint);canvas.restoreToCount(save);}
   }
   static Button action(Context c,String title,boolean primary,Runnable click){
