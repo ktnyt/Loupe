@@ -31,6 +31,7 @@ public final class MainActivity extends DiagnosticActivity {
         }
       };
   private PhotoRepository repository;
+  private static final int PHOTO_TILE_HEIGHT_DP = 96;
   private RankingStore rankingStore;
   private SharePreparation sharePreparation;
   private List<List<Integer>> bundles = new ArrayList<>();
@@ -321,7 +322,12 @@ public final class MainActivity extends DiagnosticActivity {
       });
       root.addView(TagDetailUi.dock(this,select, TagDetailUi.dockButton(this,"タグ", () -> openTags(null)), TagDetailUi.dockButton(this,"その他", this::photoMenu)));
     }
-    if(selecting)SelectionUi.finishFooter(root,controlsStart,burstMembers != null);else GalleryUi.bottomControls(root, controlsStart, BG);
+    if (selecting) {
+      SelectionUi.finishFooter(root, controlsStart, burstMembers == null ? null
+          : () -> header.getMeasuredHeight() + dp(PHOTO_TILE_HEIGHT_DP));
+    } else {
+      GalleryUi.bottomControls(root, controlsStart, BG);
+    }
     if (albumFolder == null && burstMembers == null)
       root.addView(new LibraryTabs(this, false, !selecting, this::switchLibraryTab));
     if (selecting) updateSelection();
@@ -874,7 +880,10 @@ public final class MainActivity extends DiagnosticActivity {
 
     FrameLayout gridFrame = (FrameLayout) body.getChildAt(0);
     if (bulkSavedNotice != null) gridFrame.removeView(bulkSavedNotice);
-    TextView message = label("✓  " + notice, 14, TEXT);
+    TextView message = label(notice, 14, TEXT);
+    message.setCompoundDrawablesRelative(
+        StatusView.glyphDrawable(StatusView.Symbol.COMPLETE, dp(18), TEXT), null, null, null);
+    message.setCompoundDrawablePadding(dp(8));
     bulkSavedNotice = message;
     message.setMinHeight(dp(48));
     message.setGravity(Gravity.CENTER_VERTICAL);
@@ -1441,7 +1450,7 @@ public final class MainActivity extends DiagnosticActivity {
           recycled instanceof ThumbnailCell
               ? (ThumbnailCell) recycled
               : new ThumbnailCell(MainActivity.this);
-      cell.fixedHeight = dp(96);
+      cell.fixedHeight = dp(PHOTO_TILE_HEIGHT_DP);
       ImageView image = cell.image;
       List<Integer> members = displayed.get(position);
       int representative = members.get(0);

@@ -7,6 +7,7 @@ import android.graphics.Color;
 import android.graphics.drawable.*;
 import android.view.*;
 import android.widget.*;
+import java.util.function.IntSupplier;
 
 final class GalleryUi {
   static final int BG = 0xff0f0f10,
@@ -171,10 +172,10 @@ final class GalleryUi {
   static void bottomControls(LinearLayout root, int first) { bottomControls(root, first, PANEL); }
 
   static void bottomControls(LinearLayout root, int first, int background) {
-    bottomControls(root, first, background, .48f);
+    bottomControls(root, first, background, null);
   }
 
-  static void bottomControls(LinearLayout root, int first, int background, float heightFraction) {
+  static void bottomControls(LinearLayout root, int first, int background, IntSupplier reservedContentHeight) {
     Context c = root.getContext();
     LinearLayout controls = new LinearLayout(c); controls.setOrientation(LinearLayout.VERTICAL);
     controls.setBackgroundColor(background);
@@ -187,7 +188,11 @@ final class GalleryUi {
         android.graphics.Rect visible = new android.graphics.Rect();
         getWindowVisibleDisplayFrame(visible);
         int available = visible.height() > 0 ? visible.height() : getResources().getDisplayMetrics().heightPixels;
-        int cap = Math.min(MeasureSpec.getSize(height), (int) (available * heightFraction));
+        int limit = (int) (available * .48f);
+        if (reservedContentHeight != null) {
+          limit = Math.max(limit, available - reservedContentHeight.getAsInt());
+        }
+        int cap = Math.min(MeasureSpec.getSize(height), limit);
         super.onMeasure(width, MeasureSpec.makeMeasureSpec(cap, MeasureSpec.AT_MOST));
       }
     };

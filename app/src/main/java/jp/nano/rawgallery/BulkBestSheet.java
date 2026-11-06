@@ -81,6 +81,9 @@ final class BulkBestSheet extends Dialog {
     if (outside > 0) addNote(content, "ほかの連写の" + outside + "枚は含みません", hidden > 0 ? 4 : 8);
     error = text("保存できませんでした。順位と選択は前のままです", 13, 0xffffb4a8);
     inset(error);
+    error.setCompoundDrawablesRelative(
+        StatusView.glyphDrawable(StatusView.Symbol.FAILED, dp(16), REPLACE), null, null, null);
+    error.setCompoundDrawablePadding(dp(6));
     error.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_ASSERTIVE);
     error.setVisibility(View.GONE);
     RankingUi.add(content, error, 8);
