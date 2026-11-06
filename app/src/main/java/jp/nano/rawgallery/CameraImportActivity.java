@@ -164,12 +164,14 @@ public final class CameraImportActivity extends Activity {
     private UsbDevice connected() {
         return getSystemService(UsbManager.class).getDeviceList().values().stream()
                 .filter(CameraUsb::supported)
-                .sorted(java.util.Comparator.comparing(UsbDevice::getDeviceName))
+                .sorted(java.util.Comparator.<UsbDevice, Boolean>comparing(d -> !CameraUsb.knownCamera(d))
+                        .thenComparing(UsbDevice::getDeviceName))
                 .findFirst().orElse(null);
     }
 
     private void renderStatus() {
         UsbDevice device = connected();
+        boolean manualOnly = device != null && !CameraUsb.knownCamera(device);
         boolean granted = device != null && getSystemService(UsbManager.class).hasPermission(device);
         boolean active = PROGRESS.getActive();
         if (wasActive && !active) loadCameras();
@@ -177,7 +179,7 @@ public final class CameraImportActivity extends Activity {
         if (active) starting = false;
         setText(connection, device == null ? "USBケーブルでカメラをつないでください"
                 : (device.getProductName() == null ? "カメラ" : device.getProductName())
-                  + (granted ? " · 接続済み" : " · USBの使用許可が必要です"));
+                  + (granted ? (manualOnly ? " · 手動取り込み" : " · 接続済み") : " · USBの使用許可が必要です"));
         int total = PROGRESS.getTotal();
         setText(result, active
                 ? (total > 0 ? PROGRESS.getDone() + " / " + total + " 件"
@@ -205,7 +207,7 @@ public final class CameraImportActivity extends Activity {
         stop.setVisibility(active ? View.VISIBLE : View.GONE);
         stop.setEnabled(active && !PROGRESS.getStopRequested());
         setText(stop, PROGRESS.getStopRequested() ? "中止しています" : "中止");
-        auto.setEnabled(!active && !migrating);
+        auto.setEnabled(!active && !migrating && !manualOnly);
         migrate.setEnabled(!active && !starting && !migrating);
     }
 

@@ -12,14 +12,17 @@ import java.io.Closeable
 import java.util.UUID
 
 object CameraUsb {
-    @JvmStatic fun supported(device: UsbDevice): Boolean =
+    @JvmStatic fun knownCamera(device: UsbDevice): Boolean =
         device.vendorId == 0x07B4 || device.vendorId == 0x04DA
+
+    @JvmStatic fun supported(device: UsbDevice): Boolean =
+        knownCamera(device) || UsbMassStorage.isMassStorage(device)
 
     @JvmStatic fun attached(context: Context, intent: Intent): UsbDevice? {
         if (intent.action != UsbManager.ACTION_USB_DEVICE_ATTACHED) return null
         val claimed = runCatching { deviceExtra(intent) }.getOrNull() ?: return null
         return context.getSystemService(UsbManager::class.java).deviceList[claimed.deviceName]
-            ?.takeIf { supported(it) && it.deviceId == claimed.deviceId }
+            ?.takeIf { knownCamera(it) && it.deviceId == claimed.deviceId }
     }
 
     @Suppress("DEPRECATION")
