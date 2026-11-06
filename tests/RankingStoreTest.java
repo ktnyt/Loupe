@@ -69,6 +69,7 @@ public final class RankingStoreTest {
     commitSucceeds[0] = false;
     check(!store.save(completed.undo()), "commit failure returned to caller");
     check(completed.journal.equals("22"), "input comparison not mutated");
+    check(store.load(requested).journal.equals("22"), "failed commit leaves last disk result intact");
     commitSucceeds[0] = true;
     check(store.save(completed.undo()), "undo saved");
     check(store.load(requested).journal.equals("2"), "undo resumes");
@@ -80,6 +81,18 @@ public final class RankingStoreTest {
     check(store.save(new PhotoRanking(restored.ids, "A:")), "all-rank mode saved before first choice");
     check(!store.load(requested).bestOnly() && store.load(requested).decisions() == 0, "all-rank mode survives restart");
     check(store.load(requested).undo().journal.equals("A:"), "all-rank undo keeps method");
+    PhotoRanking full = new PhotoRanking(restored.ids, "").choose(true).tie();
+    while (!full.done()) full = full.tie();
+    PhotoRanking promoted = full.addCoWinner(full.order.get(full.best().size() + 1));
+    check(promoted.journal.startsWith("A:"), "co-winner result uses full-rank journal");
+    check(store.save(promoted), "co-winner result saved");
+    PhotoRanking coWinnerReopened = store.load(List.of("写真B", "写真A", "写真C"));
+    check(coWinnerReopened.done() && coWinnerReopened.order.equals(promoted.order),
+        "co-winner result reopens with reordered requested members");
+    check(coWinnerReopened.journal.startsWith("A:") && coWinnerReopened.best().equals(promoted.best()),
+        "co-winner journal and winner group replay after restart");
+    check(store.save(best), "legacy best-only journal remains writable");
+    check(store.load(requested).bestOnly(), "best-only history still reads after full-rank history");
     disk.put(legacyKey.toString(), "invalid");
     int before = commits[0];
     try {
