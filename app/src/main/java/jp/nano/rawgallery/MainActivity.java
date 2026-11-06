@@ -30,6 +30,50 @@ public final class MainActivity extends DiagnosticActivity {
           return b.getAllocationByteCount();
         }
       };
+  private final ExecutorService historyReads = new DiagnosticExecutor("MainActivity.history", 1);
+  private Map<String,List<ShareHistoryUi.Item>> shareHistory=Collections.emptyMap();
+  private boolean historyLoaded, historyReadFailed, historyReading, historyReload, historyForeground, historyAnimating;
+  private Runnable refreshShareBadges=()->{}, refreshShareInfo=()->{};
+  private AlertDialog shareHistoryFailure;
+  private final SharedPreferences.OnSharedPreferenceChangeListener historyChanges=(prefs,key)-> {
+    if("revision".equals(key))loadShareHistory();
+    if("failure_revision".equals(key))showShareHistoryFailure();
+    if("write_failed".equals(key)&&!prefs.getBoolean(key,false)&&shareHistoryFailure!=null)shareHistoryFailure.dismiss();
+  };
+  private List<ShareHistoryUi.Item> historyFor(PhotoRepository.Photo photo){try{return shareHistory.getOrDefault(ArchiveStore.key(photo),Collections.emptyList());}catch(IOException unavailable){return Collections.emptyList();}}
+  private void loadShareHistory(){
+    if(isDestroyed())return;
+    if(historyReading){historyReload=true;return;}
+    historyReading=true;
+    historyReads.execute(()->{
+      Map<String,List<ShareHistoryUi.Item>> loaded=null;
+      try{loaded=ShareHistoryUi.load(getApplicationContext());}catch(RuntimeException ignored){}
+      Map<String,List<ShareHistoryUi.Item>> result=loaded;
+      main.post(()->{
+        historyReading=false;if(isDestroyed())return;
+        historyReadFailed=result==null;
+        historyAnimating=historyLoaded&&result!=null;
+        boolean added=false;
+        if(historyAnimating)for(String key:result.keySet())if(ShareHistoryUi.added(shareHistory.getOrDefault(key,Collections.emptyList()),result.get(key))){added=true;break;}
+        if(result!=null){shareHistory=result;historyLoaded=true;}
+        if(added&&historyForeground)Toast.makeText(this,"共有の記録を更新しました",Toast.LENGTH_LONG).show();
+        if(grid!=null&&grid.isAttachedToWindow())grid.invalidateViews();
+        refreshShareBadges.run();refreshShareInfo.run();
+        historyAnimating=false;
+        if(historyReload){historyReload=false;loadShareHistory();}
+      });
+    });
+  }
+  private void showShareHistoryFailure(){
+    if(!historyForeground||isDestroyed()||shareHistoryFailure!=null)return;
+    SharedPreferences prefs=getSharedPreferences(ShareHistoryReceiver.PREFS,0);
+    if(!prefs.getBoolean("write_failed",false))return;
+    GalleryUi.Sheet sheet=new GalleryUi.Sheet(this);
+    sheet.setTitle("共有の記録を保存できませんでした").setMessage("前の記録は残っています。写真の共有はやり直しません。").setNegativeButton("閉じる",(d,w)->{if(!ShareHistoryReceiver.canRetry())prefs.edit().remove("write_failed").apply();});
+    if(ShareHistoryReceiver.canRetry())sheet.setPositiveButton("もう一度保存",(dialog,which)->ShareHistoryReceiver.retryLater(getApplicationContext()));
+
+    shareHistoryFailure=sheet.create();shareHistoryFailure.setOnDismissListener(dialog->shareHistoryFailure=null);shareHistoryFailure.show();
+  }
   private PhotoRepository repository;
   private RankingStore rankingStore;
   private SharePreparation sharePreparation;
@@ -222,6 +266,7 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private void base() {
+    refreshShareBadges=()->{};refreshShareInfo=()->{};
     root = vertical();
     root.setBackgroundColor(BG);
     root.setOnApplyWindowInsetsListener(
@@ -441,6 +486,8 @@ public final class MainActivity extends DiagnosticActivity {
     ImageView hero = new DiagnosticImageView(this);
     hero.setScaleType(ImageView.ScaleType.FIT_CENTER);
     stage.addView(hero, new FrameLayout.LayoutParams(-1, -1));
+    ShareHistoryUi.Overlay sharedHero=new ShareHistoryUi.Overlay(this,()->new RectF(0,0,stage.getWidth(),stage.getHeight()),42,3,false);
+    stage.addView(sharedHero,new FrameLayout.LayoutParams(-1,-1));
     TextView rank = label("",12,Color.WHITE);rank.setGravity(Gravity.CENTER);rank.setIncludeFontPadding(false);rank.setPadding(dp(10),0,dp(10),0);
     TextView rankState=label("",13,MUTED);rankState.setVisibility(View.GONE);heading.addView(rankState);
     FrameLayout.LayoutParams badge = new FrameLayout.LayoutParams(-2, dp(28), Gravity.TOP | Gravity.START);
@@ -465,13 +512,20 @@ public final class MainActivity extends DiagnosticActivity {
     BurstPreviews previews = new BurstPreviews(this, hero, stage, strip, loading, retry,
         members, this::previewInto, () -> screenGeneration == generation && !isDestroyed(),
         position -> { burstPosition = position; selection[0].run(); });
+    refreshShareBadges=()->{
+      if(burstMembers==null||burstPosition>=burstMembers.size())return;
+      PhotoRepository.Photo current=photos.get(burstMembers.get(burstPosition));
+      sharedHero.items(historyFor(current),historyAnimating);
+      hero.setContentDescription(current.name+"、タップで写真を拡大"+ShareHistoryUi.description(historyFor(current)));
+      previews.history(this::historyFor);
+    };
     Runnable update = () -> {
       DiagnosticLog.event("burst.select", burstRequest, "position", burstPosition);
       int member = burstMembers.get(burstPosition);
       PhotoRepository.Photo photo = photos.get(member);
       notice.setVisibility(View.GONE);
       previews.select(burstPosition);
-      hero.setContentDescription(photo.name + "、タップで写真を拡大");
+      refreshShareBadges.run();
       int bestPosition=0;
       String winners="";
       boolean tied=false;
@@ -1217,6 +1271,9 @@ public final class MainActivity extends DiagnosticActivity {
 
   protected void onResume() {
     super.onResume();
+    historyForeground=true;
+    getSharedPreferences(ShareHistoryReceiver.PREFS,0).registerOnSharedPreferenceChangeListener(historyChanges);
+    loadShareHistory();showShareHistoryFailure();
     if(restoreViewerLook&&detail){restoreViewerLook=false;showPhoto(index,returnToRanking);}
     if (repository != null) {
       if (resumed) refresh();
@@ -1313,6 +1370,8 @@ public final class MainActivity extends DiagnosticActivity {
       if (selecting)
         cell.setContentDescription(
             cell.getContentDescription() + (cell.badges.selected ? "、選択済み" : cell.badges.partial ? "、一部選択" : "、未選択"));
+      cell.badges.shared(p.uri.toString(),historyFor(p));
+      cell.setContentDescription(cell.getContentDescription()+ShareHistoryUi.description(cell.badges.shared));
       cell.badges.camera = "";
       cell.badges.cloud = "archive".equals(p.uri.getScheme());
       cell.badges.count = members.size();
@@ -1367,6 +1426,9 @@ public final class MainActivity extends DiagnosticActivity {
     root.addView(viewer,new LinearLayout.LayoutParams(-1,0,1));
     FrameLayout photoFrame=viewer.stage;
     ZoomImageView image=viewer.image;
+    String photoDescription=image.getContentDescription().toString();
+    refreshShareBadges=()->{viewer.shared.items(historyFor(photo),historyAnimating);image.setContentDescription(photoDescription+ShareHistoryUi.description(historyFor(photo)));};
+    refreshShareBadges.run();
     image.setPageListener(direction->{if(!fromRanking){if(look!=null)look.runWhenReady("写真の移動",()->adjacentPhoto(direction));else adjacentPhoto(direction);}});
     StatusView loadStatus=new StatusView(this);
     loadStatus.asPhotoOverlay();viewer.status(loadStatus);
@@ -1383,10 +1445,16 @@ public final class MainActivity extends DiagnosticActivity {
     Button editPhoto=PhotoEditor.add(this,viewer,photo,actions);
     viewer.action("共有","共有","共有（元のファイルを共有します）",()->shareMenu(photo));
     if(!fromRanking&&"content".equals(photo.uri.getScheme()))viewer.action("タグ","タグ","タグ",()->openTags(photo));
-    viewer.action("情報","情報","写真の情報",()->new GalleryUi.Sheet(this).setTitle(photo.name)
-        .setMessage(model.getText()+"\n"+dimensions.getText()+"\n"+photo.folder)
-        .setNeutralButton("外部のアプリで編集",(dialog,which)->{dialog.dismiss();editPhoto.post(()->editPhoto.performLongClick());})
-        .setPositiveButton("閉じる",null).show());
+    viewer.action("情報","情報","写真の情報",()->{
+      LinearLayout information=vertical();
+      refreshShareInfo=()->{information.removeAllViews();information.addView(ShareHistoryUi.information(this,model.getText()+"\n"+dimensions.getText()+"\n"+photo.folder,historyFor(photo),historyLoaded,historyReadFailed),new LinearLayout.LayoutParams(-1,-2));};
+      refreshShareInfo.run();
+      AlertDialog dialog=new GalleryUi.Sheet(this).setTitle(photo.name).setView(information)
+          .setNeutralButton("外部のアプリで編集",(d,which)->{d.dismiss();editPhoto.post(()->editPhoto.performLongClick());})
+          .setPositiveButton("閉じる",null).create();
+      dialog.setOnDismissListener(d->refreshShareInfo=()->{});dialog.show();
+      if(!historyLoaded||historyReadFailed)loadShareHistory();
+    });
     if(fromRanking&&!ranking.done())viewer.choose(()->{Runnable choose=()->saveRanking(ranking.choose(rankingMembers.get(ranking.upper())==position));if(look!=null)look.runWhenReady("写真の選択",choose);else choose.run();});
     viewing =
         actions.submit(
@@ -1735,11 +1803,7 @@ public final class MainActivity extends DiagnosticActivity {
               uris.add(Uri.parse("content://jp.nano.rawgallery.share/" + file.getName()));
             ArrayList<String> historyKeys = new ArrayList<>();
             for (PhotoRepository.Photo photo : selection) historyKeys.add(ArchiveStore.key(photo));
-            String pendingSession;
-            try (ShareHistoryStore history = new ShareHistoryStore(getApplicationContext())) {
-              pendingSession = history.begin(historyKeys, System.currentTimeMillis());
-            } catch (RuntimeException unavailable) { pendingSession = null; }
-            final String historySession = pendingSession;
+            final String historySession = ShareHistoryReceiver.begin(getApplicationContext(),historyKeys,System.currentTimeMillis());
             String type = prepared.mimeType;
             String action = uris.size() == 1 ? Intent.ACTION_SEND : Intent.ACTION_SEND_MULTIPLE;
             main.post(
@@ -1901,6 +1965,12 @@ public final class MainActivity extends DiagnosticActivity {
     super.onStop();
   }
 
+  @Override protected void onPause(){
+    historyForeground=false;
+    getSharedPreferences(ShareHistoryReceiver.PREFS,0).unregisterOnSharedPreferenceChangeListener(historyChanges);
+    super.onPause();
+  }
+
   protected void onDestroy() {
     generation++;
     shareAttempt++;
@@ -1908,6 +1978,7 @@ public final class MainActivity extends DiagnosticActivity {
     if (shareDialog != null) shareDialog.dismiss();
     getContentResolver().unregisterContentObserver(mediaObserver);
     main.removeCallbacks(mediaChanged);
+    historyReads.shutdownNow();
     scans.shutdownNow();
     images.shutdownNow();
     actions.shutdownNow();

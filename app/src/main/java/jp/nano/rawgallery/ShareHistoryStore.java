@@ -43,8 +43,14 @@ final class ShareHistoryStore extends SQLiteOpenHelper {
 
   /** Freeze actual outgoing photo keys before starting the chooser; no history is created yet. */
   synchronized String begin(Collection<String> photoKeys, long now) {
+    return begin(photoKeys, now, now);
+  }
+
+  /** Persist a recovered session without using its older creation time to prune newer sessions. */
+  synchronized String begin(Collection<String> photoKeys, long created, long now) {
     List<String> keys = validatedKeys(photoKeys);
-    if (now < 0) throw new IllegalArgumentException("Invalid time");
+    if (created < 0 || now < created || now - created > SESSION_LIFETIME_MS)
+      throw new IllegalArgumentException("Invalid time");
     String id = UUID.randomUUID().toString();
     SQLiteDatabase db = getWritableDatabase();
     db.beginTransaction();
@@ -54,7 +60,7 @@ final class ShareHistoryStore extends SQLiteOpenHelper {
       db.delete("sessions", "created<? OR created>?",
           new String[] {Long.toString(now - SESSION_LIFETIME_MS), Long.toString(now)});
       ContentValues session = new ContentValues();
-      session.put("id", id); session.put("created", now);
+      session.put("id", id); session.put("created", created);
       db.insertOrThrow("sessions", null, session);
       for (String key : keys) {
         ContentValues photo = new ContentValues();

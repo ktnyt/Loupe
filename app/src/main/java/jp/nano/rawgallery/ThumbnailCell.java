@@ -42,6 +42,14 @@ final class ThumbnailCell extends FrameLayout {
     private final android.graphics.drawable.Drawable selectionCloud;
     String camera = "", rank = "";
     int count;
+    java.util.List<ShareHistoryUi.Item> shared = java.util.Collections.emptyList();
+    private final ShareHistoryUi.Painter sharePainter;
+    private String sharedKey;
+    private long shareAppeared;
+    void shared(String key,java.util.List<ShareHistoryUi.Item> value){
+      shareAppeared=key.equals(sharedKey)&&ShareHistoryUi.added(shared,value)?ShareHistoryUi.animationStart():0;
+      sharedKey=key;shared=value;
+    }
     StatusView.Symbol tagState;
     boolean cloud, failed, rankFailed, selectionMode, selected, partial, tagAtRight, photoSelection;
 
@@ -49,6 +57,7 @@ final class ThumbnailCell extends FrameLayout {
       super(context);
       density = getResources().getDisplayMetrics().density;
       selectionCloud=context.getDrawable(R.drawable.ic_selection_cloud);
+      sharePainter=new ShareHistoryUi.Painter(context);
     }
 
     protected void onDraw(Canvas canvas) {
@@ -62,12 +71,12 @@ final class ThumbnailCell extends FrameLayout {
         paint.setColor(Color.WHITE);
         canvas.drawText(camera, 11, 19, paint);
       }
-      if(cloud&&photoSelection&&selectionMode){
+      if(shared.isEmpty()&&cloud&&photoSelection&&selectionMode){
         float edge=selected?14:5,left=w-edge-24,top=h-edge-20;
         paint.setStyle(Paint.Style.FILL);paint.setColor(0x9e000000);canvas.drawRoundRect(left,top,left+24,top+20,10,10,paint);
         int save=canvas.save();canvas.translate(left+5,top+3);selectionCloud.setBounds(0,0,14,14);selectionCloud.draw(canvas);canvas.restoreToCount(save);
       }
-      if (cloud && !selectionMode) {
+      if (shared.isEmpty() && cloud && !selectionMode) {
         box(canvas, w - 29, h - 26, 24, 21);
         paint.setColor(Color.WHITE);
         canvas.drawCircle(w - 21, h - 14, 3, paint);
@@ -89,6 +98,13 @@ final class ThumbnailCell extends FrameLayout {
         if(selectionStyle&&rank.equals("1位")){
           paint.setStyle(Paint.Style.FILL);paint.setColor(0xfff5b947);float top=h-edge-20;canvas.drawRoundRect(edge,top,edge+20,top+20,5,5,paint);paint.setColor(0xff241800);Path star=new Path();for(int i=0;i<10;i++){double angle=-Math.PI/2+i*Math.PI/5;float radius=i%2==0?6:2.8f;float x=edge+10+(float)Math.cos(angle)*radius,y=top+10+(float)Math.sin(angle)*radius;if(i==0)star.moveTo(x,y);else star.lineTo(x,y);}star.close();canvas.drawPath(star,paint);
         }else{box(canvas,edge,h-edge-21,paint.measureText(rank)+12,21);paint.setColor(0xfff5b947);canvas.drawText(rank,edge+6,h-edge-7,paint);}
+      }
+      if(!shared.isEmpty()) {
+        float inset=photoSelection&&selectionMode&&selected?15:5;
+        float reserved=rank.isEmpty()&&!rankFailed?inset:edge+(selectionStyle&&rank.equals("1位")?20:paint.measureText(rank)+12)+2;
+        int opacity=ShareHistoryUi.alpha(shareAppeared),layer=canvas.saveLayerAlpha(0,0,w,h,opacity);
+        sharePainter.draw(canvas,shared,w-inset,h-inset,w-inset-reserved,w-inset*2,14,20,2,cloud,false);
+        canvas.restoreToCount(layer);if(opacity<255)postInvalidateOnAnimation();
       }
       if(tagState!=null){if(tagAtRight)box(canvas,w-30,h-26,24,20);StatusView.glyph(canvas,paint,tagState,tagAtRight?w-28:5,h-26,20,GalleryUi.TEXT,0);}
       if(rankFailed)StatusView.glyph(canvas,paint,StatusView.Symbol.FAILED,5,h-26,20,0xffff8a7a,0);

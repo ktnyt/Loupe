@@ -154,7 +154,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if(confidenceStoreTest){results.putString("stream",ConfidenceStoreChecks.run(context));finish(-1,results);return;}
       if (indexSignatureTest) { results.putString("stream", IndexSignatureChecks.run(context)); finish(-1, results); return; }
       if (indexApplyRaceTest) { results.putString("stream", IndexApplyRaceChecks.run(this)); finish(-1, results); return; }
-      if (shareHistoryTest) { results.putString("stream", ShareHistoryChecks.run(context)); finish(-1, results); return; }
+      if (shareHistoryTest) { String storeResult=ShareHistoryChecks.run(context); runOnMainSync(()->ShareHistoryUiChecks.run(context)); results.putString("stream", storeResult+"PASS share-history UI: narrow tiles, font scaling, AX, noninteractive badges\n"); finish(-1, results); return; }
       if (importLatencyTest) { results.putString("stream", ImportLatencyChecks.run(this, importInterruptionTest, importPauseTest, importDeferredTest)); finish(-1, results); return; }
       if(sortDimensionsSpecified)validateSortDimensions(context);
       if(shareScreenTest){results.putString("stream",ShareScreenChecks.run(this,tagWidth));finish(-1,results);return;}

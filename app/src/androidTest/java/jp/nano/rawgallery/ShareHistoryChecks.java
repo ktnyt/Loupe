@@ -47,6 +47,11 @@ final class ShareHistoryChecks {
         reopened.getWritableDatabase().execSQL("DROP TRIGGER fail_history");
         check(reopened.complete(failure, "example.first", "First", 1500), "retry pending transaction");
         check(reopened.history("x").size() == 1 && reopened.history("y").size() == 1, "retry batch");
+        String newer = reopened.begin(List.of("newer"), 1800);
+        String recovered = reopened.begin(List.of("recovered"), 1600, 1900);
+        check(reopened.complete(recovered, "example.first", "First", 1700), "recover older session");
+        check(reopened.history("recovered").get(0).handedOffAt == 1700, "original recovery timestamp");
+        check(reopened.complete(newer, "example.first", "First", 2000), "recovery preserves newer session");
       }
       return "PASS share-history: frozen batch, dedup, cancel, expiry, reopen, rollback, retry\n";
     } finally { context.deleteDatabase(database); }
