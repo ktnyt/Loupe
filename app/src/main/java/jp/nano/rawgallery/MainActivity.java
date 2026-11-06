@@ -494,7 +494,15 @@ public final class MainActivity extends DiagnosticActivity {
     ImageView hero = new DiagnosticImageView(this);
     hero.setScaleType(ImageView.ScaleType.FIT_CENTER);
     stage.addView(hero, new FrameLayout.LayoutParams(-1, -1));
-    ShareHistoryUi.Overlay sharedHero=new ShareHistoryUi.Overlay(this,()->new RectF(0,0,stage.getWidth(),stage.getHeight()),42,3,false);
+    ShareHistoryUi.Overlay sharedHero=new ShareHistoryUi.Overlay(this,()->{
+      android.graphics.drawable.Drawable drawable=hero.getDrawable();
+      if(drawable==null||drawable.getIntrinsicWidth()<=0||drawable.getIntrinsicHeight()<=0)
+        return new RectF(0,0,stage.getWidth(),stage.getHeight());
+      RectF bounds=new RectF(0,0,drawable.getIntrinsicWidth(),drawable.getIntrinsicHeight());
+      hero.getImageMatrix().mapRect(bounds);
+      bounds.offset(hero.getLeft()+hero.getPaddingLeft(),hero.getTop()+hero.getPaddingTop());
+      return bounds;
+    },42,3,false);
     stage.addView(sharedHero,new FrameLayout.LayoutParams(-1,-1));
     TextView rank = label("",12,Color.WHITE);rank.setGravity(Gravity.CENTER);rank.setIncludeFontPadding(false);rank.setPadding(dp(10),0,dp(10),0);
     TextView rankState=label("",13,MUTED);rankState.setVisibility(View.GONE);heading.addView(rankState);
@@ -518,7 +526,10 @@ public final class MainActivity extends DiagnosticActivity {
     Button retry = button("再試行", () -> {});
     final Runnable[] selection = new Runnable[1];
     BurstPreviews previews = new BurstPreviews(this, hero, stage, strip, loading, retry,
-        members, this::previewInto, () -> screenGeneration == generation && !isDestroyed(),
+        members, (image, photo, edge, complete) -> previewInto(image, photo, edge, loaded -> {
+          complete.accept(loaded);
+          sharedHero.postInvalidateOnAnimation();
+        }), () -> screenGeneration == generation && !isDestroyed(),
         position -> { burstPosition = position; selection[0].run(); });
     refreshShareBadges=()->{
       if(burstMembers==null||burstPosition>=burstMembers.size())return;

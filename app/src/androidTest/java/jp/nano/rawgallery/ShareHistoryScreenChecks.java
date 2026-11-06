@@ -17,8 +17,11 @@ import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.Shader;
 import android.net.Uri;
+import android.os.Build;
 import android.os.SystemClock;
+import android.util.Log;
 import android.util.LruCache;
+import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
@@ -26,6 +29,7 @@ import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.view.inspector.WindowInspector;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -273,15 +277,36 @@ final class ShareHistoryScreenChecks {
     }
     require(expected[0] != null, "Information sheet shows expected history");
     ConsistencyLayoutChecks.frame(test, dialog[0]);
+    List<TextView> dates = new ArrayList<>();
     if (many) ui(test, () -> {
       require(expected[0].getLineCount() > 1, "Long removed-app label wraps");
       List<TextView> labels = views(dialog[0], TextView.class);
       require(labels.stream().anyMatch(view -> view.getText().toString().contains("・使えないアプリ")),
           "Removed app explanation retained");
-      require(labels.stream().filter(view -> view.getText().toString().startsWith("2026/")).count() >= 7,
-          "Information sheet contains all seven dated destinations");
+      for (TextView label : labels) if (label.getText().toString().startsWith("2026/")) dates.add(label);
+      require(dates.size() == 7, "Information sheet contains all seven dated destinations");
     });
     capture(test, activity, directory, name, dialog[0], width, font);
+    if (many) {
+      ScrollView[] scroll = new ScrollView[1];
+      ui(test, () -> {
+        for (android.view.ViewParent parent = dates.get(0).getParent(); parent != null; parent = parent.getParent()) {
+          if (parent instanceof ScrollView) { scroll[0] = (ScrollView) parent; break; }
+        }
+        require(scroll[0] != null, "Information history has a scroll container");
+      });
+      for (TextView date : dates) {
+        ui(test, () -> date.requestRectangleOnScreen(new Rect(0, 0, date.getWidth(), date.getHeight()), true));
+        ConsistencyLayoutChecks.frame(test, dialog[0]);
+        ui(test, () -> {
+          Rect visible = new Rect();
+          require(date.getLocalVisibleRect(visible) && visible.height() >= date.getHeight() - 1,
+              "Each history timestamp is reachable by scrolling");
+        });
+      }
+      ui(test, () -> require(scroll[0].getScrollY() > 0, "Information fixture exercises scrolling"));
+      capture(test, activity, directory, name + "-scrolled", dialog[0], width, font);
+    }
     test.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
     test.waitForIdleSync();
   }
@@ -337,24 +362,106 @@ final class ShareHistoryScreenChecks {
 
   private static void tap(Instrumentation test, java.util.function.Supplier<View> find, float x, float y)
       throws Exception {
-    int[] point = new int[2];
+    View[] target = new View[1];
     ui(test, () -> {
-      View view = find.get();
-      require(view != null, "Photo pointer target");
-      view.getLocationOnScreen(point);
+      target[0] = find.get();
+      require(target[0] != null, "Photo pointer target");
+    });
+    ConsistencyLayoutChecks.frame(test, target[0]);
+    boolean[] reveal = {false};
+    ui(test, () -> {
+      View view = target[0];
       int localX = Math.round(view.getWidth() * x), localY = Math.round(view.getHeight() * y);
       Rect visible = new Rect();
-      require(view.getLocalVisibleRect(visible) && visible.contains(localX, localY), "Tap inside visible photo");
-      point[0] += localX;
-      point[1] += localY;
+      if (!view.getLocalVisibleRect(visible) || !visible.contains(localX, localY)) {
+        Log.i("LoupeShareFixtureTouch", "Revealing clipped photo: " + touchWindowState(view)
+            + " photo=" + java.util.Arrays.toString(bounds(view)) + " localVisible=" + visible.toShortString()
+            + " localTap=(" + localX + "," + localY + ")");
+        view.requestRectangleOnScreen(new Rect(0, 0, view.getWidth(), view.getHeight()), true);
+        reveal[0] = true;
+      }
     });
+    if (reveal[0]) {
+      test.waitForIdleSync();
+      ui(test, () -> {
+        target[0] = find.get();
+        require(target[0] != null, "Photo pointer target after scrolling");
+      });
+      ConsistencyLayoutChecks.frame(test, target[0]);
+    }
+    MotionEvent.PointerProperties finger = new MotionEvent.PointerProperties();
+    finger.id = 0;
+    finger.toolType = MotionEvent.TOOL_TYPE_FINGER;
+    MotionEvent.PointerCoords coords = new MotionEvent.PointerCoords();
+    coords.size = 1f;
+    int[] display = {-1};
+    String[] windowState = new String[1];
+    ui(test, () -> {
+      View view = target[0];
+      int[] origin = new int[2];
+      view.getLocationOnScreen(origin);
+      int localX = Math.round(view.getWidth() * x), localY = Math.round(view.getHeight() * y);
+      Rect visible = new Rect();
+      boolean inPhoto = view.getLocalVisibleRect(visible) && visible.contains(localX, localY);
+      coords.x = origin[0] + localX;
+      coords.y = origin[1] + localY;
+      if (view.getDisplay() != null) display[0] = view.getDisplay().getDisplayId();
+      windowState[0] = touchWindowState(view) + " photo=" + java.util.Arrays.toString(bounds(view))
+          + " localVisible=" + visible.toShortString() + " localTap=(" + localX + "," + localY + ")";
+      if (!inPhoto || view != find.get() || !view.hasWindowFocus() || display[0] < 0) {
+        Log.e("LoupeShareFixtureTouch", "Target not ready: " + windowState[0]);
+        throw new AssertionError("Tap requires the same visible photo in the focused app window");
+      }
+    });
+
     long down = SystemClock.uptimeMillis();
     for (int action : new int[] {MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP}) {
-      MotionEvent event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, point[0], point[1], 0);
-      try { test.sendPointerSync(event); }
-      finally { event.recycle(); }
+      coords.pressure = action == MotionEvent.ACTION_DOWN ? 1f : 0f;
+      long time = SystemClock.uptimeMillis();
+      MotionEvent.PointerProperties[] pointers = {finger};
+      MotionEvent.PointerCoords[] positions = {coords};
+      MotionEvent event = Build.VERSION.SDK_INT >= 35
+          ? MotionEvent.obtain(down, time, action, 1, pointers, positions, 0, 0, 1, 1, 0, 0,
+              InputDevice.SOURCE_TOUCHSCREEN, display[0], 0, MotionEvent.CLASSIFICATION_NONE)
+          : MotionEvent.obtain(down, time, action, 1, pointers, positions, 0, 0, 1, 1, 0, 0,
+              InputDevice.SOURCE_TOUCHSCREEN, 0);
+      require(event != null, "Touch event constructed");
+      try {
+        test.sendPointerSync(event);
+      } catch (RuntimeException rejected) {
+        Log.e("LoupeShareFixtureTouch", "Injection rejected: " + event + " explicitDisplay="
+            + (Build.VERSION.SDK_INT >= 35 ? display[0] : "platform default") + " " + windowState[0]);
+        ui(test, () -> Log.e("LoupeShareFixtureTouch", "Window after rejection: " + touchWindowState(target[0])));
+        throw rejected;
+      } finally {
+        event.recycle();
+      }
+      if (action == MotionEvent.ACTION_DOWN) SystemClock.sleep(40);
     }
     test.waitForIdleSync();
+  }
+
+  private static String touchWindowState(View target) {
+    StringBuilder state = new StringBuilder("attached=").append(target.isAttachedToWindow())
+        .append(" shown=").append(target.isShown()).append(" focus=").append(target.hasWindowFocus())
+        .append(" display=").append(target.getDisplay() == null ? -1 : target.getDisplay().getDisplayId())
+        .append(" decor=").append(java.util.Arrays.toString(bounds(target.getRootView())));
+    for (android.view.ViewParent parent = target.getParent(); parent != null; parent = parent.getParent()) {
+      if (parent instanceof ScrollingGrid) {
+        ScrollingGrid grid = (ScrollingGrid) parent;
+        state.append(" grid=").append(java.util.Arrays.toString(bounds(grid)))
+            .append(" firstRow=").append(grid.getFirstVisiblePosition())
+            .append(" lastRow=").append(grid.getLastVisiblePosition());
+        break;
+      }
+    }
+    for (View window : WindowInspector.getGlobalWindowViews()) {
+      if (window.isShown()) {
+        state.append(" window=").append(window.getClass().getSimpleName())
+            .append(java.util.Arrays.toString(bounds(window))).append(" focus=").append(window.hasWindowFocus());
+      }
+    }
+    return state.toString();
   }
 
   private static void capture(Instrumentation test, MainActivity activity, File directory,
