@@ -44,7 +44,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean diagnosticTest, sheetTest;
   private boolean tagTest, lifecycleTest;
   private boolean relatedTest;
-  private boolean coWinnerTest, positionTest, sortTest, tabsTest, albumTagsTest, comparisonLabelsTest, actionLabelsTest;
+  private boolean bulkWinnerTest, coWinnerTest, positionTest, sortTest, tabsTest, albumTagsTest, comparisonLabelsTest, actionLabelsTest;
   private boolean automaticTest, confidenceStoreTest, confidenceUiTest;
   private boolean cleanupTest;
   private boolean compactTest;
@@ -80,7 +80,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
     importInterruptionTest = importPauseTest || (args != null && "import-interruption".equals(args.getString("mode")));
     importLatencyTest = importInterruptionTest || importDeferredTest || (args != null && "import-latency".equals(args.getString("mode")));
     coWinnerTest = args != null && "burst-co-winners".equals(args.getString("mode"));
-    sortTest = coWinnerTest || (args != null && "sort-naming".equals(args.getString("mode")));
+    bulkWinnerTest = args != null && "burst-bulk-winners".equals(args.getString("mode"));
+    sortTest = bulkWinnerTest || coWinnerTest || (args != null && "sort-naming".equals(args.getString("mode")));
     shareScreenTest=args!=null&&"share-screen".equals(args.getString("mode"));
     viewerScreenTest=args!=null&&"viewer-screen".equals(args.getString("mode"));
     viewerLookTest=args!=null&&"viewer-look".equals(args.getString("mode"));
@@ -179,6 +180,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if (comparisonLabelsTest) { results.putString("stream", ComparisonLabelChecks.run(this)); finish(-1, results); return; }
       if (albumTagsTest) { results.putString("stream", AlbumTagEntryChecks.run(this)); finish(-1, results); return; }
       if (tabsTest) { results.putString("stream", LibraryTabsChecks.run(this)); finish(-1, results); return; }
+      if (bulkWinnerTest) { results.putString("stream", BurstBulkWinnerChecks.run(this,tagWidth,tagFont)); finish(-1, results); return; }
       if (coWinnerTest) { results.putString("stream", BurstCoWinnerChecks.run(this,tagWidth,tagFont)); finish(-1, results); return; }
       if (sortTest) { results.putString("stream", SortNamingChecks.run(this,tagWidth,tagFont)); finish(-1, results); return; }
       if (positionTest) { results.putString("stream", GalleryPositionChecks.run(this)); finish(-1, results); return; }

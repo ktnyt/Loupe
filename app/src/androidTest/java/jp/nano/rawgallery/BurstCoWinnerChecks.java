@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
+import android.graphics.Insets;
 import android.graphics.Paint;
 import android.net.Uri;
 import android.os.SystemClock;
@@ -18,6 +19,7 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.inspector.WindowInspector;
 import android.widget.Button;
@@ -28,6 +30,7 @@ import java.io.FileOutputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -39,6 +42,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 /** Exercises the burst detail and confirmation sheet using generated photos and isolated rankings. */
 final class BurstCoWinnerChecks {
@@ -70,7 +75,7 @@ final class BurstCoWinnerChecks {
     return null;
   }
 
-  private static View windowView(String label) {
+  static View windowView(String label) {
     for (View root : WindowInspector.getGlobalWindowViews()) {
       if (!root.hasWindowFocus()) continue;
       View match = find(root, label);
@@ -79,7 +84,7 @@ final class BurstCoWinnerChecks {
     return null;
   }
 
-  private static void await(Instrumentation t, String message, DiagnosticChecks.Check ready)
+  static void await(Instrumentation t, String message, DiagnosticChecks.Check ready)
       throws InterruptedException {
     long deadline = SystemClock.uptimeMillis() + 6000;
     boolean[] found = {false};
@@ -91,11 +96,11 @@ final class BurstCoWinnerChecks {
     throw new AssertionError("Timed out: " + message);
   }
 
-  private static void visible(Instrumentation t, String label) throws InterruptedException {
+  static void visible(Instrumentation t, String label) throws InterruptedException {
     await(t, label, () -> windowView(label) != null);
   }
 
-  private static void click(Instrumentation t, String label) throws InterruptedException {
+  static void click(Instrumentation t, String label) throws InterruptedException {
     await(t, label, () -> {
       View view = windowView(label);
       return view != null && view.isClickable() && view.isEnabled();
@@ -104,16 +109,16 @@ final class BurstCoWinnerChecks {
         AccessibilityNodeInfo.ACTION_CLICK, null), "AX click " + label));
   }
 
-  private static void back(Instrumentation t) {
+  static void back(Instrumentation t) {
     t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
     t.waitForIdleSync();
   }
 
-  private static void tapOutside(Instrumentation t, MainActivity a) {
+  static void tapOutside(Instrumentation t, MainActivity a, String label) {
     int[] point = new int[2];
     ui(t, () -> {
       View activity = a.getWindow().getDecorView();
-      View sheet = windowView(ADD).getRootView();
+      View sheet = windowView(label).getRootView();
       int[] activityOrigin = new int[2];
       int[] sheetOrigin = new int[2];
       activity.getLocationOnScreen(activityOrigin);
@@ -176,7 +181,7 @@ final class BurstCoWinnerChecks {
     }
   }
 
-  private static void capture(Instrumentation t, MainActivity a, String name, String label)
+  static void capture(Instrumentation t, MainActivity a, String name, String label)
       throws Exception {
     if (name.endsWith("-success")) {
       await(t, "saved sheet dismissed", () -> {
@@ -192,14 +197,19 @@ final class BurstCoWinnerChecks {
     Thread.sleep(350);
     t.waitForIdleSync();
     View[] focused = new View[1];
-    int[] bounds = new int[4];
+    int[][] geometry = new int[4][];
+    Insets[] systemBars = new Insets[1];
     ui(t, () -> {
       focused[0] = windowView(label);
       View decor = a.getWindow().getDecorView();
-      decor.getLocationOnScreen(bounds);
-      bounds[2] = decor.getWidth();
-      bounds[3] = decor.getHeight();
+      geometry[0] = screenBounds(decor);
+      geometry[1] = screenBounds(decor.findViewById(android.R.id.content));
+      geometry[2] = screenBounds((View) get(a, "root"));
+      if (focused[0] != null) geometry[3] = screenBounds(focused[0].getRootView());
+      WindowInsets insets = decor.getRootWindowInsets();
+      if (insets != null) systemBars[0] = insets.getInsets(WindowInsets.Type.systemBars());
     });
+    int[] bounds = geometry[0];
     check(focused[0] != null, "Capture screen " + label);
     ConsistencyLayoutChecks.frame(t, focused[0]);
     File dir = new File(a.getCacheDir(), "consistency-checks");
@@ -214,10 +224,39 @@ final class BurstCoWinnerChecks {
       int bottom = Math.min(screen.getHeight(), bounds[1] + bounds[3]);
       crop = Bitmap.createBitmap(screen, left, top, right - left, bottom - top);
       check(crop.compress(Bitmap.CompressFormat.PNG, 100, out), "Screenshot write");
+      android.util.DisplayMetrics metrics = a.getResources().getDisplayMetrics();
+      Insets bars = systemBars[0];
+      JSONObject metadata = new JSONObject()
+          .put("decor", boundsJson(geometry[0]))
+          .put("content", boundsJson(geometry[1]))
+          .put("root", boundsJson(geometry[2]))
+          .put("focusedWindow", boundsJson(geometry[3]))
+          .put("crop", boundsJson(new int[] {left, top, right - left, bottom - top}))
+          .put("display", boundsJson(new int[] {0, 0, screen.getWidth(), screen.getHeight()}))
+          .put("density", metrics.density)
+          .put("densityDpi", metrics.densityDpi)
+          .put("fontScale", a.getResources().getConfiguration().fontScale)
+          .put("systemBars", bars == null ? JSONObject.NULL : new JSONObject()
+              .put("left", bars.left).put("top", bars.top)
+              .put("right", bars.right).put("bottom", bars.bottom));
+      try (FileOutputStream metadataOut = new FileOutputStream(new File(dir, name + ".json"))) {
+        metadataOut.write(metadata.toString(2).getBytes(StandardCharsets.UTF_8));
+      }
     } finally {
       if (crop != null && crop != screen) crop.recycle();
       screen.recycle();
     }
+  }
+
+  private static int[] screenBounds(View view) {
+    int[] location = new int[2];
+    view.getLocationOnScreen(location);
+    return new int[] {location[0], location[1], view.getWidth(), view.getHeight()};
+  }
+
+  private static JSONObject boundsJson(int[] bounds) throws JSONException {
+    return new JSONObject().put("x", bounds[0]).put("y", bounds[1])
+        .put("width", bounds[2]).put("height", bounds[3]);
   }
 
   private static void seed(MainActivity a, List<PhotoRepository.Photo> photos, RankingStore store) {
@@ -251,7 +290,7 @@ final class BurstCoWinnerChecks {
     }
   }
 
-  private static SharedPreferences failFirstCommit(SharedPreferences prefs,
+  static SharedPreferences failFirstCommit(SharedPreferences prefs,
       CountDownLatch release, AtomicInteger commits) {
     // SharedPreferences can publish a commit to process memory before its disk write fails.
     Map<String, String> memory = new ConcurrentHashMap<>();
@@ -362,7 +401,7 @@ final class BurstCoWinnerChecks {
 
       click(t, ENTRY);
       visible(t, ADD);
-      tapOutside(t, a);
+      tapOutside(t, a, ADD);
       visible(t, ENTRY);
       assertWinners(disk, keys, 2);
       check(commits.get() == 0, "Dismissal attempted save");

@@ -94,9 +94,28 @@ public final class PhotoRanking {
   public PhotoRanking addCoWinner(String id) {
     if (!ids.contains(id)) throw new IllegalArgumentException("Unknown photo");
     if (!done()) throw new IllegalStateException("Ranking is unfinished");
-    if (best().contains(id)) return this;
+    return addCoWinners(List.of(id));
+  }
+
+  /** Promote the captured members, or finish an unfinished ranking from that selection. */
+  public PhotoRanking addCoWinners(Collection<String> selectedIds) {
+    Set<String> selected = new HashSet<>(selectedIds);
+    if (selected.isEmpty() || !new HashSet<>(ids).containsAll(selected))
+      throw new IllegalArgumentException("Invalid selection");
+    boolean complete = done();
+    if (complete && best().containsAll(selected)) return this;
+
     Map<String, Integer> ranks = new HashMap<>();
-    for (String member : ids) ranks.put(member, member.equals(id) ? 1 : rankOf(member));
+    if (complete) {
+      int rank = 1;
+      for (List<String> group : groups) {
+        for (String member : group) ranks.put(member, rank);
+        rank += group.size();
+      }
+    } else {
+      for (String member : ids) ranks.put(member, 2);
+    }
+    for (String member : selected) ranks.put(member, 1);
     PhotoRanking result = new PhotoRanking(ids, "A:");
     while (!result.done()) {
       int comparison = Integer.compare(ranks.get(result.upper()), ranks.get(result.lower()));

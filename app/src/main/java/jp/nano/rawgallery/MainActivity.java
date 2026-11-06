@@ -98,6 +98,8 @@ public final class MainActivity extends DiagnosticActivity {
   private SelectionUi.Summary selectionCount;
   private TextView selectionTitle;
   private Button selectionShare, selectionAll, selectionSort;
+  private BulkBestSheet.Entry selectionBulk;
+  private TextView bulkSavedNotice;
   private GalleryAdapter adapter;
   private String filter = "すべて";
   private String albumFolder;
@@ -700,6 +702,12 @@ public final class MainActivity extends DiagnosticActivity {
     LinearLayout.LayoutParams filterParams=new LinearLayout.LayoutParams(-1,-2);filterParams.leftMargin=-dp(16);filterParams.rightMargin=-dp(16);filters.setLayoutParams(filterParams);
     SelectionUi.BestSwitch check=new SelectionUi.BestSwitch(this);check.setChecked(bestOnly);check.setOnClickListener(GalleryUi::feedback);check.setOnCheckedChangeListener((v,enabled)->{bestOnly=enabled;updateSelection();});
     root.addView(check,new LinearLayout.LayoutParams(-1,-2));
+    selectionBulk = null;
+    bulkSavedNotice = null;
+    if (burstMembers != null) {
+      selectionBulk = new BulkBestSheet.Entry(this, this::confirmBulkBest);
+      root.addView(selectionBulk, new LinearLayout.LayoutParams(-1, -2));
+    }
     selectionShare = SelectionUi.action(this,"共有",true,this::shareSelection);
     selectionSort = SelectionUi.action(this,"ソート",false,this::shareSelection);
     LinearLayout actions=row();actions.addView(selectionSort,new LinearLayout.LayoutParams(0,-2,1));LinearLayout.LayoutParams shareParams=new LinearLayout.LayoutParams(0,-2,1);shareParams.leftMargin=dp(8);actions.addView(selectionShare,shareParams);root.addView(actions);
@@ -730,7 +738,11 @@ public final class MainActivity extends DiagnosticActivity {
       visible.add(photos.get(member).uri.toString());
     int hidden = 0;
     for (String key : selectedPhotos) if (!visible.contains(key)) hidden++;
-    selectionCount.counts(result.photos.size(),hidden,result.unresolved.size(),!selectedPhotos.isEmpty());
+    List<Integer> bulkTargets = selectionBulk == null ? List.of() : selectedBurstMembers();
+    int outside = selectionBulk == null ? 0 : selectedPhotos.size() - bulkTargets.size();
+    selectionCount.counts(result.photos.size(), hidden - outside, result.unresolved.size(),
+        outside, !selectedPhotos.isEmpty());
+    if (selectionBulk != null) updateBulkBest(bulkTargets);
     if(selectionTitle!=null)selectionTitle.setText(selectedPhotos.isEmpty()?"写真を選択":burstMembers!=null?"連写":albumFolder==null?"すべての写真":new File(albumFolder).getName());
     selectionSort.setEnabled(!result.unresolved.isEmpty());
     selectionShare.setEnabled(!result.photos.isEmpty() || !result.unresolved.isEmpty());
@@ -743,11 +755,158 @@ public final class MainActivity extends DiagnosticActivity {
     selectionAll.setTooltipText(allLabel);
   }
 
+  private List<Integer> selectedBurstMembers() {
+    List<Integer> targets = new ArrayList<>();
+    for (int member : burstMembers) {
+      if (selectedPhotos.contains(photos.get(member).uri.toString())) targets.add(member);
+    }
+    return targets;
+  }
+
+  private Set<String> rankingIds(List<Integer> targets) throws IOException {
+    Set<String> ids = new HashSet<>();
+    for (int member : targets) ids.add(ArchiveStore.key(photos.get(member)));
+    return ids;
+  }
+
+  private void updateBulkBest(List<Integer> targets) {
+    if (targets.isEmpty()) {
+      selectionBulk.update("同率1位にする", "同率1位にする。この連写の写真を選ぶと使えます",
+          "この連写の写真を選ぶと使えます");
+      return;
+    }
+    try {
+      PhotoRanking saved = rankingFor(burstMembers);
+      if (saved.done() && new HashSet<>(saved.best()).containsAll(rankingIds(targets))) {
+        selectionBulk.update("選んだ写真はすべて1位", "選んだ写真はすべて1位です",
+            "選んだ写真はすべて1位です");
+        return;
+      }
+    } catch (IOException | IllegalArgumentException ignored) {
+      // Let the action surface the load error and offer a retry.
+    }
+    int count = targets.size();
+    String label = count == 1 ? "1枚を1位に"
+        : count + (count == burstMembers.size() ? "枚すべてを" : "枚を") + "同率1位に";
+    selectionBulk.update(label, "選んだ" + label + "する", null);
+  }
+
+  private void confirmBulkBest() {
+    List<Integer> members = List.copyOf(burstMembers);
+    List<Integer> targets = selectedBurstMembers();
+    if (targets.isEmpty()) return;
+    PhotoRanking original;
+    Set<String> ids;
+    try {
+      original = rankingFor(members);
+      ids = Set.copyOf(rankingIds(targets));
+    } catch (IOException | IllegalArgumentException e) {
+      feedback(StatusView.Symbol.FAILED, "順位を読み込めませんでした", this::confirmBulkBest, "再試行");
+      return;
+    }
+    Set<String> winners = new HashSet<>(original.best());
+    if (winners.containsAll(ids)) return;
+
+    Set<Integer> visible = new HashSet<>();
+    for (List<Integer> tile : displayed) visible.addAll(tile);
+    List<Integer> ordinals = new ArrayList<>();
+    Set<Integer> targetMembers = new HashSet<>(targets);
+    int hidden = 0;
+    for (int i = 0; i < members.size(); i++) {
+      int member = members.get(i);
+      if (targetMembers.contains(member)) {
+        ordinals.add(i + 1);
+        if (!visible.contains(member)) hidden++;
+      }
+    }
+    int count = ids.size(), total = members.size();
+    boolean all = count == total;
+    int already = 0;
+    for (String id : ids) if (winners.contains(id)) already++;
+    String result = count == 1 ? "1枚を1位に" : count + "枚を同率1位に";
+    String action = original.done() ? result + "する" : count + "枚を1位にする";
+    String summary;
+    if (original.done()) {
+      summary = all ? total + "枚すべてが同率1位になります。"
+          : "いまの1位（" + winners.size() + "枚）はそのまま。ほかの順位の並びも保ちます。";
+      if (already > 0) summary += "うち" + already + "枚はすでに1位です。";
+    } else {
+      summary = all ? total + "枚すべてを同率1位にします。"
+          : "選んだ" + count + (count == 1 ? "枚を1位、" : "枚を同率1位、")
+              + "ほかの" + (total - count) + "枚を同率" + (count + 1) + "位にします。";
+      if (original.decisions() > 0) summary += "途中の比較は置き換えます。";
+    }
+
+    int screen = generation;
+    RankingStore store = rankingStore;
+    new BulkBestSheet(this, original.done(), action, summary, hidden,
+        selectedPhotos.size() - targets.size(), ordinals,
+        (ordinal, image) -> previewInto(image, photos.get(members.get(ordinal - 1)), dp(40)), done -> {
+          long request = DiagnosticLog.id();
+          DiagnosticLog.event("ranking.bulk.start", request, "count", count);
+          actions.execute(() -> {
+            PhotoRanking saved = null;
+            try {
+              PhotoRanking next = original.addCoWinners(ids);
+              if (store.saveBulk(original, next)) saved = next;
+            } catch (IOException | RuntimeException ignored) {
+              // Keep the confirmation open for retry.
+            }
+            PhotoRanking persisted = saved;
+            DiagnosticLog.event(persisted != null ? "ranking.bulk.saved" : "ranking.bulk.failed", request);
+            main.post(() -> {
+              if (isDestroyed()) return;
+              if (persisted != null) rankCache.put(members, persisted);
+              done.accept(persisted != null);
+              if (persisted != null && generation == screen && selecting && members.equals(burstMembers))
+                refreshAfterBulkBest(result + "しました", request);
+            });
+          });
+        }).show();
+  }
+
+  private void refreshAfterBulkBest(String notice, long request) {
+    GalleryPosition position = GalleryPosition.capture(grid, photos, displayed);
+    rebuildDisplayed();
+    adapter.notifyDataSetChanged();
+    if (position != null) position.restore(grid, photos, displayed);
+    updateSelection();
+
+    FrameLayout gridFrame = (FrameLayout) body.getChildAt(0);
+    if (bulkSavedNotice != null) gridFrame.removeView(bulkSavedNotice);
+    TextView message = label("✓  " + notice, 14, TEXT);
+    bulkSavedNotice = message;
+    message.setMinHeight(dp(48));
+    message.setGravity(Gravity.CENTER_VERTICAL);
+    message.setPadding(dp(14), dp(8), dp(14), dp(8));
+    message.setBackground(BulkBestSheet.background(this, 0xf01c1c1f, 24, 0xff3a3a3f));
+    message.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
+    params.setMargins(dp(16), 0, dp(16), dp(8));
+    gridFrame.addView(message, params);
+    message.postDelayed(() -> {
+      gridFrame.removeView(message);
+      if (bulkSavedNotice == message) bulkSavedNotice = null;
+    }, 4000);
+
+    View screen = root;
+    screen.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
+      @Override public boolean onPreDraw() {
+        screen.getViewTreeObserver().removeOnPreDrawListener(this);
+        if (screen.isHardwareAccelerated()) screen.getViewTreeObserver().registerFrameCommitCallback(
+            () -> DiagnosticLog.event("ranking.bulk.frame", request));
+        return true;
+      }
+    });
+    screen.invalidate();
+  }
+
   private void endSelection() {
     selecting = false;
     selectedPhotos.clear();
     selectionCount = null;
     selectionShare = null;
+    selectionBulk = null;
     gallery();
   }
 
