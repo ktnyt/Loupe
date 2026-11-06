@@ -26,6 +26,18 @@ final class ShareHistoryUiChecks {
         bitmap.recycle();
       }
     }
+    for(float font:new float[]{1,1.3f}) {
+      Configuration config=new Configuration(context.getResources().getConfiguration());config.fontScale=font;
+      ShareHistoryUi.Painter painter=new ShareHistoryUi.Painter(context.createConfigurationContext(config));
+      Bitmap bitmap=Bitmap.createBitmap(78,96,Bitmap.Config.ARGB_8888);
+      float drawn=painter.draw(new Canvas(bitmap),entries,63,81,12,48,14,20,2,false,false);
+      check(drawn>0,"local history survives rank crowding");
+      boolean visible=false;
+      for(int y=39;y<59;y++)for(int x=15;x<63;x++)visible|=Color.alpha(bitmap.getPixel(x,y))>0;
+      check(visible,"local history moves above rank");
+      for(int y=61;y<81;y++)for(int x=15;x<51;x++)check(Color.alpha(bitmap.getPixel(x,y))==0,"local fallback preserves rank");
+      bitmap.recycle();
+    }
     ShareHistoryUi.Overlay overlay=new ShareHistoryUi.Overlay(context,()->new RectF(0,0,200,200),12,4,false);
     check(!overlay.isClickable()&&!overlay.isFocusable(),"decoration preserves photo tap");
     check(overlay.getImportantForAccessibility()==android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO,"decoration not a separate AX target");

@@ -84,6 +84,8 @@ final class ShareHistoryUi {
       }
       if(remaining>0&&width(count,remaining,size,step,pad,withCloud)>available)remaining=0;
       float width=width(count,remaining,size,step,pad,withCloud);
+      if(width>available&&!withCloud&&!items.isEmpty()&&fullWidth>=width&&height*2+2<=bottom)
+        return draw(c,items,right,bottom-height-2,fullWidth,0,size,height,maximum,false,mini);
       if(width>available||height>bottom)return 0;
       float left=right-width,top=bottom-height;
       p.setColor(0x9e000000);c.drawRoundRect(left,top,right,bottom,height/2,height/2,p);
