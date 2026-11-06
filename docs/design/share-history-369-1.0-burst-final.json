@@ -1,0 +1,48 @@
+{
+  "decor": [
+    0,
+    0,
+    1199,
+    2670
+  ],
+  "content": [
+    0,
+    0,
+    1199,
+    2670
+  ],
+  "root": [
+    0,
+    0,
+    1199,
+    2670
+  ],
+  "focusedWindow": [
+    0,
+    0,
+    1199,
+    2670
+  ],
+  "crop": [
+    0,
+    0,
+    1199,
+    2670
+  ],
+  "display": [
+    0,
+    0,
+    1200,
+    2670
+  ],
+  "density": 3.25,
+  "densityDpi": 520,
+  "widthDp": 369,
+  "fontScale": 1,
+  "systemBars": {
+    "left": 0,
+    "top": 140,
+    "right": 0,
+    "bottom": 52
+  }
+}

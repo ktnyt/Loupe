@@ -193,6 +193,18 @@ Issue #55の[4状態の参照・実機比較](loupe55-fullstates-comparison.png)
 
 [Claude completed HTML](loupe-viewer-look-presets.html), [contract](../viewer-look-presets.md), and density3 reference PNGs [viewer normal](loupe69-reference-viewer-normal.png), [viewer short](loupe69-reference-viewer-short.png), [save dialog normal](loupe69-reference-dialog-normal.png), [save dialog short](loupe69-reference-dialog-short.png). Preserve original S08 and existing dock ordering. New top-right Look chip (right8/top8,48dp,13sp) and top-left Before; narrow320dp/font1.3 date moves down to avoid overlap. Non-dimming bottom selector min(contentHeight*.46,384dp), scrollable56dp choice rows/48dp deletion, applied/prepare/error/retry and separate JPEG save/cancel/outcome. Editor Look sheet gets preset-save above reset and Look-only name dialog. Saving navigation waits for actual export/cancellation outcome. References400x805.333/font1 and400x640/font1.3, synthetic data only; HTML LUT is illustrative, not rendering evidence. Android normal/font1 and constrained400×640dp/font1.3 operation/export checks passed. Independent comparison found no blocking UI/UX mismatch in captured states; small position/text-wrap/fixture-order differences remain, not pixel-exact equality. See [normal viewer](loupe69-comparison-viewer-normal.png), [short viewer](loupe69-comparison-viewer-short.png), [normal dialog](loupe69-comparison-dialog-normal.png), [short dialog](loupe69-comparison-dialog-short.png). Capture JSON records content/window conditions. Synthetic image colors are not photographic-quality evidence; real IME/finger/TalkBack and a physical short device remain unverified.
 
+## Issue #84 連写内の一括1位指定
+
+[Claude完成HTML](loupe-burst-bulk-winners.html)を参照する。元S03を直接開いて依頼し、ダウンロードのSHA-256一致と320dp/文字1.0・1.3の選択・確認・失敗・未確定の表示を確認した。既存の選択画面を維持し、共有設定とソート/共有の間へ全幅48dp・角丸24・線#6B6B70の★＋操作を追加する。確認シートには40dpの対象写真、順位保持/置換の説明、決定と取消を表示する。対象は明示選択した同じ連写の写真に限る。[契約](../burst-bulk-winners.md)を正とし、HTMLの「比較の記録はそのまま」は確定順位グループの保持を意味する。保存形式は既存の互換journalへ再構成する。参照HTMLの合成検査とAndroid上の検査は別に記録する。
+
+[選択画面の比較](loupe84-comparison-selection-320.png)と[確認画面の比較](loupe84-comparison-confirm-320.png)は左が参照、右が実機。合成12枚・対象2枚、320dp/文字1.0/density3.25。OS領域を[撮影条件](loupe84-capture-320.json)に従って上140px・下52px除き、参照の高さも2478pxに合わせた。画像は実指・音声・物理ディスプレイの応答時間を証明しない。修正後の[選択](loupe84-final-selection-320.png)・[確認](loupe84-final-confirm-320.png)・[失敗](loupe84-final-failure-320.png)・[成功](loupe84-final-success-320.png)は0.28.4(155)、320dp/文字1.3倍の独立UI評価に使用した。操作の可読性と下部非欠損は合格。通常369dpでも文字1.0/1.3倍の合成操作を確認した。
+
 ## Issue #82 連写の同率1位追加
 
 [Claudeの単体HTML](loupe-burst-co-winners.html)を連写詳細の同率追加操作の基準とする。既存の「1位にする」から、確定済みの非1位写真を同率1位へ追加する。既存の単独指定も保持し、保存後は同じ連写・写真に留まる。順位印と読み上げは全1位を含む。原本と共有の一時選択は変更しない。対象契約は[同率1位指定](../burst-co-winners.md)。HTMLの合成動作とAndroid実機検証は別とする。
+
+## 写真別の共有先バッジ（Issue #85）
+
+[Claude完成版HTML](loupe-share-app-badges.html)。SHA-256 `3c9b310df185bb83d2bcb25bc108009ee78b2b3a24375f009174e1a7d51e950a`。写真一覧・選択・連写・ビューアの右下の札、情報シートの全履歴、保存失敗時の再保存を扱う。寸法と保存の契約は[共有先履歴](../share-app-history.md)を参照する。
+
+元S03をClaude上で直接開いて依頼し、取得ファイルのハッシュとPC上の描画を確認した。左右の元ボードはS02/S03/S04/S08/S09で、S03/S04には採用済み変更より古い操作も含まれる。全差分を本issueの変更とせず、共有履歴以外は採用済みの操作を保持する。合成写真・ダミーアプリによる設計。[一覧比較](loupe85-final-grid-320.png)と[連写比較](loupe85-final-burst-320.png)は0.28.4(155)、320dp/文字1.3倍。369dp/文字1.0倍と合わせ、共有札の位置と既存の印との非干渉を独立評価した。Androidの直接共有/共有先選択はテスト専用受信アプリで確認した。実写真、外部サービスへの投稿、実指、TalkBack音声は未確認。400dpは端末の物理幅を超えるため右端の視覚評価には使わない。履歴保存と検査の詳細はissue #85の工程記録を参照する。

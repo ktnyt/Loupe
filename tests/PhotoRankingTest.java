@@ -92,6 +92,7 @@ public final class PhotoRankingTest {
     System.out.println(
         "Photo ranking: 100 permutations, resume/undo, bounds and invalid input passed");
     coWinnerAdditions(random);
+    bulkAdditions(random);
   }
 
   private static void coWinnerAdditions(Random random) {
@@ -183,6 +184,55 @@ public final class PhotoRankingTest {
           "random completed A journal replays");
     }
     System.out.println("Co-winner additions: completion guards, immutable replay, stable groups and score oracle passed");
+  }
+
+  private static void bulkAdditions(Random random) {
+    List<String> ids = List.of("a", "b", "c", "d", "e", "f");
+    for (PhotoRanking source : List.of(new PhotoRanking(ids, ""),
+        new PhotoRanking(ids, "A:").tie(), new PhotoRanking(ids, "B:").choose(false))) {
+      String original = source.journal;
+      expect(IllegalArgumentException.class, () -> source.addCoWinners(List.of()));
+      expect(IllegalArgumentException.class, () -> source.addCoWinners(List.of("b", "unknown")));
+      PhotoRanking result = source.addCoWinners(List.of("e", "b", "e"));
+      check(result.done() && Set.copyOf(result.best()).equals(Set.of("b", "e")),
+          "unfinished ranking uses exactly the deduplicated selection");
+      for (String id : ids) check(result.rankOf(id) == (Set.of("b", "e").contains(id) ? 1 : 3),
+          "unfinished ranking ties every other photo at the next competition rank");
+      check(source.journal.equals(original) && !source.done(), "unfinished source remains intact");
+      check(source.addCoWinners(ids).best().size() == ids.size(), "all selected photos tie first");
+    }
+
+    for (int sample = 0; sample < 80; sample++) {
+      Map<String, Integer> scores = new HashMap<>();
+      for (String id : ids) scores.put(id, random.nextInt(4));
+      PhotoRanking source = new PhotoRanking(ids, "");
+      while (!source.done()) {
+        int upper = scores.get(source.upper()), lower = scores.get(source.lower());
+        source = upper == lower ? source.tie() : source.choose(upper < lower);
+      }
+      List<String> selected = new ArrayList<>(ids);
+      Collections.shuffle(selected, random);
+      selected = selected.subList(0, 2 + random.nextInt(ids.size() - 1));
+      List<String> originalOrder = List.copyOf(source.order);
+      String originalJournal = source.journal;
+      Set<String> winners = new HashSet<>(source.best());
+      winners.addAll(selected);
+      PhotoRanking result = source.addCoWinners(selected);
+      check(Set.copyOf(result.best()).equals(winners), "completed result retains old winners");
+      for (String id : ids) {
+        long earlier = ids.stream().filter(other -> winners.contains(other)
+            || scores.get(other) < scores.get(id)).count();
+        check(result.rankOf(id) == (winners.contains(id) ? 1 : earlier + 1),
+            "competition ranks use original scores among remaining photos");
+      }
+      check(source.order.equals(originalOrder) && source.journal.equals(originalJournal),
+          "completed source remains intact");
+      check(result.addCoWinners(result.best()) == result, "all already first is a no-op");
+      PhotoRanking replayed = new PhotoRanking(ids, result.journal);
+      check(replayed.done() && replayed.order.equals(result.order), "bulk journal replays");
+      for (String id : ids) check(replayed.rankOf(id) == result.rankOf(id), "replayed tie groups");
+    }
+    System.out.println("Bulk winners: unfinished selections, completed groups, validation and replay passed");
   }
 
   private static void expect(Class<? extends Throwable> type, Runnable action) {

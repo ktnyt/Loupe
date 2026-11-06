@@ -30,7 +30,52 @@ public final class MainActivity extends DiagnosticActivity {
           return b.getAllocationByteCount();
         }
       };
+  private final ExecutorService historyReads = new DiagnosticExecutor("MainActivity.history", 1);
+  private Map<String,List<ShareHistoryUi.Item>> shareHistory=Collections.emptyMap();
+  private boolean historyLoaded, historyReadFailed, historyReading, historyReload, historyForeground, historyAnimating;
+  private Runnable refreshShareBadges=()->{}, refreshShareInfo=()->{};
+  private AlertDialog shareHistoryFailure;
+  private final SharedPreferences.OnSharedPreferenceChangeListener historyChanges=(prefs,key)-> {
+    if("revision".equals(key))loadShareHistory();
+    if("failure_revision".equals(key))showShareHistoryFailure();
+    if("write_failed".equals(key)&&!prefs.getBoolean(key,false)&&shareHistoryFailure!=null)shareHistoryFailure.dismiss();
+  };
+  private List<ShareHistoryUi.Item> historyFor(PhotoRepository.Photo photo){try{return shareHistory.getOrDefault(ArchiveStore.key(photo),Collections.emptyList());}catch(IOException unavailable){return Collections.emptyList();}}
+  private void loadShareHistory(){
+    if(isDestroyed())return;
+    if(historyReading){historyReload=true;return;}
+    historyReading=true;
+    historyReads.execute(()->{
+      Map<String,List<ShareHistoryUi.Item>> loaded=null;
+      try{loaded=ShareHistoryUi.load(getApplicationContext());}catch(RuntimeException ignored){}
+      Map<String,List<ShareHistoryUi.Item>> result=loaded;
+      main.post(()->{
+        historyReading=false;if(isDestroyed())return;
+        historyReadFailed=result==null;
+        historyAnimating=historyLoaded&&result!=null;
+        boolean added=false;
+        if(historyAnimating)for(String key:result.keySet())if(ShareHistoryUi.added(shareHistory.getOrDefault(key,Collections.emptyList()),result.get(key))){added=true;break;}
+        if(result!=null){shareHistory=result;historyLoaded=true;}
+        if(added&&historyForeground)Toast.makeText(this,"共有の記録を更新しました",Toast.LENGTH_LONG).show();
+        if(grid!=null&&grid.isAttachedToWindow())grid.invalidateViews();
+        refreshShareBadges.run();refreshShareInfo.run();
+        historyAnimating=false;
+        if(historyReload){historyReload=false;loadShareHistory();}
+      });
+    });
+  }
+  private void showShareHistoryFailure(){
+    if(!historyForeground||isDestroyed()||shareHistoryFailure!=null)return;
+    SharedPreferences prefs=getSharedPreferences(ShareHistoryReceiver.PREFS,0);
+    if(!prefs.getBoolean("write_failed",false))return;
+    GalleryUi.Sheet sheet=new GalleryUi.Sheet(this);
+    sheet.setTitle("共有の記録を保存できませんでした").setMessage("前の記録は残っています。写真の共有はやり直しません。").setNegativeButton("閉じる",(d,w)->{if(!ShareHistoryReceiver.canRetry())prefs.edit().remove("write_failed").apply();});
+    if(ShareHistoryReceiver.canRetry())sheet.setPositiveButton("もう一度保存",(dialog,which)->ShareHistoryReceiver.retryLater(getApplicationContext()));
+
+    shareHistoryFailure=sheet.create();shareHistoryFailure.setOnDismissListener(dialog->shareHistoryFailure=null);shareHistoryFailure.show();
+  }
   private PhotoRepository repository;
+  private static final int PHOTO_TILE_HEIGHT_DP = 96;
   private RankingStore rankingStore;
   private SharePreparation sharePreparation;
   private List<List<Integer>> bundles = new ArrayList<>();
@@ -98,6 +143,8 @@ public final class MainActivity extends DiagnosticActivity {
   private SelectionUi.Summary selectionCount;
   private TextView selectionTitle;
   private Button selectionShare, selectionAll, selectionSort;
+  private BulkBestSheet.Entry selectionBulk;
+  private TextView bulkSavedNotice;
   private GalleryAdapter adapter;
   private String filter = "すべて";
   private String albumFolder;
@@ -222,6 +269,7 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private void base() {
+    refreshShareBadges=()->{};refreshShareInfo=()->{};
     root = vertical();
     root.setBackgroundColor(BG);
     root.setOnApplyWindowInsetsListener(
@@ -319,7 +367,12 @@ public final class MainActivity extends DiagnosticActivity {
       });
       root.addView(TagDetailUi.dock(this,select, TagDetailUi.dockButton(this,"タグ", () -> openTags(null)), TagDetailUi.dockButton(this,"その他", this::photoMenu)));
     }
-    if(selecting)SelectionUi.finishFooter(root,controlsStart);else GalleryUi.bottomControls(root, controlsStart, BG);
+    if (selecting) {
+      SelectionUi.finishFooter(root, controlsStart, burstMembers == null ? null
+          : () -> header.getMeasuredHeight() + dp(PHOTO_TILE_HEIGHT_DP));
+    } else {
+      GalleryUi.bottomControls(root, controlsStart, BG);
+    }
     if (albumFolder == null && burstMembers == null)
       root.addView(new LibraryTabs(this, false, !selecting, this::switchLibraryTab));
     if (selecting) updateSelection();
@@ -441,6 +494,16 @@ public final class MainActivity extends DiagnosticActivity {
     ImageView hero = new DiagnosticImageView(this);
     hero.setScaleType(ImageView.ScaleType.FIT_CENTER);
     stage.addView(hero, new FrameLayout.LayoutParams(-1, -1));
+    ShareHistoryUi.Overlay sharedHero=new ShareHistoryUi.Overlay(this,()->{
+      android.graphics.drawable.Drawable drawable=hero.getDrawable();
+      if(drawable==null||drawable.getIntrinsicWidth()<=0||drawable.getIntrinsicHeight()<=0)
+        return new RectF(0,0,stage.getWidth(),stage.getHeight());
+      RectF bounds=new RectF(0,0,drawable.getIntrinsicWidth(),drawable.getIntrinsicHeight());
+      hero.getImageMatrix().mapRect(bounds);
+      bounds.offset(hero.getLeft()+hero.getPaddingLeft(),hero.getTop()+hero.getPaddingTop());
+      return bounds;
+    },42,3,false);
+    stage.addView(sharedHero,new FrameLayout.LayoutParams(-1,-1));
     TextView rank = label("",12,Color.WHITE);rank.setGravity(Gravity.CENTER);rank.setIncludeFontPadding(false);rank.setPadding(dp(10),0,dp(10),0);
     TextView rankState=label("",13,MUTED);rankState.setVisibility(View.GONE);heading.addView(rankState);
     FrameLayout.LayoutParams badge = new FrameLayout.LayoutParams(-2, dp(28), Gravity.TOP | Gravity.START);
@@ -463,15 +526,25 @@ public final class MainActivity extends DiagnosticActivity {
     Button retry = button("再試行", () -> {});
     final Runnable[] selection = new Runnable[1];
     BurstPreviews previews = new BurstPreviews(this, hero, stage, strip, loading, retry,
-        members, this::previewInto, () -> screenGeneration == generation && !isDestroyed(),
+        members, (image, photo, edge, complete) -> previewInto(image, photo, edge, loaded -> {
+          complete.accept(loaded);
+          sharedHero.postInvalidateOnAnimation();
+        }), () -> screenGeneration == generation && !isDestroyed(),
         position -> { burstPosition = position; selection[0].run(); });
+    refreshShareBadges=()->{
+      if(burstMembers==null||burstPosition>=burstMembers.size())return;
+      PhotoRepository.Photo current=photos.get(burstMembers.get(burstPosition));
+      sharedHero.items(historyFor(current),historyAnimating);
+      hero.setContentDescription(current.name+"、タップで写真を拡大"+ShareHistoryUi.description(historyFor(current)));
+      previews.history(this::historyFor);
+    };
     Runnable update = () -> {
       DiagnosticLog.event("burst.select", burstRequest, "position", burstPosition);
       int member = burstMembers.get(burstPosition);
       PhotoRepository.Photo photo = photos.get(member);
       notice.setVisibility(View.GONE);
       previews.select(burstPosition);
-      hero.setContentDescription(photo.name + "、タップで写真を拡大");
+      refreshShareBadges.run();
       int bestPosition=0;
       String winners="";
       boolean tied=false;
@@ -700,6 +773,12 @@ public final class MainActivity extends DiagnosticActivity {
     LinearLayout.LayoutParams filterParams=new LinearLayout.LayoutParams(-1,-2);filterParams.leftMargin=-dp(16);filterParams.rightMargin=-dp(16);filters.setLayoutParams(filterParams);
     SelectionUi.BestSwitch check=new SelectionUi.BestSwitch(this);check.setChecked(bestOnly);check.setOnClickListener(GalleryUi::feedback);check.setOnCheckedChangeListener((v,enabled)->{bestOnly=enabled;updateSelection();});
     root.addView(check,new LinearLayout.LayoutParams(-1,-2));
+    selectionBulk = null;
+    bulkSavedNotice = null;
+    if (burstMembers != null) {
+      selectionBulk = new BulkBestSheet.Entry(this, this::confirmBulkBest);
+      root.addView(selectionBulk, new LinearLayout.LayoutParams(-1, -2));
+    }
     selectionShare = SelectionUi.action(this,"共有",true,this::shareSelection);
     selectionSort = SelectionUi.action(this,"ソート",false,this::shareSelection);
     LinearLayout actions=row();actions.addView(selectionSort,new LinearLayout.LayoutParams(0,-2,1));LinearLayout.LayoutParams shareParams=new LinearLayout.LayoutParams(0,-2,1);shareParams.leftMargin=dp(8);actions.addView(selectionShare,shareParams);root.addView(actions);
@@ -730,8 +809,12 @@ public final class MainActivity extends DiagnosticActivity {
       visible.add(photos.get(member).uri.toString());
     int hidden = 0;
     for (String key : selectedPhotos) if (!visible.contains(key)) hidden++;
-    selectionCount.counts(result.photos.size(),hidden,result.unresolved.size(),!selectedPhotos.isEmpty());
-    if(selectionTitle!=null)selectionTitle.setText(selectedPhotos.isEmpty()?"写真を選択":burstMembers!=null?"連写":albumFolder==null?"すべての写真":new File(albumFolder).getName());
+    List<Integer> bulkTargets = selectionBulk == null ? List.of() : selectedBurstMembers();
+    int outside = selectionBulk == null ? 0 : selectedPhotos.size() - bulkTargets.size();
+    selectionCount.counts(result.photos.size(), hidden - outside, result.unresolved.size(),
+        outside, !selectedPhotos.isEmpty());
+    if (selectionBulk != null) updateBulkBest(bulkTargets);
+    if(selectionTitle!=null)selectionTitle.setText(selectedPhotos.isEmpty()?"写真を選択":burstMembers!=null?"連写 "+burstMembers.size()+"枚":albumFolder==null?"すべての写真":new File(albumFolder).getName());
     selectionSort.setEnabled(!result.unresolved.isEmpty());
     selectionShare.setEnabled(!result.photos.isEmpty() || !result.unresolved.isEmpty());
     String allLabel =
@@ -743,11 +826,161 @@ public final class MainActivity extends DiagnosticActivity {
     selectionAll.setTooltipText(allLabel);
   }
 
+  private List<Integer> selectedBurstMembers() {
+    List<Integer> targets = new ArrayList<>();
+    for (int member : burstMembers) {
+      if (selectedPhotos.contains(photos.get(member).uri.toString())) targets.add(member);
+    }
+    return targets;
+  }
+
+  private Set<String> rankingIds(List<Integer> targets) throws IOException {
+    Set<String> ids = new HashSet<>();
+    for (int member : targets) ids.add(ArchiveStore.key(photos.get(member)));
+    return ids;
+  }
+
+  private void updateBulkBest(List<Integer> targets) {
+    if (targets.isEmpty()) {
+      selectionBulk.update("同率1位にする", "同率1位にする。この連写の写真を選ぶと使えます",
+          "この連写の写真を選ぶと使えます");
+      return;
+    }
+    try {
+      PhotoRanking saved = rankingFor(burstMembers);
+      if (saved.done() && new HashSet<>(saved.best()).containsAll(rankingIds(targets))) {
+        selectionBulk.update("選んだ写真はすべて1位", "選んだ写真はすべて1位です",
+            "選んだ写真はすべて1位です");
+        return;
+      }
+    } catch (IOException | IllegalArgumentException ignored) {
+      // Let the action surface the load error and offer a retry.
+    }
+    int count = targets.size();
+    String label = count == 1 ? "1枚を1位に"
+        : count + (count == burstMembers.size() ? "枚すべてを" : "枚を") + "同率1位に";
+    selectionBulk.update(label, "選んだ" + label + "する", null);
+  }
+
+  private void confirmBulkBest() {
+    List<Integer> members = List.copyOf(burstMembers);
+    List<Integer> targets = selectedBurstMembers();
+    if (targets.isEmpty()) return;
+    PhotoRanking original;
+    Set<String> ids;
+    try {
+      original = rankingFor(members);
+      ids = Set.copyOf(rankingIds(targets));
+    } catch (IOException | IllegalArgumentException e) {
+      feedback(StatusView.Symbol.FAILED, "順位を読み込めませんでした", this::confirmBulkBest, "再試行");
+      return;
+    }
+    Set<String> winners = new HashSet<>(original.best());
+    if (winners.containsAll(ids)) return;
+
+    Set<Integer> visible = new HashSet<>();
+    for (List<Integer> tile : displayed) visible.addAll(tile);
+    List<Integer> ordinals = new ArrayList<>();
+    Set<Integer> targetMembers = new HashSet<>(targets);
+    int hidden = 0;
+    for (int i = 0; i < members.size(); i++) {
+      int member = members.get(i);
+      if (targetMembers.contains(member)) {
+        ordinals.add(i + 1);
+        if (!visible.contains(member)) hidden++;
+      }
+    }
+    int count = ids.size(), total = members.size();
+    boolean all = count == total;
+    int already = 0;
+    for (String id : ids) if (winners.contains(id)) already++;
+    String result = count == 1 ? "1枚を1位に" : count + "枚を同率1位に";
+    String action = original.done() ? result + "する" : count + "枚を1位にする";
+    String summary;
+    if (original.done()) {
+      summary = all ? total + "枚すべてが同率1位になります。"
+          : "いまの1位（" + winners.size() + "枚）はそのまま。ほかの順位の並びも保ちます。";
+      if (already > 0) summary += "うち" + already + "枚はすでに1位です。";
+    } else {
+      summary = all ? total + "枚すべてを同率1位にします。"
+          : "選んだ" + count + (count == 1 ? "枚を1位、" : "枚を同率1位、")
+              + "ほかの" + (total - count) + "枚を同率" + (count + 1) + "位にします。";
+      if (original.decisions() > 0) summary += "途中の比較は置き換えます。";
+    }
+
+    int screen = generation;
+    RankingStore store = rankingStore;
+    new BulkBestSheet(this, original.done(), action, summary, hidden,
+        selectedPhotos.size() - targets.size(), ordinals,
+        (ordinal, image) -> previewInto(image, photos.get(members.get(ordinal - 1)), dp(40)), done -> {
+          long request = DiagnosticLog.id();
+          DiagnosticLog.event("ranking.bulk.start", request, "count", count);
+          actions.execute(() -> {
+            PhotoRanking saved = null;
+            try {
+              PhotoRanking next = original.addCoWinners(ids);
+              if (store.saveBulk(original, next)) saved = next;
+            } catch (IOException | RuntimeException ignored) {
+              // Keep the confirmation open for retry.
+            }
+            PhotoRanking persisted = saved;
+            DiagnosticLog.event(persisted != null ? "ranking.bulk.saved" : "ranking.bulk.failed", request);
+            main.post(() -> {
+              if (isDestroyed()) return;
+              if (persisted != null) rankCache.put(members, persisted);
+              done.accept(persisted != null);
+              if (persisted != null && generation == screen && selecting && members.equals(burstMembers))
+                refreshAfterBulkBest(result + "しました", request);
+            });
+          });
+        }).show();
+  }
+
+  private void refreshAfterBulkBest(String notice, long request) {
+    GalleryPosition position = GalleryPosition.capture(grid, photos, displayed);
+    rebuildDisplayed();
+    adapter.notifyDataSetChanged();
+    if (position != null) position.restore(grid, photos, displayed);
+    updateSelection();
+
+    FrameLayout gridFrame = (FrameLayout) body.getChildAt(0);
+    if (bulkSavedNotice != null) gridFrame.removeView(bulkSavedNotice);
+    TextView message = label(notice, 14, TEXT);
+    message.setCompoundDrawablesRelative(
+        StatusView.glyphDrawable(StatusView.Symbol.COMPLETE, dp(18), TEXT), null, null, null);
+    message.setCompoundDrawablePadding(dp(8));
+    bulkSavedNotice = message;
+    message.setMinHeight(dp(48));
+    message.setGravity(Gravity.CENTER_VERTICAL);
+    message.setPadding(dp(14), dp(8), dp(14), dp(8));
+    message.setBackground(BulkBestSheet.background(this, 0xf01c1c1f, 24, 0xff3a3a3f));
+    message.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
+    params.setMargins(dp(16), 0, dp(16), dp(8));
+    gridFrame.addView(message, params);
+    message.postDelayed(() -> {
+      gridFrame.removeView(message);
+      if (bulkSavedNotice == message) bulkSavedNotice = null;
+    }, 4000);
+
+    View screen = root;
+    screen.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
+      @Override public boolean onPreDraw() {
+        screen.getViewTreeObserver().removeOnPreDrawListener(this);
+        if (screen.isHardwareAccelerated()) screen.getViewTreeObserver().registerFrameCommitCallback(
+            () -> DiagnosticLog.event("ranking.bulk.frame", request));
+        return true;
+      }
+    });
+    screen.invalidate();
+  }
+
   private void endSelection() {
     selecting = false;
     selectedPhotos.clear();
     selectionCount = null;
     selectionShare = null;
+    selectionBulk = null;
     gallery();
   }
 
@@ -1217,6 +1450,9 @@ public final class MainActivity extends DiagnosticActivity {
 
   protected void onResume() {
     super.onResume();
+    historyForeground=true;
+    getSharedPreferences(ShareHistoryReceiver.PREFS,0).registerOnSharedPreferenceChangeListener(historyChanges);
+    loadShareHistory();showShareHistoryFailure();
     if(restoreViewerLook&&detail){restoreViewerLook=false;showPhoto(index,returnToRanking);}
     if (repository != null) {
       if (resumed) refresh();
@@ -1282,7 +1518,7 @@ public final class MainActivity extends DiagnosticActivity {
           recycled instanceof ThumbnailCell
               ? (ThumbnailCell) recycled
               : new ThumbnailCell(MainActivity.this);
-      cell.fixedHeight = dp(96);
+      cell.fixedHeight = dp(PHOTO_TILE_HEIGHT_DP);
       ImageView image = cell.image;
       List<Integer> members = displayed.get(position);
       int representative = members.get(0);
@@ -1302,6 +1538,7 @@ public final class MainActivity extends DiagnosticActivity {
       image.setImageDrawable(null);
       cell.badges.selectionMode = selecting;
       cell.badges.photoSelection = true;
+      cell.badges.burstSelection = selecting && burstMembers != null;
       cell.badges.selected = selecting && tileSelected(members);
       cell.badges.partial = false;
       if (selecting && !cell.badges.selected) for (int member : members)
@@ -1313,6 +1550,8 @@ public final class MainActivity extends DiagnosticActivity {
       if (selecting)
         cell.setContentDescription(
             cell.getContentDescription() + (cell.badges.selected ? "、選択済み" : cell.badges.partial ? "、一部選択" : "、未選択"));
+      cell.badges.shared(p.uri.toString(),historyFor(p));
+      cell.setContentDescription(cell.getContentDescription()+ShareHistoryUi.description(cell.badges.shared));
       cell.badges.camera = "";
       cell.badges.cloud = "archive".equals(p.uri.getScheme());
       cell.badges.count = members.size();
@@ -1367,6 +1606,9 @@ public final class MainActivity extends DiagnosticActivity {
     root.addView(viewer,new LinearLayout.LayoutParams(-1,0,1));
     FrameLayout photoFrame=viewer.stage;
     ZoomImageView image=viewer.image;
+    String photoDescription=image.getContentDescription().toString();
+    refreshShareBadges=()->{viewer.shared.items(historyFor(photo),historyAnimating);image.setContentDescription(photoDescription+ShareHistoryUi.description(historyFor(photo)));};
+    refreshShareBadges.run();
     image.setPageListener(direction->{if(!fromRanking){if(look!=null)look.runWhenReady("写真の移動",()->adjacentPhoto(direction));else adjacentPhoto(direction);}});
     StatusView loadStatus=new StatusView(this);
     loadStatus.asPhotoOverlay();viewer.status(loadStatus);
@@ -1383,10 +1625,16 @@ public final class MainActivity extends DiagnosticActivity {
     Button editPhoto=PhotoEditor.add(this,viewer,photo,actions);
     viewer.action("共有","共有","共有（元のファイルを共有します）",()->shareMenu(photo));
     if(!fromRanking&&"content".equals(photo.uri.getScheme()))viewer.action("タグ","タグ","タグ",()->openTags(photo));
-    viewer.action("情報","情報","写真の情報",()->new GalleryUi.Sheet(this).setTitle(photo.name)
-        .setMessage(model.getText()+"\n"+dimensions.getText()+"\n"+photo.folder)
-        .setNeutralButton("外部のアプリで編集",(dialog,which)->{dialog.dismiss();editPhoto.post(()->editPhoto.performLongClick());})
-        .setPositiveButton("閉じる",null).show());
+    viewer.action("情報","情報","写真の情報",()->{
+      LinearLayout information=vertical();
+      refreshShareInfo=()->{information.removeAllViews();information.addView(ShareHistoryUi.information(this,model.getText()+"\n"+dimensions.getText()+"\n"+photo.folder,historyFor(photo),historyLoaded,historyReadFailed),new LinearLayout.LayoutParams(-1,-2));};
+      refreshShareInfo.run();
+      AlertDialog dialog=new GalleryUi.Sheet(this).setTitle(photo.name).setView(information)
+          .setNeutralButton("外部のアプリで編集",(d,which)->{d.dismiss();editPhoto.post(()->editPhoto.performLongClick());})
+          .setPositiveButton("閉じる",null).create();
+      dialog.setOnDismissListener(d->refreshShareInfo=()->{});dialog.show();
+      if(!historyLoaded||historyReadFailed)loadShareHistory();
+    });
     if(fromRanking&&!ranking.done())viewer.choose(()->{Runnable choose=()->saveRanking(ranking.choose(rankingMembers.get(ranking.upper())==position));if(look!=null)look.runWhenReady("写真の選択",choose);else choose.run();});
     viewing =
         actions.submit(
@@ -1733,11 +1981,17 @@ public final class MainActivity extends DiagnosticActivity {
             ArrayList<Uri> uris = new ArrayList<>();
             for (File file : prepared.files)
               uris.add(Uri.parse("content://jp.nano.rawgallery.share/" + file.getName()));
+            ArrayList<String> historyKeys = new ArrayList<>();
+            for (PhotoRepository.Photo photo : selection) historyKeys.add(ArchiveStore.key(photo));
+            final String historySession = ShareHistoryReceiver.begin(getApplicationContext(),historyKeys,System.currentTimeMillis());
             String type = prepared.mimeType;
             String action = uris.size() == 1 ? Intent.ACTION_SEND : Intent.ACTION_SEND_MULTIPLE;
             main.post(
                 () -> {
-                  if (isDestroyed() || attempt != shareAttempt) return;
+                  if (isDestroyed() || attempt != shareAttempt) {
+                    ShareHistoryReceiver.cancelLater(getApplicationContext(), historySession);
+                    return;
+                  }
                   shareProgress.dismiss();
                   Intent send =
                       new Intent(action)
@@ -1764,14 +2018,32 @@ public final class MainActivity extends DiagnosticActivity {
                       }
                     }
                     if (!supported) {
+                      ShareHistoryReceiver.cancelLater(getApplicationContext(), historySession);
                       feedback(StatusView.Symbol.FORMAT,"この共有先は選んだ画像形式に対応していません。共有先の形式を変更してください。",this::editTargets,"共有先の設定");
                       return;
                     }
                     send.setComponent(component);
                   }
                   try {
-                    startActivity(target == null ? Intent.createChooser(send, "写真を共有") : send);
-                  } catch (ActivityNotFoundException e) {
+                    if (target == null) {
+                      if (historySession == null) {
+                        startActivity(Intent.createChooser(send, "写真を共有"));
+                        ShareHistoryReceiver.failed(getApplicationContext());
+                      } else {
+                        android.app.PendingIntent callback = ShareHistoryReceiver.callback(this, historySession);
+                        try {
+                          startActivity(Intent.createChooser(send, "写真を共有", callback.getIntentSender()));
+                        } catch (RuntimeException launchFailure) {
+                          callback.cancel();
+                          throw launchFailure;
+                        }
+                      }
+                    } else {
+                      startActivity(send);
+                      ShareHistoryReceiver.recordLater(getApplicationContext(), historySession, send.getComponent());
+                    }
+                  } catch (ActivityNotFoundException | SecurityException e) {
+                    ShareHistoryReceiver.cancelLater(getApplicationContext(), historySession);
                     feedback(StatusView.Symbol.NO_APP,"共有先が見つかりません。共有先の設定を変更してください。",this::editTargets,"共有先の設定");
                   }
                 });
@@ -1873,6 +2145,12 @@ public final class MainActivity extends DiagnosticActivity {
     super.onStop();
   }
 
+  @Override protected void onPause(){
+    historyForeground=false;
+    getSharedPreferences(ShareHistoryReceiver.PREFS,0).unregisterOnSharedPreferenceChangeListener(historyChanges);
+    super.onPause();
+  }
+
   protected void onDestroy() {
     generation++;
     shareAttempt++;
@@ -1880,6 +2158,7 @@ public final class MainActivity extends DiagnosticActivity {
     if (shareDialog != null) shareDialog.dismiss();
     getContentResolver().unregisterContentObserver(mediaObserver);
     main.removeCallbacks(mediaChanged);
+    historyReads.shutdownNow();
     scans.shutdownNow();
     images.shutdownNow();
     actions.shutdownNow();

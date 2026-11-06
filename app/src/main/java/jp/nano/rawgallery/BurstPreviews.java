@@ -26,6 +26,8 @@ final class BurstPreviews {
   private boolean heroReady, stripBusy;
   private boolean heroFailed;
   private int[] ranks;
+  private Function<PhotoRepository.Photo,List<ShareHistoryUi.Item>> history = photo -> Collections.emptyList();
+  private final List<ShareHistoryUi.Overlay> shared = new ArrayList<>();
   private final List<TextView> stars = new ArrayList<>();
   private int dp(Context c, int value) { return Math.round(value * c.getResources().getDisplayMetrics().density); }
   BurstPreviews(Context c, ImageView hero, FrameLayout stage, LinearLayout strip,
@@ -47,6 +49,8 @@ final class BurstPreviews {
       image.setBackground(GalleryUi.shape(c, GalleryUi.PANEL,4));
       image.setClipToOutline(true);
       cell.addView(image,new FrameLayout.LayoutParams(dp(c,52),dp(c,35),Gravity.CENTER)); images.add(image);
+      ShareHistoryUi.Overlay badgeView=new ShareHistoryUi.Overlay(c,()->new android.graphics.RectF(0,0,image.getWidth(),image.getHeight()),2,1,true);
+      cell.addView(badgeView,new FrameLayout.LayoutParams(dp(c,52),dp(c,35),Gravity.CENTER));shared.add(badgeView);
       TextView text = new TextView(c); text.setGravity(Gravity.CENTER); text.setTextColor(Color.WHITE);
       cell.addView(text,new FrameLayout.LayoutParams(-1,-1)); labels.add(text);
       StatusView spin = new StatusView(c);
@@ -67,6 +71,7 @@ final class BurstPreviews {
     });}
     render();
   }
+  void history(Function<PhotoRepository.Photo,List<ShareHistoryUi.Item>> value){history=value;render();}
   void ranks(int[] values){ranks=values.clone();render();}
   private int currentPosition() { return Integer.parseInt(position.getTag().toString()); }
   void select(int index) {
@@ -116,6 +121,7 @@ final class BurstPreviews {
     });
   }
   private void render() {
+    if(selected>=0)hero.setContentDescription(photos.get(selected).name+"、タップで写真を拡大"+(heroFailed?"、読み込めませんでした":"")+ShareHistoryUi.description(history.apply(photos.get(selected))));
     int ready=0,failed=0;
     for (int i=0;i<states.length;i++) {
       int state=states[i]; if(state==2) ready++; if(state==3) failed++;
@@ -131,7 +137,8 @@ final class BurstPreviews {
       String rank="";
       if(ranks!=null){int winners=0;for(int value:ranks)if(value==1)winners++;rank="、"+(ranks[i]==1&&winners>1?"同率":"")+ranks[i]+"位";}
       stars.get(i).setVisibility(ranks!=null&&ranks[i]==1?View.VISIBLE:View.GONE);
-      cell.setContentDescription((i+1)+"枚目"+rank+"、"+status+(i==selected?"、表示中":""));
+      List<ShareHistoryUi.Item> entries=history.apply(photos.get(i));shared.get(i).items(entries);
+      cell.setContentDescription((i+1)+"枚目"+rank+"、"+status+(i==selected?"、表示中":"")+ShareHistoryUi.description(entries));
       android.graphics.drawable.GradientDrawable border=GalleryUi.shape(cell.getContext(),Color.TRANSPARENT,6);
       border.setStroke(dp(cell.getContext(),2),i==selected?Color.WHITE:state==3?0xffff8a7a:Color.TRANSPARENT);
       ((FrameLayout)cell).setForeground(new android.graphics.drawable.InsetDrawable(border,0,dp(cell.getContext(),4),0,dp(cell.getContext(),4)));

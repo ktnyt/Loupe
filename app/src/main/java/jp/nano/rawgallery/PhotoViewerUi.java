@@ -19,6 +19,7 @@ final class PhotoViewerUi extends ViewGroup {
   private Button zoom;
   Runnable editFocusLost;
   private final View cloud, placeholder;
+  final ShareHistoryUi.Overlay shared;
   private StatusView status;
   private boolean failed;
 
@@ -60,6 +61,8 @@ final class PhotoViewerUi extends ViewGroup {
     };
     cloud.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
     stage.addView(cloud, new FrameLayout.LayoutParams(-1,-1));
+    shared=new ShareHistoryUi.Overlay(context,()->image.isZoomed()?null:photoRect(),12,4,false);
+    stage.addView(shared,new FrameLayout.LayoutParams(-1,-1));
     addView(stage);
     footer = new LinearLayout(context);
     footer.setOrientation(LinearLayout.VERTICAL);
@@ -77,6 +80,7 @@ final class PhotoViewerUi extends ViewGroup {
         zoom.setStateDescription(expanded ? "拡大中" : "全体表示");
       }
       cloud.invalidate();
+      shared.invalidate();
       refreshStatus();
     });
   }
@@ -88,7 +92,7 @@ final class PhotoViewerUi extends ViewGroup {
 
   RectF photoRect(){RectF loaded=image.photoBounds();if(loaded!=null)return loaded;float width=stage.getWidth(),height=width*2/3f;if(height>stage.getHeight()){height=stage.getHeight();width=height*1.5f;}return new RectF((stage.getWidth()-width)/2,(stage.getHeight()-height)/2,(stage.getWidth()+width)/2,(stage.getHeight()+height)/2);}
   void status(StatusView view){status=view;stage.addView(view,new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT));refreshStatus();}
-  void refreshStatus(){if(status==null||status.getParent()!=stage)return;RectF bounds=photoRect();FrameLayout.LayoutParams p=(FrameLayout.LayoutParams)status.getLayoutParams();int top=Math.round(Math.max(0,bounds.top))+dp(2),right=Math.round(Math.max(0,stage.getWidth()-bounds.right))+dp(status.photoRightInset());if(p.topMargin!=top||p.rightMargin!=right){p.topMargin=top;p.rightMargin=right;status.setLayoutParams(p);}}
+  void refreshStatus(){shared.invalidate();if(status==null||status.getParent()!=stage)return;RectF bounds=photoRect();FrameLayout.LayoutParams p=(FrameLayout.LayoutParams)status.getLayoutParams();int top=Math.round(Math.max(0,bounds.top))+dp(2),right=Math.round(Math.max(0,stage.getWidth()-bounds.right))+dp(status.photoRightInset());if(p.topMargin!=top||p.rightMargin!=right){p.topMargin=top;p.rightMargin=right;status.setLayoutParams(p);}}
   void failed(){failed=true;placeholder.invalidate();}
   static void icon(Button button,String action){
     int resource;
