@@ -91,9 +91,13 @@ final class BurstBulkWinnerChecks {
         }
         check(((CompoundButton) windowView(SWITCH)).isChecked(), "Best-only sharing starts enabled");
         check(shared(a).isEmpty(), "Best-only sharing initially excludes lower photos");
-        if (width > 0) inspectDock(a);
       });
+      if (width > 0) ui(t, () -> logDockGeometry(a, "before capture"));
       capture(t, a, prefix + "-selection", SWITCH);
+      if (width > 0) ui(t, () -> {
+        logDockGeometry(a, "after capture");
+        inspectDock(a);
+      });
 
       click(t, SWITCH);
       ui(t, () -> check(shared(a).equals(List.of(photos.get(0), photos.get(3))),
@@ -220,10 +224,30 @@ final class BurstBulkWinnerChecks {
     if (!ok) throw new AssertionError(message);
   }
 
+  private static void logDockGeometry(MainActivity a, String stage) {
+    Button all = (Button) get(a, "selectionAll");
+    View dock = (View) all.getParent();
+    View panel = (View) dock.getParent();
+    View footer = (View) panel.getParent();
+    for (View view : new View[] {footer, panel, dock, ((ViewGroup) dock).getChildAt(0), all}) {
+      Rect visible = new Rect();
+      boolean hasVisibleArea = view.getLocalVisibleRect(visible);
+      String label = view instanceof Button ? ((Button) view).getText().toString() : "";
+      android.util.Log.i("LoupeFixtureGeometry", "bulk dock " + stage + " "
+          + view.getClass().getSimpleName() + " " + label
+          + " size=" + view.getWidth() + "x" + view.getHeight()
+          + " measured=" + view.getMeasuredWidth() + "x" + view.getMeasuredHeight()
+          + " visible=" + (hasVisibleArea ? visible.toShortString() : "none")
+          + " requested=" + view.isLayoutRequested()
+          + " textLayout=" + (view instanceof Button && ((Button) view).getLayout() != null));
+    }
+  }
+
   private static void inspectDock(MainActivity a) {
     for (String label : List.of("選択を終了", "すべて選択")) {
       Button button = exactButton(a.getWindow().getDecorView(), label);
-      check(button != null && button.getLayout() != null, "Missing dock button " + label);
+      check(button != null, "Missing dock button " + label);
+      check(button.getLayout() != null, "Missing dock text layout " + label);
       Rect visible = new Rect();
       check(button.getLocalVisibleRect(visible) && visible.height() == button.getHeight(),
           "Footer clips dock button " + label);

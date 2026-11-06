@@ -104,6 +104,23 @@ final class StatusView extends View {
   }
   static boolean error(Symbol s){return s==Symbol.FAILED||s==Symbol.NETWORK||s==Symbol.STORAGE||s==Symbol.PERMISSION||s==Symbol.TLS||s==Symbol.HOST||s==Symbol.NO_APP||s==Symbol.FORMAT;}
   static Symbol symbol(JobState.Kind kind){switch(kind){case RUNNING:return Symbol.RUNNING;case WAITING:return Symbol.WAITING;case PAUSED:return Symbol.PAUSED;case COMPLETE:return Symbol.COMPLETE;case PARTIAL:return Symbol.PARTIAL;case FAILED:return Symbol.FAILED;case AUTH_REQUIRED:return Symbol.AUTH;default:return Symbol.UNKNOWN;}}
+  static android.graphics.drawable.Drawable glyphDrawable(Symbol symbol, int size, int color) {
+    android.graphics.drawable.Drawable icon = new android.graphics.drawable.Drawable() {
+      private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+      @Override public void draw(Canvas canvas) {
+        Rect bounds = getBounds();
+        glyph(canvas, paint, symbol, bounds.left, bounds.top, bounds.width(), color, 0);
+      }
+
+      @Override public void setAlpha(int alpha) {}
+      @Override public void setColorFilter(ColorFilter filter) {}
+      @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+    };
+    icon.setBounds(0, 0, size, size);
+    return icon;
+  }
+
   static void glyph(Canvas c,Paint p,Symbol s,float x,float y,float size,int color,float angle){
     int saved=c.save();c.translate(x,y);c.scale(size/24,size/24);p.setColor(color);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1.8f);p.setStrokeCap(Paint.Cap.ROUND);p.setStrokeJoin(Paint.Join.ROUND);p.setPathEffect(null);
     switch(s){
