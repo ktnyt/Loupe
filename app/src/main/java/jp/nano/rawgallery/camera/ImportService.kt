@@ -244,7 +244,7 @@ class ImportService : Service() {
         scope.launch(Dispatchers.Main) {
             Toast.makeText(this@ImportService, msg, Toast.LENGTH_LONG).show()
         }
-        return !result.error && !result.aborted && result.failed == 0
+        return !result.error && !result.aborted && !result.degraded && result.failed == 0
     }
 
     /** 全滅時の案内文の出し分け用。試行が何で失敗したかの分類 */
