@@ -246,6 +246,7 @@ object MtpImporter {
                         "storage=$storageId format=0x%04x getObjectHandles returned null (%dms)"
                             .format(format, dt),
                     )
+                    if (format == 0) return Result(0, skipped, failed, elapsed(start), false, error = true)
                     continue
                 }
                 ImportLog.i(
@@ -308,6 +309,10 @@ object MtpImporter {
                     }
                 }
             }
+            if (handles.isNotEmpty() && infoNull == handles.size) {
+                return Result(0, skipped, failed, elapsed(start), false, error = true)
+            }
+            failed += infoNull
             ImportLog.i(TAG, "storage=$storageId extensions=$extCount")
             ImportLog.i(
                 TAG,
@@ -394,7 +399,7 @@ object MtpImporter {
         // その場合は別ファイル扱いで取り込み直しになる (重複は MediaStore の別名保存で無害)
         if (info.compressedSizeLong != ex.size) return false
         val want = minOf(HEAD_COMPARE_BYTES.toLong(), ex.size).toInt()
-        if (want <= 0) return true
+        if (want <= 0) return false
         val buf = ByteArray(want)
         val got = try {
             mtp.getPartialObject(handle, 0, want.toLong(), buf)
@@ -402,9 +407,9 @@ object MtpImporter {
             ImportLog.w(TAG, "getPartialObject failed: ${info.name}", e)
             -1L
         }
-        if (got <= 0) return true
-        val cameraHead = if (got.toInt() == want) buf else buf.copyOf(got.toInt())
-        val phoneHead = MediaSaver.readHead(context, ex.uri, got.toInt()) ?: return true
+        if (got != want.toLong()) return false
+        val cameraHead = buf
+        val phoneHead = MediaSaver.readHead(context, ex.uri, want) ?: return false
         val same = cameraHead.contentEquals(phoneHead)
         if (!same) ImportLog.i(TAG, "name collision, different content: ${info.name}")
         return same
@@ -427,6 +432,9 @@ object MtpImporter {
         try {
             if (!mtp.importFile(handle, tmp.absolutePath)) {
                 throw IllegalStateException("MTP importFile failed")
+            }
+            if (key.fileSize <= 0 || tmp.length() != key.fileSize) {
+                throw IllegalStateException("MTP transfer size could not be verified")
             }
             // E-P7 の壊れた OffsetTime を保存前に無害化する。放置すると MediaStore の
             // スキャナが撮影日時の解析に失敗し、datetaken が -1 (1970 扱い) になる

@@ -44,11 +44,12 @@ public final class CameraImportActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private TextView connection, result, migrationResult;
     private ProgressBar progress;
-    private Button run, stop, migrate;
+    private Button run, stop, migrate, notifyButton;
     private LinearLayout cameras;
     private Switch auto;
     private Closeable permission;
     private boolean migrating, starting, wasActive;
+    private String connectionFailure;
     private SharedPreferences settings;
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
@@ -60,20 +61,32 @@ public final class CameraImportActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         settings = getSharedPreferences("camera_import", MODE_PRIVATE);
+        LinearLayout frame = new LinearLayout(this);
+        frame.setOrientation(LinearLayout.VERTICAL);
+        frame.setBackgroundColor(0xff111113);
+        frame.setOnApplyWindowInsetsListener((v, insets) -> {
+            var bars = insets.getInsets(android.view.WindowInsets.Type.systemBars());
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            return insets;
+        });
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(0xff111113);
-        root.setPadding(dp(16), dp(16), dp(16), dp(16));
+        root.setPadding(dp(16), dp(20), dp(16), dp(16));
         scroll.addView(root);
-        setContentView(scroll);
+        frame.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        setContentView(frame);
         root.addView(text("設定", 13, 0xffb5b5be));
         TextView title = text("カメラから取り込む", 24, Color.WHITE);
         title.setTypeface(null, Typeface.BOLD);
         title.setAccessibilityHeading(true);
         root.addView(title);
-        LinearLayout attached = card(root, "接続");
+        LinearLayout attached = card(root, "カメラ");
+        TextView cameraHeading = (TextView) attached.getChildAt(0);
+        cameraHeading.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_camera_usb, 0, 0, 0);
+        cameraHeading.setCompoundDrawablePadding(dp(10));
         connection = text("", 14, Color.WHITE);
         attached.addView(connection);
         LinearLayout importing = card(root, "取り込み");
@@ -94,13 +107,12 @@ public final class CameraImportActivity extends Activity {
         importing.addView(auto);
         if (Build.VERSION.SDK_INT >= 33 &&
                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            Button notify = button(importing, "取り込みの通知を許可する",
+            notifyButton = button(importing, "取り込みの通知を許可する",
                     () -> requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 402));
-            notify.setVisibility(View.VISIBLE);
         }
         cameras = card(root, "取り込むもの");
         LinearLayout history = card(root, "CameraSyncの記録");
-        history.addView(text("取り込み済みの記録を引き継ぎます。CameraSyncと保存済みの写真はそのまま残ります。",
+        history.addView(text("取り込み済みの記録を引き継ぐと、同じファイルを再び取り込まずに済みます。CameraSyncと保存済みの写真は残ります。",
                 14, 0xffb5b5be));
         migrationResult = status(history);
         migrate = button(history, "記録のファイルを選ぶ", () -> {
@@ -109,7 +121,25 @@ public final class CameraImportActivity extends Activity {
                     .setType("*/*");
             startActivityForResult(intent, PICK_DB);
         });
-        button(root, "戻る", this::finish);
+        var outline = new GradientDrawable();
+        outline.setColor(Color.TRANSPARENT);
+        outline.setCornerRadius(dp(24));
+        outline.setStroke(dp(1), 0xff74747a);
+        migrate.setBackground(new android.graphics.drawable.RippleDrawable(
+                android.content.res.ColorStateList.valueOf(0x30ffffff), outline, null));
+        var migrationButtonLayout = (LinearLayout.LayoutParams) migrate.getLayoutParams();
+        migrationButtonLayout.topMargin = dp(8);
+        migrate.setLayoutParams(migrationButtonLayout);
+        LinearLayout dock = new LinearLayout(this);
+        dock.setOrientation(LinearLayout.VERTICAL);
+        dock.setBackgroundColor(0xff0f0f10);
+        dock.setPadding(dp(16), 0, dp(16), 0);
+        var back = button(dock, "‹\n戻る", this::finish);
+        back.setContentDescription("戻る");
+        back.setBackgroundResource(android.R.drawable.list_selector_background);
+        back.setTextSize(13);
+        back.setMinHeight(dp(64));
+        frame.addView(dock);
         renderStatus();
     }
 
@@ -152,7 +182,8 @@ public final class CameraImportActivity extends Activity {
         setText(result, active
                 ? (total > 0 ? PROGRESS.getDone() + " / " + total + " 件"
                     : java.util.Objects.toString(PROGRESS.getStatus(), "カメラを確認しています"))
-                : java.util.Objects.toString(PROGRESS.getLastMessage(), "まだ取り込んでいません"));
+                : java.util.Objects.toString(connectionFailure,
+                    java.util.Objects.toString(PROGRESS.getLastMessage(), "まだ取り込んでいません")));
         progress.setVisibility(active ? View.VISIBLE : View.GONE);
         if (active) {
             progress.setIndeterminate(total <= 0);
@@ -164,7 +195,13 @@ public final class CameraImportActivity extends Activity {
         setText(run, device != null && !granted ? "USBの使用を許可する"
                 : (settings.getBoolean("configured", false) ? "今すぐ取り込む" : "取り込みの設定をする"));
         run.setEnabled(device != null && !active && !starting && permission == null && !migrating);
-        run.setVisibility(active ? View.GONE : View.VISIBLE);
+        boolean configured = settings.getBoolean("configured", false);
+        run.setVisibility(active || (!configured && device == null) ? View.GONE : View.VISIBLE);
+        auto.setVisibility(configured ? View.VISIBLE : View.GONE);
+        cameras.setVisibility(configured ? View.VISIBLE : View.GONE);
+        if (notifyButton != null) notifyButton.setVisibility(configured &&
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                ? View.VISIBLE : View.GONE);
         stop.setVisibility(active ? View.VISIBLE : View.GONE);
         stop.setEnabled(active && !PROGRESS.getStopRequested());
         setText(stop, PROGRESS.getStopRequested() ? "中止しています" : "中止");
@@ -175,6 +212,7 @@ public final class CameraImportActivity extends Activity {
     private void startFromScreen() {
         UsbDevice device = connected();
         if (device == null) return;
+        connectionFailure = null;
         if (getSystemService(UsbManager.class).hasPermission(device)) prepareImport(device);
         else {
             try {
@@ -182,10 +220,11 @@ public final class CameraImportActivity extends Activity {
                     permission = null;
                     renderStatus();
                     if (granted) prepareImport(device);
-                    else setText(result, "USBの使用が許可されませんでした");
+                    else { connectionFailure = "USBの使用が許可されませんでした"; renderStatus(); }
                 });
             } catch (RuntimeException failure) {
-                setText(result, "USBの使用許可を確認できませんでした");
+                connectionFailure = "USBの使用許可を確認できませんでした";
+                renderStatus();
             }
         }
     }

@@ -271,6 +271,7 @@ public final class MainActivity extends DiagnosticActivity {
   private void base() {
     refreshShareBadges=()->{};refreshShareInfo=()->{};
     root = vertical();
+    cameraImportBand = null;
     root.setBackgroundColor(BG);
     root.setOnApplyWindowInsetsListener(
         (v, insets) -> {
@@ -280,6 +281,23 @@ public final class MainActivity extends DiagnosticActivity {
         });
     setContentView(root);
   }
+
+  private TextView cameraImportBand;
+  private final Runnable refreshCameraImportBand = () -> {
+    TextView band = cameraImportBand;
+    if (band == null) return;
+    var state = jp.nano.rawgallery.camera.ImportProgress.INSTANCE;
+    String text = state.getActive()
+        ? (state.getTotal() == 0 ? "カメラを確認しています"
+            : "カメラから取り込み中 · " + state.getDone() + " / " + state.getTotal())
+        : state.getLastMessage();
+    band.setVisibility(text == null ? View.GONE : View.VISIBLE);
+    if (!android.text.TextUtils.equals(band.getText(), text)) band.setText(text);
+  };
+  private final Runnable cameraImportChanged = () -> {
+    main.removeCallbacks(refreshCameraImportBand);
+    main.post(refreshCameraImportBand);
+  };
 
   private void gallery() {
     DiagnosticLog.event("screen.gallery", burstRequest);
@@ -303,6 +321,16 @@ public final class MainActivity extends DiagnosticActivity {
 
     if (!selecting && burstMembers == null) addOtherAlbums();
     root.addView(header);
+    if (!selecting && burstMembers == null) {
+      cameraImportBand = label("", 14, TEXT);
+      cameraImportBand.setPadding(dp(20), dp(8), dp(20), dp(8));
+      cameraImportBand.setMinHeight(dp(48));
+      cameraImportBand.setGravity(Gravity.CENTER_VERTICAL);
+      cameraImportBand.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+      cameraImportBand.setOnClickListener(v -> startActivity(new Intent(this, CameraImportActivity.class)));
+      root.addView(cameraImportBand);
+      refreshCameraImportBand.run();
+    }
     collectListHeader();
     body = vertical();
     root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -1453,6 +1481,8 @@ public final class MainActivity extends DiagnosticActivity {
 
   protected void onResume() {
     super.onResume();
+    jp.nano.rawgallery.camera.ImportProgress.INSTANCE.addListener(cameraImportChanged);
+    refreshCameraImportBand.run();
     historyForeground=true;
     getSharedPreferences(ShareHistoryReceiver.PREFS,0).registerOnSharedPreferenceChangeListener(historyChanges);
     loadShareHistory();showShareHistoryFailure();
@@ -2149,6 +2179,8 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   @Override protected void onPause(){
+    jp.nano.rawgallery.camera.ImportProgress.INSTANCE.removeListener(cameraImportChanged);
+    main.removeCallbacks(refreshCameraImportBand);
     historyForeground=false;
     getSharedPreferences(ShareHistoryReceiver.PREFS,0).unregisterOnSharedPreferenceChangeListener(historyChanges);
     super.onPause();

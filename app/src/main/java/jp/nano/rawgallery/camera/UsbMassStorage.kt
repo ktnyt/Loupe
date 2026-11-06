@@ -32,6 +32,7 @@ class UsbMassStorage private constructor(
     override var blockSize: Int = 512
         private set
     private var tag = 0
+    private var lastLba = 0L
     // この個体で安定して通る転送サイズ。大きく始め、ストールを見たら下げて保持する。
     // 不良セクタで一時的に縮めても、正常な読みが通ればここまで戻すので底に居座らない
     private var goodBlocks = INITIAL_MAX_BLOCKS
@@ -83,6 +84,10 @@ class UsbMassStorage private constructor(
     }
 
     override fun readBlocks(lba: Long, dest: ByteArray, destOffset: Int, blockCount: Int) {
+        require(lba >= 0 && blockCount > 0 && lba + blockCount - 1 <= lastLba &&
+            destOffset >= 0 && destOffset.toLong() + blockCount.toLong() * blockSize <= dest.size) {
+            "USB read outside capacity or buffer"
+        }
         var doneBlocks = 0
         var attempts = 0
         var size = goodBlocks // この読みで使う転送単位。失敗のたび一時的に半減する
@@ -154,9 +159,10 @@ class UsbMassStorage private constructor(
         val data = ByteArray(8)
         if (!transfer(cb, data, 0, 8, dataIn = true)) throw IllegalStateException("READ CAPACITY failed")
         val bb = ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN)
-        bb.int // last LBA (未使用)
+        lastLba = bb.int.toLong() and 0xffffffffL
         val bs = bb.int
-        if (bs in 512..8192) blockSize = bs
+        require(bs == 512 || bs == 1024 || bs == 2048 || bs == 4096) { "Unsupported block size" }
+        blockSize = bs
     }
 
     /** CBW 送信 → (必要なら) データ転送 → CSW 受信 */

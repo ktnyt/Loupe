@@ -46,6 +46,7 @@ object MassStorageImporter {
             val targets = ArrayList<Target>()
             for (node in all) {
                 // 指定外の種別は履歴照合より前に外す。スキップ件数にも数えない
+                if (isCancelled()) return MtpImporter.Result(0, skipped, 0, elapsed(start), true)
                 val kind = MediaTypes.kindOf(node.name) ?: continue
                 if (kind !in kinds) continue
                 val key = ImportedKey(node.name, node.length, node.modifiedEpochSec)
@@ -133,14 +134,15 @@ object MassStorageImporter {
     ): Boolean {
         if (node.length != ex.size) return false
         val want = minOf(HEAD_COMPARE_BYTES.toLong(), ex.size).toInt()
-        if (want <= 0) return true
+        if (want <= 0) return false
         val cameraHead = try {
             exfat.readHead(node, want)
         } catch (e: Exception) {
             ImportLog.w(TAG, "readHead failed: ${node.name}", e)
-            return true // 読めなければ従来どおりサイズ一致を信用する
+            return false
         }
-        val phoneHead = MediaSaver.readHead(context, ex.uri, cameraHead.size) ?: return true
+        if (cameraHead.size != want) return false
+        val phoneHead = MediaSaver.readHead(context, ex.uri, want) ?: return false
         return cameraHead.contentEquals(phoneHead)
     }
 

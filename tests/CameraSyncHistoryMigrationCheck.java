@@ -12,8 +12,9 @@ public final class CameraSyncHistoryMigrationCheck {
         File output = new File(args[0], "target.db");
         try (SQLiteDatabase source = create(input); SQLiteDatabase target = create(output)) {
             source.execSQL("INSERT INTO camera VALUES (1,'PEN','serial','PEN',1,'RAW',0)");
-            source.execSQL("INSERT INTO imported VALUES (1,'PEN','serial','shot.ORF',9,1,2,'existing',NULL)");
-            source.execSQL("INSERT INTO imported VALUES (2,'PEN','serial','shot.ORF',9,1,3,'existing',4)");
+            source.execSQL("INSERT INTO imported VALUES (1,'PEN','serial','shot.ORF',9,1,2,'content://media/external/images/media/1',NULL)");
+            source.execSQL("INSERT INTO imported VALUES (2,'PEN','serial','shot.ORF',9,1,3,'content://media/external/images/media/1',4)");
+            source.execSQL("INSERT INTO imported VALUES (3,'PEN','serial','unknown.ORF',9,1,3,'existing',NULL)");
             var first = CameraSyncHistoryMigration.merge(input, target);
             check(first.camerasAdded() == 1 && first.importsAdded() == 1);
             check(value(target, "SELECT delete_after_import FROM camera") == 0);
@@ -24,7 +25,7 @@ public final class CameraSyncHistoryMigrationCheck {
             check(repeat.camerasAdded() == 0 && repeat.importsAdded() == 0);
             check(value(target, "SELECT COUNT(*) FROM camera WHERE folder='New folder'") == 1);
             source.execSQL("INSERT INTO camera VALUES (2,'Other','serial','Other',0,'RAW',0)");
-            source.execSQL("INSERT INTO imported VALUES (3,'Other','serial','bad.ORF',-1,1,2,'existing',NULL)");
+            source.execSQL("INSERT INTO imported VALUES (4,'Other','serial','bad.ORF',-1,1,2,'content://media/external/images/media/1',NULL)");
             try {
                 CameraSyncHistoryMigration.merge(input, target);
                 throw new AssertionError("Invalid migration succeeded");

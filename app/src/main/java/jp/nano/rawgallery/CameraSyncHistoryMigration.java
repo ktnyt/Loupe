@@ -54,6 +54,13 @@ final class CameraSyncHistoryMigration {
         }
         try (SQLiteDatabase source = SQLiteDatabase.openDatabase(snapshot.getPath(), null,
                 SQLiteDatabase.OPEN_READONLY | SQLiteDatabase.NO_LOCALIZED_COLLATORS)) {
+            source.execSQL("PRAGMA trusted_schema=OFF");
+            for (String table : Set.of("camera", "imported")) {
+                if (!contains(source, "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?"
+                        + " AND upper(sql) LIKE 'CREATE TABLE %'", table)) {
+                    throw new IllegalArgumentException("Invalid CameraSync history schema");
+                }
+            }
             int version = source.getVersion();
             if (version < 1 || version > 4) {
                 throw new IllegalArgumentException("Unsupported CameraSync history version");
@@ -118,8 +125,8 @@ final class CameraSyncHistoryMigration {
                         + "dest_uri, " + deletedAt + " FROM imported ORDER BY id DESC", null)) {
             while (rows.moveToNext()) {
                 String uri = requiredText(rows, 6);
-                // Versions 1–3 could record a false match based on the name alone.
-                if (version < 4 && "existing".equals(uri)) continue;
+                // Legacy fallback matches may have been recorded without a successful read.
+                if ("existing".equals(uri)) continue;
                 String model = requiredText(rows, 0);
                 String serial = requiredText(rows, 1);
                 String filename = requiredText(rows, 2);

@@ -3,6 +3,12 @@ package jp.nano.rawgallery.camera
 
 /** 取り込みの進捗をサービスから UI へ共有するためのシングルトン */
 object ImportProgress {
+    private val listeners = java.util.concurrent.CopyOnWriteArrayList<Runnable>()
+
+    fun addListener(listener: Runnable) { listeners.addIfAbsent(listener) }
+    fun removeListener(listener: Runnable) { listeners.remove(listener) }
+    private fun changed() { listeners.forEach(Runnable::run) }
+
     @Volatile var active = false
     @Volatile var model = ""
     @Volatile var done = 0
@@ -33,6 +39,7 @@ object ImportProgress {
         status = message
         stopRequested = false
         active = true
+        changed()
     }
 
     fun begin(model: String) {
@@ -43,16 +50,19 @@ object ImportProgress {
         status = null
         // stopRequested はここでは触らない。接続中に押された停止を消さないため
         active = true
+        changed()
     }
 
     fun update(done: Int, total: Int) {
         this.done = done
         this.total = total
+        changed()
     }
 
     fun finish(message: String) {
         active = false
         status = null
         lastMessage = message
+        changed()
     }
 }

@@ -27,12 +27,13 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
     private var fatOffsetSectors = 0L
     private var clusterHeapOffsetSectors = 0L
     private var rootDirCluster = 0L
+    private var clusterCount = 0L
     private val bytesPerCluster get() = bytesPerSector * sectorsPerCluster
-    private val sectorsPerBlock get() = bytesPerSector / dev.blockSize
 
     fun mount() {
-        val boot = ByteArray(512)
-        readSectors(0, 1, boot, 0)
+        require(dev.blockSize in 512..4096) { "Unsupported USB block size" }
+        val boot = ByteArray(dev.blockSize)
+        dev.readBlocks(partitionLba, boot, 0, 1)
         // "EXFAT   " シグネチャ (offset 3, 8 bytes) を確認
         val sig = String(boot, 3, 8, Charsets.US_ASCII)
         require(sig == "EXFAT   ") { "not exFAT (sig='$sig')" }
@@ -40,8 +41,14 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
         fatOffsetSectors = bb.getInt(80).toLong() and 0xFFFFFFFFL
         clusterHeapOffsetSectors = bb.getInt(88).toLong() and 0xFFFFFFFFL
         rootDirCluster = bb.getInt(96).toLong() and 0xFFFFFFFFL
-        bytesPerSector = 1 shl (boot[108].toInt() and 0xFF)
-        sectorsPerCluster = 1 shl (boot[109].toInt() and 0xFF)
+        clusterCount = bb.getInt(92).toLong() and 0xFFFFFFFFL
+        val sectorShift = boot[108].toInt() and 0xFF
+        val clusterShift = boot[109].toInt() and 0xFF
+        require(sectorShift in 9..12 && clusterShift <= 25 - sectorShift) { "Invalid exFAT geometry" }
+        bytesPerSector = 1 shl sectorShift
+        sectorsPerCluster = 1 shl clusterShift
+        require(bytesPerSector % dev.blockSize == 0 && validCluster(rootDirCluster) &&
+            fatOffsetSectors > 0 && clusterHeapOffsetSectors > fatOffsetSectors) { "Invalid exFAT volume" }
     }
 
     /** DCIM を辿って取り込み対象 (写真・RAW・動画) のノードを機種フォルダ順に列挙する */
@@ -67,7 +74,12 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
     }
 
     fun copyTo(node: Node, out: OutputStream) {
+        require(node.length > 0 && node.length <= clusterCount * bytesPerCluster &&
+            validCluster(node.firstCluster)) { "Invalid exFAT file allocation" }
         if (node.noFatChain) {
+            require((node.length - 1) / bytesPerCluster <= clusterCount + 1 - node.firstCluster) {
+                "Invalid exFAT extent"
+            }
             // カメラの書くファイルはほぼ連続配置。大きな窓でまとめ読みして USB 往復を最小化する
             copyContiguous(node.firstCluster, node.length, out)
         } else {
@@ -82,8 +94,8 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
         val windowSectors = maxOf(sectorsPerCluster, READ_WINDOW_BYTES / bytesPerSector)
         val window = ByteArray(windowSectors * bytesPerSector)
         while (remaining > 0) {
-            val needSectors = ((remaining + bytesPerSector - 1) / bytesPerSector).toInt()
-            val secs = minOf(windowSectors, needSectors)
+            val needSectors = (remaining + bytesPerSector - 1) / bytesPerSector
+            val secs = minOf(windowSectors.toLong(), needSectors).toInt()
             readSectors(sector, secs, window, 0)
             val n = minOf(remaining, secs.toLong() * bytesPerSector).toInt()
             out.write(window, 0, n)
@@ -97,12 +109,16 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
         var remaining = node.length
         val clusterBuf = ByteArray(bytesPerCluster)
         var cluster = node.firstCluster
-        while (remaining > 0 && cluster in 2..0xFFFFFFF6L) {
+        val seen = HashSet<Long>()
+        while (remaining > 0) {
+            require(validCluster(cluster) && seen.add(cluster) && seen.size <= 1_000_000) {
+                "Invalid or incomplete exFAT file chain"
+            }
             readCluster(cluster, clusterBuf)
             val n = minOf(remaining, bytesPerCluster.toLong()).toInt()
             out.write(clusterBuf, 0, n)
             remaining -= n
-            cluster = fatNext(cluster)
+            if (remaining > 0) cluster = fatNext(cluster)
         }
     }
 
@@ -167,18 +183,25 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
         val out = java.io.ByteArrayOutputStream()
         val clusterBuf = ByteArray(bytesPerCluster)
         var cluster = firstCluster
-        var guard = 0
+        val seen = HashSet<Long>()
         var remaining = if (length > 0) length else Long.MAX_VALUE
-        while (cluster in 2..0xFFFFFFF6L && remaining > 0 && guard < MAX_DIR_CLUSTERS) {
+        while (validCluster(cluster) && remaining > 0) {
+            require(seen.add(cluster) && out.size() + bytesPerCluster <= MAX_DIR_BYTES) {
+                "Invalid or oversized exFAT directory"
+            }
             readCluster(cluster, clusterBuf)
             val n = if (length > 0) minOf(remaining, bytesPerCluster.toLong()).toInt() else bytesPerCluster
             out.write(clusterBuf, 0, n)
+            for (entry in 0 until n step 32) {
+                if (clusterBuf[entry] == 0.toByte()) return out.toByteArray()
+            }
             remaining -= n
-            cluster = if (noFatChain) cluster + 1 else fatNext(cluster)
-            guard++
+            if (remaining > 0) cluster = if (noFatChain) cluster + 1 else fatNext(cluster)
         }
         return out.toByteArray()
     }
+
+    private fun validCluster(cluster: Long): Boolean = cluster in 2..minOf(clusterCount + 1, 0xFFFFFFF6L)
 
     private fun fatNext(cluster: Long): Long {
         val fatByte = fatOffsetSectors * bytesPerSector + cluster * 4
@@ -200,8 +223,7 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
             dev.readBlocks(partitionLba + sector, dest, destOffset, count)
         } else {
             // exFAT セクタが 512 より大きい場合 (稀) の換算
-            val absByte = (partitionLba + sector) * bytesPerSector
-            val lba = absByte / dev.blockSize
+            val lba = partitionLba + sector * (bytesPerSector / dev.blockSize)
             val blocks = (count * bytesPerSector + dev.blockSize - 1) / dev.blockSize
             dev.readBlocks(lba, dest, destOffset, blocks)
         }
@@ -220,7 +242,7 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
     }
 
     companion object {
-        private const val MAX_DIR_CLUSTERS = 100_000
+        private const val MAX_DIR_BYTES = 64 * 1024 * 1024
         private const val READ_WINDOW_BYTES = 256 * 1024
 
         /** exFAT の 32bit タイムスタンプ (ローカル時刻) を epoch 秒に直す */
