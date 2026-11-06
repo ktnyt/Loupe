@@ -321,7 +321,7 @@ public final class MainActivity extends DiagnosticActivity {
       });
       root.addView(TagDetailUi.dock(this,select, TagDetailUi.dockButton(this,"タグ", () -> openTags(null)), TagDetailUi.dockButton(this,"その他", this::photoMenu)));
     }
-    if(selecting)SelectionUi.finishFooter(root,controlsStart);else GalleryUi.bottomControls(root, controlsStart, BG);
+    if(selecting)SelectionUi.finishFooter(root,controlsStart,burstMembers != null);else GalleryUi.bottomControls(root, controlsStart, BG);
     if (albumFolder == null && burstMembers == null)
       root.addView(new LibraryTabs(this, false, !selecting, this::switchLibraryTab));
     if (selecting) updateSelection();
@@ -743,7 +743,7 @@ public final class MainActivity extends DiagnosticActivity {
     selectionCount.counts(result.photos.size(), hidden - outside, result.unresolved.size(),
         outside, !selectedPhotos.isEmpty());
     if (selectionBulk != null) updateBulkBest(bulkTargets);
-    if(selectionTitle!=null)selectionTitle.setText(selectedPhotos.isEmpty()?"写真を選択":burstMembers!=null?"連写":albumFolder==null?"すべての写真":new File(albumFolder).getName());
+    if(selectionTitle!=null)selectionTitle.setText(selectedPhotos.isEmpty()?"写真を選択":burstMembers!=null?"連写 "+burstMembers.size()+"枚":albumFolder==null?"すべての写真":new File(albumFolder).getName());
     selectionSort.setEnabled(!result.unresolved.isEmpty());
     selectionShare.setEnabled(!result.photos.isEmpty() || !result.unresolved.isEmpty());
     String allLabel =
@@ -1461,6 +1461,7 @@ public final class MainActivity extends DiagnosticActivity {
       image.setImageDrawable(null);
       cell.badges.selectionMode = selecting;
       cell.badges.photoSelection = true;
+      cell.badges.burstSelection = selecting && burstMembers != null;
       cell.badges.selected = selecting && tileSelected(members);
       cell.badges.partial = false;
       if (selecting && !cell.badges.selected) for (int member : members)

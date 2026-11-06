@@ -2,6 +2,7 @@ package jp.nano.rawgallery;
 
 import android.content.Context;
 import android.graphics.*;
+import android.util.TypedValue;
 import android.view.View;
 import android.widget.*;
 
@@ -44,6 +45,7 @@ final class ThumbnailCell extends FrameLayout {
     int count;
     StatusView.Symbol tagState;
     boolean cloud, failed, rankFailed, selectionMode, selected, partial, tagAtRight, photoSelection;
+    boolean burstSelection;
 
     Badges(Context context) {
       super(context);
@@ -88,7 +90,25 @@ final class ThumbnailCell extends FrameLayout {
       if (!rank.isEmpty()) {
         if(selectionStyle&&rank.equals("1位")){
           paint.setStyle(Paint.Style.FILL);paint.setColor(0xfff5b947);float top=h-edge-20;canvas.drawRoundRect(edge,top,edge+20,top+20,5,5,paint);paint.setColor(0xff241800);Path star=new Path();for(int i=0;i<10;i++){double angle=-Math.PI/2+i*Math.PI/5;float radius=i%2==0?6:2.8f;float x=edge+10+(float)Math.cos(angle)*radius,y=top+10+(float)Math.sin(angle)*radius;if(i==0)star.moveTo(x,y);else star.lineTo(x,y);}star.close();canvas.drawPath(star,paint);
-        }else{box(canvas,edge,h-edge-21,paint.measureText(rank)+12,21);paint.setColor(0xfff5b947);canvas.drawText(rank,edge+6,h-edge-7,paint);}
+        } else if (burstSelection) {
+          paint.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+          paint.setTextSize(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 12,
+              getResources().getDisplayMetrics()) / density);
+          float height = Math.max(20, paint.descent() - paint.ascent() + 2);
+          float bottom = h - edge;
+          paint.setStyle(Paint.Style.FILL);
+          paint.setColor(0x9e000000);
+          canvas.drawRoundRect(edge, bottom - height, edge + paint.measureText(rank) + 12,
+              bottom, height / 2, height / 2, paint);
+          paint.setColor(Color.WHITE);
+          canvas.drawText(rank, edge + 6, bottom - (height + paint.ascent() + paint.descent()) / 2, paint);
+          paint.setTypeface(Typeface.DEFAULT_BOLD);
+          paint.setTextSize(12);
+        } else {
+          box(canvas, edge, h - edge - 21, paint.measureText(rank) + 12, 21);
+          paint.setColor(0xfff5b947);
+          canvas.drawText(rank, edge + 6, h - edge - 7, paint);
+        }
       }
       if(tagState!=null){if(tagAtRight)box(canvas,w-30,h-26,24,20);StatusView.glyph(canvas,paint,tagState,tagAtRight?w-28:5,h-26,20,GalleryUi.TEXT,0);}
       if(rankFailed)StatusView.glyph(canvas,paint,StatusView.Symbol.FAILED,5,h-26,20,0xffff8a7a,0);

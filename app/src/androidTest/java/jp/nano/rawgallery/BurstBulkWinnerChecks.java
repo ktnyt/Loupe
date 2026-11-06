@@ -91,6 +91,7 @@ final class BurstBulkWinnerChecks {
         }
         check(((CompoundButton) windowView(SWITCH)).isChecked(), "Best-only sharing starts enabled");
         check(shared(a).isEmpty(), "Best-only sharing initially excludes lower photos");
+        if (width > 0) inspectDock(a);
       });
       capture(t, a, prefix + "-selection", SWITCH);
 
@@ -155,7 +156,7 @@ final class BurstBulkWinnerChecks {
         check(shared(a).equals(List.of(photos.get(0), photos.get(3))),
             "Best-only sharing did not use the newly saved winners");
       });
-      capture(t, a, prefix + "-success", SAVED);
+      capture(t, a, prefix + "-success", SAVED, true);
       ui(t, () -> bulk(a).performClick());
       ui(t, () -> check(a.hasWindowFocus(), "Disabled action opened confirmation"));
       check(commits.get() == 3, "All already winners saved again");
@@ -217,6 +218,18 @@ final class BurstBulkWinnerChecks {
 
   private static void check(boolean ok, String message) {
     if (!ok) throw new AssertionError(message);
+  }
+
+  private static void inspectDock(MainActivity a) {
+    for (String label : List.of("選択を終了", "すべて選択")) {
+      Button button = exactButton(a.getWindow().getDecorView(), label);
+      check(button != null && button.getLayout() != null, "Missing dock button " + label);
+      Rect visible = new Rect();
+      check(button.getLocalVisibleRect(visible) && visible.height() == button.getHeight(),
+          "Footer clips dock button " + label);
+      check(button.getLayout().getHeight() + button.getCompoundPaddingTop()
+          + button.getCompoundPaddingBottom() <= button.getHeight(), "Clipped dock label " + label);
+    }
   }
 
   private static Button bulk(MainActivity a) {

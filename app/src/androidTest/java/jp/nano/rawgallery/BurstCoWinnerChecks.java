@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.Insets;
 import android.graphics.Paint;
 import android.net.Uri;
@@ -183,6 +184,11 @@ final class BurstCoWinnerChecks {
 
   static void capture(Instrumentation t, MainActivity a, String name, String label)
       throws Exception {
+    capture(t, a, name, label, false);
+  }
+
+  static void capture(Instrumentation t, MainActivity a, String name, String label,
+      boolean requireClearSelectionFooter) throws Exception {
     if (name.endsWith("-success")) {
       await(t, "saved sheet dismissed", () -> {
         if (!a.hasWindowFocus()) return false;
@@ -214,8 +220,19 @@ final class BurstCoWinnerChecks {
     ConsistencyLayoutChecks.frame(t, focused[0]);
     File dir = new File(a.getCacheDir(), "consistency-checks");
     check(dir.isDirectory() || dir.mkdirs(), "Screenshot directory");
-    Bitmap screen = t.getUiAutomation().takeScreenshot();
-    check(screen != null, "Screenshot unavailable");
+    Bitmap screen;
+    if (requireClearSelectionFooter) {
+      // Focus and an app frame can arrive before the compositor removes the dialog.
+      // Sample the middle of the blank padding at the bottom of the selection footer.
+      Insets bars = systemBars[0];
+      check(bars != null, "Missing system bar insets");
+      int[] root = geometry[2];
+      screen = captureClearFooter(t, root[0] + root[2] / 2,
+          root[1] + root[3] - bars.bottom - GalleryUi.dp(a, 10));
+    } else {
+      screen = t.getUiAutomation().takeScreenshot();
+      check(screen != null, "Screenshot unavailable");
+    }
     Bitmap crop = null;
     try (FileOutputStream out = new FileOutputStream(new File(dir, name + ".png"))) {
       int left = Math.max(0, bounds[0]);
@@ -246,6 +263,23 @@ final class BurstCoWinnerChecks {
       if (crop != null && crop != screen) crop.recycle();
       screen.recycle();
     }
+  }
+
+  private static Bitmap captureClearFooter(Instrumentation t, int x, int y)
+      throws InterruptedException {
+    long deadline = SystemClock.uptimeMillis() + 2000;
+    do {
+      Bitmap screen = t.getUiAutomation().takeScreenshot();
+      check(screen != null, "Screenshot unavailable");
+      int color = screen.getPixel(x, y);
+      int expected = GalleryUi.BG;
+      if (Math.abs(Color.red(color) - Color.red(expected)) <= 3
+          && Math.abs(Color.green(color) - Color.green(expected)) <= 3
+          && Math.abs(Color.blue(color) - Color.blue(expected)) <= 3) return screen;
+      screen.recycle();
+      Thread.sleep(50);
+    } while (SystemClock.uptimeMillis() < deadline);
+    throw new AssertionError("Display still obscures the saved selection footer");
   }
 
   private static int[] screenBounds(View view) {

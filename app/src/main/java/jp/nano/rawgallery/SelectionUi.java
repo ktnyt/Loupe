@@ -40,5 +40,19 @@ final class SelectionUi {
     android.text.SpannableString label=new android.text.SpannableString(" "+title);label.setSpan(new android.text.style.ReplacementSpan(){public int getSize(Paint paint,CharSequence value,int start,int end,Paint.FontMetricsInt fm){return GalleryUi.dp(c,26);}public void draw(Canvas canvas,CharSequence value,int start,int end,float x,int top,int y,int bottom,Paint paint){ActionIcon icon=new ActionIcon(title,c.getResources().getDisplayMetrics().density*18f/26);icon.setTintList(ColorStateList.valueOf(paint.getColor()));int n=GalleryUi.dp(c,18),center=Math.round(y+(paint.ascent()+paint.descent())/2);icon.setBounds((int)x,center-n/2,(int)x+n,center+n/2);if(title.equals("ソート")){int save=canvas.save();canvas.translate(x,center-n/2f);canvas.scale(n/24f,n/24f);Paint outline=new Paint(Paint.ANTI_ALIAS_FLAG);outline.setColor(paint.getColor());outline.setStyle(Paint.Style.STROKE);outline.setStrokeWidth(1.9f);canvas.drawRoundRect(4,3.5f,20,10.5f,1.5f,1.5f,outline);canvas.drawRoundRect(4,13.5f,20,20.5f,1.5f,1.5f,outline);canvas.restoreToCount(save);}else icon.draw(canvas);}},0,1,android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);b.setText(label);return b;
   }
   static void allIcon(Button button){Context c=button.getContext();Drawable icon=new Drawable(){final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);public void draw(Canvas canvas){int save=canvas.save();canvas.translate(getBounds().left,getBounds().top);canvas.scale(getBounds().width()/24f,getBounds().height()/24f);p.setColor(GalleryUi.TEXT);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1.8f);p.setStrokeCap(Paint.Cap.ROUND);p.setStrokeJoin(Paint.Join.ROUND);canvas.drawRoundRect(4,4,20,20,2.5f,2.5f,p);Path tick=new Path();tick.moveTo(8.5f,12.3f);tick.lineTo(11,14.8f);tick.lineTo(15.8f,9.8f);canvas.drawPath(tick,p);canvas.restoreToCount(save);}public void setAlpha(int a){}public void setColorFilter(ColorFilter f){}public int getOpacity(){return PixelFormat.TRANSLUCENT;}};icon.setBounds(0,0,GalleryUi.dp(c,24),GalleryUi.dp(c,24));button.setCompoundDrawables(null,icon,null,null);}
-  static void finishFooter(LinearLayout root,int first){GalleryUi.bottomControls(root,first,GalleryUi.BG);ScrollView scroll=(ScrollView)root.getChildAt(root.getChildCount()-1);LinearLayout panel=(LinearLayout)scroll.getChildAt(0);panel.setClipToPadding(false);for(int i=1;i<panel.getChildCount();i++){View child=panel.getChildAt(i);LinearLayout.LayoutParams lp=(LinearLayout.LayoutParams)child.getLayoutParams();lp.topMargin=GalleryUi.dp(root.getContext(),8);child.setLayoutParams(lp);}panel.setPadding(GalleryUi.dp(root.getContext(),16),GalleryUi.dp(root.getContext(),8),GalleryUi.dp(root.getContext(),16),GalleryUi.dp(root.getContext(),20));}
+  static void finishFooter(LinearLayout root, int first, boolean hasBulkAction) {
+    // Leave room for the burst action and wrapped filters before the panel needs to scroll.
+    GalleryUi.bottomControls(root, first, GalleryUi.BG, hasBulkAction ? .60f : .48f);
+    ScrollView scroll = (ScrollView) root.getChildAt(root.getChildCount() - 1);
+    LinearLayout panel = (LinearLayout) scroll.getChildAt(0);
+    panel.setClipToPadding(false);
+    Context c = root.getContext();
+    for (int i = 1; i < panel.getChildCount(); i++) {
+      View child = panel.getChildAt(i);
+      LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) child.getLayoutParams();
+      lp.topMargin = GalleryUi.dp(c, 8);
+      child.setLayoutParams(lp);
+    }
+    panel.setPadding(GalleryUi.dp(c, 16), GalleryUi.dp(c, 8), GalleryUi.dp(c, 16), GalleryUi.dp(c, 20));
+  }
 }
