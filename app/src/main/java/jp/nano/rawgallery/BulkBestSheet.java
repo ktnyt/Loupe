@@ -13,7 +13,10 @@ import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.text.SpannableString;
+import android.text.Spanned;
 import android.text.style.AbsoluteSizeSpan;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.TypefaceSpan;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -35,6 +38,7 @@ final class BulkBestSheet extends Dialog {
   private static final int PANEL = 0xff1c1c1f;
   private static final int OUTLINE = 0xff6b6b70;
   private static final int REPLACE = 0xffff8a7a;
+  private static final Typeface SEMIBOLD = Typeface.create(Typeface.DEFAULT, 600, false);
   private final Button confirm, cancel;
   private final TextView error;
   private final ProgressBar progress;
@@ -64,7 +68,7 @@ final class BulkBestSheet extends Dialog {
     content.addView(handle, handleParams);
 
     TextView title = text(action.substring(0, action.length() - "する".length()) + "しますか？", 20, GalleryUi.TEXT);
-    title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+    title.setTypeface(SEMIBOLD);
     title.setAccessibilityHeading(true);
     title.setLineHeight(sp(28));
     title.setPadding(dp(8), 0, dp(8), dp(4));
@@ -200,6 +204,7 @@ final class BulkBestSheet extends Dialog {
       Runnable click) {
     Button button = RankingUi.action(GalleryUi.button(getContext(), label, click),
         primary, height, size, null);
+    button.setTypeface(SEMIBOLD);
     button.setSingleLine(false);
     button.setEllipsize(null);
     button.setBackground(background(getContext(), primary ? GalleryUi.TEXT : Color.TRANSPARENT,
@@ -213,8 +218,15 @@ final class BulkBestSheet extends Dialog {
     else confirm.setText(label);
     if (retry) {
       SpannableString styled = new SpannableString(confirm.getText());
-      styled.setSpan(new AbsoluteSizeSpan(12, true), label.indexOf('\n') + 1 + (complete ? 3 : 0),
-          styled.length(), 0);
+      int detailStart = styled.length() - action.length();
+      int detailEnd = styled.length();
+      int detailColor = (complete ? GalleryUi.TEXT : REPLACE) & 0x00ffffff | 0xd9000000;
+      styled.setSpan(new AbsoluteSizeSpan(sp(12)), detailStart, detailEnd,
+          Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+      styled.setSpan(new TypefaceSpan(Typeface.DEFAULT), detailStart, detailEnd,
+          Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+      styled.setSpan(new ForegroundColorSpan(detailColor), detailStart, detailEnd,
+          Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
       confirm.setText(styled);
     }
     confirm.setContentDescription(retry ? action + "を再試行" : action);
