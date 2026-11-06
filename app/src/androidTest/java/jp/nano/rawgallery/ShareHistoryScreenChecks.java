@@ -172,7 +172,7 @@ final class ShareHistoryScreenChecks {
         GalleryScreenChecks.syntheticCarousel(test, activity);
       }
       return "PASS share-history screens: generated photos, actual gallery/selection/burst/viewer/info, "
-          + "0/1/2/7 apps, rank and cached cloud preview, badge-area taps, AX labels and decoration, "
+          + "0/1/2/7 apps, rank and cached cloud preview, photo taps near the badges (shifted inward for system gestures if needed), AX labels and decoration, "
           + "removed long label, zoom, hardware captures with geometry. No handoffs or history writes.\n";
     } finally {
       ui(test, activity::finish);
@@ -402,12 +402,27 @@ final class ShareHistoryScreenChecks {
       view.getLocationOnScreen(origin);
       int localX = Math.round(view.getWidth() * x), localY = Math.round(view.getHeight() * y);
       Rect visible = new Rect();
-      boolean inPhoto = view.getLocalVisibleRect(visible) && visible.contains(localX, localY);
-      coords.x = origin[0] + localX;
+      boolean photoVisible = view.getLocalVisibleRect(visible);
+      int requestedX = origin[0] + localX;
+      WindowManager windowManager = view.getContext().getSystemService(WindowManager.class);
+      Rect screen = windowManager.getMaximumWindowMetrics().getBounds();
+      WindowInsets insets = view.getRootWindowInsets();
+      Insets gestures = insets == null ? Insets.NONE : insets.getInsets(
+          WindowInsets.Type.systemGestures() | WindowInsets.Type.mandatorySystemGestures());
+      // OEM gesture windows can extend past the inset they report to a narrowed app window.
+      int edgeGuard = GalleryUi.dp(view.getContext(), 24);
+      int safeLeft = Math.max(origin[0] + visible.left, screen.left + Math.max(edgeGuard, gestures.left));
+      int safeRight = Math.min(origin[0] + visible.right, screen.right - Math.max(edgeGuard, gestures.right));
+      int safeX = Math.max(safeLeft, Math.min(requestedX, safeRight - 1));
+      boolean inPhoto = photoVisible && safeLeft < safeRight && visible.contains(safeX - origin[0], localY);
+      coords.x = safeX;
       coords.y = origin[1] + localY;
       if (view.getDisplay() != null) display[0] = view.getDisplay().getDisplayId();
       windowState[0] = touchWindowState(view) + " photo=" + java.util.Arrays.toString(bounds(view))
-          + " localVisible=" + visible.toShortString() + " localTap=(" + localX + "," + localY + ")";
+          + " localVisible=" + visible.toShortString() + " localTap=(" + localX + "," + localY + ")"
+          + " safeScreenX=" + safeX + " safeRange=[" + safeLeft + "," + safeRight + ")"
+          + " screen=" + screen.toShortString() + " gestures=" + gestures;
+      if (safeX != requestedX) Log.i("LoupeShareFixtureTouch", "Tap moved inward: " + windowState[0]);
       if (!inPhoto || view != find.get() || !view.hasWindowFocus() || display[0] < 0) {
         Log.e("LoupeShareFixtureTouch", "Target not ready: " + windowState[0]);
         throw new AssertionError("Tap requires the same visible photo in the focused app window");
