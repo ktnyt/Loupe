@@ -29,6 +29,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     if(viewerLookTest&&activity instanceof RawEditActivity)ViewerLookChecks.rawEditActivityLaunches++;
   }
   private boolean shareHistoryTest, shareHistoryScreenTest, shareHistoryHandoffTest, shareHistoryCallbackTest;
+  private boolean shareHistoryRestartSeed, shareHistoryRestartVerify;
   private boolean shareToggleTest, galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest, viewerLookTest, viewerLookUiTest, viewerRawLookTest;
   private boolean photoEditTest, lookTimingRaw, lookTimingJpeg;
   private boolean consistencyTest, syncControlsTest, tagDetailTest, resultTest, resultTalkBack;
@@ -76,6 +77,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
     shareHistoryScreenTest = args != null && "share-history-screen".equals(args.getString("mode"));
     shareHistoryHandoffTest = args != null && "share-history-handoff".equals(args.getString("mode"));
     shareHistoryCallbackTest = args != null && "share-history-callback".equals(args.getString("mode"));
+    shareHistoryRestartSeed = args != null && "share-history-restart-seed".equals(args.getString("mode"));
+    shareHistoryRestartVerify = args != null && "share-history-restart-verify".equals(args.getString("mode"));
     if (shareHistoryScreenTest) {
       tagWidth = Integer.parseInt(args.getString("width", "400"));
       tagFont = Float.parseFloat(args.getString("font", "1.0"));
@@ -162,6 +165,12 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if(confidenceStoreTest){results.putString("stream",ConfidenceStoreChecks.run(context));finish(-1,results);return;}
       if (indexSignatureTest) { results.putString("stream", IndexSignatureChecks.run(context)); finish(-1, results); return; }
       if (indexApplyRaceTest) { results.putString("stream", IndexApplyRaceChecks.run(this)); finish(-1, results); return; }
+      if (shareHistoryRestartSeed || shareHistoryRestartVerify) {
+        results.putString("stream", shareHistoryRestartSeed
+            ? ShareHistoryRestartChecks.seed(context) : ShareHistoryRestartChecks.verify(context));
+        finish(-1, results);
+        return;
+      }
       if (shareHistoryScreenTest) {
         results.putString("stream", ShareHistoryScreenChecks.run(this, tagWidth, tagFont));
         finish(-1, results);
