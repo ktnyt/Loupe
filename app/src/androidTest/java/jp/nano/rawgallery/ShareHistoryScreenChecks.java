@@ -502,6 +502,8 @@ final class ShareHistoryScreenChecks {
     try {
       int[] decor = bounds[0];
       int left = Math.max(0, decor[0]), top = Math.max(0, decor[1]);
+      require(decor[0] >= 0 && decor[1] >= 0 && decor[0] + decor[2] <= screen.getWidth()
+          && decor[1] + decor[3] <= screen.getHeight(), "Fixture window must fit physical display for complete capture");
       int right = Math.min(screen.getWidth(), decor[0] + decor[2]);
       int bottom = Math.min(screen.getHeight(), decor[1] + decor[3]);
       cropped = Bitmap.createBitmap(screen, left, top, right - left, bottom - top);
