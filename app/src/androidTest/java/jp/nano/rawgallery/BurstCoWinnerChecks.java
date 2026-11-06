@@ -178,6 +178,19 @@ final class BurstCoWinnerChecks {
 
   private static void capture(Instrumentation t, MainActivity a, String name, String label)
       throws Exception {
+    if (name.endsWith("-success")) {
+      await(t, "saved sheet dismissed", () -> {
+        if (!a.hasWindowFocus()) return false;
+        for (View root : WindowInspector.getGlobalWindowViews()) {
+          if (find(root, "保存しています") != null) return false;
+        }
+        return true;
+      });
+    }
+    // App frame completion does not include removal of a separate dialog surface.
+    // Allow the window compositor to settle; this delay is not part of timing metrics.
+    Thread.sleep(350);
+    t.waitForIdleSync();
     View[] focused = new View[1];
     int[] bounds = new int[4];
     ui(t, () -> {
