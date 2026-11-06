@@ -13,7 +13,9 @@ import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.net.Uri;
 import android.os.SystemClock;
+import android.view.InputDevice;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityNodeInfo;
@@ -23,6 +25,8 @@ import android.widget.ImageView;
 import android.widget.TextView;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -103,6 +107,60 @@ final class BurstCoWinnerChecks {
   private static void back(Instrumentation t) {
     t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
     t.waitForIdleSync();
+  }
+
+  private static void tapOutside(Instrumentation t, MainActivity a) {
+    int[] point = new int[2];
+    ui(t, () -> {
+      View activity = a.getWindow().getDecorView();
+      View sheet = windowView(ADD).getRootView();
+      int[] activityOrigin = new int[2];
+      int[] sheetOrigin = new int[2];
+      activity.getLocationOnScreen(activityOrigin);
+      sheet.getLocationOnScreen(sheetOrigin);
+      int left = Math.max(activityOrigin[0], sheetOrigin[0]);
+      int right = Math.min(activityOrigin[0] + activity.getWidth(), sheetOrigin[0] + sheet.getWidth());
+      int bottom = Math.min(sheetOrigin[1], activityOrigin[1] + activity.getHeight());
+      check(right > left && bottom > activityOrigin[1], "No exposed activity above sheet");
+      point[0] = (left + right) / 2;
+      point[1] = (activityOrigin[1] + bottom) / 2;
+    });
+    long down = SystemClock.uptimeMillis();
+    for (int action : new int[] {MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP}) {
+      MotionEvent event = MotionEvent.obtain(down, SystemClock.uptimeMillis(),
+          action, point[0], point[1], 0);
+      event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+      try {
+        check(t.getUiAutomation().injectInputEvent(event, true), "Outside touch " + action);
+      } finally {
+        event.recycle();
+      }
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  private static void assertBestShotSelection(MainActivity a, List<PhotoRepository.Photo> photos) {
+    Set<String> selected = (Set<String>) get(a, "selectedPhotos");
+    Set<String> previous = Set.copyOf(selected);
+    Object previousMode = get(a, "bestOnly");
+    try {
+      selected.clear();
+      for (PhotoRepository.Photo photo : photos) selected.add(photo.uri.toString());
+      set(a, "bestOnly", true);
+      Method resolve = MainActivity.class.getDeclaredMethod("resolveSelection");
+      resolve.setAccessible(true);
+      Object result = resolve.invoke(a);
+      Field matches = result.getClass().getDeclaredField("photos");
+      matches.setAccessible(true);
+      check(matches.get(result).equals(List.of(photos.get(0), photos.get(2))),
+          "Best-shot selection did not resolve both co-winners");
+    } catch (ReflectiveOperationException error) {
+      throw new AssertionError("Best-shot selection unavailable", error);
+    } finally {
+      selected.clear();
+      selected.addAll(previous);
+      set(a, "bestOnly", previousMode);
+    }
   }
 
   private static void inspectButton(MainActivity a, String label, int height) {
@@ -288,6 +346,12 @@ final class BurstCoWinnerChecks {
       back(t);
       visible(t, ENTRY);
       assertWinners(disk, keys, 2);
+
+      click(t, ENTRY);
+      visible(t, ADD);
+      tapOutside(t, a);
+      visible(t, ENTRY);
+      assertWinners(disk, keys, 2);
       check(commits.get() == 0, "Dismissal attempted save");
 
       click(t, ENTRY);
@@ -312,6 +376,7 @@ final class BurstCoWinnerChecks {
       visible(t, SAVED);
       check(commits.get() == 3, "Unexpected save count");
       assertWinners(new RankingStore(prefs), keys, 0, 2);
+      ui(t, () -> assertBestShotSelection(a, photos));
       check((int) get(a, "burstPosition") == 0, "Co-add moved the photo");
       visible(t, "1・3枚目");
       visible(t, "同率1位、順位決定済み");
@@ -338,9 +403,9 @@ final class BurstCoWinnerChecks {
       visible(t, "1位にしました");
       assertWinners(disk, keys, 1);
       check((int) get(a, "burstPosition") == 1, "Replacement moved the photo");
-      return "PASS isolated burst UI: unfinished, cancel and Back, busy and Back, failed save, "
+      return "PASS isolated burst UI: unfinished, cancel, Back, outside tap, busy and Back, failed save, "
           + "restore of cached and stored ranks, retry, two co-adds, reopen, all winner labels, "
-          + "single replacement, and photo position. "
+          + "best-shot selection, single replacement, and photo position. "
           + "AX ACTION_CLICK and button bounds checked; spoken TalkBack and finger taps untested.\n";
     } finally {
       release.countDown();

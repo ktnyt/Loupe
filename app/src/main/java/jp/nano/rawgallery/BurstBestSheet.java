@@ -37,7 +37,7 @@ final class BurstBestSheet extends Dialog {
     soleName=canAdd||tiedWinner?"この写真だけを1位にする":"1位にする";
     soleSubtitle=canAdd||tiedWinner?"ほかは同率2位":"";
     sole=action(soleName,soleSubtitle,true,()->start(false));RankingUi.add(content,sole,canAdd?8:16);
-    cancel=action("キャンセル","",false,this::dismiss);cancel.setBackgroundColor(Color.TRANSPARENT);RankingUi.add(content,cancel,8);
+    cancel=action("キャンセル","",false,this::dismiss);cancel.setMinHeight(dp(48));cancel.setMinimumHeight(dp(48));cancel.setBackground(GalleryUi.shape(c,GalleryUi.TEXT,24));cancel.setTextColor(0xff111111);RankingUi.add(content,cancel,8);
     ScrollView scroll=new ScrollView(c);scroll.addView(content);setContentView(scroll);
     setCanceledOnTouchOutside(true);
     Window w=getWindow();GradientDrawable bg=GalleryUi.shape(c,0xff1c1c1f,28);bg.setCornerRadii(new float[]{dp(28),dp(28),dp(28),dp(28),0,0,0,0});w.setBackgroundDrawable(bg);w.setGravity(Gravity.BOTTOM);w.setWindowAnimations(0);
@@ -49,7 +49,7 @@ final class BurstBestSheet extends Dialog {
     Button b=GalleryUi.button(getContext(),name,action);RankingUi.action(b,false,56,15,null);
     b.setAllCaps(false);b.setSingleLine(false);b.setMaxLines(6);b.setEllipsize(null);
     setLabel(b,name,sub);
-    GradientDrawable bg=GalleryUi.shape(getContext(),primary?0xffff8a7a:Color.TRANSPARENT,26);if(!primary)bg.setStroke(dp(1),0xff6b6b70);b.setBackground(bg);b.setTextColor(primary?0xff201412:GalleryUi.TEXT);return b;
+    GradientDrawable bg=GalleryUi.shape(getContext(),Color.TRANSPARENT,26);bg.setStroke(dp(1),primary?0xffff8a7a:0xff6b6b70);b.setBackground(bg);b.setTextColor(primary?0xffff8a7a:GalleryUi.TEXT);return b;
   }
   private void setLabel(Button b,String name,String sub){
     String value=name+(sub.isEmpty()?"":"\n"+sub);android.text.SpannableString styled=new android.text.SpannableString(value);
