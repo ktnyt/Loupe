@@ -53,7 +53,9 @@ class ImportService : Service() {
         val usbDevice = intent?.let(CameraUsb::deviceExtra)?.takeIf {
             CameraUsb.supported(it) && getSystemService(UsbManager::class.java).hasPermission(it)
         }
+        val requestId = intent?.getStringExtra(EXTRA_REQUEST_ID)
         if (usbDevice == null) {
+            ImportProgress.completeRequest(requestId, false)
             stopSelf(startId)
             return START_NOT_STICKY
         }
@@ -62,6 +64,7 @@ class ImportService : Service() {
         // 自動起動と手動ボタンが重なると同じカメラを同時に開き、両方のセッションが壊れる
         // (E-P7 実測: deviceInfo が null になる)。実行中は新しい要求を受け付けない
         if (!running.compareAndSet(false, true)) {
+            ImportProgress.completeRequest(requestId, false)
             ImportLog.w(TAG, "import already running; ignoring new request")
             scope.launch(Dispatchers.Main) {
                 Toast.makeText(this@ImportService, getString(R.string.camera_import_notif_busy), Toast.LENGTH_SHORT).show()
@@ -70,13 +73,14 @@ class ImportService : Service() {
         }
         startForeground(NOTIF_PROGRESS, notification(getString(R.string.camera_import_notif_connecting), ongoing = true))
         watchDetach(usbDevice)
-        val allowDeletion = intent.getBooleanExtra(EXTRA_ALLOW_DELETION, false)
+        val allowDeletion = requestId == null && intent.getBooleanExtra(EXTRA_ALLOW_DELETION, false)
         scope.launch {
             val lock = CameraImportGate.lock
+            var succeeded = false
             try {
                 if (lock.tryLock()) {
                     try {
-                        runImport(usbDevice, requestedKinds, allowDeletion)
+                        succeeded = runImport(usbDevice, requestedKinds, allowDeletion)
                     } finally {
                         lock.unlock()
                     }
@@ -87,6 +91,7 @@ class ImportService : Service() {
                 ImportLog.w(TAG, "import failed", error)
                 ImportProgress.finish(getString(R.string.camera_import_notif_open_failed))
             } finally {
+                ImportProgress.completeRequest(requestId, succeeded)
                 withContext(Dispatchers.Main) {
                     running.set(false)
                     stopForeground(STOP_FOREGROUND_REMOVE)
@@ -97,7 +102,7 @@ class ImportService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun runImport(usbDevice: UsbDevice, requestedKinds: Set<MediaTypes.Kind>?, allowDeletion: Boolean) {
+    private fun runImport(usbDevice: UsbDevice, requestedKinds: Set<MediaTypes.Kind>?, allowDeletion: Boolean): Boolean {
         // 新しい取り込みは前回の中断状態を持ち越さない。
         // サービスは同一インスタンスが再利用されることがあり、残った true が即中断を招く
         cancelled.set(false)
@@ -110,7 +115,7 @@ class ImportService : Service() {
         // 始めたマスストレージは init が空振りして 1 回目の試行を必ず落としていた
         // (2026-08-22 実測: G99M2 で 18.5 秒の空振り。31 秒のうち 21 秒がここで消えた)
         val isMtp = !UsbMassStorage.isMassStorage(usbDevice)
-        try { Thread.sleep(INITIAL_SETTLE_MS) } catch (e: InterruptedException) { return }
+        try { Thread.sleep(INITIAL_SETTLE_MS) } catch (e: InterruptedException) { return false }
 
         // 開く前に Device Reset を送る案は 2026-08-22 に実測して却下した。
         // open は速くなる (15.4 秒 → 1.1 秒) が、その後のスキャンが壊れる:
@@ -192,7 +197,7 @@ class ImportService : Service() {
                 else getString(R.string.camera_import_notif_detached_cancel)
             ImportProgress.finish(msg)
             notify(NOTIF_DONE, notification(msg))
-            return
+            return false
         }
 
         val (camera, result) = outcome ?: run {
@@ -204,7 +209,7 @@ class ImportService : Service() {
                 else getString(R.string.camera_import_notif_open_failed)
             ImportProgress.finish(msg)
             notify(NOTIF_DONE, notification(msg))
-            return
+            return false
         }
 
         val seconds = result.elapsedMs / 1000.0
@@ -239,6 +244,7 @@ class ImportService : Service() {
         scope.launch(Dispatchers.Main) {
             Toast.makeText(this@ImportService, msg, Toast.LENGTH_LONG).show()
         }
+        return !result.error && !result.aborted && result.failed == 0
     }
 
     /** 全滅時の案内文の出し分け用。試行が何で失敗したかの分類 */
@@ -555,14 +561,16 @@ class ImportService : Service() {
             name.trim().replace(Regex("""[/\\:*?"<>|]"""), "_").takeUnless { it.isEmpty() || it == "." || it == ".." } ?: "Camera"
 
         /** [kinds] が null なら、そのカメラの既定の種別設定に従う */
+        private const val EXTRA_REQUEST_ID = "import_request_id"
         private const val EXTRA_ALLOW_DELETION = "allow_camera_deletion"
 
         @JvmStatic @JvmOverloads
-        fun start(context: Context, usbDevice: UsbDevice, kinds: Set<MediaTypes.Kind>? = null, allowDeletion: Boolean = false) {
+        fun start(context: Context, usbDevice: UsbDevice, kinds: Set<MediaTypes.Kind>? = null, allowDeletion: Boolean = false, requestId: String? = null) {
             val intent = Intent(context, ImportService::class.java)
                 .putExtra(UsbManager.EXTRA_DEVICE, usbDevice)
                 .putExtra(EXTRA_ALLOW_DELETION, allowDeletion)
             kinds?.let { intent.putExtra(EXTRA_KINDS, MediaTypes.kindsToString(it)) }
+            requestId?.let { intent.putExtra(EXTRA_REQUEST_ID, it) }
             context.startForegroundService(intent)
         }
     }

@@ -3,6 +3,14 @@ package jp.nano.rawgallery.camera
 
 /** 取り込みの進捗をサービスから UI へ共有するためのシングルトン */
 object ImportProgress {
+    data class Completion(val requestId: String, val succeeded: Boolean)
+    @Volatile var completion: Completion? = null
+        private set
+
+    fun completeRequest(requestId: String?, succeeded: Boolean) {
+        if (requestId != null) completion = Completion(requestId, succeeded)
+    }
+
     private val listeners = java.util.concurrent.CopyOnWriteArrayList<Runnable>()
 
     fun addListener(listener: Runnable) { listeners.addIfAbsent(listener) }

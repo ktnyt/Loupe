@@ -51,6 +51,8 @@ public final class CameraImportActivity extends Activity {
     private Closeable permission;
     private boolean migrating, starting, wasActive;
     private String connectionFailure;
+    private boolean quickImportFlow;
+    private String quickRequestId;
     private SharedPreferences settings;
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
@@ -62,6 +64,10 @@ public final class CameraImportActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         settings = getSharedPreferences("camera_import", MODE_PRIVATE);
+        if (state != null) {
+            quickImportFlow = state.getBoolean("quick_import_flow");
+            quickRequestId = state.getString("quick_import_request");
+        }
         LinearLayout frame = new LinearLayout(this);
         frame.setOrientation(LinearLayout.VERTICAL);
         frame.setBackgroundColor(0xff111113);
@@ -162,10 +168,17 @@ public final class CameraImportActivity extends Activity {
         super.onDestroy();
     }
 
+    @Override protected void onSaveInstanceState(Bundle state) {
+        super.onSaveInstanceState(state);
+        state.putBoolean("quick_import_flow", quickImportFlow);
+        state.putString("quick_import_request", quickRequestId);
+    }
+
     @Override protected void onPostResume() {
         super.onPostResume();
         if (getIntent().getBooleanExtra(START_IMPORT_KEEP_ORIGINALS, false)) {
             getIntent().removeExtra(START_IMPORT_KEEP_ORIGINALS);
+            quickImportFlow = true;
             startFromScreen(true);
         }
     }
@@ -183,6 +196,15 @@ public final class CameraImportActivity extends Activity {
     }
 
     private void renderStatus() {
+        var completion = PROGRESS.getCompletion();
+        if (quickRequestId != null && completion != null && quickRequestId.equals(completion.getRequestId())) {
+            quickRequestId = null;
+            starting = false;
+            if (completion.getSucceeded()) {
+                finish();
+                return;
+            }
+        }
         UsbDevice device = connected();
         boolean manualOnly = device != null && !CameraUsb.knownCamera(device);
         boolean granted = device != null && getSystemService(UsbManager.class).hasPermission(device);
@@ -224,7 +246,7 @@ public final class CameraImportActivity extends Activity {
         migrate.setEnabled(!active && !starting && !migrating);
     }
 
-    private void startFromScreen() { startFromScreen(false); }
+    private void startFromScreen() { startFromScreen(quickImportFlow); }
 
     private void startFromScreen(boolean keepOriginals) {
         if (PROGRESS.getActive() || starting || migrating || permission != null) return;
@@ -294,11 +316,13 @@ public final class CameraImportActivity extends Activity {
 
     private void launch(UsbDevice device, boolean delete) {
         if (starting || migrating || PROGRESS.getActive()) return;
+        if (quickImportFlow) quickRequestId = java.util.UUID.randomUUID().toString();
         starting = true;
         try {
-            ImportService.start(this, device, null, delete);
+            ImportService.start(this, device, null, delete && !quickImportFlow, quickRequestId);
         } catch (RuntimeException failure) {
             starting = false;
+            quickRequestId = null;
             PROGRESS.finish("取り込みを開始できませんでした");
         }
         handler.postDelayed(() -> { starting = false; renderStatus(); }, 4000);

@@ -66,10 +66,27 @@ final class CameraTabsChecks {
           camera.performClick();
           camera.performLongClick();
           check(!camera.isEnabled() && !hasLongAction(camera), "selection disabled");
+          var request = CameraImportActivity.class.getDeclaredField("quickRequestId");
+          request.setAccessible(true);
+          var render = CameraImportActivity.class.getDeclaredMethod("renderStatus");
+          render.setAccessible(true);
+          var progress = jp.nano.rawgallery.camera.ImportProgress.INSTANCE;
+          request.set(activity, "return-test");
+          progress.completeRequest("unrelated", true);
+          render.invoke(activity);
+          check(!activity.isFinishing(), "unrelated completion stays");
+          progress.completeRequest("return-test", false);
+          render.invoke(activity);
+          check(!activity.isFinishing(), "failed import stays");
+          request.set(activity, "return-test-2");
+          progress.completeRequest("return-test-2", true);
+          render.invoke(activity);
+          check(activity.isFinishing(), "successful quick import returns");
+
         } catch (Throwable failure) { error.set(failure); }
       });
       if (error.get() != null) throw new AssertionError(error.get());
-      return "PASS camera tab attach/detach, tap/long press, busy/selection guards and 320dp/1.3x layout (synthetic device).";
+      return "PASS camera tab attach/detach, tap/long press, busy/selection guards and 320dp/1.3x layout, successful quick import returns (synthetic device).";
     } finally { t.runOnMainSync(activity::finish); }
   }
 
