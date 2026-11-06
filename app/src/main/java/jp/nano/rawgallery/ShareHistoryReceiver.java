@@ -201,8 +201,10 @@ public final class ShareHistoryReceiver extends BroadcastReceiver {
         synchronized (SESSION_LOCK) {
           putBounded(RETRIES, handoff.sessionId, handoff);
         }
-        failed(context);
       }
+      // A chooser callback can recreate the process, leaving only the durable session.
+      // Report storage failure even when no in-memory retry can be recovered.
+      failed(context);
       DiagnosticLog.event("share.history.failed", request, "elapsedMs", android.os.SystemClock.elapsedRealtime() - started);
       return;
     }
