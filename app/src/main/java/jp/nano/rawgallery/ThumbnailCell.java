@@ -2,6 +2,7 @@ package jp.nano.rawgallery;
 
 import android.content.Context;
 import android.graphics.*;
+import android.util.TypedValue;
 import android.view.View;
 import android.widget.*;
 
@@ -52,6 +53,7 @@ final class ThumbnailCell extends FrameLayout {
     }
     StatusView.Symbol tagState;
     boolean cloud, failed, rankFailed, selectionMode, selected, partial, tagAtRight, photoSelection;
+    boolean burstSelection;
 
     Badges(Context context) {
       super(context);
@@ -94,14 +96,35 @@ final class ThumbnailCell extends FrameLayout {
         paint.setColor(Color.WHITE);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1.3f);
         canvas.drawRoundRect(left+5,edge+5,left+13,edge+13,1,1,paint);canvas.drawRoundRect(left+8,edge+8,left+16,edge+16,1,1,paint);paint.setStyle(Paint.Style.FILL);canvas.drawText(number,left+21,edge+14,paint);
       }
+      float rankWidth=rankFailed?20:0;
       if (!rank.isEmpty()) {
+        rankWidth=selectionStyle&&rank.equals("1位")?20:paint.measureText(rank)+12;
         if(selectionStyle&&rank.equals("1位")){
           paint.setStyle(Paint.Style.FILL);paint.setColor(0xfff5b947);float top=h-edge-20;canvas.drawRoundRect(edge,top,edge+20,top+20,5,5,paint);paint.setColor(0xff241800);Path star=new Path();for(int i=0;i<10;i++){double angle=-Math.PI/2+i*Math.PI/5;float radius=i%2==0?6:2.8f;float x=edge+10+(float)Math.cos(angle)*radius,y=top+10+(float)Math.sin(angle)*radius;if(i==0)star.moveTo(x,y);else star.lineTo(x,y);}star.close();canvas.drawPath(star,paint);
-        }else{box(canvas,edge,h-edge-21,paint.measureText(rank)+12,21);paint.setColor(0xfff5b947);canvas.drawText(rank,edge+6,h-edge-7,paint);}
+        } else if (burstSelection) {
+          paint.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+          paint.setTextSize(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 12,
+              getResources().getDisplayMetrics()) / density);
+          rankWidth=paint.measureText(rank)+12;
+          float height = Math.max(20, paint.descent() - paint.ascent() + 2);
+          float bottom = h - edge;
+          paint.setStyle(Paint.Style.FILL);
+          paint.setColor(0x9e000000);
+          canvas.drawRoundRect(edge, bottom - height, edge + paint.measureText(rank) + 12,
+              bottom, height / 2, height / 2, paint);
+          paint.setColor(Color.WHITE);
+          canvas.drawText(rank, edge + 6, bottom - (height + paint.ascent() + paint.descent()) / 2, paint);
+          paint.setTypeface(Typeface.DEFAULT_BOLD);
+          paint.setTextSize(12);
+        } else {
+          box(canvas, edge, h - edge - 21, paint.measureText(rank) + 12, 21);
+          paint.setColor(0xfff5b947);
+          canvas.drawText(rank, edge + 6, h - edge - 7, paint);
+        }
       }
       if(!shared.isEmpty()) {
         float inset=photoSelection&&selectionMode&&selected?15:5;
-        float reserved=rank.isEmpty()&&!rankFailed?inset:edge+(selectionStyle&&rank.equals("1位")?20:paint.measureText(rank)+12)+2;
+        float reserved=rankWidth==0?inset:edge+rankWidth+2;
         int opacity=ShareHistoryUi.alpha(shareAppeared),layer=canvas.saveLayerAlpha(0,0,w,h,opacity);
         sharePainter.draw(canvas,shared,w-inset,h-inset,w-inset-reserved,w-inset*2,14,20,2,cloud,false);
         canvas.restoreToCount(layer);if(opacity<255)postInvalidateOnAnimation();

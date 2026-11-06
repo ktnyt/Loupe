@@ -1,0 +1,47 @@
+{
+  "decor": {
+    "x": 80,
+    "y": 0,
+    "width": 1040,
+    "height": 2670
+  },
+  "content": {
+    "x": 80,
+    "y": 0,
+    "width": 1040,
+    "height": 2670
+  },
+  "root": {
+    "x": 80,
+    "y": 0,
+    "width": 1040,
+    "height": 2670
+  },
+  "focusedWindow": {
+    "x": 80,
+    "y": 1612,
+    "width": 1040,
+    "height": 1006
+  },
+  "crop": {
+    "x": 80,
+    "y": 0,
+    "width": 1040,
+    "height": 2670
+  },
+  "display": {
+    "x": 0,
+    "y": 0,
+    "width": 1200,
+    "height": 2670
+  },
+  "density": 3.25,
+  "densityDpi": 520,
+  "fontScale": 1,
+  "systemBars": {
+    "left": 0,
+    "top": 140,
+    "right": 0,
+    "bottom": 52
+  }
+}

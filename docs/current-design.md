@@ -80,6 +80,7 @@ flowchart TD
 - 不変条件: 対象は開いた束の写真集合に限定する。集合が変われば別記録。判断結果と今回共有する選択状態は別に持つ。
 - 事前条件: 写真IDが空でなく重複しない。未完了の比較で両方のプレビューが表示できた後に選択する。
 - 個別指定: 確定後の非1位写真を既存1位へ追加できる。残る順位グループを保持し、同率人数に応じて順位を再計算する。単独1位への置換も可能。確認・保存・失敗時の契約は[連写の同率1位指定](burst-co-winners.md)を参照。
+- 一括指定: 連写内の選択画面から明示選択した写真をまとめて1位へ追加する。共有設定とは独立し、確定済みの1位と下位グループ順を保持する。[契約](burst-bulk-winners.md)を参照。
 - 事後条件: 選択・同順位・一手戻しで次の履歴を作り、永続保存成功後に画面の順位状態を進める。保存失敗なら次の比較に進まない。同順位は1位・1位・3位のように表示する。
 - 実装: [PhotoRanking.java](../app/src/main/java/jp/nano/rawgallery/PhotoRanking.java) コンストラクタ・`choose/tie/undo/best/rankOf`、[MainActivity.java](../app/src/main/java/jp/nano/rawgallery/MainActivity.java) `rankingFor/openRanking/saveRanking/rankingCandidate`、[RankingStore.java](../app/src/main/java/jp/nano/rawgallery/RankingStore.java) `load/save`、`ComparisonLayout`。順位のキー生成・読込・commitはRankingStoreへ分離済み。
 - 検証: 順位100順列、再開・undo・不正入力、比較レイアウトの単体検査成功。RankingStoreの保存失敗の戻り値・既存キーとの互換性はホストテストで検査済み。Androidのディスク書込み失敗と実画面の操作は未検査。

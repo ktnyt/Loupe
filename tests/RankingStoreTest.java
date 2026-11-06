@@ -91,6 +91,16 @@ public final class RankingStoreTest {
         "co-winner result reopens with reordered requested members");
     check(coWinnerReopened.journal.startsWith("A:") && coWinnerReopened.best().equals(promoted.best()),
         "co-winner journal and winner group replay after restart");
+    int bulkStart = commits[0];
+    PhotoRanking bulk = coWinnerReopened.addCoWinners(List.of("写真C", "写真A", "写真B", "写真C"));
+    check(store.saveBulk(coWinnerReopened, bulk) && commits[0] == bulkStart + 1, "bulk result uses one commit");
+    PhotoRanking bulkReopened = new RankingStore(preferences).load(requested);
+    check(disk.size() == 1 && bulkReopened.journal.startsWith("A:"), "existing key and format");
+    check(Set.copyOf(bulkReopened.best()).equals(Set.copyOf(requested)), "bulk winners survive reopen");
+    check(!store.saveBulk(coWinnerReopened, bulk), "stale confirmation cannot replace a newer journal");
+    check(store.saveBulk(bulkReopened, bulkReopened), "unchanged confirmation succeeds");
+    check(commits[0] == bulkStart + 1 && store.load(requested).journal.equals(bulkReopened.journal),
+        "stale and unchanged confirmations do not write");
     check(store.save(best), "legacy best-only journal remains writable");
     check(store.load(requested).bestOnly(), "best-only history still reads after full-rank history");
     disk.put(legacyKey.toString(), "invalid");

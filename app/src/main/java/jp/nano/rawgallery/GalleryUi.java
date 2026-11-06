@@ -171,6 +171,10 @@ final class GalleryUi {
   static void bottomControls(LinearLayout root, int first) { bottomControls(root, first, PANEL); }
 
   static void bottomControls(LinearLayout root, int first, int background) {
+    bottomControls(root, first, background, .48f);
+  }
+
+  static void bottomControls(LinearLayout root, int first, int background, float heightFraction) {
     Context c = root.getContext();
     LinearLayout controls = new LinearLayout(c); controls.setOrientation(LinearLayout.VERTICAL);
     controls.setBackgroundColor(background);
@@ -183,7 +187,7 @@ final class GalleryUi {
         android.graphics.Rect visible = new android.graphics.Rect();
         getWindowVisibleDisplayFrame(visible);
         int available = visible.height() > 0 ? visible.height() : getResources().getDisplayMetrics().heightPixels;
-        int cap = Math.min(MeasureSpec.getSize(height), (int) (available * .48f));
+        int cap = Math.min(MeasureSpec.getSize(height), (int) (available * heightFraction));
         super.onMeasure(width, MeasureSpec.makeMeasureSpec(cap, MeasureSpec.AT_MOST));
       }
     };
