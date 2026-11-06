@@ -212,3 +212,5 @@ Issue #55の[4状態の参照・実機比較](loupe55-fullstates-comparison.png)
 ## USBカメラ取り込み（Issue #87）
 
 [参照HTML](loupe-camera-import.html)は、未接続、初回設定、取り込み中・結果、履歴移行の状態を扱う。対象契約は[USBカメラ取り込み](../camera-import-contract.md)。Loupeで変更するフォルダは端末の保存先。通知許可は設定後に案内する。HTMLのデータは合成で、AndroidのUSB動作の確認とは区別する。
+
+[カメラタブの参照HTML](loupe-camera-tab.html)はライブラリ最下段の接続時、取り込み中、選択中と切断後を扱う。タップで取り込み設定を開き、長押しで原本を保持したまま取り込む。OS許可と初回設定が必要な場合は取り込み前に表示する。

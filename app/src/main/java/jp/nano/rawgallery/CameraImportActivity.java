@@ -38,6 +38,7 @@ import java.util.List;
 import java.util.concurrent.Executors;
 
 public final class CameraImportActivity extends Activity {
+    static final String START_IMPORT_KEEP_ORIGINALS = "start_import_keep_originals";
     private static final int PICK_DB = 401;
     private static final java.util.concurrent.Executor IO = Executors.newSingleThreadExecutor();
     private static final ImportProgress PROGRESS = ImportProgress.INSTANCE;
@@ -161,8 +162,20 @@ public final class CameraImportActivity extends Activity {
         super.onDestroy();
     }
 
-    private UsbDevice connected() {
-        return getSystemService(UsbManager.class).getDeviceList().values().stream()
+    @Override protected void onPostResume() {
+        super.onPostResume();
+        if (getIntent().getBooleanExtra(START_IMPORT_KEEP_ORIGINALS, false)) {
+            getIntent().removeExtra(START_IMPORT_KEEP_ORIGINALS);
+            startFromScreen(true);
+        }
+    }
+
+    private UsbDevice connected() { return connected(this); }
+
+    static UsbDevice connected(android.content.Context context) {
+        UsbManager manager = context.getSystemService(UsbManager.class);
+        if (manager == null) return null;
+        return manager.getDeviceList().values().stream()
                 .filter(CameraUsb::supported)
                 .sorted(java.util.Comparator.<UsbDevice, Boolean>comparing(d -> !CameraUsb.knownCamera(d))
                         .thenComparing(UsbDevice::getDeviceName))
@@ -211,17 +224,20 @@ public final class CameraImportActivity extends Activity {
         migrate.setEnabled(!active && !starting && !migrating);
     }
 
-    private void startFromScreen() {
+    private void startFromScreen() { startFromScreen(false); }
+
+    private void startFromScreen(boolean keepOriginals) {
+        if (PROGRESS.getActive() || starting || migrating || permission != null) return;
         UsbDevice device = connected();
         if (device == null) return;
         connectionFailure = null;
-        if (getSystemService(UsbManager.class).hasPermission(device)) prepareImport(device);
+        if (getSystemService(UsbManager.class).hasPermission(device)) prepareImport(device, keepOriginals);
         else {
             try {
                 permission = CameraUsb.request(this, device, granted -> {
                     permission = null;
                     renderStatus();
-                    if (granted) prepareImport(device);
+                    if (granted) prepareImport(device, keepOriginals);
                     else { connectionFailure = "USBの使用が許可されませんでした"; renderStatus(); }
                 });
             } catch (RuntimeException failure) {
@@ -231,7 +247,7 @@ public final class CameraImportActivity extends Activity {
         }
     }
 
-    private void prepareImport(UsbDevice device) {
+    private void prepareImport(UsbDevice device, boolean keepOriginals) {
         if (!settings.getBoolean("configured", false)) {
             String[] types = {"JPEG", "RAW", "動画"};
             boolean[] checked = {true, true, true};
@@ -250,6 +266,10 @@ public final class CameraImportActivity extends Activity {
                 launch(device, false);
             }));
             dialog.show();
+            return;
+        }
+        if (keepOriginals) {
+            launch(device, false);
             return;
         }
         IO.execute(() -> {

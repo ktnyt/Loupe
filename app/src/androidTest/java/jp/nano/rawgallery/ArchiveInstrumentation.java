@@ -30,6 +30,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   }
   private boolean shareHistoryTest, shareHistoryScreenTest, shareHistoryHandoffTest, shareHistoryCallbackTest;
   private boolean shareHistoryRestartSeed, shareHistoryRestartVerify;
+  private boolean cameraTabsTest;
   private boolean shareToggleTest, galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest, viewerLookTest, viewerLookUiTest, viewerRawLookTest;
   private boolean photoEditTest, lookTimingRaw, lookTimingJpeg;
   private boolean consistencyTest, syncControlsTest, tagDetailTest, resultTest, resultTalkBack;
@@ -124,6 +125,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     actionLabelsTest = args != null && "action-labels".equals(args.getString("mode"));
     comparisonLabelsTest = args != null && "comparison-labels".equals(args.getString("mode"));
     albumTagsTest = args != null && "album-tags".equals(args.getString("mode"));
+    cameraTabsTest = args != null && "camera-tabs".equals(args.getString("mode"));
     tabsTest = args != null && "library-tabs".equals(args.getString("mode"));
     positionTest = args != null && "gallery-position".equals(args.getString("mode"));
     burstTest = args != null && "burst".equals(args.getString("mode"));
@@ -213,6 +215,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if (actionLabelsTest) { results.putString("stream", ActionLabelChecks.run(this)); finish(-1, results); return; }
       if (comparisonLabelsTest) { results.putString("stream", ComparisonLabelChecks.run(this)); finish(-1, results); return; }
       if (albumTagsTest) { results.putString("stream", AlbumTagEntryChecks.run(this)); finish(-1, results); return; }
+      if (cameraTabsTest) { results.putString("stream", CameraTabsChecks.run(this)); finish(-1, results); return; }
       if (tabsTest) { results.putString("stream", LibraryTabsChecks.run(this)); finish(-1, results); return; }
       if (bulkWinnerTest) { results.putString("stream", BurstBulkWinnerChecks.run(this,tagWidth,tagFont)); finish(-1, results); return; }
       if (coWinnerTest) { results.putString("stream", BurstCoWinnerChecks.run(this,tagWidth,tagFont)); finish(-1, results); return; }
