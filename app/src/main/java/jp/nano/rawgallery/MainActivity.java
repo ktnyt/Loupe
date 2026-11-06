@@ -421,6 +421,8 @@ public final class MainActivity extends DiagnosticActivity {
     DiagnosticLog.use(previous);
   }
 
+  private String burstSavedNotice;
+
   private void burstDetail() {
     DiagnosticLog.event("screen.burstDetail", burstRequest);
     grid = null;
@@ -444,6 +446,8 @@ public final class MainActivity extends DiagnosticActivity {
     FrameLayout.LayoutParams badge = new FrameLayout.LayoutParams(-2, dp(28), Gravity.TOP | Gravity.START);
     badge.setMargins(dp(12), dp(12), dp(12), 0);
     stage.addView(rank, badge);
+    TextView notice=label("",14,TEXT);notice.setMinHeight(dp(48));notice.setGravity(Gravity.CENTER_VERTICAL);notice.setPadding(dp(14),dp(8),dp(14),dp(8));android.graphics.drawable.GradientDrawable noticeBackground=GalleryUi.shape(this,0xf01c1c1f,24);noticeBackground.setStroke(dp(1),0xff3a3a3f);notice.setBackground(noticeBackground);notice.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);notice.setVisibility(View.GONE);
+    FrameLayout.LayoutParams np=new FrameLayout.LayoutParams(-1,-2,Gravity.TOP);np.setMargins(dp(16),dp(48),dp(16),0);stage.addView(notice,np);
     hero.setOnClickListener(v -> showPhoto(burstMembers.get(burstPosition)));
     HorizontalScrollView stripScroll = new HorizontalScrollView(this);
     stripScroll.setHorizontalScrollBarEnabled(false);
@@ -465,23 +469,39 @@ public final class MainActivity extends DiagnosticActivity {
       DiagnosticLog.event("burst.select", burstRequest, "position", burstPosition);
       int member = burstMembers.get(burstPosition);
       PhotoRepository.Photo photo = photos.get(member);
+      notice.setVisibility(View.GONE);
       previews.select(burstPosition);
       hero.setContentDescription(photo.name + "、タップで写真を拡大");
       int bestPosition=0;
+      String winners="";
+      boolean tied=false;
       String rankNumber="",rankDescription="順位が未決定";
       StatusView.Symbol rankSymbol=StatusView.Symbol.UNKNOWN;
       try {
         PhotoRanking saved=rankingFor(burstMembers);
-        if(saved.done()){for(int i=0;i<burstMembers.size();i++)if(saved.best().contains(ArchiveStore.key(photos.get(burstMembers.get(i))))){bestPosition=i+1;break;}rankNumber=saved.rankOf(ArchiveStore.key(photo))+"位";rankDescription=rankNumber+"、順位決定済み";rankSymbol=StatusView.Symbol.COMPLETE;}
+        if(saved.done()){
+          List<String> positions=new ArrayList<>();
+          int[] ranks=new int[burstMembers.size()];
+          for(int i=0;i<burstMembers.size();i++){
+            ranks[i]=saved.rankOf(ArchiveStore.key(photos.get(burstMembers.get(i))));
+            if(ranks[i]==1)positions.add(Integer.toString(i+1));
+          }
+          winners=String.join("・",positions);bestPosition=Integer.parseInt(positions.get(0));tied=positions.size()>1;
+          previews.ranks(ranks);
+          int number=saved.rankOf(ArchiveStore.key(photo));
+          rankNumber=(number==1&&tied?"同率":"")+number+"位";
+          rankDescription=rankNumber+"、順位決定済み";rankSymbol=StatusView.Symbol.COMPLETE;
+        }
         else if(saved.decisions()>0){rankDescription="順位決めの途中";rankSymbol=StatusView.Symbol.PAUSED;}
       }catch(Exception e){rankDescription="順位を読み込めません";rankSymbol=StatusView.Symbol.FAILED;}
       rank.setVisibility(rankSymbol==StatusView.Symbol.COMPLETE?View.VISIBLE:View.GONE);
       rank.setText(rankNumber);rank.setContentDescription(rankDescription);
-      boolean winner="1位".equals(rankNumber);rank.setTextColor(winner?0xff241800:Color.WHITE);
+      boolean winner="1位".equals(rankNumber)||"同率1位".equals(rankNumber);rank.setTextColor(winner?0xff241800:Color.WHITE);
       rank.setBackground(GalleryUi.shape(this,winner?0xfff5b947:0xa8000000,14));
       rankState.setVisibility(rankSymbol==StatusView.Symbol.UNKNOWN?View.GONE:View.VISIBLE);
       RankingUi.state(rankState,rankSymbol,bestPosition);
-      rankState.setContentDescription(rankSymbol==StatusView.Symbol.COMPLETE?"順位決定済み、1位は"+bestPosition+"枚目":rankDescription);
+      if(rankSymbol==StatusView.Symbol.COMPLETE)rankState.setText(winners+"枚目");
+      rankState.setContentDescription(rankSymbol==StatusView.Symbol.COMPLETE?"順位決定済み、1位は"+winners+"枚目"+(tied?"、同率":""):rankDescription);
       heading.setContentDescription("連写 "+burstMembers.size()+"枚、"+rankDescription);
     };
     selection[0] = update;
@@ -507,22 +527,47 @@ public final class MainActivity extends DiagnosticActivity {
         button("選択", () -> { selecting = true; bestOnly = true; gallery(); }),button("その他",this::photoMenu)),8);
     root.addView(new RankingUi.Screen(this,header,stage,controls,true),new LinearLayout.LayoutParams(-1,0,1));
     update.run();
+    if(burstSavedNotice!=null){notice.setText("✓  "+burstSavedNotice);burstSavedNotice=null;notice.setVisibility(View.VISIBLE);notice.postDelayed(()->notice.setVisibility(View.GONE),4000);}
   }
 
   private void chooseCurrentBest() {
-    new GalleryUi.Sheet(this).setTitle("この写真を1位にしますか？")
-        .setMessage("この連写の結果を1位と残り同率2位で保存します。")
-        .setPositiveButton("1位にする", (d, w) -> {
+    try {
+      PhotoRanking saved=rankingFor(burstMembers);
+      List<Integer> members=List.copyOf(burstMembers);
+      String current=ArchiveStore.key(photos.get(members.get(burstPosition)));
+      int position=burstPosition, screen=generation;
+      List<String> winners=new ArrayList<>();
+      if(saved.done())for(int i=0;i<members.size();i++)if(saved.best().contains(ArchiveStore.key(photos.get(members.get(i)))))winners.add((i+1)+"枚目");
+      boolean canAdd=saved.done()&&!saved.best().contains(current);
+      boolean tiedWinner=saved.done()&&saved.best().contains(current)&&saved.best().size()>1;
+      RankingStore store=rankingStore;
+      new BurstBestSheet(this,canAdd,tiedWinner,(position+1)+"枚目。いまの1位："+String.join("・",winners),(together,done)->{
+        long request=DiagnosticLog.id();DiagnosticLog.event("ranking.direct.start",request,"together",together?1:0,"count",saved.ids.size());
+        actions.execute(()->{
+          boolean success=false;
           try {
-            PhotoRanking saved = rankingFor(burstMembers);
-            String winner = ArchiveStore.key(photos.get(burstMembers.get(burstPosition)));
-            PhotoRanking next = new PhotoRanking(saved.ids, "B:");
-            while (!next.done()) next = next.choose(next.upper().equals(winner));
-            if (!rankingStore.save(next)) { feedback(StatusView.Symbol.FAILED,"順位を保存できませんでした",this::chooseCurrentBest,"1位にする"); return; }
-            rankCache.clear();
-            gallery();
-          } catch (Exception e) { feedback(StatusView.Symbol.FAILED,"順位を保存できませんでした",this::chooseCurrentBest,"1位にする"); }
-        }).setNegativeButton("キャンセル", null).show();
+            PhotoRanking next;
+            if(together)next=saved.addCoWinner(current);
+            else{next=new PhotoRanking(saved.ids,"B:");while(!next.done())next=next.choose(next.upper().equals(current));}
+            success=store.save(next);
+          }catch(Exception ignored){}
+          // SharedPreferences may publish new memory before reporting a disk failure.
+          if(!success)try{store.save(saved);}catch(Exception ignored){}
+          final boolean persisted=success;
+          DiagnosticLog.event(persisted?"ranking.direct.saved":"ranking.direct.failed",request);
+          main.post(()->{
+            if(isDestroyed())return;
+            if(persisted)rankCache.clear();
+            done.accept(persisted);
+            if(persisted&&generation==screen&&members.equals(burstMembers)&&burstPosition==position){
+              burstSavedNotice=together?"同率1位に追加しました":"1位にしました";gallery();
+              root.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener(){public boolean onPreDraw(){root.getViewTreeObserver().removeOnPreDrawListener(this);if(root.isHardwareAccelerated())root.getViewTreeObserver().registerFrameCommitCallback(()->DiagnosticLog.event("ranking.direct.frame",request));return true;}});
+              root.invalidate();
+            }
+          });
+        });
+      }).show();
+    }catch(Exception e){feedback(StatusView.Symbol.FAILED,"順位を読み込めませんでした",this::chooseCurrentBest,"再試行");}
   }
 
   private PhotoRanking rankingFor(List<Integer> members) throws IOException {

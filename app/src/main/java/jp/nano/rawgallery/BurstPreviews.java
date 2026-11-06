@@ -25,6 +25,8 @@ final class BurstPreviews {
   private int selected = -1, version;
   private boolean heroReady, stripBusy;
   private boolean heroFailed;
+  private int[] ranks;
+  private final List<TextView> stars = new ArrayList<>();
   private int dp(Context c, int value) { return Math.round(value * c.getResources().getDisplayMetrics().density); }
   BurstPreviews(Context c, ImageView hero, FrameLayout stage, LinearLayout strip,
       StatusView progress, Button retry, List<PhotoRepository.Photo> photos, Loader loader,
@@ -49,6 +51,7 @@ final class BurstPreviews {
       cell.addView(text,new FrameLayout.LayoutParams(-1,-1)); labels.add(text);
       StatusView spin = new StatusView(c);
       cell.addView(spin,new FrameLayout.LayoutParams(dp(c,48),dp(c,48),Gravity.CENTER)); spinners.add(spin);
+      TextView star=new TextView(c);star.setText("★");star.setTextSize(10);star.setTextColor(0xff241800);star.setGravity(Gravity.CENTER);star.setBackground(GalleryUi.shape(c,0xfff5b947,5));star.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);star.setVisibility(View.GONE);cell.addView(star,new FrameLayout.LayoutParams(dp(c,16),dp(c,16),Gravity.TOP|Gravity.END));stars.add(star);
       LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(c,56),dp(c,48)); lp.setMargins(0,0,0,0);
       strip.addView(cell,lp); cell.setOnClickListener(v -> choose.accept(n));
       cell.setFocusable(true);
@@ -64,6 +67,7 @@ final class BurstPreviews {
     });}
     render();
   }
+  void ranks(int[] values){ranks=values.clone();render();}
   private int currentPosition() { return Integer.parseInt(position.getTag().toString()); }
   void select(int index) {
     if (!active.getAsBoolean() || selected==index) return;
@@ -124,7 +128,10 @@ final class BurstPreviews {
       }
       String status=state==0?"待機中":state==1?"読み込み中":state==2?"表示済み":"読み込めませんでした";
       View cell=(View)images.get(i).getParent();
-      cell.setContentDescription((i+1)+"枚目、"+status+(i==selected?"、表示中":""));
+      String rank="";
+      if(ranks!=null){int winners=0;for(int value:ranks)if(value==1)winners++;rank="、"+(ranks[i]==1&&winners>1?"同率":"")+ranks[i]+"位";}
+      stars.get(i).setVisibility(ranks!=null&&ranks[i]==1?View.VISIBLE:View.GONE);
+      cell.setContentDescription((i+1)+"枚目"+rank+"、"+status+(i==selected?"、表示中":""));
       android.graphics.drawable.GradientDrawable border=GalleryUi.shape(cell.getContext(),Color.TRANSPARENT,6);
       border.setStroke(dp(cell.getContext(),2),i==selected?Color.WHITE:state==3?0xffff8a7a:Color.TRANSPARENT);
       ((FrameLayout)cell).setForeground(new android.graphics.drawable.InsetDrawable(border,0,dp(cell.getContext(),4),0,dp(cell.getContext(),4)));

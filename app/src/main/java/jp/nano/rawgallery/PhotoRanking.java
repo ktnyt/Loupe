@@ -90,6 +90,21 @@ public final class PhotoRanking {
     return done() ? List.copyOf(groups.get(0)) : List.of();
   }
 
+  /** Promote one member without demoting winners or reordering the remaining rank groups. */
+  public PhotoRanking addCoWinner(String id) {
+    if (!ids.contains(id)) throw new IllegalArgumentException("Unknown photo");
+    if (!done()) throw new IllegalStateException("Ranking is unfinished");
+    if (best().contains(id)) return this;
+    Map<String, Integer> ranks = new HashMap<>();
+    for (String member : ids) ranks.put(member, member.equals(id) ? 1 : rankOf(member));
+    PhotoRanking result = new PhotoRanking(ids, "A:");
+    while (!result.done()) {
+      int comparison = Integer.compare(ranks.get(result.upper()), ranks.get(result.lower()));
+      result = comparison == 0 ? result.tie() : result.choose(comparison < 0);
+    }
+    return result;
+  }
+
   public int rankOf(String id) {
     int rank = 1;
     for (List<String> group : groups) {
