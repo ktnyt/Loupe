@@ -28,7 +28,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     if ((tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || viewerLookTest || viewerLookUiTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
     if(viewerLookTest&&activity instanceof RawEditActivity)ViewerLookChecks.rawEditActivityLaunches++;
   }
-  private boolean shareHistoryTest;
+  private boolean shareHistoryTest, shareHistoryScreenTest, shareHistoryHandoffTest, shareHistoryCallbackTest;
   private boolean shareToggleTest, galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest, viewerLookTest, viewerLookUiTest, viewerRawLookTest;
   private boolean photoEditTest, lookTimingRaw, lookTimingJpeg;
   private boolean consistencyTest, syncControlsTest, tagDetailTest, resultTest, resultTalkBack;
@@ -73,6 +73,13 @@ public final class ArchiveInstrumentation extends Instrumentation {
   public void onCreate(Bundle args) {
     super.onCreate(args);
     shareHistoryTest = args != null && "share-history".equals(args.getString("mode"));
+    shareHistoryScreenTest = args != null && "share-history-screen".equals(args.getString("mode"));
+    shareHistoryHandoffTest = args != null && "share-history-handoff".equals(args.getString("mode"));
+    shareHistoryCallbackTest = args != null && "share-history-callback".equals(args.getString("mode"));
+    if (shareHistoryScreenTest) {
+      tagWidth = Integer.parseInt(args.getString("width", "400"));
+      tagFont = Float.parseFloat(args.getString("font", "1.0"));
+    }
     confidenceUiTest=args!=null&&"tag-confidence".equals(args.getString("mode"));
     confidenceStoreTest=args!=null&&"confidence-store".equals(args.getString("mode"));
     indexSignatureTest = args != null && "index-signature".equals(args.getString("mode"));
@@ -154,6 +161,21 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if(confidenceStoreTest){results.putString("stream",ConfidenceStoreChecks.run(context));finish(-1,results);return;}
       if (indexSignatureTest) { results.putString("stream", IndexSignatureChecks.run(context)); finish(-1, results); return; }
       if (indexApplyRaceTest) { results.putString("stream", IndexApplyRaceChecks.run(this)); finish(-1, results); return; }
+      if (shareHistoryScreenTest) {
+        results.putString("stream", ShareHistoryScreenChecks.run(this, tagWidth, tagFont));
+        finish(-1, results);
+        return;
+      }
+      if (shareHistoryHandoffTest) {
+        results.putString("stream", ShareHistoryHandoffChecks.run(this));
+        finish(-1, results);
+        return;
+      }
+      if (shareHistoryCallbackTest) {
+        results.putString("stream", ShareHistoryCallbackChecks.run(this));
+        finish(-1, results);
+        return;
+      }
       if (shareHistoryTest) { String storeResult=ShareHistoryChecks.run(context); runOnMainSync(()->ShareHistoryUiChecks.run(context)); results.putString("stream", storeResult+"PASS share-history UI: narrow tiles, font scaling, AX, noninteractive badges\n"); finish(-1, results); return; }
       if (importLatencyTest) { results.putString("stream", ImportLatencyChecks.run(this, importInterruptionTest, importPauseTest, importDeferredTest)); finish(-1, results); return; }
       if(sortDimensionsSpecified)validateSortDimensions(context);
