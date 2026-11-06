@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="camera_import_title">USB camera import</string>
+    <string name="camera_import_notif_channel">Import</string>
+    <string name="camera_import_notif_connecting">Connecting to camera…</string>
+    <string name="camera_import_notif_attempting">Trying to connect to the camera (attempt %d, waiting up to 30 s)…</string>
+    <string name="camera_import_notif_waiting_camera">Waiting for the camera to respond (attempt %d)…</string>
+    <string name="camera_import_notif_waiting_busy">The camera is busy with another connection. Waiting for it to finish…</string>
+    <string name="camera_import_notif_waiting_replug">Camera not responding. Replugging the cable often fixes this (waiting, attempt %d). The import will continue automatically</string>
+    <string name="camera_import_notif_open_failed">Could not open the camera. Re-select the USB mode (PTP/MTP) on the camera; if that does not help, power-cycle the camera</string>
+    <string name="camera_import_notif_stalled_all">The camera did not respond. Re-plug the cable or power-cycle the camera, then try again</string>
+    <string name="camera_import_usb_permission_denied">USB access was denied. Reconnect and allow access.</string>
+    <string name="camera_import_notif_progress">%1$s: importing %2$d/%3$d</string>
+    <string name="camera_import_notif_done">Imported %1$d, skipped %2$d (%3$.1f s)</string>
+    <string name="camera_import_notif_done_nothing">No new photos or videos (%d already imported)</string>
+    <string name="camera_import_notif_done_partial">Imported %1$d, failed %2$d</string>
+    <string name="camera_import_notif_aborted">Cable disconnected. Imported %d — the rest will continue next time</string>
+    <string name="camera_import_notif_read_error">Card read failed (imported %d). Reconnect the camera or check the connection, then try again</string>
+    <string name="camera_import_notif_busy">An import is already running</string>
+    <string name="camera_import_notif_detached_cancel">Cancelled because the camera was disconnected</string>
+    <string name="camera_import_notif_deleted_suffix">. Deleted %d from the camera</string>
+    <string name="camera_import_notif_delete_failed_suffix">. Could not delete from the camera</string>
+    <string name="camera_import_notif_delete_remained_suffix">. %d of them still remain on the camera (some cameras do not persist deletions)</string>
+    <string name="camera_import_notif_resurrected_suffix">. %d previously deleted files have reappeared on the camera; they are already imported and will be skipped</string>
+    <string name="camera_import_notif_degraded_suffix">. Ran in degraded mode without some RAW queries; import again if RAW files are missing</string>
+</resources>

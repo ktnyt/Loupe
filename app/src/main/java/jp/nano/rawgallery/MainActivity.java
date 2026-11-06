@@ -1041,9 +1041,12 @@ public final class MainActivity extends DiagnosticActivity {
   private void galleryMenu() {
     DiagnosticLog.event("screen.galleryMenu", 0);
     MoreMenuUi.show(this,"設定とその他の操作",
-            new String[] {"クラウドと同期", "共有先の設定", "連写のまとめ方", "写真へのアクセス", "再読み込み", "写真のプレビュー", "処理の状況"},
+            new String[] {"クラウドと同期", "共有先の設定", "連写のまとめ方", "写真へのアクセス", "再読み込み", "写真のプレビュー", "処理の状況", "カメラから取り込む"},
             (d, which) -> {
               switch (which) {
+                case 7:
+                  startActivity(new Intent(this, CameraImportActivity.class));
+                  break;
                 case 6:
                   startActivity(new Intent(this, DashboardActivity.class));
                   break;

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- product-id は列挙せず vendor-id のみ。将来機種を追加コストなしで含める (仕様書 4.1) -->
+    <usb-device vendor-id="1972" />  <!-- 0x07B4 OM Digital Solutions / Olympus -->
+    <usb-device vendor-id="1242" />  <!-- 0x04DA Panasonic -->
+</resources>
