@@ -131,6 +131,23 @@ final class ShareHistoryStore extends SQLiteOpenHelper {
     return List.copyOf(result);
   }
 
+  /** One snapshot for rebinding visible photos; callers perform disk I/O off the UI thread. */
+  synchronized java.util.Map<String, List<Entry>> snapshot() {
+    java.util.Map<String, List<Entry>> mutable = new java.util.HashMap<>();
+    try (Cursor cursor = getReadableDatabase().query("history",
+        new String[] {"photo", "package", "label", "handed_off"}, null, null,
+        null, null, "handed_off DESC, package ASC")) {
+      while (cursor.moveToNext()) {
+        mutable.computeIfAbsent(cursor.getString(0), key -> new ArrayList<>())
+            .add(new Entry(cursor.getString(1), cursor.getString(2), cursor.getLong(3)));
+      }
+    }
+    java.util.Map<String, List<Entry>> result = new java.util.HashMap<>();
+    for (java.util.Map.Entry<String, List<Entry>> entry : mutable.entrySet())
+      result.put(entry.getKey(), List.copyOf(entry.getValue()));
+    return java.util.Map.copyOf(result);
+  }
+
   private static void deleteSession(SQLiteDatabase db, String id) {
     db.delete("session_photos", "session=?", new String[] {id});
     db.delete("sessions", "id=?", new String[] {id});

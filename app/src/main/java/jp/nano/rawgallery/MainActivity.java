@@ -1733,11 +1733,21 @@ public final class MainActivity extends DiagnosticActivity {
             ArrayList<Uri> uris = new ArrayList<>();
             for (File file : prepared.files)
               uris.add(Uri.parse("content://jp.nano.rawgallery.share/" + file.getName()));
+            ArrayList<String> historyKeys = new ArrayList<>();
+            for (PhotoRepository.Photo photo : selection) historyKeys.add(ArchiveStore.key(photo));
+            String pendingSession;
+            try (ShareHistoryStore history = new ShareHistoryStore(getApplicationContext())) {
+              pendingSession = history.begin(historyKeys, System.currentTimeMillis());
+            } catch (RuntimeException unavailable) { pendingSession = null; }
+            final String historySession = pendingSession;
             String type = prepared.mimeType;
             String action = uris.size() == 1 ? Intent.ACTION_SEND : Intent.ACTION_SEND_MULTIPLE;
             main.post(
                 () -> {
-                  if (isDestroyed() || attempt != shareAttempt) return;
+                  if (isDestroyed() || attempt != shareAttempt) {
+                    ShareHistoryReceiver.cancelLater(getApplicationContext(), historySession);
+                    return;
+                  }
                   shareProgress.dismiss();
                   Intent send =
                       new Intent(action)
@@ -1764,14 +1774,32 @@ public final class MainActivity extends DiagnosticActivity {
                       }
                     }
                     if (!supported) {
+                      ShareHistoryReceiver.cancelLater(getApplicationContext(), historySession);
                       feedback(StatusView.Symbol.FORMAT,"この共有先は選んだ画像形式に対応していません。共有先の形式を変更してください。",this::editTargets,"共有先の設定");
                       return;
                     }
                     send.setComponent(component);
                   }
                   try {
-                    startActivity(target == null ? Intent.createChooser(send, "写真を共有") : send);
-                  } catch (ActivityNotFoundException e) {
+                    if (target == null) {
+                      if (historySession == null) {
+                        startActivity(Intent.createChooser(send, "写真を共有"));
+                        ShareHistoryReceiver.failed(getApplicationContext());
+                      } else {
+                        android.app.PendingIntent callback = ShareHistoryReceiver.callback(this, historySession);
+                        try {
+                          startActivity(Intent.createChooser(send, "写真を共有", callback.getIntentSender()));
+                        } catch (RuntimeException launchFailure) {
+                          callback.cancel();
+                          throw launchFailure;
+                        }
+                      }
+                    } else {
+                      startActivity(send);
+                      ShareHistoryReceiver.recordLater(getApplicationContext(), historySession, send.getComponent());
+                    }
+                  } catch (ActivityNotFoundException | SecurityException e) {
+                    ShareHistoryReceiver.cancelLater(getApplicationContext(), historySession);
                     feedback(StatusView.Symbol.NO_APP,"共有先が見つかりません。共有先の設定を変更してください。",this::editTargets,"共有先の設定");
                   }
                 });

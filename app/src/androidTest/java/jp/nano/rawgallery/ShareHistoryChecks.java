@@ -21,6 +21,7 @@ final class ShareHistoryChecks {
         check(store.complete(store.begin(List.of("a"), 300), "example.first", "Renamed", 400), "reshare");
         check(store.history("a").size() == 1, "dedup app");
         check(store.history("a").get(0).label.equals("Renamed"), "updated label");
+        check(store.history("a").get(0).handedOffAt == 400, "event timestamp retained");
         check(store.complete(store.begin(List.of("a"), 500), "example.second", "Second", 600), "second app");
         check(store.history("a").size() == 2, "multiple apps");
         check(store.history("a").get(0).packageName.equals("example.second"), "recent first");
