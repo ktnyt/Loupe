@@ -30,7 +30,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   }
   private boolean shareHistoryTest, shareHistoryScreenTest, shareHistoryHandoffTest, shareHistoryCallbackTest;
   private boolean shareHistoryRestartSeed, shareHistoryRestartVerify;
-  private boolean shareToggleTest, galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest, viewerLookTest, viewerLookUiTest, viewerRawLookTest;
+  private boolean shareCapacityTest, shareToggleTest, galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest, viewerLookTest, viewerLookUiTest, viewerRawLookTest;
   private boolean photoEditTest, lookTimingRaw, lookTimingJpeg;
   private boolean consistencyTest, syncControlsTest, tagDetailTest, resultTest, resultTalkBack;
   private boolean dashboardTalkBackTest;
@@ -95,6 +95,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     bulkWinnerTest = args != null && "burst-bulk-winners".equals(args.getString("mode"));
     sortTest = bulkWinnerTest || coWinnerTest || (args != null && "sort-naming".equals(args.getString("mode")));
     shareScreenTest=args!=null&&"share-screen".equals(args.getString("mode"));
+    shareCapacityTest=args!=null&&"share-capacity".equals(args.getString("mode"));
     viewerScreenTest=args!=null&&"viewer-screen".equals(args.getString("mode"));
     viewerLookTest=args!=null&&"viewer-look".equals(args.getString("mode"));
     viewerLookUiTest=args!=null&&"viewer-look-ui".equals(args.getString("mode"));
@@ -104,7 +105,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     lookTimingJpeg=args!=null&&"viewer-look-timing-jpeg".equals(args.getString("mode"));
     shareToggleTest=args!=null&&"share-toggle".equals(args.getString("mode"));
     galleryTalkBack=args!=null&&"gallery-screen-talkback".equals(args.getString("mode"));
-    galleryScreenTest=shareToggleTest||shareScreenTest||viewerScreenTest||galleryTalkBack||(args!=null&&"gallery-screen".equals(args.getString("mode")));
+    galleryScreenTest=shareCapacityTest||shareToggleTest||shareScreenTest||viewerScreenTest||galleryTalkBack||(args!=null&&"gallery-screen".equals(args.getString("mode")));
     resultTalkBack=args!=null&&"ranking-result-talkback".equals(args.getString("mode"));
     resultTest=resultTalkBack||(args!=null&&"ranking-result".equals(args.getString("mode")));
     tagDetailTest=args!=null&&"tag-detail".equals(args.getString("mode"));
@@ -190,6 +191,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if (importLatencyTest) { results.putString("stream", ImportLatencyChecks.run(this, importInterruptionTest, importPauseTest, importDeferredTest)); finish(-1, results); return; }
       if(sortDimensionsSpecified)validateSortDimensions(context);
       if(shareScreenTest){results.putString("stream",ShareScreenChecks.run(this,tagWidth));finish(-1,results);return;}
+      if(shareCapacityTest){results.putString("stream",ShareCapacityUiChecks.run(this,tagWidth,tagFont));finish(-1,results);return;}
       if(photoEditTest){results.putString("stream",PhotoEditChecks.run(this));finish(-1,results);return;}
       if(viewerRawLookTest){results.putString("stream",ViewerRawLookChecks.run(this));finish(-1,results);return;}
       if(lookTimingRaw||lookTimingJpeg){results.putString("stream",ViewerLookTimingChecks.run(this,lookTimingRaw));finish(-1,results);return;}
