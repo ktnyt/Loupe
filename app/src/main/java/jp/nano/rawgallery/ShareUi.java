@@ -61,15 +61,36 @@ final class ShareUi {
       },0,1,android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);button.setText(label);actions.addView(button,new LinearLayout.LayoutParams(-1,-2));add(actions,action(c,"選択に戻る",false,this::dismiss),0,8,0,0);
     }
   }
+  static final class OverLimit extends Sheet {
+    OverLimit(Context c,int count,boolean raw,long bytes,Runnable alternative){
+      super(c,title(count,raw));
+      LinearLayout actions=state(this,false,"1回の共有は512 MiBまでです。写真を減らしてください。");
+      TextView amount=text(c,(raw?"元の形式 ":"JPEG ")+ShareCapacity.format(bytes)+" / 512 MiB",13,18,0xffffb4a8);
+      amount.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_ASSERTIVE);add(actions,amount,8,0,8,8);
+      if(alternative!=null)actions.addView(action(c,raw?"JPEGで共有":"元の形式で共有",true,()->{dismiss();alternative.run();}),new LinearLayout.LayoutParams(-1,-2));
+      add(actions,action(c,"選択に戻る",false,this::dismiss),0,8,0,0);
+    }
+  }
   /** Reserve a fixed check slot beside the centered, wrapping format label. */
   static final class FormatButton extends Button {
     final Paint check=new Paint(3);
+    ShareCapacity.Result capacity;
+    void capacity(String label,ShareCapacity.Result value){
+      capacity=value;setText(label+"\n"+value.amount()+" MiB");setEnabled(value.actionable());
+      setContentDescription(label+"。"+value.description());requestLayout();invalidate();
+    }
     FormatButton(Context c,String label,Runnable chosen){super(c);setAllCaps(false);setText(label);setContentDescription(label);setTextSize(14);setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));setIncludeFontPadding(false);setLineHeight(Math.round(getTextSize()*20/14));setMinWidth(0);setMinimumWidth(0);setMinHeight(dp(c,48));setMinimumHeight(dp(c,48));setPadding(dp(c,28),dp(c,4),dp(c,8),dp(c,4));setOnClickListener(v->{GalleryUi.feedback(v);try(DiagnosticLog.Scope ignored=DiagnosticLog.span("action.button")){chosen.run();}});setAccessibilityDelegate(new View.AccessibilityDelegate(){public void onInitializeAccessibilityNodeInfo(View host,android.view.accessibility.AccessibilityNodeInfo info){super.onInitializeAccessibilityNodeInfo(host,info);info.setClassName("android.widget.RadioButton");info.setCheckable(true);info.setChecked(host.isSelected());}});}
     protected void onMeasure(int w,int h){super.onMeasure(w,h);int lines=getLayout()==null?1:getLayout().getLineCount();setMeasuredDimension(getMeasuredWidth(),resolveSizeAndState(Math.max(dp(getContext(),48),Math.round(dp(getContext(),8)+lines*getTextSize()*20/14)),h,0));}
     protected void onDraw(Canvas canvas){android.text.Layout layout=getLayout();if(layout==null)return;Context c=getContext();float width=0;for(int i=0;i<layout.getLineCount();i++)width=Math.max(width,layout.getLineWidth(i));float left=(getWidth()-dp(c,20)-width)/2;
       if(isSelected()){int saved=canvas.save();canvas.translate(left,getHeight()/2f-dp(c,8));canvas.scale(dp(c,16)/24f,dp(c,16)/24f);check.setStyle(Paint.Style.STROKE);check.setStrokeWidth(2.2f);check.setStrokeCap(Paint.Cap.ROUND);check.setStrokeJoin(Paint.Join.ROUND);check.setColor(getCurrentTextColor());Path path=new Path();path.moveTo(5,12.5f);path.lineTo(9.5f,17);path.lineTo(19,7.5f);canvas.drawPath(path,check);canvas.restoreToCount(saved);}
       Paint paint=getPaint();paint.setColor(getCurrentTextColor());float lineHeight=getTextSize()*20/14;float baseline=(getHeight()-layout.getLineCount()*lineHeight)/2+(lineHeight-paint.ascent()-paint.descent())/2;
-      for(int i=0;i<layout.getLineCount();i++){String line=getText().subSequence(layout.getLineStart(i),layout.getLineEnd(i)).toString().replace("\n","");canvas.drawText(line,left+dp(c,20)+(width-paint.measureText(line))/2,baseline+i*lineHeight,paint);}
+      float size=paint.getTextSize();int subtitle=getText().toString().lastIndexOf('\n')+1;
+      for(int i=0;i<layout.getLineCount();i++){
+        boolean secondary=capacity!=null&&layout.getLineStart(i)>=subtitle;
+        paint.setTextSize(secondary?size*12/14:size);paint.setColor(secondary&&!isEnabled()?0xffff8a7a:getCurrentTextColor());
+        String line=getText().subSequence(layout.getLineStart(i),layout.getLineEnd(i)).toString().replace("\n","");canvas.drawText(line,left+dp(c,20)+(width-paint.measureText(line))/2,baseline+i*lineHeight,paint);
+      }
+      paint.setTextSize(size);paint.setColor(getCurrentTextColor());
     }
   }
   /** Wrapping rows keep every item reachable without shrinking text or hit targets. */
@@ -82,10 +103,14 @@ final class ShareUi {
   static final class Menu extends Sheet {
     final List<ImageView> previews=new ArrayList<>();
     final List<PhotoRepository.Photo> previewPhotos=new ArrayList<>();
-    final Button jpeg,original;
+    final FormatButton jpeg,original;
     final TextView explanation;
+    final List<PhotoRepository.Photo> photos;
+    final List<ShareTargets.Target> targets;
+    ShareCapacityChecks.Snapshot budget;
     boolean raw;
     Menu(Context c,List<PhotoRepository.Photo> photos,List<ShareTargets.Target> targets,int cloud,Set<String> best,BiConsumer<Boolean,ShareTargets.Target> chosen){super(c,photos.size()+"枚を共有");
+      this.photos=List.copyOf(photos);this.targets=List.copyOf(targets);
       Wrap thumbs=new Wrap(c,6);int shown=Math.min(photos.size(),photos.size()>6?5:6);
       for(int i=0;i<shown;i++){PhotoRepository.Photo photo=photos.get(i);FrameLayout tile=new FrameLayout(c);tile.setBackground(GalleryUi.shape(c,0xff26262a,6));tile.setClipToOutline(true);ImageView image=new ImageView(c);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);tile.addView(image,new FrameLayout.LayoutParams(-1,-1));previews.add(image);previewPhotos.add(photo);if(best.contains(photo.uri.toString())){View star=new View(c){final Paint p=new Paint(3);protected void onDraw(Canvas canvas){float d=getResources().getDisplayMetrics().density;canvas.save();canvas.scale(d,d);p.setStyle(Paint.Style.FILL);p.setColor(0xfff5b947);canvas.drawRoundRect(0,0,16,16,4,4,p);p.setColor(0xff241800);Path path=new Path();for(int j=0;j<10;j++){double a=-Math.PI/2+j*Math.PI/5;float radius=j%2==0?5.5f:2.4f;float x=8+(float)Math.cos(a)*radius,y=8+(float)Math.sin(a)*radius;if(j==0)path.moveTo(x,y);else path.lineTo(x,y);}path.close();canvas.drawPath(path,p);canvas.restore();}};FrameLayout.LayoutParams sp=new FrameLayout.LayoutParams(dp(c,16),dp(c,16),Gravity.BOTTOM|Gravity.LEFT);sp.setMargins(dp(c,3),0,0,dp(c,3));tile.addView(star,sp);}thumbs.addView(tile,new ViewGroup.LayoutParams(dp(c,52),dp(c,52)));}
       if(photos.size()>shown){TextView more=text(c,"+"+(photos.size()-shown),13,18,GalleryUi.TEXT);more.setGravity(Gravity.CENTER);more.setBackground(GalleryUi.shape(c,0xff26262a,6));thumbs.addView(more,new ViewGroup.LayoutParams(dp(c,52),dp(c,52)));}thumbs.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);add(content,thumbs,24,12,24,4);
@@ -94,9 +119,41 @@ final class ShareUi {
       explanation=text(c,"",12,18,GalleryUi.MUTED);add(content,explanation,24,6,24,0);setRaw(false);
       Wrap destinations=new Wrap(c,4);for(ShareTargets.Target target:targets)destinations.addView(destination(c,target.label,target.raw?"元の形式":"JPEG",false,()->{dismiss();chosen.accept(target.raw,target);}),new ViewGroup.LayoutParams(dp(c,84),-2));destinations.addView(destination(c,"共有先を選ぶ","",true,()->{dismiss();chosen.accept(raw,null);}),new ViewGroup.LayoutParams(dp(c,84),-2));add(content,destinations,12,16,12,0);add(content,action(c,"閉じる",false,this::dismiss),16,12,16,0);
     }
-    void setRaw(boolean value){raw=value;for(Button button:new Button[]{jpeg,original}){boolean selected=button==original?raw:!raw;button.setSelected(selected);button.setStateDescription(selected?"選択中":"未選択");button.setTextColor(selected?0xff111111:GalleryUi.TEXT);button.setBackground(GalleryUi.shape(getContext(),selected?GalleryUi.TEXT:0,24));button.invalidate();}explanation.setText(raw?"撮影した形式のまま · RAW / JPEG":"RAWの場合は、ファイル内のJPEG画像を使います");}
+    void setRaw(boolean value){
+      if(budget!=null&&!(value?budget.original:budget.jpeg).actionable())return;
+      raw=value;renderFormat();
+    }
+    void capacity(ShareCapacityChecks.Snapshot value){
+      budget=value;jpeg.capacity("JPEGで共有",value.jpeg);original.capacity("元の形式で共有",value.original);
+      if(!(raw?value.original:value.jpeg).actionable()&&(raw?value.jpeg:value.original).actionable())raw=!raw;
+      renderFormat();
+    }
+    private void renderFormat(){
+      for(Button button:new Button[]{jpeg,original}){
+        boolean selected=button==original?raw:!raw;button.setSelected(selected);
+        button.setStateDescription((selected?"選択中":"未選択")+(button.isEnabled()?"":"。使えません"));
+        button.setTextColor(!button.isEnabled()?0xff626b72:selected?0xff111111:GalleryUi.TEXT);
+        button.setBackground(GalleryUi.shape(getContext(),selected&&button.isEnabled()?GalleryUi.TEXT:0,24));button.invalidate();
+      }
+      explanation.setText(raw?"撮影した形式のまま · RAW / JPEG":"RAWの場合は、ファイル内のJPEG画像を使います");
+      if(budget!=null){
+        ViewGroup destinations=(ViewGroup)content.getChildAt(content.getChildCount()-2);
+        for(int i=0;i<destinations.getChildCount();i++){
+          View item=destinations.getChildAt(i);boolean format=i<targets.size()?targets.get(i).raw:raw;
+          ShareCapacity.Result capacity=format?budget.original:budget.jpeg;
+          item.setEnabled(capacity.actionable());item.setAlpha(item.isEnabled()?1f:.38f);
+          String name=i<targets.size()?targets.get(i).label:"共有先を選ぶ";
+          item.setContentDescription(name+"。"+(format?"元の形式":"JPEG")+"。"+capacity.description());
+          item.setStateDescription(item.isEnabled()?null:"使えません");
+          LinearLayout column=(LinearLayout)item;
+          TextView size=(TextView)column.findViewWithTag("share-target-capacity");
+          if(size==null){size=text(getContext(),"",12,16,GalleryUi.MUTED);size.setTag("share-target-capacity");size.setGravity(Gravity.CENTER);size.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);column.addView(size,new LinearLayout.LayoutParams(-1,-2));}
+          size.setText(capacity.state==ShareCapacity.State.UNKNOWN?"確認して共有":capacity.amount()+" MiB");
+        }
+      }
+    }
   }
-  static View destination(Context c,String label,String format,boolean chooser,Runnable clicked){LinearLayout item=column(c);item.setPadding(0,dp(c,4),0,dp(c,4));item.setGravity(Gravity.CENTER_HORIZONTAL);item.setMinimumHeight(dp(c,84));item.setClickable(true);item.setFocusable(true);item.setContentDescription(label+(format.isEmpty()?"。形式は上の選択":"（保存した形式："+format+"）"));item.setOnClickListener(v->{GalleryUi.feedback(v);clicked.run();});View circle=new View(c){final Paint p=new Paint(3);protected void onDraw(Canvas canvas){float d=getResources().getDisplayMetrics().density;canvas.save();canvas.scale(d,d);p.setColor(0xff2a2a2e);p.setStyle(Paint.Style.FILL);canvas.drawCircle(28,28,28,p);if(chooser){ActionIcon icon=new ActionIcon("共有",24f/26);icon.setTintList(android.content.res.ColorStateList.valueOf(GalleryUi.TEXT));icon.setBounds(16,16,40,40);icon.draw(canvas);}else{p.setColor(GalleryUi.TEXT);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1.7f);canvas.drawRoundRect(18,18,38,33,2,2,p);canvas.drawLine(28,33,28,38,p);canvas.drawLine(23,38,33,38,p);}canvas.restore();}};item.addView(circle,new LinearLayout.LayoutParams(dp(c,56),dp(c,56)));TextView name=text(c,label,12,16,GalleryUi.TEXT);name.setGravity(Gravity.CENTER);LinearLayout.LayoutParams np=new LinearLayout.LayoutParams(-1,-2);np.topMargin=dp(c,6);item.addView(name,np);if(!format.isEmpty()){TextView sub=text(c,format,12,16,GalleryUi.MUTED);sub.setGravity(Gravity.CENTER);LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(-1,-2);sp.topMargin=dp(c,6);item.addView(sub,sp);}for(int i=0;i<item.getChildCount();i++)item.getChildAt(i).setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);return item;}
+  static View destination(Context c,String label,String format,boolean chooser,Runnable clicked){LinearLayout item=column(c);item.setPadding(0,dp(c,4),0,dp(c,4));item.setGravity(Gravity.CENTER_HORIZONTAL);item.setMinimumHeight(dp(c,84));item.setClickable(true);item.setFocusable(true);item.setContentDescription(label+(format.isEmpty()?"。形式は上の選択":"（保存した形式："+format+"）"));item.setOnClickListener(v->{if(!v.isEnabled())return;GalleryUi.feedback(v);clicked.run();});View circle=new View(c){final Paint p=new Paint(3);protected void onDraw(Canvas canvas){float d=getResources().getDisplayMetrics().density;canvas.save();canvas.scale(d,d);p.setColor(0xff2a2a2e);p.setStyle(Paint.Style.FILL);canvas.drawCircle(28,28,28,p);if(chooser){ActionIcon icon=new ActionIcon("共有",24f/26);icon.setTintList(android.content.res.ColorStateList.valueOf(GalleryUi.TEXT));icon.setBounds(16,16,40,40);icon.draw(canvas);}else{p.setColor(GalleryUi.TEXT);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1.7f);canvas.drawRoundRect(18,18,38,33,2,2,p);canvas.drawLine(28,33,28,38,p);canvas.drawLine(23,38,33,38,p);}canvas.restore();}};item.addView(circle,new LinearLayout.LayoutParams(dp(c,56),dp(c,56)));TextView name=text(c,label,12,16,GalleryUi.TEXT);name.setGravity(Gravity.CENTER);LinearLayout.LayoutParams np=new LinearLayout.LayoutParams(-1,-2);np.topMargin=dp(c,6);item.addView(name,np);if(!format.isEmpty()){TextView sub=text(c,format,12,16,GalleryUi.MUTED);sub.setGravity(Gravity.CENTER);LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(-1,-2);sp.topMargin=dp(c,6);item.addView(sub,sp);}for(int i=0;i<item.getChildCount();i++)item.getChildAt(i).setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);return item;}
   static final class CloudIcon extends android.graphics.drawable.Drawable {
     final Paint p=new Paint(3);final int size;
     CloudIcon(Context c){size=dp(c,16);setBounds(0,0,size,size);}
