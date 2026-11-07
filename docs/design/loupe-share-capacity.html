@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Loupe 共有の容量</title><style>
+:root{--ink:#EDEDEA;--muted:#A9A9A4;--k:1;--w:400px;--h:844px}
+*{box-sizing:border-box}
+body{margin:0;background:#1E1E20;color:var(--ink);font-family:'Noto Sans JP',system-ui,sans-serif;font-size:15px;line-height:1.6}
+.wrap{max-width:1500px;padding:28px 24px 64px}
+h1.pg{margin:0;font-size:24px;line-height:1.4}
+.lead{margin:6px 0 0;color:#D6D6D2;font-size:14px}
+.note{margin:10px 0 0;padding:10px 14px;border-radius:10px;border:1px solid #4A4A50;background:#161618;font-size:13.5px}
+.controls{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin:10px 0 0}
+.lb{color:var(--muted);font-size:12.5px;margin-right:6px}
+.seg{display:inline-flex;flex-wrap:wrap;background:#2A2A2E;border-radius:22px;padding:2px}
+.seg button{background:none;border:0;color:var(--ink);font:inherit;font-size:13px;min-height:44px;padding:0 12px;border-radius:20px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:#EDEDEA;color:#111}
+.hw{background:#2A2A2E;border:1px solid #4A4A50;color:var(--ink);font:inherit;font-size:13px;font-weight:600;min-height:44px;padding:0 14px;border-radius:22px;cursor:pointer}
+.hw[aria-pressed="true"]{background:#EDEDEA;color:#111}
+.wrap :focus-visible{outline:2px solid #8AB4F8;outline-offset:2px}
+.stage{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start;margin-top:14px}
+.col>h2{margin:0 0 8px;font-size:14px;font-weight:600}
+.col>h2 small{color:var(--muted);font-weight:400}
+.side{flex:1;min-width:300px;display:flex;flex-direction:column;gap:10px}
+.box{background:#141416;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.6;overflow-wrap:anywhere}
+.okc{color:#9FE0B5}.ngc{color:#F2A7AB}
+table.t{border-collapse:collapse;width:100%;font-size:13.5px;line-height:1.6}
+table.t th,table.t td{border-bottom:1px solid #2E2E32;padding:6px 10px 6px 0;text-align:left;vertical-align:top}
+table.t th{color:var(--muted);font-weight:500;font-size:12px}
+h2.sec{margin:32px 0 8px;font-size:19px}
+.spec ul{margin:0;padding-left:20px}.spec li{margin:3px 0;font-size:14px}
+.tscroll{overflow-x:auto}
+.tg{display:inline-block;padding:0 8px;border-radius:10px;font-size:12px;color:#111;background:#F5A623;white-space:nowrap;margin:0 2px 2px 0}
+.tg.q{background:#8AB4F8}.tg.k{background:#9FE0B5}
+.orig,.dev{position:relative;overflow:hidden;transform:translateZ(0);outline:1px solid #3A3A3F;background:#0F0F10;color:#EDEDEA}
+.orig{width:390px;height:844px}
+.dev{width:var(--w);height:var(--h);font-family:'Noto Sans JP',system-ui,sans-serif;font-size:calc(15px*var(--k));line-height:calc(22px*var(--k));-webkit-font-smoothing:antialiased}
+.dev button{font-family:inherit;color:inherit}
+.dev *{text-overflow:clip}
+.dev :focus{outline:none}
+.dev :focus-visible{outline:2px solid #EDEDEA;outline-offset:2px}
+.dev.showchg [data-chg]{outline:2px solid #F5A623;outline-offset:-2px}
+.dev.showchg [data-chg="new"]{outline:2px dashed #F5A623}
+.spin{animation:spin 1s linear infinite;transform-origin:50% 50%}
+@keyframes spin{to{transform:rotate(360deg)}}
+.rm .spin{animation:none}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}}
+.caller{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:20px;color:#A9A9A4;text-align:center;background:#0F0F10;z-index:9;font-size:calc(14px*var(--k));line-height:1.5}
+.caller button{min-height:48px;padding:10px 18px;border-radius:24px;background:#26262A;border:1px solid #3A3A3F;color:#EDEDEA;font:inherit;cursor:pointer}
+.synth{position:absolute;right:8px;top:6px;font-size:10px;color:#8A8A85;border:1px dashed #3A3A3F;border-radius:6px;padding:0 6px;z-index:8;line-height:1.6;pointer-events:none;background:#0F0F10}
+.f12{font-size:calc(12px*var(--k));line-height:calc(16px*var(--k))}
+.f13{font-size:calc(13px*var(--k));line-height:calc(18px*var(--k))}
+.f14{font-size:calc(14px*var(--k));line-height:calc(20px*var(--k))}
+.f15{font-size:calc(15px*var(--k));line-height:calc(22px*var(--k))}
+.f28{font-size:calc(28px*var(--k));line-height:calc(36px*var(--k))}
+.mut{color:#A9A9A4}.num{font-variant-numeric:tabular-nums}
+.scr{position:absolute;inset:0;overflow-y:auto}
+.scr::-webkit-scrollbar{width:0}
+.panel{position:absolute;left:0;right:0;bottom:0;background:#0F0F10;border-top:1px solid #222226;padding:10px 16px 20px;display:flex;flex-direction:column;gap:8px;z-index:3}
+.pri{background:#EDEDEA;border:0;padding:6px 16px;margin:0;color:#111 !important;cursor:pointer;min-height:52px;border-radius:26px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:calc(15px*var(--k));line-height:calc(20px*var(--k));font-weight:600;text-align:center}
+.out{background:none;border:1px solid #3A3A3F;padding:4px 16px;margin:0;cursor:pointer;min-height:48px;border-radius:24px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:calc(14px*var(--k));line-height:calc(18px*var(--k));font-weight:500;text-align:center}
+.dock{display:grid;margin:0 -8px}
+.db{background:none;border:0;padding:6px 4px;margin:0;cursor:pointer;min-height:64px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:calc(12px*var(--k));line-height:calc(16px*var(--k));font-weight:500;text-align:center}
+.db[aria-disabled="true"]{color:#626B72}
+.db svg{width:24px;height:24px;flex-shrink:0}
+.dim{position:absolute;inset:0;background:rgba(0,0,0,.64);border:0;padding:0;margin:0;width:100%;cursor:default;z-index:5}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:#1C1C1F;border-radius:28px 28px 0 0;padding:8px 0 20px;display:flex;flex-direction:column;z-index:6}
+.sheet .hdl{display:block;width:32px;height:4px;border-radius:2px;background:#4A4A50;margin:4px auto 12px}
+.sheet h2{margin:0;padding:0 24px 4px;font-size:calc(20px*var(--k));line-height:calc(28px*var(--k));font-weight:600}
+.sheet .body{margin:4px 24px 0;font-size:calc(14px*var(--k));line-height:calc(21px*var(--k))}
+.sheet .acts{display:flex;flex-direction:column;gap:8px;padding:16px 16px 0}
+.sheet .it{background:none;border:0;padding:4px 24px;margin:0;cursor:pointer;width:100%;min-height:48px;display:flex;align-items:center;gap:16px;text-align:left;font-size:calc(15px*var(--k));line-height:calc(22px*var(--k))}
+.danger{background:none;border:1px solid #FF8A7A;padding:6px 16px;margin:0;color:#FF8A7A !important;cursor:pointer;min-height:52px;border-radius:26px;font-size:calc(15px*var(--k));line-height:calc(22px*var(--k));font-weight:600}
+.cancel{background:#EDEDEA;border:0;padding:6px 16px;margin:0;color:#111 !important;cursor:pointer;min-height:48px;border-radius:24px;font-size:calc(14px*var(--k));line-height:calc(20px*var(--k));font-weight:600}
+body.solo .wrap>*:not(.stage),body.solo .side,body.solo .col.o,body.solo .col>h2{display:none}
+#soloExit{display:none}
+body.solo #soloExit{display:inline-flex;position:fixed;right:16px;top:16px;z-index:20}
+
+.f16{font-size:calc(16px*var(--k));line-height:calc(20px*var(--k))}
+.f17{font-size:calc(17px*var(--k));line-height:calc(22px*var(--k))}
+.f20{font-size:calc(20px*var(--k));line-height:calc(28px*var(--k))}
+.cta{width:100%;min-height:64px;padding:6px 16px;border:0;border-radius:26px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;font-weight:500;font-size:calc(13px*var(--k));text-align:center;margin:0}
+.cta .ic{width:24px;height:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:visible}
+.cta .ic svg{flex-shrink:0}
+.cta .lbl{display:block;max-width:100%;line-height:24px;overflow-wrap:anywhere}
+.ablab{display:flex;align-items:center;justify-content:center;min-width:24px;min-height:24px;padding:2px 7px;border-radius:6px;background:rgba(15,15,16,.72);box-shadow:0 0 0 1px rgba(237,237,234,.45);color:#EDEDEA;font-weight:500;font-size:calc(13px*var(--k));line-height:calc(16px*var(--k))}
+.modes{margin:0;padding:4px;background:#19191B;border-radius:14px;display:grid;grid-template-columns:1fr 1fr;gap:4px}
+.mode{position:relative;min-height:64px;min-width:48px;padding:8px;margin:0;border-radius:10px;border:1px solid #3A3A3F;background:transparent;color:#EDEDEA;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;text-align:center}
+.mode[aria-checked="true"]{border:2px solid #EDEDEA;background:#26262A;padding:7px}
+.mode .nm{display:block;max-width:100%;font-weight:500;font-size:calc(13px*var(--k));line-height:calc(20px*var(--k));overflow-wrap:anywhere}
+.mode .ex{display:flex;align-items:center;gap:6px}
+.mode .ck{width:18px;height:18px;flex-shrink:0;border-radius:9px;border:2px solid #6B6B70;display:flex;align-items:center;justify-content:center}
+.mode[aria-checked="true"] .ck{background:#EDEDEA;border-color:#EDEDEA;color:#111}
+.mode .ck svg{width:12px;height:12px;display:none}
+.mode[aria-checked="true"] .ck svg{display:block}
+.rk{display:flex;align-items:center;gap:3px}
+.rk span{display:block;width:calc(16px*var(--k));height:calc(18px*var(--k));border-radius:5px;background:#34343A;color:#EDEDEA;font-size:calc(11px*var(--k));line-height:calc(18px*var(--k));font-weight:600;font-variant-numeric:tabular-nums;text-align:center}
+.rk span.r1{background:#EDEDEA;color:#111}
+.rk span.tie{width:auto;height:auto;background:none;display:flex;gap:1px;border-radius:5px;overflow:hidden}
+.rk .tie span{border-radius:0}
+[data-span]{grid-column:1/-1}
+[data-panel]>*{flex-shrink:0}
+.dev.showchg [data-fit]{outline:2px dashed #8AB4F8;outline-offset:-2px}
+.dev .sheet h2{color:#EDEDEA}
+.dev .db{color:#EDEDEA}
+.dev .db[aria-disabled="true"]{color:#626B72}
+.dev .two{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:10px;min-height:56px;padding:6px 16px;text-align:center;width:100%}
+.dev .two .tl{display:flex;flex-direction:column;align-items:center;min-width:0}
+.dev .two .m{font-weight:600;font-size:calc(15px*var(--k));line-height:calc(20px*var(--k));overflow-wrap:anywhere}
+.dev .two .c{font-weight:400;font-size:calc(12px*var(--k));line-height:calc(16px*var(--k));opacity:.85;overflow-wrap:anywhere}
+.dev .sheet .out.two{color:#EDEDEA;border-color:#6B6B70;border-radius:26px}
+.dev .two[aria-disabled="true"]{opacity:.55}
+.dev .two[data-saving]{opacity:1}
+.dev .cancel[aria-disabled="true"]{opacity:.45}
+.dev .toast{position:absolute;left:16px;right:16px;z-index:4;min-height:48px;padding:8px 14px;border-radius:24px;background:rgba(28,28,31,.94);box-shadow:0 0 0 1px #3A3A3F;display:flex;align-items:center;gap:8px;color:#EDEDEA}
+.dev .toast svg{flex-shrink:0}
+
+.dev .f24{font-size:calc(24px*var(--k));line-height:calc(32px*var(--k))}
+.dev .tile{border:0;padding:0;margin:0;cursor:pointer;position:relative;display:block;height:96px;overflow:hidden}
+.dev .rkS{position:absolute;width:20px;height:20px;border-radius:5px;background:#F5B947;color:#241800;display:flex;align-items:center;justify-content:center}
+.dev .rkN{position:absolute;min-height:20px;padding:0 6px;border-radius:10px;background:rgba(0,0,0,.62);color:#fff;display:flex;align-items:center;font-weight:500}
+.dev .ckOn{position:absolute;top:6px;left:6px;width:22px;height:22px;border-radius:11px;background:#4C8DF6;color:#fff;display:flex;align-items:center;justify-content:center}
+.dev .ckOff{position:absolute;top:6px;left:6px;width:22px;height:22px;box-sizing:border-box;border-radius:11px;border:2px solid rgba(255,255,255,.92);background:rgba(0,0,0,.28)}
+.dev .fchip{background:none;border:0;padding:0 4px;margin:0;cursor:pointer;min-height:48px;display:flex;align-items:center;flex-shrink:0}
+.dev .fchip>span{min-height:36px;box-sizing:border-box;padding:0 12px 0 8px;border-radius:8px;border:1px solid;display:flex;align-items:center;gap:4px;font-weight:500;white-space:nowrap}
+.dev .pill{display:inline-flex;align-items:center;gap:4px;min-height:28px;padding:0 8px 0 6px;border-radius:14px;background:#1F1F22;box-shadow:inset 0 0 0 1px #3A3A3F;color:#EDEDEA;font-weight:500;white-space:nowrap}
+.dev .swb{background:none;border:0;padding:0;margin:0;cursor:pointer;width:64px;height:48px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.dev .swt{position:relative;display:block;width:52px;height:32px;border-radius:16px;border:2px solid;box-sizing:border-box}
+.dev .swk{position:absolute;top:4px;width:20px;height:20px;border-radius:10px}
+.dev .bbtn{width:100%;min-height:48px;margin:0 0 8px;padding:4px 16px;border-radius:24px;background:none;border:1px solid #6B6B70;color:#EDEDEA;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;font-weight:600;font-size:calc(14px*var(--k));line-height:calc(20px*var(--k));text-align:center}
+.dev .bbtn span{overflow-wrap:anywhere}
+.dev .bbtn[aria-disabled="true"]{border-color:#2E2E32;color:#626B72}
+.dev .sbtn{background:none;border:1px solid #F5B947;padding:4px 12px;margin:0;color:#F5B947;cursor:pointer;min-height:48px;border-radius:24px;display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;text-align:center}
+.dev .shbtn{border:0;padding:4px 12px;margin:0;cursor:pointer;min-height:48px;border-radius:24px;display:flex;align-items:center;justify-content:center;gap:8px;font-weight:600;text-align:center}
+.dev .cth{display:flex;flex-wrap:wrap;gap:6px;padding:8px 24px 0}
+.dev .cth>span{width:40px;height:40px;border-radius:6px;position:relative;display:flex;align-items:flex-end;justify-content:flex-end}
+.dev .cth>span>span{margin:2px;padding:0 4px;border-radius:6px;background:rgba(0,0,0,.62);color:#fff}
+.dev .cth .more{background:#26262A;align-items:center;justify-content:center;color:#EDEDEA}
+.dev .nts{list-style:none;margin:8px 24px 0;padding:0;display:flex;flex-direction:column;gap:4px;color:#C9C9C4}
+.dev .nts li{display:flex;gap:6px;align-items:flex-start}
+.dev .nts svg{flex-shrink:0;margin-top:2px}
+.dev .toast{bottom:auto}
+
+.dev .g4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px}
+.dev .tile{background:#151517;isolation:isolate}
+.dev .bc{position:absolute;height:20px;padding:0 6px 0 4px;border-radius:10px;background:rgba(0,0,0,.62);display:flex;align-items:center;gap:3px;font-weight:500;color:#fff}
+.dev .stb{position:absolute;width:20px;height:20px;border-radius:5px;background:#F5B947;color:#241800;display:flex;align-items:center;justify-content:center}
+.dev .sb{position:absolute;z-index:1;isolation:isolate;display:flex;align-items:center;background:rgba(0,0,0,.62);pointer-events:none;white-space:nowrap}
+.dev .sbIn{animation:sbIn .18s ease-out}
+@keyframes sbIn{from{opacity:0}to{opacity:1}}
+.dev.rm .sbIn{animation:none}
+@media (prefers-reduced-motion:reduce){.dev .sbIn{animation:none}}
+.dev .ai{display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.dev .lookc{position:absolute;right:8px;top:8px;min-height:48px;min-width:48px;padding:0 14px 0 12px;border-radius:24px;border:1px solid #3A3A3F;background:rgba(0,0,0,.62);color:#EDEDEA;display:flex;align-items:center;gap:6px;cursor:pointer;z-index:2}
+.dev .f20{font-size:calc(20px*var(--k));line-height:calc(28px*var(--k))}
+.dev .dst{min-height:88px;border:0;background:none;color:#EDEDEA;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:6px;padding:4px;text-align:center}
+.dev .dic{width:52px;height:52px;border-radius:26px;background:#26262A;display:flex;align-items:center;justify-content:center}
+.dev .hr{display:flex;gap:12px;align-items:center;min-height:52px;padding:4px 0}
+.dev .kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px}.dev .kv dt,.dev .kv dd{margin:0}
+.dev .tbtn{font:inherit;font-size:calc(14px*var(--k));min-height:48px;padding:0 12px;border-radius:24px;border:1px solid #6B6B70;background:none;color:#EDEDEA;cursor:pointer;flex-shrink:0;font-weight:600}
+.dev .toast{flex-wrap:wrap}
+.dev .sys{position:absolute;inset:0;background:#202124;z-index:7;overflow-y:auto;display:flex;flex-direction:column}
+.dev .systag{align-self:flex-start;margin:6px 16px 0;font-size:10px;color:#9A9A95;border:1px dashed #4A4A50;border-radius:6px;padding:0 6px;line-height:1.6}
+.dev .pk{width:100%;min-height:56px;display:flex;align-items:center;gap:12px;background:none;border:0;border-radius:12px;padding:6px 8px;cursor:pointer;color:inherit}
+
+.pair{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start;margin-top:14px}
+.pair .col h2{margin:0 0 8px;font-size:14px;font-weight:600}
+.dev .pill{gap:4px}
+.dev .fmtb{border:0;padding:4px 8px;margin:0;cursor:pointer;min-height:48px;border-radius:24px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;font-weight:500;text-align:center}
+.dev .fmtb .fl{display:flex;align-items:center;gap:4px}
+.dev .dstb{background:none;border:0;padding:4px 0;margin:0;cursor:pointer;width:84px;min-height:48px;display:flex;flex-direction:column;align-items:center;gap:6px}
+.dev .dic{width:56px;height:56px;border-radius:28px;background:#2A2A2E;display:flex;align-items:center;justify-content:center}
+#base{pointer-events:none}
+body.clean #prop.showchg [data-chg]{outline:none}
+</style></head><body><div class="wrap">
+<h1 class="pg">Loupe — 選択と共有：1回の共有は 512 MiB まで（Issue #89）</h1>
+<p class="lead">左は採用済みの選択と共有（loupe-select-share.html に loupe-share-app-badges.html の印をのせたもの）、右は最小の変更です。右の画面で写真を選ぶ・外す、「連写は1位だけ共有」、［共有］、形式の切り替え、共有先と準備を試せます。左は同じ状態を元の決まりで出します（操作はできません）。</p>
+<div class="note"><b>参照用のモック（製品の画面の外の注意）。</b>写真は合成、サイズはダミーです（写真ごとに決まった値、または上の「合計（模擬）」）。クラウドの印がある写真は、選んだだけでは元を落とさないため、JPEG で渡すサイズは「準備で確認」になります。Android と Git、前のファイルは変更していません。</div>
+<div class="controls" role="group" aria-label="状態（模擬）"><span><span class="lb">状態（模擬）</span><span class="seg" id="oX"><button data-v="normal" aria-pressed="true">ふつう</button><button data-v="checking" aria-pressed="false">確認中</button><button data-v="failed" aria-pressed="false">測れなかった</button><button data-v="tooLarge" aria-pressed="false">超えた</button><button data-v="reduced" aria-pressed="false">選択を減らした</button><button data-v="bestOn" aria-pressed="false">1位だけをオン</button><button data-v="exact" aria-pressed="false">ちょうど 512</button><button data-v="over1" aria-pressed="false">512 MiB＋1バイト</button><button data-v="jpegOnly" aria-pressed="false">JPEG だけ収まる（メニュー）</button><button data-v="deferred" aria-pressed="false">クラウドの RAW・後で確認</button><button data-v="deferredMix" aria-pressed="false">端末＋クラウド</button><button data-v="deferredSheet" aria-pressed="false">後で確認（メニュー）</button><button data-v="deferredConfOver" aria-pressed="false">確定分で超えた＋クラウド</button><button data-v="cloudFailed" aria-pressed="false">クラウド＋端末で失敗</button><button data-v="unsorted" aria-pressed="false">未決定の連写＋超えた</button><button data-v="sheet" aria-pressed="false">メニュー・両方可</button></span></span></div><div class="controls" role="group" aria-label="サイズ（模擬）"><span><span class="lb">合計（模擬）</span><span class="seg" id="oSz"><button data-v="auto" aria-pressed="true">選択から計算</button><button data-v="exact" aria-pressed="false">JPEG 512／元 1,180</button><button data-v="over1" aria-pressed="false">JPEG 512＋1B</button><button data-v="jpegOnly" aria-pressed="false">JPEG 300／元 690</button><button data-v="big" aria-pressed="false">JPEG 640／元 1,530</button></span></span><span><span class="lb">端末の写真の測定</span><span class="seg" id="oMs"><button data-v="done" aria-pressed="true">済み</button><button data-v="check" aria-pressed="false">確認中</button><button data-v="failed" aria-pressed="false">失敗</button></span></span><span><span class="lb">クラウドの RAW の JPEG</span><span class="seg" id="oCl"><button data-v="deferred" aria-pressed="true">未確認（準備で確認）</button><button data-v="known" aria-pressed="false">確認済み</button></span></span><span><span class="lb">準備で確かめた結果</span><span class="seg" id="oPr"><button data-v="fit" aria-pressed="true">収まる</button><button data-v="over" aria-pressed="false">540 MiB で超える</button></span></span><span><span class="lb">連写は1位だけ</span><span class="seg" id="oBs"><button data-v="on" aria-pressed="true">オン</button><button data-v="off" aria-pressed="false">オフ</button></span></span></div><div class="controls"><span><span class="lb">幅</span><span class="seg" id="oW"><button data-v="320" aria-pressed="false">320dp</button><button data-v="369" aria-pressed="true">369dp</button><button data-v="400" aria-pressed="false">400dp</button></span></span><span><span class="lb">高さ</span><span class="seg" id="oH"><button data-v="640" aria-pressed="true">640dp</button><button data-v="844" aria-pressed="false">844dp</button></span></span><span><span class="lb">文字</span><span class="seg" id="oK"><button data-v="1" aria-pressed="true">1.0倍</button><button data-v="1.3" aria-pressed="false">1.3倍</button></span></span><button class="hw" id="hwBack" type="button">Android Back（模擬）</button></div>
+<div class="pair"><div class="col"><h2>元（採用済み）</h2><div class="dev" id="base"></div></div><div class="col"><h2>変更後</h2><div class="dev showchg" id="prop"></div></div>
+<div class="side"><div class="box" id="ax"></div><div class="box" id="chk"></div><div class="box" id="log"></div></div></div>
+<div id="live" aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)"></div>
+<section class="spec"><h2 class="sec">部品の仕様（Issue #89）</h2>
+<ul>
+<li><b>変えたのは2か所だけ</b>：選択の画面の札の行に容量の札を1つ足し、［共有］の有効・無効を決める条件を増やした。共有のメニューは、形式と保存した共有先ごとに決める。写真の列・クラウドと共有先の印・絞り込み・「連写は1位だけ共有」・［ソート］・下の操作の位置・間隔・色はそのまま。確認のダイアログは足さない。</li>
+<li><b>上限</b>：1回の共有は 512 MiB（536,870,912 バイト）まで。ちょうどは可。比べるのは実際に渡す写真（採用済みの決まり：順位が未決定の連写は対象外、決定済みの連写は「1位だけ」なら1位（同率を含む）、オフならすべて。見えない選択も含む）。</li>
+<li><b>形式ごとの状態</b>：確定して収まる（OK）・確定して超える（OVER）・後で確認（DEFERRED）。端末の写真はここで測る。測っている間（CHECKING）と測れなかったとき（FAILED）は入口を無効にする。</li>
+<li><b>後で確認</b>：クラウドの RAW は、元の形式のサイズは記録から分かるが、JPEG で渡すサイズは元を落とさないと分からない。選んだだけでは落とさない。JPEG は「確定した分 ＋ 未確認」になり、確定した分だけで 512 MiB を超えれば OVER、超えなければ DEFERRED。元の形式のサイズで JPEG を超過と判断しない。</li>
+<li><b>入口（［共有］）</b>：どれか1つの形式が OK か DEFERRED なら使える。すべての形式が OVER、または端末の写真が CHECKING／FAILED のときは無効。</li>
+<li><b>DEFERRED の形式</b>：メニューで使える。2行目「? MiB」、その形式の共有先に「確認して共有」。押すと既存の共有の準備（ここで元を落とす）でサイズを確かめ、収まれば渡す。超えたら渡さず「JPEG 540 / 512 MiB」と［元の形式で共有］（収まるときだけ）・［選択に戻る］。確かめたサイズはその後の表示に使う。収まると言い切る表示はしない。</li>
+<li>相手に残る古いコピーや Loupe のキャッシュは、この上限とは別。選択の画面にキャッシュの量は出さない。</li>
+</ul>
+<table class="t">
+<tr><th>入口の状態</th><th>容量の札（共有の対象の札の右）</th><th>［共有］</th><th>読み上げ（札）</th></tr>
+<tr><td>OK（どれかが収まる）</td><td>「130 / 512 MiB」（収まる形式のうち小さいほう）</td><td>有効</td><td>「共有の量 130 MiB、上限 512 MiB」</td></tr>
+<tr><td>ちょうど</td><td>「512 / 512 MiB」</td><td>有効</td><td>同上</td></tr>
+<tr><td>後で確認（収まる形式がなく、未確認がある）</td><td>「? / 512 MiB」（ふつうの色）</td><td>有効</td><td>「クラウドの写真のサイズは、共有の準備で確かめます。上限 512 MiB」</td></tr>
+<tr><td>確認中（端末）</td><td>回る印16＋「/ 512 MiB」</td><td>無効</td><td>「共有できる量を確認しています。確認が終わるまで共有は使えません」</td></tr>
+<tr><td>測れなかった（端末）</td><td>警告16＋「確認できません」（赤）</td><td>無効</td><td>「サイズを測れなかった写真があるため、共有は使えません。上限 512 MiB」</td></tr>
+<tr><td>超えた（すべての形式が確定して超える）</td><td>警告16＋「519 / 512 MiB」（赤）</td><td>無効</td><td>「共有できる量を超えています。519 MiB、上限 512 MiB。写真を減らすと共有できます」。ボタンは「共有、使えません。…」</td></tr>
+</table>
+<table class="t" style="margin-top:12px">
+<tr><th>部品</th><th>寸法・色</th></tr>
+<tr><td>容量の札</td><td>採用済みの札と同じ：高さ28・角丸14・左右 6／8・間4・地 #1F1F22・内側の線 1 #3A3A3F・13sp 500・数字は等幅。超えた・測れなかった：内側の線 1.5 #FF8A7A、文字 #FFB4A8、警告16。回る印16（減らす動きでは止める）</td></tr>
+<tr><td>［共有］の無効</td><td>採用済みの0枚のときと同じ：地 #26262A・文字 #626B72・aria-disabled。押しても何もしない。［ソート］は順位が未決定の連写があれば容量と関係なく有効（線と文字 #F5B947）</td></tr>
+<tr><td>メニューの形式</td><td>採用済みの切り替え（高さ48以上・角丸24・地 #26262A、選択中 #EDEDEA）に2行目 12sp：「120 MiB」／「? MiB」。超えた形式：文字 #626B72、2行目は警告12＋#FF8A7A、aria-disabled。開くとき、選んでいた形式が超えていれば使える形式に切り替える</td></tr>
+<tr><td>共有先</td><td>採用済み（幅84・丸56・地 #2A2A2E）。超えた形式の共有先（家族アルバム＝JPEG、PCへ転送＝元の形式、共有先を選ぶ＝上の形式）：丸の不透明度 .38、名前 #626B72、形式の文字 #FF8A7A＋警告、aria-disabled。DEFERRED の形式の共有先：有効のまま、3行目 12sp #A9A9A4「確認して共有」</td></tr>
+<tr><td>準備での超過</td><td>採用済みの準備の形（見出し「n枚を共有 · JPEG」）。13sp #FFB4A8＋警告16「JPEG 540 / 512 MiB」（role=alert）、［元の形式で共有］（地 #EDEDEA・高さ48）、［選択に戻る］（線）</td></tr>
+</table>
+<ul><li>未確認：実際のファイルサイズの取り方と時間、クラウドの元を落とす時間、TalkBack、Android の端末での見た目。</li></ul>
+</section></div>
+<script>(function(){
+  const O = { w: 369, h: 640, k: 1, rm: false, ld: 'ok', size: 'auto', meas: 'done', cloud: 'deferred', prepRes: 'fit' };
+  const SW = (p, w, sw) => '<svg width="' + w + '" height="' + w + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="' + (sw || 1.9) + '" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + p + '</svg>';
+  const STARP = 'M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z';
+  const G = {
+    burst: SW('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4.5 15.5V6.5a2 2 0 0 1 2-2h9"/>', 14, 2),
+    star: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="' + STARP + '"/></svg>',
+    cloud: SW('<path d="M7 18.5h10.5a3.5 3.5 0 0 0 .3-7A5.5 5.5 0 0 0 7.2 10 4.3 4.3 0 0 0 7 18.5z"/>', 14, 2),
+    check16: SW('<path d="M5 12.5l4.5 4.5L19 7.5"/>', 16, 2.2),
+    back: SW('<path d="M19 12H5M11 18l-6-6 6-6"/>', 24, 1.8), sel: SW('<circle cx="12" cy="12" r="8.5"/><path d="M8.3 12.3l2.6 2.6 4.9-5.2"/>', 24, 1.8),
+    tag: SW('<path d="M3.5 12.2V4.5a1 1 0 0 1 1-1h7.7l8.3 8.3a1 1 0 0 1 0 1.4l-7.3 7.3a1 1 0 0 1-1.4 0z"/><circle cx="8" cy="8" r="1.4"/>', 24, 1.8),
+    more: '<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5.5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="18.5" r="1.7"/></svg>',
+    prev: SW('<path d="M15 6l-6 6 6 6"/>', 24, 1.8), next: SW('<path d="M9 6l6 6-6 6"/>', 24, 1.8), zoom: SW('<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.4-4.4M11 8.5v5M8.5 11h5"/>', 24, 1.8),
+    edit: SW('<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>', 24, 1.8), info: SW('<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.8v.1"/>', 24, 1.8),
+    share: SW('<circle cx="18" cy="5.5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="18.5" r="2.5"/><path d="M8.2 10.8l7.6-4.1M8.2 13.2l7.6 4.1"/>', 24, 1.8),
+    share20: SW('<circle cx="18" cy="5.5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="18.5" r="2.5"/><path d="M8.2 10.8l7.6-4.1M8.2 13.2l7.6 4.1"/>', 20),
+    share14: SW('<circle cx="18" cy="5.5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="18.5" r="2.5"/><path d="M8.2 10.8l7.6-4.1M8.2 13.2l7.6 4.1"/>', 14, 2),
+    sort: SW('<rect x="4" y="3.5" width="16" height="7" rx="1.5"/><rect x="4" y="13.5" width="16" height="7" rx="1.5"/>', 18),
+    end: SW('<path d="M6 6l12 12M18 6L6 18"/>', 24, 1.8), all: SW('<rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M8.5 12.3l2.5 2.5 4.8-5"/>', 24, 1.8),
+    look: SW('<circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17" /><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/>', 20, 1.8),
+    bar: '<svg width="24" height="24" viewBox="0 0 26 26" fill="currentColor" aria-hidden="true"><rect x="4.5" y="14" width="4.4" height="7.5" rx="1"/><rect x="10.8" y="8.5" width="4.4" height="13" rx="1"/><rect x="17.1" y="4.5" width="4.4" height="17" rx="1"/></svg>',
+    starO: SW('<path d="' + STARP + '"/>', 18),
+    spin: (w) => '<svg width="' + w + '" height="' + w + '" viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke="rgba(255,255,255,0.18)"/><path class="spin" d="M12 4a8 8 0 0 1 8 8" stroke="#EDEDEA"/></svg>',
+    fail: (w) => SW('<path d="M12 4l9 15.5H3z"/><path d="M12 10v4.5M12 17.2v.1"/>', w),
+    fam: SW('<circle cx="9" cy="9" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="10" r="2.3"/><path d="M15.6 14.6A4.5 4.5 0 0 1 21 19"/>', 24, 1.8),
+    pc: SW('<rect x="3" y="4.5" width="18" height="12" rx="1.5"/><path d="M9 20h6M12 16.5V20"/>', 24, 1.8),
+    done: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" style="flex-shrink:0"><circle cx="12" cy="12" r="9.5" fill="#EDEDEA"/><path d="M7.8 12.3l2.8 2.8 5.6-5.8" fill="none" stroke="#111" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+  };
+  /* ===== ダミーのアプリ（パッケージ名で重複を除く） ===== */
+  const GLYPH = { house: '<path d="M5 11.5L12 5l7 6.5V19H5z"/>', mon: '<rect x="4" y="5.5" width="16" height="10" rx="1.2"/><path d="M9 19h6"/>', bub: '<path d="M5 6h14v9H10l-4 3.5V15H5z"/>', book: '<path d="M5 5h6a2 2 0 0 1 2 2v12a2 2 0 0 0-2-2H5zM19 5h-6"/><path d="M19 5v12h-6"/>', cloud: '<path d="M7 17.5h10a3.3 3.3 0 0 0 .3-6.6A5.2 5.2 0 0 0 7.3 9.6 4 4 0 0 0 7 17.5z"/>', lines: '<path d="M6 7h12M6 12h12M6 17h8"/>', heart: '<path d="M12 18.5s-6.5-4-6.5-8.3A3.4 3.4 0 0 1 12 8.6a3.4 3.4 0 0 1 6.5 1.6c0 4.3-6.5 8.3-6.5 8.3z"/>', gen: '<rect x="6" y="6" width="12" height="12" rx="3"/>' };
+  const APPS = {
+    'example.dummy.familyalbum': { name: 'ファミリーアルバム（ダミー）', c: '#3D8B6E', g: 'house' },
+    'example.dummy.pctransfer': { name: 'PC転送（ダミー）', c: '#4A6FA5', g: 'mon' },
+    'example.dummy.message': { name: 'メッセージ（ダミー）', c: '#2F8F57', g: 'bub' },
+    'example.dummy.photobook': { name: 'フォトブック工房（ダミー）', c: '#A85A1E', g: 'book' },
+    'example.dummy.longcloud': { name: 'とても長い名前のクラウドストレージ・バックアップ（ダミー）', c: '#6A4FB3', g: 'cloud' },
+    'example.dummy.memo': { name: 'メモ（ダミー）', c: '#8A7416', g: 'lines' },
+    'example.dummy.sns': { name: 'つぶやきSNS（ダミー）', c: '#B23A57', g: 'heart' },
+    'example.dummy.oldshare': { name: 'むかしの写真共有（ダミー）', c: '#5A5A60', g: 'gen' }
+  };
+  const INSTALLED = (p) => p !== 'example.dummy.oldshare' && !(N.removed || []).includes(p);
+  const CHOOSER = ['example.dummy.message', 'example.dummy.photobook', 'example.dummy.longcloud', 'example.dummy.memo', 'example.dummy.sns'];
+  function appIcon(p, sz, ring) { const a = APPS[p], gone = !INSTALLED(p); return '<span class="ai" style="width:' + sz + 'px;height:' + sz + 'px;border-radius:' + Math.round(sz * 0.28) + 'px;background:' + (gone ? '#3A3A3F' : a.c) + ';' + (ring ? 'box-shadow:0 0 0 1.5px rgba(12,12,13,.95);' : '') + 'color:' + (gone ? '#A9A9A4' : '#fff') + '">' + SW(GLYPH[gone ? 'gen' : a.g], Math.round(sz * 0.72), 2.2) + '</span>'; }
+  const appName = (r) => r.name + (INSTALLED(r.pkg) ? '' : '（使えないアプリ）');
+  /* ===== 合成の写真 ===== */
+  const BGS = ['#8D979E,#586065', '#34443A,#1C2419', '#A9C3D8,#69736A', '#7B5B45,#2A201B', '#C8B08A,#6E5A44', '#3A3F45,#8AB4F8', '#B6463C,#E9C46A', '#5D6B58,#C9A27E', '#1E2B42,#E9A86A', '#C9C3B8,#8A7F70'];
+  const BG = (i) => 'radial-gradient(13% 17% at ' + (32 + (i * 7) % 34) + '% 60%,rgba(237,226,205,.85) 0,rgba(237,226,205,.85) 96%,rgba(0,0,0,0) 100%),linear-gradient(' + (150 + i * 11) + 'deg,' + BGS[i % BGS.length] + ')';
+  /* タイル：単写真か連写（連写は代表の写真だけの記録を出す。ほかの写真の記録は合わせない） */
+  const T = [
+    { id: 'p1' }, { id: 'b1', burst: ['b1a', 'b1b', 'b1c', 'b1d', 'b1e'], win: ['b1c'] }, { id: 'p2', cloud: true }, { id: 'p3' },
+    { id: 'b2', burst: ['b2a', 'b2b', 'b2c', 'b2d'], win: ['b2a', 'b2d'], cloud: true }, { id: 'p4' }, { id: 'p5', cloud: true }, { id: 'b3', burst: ['b3a', 'b3b', 'b3c', 'b3d', 'b3e'], win: ['b3b'] },
+    { id: 'p6' }, { id: 'p7' }, { id: 'b4', burst: ['b4a', 'b4b', 'b4c', 'b4d', 'b4e', 'b4f'], win: [] }, { id: 'p8', cloud: true },
+    { id: 'p9' }, { id: 'p10', cloud: true }, { id: 'b5', burst: ['b5a', 'b5b', 'b5c', 'b5d'], win: ['b5d'] }, { id: 'p11' }
+  ];
+  T.forEach((t, i) => { t.i = i; t.rep = t.burst ? (t.win[0] || t.burst[0]) : t.id; });
+  const PH = {}; let pi = 0; T.forEach((t) => (t.burst || [t.id]).forEach((id) => { PH[id] = { id: id, bg: BG(pi++), name: 'LOUPE_' + id.toUpperCase() + '.ORF', time: '10月18日 13:' + String(10 + pi).padStart(2, '0') }; }));
+  /* 記録：写真ごと・新しい順・パッケージ名で重複なし（保存されたもの） */
+  const R = (pkg, at) => ({ pkg: pkg, name: APPS[pkg].name, at: at });
+  const SEED = () => ({
+    p1: [R('example.dummy.familyalbum', '11月2日 18:40')],
+    b1c: [R('example.dummy.message', '11月3日 09:12'), R('example.dummy.familyalbum', '11月2日 18:40')],
+    b1a: [R('example.dummy.sns', '10月30日 21:05')],
+    p3: [R('example.dummy.longcloud', '11月1日 08:30')],
+    b2a: [R('example.dummy.sns', '11月4日 20:11'), R('example.dummy.message', '11月4日 19:02'), R('example.dummy.photobook', '11月1日 12:00'), R('example.dummy.familyalbum', '10月29日 07:45'), R('example.dummy.pctransfer', '10月28日 22:10')],
+    p5: [R('example.dummy.oldshare', '10月20日 10:00'), R('example.dummy.familyalbum', '10月19日 09:00')],
+    p6: [R('example.dummy.photobook', '11月5日 15:20'), R('example.dummy.memo', '11月5日 15:01'), R('example.dummy.pctransfer', '11月2日 11:11')],
+    p8: [R('example.dummy.message', '11月5日 08:00')],
+    b5d: [R('example.dummy.pctransfer', '11月4日 10:10'), R('example.dummy.familyalbum', '11月3日 10:10')]
+  });
+  const fresh = () => ({ v: 'grid', sel: [], f: 'all', best: true, sheet: null, chooser: false, prep: null, ext: null, toast: null, pend: null, fresh: [], cur: 'p6', bcur: 0, btile: 1, caller: null, left: null, back: null, fmt: 'jpeg', removed: [] });
+  let N = fresh(), H = SEED(), SAVED = JSON.parse(JSON.stringify(H)), log = [], clock = 0, tmr = null, toastT = null, writes = 0, shares = 0;
+  const add = (x) => { log.unshift(x); log = log.slice(0, 16); };
+  const say = (x) => { const l = document.getElementById('live'); l.textContent = ''; setTimeout(() => { l.textContent = x; }, 30); };
+  const hist = (id) => H[id] || [];
+  const tw = document.createElement('canvas').getContext('2d');
+  const textW = (t, px) => { tw.font = '500 ' + px + 'px "Noto Sans JP", system-ui, sans-serif'; return tw.measureText(t).width; };
+  function axHist(id) { const h = hist(id); if (!h.length) return ''; const names = h.slice(0, 2).map(appName); return '、共有したアプリ ' + h.length + '件：' + names.join('、') + (h.length > 2 ? ' ほか' + (h.length - 2) + '件' : ''); }
+  /* ===== バッジ：小さく重なるアイコン＋残りの数（＋クラウド）。押せない（pointer-events:none） ===== */
+  function badge(id, o) {
+    const h = hist(id), cloud = !!o.cloud; if (!h.length && !cloud) return '';
+    const sz = o.sz, step = o.step, pad = o.pad, cpx = 12 * O.k;
+    const width = (k, cnt) => pad * 2 + (k ? sz + step * (k - 1) : 0) + (cnt ? (k ? 2 : 0) + textW('+' + cnt, cpx) + 1 : 0) + (cloud ? (k || cnt ? 3 : 0) + 14 : 0);
+    let k = Math.min(h.length, o.max), cnt = h.length - k;
+    while (k > 1 && width(k, h.length - k) > o.avail) { k--; }
+    cnt = h.length - k;
+    if (cloud && h.length && o.split && width(1, cnt) > o.avail) { /* 狭いとき：クラウドは元の位置のまま、アプリの札をその上へ */
+      const up = badge(id, Object.assign({}, o, { cloud: false, b: o.b + o.ph + 2, avail: o.split, split: 0 }));
+      return up + '<span class="sb" aria-hidden="true" data-cloudonly style="right:' + o.r + 'px;bottom:' + o.b + 'px;height:' + o.ph + 'px;border-radius:' + o.ph / 2 + 'px;padding:0 5px"><span data-cloud style="display:flex;color:#fff">' + G.cloud + '</span></span>';
+    }
+    if (k === 1 && cnt && width(1, cnt) > o.avail) cnt = 0;
+    const fresh = N.fresh.includes(id) && !O.rm;
+    const icons = h.slice(0, k).map((r, j) => '<span style="margin-left:' + (j ? -(sz - step) : 0) + 'px;position:relative;z-index:' + (10 - j) + ';display:flex">' + appIcon(r.pkg, sz, true) + '</span>').join('');
+    return '<span class="sb' + (fresh ? ' sbIn' : '') + '" aria-hidden="true" data-sb="' + id + '" data-k="' + k + '" data-cnt="' + cnt + '" style="right:' + o.r + 'px;bottom:' + o.b + 'px;height:' + o.ph + 'px;border-radius:' + o.ph / 2 + 'px;padding:0 ' + pad + 'px;gap:0">' + icons + (cnt ? '<span class="f12 num" style="margin-left:' + (k ? 2 : 0) + 'px;color:#fff;font-weight:600">+' + cnt + '</span>' : '') + (cloud ? '<span data-cloud style="display:flex;margin-left:' + (k || cnt ? 3 : 0) + 'px;color:#fff">' + G.cloud + '</span>' : '') + '</span>';
+  }
+  const tileW = () => (O.w - 6) / 4;
+  function tileBadge(t, inset) { const tw_ = tileW(); const star = t.burst && t.win.length; return badge(t.rep, { cloud: t.cloud, sz: 14, step: 10, pad: 3, ph: 20, max: 2, r: inset + 1, b: inset + 1, avail: tw_ - (inset + 1) - (star ? inset + 22 : inset), split: tw_ - (inset + 1) - inset }); }
+  function ldOf(t) { if (O.ld === 'ok') return 'ok'; if (O.ld === 'loading') return t.i % 3 === 1 ? 'loading' : 'ok'; return t.i % 4 === 2 ? 'failed' : 'ok'; }
+  function tileInner(t, on) {
+    const ld = ldOf(t), ins = on ? 14 : 4;
+    return '<span style="position:absolute;inset:' + (on ? '10px' : '0') + ';border-radius:' + (on ? '6px' : '0') + ';background:' + (ld === 'ok' ? PH[t.rep].bg : '#1B1B1E') + '"></span>' +
+      (ld === 'loading' ? '<span aria-hidden="true" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center">' + G.spin(20) + '</span>' : '') +
+      (ld === 'failed' ? '<span aria-hidden="true" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#FF8A7A">' + G.fail(20) + '</span>' : '') +
+      (t.burst ? '<span aria-hidden="true" class="f12 num bc" style="top:' + ins + 'px;right:' + ins + 'px">' + G.burst + '<span>' + t.burst.length + '</span></span>' : '') +
+      (t.burst && t.win.length ? '<span aria-hidden="true" class="stb" style="left:' + ins + 'px;bottom:' + ins + 'px">' + G.star + '</span>' : '') + tileBadge(t, on ? 14 : 4);
+  }
+  function tileLabel(t, on) { const ld = ldOf(t); return (t.burst ? '連写 ' + t.burst.length + '枚、' + (t.win.length ? '順位決定済み' : '順位が未決定') : '写真') + (t.cloud ? '、クラウドにあります' : '') + (ld === 'loading' ? '、読み込み中' : ld === 'failed' ? '、読み込めませんでした' : '') + axHist(t.rep) + (on != null ? '、' + (on ? '選択中' : '未選択') : ''); }
+  const visT = () => T.filter((t) => N.f === 'all' || (N.f === 'best' && t.burst && t.win.length) || (N.f === 'unsel' && t.burst && !t.win.length) || (N.f === 'done' && t.burst && t.win.length));
+  const chip = (on, label, f) => '<button data-filter="' + f + '" aria-pressed="' + on + '" class="fchip" style="color:' + (on ? '#111' : '#EDEDEA') + '"><span class="f13" style="border-color:' + (on ? '#EDEDEA' : '#3A3A3F') + ';background:' + (on ? '#EDEDEA' : 'transparent') + '"><span style="width:16px;height:16px;display:flex;align-items:center;justify-content:center">' + (on ? G.check16 : '') + '</span><span>' + label + '</span></span></button>';
+  const units = (t) => (t.burst ? t.burst.length : 1);
+  function outgoing() { /* 既存の決まりで凍結：連写は「1位だけ共有」なら1位（同率を含む）、オフならすべて。見えない選択も含む */
+    const out = []; N.sel.map((i) => T[i]).forEach((t) => { if (!t.burst) out.push(t.id); else if (N.best && t.win.length) out.push(...t.win); else out.push(...t.burst); }); return out;
+  }
+
+  /* ===== Issue #89：1回の共有は 512 MiB まで ===== */
+  const MiB = 1048576, LIMIT = 512 * MiB;
+  /* 合成のサイズ（写真ごと・決まった値） */
+  const IDX = Object.keys(PH);
+  const sizeOf = (id) => { const i = IDX.indexOf(id); return { j: (40 + (i * 13) % 30) * MiB, o: (120 + (i * 17) % 60) * MiB }; };
+  /* 共有の対象（採用済みの決まり）：順位が未決定の連写は対象外（ソートへ）。決定済みの連写は「1位だけ」なら1位（同率を含む）、オフならすべて */
+  function targets() { const out = []; N.sel.map((i) => T[i]).forEach((t) => { if (!t.burst) out.push(t.id); else if (!t.win.length) return; else if (N.best) out.push(...t.win); else out.push(...t.burst); }); return out; }
+  const OV = { auto: null, exact: [512 * MiB, 1180 * MiB], over1: [512 * MiB + 1, 1180 * MiB], jpegOnly: [300 * MiB, 690 * MiB], big: [640 * MiB, 1530 * MiB] };
+  /* 端末の写真は JPEG も元の形式もここで測る（確認中・失敗あり）。クラウドの RAW は元の形式のサイズは記録から分かるが、
+     JPEG で渡すサイズは元を落とさないと分からない（選んだだけでは落とさない）→ 後で確認（DEFERRED） */
+  const isCloud = (id) => T.some((t) => t.cloud && (t.burst ? t.burst.includes(id) : t.id === id));
+  function cap() {
+    const t = targets(); if (!t.length) return { gate: 'none', n: 0, F: {} };
+    const deferred = (id) => isCloud(id) && O.cloud === 'deferred';
+    const local = t.filter((id) => !isCloud(id));
+    if (local.length && O.meas === 'check') return { gate: 'check', n: t.length, F: {} };
+    if (local.length && O.meas === 'failed') return { gate: 'failed', n: t.length, F: {} };
+    let jc = 0, o = 0, jDef = t.some(deferred);
+    if (OV[O.size]) { jc = OV[O.size][0]; o = OV[O.size][1]; } else t.forEach((id) => { const s = sizeOf(id); o += s.o; if (!deferred(id)) jc += s.j; });
+    if (N.prepJ != null) { jc = N.prepJ; jDef = false; }
+    /* 確定した分だけで超えていれば超過。確定分が収まっていて未確認があれば「後で確認」。元の形式のサイズで JPEG を判断しない */
+    const F = { jpeg: { st: jc > LIMIT ? 'over' : jDef ? 'deferred' : 'ok', size: jc }, orig: { st: o > LIMIT ? 'over' : 'ok', size: o } };
+    const anyOk = F.jpeg.st === 'ok' || F.orig.st === 'ok', anyDef = F.jpeg.st === 'deferred';
+    return { gate: anyOk ? 'ok' : anyDef ? 'deferred' : 'over', n: t.length, F: F };
+  }
+  const fmtM = (b) => { const v = b / MiB; return Number.isInteger(v) ? v.toLocaleString('en-US') : (Math.ceil(v * 10) / 10).toLocaleString('en-US', { minimumFractionDigits: 1 }); };
+  const WARN = SW('<path d="M12 4l9 15.5H3z"/><path d="M12 10v4.5M12 17.2v.1"/>', 16);
+  const SPIN = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="2.6" stroke-linecap="round" aria-hidden="true" style="flex-shrink:0"><circle cx="12" cy="12" r="8" stroke="rgba(255,255,255,0.22)"/><path class="spin" d="M12 4a8 8 0 0 1 8 8" stroke="currentColor"/></svg>';
+  const fitSize = (c) => Math.min(...['jpeg', 'orig'].filter((f) => c.F[f].st === 'ok').map((f) => c.F[f].size));
+  const overSize = (c) => Math.min(c.F.jpeg.size, c.F.orig.size);
+  function capAx(c) {
+    if (c.gate === 'check') return '共有できる量を確認しています。確認が終わるまで共有は使えません';
+    if (c.gate === 'failed') return 'サイズを測れなかった写真があるため、共有は使えません。上限 512 MiB';
+    if (c.gate === 'over') return '共有できる量を超えています。' + fmtM(overSize(c)) + ' MiB、上限 512 MiB。写真を減らすと共有できます';
+    if (c.gate === 'deferred') return 'クラウドの写真のサイズは、共有の準備で確かめます。上限 512 MiB';
+    return '共有の量 ' + fmtM(fitSize(c)) + ' MiB、上限 512 MiB';
+  }
+  function capPill(c) {
+    if (c.gate === 'none') return '';
+    const bad = c.gate === 'over' || c.gate === 'failed';
+    const inner = c.gate === 'check' ? SPIN + '<span aria-hidden="true">/ 512 MiB</span>' : c.gate === 'failed' ? WARN + '<span aria-hidden="true">確認できません</span>' : c.gate === 'deferred' ? '<span aria-hidden="true">? / 512 MiB</span>' : (bad ? WARN : '') + '<span aria-hidden="true">' + fmtM(c.gate === 'over' ? overSize(c) : fitSize(c)) + ' / 512 MiB</span>';
+    return '<span role="img" aria-label="' + capAx(c) + '" data-cap="' + c.gate + '" data-chg="new" class="pill f13 num"' + (bad ? ' style="box-shadow:inset 0 0 0 1.5px #FF8A7A;color:#FFB4A8"' : '') + '>' + inner + '</span>';
+  }
+  /* ===== 選択の画面（採用済み loupe-select-share ＋ #85 の印）。cap=false は元のまま ===== */
+  function selScreen(capOn) {
+    const n = N.sel.length, vis = visT(), hid = N.sel.filter((i) => !vis.includes(T[i])).length, tg = targets().length, c = cap();
+    const head = '<div style="padding:40px 20px 16px;display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 12px"><h1 class="f24" style="margin:0;font-weight:600">' + (n ? '嵐山 10.18' : '写真を選択') + '</h1>' + (n ? '<span class="f14 mut num" style="margin-left:auto">' + N.sel.reduce((a, i) => a + units(T[i]), 0) + '枚選択</span>' : '') + '</div>';
+    const g = '<div class="g4">' + vis.map((t) => { const on = N.sel.includes(t.i); return '<button data-tile="' + t.i + '" class="tile" aria-label="' + tileLabel(t, on) + '" style="background:' + (on ? 'rgb(30,43,66)' : '#151517') + '">' + tileInner(t, on) + (on ? '<span aria-hidden="true" class="ckOn">' + G.check16 + '</span>' : '<span aria-hidden="true" class="ckOff"></span>') + '</button>'; }).join('') + '</div>';
+    const pill = (g_, t, ax) => '<span role="img" aria-label="' + ax + '" class="pill f13 num">' + g_ + '<span aria-hidden="true">' + t + '</span></span>';
+    const unsel = N.sel.filter((i) => T[i].burst && !T[i].win.length).length;
+    const status = '<div class="stat" style="min-height:40px;display:flex;flex-wrap:wrap;align-items:center;gap:6px">' + (n ? pill(G.share14, tg + '枚', '共有の対象 ' + tg + '枚') + (capOn ? capPill(c) : '') + (hid ? pill(SW('<path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/><path d="M4 20L20 4"/>', 16), hid + '枚', '今の絞り込みで見えない選択 ' + hid + '枚') : '') + (unsel ? pill(SW('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4.5 15.5V6.5a2 2 0 0 1 2-2h9"/>', 16), unsel + '組', '順位が未決定の連写 ' + unsel + '組') : '') : '') + '</div>';
+    const chips = '<div role="group" aria-label="表示する写真" style="display:flex;flex-wrap:wrap;min-height:48px;align-items:center;margin:0 -8px">' + [['all', 'すべて'], ['best', '1位'], ['unsel', '順位が未決定'], ['done', '順位決定済み']].map(([f, l]) => chip(N.f === f, l, f)).join('') + '</div>';
+    const sw = '<div style="display:flex;align-items:center;gap:12px;min-height:48px"><span class="f14" style="flex:1;min-width:0">連写は1位だけ共有（同率を含む）</span><button data-act="bestSw" role="switch" aria-checked="' + N.best + '" aria-label="連写は1位だけ共有（同率を含む）" class="swb"><span class="swt" style="background:' + (N.best ? '#EDEDEA' : 'transparent') + ';border-color:' + (N.best ? '#EDEDEA' : '#8C8C86') + '"><span class="swk" style="left:' + (N.best ? 24 : 4) + 'px;background:' + (N.best ? '#111' : '#8C8C86') + '"></span></span></button></div>';
+    const sortOn = unsel > 0;
+    const shareOn = capOn ? (tg > 0 && (c.gate === 'ok' || c.gate === 'deferred')) : n > 0;
+    const shareAx = capOn && tg > 0 && !shareOn ? '共有、使えません。' + capAx(c) : capOn && c.gate === 'deferred' ? '共有。' + capAx(c) : '共有';
+    const btns = '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px"><button data-act="sort"' + (sortOn ? '' : ' aria-disabled="true"') + ' class="sbtn f14" style="border-color:' + (sortOn ? '#F5B947' : '#3A3A3F') + ';color:' + (sortOn ? '#F5B947' : '#626B72') + '">' + G.sort + '<span>ソート</span></button><button data-act="share"' + (shareOn ? '' : ' aria-disabled="true"') + ' aria-label="' + shareAx + '"' + (capOn ? ' data-chg="state"' : '') + ' class="shbtn f15" style="background:' + (shareOn ? '#EDEDEA' : '#26262A') + ';color:' + (shareOn ? '#111' : '#626B72') + ' !important">' + G.share20 + '<span aria-hidden="true">共有</span></button></div>';
+    const allVis = vis.length && vis.every((t) => N.sel.includes(t.i));
+    const dock = '<nav aria-label="選択の操作" class="dock" style="grid-template-columns:repeat(2,minmax(0,1fr))"><button class="db" data-act="end">' + G.end + '<span>選択を終了</span></button><button class="db" data-act="selAll" aria-label="' + (allVis ? '表示中の写真の選択を解除' : '表示中の写真をすべて選択') + '">' + G.all + '<span aria-hidden="true">' + (allVis ? '選択を解除' : 'すべて選択') + '</span></button></nav>';
+    return '<span class="synth" aria-hidden="true">合成の画面</span><div class="scr">' + head + g + '<div class="sp"></div></div><div class="panel" style="padding:8px 16px 20px">' + status + chips + sw + btns + dock + '</div>';
+  }
+  /* ===== 共有のメニュー（採用済み S09）。形式ごと・保存した共有先ごとに判定 ===== */
+  function shareSheet(capOn) {
+    const t = targets(), c = cap(), k = t.length;
+    const th = t.slice(0, k > 6 ? 5 : 6), more = k - th.length;
+    const thumb = (id) => '<span style="position:relative;display:block;width:52px;height:52px;border-radius:6px;background:' + PH[id].bg + ';flex-shrink:0"></span>';
+    const cloud = N.sel.filter((i) => T[i].cloud && (!T[i].burst || T[i].win.length)).length;
+    const fst = (f) => (capOn ? c.F[f].st : 'ok'), okF = (f) => fst(f) !== 'over';
+    const szT = (f) => (fst(f) === 'deferred' ? '? MiB' : fmtM(c.F[f].size) + ' MiB');
+    const fmtB = (v, l) => { const on = N.fmt === v, ok = okF(v), d = fst(v) === 'deferred', sz = capOn ? szT(v) : ''; return '<button data-fmt="' + v + '" aria-pressed="' + on + '"' + (ok ? '' : ' aria-disabled="true"') + ' aria-label="' + l + (capOn ? (d ? '、サイズは準備で確かめます' : '、' + sz + (ok ? '' : '、上限 512 MiB を超えるため使えません')) : '') + '" class="fmtb f14" style="background:' + (on ? '#EDEDEA' : 'transparent') + ';color:' + (on ? '#111' : ok ? '#EDEDEA' : '#626B72') + '"><span class="fl"><span style="width:16px;height:16px;display:flex;align-items:center;justify-content:center">' + (on ? G.check16 : '') + '</span><span>' + l + '</span></span>' + (capOn ? '<span class="f12 num" data-chg="new" style="display:flex;align-items:center;gap:3px;color:' + (on ? '#3A3A3F' : ok ? '#A9A9A4' : '#FF8A7A') + '">' + (ok ? '' : WARN) + sz + '</span>' : '') + '</button>'; };
+    const dst = (act, icon, name, sub, f) => { const ok = okF(f), d = capOn && fst(f) === 'deferred'; return '<button data-act="' + act + '" data-f="' + f + '" data-name="' + name + '"' + (ok ? '' : ' aria-disabled="true"') + ' aria-label="' + name + (sub ? '（保存した形式：' + sub + '）' : '。形式は上の選択') + (d ? '。確認して共有（サイズは準備で確かめます）' : '') + (ok ? '' : '。上限 512 MiB を超えるため使えません') + '" class="dstb"><span aria-hidden="true" class="dic" style="' + (ok ? '' : 'opacity:.38') + '">' + icon + '</span><span aria-hidden="true" class="f12" style="text-align:center;overflow-wrap:anywhere;color:' + (ok ? '#EDEDEA' : '#626B72') + '">' + name + '</span>' + (sub ? '<span aria-hidden="true" class="f12" style="text-align:center;display:flex;gap:3px;align-items:center;justify-content:center;color:' + (ok ? '#A9A9A4' : '#FF8A7A') + '">' + (ok ? '' : WARN) + sub + '</span>' : '') + (d ? '<span aria-hidden="true" class="f12" data-chg="new" style="text-align:center;color:#A9A9A4">確認して共有</span>' : '') + '</button>'; };
+    const body = '<div aria-hidden="true" style="display:flex;flex-wrap:wrap;gap:6px;padding:12px 24px 4px;min-height:52px">' + th.map(thumb).join('') + (more > 0 ? '<span class="f13 num" style="width:52px;height:52px;border-radius:6px;background:#26262A;display:flex;align-items:center;justify-content:center">+' + more + '</span>' : '') + '</div>' +
+      (cloud ? '<div class="f13 mut" style="display:flex;gap:8px;align-items:center;padding:8px 24px 0">' + G.cloud + '<span>' + cloud + '枚はクラウドからダウンロードします</span></div>' : '') +
+      '<div role="group" aria-label="共有する形式" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin:12px 16px 0;border-radius:24px;background:#26262A">' + fmtB('jpeg', 'JPEGで共有') + fmtB('orig', '元の形式で共有') + '</div>' +
+      '<p class="f12 mut" style="margin:6px 24px 0">' + (N.fmt === 'jpeg' ? 'RAWの場合は、ファイル内のJPEG画像を使います' : '撮影した形式のまま · RAW / JPEG') + '</p>' +
+      '<div role="group" aria-label="共有先" style="display:flex;flex-wrap:wrap;gap:4px;padding:16px 12px 0">' + dst('dFam', G.fam, '家族アルバム', 'JPEG', 'jpeg') + dst('dPc', G.pc, 'PCへ転送', '元の形式', 'orig') + dst('dOs', G.share, '共有先を選ぶ', '', N.fmt) + '</div>' +
+      '<div style="padding:12px 16px 0"><button class="out" data-act="close" style="width:100%;color:#EDEDEA">閉じる</button></div>';
+    const fl = (f) => (f === 'jpeg' ? 'JPEG' : 'RAW / JPEG');
+    const pbody = !N.prep ? '' : N.prep.st === 'run' ? '<div style="padding:12px 24px 0"><span role="img" aria-label="共有の準備をしています" style="display:inline-flex;width:24px;height:24px;align-items:center;justify-content:center">' + SPIN.replace('width="16" height="16"', 'width="20" height="20"') + '</span></div><div class="acts"><button class="out" data-act="stopPrep" style="color:#EDEDEA">中止</button></div>'
+      : '<div style="padding:12px 24px 0" role="alert" data-prepover aria-label="JPEG は ' + fmtM(N.prepJ) + ' MiB で、上限 512 MiB を超えました。渡していません"><span class="f13 num" aria-hidden="true" style="display:flex;gap:6px;align-items:center;color:#FFB4A8">' + WARN + '<span>JPEG ' + fmtM(N.prepJ) + ' / 512 MiB</span></span></div><div class="acts">' + (c.F.orig.st === 'ok' ? '<button class="cancel" data-act="useOrig" aria-label="元の形式で共有、' + fmtM(c.F.orig.size) + ' MiB">元の形式で共有</button>' : '') + '<button class="out" data-act="backSel" style="color:#EDEDEA">選択に戻る</button></div>';
+    return '<button class="dim" data-act="close" aria-label="閉じる" tabindex="-1"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="共有" style="max-height:' + Math.round(O.h * 0.9) + 'px;overflow-y:auto"><span class="hdl" aria-hidden="true"></span><h2 class="num">' + k + '枚を共有' + (N.prep ? ' · ' + fl(N.prep.f) : '') + '</h2>' + (N.prep ? pbody : body) + '</div>';
+  }
+  /* ===== 描画（左：元・右：変更後） ===== */
+  const B = document.getElementById('base'), P = document.getElementById('prop');
+  function paint(el, capOn) {
+    const sc0 = el.querySelector('.scr'), keep = sc0 ? sc0.scrollTop : 0;
+    el.style.setProperty('--w', O.w + 'px'); el.style.setProperty('--h', O.h + 'px');
+    el.innerHTML = selScreen(capOn) + (N.sheet ? shareSheet(capOn) : '') + (capOn && N.toast ? '<div class="caller"><span>（' + N.toast + '・デモ）</span><button data-act="ret">選択へ戻る（デモ）</button></div>' : '');
+    const sp = el.querySelector('.sp'), pn = el.querySelector('.panel'); sp.style.height = pn.offsetHeight + 24 + 'px'; el.querySelector('.scr').scrollTop = keep;
+    if (N.sheet) el.querySelectorAll('.scr,.panel').forEach((e) => { e.setAttribute('aria-hidden', 'true'); e.inert = true; });
+  }
+  function render(f) {
+    document.documentElement.style.setProperty('--k', O.k);
+    paint(B, false); paint(P, true); B.inert = true;
+    if (f) { const e = P.querySelector(f); if (e) e.focus({ preventScroll: true }); }
+    check();
+  }
+  function check() {
+    const res = [B, P].map((el) => {
+      const d = el.getBoundingClientRect(), vis = (e) => e.offsetParent !== null && !e.closest('.synth');
+      const small = [...el.querySelectorAll('button')].filter((b) => vis(b) && !b.classList.contains('dim') && !b.closest('[inert]')).filter((b) => { const r = b.getBoundingClientRect(); return r.height < 47.5 || r.width < 47.5; }).length;
+      const ov = [...el.querySelectorAll('*')].filter(vis).filter((e) => { const r = e.getBoundingClientRect(); return r.width && (r.right > d.right + 0.5 || r.left < d.left - 0.5); }).length;
+      const trunc = [...el.querySelectorAll('span,button,p,h1,h2')].filter((e) => vis(e) && e.children.length === 0 && e.textContent.trim() && e.scrollWidth > e.clientWidth + 1 && getComputedStyle(e).overflow !== 'visible').length + [...el.querySelectorAll('.pill,.fmtb,.dstb')].filter((e) => vis(e) && [...e.querySelectorAll('span')].some((s) => { const a = s.getBoundingClientRect(), b = e.getBoundingClientRect(); return a.width && (a.right > b.right + 0.5 || a.left < b.left - 0.5); })).length;
+      const pn = el.querySelector('.panel'), sc = el.querySelector('.scr'); sc.scrollTop = 1e6; const last = [...sc.querySelectorAll('.tile')].pop(); const cover = !last || last.getBoundingClientRect().bottom <= pn.getBoundingClientRect().top + 0.5; sc.scrollTop = 0;
+      const sh = el.querySelector('.sheet'); let reach = true; if (sh) { sh.scrollTop = 1e6; reach = [...sh.querySelectorAll('button')].every((x) => x.getBoundingClientRect().bottom <= d.bottom + 0.5); sh.scrollTop = 0; }
+      return { small, ov, trunc, cover, reach };
+    });
+    const okc = (b) => (b ? '<span class="okc">なし</span>' : '<span class="ngc">あり</span>');
+    const c = cap();
+    document.getElementById('chk').innerHTML = '<b>検査（' + O.w + 'dp・文字' + O.k + '倍・高さ' + O.h + 'dp）</b>' + ['元', '変更後'].map((n, i) => '<br>' + n + '：48dp未満 ' + okc(!res[i].small) + '・はみ出し ' + okc(!res[i].ov) + '・切れ ' + okc(!res[i].trunc) + '・下の操作と写真の重なり ' + okc(res[i].cover) + '・シートの操作に届く ' + (res[i].reach ? '<span class="okc">はい</span>' : '<span class="ngc">いいえ</span>')).join('') +
+      '<br>対象 ' + c.n + '枚・入口 ' + c.gate + (c.F && c.F.jpeg ? '・JPEG ' + c.F.jpeg.st + ' ' + fmtM(c.F.jpeg.size) + ' MiB（確定分）・元の形式 ' + c.F.orig.st + ' ' + fmtM(c.F.orig.size) + ' MiB' : '') + '・共有の開始 ' + starts + '回';
+    const ax = [...P.querySelectorAll('[data-cap],[data-act=share],[data-fmt],[data-act^=d]')].filter((e) => e.offsetParent !== null).map((e) => '・[' + (e.tagName === 'BUTTON' ? 'button' : 'img') + '] ' + e.getAttribute('aria-label') + (e.getAttribute('aria-disabled') ? '（無効）' : ''));
+    document.getElementById('ax').innerHTML = '<b>読み上げ（変更後・容量に関わる部分）</b><br>' + (ax.join('<br>') || '—');
+    document.getElementById('log').innerHTML = '<b>操作の記録</b><br>' + (log.map((x) => '・' + x).join('<br>') || '—');
+  }
+  let starts = 0;
+  function openSheet() {
+    const c = cap(); if (c.gate !== 'ok' && c.gate !== 'deferred') return;
+    if (c.F[N.fmt].st === 'over') N.fmt = N.fmt === 'jpeg' ? 'orig' : 'jpeg';
+    N.sheet = true; N.prep = null; add('［共有］→ 共有のメニュー（JPEG ' + (c.F.jpeg.st === 'deferred' ? '?（準備で確認）' : fmtM(c.F.jpeg.size)) + '・元の形式 ' + fmtM(c.F.orig.size) + ' MiB）');
+  }
+  let prepT = null;
+  function choose(f, name) {
+    const c = cap(); if (c.F[f].st === 'over') return;
+    N.prep = { st: 'run', f: f, name: name }; add('「' + name + '」→ 既存の共有の準備（' + (c.F[f].st === 'deferred' ? 'ここで元を落として JPEG のサイズを確かめる' : 'サイズは確定') + '）');
+    clearTimeout(prepT); prepT = setTimeout(() => {
+      if (!N.prep || N.prep.st !== 'run') return;
+      if (f === 'jpeg' && c.F.jpeg.st === 'deferred') { const real = O.prepRes === 'over' ? 540 * MiB : c.F.jpeg.size + 180 * MiB; N.prepJ = real; if (real > LIMIT) { N.prep.st = 'over'; add('準備で確かめた JPEG は ' + fmtM(real) + ' MiB → 上限を超えたので渡さない'); say('JPEG は ' + fmtM(real) + ' MiB で、上限 512 MiB を超えました'); return render(cap().F.orig.st === 'ok' ? '.sheet [data-act=useOrig]' : '.sheet [data-act=backSel]'); } add('準備で確かめた JPEG は ' + fmtM(real) + ' MiB → 収まった'); }
+      starts++; N.prep = null; N.sheet = false; N.toast = '共有を始めた：' + name + '（' + (f === 'jpeg' ? 'JPEG' : '元の形式') + '）'; add(N.toast); render();
+    }, 900);
+  }
+  P.addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return; const a = b.dataset.act; let f = null;
+    if (b.getAttribute('aria-disabled') === 'true') { add('（無効のため何もしない）' + (b.getAttribute('aria-label') || b.textContent.trim())); return render(); }
+    if (b.dataset.tile != null) { const i = +b.dataset.tile; N.sel = N.sel.includes(i) ? N.sel.filter((x) => x !== i) : N.sel.concat([i]); add((N.sel.includes(i) ? '選択' : '選択解除') + '：タイル ' + (i + 1) + ' → ' + cap().st); return render('[data-tile="' + i + '"]'); }
+    if (b.dataset.filter) { N.f = b.dataset.filter; return render('[data-filter=' + N.f + ']'); }
+    if (b.dataset.fmt) { N.fmt = b.dataset.fmt; add('形式：' + b.dataset.fmt); return render('[data-fmt=' + N.fmt + ']'); }
+    switch (a) {
+      case 'bestSw': N.best = !N.best; add('連写は1位だけ共有：' + (N.best ? 'オン' : 'オフ') + ' → ' + cap().st); f = '[data-act=bestSw]'; break;
+      case 'share': openSheet(); f = '.sheet [data-fmt=' + N.fmt + ']'; break;
+      case 'close': clearTimeout(prepT); N.prep = null; N.sheet = false; add('閉じる'); f = '[data-act=share]'; break;
+      case 'dFam': case 'dPc': case 'dOs': choose(b.dataset.f, b.dataset.name); f = '.sheet [data-act=stopPrep]'; break;
+      case 'stopPrep': clearTimeout(prepT); N.prep = null; add('［中止］→ 選んだ写真はそのまま'); f = '.sheet [data-fmt=' + N.fmt + ']'; break;
+      case 'useOrig': N.fmt = 'orig'; N.prep = null; choose('orig', '元の形式で共有'); f = '.sheet [data-act=stopPrep]'; break;
+      case 'backSel': N.prep = null; N.sheet = false; add('選択に戻る（選択はそのまま）'); f = '[data-act=share]'; break;
+      case 'ret': N.toast = null; f = '[data-act=share]'; break;
+      case 'sort': add('［ソート］→ 比較（既存）'); f = '[data-act=sort]'; break;
+      case 'selAll': { const vis = visT(), all = vis.every((t) => N.sel.includes(t.i)); N.sel = all ? N.sel.filter((i) => !vis.includes(T[i])) : [...new Set(N.sel.concat(vis.map((t) => t.i)))]; f = '[data-act=selAll]'; break; }
+      case 'end': N.sel = []; add('［選択を終了］'); break;
+    }
+    render(f);
+  });
+  document.getElementById('hwBack').addEventListener('click', () => { if (N.toast) { N.toast = null; } else if (N.sheet) { clearTimeout(prepT); N.prep = null; N.sheet = false; add('Back：メニューを閉じる'); } render('[data-act=share]'); });
+  /* ===== 模擬の状態 ===== */
+  const SIMS = {
+    normal: { sel: [0, 1, 3], best: true },
+    checking: { sel: [0, 1, 3], best: true, meas: 'check' },
+    failed: { sel: [0, 1, 3], best: true, meas: 'failed' },
+    tooLarge: { sel: [0, 1, 3, 5, 9, 15], best: false },
+    reduced: { sel: [0, 1, 3, 5, 9], best: false },
+    bestOn: { sel: [0, 1, 3, 5, 9, 15], best: true },
+    exact: { sel: [0, 1, 3], best: true, size: 'exact' },
+    over1: { sel: [0, 1, 3], best: true, size: 'over1' },
+    jpegOnly: { sel: [0, 1, 3], best: true, size: 'jpegOnly', sheet: true },
+    deferred: { sel: [2, 4, 6, 11, 13], best: false },
+    deferredMix: { sel: [0, 2, 3], best: true },
+    deferredSheet: { sel: [2, 4, 6, 11, 13], best: false, sheet: true },
+    deferredConfOver: { sel: [0, 1, 3, 5, 9, 15, 2], best: false },
+    cloudFailed: { sel: [0, 2], best: true, meas: 'failed' },
+    unsorted: { sel: [10, 0, 3], best: true, size: 'big' },
+    sheet: { sel: [0, 1, 3], best: true, sheet: true }
+  };
+  function simX(v) { const s = SIMS[v]; clearTimeout(prepT); N = fresh(); N.v = 'sel'; N.fmt = 'jpeg'; N.prep = null; N.prepJ = null; N.sel = s.sel.slice(); N.best = s.best; O.size = s.size || 'auto'; O.meas = s.meas || 'done'; O.cloud = s.cloud || 'deferred'; syncSeg(); if (s.sheet) openSheet(); add('（模擬）' + v); render(s.sheet ? '.sheet [data-fmt=' + N.fmt + ']' : '[data-act=share]'); }
+  function syncSeg() { [['oW', O.w], ['oH', O.h], ['oK', O.k], ['oSz', O.size], ['oMs', O.meas], ['oCl', O.cloud], ['oPr', O.prepRes], ['oBs', N.best ? 'on' : 'off']].forEach(([id, v]) => document.querySelectorAll('#' + id + ' button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.v == String(v)))); }
+  const seg = (id, fn) => document.getElementById(id).addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; fn(b.dataset.v); if (N.sheet && !N.prep && !['ok', 'deferred'].includes(cap().gate)) N.sheet = false; syncSeg(); render(); });
+  seg('oW', (v) => { O.w = +v; }); seg('oH', (v) => { O.h = +v; }); seg('oK', (v) => { O.k = +v; });
+  seg('oSz', (v) => { O.size = v; }); seg('oMs', (v) => { O.meas = v; }); seg('oBs', (v) => { N.best = v === 'on'; }); seg('oCl', (v) => { O.cloud = v; N.prepJ = null; }); seg('oPr', (v) => { O.prepRes = v; });
+  document.getElementById('oX').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; document.querySelectorAll('#oX button').forEach((x) => x.setAttribute('aria-pressed', x === b)); simX(b.dataset.v); });
+  window.__k = { get prep() { return N.prep; }, O: O, get N() { return N; }, cap: cap, targets: targets, sim: simX, render: render, get starts() { return starts; }, sizeOf: sizeOf, MiB: MiB };
+  simX('normal');
+
+})();</script></body></html>

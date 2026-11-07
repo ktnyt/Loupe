@@ -81,6 +81,8 @@ public final class MainActivity extends DiagnosticActivity {
   private static final int PHOTO_TILE_HEIGHT_DP = 96;
   private RankingStore rankingStore;
   private SharePreparation sharePreparation;
+  private ShareCapacityChecks shareCapacity;
+  private ShareUi.Menu capacityMenu;
   private List<List<Integer>> bundles = new ArrayList<>();
   private List<Integer> burstMembers;
   private List<List<Integer>> displayed = new ArrayList<>();
@@ -191,6 +193,12 @@ public final class MainActivity extends DiagnosticActivity {
     repository = new PhotoRepository(this);
     rankingStore = new RankingStore(this);
     sharePreparation = new SharePreparation(this, repository);
+    shareCapacity = new ShareCapacityChecks(this,repository,()->{
+      if(isDestroyed())return;
+      if(selecting)updateSelection();
+      if(capacityMenu!=null&&capacityMenu.isShowing())
+        capacityMenu.capacity(shareCapacity.snapshot(capacityMenu.photos));
+    });
     targets = ShareTargets.load(this);
     if (state != null) {
       libraryAlbums = state.getBoolean("libraryAlbums", state.getBoolean("home", true));
@@ -853,7 +861,7 @@ public final class MainActivity extends DiagnosticActivity {
       root.addView(selectionBulk, new LinearLayout.LayoutParams(-1, -2));
     }
     selectionShare = SelectionUi.action(this,"共有",true,this::shareSelection);
-    selectionSort = SelectionUi.action(this,"ソート",false,this::shareSelection);
+    selectionSort = SelectionUi.action(this,"ソート",false,()->shareSelection(true));
     LinearLayout actions=row();actions.addView(selectionSort,new LinearLayout.LayoutParams(0,-2,1));LinearLayout.LayoutParams shareParams=new LinearLayout.LayoutParams(0,-2,1);shareParams.leftMargin=dp(8);actions.addView(selectionShare,shareParams);root.addView(actions);
     selectionAll =
         TagDetailUi.dockButton(this,
@@ -889,7 +897,12 @@ public final class MainActivity extends DiagnosticActivity {
     if (selectionBulk != null) updateBulkBest(bulkTargets);
     if(selectionTitle!=null)selectionTitle.setText(selectedPhotos.isEmpty()?"写真を選択":burstMembers!=null?"連写 "+burstMembers.size()+"枚":albumFolder==null?"すべての写真":new File(albumFolder).getName());
     selectionSort.setEnabled(!result.unresolved.isEmpty());
-    selectionShare.setEnabled(!result.photos.isEmpty() || !result.unresolved.isEmpty());
+    ShareCapacityChecks.Snapshot capacity=shareCapacity.request(result.photos);
+    selectionCount.capacity(result.photos.isEmpty()?null:capacity.available);
+    selectionShare.setEnabled((!result.photos.isEmpty()&&capacity.available.actionable())
+        || (result.photos.isEmpty()&&!result.unresolved.isEmpty()));
+    selectionShare.setContentDescription("共有"+(!result.photos.isEmpty()?"。"+capacity.available.description():""));
+    selectionShare.setStateDescription(selectionShare.isEnabled()?null:"使えません");
     String allLabel =
         allVisibleSelected()
             ? "選択を解除"
@@ -1050,6 +1063,7 @@ public final class MainActivity extends DiagnosticActivity {
 
   private void endSelection() {
     selecting = false;
+    shareCapacity.clearSelection();
     selectedPhotos.clear();
     selectionCount = null;
     selectionShare = null;
@@ -1058,8 +1072,12 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private void shareSelection() {
+    shareSelection(false);
+  }
+  private void shareSelection(boolean sorting) {
     DiagnosticLog.event("screen.shareSelection", 0);
     SelectionResult result = resolveSelection();
+    if(!sorting&&!result.photos.isEmpty()&&!shareCapacity.snapshot(result.photos).available.actionable())return;
     if (!result.unresolved.isEmpty()) {
       shareDialog = new ShareUi.Confirmation(this,result.unresolved.size(),
           () -> {
@@ -1067,7 +1085,7 @@ public final class MainActivity extends DiagnosticActivity {
             rankingFromSelection = true;
             burstMembers = new ArrayList<>(result.unresolved.get(0));
             openRanking();
-          },result.photos.isEmpty()?null:() -> shareMenu(result.photos));
+          },result.photos.isEmpty()||!shareCapacity.snapshot(result.photos).available.actionable()?null:() -> shareMenu(result.photos));
       shareDialog.show();
     } else if (!result.photos.isEmpty()) shareMenu(result.photos);
   }
@@ -2040,8 +2058,10 @@ public final class MainActivity extends DiagnosticActivity {
       if(group!=null&&group.size()>1)try{PhotoRanking rank=rankingFor(group);if(rank.done()&&rank.best().contains(ArchiveStore.key(photo)))best.add(photo.uri.toString());}catch(Exception ignored){}
     }
     ShareUi.Menu menu=new ShareUi.Menu(this,frozen,ShareTargets.load(this),cloud,best,(raw,target)->export(frozen,raw,target));
+    capacityMenu=menu;
+    menu.capacity(shareCapacity.request(frozen));
     shareDialog=menu;
-    menu.setOnDismissListener(d->{for(ImageView image:menu.previews)if(image.getTag() instanceof ImageLoad)((ImageLoad)image.getTag()).cancelled=true;});
+    menu.setOnDismissListener(d->{if(capacityMenu==menu)capacityMenu=null;for(ImageView image:menu.previews)if(image.getTag() instanceof ImageLoad)((ImageLoad)image.getTag()).cancelled=true;});
     menu.show();
     for(int i=0;i<menu.previews.size();i++)previewInto(menu.previews.get(i),menu.previewPhotos.get(i),dp(52));
   }
@@ -2071,6 +2091,7 @@ public final class MainActivity extends DiagnosticActivity {
             String action = uris.size() == 1 ? Intent.ACTION_SEND : Intent.ACTION_SEND_MULTIPLE;
             main.post(
                 () -> {
+                  shareCapacity.observed(prepared.jpegSizes);
                   if (isDestroyed() || attempt != shareAttempt) {
                     ShareHistoryReceiver.cancelLater(getApplicationContext(), historySession);
                     return;
@@ -2134,6 +2155,16 @@ public final class MainActivity extends DiagnosticActivity {
             main.post(() -> {
               if (isDestroyed() || attempt != shareAttempt) return;
               shareProgress.dismiss();
+              if(e instanceof SharePreparation.CapacityException){
+                SharePreparation.CapacityException limit=(SharePreparation.CapacityException)e;
+                shareCapacity.observed(limit.jpegSizes);
+                if(selecting)updateSelection();
+                ShareCapacityChecks.Snapshot capacity=shareCapacity.snapshot(selection);
+                ShareCapacity.Result other=raw?capacity.jpeg:capacity.original;
+                shareDialog=new ShareUi.OverLimit(this,selection.size(),raw,limit.bytes,
+                    other.actionable()?()->export(selection,!raw,null):null);
+                shareDialog.show();return;
+              }
               shareDialog=new ShareUi.Failure(this,selection.size(),raw,
                   selection.size()+"枚の選択は保持されています。共有を準備できませんでした。空き容量・通信・読み取り許可を確認してください。",
                   ()->export(selection,raw,target));
@@ -2248,6 +2279,7 @@ public final class MainActivity extends DiagnosticActivity {
     getContentResolver().unregisterContentObserver(mediaObserver);
     main.removeCallbacks(mediaChanged);
     historyReads.shutdownNow();
+    shareCapacity.close();
     scans.shutdownNow();
     images.shutdownNow();
     actions.shutdownNow();
