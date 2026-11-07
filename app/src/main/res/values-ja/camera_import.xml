@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="camera_import_title">カメラから取り込み</string>
+    <string name="camera_import_notif_channel">取り込み</string>
+    <string name="camera_import_notif_connecting">カメラに接続中…</string>
+    <string name="camera_import_notif_attempting">カメラに接続を試しています (%d 回目、応答待ちは最大 30 秒)…</string>
+    <string name="camera_import_notif_waiting_camera">カメラの応答を待っています (%d 回目)…</string>
+    <string name="camera_import_notif_waiting_busy">カメラが別の接続を処理中です。空くのを待っています…</string>
+    <string name="camera_import_notif_waiting_replug">カメラが応答しません。ケーブルを挿し直すと直ることがあります (待機 %d 回目)。挿し直せばこのまま続行します</string>
+    <string name="camera_import_notif_open_failed">カメラを開けませんでした。カメラ側で USB モード (PTP/MTP) を選び直し、直らないときはカメラの電源を入れ直してください</string>
+    <string name="camera_import_notif_stalled_all">カメラが応答しませんでした。ケーブルを挿し直すか、カメラの電源を入れ直してから、もう一度お試しください</string>
+    <string name="camera_import_usb_permission_denied">USB アクセスが拒否されました。挿し直して許可してください。</string>
+    <string name="camera_import_notif_progress">%1$s: 取り込み中 %2$d/%3$d</string>
+    <string name="camera_import_notif_done">%1$d 件を取り込み、%2$d 件をスキップ (%3$.1f 秒)</string>
+    <string name="camera_import_notif_done_nothing">新しい写真・動画はありません (%d 件は取り込み済み)</string>
+    <string name="camera_import_notif_done_partial">%1$d 件を取り込み、%2$d 件は失敗</string>
+    <string name="camera_import_notif_aborted">ケーブルが抜かれました。%d 件まで取り込み済み。続きは次回接続時に取り込みます</string>
+    <string name="camera_import_notif_read_error">カードの読み取りに失敗しました (%d 件取り込み済み)。カメラを挿し直すか接続を確認して、もう一度お試しください</string>
+    <string name="camera_import_notif_busy">すでに取り込みを実行中です</string>
+    <string name="camera_import_notif_detached_cancel">カメラが取り外されたため中止しました</string>
+    <string name="camera_import_notif_deleted_suffix">。カメラ側の %d 件を削除しました</string>
+    <string name="camera_import_notif_delete_failed_suffix">。カメラ側の削除はできませんでした</string>
+    <string name="camera_import_notif_delete_remained_suffix">。うち %d 件はカメラ側に残ったままです (この機種では削除が反映されないことがあります)</string>
+    <string name="camera_import_notif_resurrected_suffix">。削除したはずの %d 件がカメラ側で復活しています。取り込み済みのため再取得はしません</string>
+    <string name="camera_import_notif_degraded_suffix">。RAW の照会を一部省いた縮退モードで走りました。RAW が足りなければもう一度取り込んでください</string>
+</resources>

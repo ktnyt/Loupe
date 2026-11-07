@@ -6,6 +6,9 @@ import android.content.*;
 import android.content.pm.*;
 import android.graphics.*;
 import android.net.Uri;
+import android.hardware.usb.UsbManager;
+import jp.nano.rawgallery.camera.ImportProgress;
+import jp.nano.rawgallery.camera.ImportService;
 import android.os.*;
 import android.util.LruCache;
 import android.view.*;
@@ -279,6 +282,8 @@ public final class MainActivity extends DiagnosticActivity {
   private void base() {
     refreshShareBadges=()->{};refreshShareInfo=()->{};
     root = vertical();
+    cameraImportBand = null;
+    libraryTabs = null;
     root.setBackgroundColor(BG);
     root.setOnApplyWindowInsetsListener(
         (v, insets) -> {
@@ -288,6 +293,64 @@ public final class MainActivity extends DiagnosticActivity {
         });
     setContentView(root);
   }
+
+  private LibraryTabs libraryTabs;
+  private boolean usbReceiverRegistered;
+  private final BroadcastReceiver usbChanges = new BroadcastReceiver() {
+    @Override public void onReceive(Context context, Intent intent) {
+      updateCameraTab();
+    }
+  };
+  private void addLibraryTabs(boolean albums, boolean enabled) {
+    libraryTabs = new LibraryTabs(this, albums, enabled, this::switchLibraryTab,
+        () -> startActivity(new Intent(this, CameraImportActivity.class)), this::startCameraImportFromTab);
+    root.addView(libraryTabs);
+    updateCameraTab();
+  }
+  private void updateCameraTab() {
+    if (libraryTabs == null) return;
+    var device = CameraImportActivity.connected(this);
+    var state = ImportProgress.INSTANCE;
+    libraryTabs.setCameraState(device != null, device == null ? null : device.getProductName(),
+        state.getActive(), state.getDone(), state.getTotal());
+  }
+  private void startCameraImportFromTab() {
+    if (selecting || ImportProgress.INSTANCE.getActive()) return;
+    var device = CameraImportActivity.connected(this);
+    if (device == null) {
+      updateCameraTab();
+      return;
+    }
+    if (getSharedPreferences("camera_import", MODE_PRIVATE).getBoolean("configured", false)
+        && getSystemService(UsbManager.class).hasPermission(device)) {
+      try {
+        ImportService.start(this, device);
+        return;
+      } catch (RuntimeException unavailable) {
+        // Re-check the device and permissions in the import screen.
+      }
+    }
+    startActivity(new Intent(this, CameraImportActivity.class)
+        .putExtra(CameraImportActivity.START_IMPORT_KEEP_ORIGINALS, true));
+  }
+
+  private TextView cameraImportBand;
+  private final Runnable refreshCameraImportBand = () -> {
+    updateCameraTab();
+    TextView band = cameraImportBand;
+    if (band == null) return;
+    var state = jp.nano.rawgallery.camera.ImportProgress.INSTANCE;
+    String text = state.getActive()
+        ? (state.getTotal() == 0 ? "カメラを確認しています"
+            : "カメラから取り込み中 · " + state.getDone() + " / " + state.getTotal())
+        : state.getLastMessage();
+    band.setVisibility(text == null ? View.GONE : View.VISIBLE);
+    if (!android.text.TextUtils.equals(band.getText(), text)) band.setText(text);
+  };
+  private final Runnable cameraImportChanged = () -> {
+    main.removeCallbacks(refreshCameraImportBand);
+    main.post(refreshCameraImportBand);
+  };
 
   private void gallery() {
     DiagnosticLog.event("screen.gallery", burstRequest);
@@ -311,6 +374,16 @@ public final class MainActivity extends DiagnosticActivity {
 
     if (!selecting && burstMembers == null) addOtherAlbums();
     root.addView(header);
+    if (!selecting && burstMembers == null) {
+      cameraImportBand = label("", 14, TEXT);
+      cameraImportBand.setPadding(dp(20), dp(8), dp(20), dp(8));
+      cameraImportBand.setMinHeight(dp(48));
+      cameraImportBand.setGravity(Gravity.CENTER_VERTICAL);
+      cameraImportBand.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+      cameraImportBand.setOnClickListener(v -> startActivity(new Intent(this, CameraImportActivity.class)));
+      root.addView(cameraImportBand);
+      refreshCameraImportBand.run();
+    }
     collectListHeader();
     body = vertical();
     root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -382,7 +455,7 @@ public final class MainActivity extends DiagnosticActivity {
       GalleryUi.bottomControls(root, controlsStart, BG);
     }
     if (albumFolder == null && burstMembers == null)
-      root.addView(new LibraryTabs(this, false, !selecting, this::switchLibraryTab));
+      addLibraryTabs(false, !selecting);
     if (selecting) updateSelection();
     else if (!photos.isEmpty()) updateCount();
     applyPendingIndexUpdate();
@@ -1059,9 +1132,12 @@ public final class MainActivity extends DiagnosticActivity {
   private void galleryMenu() {
     DiagnosticLog.event("screen.galleryMenu", 0);
     MoreMenuUi.show(this,"設定とその他の操作",
-            new String[] {"クラウドと同期", "共有先の設定", "連写のまとめ方", "写真へのアクセス", "再読み込み", "写真のプレビュー", "処理の状況"},
+            new String[] {"クラウドと同期", "共有先の設定", "連写のまとめ方", "写真へのアクセス", "再読み込み", "写真のプレビュー", "処理の状況", "カメラから取り込む"},
             (d, which) -> {
               switch (which) {
+                case 7:
+                  startActivity(new Intent(this, CameraImportActivity.class));
+                  break;
                 case 6:
                   startActivity(new Intent(this, DashboardActivity.class));
                   break;
@@ -1154,7 +1230,7 @@ public final class MainActivity extends DiagnosticActivity {
     body = vertical();
     root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
     dock(button("タグ", () -> openTags(null)), button("その他", this::galleryMenu));
-    root.addView(new LibraryTabs(this, true, true, this::switchLibraryTab));
+    addLibraryTabs(true, true);
     loadAlbums();
   }
 
@@ -1468,6 +1544,13 @@ public final class MainActivity extends DiagnosticActivity {
 
   protected void onResume() {
     super.onResume();
+    var filter = new IntentFilter(UsbManager.ACTION_USB_DEVICE_ATTACHED);
+    filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
+    if (Build.VERSION.SDK_INT >= 33) registerReceiver(usbChanges, filter, Context.RECEIVER_EXPORTED);
+    else registerReceiver(usbChanges, filter);
+    usbReceiverRegistered = true;
+    jp.nano.rawgallery.camera.ImportProgress.INSTANCE.addListener(cameraImportChanged);
+    refreshCameraImportBand.run();
     historyForeground=true;
     getSharedPreferences(ShareHistoryReceiver.PREFS,0).registerOnSharedPreferenceChangeListener(historyChanges);
     loadShareHistory();showShareHistoryFailure();
@@ -2177,6 +2260,12 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   @Override protected void onPause(){
+    if (usbReceiverRegistered) {
+      unregisterReceiver(usbChanges);
+      usbReceiverRegistered = false;
+    }
+    jp.nano.rawgallery.camera.ImportProgress.INSTANCE.removeListener(cameraImportChanged);
+    main.removeCallbacks(refreshCameraImportBand);
     historyForeground=false;
     getSharedPreferences(ShareHistoryReceiver.PREFS,0).unregisterOnSharedPreferenceChangeListener(historyChanges);
     super.onPause();
