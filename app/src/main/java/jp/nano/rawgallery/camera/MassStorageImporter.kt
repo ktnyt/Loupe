@@ -81,11 +81,22 @@ object MassStorageImporter {
                 if (isCancelled()) { aborted = true; break }
                 val node = t.node
                 try {
-                    // exFAT から MediaStore へ直接流す。動画は数 GB になるためメモリに置かない
                     val t0 = System.currentTimeMillis()
                     val key = ImportedKey(node.name, node.length, node.modifiedEpochSec)
-                    val uri = MediaSaver.save(context, t.saveName, node.modifiedEpochSec, camera) { out ->
-                        exfat.copyTo(node, out)
+                    val uri = if (MediaTypes.isVideo(node.name)) {
+                        // Videos may be several GiB; keep the existing streaming path.
+                        MediaSaver.save(context, t.saveName, node.modifiedEpochSec, camera) { out ->
+                            exfat.copyTo(node, out)
+                        }
+                    } else {
+                        PhotoImportCopy.prepare(context.cacheDir, node.name, node.length,
+                            { out -> exfat.copyTo(node, out) },
+                            { file ->
+                                MediaSaver.save(context, t.saveName, node.modifiedEpochSec, camera) { out ->
+                                    file.inputStream().use { it.copyTo(out) }
+                                }
+                            },
+                        )
                     }
                     totalMs += System.currentTimeMillis() - t0
                     bytesTotal += node.length
@@ -143,7 +154,7 @@ object MassStorageImporter {
         }
         if (cameraHead.size != want) return false
         val phoneHead = MediaSaver.readHead(context, ex.uri, want) ?: return false
-        return cameraHead.contentEquals(phoneHead)
+        return PhotoImportCopy.sameHead(context.cacheDir, cameraHead, phoneHead)
     }
 
     /** MBR の先頭の有効パーティションの開始 LBA を返す */

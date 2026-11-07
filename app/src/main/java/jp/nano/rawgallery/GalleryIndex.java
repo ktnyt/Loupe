@@ -146,7 +146,7 @@ final class GalleryIndex extends SQLiteOpenHelper {
       archiveRevision = archive.indexRevision();
     }
     return media
-        + ":archive-v3:"
+        + ":capture-order-v1:archive-v3:"
         + archiveRevision
         + ":"
         + c.getSharedPreferences("settings", 0).getInt("burstGapSeconds", 1)
@@ -181,15 +181,16 @@ final class GalleryIndex extends SQLiteOpenHelper {
       List<PhotoRepository.Photo> photos = new PhotoRepository(c).scan("すべて");
       DiagnosticLog.event("index.scan_end", request, "count", photos.size());
       int gap = c.getSharedPreferences("settings", 0).getInt("burstGapSeconds", 1);
-      List<BurstGroups.Entry> entries = new ArrayList<>();
       DiagnosticLog.event("index.metadata_start", request);
+      Map<String, ArchiveStore.RawMetadata> metadata;
       try (ArchiveStore store = new ArchiveStore(c)) {
-        Map<String, ArchiveStore.RawMetadata> metadata = store.metadataSnapshot();
+        metadata = store.metadataSnapshot();
         for (int i = 0; i < photos.size(); i++) {
           if (cancelled.getAsBoolean()) return false;
           PhotoRepository.Photo p = photos.get(i);
           ArchiveStore.RawMetadata meta = metadata.get(ArchiveStore.key(p));
-          if (gap > 0 && meta == null)
+          // Capture dates also determine gallery order when burst grouping is disabled.
+          if (meta == null)
             try {
               if ("archive".equals(p.uri.getScheme())) {
                 org.json.JSONObject record = store.get(p.uri.getHost());
@@ -199,16 +200,24 @@ final class GalleryIndex extends SQLiteOpenHelper {
               } else meta = store.metadata(p);
             } catch (Exception ignored) {
             }
-          String model = meta == null ? "" : meta.model.trim();
-          if (model.equals("JPEG")) model = "";
-          entries.add(
-              new BurstGroups.Entry(
-                  i,
-                  meta == null ? 0 : meta.taken,
-                  model.isEmpty()
-                      ? ""
-                      : model + "|" + p.folder + "|" + (p.isJpeg() ? "jpeg" : "raw")));
+          if (meta != null) metadata.put(ArchiveStore.key(p), meta);
         }
+      }
+      orderByCapture(photos, metadata);
+      List<BurstGroups.Entry> entries = new ArrayList<>();
+      for (int i = 0; i < photos.size(); i++) {
+        if (cancelled.getAsBoolean()) return false;
+        PhotoRepository.Photo p = photos.get(i);
+        ArchiveStore.RawMetadata meta = metadata.get(ArchiveStore.key(p));
+        String model = meta == null ? "" : meta.model.trim();
+        if (model.equals("JPEG")) model = "";
+        entries.add(
+            new BurstGroups.Entry(
+                i,
+                meta == null ? 0 : meta.taken,
+                model.isEmpty()
+                    ? ""
+                    : model + "|" + p.folder + "|" + (p.isJpeg() ? "jpeg" : "raw")));
       }
       DiagnosticLog.event("index.metadata_end", request, "count", entries.size());
       if (cancelled.getAsBoolean()) return false;
@@ -268,5 +277,21 @@ final class GalleryIndex extends SQLiteOpenHelper {
     } finally {
       DiagnosticLog.event("index.end", request);
     }
+  }
+
+  /** Browsing dates use EXIF when available without rewriting source media or backup records. */
+  static void orderByCapture(
+      List<PhotoRepository.Photo> photos, Map<String, ArchiveStore.RawMetadata> metadata)
+      throws java.io.IOException {
+    for (int i = 0; i < photos.size(); i++) {
+      PhotoRepository.Photo photo = photos.get(i);
+      ArchiveStore.RawMetadata capture = metadata.get(ArchiveStore.key(photo));
+      if (capture != null && capture.taken > 0 && capture.taken != photo.taken)
+        photos.set(i, new PhotoRepository.Photo(photo.uri, photo.name, photo.folder, photo.size,
+            photo.modified, capture.taken, photo.added, photo.created));
+    }
+    photos.sort(Comparator.comparingLong(
+        (PhotoRepository.Photo p) -> p.taken > 0 ? p.taken : p.modified * 1000)
+        .reversed().thenComparing(p -> p.name));
   }
 }
