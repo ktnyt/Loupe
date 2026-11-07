@@ -38,7 +38,7 @@ final class SelectionUi {
     }
     void capacity(ShareCapacity.Result capacity){
       if(capacity==null)return;
-      Context c=getContext();boolean warning=capacity.state==ShareCapacity.State.OVER||capacity.state==ShareCapacity.State.FAILED;
+      Context c=getContext();boolean warning=capacity.state==ShareCapacity.State.OVER||capacity.state==ShareCapacity.State.FAILED||capacity.state==ShareCapacity.State.SOURCE_LIMIT||capacity.state==ShareCapacity.State.SOURCE_SIZE;
       TextView value=new TextView(c);value.setTag("share-capacity");
       value.setText(capacity.state==ShareCapacity.State.FAILED?"確認できません":capacity.label());
       value.setTextSize(13);value.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));value.setFontFeatureSettings("tnum");

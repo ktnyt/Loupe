@@ -11,7 +11,8 @@ import org.json.JSONObject;
 
 /** Bounded, recoverable originals. Durable proxies are stored elsewhere. */
 final class OriginalCache {
-  private static final long LIMIT = 512L * 1024 * 1024;
+  static final long LIMIT = 512L * 1024 * 1024;
+  static boolean supportsSize(long bytes) { return bytes > 0 && bytes <= LIMIT; }
 
   static synchronized PhotoRepository.Photo obtain(Context c, PhotoRepository.Photo p)
       throws Exception {
@@ -37,7 +38,7 @@ final class OriginalCache {
       return local(p, target);
     }
     target.delete();
-    if (p.size <= 0 || p.size > LIMIT) throw new IOException("原本の一時保存上限は512 MiBです");
+    if (!supportsSize(p.size)) throw new IOException("原本の一時保存上限は512 MiBです");
     trim(dir, null, p.size);
     File partial = new File(dir, key + ".part");
     try {

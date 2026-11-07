@@ -102,6 +102,7 @@ final class SharePreparation {
   static long measureJpeg(Context context, PhotoRepository repository,
       PhotoRepository.Photo photo) throws Exception {
     if (photo.isJpeg()) return photo.size;
+    if (!OriginalCache.supportsSize(photo.size)) throw new IOException("原本の一時保存上限は512 MiBです");
     if ("archive".equals(photo.uri.getScheme())) throw new IOException("共有の準備時に容量を確認します");
     PhotoRepository.Preview preview = repository.sourcePreview(photo);
     File scratch = File.createTempFile("share-measure-", ".jpg", context.getCacheDir());
