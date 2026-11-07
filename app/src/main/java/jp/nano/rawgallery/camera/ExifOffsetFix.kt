@@ -35,31 +35,97 @@ object ExifOffsetFix {
             0
         }
 
-    private fun patch(f: RandomAccessFile): Int {
-        val tiffBase = findTiffBase(f) ?: return 0
+    /** Comparison uses the imported values only for fields the source repair is allowed to change. */
+    internal fun patchForComparison(sourceCopy: File, importedHeader: File) {
+        try {
+            val entries = RandomAccessFile(sourceCopy, "r").use { repairableEntries(it) }
+            val offsets = OFFSET_TAGS.associateWith { "+00:00\u0000".toByteArray(Charsets.US_ASCII) }
+                .toMutableMap()
+            RandomAccessFile(importedHeader, "r").use { offsets.putAll(validOffsets(it)) }
+            RandomAccessFile(sourceCopy, "rw").use { patch(it, offsets, entries) }
+            RandomAccessFile(importedHeader, "rw").use { patch(it, offsets, entries) }
+        } catch (e: Exception) {
+            // The full-byte comparison still rejects any remaining difference.
+        }
+    }
+
+    private data class Directory(val base: Long, val offset: Long, val little: Boolean, val count: Int)
+
+    private fun directory(f: RandomAccessFile): Directory? {
+        val tiffBase = findTiffBase(f) ?: return null
         // "II"/"MM" は 2 バイト同値なのでエンディアン指定はどちらでもよい
         val le = when (readU16(f, tiffBase, le = true)) {
             0x4949 -> true
             0x4D4D -> false
-            else -> return 0
+            else -> return null
         }
         val ifd0 = tiffBase + readU32(f, tiffBase + 4, le)
-        val exifIfdOff = findTagValue(f, ifd0, le, TAG_EXIF_IFD) ?: return 0
+        val exifIfdOff = findTagValue(f, ifd0, le, TAG_EXIF_IFD) ?: return null
         val exifIfd = tiffBase + exifIfdOff
         val count = readU16(f, exifIfd, le)
-        if (count <= 0 || count > MAX_IFD_ENTRIES) return 0
+        if (count <= 0 || count > MAX_IFD_ENTRIES) return null
+        return Directory(tiffBase, exifIfd, le, count)
+    }
+
+    private fun validOffsets(f: RandomAccessFile): Map<Int, ByteArray> {
+        val d = directory(f) ?: return emptyMap()
+        val result = HashMap<Int, ByteArray>()
+        for (i in 0 until d.count) {
+            val entry = d.offset + 2 + i.toLong() * 12
+            val tag = readU16(f, entry, d.little)
+            if (tag !in OFFSET_TAGS || readU16(f, entry + 2, d.little) != TYPE_ASCII ||
+                readU32(f, entry + 4, d.little) != OFFSET_LEN.toLong()) continue
+            val value = ByteArray(OFFSET_LEN)
+            f.seek(d.base + readU32(f, entry + 8, d.little))
+            f.readFully(value)
+            if (isValidOffsetString(value) && value[6].toInt() == 0) result[tag] = value
+        }
+        return result
+    }
+
+    private fun repairableEntries(f: RandomAccessFile): Set<Long> {
+        val d = directory(f) ?: return emptySet()
+        val result = HashSet<Long>()
+        for (i in 0 until d.count) {
+            val entry = d.offset + 2 + i.toLong() * 12
+            val tag = readU16(f, entry, d.little)
+            if (tag !in OFFSET_TAGS && tag != TAG_PADDING) continue
+            if (readU16(f, entry + 2, d.little) != TYPE_ASCII) continue
+            val n = readU32(f, entry + 4, d.little)
+            if (n <= 0 || n > 33) continue
+            val value = ByteArray(n.toInt())
+            f.seek(if (n <= 4) entry + 8 else d.base + readU32(f, entry + 8, d.little))
+            f.readFully(value)
+            if ((tag in OFFSET_TAGS && !isValidOffsetString(value)) ||
+                (tag == TAG_PADDING && n.toInt() == OFFSET_LEN && isBlankOffset(value)))
+                result.add(entry)
+        }
+        return result
+    }
+
+    private fun patch(
+        f: RandomAccessFile,
+        comparisonOffsets: Map<Int, ByteArray>? = null,
+        comparisonEntries: Set<Long>? = null,
+    ): Int {
+        val d = directory(f) ?: return 0
+        val tiffBase = d.base
+        val exifIfd = d.offset
+        val le = d.little
+        val count = d.count
 
         // 撮影日時のタイムゾーンオフセット。DST のある地域でも撮影時点の値になる
-        val offsetBytes = offsetStringFor(
+        val offsetBytes = if (comparisonOffsets == null) offsetStringFor(
             readAsciiTag(f, tiffBase, exifIfd, le, count, TAG_DATETIME_ORIGINAL)
                 ?: readAsciiTag(f, tiffBase, exifIfd, le, count, TAG_DATETIME_DIGITIZED)
-        )
+        ) else null
 
         var patched = 0
         var restored = 0
         for (i in 0 until count) {
             val entry = exifIfd + 2 + i.toLong() * 12
             val tag = readU16(f, entry, le)
+            if (comparisonOffsets != null && tag !in OFFSET_TAGS && tag != TAG_PADDING) continue
             if (readU16(f, entry + 2, le) != TYPE_ASCII) continue
             val n = readU32(f, entry + 4, le)
             if (n <= 0 || n > 33) continue
@@ -69,9 +135,11 @@ object ExifOffsetFix {
             f.readFully(bytes)
             when {
                 tag in OFFSET_TAGS && !isValidOffsetString(bytes) -> {
+                    if (comparisonEntries != null && entry !in comparisonEntries) continue
                     if (n.toInt() == OFFSET_LEN) {
+                        val replacement = comparisonOffsets?.get(tag) ?: offsetBytes ?: continue
                         f.seek(valuePos)
-                        f.write(offsetBytes)
+                        f.write(replacement)
                     } else {
                         // 値を書き込める形でないときは無効化だけして解析失敗を防ぐ
                         writeU16(f, entry, le, TAG_PADDING)
@@ -81,10 +149,12 @@ object ExifOffsetFix {
                 // 旧版のこのアプリが Padding 化した痕跡 (空欄値のまま残っている)。
                 // IFD はタグ昇順なので、遭遇順に 0x9010/0x9011/0x9012 を割り戻す
                 tag == TAG_PADDING && n.toInt() == OFFSET_LEN && isBlankOffset(bytes) && restored < 3 -> {
-                    writeU16(f, entry, le, 0x9010 + restored)
+                    val restoredTag = 0x9010 + restored++
+                    if (comparisonEntries != null && entry !in comparisonEntries) continue
+                    val replacement = comparisonOffsets?.get(restoredTag) ?: offsetBytes ?: continue
+                    writeU16(f, entry, le, restoredTag)
                     f.seek(valuePos)
-                    f.write(offsetBytes)
-                    restored++
+                    f.write(replacement)
                     patched++
                 }
             }

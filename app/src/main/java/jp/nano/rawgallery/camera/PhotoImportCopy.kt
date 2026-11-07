@@ -26,23 +26,21 @@ object PhotoImportCopy {
         }
     }
 
-    /** Offset repair changes only the imported header, so compare those headers in the same form. */
+    /** Match only permitted source repairs; a phone timezone change must not change identity. */
     fun sameHead(cacheDirectory: File, cameraHead: ByteArray, phoneHead: ByteArray): Boolean {
         if (cameraHead.contentEquals(phoneHead)) return true
         if (cameraHead.size != phoneHead.size) return false
-        return normalizedHead(cacheDirectory, cameraHead).contentEquals(
-            normalizedHead(cacheDirectory, phoneHead),
-        )
-    }
-
-    private fun normalizedHead(cacheDirectory: File, bytes: ByteArray): ByteArray {
-        val temporary = File.createTempFile("camera-head-", ".bin", cacheDirectory)
+        val cameraCopy = File.createTempFile("camera-head-", ".bin", cacheDirectory)
+        var importedCopy: File? = null
         try {
-            temporary.writeBytes(bytes)
-            ExifOffsetFix.patchIfBroken(temporary)
-            return temporary.readBytes()
+            importedCopy = File.createTempFile("imported-head-", ".bin", cacheDirectory)
+            cameraCopy.writeBytes(cameraHead)
+            importedCopy.writeBytes(phoneHead)
+            ExifOffsetFix.patchForComparison(cameraCopy, importedCopy)
+            return cameraCopy.readBytes().contentEquals(importedCopy.readBytes())
         } finally {
-            temporary.delete()
+            cameraCopy.delete()
+            importedCopy?.delete()
         }
     }
 }

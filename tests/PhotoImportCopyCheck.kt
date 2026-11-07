@@ -69,6 +69,47 @@ fun main() {
 
         check(PhotoImportCopy.sameHead(directory, broken, corrected)) { "Repaired copy dedup failed" }
         check(PhotoImportCopy.sameHead(directory, broken, before)) { "Unpatched copy dedup failed" }
+        TimeZone.setDefault(TimeZone.getTimeZone("UTC"))
+        check(PhotoImportCopy.sameHead(directory, broken, corrected)) {
+            "Repaired copy dedup changed after the phone timezone changed"
+        }
+        check(PhotoImportCopy.sameHead(directory, jpeg, correctedJpeg)) {
+            "JPEG dedup changed after the phone timezone changed"
+        }
+        val remoteDate = broken.copyOf().also {
+            ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN).putInt(36, 100_000)
+        }
+        val importedRemoteDate = corrected.copyOf().also {
+            ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN).putInt(36, 100_000)
+        }
+        check(PhotoImportCopy.sameHead(directory, remoteDate, importedRemoteDate)) {
+            "Comparison tried to read unrelated date data beyond the captured header"
+        }
+        check(!PhotoImportCopy.sameHead(directory, header("+00:00"), header("+09:00"))) {
+            "Originally valid differing offsets were treated as repair differences"
+        }
+        check(!PhotoImportCopy.sameHead(directory, header("+00:00"), broken)) {
+            "Originally valid source offsets were ignored when the saved header was malformed"
+        }
+        TimeZone.setDefault(TimeZone.getTimeZone("Asia/Tokyo"))
+        val mixed = broken.copyOf().also { "-03:30\u0000".toByteArray().copyInto(it, 100) }
+        val correctedMixed = PhotoImportCopy.prepare(directory, "MIXED.ORF", mixed.size.toLong(),
+            { it.write(mixed) }, { it.readBytes() })
+        val padding = broken.copyOf().also {
+            val table = ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN)
+            for (position in listOf(40, 52, 64)) table.putShort(position, 0xEA1C.toShort())
+        }
+        TimeZone.setDefault(TimeZone.getTimeZone("UTC"))
+        check(PhotoImportCopy.sameHead(directory, mixed, correctedMixed)) {
+            "Mixed valid/repaired offsets did not retain their imported values"
+        }
+        check(PhotoImportCopy.sameHead(directory, broken, padding)) {
+            "Legacy padding repair was not recognized"
+        }
+        check(!PhotoImportCopy.sameHead(directory, header("+00:00"), padding)) {
+            "Legacy padding hid changes to originally valid source offsets"
+        }
+        check(broken.contentEquals(before)) { "Header comparison mutated source bytes" }
         val different = corrected.copyOf().also { it[150] = 99 }
         check(!PhotoImportCopy.sameHead(directory, broken, different)) { "Different photo matched" }
         check(!PhotoImportCopy.sameHead(directory, valid, corrected)) { "Different valid offset matched" }
