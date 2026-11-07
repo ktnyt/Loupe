@@ -47,7 +47,7 @@ final class ShareCapacityUiChecks {
         AccessibilityNodeInfo node=share.createAccessibilityNodeInfo();try{TagDetailChecks.require(!node.isEnabled(),"AX disabled matches view");}finally{node.recycle();}
         TagDetailChecks.require(share.getContentDescription().toString().contains("上限を超えています"),"AX capacity reason");
         Object dialog=RankingResultChecks.get(a,"shareDialog");share.performClick();TagDetailChecks.require(RankingResultChecks.get(a,"shareDialog")==dialog,"disabled action cannot open menu");
-        View root=(View)RankingResultChecks.get(a,"root");TagDetailChecks.inspect(root);TextView badge=root.findViewWithTag("share-capacity");TagDetailChecks.require(badge.getText().toString().equals("768 / 512 MiB"),"visible size matches disabled state");
+        View root=(View)RankingResultChecks.get(a,"root");TagDetailChecks.inspect(root);fullyVisibleActions(a);TextView badge=root.findViewWithTag("share-capacity");TagDetailChecks.require(badge.getText().toString().equals("768 / 512 MiB"),"visible size matches disabled state");
       });
       String prefix="capacity-"+width+"-"+font;
       ConsistencyLayoutChecks.captureHardware(t,a,(View)RankingResultChecks.get(a,"root"),shots,prefix+"-over");
@@ -57,7 +57,7 @@ final class ShareCapacityUiChecks {
         TextView badge=((View)RankingResultChecks.get(a,"root")).findViewWithTag("share-capacity");TagDetailChecks.require(badge.getText().toString().equals("512 / 512 MiB"),"exact limit displayed");
         ((Set<String>)RankingResultChecks.get(a,"selectedPhotos")).add(photos.get(2).uri.toString());RankingResultChecks.set(a,"bestOnly",true);RankingResultChecks.call(a,"updateSelection");
         TagDetailChecks.require(((Button)RankingResultChecks.get(a,"selectionShare")).isEnabled(),"best-only resolves smaller actual share targets");
-        TagDetailChecks.inspect((View)RankingResultChecks.get(a,"root"));
+        TagDetailChecks.inspect((View)RankingResultChecks.get(a,"root"));fullyVisibleActions(a);
       });
       ConsistencyLayoutChecks.captureHardware(t,a,(View)RankingResultChecks.get(a,"root"),shots,prefix+"-fit");
       AtomicInteger chosen=new AtomicInteger();
@@ -67,6 +67,16 @@ final class ShareCapacityUiChecks {
         menu.original.performClick();TagDetailChecks.require(!menu.raw&&!menu.original.isEnabled()&&menu.jpeg.isEnabled(),"over original disabled; fitting JPEG remains usable");
         ViewGroup destinations=(ViewGroup)menu.content.getChildAt(menu.content.getChildCount()-2);destinations.getChildAt(1).performClick();TagDetailChecks.require(chosen.get()==0&&menu.isShowing(),"oversized saved target does nothing");
         destinations.getChildAt(0).performClick();TagDetailChecks.require(chosen.get()==1&&!menu.isShowing(),"fitting saved target proceeds");
+      });
+      if(width==320&&font==1.3f)TagDetailChecks.ui(t,()->{
+        for(int selected=0;selected<4;selected++){
+          PhotoListUi.Filters filters=new PhotoListUi.Filters(a);String[] names={"すべて","1位","順位が未決定","順位決定済み"};
+          for(int i=0;i<4;i++)filters.addView(PhotoListUi.chip(a,names[i],i==selected,()->{}),new ViewGroup.LayoutParams(-2,-2));
+          filters.measure(View.MeasureSpec.makeMeasureSpec(GalleryUi.dp(a,width),View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(0,View.MeasureSpec.UNSPECIFIED));
+          filters.layout(0,0,filters.getMeasuredWidth(),filters.getMeasuredHeight());
+          TagDetailChecks.require(filters.getMeasuredHeight()<=GalleryUi.dp(a,100),"all selected filters fit two rows");TagDetailChecks.inspect(filters);
+          TagDetailChecks.require(filters.getChildAt(2).getTop()==filters.getChildAt(3).getTop(),"long filters share second row");
+        }
       });
       stale(t,a,photos.get(0));
       TagDetailChecks.ui(t,()->{
@@ -82,6 +92,12 @@ final class ShareCapacityUiChecks {
     } finally {
       TagDetailChecks.ui(t,()->{for(Dialog dialog:dialogs)if(dialog.isShowing())dialog.dismiss();a.finish();});
       for(File file:files)file.delete();fixtures.delete();
+    }
+  }
+  private static void fullyVisibleActions(MainActivity a){
+    View root=(View)RankingResultChecks.get(a,"root");
+    for(View action:new View[]{(View)RankingResultChecks.get(a,"selectionShare"),(View)RankingResultChecks.get(a,"selectionSort"),(View)RankingResultChecks.get(a,"selectionAll"),TagDetailChecks.button(root,"選択を終了")}){
+      Rect visible=new Rect();TagDetailChecks.require(action!=null&&action.getLocalVisibleRect(visible)&&visible.left==0&&visible.top==0&&visible.right==action.getWidth()&&visible.bottom==action.getHeight(),"selection action fully visible without scrolling");
     }
   }
   private static void stale(Instrumentation t,MainActivity a,PhotoRepository.Photo jpeg)throws Exception{
