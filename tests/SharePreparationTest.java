@@ -84,10 +84,21 @@ public final class SharePreparationTest {
       try (RandomAccessFile file = new RandomAccessFile(existing, "rw")) {
         file.setLength(LIMIT);
       }
-      expectFailure(new SharePreparation(capacity, (photo, raw, destination) -> {
+      SharePreparation.Result besideExisting = new SharePreparation(capacity, (photo, raw, destination) -> {
         Files.write(destination.toPath(), new byte[] {1});
-      }), List.of(photo("one.jpg")));
-      check(capacity.list().length == 1 && existing.length() == LIMIT, "existing bytes count toward limit");
+      }).prepare(List.of(photo("one.jpg")), true);
+      check(capacity.list().length == 2 && existing.length() == LIMIT,
+          "retained recipient copies do not consume this share budget");
+      check(besideExisting.files.get(0).length() == 1, "new share succeeds beside full retained cache");
+      SharePreparation.Result exact = new SharePreparation(new File(root,"exact"), (photo, raw, destination) -> {
+        try (RandomAccessFile f = new RandomAccessFile(destination,"rw")) { f.setLength(LIMIT); }
+      }).prepare(List.of(photo("one.jpg")),true);
+      check(exact.files.get(0).length() == LIMIT, "exact per-share limit succeeds");
+      int[] preflightCopies={0};
+      expectFailure(new SharePreparation(new File(root,"early"), (photo,raw,destination)->{
+        preflightCopies[0]++; Files.write(destination.toPath(),new byte[]{1});
+      }), List.of(new PhotoRepository.Photo(null,"too-large.jpg","test/",LIMIT+1,0,0)));
+      check(preflightCopies[0]==0,"known oversized selection rejected before retrieval");
       check(existing.setLastModified(System.currentTimeMillis() - 25L * 60 * 60 * 1000), "age fixture");
       new SharePreparation(capacity, (photo, raw, destination) -> {
         Files.write(destination.toPath(), new byte[] {1});
