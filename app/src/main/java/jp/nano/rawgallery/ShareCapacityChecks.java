@@ -46,7 +46,7 @@ final class ShareCapacityChecks implements AutoCloseable {
       List<PhotoRepository.Photo> missing=new ArrayList<>();
       if(ShareCapacity.assess(photos,false,jpegSizes,false).state!=ShareCapacity.State.OVER)
         for(PhotoRepository.Photo photo:photos)
-          if(!photo.isJpeg() && !"archive".equals(photo.uri.getScheme())
+          if(!photo.isJpeg() && OriginalCache.supportsSize(photo.size) && !"archive".equals(photo.uri.getScheme())
               && !jpegSizes.containsKey(ShareCapacity.key(photo))) missing.add(photo);
       if(!missing.isEmpty() && !closed) {
         pending=true;

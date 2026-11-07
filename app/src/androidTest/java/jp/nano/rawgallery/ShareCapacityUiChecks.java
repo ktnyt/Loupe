@@ -87,7 +87,7 @@ final class ShareCapacityUiChecks {
   private static void stale(Instrumentation t,MainActivity a,PhotoRepository.Photo jpeg)throws Exception{
     CountDownLatch entered=new CountDownLatch(1),release=new CountDownLatch(1),finished=new CountDownLatch(1);
     AtomicInteger callbacks=new AtomicInteger();ShareCapacityChecks[] check={null};
-    PhotoRepository.Photo raw=new PhotoRepository.Photo(jpeg.uri,"deferred.orf","fixture/",ShareCapacity.LIMIT+1,0,0);
+    PhotoRepository.Photo raw=new PhotoRepository.Photo(jpeg.uri,"deferred.orf","fixture/",256L*1024*1024,0,0);
     TagDetailChecks.ui(t,()->{check[0]=new ShareCapacityChecks(callbacks::incrementAndGet,photo->{entered.countDown();boolean done=false;while(!done)try{release.await();done=true;}catch(InterruptedException ignored){}finished.countDown();return 800L*1024*1024;});check[0].request(List.of(raw));});
     try{
       TagDetailChecks.require(entered.await(10,TimeUnit.SECONDS),"old local check entered");
