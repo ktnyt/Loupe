@@ -104,3 +104,7 @@ TalkBackの有効化を許可されたこと自体は、検証の必須要件を
 通常の合成実機検査は `python3 scripts/device-check.py --serial <端末> --mode <mode> --width 400 --font 1.0 --standby-youtube` で実行する。instrumentationが終了コード0でも本文がPASSでなければ失敗として終了する。結果の確認と次の検査は分け、失敗時は対策と再確認を先に行う。
 
 写真一覧・選択のTalkBack検査は同じ復元付きCLIで `--mode gallery-screen-talkback` を指定する。実TalkBackのタッチガイド有効状態、写真のフォーカスとAX操作、共有設定スイッチの読み上げ属性と切替を確認する。通常の `gallery-screen` は画面上の座標へタップを送る。音声の聞き取りやTalkBackのジェスチャー操作まで検査済みとは扱わない。
+
+## OTA配布
+
+[OTA更新手順](ota-updates.md)に従い、main prepareのbundleだけをpublishする。Obtainiumで通常更新した後は `scripts/deploy-apk.py confirm --bundle <bundle.json> --serial <SERIAL>` をissue進捗の `--then` から実行し、USB installをやり直さず実端末のAPKを照合する。配布したAPKと同一であることを確認するまでdeliveryを完了にしない。

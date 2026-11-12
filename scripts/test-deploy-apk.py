@@ -41,7 +41,7 @@ class DeployTests(unittest.TestCase):
         self.root = Path(self.temp.name).resolve()
         self.apk = self.root / 'loupe.apk'
         self.apk.write_bytes(b'synthetic apk bytes')
-        self.info = dict(deploy.manifest_info(XML), certificates=['abc123'], apk_sha256=deploy.sha256(self.apk))
+        self.info = dict(deploy.manifest_info(XML), certificates=[deploy.CERTIFICATE], apk_sha256=deploy.sha256(self.apk))
         self.bundle = dict(self.info, schema=1, mode='main', apk='loupe.apk', issue=None,
                            source_commit='a'*40, source_tree='b'*40)
         self.stamp()
@@ -87,6 +87,106 @@ class DeployTests(unittest.TestCase):
              patch.object(deploy, 'installed', side_effect=[self.previous, after or self.info]), \
              patch.object(deploy, 'adb', side_effect=self.fake_adb), patch('builtins.print'):
             deploy.install(self.args)
+
+    def confirm(self, after=None, ancestry=None):
+        deploy.save(self.bundle_path, self.bundle)
+        with patch.object(deploy, 'git', side_effect=self.fake_git), \
+             patch.object(deploy, 'contains', side_effect=ancestry or [True, True, True]), \
+             patch.object(deploy, 'apk_info', return_value=self.info), \
+             patch.object(deploy, 'installed', return_value=after or self.info), \
+             patch.object(deploy, 'adb', side_effect=self.fake_adb), patch('builtins.print'):
+            deploy.confirm(self.args)
+
+    def test_ota_confirm_closes_integrated_recovery_without_install(self):
+        deploy.save(self.record_path(), dict(serial=self.args.serial, mode='recovery',
+                    source_commit='c'*40, apk_sha256='recovery-hash', status='pending-main-integration'))
+        self.confirm()
+        record = deploy.load(self.record_path())
+        self.assertEqual(record['status'], 'installed-main')
+        self.assertEqual(record['method'], 'ota-readback')
+        self.assertEqual(record['previous_apk_sha256'], 'recovery-hash')
+        self.assert_not_installed()
+
+    def test_ota_mismatch_preserves_pending(self):
+        pending = dict(serial=self.args.serial, mode='recovery', source_commit='c'*40,
+                       status='pending-main-integration')
+        deploy.save(self.record_path(), pending)
+        with self.assertRaisesRegex(ValueError, 'identity mismatch'):
+            self.confirm(after=dict(self.info, apk_sha256='wrong'))
+        self.assertEqual(deploy.load(self.record_path()), pending)
+        self.assert_not_installed()
+
+    def test_ota_rejects_recovery_and_unintegrated_pending(self):
+        self.bundle.update(mode='recovery', issue=87)
+        self.stamp()
+        with self.assertRaisesRegex(ValueError, 'main bundle'):
+            self.confirm()
+        self.bundle.update(mode='main', issue=None)
+        self.stamp()
+        deploy.save(self.record_path(), dict(serial=self.args.serial, mode='recovery',
+                    source_commit='c'*40, status='pending-main-integration'))
+        with self.assertRaisesRegex(ValueError, 'recovery source'):
+            self.confirm(ancestry=[True, False])
+        self.assert_not_installed()
+
+    def test_ota_disconnect_preserves_pending(self):
+        pending = dict(serial=self.args.serial, mode='recovery', source_commit='c'*40,
+                       status='pending-main-integration')
+        deploy.save(self.record_path(), pending)
+        deploy.save(self.bundle_path, self.bundle)
+        with patch.object(deploy, 'git', side_effect=self.fake_git), \
+             patch.object(deploy, 'contains', return_value=True), \
+             patch.object(deploy, 'apk_info', return_value=self.info), \
+             patch.object(deploy, 'installed', side_effect=subprocess.CalledProcessError(1, 'fake-adb')), \
+             patch.object(deploy, 'adb', side_effect=self.fake_adb):
+            with self.assertRaises(subprocess.CalledProcessError):
+                deploy.confirm(self.args)
+        self.assertEqual(deploy.load(self.record_path()), pending)
+        self.assert_not_installed()
+
+    def test_ota_alternate_signature_on_candidate_and_device_preserves_record(self):
+        pending = dict(serial=self.args.serial, mode='recovery', source_commit='c'*40,
+                       status='pending-main-integration')
+        deploy.save(self.record_path(), pending)
+        self.info['certificates'] = ['alternate-certificate']
+        self.bundle['certificates'] = ['alternate-certificate']
+        with self.assertRaisesRegex(ValueError, 'Loupe signing certificate'):
+            self.confirm(after=self.info)
+        self.assertEqual(deploy.load(self.record_path()), pending)
+        self.assertEqual(self.calls, [])
+
+    def test_ota_pending_newer_main_cannot_be_closed_with_older_installed_main(self):
+        pending = dict(serial=self.args.serial, mode='main', source_commit='c'*40,
+                       status='pending-readback')
+        deploy.save(self.record_path(), pending)
+        def ancestry(repo, ancestor, descendant='origin/main'):
+            # Candidate A is in main, but pending B is a descendant of A.
+            return ancestor == 'a'*40
+        deploy.save(self.bundle_path, self.bundle)
+        with patch.object(deploy, 'git', side_effect=self.fake_git), \
+             patch.object(deploy, 'contains', side_effect=ancestry), \
+             patch.object(deploy, 'apk_info', return_value=self.info), \
+             patch.object(deploy, 'installed', return_value=self.info), \
+             patch.object(deploy, 'adb', side_effect=self.fake_adb):
+            with self.assertRaisesRegex(ValueError, 'pending main source'):
+                deploy.confirm(self.args)
+        self.assertEqual(deploy.load(self.record_path()), pending)
+        self.assert_not_installed()
+
+    def test_ota_serial_lock_and_main_checks_are_preserved(self):
+        with self.assertRaisesRegex(ValueError, 'not in origin/main'):
+            self.confirm(ancestry=[False])
+        self.args.serial = 'invalid serial'
+        with self.assertRaisesRegex(ValueError, 'serial'):
+            self.confirm()
+        self.args.serial = 'fake-phone'
+        with deploy.device_lock(self.record_path().parent / 'deployment'):
+            with self.assertRaisesRegex(ValueError, 'Another deployment'):
+                self.confirm()
+        deploy.save(self.record_path().parent / 'other.json', dict(status='pending-readback'))
+        with self.assertRaisesRegex(ValueError, 'original serial'):
+            self.confirm()
+        self.assert_not_installed()
 
     def assert_not_installed(self):
         self.assertFalse(any(x[0] == 'install' for x in self.calls))

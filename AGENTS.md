@@ -12,10 +12,11 @@
 ## 常用実機へ入れるAPKとmain
 
 - 常用APKは `scripts/deploy-apk.py prepare` で、fetch済み `origin/main` のcleanなコミットから作る。未コミット変更や未マージbranchのAPKを常用版として導入しない。
-- 本体APKの導入は `scripts/deploy-apk.py install` をissue進捗の `--then` から呼ぶ。prepareが記録したsource commit/tree・APKハッシュ・署名・版・必須機能を再照合し、導入後に端末APKを読み戻す。`adb install` の成功表示だけで完了にしない。別applicationIdの検査APKと専用エミュレータの検査導入は除く。
+- USBでの本体APK導入は `scripts/deploy-apk.py install` をissue進捗の `--then` から呼ぶ。prepareが記録したsource commit/tree・APKハッシュ・署名・版・必須機能を再照合し、導入後に端末APKを読み戻す。`adb install` の成功表示だけで完了にしない。別applicationIdの検査APKと専用エミュレータの検査導入は除く。
 - library・動画・Nano Banana・カメラ取り込みを必須機能として扱う。現在の端末が既に機能欠落していても、この検査を省略しない。manifest検査と、カメラ/Nanoの設定導線のUI検査を併用する。機能の意図的な廃止は要件変更としてissueとレビューを経て必須契約も更新し、回避flagで通さない。
 - 実機でしか検証できない場合は、通常は専用エミュレータ/予備端末を先に使う。常用端末で未マージソースを確認する必要がある場合だけ、依頼範囲とissueを明記した `prepare --mode recovery --ref <commit> --issue <番号>` と `install --ack-recovery` を使う。これは常用導入完了ではない。
 - recoveryを常用実機に入れたら、そのcommitをmainに含め、mainから作り直したAPKを同じ端末へ導入・照合するまでdeliveryを閉じない。端末が切断してもpending記録を消さない。機能欠落したmain版を戻し先にしない。`scripts/deploy-apk.py status` がpendingなら完了報告を止める。
+- OTAは `scripts/publish-apk.py` で検査済みmain bundleだけをReleaseへ配布する。ObtainiumとAndroidの通常インストーラーで更新後、同じbundleを `scripts/deploy-apk.py confirm` で読み戻し照合する。confirmはinstallをやり直さず、既存pendingと復元commitの祖先条件を満たしてからmain導入として記録する。
 - アプリデータ、カメラ履歴、API設定を消して合わせない。uninstallやversionCodeのdowngradeで復旧を回避しない。詳細とコマンドは [開発手順](docs/development-workflow.md#apkとmainの照合) を参照する。
 
 ## issueへの進捗記録（必須）
