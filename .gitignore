@@ -20,3 +20,7 @@ docs/*-test-results.txt
 
 # Android native build intermediates
 **/.cxx/
+
+# APK bundles and per-device deployment records
+outputs/apk/
+outputs/deployments/
