@@ -120,7 +120,7 @@ def wait_for_standby(shell, attempts=30, interval=0.5, play_when_focused=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--serial', required=True)
-    parser.add_argument('--mode', required=True, choices=('gallery-material3', 'material3', 'sheets', 'sync-controls', 'system-back', 'share-capacity', 'share-history', 'share-history-screen', 'share-history-handoff', 'share-history-callback', 'share-history-restart-seed', 'share-history-restart-verify', 'share-toggle', 'photo-edit', 'share-screen', 'viewer-screen', 'viewer-look', 'viewer-look-ui', 'viewer-look-raw', 'viewer-look-timing-raw', 'viewer-look-timing-jpeg', 'gallery-screen', 'ranking-result', 'tag-detail', 'tag-confidence', 'confidence-store', 'sort-naming', 'burst-co-winners', 'burst-bulk-winners', 'consistency-layout'))
+    parser.add_argument('--mode', required=True, choices=('nano-banana', 'video', 'gallery-material3', 'material3', 'sheets', 'sync-controls', 'system-back', 'share-capacity', 'share-history', 'share-history-screen', 'share-history-handoff', 'share-history-callback', 'share-history-restart-seed', 'share-history-restart-verify', 'share-toggle', 'photo-edit', 'share-screen', 'viewer-screen', 'viewer-look', 'viewer-look-ui', 'viewer-look-raw', 'viewer-look-timing-raw', 'viewer-look-timing-jpeg', 'gallery-screen', 'ranking-result', 'tag-detail', 'tag-confidence', 'confidence-store', 'sort-naming', 'burst-co-winners', 'burst-bulk-winners', 'consistency-layout'))
     parser.add_argument('--width', default='400')
     parser.add_argument('--font', default='1.0')
     parser.add_argument('--adb', default='/opt/homebrew/share/android-commandlinetools/platform-tools/adb')

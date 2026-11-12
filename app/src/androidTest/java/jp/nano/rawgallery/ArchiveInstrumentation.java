@@ -13,12 +13,20 @@ import org.json.JSONObject;
  * source.
  */
 public final class ArchiveInstrumentation extends Instrumentation {
+  private boolean videoTest, nanoBananaTest;
   private boolean material3Test, materialGalleryTest;
   private int tagWidth;
   private boolean sortDimensionsSpecified;
   private float tagFont;
   @Override public void callActivityOnCreate(android.app.Activity activity, Bundle state) {
-    if ((tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || viewerLookTest || viewerLookUiTest) && (activity instanceof TagActivity || activity instanceof MainActivity || viewerLookUiTest && activity instanceof RawEditActivity) && tagWidth > 0) {
+    if(nanoBananaTest&&activity instanceof NanoBananaActivity) {
+      if(NanoBananaChecks.fixtureStore==null)throw new AssertionError("Isolated Nano fixture missing");
+      try{java.lang.reflect.Field f=NanoBananaActivity.class.getDeclaredField("store");f.setAccessible(true);f.set(activity,NanoBananaChecks.fixtureStore);}catch(Exception e){throw new RuntimeException(e);}
+      // Simulate recreation to show durable states without executing any network job.
+      state=new Bundle();
+    }
+
+    if ((tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || viewerLookTest || viewerLookUiTest || videoTest) && (activity instanceof TagActivity || activity instanceof MainActivity || activity instanceof VideoActivity || viewerLookUiTest && activity instanceof RawEditActivity) && tagWidth > 0) {
       android.content.res.Configuration config = new android.content.res.Configuration(activity.getBaseContext().getResources().getConfiguration());
       config.fontScale = tagFont; config.screenWidthDp = tagWidth;
       // Test process resources only; never writes system settings.
@@ -26,7 +34,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     }
     if((confidenceUiTest||tagDetailTest)&&activity instanceof TagActivity)TagFixtureIsolation.install((TagActivity)activity);
     super.callActivityOnCreate(activity, state);
-    if ((tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || viewerLookTest || viewerLookUiTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+    if ((tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || viewerLookTest || viewerLookUiTest || videoTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
     if(viewerLookTest&&activity instanceof RawEditActivity)ViewerLookChecks.rawEditActivityLaunches++;
   }
   private boolean shareHistoryTest, shareHistoryScreenTest, shareHistoryHandoffTest, shareHistoryCallbackTest;
@@ -74,6 +82,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    videoTest=args!=null&&"video".equals(args.getString("mode"));
+    nanoBananaTest=args!=null&&"nano-banana".equals(args.getString("mode"));
     material3Test=args!=null&&"material3".equals(args.getString("mode"));
     materialGalleryTest=args!=null&&"gallery-material3".equals(args.getString("mode"));
     shareHistoryTest = args != null && "share-history".equals(args.getString("mode"));
@@ -112,7 +122,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     resultTalkBack=args!=null&&"ranking-result-talkback".equals(args.getString("mode"));
     resultTest=resultTalkBack||(args!=null&&"ranking-result".equals(args.getString("mode")));
     tagDetailTest=args!=null&&"tag-detail".equals(args.getString("mode"));
-    if((tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || viewerLookTest || viewerLookUiTest) && args.containsKey("width")){tagWidth=Integer.parseInt(args.getString("width"));tagFont=Float.parseFloat(args.getString("font","1.0"));}
+    if((tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || viewerLookTest || viewerLookUiTest || videoTest || nanoBananaTest) && args.containsKey("width")){tagWidth=Integer.parseInt(args.getString("width"));tagFont=Float.parseFloat(args.getString("font","1.0"));}
     sortDimensionsSpecified=sortTest && args.containsKey("width");
     syncControlsTest=args!=null&&"sync-controls".equals(args.getString("mode"));
     consistencyTest=args!=null&&"consistency-layout".equals(args.getString("mode"));
@@ -160,6 +170,15 @@ public final class ArchiveInstrumentation extends Instrumentation {
       String report=failureReport(new AssertionError(new java.io.IOException("PRIVATE_VALUE")));
       if(report.contains("PRIVATE_VALUE")||!report.contains("java.io.IOException")||!report.contains("ArchiveInstrumentation.java:"))throw new AssertionError();
       Context context = getTargetContext();
+      if (nanoBananaTest) {
+        results.putString("stream", NanoBananaChecks.run(this, tagWidth > 0 ? tagWidth : 400, tagFont > 0 ? tagFont : 1f));
+        finish(-1, results); return;
+      }
+      if (videoTest) {
+        results.putString("stream", VideoChecks.run(this, tagWidth > 0 ? tagWidth : 400, tagFont > 0 ? tagFont : 1f));
+        finish(-1, results);
+        return;
+      }
       if (e2ArchiveTest) {
         results.putString("stream", E2DeviceChecks.run(context, e2RunId));
         finish(-1, results);

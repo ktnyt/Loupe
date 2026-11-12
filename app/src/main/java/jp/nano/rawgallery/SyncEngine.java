@@ -20,7 +20,7 @@ final class SyncEngine {
     try (ArchiveStore store = new ArchiveStore(c)) {
       for (PhotoRepository.Photo p : new PhotoRepository(c).scan("すべて")) {
         if (Thread.currentThread().isInterrupted()) break;
-        if (!managed(c, p, false)) continue;
+        if (p.isVideo() || !managed(c, p, false)) continue;
         try {
           ArchiveStore.RawMetadata metadata = store.metadata(p);
           if (p.isJpeg() || SyncPolicy.supported(metadata.model))
@@ -105,6 +105,7 @@ final class SyncEngine {
       int processed = 0, deferred = 0;
       boolean reachedEnd=true;
       for (PhotoRepository.Photo p : batch) {
+        if (p.isVideo()) continue;
         SharedPreferences settings = c.getSharedPreferences("settings", 0);
         if (!settings.getBoolean("syncEnabled", false)
             || Thread.currentThread().isInterrupted()

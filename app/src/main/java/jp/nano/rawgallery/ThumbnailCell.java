@@ -53,7 +53,7 @@ final class ThumbnailCell extends FrameLayout {
     }
     StatusView.Symbol tagState;
     boolean cloud, failed, rankFailed, selectionMode, selected, partial, tagAtRight, photoSelection;
-    boolean burstSelection;
+    boolean burstSelection, video;
 
     Badges(Context context) {
       super(context);
@@ -131,7 +131,17 @@ final class ThumbnailCell extends FrameLayout {
       }
       if(tagState!=null){if(tagAtRight)box(canvas,w-30,h-26,24,20);StatusView.glyph(canvas,paint,tagState,tagAtRight?w-28:5,h-26,20,GalleryUi.TEXT,0);}
       if(rankFailed)StatusView.glyph(canvas,paint,StatusView.Symbol.FAILED,5,h-26,20,0xffff8a7a,0);
-      if (selectionMode) {
+      if (video) {
+        box(canvas, w / 2 - 14, h / 2 - 14, 28, 28);
+        paint.setColor(Color.WHITE);
+        Path triangle = new Path();
+        triangle.moveTo(w / 2 - 4, h / 2 - 7);
+        triangle.lineTo(w / 2 + 7, h / 2);
+        triangle.lineTo(w / 2 - 4, h / 2 + 7);
+        triangle.close();
+        canvas.drawPath(triangle, paint);
+      }
+      if (selectionMode && !video) {
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(selected ? GalleryUi.ACCENT : 0xaa141719);
         canvas.drawCircle(17, 17, 11, paint);

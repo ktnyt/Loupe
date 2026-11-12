@@ -220,7 +220,10 @@ public final class MainActivity extends DiagnosticActivity {
         Build.VERSION.SDK_INT >= 33
             ? Manifest.permission.READ_MEDIA_IMAGES
             : Manifest.permission.READ_EXTERNAL_STORAGE;
-    if (checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) requestPhotoAccess();
+    if (checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED
+        || (Build.VERSION.SDK_INT >= 33
+            && checkSelfPermission(Manifest.permission.READ_MEDIA_VIDEO) != PackageManager.PERMISSION_GRANTED))
+      requestPhotoAccess();
   }
 
   @Override
@@ -352,6 +355,10 @@ public final class MainActivity extends DiagnosticActivity {
     grid.setHapticFeedbackEnabled(false);
     grid.onCellLongClick(
         (parent, view, pos, id) -> {
+          if (photos.get(displayed.get(pos).get(0)).isVideo()) {
+            feedback(StatusView.Symbol.PAUSED,"動画はタップして再生できます",null,"");
+            return true;
+          }
           root.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
           if (!selecting) {
             selecting = true;
@@ -415,7 +422,7 @@ public final class MainActivity extends DiagnosticActivity {
   private void previewInto(ImageView image, PhotoRepository.Photo photo, int size, java.util.function.Consumer<Boolean> complete) {
     long request = DiagnosticLog.id();
     DiagnosticLog.event("image.request", request, "burst", burstRequest,
-        "photo", DiagnosticLog.photo(photo), "size", size, "format", photo.isJpeg() ? "JPEG" : "RAW");
+        "photo", DiagnosticLog.photo(photo), "size", size, "format", photo.isVideo() ? "VIDEO" : photo.isJpeg() ? "JPEG" : "RAW");
     String key = imageKey(photo, size);
     if (image.getTag() instanceof ImageLoad) ((ImageLoad) image.getTag()).cancelled = true;
     ImageLoad load = new ImageLoad();
@@ -451,7 +458,7 @@ public final class MainActivity extends DiagnosticActivity {
     images.execute(() -> {
       if (cancelled.getAsBoolean()) { DiagnosticLog.event("image.discard", request); return; }
       try {
-        Bitmap bitmap = size <= 600 ? repository.thumbnail(photo, size, cancelled)
+        Bitmap bitmap = size <= 600 || photo.isVideo() ? repository.thumbnail(photo, size, cancelled)
             : PhotoRepository.bitmap(repository.preview(photo, cancelled), size);
         if (cancelled.getAsBoolean()) { bitmap.recycle(); DiagnosticLog.event("image.discard", request); return; }
         thumbs.put(key, bitmap);
@@ -671,7 +678,7 @@ public final class MainActivity extends DiagnosticActivity {
   private SelectionResult resolveSelection() {
     Set<Integer> requested = new LinkedHashSet<>();
     for (int i = 0; i < photos.size(); i++)
-      if (selectedPhotos.contains(photos.get(i).uri.toString())) requested.add(i);
+      if (!photos.get(i).isVideo() && selectedPhotos.contains(photos.get(i).uri.toString())) requested.add(i);
     BestShotSelection resolved =
         BestShotSelection.resolve(
             requested,
@@ -704,6 +711,10 @@ public final class MainActivity extends DiagnosticActivity {
 
   private void toggleSelection(int pos) {
     List<Integer> members = displayed.get(pos);
+    if (photos.get(members.get(0)).isVideo()) {
+      feedback(StatusView.Symbol.PAUSED,"動画は写真の選択対象外です",null,"");
+      return;
+    }
     boolean remove = tileSelected(members);
     for (int member : members) {
       String key = photos.get(member).uri.toString();
@@ -715,8 +726,13 @@ public final class MainActivity extends DiagnosticActivity {
 
   private boolean allVisibleSelected() {
     if (displayed.isEmpty()) return false;
-    for (List<Integer> members : displayed) if (!tileSelected(members)) return false;
-    return true;
+    boolean hasPhotos = false;
+    for (List<Integer> members : displayed) {
+      if (photos.get(members.get(0)).isVideo()) continue;
+      hasPhotos = true;
+      if (!tileSelected(members)) return false;
+    }
+    return hasPhotos;
   }
 
   private String sortLabel() {
@@ -798,6 +814,7 @@ public final class MainActivity extends DiagnosticActivity {
             () -> {
               boolean remove = allVisibleSelected();
               for (List<Integer> members : displayed) for (int member : members) {
+                if (photos.get(member).isVideo()) continue;
                 String key = photos.get(member).uri.toString();
                 if (remove) selectedPhotos.remove(key); else selectedPhotos.add(key);
               }
@@ -1062,9 +1079,12 @@ public final class MainActivity extends DiagnosticActivity {
   private void galleryMenu() {
     DiagnosticLog.event("screen.galleryMenu", 0);
     MoreMenuUi.show(this,"設定とその他の操作",
-            new String[] {"クラウドと同期", "共有先の設定", "連写のまとめ方", "写真へのアクセス", "再読み込み", "写真のプレビュー", "処理の状況"},
+            new String[] {"クラウドと同期", "共有先の設定", "連写のまとめ方", "写真へのアクセス", "再読み込み", "写真のプレビュー", "処理の状況", "Nano Banana"},
             (d, which) -> {
               switch (which) {
+                case 7:
+                  startActivity(new Intent(this, NanoBananaSettingsActivity.class));
+                  break;
                 case 6:
                   startActivity(new Intent(this, DashboardActivity.class));
                   break;
@@ -1129,13 +1149,19 @@ public final class MainActivity extends DiagnosticActivity {
     subtitle.setText(countText());
   }
 
-  private void adjacentPhoto(int direction) {
-    if (burstMembers == null) {
-      showPhoto(index + direction);
-      return;
+  private int adjacentPhotoPosition(int direction) {
+    if(burstMembers!=null) {
+      int next=burstMembers.indexOf(index)+direction;
+      return next>=0&&next<burstMembers.size()?burstMembers.get(next):-1;
     }
-    int next = burstMembers.indexOf(index) + direction;
-    if (next >= 0 && next < burstMembers.size()) showPhoto(burstMembers.get(next));
+    for(int next=index+direction;next>=0&&next<photos.size();next+=direction)
+      if(!photos.get(next).isVideo())return next;
+    return -1;
+  }
+
+  private void adjacentPhoto(int direction) {
+    int next=adjacentPhotoPosition(direction);
+    if(next>=0)showPhoto(next);
   }
 
   private void albumHome() {
@@ -1178,7 +1204,11 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private ImageView carouselPhoto(LinearLayout cards, PhotoRepository.Photo photo, String name, int width, Runnable open) {
-    ImageView image=GalleryCarouselUi.photo(this,cards,name,width==300,open);
+    ImageView image=GalleryCarouselUi.photo(this,cards,(photo.isVideo()?"動画、":"")+name,width==300,open);
+    if (photo.isVideo()) {
+      image.setForeground(getDrawable(R.drawable.ic_video_play));
+      image.setForegroundGravity(Gravity.CENTER);
+    }
     final boolean[] requested = {false};
     Runnable loadVisible = () -> {
       android.graphics.Rect visible = new android.graphics.Rect();
@@ -1456,17 +1486,15 @@ public final class MainActivity extends DiagnosticActivity {
       requestPermissions(
           new String[] {
             Manifest.permission.READ_MEDIA_IMAGES,
+            Manifest.permission.READ_MEDIA_VIDEO,
             Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
           },
           1);
+    else if (Build.VERSION.SDK_INT >= 33)
+      requestPermissions(new String[] {Manifest.permission.READ_MEDIA_IMAGES,
+          Manifest.permission.READ_MEDIA_VIDEO}, 1);
     else
-      requestPermissions(
-          new String[] {
-            Build.VERSION.SDK_INT >= 33
-                ? Manifest.permission.READ_MEDIA_IMAGES
-                : Manifest.permission.READ_EXTERNAL_STORAGE
-          },
-          1);
+      requestPermissions(new String[] {Manifest.permission.READ_EXTERNAL_STORAGE}, 1);
   }
 
   protected void onResume() {
@@ -1553,6 +1581,7 @@ public final class MainActivity extends DiagnosticActivity {
       cell.setContentDescription(
           p.name
               + "、"
+              + (p.isVideo() ? "動画、" : "")
               + p.cameraGroup()
               + ("archive".equals(p.uri.getScheme()) ? "、クラウド" : "、端末")
               + (members.size() > 1 ? "、連写" + members.size() + "枚" : ""));
@@ -1574,6 +1603,7 @@ public final class MainActivity extends DiagnosticActivity {
       cell.badges.shared(p.uri.toString(),historyFor(p));
       cell.setContentDescription(cell.getContentDescription()+ShareHistoryUi.description(cell.badges.shared));
       cell.badges.camera = "";
+      cell.badges.video = p.isVideo();
       cell.badges.cloud = "archive".equals(p.uri.getScheme());
       cell.badges.count = members.size();
       cell.badges.rank = "";cell.badges.rankFailed=false;
@@ -1611,6 +1641,11 @@ public final class MainActivity extends DiagnosticActivity {
     DiagnosticLog.event("screen.photo", 0, "position", position);
     rememberGallery();
     if (position < 0 || position >= photos.size()) return;
+    if (photos.get(position).isVideo()) {
+      PhotoRepository.Photo video = photos.get(position);
+      startActivity(new Intent(this, VideoActivity.class).setData(video.uri).putExtra("name", video.name));
+      return;
+    }
     if (viewing != null) viewing.cancel(true);
     detail = true;
     rankingScreen = false;
@@ -1640,11 +1675,12 @@ public final class MainActivity extends DiagnosticActivity {
       int count=burstMembers==null?photos.size():burstMembers.size();
       Button previous=viewer.action("前の写真","前へ","前の写真",()->{if(look!=null)look.runWhenReady("前の写真へ移動",()->adjacentPhoto(-1));else adjacentPhoto(-1);});
       Button next=viewer.action("次の写真","次へ","次の写真",()->{if(look!=null)look.runWhenReady("次の写真へ移動",()->adjacentPhoto(1));else adjacentPhoto(1);});
-      previous.setEnabled(within>0);next.setEnabled(within+1<count);
+      previous.setEnabled(adjacentPhotoPosition(-1)>=0);next.setEnabled(adjacentPhotoPosition(1)>=0);
     }
     viewer.zoom();
     Button editPhoto=PhotoEditor.add(this,viewer,photo,actions);
     viewer.action("共有","共有","共有（元のファイルを共有します）",()->shareMenu(photo));
+    if(!fromRanking)viewer.action("Nano Banana","AI編集","Nano Bananaで写真を編集",()->NanoBananaUi.show(this,photo));
     if(!fromRanking&&"content".equals(photo.uri.getScheme()))viewer.action("タグ","タグ","タグ",()->openTags(photo));
     viewer.action("情報","情報","写真の情報",()->{
       LinearLayout information=vertical();

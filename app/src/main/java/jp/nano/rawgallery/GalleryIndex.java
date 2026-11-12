@@ -146,10 +146,12 @@ final class GalleryIndex extends SQLiteOpenHelper {
       archiveRevision = archive.indexRevision();
     }
     return media
-        + ":capture-order-v1:archive-v3:"
+        + ":capture-order-v1:video-v1:archive-v3:"
         + archiveRevision
         + ":"
         + c.getSharedPreferences("settings", 0).getInt("burstGapSeconds", 1)
+        + ":"
+        + c.checkSelfPermission(android.Manifest.permission.READ_MEDIA_VIDEO)
         + ":"
         + c.checkSelfPermission(android.Manifest.permission.READ_MEDIA_IMAGES)
         + ":"
@@ -215,7 +217,7 @@ final class GalleryIndex extends SQLiteOpenHelper {
             new BurstGroups.Entry(
                 i,
                 meta == null ? 0 : meta.taken,
-                model.isEmpty()
+                p.isVideo() || model.isEmpty()
                     ? ""
                     : model + "|" + p.folder + "|" + (p.isJpeg() ? "jpeg" : "raw")));
       }

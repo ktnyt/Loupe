@@ -35,6 +35,8 @@ public final class PhotoRepository {
       created = birth;
     }
 
+    public boolean isVideo() { return VideoFormats.accepts(name); }
+
     public boolean isJpeg() {
       return name.toLowerCase(Locale.ROOT).matches(".*\\.(jpg|jpeg)$");
     }
@@ -135,7 +137,8 @@ public final class PhotoRepository {
       MediaStore.MediaColumns.DATE_ADDED
     };
     Uri root = MediaStore.Files.getContentUri("external");
-    String[] patterns = RawFormats.patterns();
+    String[] patterns = java.util.stream.Stream.concat(
+        Arrays.stream(RawFormats.patterns()), Arrays.stream(VideoFormats.patterns())).toArray(String[]::new);
     String condition = "(" + String.join(" OR ",
         Collections.nCopies(patterns.length, MediaStore.Files.FileColumns.DISPLAY_NAME + " LIKE ?")) + ")";
     try (Cursor c =
@@ -212,7 +215,7 @@ public final class PhotoRepository {
           scanTree(tree, child, result, depth + 1);
           continue;
         }
-        if (!RawFormats.accepts(name))
+        if (!RawFormats.accepts(name) && !VideoFormats.accepts(name))
           continue;
         String relative = child.startsWith("primary:") ? child.substring(8) : child;
         String folder = relative.substring(0, Math.max(0, relative.lastIndexOf('/') + 1));
@@ -313,7 +316,21 @@ public final class PhotoRepository {
         return bitmap;
       } catch (IOException | RuntimeException e) { checkPreparation(cancelled); }
     }
+    if (p.isVideo()) return videoThumbnail(p, edge, cancelled);
     return bitmap(preview(p, cancelled), edge);
+  }
+
+  private Bitmap videoThumbnail(Photo p, int edge, java.util.function.BooleanSupplier cancelled)
+      throws IOException {
+    checkPreparation(cancelled);
+    try (android.media.MediaMetadataRetriever retriever = new android.media.MediaMetadataRetriever()) {
+      retriever.setDataSource(context, p.uri);
+      Bitmap frame = retriever.getScaledFrameAtTime(0,
+          android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC, Math.max(1, edge), Math.max(1, edge));
+      if (frame == null) throw new IOException("動画のサムネイルを取得できません");
+      if (cancelled.getAsBoolean()) { frame.recycle(); checkPreparation(cancelled); }
+      return frame;
+    } catch (RuntimeException error) { throw new IOException("動画のサムネイルを取得できません", error); }
   }
 
   public Preview preview(Photo p) throws IOException { return preview(p, () -> false); }
@@ -341,6 +358,7 @@ public final class PhotoRepository {
   }
 
   private Preview previewLocked(Photo p, java.util.function.BooleanSupplier cancelled) throws IOException {
+    if (p.isVideo()) throw new IOException("動画は写真プレビューの対象外です");
     if ("archive".equals(p.uri.getScheme())) {
       try (ArchiveStore store = new ArchiveStore(context)) {
         return store.preview(p.uri.getHost());
@@ -462,6 +480,7 @@ public final class PhotoRepository {
   }
 
   private Preview sourcePreviewLocked(Photo p) throws IOException {
+    if (p.isVideo()) throw new IOException("動画はRAW解析の対象外です");
     if ("archive".equals(p.uri.getScheme())) {
       try (ArchiveStore store = new ArchiveStore(context)) {
         return store.preview(p.uri.getHost());
