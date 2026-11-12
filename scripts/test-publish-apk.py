@@ -29,6 +29,7 @@ class PublishTests(unittest.TestCase):
             apk_sha256=deploy.sha256(self.root / 'loupe.apk'))
         self.info = copy.deepcopy(self.bundle)
         self.info['provenance'] = {k: self.bundle[k] for k in ('schema', 'mode', 'source_commit', 'source_tree', 'issue')}
+        self.bundle['provenance'] = copy.deepcopy(self.info['provenance'])
         self.args = argparse.Namespace(repo=self.root, sdk='fake', gh='fake-gh',
             bundle=self.root / 'bundle.json', notes_file=self.root / 'notes.md', title=None)
         self.calls = []
@@ -130,6 +131,18 @@ class PublishTests(unittest.TestCase):
                     self.apply()
                 self.assertEqual(self.calls, [])
                 self.info, self.bundle = saved, bundle
+
+    def test_private_extra_field_and_forged_bundle_provenance_never_reach_github(self):
+        original = copy.deepcopy(self.bundle)
+        for field, value in [('private_api_key', 'synthetic-secret'),
+                             ('provenance', dict(self.info['provenance'], private='synthetic-secret'))]:
+            with self.subTest(field=field):
+                self.bundle = copy.deepcopy(original)
+                self.bundle[field] = value
+                with self.assertRaises(ValueError):
+                    self.apply()
+                self.assertEqual(self.calls, [])
+                self.assert_unpublished()
 
     def test_existing_tag_or_release_is_not_replaced(self):
         self.exists = True

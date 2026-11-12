@@ -41,7 +41,7 @@ class DeployTests(unittest.TestCase):
         self.root = Path(self.temp.name).resolve()
         self.apk = self.root / 'loupe.apk'
         self.apk.write_bytes(b'synthetic apk bytes')
-        self.info = dict(deploy.manifest_info(XML), certificates=['abc123'], apk_sha256=deploy.sha256(self.apk))
+        self.info = dict(deploy.manifest_info(XML), certificates=[deploy.CERTIFICATE], apk_sha256=deploy.sha256(self.apk))
         self.bundle = dict(self.info, schema=1, mode='main', apk='loupe.apk', issue=None,
                            source_commit='a'*40, source_tree='b'*40)
         self.stamp()
@@ -140,6 +140,35 @@ class DeployTests(unittest.TestCase):
              patch.object(deploy, 'installed', side_effect=subprocess.CalledProcessError(1, 'fake-adb')), \
              patch.object(deploy, 'adb', side_effect=self.fake_adb):
             with self.assertRaises(subprocess.CalledProcessError):
+                deploy.confirm(self.args)
+        self.assertEqual(deploy.load(self.record_path()), pending)
+        self.assert_not_installed()
+
+    def test_ota_alternate_signature_on_candidate_and_device_preserves_record(self):
+        pending = dict(serial=self.args.serial, mode='recovery', source_commit='c'*40,
+                       status='pending-main-integration')
+        deploy.save(self.record_path(), pending)
+        self.info['certificates'] = ['alternate-certificate']
+        self.bundle['certificates'] = ['alternate-certificate']
+        with self.assertRaisesRegex(ValueError, 'Loupe signing certificate'):
+            self.confirm(after=self.info)
+        self.assertEqual(deploy.load(self.record_path()), pending)
+        self.assertEqual(self.calls, [])
+
+    def test_ota_pending_newer_main_cannot_be_closed_with_older_installed_main(self):
+        pending = dict(serial=self.args.serial, mode='main', source_commit='c'*40,
+                       status='pending-readback')
+        deploy.save(self.record_path(), pending)
+        def ancestry(repo, ancestor, descendant='origin/main'):
+            # Candidate A is in main, but pending B is a descendant of A.
+            return ancestor == 'a'*40
+        deploy.save(self.bundle_path, self.bundle)
+        with patch.object(deploy, 'git', side_effect=self.fake_git), \
+             patch.object(deploy, 'contains', side_effect=ancestry), \
+             patch.object(deploy, 'apk_info', return_value=self.info), \
+             patch.object(deploy, 'installed', return_value=self.info), \
+             patch.object(deploy, 'adb', side_effect=self.fake_adb):
+            with self.assertRaisesRegex(ValueError, 'pending main source'):
                 deploy.confirm(self.args)
         self.assertEqual(deploy.load(self.record_path()), pending)
         self.assert_not_installed()

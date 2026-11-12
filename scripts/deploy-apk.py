@@ -20,6 +20,7 @@ PACKAGE = 'jp.nano.rawgallery'
 ANDROID = '{http://schemas.android.com/apk/res/android}'
 REQUIRED = {'library', 'video', 'nano-banana', 'camera-import'}
 SCHEMA = 1
+CERTIFICATE = 'fbd379f053574ef5f497e524b7828e4c388e88c14968acc11b8b39363167b678'
 PROVENANCE = "assets/loupe-deployment.json"
 
 
@@ -274,8 +275,11 @@ def install(args):
 def install_candidate(args, repo, bundle, apk):
     actual = apk_info(apk, args.sdk)
     verify_bundle(bundle, actual)
-    if getattr(args, 'confirm_only', False) and bundle['mode'] != 'main':
-        raise ValueError('OTA confirmation requires a main bundle')
+    if getattr(args, 'confirm_only', False):
+        if bundle['mode'] != 'main':
+            raise ValueError('OTA confirmation requires a main bundle')
+        if actual['certificates'] != [CERTIFICATE]:
+            raise ValueError('OTA confirmation requires the existing Loupe signing certificate')
     source = bundle.get('source_commit', '')
     if not re.fullmatch(r'[0-9a-f]{40}', source):
         raise ValueError('Invalid source commit')
@@ -318,6 +322,13 @@ def install_locked(args, repo, bundle, actual, apk, source, state_path):
     if previous_record and previous_record.get('mode') == 'recovery':
         if not contains(repo, previous_record['source_commit'], source):
             raise ValueError('The installed recovery source is not integrated into this successor build')
+    if (getattr(args, 'confirm_only', False) and previous_record
+            and previous_record.get('mode') == 'main'
+            and previous_record.get('status') != 'installed-main'):
+        pending_source = previous_record.get('source_commit', '')
+        if (not re.fullmatch(r'[0-9a-f]{40}', pending_source)
+                or not contains(repo, pending_source, source)):
+            raise ValueError('The pending main source is not integrated into this confirmation build')
     if adb(args, 'get-state') != 'device':
         raise ValueError('The selected device is unavailable')
     previous = installed(args)

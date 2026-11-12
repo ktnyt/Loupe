@@ -15,7 +15,10 @@ spec = importlib.util.spec_from_file_location('deploy_apk', Path(__file__).with_
 deploy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(deploy)
 REPOSITORY = 'ktnyt/Loupe'
-CERTIFICATE = 'fbd379f053574ef5f497e524b7828e4c388e88c14968acc11b8b39363167b678'
+CERTIFICATE = deploy.CERTIFICATE
+BUNDLE_FIELDS = {'schema', 'mode', 'source_commit', 'source_tree', 'issue', 'apk',
+                 'package', 'version_code', 'version_name', 'certificates', 'features',
+                 'apk_sha256', 'provenance'}
 
 
 def gh(args, *parts):
@@ -36,6 +39,10 @@ def require_absent(args, endpoint):
 def verify_candidate(args, repo, bundle, apk):
     actual = deploy.apk_info(apk, args.sdk)
     deploy.verify_bundle(bundle, actual)
+    if set(bundle) != BUNDLE_FIELDS:
+        raise ValueError('Publication bundle must contain only the verified deployment fields')
+    if bundle['provenance'] != actual['provenance']:
+        raise ValueError('Publication bundle provenance differs from signed APK')
     if bundle['mode'] != 'main':
         raise ValueError('Only main bundles may be published')
     source = bundle.get('source_commit', '')
@@ -66,9 +73,9 @@ def publish(args):
         root = Path(temp)
         snapshot = root / 'loupe.apk'
         shutil.copyfile(apk, snapshot)
-        deploy.save(root / 'bundle.json', bundle)
         shutil.copyfile(args.notes_file, root / 'notes.md')
         tag = verify_candidate(args, repo, bundle, snapshot)
+        deploy.save(root / 'bundle.json', bundle)
         require_absent(args, f'repos/{REPOSITORY}/git/ref/tags/{tag}')
         require_absent(args, f'repos/{REPOSITORY}/releases/tags/{tag}')
         gh(args, 'release', 'create', tag, '--repo', REPOSITORY, '--draft',
