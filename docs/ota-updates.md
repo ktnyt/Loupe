@@ -6,7 +6,19 @@ GitHub Releasesの `ktnyt/Loupe` とObtainiumを使う。スマホで更新を�
 
 Obtainiumへ `https://github.com/ktnyt/Loupe` を追加する。stable Releaseの `loupe.apk` を対象とし、pre-releaseや検査APKを選ばない。更新が見つかったらダウンロードし、Androidの確認画面で更新する。提供元のインストール許可が必要な場合はObtainiumだけを許可する。
 
-## 配布側
+## mainからの自動配布
+
+公式リポジトリのmainへpush（PRのマージを含む）すると、`.github/workflows/release.yml` がhost回帰検査、Androidのビルド、lintを実行する。検査成功後の別jobで既存署名を復元し、最新mainから配布APKを作り、既存のdraft/hash検査を経てstable Releaseを公開する。PRの検査jobには配布鍵や書き込みtokenを渡さない。
+
+版は `10d1f68`（0.31.3 / code 167）からmainのfirst-parentを進んだ数で決まる。1回のmergeではpatchとversionCodeが1ずつ増え、feature branch内のコミット数には影響されない。同じsourceの再ビルドは同じ版になる。full historyと基点が必要で、手動での版上げコミットは不要。
+
+配布は同時実行せず、既にmainが進んだ古いrunは公開を省略する。同じ版が公開済みならsource・署名・APK・assetを再検証し、上書きせず成功として扱う。失敗したdraftや別sourceの同名tagは自動で修復しない。Actionsの失敗ログとReleaseの状態を確認して対応する。
+
+署名は `LOUPE_SIGNING_KEYSTORE_B64` というActions Secretに登録した既存keystoreを使う。runner内だけで復元し、証明書fingerprintを照合し、終了時に削除する。鍵がない・証明書が違う場合は公開を停止する。鍵をログやartifactへ含めない。
+
+Obtainiumは公開Releaseを取得する。GitHubでの公開と端末での検知・更新操作・通知受信は別であり、Androidのバックグラウンド制限も影響する。通常の更新操作は引き続き端末で行う。
+
+## 手動配布・照合
 
 配布元は最新mainのcleanなソースから `scripts/deploy-apk.py prepare` で作ったmode=mainのbundle。mainのcommit/treeとmodeを署名対象assetへ埋め込み、APK hash・署名・版・4必須機能を照合する。現行署名を保ち、recoveryや検査用APK・個人データ・鍵を公開しない。
 
