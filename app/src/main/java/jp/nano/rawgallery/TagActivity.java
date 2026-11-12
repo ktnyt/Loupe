@@ -239,7 +239,7 @@ public final class TagActivity extends DiagnosticActivity {
         List<String> ids = new ArrayList<>();
         Map<String, String> storedIds = store.photoIds();
         for (PhotoRepository.Photo photo : snapshot.photos) {
-          if (!"content".equals(photo.uri.getScheme())) continue;
+          if (photo.isVideo() || !"content".equals(photo.uri.getScheme())) continue;
           local.add(photo); ids.add(storedIds.get(TagStore.source(photo)));
         }
         TagJudgments loaded = store.load();

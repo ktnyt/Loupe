@@ -55,6 +55,7 @@ final class ArchiveStore extends SQLiteOpenHelper {
   }
 
   RawMetadata metadata(PhotoRepository.Photo p) throws Exception {
+    if (p.isVideo()) return new RawMetadata("動画", p.taken);
     String key = key(p);
     try (Cursor c =
         getReadableDatabase()

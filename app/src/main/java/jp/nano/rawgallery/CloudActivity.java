@@ -297,7 +297,7 @@ public final class CloudActivity extends DiagnosticActivity {
             java.util.LinkedHashMap<String, PhotoRepository.Photo> candidates =
                 new java.util.LinkedHashMap<>();
             for (PhotoRepository.Photo p : new PhotoRepository(this).scan("すべて"))
-              if (!p.cameraGroup().equals("その他") && "content".equals(p.uri.getScheme()))
+              if (!p.isVideo() && !p.cameraGroup().equals("その他") && "content".equals(p.uri.getScheme()))
                 candidates.putIfAbsent(p.cameraGroup(), p);
             java.util.ArrayList<PhotoRepository.Photo> photos =
                 new java.util.ArrayList<>(candidates.values());

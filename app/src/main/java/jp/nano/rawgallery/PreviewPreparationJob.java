@@ -23,6 +23,7 @@ public final class PreviewPreparationJob extends JobService {
           .setMinimumLatency(1500).setRequiresStorageNotLow(true).setPersisted(true).build());
   }
   static boolean local(PhotoRepository.Photo p) {
+    if (p.isVideo()) return false;
     String scheme = p.uri.getScheme(), authority = p.uri.getAuthority();
     return "file".equals(scheme) || ("content".equals(scheme)
         && ("media".equals(authority) || "com.android.externalstorage.documents".equals(authority)));

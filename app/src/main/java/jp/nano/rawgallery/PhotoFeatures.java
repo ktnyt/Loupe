@@ -65,7 +65,7 @@ final class PhotoFeatures implements AutoCloseable {
   }
 
   RelatedPhotos.Vector obtain(PhotoRepository.Photo photo) throws Exception {
-    if (!"content".equals(photo.uri.getScheme())) throw new IllegalArgumentException("Local photos only");
+    if (photo.isVideo() || !"content".equals(photo.uri.getScheme())) throw new IllegalArgumentException("Local photos only");
     RelatedPhotos.Vector saved = cached(photo);
     if (saved != null) return saved;
     Bitmap bitmap = PhotoRepository.bitmap(repository.preview(photo), 512);
