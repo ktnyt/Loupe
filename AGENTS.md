@@ -9,6 +9,15 @@
 - 並行作業は着手時にworktreeで分離する。管理対象外のファイルは .gitignore または .git/info/exclude で除外し、既存の変更を勝手に破棄・上書きしない。
 - 完了・中断報告にはコミットIDと検証状況を含める。通常の開発では本規約の完了条件を満たしてpush・PR作成・マージまで行う。アプリの公開・リリースは別途依頼の範囲で行う。
 
+## 常用実機へ入れるAPKとmain
+
+- 常用APKは `scripts/deploy-apk.py prepare` で、fetch済み `origin/main` のcleanなコミットから作る。未コミット変更や未マージbranchのAPKを常用版として導入しない。
+- 本体APKの導入は `scripts/deploy-apk.py install` をissue進捗の `--then` から呼ぶ。prepareが記録したsource commit/tree・APKハッシュ・署名・版・必須機能を再照合し、導入後に端末APKを読み戻す。`adb install` の成功表示だけで完了にしない。別applicationIdの検査APKと専用エミュレータの検査導入は除く。
+- library・動画・Nano Banana・カメラ取り込みを必須機能として扱う。現在の端末が既に機能欠落していても、この検査を省略しない。manifest検査と、カメラ/Nanoの設定導線のUI検査を併用する。機能の意図的な廃止は要件変更としてissueとレビューを経て必須契約も更新し、回避flagで通さない。
+- 実機でしか検証できない場合は、通常は専用エミュレータ/予備端末を先に使う。常用端末で未マージソースを確認する必要がある場合だけ、依頼範囲とissueを明記した `prepare --mode recovery --ref <commit> --issue <番号>` と `install --ack-recovery` を使う。これは常用導入完了ではない。
+- recoveryを常用実機に入れたら、そのcommitをmainに含め、mainから作り直したAPKを同じ端末へ導入・照合するまでdeliveryを閉じない。端末が切断してもpending記録を消さない。機能欠落したmain版を戻し先にしない。`scripts/deploy-apk.py status` がpendingなら完了報告を止める。
+- アプリデータ、カメラ履歴、API設定を消して合わせない。uninstallやversionCodeのdowngradeで復旧を回避しない。詳細とコマンドは [開発手順](docs/development-workflow.md#apkとmainの照合) を参照する。
+
 ## issueへの進捗記録（必須）
 
 - 実装を始める前に対象issueを特定し、既存コメントと作業IDを確認する。依頼に対応するissueがなければ既存issueを検索した上で作成する。複数候補で目的が曖昧な場合だけ確認する。
@@ -47,8 +56,8 @@
 3. branchを `<issue-number>/<short-description>` 形式で作成する（例: `18/development-workflow`、接頭辞は付けない）。最新化したmainを基点にする。先行リファクタリングをマージした場合はmainを再更新する。混在が見込まれる場合はworktreeを使う。
 4. エージェントが不要と判断できる場合を除き、変更前の実機操作・現状を確認する。省略時は理由をissueに記録する。
 5. UI変更は[Material 3 UI契約](docs/material3-ui.md)とissueの現行契約に沿って設計する。影響する画面・状態・操作・アクセシビリティを記し、Android UIのcaptureと独立したUI/UXレビューを用意してから完了判定する。`docs/design/`内のHTMLやcaptureは歴史的記録であり、現行の視覚的な権威ではない。
-6. 最もシンプルな方法で実装し、変更に応じた検証、インストール、変更後の実機確認を行う。実機不要の判断は根拠付きで記録する。
+6. 最もシンプルな方法で実装し、変更に応じた検証を行う。常用実機への導入はmain反映後に上記gateを使う。main前の実機確認が必要な場合はrecoveryとして区別し、main版への復帰まで追跡する。実機不要の判断は根拠付きで記録する。
 7. UI変更ではMaterial 3 UI契約、実機capture、操作記録を開発の前提を知らないレビュー担当へ渡し、目的・状態・UX・アクセシビリティを独立評価する。指摘を修正して実機確認とレビューを繰り返す。
 8. cold-reviewを使って独立レビューし、修正・再レビューする。その後security-reviewで同様に確認する。後の修正が前の検証を無効にした場合は該当検証をやり直す。
 9. 明らかにissueの本質から外れた指摘は理由を記録してその指摘のループを止める。範囲外でも重要な項目は別issueへ起票してリンクする。未解決の範囲内指摘を放置して合格としない。
-10. 進捗reportと完了条件を照合し、PRに検証・レビュー結果と `Closes #番号` を記載する。必要なチェック通過後にマージし、issueの自動クローズを確認する。部分対応は `Refs` とし、自動クローズしない。
+10. 進捗reportと完了条件を照合し、必要なチェック後にマージする。実機導入が残るPRや部分対応は `Refs` とし、常用main APKの導入・読み戻しと実機確認後にissueを閉じる。全完了条件を既に満たしたPRだけ `Closes #番号` を使い、自動クローズを確認する。

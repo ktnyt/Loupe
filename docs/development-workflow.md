@@ -25,6 +25,34 @@ mainが別worktreeで使用中なら、そのworktreeの状態と利用状況を
 
 branchは `18/development-workflow` のように作成する。先行issueにもその番号のbranchを使う。先行リファクタリングのマージ後はmainの最新化を再実行してから本題のbranchを作成する。変更前の実機確認で再現操作・期待・実測・対象端末・アプリ版・写真枚数/形式・キャッシュ状態を残す。アプリに影響しない文書や開発ツールの変更など、省略できる場合は理由を記録する。接続できないことは「不要」の根拠にならない。
 
+## APKとmainの照合
+
+常用端末の本体はmainからビルドしたAPKへ統一する。PR branchの動作検証と、普段使う端末への常用導入を分ける。通常はエミュレータや予備端末で実装・独立レビューを先に確かめ、main反映後に常用APKを用意する。
+
+```sh
+python3 scripts/deploy-apk.py prepare --output outputs/apk/main-<作業名>
+python3 scripts/deploy-apk.py inspect --apk outputs/apk/main-<作業名>/loupe.apk
+python3 scripts/issue-progress.py record --issue ISSUE --run WORK_ID --phase install --status start --note 'mainコミットと対象端末' --then python3 scripts/deploy-apk.py install --bundle outputs/apk/main-<作業名>/bundle.json --serial SERIAL
+python3 scripts/deploy-apk.py status
+```
+
+prepareはcallerの未保存変更を拒否し、origin/mainをfetchして、そのコミットだけを新しい一時worktreeでビルドする。APKとsource commit/tree、SHA-256、applicationId、versionCode、署名証明書、検出した必須機能を同じbundleへ記録する。source commit/tree・mode・issueはビルド時にassetとしてAPKへ埋め込み、APKの署名対象に含める。installはbundleとの一致を確認し、JSONだけをmain扱いに書き換えたAPKを拒否する。既存APKへmain証明を後付けするコマンドは設けない。bundleと端末記録はgit管理外。
+
+installはAPKを非公開の一時ディレクトリへコピーし、同じスナップショットを検査・導入する。サイズ上限付きで署名対象provenanceを読み、重複を拒否する。これらを再計算し、ソースがmainに含まれること、端末と同じpackage/署名でversionCodeが下がらないこと、library/video/nano-banana/camera-importを備えることを確認する。現在の端末がcameraなしでも必須検査は残す。カメラのUSB attach filter/metadata/connectedDevice serviceも確認する。ただしmanifestだけではmenu欠落が分からないため、camera-tabsの常設カメラ/Nano設定遷移などのUI検査も行う。
+
+`adb install -r`の前にpending記録を保存し、導入後の端末APKを取得してハッシュ・版・署名を読み戻す。切断や不一致ならpendingを残して停止する。端末ごとの記録は正確なserialのSHA-256をファイル名に使い、serial自体も記録と照合する。git common directoryを基点に全worktreeで共有する。共有記録ディレクトリを、以前の記録の確認から導入後の読み戻しまで排他ロックし、並行する導入を拒否する。recoveryやreadback待ちの間は同じADB serialで完結させる。別serialのpendingが残る場合は新しい導入を拒否するため、USBと無線ADBを途中で切り替えない。`--records`は隔離テスト等で別記録先が必要な場合に限り、常用導入のpendingを隠すために変更しない。検査用の別applicationIdのAPKを入れる操作は、本体の常用導入とは区別する。
+
+main前に常用端末で確認が必要な場合は、issueと目的を明記して復旧/検証用として作る。
+
+```sh
+python3 scripts/deploy-apk.py prepare --mode recovery --ref <保存済みcommit> --issue ISSUE --output outputs/apk/recovery-<作業名>
+python3 scripts/issue-progress.py record --issue ISSUE --run WORK_ID --phase install --status start --note '復元用commitと対象端末' --then python3 scripts/deploy-apk.py install --bundle outputs/apk/recovery-<作業名>/bundle.json --serial SERIAL --ack-recovery
+```
+
+recovery導入後はpending-main-integrationとなり、statusは成功にしない。次のAPKもrecoveryであっても、未統合の復元コミットを含まなければ上書きを拒否する。端末から取得したAPK内の署名provenanceもmain/recoveryの両方で祖先検査するため、Mac側の記録がない場合やADB serialが変わった場合も復元コミットを引き継ぐ。ソースcommitはmerge commitまたはfast-forwardで祖先関係を保ってmainへ反映する。導入済recoveryをsquash/rebaseして元commitを祖先から外さない。その後、mainから作り直したAPKを導入・読み戻して閉じる。機能を欠くmainを戻し先にしない。実機で確認できないまま常用検証APKを残してdeliveryを完了にしない。実機導入・確認が残るPRはRefsとして、完了前のissue自動クローズを避ける。
+
+機能の意図的な廃止は要件変更として別途判断し、issue・レビュー・必須契約の更新を伴わせる。検査の回避flagやuninstall、データ消去、downgradeで合わせない。今回のcameraなしAPK相当を拒否するhost fixtureと、main/hash/署名/版/導入後切断の検査は `python3 scripts/test-deploy-apk.py` で行う。
+
 ## Material 3によるUI設計
 
 現行のUI契約は[Material 3 UI契約](material3-ui.md)と対象issueの契約に置く。`docs/design/`のHTML・画像は当時の設計や検証を示す履歴であり、新規UIの現行基準ではない。既存の動作契約とアクセシビリティは維持する。
@@ -39,7 +67,7 @@ branchは `18/development-workflow` のように作成する。先行issueにも
 
 端末を使う検証・画面操作・待機用の再生は直列に実行する。バックグラウンド実行の検証はsessionの終了と結果ログを確認してから次の端末操作へ進む。待機用動画の起動も検証中には行わない。通常の合成検証は `scripts/device-check.py --standby-youtube` で開始前に動画を一時停止してYouTubeを終了し、PiPが検査画面に残らないようにする。成功・失敗時とも終了処理でYouTubeへ戻して画面点灯の保持を確認する。動画を使わない場合は `--no-standby-video 理由` を必須とする。前面と画面点灯を保持するウィンドウが両方YouTubeであることを最大5秒確認する。動画の読み込み待ちを再生失敗と混同せず、過去の保持ウィンドウだけでは成功にしない。保持状態は将来のロック防止の保証ではなく、次の実機操作前の確認は省かない。TalkBack検証は設定復元後に別途動画を再開する。終了処理が失敗した場合は、導入や検査の成否と分けて記録し、次の待機前に実際の画面保持を確認する。
 
-実装後は変更に合ったテストとビルドを行い、APK版と端末を特定してインストールする。実機で期待結果・実測結果を確認し、対象画面をキャプチャする。UI変更では同じ画面状態のAndroid captureを条件付きで用意する。動きや操作は録画または操作記録を添える。機密情報を含まないテストデータで撮影する。
+実装後は変更に合ったテストとビルドを行い、上記のmain照合gateでAPK版と端末を特定して導入する。実機で期待結果・実測結果を確認し、対象画面をキャプチャする。UI変更では同じ画面状態のAndroid captureを条件付きで用意する。動きや操作は録画または操作記録を添える。機密情報を含まないテストデータで撮影する。
 
 新しいサブエージェントを履歴なしで起動し（利用環境が対応する場合は `fork_turns: none`）、次の指示と成果物だけを渡す。実装者の見立て、弁明、予想する合否は渡さない。
 
