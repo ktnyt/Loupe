@@ -37,6 +37,7 @@ jobs:
     if: github.repository == 'ktnyt/Loupe' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    environment: loupe-release
     concurrency:
       group: loupe-main-release
       cancel-in-progress: false

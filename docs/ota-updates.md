@@ -14,7 +14,7 @@ Obtainiumへ `https://github.com/ktnyt/Loupe` を追加する。stable Release�
 
 配布は同時実行せず、開始時にmainが進んでいた古いrunは公開を省略する。asset転送中にmainが進んだ場合も公開直前の再確認で停止し、draftと作成済みtagを残す。同じ版が公開済みならsource・署名・APK・assetを再検証し、上書きせず成功として扱う。失敗したdraftや別sourceの同名tagは自動で修復しない。Actionsの失敗ログとReleaseの状態を確認して対応する。
 
-署名は `LOUPE_SIGNING_KEYSTORE_B64` というActions Secretに登録した既存keystoreを使う。runner内だけで復元し、証明書fingerprintを照合し、終了時に削除する。鍵がない・証明書が違う場合は公開を停止する。鍵をログやartifactへ含めない。
+署名は `LOUPE_SIGNING_KEYSTORE_B64` というenvironment secretに登録した既存keystoreを使う。`loupe-release` environmentのdeployment branch policyはbranch `main`だけを許可し、repository secretには鍵を置かない。手動承認待ちは設けず、main以外のworkflowにはこの鍵を提供しない。runner内だけで復元し、証明書fingerprintを照合し、終了時に削除する。鍵がない・証明書が違う場合は公開を停止する。鍵をログやartifactへ含めない。
 
 Obtainiumは公開Releaseを取得する。GitHubでの公開と端末での検知・更新操作・通知受信は別であり、Androidのバックグラウンド制限も影響する。通常の更新操作は引き続き端末で行う。
 
