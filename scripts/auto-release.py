@@ -31,12 +31,14 @@ def official_main(args, source):
 
 
 def expected_bundle(bundle, source, version):
-    if (bundle.get('source_commit') != source or bundle.get('mode') != 'main'
-            or bundle.get('certificates') != [deploy.CERTIFICATE]
-            or bundle.get('version_code') != version['version_code']
-            or bundle.get('version_name') != version['version_name']
-            or bundle.get('apk') != 'loupe.apk'):
-        raise ValueError('Release bundle differs from the expected main source, certificate or version')
+    expected = dict(source_commit=source, mode='main', certificates=[deploy.CERTIFICATE],
+                    version_code=version['version_code'], version_name=version['version_name'],
+                    apk='loupe.apk')
+    # These are public release fields only; never dump an entire input bundle.
+    mismatches = {key: dict(expected=value, actual=bundle.get(key))
+                  for key, value in expected.items() if bundle.get(key) != value}
+    if mismatches:
+        raise ValueError('Release bundle mismatch: ' + json.dumps(mismatches, sort_keys=True))
 
 
 def release_identity(release, source, tag):

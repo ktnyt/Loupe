@@ -176,9 +176,18 @@ class AutomaticReleaseTests(unittest.TestCase):
     def test_wrong_expected_version_rejected(self):
         self.existing = True
         self.bundle['version_code'] += 1
-        with self.assertRaisesRegex(ValueError, 'expected main'):
+        with self.assertRaisesRegex(ValueError, 'version_code'):
             auto.automatic_release(self.args)
         self.assertEqual(self.publications, [])
+
+    def test_mismatch_diagnostics_only_include_public_compared_fields(self):
+        self.bundle['version_code'] += 1
+        self.bundle['private_extra'] = 'synthetic-secret-never-log'
+        with self.assertRaises(ValueError) as error:
+            auto.expected_bundle(self.bundle, 'a' * 40, dict(version_code=167, version_name='0.31.3'))
+        self.assertIn('version_code', str(error.exception))
+        self.assertNotIn('synthetic-secret-never-log', str(error.exception))
+        self.assertNotIn('private_extra', str(error.exception))
 
     def test_missing_asset_rejected_before_download(self):
         self.existing = True

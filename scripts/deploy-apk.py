@@ -402,10 +402,13 @@ def main():
     p.set_defaults(action=prepare)
     p = commands.add_parser('inspect')
     p.add_argument('--apk', required=True)
+    p.add_argument('--certificate', help='Expected SHA-256 signing certificate fingerprint')
     def inspect(args):
         info = apk_info(args.apk, args.sdk)
         print(json.dumps(info, ensure_ascii=False))
         check_features(info)
+        if args.certificate and info['certificates'] != [args.certificate]:
+            raise ValueError('APK does not use the explicitly expected signing certificate')
     p.set_defaults(action=inspect)
     for command, action in [('install', install), ('confirm', confirm), ('status', status)]:
         p = commands.add_parser(command)

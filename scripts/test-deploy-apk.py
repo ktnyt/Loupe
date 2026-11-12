@@ -447,6 +447,16 @@ class DeployTests(unittest.TestCase):
 
 
 
+class InspectSigningPinTests(unittest.TestCase):
+    def test_cli_inspection_compares_the_expected_test_signer(self):
+        info = dict(deploy.manifest_info(XML), certificates=[deploy.CERTIFICATE])
+        for expected, result in ((deploy.CERTIFICATE, 0), ('0' * 64, 1)):
+            with self.subTest(expected=expected), \
+                 patch.object(deploy.sys, 'argv', ['deploy-apk.py', 'inspect', '--apk', 'fake.apk', '--certificate', expected]), \
+                 patch.object(deploy, 'apk_info', return_value=info), patch('builtins.print'):
+                self.assertEqual(deploy.main(), result)
+
+
 class SdkToolSelectionTests(unittest.TestCase):
     def test_pinned_signer_is_used_even_when_runner_has_newer_sdk(self):
         with tempfile.TemporaryDirectory() as temp:
