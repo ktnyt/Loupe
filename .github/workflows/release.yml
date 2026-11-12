@@ -24,6 +24,12 @@ jobs:
       - name: Install pinned Android build tools
         run: |
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.0.12077973' 'cmake;3.22.1'
+      - name: Create isolated verification signing key
+        env:
+          LOUPE_SIGNING_KEYSTORE: ${{ runner.temp }}/loupe-verification.keystore
+        run: |
+          echo "LOUPE_SIGNING_KEYSTORE=$LOUPE_SIGNING_KEYSTORE" >> "$GITHUB_ENV"
+          keytool -genkeypair -keystore "$LOUPE_SIGNING_KEYSTORE" -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 30 -dname 'CN=Loupe CI Verification'
       - name: Host regression checks
         run: |
           set -euo pipefail
@@ -33,7 +39,9 @@ jobs:
       - name: Android build and lint
         run: ./gradlew :app:assembleDebug :app:lintDebug --console=plain
       - name: Inspect APK signature and required features
-        run: python3 scripts/deploy-apk.py --sdk "$ANDROID_HOME" inspect --apk app/build/outputs/apk/debug/app-debug.apk
+        run: |
+          fingerprint=$(keytool -exportcert -keystore "$LOUPE_SIGNING_KEYSTORE" -alias androiddebugkey -storepass android | sha256sum | cut -d ' ' -f 1)
+          python3 scripts/deploy-apk.py --sdk "$ANDROID_HOME" inspect --apk app/build/outputs/apk/debug/app-debug.apk --certificate "$fingerprint"
 
   release:
     needs: verify
@@ -61,19 +69,21 @@ jobs:
       - name: Restore existing signing identity
         env:
           KEYSTORE_B64: ${{ secrets.LOUPE_SIGNING_KEYSTORE_B64 }}
+          LOUPE_SIGNING_KEYSTORE: ${{ runner.temp }}/loupe-distribution.keystore
         run: |
+          echo "LOUPE_SIGNING_KEYSTORE=$LOUPE_SIGNING_KEYSTORE" >> "$GITHUB_ENV"
           python3 - <<'PY'
           import base64, os
           from pathlib import Path
           encoded = os.environ.get('KEYSTORE_B64', '')
           if not encoded:
               raise SystemExit('LOUPE_SIGNING_KEYSTORE_B64 is not configured')
-          key = Path.home() / '.android/debug.keystore'
+          key = Path(os.environ['LOUPE_SIGNING_KEYSTORE'])
           key.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
           key.write_bytes(base64.b64decode(encoded, validate=True))
           key.chmod(0o600)
           PY
-          fingerprint=$(keytool -exportcert -keystore "$HOME/.android/debug.keystore" -alias androiddebugkey -storepass android | sha256sum | cut -d ' ' -f 1)
+          fingerprint=$(keytool -exportcert -keystore "$LOUPE_SIGNING_KEYSTORE" -alias androiddebugkey -storepass android | sha256sum | cut -d ' ' -f 1)
           test "$fingerprint" = fbd379f053574ef5f497e524b7828e4c388e88c14968acc11b8b39363167b678
       - name: Publish verified main APK
         env:
@@ -81,4 +91,6 @@ jobs:
         run: python3 scripts/auto-release.py --sdk "$ANDROID_HOME"
       - name: Remove runner signing key
         if: always()
-        run: rm -f "$HOME/.android/debug.keystore"
+        env:
+          LOUPE_SIGNING_KEYSTORE: ${{ runner.temp }}/loupe-distribution.keystore
+        run: rm -f "$LOUPE_SIGNING_KEYSTORE"

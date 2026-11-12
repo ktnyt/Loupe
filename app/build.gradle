@@ -10,6 +10,19 @@ def distributionVersion = new groovy.json.JsonSlurper().parseText(providers.exec
 }.standardOutput.asText.get())
 android {
     namespace 'jp.nano.rawgallery'
+    // CI binds the exact restored/test key instead of relying on Android's home lookup.
+    def explicitSigningStore = System.getenv('LOUPE_SIGNING_KEYSTORE')
+    if (explicitSigningStore) {
+        if (!file(explicitSigningStore).isFile()) {
+            throw new GradleException('Explicit Loupe signing keystore is missing')
+        }
+        signingConfigs.debug {
+            storeFile file(explicitSigningStore)
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
     compileSdk 35
     ndkVersion '27.0.12077973'
     externalNativeBuild { cmake { path file('src/main/cpp/CMakeLists.txt'); version '3.22.1' } }
