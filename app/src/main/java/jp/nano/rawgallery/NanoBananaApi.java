@@ -16,12 +16,13 @@ final class NanoBananaApi {
   private static final String ROOT="https://api.nanobananaapi.ai/api/v1/nanobanana/";
   private final String key;
   NanoBananaApi(String key) { this.key=key; }
-  static JSONObject request(String prompt,String imageUrl) throws Exception {
+  static JSONObject request(String prompt,String imageUrl,NanoBananaOutput output) throws Exception {
+    output=NanoBananaOutput.of(output.aspectRatio,output.resolution);
     return new JSONObject().put("prompt",prompt).put("imageUrls",new JSONArray().put(imageUrl))
-        .put("aspectRatio","auto").put("resolution","1K").put("googleSearch",false).put("outputFormat","jpg");
+        .put("aspectRatio",output.aspectRatio).put("resolution",output.resolution).put("googleSearch",false).put("outputFormat","jpg");
   }
-  String generate(String prompt,String imageUrl) throws Exception {
-    JSONObject result=call("generate-2",request(prompt,imageUrl));
+  String generate(String prompt,String imageUrl,NanoBananaOutput output) throws Exception {
+    JSONObject result=call("generate-2",request(prompt,imageUrl,output));
     String id=result.getString("taskId");
     if(!id.matches("[A-Za-z0-9_-]{1,256}"))throw new IOException("生成タスクの応答を確認できませんでした");
     return id;

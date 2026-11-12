@@ -28,7 +28,35 @@ final class NanoBananaStore {
     Prompt(String id, String name, String text) { this.id=id; this.name=name; this.text=text; }
   }
   NanoBananaStore(Context context) { this(context,"nano-banana"); }
-  NanoBananaStore(Context context,String name) { prefs=context.getSharedPreferences(name, Context.MODE_PRIVATE); }
+  NanoBananaStore(Context context,String name) { this(context.getSharedPreferences(name, Context.MODE_PRIVATE)); }
+  NanoBananaStore(SharedPreferences prefs) {this.prefs=prefs;}
+  NanoBananaOutput output() throws IOException {
+    synchronized(LOCK) {
+      try {
+        String value=prefs.getString("output",null);
+        return value==null?NanoBananaOutput.DEFAULT:NanoBananaOutput.read(new JSONObject(value));
+      }catch(Exception e){throw new IOException("出力設定を読み込めませんでした。比率と解像度を選び直してください");}
+    }
+  }
+  void setOutput(String aspectRatio,String resolution) throws IOException {
+    NanoBananaOutput value=NanoBananaOutput.of(aspectRatio,resolution);
+    synchronized(LOCK) {
+      Object previous=prefs.getAll().get("output");
+      try {
+        if(prefs.edit().putString("output",value.json().toString()).commit())return;
+      }catch(Exception e){/* Restore the in-memory preference as well as the durable value. */}
+      SharedPreferences.Editor rollback=prefs.edit();
+      if(previous instanceof String)rollback.putString("output",(String)previous);
+      else if(previous instanceof Integer)rollback.putInt("output",(Integer)previous);
+      else if(previous instanceof Long)rollback.putLong("output",(Long)previous);
+      else if(previous instanceof Float)rollback.putFloat("output",(Float)previous);
+      else if(previous instanceof Boolean)rollback.putBoolean("output",(Boolean)previous);
+      else if(previous instanceof java.util.Set)rollback.putStringSet("output",new java.util.HashSet<>((java.util.Set<String>)previous));
+      else rollback.remove("output");
+      rollback.commit();
+      throw new IOException("出力設定を保存できませんでした。もう一度保存してください");
+    }
+  }
   boolean hasKey() { return prefs.contains("credential"); }
   private static SecretKey key() throws Exception {
     KeyStore keys=KeyStore.getInstance("AndroidKeyStore"); keys.load(null);
