@@ -8,7 +8,7 @@ Obtainiumへ `https://github.com/ktnyt/Loupe` を追加する。stable Release�
 
 ## mainからの自動配布
 
-公式リポジトリのmainへpush（PRのマージを含む）すると、`.github/workflows/release.yml` がhost回帰検査、Androidのビルド、lintを実行する。検査成功後の別jobで既存署名を復元し、最新mainから配布APKを作り、既存のdraft/hash検査を経てstable Releaseを公開する。PRの検査jobには配布鍵や書き込みtokenを渡さない。
+公式リポジトリのmainへpush（PRのマージを含む）すると、`.github/workflows/release.yml` がhost回帰検査、Androidのビルド、lint、実APKの署名と必須機能の検査を実行する。検査用apksignerはbuild-tools 35.0.0へ固定し、runnerに同居する新しいSDKへ自動で切り替えない。検査成功後の別jobで既存署名を復元し、最新mainから配布APKを作り、既存のdraft/hash検査を経てstable Releaseを公開する。PRの検査jobには配布鍵や書き込みtokenを渡さない。
 
 版は `10d1f68`（0.31.3 / code 167）からmainのfirst-parentを進んだ数で決まる。1回のmergeではpatchとversionCodeが1ずつ増え、feature branch内のコミット数には影響されない。同じmain sourceの再ビルドは同じ版になる。recoveryやPRのビルドは祖先に含む最新の公式mainの版を使い、branch内のコミット数で版を増やさない。recoveryをmainへマージした後の通常版はそれより新しくなる。full historyと基点が必要で、手動での版上げコミットは不要。
 

@@ -103,11 +103,11 @@ def manifest_info(xml):
 def tools(sdk):
     sdk = Path(sdk)
     analyzer = sdk / 'cmdline-tools/latest/bin/apkanalyzer'
-    versions = [x for x in (sdk / 'build-tools').iterdir() if re.fullmatch(r'\d+(\.\d+)*', x.name)]
-    versions.sort(key=lambda x: tuple(map(int, x.name.split('.'))))
-    if not analyzer.is_file() or not versions:
-        raise ValueError('Android apkanalyzer/build-tools are required')
-    return analyzer, versions[-1] / 'apksigner'
+    signer = sdk / 'build-tools/35.0.0/apksigner'
+    # Keep inspection on the same supported version as CI, not a runner's newest SDK.
+    if not analyzer.is_file() or not signer.is_file():
+        raise ValueError('Android apkanalyzer and build-tools;35.0.0 are required')
+    return analyzer, signer
 
 
 def environment():

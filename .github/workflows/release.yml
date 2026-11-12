@@ -32,6 +32,8 @@ jobs:
           sh tests/preparation-storage.sh
       - name: Android build and lint
         run: ./gradlew :app:assembleDebug :app:lintDebug --console=plain
+      - name: Inspect APK signature and required features
+        run: python3 scripts/deploy-apk.py --sdk "$ANDROID_HOME" inspect --apk app/build/outputs/apk/debug/app-debug.apk
 
   release:
     needs: verify

@@ -446,5 +446,21 @@ class DeployTests(unittest.TestCase):
             deploy.status(self.args)
 
 
+
+class SdkToolSelectionTests(unittest.TestCase):
+    def test_pinned_signer_is_used_even_when_runner_has_newer_sdk(self):
+        with tempfile.TemporaryDirectory() as temp:
+            sdk = Path(temp)
+            analyzer = sdk / 'cmdline-tools/latest/bin/apkanalyzer'
+            pinned = sdk / 'build-tools/35.0.0/apksigner'
+            future = sdk / 'build-tools/37.0.0/apksigner'
+            for path in (analyzer, pinned, future):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+            self.assertEqual(deploy.tools(sdk), (analyzer, pinned))
+            pinned.unlink()
+            with self.assertRaisesRegex(ValueError, '35.0.0'):
+                deploy.tools(sdk)
+
 if __name__ == '__main__':
     unittest.main()
