@@ -82,16 +82,25 @@ def publish(args):
                 or official_main.get('object', {}).get('sha') != bundle['source_commit']):
             raise ValueError('Publication source must equal the official ktnyt/Loupe main commit')
         require_absent(args, f'repos/{REPOSITORY}/git/ref/tags/{tag}')
-        require_absent(args, f'repos/{REPOSITORY}/releases/tags/{tag}')
-        gh(args, 'release', 'create', tag, '--repo', REPOSITORY, '--draft',
-           '--target', bundle['source_commit'], '--title', args.title or tag,
-           '--notes-file', root / 'notes.md', snapshot, root / 'bundle.json')
+        # The tag lookup excludes drafts whose pending tag does not exist yet.
+        pages = json.loads(gh(args, 'api', f'repos/{REPOSITORY}/releases?per_page=100',
+                              '--paginate', '--slurp'))
+        if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
+            raise ValueError('Cannot establish existing draft and published releases')
+        if any(release.get('tag_name') == tag for page in pages for release in page):
+            raise ValueError('Existing GitHub tag or release will not be overwritten')
+        deploy.save(root / 'release.json', dict(tag_name=tag, target_commitish=bundle['source_commit'],
+                    name=args.title or tag, body=(root / 'notes.md').read_text(), draft=True, prerelease=False))
+        created = gh(args, 'api', f'repos/{REPOSITORY}/releases', '--method', 'POST',
+                     '--input', root / 'release.json')
         # Keep the identity of this draft, rather than publishing by a mutable tag lookup.
         try:
-            draft = json.loads(gh(args, 'api', f'repos/{REPOSITORY}/releases/tags/{tag}'))
+            draft = json.loads(created)
             draft_id = draft.get('id')
             if type(draft_id) is not int or draft_id <= 0:
                 raise ValueError('Draft release REST ID is unavailable')
+            # gh's FetchRelease also searches pending draft tag names through GraphQL.
+            gh(args, 'release', 'upload', tag, '--repo', REPOSITORY, snapshot, root / 'bundle.json')
             download = root / 'download'
             download.mkdir()
             gh(args, 'release', 'download', tag, '--repo', REPOSITORY, '--dir', download)
@@ -114,7 +123,7 @@ def publish(args):
                     or tag_ref.get('object', {}).get('type') != 'commit'
                     or tag_ref.get('object', {}).get('sha') != bundle['source_commit']):
                 raise ValueError('Created tag does not point at the verified source commit')
-            current = json.loads(gh(args, 'api', f'repos/{REPOSITORY}/releases/tags/{tag}'))
+            current = json.loads(gh(args, 'api', f'repos/{REPOSITORY}/releases/{draft_id}'))
             if (current.get('id') != draft_id or current.get('tag_name') != tag
                     or current.get('draft') is not True
                     or current.get('target_commitish') != bundle['source_commit']):

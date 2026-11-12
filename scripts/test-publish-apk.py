@@ -45,6 +45,8 @@ class PublishTests(unittest.TestCase):
         self.tag_wrong = False
         self.draft_swapped = False
         self.publish_error = False
+        self.upload_error = False
+        self.extra_release_page = False
 
     def tearDown(self):
         self.temp.cleanup()
@@ -62,6 +64,20 @@ class PublishTests(unittest.TestCase):
                 raise subprocess.CalledProcessError(1, 'gh', stderr='HTTP 503')
             if endpoint.endswith('/git/ref/heads/main'):
                 return json.dumps(dict(ref='refs/heads/main', object=dict(type='commit', sha=self.official_main)))
+            if endpoint == 'repos/ktnyt/Loupe/releases?per_page=100':
+                self.assertEqual(parts[2:], ('--paginate', '--slurp'))
+                existing = [dict(id=88, tag_name='v0.31.3', draft=True)] if self.release_exists else []
+                return json.dumps([[], existing] if self.extra_release_page else [existing])
+            if endpoint == 'repos/ktnyt/Loupe/releases':
+                self.assertEqual(parts[2:5], ('--method', 'POST', '--input'))
+                request = deploy.load(parts[5])
+                self.assertEqual(request, dict(tag_name='v0.31.3', target_commitish='a'*40,
+                    name='v0.31.3', body='Release notes', draft=True, prerelease=False))
+                self.draft_created = True
+                return json.dumps(dict(id=101, tag_name='v0.31.3', draft=True))
+            if '/releases/tags/' in endpoint:
+                # REST cannot resolve a draft's pending tag before the Git ref exists.
+                raise subprocess.CalledProcessError(1, 'gh', stderr='HTTP 404')
             if endpoint.endswith('/git/refs'):
                 self.assertEqual(parts[2:], ('--method', 'POST', '--raw-field', 'ref=refs/tags/v0.31.3',
                                            '--raw-field', 'sha=' + 'a'*40))
@@ -85,14 +101,15 @@ class PublishTests(unittest.TestCase):
             if self.exists or (self.release_exists and '/releases/' in endpoint):
                 return '{}'
             raise subprocess.CalledProcessError(1, 'gh', stderr='HTTP 404')
-        if parts[:2] == ('release', 'create'):
-            self.draft_created = True
+        if parts[:2] == ('release', 'upload'):
+            self.assertTrue(self.draft_created)
+            if self.upload_error:
+                raise subprocess.CalledProcessError(1, 'gh', stderr='HTTP 503')
             self.snapshot = Path(parts[-2]).parent
             self.assertNotEqual(self.snapshot, self.root)
             self.assertEqual(Path(parts[-2]).name, 'loupe.apk')
             self.assertEqual(Path(parts[-1]).name, 'bundle.json')
-            self.assertEqual(parts[parts.index('--target')+1], 'a'*40)
-            self.assertIn('--draft', parts)
+            self.assertNotIn('--clobber', parts)
             return ''
         if parts[:2] == ('release', 'download'):
             if self.download_error:
@@ -121,7 +138,8 @@ class PublishTests(unittest.TestCase):
         self.apply()
         self.assertEqual(self.calls[-1], ('api', 'repos/ktnyt/Loupe/releases/101', '--method', 'PATCH', '--field', 'draft=false'))
         self.assertTrue(self.tag_created)
-        self.assertEqual(sum(x[:2] == ('release', 'create') for x in self.calls), 1)
+        self.assertEqual(sum(x[:2] == ('api', 'repos/ktnyt/Loupe/releases') for x in self.calls), 1)
+        self.assertFalse(any('/releases/tags/' in str(x) for x in self.calls))
 
     def test_mode_hash_signature_source_and_tree_rejected_before_github(self):
         original = copy.deepcopy(self.bundle)
@@ -220,21 +238,37 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 3)
         self.assert_unpublished()
 
+    def test_existing_pending_tag_draft_on_later_page_is_not_overwritten(self):
+        self.release_exists = True
+        self.extra_release_page = True
+        with self.assertRaisesRegex(ValueError, 'overwritten'):
+            self.apply()
+        self.assertFalse(self.draft_created)
+        self.assert_unpublished()
+
+    def test_pending_tag_rest_lookup_404_does_not_block_success(self):
+        # The fake API rejects every /releases/tags/ lookup; success must use create-response ID.
+        self.apply()
+        self.assertTrue(self.draft_created)
+        self.assertTrue(self.tag_created)
+        self.assertFalse(any('/releases/tags/' in str(x) for x in self.calls))
+        self.assertEqual(self.calls[-1][1], 'repos/ktnyt/Loupe/releases/101')
+
     def test_errors_are_not_interpreted_as_absence(self):
         self.network_error = True
         with self.assertRaises(subprocess.CalledProcessError):
             self.apply()
         self.assert_unpublished()
-        self.assertFalse(any(x[:2] == ('release', 'create') for x in self.calls))
+        self.assertFalse(self.draft_created)
 
     def test_asset_or_metadata_mismatch_keeps_draft(self):
-        for field in ('corrupt', 'metadata_bad', 'download_error'):
+        for field in ('corrupt', 'metadata_bad', 'download_error', 'upload_error'):
             with self.subTest(field=field):
                 self.calls.clear()
                 setattr(self, field, True)
                 with self.assertRaises((ValueError, subprocess.CalledProcessError)):
                     self.apply()
-                self.assertTrue(any(x[:2] == ('release', 'create') for x in self.calls))
+                self.assertTrue(self.draft_created)
                 self.assert_unpublished()
                 self.assertFalse(any('delete' in x for x in self.calls))
                 setattr(self, field, False)
