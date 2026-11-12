@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 通知・テーマアイコン用の単色シルエット -->
+    <path
+        android:pathData="M42,26 h16 l10,10 v14 h-8 v-8 h-20 v8 h-8 v-20 a4,4 0 0 1 4,-4 z M32,58 h8 v8 a4,4 0 0 0 4,4 h22 a4,4 0 0 0 4,-4 v-8 h8 v10 a8,8 0 0 1 -8,8 h-30 a8,8 0 0 1 -8,-8 z"
+        android:fillColor="#FFFFFF" />
+    <path
+        android:pathData="M50.5,40 h7 v10 h5.5 l-9,11 l-9,-11 h5.5 z"
+        android:fillColor="#FFFFFF" />
+</vector>
