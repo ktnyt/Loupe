@@ -71,6 +71,15 @@ def verify_candidate(args, repo, bundle, apk):
     return 'v' + actual['version_name']
 
 
+
+def require_official_main(args, source):
+    ref = json.loads(gh(args, 'api', f'repos/{REPOSITORY}/git/ref/heads/main'))
+    if (ref.get('ref') != 'refs/heads/main'
+            or ref.get('object', {}).get('type') != 'commit'
+            or ref.get('object', {}).get('sha') != source):
+        raise ValueError('Publication source must equal the official ktnyt/Loupe main commit')
+
+
 def publish(args):
     repo = Path(deploy.git(args.repo, 'rev-parse', '--show-toplevel'))
     bundle_path = Path(args.bundle).resolve()
@@ -86,11 +95,7 @@ def publish(args):
         shutil.copyfile(args.notes_file, root / 'notes.md')
         tag = verify_candidate(args, repo, bundle, snapshot)
         deploy.save(root / 'bundle.json', bundle)
-        official_main = json.loads(gh(args, 'api', f'repos/{REPOSITORY}/git/ref/heads/main'))
-        if (official_main.get('ref') != 'refs/heads/main'
-                or official_main.get('object', {}).get('type') != 'commit'
-                or official_main.get('object', {}).get('sha') != bundle['source_commit']):
-            raise ValueError('Publication source must equal the official ktnyt/Loupe main commit')
+        require_official_main(args, bundle['source_commit'])
         require_absent(args, f'repos/{REPOSITORY}/git/ref/tags/{tag}')
         # The tag lookup excludes drafts whose pending tag does not exist yet.
         pages = json.loads(gh(args, 'api', f'repos/{REPOSITORY}/releases?per_page=100',
@@ -151,6 +156,7 @@ def publish(args):
             if (len(current_assets) != len(verified_assets)
                     or {asset.get('name'): asset.get('id') for asset in current_assets} != verified_assets):
                 raise ValueError('Draft release assets changed after verified read-back')
+            require_official_main(args, bundle['source_commit'])
             gh(args, 'api', f'repos/{REPOSITORY}/releases/{draft_id}', '--method', 'PATCH',
                '--field', 'draft=false')
         except (ValueError, OSError, subprocess.CalledProcessError):

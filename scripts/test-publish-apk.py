@@ -51,6 +51,7 @@ class PublishTests(unittest.TestCase):
         self.binary_downloads = []
         self.final_assets_change = None
         self.uploads = []
+        self.main_advanced = False
 
     def tearDown(self):
         self.temp.cleanup()
@@ -82,7 +83,7 @@ class PublishTests(unittest.TestCase):
                 self.uploads.append(endpoint)
                 return '{}'
             if endpoint.endswith('/git/ref/heads/main'):
-                return json.dumps(dict(ref='refs/heads/main', object=dict(type='commit', sha=self.official_main)))
+                return json.dumps(dict(ref='refs/heads/main', object=dict(type='commit', sha=('c'*40 if self.main_advanced and self.tag_created else self.official_main))))
             if endpoint == 'repos/ktnyt/Loupe/releases?per_page=100':
                 self.assertEqual(parts[2:], ('--paginate', '--slurp'))
                 existing = [dict(id=88, tag_name='v0.31.3', draft=True)] if self.release_exists else []
@@ -217,6 +218,14 @@ class PublishTests(unittest.TestCase):
             'https://uploads.github.com/repos/ktnyt/Loupe/releases/101/assets?name=bundle.json'])
         self.assertFalse(any(x[0] == 'release' for x in self.calls))
         self.assertFalse(any('/releases/tags/' in str(x) for x in self.calls))
+
+    def test_main_advancing_during_transfer_prevents_publication(self):
+        self.main_advanced = True
+        with self.assertRaisesRegex(ValueError, 'official ktnyt/Loupe main'):
+            self.apply()
+        self.assertTrue(self.draft_created)
+        self.assertTrue(self.tag_created)
+        self.assert_unpublished()
 
     def test_mode_hash_signature_source_and_tree_rejected_before_github(self):
         original = copy.deepcopy(self.bundle)

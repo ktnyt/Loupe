@@ -2,6 +2,12 @@ plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
 }
+// The same source always has the same version; main merges advance one patch.
+def distributionVersion = new groovy.json.JsonSlurper().parseText(providers.exec {
+    workingDir rootProject.rootDir
+    commandLine 'python3', rootProject.file('scripts/release-version.py').absolutePath,
+            '--repo', rootProject.rootDir.absolutePath
+}.standardOutput.asText.get())
 android {
     namespace 'jp.nano.rawgallery'
     compileSdk 35
@@ -15,8 +21,8 @@ android {
         externalNativeBuild { cmake { arguments '-DANDROID_STL=c++_static', '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON' } }
         minSdk 30
         targetSdk 35
-        versionCode 167
-        versionName '0.31.3'
+        versionCode distributionVersion.version_code
+        versionName distributionVersion.version_name
         testInstrumentationRunner 'jp.nano.rawgallery.ArchiveInstrumentation'
     }
     sourceSets { main { assets.srcDir rootProject.file('third-party/libraw'); assets.srcDir rootProject.file('third-party/libjpeg-turbo') } }

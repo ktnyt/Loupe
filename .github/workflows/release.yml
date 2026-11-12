@@ -1,0 +1,82 @@
+name: Verify and release Loupe
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install pinned Android build tools
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.0.12077973' 'cmake;3.22.1'
+      - name: Host regression checks
+        run: |
+          set -euo pipefail
+          for check in scripts/test-*.py; do python3 "$check"; done
+          sh tests/ranking.sh
+          sh tests/preparation-storage.sh
+      - name: Android build and lint
+        run: ./gradlew :app:assembleDebug :app:lintDebug --console=plain
+
+  release:
+    needs: verify
+    if: github.repository == 'ktnyt/Loupe' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: loupe-release
+    concurrency:
+      group: loupe-main-release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install pinned Android build tools
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.0.12077973' 'cmake;3.22.1'
+      - name: Restore existing signing identity
+        env:
+          KEYSTORE_B64: ${{ secrets.LOUPE_SIGNING_KEYSTORE_B64 }}
+        run: |
+          python3 - <<'PY'
+          import base64, os
+          from pathlib import Path
+          encoded = os.environ.get('KEYSTORE_B64', '')
+          if not encoded:
+              raise SystemExit('LOUPE_SIGNING_KEYSTORE_B64 is not configured')
+          key = Path.home() / '.android/debug.keystore'
+          key.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+          key.write_bytes(base64.b64decode(encoded, validate=True))
+          key.chmod(0o600)
+          PY
+          fingerprint=$(keytool -exportcert -keystore "$HOME/.android/debug.keystore" -alias androiddebugkey -storepass android | sha256sum | cut -d ' ' -f 1)
+          test "$fingerprint" = fbd379f053574ef5f497e524b7828e4c388e88c14968acc11b8b39363167b678
+      - name: Publish verified main APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/auto-release.py --sdk "$ANDROID_HOME"
+      - name: Remove runner signing key
+        if: always()
+        run: rm -f "$HOME/.android/debug.keystore"
