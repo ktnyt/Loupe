@@ -41,3 +41,7 @@ Sources: [Material Components 1.13.0 getting started](https://github.com/materia
 The RAW adjustment sliders remain specialized `AppCompatSeekBar` subclasses: they implement photo pinch forwarding, cancel-time value restoration, double-tap reset, keyboard Delete reset or custom tick rendering. These gesture contracts are retained rather than replaced by a standard `Slider` without equivalent behavior. Nonmodal look-preview overlays also keep their bounded height and undimmed photograph; their actions and switches use Material components.
 
 Modal window decor includes the full-screen scrim. Measure `design_bottom_sheet` as the actual surface, bounded by the configured available width and 640dp; alerts use their native centered geometry. Material entrance/exit motion is expected. Preserve stable placement after entrance rather than requiring every animation frame to match the retired custom Dialog.
+
+## Verified migration evidence
+
+See [physical-device captures and validation limits](design/material3/README.md) for #92. The user explicitly omitted spoken-output/TalkBack validation for this migration; programmatic native accessibility checks are separate evidence. Existing cloud-badge pixel validation remains tracked in #80.

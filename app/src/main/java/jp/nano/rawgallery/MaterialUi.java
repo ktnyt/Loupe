@@ -55,14 +55,18 @@ final class MaterialUi {
   static void filled(Button button) { style(button, true, false); }
   static void outlined(Button button) { style(button, false, true); }
 
+  static int width(Context context) {
+    float density=context.getResources().getDisplayMetrics().density;
+    int configured=context.getResources().getConfiguration().screenWidthDp;
+    int pixels=context.getResources().getDisplayMetrics().widthPixels;
+    return configured>0?Math.min(pixels,Math.round(configured*density)):pixels;
+  }
+
   /** Keep native modal surfaces within the activity's available configuration width. */
   static void sheet(com.google.android.material.bottomsheet.BottomSheetDialog dialog) {
     Context context=dialog.getContext();
     float density=context.getResources().getDisplayMetrics().density;
-    int configured=context.getResources().getConfiguration().screenWidthDp;
-    int width=context.getResources().getDisplayMetrics().widthPixels;
-    if(configured>0)width=Math.min(width,Math.round(configured*density));
-    dialog.getBehavior().setMaxWidth(Math.min(width,Math.round(640*density)));
+    dialog.getBehavior().setMaxWidth(Math.min(width(context),Math.round(640*density)));
     dialog.getBehavior().setSkipCollapsed(true);
     dialog.getBehavior().setState(com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED);
   }

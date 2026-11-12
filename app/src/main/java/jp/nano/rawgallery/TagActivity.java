@@ -467,7 +467,7 @@ public final class TagActivity extends DiagnosticActivity {
     int attached=0,inferred=0,excluded=0;
     for(int i=0;i<photos.size();i++){if(value(i)==TagJudgments.Value.EXCLUDED)excluded++;else if(value(i)==TagJudgments.Value.ASSIGNED)attached++;else if(isAutomatic(i)){attached++;inferred++;}}
     if(confidenceSummary!=null)confidenceSummary.setText("タグ付き "+attached+"枚"+(inferred>0?"（推定 "+inferred+"枚）":"")+" · 該当しない "+excluded+"枚 · 未確認 "+(photos.size()-attached-excluded)+"枚");
-    if(attachedState!=null){attachedState.setText((browseFilter==Filter.REMOVED?"   ":"✓  ")+"タグ付き "+attached);attachedState.setContentDescription("タグ付き "+attached);}
+    if(attachedState!=null){attachedState.setText("タグ付き "+attached);attachedState.setContentDescription("タグ付き "+attached);}
     if(emptyPhotos!=null)emptyPhotos.setVisibility(browsePhotos.isEmpty()?android.view.View.VISIBLE:android.view.View.GONE);
   }
 

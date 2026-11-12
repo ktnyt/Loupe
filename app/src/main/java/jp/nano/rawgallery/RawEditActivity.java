@@ -137,7 +137,7 @@ public final class RawEditActivity extends androidx.appcompat.app.AppCompatActiv
     LinearLayout top=new LinearLayout(this);top.setGravity(Gravity.CENTER_VERTICAL);top.setPadding(dp(16),0,dp(8),0);root.addView(top,new LinearLayout.LayoutParams(-1,dp(56)));
     LinearLayout heading=new LinearLayout(this);heading.setGravity(Gravity.CENTER_VERTICAL);heading.setMinimumHeight(dp(48));heading.setMinimumWidth(dp(48));heading.setTag("look-open");heading.setClickable(true);heading.setFocusable(true);heading.setContentDescription("現像。ルックを調整");heading.setOnClickListener(v->showLookSheet());
     title=text("現像",15,INK);title.setTypeface(Typeface.create(Typeface.DEFAULT,600,false));
-    LinearLayout words=new LinearLayout(this);words.setGravity(Gravity.CENTER_VERTICAL);if(getResources().getConfiguration().screenWidthDp<360||getResources().getConfiguration().screenWidthDp/getResources().getConfiguration().fontScale<300)words.setOrientation(LinearLayout.VERTICAL);words.addView(title);
+    LinearLayout words=new LinearLayout(this);words.setGravity(Gravity.CENTER_VERTICAL);if(getResources().getConfiguration().screenWidthDp<360||getResources().getConfiguration().screenWidthDp/getResources().getConfiguration().fontScale<300)words.setOrientation(LinearLayout.VERTICAL);title.setSingleLine(true);words.addView(title,new LinearLayout.LayoutParams(-2,-2));
     TextView experiment=text("実験",12,MUTED);LinearLayout.LayoutParams ep=new LinearLayout.LayoutParams(-2,-2);if(words.getOrientation()==LinearLayout.HORIZONTAL)ep.leftMargin=dp(4);words.addView(experiment,ep);heading.addView(words);
     View arrow=new View(this){final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);protected void onDraw(Canvas canvas){paint.setColor(INK);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(1.5f));paint.setStrokeCap(Paint.Cap.ROUND);paint.setStrokeJoin(Paint.Join.ROUND);Path p=new Path();p.moveTo(dp(4.5f),getHeight()/2f-dp(1.5f));p.lineTo(dp(8),getHeight()/2f+dp(2));p.lineTo(dp(11.5f),getHeight()/2f-dp(1.5f));canvas.drawPath(p,paint);}};LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(dp(16),dp(48));ap.leftMargin=dp(2);heading.addView(arrow,ap);top.addView(heading,new LinearLayout.LayoutParams(0,-1,1));
     View lookDot=new View(this);lookDot.setTag("look-indicator");lookDot.setBackground(rounded(INK,3));LinearLayout.LayoutParams dotp=new LinearLayout.LayoutParams(dp(6),dp(6));dotp.leftMargin=dp(4);heading.addView(lookDot,dotp);lookDot.setVisibility(state.look().active()?View.VISIBLE:View.GONE);
@@ -308,8 +308,8 @@ public final class RawEditActivity extends androidx.appcompat.app.AppCompatActiv
     dialog.setOnDismissListener(d->{panel.finishFields();endEdit(false);if(lookDialog==dialog){lookDialog=null;lookPanel=null;}});
     updateLookUi();dialog.show();Window window=dialog.getWindow();if(window!=null){
       window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-      window.setGravity(Gravity.BOTTOM);window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
-      int content=root.getHeight()-root.getPaddingTop()-root.getPaddingBottom();window.setLayout(-1,Math.max(dp(160),Math.min(dp(384),Math.round(content*.46f))));
+      window.setGravity(Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+      int content=root.getHeight()-root.getPaddingTop()-root.getPaddingBottom();window.setLayout(MaterialUi.width(this),Math.max(dp(160),Math.min(dp(384),Math.round(content*.46f))));
     }
   }
   private void closeLookSheet(boolean reopen){
@@ -333,7 +333,7 @@ public final class RawEditActivity extends androidx.appcompat.app.AppCompatActiv
       dialog.dismiss();if(!ready||saving||lookLoading)return;
       if(lookPreset==2)customLook=state.look();lookPreset=0;changed(RawEditState.neutral());history.clear();lookCurves=false;renderControls();updateLookUi();
     },dialog::dismiss));dialog.setCanceledOnTouchOutside(true);dialog.setOnDismissListener(d->{if(neutralDialog==dialog)neutralDialog=null;});dialog.show();
-    dialog.getBehavior().setSkipCollapsed(true);dialog.getBehavior().setState(BottomSheetBehavior.STATE_EXPANDED);
+    MaterialUi.sheet(dialog);
   }
   private void pickLookCube(){
     if(lookLoading||saving)return;if(lookPanel!=null)lookPanel.finishFields();lookSheetWanted=true;

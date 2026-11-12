@@ -84,6 +84,8 @@ final class TagDetailChecks {
       File dir=new File(a.getCacheDir(),"consistency-checks");dir.mkdirs();ConsistencyLayoutChecks.captureHardware(t,a,(View)get(a,"root"),dir,"tag-detail-"+width+"-"+a.getResources().getConfiguration().fontScale+"-normal");
       ui(t,()->{
         inspect((View)get(a,"root"));
+        call(a,"refreshConfidenceCounts");
+        require(((Button)get(a,"attachedState")).getText().toString().equals("タグ付き 6"),"native state label survives count refresh");
         ViewGroup states=(ViewGroup)((View)get(a,"attachedState")).getParent();
         for(int i=0;i<states.getChildCount();i++){
           View state=states.getChildAt(i);

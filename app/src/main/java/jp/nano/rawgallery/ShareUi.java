@@ -27,6 +27,7 @@ final class ShareUi {
     Button button=GalleryUi.button(c,title,click);
     button.setCompoundDrawables(null,null,null,null);
     button.setTextSize(14);
+    button.setMinHeight(dp(c,primary?52:48));button.setMinimumHeight(dp(c,primary?52:48));
     button.setPadding(dp(c,16),dp(c,8),dp(c,16),dp(c,8));
     if(primary)MaterialUi.filled(button);else MaterialUi.outlined(button);
     return button;

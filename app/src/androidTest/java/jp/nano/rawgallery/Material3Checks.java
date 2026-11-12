@@ -71,7 +71,8 @@ final class Material3Checks {
         androidx.appcompat.app.AlertDialog[] list={null};int[] chosen={0};
         TagDetailChecks.ui(test,()->{
           Configuration config=new Configuration(activity.getResources().getConfiguration());config.fontScale=scale;
-          Context context=scale==1f?activity:new ContextThemeWrapper(activity.createConfigurationContext(config),R.style.AppTheme);
+          ContextThemeWrapper enlarged=new ContextThemeWrapper(activity,R.style.AppTheme);enlarged.applyOverrideConfiguration(config);
+          Context context=scale==1f?activity:enlarged;
           list[0]=new GalleryUi.Sheet(context).setTitle("項目の合成検査")
               .setItems(new String[]{"すべての写真","アルバム"},(dialog,index)->chosen[0]++).show();
         });

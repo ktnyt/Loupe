@@ -68,7 +68,10 @@ require(v.performAccessibilityAction(android.view.accessibility.AccessibilityNod
 }
   private static View find(Dialog d,String tag){return d==null||d.getWindow()==null?null:d.getWindow().getDecorView().findViewWithTag(tag);
 }
-  private static void click(Instrumentation t,View view,String what)throws Exception{TagDetailChecks.ui(t,()->{require(view!=null&&view.isEnabled()&&view.performClick(),what);
+  private static void click(Instrumentation t,View view,String what)throws Exception{TagDetailChecks.ui(t,()->{require(view!=null&&view.isEnabled(),what);
+boolean checked=view instanceof android.widget.CompoundButton&&((android.widget.CompoundButton)view).isChecked();
+boolean handled=view.performClick();
+require(handled||view instanceof android.widget.CompoundButton&&((android.widget.CompoundButton)view).isChecked()!=checked,what);
 });
 t.waitForIdleSync();
 }
@@ -214,7 +217,7 @@ require(dir.isDirectory()||dir.mkdirs(),"capture directory");
 try(OutputStream o=new FileOutputStream(new File(dir,name+"-windows.png"))){require(cropped.compress(Bitmap.CompressFormat.PNG,100,o),"window capture PNG");}
 Bitmap display=t.getUiAutomation().takeScreenshot();require(display!=null,"actual compositor screenshot");
 Bitmap actual=null;
-try{int x=r.left+app[0],y=r.top+app[1];require(x>=0&&y>=0&&x+r.width()<=display.getWidth()&&y+r.height()<=display.getHeight(),"actual compositor crop bounds");actual=Bitmap.createBitmap(display,x,y,r.width(),r.height());try(OutputStream o=new FileOutputStream(new File(dir,name+".png"))){require(actual.compress(Bitmap.CompressFormat.PNG,100,o),"actual compositor PNG");}metadata.put("primary_capture","actual compositor screenshot cropped to Activity content; includes system dim");metadata.put("pixelcopy_artifact",name+"-windows.png");}finally{if(actual!=null&&actual!=display)actual.recycle();display.recycle();}
+try{int x=r.left+app[0],y=r.top+app[1];require(x>=0&&y>=0&&x+r.width()<=display.getWidth()&&y+r.height()<=display.getHeight(),"actual compositor crop bounds");try(OutputStream full=new FileOutputStream(new File(dir,name+"-display.png"))){require(display.compress(Bitmap.CompressFormat.PNG,100,full),"full physical display PNG");}actual=Bitmap.createBitmap(display,x,y,r.width(),r.height());try(OutputStream o=new FileOutputStream(new File(dir,name+".png"))){require(actual.compress(Bitmap.CompressFormat.PNG,100,o),"actual compositor PNG");}metadata.put("primary_capture","actual compositor screenshot cropped to Activity content; includes system dim");metadata.put("pixelcopy_artifact",name+"-windows.png");}finally{if(actual!=null&&actual!=display)actual.recycle();display.recycle();}
 try(Writer o=new FileWriter(new File(dir,name+".json"))){o.write(metadata.toString(2));
 }}finally{if(cropped!=null&&cropped!=image)cropped.recycle();
 if(layer!=null)layer.recycle();
@@ -347,6 +350,8 @@ await(t,10000,()->find(presetDialog(ed),"preset-confirm").isEnabled(),"library r
 final View nameField=name;
 TagDetailChecks.ui(t,()->((EditText)nameField).setText("やわらかい夕方"));
 TagDetailChecks.ui(t,()->((ScrollView)find(captureDialog,"look-preset-dialog")).scrollTo(0,0));
+t.waitForIdleSync();
+TagDetailChecks.ui(t,()->TagDetailChecks.inspect(find(captureDialog,"look-preset-dialog")));
 capture(t,ed,dialog,prefix+"-dialog",shortWindow);
 TagDetailChecks.ui(t,()->((EditText)nameField).setText(ownedName));
 reveal(t,confirm);

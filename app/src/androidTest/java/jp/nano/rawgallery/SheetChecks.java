@@ -83,7 +83,8 @@ final class SheetChecks {
           if (mode == 3) {
             android.content.res.Configuration config = new android.content.res.Configuration(activity.getResources().getConfiguration());
             config.fontScale = 1.3f;
-            context = new android.view.ContextThemeWrapper(activity.createConfigurationContext(config),R.style.AppTheme);
+            android.view.ContextThemeWrapper enlarged=new android.view.ContextThemeWrapper(activity,R.style.AppTheme);
+            enlarged.applyOverrideConfiguration(config);context=enlarged;
           }
           if(mode>=4){dialog[0]=MoreMenuUi.create(activity,"設定とその他の操作",new String[]{"クラウドと同期","共有先の設定","連写のまとめ方","写真へのアクセス","再読み込み","写真のプレビュー","処理の状況"},(d,i)->clicked[0]=i==6);dialog[0].setOnShowListener(d->shown[0]=true);return;}
           GalleryUi.Sheet builder = new GalleryUi.Sheet(context);
