@@ -21,7 +21,7 @@ final class NanoBananaJob {
   interface Progress { void show(String message); }
   interface Services {
     String upload(String object,byte[] jpeg,String owner) throws Exception;
-    String generate(String prompt,String object,String version) throws Exception;
+    String generate(String prompt,String object,String version,NanoBananaOutput output) throws Exception;
     JSONObject status(String task) throws Exception;
     byte[] download(String url) throws Exception;
     void delete(String object,String version,String owner) throws Exception;
@@ -32,7 +32,7 @@ final class NanoBananaJob {
     NanoBananaE2 e2=store.e2();NanoBananaApi api=new NanoBananaApi(store.apiKey());
     return new Services() {
       public String upload(String object,byte[] jpeg,String owner)throws Exception{return e2.upload(object,jpeg,owner);}
-      public String generate(String prompt,String object,String version)throws Exception{return api.generate(prompt,e2.signedGet(object,version));}
+      public String generate(String prompt,String object,String version,NanoBananaOutput output)throws Exception{return api.generate(prompt,e2.signedGet(object,version),output);}
       public JSONObject status(String task)throws Exception{return api.status(task);}
       public byte[] download(String url)throws Exception{return NanoBananaApi.download(url);}
       public void delete(String object,String version,String owner)throws Exception{e2.delete(object,version,owner);}
@@ -50,12 +50,13 @@ final class NanoBananaJob {
     try {
       if(job==null) {
         if(photo==null||prompt==null)throw new IOException("写真とプロンプトを選び直してください");
+        NanoBananaOutput output=store.output();
         // Validate both credentials before touching the network or creating remote objects.
         Services network=services();
         progress.show("送信用の写真を準備しています");
         byte[] jpeg=input(new PhotoRepository(context),photo);
         String object="loupe-nano-temp/"+UUID.randomUUID()+".jpg";
-        job=new JSONObject().put("object",object).put("stage","uploading").put("owner",UUID.randomUUID().toString());store.job(job);
+        job=new JSONObject().put("object",object).put("stage","uploading").put("owner",UUID.randomUUID().toString()).put("output",output.json());store.job(job);
         progress.show("IDrive e2へ送信しています");
         String version;
         try{version=network.upload(object,jpeg,job.getString("owner"));}
@@ -68,7 +69,7 @@ final class NanoBananaJob {
         // Persist this boundary BEFORE POST. Crash/timeout here requires manual cleanup, never a new POST.
         job.put("stage","submitting");store.job(job);
         progress.show("Nano Bananaへ依頼しています");
-        String task=network.generate(prompt.text,object,version);
+        String task=network.generate(prompt.text,object,version,NanoBananaOutput.fromJob(job));
         job.put("task",task).put("stage","generating");store.job(job);
       }
       String stage=job.getString("stage");
@@ -150,7 +151,7 @@ final class NanoBananaJob {
   private void saveResult(JSONObject job,byte[] bytes) throws Exception {
     BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;
     BitmapFactory.decodeByteArray(bytes,0,bytes.length,bounds);
-    if(bounds.outWidth<=0||bounds.outHeight<=0||(long)bounds.outWidth*bounds.outHeight>16000000)
+    if(bounds.outWidth<=0||bounds.outHeight<=0||(long)bounds.outWidth*bounds.outHeight>20000000)
       throw new IOException("生成結果を画像として開けませんでした");
     Bitmap bitmap=BitmapFactory.decodeByteArray(bytes,0,bytes.length);
     if(bitmap==null)throw new IOException("生成結果を画像として開けませんでした");

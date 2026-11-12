@@ -42,12 +42,39 @@ public final class NanoBananaSettingsActivity extends AppCompatActivity {
         .setNegativeButton("キャンセル",null).setPositiveButton("削除",(d,w)->{try{store.deleteE2();render();}catch(IOException e){error(e);}}).show());
     try {if(store.job()!=null)action("進行中の処理・前回の結果",()->startActivity(new android.content.Intent(this,NanoBananaActivity.class)));}catch(IOException e){error(e);}
     column.addView(label("e2バケットはバージョニング有効が必要です。送信用の一時画像は、生成後に削除します。",14));
+    outputControls();
     TextView prompts=label("プロンプト",20);prompts.setAccessibilityHeading(true);column.addView(prompts);
     try {
       for(NanoBananaStore.Prompt p:store.prompts()) action(p.name,()->editPrompt(p));
     } catch(IOException e) { error(e); }
     action("プロンプトを追加",()->editPrompt(null));
     action("閉じる",this::finish);setContentView(scroll);
+  }
+  private void outputControls() {
+    TextView title=label("出力",20);title.setAccessibilityHeading(true);column.addView(title);
+    NanoBananaOutput value;
+    try{value=store.output();}catch(IOException e){column.addView(label(e.getMessage(),14));value=NanoBananaOutput.DEFAULT;}
+    final NanoBananaOutput current=value;
+    action("アスペクト比: "+current.aspectLabel(),()->editOutput(true,current));
+    action("解像度: "+current.resolution,()->editOutput(false,current));
+    column.addView(label("送信画像は長辺1600pxまでです。高い解像度では料金が増えます。設定は次の新しい編集から適用されます。",14));
+  }
+  private androidx.appcompat.app.AlertDialog editOutput(boolean aspect,NanoBananaOutput current) {
+    java.util.List<String> values=aspect?NanoBananaOutput.ASPECTS:NanoBananaOutput.RESOLUTIONS;
+    String[] labels=values.toArray(new String[0]);if(aspect)labels[0]="自動";
+    int initial=values.indexOf(aspect?current.aspectRatio:current.resolution);
+    int[] selected={initial};
+    androidx.appcompat.app.AlertDialog dialog=new MaterialAlertDialogBuilder(this)
+        .setTitle(aspect?"アスペクト比":"解像度")
+        .setSingleChoiceItems(labels,initial,(d,which)->selected[0]=which)
+        .setNegativeButton("キャンセル",null).setPositiveButton("保存",null).create();
+    dialog.setOnShowListener(d->{
+      dialog.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+      dialog.getButton(-1).setOnClickListener(v->{try{
+        store.setOutput(aspect?values.get(selected[0]):current.aspectRatio,aspect?current.resolution:values.get(selected[0]));
+        dialog.dismiss();render();
+      }catch(IOException e){error(e);}});
+    });dialog.show();return dialog;
   }
   private TextView label(String text,int size) {
     TextView v=new TextView(this);v.setText(text);v.setTextSize(size);v.setTextColor(GalleryUi.TEXT);

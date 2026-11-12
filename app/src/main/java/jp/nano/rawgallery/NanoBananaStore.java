@@ -28,7 +28,29 @@ final class NanoBananaStore {
     Prompt(String id, String name, String text) { this.id=id; this.name=name; this.text=text; }
   }
   NanoBananaStore(Context context) { this(context,"nano-banana"); }
-  NanoBananaStore(Context context,String name) { prefs=context.getSharedPreferences(name, Context.MODE_PRIVATE); }
+  NanoBananaStore(Context context,String name) { this(context.getSharedPreferences(name, Context.MODE_PRIVATE)); }
+  NanoBananaStore(SharedPreferences prefs) {this.prefs=prefs;}
+  NanoBananaOutput output() throws IOException {
+    synchronized(LOCK) {
+      try {
+        String value=prefs.getString("output",null);
+        return value==null?NanoBananaOutput.DEFAULT:NanoBananaOutput.read(new JSONObject(value));
+      }catch(Exception e){throw new IOException("出力設定を読み込めませんでした。比率と解像度を選び直してください");}
+    }
+  }
+  void setOutput(String aspectRatio,String resolution) throws IOException {
+    NanoBananaOutput value=NanoBananaOutput.of(aspectRatio,resolution);
+    synchronized(LOCK) {
+      String previous=prefs.getString("output",null);
+      try {
+        if(prefs.edit().putString("output",value.json().toString()).commit())return;
+      }catch(Exception e){/* Restore the in-memory preference as well as the durable value. */}
+      SharedPreferences.Editor rollback=prefs.edit();
+      if(previous==null)rollback.remove("output");else rollback.putString("output",previous);
+      rollback.commit();
+      throw new IOException("出力設定を保存できませんでした。もう一度保存してください");
+    }
+  }
   boolean hasKey() { return prefs.contains("credential"); }
   private static SecretKey key() throws Exception {
     KeyStore keys=KeyStore.getInstance("AndroidKeyStore"); keys.load(null);

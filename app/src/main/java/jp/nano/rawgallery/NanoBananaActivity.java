@@ -90,9 +90,17 @@ public final class NanoBananaActivity extends DiagnosticActivity {
       location.setVisibility(job!=null&&!complete?View.VISIBLE:View.GONE);location.setEnabled(!busy);
       done.setEnabled(!busy||job!=null);
       if(complete&&result==null&&job.has("saved")) {
-        try(java.io.InputStream in=getContentResolver().openInputStream(Uri.parse(job.getString("saved")))){result=BitmapFactory.decodeStream(in);image.setImageBitmap(result);}
+        result=resultPreview(this,Uri.parse(job.getString("saved")));image.setImageBitmap(result);
       }
     }catch(Exception e){status.setText("処理記録を読み込めませんでした。設定を確認してください");}
+  }
+  /** Decode only a display-sized preview; the saved JPEG retains its original dimensions. */
+  static Bitmap resultPreview(android.content.Context context,Uri uri) throws java.io.IOException {
+    BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;
+    try(java.io.InputStream in=context.getContentResolver().openInputStream(uri)){BitmapFactory.decodeStream(in,null,options);}
+    options.inJustDecodeBounds=false;options.inSampleSize=1;
+    while(Math.max(options.outWidth,options.outHeight)/options.inSampleSize>1600)options.inSampleSize*=2;
+    try(java.io.InputStream in=context.getContentResolver().openInputStream(uri)){return BitmapFactory.decodeStream(in,null,options);}
   }
   @Override protected void onResume(){super.onResume();main.post(refresh);}
   @Override protected void onPause(){main.removeCallbacks(refresh);super.onPause();}
