@@ -53,13 +53,14 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
 
     /** DCIM を辿って取り込み対象 (写真・RAW・動画) のノードを機種フォルダ順に列挙する */
     fun listMediaUnderDcim(): List<Node> {
-        val dcim = listDir(rootDirCluster, noFatChain = false, length = -1)
+        val budget = ScanBudget()
+        val dcim = listDir(rootDirCluster, noFatChain = false, length = -1, budget = budget)
             .firstOrNull { it.isDir && it.name.equals("DCIM", ignoreCase = true) }
             ?: return emptyList()
         val out = ArrayList<Node>()
-        for (sub in listDir(dcim.firstCluster, dcim.noFatChain, dcim.length).sortedBy { it.name }) {
+        for (sub in listDir(dcim.firstCluster, dcim.noFatChain, dcim.length, budget).sortedBy { it.name }) {
             if (!sub.isDir) continue
-            for (f in listDir(sub.firstCluster, sub.noFatChain, sub.length).sortedBy { it.name }) {
+            for (f in listDir(sub.firstCluster, sub.noFatChain, sub.length, budget).sortedBy { it.name }) {
                 if (!f.isDir && MediaTypes.isTarget(f.name)) out.add(f)
             }
         }
@@ -123,8 +124,8 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
     }
 
     /** ディレクトリのエントリ集合を Node にまとめる */
-    private fun listDir(firstCluster: Long, noFatChain: Boolean, length: Long): List<Node> {
-        val bytes = readDirBytes(firstCluster, noFatChain, length)
+    private fun listDir(firstCluster: Long, noFatChain: Boolean, length: Long, budget: ScanBudget): List<Node> {
+        val bytes = readDirBytes(firstCluster, noFatChain, length, budget)
         val nodes = ArrayList<Node>()
         var i = 0
         while (i + 32 <= bytes.size) {
@@ -163,6 +164,7 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
                 read++
                 j += 32
             }
+            budget.entry()
             nodes.add(
                 Node(
                     name = nameSb.toString(),
@@ -179,7 +181,9 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
     }
 
     /** ディレクトリのクラスタチェーンをすべて連結して返す */
-    private fun readDirBytes(firstCluster: Long, noFatChain: Boolean, length: Long): ByteArray {
+    private fun readDirBytes(firstCluster: Long, noFatChain: Boolean, length: Long, budget: ScanBudget): ByteArray {
+        require(validCluster(firstCluster)) { "Invalid exFAT directory cluster" }
+        budget.directoryCluster(firstCluster, bytesPerCluster)
         val out = java.io.ByteArrayOutputStream()
         val clusterBuf = ByteArray(bytesPerCluster)
         var cluster = firstCluster
@@ -189,6 +193,7 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
             require(seen.add(cluster) && out.size() + bytesPerCluster <= MAX_DIR_BYTES) {
                 "Invalid or oversized exFAT directory"
             }
+            if (cluster != firstCluster) budget.directoryCluster(cluster, bytesPerCluster)
             readCluster(cluster, clusterBuf)
             val n = if (length > 0) minOf(remaining, bytesPerCluster.toLong()).toInt() else bytesPerCluster
             out.write(clusterBuf, 0, n)
@@ -199,6 +204,24 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
             if (remaining > 0) cluster = if (noFatChain) cluster + 1 else fatNext(cluster)
         }
         return out.toByteArray()
+    }
+
+    /** One budget spans root, DCIM and every camera folder; cross-linked directories fail closed. */
+    private class ScanBudget {
+        private var bytes = 0L
+        private var entries = 0
+        private val clusters = HashSet<Long>()
+
+        fun directoryCluster(cluster: Long, count: Int) {
+            require(clusters.add(cluster) && bytes + count <= MAX_DIR_BYTES) {
+                "Repeated or oversized exFAT directory scan"
+            }
+            bytes += count
+        }
+
+        fun entry() {
+            require(++entries <= MAX_SCAN_ENTRIES) { "Too many exFAT directory entries" }
+        }
     }
 
     private fun validCluster(cluster: Long): Boolean = cluster in 2..minOf(clusterCount + 1, 0xFFFFFFF6L)
@@ -242,6 +265,7 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
     }
 
     companion object {
+        private const val MAX_SCAN_ENTRIES = 100_000
         private const val MAX_DIR_BYTES = 64 * 1024 * 1024
         private const val READ_WINDOW_BYTES = 256 * 1024
 
