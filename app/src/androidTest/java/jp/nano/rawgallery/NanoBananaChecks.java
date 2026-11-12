@@ -188,6 +188,14 @@ final class NanoBananaChecks {
       TagDetailChecks.require(row.getHeight()>=GalleryUi.dp(screen,48),"last aspect has 48dp target");
       list.performItemClick(row,last,list.getAdapter().getItemId(last));
       TagDetailChecks.require(list.getCheckedItemPosition()==last,"21:9 selected by attached row");
+    });
+    test.waitForIdleSync();Thread.sleep(350);
+    TagDetailChecks.ui(test,()->{
+      android.widget.ListView list=tail[0].getListView();
+      View selected=list.getChildAt(last-list.getFirstVisiblePosition());
+      TagDetailChecks.require(selected instanceof android.widget.Checkable&&((android.widget.Checkable)selected).isChecked(),"selected row is visually checkable");
+      // A software Canvas does not advance RenderThread drawable animations; capture the static endpoint.
+      selected.jumpDrawablesToCurrentState();
       View decor=tail[0].getWindow().getDecorView();android.graphics.Bitmap bitmap=android.graphics.Bitmap.createBitmap(decor.getWidth(),decor.getHeight(),android.graphics.Bitmap.Config.ARGB_8888);decor.draw(new android.graphics.Canvas(bitmap));
       try(java.io.FileOutputStream out=new java.io.FileOutputStream(new File(dir,"nano-output-aspect-tail-"+width+"-"+font+".png"))){bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}catch(Exception e){throw new RuntimeException(e);}finally{bitmap.recycle();}
       tail[0].getButton(-1).performClick();
