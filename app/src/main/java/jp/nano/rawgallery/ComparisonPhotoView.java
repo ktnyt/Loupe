@@ -6,7 +6,7 @@ import android.util.TypedValue;
 import android.widget.ImageView;
 
 /** A/B belongs to the displayed candidate, not its current horizontal/vertical slot. */
-final class ComparisonPhotoView extends ImageView {
+final class ComparisonPhotoView extends androidx.appcompat.widget.AppCompatImageView {
   private final String letter, name;
   private final Paint ink = new Paint(Paint.ANTI_ALIAS_FLAG);
   private final RectF image = new RectF(), badge = new RectF();

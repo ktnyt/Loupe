@@ -79,7 +79,7 @@ final class AlbumTagEntryChecks {
       for(int width:new int[]{320,400})for(float scale:new float[]{1f,1.3f}){
         View[] controls={null};
         main(t,()->{
-          Configuration config=new Configuration(a.getResources().getConfiguration());config.fontScale=scale;Context c=a.createConfigurationContext(config);
+          Configuration config=new Configuration(a.getResources().getConfiguration());config.fontScale=scale;Context c=new android.view.ContextThemeWrapper(a.createConfigurationContext(config),R.style.AppTheme);
           LinearLayout outer=new LinearLayout(a);outer.setOrientation(1);outer.setPadding(0,GalleryUi.dp(a,64),0,0);outer.setBackgroundColor(GalleryUi.BG);
           LinearLayout group=new LinearLayout(c);group.setOrientation(1);
           group.addView(GalleryUi.dock(c,GalleryUi.button(c,"タグ",()->{}),GalleryUi.button(c,"その他",()->{})));

@@ -2,6 +2,7 @@ package jp.nano.rawgallery;
 
 import android.app.Activity;
 import android.app.Dialog;
+import com.google.android.material.bottomsheet.BottomSheetDialog;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.res.ColorStateList;
@@ -16,14 +17,12 @@ final class MoreMenuUi {
     Dialog dialog=create(activity,title,items,action);dialog.show();return dialog;
   }
   static Dialog create(Activity activity,String title,String[] items,DialogInterface.OnClickListener action){
-    Dialog dialog=new Dialog(activity);dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+    BottomSheetDialog dialog=new BottomSheetDialog(activity);
     dialog.setCanceledOnTouchOutside(true);
     Content content=new Content(activity,title,items,index->{dialog.dismiss();action.onClick(dialog,index);},dialog::dismiss);
     dialog.setContentView(content);dialog.create();
-    int width=activity.getWindow().getDecorView().getWidth();
-    GalleryUi.styleSheet(dialog,width>0?width:activity.getResources().getDisplayMetrics().widthPixels);
-    DiagnosticWindow.install(dialog.getWindow());
-    dialog.getWindow().setBackgroundDrawable(GalleryUi.shape(activity,0xff1c1c1f,20));
+    DiagnosticWindow.install(dialog.getWindow());SheetDiagnostics.install(dialog);
+    MaterialUi.sheet(dialog);
     dialog.getWindow().addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
     WindowManager.LayoutParams attributes=dialog.getWindow().getAttributes();attributes.dimAmount=.64f;dialog.getWindow().setAttributes(attributes);
     dialog.getWindow().getDecorView().setAccessibilityPaneTitle(title);
@@ -31,8 +30,8 @@ final class MoreMenuUi {
   }
   private static int dp(Context c,float value){return GalleryUi.dp(c,value);}
   private static Button button(Context c,String label,int size,int line){
-    Button b=new Button(c);b.setText(label);b.setContentDescription(label);b.setAllCaps(false);b.setTextColor(GalleryUi.TEXT);b.setTextSize(size);b.setIncludeFontPadding(false);b.setLineHeight(Math.round(b.getTextSize()*line/size));b.setMinHeight(dp(c,48));b.setMinimumHeight(dp(c,48));b.setMinWidth(0);b.setMinimumWidth(0);
-    b.setBackground(new RippleDrawable(ColorStateList.valueOf(0x33ffffff),new ColorDrawable(Color.TRANSPARENT),null));return b;
+    Button b=MaterialUi.button(c);b.setText(label);b.setContentDescription(label);b.setAllCaps(false);b.setTextSize(size);b.setIncludeFontPadding(false);b.setLineHeight(Math.round(b.getTextSize()*line/size));b.setMinHeight(dp(c,48));b.setMinimumHeight(dp(c,48));b.setMinWidth(0);b.setMinimumWidth(0);
+    MaterialUi.text(b);return b;
   }
   private static final class Chevron extends Drawable {
     final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -51,7 +50,7 @@ final class MoreMenuUi {
       rows=new LinearLayout(c);rows.setOrientation(LinearLayout.VERTICAL);
       for(int i=0;i<items.length;i++){final int index=i;Button row=button(c,items[i],15,22);row.setGravity(Gravity.CENTER_VERTICAL|Gravity.LEFT);row.setTypeface(Typeface.create(Typeface.DEFAULT,400,false));row.setPadding(dp(c,24),0,dp(c,24),0);Chevron arrow=new Chevron();arrow.setBounds(0,0,dp(c,20),dp(c,20));row.setCompoundDrawables(null,null,arrow,null);row.setCompoundDrawablePadding(dp(c,16));row.setOnClickListener(v->{GalleryUi.feedback(v);select.accept(index);});rows.addView(row,new LinearLayout.LayoutParams(-1,-2));}
       list=new ScrollView(c);list.setFillViewport(false);list.addView(rows,new LayoutParams(-1,-2));column.addView(list,new LinearLayout.LayoutParams(-1,-2));
-      bottom=new LinearLayout(c);bottom.setPadding(dp(c,16),dp(c,8),dp(c,16),dp(c,20));Button cancel=button(c,"閉じる",14,20);cancel.setTypeface(Typeface.create(Typeface.DEFAULT,500,false));GradientDrawable shape=GalleryUi.shape(c,Color.TRANSPARENT,24);shape.setStroke(dp(c,1),0xff3a3a3f);cancel.setBackground(new RippleDrawable(ColorStateList.valueOf(0x33ffffff),shape,null));cancel.setPadding(dp(c,16),0,dp(c,16),0);cancel.setOnClickListener(v->close.run());bottom.addView(cancel,new LinearLayout.LayoutParams(-1,-2));column.addView(bottom);
+      bottom=new LinearLayout(c);bottom.setPadding(dp(c,16),dp(c,8),dp(c,16),dp(c,20));Button cancel=button(c,"閉じる",14,20);cancel.setTypeface(Typeface.create(Typeface.DEFAULT,500,false));MaterialUi.outlined(cancel);cancel.setPadding(dp(c,16),0,dp(c,16),0);cancel.setOnClickListener(v->close.run());bottom.addView(cancel,new LinearLayout.LayoutParams(-1,-2));column.addView(bottom);
     }
     @Override protected void onMeasure(int width,int height){
       Rect visible=new Rect();getWindowVisibleDisplayFrame(visible);int available=visible.height()>0?visible.height():getResources().getDisplayMetrics().heightPixels;

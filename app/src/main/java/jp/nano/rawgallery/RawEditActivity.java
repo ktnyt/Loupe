@@ -1,5 +1,11 @@
 package jp.nano.rawgallery;
 
+import androidx.appcompat.app.AlertDialog;
+import com.google.android.material.bottomsheet.BottomSheetBehavior;
+import com.google.android.material.bottomsheet.BottomSheetDialog;
+import com.google.android.material.button.MaterialButton;
+import com.google.android.material.color.MaterialColors;
+
 import android.app.*;
 import android.content.*;
 import android.content.pm.ApplicationInfo;
@@ -16,7 +22,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 
 /** Experimental, local, non-destructive RAW editor; same activity is used by the isolated test app. */
-public final class RawEditActivity extends Activity {
+public final class RawEditActivity extends androidx.appcompat.app.AppCompatActivity {
   static final int ZOOM_ACTION=0x7f0f0061;
   private static final int BG=0xff0f0f10,INK=0xffededea,MUTED=0xffa9a9a4;
   private final Handler main=new Handler(Looper.getMainLooper());
@@ -108,7 +114,7 @@ public final class RawEditActivity extends Activity {
     if(lookPreset==0&&!state.equals(RawEditState.neutral()))lookPreset=-1;
     build();
     if(bundle!=null){image.restorePose(bundle.getFloat("zoom",1),bundle.getFloat("panX",0),bundle.getFloat("panY",0));}
-    if(lookRestoreFailed){new AlertDialog.Builder(this).setTitle("ルックを復元できません")
+    if(lookRestoreFailed){new com.google.android.material.dialog.MaterialAlertDialogBuilder(this).setTitle("ルックを復元できません")
         .setMessage("前回の調整値を読み込めませんでした。編集画面を開き直してください。")
         .setCancelable(false).setPositiveButton("閉じる",(d,w)->finish()).show();}
     else if(input!=null||synthetic())load();else showPicker();
@@ -117,7 +123,7 @@ public final class RawEditActivity extends Activity {
   private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
   private TextView text(String value,float size,int color){TextView t=new TextView(this);t.setText(value);t.setTextSize(size);t.setTextColor(color);t.setGravity(Gravity.CENTER_VERTICAL);return t;}
   private Button button(String value,Runnable action){
-    Button b=new Button(this);b.setAllCaps(false);b.setText(value);b.setTextColor(INK);b.setTextSize(13);b.setLetterSpacing(0);b.setTypeface(Typeface.create(Typeface.DEFAULT,500,false));b.setMinWidth(0);b.setMinimumWidth(0);b.setMinHeight(dp(48));b.setMinimumHeight(dp(48));b.setPadding(dp(8),0,dp(8),0);b.setBackgroundColor(Color.TRANSPARENT);b.setOnClickListener(v->action.run());return b;
+    Button b=MaterialUi.button(this);MaterialUi.text(b);b.setText(value);b.setTextSize(13);b.setLetterSpacing(0);b.setTypeface(Typeface.create(Typeface.DEFAULT,500,false));b.setPadding(dp(8),0,dp(8),0);b.setOnClickListener(v->action.run());return b;
   }
   private GradientDrawable rounded(int color,float radius){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));return d;}
   private Button topButton(String label,String icon,Runnable action){
@@ -131,14 +137,14 @@ public final class RawEditActivity extends Activity {
     LinearLayout top=new LinearLayout(this);top.setGravity(Gravity.CENTER_VERTICAL);top.setPadding(dp(16),0,dp(8),0);root.addView(top,new LinearLayout.LayoutParams(-1,dp(56)));
     LinearLayout heading=new LinearLayout(this);heading.setGravity(Gravity.CENTER_VERTICAL);heading.setMinimumHeight(dp(48));heading.setMinimumWidth(dp(48));heading.setTag("look-open");heading.setClickable(true);heading.setFocusable(true);heading.setContentDescription("現像。ルックを調整");heading.setOnClickListener(v->showLookSheet());
     title=text("現像",15,INK);title.setTypeface(Typeface.create(Typeface.DEFAULT,600,false));
-    LinearLayout words=new LinearLayout(this);words.setGravity(Gravity.CENTER_VERTICAL);if(getResources().getConfiguration().screenWidthDp<360||getResources().getConfiguration().screenWidthDp/getResources().getConfiguration().fontScale<300)words.setOrientation(LinearLayout.VERTICAL);words.addView(title);
+    LinearLayout words=new LinearLayout(this);words.setGravity(Gravity.CENTER_VERTICAL);if(getResources().getConfiguration().screenWidthDp<360||getResources().getConfiguration().screenWidthDp/getResources().getConfiguration().fontScale<300)words.setOrientation(LinearLayout.VERTICAL);title.setSingleLine(true);words.addView(title,new LinearLayout.LayoutParams(-2,-2));
     TextView experiment=text("実験",12,MUTED);LinearLayout.LayoutParams ep=new LinearLayout.LayoutParams(-2,-2);if(words.getOrientation()==LinearLayout.HORIZONTAL)ep.leftMargin=dp(4);words.addView(experiment,ep);heading.addView(words);
     View arrow=new View(this){final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);protected void onDraw(Canvas canvas){paint.setColor(INK);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(1.5f));paint.setStrokeCap(Paint.Cap.ROUND);paint.setStrokeJoin(Paint.Join.ROUND);Path p=new Path();p.moveTo(dp(4.5f),getHeight()/2f-dp(1.5f));p.lineTo(dp(8),getHeight()/2f+dp(2));p.lineTo(dp(11.5f),getHeight()/2f-dp(1.5f));canvas.drawPath(p,paint);}};LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(dp(16),dp(48));ap.leftMargin=dp(2);heading.addView(arrow,ap);top.addView(heading,new LinearLayout.LayoutParams(0,-1,1));
     View lookDot=new View(this);lookDot.setTag("look-indicator");lookDot.setBackground(rounded(INK,3));LinearLayout.LayoutParams dotp=new LinearLayout.LayoutParams(dp(6),dp(6));dotp.leftMargin=dp(4);heading.addView(lookDot,dotp);lookDot.setVisibility(state.look().active()?View.VISIBLE:View.GONE);
     help=topButton("ヘルプ","help",this::showHelp);top.addView(help,new LinearLayout.LayoutParams(dp(48),-1));
-    compare=topButton("比較","compare",()->{if(ready&&!saving){before=!before;compare.setSelected(before);requestRender();}});compare.setContentDescription("補正前と比べる");top.addView(compare,new LinearLayout.LayoutParams(dp(48),-1));
+    compare=topButton("比較","compare",()->{if(ready&&!saving){before=!before;MaterialUi.choice(compare,before);requestRender();}});MaterialUi.choice(compare,before);compare.setContentDescription("補正前と比べる");top.addView(compare,new LinearLayout.LayoutParams(dp(48),-1));
     reset=topButton("初期化","reset",this::resetTab);reset.setContentDescription("現在のタブだけ初期化");top.addView(reset,new LinearLayout.LayoutParams(dp(48),-1));
-    save=button("保存",this::confirmSave);save.setSingleLine(true);save.setTextColor(0xff111111);save.setTextSize(14);save.setTypeface(Typeface.create(Typeface.DEFAULT,600,false));save.setPadding(0,0,0,0);save.setBackground(rounded(INK,24));LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(dp(64),dp(48));sp.leftMargin=dp(4);top.addView(save,sp);
+    save=button("保存",this::confirmSave);MaterialUi.filled(save);save.setSingleLine(true);save.setTextSize(14);save.setTypeface(Typeface.create(Typeface.DEFAULT,600,false));save.setPadding(0,0,0,0);LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(dp(64),dp(48));sp.leftMargin=dp(4);top.addView(save,sp);
     picture=new PhotoSurface();picture.setClipChildren(false);picture.setBackgroundColor(Color.BLACK);root.addView(picture,new LinearLayout.LayoutParams(-1,0,1));
     image=new RawEditImageView(this);picture.addView(image,new FrameLayout.LayoutParams(-1,-1));image.setViewportListener(this::viewportChanged);
     status=text("",14,INK);status.setGravity(Gravity.CENTER);status.setPadding(dp(16),dp(8),dp(16),dp(8));status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);picture.addView(status,new FrameLayout.LayoutParams(-1,-1));status.setClickable(false);
@@ -175,7 +181,7 @@ public final class RawEditActivity extends Activity {
   private void renderControls(){
     if(controls==null)return;controls.removeAllViews();if(pad!=null){pad.cancelGuides();picture.removeView(pad);pad=null;}
     if(curvePanel!=null){curvePanel.finishFields();curveBank=curvePanel.bank();curvePanel.cancelGesture();picture.removeView(curvePanel);curvePanel=null;}
-    for(int i=0;i<7;i++){Button t=(Button)tabs.getChildAt(i);t.setTextColor(tab==i?INK:0xff8a8a85);Drawable glyph=t.getCompoundDrawables()[1];if(glyph instanceof Icon)((Icon)glyph).color=tab==i?INK:0xff8a8a85;t.setTypeface(Typeface.create(Typeface.DEFAULT,tab==i?600:500,false));t.setSelected(tab==i);t.setBackground(new TabBackground(tab==i));t.setContentDescription(tabNames[i]+(tab==i?"、選択中":""));}
+    for(int i=0;i<7;i++){MaterialButton t=(MaterialButton)tabs.getChildAt(i);MaterialUi.choice(t,tab==i);Drawable glyph=t.getCompoundDrawables()[1];if(glyph instanceof Icon)((Icon)glyph).color=MaterialColors.getColor(t,tab==i?com.google.android.material.R.attr.colorOnPrimary:androidx.appcompat.R.attr.colorPrimary);t.setTypeface(Typeface.create(Typeface.DEFAULT,tab==i?600:500,false));t.setContentDescription(tabNames[i]+(tab==i?"、選択中":""));}
     if(tab==2){
       curvePanel=new RawEditCurvePanel(this,curveDisplayState(),curveBank,new RawEditCurvePanel.Listener(){
         public void begin(){beginEdit();}public void changed(RawEditState next){curveChanged(next,0);}public void changed(RawEditState next,long editNs){curveChanged(next,editNs);}
@@ -204,7 +210,7 @@ public final class RawEditActivity extends Activity {
       public void onStartTrackingTouch(SeekBar v){beginEdit();interacting=true;updateBadge();}public void onStopTrackingTouch(SeekBar v){endEdit(false);interacting=false;updateBadge();}
     });
   }
-  private final class ResetSeekBar extends SeekBar {
+  private final class ResetSeekBar extends androidx.appcompat.widget.AppCompatSeekBar {
     private final int key;private final String name;private final RawEditPad.DoubleTapReset taps;
     private boolean editing;private float downX;private int startProgress;
     ResetSeekBar(int key,String name){super(RawEditActivity.this);this.key=key;this.name=name;taps=new RawEditPad.DoubleTapReset(RawEditActivity.this);}
@@ -259,9 +265,9 @@ public final class RawEditActivity extends Activity {
     RawEditState start=editStart;editStart=null;if(start!=null){if(cancel){state=start;customLook=customBeforeEdit;hasCustom=hadCustomBeforeEdit;lookPreset=presetBeforeEdit;lookBase=baseBeforeEdit;if(pad!=null)pad.update(state);requestRender();}else history.push(start,state);}
     interacting=false;updateCurvePanel();updateBadge();updateLookUi();
   }
-  private void applyHistory(boolean redo){endEdit(false);state=redo?history.redo(state):history.undo(state);syncLookIdentity();before=false;compare.setSelected(false);if(pad!=null)pad.update(state);updateCurvePanel();updateLookUi();requestRender();}
+  private void applyHistory(boolean redo){endEdit(false);state=redo?history.redo(state):history.undo(state);syncLookIdentity();before=false;MaterialUi.choice(compare,false);if(pad!=null)pad.update(state);updateCurvePanel();updateLookUi();requestRender();}
   private void changed(RawEditState value){changed(value,0);}
-  private void changed(RawEditState value,long editNs){RawEditState old=state;state=value;if(lookPreset==0&&!state.equals(RawEditState.neutral()))lookPreset=-1;if(editStart==null)history.push(old,value);before=false;compare.setSelected(false);if(pad!=null)pad.update(value);updateCurvePanel();updateLookUi();requestRender(editNs);}
+  private void changed(RawEditState value,long editNs){RawEditState old=state;state=value;if(lookPreset==0&&!state.equals(RawEditState.neutral()))lookPreset=-1;if(editStart==null)history.push(old,value);before=false;MaterialUi.choice(compare,false);if(pad!=null)pad.update(value);updateCurvePanel();updateLookUi();requestRender(editNs);}
   private void resetTab(){
     if(!ready||saving)return;int[][] keys={{0,1},{2,3,4},{5},{6,7},{8,9,10},{11,12},{13,14,15}};
     if(tab==2&&lookCurves){RawEditLook look=state.look();for(int i=0;i<5;i++)look=look.withCurve(i,new RawEditCurve());changedLook(look,0);}
@@ -286,6 +292,7 @@ public final class RawEditActivity extends Activity {
   private void showLookSheet(){
     if(!ready||saving||lookRestoreFailed||lookDialog!=null)return;lookSheetWanted=false;
     if(curvePanel!=null)curvePanel.finishFields();endEdit(false);
+    // Specialized non-dimming, bounded editor overlay keeps the photo visible while controls are adjusted.
     Dialog dialog=new Dialog(this);dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
     RawEditLookPanel panel=new RawEditLookPanel(this,new RawEditLookPanel.Listener(){
       public void begin(){beginEdit();}public void end(){endEdit(false);}
@@ -301,8 +308,8 @@ public final class RawEditActivity extends Activity {
     dialog.setOnDismissListener(d->{panel.finishFields();endEdit(false);if(lookDialog==dialog){lookDialog=null;lookPanel=null;}});
     updateLookUi();dialog.show();Window window=dialog.getWindow();if(window!=null){
       window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-      window.setGravity(Gravity.BOTTOM);window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
-      int content=root.getHeight()-root.getPaddingTop()-root.getPaddingBottom();window.setLayout(-1,Math.max(dp(160),Math.min(dp(384),Math.round(content*.46f))));
+      window.setGravity(Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+      int content=root.getHeight()-root.getPaddingTop()-root.getPaddingBottom();window.setLayout(MaterialUi.width(this),Math.max(dp(160),Math.min(dp(384),Math.round(content*.46f))));
     }
   }
   private void closeLookSheet(boolean reopen){
@@ -321,12 +328,12 @@ public final class RawEditActivity extends Activity {
     lookPreset=target;changed(state.withLook(target==1?RawEditLook.cntLike():RawEditLook.neutral()));
   }
   private void showNeutralConfirmation(){
-    if(neutralDialog!=null)return;Dialog dialog=new Dialog(this);dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);neutralDialog=dialog;
+    if(neutralDialog!=null)return;BottomSheetDialog dialog=new BottomSheetDialog(this);neutralDialog=dialog;
     dialog.setContentView(RawEditLookPanel.neutralConfirmation(this,()->{
       dialog.dismiss();if(!ready||saving||lookLoading)return;
       if(lookPreset==2)customLook=state.look();lookPreset=0;changed(RawEditState.neutral());history.clear();lookCurves=false;renderControls();updateLookUi();
     },dialog::dismiss));dialog.setCanceledOnTouchOutside(true);dialog.setOnDismissListener(d->{if(neutralDialog==dialog)neutralDialog=null;});dialog.show();
-    Window window=dialog.getWindow();if(window!=null){window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));window.setGravity(Gravity.BOTTOM);window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);window.setDimAmount(.6f);window.setLayout(-1,-2);}
+    MaterialUi.sheet(dialog);
   }
   private void pickLookCube(){
     if(lookLoading||saving)return;if(lookPanel!=null)lookPanel.finishFields();lookSheetWanted=true;
@@ -360,9 +367,9 @@ public final class RawEditActivity extends Activity {
     InputStream stream=lookStream.getAndSet(null);if(stream!=null)try{stream.close();}catch(IOException failure){RawEditLog.event("look.import.close.failed",0,0,0);}
   }
   private void showHelp(){
-    if(tab==2){new AlertDialog.Builder(this).setTitle("トーンカーブ").setMessage("グラフの空白をタップして点を追加し、点をドラッグして動かします。入力と出力は0〜100。点の順序は入れ替わりません。端点も動かせますが削除できません。\n明度・RGB・R・G・Bの5本はすべて重ねて適用します。明度はOklabの明るさ、RGBは各色へ同じ変換を適用します。\nロールオフはカーブの前でハイライトを滑らかに圧縮します。失ったRAW情報は復元しません。\n矢印キーで移動、PageUp/Downで点選択、Insertで追加、Deleteで削除。2本指では編集を取り消して写真を拡大・移動します。").setPositiveButton("閉じる",null).show();return;}
+    if(tab==2){new com.google.android.material.dialog.MaterialAlertDialogBuilder(this).setTitle("トーンカーブ").setMessage("グラフの空白をタップして点を追加し、点をドラッグして動かします。入力と出力は0〜100。点の順序は入れ替わりません。端点も動かせますが削除できません。\n明度・RGB・R・G・Bの5本はすべて重ねて適用します。明度はOklabの明るさ、RGBは各色へ同じ変換を適用します。\nロールオフはカーブの前でハイライトを滑らかに圧縮します。失ったRAW情報は復元しません。\n矢印キーで移動、PageUp/Downで点選択、Insertで追加、Deleteで削除。2本指では編集を取り消して写真を拡大・移動します。").setPositiveButton("閉じる",null).show();return;}
     String value=axes[tab][0]+"　"+RawEditPad.value(pairs[tab][0],state.get(pairs[tab][0]))+"\n"+axes[tab][1]+"　"+RawEditPad.value(pairs[tab][1],state.get(pairs[tab][1]));
-    new AlertDialog.Builder(this).setTitle(tabNames[tab]).setMessage("写真の中央のカーソルをつかむと、横と縦の値が変わります。右は縦だけ、下は横だけ。カーソル以外の場所は写真を移動します。\n2本の指で拡大・移動できます。\nガイドは指を離して3秒後に消え、カーソルは残ります。カーソルのダブルタップは初期値へ戻します。写真のダブルタップは原寸100%、150%、全体表示の順に切り替えます。\n\n"+value+(tab==6?"\nモノクロ：色相260・彩度11・輝度+2":"")+"\n\n精細な表示と保存は原寸の準備のあと。準備中も編集できます。\n右上の格子に三角の印は原寸の準備の失敗。押すと再試行。\n原寸 "+width+" × "+height+"："+(fullSession!=null&&fullSession.isPrepared()?"完了":preparationFailed?"失敗":"準備中")+"\n拡大の上限 "+String.format(java.util.Locale.ROOT,"%.2f",image.maxZoom())+"倍").setPositiveButton("閉じる",null).show();
+    new com.google.android.material.dialog.MaterialAlertDialogBuilder(this).setTitle(tabNames[tab]).setMessage("写真の中央のカーソルをつかむと、横と縦の値が変わります。右は縦だけ、下は横だけ。カーソル以外の場所は写真を移動します。\n2本の指で拡大・移動できます。\nガイドは指を離して3秒後に消え、カーソルは残ります。カーソルのダブルタップは初期値へ戻します。写真のダブルタップは原寸100%、150%、全体表示の順に切り替えます。\n\n"+value+(tab==6?"\nモノクロ：色相260・彩度11・輝度+2":"")+"\n\n精細な表示と保存は原寸の準備のあと。準備中も編集できます。\n右上の格子に三角の印は原寸の準備の失敗。押すと再試行。\n原寸 "+width+" × "+height+"："+(fullSession!=null&&fullSession.isPrepared()?"完了":preparationFailed?"失敗":"準備中")+"\n拡大の上限 "+String.format(java.util.Locale.ROOT,"%.2f",image.maxZoom())+"倍").setPositiveButton("閉じる",null).show();
   }
   interface PhotoNavigation {void curveNavigation(MotionEvent event);}
   private final class PhotoSurface extends FrameLayout implements PhotoNavigation {
@@ -372,7 +379,7 @@ public final class RawEditActivity extends Activity {
       if(e.getActionMasked()==MotionEvent.ACTION_DOWN){pinch=false;start=state;startBefore=before;}
       if(e.getPointerCount()>=2&&!pinch){
         endEdit(true);pinch=true;cursor=-1;if(pad!=null)pad.cancelGuides();
-        if(start!=null&&ready&&!saving){state=start;before=startBefore;compare.setSelected(before);if(pad!=null)pad.update(state);requestRender();}
+        if(start!=null&&ready&&!saving){state=start;before=startBefore;MaterialUi.choice(compare,before);if(pad!=null)pad.update(state);requestRender();}
         interacting=true;updateBadge();
       }
       image.multi(e);
@@ -414,9 +421,9 @@ public final class RawEditActivity extends Activity {
     public boolean onInterceptTouchEvent(MotionEvent e){return !curveGesture&&!accessoryGesture&&(pinch||e.getPointerCount()>=2);}
     public boolean onTouchEvent(MotionEvent e){return pinch||super.onTouchEvent(e);}
   }
-  private final class TabButton extends Button {
+  private final class TabButton extends MaterialButton {
     TabButton(String label,int index){
-      super(RawEditActivity.this);setAllCaps(false);setText(label);setTextSize(12);setLetterSpacing(0);setIncludeFontPadding(false);setPadding(0,0,0,0);setMinWidth(0);setMinimumWidth(0);setMinHeight(0);setMinimumHeight(0);setCompoundDrawablesWithIntrinsicBounds(null,new Icon("tab"+index,24),null,null);setCompoundDrawablePadding(dp(4));
+      super(RawEditActivity.this);MaterialUi.text(this);setAllCaps(false);setText(label);setTextSize(12);setLetterSpacing(0);setIncludeFontPadding(false);setPadding(0,0,0,0);setMinWidth(0);setMinimumWidth(0);setMinHeight(0);setMinimumHeight(0);setCompoundDrawablesWithIntrinsicBounds(null,new Icon("tab"+index,24),null,null);setCompoundDrawablePadding(dp(4));
     }
     protected void onDraw(Canvas canvas){
       float line=dp(16)*getResources().getConfiguration().fontScale,top=(getHeight()-dp(28)-line)/2f;
@@ -424,12 +431,6 @@ public final class RawEditActivity extends Activity {
       Paint paint=getPaint();paint.setColor(getCurrentTextColor());Paint.FontMetrics metrics=paint.getFontMetrics();String label=getText().toString();
       canvas.drawText(label,(getWidth()-paint.measureText(label))/2f,top+dp(28)+line/2f-(metrics.ascent+metrics.descent)/2f,paint);
     }
-  }
-  private class RowBackground extends Drawable {
-    final Paint p=new Paint();public void draw(Canvas c){p.setColor(Color.BLACK);c.drawRect(getBounds(),p);p.setColor(0xff222226);c.drawRect(0,0,getBounds().width(),dp(1),p);}public void setAlpha(int a){}public void setColorFilter(ColorFilter f){}public int getOpacity(){return PixelFormat.OPAQUE;}
-  }
-  private final class TabBackground extends RowBackground {
-    final boolean selected;TabBackground(boolean s){selected=s;}public void draw(Canvas c){super.draw(c);p.setColor(selected?INK:0xff222226);float w=getBounds().width();c.drawRect(selected?w*.25f:0,0,selected?w*.75f:w,dp(selected?2:1),p);}
   }
   private final class SliderTrack extends Drawable {
     final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);public void draw(Canvas c){float y=getBounds().exactCenterY();p.setColor(0xff3a3a3f);p.setStrokeWidth(dp(2));c.drawLine(0,y,getBounds().width(),y,p);p.setColor(0xff6b6b70);c.drawLine(getBounds().exactCenterX(),y-dp(6),getBounds().exactCenterX(),y+dp(6),p);}public int getIntrinsicHeight(){return dp(48);}public void setAlpha(int a){}public void setColorFilter(ColorFilter f){}public int getOpacity(){return PixelFormat.TRANSLUCENT;}
@@ -541,7 +542,7 @@ public final class RawEditActivity extends Activity {
     fullBadge.setContentDescription(preparationFailed?"原寸を準備できませんでした。低い解像度で表示と編集を続けられます。拡大はプレビューの150%まで、保存は原寸の準備のあとです。押すと再試行":"精細な表示を準備しています。編集はそのまま続けられます");fullBadge.invalidate();
     FrameLayout.LayoutParams fp=(FrameLayout.LayoutParams)fullBadge.getLayoutParams();int fullMargin=dp(preparationFailed?2:11);if(fp.rightMargin!=fullMargin){fp.rightMargin=fullMargin;fullBadge.setLayoutParams(fp);}
     FrameLayout.LayoutParams ip=(FrameLayout.LayoutParams)busyIcon.getLayoutParams();ip.rightMargin=dp(show?64:12);busyIcon.setLayoutParams(ip);
-    save.setText("保存");save.setPadding(0,0,0,0);save.setCompoundDrawablePadding(dp(4));save.setBackground(rounded(saveWaiting||saving?0xff2a2a2e:INK,24));save.setTextColor(saveWaiting||saving?0xffc9c9c4:0xff111111);
+    save.setText("保存");save.setPadding(0,0,0,0);save.setCompoundDrawablePadding(dp(4));
     save.setCompoundDrawablesWithIntrinsicBounds(saveWaiting||saving?new Icon("spinner",16):null,null,preparationFailed?new Icon("warning",12,0xffff8a7a):null,null);
     save.setStateDescription(saveWaiting?"原寸の準備を待っています。押すと中止":saving?"保存中":preparationFailed?"原寸の準備を再試行":null);
   }
@@ -600,7 +601,7 @@ public final class RawEditActivity extends Activity {
   private void confirmSave(){
     if(!ready||saving||lookLoading||fullSession==null)return;
     if(saveWaiting){saveWaiting=false;updateFullUi();return;}
-    maxSaturation=false;before=false;compare.setSelected(false);renderControls();requestRender();
+    maxSaturation=false;before=false;MaterialUi.choice(compare,false);renderControls();requestRender();
     if(!fullSession.isPrepared()){
       saveWaiting=true;if(fullSession.hasFailed())retryPreparation();updateFullUi();return;
     }
@@ -609,21 +610,23 @@ public final class RawEditActivity extends Activity {
   private void actualConfirmSave(){
     RawEditFullSession session=fullSession;int token=epoch;
     if(!ready||saving||session==null||!session.isPrepared()||!current(token)||isFinishing()||saveDialog!=null)return;
-    if(before||maxSaturation){before=false;maxSaturation=false;compare.setSelected(false);renderControls();requestRender();}
-    saveDialog=new AlertDialog.Builder(this).setTitle("JPEGで保存").setMessage(width+" × "+height+" px　JPEG\n実験版・別のファイルとして保存"+(state.get(RawEditState.MONO)==1?"\nモノクロ":"")+(state.look().active()?"\nルック："+lookName():""))
+    if(before||maxSaturation){before=false;maxSaturation=false;MaterialUi.choice(compare,false);renderControls();requestRender();}
+    saveDialog=new com.google.android.material.dialog.MaterialAlertDialogBuilder(this).setTitle("JPEGで保存").setMessage(width+" × "+height+" px　JPEG\n実験版・別のファイルとして保存"+(state.get(RawEditState.MONO)==1?"\nモノクロ":"")+(state.look().active()?"\nルック："+lookName():""))
       .setNegativeButton("キャンセル",null).setPositiveButton("保存",(d,w)->{if(current(session,token))saveImage();}).create();
     saveDialog.setOnDismissListener(d->saveDialog=null);saveDialog.show();
   }
   private void saveImage(){
     if(!ready||saving||dead||!visible||isFinishing()||fullSession==null||!fullSession.isPrepared())return;
-    if(before||maxSaturation){before=false;maxSaturation=false;compare.setSelected(false);renderControls();requestRender();}
+    if(before||maxSaturation){before=false;maxSaturation=false;MaterialUi.choice(compare,false);renderControls();requestRender();}
     saveWaiting=false;saving=true;image.clearDetail();fullSession.input();enabled(false);updateFullUi();busyIcon.setVisibility(View.VISIBLE);fullSession.save(state);
   }
   private void finishSaveUi(){saving=false;busyIcon.setVisibility(View.GONE);enabled(true);updateFullUi();scheduleRender();requestDetailForCurrent();}
+  // Back is consumed by the editor to cancel loading or confirm unsaved edits.
+  @android.annotation.SuppressLint("MissingSuperCall")
   public void onBackPressed(){
     if(saveWaiting){saveWaiting=false;updateFullUi();return;}
     if(saving){if(fullSession!=null)fullSession.cancelSave();return;}
-    if(!state.equals(saved)){new AlertDialog.Builder(this).setTitle("変更を破棄しますか？").setNegativeButton("編集を続ける",null).setPositiveButton("破棄",(d,w)->finish()).show();}
+    if(!state.equals(saved)){new com.google.android.material.dialog.MaterialAlertDialogBuilder(this).setTitle("変更を破棄しますか？").setNegativeButton("編集を続ける",null).setPositiveButton("破棄",(d,w)->finish()).show();}
     else finish();
   }
   protected void onSaveInstanceState(Bundle b){

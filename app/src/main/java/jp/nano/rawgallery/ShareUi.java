@@ -1,6 +1,8 @@
 package jp.nano.rawgallery;
 
 import android.app.Dialog;
+import com.google.android.material.bottomsheet.BottomSheetDialog;
+import com.google.android.material.button.MaterialButton;
 import android.content.Context;
 import android.graphics.*;
 import android.graphics.drawable.GradientDrawable;
@@ -14,25 +16,33 @@ final class ShareUi {
   static int dp(Context c,int n){return GalleryUi.dp(c,n);}
   static int sheetWidth(Context c){int available=c.getResources().getDisplayMetrics().widthPixels;int configured=c.getResources().getConfiguration().screenWidthDp;return configured>0?Math.min(available,dp(c,configured)):available;}
   static TextView text(Context c,String value,int size,int line,int color){
-    TextView text=new TextView(c){
+    TextView text=new androidx.appcompat.widget.AppCompatTextView(c){
       protected void onMeasure(int width,int height){super.onMeasure(width,height);int rows=getLayout()==null?1:getLayout().getLineCount();int box=Math.round(rows*getTextSize()*line/size)+getPaddingTop()+getPaddingBottom();setMeasuredDimension(getMeasuredWidth(),resolveSizeAndState(Math.max(getMeasuredHeight(),box),height,0));}
     };
     text.setText(value);text.setTextSize(size);text.setTextColor(color);text.setIncludeFontPadding(false);text.setLineHeight(Math.round(text.getTextSize()*line/size));text.setGravity(Gravity.CENTER_VERTICAL);return text;
   }
   static LinearLayout column(Context c){LinearLayout v=new LinearLayout(c);v.setOrientation(LinearLayout.VERTICAL);return v;}
   static void add(LinearLayout parent,View child,int left,int top,int right,int bottom){Context c=parent.getContext();LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.setMargins(dp(c,left),dp(c,top),dp(c,right),dp(c,bottom));parent.addView(child,p);}
-  static Button action(Context c,String title,boolean primary,Runnable click){Button b=GalleryUi.button(c,title,click);b.setCompoundDrawables(null,null,null,null);b.setTextSize(primary?15:14);b.setIncludeFontPadding(false);b.setLineHeight(Math.round(b.getTextSize()*18/(primary?15:14)));b.setMinHeight(dp(c,primary?52:48));b.setMinimumHeight(dp(c,primary?52:48));b.setPadding(dp(c,16),dp(c,4),dp(c,16),dp(c,4));b.setTextColor(primary?0xff111111:GalleryUi.TEXT);GradientDrawable shape=GalleryUi.shape(c,primary?GalleryUi.TEXT:0,primary?26:24);if(!primary)shape.setStroke(dp(c,1),0xff3a3a3f);b.setBackground(shape);return b;}
-  static class Sheet extends Dialog {
+  static Button action(Context c,String title,boolean primary,Runnable click) {
+    Button button=GalleryUi.button(c,title,click);
+    button.setCompoundDrawables(null,null,null,null);
+    button.setTextSize(14);
+    button.setMinHeight(dp(c,primary?52:48));button.setMinimumHeight(dp(c,primary?52:48));
+    button.setPadding(dp(c,16),dp(c,8),dp(c,16),dp(c,8));
+    if(primary)MaterialUi.filled(button);else MaterialUi.outlined(button);
+    return button;
+  }
+  static class Sheet extends BottomSheetDialog {
     final LinearLayout content;
     Sheet(Context c,String title){super(c);requestWindowFeature(Window.FEATURE_NO_TITLE);content=column(c);content.setPadding(0,dp(c,8),0,dp(c,20));View handle=new View(c);handle.setBackground(GalleryUi.shape(c,0xff4a4a50,2));handle.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);LinearLayout.LayoutParams hp=new LinearLayout.LayoutParams(dp(c,32),dp(c,4));hp.gravity=Gravity.CENTER_HORIZONTAL;hp.topMargin=dp(c,4);hp.bottomMargin=dp(c,12);content.addView(handle,hp);TextView heading=text(c,title,20,28,GalleryUi.TEXT);heading.setTypeface(Typeface.create(Typeface.DEFAULT,600,false));heading.setAccessibilityHeading(true);add(content,heading,24,0,24,4);
-      ScrollView scroll=new ScrollView(c){protected void onMeasure(int w,int h){Rect visible=new Rect();getWindowVisibleDisplayFrame(visible);int available=visible.height()>0?visible.height():getResources().getDisplayMetrics().heightPixels;int cap=Math.min(MeasureSpec.getSize(h),Math.max(dp(c,48),available-dp(c,24)));super.onMeasure(w,MeasureSpec.makeMeasureSpec(cap,MeasureSpec.AT_MOST));}};scroll.setVerticalScrollBarEnabled(false);scroll.addView(content);setContentView(scroll);setCanceledOnTouchOutside(true);Window win=getWindow();GradientDrawable bg=GalleryUi.shape(c,0xff1c1c1f,0);float r=dp(c,28);bg.setCornerRadii(new float[]{r,r,r,r,0,0,0,0});win.setBackgroundDrawable(bg);win.setGravity(Gravity.BOTTOM);win.setDimAmount(.64f);win.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);win.setWindowAnimations(0);win.setLayout(sheetWidth(c),-2);DiagnosticWindow.install(win);
+      ScrollView scroll=new ScrollView(c){protected void onMeasure(int w,int h){Rect visible=new Rect();getWindowVisibleDisplayFrame(visible);int available=visible.height()>0?visible.height():getResources().getDisplayMetrics().heightPixels;int cap=Math.min(MeasureSpec.getSize(h),Math.max(dp(c,48),available-dp(c,24)));super.onMeasure(w,MeasureSpec.makeMeasureSpec(cap,MeasureSpec.AT_MOST));}};scroll.setVerticalScrollBarEnabled(false);scroll.addView(content);setContentView(scroll);setCanceledOnTouchOutside(true);DiagnosticWindow.install(getWindow());SheetDiagnostics.install(this);
     }
-    public void show(){super.show();getWindow().setLayout(sheetWidth(getContext()),-2);}
+    public void show(){super.show();MaterialUi.sheet(this);}
   }
   static final class Confirmation extends Sheet {
     Confirmation(Context c,int groups,Runnable sort,Runnable partial){super(c,"ソート");
       TextView badge=text(c,groups+"組",13,18,GalleryUi.TEXT);badge.setMinHeight(dp(c,28));badge.setPadding(dp(c,6),0,dp(c,10),0);badge.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_confirmation_pause,0,0,0);badge.setCompoundDrawablePadding(dp(c,6));GradientDrawable shape=GalleryUi.shape(c,0xff1f1f22,14);shape.setStroke(dp(c,1),0xff3a3a3f);badge.setBackground(shape);badge.setContentDescription(groups+"組の順位がまだ決まっていません。ソートした後に選択画面へ戻れます。");LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-2,-2);bp.setMargins(dp(c,24),dp(c,8),dp(c,24),0);content.addView(badge,bp);
-      LinearLayout actions=column(c);add(content,actions,16,16,16,0);Button start=action(c,"ソート",true,()->{dismiss();sort.run();});start.setBackground(GalleryUi.shape(c,GalleryUi.TEXT,24));start.setStateListAnimator(null);start.setElevation(0);start.setTypeface(Typeface.create(Typeface.DEFAULT,600,false));start.setTextSize(14);start.setLineHeight(Math.round(start.getTextSize()*20/14));actions.addView(start,new LinearLayout.LayoutParams(-1,-2));
+      LinearLayout actions=column(c);add(content,actions,16,16,16,0);Button start=action(c,"ソート",true,()->{dismiss();sort.run();});MaterialUi.filled(start);start.setStateListAnimator(null);start.setElevation(0);start.setTypeface(Typeface.create(Typeface.DEFAULT,600,false));start.setTextSize(14);start.setLineHeight(Math.round(start.getTextSize()*20/14));actions.addView(start,new LinearLayout.LayoutParams(-1,-2));
       if(partial!=null)add(actions,action(c,"順位が未決定の連写を除いて共有",false,()->{dismiss();partial.run();}),0,8,0,0);
       add(actions,action(c,"キャンセル",false,this::dismiss),0,8,0,0);
     }
@@ -54,7 +64,7 @@ final class ShareUi {
     Preparing(Context c,int count,boolean raw,Runnable cancelled){super(c,title(count,raw));setCancelable(false);setCanceledOnTouchOutside(false);LinearLayout actions=state(this,true,(raw?"元のファイル":"JPEG画像")+"を準備しています。"+count+"枚の選択は保持されます。");actions.addView(action(c,"中止",false,()->{dismiss();cancelled.run();}),new LinearLayout.LayoutParams(-1,-2));}
   }
   static final class Failure extends Sheet {
-    Failure(Context c,int count,boolean raw,String description,Runnable retry){super(c,title(count,raw));LinearLayout actions=state(this,false,description);Button button=action(c,"再試行",true,()->{dismiss();retry.run();});button.setTextSize(14);button.setTypeface(Typeface.create(Typeface.DEFAULT,600,false));button.setLineHeight(Math.round(button.getTextSize()*20/14));button.setMinHeight(dp(c,48));button.setMinimumHeight(dp(c,48));button.setPadding(dp(c,16),dp(c,6),dp(c,16),dp(c,6));button.setBackground(GalleryUi.shape(c,GalleryUi.TEXT,24));
+    Failure(Context c,int count,boolean raw,String description,Runnable retry){super(c,title(count,raw));LinearLayout actions=state(this,false,description);Button button=action(c,"再試行",true,()->{dismiss();retry.run();});button.setTextSize(14);button.setTypeface(Typeface.create(Typeface.DEFAULT,600,false));button.setLineHeight(Math.round(button.getTextSize()*20/14));button.setMinHeight(dp(c,48));button.setMinimumHeight(dp(c,48));button.setPadding(dp(c,16),dp(c,6),dp(c,16),dp(c,6));MaterialUi.filled(button);
       android.text.SpannableString label=new android.text.SpannableString(" 再試行");label.setSpan(new android.text.style.ReplacementSpan(){
         public int getSize(Paint p,CharSequence value,int start,int end,Paint.FontMetricsInt metrics){return dp(c,24);}
         public void draw(Canvas canvas,CharSequence value,int start,int end,float x,int top,int y,int bottom,Paint p){android.graphics.drawable.Drawable glyph=c.getDrawable(R.drawable.ic_share_retry);int center=Math.round(y+(p.ascent()+p.descent())/2);glyph.setBounds(Math.round(x),center-dp(c,9),Math.round(x)+dp(c,18),center+dp(c,9));glyph.draw(canvas);}
@@ -71,26 +81,20 @@ final class ShareUi {
       add(actions,action(c,"選択に戻る",false,this::dismiss),0,8,0,0);
     }
   }
-  /** Reserve a fixed check slot beside the centered, wrapping format label. */
-  static final class FormatButton extends Button {
-    final Paint check=new Paint(3);
+  /** Native checkable buttons; capacity updates preserve the selection contract. */
+  static final class FormatButton extends MaterialButton {
     ShareCapacity.Result capacity;
-    void capacity(String label,ShareCapacity.Result value){
-      capacity=value;setText(label+"\n"+value.amount()+" MiB");setEnabled(value.actionable());
-      setContentDescription(label+"。"+value.description());requestLayout();invalidate();
+    FormatButton(Context c,String label,Runnable chosen) {
+      super(c);setAllCaps(false);setText(label);setContentDescription(label);
+      setTextSize(14);setMinWidth(0);setMinimumWidth(0);
+      setMinHeight(dp(c,48));setMinimumHeight(dp(c,48));
+      setInsetTop(0);setInsetBottom(0);setPadding(dp(c,12),dp(c,8),dp(c,12),dp(c,8));
+      MaterialUi.choice(this,false);
+      setOnClickListener(v->{GalleryUi.feedback(v);try(DiagnosticLog.Scope ignored=DiagnosticLog.span("action.button")){chosen.run();}});
     }
-    FormatButton(Context c,String label,Runnable chosen){super(c);setAllCaps(false);setText(label);setContentDescription(label);setTextSize(14);setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));setIncludeFontPadding(false);setLineHeight(Math.round(getTextSize()*20/14));setMinWidth(0);setMinimumWidth(0);setMinHeight(dp(c,48));setMinimumHeight(dp(c,48));setPadding(dp(c,28),dp(c,4),dp(c,8),dp(c,4));setOnClickListener(v->{GalleryUi.feedback(v);try(DiagnosticLog.Scope ignored=DiagnosticLog.span("action.button")){chosen.run();}});setAccessibilityDelegate(new View.AccessibilityDelegate(){public void onInitializeAccessibilityNodeInfo(View host,android.view.accessibility.AccessibilityNodeInfo info){super.onInitializeAccessibilityNodeInfo(host,info);info.setClassName("android.widget.RadioButton");info.setCheckable(true);info.setChecked(host.isSelected());}});}
-    protected void onMeasure(int w,int h){super.onMeasure(w,h);int lines=getLayout()==null?1:getLayout().getLineCount();setMeasuredDimension(getMeasuredWidth(),resolveSizeAndState(Math.max(dp(getContext(),48),Math.round(dp(getContext(),8)+lines*getTextSize()*20/14)),h,0));}
-    protected void onDraw(Canvas canvas){android.text.Layout layout=getLayout();if(layout==null)return;Context c=getContext();float width=0;for(int i=0;i<layout.getLineCount();i++)width=Math.max(width,layout.getLineWidth(i));float left=(getWidth()-dp(c,20)-width)/2;
-      if(isSelected()){int saved=canvas.save();canvas.translate(left,getHeight()/2f-dp(c,8));canvas.scale(dp(c,16)/24f,dp(c,16)/24f);check.setStyle(Paint.Style.STROKE);check.setStrokeWidth(2.2f);check.setStrokeCap(Paint.Cap.ROUND);check.setStrokeJoin(Paint.Join.ROUND);check.setColor(getCurrentTextColor());Path path=new Path();path.moveTo(5,12.5f);path.lineTo(9.5f,17);path.lineTo(19,7.5f);canvas.drawPath(path,check);canvas.restoreToCount(saved);}
-      Paint paint=getPaint();paint.setColor(getCurrentTextColor());float lineHeight=getTextSize()*20/14;float baseline=(getHeight()-layout.getLineCount()*lineHeight)/2+(lineHeight-paint.ascent()-paint.descent())/2;
-      float size=paint.getTextSize();int subtitle=getText().toString().lastIndexOf('\n')+1;
-      for(int i=0;i<layout.getLineCount();i++){
-        boolean secondary=capacity!=null&&layout.getLineStart(i)>=subtitle;
-        paint.setTextSize(secondary?size*12/14:size);paint.setColor(secondary&&!isEnabled()?0xffff8a7a:getCurrentTextColor());
-        String line=getText().subSequence(layout.getLineStart(i),layout.getLineEnd(i)).toString().replace("\n","");canvas.drawText(line,left+dp(c,20)+(width-paint.measureText(line))/2,baseline+i*lineHeight,paint);
-      }
-      paint.setTextSize(size);paint.setColor(getCurrentTextColor());
+    void capacity(String label,ShareCapacity.Result value) {
+      capacity=value;setText(label+"\n"+value.amount()+" MiB");setEnabled(value.actionable());
+      setContentDescription(label+"。"+value.description());
     }
   }
   /** Wrapping rows keep every item reachable without shrinking text or hit targets. */
@@ -132,8 +136,7 @@ final class ShareUi {
       for(Button button:new Button[]{jpeg,original}){
         boolean selected=button==original?raw:!raw;button.setSelected(selected);
         button.setStateDescription((selected?"選択中":"未選択")+(button.isEnabled()?"":"。使えません"));
-        button.setTextColor(!button.isEnabled()?0xff626b72:selected?0xff111111:GalleryUi.TEXT);
-        button.setBackground(GalleryUi.shape(getContext(),selected&&button.isEnabled()?GalleryUi.TEXT:0,24));button.invalidate();
+        MaterialUi.choice(button,selected);
       }
       explanation.setText(raw?"撮影した形式のまま · RAW / JPEG":"RAWの場合は、ファイル内のJPEG画像を使います");
       if(budget!=null){

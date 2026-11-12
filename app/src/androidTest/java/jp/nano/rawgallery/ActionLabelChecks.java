@@ -29,7 +29,7 @@ final class ActionLabelChecks {
         for(int width:landscape?new int[]{640,800}:new int[]{320,400})for(float scale:new float[]{1f,1.3f})for(boolean all:new boolean[]{false,true})for(boolean enabled:new boolean[]{false,true}) {
           View[] dock={null};List<Button> buttons=new ArrayList<>();int[] clicks={0};
           main(t,()->{
-            Configuration cfg=new Configuration(a.getResources().getConfiguration());cfg.fontScale=scale;Context c=a.createConfigurationContext(cfg);
+            Configuration cfg=new Configuration(a.getResources().getConfiguration());cfg.fontScale=scale;Context c=new android.view.ContextThemeWrapper(a.createConfigurationContext(cfg),R.style.AppTheme);
             Button undo=GalleryUi.button(c,"直前の操作を取り消す",()->clicks[0]++);undo.setText("取り消し");undo.setEnabled(enabled);
             buttons.add(undo);if(all)buttons.add(GalleryUi.button(c,"同じ順位",()->{}));buttons.add(GalleryUi.button(c,"その他",()->{}));
             dock[0]=GalleryUi.adaptiveDock(c,buttons.toArray(new Button[0]));
@@ -50,7 +50,7 @@ final class ActionLabelChecks {
         for(int width:landscape?new int[]{640,800}:new int[]{320,400})for(float scale:new float[]{1f,1.3f}) {
           View[] navigation={null};List<Button> buttons=new ArrayList<>();
           main(t,()->{
-            Configuration cfg=new Configuration(a.getResources().getConfiguration());cfg.fontScale=scale;Context c=a.createConfigurationContext(cfg);
+            Configuration cfg=new Configuration(a.getResources().getConfiguration());cfg.fontScale=scale;Context c=new android.view.ContextThemeWrapper(a.createConfigurationContext(cfg),R.style.AppTheme);
             for(String label:new String[]{"前の写真","次の写真","拡大"})buttons.add(GalleryUi.button(c,label,()->{}));
             navigation[0]=GalleryUi.adaptiveDock(c,buttons.toArray(new Button[0]));
             LinearLayout outer=new LinearLayout(a);outer.setOrientation(1);outer.setPadding(0,GalleryUi.dp(a,64),0,0);outer.setBackgroundColor(GalleryUi.BG);
@@ -63,11 +63,11 @@ final class ActionLabelChecks {
       }
       main(t,()->{
         for(int width:new int[]{320,400,640,800})for(float scale:new float[]{1f,1.3f})for(String label:new String[]{"ソート","ソートを再開","ソート結果"}){
-          Configuration cfg=new Configuration(a.getResources().getConfiguration());cfg.fontScale=scale;Context c=a.createConfigurationContext(cfg);
+          Configuration cfg=new Configuration(a.getResources().getConfiguration());cfg.fontScale=scale;Context c=new android.view.ContextThemeWrapper(a.createConfigurationContext(cfg),R.style.AppTheme);
           Button b=GalleryUi.neutralPrimary(GalleryUi.button(c,label,()->{}));b.measure(View.MeasureSpec.makeMeasureSpec(GalleryUi.dp(c,width-32),View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(0,View.MeasureSpec.UNSPECIFIED));b.layout(0,0,b.getMeasuredWidth(),b.getMeasuredHeight());check(b);
         }
         for(int width:new int[]{320,400,640,800})for(float scale:new float[]{1f,1.3f}){
-          Configuration cfg=new Configuration(a.getResources().getConfiguration());cfg.fontScale=scale;Context c=a.createConfigurationContext(cfg);
+          Configuration cfg=new Configuration(a.getResources().getConfiguration());cfg.fontScale=scale;Context c=new android.view.ContextThemeWrapper(a.createConfigurationContext(cfg),R.style.AppTheme);
           Button b=GalleryUi.button(c,"この写真を1位に",()->{});b.setText("1位にする");b.setTooltipText(b.getContentDescription());
           b.measure(View.MeasureSpec.makeMeasureSpec(GalleryUi.dp(c,(width-32)/2),View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(0,View.MeasureSpec.UNSPECIFIED));b.layout(0,0,b.getMeasuredWidth(),b.getMeasuredHeight());
           if(b.getLayout().getLineCount()!=1||b.getLayout().getLineWidth(0)>b.getWidth()-b.getCompoundPaddingLeft()-b.getCompoundPaddingRight()+1||b.getHeight()<GalleryUi.dp(c,48)||!"この写真を1位に".contentEquals(b.getContentDescription()))throw new AssertionError("best label");

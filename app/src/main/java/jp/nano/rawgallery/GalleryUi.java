@@ -1,6 +1,8 @@
 package jp.nano.rawgallery;
 
 import android.app.*;
+import androidx.appcompat.app.AlertDialog;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import android.content.*;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
@@ -10,11 +12,11 @@ import android.widget.*;
 import java.util.function.IntSupplier;
 
 final class GalleryUi {
-  static final int BG = 0xff0f0f10,
-      PANEL = 0xff19191b,
-      TEXT = 0xffededea,
-      MUTED = 0xffa9a9a4,
-      ACCENT = 0xff4c8dff;
+  static final int BG = 0xff111318,
+      PANEL = 0xff1d2026,
+      TEXT = 0xffe2e2e9,
+      MUTED = 0xffc4c6d0,
+      ACCENT = 0xffadc6ff;
 
   static int dp(Context c, float value) {
     return Math.round(value * c.getResources().getDisplayMetrics().density);
@@ -28,26 +30,10 @@ final class GalleryUi {
   }
 
   static Button button(Context c, String text, Runnable action) {
-    Button button = new Button(c);
+    Button button = MaterialUi.button(c);
     button.setText(text);
-    button.setAllCaps(false);
-    button.setTextSize(13);
-    button.setTypeface(
-        android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL));
-    button.setTextColor(
-        new ColorStateList(
-            new int[][] {new int[] {android.R.attr.state_enabled}, new int[] {}},
-            new int[] {TEXT, 0xff626b72}));
-    button.setMinHeight(dp(c, 48));
-    button.setMinimumHeight(dp(c, 48));
-    button.setMinWidth(0);
-    button.setMinimumWidth(0);
-    button.setPadding(dp(c, 10), 0, dp(c, 10), 0);
-    button.setBackground(
-        new RippleDrawable(
-            ColorStateList.valueOf(0x33c7d8e4),
-            shape(c, Color.TRANSPARENT, 14),
-            shape(c, Color.WHITE, 14)));
+    button.setTextSize(14);
+    button.setPadding(dp(c, 12), dp(c, 4), dp(c, 12), dp(c, 4));
     button.setContentDescription(text);
     decorateAction(button);
     button.setOnClickListener(
@@ -100,10 +86,8 @@ final class GalleryUi {
   }
 
   static Button neutralPrimary(Button button) {
-    button.setTextColor(0xff111111);
-    tintIcon(button, 0xff111111);
-    button.setBackground(new RippleDrawable(ColorStateList.valueOf(0x33000000),
-        shape(button.getContext(), TEXT, 26), null));
+    MaterialUi.filled(button);
+    tintIcon(button, 0xff002e69);
     return button;
   }
 
@@ -113,14 +97,8 @@ final class GalleryUi {
   }
 
   static Button primary(Button button) {
-    Context c = button.getContext();
-    button.setTextColor(BG);
-    tintIcon(button, BG);
-    button.setBackground(
-        new RippleDrawable(
-            ColorStateList.valueOf(0x44c7d8e4),
-            shape(c, TEXT, 24),
-            shape(c, Color.WHITE, 14)));
+    MaterialUi.filled(button);
+    tintIcon(button, 0xff002e69);
     return button;
   }
 
@@ -149,22 +127,10 @@ final class GalleryUi {
     return new ActionRows(c, buttons);
   }
 
-  // The check occupies the same advance in both states; no neighbouring control moves.
   static Button chip(Context c, String title, boolean selected, Runnable action) {
-    Button button = button(c, "✓  " + title, action);
-    android.text.SpannableString text = new android.text.SpannableString("✓  " + title);
-    text.setSpan(new android.text.style.ForegroundColorSpan(
-        selected ? TEXT : Color.TRANSPARENT), 0, 1, 0);
-    button.setText(text);
-    button.setContentDescription(title);
-    button.setSelected(selected);
+    Button button = button(c, title, action);
+    MaterialUi.choice(button, selected);
     button.setStateDescription(selected ? "選択中" : "未選択");
-    GradientDrawable fill = shape(c, selected ? 0xff2c2c30 : 0xff19191b, 8);
-    fill.setStroke(dp(c, 1), selected ? 0xff66666c : 0xff343438);
-    android.graphics.drawable.InsetDrawable inset = new android.graphics.drawable.InsetDrawable(
-        fill, 0, dp(c, 8), 0, dp(c, 8));
-    button.setBackground(new RippleDrawable(ColorStateList.valueOf(0x334c8dff), inset, null));
-    button.setPadding(dp(c, 12), 0, dp(c, 12), 0);
     return button;
   }
 
@@ -200,67 +166,17 @@ final class GalleryUi {
     root.addView(scroll, new LinearLayout.LayoutParams(-1, -2));
   }
 
-  /** Configure before show; never submit an oversized first frame (Issue #13). */
-  static void styleSheet(Dialog dialog, int availableWidth) {
-    Window window = dialog.getWindow(); if (window == null) return;
-    Context context = dialog.getContext();
-    window.setBackgroundDrawable(shape(context, PANEL, 20));
-    window.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-    window.setWindowAnimations(0);
-    window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
-    int width = availableWidth;
-    final int sheetWidth = Math.min(width - dp(context, 24), dp(context, 560));
-    window.setLayout(sheetWidth, WindowManager.LayoutParams.WRAP_CONTENT);
-    View decor = window.getDecorView();
-    decor.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
-      private ViewTreeObserver.OnPreDrawListener beforeDraw;
-      @Override public void onViewAttachedToWindow(View view) {
-        long request = DiagnosticLog.id();
-        DiagnosticLog.event("dialog.show", request);
-        beforeDraw = new ViewTreeObserver.OnPreDrawListener() {
-          private boolean first = true;
-          @Override public boolean onPreDraw() {
-            android.graphics.Rect visible = new android.graphics.Rect();
-            view.getWindowVisibleDisplayFrame(visible);
-            int max = (int) (visible.height() * .48f);
-            if (max > 0 && view.getHeight() > max) {
-              if (window.getAttributes().height != max) window.setLayout(sheetWidth, max);
-              return false;
-            }
-            if (first) {
-              first = false;
-              int[] location = new int[2]; view.getLocationOnScreen(location);
-              int w = view.getWidth(), h = view.getHeight();
-              DiagnosticLog.event("dialog.first_draw", request,
-                  "x", location[0], "y", location[1], "width", w, "height", h);
-              if (view.isHardwareAccelerated()) view.getViewTreeObserver().registerFrameCommitCallback(
-                  () -> DiagnosticLog.event("dialog.frame_commit", request));
-              else DiagnosticLog.event("dialog.frame_unavailable", request);
-            }
-            return true;
-          }
-        };
-        view.getViewTreeObserver().addOnPreDrawListener(beforeDraw);
-      }
-      @Override public void onViewDetachedFromWindow(View view) {
-        if (beforeDraw != null && view.getViewTreeObserver().isAlive())
-          view.getViewTreeObserver().removeOnPreDrawListener(beforeDraw);
-      }
-    });
-  }
-
-  static final class Sheet extends AlertDialog.Builder {
+  static final class Sheet extends MaterialAlertDialogBuilder {
     Sheet(Context c) { super(c); }
     @Override public AlertDialog create() {
       AlertDialog dialog = super.create();
-      // Dialog.create finishes theme/content setup without adding the window to the screen.
-      dialog.create();
-      styleSheet(dialog, getContext().getResources().getDisplayMetrics().widthPixels);
       DiagnosticWindow.install(dialog.getWindow());
+      SheetDiagnostics.install(dialog);
       return dialog;
     }
     @Override public AlertDialog show() {
       AlertDialog dialog = create(); dialog.show(); return dialog;
     }
   }
+
 }

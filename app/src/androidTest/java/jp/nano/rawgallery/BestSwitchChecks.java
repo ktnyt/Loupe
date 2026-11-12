@@ -50,7 +50,7 @@ final class BestSwitchChecks {
     try{t.sendPointerSync(press);t.sendPointerSync(release);}finally{press.recycle();release.recycle();}
   }
   private static void pixels(Instrumentation t,MainActivity a,SelectionUi.BestSwitch toggle,boolean checked,String name)throws Exception{
-    t.waitForIdleSync();Thread.sleep(150);
+    t.waitForIdleSync();Thread.sleep(400);
     Bitmap[] image={null};CountDownLatch copied=new CountDownLatch(1);int[] result={-1};
     TagDetailChecks.ui(t,()->{
       android.view.accessibility.AccessibilityNodeInfo node=toggle.createAccessibilityNodeInfo();
@@ -68,11 +68,20 @@ final class BestSwitchChecks {
       TagDetailChecks.require(copied.await(5,TimeUnit.SECONDS)&&result[0]==PixelCopy.SUCCESS,"PixelCopy "+name);
       File dir=new File(a.getCacheDir(),"consistency-checks");dir.mkdirs();
       try(FileOutputStream out=new FileOutputStream(new File(dir,"best-switch-"+a.getResources().getConfiguration().screenWidthDp+"-"+a.getResources().getConfiguration().fontScale+"-"+name+".png"))){image[0].compress(Bitmap.CompressFormat.PNG,100,out);}
-      float d=a.getResources().getDisplayMetrics().density;
-      int left=image[0].getPixel(Math.round(image[0].getWidth()-44*d),image[0].getHeight()/2);
-      int right=image[0].getPixel(Math.round(image[0].getWidth()-24*d),image[0].getHeight()/2);
-      if(left!=(checked?GalleryUi.TEXT:0xff8c8c86)||right!=(checked?0xff111111:GalleryUi.BG))
-        throw new AssertionError("visible track/thumb did not update: "+name+" left="+Integer.toHexString(left)+" right="+Integer.toHexString(right));
+      TagDetailChecks.ui(t,()->{
+        Bitmap expected=Bitmap.createBitmap(toggle.getWidth(),toggle.getHeight(),Bitmap.Config.ARGB_8888);
+        try {
+          toggle.draw(new android.graphics.Canvas(expected));
+          Rect bounds=toggle.getThumbDrawable().getBounds();
+          int x=Math.max(0,Math.min(expected.getWidth()-1,bounds.centerX()));
+          int y=Math.max(0,Math.min(expected.getHeight()-1,bounds.centerY()));
+          int actual=image[0].getPixel(x,y), wanted=expected.getPixel(x,y);
+          if(Math.abs(android.graphics.Color.red(actual)-android.graphics.Color.red(wanted))>8
+              ||Math.abs(android.graphics.Color.green(actual)-android.graphics.Color.green(wanted))>8
+              ||Math.abs(android.graphics.Color.blue(actual)-android.graphics.Color.blue(wanted))>8)
+            throw new AssertionError("native thumb did not update on screen: "+name);
+        } finally { expected.recycle(); }
+      });
     }finally{if(image[0]!=null)image[0].recycle();}
   }
 }

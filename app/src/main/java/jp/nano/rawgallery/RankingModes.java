@@ -1,5 +1,7 @@
 package jp.nano.rawgallery;
 
+import com.google.android.material.button.MaterialButton;
+
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.graphics.*;
@@ -30,7 +32,7 @@ final class RankingModes {
   private static GradientDrawable shape(Context c,int color,int radius) {
     GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(c,radius));return d;
   }
-  static final class Choice extends Button {
+  static final class Choice extends MaterialButton {
     Choice(Context c,boolean best,boolean selected,Runnable action) {
       super(c);
       setAllCaps(false);setText(best?"1位を決める":"すべてに順位");
@@ -41,9 +43,7 @@ final class RankingModes {
       setLineSpacing(Math.max(0,20*c.getResources().getDisplayMetrics().scaledDensity-getPaint().getFontMetrics(null)),1);
       setSelected(selected);setStateDescription(selected?"選択中":"未選択");
       setContentDescription(best?"1位を決める。1枚だけが1位、ほかの写真はすべて同率2位":"すべてに順位。すべての写真に順位を付ける、同じ順位も選べる");
-      GradientDrawable fill=shape(c,selected?0xff26262a:Color.TRANSPARENT,10);
-      fill.setStroke(dp(c,selected?2:1),selected?GalleryUi.TEXT:0xff3a3a3f);
-      setBackground(new RippleDrawable(ColorStateList.valueOf(0x33ededea),fill,null));
+      MaterialUi.choice(this,selected);
       Example example=new Example(c,best,selected);example.setBounds(0,0,example.getIntrinsicWidth(),example.getIntrinsicHeight());
       setCompoundDrawables(null,null,null,example);setCompoundDrawablePadding(dp(c,4));
       setOnClickListener(v->{GalleryUi.feedback(this);action.run();});

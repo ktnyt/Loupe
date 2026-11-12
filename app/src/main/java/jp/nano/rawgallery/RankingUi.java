@@ -44,10 +44,7 @@ final class RankingUi {
     if(icon!=null){ActionIcon d=new ActionIcon(icon,c.getResources().getDisplayMetrics().density);d.setBounds(0,0,dp(c,18),dp(c,18));d.setTintList(ColorStateList.valueOf(primary?0xff111111:GalleryUi.TEXT));inline(b,d,b.getText().toString(),18);}
     b.setGravity(Gravity.CENTER);b.setPadding(dp(c,12),dp(c,8),dp(c,12),dp(c,8));
     b.setMinHeight(dp(c,height));b.setMinimumHeight(dp(c,height));b.setElevation(0);b.setStateListAnimator(null);
-    GradientDrawable bg=GalleryUi.shape(c,primary?GalleryUi.TEXT:Color.TRANSPARENT,height/2);
-    if(!primary)bg.setStroke(dp(c,1),0xff3a3a3f);
-    if(primary){android.graphics.drawable.StateListDrawable state=new android.graphics.drawable.StateListDrawable();state.addState(new int[]{android.R.attr.state_enabled},bg);state.addState(new int[]{},GalleryUi.shape(c,0xff2a2a2e,height/2));b.setBackground(new RippleDrawable(ColorStateList.valueOf(0x33aaaaaa),state,null));}else b.setBackground(new RippleDrawable(ColorStateList.valueOf(0x33aaaaaa),bg,null));
-    b.setTextColor(new ColorStateList(new int[][]{new int[]{android.R.attr.state_enabled},new int[]{}},new int[]{primary?0xff111111:GalleryUi.TEXT,0xff626b72}));
+    if(primary)MaterialUi.filled(b);else MaterialUi.outlined(b);
     return b;
   }
   static void inline(Button b,Drawable icon,String label,int size){

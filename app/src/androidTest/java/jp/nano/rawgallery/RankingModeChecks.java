@@ -21,7 +21,7 @@ final class RankingModeChecks {
         waitFor(t,"rotation",()->a.getResources().getConfiguration().orientation==(landscape?Configuration.ORIENTATION_LANDSCAPE:Configuration.ORIENTATION_PORTRAIT));
         for(int width:landscape?new int[]{640,800}:new int[]{320,400})for(float scale:new float[]{1f,1.3f})for(boolean best:new boolean[]{true,false}) {
           LinearLayout[] modes={null};int[] clicks={0};
-          main(t,()->{Configuration cfg=new Configuration(a.getResources().getConfiguration());cfg.fontScale=scale;Context c=a.createConfigurationContext(cfg);
+          main(t,()->{Configuration cfg=new Configuration(a.getResources().getConfiguration());cfg.fontScale=scale;Context c=new android.view.ContextThemeWrapper(a.createConfigurationContext(cfg),R.style.AppTheme);
             modes[0]=RankingModes.create(c,best,()->clicks[0]++,()->clicks[0]++);
             LinearLayout outer=new LinearLayout(a);outer.setOrientation(1);outer.setBackgroundColor(GalleryUi.BG);outer.setPadding(0,GalleryUi.dp(a,64),0,0);
             outer.addView(modes[0],new LinearLayout.LayoutParams(GalleryUi.dp(c,width),-2));a.setContentView(outer);return true;});

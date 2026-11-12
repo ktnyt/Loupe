@@ -17,6 +17,7 @@ android {
     sourceSets {
         main {
             java.srcDirs = [layout.buildDirectory.dir('generated/raw-editor/java')]
+            res.srcDir '../app/src/main/res'
             assets.srcDir rootProject.file('third-party/libraw'); assets.srcDir rootProject.file('third-party/libjpeg-turbo')
         }
     }
@@ -26,9 +27,11 @@ android {
 // Give javac and lint the same bounded source tree; includes alone is ignored by lint.
 def syncRawEditorSources = tasks.register('syncRawEditorSources', Sync) {
     from('../app/src/main/java') {
-        include 'jp/nano/rawgallery/RawEdit*.java', 'jp/nano/rawgallery/NativeRaw.java', 'jp/nano/rawgallery/NativeJpeg.java', 'jp/nano/rawgallery/LookPresetStore.java', 'jp/nano/rawgallery/LookPresetSaveDialog.java'
+        include 'jp/nano/rawgallery/RawEdit*.java', 'jp/nano/rawgallery/NativeRaw.java', 'jp/nano/rawgallery/NativeJpeg.java', 'jp/nano/rawgallery/LookPresetStore.java', 'jp/nano/rawgallery/LookPresetSaveDialog.java', 'jp/nano/rawgallery/MaterialUi.java'
     }
     into layout.buildDirectory.dir('generated/raw-editor/java')
 }
 tasks.named('preBuild').configure { dependsOn syncRawEditorSources }
 tasks.configureEach { if (name.startsWith('lint') || name.contains('Lint')) dependsOn syncRawEditorSources }
+
+dependencies { implementation 'com.google.android.material:material:1.13.0' }

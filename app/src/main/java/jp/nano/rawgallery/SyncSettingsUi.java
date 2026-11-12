@@ -1,11 +1,13 @@
 package jp.nano.rawgallery;
 
+import com.google.android.material.button.MaterialButton;
+
 import android.content.Context;
 import android.graphics.*;
-import android.graphics.drawable.GradientDrawable;
 import android.view.*;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.*;
+import com.google.android.material.materialswitch.MaterialSwitch;
 
 /** Layout only. Permission checks, stored values and actions remain owned by SyncActivity. */
 final class SyncSettingsUi {
@@ -38,29 +40,12 @@ final class SyncSettingsUi {
   static void styleButton(Context c,Button b,boolean primary,int size,int min){
     b.setAllCaps(false);b.setTextSize(size);b.setTextColor(primary?0xff111111:GalleryUi.TEXT);b.setIncludeFontPadding(false);b.setLineHeight(Math.round(b.getTextSize()*1.35f));b.setSingleLine(false);b.setEllipsize(null);b.setGravity(Gravity.CENTER);b.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));
     b.setMinHeight(dp(c,min));b.setMinimumHeight(dp(c,min));b.setPadding(dp(c,b instanceof ActionButton&&hasIcon(b)?44:16),dp(c,10),dp(c,16),dp(c,10));
-    GradientDrawable shape=GalleryUi.shape(c,primary?GalleryUi.TEXT:Color.TRANSPARENT,min/2);if(!primary)shape.setStroke(dp(c,1),0xff3a3a3f);
-    android.graphics.drawable.StateListDrawable states=new android.graphics.drawable.StateListDrawable();GradientDrawable focus=GalleryUi.shape(c,primary?GalleryUi.TEXT:Color.TRANSPARENT,min/2);focus.setStroke(dp(c,2),primary?0xff111111:GalleryUi.TEXT);states.addState(new int[]{android.R.attr.state_focused},focus);states.addState(new int[]{},shape);
-    b.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(primary?0x22000000:0x33ffffff),states,GalleryUi.shape(c,Color.WHITE,min/2)));
+    if(primary)MaterialUi.filled(b);else MaterialUi.outlined(b);
   }
   private static void action(Context c,LinearLayout card,Button b,String label){if(b==null)return;b.setText(label);b.setContentDescription(label);styleButton(c,b,false,14,48);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=dp(c,8);card.addView(b,p);}
-  private static void headingControl(Context c,LinearLayout card,Switch control,String description){
+  private static void headingControl(Context c,LinearLayout card,MaterialSwitch control,String description){
     View title=card.getChildAt(0);card.removeView(title);LinearLayout header=new LinearLayout(c);header.setGravity(Gravity.CENTER_VERTICAL);
-    header.addView(title,new LinearLayout.LayoutParams(0,-2,1));control.setText("");control.setContentDescription(description);control.setMinimumWidth(dp(c,52));control.setSwitchMinWidth(dp(c,52));control.setSplitTrack(false);control.setPadding(0,0,0,0);
-    GradientDrawable track=new GradientDrawable(){
-      @Override public boolean getPadding(Rect padding){padding.set(dp(c,6),0,dp(c,6),0);return true;}
-    };track.setColor(GalleryUi.TEXT);track.setCornerRadius(dp(c,16));track.setSize(dp(c,52),dp(c,32));control.setTrackDrawable(track);
-    android.graphics.drawable.Drawable thumb=new android.graphics.drawable.Drawable(){
-      private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
-      @Override public int getIntrinsicWidth(){return dp(c,20);}
-      @Override public int getIntrinsicHeight(){return dp(c,20);}
-      @Override public boolean isStateful(){return true;}
-      @Override protected boolean onStateChange(int[] state){invalidateSelf();return true;}
-      @Override public void draw(Canvas canvas){paint.setColor(control.isChecked()?0xff111111:0xffa9a9a4);Rect bounds=getBounds();canvas.drawCircle(bounds.exactCenterX(),bounds.exactCenterY(),dp(c,10),paint);}
-      @Override public void setAlpha(int alpha){paint.setAlpha(alpha);}
-      @Override public void setColorFilter(ColorFilter filter){paint.setColorFilter(filter);}
-      @Override public int getOpacity(){return PixelFormat.TRANSLUCENT;}
-    };control.setThumbDrawable(thumb);control.setThumbTintList(null);
-    control.setTrackTintList(new android.content.res.ColorStateList(new int[][]{new int[]{android.R.attr.state_checked},new int[]{}},new int[]{GalleryUi.TEXT,0xff3a3a3f}));
+    header.addView(title,new LinearLayout.LayoutParams(0,-2,1));control.setText("");control.setContentDescription(description);control.setMinimumWidth(dp(c,52));control.setPadding(0,0,0,0);
     LinearLayout.LayoutParams controlParams=new LinearLayout.LayoutParams(dp(c,52),dp(c,48));controlParams.leftMargin=dp(c,12);header.addView(control,controlParams);card.addView(header,0);
   }
   static void verification(Context c,LinearLayout root,StatusView status,Button action){
@@ -69,7 +54,7 @@ final class SyncSettingsUi {
     action(c,card,action,"確認する");
   }
   private static boolean hasIcon(Button b){String label=b.getText().toString();return label.contains("位置情報")||label.contains("アクセス")||label.equals("状態を更新");}
-  static TextView populate(Context c,LinearLayout root,LinearLayout screen,TextView info,StatusView collection,StatusView permission,StatusView progress,TextView progressTime,Switch sync,Switch cleanup,Button allFiles,Button location,Button keep,Button settings,Button other){
+  static TextView populate(Context c,LinearLayout root,LinearLayout screen,TextView info,StatusView collection,StatusView permission,StatusView progress,TextView progressTime,MaterialSwitch sync,MaterialSwitch cleanup,Button allFiles,Button location,Button keep,Button settings,Button other){
     LinearLayout heading=column(c);heading.setMinimumHeight(dp(c,424));heading.setGravity(Gravity.BOTTOM);heading.setPadding(dp(c,20),0,dp(c,20),dp(c,20));
     TextView title=text(c,"クラウドと同期",28,GalleryUi.TEXT,36f/28);title.setTypeface(Typeface.create(Typeface.create("sans-serif",Typeface.NORMAL),600,false));title.setAccessibilityHeading(true);heading.addView(title);TextView last=text(c,"最後の同期：—",14,0xffa9a9a4,20f/14);last.setTag("last-sync");heading.addView(last);root.addView(heading);
     LinearLayout cards=column(c);cards.setPadding(dp(c,16),0,dp(c,16),dp(c,32));root.addView(cards);
@@ -91,7 +76,7 @@ final class SyncSettingsUi {
     return retention;
   }
 
-  static final class ActionButton extends Button {
+  static final class ActionButton extends MaterialButton {
     private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
     ActionButton(Context c,String label,Runnable action){super(c);setText(label);setMinWidth(0);setMinimumWidth(0);setOnClickListener(v->{GalleryUi.feedback(v);try(DiagnosticLog.Scope ignored=DiagnosticLog.span("action.button")){action.run();}});}
     @Override protected void onDraw(Canvas canvas){super.onDraw(canvas);if(!hasIcon(this))return;android.text.Layout layout=getLayout();if(layout==null)return;

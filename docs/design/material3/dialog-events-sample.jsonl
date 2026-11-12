@@ -1,0 +1,6 @@
+{"ns": 15736873315713, "event": "dialog.show", "request": 1449, "dropped": 0}
+{"ns": 15736878936233, "event": "dialog.first_draw", "request": 1449, "dropped": 0, "x": 80, "y": 1429, "width": 1040, "height": 1241}
+{"ns": 15736886406077, "event": "dialog.frame_commit", "request": 1449, "dropped": 0}
+{"ns": 15737474745400, "event": "dialog.show", "request": 1453, "dropped": 0}
+{"ns": 15737481598994, "event": "dialog.first_draw", "request": 1453, "dropped": 0, "x": 80, "y": 2085, "width": 1040, "height": 585}
+{"ns": 15737489181546, "event": "dialog.frame_commit", "request": 1453, "dropped": 0}

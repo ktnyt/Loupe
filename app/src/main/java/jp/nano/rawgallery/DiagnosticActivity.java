@@ -5,7 +5,7 @@ import android.os.Bundle;
 import android.view.*;
 
 /** Raw input has no text/coordinates; semantic actions are logged separately. */
-public class DiagnosticActivity extends Activity {
+public class DiagnosticActivity extends androidx.appcompat.app.AppCompatActivity {
   @Override public void onCreate(Bundle state) {
     DiagnosticLog.init(this);
     DiagnosticLog.event("activity.create", 0, "screen", getClass().getSimpleName());

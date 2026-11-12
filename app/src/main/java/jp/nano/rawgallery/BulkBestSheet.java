@@ -1,7 +1,10 @@
 package jp.nano.rawgallery;
 
+import com.google.android.material.button.MaterialButton;
+import com.google.android.material.bottomsheet.BottomSheetDialog;
+import com.google.android.material.bottomsheet.BottomSheetBehavior;
+
 import android.app.Activity;
-import android.app.Dialog;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -11,7 +14,6 @@ import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
-import android.graphics.drawable.GradientDrawable;
 import android.text.SpannableString;
 import android.text.Spanned;
 import android.text.style.AbsoluteSizeSpan;
@@ -19,7 +21,6 @@ import android.text.style.ForegroundColorSpan;
 import android.text.style.TypefaceSpan;
 import android.view.Gravity;
 import android.view.View;
-import android.view.ViewGroup;
 import android.view.Window;
 import android.view.MotionEvent;
 import android.widget.Button;
@@ -34,8 +35,7 @@ import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /** Confirm and retry one captured selection. */
-final class BulkBestSheet extends Dialog {
-  private static final int PANEL = 0xff1c1c1f;
+final class BulkBestSheet extends BottomSheetDialog {
   private static final int OUTLINE = 0xff6b6b70;
   private static final int REPLACE = 0xffff8a7a;
   private static final Typeface SEMIBOLD = Typeface.create(Typeface.DEFAULT, 600, false);
@@ -52,7 +52,6 @@ final class BulkBestSheet extends Dialog {
       Consumer<Consumer<Boolean>> save) {
     super(owner);
     setOwnerActivity(owner);
-    requestWindowFeature(Window.FEATURE_NO_TITLE);
     this.complete = complete;
     this.action = action;
     this.save = save;
@@ -97,7 +96,7 @@ final class BulkBestSheet extends Dialog {
     setConfirmLabel(false);
     FrameLayout confirmFrame = new FrameLayout(c);
     confirmFrame.addView(confirm, new FrameLayout.LayoutParams(-1, -2));
-    progress = new ProgressBar(c);
+    progress = new com.google.android.material.progressindicator.CircularProgressIndicator(c);progress.setIndeterminate(true);
     FrameLayout.LayoutParams progressParams =
         new FrameLayout.LayoutParams(dp(18), dp(18), Gravity.START | Gravity.CENTER_VERTICAL);
     progressParams.leftMargin = dp(16);
@@ -124,15 +123,10 @@ final class BulkBestSheet extends Dialog {
     setContentView(scroll);
     setCanceledOnTouchOutside(true);
     Window window = getWindow();
-    GradientDrawable bg = GalleryUi.shape(c, PANEL, 28);
-    float radius = dp(28);
-    bg.setCornerRadii(new float[]{radius, radius, radius, radius, 0, 0, 0, 0});
-    window.setBackgroundDrawable(bg);
-    window.setGravity(Gravity.BOTTOM);
-    window.setWindowAnimations(0);
-    window.setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT);
-    DiagnosticWindow.install(window);
+    DiagnosticWindow.install(window);SheetDiagnostics.install(this);
   }
+
+  @Override public void show() { super.show();MaterialUi.sheet(this); }
 
   private void addThumbnails(LinearLayout content, List<Integer> ordinals,
       BiConsumer<Integer, ImageView> thumbnail, int sheetWidth) {
@@ -207,8 +201,7 @@ final class BulkBestSheet extends Dialog {
     button.setTypeface(SEMIBOLD);
     button.setSingleLine(false);
     button.setEllipsize(null);
-    button.setBackground(background(getContext(), primary ? GalleryUi.TEXT : Color.TRANSPARENT,
-        primary ? 24 : 26, border));
+    if(primary)MaterialUi.filled(button);else{MaterialUi.outlined(button);if(border!=0)((com.google.android.material.button.MaterialButton)button).setStrokeColor(android.content.res.ColorStateList.valueOf(border));}
     return button;
   }
 
@@ -262,11 +255,6 @@ final class BulkBestSheet extends Dialog {
     });
   }
 
-  static GradientDrawable background(Context context, int fill, int radius, int border) {
-    GradientDrawable shape = GalleryUi.shape(context, fill, radius);
-    if (border != 0) shape.setStroke(GalleryUi.dp(context, 1), border);
-    return shape;
-  }
 
   static Drawable starPlus(int color) {
     return new Drawable() {
@@ -307,11 +295,12 @@ final class BulkBestSheet extends Dialog {
   }
 
   /** A dimmed button still announces why it is unavailable when tapped. */
-  static final class Entry extends Button {
+  static final class Entry extends MaterialButton {
     private String reason;
 
     Entry(Context c, Runnable open) {
       super(c);
+      MaterialUi.outlined(this);
       RankingUi.action(this, false, 48, 14, null);
       setAllCaps(false);
       setSingleLine(false);
@@ -329,8 +318,7 @@ final class BulkBestSheet extends Dialog {
       setEnabled(reason == null);
       int color = reason == null ? GalleryUi.TEXT : 0xff626b72;
       setTextColor(color);
-      setBackground(background(getContext(), Color.TRANSPARENT, 24,
-          reason == null ? OUTLINE : 0xff2e2e32));
+      MaterialUi.outlined(this);setStrokeColor(android.content.res.ColorStateList.valueOf(reason==null?OUTLINE:0xff2e2e32));
       RankingUi.inline(this, starPlus(color), label, 20);
       setContentDescription(description);
     }

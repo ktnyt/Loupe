@@ -45,7 +45,8 @@ final class ComparisonLabelChecks {
       main(t,()->{set(a,"rankingStore",new RankingStore(prefs));set(a,"photos",photos);set(a,"bundles",List.of(List.of(0,1,2)));set(a,"burstMembers",List.of(0,1,2));invoke(a,"openRanking");return true;});ready(t,a);
       // Resize the actual comparison container in place: the existing layout chooser changes orientation.
       for(int height:new int[]{420,180,420}){
-        main(t,()->{LinearLayout cmp=(LinearLayout)candidate(a,"A").getParent();cmp.setLayoutParams(new LinearLayout.LayoutParams(GalleryUi.dp(a,400),GalleryUi.dp(a,height)));return true;});
+        main(t,()->{LinearLayout cmp=(LinearLayout)candidate(a,"A").getParent();RankingUi.Screen screen=(RankingUi.Screen)cmp.getParent();
+          screen.setLayoutParams(new LinearLayout.LayoutParams(-1,screen.header.getMeasuredHeight()+screen.footer.getMeasuredHeight()+GalleryUi.dp(a,height+6)));return true;});
         waitFor(t,"orientation",()->((LinearLayout)candidate(a,"A").getParent()).getOrientation()==(height==180?LinearLayout.HORIZONTAL:LinearLayout.VERTICAL));
         main(t,()->{PhotoRanking rank=(PhotoRanking)field(a,"ranking");Map<String,Integer> members=(Map<String,Integer>)field(a,"rankingMembers");
           for(String letter:new String[]{"A","B"}){ComparisonPhotoView v=candidate(a,letter);String key=letter.equals("A")?rank.upper():rank.lower();if(!v.getContentDescription().toString().contains(photos.get(members.get(key)).name))throw new AssertionError("wrong candidate name");geometry(v);}return true;});
@@ -69,16 +70,16 @@ final class ComparisonLabelChecks {
       waitFor(t,"failure",()->{ComparisonPhotoView x=candidate(a,"A"),y=candidate(a,"B");return x!=null&&(x.getContentDescription().toString().contains("読み込めません")||y.getContentDescription().toString().contains("読み込めません"));});
       main(t,()->{if(button(a.getWindow().getDecorView(),"Aを選ぶ").isEnabled()||button(a.getWindow().getDecorView(),"Bを選ぶ").isEnabled()||candidate(a,"A").isEnabled()||candidate(a,"B").isEnabled())throw new AssertionError("failed pair selectable");return true;});
       // Standalone identical-size visual fixtures, no original photos or OS bars in captures.
-      for(int width:new int[]{320,400})for(float scale:new float[]{1f,1.3f})for(boolean horizontal:new boolean[]{false,true})for(boolean dark:new boolean[]{false,true}){
+      for(int width:new int[]{320,-1})for(float scale:new float[]{1f,1.3f})for(boolean horizontal:new boolean[]{false,true})for(boolean dark:new boolean[]{false,true}){
         LinearLayout[] pair={null};
-        main(t,()->{Configuration cfg=new Configuration(a.getResources().getConfiguration());cfg.fontScale=scale;Context c=a.createConfigurationContext(cfg);
+        main(t,()->{Configuration cfg=new Configuration(a.getResources().getConfiguration());cfg.fontScale=scale;Context c=new android.view.ContextThemeWrapper(a.createConfigurationContext(cfg),R.style.AppTheme);
           LinearLayout outer=new LinearLayout(a);outer.setOrientation(1);outer.setPadding(0,GalleryUi.dp(a,64),0,0);outer.setBackgroundColor(GalleryUi.BG);
           pair[0]=new LinearLayout(c);pair[0].setOrientation(horizontal?0:1);
           for(String letter:new String[]{"A","B"}){ComparisonPhotoView v=new ComparisonPhotoView(c,letter,"fixture.jpg");Bitmap b=Bitmap.createBitmap(600,400,Bitmap.Config.ARGB_8888);b.eraseColor(dark?0xff0f0f10:Color.WHITE);bitmaps.add(b);v.setImageBitmap(b);v.loaded();pair[0].addView(v,new LinearLayout.LayoutParams(horizontal?0:-1,horizontal?-1:0,1));}
-          outer.addView(pair[0],new LinearLayout.LayoutParams(GalleryUi.dp(c,width),GalleryUi.dp(c,420)));a.setContentView(outer);return true;});
+          outer.addView(pair[0],new LinearLayout.LayoutParams(width<0?-1:GalleryUi.dp(c,width),GalleryUi.dp(c,420)));a.setContentView(outer);return true;});
         waitFor(t,"fixture",()->pair[0].getHeight()>0&&pair[0].getChildAt(0).getWidth()>0);
         main(t,()->{geometry((ComparisonPhotoView)pair[0].getChildAt(0));geometry((ComparisonPhotoView)pair[0].getChildAt(1));return true;});
-        capture(t,a,pair[0],pair[0].getHeight(),"compare-"+width+"-"+scale+"-"+(horizontal?"h":"v")+"-"+(dark?"dark":"bright"));
+        capture(t,a,pair[0],pair[0].getHeight(),"compare-"+(width<0?"native":width)+"-"+scale+"-"+(horizontal?"h":"v")+"-"+(dark?"dark":"bright"));
       }
       main(t,()->{ComparisonPhotoView tiny=new ComparisonPhotoView(a,"A","tiny");Bitmap b=Bitmap.createBitmap(1000,1,Bitmap.Config.ARGB_8888);tiny.setImageBitmap(b);tiny.measure(View.MeasureSpec.makeMeasureSpec(300,1073741824),View.MeasureSpec.makeMeasureSpec(300,1073741824));tiny.layout(0,0,300,300);Bitmap target=Bitmap.createBitmap(300,300,Bitmap.Config.ARGB_8888);tiny.draw(new Canvas(target));if(!((RectF)field(tiny,"badge")).isEmpty()||!tiny.getContentDescription().toString().startsWith("A、"))throw new AssertionError("tiny overflow");target.recycle();b.recycle();return true;});
       return "PASS actual comparison vertical/horizontal/vertical, A/B names and candidate correspondence, both buttons/photo taps/long presses/zoom/undo, unreadable pair disabled, 16 size/font/orientation/brightness fixtures and tiny image fallback. Private ranking store only. TalkBack speech and first-frame latency unmeasured.\n";

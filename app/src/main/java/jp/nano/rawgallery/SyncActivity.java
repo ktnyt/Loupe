@@ -7,6 +7,7 @@ import android.os.*;
 import android.provider.Settings;
 import android.view.*;
 import android.widget.*;
+import com.google.android.material.materialswitch.MaterialSwitch;
 import java.util.concurrent.*;
 
 public final class SyncActivity extends DiagnosticActivity {
@@ -14,7 +15,7 @@ public final class SyncActivity extends DiagnosticActivity {
   private final Handler main = new Handler(Looper.getMainLooper());
   private TextView info, retention, progressTime;
   private StatusView progress, collection, permissionState;
-  private Switch syncState, cleanupState;
+  private MaterialSwitch syncState, cleanupState;
   private boolean refreshing, updatingSwitches;
   private TextView lastSync;
   private StatusView verificationStatus;
@@ -70,8 +71,8 @@ public final class SyncActivity extends DiagnosticActivity {
     setContentView(screen);
     info = new TextView(this);progressTime = new TextView(this);
     collection=new StatusView(this);permissionState=new StatusView(this);progress=new StatusView(this);
-    syncState=new Switch(this);cleanupState=new Switch(this);
-    for(Switch toggle:new Switch[]{syncState,cleanupState}){toggle.setTextColor(GalleryUi.TEXT);toggle.setMinHeight(GalleryUi.dp(this,48));toggle.setTextSize(14);}
+    syncState=new MaterialSwitch(this);cleanupState=new MaterialSwitch(this);
+    for(MaterialSwitch toggle:new MaterialSwitch[]{syncState,cleanupState}){toggle.setTextColor(GalleryUi.TEXT);toggle.setMinHeight(GalleryUi.dp(this,48));toggle.setTextSize(14);}
     syncState.setOnCheckedChangeListener((button,checked)->changeSetting(false,checked));
     cleanupState.setOnCheckedChangeListener((button,checked)->changeSetting(true,checked));
     if (!android.os.Environment.isExternalStorageManager())

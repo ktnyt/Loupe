@@ -48,7 +48,7 @@ final class VisualStatusChecks {
         final int statePage=page;
         LinearLayout[] board={null};
         main(t,()->{
-          Configuration config=new Configuration(a.getResources().getConfiguration());config.fontScale=scale;Context c=a.createConfigurationContext(config);
+          Configuration config=new Configuration(a.getResources().getConfiguration());config.fontScale=scale;Context c=new android.view.ContextThemeWrapper(a.createConfigurationContext(config),R.style.AppTheme);
           FrameLayout host=new FrameLayout(a);host.setBackgroundColor(GalleryUi.BG);board[0]=new LinearLayout(c);board[0].setOrientation(1);board[0].setBackgroundColor(GalleryUi.BG);
           FrameLayout.LayoutParams bounds=new FrameLayout.LayoutParams(GalleryUi.dp(c,width),-2);bounds.topMargin=GalleryUi.dp(c,64);host.addView(board[0],bounds);a.setContentView(host);
           StatusView.Symbol[] symbols=statePage==0?new StatusView.Symbol[]{StatusView.Symbol.UNKNOWN,StatusView.Symbol.WAITING,StatusView.Symbol.PAUSED,StatusView.Symbol.COMPLETE,StatusView.Symbol.PARTIAL,StatusView.Symbol.FAILED,StatusView.Symbol.AUTH,StatusView.Symbol.PREVIEW}:new StatusView.Symbol[]{StatusView.Symbol.RUNNING,StatusView.Symbol.NETWORK,StatusView.Symbol.STORAGE,StatusView.Symbol.PERMISSION,StatusView.Symbol.TLS,StatusView.Symbol.HOST,StatusView.Symbol.NO_APP,StatusView.Symbol.FORMAT,StatusView.Symbol.EMPTY,StatusView.Symbol.CANCELLED,StatusView.Symbol.ALREADY};
