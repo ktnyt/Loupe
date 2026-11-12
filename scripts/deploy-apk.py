@@ -252,6 +252,12 @@ def validate_update(candidate, previous):
         raise ValueError('versionCode downgrade is forbidden')
 
 
+def confirm(args):
+    """Read back an OTA update without installing or changing application data."""
+    args.confirm_only = True
+    install(args)
+
+
 def install(args):
     repo = Path(git(args.repo, 'rev-parse', '--show-toplevel'))
     bundle_path = Path(args.bundle).resolve()
@@ -268,6 +274,8 @@ def install(args):
 def install_candidate(args, repo, bundle, apk):
     actual = apk_info(apk, args.sdk)
     verify_bundle(bundle, actual)
+    if getattr(args, 'confirm_only', False) and bundle['mode'] != 'main':
+        raise ValueError('OTA confirmation requires a main bundle')
     source = bundle.get('source_commit', '')
     if not re.fullmatch(r'[0-9a-f]{40}', source):
         raise ValueError('Invalid source commit')
@@ -318,11 +326,23 @@ def install_locked(args, repo, bundle, actual, apk, source, state_path):
         recovery = installed_source.get('source_commit', '')
         if not re.fullmatch(r'[0-9a-f]{40}', recovery) or not contains(repo, recovery, source):
             raise ValueError('The installed APK source is not integrated into this successor build')
-    validate_update(actual, previous)
+    confirming = getattr(args, 'confirm_only', False)
+    if confirming:
+        # previous is already the OTA-installed APK, not the pre-update version.
+        verify_bundle(bundle, previous)
+    else:
+        validate_update(actual, previous)
     record = dict(schema=SCHEMA, mode=bundle['mode'], source_commit=source, issue=bundle.get('issue'),
                   apk_sha256=actual['apk_sha256'], previous_apk_sha256=previous['apk_sha256'],
                   version_code=actual['version_code'], features=actual['features'],
                   serial=args.serial, at=datetime.now(timezone.utc).isoformat(), status='pending-readback')
+    if confirming:
+        record['previous_apk_sha256'] = (previous_record or {}).get('apk_sha256')
+        record['status'] = 'installed-main'
+        record['method'] = 'ota-readback'
+        save(state_path, record)
+        print(json.dumps(record, ensure_ascii=False))
+        return
     save(state_path, record)
     # No downgrade flags, uninstall, preference/database reads, or application-data writes.
     adb(args, 'install', '-r', str(apk))
@@ -376,14 +396,15 @@ def main():
         print(json.dumps(info, ensure_ascii=False))
         check_features(info)
     p.set_defaults(action=inspect)
-    for command, action in [('install', install), ('status', status)]:
+    for command, action in [('install', install), ('confirm', confirm), ('status', status)]:
         p = commands.add_parser(command)
         p.add_argument('--records', help='Explicit test/isolated record directory; default is shared across worktrees')
-        if command == 'install':
+        if command in {'install', 'confirm'}:
             p.add_argument('--bundle', required=True)
             p.add_argument('--serial', required=True)
             p.add_argument('--adb', default='/opt/homebrew/share/android-commandlinetools/platform-tools/adb')
-            p.add_argument('--ack-recovery', action='store_true')
+            if command == 'install':
+                p.add_argument('--ack-recovery', action='store_true')
         p.set_defaults(action=action)
     args = parser.parse_args()
     try:
