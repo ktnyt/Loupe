@@ -13,14 +13,22 @@ def git(repo, *args):
                           capture_output=True, text=True).stdout.strip()
 
 
-def version(repo, ref='HEAD', base=BASE):
+def version(repo, ref='HEAD', base=BASE, main_ref='origin/main'):
     if git(repo, 'rev-parse', '--is-shallow-repository') != 'false':
         raise ValueError('Release versions require full git history')
     commit = git(repo, 'rev-parse', '--verify', ref + '^{commit}')
-    history = git(repo, 'rev-list', '--first-parent', commit).splitlines()
+    # Recovery builds share their newest canonical main ancestor's generation.
+    # Feature-only commits must never outrun the eventual main merge version.
+    history = git(repo, 'rev-list', '--first-parent', main_ref).splitlines()
     if base not in history:
-        raise ValueError('Release baseline must be on the first-parent history')
-    distance = history.index(base)
+        raise ValueError('Release baseline must be on canonical main first-parent history')
+    ancestors = set(git(repo, 'rev-list', commit).splitlines())
+    baseline_index = history.index(base)
+    anchor_index = next((index for index, ancestor in enumerate(history[:baseline_index + 1])
+                         if ancestor in ancestors), None)
+    if anchor_index is None:
+        raise ValueError('Release source must descend from the canonical main baseline')
+    distance = baseline_index - anchor_index
     code = 167 + distance
     if code > 2100000000:
         raise ValueError('Android versionCode limit exceeded')

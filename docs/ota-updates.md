@@ -10,9 +10,9 @@ Obtainiumへ `https://github.com/ktnyt/Loupe` を追加する。stable Release�
 
 公式リポジトリのmainへpush（PRのマージを含む）すると、`.github/workflows/release.yml` がhost回帰検査、Androidのビルド、lintを実行する。検査成功後の別jobで既存署名を復元し、最新mainから配布APKを作り、既存のdraft/hash検査を経てstable Releaseを公開する。PRの検査jobには配布鍵や書き込みtokenを渡さない。
 
-版は `10d1f68`（0.31.3 / code 167）からmainのfirst-parentを進んだ数で決まる。1回のmergeではpatchとversionCodeが1ずつ増え、feature branch内のコミット数には影響されない。同じsourceの再ビルドは同じ版になる。full historyと基点が必要で、手動での版上げコミットは不要。
+版は `10d1f68`（0.31.3 / code 167）からmainのfirst-parentを進んだ数で決まる。1回のmergeではpatchとversionCodeが1ずつ増え、feature branch内のコミット数には影響されない。同じmain sourceの再ビルドは同じ版になる。recoveryやPRのビルドは祖先に含む最新の公式mainの版を使い、branch内のコミット数で版を増やさない。recoveryをmainへマージした後の通常版はそれより新しくなる。full historyと基点が必要で、手動での版上げコミットは不要。
 
-配布は同時実行せず、既にmainが進んだ古いrunは公開を省略する。同じ版が公開済みならsource・署名・APK・assetを再検証し、上書きせず成功として扱う。失敗したdraftや別sourceの同名tagは自動で修復しない。Actionsの失敗ログとReleaseの状態を確認して対応する。
+配布は同時実行せず、開始時にmainが進んでいた古いrunは公開を省略する。asset転送中にmainが進んだ場合も公開直前の再確認で停止し、draftと作成済みtagを残す。同じ版が公開済みならsource・署名・APK・assetを再検証し、上書きせず成功として扱う。失敗したdraftや別sourceの同名tagは自動で修復しない。Actionsの失敗ログとReleaseの状態を確認して対応する。
 
 署名は `LOUPE_SIGNING_KEYSTORE_B64` というActions Secretに登録した既存keystoreを使う。runner内だけで復元し、証明書fingerprintを照合し、終了時に削除する。鍵がない・証明書が違う場合は公開を停止する。鍵をログやartifactへ含めない。
 

@@ -107,4 +107,4 @@ TalkBackの有効化を許可されたこと自体は、検証の必須要件を
 
 ## OTA配布
 
-[OTA更新手順](ota-updates.md)に従い、mainへのpush後にGitHub Actionsで検査・署名・stable Release公開を行う。版はfirst-parent履歴から自動算出するため、app/build.gradleの固定番号を手動で増やさない。公開jobの成功とReleaseのsource/hashを確認する。手動配布でもmain prepareのbundleだけをpublishする。Obtainiumで通常更新した後は `scripts/deploy-apk.py confirm --bundle <bundle.json> --serial <SERIAL>` をissue進捗の `--then` から実行し、USB installをやり直さず実端末のAPKを照合する。配布したAPKと同一であることを確認するまでdeliveryを完了にしない。
+[OTA更新手順](ota-updates.md)に従い、mainへのpush後にGitHub Actionsで検査・署名・stable Release公開を行う。版はfirst-parent履歴から自動算出するため、app/build.gradleの固定番号を手動で増やさない。公開jobの成功とReleaseのsource/hashを確認する。手動配布でもmain prepareのbundleだけをpublishする。Obtainiumで通常更新した後は `scripts/deploy-apk.py confirm --bundle <bundle.json> --serial <SERIAL>` をissue進捗の `--then` から実行し、USB installをやり直さず実端末のAPKを照合する。実機導入を行う作業では、配布したAPKと同一であることを確認するまでdeliveryを完了にしない。自動配布機能そのものの検証はmainへのpushから公開assetの署名・版・来歴照合までを対象とし、端末への導入を伴わない場合は理由付きで省略を記録する。
