@@ -49,7 +49,7 @@ python3 scripts/deploy-apk.py prepare --mode recovery --ref <保存済みcommit>
 python3 scripts/issue-progress.py record --issue ISSUE --run WORK_ID --phase install --status start --note '復元用commitと対象端末' --then python3 scripts/deploy-apk.py install --bundle outputs/apk/recovery-<作業名>/bundle.json --serial SERIAL --ack-recovery
 ```
 
-recovery導入後はpending-main-integrationとなり、statusは成功にしない。次のAPKもrecoveryであっても、未統合の復元コミットを含まなければ上書きを拒否する。端末から取得したAPK内の署名provenanceもmain/recoveryの両方で祖先検査するため、Mac側の記録がない場合やADB serialが変わった場合も復元コミットを引き継ぐ。ソースcommitをmainへ反映した後、mainから作り直したAPKを導入・読み戻して閉じる。機能を欠くmainを戻し先にしない。実機で確認できないまま常用検証APKを残してdeliveryを完了にしない。実機導入・確認が残るPRはRefsとして、完了前のissue自動クローズを避ける。
+recovery導入後はpending-main-integrationとなり、statusは成功にしない。次のAPKもrecoveryであっても、未統合の復元コミットを含まなければ上書きを拒否する。端末から取得したAPK内の署名provenanceもmain/recoveryの両方で祖先検査するため、Mac側の記録がない場合やADB serialが変わった場合も復元コミットを引き継ぐ。ソースcommitはmerge commitまたはfast-forwardで祖先関係を保ってmainへ反映する。導入済recoveryをsquash/rebaseして元commitを祖先から外さない。その後、mainから作り直したAPKを導入・読み戻して閉じる。機能を欠くmainを戻し先にしない。実機で確認できないまま常用検証APKを残してdeliveryを完了にしない。実機導入・確認が残るPRはRefsとして、完了前のissue自動クローズを避ける。
 
 機能の意図的な廃止は要件変更として別途判断し、issue・レビュー・必須契約の更新を伴わせる。検査の回避flagやuninstall、データ消去、downgradeで合わせない。今回のcameraなしAPK相当を拒否するhost fixtureと、main/hash/署名/版/導入後切断の検査は `python3 scripts/test-deploy-apk.py` で行う。
 

@@ -66,17 +66,21 @@ def manifest_info(xml):
         raise ValueError('Application is absent or disabled')
     entries = {qualified(x.get(ANDROID + 'name', '')): x for x in app
                if x.tag in {'activity', 'service'} and x.get(ANDROID + 'enabled', 'true') != 'false'}
+    activities = {name: node for name, node in entries.items() if node.tag == 'activity'}
+    services = {name: node for name, node in entries.items() if node.tag == 'service'}
     permissions = {x.get(ANDROID + 'name') for x in root.findall('uses-permission')}
     features = set()
-    if PACKAGE + '.MainActivity' in entries:
+    if PACKAGE + '.MainActivity' in activities:
         features.add('library')
-    if PACKAGE + '.VideoActivity' in entries and 'android.permission.READ_MEDIA_VIDEO' in permissions:
+    if PACKAGE + '.VideoActivity' in activities and 'android.permission.READ_MEDIA_VIDEO' in permissions:
         features.add('video')
-    if {PACKAGE + '.NanoBananaActivity', PACKAGE + '.NanoBananaSettingsActivity'} <= entries.keys():
+    if {PACKAGE + '.NanoBananaActivity', PACKAGE + '.NanoBananaSettingsActivity'} <= activities.keys():
         features.add('nano-banana')
-    attach = entries.get(PACKAGE + '.camera.CameraAttachActivity')
-    service = entries.get(PACKAGE + '.camera.ImportService')
-    if PACKAGE + '.CameraImportActivity' in entries and attach is not None and service is not None:
+    attach = activities.get(PACKAGE + '.camera.CameraAttachActivity')
+    service = services.get(PACKAGE + '.camera.ImportService')
+    if (PACKAGE + '.CameraImportActivity' in activities and attach is not None and service is not None
+            and {'android.permission.FOREGROUND_SERVICE',
+                 'android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE'} <= permissions):
         action = 'android.hardware.usb.action.USB_DEVICE_ATTACHED'
         actions = {x.get(ANDROID + 'name') for x in attach.findall('./intent-filter/action')}
         metadata = any(x.get(ANDROID + 'name') == action and x.get(ANDROID + 'resource')

@@ -19,6 +19,8 @@ spec.loader.exec_module(deploy)
 
 XML = '''<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="jp.nano.rawgallery" android:versionCode="165" android:versionName="0.31.1">
 <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>
 <application>
 <activity android:name=".MainActivity"/>
 <activity android:name=".VideoActivity"/>
@@ -114,6 +116,17 @@ class DeployTests(unittest.TestCase):
                     XML.replace('android:name=".camera.CameraAttachActivity"',
                                 'android:name=".camera.CameraAttachActivity" android:enabled="false"')]:
             self.assertNotIn('camera-import', deploy.manifest_info(xml)['features'])
+
+    def test_camera_requires_foreground_permissions_and_component_types(self):
+        for permission in ('FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_CONNECTED_DEVICE'):
+            xml = XML.replace('<uses-permission android:name="android.permission.'+permission+'"/>', '')
+            self.assertNotIn('camera-import', deploy.manifest_info(xml)['features'])
+        xml = XML.replace('<service android:name=".camera.ImportService"',
+                          '<activity android:name=".camera.ImportService"')
+        self.assertNotIn('camera-import', deploy.manifest_info(xml)['features'])
+        xml = XML.replace('<activity android:name=".CameraImportActivity"',
+                          '<service android:name=".CameraImportActivity"')
+        self.assertNotIn('camera-import', deploy.manifest_info(xml)['features'])
 
     def test_hash_and_source_mismatch_stop_before_adb(self):
         self.bundle['apk_sha256'] = 'wrong'
