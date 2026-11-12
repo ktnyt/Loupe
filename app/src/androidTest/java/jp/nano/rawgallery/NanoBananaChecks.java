@@ -62,7 +62,7 @@ final class NanoBananaChecks {
       test4k(test,store);
       store.deletePrompt(first.id);TagDetailChecks.require(store.prompts().size()==1,"delete one prompt");
       store.deleteKey();TagDetailChecks.require(!store.hasKey(),"delete credential");
-      return "PASS Nano Banana isolated encrypted credential roundtrip, input validation, prompt CRUD/duplicate labels, output allowlists/atomic save rollback/defaults/request body, choice dialogs Save/Cancel/restored selection, settings layout and 48dp controls. 4K 4800x3584 save/readback, sampled preview and 20MP rejection verified. Durable job recovery, ambiguous POST suppression, result save and cleanup retry verified with fake network. No service request or real credentials; physical touch, IME and spoken output unverified.\n";
+      return "PASS Nano Banana isolated encrypted credential roundtrip, input validation, prompt CRUD/duplicate labels, output allowlists/atomic save rollback/defaults/request body, choice dialogs Save/Cancel/restored selection, corrupt non-String preference recovery, scrolled 21:9 selection/save/reopen, settings layout and 48dp controls. 4K 4800x3584 save/readback, sampled preview and 20MP rejection verified. Durable job recovery, ambiguous POST suppression, result save and cleanup retry verified with fake network. No service request or real credentials; physical touch, IME and spoken output unverified.\n";
     }finally{if(activity!=null){final NanoBananaSettingsActivity screen=activity;TagDetailChecks.ui(test,screen::finish);}prefs.edit().clear().commit();}
   }
   private static void testOutput(Context context,NanoBananaStore store,SharedPreferences prefs) throws Exception {
@@ -117,6 +117,25 @@ final class NanoBananaChecks {
       try(java.io.FileOutputStream out=new java.io.FileOutputStream(new File(dir,"nano-output-settings-"+width+"-"+font+".png"))){bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}catch(Exception e){throw new RuntimeException(e);}finally{bitmap.recycle();}
       scroll.scrollTo(0,0);
     });
+    // A malformed preference type must be repairable through the same Save listener as normal edits.
+    test.getTargetContext().getSharedPreferences("nano-banana-fixture",0).edit().putInt("output",1).commit();
+    androidx.appcompat.app.AlertDialog[] recovery={null};
+    TagDetailChecks.ui(test,()->{try{
+      Method render=NanoBananaSettingsActivity.class.getDeclaredMethod("render");render.setAccessible(true);render.invoke(screen);
+      ViewGroup column=(ViewGroup)((android.widget.ScrollView)((ViewGroup)screen.findViewById(android.R.id.content)).getChildAt(0)).getChildAt(0);
+      boolean repair=false;for(int i=0;i<column.getChildCount();i++)if(column.getChildAt(i) instanceof Button&&((Button)column.getChildAt(i)).getText().toString().equals("解像度: 1K"))repair=true;
+      TagDetailChecks.require(repair,"corrupt preference still offers output repair");
+      Method edit=NanoBananaSettingsActivity.class.getDeclaredMethod("editOutput",boolean.class,NanoBananaOutput.class);edit.setAccessible(true);
+      recovery[0]=(androidx.appcompat.app.AlertDialog)edit.invoke(screen,false,NanoBananaOutput.DEFAULT);
+    }catch(Exception e){throw new RuntimeException(e);}});test.waitForIdleSync();
+    TagDetailChecks.ui(test,()->{recovery[0].getListView().performItemClick(recovery[0].getListView().getChildAt(1),1,1);recovery[0].getButton(-1).performClick();});test.waitForIdleSync();
+    TagDetailChecks.require(store.output().resolution.equals("2K"),"non-String preference repaired by dialog Save");
+    TagDetailChecks.ui(test,()->{
+      ViewGroup column=(ViewGroup)((android.widget.ScrollView)((ViewGroup)screen.findViewById(android.R.id.content)).getChildAt(0)).getChildAt(0);
+      boolean displayed=false;for(int i=0;i<column.getChildCount();i++)if(column.getChildAt(i) instanceof Button&&((Button)column.getChildAt(i)).getText().toString().equals("解像度: 2K"))displayed=true;
+      TagDetailChecks.require(displayed,"repaired output re-rendered as 2K");
+    });
+    store.setOutput("auto","1K");
     for(boolean aspect:new boolean[]{true,false}){
       androidx.appcompat.app.AlertDialog[] opened={null};
       TagDetailChecks.ui(test,()->{try{
@@ -148,6 +167,39 @@ final class NanoBananaChecks {
       }catch(Exception e){throw new RuntimeException(e);}});
       store.setOutput("auto","1K");
     }
+    androidx.appcompat.app.AlertDialog[] tail={null};
+    TagDetailChecks.ui(test,()->{try{
+      Method edit=NanoBananaSettingsActivity.class.getDeclaredMethod("editOutput",boolean.class,NanoBananaOutput.class);edit.setAccessible(true);
+      tail[0]=(androidx.appcompat.app.AlertDialog)edit.invoke(screen,true,store.output());
+    }catch(Exception e){throw new RuntimeException(e);}});test.waitForIdleSync();
+    final int last=NanoBananaOutput.ASPECTS.size()-1;
+    TagDetailChecks.ui(test,()->tail[0].getListView().smoothScrollToPosition(last));
+    boolean[] visible={false};long deadline=android.os.SystemClock.uptimeMillis()+10000;
+    while(!visible[0]&&android.os.SystemClock.uptimeMillis()<deadline){
+      TagDetailChecks.ui(test,()->{
+        android.widget.ListView list=tail[0].getListView();View row=list.getChildAt(last-list.getFirstVisiblePosition());
+        visible[0]=list.getLastVisiblePosition()==last&&row!=null&&row.getTop()>=0&&row.getBottom()<=list.getHeight();
+      });if(!visible[0])Thread.sleep(50);
+    }
+    TagDetailChecks.require(visible[0],"aspect list scroll reaches fully visible 21:9");
+    TagDetailChecks.ui(test,()->{
+      android.widget.ListView list=tail[0].getListView();View row=list.getChildAt(last-list.getFirstVisiblePosition());
+      TagDetailChecks.require(row instanceof android.widget.TextView&&((android.widget.TextView)row).getText().toString().equals("21:9"),"last attached aspect is 21:9");
+      TagDetailChecks.require(row.getHeight()>=GalleryUi.dp(screen,48),"last aspect has 48dp target");
+      list.performItemClick(row,last,list.getAdapter().getItemId(last));
+      TagDetailChecks.require(list.getCheckedItemPosition()==last,"21:9 selected by attached row");
+      View decor=tail[0].getWindow().getDecorView();android.graphics.Bitmap bitmap=android.graphics.Bitmap.createBitmap(decor.getWidth(),decor.getHeight(),android.graphics.Bitmap.Config.ARGB_8888);decor.draw(new android.graphics.Canvas(bitmap));
+      try(java.io.FileOutputStream out=new java.io.FileOutputStream(new File(dir,"nano-output-aspect-tail-"+width+"-"+font+".png"))){bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}catch(Exception e){throw new RuntimeException(e);}finally{bitmap.recycle();}
+      tail[0].getButton(-1).performClick();
+    });
+    TagDetailChecks.require(store.output().aspectRatio.equals("21:9"),"21:9 saved after list scroll");
+    TagDetailChecks.ui(test,()->{try{
+      Method edit=NanoBananaSettingsActivity.class.getDeclaredMethod("editOutput",boolean.class,NanoBananaOutput.class);edit.setAccessible(true);
+      tail[0]=(androidx.appcompat.app.AlertDialog)edit.invoke(screen,true,store.output());
+      TagDetailChecks.require(tail[0].getListView().getCheckedItemPosition()==last,"reopened dialog retains 21:9 selection");
+      tail[0].getButton(-2).performClick();
+    }catch(Exception e){throw new RuntimeException(e);}});
+    store.setOutput("auto","1K");
   }
   private static void testJobs(Instrumentation test,NanoBananaStore store,int width,float font) throws Exception {
     Context context=test.getTargetContext();

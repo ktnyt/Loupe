@@ -41,12 +41,18 @@ final class NanoBananaStore {
   void setOutput(String aspectRatio,String resolution) throws IOException {
     NanoBananaOutput value=NanoBananaOutput.of(aspectRatio,resolution);
     synchronized(LOCK) {
-      String previous=prefs.getString("output",null);
+      Object previous=prefs.getAll().get("output");
       try {
         if(prefs.edit().putString("output",value.json().toString()).commit())return;
       }catch(Exception e){/* Restore the in-memory preference as well as the durable value. */}
       SharedPreferences.Editor rollback=prefs.edit();
-      if(previous==null)rollback.remove("output");else rollback.putString("output",previous);
+      if(previous instanceof String)rollback.putString("output",(String)previous);
+      else if(previous instanceof Integer)rollback.putInt("output",(Integer)previous);
+      else if(previous instanceof Long)rollback.putLong("output",(Long)previous);
+      else if(previous instanceof Float)rollback.putFloat("output",(Float)previous);
+      else if(previous instanceof Boolean)rollback.putBoolean("output",(Boolean)previous);
+      else if(previous instanceof java.util.Set)rollback.putStringSet("output",new java.util.HashSet<>((java.util.Set<String>)previous));
+      else rollback.remove("output");
       rollback.commit();
       throw new IOException("出力設定を保存できませんでした。もう一度保存してください");
     }
