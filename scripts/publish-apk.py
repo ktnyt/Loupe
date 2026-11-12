@@ -25,6 +25,16 @@ def gh(args, *parts):
     return deploy.run([args.gh, *parts])
 
 
+def download_asset(args, asset_id, output):
+    # Keep APK bytes binary end to end; the text-oriented gh helper cannot be used here.
+    if type(asset_id) is not int or asset_id <= 0:
+        raise ValueError('Draft asset REST ID is unavailable')
+    with Path(output).open('wb') as target:
+        subprocess.run([args.gh, 'api', f'repos/{REPOSITORY}/releases/assets/{asset_id}',
+                        '-H', 'Accept: application/octet-stream'],
+                       check=True, stdout=target, stderr=subprocess.PIPE)
+
+
 def require_absent(args, endpoint):
     try:
         gh(args, 'api', endpoint)
@@ -103,13 +113,16 @@ def publish(args):
             gh(args, 'release', 'upload', tag, '--repo', REPOSITORY, snapshot, root / 'bundle.json')
             download = root / 'download'
             download.mkdir()
-            gh(args, 'release', 'download', tag, '--repo', REPOSITORY, '--dir', download)
             metadata = json.loads(gh(args, 'api', f'repos/{REPOSITORY}/releases/{draft_id}'))
             if (metadata.get('id') != draft_id or metadata.get('tag_name') != tag
                     or metadata.get('target_commitish') != bundle['source_commit']
                     or metadata.get('draft') is not True
                     or sorted(x.get('name', '') for x in metadata.get('assets', [])) != ['bundle.json', 'loupe.apk']):
                 raise ValueError('Draft release metadata or asset names differ')
+            # Download only asset IDs belonging to the draft created by this invocation.
+            # A different release appearing under the same tag must never supply these bytes.
+            for asset in metadata['assets']:
+                download_asset(args, asset.get('id'), download / asset['name'])
             if (set(x.name for x in download.iterdir()) != {'loupe.apk', 'bundle.json'}
                     or deploy.sha256(download / 'loupe.apk') != deploy.sha256(snapshot)
                     or deploy.sha256(download / 'bundle.json') != deploy.sha256(root / 'bundle.json')):

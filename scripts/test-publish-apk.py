@@ -47,6 +47,8 @@ class PublishTests(unittest.TestCase):
         self.publish_error = False
         self.upload_error = False
         self.extra_release_page = False
+        self.shadow_release = False
+        self.binary_downloads = []
 
     def tearDown(self):
         self.temp.cleanup()
@@ -97,7 +99,8 @@ class PublishTests(unittest.TestCase):
                     return '{}'
                 return json.dumps(dict(id=102 if self.tag_created and self.draft_swapped else 101,
                     tag_name='v0.31.3', target_commitish='a'*40, draft=True,
-                    assets=[dict(name='loupe.apk'), dict(name='bad.json' if self.metadata_bad else 'bundle.json')]))
+                    assets=[dict(id=501, name='loupe.apk'),
+                            dict(id=502, name='bad.json' if self.metadata_bad else 'bundle.json')]))
             if self.exists or (self.release_exists and '/releases/' in endpoint):
                 return '{}'
             raise subprocess.CalledProcessError(1, 'gh', stderr='HTTP 404')
@@ -117,10 +120,19 @@ class PublishTests(unittest.TestCase):
             target = Path(parts[parts.index('--dir')+1])
             for name in ('loupe.apk', 'bundle.json'):
                 shutil.copyfile(self.snapshot/name, target/name)
-            if self.corrupt:
+            if self.corrupt and not self.shadow_release:
                 (target/'loupe.apk').write_bytes(b'wrong')
             return ''
         raise AssertionError(parts)
+
+    def fake_download_asset(self, args, asset_id, output):
+        self.binary_downloads.append(asset_id)
+        if self.download_error:
+            raise subprocess.CalledProcessError(1, 'gh')
+        name = {501: 'loupe.apk', 502: 'bundle.json'}[asset_id]
+        shutil.copyfile(self.snapshot/name, output)
+        if self.corrupt and asset_id == 501:
+            Path(output).write_bytes(b'wrong-created-draft-bytes')
 
     def apply(self):
         self.tag_created = False
@@ -128,7 +140,8 @@ class PublishTests(unittest.TestCase):
         deploy.save(self.args.bundle, self.bundle)
         with patch.object(deploy, 'git', side_effect=self.fake_git), \
              patch.object(deploy, 'apk_info', return_value=self.info), \
-             patch.object(publish, 'gh', side_effect=self.fake_gh), patch('builtins.print'):
+             patch.object(publish, 'gh', side_effect=self.fake_gh), \
+             patch.object(publish, 'download_asset', side_effect=self.fake_download_asset), patch('builtins.print'):
             publish.publish(self.args)
 
     def assert_unpublished(self):
@@ -138,8 +151,34 @@ class PublishTests(unittest.TestCase):
         self.apply()
         self.assertEqual(self.calls[-1], ('api', 'repos/ktnyt/Loupe/releases/101', '--method', 'PATCH', '--field', 'draft=false'))
         self.assertTrue(self.tag_created)
+        self.assertEqual(self.binary_downloads, [501, 502])
         self.assertEqual(sum(x[:2] == ('api', 'repos/ktnyt/Loupe/releases') for x in self.calls), 1)
         self.assertFalse(any('/releases/tags/' in str(x) for x in self.calls))
+
+    def test_created_draft_bytes_are_checked_even_if_tag_release_offers_matching_bytes(self):
+        self.shadow_release = True
+        self.corrupt = True
+        with self.assertRaisesRegex(ValueError, 'asset hash differs'):
+            self.apply()
+        self.assertEqual(self.binary_downloads, [501, 502])
+        self.assertFalse(any(x[:2] == ('release', 'download') for x in self.calls))
+        self.assert_unpublished()
+        self.assertFalse(self.tag_created)
+
+    def test_asset_download_streams_binary_from_exact_rest_id(self):
+        output = self.root / 'binary.apk'
+        def command(parts, **kwargs):
+            self.assertEqual(parts, ['fake-gh', 'api', 'repos/ktnyt/Loupe/releases/assets/501',
+                                     '-H', 'Accept: application/octet-stream'])
+            self.assertTrue(kwargs['check'])
+            self.assertNotIn('text', kwargs)
+            kwargs['stdout'].write(b'\xff\x00\xfeAPK')
+        with patch.object(subprocess, 'run', side_effect=command):
+            publish.download_asset(self.args, 501, output)
+        self.assertEqual(output.read_bytes(), b'\xff\x00\xfeAPK')
+        for value in (None, '501', -1, True):
+            with self.assertRaises(ValueError):
+                publish.download_asset(self.args, value, output)
 
     def test_mode_hash_signature_source_and_tree_rejected_before_github(self):
         original = copy.deepcopy(self.bundle)
