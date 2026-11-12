@@ -49,6 +49,7 @@ class PublishTests(unittest.TestCase):
         self.extra_release_page = False
         self.shadow_release = False
         self.binary_downloads = []
+        self.final_assets_change = None
 
     def tearDown(self):
         self.temp.cleanup()
@@ -97,10 +98,18 @@ class PublishTests(unittest.TestCase):
                     if self.publish_error:
                         raise subprocess.CalledProcessError(1, 'gh', stderr='HTTP 503')
                     return '{}'
+                assets = [dict(id=501, name='loupe.apk'),
+                          dict(id=502, name='bad.json' if self.metadata_bad else 'bundle.json')]
+                if self.tag_created:
+                    if self.final_assets_change == 'replacement':
+                        assets[0]['id'] = 999
+                    elif self.final_assets_change == 'missing_id':
+                        del assets[0]['id']
+                    elif self.final_assets_change == 'duplicate':
+                        assets.append(dict(assets[0]))
                 return json.dumps(dict(id=102 if self.tag_created and self.draft_swapped else 101,
                     tag_name='v0.31.3', target_commitish='a'*40, draft=True,
-                    assets=[dict(id=501, name='loupe.apk'),
-                            dict(id=502, name='bad.json' if self.metadata_bad else 'bundle.json')]))
+                    assets=assets))
             if self.exists or (self.release_exists and '/releases/' in endpoint):
                 return '{}'
             raise subprocess.CalledProcessError(1, 'gh', stderr='HTTP 404')
@@ -164,6 +173,20 @@ class PublishTests(unittest.TestCase):
         self.assertFalse(any(x[:2] == ('release', 'download') for x in self.calls))
         self.assert_unpublished()
         self.assertFalse(self.tag_created)
+
+    def test_final_asset_replacement_missing_id_or_duplicate_stops_publication(self):
+        for change in ('replacement', 'missing_id', 'duplicate'):
+            with self.subTest(change=change):
+                self.calls.clear()
+                self.binary_downloads.clear()
+                self.final_assets_change = change
+                with self.assertRaisesRegex(ValueError, 'assets changed after verified read-back'):
+                    self.apply()
+                self.assertEqual(self.binary_downloads, [501, 502])
+                self.assertTrue(self.tag_created)
+                self.assertTrue(self.draft_created)
+                self.assert_unpublished()
+                self.assertFalse(any('delete' in x for x in self.calls))
 
     def test_asset_download_streams_binary_from_exact_rest_id(self):
         output = self.root / 'binary.apk'

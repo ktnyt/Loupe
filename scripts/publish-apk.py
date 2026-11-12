@@ -119,6 +119,7 @@ def publish(args):
                     or metadata.get('draft') is not True
                     or sorted(x.get('name', '') for x in metadata.get('assets', [])) != ['bundle.json', 'loupe.apk']):
                 raise ValueError('Draft release metadata or asset names differ')
+            verified_assets = {asset['name']: asset.get('id') for asset in metadata['assets']}
             # Download only asset IDs belonging to the draft created by this invocation.
             # A different release appearing under the same tag must never supply these bytes.
             for asset in metadata['assets']:
@@ -141,6 +142,10 @@ def publish(args):
                     or current.get('draft') is not True
                     or current.get('target_commitish') != bundle['source_commit']):
                 raise ValueError('Draft release identity changed before publication')
+            current_assets = current.get('assets', [])
+            if (len(current_assets) != len(verified_assets)
+                    or {asset.get('name'): asset.get('id') for asset in current_assets} != verified_assets):
+                raise ValueError('Draft release assets changed after verified read-back')
             gh(args, 'api', f'repos/{REPOSITORY}/releases/{draft_id}', '--method', 'PATCH',
                '--field', 'draft=false')
         except (ValueError, OSError, subprocess.CalledProcessError):
