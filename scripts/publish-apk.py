@@ -76,26 +76,55 @@ def publish(args):
         shutil.copyfile(args.notes_file, root / 'notes.md')
         tag = verify_candidate(args, repo, bundle, snapshot)
         deploy.save(root / 'bundle.json', bundle)
+        official_main = json.loads(gh(args, 'api', f'repos/{REPOSITORY}/git/ref/heads/main'))
+        if (official_main.get('ref') != 'refs/heads/main'
+                or official_main.get('object', {}).get('type') != 'commit'
+                or official_main.get('object', {}).get('sha') != bundle['source_commit']):
+            raise ValueError('Publication source must equal the official ktnyt/Loupe main commit')
         require_absent(args, f'repos/{REPOSITORY}/git/ref/tags/{tag}')
         require_absent(args, f'repos/{REPOSITORY}/releases/tags/{tag}')
         gh(args, 'release', 'create', tag, '--repo', REPOSITORY, '--draft',
            '--target', bundle['source_commit'], '--title', args.title or tag,
            '--notes-file', root / 'notes.md', snapshot, root / 'bundle.json')
-        # Failures after draft creation deliberately leave it for inspection.
-        download = root / 'download'
-        download.mkdir()
-        gh(args, 'release', 'download', tag, '--repo', REPOSITORY, '--dir', download)
-        metadata = json.loads(gh(args, 'release', 'view', tag, '--repo', REPOSITORY,
-                                 '--json', 'tagName,targetCommitish,isDraft,assets'))
-        if (metadata.get('tagName') != tag or metadata.get('targetCommitish') != bundle['source_commit']
-                or metadata.get('isDraft') is not True
-                or sorted(x.get('name', '') for x in metadata.get('assets', [])) != ['bundle.json', 'loupe.apk']):
-            raise ValueError('Draft release metadata or asset names differ; draft retained')
-        if (set(x.name for x in download.iterdir()) != {'loupe.apk', 'bundle.json'}
-                or deploy.sha256(download / 'loupe.apk') != deploy.sha256(snapshot)
-                or deploy.sha256(download / 'bundle.json') != deploy.sha256(root / 'bundle.json')):
-            raise ValueError('Downloaded release asset hash differs; draft retained')
-        gh(args, 'release', 'edit', tag, '--repo', REPOSITORY, '--draft=false')
+        # Keep the identity of this draft, rather than publishing by a mutable tag lookup.
+        try:
+            draft = json.loads(gh(args, 'api', f'repos/{REPOSITORY}/releases/tags/{tag}'))
+            draft_id = draft.get('id')
+            if type(draft_id) is not int or draft_id <= 0:
+                raise ValueError('Draft release REST ID is unavailable')
+            download = root / 'download'
+            download.mkdir()
+            gh(args, 'release', 'download', tag, '--repo', REPOSITORY, '--dir', download)
+            metadata = json.loads(gh(args, 'api', f'repos/{REPOSITORY}/releases/{draft_id}'))
+            if (metadata.get('id') != draft_id or metadata.get('tag_name') != tag
+                    or metadata.get('target_commitish') != bundle['source_commit']
+                    or metadata.get('draft') is not True
+                    or sorted(x.get('name', '') for x in metadata.get('assets', [])) != ['bundle.json', 'loupe.apk']):
+                raise ValueError('Draft release metadata or asset names differ')
+            if (set(x.name for x in download.iterdir()) != {'loupe.apk', 'bundle.json'}
+                    or deploy.sha256(download / 'loupe.apk') != deploy.sha256(snapshot)
+                    or deploy.sha256(download / 'bundle.json') != deploy.sha256(root / 'bundle.json')):
+                raise ValueError('Downloaded release asset hash differs')
+            # Atomic create-ref fails if another actor created this tag during asset verification.
+            # Never PATCH an existing tag, even when it happens to point at our source.
+            gh(args, 'api', f'repos/{REPOSITORY}/git/refs', '--method', 'POST',
+               '--raw-field', f'ref=refs/tags/{tag}', '--raw-field', 'sha=' + bundle['source_commit'])
+            tag_ref = json.loads(gh(args, 'api', f'repos/{REPOSITORY}/git/ref/tags/{tag}'))
+            if (tag_ref.get('ref') != 'refs/tags/' + tag
+                    or tag_ref.get('object', {}).get('type') != 'commit'
+                    or tag_ref.get('object', {}).get('sha') != bundle['source_commit']):
+                raise ValueError('Created tag does not point at the verified source commit')
+            current = json.loads(gh(args, 'api', f'repos/{REPOSITORY}/releases/tags/{tag}'))
+            if (current.get('id') != draft_id or current.get('tag_name') != tag
+                    or current.get('draft') is not True
+                    or current.get('target_commitish') != bundle['source_commit']):
+                raise ValueError('Draft release identity changed before publication')
+            gh(args, 'api', f'repos/{REPOSITORY}/releases/{draft_id}', '--method', 'PATCH',
+               '--field', 'draft=false')
+        except (ValueError, OSError, subprocess.CalledProcessError):
+            print('Draft release and any created tag have been retained; nothing is deleted or overwritten.',
+                  file=sys.stderr)
+            raise
         print(f'https://github.com/{REPOSITORY}/releases/tag/{tag}')
 
 

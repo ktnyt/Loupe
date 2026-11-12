@@ -40,6 +40,11 @@ class PublishTests(unittest.TestCase):
         self.network_error = False
         self.download_error = False
         self.main = 'a'*40
+        self.official_main = 'a'*40
+        self.tag_race = False
+        self.tag_wrong = False
+        self.draft_swapped = False
+        self.publish_error = False
 
     def tearDown(self):
         self.temp.cleanup()
@@ -52,10 +57,36 @@ class PublishTests(unittest.TestCase):
     def fake_gh(self, args, *parts):
         self.calls.append(parts)
         if parts[0] == 'api':
-            if self.exists or (self.release_exists and '/releases/' in parts[1]):
+            endpoint = parts[1]
+            if self.network_error:
+                raise subprocess.CalledProcessError(1, 'gh', stderr='HTTP 503')
+            if endpoint.endswith('/git/ref/heads/main'):
+                return json.dumps(dict(ref='refs/heads/main', object=dict(type='commit', sha=self.official_main)))
+            if endpoint.endswith('/git/refs'):
+                self.assertEqual(parts[2:], ('--method', 'POST', '--raw-field', 'ref=refs/tags/v0.31.3',
+                                           '--raw-field', 'sha=' + 'a'*40))
+                if self.tag_race:
+                    raise subprocess.CalledProcessError(1, 'gh', stderr='HTTP 422 Reference already exists')
+                self.tag_created = True
                 return '{}'
-            raise subprocess.CalledProcessError(1, 'gh', stderr='HTTP 503' if self.network_error else 'HTTP 404')
+            if endpoint.endswith('/git/ref/tags/v0.31.3') and self.tag_created:
+                return json.dumps(dict(ref='refs/tags/v0.31.3', object=dict(type='commit',
+                    sha=('c' if self.tag_wrong else 'a')*40)))
+            if '/releases/' in endpoint and self.draft_created:
+                if '--method' in parts:
+                    self.assertEqual(parts, ('api', 'repos/ktnyt/Loupe/releases/101', '--method', 'PATCH',
+                                             '--field', 'draft=false'))
+                    if self.publish_error:
+                        raise subprocess.CalledProcessError(1, 'gh', stderr='HTTP 503')
+                    return '{}'
+                return json.dumps(dict(id=102 if self.tag_created and self.draft_swapped else 101,
+                    tag_name='v0.31.3', target_commitish='a'*40, draft=True,
+                    assets=[dict(name='loupe.apk'), dict(name='bad.json' if self.metadata_bad else 'bundle.json')]))
+            if self.exists or (self.release_exists and '/releases/' in endpoint):
+                return '{}'
+            raise subprocess.CalledProcessError(1, 'gh', stderr='HTTP 404')
         if parts[:2] == ('release', 'create'):
+            self.draft_created = True
             self.snapshot = Path(parts[-2]).parent
             self.assertNotEqual(self.snapshot, self.root)
             self.assertEqual(Path(parts[-2]).name, 'loupe.apk')
@@ -72,15 +103,11 @@ class PublishTests(unittest.TestCase):
             if self.corrupt:
                 (target/'loupe.apk').write_bytes(b'wrong')
             return ''
-        if parts[:2] == ('release', 'view'):
-            return json.dumps(dict(tagName='v0.31.3', targetCommitish='a'*40, isDraft=True,
-                assets=[dict(name='loupe.apk'), dict(name='bad.json' if self.metadata_bad else 'bundle.json')]))
-        if parts[:2] == ('release', 'edit'):
-            self.assertIn('--draft=false', parts)
-            return ''
         raise AssertionError(parts)
 
     def apply(self):
+        self.tag_created = False
+        self.draft_created = False
         deploy.save(self.args.bundle, self.bundle)
         with patch.object(deploy, 'git', side_effect=self.fake_git), \
              patch.object(deploy, 'apk_info', return_value=self.info), \
@@ -88,11 +115,12 @@ class PublishTests(unittest.TestCase):
             publish.publish(self.args)
 
     def assert_unpublished(self):
-        self.assertFalse(any(x[:2] == ('release', 'edit') for x in self.calls))
+        self.assertFalse(any('--method' in x and x[x.index('--method')+1] == 'PATCH' for x in self.calls))
 
     def test_success_publishes_only_verified_main_assets(self):
         self.apply()
-        self.assertEqual(self.calls[-1], ('release', 'edit', 'v0.31.3', '--repo', 'ktnyt/Loupe', '--draft=false'))
+        self.assertEqual(self.calls[-1], ('api', 'repos/ktnyt/Loupe/releases/101', '--method', 'PATCH', '--field', 'draft=false'))
+        self.assertTrue(self.tag_created)
         self.assertEqual(sum(x[:2] == ('release', 'create') for x in self.calls), 1)
 
     def test_mode_hash_signature_source_and_tree_rejected_before_github(self):
@@ -144,6 +172,41 @@ class PublishTests(unittest.TestCase):
                 self.assertEqual(self.calls, [])
                 self.assert_unpublished()
 
+    def test_fork_main_cannot_publish_to_official_repository(self):
+        self.official_main = 'c'*40
+        with self.assertRaisesRegex(ValueError, 'official ktnyt/Loupe main'):
+            self.apply()
+        self.assertEqual(len(self.calls), 1)
+        self.assertFalse(self.draft_created)
+        self.assert_unpublished()
+
+    def test_tag_appearing_during_download_keeps_draft_unpublished(self):
+        self.tag_race = True
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.apply()
+        self.assertTrue(self.draft_created)
+        self.assert_unpublished()
+        self.assertFalse(any('delete' in x for x in self.calls))
+
+    def test_wrong_created_tag_or_changed_draft_id_cannot_be_published(self):
+        for field in ('tag_wrong', 'draft_swapped'):
+            with self.subTest(field=field):
+                self.calls.clear()
+                setattr(self, field, True)
+                with self.assertRaises(ValueError):
+                    self.apply()
+                self.assertTrue(self.tag_created)
+                self.assert_unpublished()
+                setattr(self, field, False)
+
+    def test_publish_failure_preserves_created_tag_and_draft(self):
+        self.publish_error = True
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.apply()
+        self.assertTrue(self.tag_created)
+        self.assertTrue(self.draft_created)
+        self.assertFalse(any('delete' in x for x in self.calls))
+
     def test_existing_tag_or_release_is_not_replaced(self):
         self.exists = True
         with self.assertRaisesRegex(ValueError, 'overwritten'):
@@ -154,7 +217,7 @@ class PublishTests(unittest.TestCase):
         self.release_exists = True
         with self.assertRaisesRegex(ValueError, 'overwritten'):
             self.apply()
-        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(len(self.calls), 3)
         self.assert_unpublished()
 
     def test_errors_are_not_interpreted_as_absence(self):
