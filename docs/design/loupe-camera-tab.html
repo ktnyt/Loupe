@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loupe カメラのタブ</title>
+<style>
+:root{--k:1}
+*{box-sizing:border-box}
+body{margin:0;background:#1E1E20;color:#EDEDEA;font-family:'Noto Sans JP',system-ui,sans-serif;font-size:15px;line-height:1.6}
+.wrap{max-width:1300px;padding:24px 20px 48px}
+h1.pg{margin:0;font-size:22px}
+.note{margin:8px 0 0;padding:10px 14px;border-radius:10px;border:1px solid #4A4A50;background:#161618;font-size:13.5px}
+.controls{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin:10px 0 0}
+.lb{color:#A9A9A4;font-size:12.5px;margin-right:6px}
+.seg{display:inline-flex;flex-wrap:wrap;background:#2A2A2E;border-radius:22px;padding:2px}
+.seg button,.hw{background:none;border:0;color:#EDEDEA;font:inherit;font-size:13px;min-height:44px;padding:0 12px;border-radius:20px;cursor:pointer}
+.hw{background:#2A2A2E;border:1px solid #4A4A50;border-radius:22px;font-weight:600}
+.seg button[aria-pressed=true]{background:#EDEDEA;color:#111}
+.wrap :focus-visible{outline:2px solid #8AB4F8;outline-offset:2px}
+.stage{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start;margin-top:14px}
+.side{flex:1;min-width:280px;display:flex;flex-direction:column;gap:10px}
+.box{background:#141416;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.6;overflow-wrap:anywhere}
+.okc{color:#9FE0B5}.ngc{color:#F2A7AB}
+table.t{border-collapse:collapse;width:100%;font-size:13.5px}
+table.t th,table.t td{border-bottom:1px solid #2E2E32;padding:6px 10px 6px 0;text-align:left;vertical-align:top}
+table.t th{color:#A9A9A4;font-weight:500;font-size:12px}
+h2.sec{margin:28px 0 8px;font-size:18px}
+ul.s{margin:0;padding-left:20px;font-size:14px}
+/* 端末の画面 */
+#dev{position:relative;overflow:hidden;width:var(--w);height:var(--h);background:#0F0F10;outline:1px solid #3A3A3F;transform:translateZ(0);font-size:calc(15px*var(--k));line-height:calc(22px*var(--k))}
+#dev button{font-family:inherit;color:inherit}
+#dev :focus{outline:none}#dev :focus-visible{outline:2px solid #EDEDEA;outline-offset:-2px}
+.f12{font-size:calc(12px*var(--k));line-height:calc(16px*var(--k))}.f13{font-size:calc(13px*var(--k));line-height:calc(18px*var(--k))}.f14{font-size:calc(14px*var(--k));line-height:calc(20px*var(--k))}.f16{font-size:calc(16px*var(--k));line-height:calc(22px*var(--k))}.f24{font-size:calc(24px*var(--k));line-height:calc(32px*var(--k))}
+.mut{color:#A9A9A4}.num{font-variant-numeric:tabular-nums}
+.synth{position:absolute;right:8px;top:6px;font-size:10px;color:#8A8A85;border:1px dashed #3A3A3F;border-radius:6px;padding:0 6px;z-index:8;background:#0F0F10;pointer-events:none}
+.scr{position:absolute;inset:0;overflow-y:auto}
+.g4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px}
+.tile{height:96px;border:0;padding:0;margin:0;cursor:pointer;position:relative}
+.ck{position:absolute;top:6px;left:6px;width:22px;height:22px;border-radius:11px;border:2px solid rgba(255,255,255,.92);background:rgba(0,0,0,.28)}
+.ck.on{background:#4C8DF6;border-color:#4C8DF6}
+.panel{position:absolute;left:0;right:0;bottom:0;background:#0F0F10;border-top:1px solid #222226;padding:8px 16px 0;z-index:3}
+.fchip{background:none;border:0;padding:0 4px;min-height:48px;display:flex;align-items:center;cursor:pointer}
+.fchip>span{min-height:36px;padding:0 12px;border-radius:8px;border:1px solid #3A3A3F;display:flex;align-items:center;font-weight:500;white-space:nowrap}
+.fchip[aria-pressed=true]>span{background:#EDEDEA;border-color:#EDEDEA;color:#111}
+.dock{display:grid;margin:0 -8px}
+.db{background:none;border:0;padding:6px 4px;cursor:pointer;min-height:64px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-weight:500}
+.tabs{display:grid;margin:0 -16px;padding:0 8px 16px;border-top:1px solid #19191B;background:#0F0F10}
+.tabs.off{opacity:.38}
+.tab{min-width:0;min-height:56px;padding:6px 4px;margin:0;background:none;border:0;display:flex;justify-content:center;align-items:center;cursor:pointer;font-weight:500;text-align:center;-webkit-touch-callout:none;user-select:none}
+.tab .in{display:inline-flex;flex-direction:column;align-items:center;gap:4px;min-width:0}
+.tab .t{overflow-wrap:anywhere}
+.tab .u{display:block;height:2px;width:100%;border-radius:1px;background:transparent}
+.tab[aria-selected=true] .u{background:#EDEDEA}
+.tab[aria-selected=false],.camtab{color:#A9A9A4}
+.camtab .row{display:inline-flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:2px 6px;color:#EDEDEA}
+.camtab .t{white-space:nowrap}
+.camtab .ring{position:relative;width:24px;height:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.camtab .ring svg.p{position:absolute;inset:-4px;width:32px;height:32px}
+.camIn{animation:camIn .2s ease-out}@keyframes camIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.rm .camIn{animation:none}@media (prefers-reduced-motion:reduce){.camIn{animation:none}}
+.toast{position:absolute;left:16px;right:16px;z-index:5;min-height:48px;padding:8px 14px;border-radius:24px;background:rgba(28,28,31,.96);box-shadow:0 0 0 1px #3A3A3F;display:flex;align-items:center;gap:8px}
+.cover{position:absolute;inset:0;z-index:9;background:#0F0F10;display:flex;flex-direction:column;gap:12px;padding:56px 20px 20px}
+.cover .card{background:#19191B;border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:8px}
+.btn{min-height:48px;border-radius:24px;border:1px solid #3A3A3F;background:none;padding:4px 16px;cursor:pointer;font-weight:500}
+.btn.pri{background:#EDEDEA;color:#111 !important;border:0;font-weight:600;min-height:52px}
+.sysd{position:absolute;inset:0;z-index:10;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:24px}
+.sysc{background:#2B2C30;border-radius:24px;padding:20px 20px 8px;max-width:312px;width:100%}
+.sysc h2{margin:0 0 12px;font-weight:500;overflow-wrap:anywhere}
+.tb{min-height:48px;min-width:64px;border:0;background:none;color:#A8C7FA !important;font-weight:600;cursor:pointer;border-radius:24px}
+.systag{font-size:10px;color:#9A9A95;border:1px dashed #4A4A50;border-radius:6px;padding:0 6px;display:inline-block;margin-bottom:6px}
+.spin{animation:sp 1s linear infinite;transform-origin:50% 50%}@keyframes sp{to{transform:rotate(360deg)}}.rm .spin{animation:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1 class="pg">Loupe — 下のタブの「カメラ」（Issue #87 の続き）</h1>
+<div class="note"><b>参照用のモック（製品の画面の外の注意）。</b>写真の一覧と［すべての写真］［アルバム］のタブは採用済みのまま（loupe-photo-list-filters／loupe-select-share）。カメラ・件数はすべて模擬です。取り込みの設定の画面は loupe-camera-import.html のものを開く想定です。Android と Git は変更していません。</div>
+<div class="controls">
+<span><span class="lb">つないだもの</span><span class="seg" id="oD"><button data-v="none">なし</button><button data-v="cam">カメラ（MTP）</button><button data-v="sto">USB ストレージ</button><button data-v="kbd">対応していない機器</button></span></span>
+<span><span class="lb">準備</span><span class="seg" id="oP"><button data-v="ready">許可・設定済み</button><button data-v="perm">USB の許可が必要</button><button data-v="first">はじめて</button></span></span>
+<button class="hw" id="sel" aria-pressed="false">選択中（模擬）</button>
+<button class="hw" id="lp">長押し（TalkBack の操作・模擬）</button>
+</div>
+<div class="controls">
+<span><span class="lb">幅</span><span class="seg" id="oW"><button data-v="320">320dp</button><button data-v="369">369dp</button><button data-v="400">400dp</button></span></span>
+<span><span class="lb">高さ</span><span class="seg" id="oH"><button data-v="640">640dp</button><button data-v="844">844dp</button></span></span>
+<span><span class="lb">文字</span><span class="seg" id="oK"><button data-v="1">1.0倍</button><button data-v="1.3">1.3倍</button></span></span>
+<button class="hw" id="hwBack">Android Back（模擬）</button><button class="hw" id="oRM" aria-pressed="false">減らす動き</button><button class="hw" id="reset" style="background:none">最初から</button>
+</div>
+<div class="stage"><div id="dev" role="region" aria-label="端末の画面（合成）"></div><div class="side"><div class="box" id="ax"></div><div class="box" id="chk"></div><div class="box" id="log"></div></div></div>
+<div id="live" aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)"></div>
+
+<h2 class="sec">決まり</h2>
+<ul class="s">
+<li><b>出るとき</b>：対応するカメラ（MTP／PTP）か USB ストレージ（カードリーダーなど）がつながっている間だけ、［すべての写真］［アルバム］の右に3つめ［カメラ］を出す。外すと消える（対応していない機器では出さない）。出るときだけ 200ms で薄く現れる（減らす動きでは無し）。</li>
+<li><b>タップ</b>：カメラから取り込むの設定（loupe-camera-import.html）を開く。Back で写真の一覧へ。</li>
+<li><b>長押し（0.5秒）</b>：取り込みを始める。<b>この操作ではカメラから削除しない</b>（設定で削除をオンにしていても）。USB の許可がなければ許可の確認、はじめてなら取り込みの設定を挟み、要るときだけ出す。取り込み中の長押しは何もしない。</li>
+<li><b>取り込み中</b>：アイコンのまわりに進みの輪（細さ2・#EDEDEA、地 #3A3A3F）。文字は「カメラ」のまま。</li>
+<li><b>外したとき</b>：タブが消え、フォーカスは［すべての写真］へ。取り込み中なら「カメラが外されました。取り込めた n件はそのまま」。</li>
+<li><b>選択中</b>：採用済みのとおりタブはすべて無効（不透明度 .38・aria-disabled）。カメラのタブも無効で、長押しも何もしない。</li>
+</ul>
+<h2 class="sec">寸法・読み上げ</h2>
+<table class="t">
+<tr><th>部品</th><th>内容</th></tr>
+<tr><td>タブ</td><td>既存の2つ＋カメラで3等分。高さ56以上（下の余白16）、16sp 500。カメラ：アイコン24＋「カメラ」、選択中の下線は既存の2つだけ（カメラは画面を開く操作）。文字が入らないときは折り返す（省略しない）。カメラは「カメラ」を1語のまま、狭いときはアイコンの下へ回す</td></tr>
+<tr><td>読み上げ</td><td>「カメラ、ダミーカメラ X-1 がつながっています。押すと取り込みの設定。長押しで取り込み（カメラからは削除しない）」。取り込み中は「…取り込み中 12 / 48件…」。TalkBack ではカスタム操作「取り込みを始める（削除しない）」と、ダブルタップして長押しの両方</td></tr>
+<tr><td>知らせ</td><td>下のタブの8dp上・左右16・高さ48以上・角丸24（role=status）。開始・完了・外した</td></tr>
+</table>
+</div>
+<script>
+(function () {
+  const O = { w: 369, h: 844, k: 1, rm: false };
+  const S = () => ({ dev: 'none', perm: true, setup: true, sel: false, cover: null, job: null, toast: null, tab: 'all', selIds: [] });
+  let N = S(), log = [], tm = null, lpT = null, lpFired = false, toastT = null;
+  const dev = document.getElementById('dev');
+  const add = (x) => { log.unshift(x); log = log.slice(0, 14); };
+  const say = (x) => { const l = document.getElementById('live'); l.textContent = ''; setTimeout(() => { l.textContent = x; }, 30); };
+  const SW = (p, w) => '<svg width="' + w + '" height="' + w + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + p + '</svg>';
+  const CAMI = SW('<path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13.5" r="3.5"/>', 24);
+  const OKI = SW('<path d="M5 12.5l4.5 4.5L19 7.5"/>', 18);
+  const BGS = ['#8D979E,#586065', '#34443A,#1C2419', '#A9C3D8,#69736A', '#7B5B45,#2A201B', '#C8B08A,#6E5A44', '#3A3F45,#8AB4F8', '#B6463C,#E9C46A', '#5D6B58,#C9A27E'];
+  const bg = (i) => 'radial-gradient(13% 17% at ' + (32 + (i * 7) % 34) + '% 60%,rgba(237,226,205,.85) 0,rgba(237,226,205,.85) 96%,rgba(0,0,0,0) 100%),linear-gradient(' + (150 + i * 11) + 'deg,' + BGS[i % 8] + ')';
+  const supported = () => N.dev === 'cam' || N.dev === 'sto';
+  const devName = () => (N.dev === 'sto' ? 'USB ストレージ' : 'ダミーカメラ X-1');
+  const running = () => N.job && N.job.st === 'run';
+  function camLabel() { return 'カメラ、' + devName() + ' がつながっています' + (running() ? '、取り込み中 ' + N.job.n + ' / ' + N.job.total + '件' : '') + (N.sel ? '（選択中は使えません）' : '。押すと取り込みの設定。長押しで取り込み（カメラからは削除しない）'); }
+  function tabs() {
+    const cols = supported() ? 3 : 2, off = N.sel;
+    const t = (id, l) => '<button role="tab" class="tab f16" data-tab="' + id + '" aria-selected="' + (N.tab === id) + '"' + (off ? ' aria-disabled="true"' : '') + '><span class="in"><span class="t">' + l + '</span><span class="u" aria-hidden="true"></span></span></button>';
+    let cam = '';
+    if (supported()) {
+      const p = running() ? N.job.n / N.job.total : 0, C = 2 * Math.PI * 14;
+      const ring = running() ? '<svg class="p" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="14" fill="none" stroke="#3A3A3F" stroke-width="2"/><circle cx="16" cy="16" r="14" fill="none" stroke="#EDEDEA" stroke-width="2" stroke-linecap="round" stroke-dasharray="' + (C * p).toFixed(1) + ' ' + C.toFixed(1) + '" transform="rotate(-90 16 16)"/></svg>' : '';
+      cam = '<button class="tab camtab f16' + (N.justIn ? ' camIn' : '') + '" data-cam aria-label="' + camLabel() + '"' + (off ? ' aria-disabled="true"' : '') + '><span class="in"><span class="row"><span class="ring">' + ring + CAMI + '</span><span class="t">カメラ</span></span><span class="u" aria-hidden="true"></span></span></button>';
+    }
+    return '<div class="tabs' + (off ? ' off' : '') + '" style="grid-template-columns:repeat(' + cols + ',minmax(0,1fr))"><div role="tablist" aria-label="表示の切り替え" style="display:contents">' + t('all', 'すべての写真') + t('alb', 'アルバム') + '</div>' + cam + '</div>';
+  }
+  function screen() {
+    const g = '<div class="g4">' + Array.from({ length: 20 }, (_, i) => '<button class="tile" data-tile="' + i + '" aria-label="写真' + (N.sel ? (N.selIds.includes(i) ? '、選択中' : '、未選択') : '') + '" style="background:' + bg(i) + '">' + (N.sel ? '<span class="ck' + (N.selIds.includes(i) ? ' on' : '') + '" aria-hidden="true"></span>' : '') + '</button>').join('') + '</div>';
+    const chips = '<div role="group" aria-label="表示する写真" style="display:flex;flex-wrap:wrap;margin:0 -8px">' + [['すべて', true], ['1位'], ['順位が未決定'], ['順位決定済み']].map(([l, on]) => '<button class="fchip f13" aria-pressed="' + !!on + '" data-x><span>' + l + '</span></button>').join('') + '</div>';
+    const dock = N.sel ? '<nav aria-label="選択の操作" class="dock" style="grid-template-columns:repeat(2,minmax(0,1fr))"><button class="db f12" data-end>' + SW('<path d="M6 6l12 12M18 6L6 18"/>', 24) + '<span>選択を終了</span></button><button class="db f12" data-x>' + SW('<rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M8.5 12.3l2.5 2.5 4.8-5"/>', 24) + '<span>すべて選択</span></button></nav>'
+      : '<nav aria-label="写真一覧の操作" class="dock" style="grid-template-columns:repeat(3,minmax(0,1fr))"><button class="db f12" data-selmode>' + SW('<circle cx="12" cy="12" r="8.5"/><path d="M8.3 12.3l2.6 2.6 4.9-5.2"/>', 24) + '<span>選択</span></button><button class="db f12" data-x>' + SW('<path d="M3.5 12.2V4.5a1 1 0 0 1 1-1h7.7l8.3 8.3a1 1 0 0 1 0 1.4l-7.3 7.3a1 1 0 0 1-1.4 0z"/>', 24) + '<span>タグ</span></button><button class="db f12" data-x>' + SW('<circle cx="12" cy="5.5" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="12" cy="18.5" r="1.2"/>', 24) + '<span>その他</span></button></nav>';
+    const head = '<div style="padding:40px 20px 12px;display:flex;align-items:baseline;justify-content:space-between;gap:12px"><h1 class="f24" style="margin:0;font-weight:600">' + (N.tab === 'alb' ? 'アルバム' : 'すべての写真') + '</h1><span class="f14 mut num">' + (N.sel ? N.selIds.length + '枚選択' : (51 + (N.imported || 0)) + '枚') + '</span></div>';
+    return '<span class="synth" aria-hidden="true">合成の画面</span><div class="scr">' + head + g + '<div data-sp></div></div><div class="panel">' + chips + dock + tabs() + '</div>';
+  }
+  function cover() {
+    if (N.cover === 'settings') return '<div class="cover" role="dialog" aria-label="カメラから取り込む"><span class="f13 mut">設定</span><h2 class="f24" style="margin:0">カメラから取り込む</h2><div class="card"><span class="f14">' + devName() + '</span><span class="f13 mut">' + (running() ? '取り込み中 ' + N.job.n + ' / ' + N.job.total + '件' : '（loupe-camera-import.html の画面・模擬）') + '</span></div><button class="btn" data-close>戻る</button></div>';
+    if (N.cover === 'setup') return '<div class="cover" role="dialog" aria-label="はじめての接続"><span class="f13 mut">はじめての接続</span><h2 class="f24" style="margin:0;overflow-wrap:anywhere">' + devName() + '</h2><div class="card"><span class="f14">フォルダ：写真のフォルダすべて</span><span class="f14">種類：JPEG・RAW</span><span class="f13 mut">カメラのファイルは削除しません</span></div><button class="btn pri" data-setupgo>この設定で取り込む</button><button class="btn" data-close>あとで</button></div>';
+    if (N.cover === 'usb') return '<div class="sysd" role="dialog" aria-modal="true" aria-labelledby="uh"><div class="sysc"><span class="systag" aria-hidden="true">Android の確認（模擬）</span><h2 id="uh" class="f16">Loupe に ' + devName() + ' へのアクセスを許可しますか？</h2><div style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap"><button class="tb f14" data-usbno>キャンセル</button><button class="tb f14" data-usbok>OK</button></div></div></div>';
+    return '';
+  }
+  function render(f) {
+    const sc0 = dev.querySelector('.scr'), keep = sc0 ? sc0.scrollTop : 0;
+    dev.style.setProperty('--w', O.w + 'px'); dev.style.setProperty('--h', O.h + 'px'); dev.style.setProperty('--k', O.k); dev.classList.toggle('rm', O.rm);
+    dev.innerHTML = screen() + (N.toast ? '<div class="toast f14" role="status" data-toast>' + OKI + '<span>' + N.toast + '</span></div>' : '') + cover();
+    N.justIn = false;
+    const pn = dev.querySelector('.panel'); dev.querySelector('[data-sp]').style.height = pn.offsetHeight + 24 + 'px'; dev.querySelector('.scr').scrollTop = keep;
+    const ts = dev.querySelector('[data-toast]'); if (ts) ts.style.bottom = dev.querySelector('.tabs').offsetHeight + 8 + 'px';
+    if (N.cover) dev.querySelectorAll('.scr,.panel,[data-toast]').forEach((e) => { e.inert = true; });
+    if (f) { const e = dev.querySelector(f); if (e) e.focus({ preventScroll: true }); }
+    check();
+  }
+  function check() {
+    const btns = [...dev.querySelectorAll('button')].filter((b) => b.offsetParent && !b.closest('[inert]'));
+    const small = btns.filter((b) => { const r = b.getBoundingClientRect(); return r.height < 47.5 || r.width < 47.5; }).length;
+    const d = dev.getBoundingClientRect();
+    const ov = [...dev.querySelectorAll('*')].filter((e) => e.offsetParent && !e.closest('.g4')).filter((e) => { const r = e.getBoundingClientRect(); return r.width && (r.right > d.right + 0.5 || r.left < d.left - 0.5); }).length;
+    const clip = [...dev.querySelectorAll('.tab .t, .tab .row')].filter((e) => e.scrollWidth > e.clientWidth + 1 || e.getBoundingClientRect().right > e.closest('.tab').getBoundingClientRect().right + 0.5).length;
+    const cam = dev.querySelector('[data-cam]'), cr = cam && cam.getBoundingClientRect();
+    const ok = (b) => (b ? '<span class="okc">なし</span>' : '<span class="ngc">あり</span>');
+    document.getElementById('chk').innerHTML = '<b>検査（' + O.w + 'dp・文字' + O.k + '倍・高さ' + O.h + 'dp）</b><br>48dp未満：' + ok(!small) + '<br>はみ出し：' + ok(!ov) + '<br>タブの文字の切れ：' + ok(!clip) + '<br>カメラのタブ：' + (cam ? Math.round(cr.width) + '×' + Math.round(cr.height) + 'dp' + (cam.getAttribute('aria-disabled') ? '（無効）' : '') : 'なし') + '<br>状態：' + ({ none: 'なし', cam: 'カメラ', sto: 'USB ストレージ', kbd: '対応していない機器' })[N.dev] + '・許可 ' + (N.perm ? 'あり' : 'なし') + '・設定 ' + (N.setup ? '済み' : 'まだ') + '・取り込み ' + (N.job ? N.job.st + ' ' + N.job.n + '/' + N.job.total : '—') + '・削除 ' + (N.job ? (N.job.del ? 'する' : 'しない') : '—');
+    document.getElementById('ax').innerHTML = '<b>読み上げ（下のタブ）</b><br>' + [...dev.querySelectorAll('.tabs button')].map((b) => '・[' + (b.getAttribute('role') || 'button') + '] ' + (b.getAttribute('aria-label') || b.textContent.trim()) + (b.getAttribute('aria-selected') === 'true' ? '（選択中）' : '') + (b.getAttribute('aria-disabled') ? '（無効）' : '')).join('<br>');
+    document.getElementById('log').innerHTML = '<b>操作の記録</b><br>' + (log.map((x) => '・' + x).join('<br>') || '—');
+  }
+  function toast(t) { N.toast = t; say(t); clearTimeout(toastT); toastT = setTimeout(() => { N.toast = null; render(keepF()); }, 4000); }
+  const keepF = () => { const a = document.activeElement; if (!a || !dev.contains(a)) return null; return a.dataset.cam != null ? '[data-cam]' : a.dataset.tab ? '[data-tab=' + a.dataset.tab + ']' : null; };
+  /* 長押し：要るときだけ許可・設定を挟む。削除しない取り込み */
+  function longPress(src) {
+    if (!supported() || N.sel) { add('（無効）長押し：' + (N.sel ? '選択中' : 'つながっていない')); return render(keepF()); }
+    if (running()) { add('長押し：取り込み中なので何もしない'); say('取り込み中です'); return render('[data-cam]'); }
+    add(src + ' → 取り込み（カメラからは削除しない）');
+    if (!N.perm) { N.cover = 'usb'; N.pending = true; add('USB の許可がない → 確認'); return render('[data-usbok]'); }
+    if (!N.setup) { N.cover = 'setup'; N.pending = true; add('はじめて → 取り込みの設定'); return render('[data-setupgo]'); }
+    start();
+  }
+  function start() {
+    N.pending = false; N.cover = null; N.job = { st: 'run', n: 0, total: 48, del: false }; toast('取り込みを始めました（カメラからは削除しません）'); add('取り込み開始 48件（削除しない）');
+    clearInterval(tm); tm = setInterval(() => { const j = N.job; if (!j || j.st !== 'run') return clearInterval(tm); j.n++; if (j.n >= j.total) { j.st = 'done'; clearInterval(tm); N.imported = (N.imported || 0) + j.total; toast(j.total + '件を取り込みました'); add('完了'); } render(keepF()); }, 120);
+    render('[data-cam]');
+  }
+  dev.addEventListener('pointerdown', (e) => { const c = e.target.closest('[data-cam]'); if (!c) return; lpFired = false; clearTimeout(lpT); lpT = setTimeout(() => { lpFired = true; longPress('長押し（0.5秒）'); }, 500); });
+  ['pointerup', 'pointercancel'].forEach((t) => dev.addEventListener(t, () => clearTimeout(lpT), true));
+  dev.addEventListener('pointerleave', (e) => { if (e.target.dataset && e.target.dataset.cam != null) clearTimeout(lpT); }, true);
+  dev.addEventListener('contextmenu', (e) => { if (e.target.closest('[data-cam]')) { e.preventDefault(); if (!lpFired) longPress('長押し（キーボードのメニュー）'); lpFired = false; } });
+  dev.addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.cam != null) { if (lpFired) { lpFired = false; return; } if (N.sel) { add('（無効）選択中'); return render('[data-cam]'); } N.cover = 'settings'; add('タップ → 取り込みの設定を開く'); return render('[data-close]'); }
+    if (b.dataset.tab) { if (N.sel) { add('（無効）選択中'); return render(keepF()); } N.tab = b.dataset.tab; add('タブ：' + b.textContent.trim()); return render('[data-tab=' + N.tab + ']'); }
+    if (b.dataset.tile != null) { if (N.sel) { const i = +b.dataset.tile; N.selIds = N.selIds.includes(i) ? N.selIds.filter((x) => x !== i) : N.selIds.concat([i]); } return render('[data-tile="' + b.dataset.tile + '"]'); }
+    if (b.dataset.selmode != null) { setSel(true); return; }
+    if (b.dataset.end != null) { setSel(false); return; }
+    if (b.dataset.close != null) { const was = N.cover; N.cover = null; N.pending = false; add(was === 'setup' ? '［あとで］→ 取り込まない' : '戻る'); return render('[data-cam]'); }
+    if (b.dataset.usbok != null) { N.perm = true; N.cover = null; add('USB を許可'); if (!N.setup) { N.cover = 'setup'; return render('[data-setupgo]'); } return start(); }
+    if (b.dataset.usbno != null) { N.cover = null; N.pending = false; add('USB を許可しない → 取り込まない'); return render('[data-cam]'); }
+    if (b.dataset.setupgo != null) { N.setup = true; add('この設定で取り込む'); return start(); }
+  });
+  dev.addEventListener('keydown', (e) => { if (e.target.closest('[data-cam]') && e.key === 'F10' && e.shiftKey) { e.preventDefault(); longPress('長押し（Shift+F10）'); } });
+  function setSel(on) { N.sel = on; if (!on) N.selIds = []; add(on ? '［選択］→ タブは無効' : '［選択を終了］'); document.getElementById('sel').setAttribute('aria-pressed', on); render(on ? '[data-tile="0"]' : '[data-selmode]'); }
+  function setDev(v) {
+    const was = supported(); N.dev = v;
+    if (!supported()) { if (was) { if (running()) { clearInterval(tm); const n = N.job.n; N.job.st = 'disc'; N.imported = (N.imported || 0) + n; toast('カメラが外されました。取り込めた ' + n + '件はそのまま'); add('外した（取り込み途中）'); } else add('外した → タブを消す'); if (N.cover) N.cover = null; return render('[data-tab=all]'); } add(v === 'kbd' ? '対応していない機器 → タブは出さない' : 'なし'); return render(); }
+    N.justIn = !was; add('つないだ：' + devName() + ' → タブを出す'); render(keepF());
+  }
+  const seg = (id, fn) => document.getElementById(id).addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; fn(b.dataset.v); sync(); });
+  function sync() { [['oW', O.w], ['oH', O.h], ['oK', O.k], ['oD', N.dev], ['oP', !N.perm ? 'perm' : !N.setup ? 'first' : 'ready']].forEach(([id, v]) => document.querySelectorAll('#' + id + ' button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.v == String(v)))); }
+  seg('oW', (v) => { O.w = +v; render(); }); seg('oH', (v) => { O.h = +v; render(); }); seg('oK', (v) => { O.k = +v; render(); });
+  seg('oD', setDev); seg('oP', (v) => { N.perm = v !== 'perm'; N.setup = v !== 'first'; add('（模擬）準備：' + v); render(); });
+  document.getElementById('sel').addEventListener('click', () => setSel(!N.sel));
+  document.getElementById('lp').addEventListener('click', () => longPress('TalkBack のカスタム操作「取り込みを始める（削除しない）」'));
+  document.getElementById('oRM').addEventListener('click', (e) => { O.rm = !O.rm; e.currentTarget.setAttribute('aria-pressed', O.rm); render(); });
+  document.getElementById('hwBack').addEventListener('click', () => { if (N.cover) { const was = N.cover; N.cover = null; N.pending = false; add('Back：' + (was === 'usb' ? '許可しない' : '閉じる') + '（取り込まない）'); return render('[data-cam]'); } if (N.sel) return setSel(false); add('Back：開いた元へ'); render(); });
+  document.getElementById('reset').addEventListener('click', () => { clearInterval(tm); N = S(); log = []; document.getElementById('sel').setAttribute('aria-pressed', false); sync(); render(); });
+  window.__t = { O: O, get N() { return N; }, render: render, setDev: setDev, longPress: longPress, setSel: setSel, sync: sync };
+  sync(); render();
+})();
+</script>
+</body>
+</html>
