@@ -1079,9 +1079,12 @@ public final class MainActivity extends DiagnosticActivity {
   private void galleryMenu() {
     DiagnosticLog.event("screen.galleryMenu", 0);
     MoreMenuUi.show(this,"設定とその他の操作",
-            new String[] {"クラウドと同期", "共有先の設定", "連写のまとめ方", "写真へのアクセス", "再読み込み", "写真のプレビュー", "処理の状況"},
+            new String[] {"クラウドと同期", "共有先の設定", "連写のまとめ方", "写真へのアクセス", "再読み込み", "写真のプレビュー", "処理の状況", "Nano Banana"},
             (d, which) -> {
               switch (which) {
+                case 7:
+                  startActivity(new Intent(this, NanoBananaSettingsActivity.class));
+                  break;
                 case 6:
                   startActivity(new Intent(this, DashboardActivity.class));
                   break;
@@ -1677,6 +1680,7 @@ public final class MainActivity extends DiagnosticActivity {
     viewer.zoom();
     Button editPhoto=PhotoEditor.add(this,viewer,photo,actions);
     viewer.action("共有","共有","共有（元のファイルを共有します）",()->shareMenu(photo));
+    if(!fromRanking)viewer.action("Nano Banana","AI編集","Nano Bananaで写真を編集",()->NanoBananaUi.show(this,photo));
     if(!fromRanking&&"content".equals(photo.uri.getScheme()))viewer.action("タグ","タグ","タグ",()->openTags(photo));
     viewer.action("情報","情報","写真の情報",()->{
       LinearLayout information=vertical();

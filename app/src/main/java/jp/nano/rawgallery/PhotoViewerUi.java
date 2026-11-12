@@ -106,6 +106,7 @@ final class PhotoViewerUi extends ViewGroup {
       case "共有": resource=R.drawable.ic_viewer_share;break;
       case "編集": resource=R.drawable.ic_viewer_edit;break;
       case "情報": resource=R.drawable.ic_viewer_info;break;
+      case "Nano Banana": resource=R.drawable.ic_nano_banana;break;
       case "タグ": resource=R.drawable.ic_viewer_tag;break;
       default: throw new IllegalArgumentException(action);
     }

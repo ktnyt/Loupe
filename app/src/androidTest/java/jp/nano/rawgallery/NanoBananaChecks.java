@@ -1,0 +1,191 @@
+package jp.nano.rawgallery;
+
+import android.app.Instrumentation;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.Button;
+import android.widget.EditText;
+import java.io.File;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+
+/** Isolated local fixture. Never uses production credentials or makes an API call. */
+final class NanoBananaChecks {
+  static NanoBananaStore fixtureStore;
+  static String run(Instrumentation test,int width,float font) throws Exception {
+    Context context=test.getTargetContext();String namespace="nano-banana-fixture";
+    SharedPreferences prefs=context.getSharedPreferences(namespace,0);prefs.edit().clear().commit();
+    NanoBananaStore store=new NanoBananaStore(context,namespace);
+    NanoBananaSettingsActivity activity=null;
+    try {
+      store.setKey("synthetic-credential-only");
+      TagDetailChecks.require(store.hasKey()&&store.apiKey().equals("synthetic-credential-only"),"credential roundtrip");
+      TagDetailChecks.require(!prefs.getString("credential","").contains("synthetic"),"encrypted credential");
+      boolean invalid=false;try{store.setKey("bad\nkey");}catch(java.io.IOException expected){invalid=true;}
+      TagDetailChecks.require(invalid,"reject header injection");
+      store.savePrompt(null,"色を整える","自然な色に整えてください");
+      NanoBananaStore.Prompt first=store.prompts().get(0);
+      store.savePrompt(first.id,"色を整える","自然な色と明るさに整えてください");
+      TagDetailChecks.require(store.prompts().size()==1&&store.prompts().get(0).text.contains("明るさ"),"edit by stable ID");
+      invalid=false;try{store.savePrompt(null,"色を整える","重複");}catch(java.io.IOException expected){invalid=true;}
+      TagDetailChecks.require(invalid,"reject duplicate labels");
+      store.savePrompt(null,"背景を変える長い名前のプロンプトを編集する","背景を夕暮れの海辺にしてください");
+      activity=(NanoBananaSettingsActivity)test.startActivitySync(new Intent(context,NanoBananaSettingsActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+      final NanoBananaSettingsActivity screen=activity;
+      TagDetailChecks.ui(test,()->{
+        try {
+          Field field=NanoBananaSettingsActivity.class.getDeclaredField("store");field.setAccessible(true);field.set(screen,store);
+          android.content.res.Configuration config=new android.content.res.Configuration(screen.getResources().getConfiguration());
+          config.fontScale=font;screen.getResources().updateConfiguration(config,screen.getResources().getDisplayMetrics());
+          Method render=NanoBananaSettingsActivity.class.getDeclaredMethod("render");render.setAccessible(true);render.invoke(screen);
+          screen.getWindow().setLayout(GalleryUi.dp(screen,width),-1);
+        }catch(Exception e){throw new RuntimeException(e);}
+      });test.waitForIdleSync();Thread.sleep(250);
+      View content=((ViewGroup)screen.findViewById(android.R.id.content)).getChildAt(0);
+      TagDetailChecks.ui(test,()->{
+        TagDetailChecks.require((screen.getWindow().getAttributes().flags&android.view.WindowManager.LayoutParams.FLAG_SECURE)!=0,"secure settings window");
+        verifyTargets(content,GalleryUi.dp(screen,48));
+      });
+      File dir=new File(context.getCacheDir(),"consistency-checks");dir.mkdirs();
+      // FLAG_SECURE blocks PixelCopy; draw this synthetic fixture directly for layout review.
+      TagDetailChecks.ui(test,()->{
+        android.graphics.Bitmap b=android.graphics.Bitmap.createBitmap(content.getWidth(),content.getHeight(),android.graphics.Bitmap.Config.ARGB_8888);
+        content.draw(new android.graphics.Canvas(b));
+        try(java.io.FileOutputStream out=new java.io.FileOutputStream(new File(dir,"nano-settings-"+width+"-"+font+".png"))){b.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}catch(Exception e){throw new RuntimeException(e);}finally{b.recycle();}
+      });
+      testJobs(test,store,width,font);
+      store.deletePrompt(first.id);TagDetailChecks.require(store.prompts().size()==1,"delete one prompt");
+      store.deleteKey();TagDetailChecks.require(!store.hasKey(),"delete credential");
+      return "PASS Nano Banana isolated encrypted credential roundtrip, input validation, prompt CRUD/duplicate labels, settings layout and 48dp controls. Durable job recovery, ambiguous POST suppression, result save and cleanup retry verified with fake network. No service request or real credentials; physical touch, IME and spoken output unverified.\n";
+    }finally{if(activity!=null){final NanoBananaSettingsActivity screen=activity;TagDetailChecks.ui(test,screen::finish);}prefs.edit().clear().commit();}
+  }
+  private static void testJobs(Instrumentation test,NanoBananaStore store,int width,float font) throws Exception {
+    Context context=test.getTargetContext();
+    File source=new File(context.getCacheDir(),"nano-fixture-input.jpg");
+    android.graphics.Bitmap b=android.graphics.Bitmap.createBitmap(3000,2000,android.graphics.Bitmap.Config.ARGB_8888);
+    b.eraseColor(0xff2468ac);java.io.ByteArrayOutputStream out=new java.io.ByteArrayOutputStream();
+    b.compress(android.graphics.Bitmap.CompressFormat.JPEG,90,out);b.recycle();byte[] jpeg=out.toByteArray();
+    try(java.io.FileOutputStream file=new java.io.FileOutputStream(source)){file.write(jpeg);}
+    PhotoRepository.Photo photo=new PhotoRepository.Photo(android.net.Uri.fromFile(source),"nano-fixture-input.jpg","synthetic",jpeg.length,1,1);
+    NanoBananaStore.Prompt prompt=new NanoBananaStore.Prompt("fixture","Fixture","Edit synthetic image");
+    class Fake implements NanoBananaJob.Services {
+      int submits,downloads,deletes; boolean ambiguous,queryFailure=true,deleteFailure=true;
+      public String upload(String key,byte[] bytes,String owner){
+        android.graphics.BitmapFactory.Options size=new android.graphics.BitmapFactory.Options();size.inJustDecodeBounds=true;
+        android.graphics.BitmapFactory.decodeByteArray(bytes,0,bytes.length,size);
+        TagDetailChecks.require(Math.max(size.outWidth,size.outHeight)<=1600,"1600px upload bound");return "fixture-v1";
+      }
+      public String generate(String text,String key,String version)throws Exception{submits++;if(ambiguous)throw new java.io.IOException("synthetic response loss");return "fixture-task";}
+      public org.json.JSONObject status(String task)throws Exception{
+        TagDetailChecks.require(task.equals("fixture-task"),"resume same task");
+        if(queryFailure){queryFailure=false;throw new java.io.IOException("synthetic disconnect");}
+        return new org.json.JSONObject().put("successFlag",1).put("response",new org.json.JSONObject().put("resultImageUrl","https://synthetic.invalid/result.jpg"));
+      }
+      public byte[] download(String url){downloads++;return jpeg;}
+      public void delete(String key,String version,String owner)throws Exception{deletes++;if(deleteFailure){deleteFailure=false;throw new java.io.IOException("synthetic cleanup failure");}}
+    }
+    String object="loupe-nano-temp/00000000-0000-0000-0000-000000000000.jpg";
+    String xml="<ListVersionsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Prefix>"+object+"</Prefix><IsTruncated>false</IsTruncated><Version><Key>"+object+"</Key><VersionId>fixture-v1</VersionId></Version></ListVersionsResult>";
+    TagDetailChecks.require(NanoBananaE2.listedVersions(xml.getBytes(java.nio.charset.StandardCharsets.UTF_8),object).equals(java.util.List.of("fixture-v1")),"Android XML version parser");
+    boolean unavailable=false;try{NanoBananaJob.pendingState(null);}catch(java.io.IOException expected){unavailable=true;}
+    TagDetailChecks.require(unavailable,"unavailable provider must stop before deletion");
+    try(android.database.MatrixCursor cursor=new android.database.MatrixCursor(new String[]{"is_pending"})){
+      TagDetailChecks.require(NanoBananaJob.pendingState(cursor)==-1,"absent row is separate from unavailable provider");
+      cursor.addRow(new Object[]{0});TagDetailChecks.require(NanoBananaJob.pendingState(cursor)==0,"published row preserved");
+    }
+    String saved=null;
+    try {
+      TagDetailChecks.require(NanoBananaApi.resultUrl("https://tempfile.aiquickdraw.com/result.jpg").getHost().equals("tempfile.aiquickdraw.com"),"provider CDN allowed");
+      for(String url:java.util.List.of("https://127.0.0.1/x","https://[fd00::1]/x","https://100.64.0.1/x","https://evil.example/x","http://file.aiquickdraw.com/x","https://file.aiquickdraw.com.evil.example/x","https://user@file.aiquickdraw.com/x")){
+        boolean denied=false;try{NanoBananaApi.resultUrl(url);}catch(Exception expected){denied=true;}TagDetailChecks.require(denied,"reject non-provider result URL");
+      }
+      org.json.JSONObject request=NanoBananaApi.request("fixture prompt","https://synthetic.invalid/input");
+      TagDetailChecks.require(request.getJSONArray("imageUrls").length()==1&&request.getString("resolution").equals("1K")&&!request.getBoolean("googleSearch")&&!request.has("callBackUrl"),"API request contract");
+      Fake fake=new Fake();NanoBananaJob job=new NanoBananaJob(context,store,fake);
+      boolean failed=false;try{job.run(photo,prompt,m->{});}catch(java.io.IOException expected){failed=true;}
+      TagDetailChecks.require(failed&&store.job().getString("stage").equals("generating")&&fake.submits==1,"query failure preserves task");
+      failed=false;try{job.run(null,null,m->{});}catch(java.io.IOException expected){failed=true;}
+      saved=store.job().getString("saved");
+      TagDetailChecks.require(failed&&store.job().getString("stage").equals("cleanup")&&fake.submits==1,"saved output survives cleanup failure");
+      job.run(null,null,m->{});
+      TagDetailChecks.require(store.job().getString("stage").equals("complete")&&fake.submits==1&&fake.downloads==1&&fake.deletes==2,"cleanup retry never regenerates or resaves");
+      captureRun(test,store,width,font);
+      org.json.JSONObject published=store.job();published.remove("saved");published.put("stage","generating");store.job(published);
+      job.discard();
+      try(android.database.Cursor cursor=context.getContentResolver().query(android.net.Uri.parse(saved),new String[]{"_id"},null,null,null)){
+        TagDetailChecks.require(cursor!=null&&cursor.moveToFirst(),"discard preserves already published result after crash");
+      }
+      store.setE2("synthetic-bucket","ABCDEFGHIJKLMNOPQRST","a".repeat(40));
+      store.job(new org.json.JSONObject().put("stage","uploading").put("object","loupe-nano-temp/00000000-0000-0000-0000-000000000000.jpg"));
+      store.setE2("synthetic-bucket","ABCDEFGHIJKLMNOPQRST","b".repeat(40));
+      boolean blocked=false;try{store.setE2("different-bucket","ABCDEFGHIJKLMNOPQRST","b".repeat(40));}catch(java.io.IOException expected){blocked=true;}
+      TagDetailChecks.require(blocked,"cleanup destination immutable while credentials remain correctable");
+      NanoBananaJob.BUSY.set(true);
+      blocked=false;try{store.setE2("synthetic-bucket","ABCDEFGHIJKLMNOPQRST","c".repeat(40));}catch(java.io.IOException expected){blocked=true;}finally{NanoBananaJob.BUSY.set(false);}
+      TagDetailChecks.require(blocked,"busy request locks credential snapshot");
+      store.job(null);
+      Fake ambiguous=new Fake();ambiguous.ambiguous=true;ambiguous.deleteFailure=false;
+      NanoBananaJob uncertain=new NanoBananaJob(context,store,ambiguous);
+      try{uncertain.run(photo,prompt,m->{});}catch(java.io.IOException expected){}
+      TagDetailChecks.require(store.job().getString("stage").equals("submitting"),"persist ambiguous POST boundary");
+      try{uncertain.run(null,null,m->{});}catch(java.io.IOException expected){}
+      TagDetailChecks.require(ambiguous.submits==1,"ambiguous POST never resubmitted");
+      uncertain.discard();TagDetailChecks.require(store.job()==null&&ambiguous.deletes==1,"explicit cleanup clears ambiguous job");
+      captureViewer(test,store,photo,width,font);
+    }finally{
+      if(saved!=null)context.getContentResolver().delete(android.net.Uri.parse(saved),null,null);
+      store.job(null);source.delete();
+    }
+  }
+  private static void captureRun(Instrumentation test,NanoBananaStore store,int width,float font) throws Exception {
+    org.json.JSONObject complete=store.job();
+    captureRunState(test,store,width,font,"nano-result");
+    store.job(new org.json.JSONObject(complete.toString()).put("stage","generating"));
+    captureRunState(test,store,width,font,"nano-resume");
+    store.job(complete);
+  }
+  private static void captureRunState(Instrumentation test,NanoBananaStore store,int width,float font,String name) throws Exception {
+    fixtureStore=store;NanoBananaActivity activity=null;
+    try {
+      activity=(NanoBananaActivity)test.startActivitySync(new Intent(test.getTargetContext(),NanoBananaActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+      final NanoBananaActivity screen=activity;
+      TagDetailChecks.ui(test,()->{
+        android.content.res.Configuration config=new android.content.res.Configuration(screen.getResources().getConfiguration());config.fontScale=font;
+        screen.getResources().updateConfiguration(config,screen.getResources().getDisplayMetrics());screen.getWindow().setLayout(GalleryUi.dp(screen,width),-1);
+      });test.waitForIdleSync();Thread.sleep(250);
+      File dir=new File(test.getTargetContext().getCacheDir(),"consistency-checks");dir.mkdirs();
+      View content=((ViewGroup)screen.findViewById(android.R.id.content)).getChildAt(0);
+      ConsistencyLayoutChecks.captureHardware(test,screen,content,dir,name+"-"+width+"-"+font);
+    }finally{if(activity!=null){final NanoBananaActivity screen=activity;TagDetailChecks.ui(test,screen::finish);}fixtureStore=null;}
+  }
+  private static void captureViewer(Instrumentation test,NanoBananaStore store,PhotoRepository.Photo photo,int width,float font) throws Exception {
+    MainActivity activity=(MainActivity)test.startActivitySync(new Intent(test.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    try {
+      GalleryScreenChecks.finishInitialIndex(test,activity);GalleryScreenChecks.portraitFixture(test,activity,width,font);
+      TagDetailChecks.ui(test,()->{
+        RankingResultChecks.set(activity,"photos",new java.util.ArrayList<>(java.util.List.of(photo)));
+        RankingResultChecks.set(activity,"burstMembers",null);
+        try{Method m=MainActivity.class.getDeclaredMethod("showPhoto",int.class);m.setAccessible(true);m.invoke(activity,0);}catch(Exception e){throw new RuntimeException(e);}
+      });
+      long until=android.os.SystemClock.uptimeMillis()+10000;boolean[] ready={false};
+      while(!ready[0]&&android.os.SystemClock.uptimeMillis()<until){TagDetailChecks.ui(test,()->ready[0]=RankingResultChecks.get(activity,"activePreview")!=null);Thread.sleep(40);}
+      TagDetailChecks.require(ready[0],"synthetic photo viewer loaded");
+      File dir=new File(test.getTargetContext().getCacheDir(),"consistency-checks");dir.mkdirs();
+      View content=((ViewGroup)activity.findViewById(android.R.id.content)).getChildAt(0);
+      ConsistencyLayoutChecks.captureHardware(test,activity,content,dir,"nano-viewer-"+width+"-"+font);
+      TagDetailChecks.ui(test,()->NanoBananaUi.show(activity,photo,store));test.waitForIdleSync();Thread.sleep(350);
+      java.io.File target=new File(dir,"nano-menu-"+width+"-"+font+".png");
+      android.graphics.Bitmap screenshot=test.getUiAutomation().takeScreenshot();
+      try(java.io.FileOutputStream out=new java.io.FileOutputStream(target)){screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}finally{screenshot.recycle();}
+      TagDetailChecks.ui(test,()->activity.onBackPressed());
+    }finally{TagDetailChecks.ui(test,activity::finish);}
+  }
+  private static void verifyTargets(View v,int min) {
+    if(v instanceof Button&&v.getVisibility()==View.VISIBLE)TagDetailChecks.require(v.getHeight()>=min,"48dp target");
+    if(v instanceof EditText)TagDetailChecks.require(!v.isSaveEnabled(),"credential state saving disabled");
+    if(v instanceof ViewGroup){ViewGroup g=(ViewGroup)v;for(int i=0;i<g.getChildCount();i++)verifyTargets(g.getChildAt(i),min);}
+  }
+}
