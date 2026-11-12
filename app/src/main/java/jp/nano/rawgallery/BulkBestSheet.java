@@ -96,7 +96,7 @@ final class BulkBestSheet extends BottomSheetDialog {
     setConfirmLabel(false);
     FrameLayout confirmFrame = new FrameLayout(c);
     confirmFrame.addView(confirm, new FrameLayout.LayoutParams(-1, -2));
-    progress = new com.google.android.material.progressindicator.CircularProgressIndicator(c);
+    progress = new com.google.android.material.progressindicator.CircularProgressIndicator(c);progress.setIndeterminate(true);
     FrameLayout.LayoutParams progressParams =
         new FrameLayout.LayoutParams(dp(18), dp(18), Gravity.START | Gravity.CENTER_VERTICAL);
     progressParams.leftMargin = dp(16);
@@ -123,16 +123,10 @@ final class BulkBestSheet extends BottomSheetDialog {
     setContentView(scroll);
     setCanceledOnTouchOutside(true);
     Window window = getWindow();
-    DiagnosticWindow.install(window);
+    DiagnosticWindow.install(window);SheetDiagnostics.install(this);
   }
 
-  @Override public void show() {
-    super.show();
-    Window window = getWindow();
-    if (window == null) return;
-    View sheet = window.findViewById(com.google.android.material.R.id.design_bottom_sheet);
-    if (sheet != null) BottomSheetBehavior.from(sheet).setState(BottomSheetBehavior.STATE_EXPANDED);
-  }
+  @Override public void show() { super.show();MaterialUi.sheet(this); }
 
   private void addThumbnails(LinearLayout content, List<Integer> ordinals,
       BiConsumer<Integer, ImageView> thumbnail, int sheetWidth) {

@@ -224,12 +224,10 @@ SDKを使う検証では`ANDROID_HOME=/opt/homebrew/share/android-commandlinetoo
 ## その他メニューの初期表示
 
 - 目的: 操作先が途中で移動せず、その他メニューを安定して操作できる。
-- 要件・契約: 共通Sheetは初回描画から下部中央、幅 `min(表示幅−24dp,560dp)`、角丸20dp、背景 `#19191b`、可視高さ48%以下で表示する。初回と再表示で中央や横から位置を修正するフレームを見せない。
-- 既存の項目・ラベル・戻る・外側タップ・読み上げと、入力SheetのADJUST_RESIZEを維持する。原本・順位・タグ・選択を変更しない。
-- 参照: [Issue #13](https://github.com/ktnyt/Loupe/issues/13)、[当時のHTMLプロトタイプ](design/loupe-issue13-menu.html)。HTMLの項目や装飾はダミーであり適用範囲外。
-- 実装: Dialogの内容をcreateで構築してから、show前に位置・幅・背景を設定する。高さ上限を超えた初回描画はpre-drawで止め、上限を適用したレイアウトで描画する。呼び出し元のonShowを置き換えない。
-- 検証: Android 16の実機、0.17.9でアルバム・写真一覧の初回/再表示を録画確認。合成の短いリスト・長いリスト・入力シートで初描画から300msの各37〜38フレームの位置・寸法が一致し、水平中央・高さ上限と項目コールバックを確認。1.3倍文字の長いリストを含む8条件で検証。タグ入力のIME表示とキャンセルを確認。
-- 未確認: TalkBack、端末設定による文字サイズ変更、画面回転・分割表示、他端末。初回描画ログとGPU送出ログは物理ディスプレイの表示時刻ではない。
+- 要件・契約: メニューはMaterial 3のBottomSheetDialogを使い、実際のシート本体を利用可能幅（最大640dp）へ収める。項目一覧の可視高さ48%上限とスクロール、既存の項目・ラベル・戻る・外側タップ・読み上げを保つ。入力はMaterialAlertDialogとTextInputLayoutで表示し、IMEで操作を隠さない。原本・順位・タグ・選択を変更しない。
+- 実装: MaterialUi.sheetでnative surfaceの最大幅と展開状態を指定する。背景・角丸・scrim・入退場アニメーションはMaterial 3に従う。共通SheetDiagnosticsがscrimを除くsurfaceの初回描画/フレーム提出を記録し、呼出元のonShowを置き換えない。
+- 参照: [Material 3 UI契約](material3-ui.md)。Issue #13の旧24dp外余白・20dp角丸・固定背景・無アニメーションとdecorの完全静止検査は、Material 3移行で置き換える。過去の確認結果はissue #13とGit履歴に残す。
+- 検証: 現在の版の実機記録はissue #92を参照。旧0.17.9での固定Dialog検証をMaterial 3版の動作保証として扱わない。
 
 ### 操作の手がかり（Issue #14）
 

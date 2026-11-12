@@ -90,6 +90,16 @@ final class SortNamingChecks {
     ConsistencyLayoutChecks.captureHardware(t,a,(View)field(a,"root"),dir,"sort-test-"+a.getResources().getConfiguration().screenWidthDp+"-"+a.getResources().getConfiguration().fontScale+"-"+name);
   }
   private static void back(Instrumentation t) { t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK); t.waitForIdleSync(); }
+  private static View visibleResult(View view) {
+    android.graphics.Rect visible=new android.graphics.Rect();
+    if(view.isClickable()&&view.isShown()&&view.getTag() instanceof String
+        &&((String)view.getTag()).startsWith("result-")&&view.getGlobalVisibleRect(visible)
+        &&visible.width()>=view.getWidth()-1&&visible.height()>=view.getHeight()-1)return view;
+    if(view instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)view).getChildCount();i++){
+      View found=visibleResult(((android.view.ViewGroup)view).getChildAt(i));if(found!=null)return found;
+    }
+    return null;
+  }
   static String run(Instrumentation t)throws Exception{return run(t,0,1f);}
   static String run(Instrumentation t,int width,float font)throws Exception{
     MainActivity a=(MainActivity)t.startActivitySync(new Intent(t.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
@@ -152,8 +162,8 @@ final class SortNamingChecks {
       main(t,()->{try{set(a,"photos",many);Map<String,Integer> members=(Map<String,Integer>)field(a,"rankingMembers");members.clear();members.putAll(manyMembers);set(a,"ranking",scrollRanking);set(a,"rankingResultState",null);invoke(a,"showRanking");}catch(Exception e){throw new RuntimeException(e);}});
       waitFor(t,()->results(a.getWindow().getDecorView()).getChildCount()>0);
       main(t,()->results(a.getWindow().getDecorView()).setSelectionFromTop(1,-GalleryUi.dp(a,100)));
-      waitFor(t,()->results(a.getWindow().getDecorView()).getFirstVisiblePosition()>0);
-      int[] pos={0,0};main(t,()->{ListView list=results(a.getWindow().getDecorView());pos[0]=list.getFirstVisiblePosition();pos[1]=list.getChildAt(0).getTop();View target=list.findViewWithTag("result-"+scrollRanking.ids.get(30));if(target==null)throw new AssertionError("photo target missing");target.performClick();});
+      waitFor(t,()->{ListView list=results(a.getWindow().getDecorView());return list.getFirstVisiblePosition()>0||list.getChildAt(0)!=null&&list.getChildAt(0).getTop()<list.getPaddingTop();});
+      int[] pos={0,0};main(t,()->{ListView list=results(a.getWindow().getDecorView());pos[0]=list.getFirstVisiblePosition();pos[1]=list.getChildAt(0).getTop();View target=visibleResult(list);if(target==null)throw new AssertionError("visible photo target missing");target.performClick();});
       waitFor(t,()->results(a.getWindow().getDecorView())==null);back(t);
       waitFor(t,()->{ListView list=results(a.getWindow().getDecorView());return list!=null&&list.getChildCount()>0&&list.getFirstVisiblePosition()==pos[0]&&list.getChildAt(0).getTop()==pos[1];});
       main(t,()->{try{set(a,"photos",photos);Map<String,Integer> members=(Map<String,Integer>)field(a,"rankingMembers");members.clear();members.putAll(originalMembers);set(a,"ranking",originalRanking);set(a,"rankingResultState",null);invoke(a,"showRanking");}catch(Exception e){throw new RuntimeException(e);}});

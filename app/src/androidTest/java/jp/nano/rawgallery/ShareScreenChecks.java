@@ -20,7 +20,7 @@ final class ShareScreenChecks {
     ConsistencyLayoutChecks.captureHardware(t,dialog.getWindow(),dialog.getWindow().getDecorView(),dir,name);
   }
   static void outside(Instrumentation t,Dialog dialog)throws Exception{
-    View decor=dialog.getWindow().getDecorView();ConsistencyLayoutChecks.frame(t,decor);int[] point=new int[2];TagDetailChecks.ui(t,()->{decor.getLocationOnScreen(point);point[0]+=decor.getWidth()/2;point[1]-=GalleryUi.dp(decor.getContext(),24);TagDetailChecks.require(point[1]>GalleryUi.dp(decor.getContext(),48),"outside tap lies below system status area");});
+    View decor=dialog.getWindow().findViewById(com.google.android.material.R.id.design_bottom_sheet);ConsistencyLayoutChecks.frame(t,decor);int[] point=new int[2];TagDetailChecks.ui(t,()->{decor.getLocationOnScreen(point);point[0]+=decor.getWidth()/2;point[1]-=GalleryUi.dp(decor.getContext(),24);TagDetailChecks.require(point[1]>GalleryUi.dp(decor.getContext(),48),"outside tap lies below system status area");});
     long now=android.os.SystemClock.uptimeMillis();MotionEvent down=MotionEvent.obtain(now,now,MotionEvent.ACTION_DOWN,point[0],point[1],0),up=MotionEvent.obtain(now,now+40,MotionEvent.ACTION_UP,point[0],point[1],0);try{t.sendPointerSync(down);t.sendPointerSync(up);}finally{down.recycle();up.recycle();}t.waitForIdleSync();
   }
   static View modal(Instrumentation t,MainActivity a)throws Exception{
@@ -42,7 +42,7 @@ final class ShareScreenChecks {
         View root=modal(t,a);ConsistencyLayoutChecks.frame(t,root);
         ShareUi.Confirmation active=confirmationDialog(RankingResultChecks.get(a,"shareDialog"));
         TagDetailChecks.require(active.isShowing(),"confirmation shown");shot(t,active,dir,prefix+"-confirm-"+(partial?"partial":"only"));
-        TagDetailChecks.ui(t,()->{TagDetailChecks.inspect(root);TagDetailChecks.require(root==active.getWindow().getDecorView() && root.getWidth()==GalleryUi.dp(a,a.getResources().getConfiguration().screenWidthDp),"confirmation owns focused full-width window");});
+        TagDetailChecks.ui(t,()->{TagDetailChecks.inspect(root);TagDetailChecks.require(root==active.getWindow().getDecorView() && root.findViewById(com.google.android.material.R.id.design_bottom_sheet).getWidth()==GalleryUi.dp(a,Math.min(640,a.getResources().getConfiguration().screenWidthDp)),"confirmation owns focus and native surface follows available width");});
         TagDetailChecks.ui(t,()->{TagDetailChecks.require((TagDetailChecks.button(root,"順位が未決定の連写を除いて共有")!=null)==partial,"partial share visibility");TagDetailChecks.button(root,"キャンセル").performClick();TagDetailChecks.require(((Set<?>)RankingResultChecks.get(a,"selectedPhotos")).equals(expected),"confirmation cancel retains selection");});t.waitForIdleSync();
         TagDetailChecks.ui(t,()->RankingResultChecks.call(a,"shareSelection"));View backRoot=modal(t,a);t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);t.waitForIdleSync();
         TagDetailChecks.ui(t,()->TagDetailChecks.require(!confirmationDialog(RankingResultChecks.get(a,"shareDialog")).isShowing()&&((Set<?>)RankingResultChecks.get(a,"selectedPhotos")).equals(expected),"confirmation Back retains selection"));
@@ -79,7 +79,7 @@ final class ShareScreenChecks {
       ShareUi.Menu[] menu={null};
       TagDetailChecks.ui(t,()->{menu[0]=new ShareUi.Menu(a,photos,targets,2,Set.of(photos.get(0).uri.toString()),(value,destination)->{chosen.incrementAndGet();raw[0]=value;target[0]=destination;});dialogs.add(menu[0]);for(ImageView image:menu[0].previews)image.setImageBitmap(bitmap);menu[0].show();});
       shot(t,menu[0],dir,prefix+"-menu-jpeg");
-      TagDetailChecks.ui(t,()->{TagDetailChecks.require(menu[0].getWindow().getDecorView().getWidth()==GalleryUi.dp(a,width),"share sheet follows available width");TagDetailChecks.inspect(menu[0].content);metrics.append(geometry(menu[0].content,"menu"));});
+      TagDetailChecks.ui(t,()->{TagDetailChecks.require(menu[0].getWindow().findViewById(com.google.android.material.R.id.design_bottom_sheet).getWidth()==GalleryUi.dp(a,width),"share sheet follows available width");TagDetailChecks.inspect(menu[0].content);metrics.append(geometry(menu[0].content,"menu"));});
       TagDetailChecks.ui(t,()->TagDetailChecks.require(!a.hasWindowFocus()&&menu[0].getWindow().getDecorView().hasWindowFocus(),"dialog owns focus while activity remains visible"));
       ConsistencyLayoutChecks.captureHardware(t,a,(View)RankingResultChecks.get(a,"root"),dir,prefix+"-dialog-underlay");
       TagDetailChecks.ui(t,()->{menu[0].original.performClick();TagDetailChecks.require(chosen.get()==0&&menu[0].raw,"format alone does not prepare");});shot(t,menu[0],dir,prefix+"-menu-original");TagDetailChecks.ui(t,()->TagDetailChecks.inspect(menu[0].content));

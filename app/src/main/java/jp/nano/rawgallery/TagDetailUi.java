@@ -14,8 +14,11 @@ final class TagDetailUi {
   }
   private static void add(Context c,LinearLayout box,TextView text){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=GalleryUi.dp(c,4);box.addView(text,p);}
   private static TextView text(Context c,String value,int size,int line,int color){TextView t=new TextView(c);t.setText(value);t.setTextSize(size);t.setTextColor(color);t.setIncludeFontPadding(false);t.setLineHeight(Math.round(t.getTextSize()*line/size));return t;}
-  static Button state(Context c,String title,boolean selected,Runnable action){
-    Button b=GalleryUi.button(c,"✓  "+title,action);MaterialUi.choice(b,selected);android.text.SpannableString value=new android.text.SpannableString("✓  "+title);value.setSpan(new android.text.style.ForegroundColorSpan(selected?0xff111111:android.graphics.Color.TRANSPARENT),0,1,0);b.setText(value);b.setContentDescription(title);b.setSelected(selected);b.setStateDescription(selected?"選択中":"未選択");b.setIncludeFontPadding(false);b.setPadding(GalleryUi.dp(c,8),GalleryUi.dp(c,4),GalleryUi.dp(c,8),GalleryUi.dp(c,4));return b;
+  static Button state(Context c,String title,boolean selected,Runnable action) {
+    Button button=GalleryUi.chip(c,title,selected,action);
+    button.setIncludeFontPadding(false);
+    button.setPadding(GalleryUi.dp(c,8),GalleryUi.dp(c,4),GalleryUi.dp(c,8),GalleryUi.dp(c,4));
+    return button;
   }
   static Button action(Context c,String title,boolean primary,Runnable action){
     Button b=new ActionButton(c);if(primary)MaterialUi.filled(b);else MaterialUi.outlined(b);b.setText(title);b.setContentDescription(title);b.setAllCaps(false);b.setMinWidth(0);b.setMinimumWidth(0);b.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));b.setOnClickListener(v->{GalleryUi.feedback(v);try(DiagnosticLog.Scope ignored=DiagnosticLog.span("action.button")){action.run();}});b.setTextSize(primary?15:14);b.setIncludeFontPadding(false);b.setMinHeight(GalleryUi.dp(c,primary?52:48));b.setMinimumHeight(GalleryUi.dp(c,primary?52:48));b.setPadding(GalleryUi.dp(c,16),GalleryUi.dp(c,6),GalleryUi.dp(c,16),GalleryUi.dp(c,6));

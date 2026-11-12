@@ -171,6 +171,7 @@ final class GalleryUi {
     @Override public AlertDialog create() {
       AlertDialog dialog = super.create();
       DiagnosticWindow.install(dialog.getWindow());
+      SheetDiagnostics.install(dialog);
       return dialog;
     }
     @Override public AlertDialog show() {

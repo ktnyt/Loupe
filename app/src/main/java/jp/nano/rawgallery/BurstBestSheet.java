@@ -32,7 +32,7 @@ final class BurstBestSheet extends BottomSheetDialog {
     TextView summary=text(canAdd||tiedWinner?members:"この連写の結果を1位と残り同率2位で保存します。",14);
     summary.setPadding(dp(8),dp(4),dp(8),0);content.addView(summary);
     error=text("保存できませんでした。順位は前のままです",14);error.setTextColor(0xffff8a7a);error.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);error.setVisibility(View.GONE);RankingUi.add(content,error,8);
-    progress=new com.google.android.material.progressindicator.CircularProgressIndicator(c);progress.setVisibility(View.GONE);LinearLayout.LayoutParams pp=new LinearLayout.LayoutParams(dp(20),dp(20));pp.gravity=Gravity.CENTER;content.addView(progress,pp);
+    progress=new com.google.android.material.progressindicator.CircularProgressIndicator(c);progress.setIndeterminate(true);progress.setVisibility(View.GONE);LinearLayout.LayoutParams pp=new LinearLayout.LayoutParams(dp(20),dp(20));pp.gravity=Gravity.CENTER;content.addView(progress,pp);
     add=action("同率1位に追加","いまの1位はそのまま",false,()->start(true));
     if(canAdd)RankingUi.add(content,add,16);
     soleName=canAdd||tiedWinner?"この写真だけを1位にする":"1位にする";
@@ -41,7 +41,7 @@ final class BurstBestSheet extends BottomSheetDialog {
     cancel=action("キャンセル","",false,this::dismiss);MaterialUi.filled(cancel);cancel.setMinHeight(dp(48));cancel.setMinimumHeight(dp(48));RankingUi.add(content,cancel,8);
     ScrollView scroll=new ScrollView(c);scroll.addView(content);setContentView(scroll);
     setCanceledOnTouchOutside(true);
-    Window w=getWindow();DiagnosticWindow.install(w);
+    Window w=getWindow();DiagnosticWindow.install(w);SheetDiagnostics.install(this);
   }
   private int dp(int n){return GalleryUi.dp(getContext(),n);}
   private TextView text(String s,int size){TextView t=new TextView(getContext());t.setText(s);t.setTextSize(size);t.setTextColor(GalleryUi.TEXT);t.setIncludeFontPadding(false);return t;}
@@ -69,7 +69,8 @@ final class BurstBestSheet extends BottomSheetDialog {
     }
     b.setText(styled);b.setContentDescription(name+(sub.isEmpty()?"":"。"+sub));
   }
-  @Override public void show(){super.show();Window window=getWindow();if(window==null)return;View sheet=window.findViewById(com.google.android.material.R.id.design_bottom_sheet);if(sheet!=null)BottomSheetBehavior.from(sheet).setState(BottomSheetBehavior.STATE_EXPANDED);}
+  @Override public void show(){super.show();MaterialUi.sheet(this);}
+
   private void start(boolean together){
     if(busy)return;busy=true;Button chosen=together?add:sole;
     setCancelable(false);setCanceledOnTouchOutside(false);add.setEnabled(false);sole.setEnabled(false);cancel.setEnabled(false);error.setVisibility(View.GONE);progress.setVisibility(View.VISIBLE);chosen.setText("保存しています…");chosen.setContentDescription("保存しています");

@@ -39,3 +39,5 @@ Before merge, check photo/album navigation, selection and best-only sharing, for
 Sources: [Material Components 1.13.0 getting started](https://github.com/material-components/material-components-android/blob/1.13.0/docs/getting-started.md), [1.13.0 release](https://github.com/material-components/material-components-android/releases/tag/1.13.0).
 
 The RAW adjustment sliders remain specialized `AppCompatSeekBar` subclasses: they implement photo pinch forwarding, cancel-time value restoration, double-tap reset, keyboard Delete reset or custom tick rendering. These gesture contracts are retained rather than replaced by a standard `Slider` without equivalent behavior. Nonmodal look-preview overlays also keep their bounded height and undimmed photograph; their actions and switches use Material components.
+
+Modal window decor includes the full-screen scrim. Measure `design_bottom_sheet` as the actual surface, bounded by the configured available width and 640dp; alerts use their native centered geometry. Material entrance/exit motion is expected. Preserve stable placement after entrance rather than requiring every animation frame to match the retired custom Dialog.

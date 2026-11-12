@@ -13,7 +13,7 @@ import org.json.JSONObject;
  * source.
  */
 public final class ArchiveInstrumentation extends Instrumentation {
-  private boolean material3Test;
+  private boolean material3Test, materialGalleryTest;
   private int tagWidth;
   private boolean sortDimensionsSpecified;
   private float tagFont;
@@ -75,6 +75,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   public void onCreate(Bundle args) {
     super.onCreate(args);
     material3Test=args!=null&&"material3".equals(args.getString("mode"));
+    materialGalleryTest=args!=null&&"gallery-material3".equals(args.getString("mode"));
     shareHistoryTest = args != null && "share-history".equals(args.getString("mode"));
     shareHistoryScreenTest = args != null && "share-history-screen".equals(args.getString("mode"));
     shareHistoryHandoffTest = args != null && "share-history-handoff".equals(args.getString("mode"));
@@ -107,7 +108,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     lookTimingJpeg=args!=null&&"viewer-look-timing-jpeg".equals(args.getString("mode"));
     shareToggleTest=args!=null&&"share-toggle".equals(args.getString("mode"));
     galleryTalkBack=args!=null&&"gallery-screen-talkback".equals(args.getString("mode"));
-    galleryScreenTest=shareCapacityTest||shareToggleTest||shareScreenTest||viewerScreenTest||galleryTalkBack||(args!=null&&"gallery-screen".equals(args.getString("mode")));
+    galleryScreenTest=materialGalleryTest||shareCapacityTest||shareToggleTest||shareScreenTest||viewerScreenTest||galleryTalkBack||(args!=null&&"gallery-screen".equals(args.getString("mode")));
     resultTalkBack=args!=null&&"ranking-result-talkback".equals(args.getString("mode"));
     resultTest=resultTalkBack||(args!=null&&"ranking-result".equals(args.getString("mode")));
     tagDetailTest=args!=null&&"tag-detail".equals(args.getString("mode"));
@@ -200,7 +201,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if(viewerLookUiTest){results.putString("stream",ViewerLookUiChecks.run(this,tagWidth,tagFont));finish(-1,results);return;}
       if(viewerLookTest){results.putString("stream",ViewerLookChecks.run(this,tagWidth,tagFont));finish(-1,results);return;}
       if(viewerScreenTest){results.putString("stream",ViewerScreenChecks.run(this,tagWidth));finish(-1,results);return;}
-      if(galleryScreenTest){results.putString("stream",GalleryScreenChecks.run(this,tagWidth,galleryTalkBack,shareToggleTest));finish(-1,results);return;}
+      if(galleryScreenTest){results.putString("stream",GalleryScreenChecks.run(this,tagWidth,galleryTalkBack,shareToggleTest,materialGalleryTest));finish(-1,results);return;}
       if(resultTest){results.putString("stream",RankingResultChecks.run(this,tagWidth,resultTalkBack));finish(-1,results);return;}
       if(tagDetailTest){results.putString("stream",TagDetailChecks.run(this,tagWidth));finish(-1,results);return;}
       if(syncControlsTest){results.putString("stream",SyncControlChecks.run(this));finish(-1,results);return;}

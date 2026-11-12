@@ -17,11 +17,12 @@ final class MoreMenuUi {
     Dialog dialog=create(activity,title,items,action);dialog.show();return dialog;
   }
   static Dialog create(Activity activity,String title,String[] items,DialogInterface.OnClickListener action){
-    Dialog dialog=new BottomSheetDialog(activity);
+    BottomSheetDialog dialog=new BottomSheetDialog(activity);
     dialog.setCanceledOnTouchOutside(true);
     Content content=new Content(activity,title,items,index->{dialog.dismiss();action.onClick(dialog,index);},dialog::dismiss);
     dialog.setContentView(content);dialog.create();
-    DiagnosticWindow.install(dialog.getWindow());
+    DiagnosticWindow.install(dialog.getWindow());SheetDiagnostics.install(dialog);
+    MaterialUi.sheet(dialog);
     dialog.getWindow().addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
     WindowManager.LayoutParams attributes=dialog.getWindow().getAttributes();attributes.dimAmount=.64f;dialog.getWindow().setAttributes(attributes);
     dialog.getWindow().getDecorView().setAccessibilityPaneTitle(title);

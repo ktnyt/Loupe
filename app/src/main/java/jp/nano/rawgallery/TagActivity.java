@@ -208,7 +208,7 @@ public final class TagActivity extends DiagnosticActivity {
         .setPositiveButton("作成", null).setNegativeButton("キャンセル", null).create();
     dialog.setOnShowListener(ignored -> { dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
       String name = input.getText().toString().trim();
-      if (name.isEmpty() || name.length() > 80) { inputError.show(StatusView.Symbol.FAILED,"1〜80文字で入力してください");input.setStateDescription("入力エラー。1〜80文字で入力してください");inputLayout.setError("1〜80文字で入力してください");return; }
+      if (name.isEmpty() || name.length() > 80) { inputError.clear();inputLayout.setError("1〜80文字で入力してください");return; }
       inputError.clear();input.setStateDescription(null);inputLayout.setError(null);
       dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
       int token = generation;
@@ -401,9 +401,9 @@ public final class TagActivity extends DiagnosticActivity {
     if(tagOverview){
       tagActions=new LinearLayout(this);tagActions.setOrientation(LinearLayout.VERTICAL);
       int attached=0,excluded=0,assigned=0;for(int i=0;i<photos.size();i++){if(value(i)==TagJudgments.Value.EXCLUDED)excluded++;else if(value(i)==TagJudgments.Value.ASSIGNED){attached++;assigned++;}else if(isAutomatic(i))attached++;}
-      LinearLayout states=new LinearLayout(this);states.setBackground(GalleryUi.shape(this,0xff1c1c1f,24));
-      attachedState=TagDetailUi.state(this,"タグ付き "+attached,filter!=Filter.REMOVED,()->{selectedPhotos.clear();renderPhotos(Filter.ATTACHED,0,0);});states.addView(attachedState,new LinearLayout.LayoutParams(0,-2,1));
-      states.addView(TagDetailUi.state(this,"該当しない "+excluded,filter==Filter.REMOVED,()->{selectedPhotos.clear();renderPhotos(Filter.REMOVED,0,0);}),new LinearLayout.LayoutParams(0,-2,1));((LinearLayout.LayoutParams)states.getChildAt(1).getLayoutParams()).leftMargin=GalleryUi.dp(this,4);tagActions.addView(states);tagActions.addView(confidenceControl());
+      LinearLayout states=new LinearLayout(this);states.setBaselineAligned(false);states.setBackground(GalleryUi.shape(this,0xff1c1c1f,24));
+      attachedState=TagDetailUi.state(this,"タグ付き "+attached,filter!=Filter.REMOVED,()->{selectedPhotos.clear();renderPhotos(Filter.ATTACHED,0,0);});states.addView(attachedState,new LinearLayout.LayoutParams(0,-1,1));
+      states.addView(TagDetailUi.state(this,"該当しない "+excluded,filter==Filter.REMOVED,()->{selectedPhotos.clear();renderPhotos(Filter.REMOVED,0,0);}),new LinearLayout.LayoutParams(0,-1,1));((LinearLayout.LayoutParams)states.getChildAt(1).getLayoutParams()).leftMargin=GalleryUi.dp(this,4);tagActions.addView(states);tagActions.addView(confidenceControl());
       Button related=TagDetailUi.action(this,"写真を解析",true,this::startAutomatic);related.setEnabled(!photos.isEmpty()&&(!autoRunning||analysisFinished&&!autoPending));analysisAction=related;tagActions.addView(related);
       Button manual=TagDetailUi.action(this,"基準を教える",false,this::startTeaching);manual.setEnabled(!photos.isEmpty());tagActions.addView(manual);
       tagActions.addView(TagDetailUi.dock(this,TagDetailUi.dockButton(this,"写真を追加",()->showPhotos(Filter.ALL)),TagDetailUi.dockButton(this,"一括訂正",()->{selecting=true;selectedPhotos.clear();refreshSelection();}),TagDetailUi.dockButton(this,"その他",this::tagMenu)));TagDetailUi.gaps(tagActions);root.addView(tagActions);

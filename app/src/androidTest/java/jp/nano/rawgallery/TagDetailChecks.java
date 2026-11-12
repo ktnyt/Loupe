@@ -82,7 +82,15 @@ final class TagDetailChecks {
       isolatedSave(t,file);
       ui(t,()->{a.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);set(a,"tag",new TagStore.Tag("detail-fixture","空"));List<PhotoRepository.Photo> photos=(List<PhotoRepository.Photo>)get(a,"photos");List<String> ids=(List<String>)get(a,"photoIds");photos.clear();ids.clear();TagJudgments judgments=new TagJudgments();for(int i=0;i<40;i++){photos.add(new PhotoRepository.Photo(Uri.fromFile(file),"合成"+i+".jpg","",file.length(),1792298040L,1792298040000L));ids.add("fixture-"+i);if(i<6)judgments=judgments.record("op-"+i,"detail-fixture","fixture-"+i,0,TagJudgments.Value.ASSIGNED);else if(i<8)judgments=judgments.record("op-"+i,"detail-fixture","fixture-"+i,0,TagJudgments.Value.EXCLUDED);}set(a,"judgments",judgments);set(a,"automatic",new HashMap<>());call(a,"renderTag");});idle(t,a);
       File dir=new File(a.getCacheDir(),"consistency-checks");dir.mkdirs();ConsistencyLayoutChecks.captureHardware(t,a,(View)get(a,"root"),dir,"tag-detail-"+width+"-"+a.getResources().getConfiguration().fontScale+"-normal");
-      ui(t,()->inspect((View)get(a,"root")));
+      ui(t,()->{
+        inspect((View)get(a,"root"));
+        ViewGroup states=(ViewGroup)((View)get(a,"attachedState")).getParent();
+        for(int i=0;i<states.getChildCount();i++){
+          View state=states.getChildAt(i);
+          require(state.getTop()>=0&&state.getBottom()<=states.getHeight(),"tag filter shape fits its parent");
+          require(state.getHeight()==states.getChildAt(0).getHeight(),"tag filter target heights agree");
+        }
+      });
       viewerCapture(t,a,dir,"assigned");
       ui(t,()->{View root=(View)get(a,"root");require(((List<?>)get(a,"browsePhotos")).size()==6,"attached filter");require(button(root,"写真を解析").isEnabled(),"automatic entry");button(root,"該当しない 2").performClick();});idle(t,a);
       viewerCapture(t,a,dir,"excluded");

@@ -232,7 +232,7 @@ t.waitForIdleSync();
 if(shortWindow)await(t,5000,()->{View root=((ViewGroup)a.findViewById(android.R.id.content)).getChildAt(0);return root.getHeight()-root.getPaddingTop()-root.getPaddingBottom()==GalleryUi.dp(a,640);},"exact 640dp content height");
 }
   static String run(Instrumentation t,int width,float font)throws Exception{
-    require(width==400,"reference capture requires width 400dp");
+    require(width>=320&&GalleryUi.dp(t.getTargetContext(),width)<=t.getTargetContext().getResources().getDisplayMetrics().widthPixels,"capture width must fit the actual display");
 boolean shortWindow=font>1.1f;
 String prefix=shortWindow?"short":"normal";
 MainActivity a=(MainActivity)t.startActivitySync(new Intent(t.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));

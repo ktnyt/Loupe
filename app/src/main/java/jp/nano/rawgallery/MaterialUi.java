@@ -55,6 +55,18 @@ final class MaterialUi {
   static void filled(Button button) { style(button, true, false); }
   static void outlined(Button button) { style(button, false, true); }
 
+  /** Keep native modal surfaces within the activity's available configuration width. */
+  static void sheet(com.google.android.material.bottomsheet.BottomSheetDialog dialog) {
+    Context context=dialog.getContext();
+    float density=context.getResources().getDisplayMetrics().density;
+    int configured=context.getResources().getConfiguration().screenWidthDp;
+    int width=context.getResources().getDisplayMetrics().widthPixels;
+    if(configured>0)width=Math.min(width,Math.round(configured*density));
+    dialog.getBehavior().setMaxWidth(Math.min(width,Math.round(640*density)));
+    dialog.getBehavior().setSkipCollapsed(true);
+    dialog.getBehavior().setState(com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED);
+  }
+
   /** Selection is committed by the caller, so a failed action never toggles the visual state. */
   static void choice(Button button, boolean selected) {
     MaterialButton material = (MaterialButton) button;
