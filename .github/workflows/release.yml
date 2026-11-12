@@ -22,7 +22,8 @@ jobs:
           distribution: temurin
           java-version: '17'
       - name: Install pinned Android build tools
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.0.12077973' 'cmake;3.22.1'
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.0.12077973' 'cmake;3.22.1'
       - name: Host regression checks
         run: |
           set -euo pipefail
@@ -53,7 +54,8 @@ jobs:
           distribution: temurin
           java-version: '17'
       - name: Install pinned Android build tools
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.0.12077973' 'cmake;3.22.1'
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.0.12077973' 'cmake;3.22.1'
       - name: Restore existing signing identity
         env:
           KEYSTORE_B64: ${{ secrets.LOUPE_SIGNING_KEYSTORE_B64 }}
