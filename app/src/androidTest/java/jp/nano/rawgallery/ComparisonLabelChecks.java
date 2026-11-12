@@ -71,7 +71,7 @@ final class ComparisonLabelChecks {
       // Standalone identical-size visual fixtures, no original photos or OS bars in captures.
       for(int width:new int[]{320,400})for(float scale:new float[]{1f,1.3f})for(boolean horizontal:new boolean[]{false,true})for(boolean dark:new boolean[]{false,true}){
         LinearLayout[] pair={null};
-        main(t,()->{Configuration cfg=new Configuration(a.getResources().getConfiguration());cfg.fontScale=scale;Context c=a.createConfigurationContext(cfg);
+        main(t,()->{Configuration cfg=new Configuration(a.getResources().getConfiguration());cfg.fontScale=scale;Context c=new android.view.ContextThemeWrapper(a.createConfigurationContext(cfg),R.style.AppTheme);
           LinearLayout outer=new LinearLayout(a);outer.setOrientation(1);outer.setPadding(0,GalleryUi.dp(a,64),0,0);outer.setBackgroundColor(GalleryUi.BG);
           pair[0]=new LinearLayout(c);pair[0].setOrientation(horizontal?0:1);
           for(String letter:new String[]{"A","B"}){ComparisonPhotoView v=new ComparisonPhotoView(c,letter,"fixture.jpg");Bitmap b=Bitmap.createBitmap(600,400,Bitmap.Config.ARGB_8888);b.eraseColor(dark?0xff0f0f10:Color.WHITE);bitmaps.add(b);v.setImageBitmap(b);v.loaded();pair[0].addView(v,new LinearLayout.LayoutParams(horizontal?0:-1,horizontal?-1:0,1));}

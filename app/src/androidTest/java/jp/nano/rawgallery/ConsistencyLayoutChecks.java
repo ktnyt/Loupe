@@ -7,6 +7,7 @@ import android.util.DisplayMetrics;
 import android.view.*;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.*;
+import com.google.android.material.materialswitch.MaterialSwitch;
 import java.io.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -21,7 +22,7 @@ final class ConsistencyLayoutChecks {
       ((java.util.concurrent.ExecutorService)AlbumTagEntryChecks.field(a,"worker")).submit(()->{}).get();t.waitForIdleSync();
       t.runOnMainSync(()->a.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON));
       for(int width:new int[]{320,400})for(float scale:new float[]{1f,1.3f}){
-        final Context[] context={null};t.runOnMainSync(()->{Configuration config=new Configuration(original);config.fontScale=scale;config.screenWidthDp=width;context[0]=a.createConfigurationContext(config);});Context c=context[0];
+        final Context[] context={null};t.runOnMainSync(()->{Configuration config=new Configuration(original);config.fontScale=scale;config.screenWidthDp=width;context[0]=new android.view.ContextThemeWrapper(a.createConfigurationContext(config),R.style.AppTheme);});Context c=context[0];
         {final LinearLayout[] albumScreen={null};
           t.runOnMainSync(()->{LinearLayout screen=column(c);screen.setBackgroundColor(GalleryUi.BG);LinearLayout header=column(c);LinearLayout cards=GalleryCarouselUi.section(c,header,"最近の写真",true);((TextView)header.findViewWithTag("carousel-date")).setText("10月18日");
             for(int n=0;n<3;n++)GalleryCarouselUi.photo(c,cards,"10月18日 13:13",true,actions::incrementAndGet).setImageDrawable(new android.graphics.drawable.ColorDrawable(n==0?0xff718774:0xffa4b7c3));
@@ -50,13 +51,13 @@ final class ConsistencyLayoutChecks {
           if(state.equals("fail")){int before=actions.get();t.runOnMainSync(()->clickAll(root[0]));if(actions.get()!=before+2)throw new AssertionError("retry/create callbacks");}
         }
         for(String state:new String[]{"normal","denied","failed","long-info"}){
-          final LinearLayout[] root={null};final ScrollView[] scroll={null};final Switch[] toggle={null};
+          final LinearLayout[] root={null};final ScrollView[] scroll={null};final MaterialSwitch[] toggle={null};
           t.runOnMainSync(()->{LinearLayout screen=column(c);screen.setBackgroundColor(GalleryUi.BG);LinearLayout content=column(c);scroll[0]=new ScrollView(c);scroll[0].addView(content);screen.addView(scroll[0],new LinearLayout.LayoutParams(-1,0,1));
             StatusView collection=new StatusView(c),permission=new StatusView(c),progress=new StatusView(c);collection.show(state.equals("failed")?StatusView.Symbol.FAILED:StatusView.Symbol.COMPLETE,"写真情報の読み取り");permission.show(state.equals("denied")?StatusView.Symbol.PERMISSION:StatusView.Symbol.COMPLETE,"自動管理の権限");progress.show(StatusView.Symbol.COMPLETE,"","バックグラウンド同期、完了",null,"");TextView clock=new TextView(c);clock.setText("10:42");TextView info=new TextView(c);info.setText(state.equals("long-info")?"JPEG 1180枚\nRAW 245枚\n合計1425枚。元のファイルの集計です。":"1,180枚");
-            Switch sync=new Switch(c),cleanup=new Switch(c);sync.setChecked(true);cleanup.setChecked(true);toggle[0]=sync;
+            MaterialSwitch sync=new MaterialSwitch(c),cleanup=new MaterialSwitch(c);sync.setChecked(true);cleanup.setChecked(true);toggle[0]=sync;
             TextView retention=SyncSettingsUi.populate(c,content,screen,info,collection,permission,progress,clock,sync,cleanup,state.equals("denied")?button(c,actions):null,button(c,actions),button(c,actions),button(c,actions),button(c,actions));retention.setText("撮影日から30日");StatusView verified=new StatusView(c);verified.show(StatusView.Symbol.COMPLETE,"前回選んだ写真の確認が完了");SyncSettingsUi.verification(c,content,verified,button(c,actions));mount(a,screen,c,width);root[0]=screen;
           });t.waitForIdleSync();Thread.sleep(100);check(t,root[0]);
-          t.runOnMainSync(()->{Switch sw=toggle[0];sw.performClick();if(sw.isChecked())throw new AssertionError("switch click did not toggle");AccessibilityNodeInfo node=sw.createAccessibilityNodeInfo();if(!node.isClickable()||node.isChecked())throw new AssertionError("switch AX contract");sw.setChecked(true);});
+          t.runOnMainSync(()->{MaterialSwitch sw=toggle[0];sw.performClick();if(sw.isChecked())throw new AssertionError("switch click did not toggle");AccessibilityNodeInfo node=sw.createAccessibilityNodeInfo();if(!node.isClickable()||node.isChecked())throw new AssertionError("switch AX contract");sw.setChecked(true);});
           capture(t,root[0],dir,"sync-"+width+"-"+scale+"-"+state);captures++;
           t.runOnMainSync(()->scroll[0].fullScroll(View.FOCUS_DOWN));t.waitForIdleSync();Thread.sleep(80);capture(t,root[0],dir,"sync-"+width+"-"+scale+"-"+state+"-bottom");captures++;
         }

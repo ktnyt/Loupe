@@ -1,10 +1,33 @@
 <resources>
-    <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
+    <!-- A fixed dark scheme keeps surrounding chrome stable while judging photographs. -->
+    <style name="AppTheme" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">#ADC6FF</item>
+        <item name="colorOnPrimary">#002E69</item>
+        <item name="colorPrimaryContainer">#16458E</item>
+        <item name="colorOnPrimaryContainer">#D8E2FF</item>
+        <item name="colorSecondary">#BEC6DC</item>
+        <item name="colorOnSecondary">#283141</item>
+        <item name="colorSecondaryContainer">#3E4759</item>
+        <item name="colorOnSecondaryContainer">#DAE2F9</item>
+        <item name="colorSurface">#111318</item>
+        <item name="colorOnSurface">#E2E2E9</item>
+        <item name="colorSurfaceVariant">#44474F</item>
+        <item name="colorOnSurfaceVariant">#C4C6D0</item>
+        <item name="colorSurfaceContainer">#1D2026</item>
+        <item name="colorSurfaceContainerHigh">#282A31</item>
+        <item name="colorSurfaceContainerHighest">#33353C</item>
+        <item name="colorOutline">#8E9099</item>
+        <item name="colorOutlineVariant">#44474F</item>
+        <item name="colorError">#FFB4AB</item>
+        <item name="colorOnError">#690005</item>
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#4C8DFF</item>
+        <item name="android:colorAccent">#ADC6FF</item>
+        <item name="android:colorBackground">#111318</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:navigationBarColor">#0F0F10</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:navigationBarColor">#111318</item>
+        <item name="android:statusBarColor">#111318</item>
         <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:windowBackground">#0F0F10</item>
+        <item name="android:windowBackground">#111318</item>
     </style>
 </resources>

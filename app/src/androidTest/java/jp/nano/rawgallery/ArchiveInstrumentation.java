@@ -13,6 +13,7 @@ import org.json.JSONObject;
  * source.
  */
 public final class ArchiveInstrumentation extends Instrumentation {
+  private boolean material3Test;
   private int tagWidth;
   private boolean sortDimensionsSpecified;
   private float tagFont;
@@ -73,6 +74,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
 
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    material3Test=args!=null&&"material3".equals(args.getString("mode"));
     shareHistoryTest = args != null && "share-history".equals(args.getString("mode"));
     shareHistoryScreenTest = args != null && "share-history-screen".equals(args.getString("mode"));
     shareHistoryHandoffTest = args != null && "share-history-handoff".equals(args.getString("mode"));
@@ -215,6 +217,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if (actionLabelsTest) { results.putString("stream", ActionLabelChecks.run(this)); finish(-1, results); return; }
       if (comparisonLabelsTest) { results.putString("stream", ComparisonLabelChecks.run(this)); finish(-1, results); return; }
       if (albumTagsTest) { results.putString("stream", AlbumTagEntryChecks.run(this)); finish(-1, results); return; }
+      if (material3Test) { results.putString("stream", Material3Checks.run(this)); finish(-1, results); return; }
       if (tabsTest) { results.putString("stream", LibraryTabsChecks.run(this)); finish(-1, results); return; }
       if (bulkWinnerTest) { results.putString("stream", BurstBulkWinnerChecks.run(this,tagWidth,tagFont)); finish(-1, results); return; }
       if (coWinnerTest) { results.putString("stream", BurstCoWinnerChecks.run(this,tagWidth,tagFont)); finish(-1, results); return; }

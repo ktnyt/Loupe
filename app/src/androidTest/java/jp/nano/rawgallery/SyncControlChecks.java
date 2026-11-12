@@ -3,7 +3,7 @@ package jp.nano.rawgallery;
 import android.app.Instrumentation;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.widget.Switch;
+import com.google.android.material.materialswitch.MaterialSwitch;
 import java.util.concurrent.ExecutorService;
 
 /** Never enables synchronization or deletion; exercises the pre-confirmation boundary. */
@@ -27,7 +27,7 @@ final class SyncControlChecks {
         ((ExecutorService)AlbumTagEntryChecks.field(activity,"worker")).submit(()->{}).get();test.waitForIdleSync();
         android.widget.TextView retention=(android.widget.TextView)AlbumTagEntryChecks.field(activity,"retention");
         test.runOnMainSync(()->{if(!("撮影日から"+prefs.getInt("retentionDays",7)+"日").contentEquals(retention.getText()))throw new AssertionError("retention display differs from processing policy");});
-        Switch toggle=(Switch)AlbumTagEntryChecks.field(activity,field);
+        MaterialSwitch toggle=(MaterialSwitch)AlbumTagEntryChecks.field(activity,field);
         test.runOnMainSync(()->{
           // Native drag ends by calling setChecked, bypassing OnClickListener.
           toggle.setChecked(true);

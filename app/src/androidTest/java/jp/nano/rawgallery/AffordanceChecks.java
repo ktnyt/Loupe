@@ -38,7 +38,7 @@ final class AffordanceChecks {
       for(int width:new int[]{320,400})for(float scale:new float[]{1f,1.3f})for(boolean longer:new boolean[]{false,true}) {
         LinearLayout[] content={null};View[] dock={null};int[] clicks={0};
         main(t,()->{
-          Configuration cfg=new Configuration(a.getResources().getConfiguration());cfg.fontScale=scale;Context c=a.createConfigurationContext(cfg);
+          Configuration cfg=new Configuration(a.getResources().getConfiguration());cfg.fontScale=scale;Context c=new android.view.ContextThemeWrapper(a.createConfigurationContext(cfg),R.style.AppTheme);
           LinearLayout root=new LinearLayout(a);root.setOrientation(1);root.setBackgroundColor(GalleryUi.BG);root.setPadding(0,GalleryUi.dp(a,64),0,0);
           content[0]=new LinearLayout(c);content[0].setOrientation(1);content[0].setPadding(GalleryUi.dp(c,8),0,GalleryUi.dp(c,8),0);
           for(int i=0;i<3;i++) {

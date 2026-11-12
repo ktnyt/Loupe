@@ -1,5 +1,7 @@
 package jp.nano.rawgallery;
 
+import androidx.appcompat.app.AlertDialog;
+
 import android.Manifest;
 import android.app.*;
 import android.content.*;
@@ -966,7 +968,8 @@ public final class MainActivity extends DiagnosticActivity {
     message.setMinHeight(dp(48));
     message.setGravity(Gravity.CENTER_VERTICAL);
     message.setPadding(dp(14), dp(8), dp(14), dp(8));
-    message.setBackground(BulkBestSheet.background(this, 0xf01c1c1f, 24, 0xff3a3a3f));
+    android.graphics.drawable.GradientDrawable noticeShape=GalleryUi.shape(this,0xf01c1c1f,24);
+    noticeShape.setStroke(dp(1),0xff3a3a3f);message.setBackground(noticeShape);
     message.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
     FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
     params.setMargins(dp(16), 0, dp(16), dp(8));
@@ -1721,9 +1724,9 @@ public final class MainActivity extends DiagnosticActivity {
                           LinearLayout recovery=new LinearLayout(this);recovery.setTag("viewer-original-recovery");recovery.setOrientation(LinearLayout.VERTICAL);recovery.setGravity(Gravity.CENTER);
                           loadStatus.asPhotoFailure();loadStatus.show(StatusView.Symbol.FAILED,failure);recovery.addView(loadStatus,new LinearLayout.LayoutParams(dp(32),dp(32)));
                           Button retry=button("再試行",()->showPhoto(position,fromRanking));retry.setContentDescription(failure+"。再試行");retry.setTextSize(14);retry.setPadding(dp(18),0,dp(18),0);
-                          android.graphics.drawable.GradientDrawable outline=GalleryUi.shape(this,Color.TRANSPARENT,24);outline.setStroke(dp(1),0xff3a3a3f);retry.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x33c7d8e4),outline,GalleryUi.shape(this,Color.WHITE,24)));
+                          MaterialUi.outlined(retry);
                           ActionIcon retryIcon=new ActionIcon("再試行",getResources().getDisplayMetrics().density*20/26);retryIcon.setBounds(0,0,dp(20),dp(20));retry.setCompoundDrawables(retryIcon,null,null,null);retry.setCompoundDrawablePadding(dp(6));recovery.addView(retry,new LinearLayout.LayoutParams(-2,dp(48)));
-                          android.graphics.drawable.GradientDrawable retryBackground=GalleryUi.shape(this,Color.BLACK,24);retryBackground.setStroke(dp(1),0xff3a3a3f);retry.setBackground(retryBackground);
+                          MaterialUi.outlined(retry);
                           LinearLayout.LayoutParams retryPosition=(LinearLayout.LayoutParams)retry.getLayoutParams();retryPosition.topMargin=dp(12);retry.setLayoutParams(retryPosition);
                           photoFrame.addView(recovery,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER));if(look!=null&&look.controller.applied()!=null)recovery.setVisibility(View.GONE);
                         }else loadStatus.show(StatusView.Symbol.FAILED,"",failure,()->showPhoto(position,fromRanking),"再試行");

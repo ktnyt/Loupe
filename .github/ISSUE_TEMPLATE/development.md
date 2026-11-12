@@ -59,7 +59,7 @@ assignees: ""
 
 <!-- 開発フローは docs/development-workflow.md。対象外は理由を書く。 -->
 - 先行リファクタリングissue・依存する契約:
-- UI変更の有無・Claude依頼先・基準HTML:
+- UI変更の有無・対象画面と状態・Material 3部品・capture条件・アクセシビリティ:
 - 変更前／変更後の実機操作・条件・計測イベント・単位:
 - UI・UX独立評価／Cold Review／Security Reviewの対象:
 - 作業ID・未計測項目:

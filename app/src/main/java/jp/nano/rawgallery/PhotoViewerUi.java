@@ -1,5 +1,7 @@
 package jp.nano.rawgallery;
 
+import com.google.android.material.button.MaterialButton;
+
 import android.content.Context;
 import android.graphics.*;
 import android.view.*;
@@ -125,7 +127,7 @@ final class PhotoViewerUi extends ViewGroup {
   }
 
   static Button button(Context c, String icon, String label, String spoken, Runnable action) {
-    Button b = new DockButton(c);
+    Button b = new DockButton(c);MaterialUi.text(b);
     b.setAllCaps(false);
     b.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));
     b.setTextColor(new android.content.res.ColorStateList(new int[][]{new int[]{android.R.attr.state_enabled},new int[]{}},new int[]{GalleryUi.TEXT,0xff626b72}));
@@ -136,14 +138,13 @@ final class PhotoViewerUi extends ViewGroup {
     b.setLineHeight(Math.round(b.getTextSize()*16/12));
     b.setMinHeight(GalleryUi.dp(c,64)); b.setMinimumHeight(GalleryUi.dp(c,64));
     b.setPadding(GalleryUi.dp(c,2),GalleryUi.dp(c,4),GalleryUi.dp(c,2),GalleryUi.dp(c,4));
-    b.setBackgroundColor(Color.TRANSPARENT);
     icon(b,icon);
     b.setCompoundDrawablePadding(GalleryUi.dp(c,4));
     return b;
   }
 
   /** Each column centers its own icon and label, including wrapped labels. */
-  static final class DockButton extends Button {
+  static final class DockButton extends MaterialButton {
     private android.graphics.drawable.Drawable glyph;
     private boolean saveFailed, running;
     String[] widthLabels;
@@ -273,7 +274,7 @@ final class PhotoViewerUi extends ViewGroup {
       public int getSize(Paint p,CharSequence s,int start,int end,Paint.FontMetricsInt fm){return dp(28);}
       public void draw(Canvas canvas,CharSequence s,int start,int end,float x,int top,int y,int bottom,Paint p){int saved=canvas.save();canvas.translate(x,y+(p.ascent()+p.descent())/2-dp(10));canvas.scale(dp(20)/24f,dp(20)/24f);Paint stroke=new Paint(3);stroke.setColor(0xff111111);stroke.setStyle(Paint.Style.STROKE);stroke.setStrokeWidth(1.8f);stroke.setStrokeCap(Paint.Cap.ROUND);stroke.setStrokeJoin(Paint.Join.ROUND);Path tick=new Path();tick.moveTo(4,12);tick.lineTo(9,17);tick.lineTo(20,6);canvas.drawPath(tick,stroke);canvas.restoreToCount(saved);}
     },0,1,android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);choose.setText(label);
-    choose.setTextColor(0xff111111);choose.setBackground(GalleryUi.shape(c,GalleryUi.TEXT,26));
+    MaterialUi.filled(choose);
     choose.setMinHeight(dp(52));choose.setMinimumHeight(dp(52));choose.setPadding(dp(16),dp(6),dp(16),dp(6));
     LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1,-2);
     p.setMargins(dp(16),0,dp(16),dp(8)); footer.addView(choose,0,p);

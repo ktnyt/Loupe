@@ -6,7 +6,7 @@ import android.view.ViewTreeObserver;
 import android.widget.ImageView;
 
 /** Registers before traversal: registering inside onDraw can miss that frame. */
-final class DiagnosticImageView extends ImageView {
+final class DiagnosticImageView extends androidx.appcompat.widget.AppCompatImageView {
   private long request, drawn;
   private boolean pending;
   private ViewTreeObserver.OnPreDrawListener listener;

@@ -12,11 +12,14 @@ android {
         externalNativeBuild { cmake { arguments '-DANDROID_STL=c++_static', '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON' } }
         minSdk 30
         targetSdk 35
-        versionCode 162
-        versionName '0.29.6'
+        versionCode 163
+        versionName '0.30.0'
         testInstrumentationRunner 'jp.nano.rawgallery.ArchiveInstrumentation'
     }
     sourceSets { main { assets.srcDir rootProject.file('third-party/libraw'); assets.srcDir rootProject.file('third-party/libjpeg-turbo') } }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }
-dependencies { implementation 'com.google.mediapipe:tasks-vision:0.10.35' }
+dependencies {
+    implementation 'com.google.mediapipe:tasks-vision:0.10.35'
+    implementation 'com.google.android.material:material:1.13.0'
+}

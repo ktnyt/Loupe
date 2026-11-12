@@ -19,7 +19,7 @@ python3 scripts/issue-progress.py report --issue 42 --run 20261025-issue42-featu
 | --- | --- |
 | design | issue確認後の目的・契約整理の直前／契約確定直後 |
 | baseline-test | 変更前の実機操作直前／結果確認直後 |
-| claude-design | ClaudeへのUI依頼直前／完了とHTML・設計書更新確認直後（待ち時間を含む） |
+| ui-design | UI設計と現行契約の準備直前／画面・状態・アクセシビリティ要件の記録直後 |
 | ui-review | 独立したUI・UX評価の依頼直前／結果受領直後 |
 | cold-review | 独立レビュー依頼直前／結果受領直後 |
 | security-review | セキュリティレビュー開始直前／結果確認直後 |
@@ -51,9 +51,9 @@ python3 scripts/issue-progress.py report --issue 42 --run 20261025-issue42-featu
 
 ## 開発フローとの対応
 
-[開発フロー](development-workflow.md)に従い各工程を記録する。UI変更なしならclaude-designとui-review、実機不要ならbaseline-test・install・device-testを理由付きskipにする。design、implementation、cold-review、security-review、deliveryは通常開発で必要。additionalは追加修正を行うたびに記録する。先行リファクタリングはそのissueと作業IDで記録する。
+[開発フロー](development-workflow.md)に従い各工程を記録する。UI変更なしならui-designとui-review、実機不要ならbaseline-test・install・device-testを理由付きskipにする。design、implementation、cold-review、security-review、deliveryは通常開発で必要。additionalは追加修正を行うたびに記録する。先行リファクタリングはそのissueと作業IDで記録する。
 
-レビューのcompleteは結果受領を意味し、合格を意味しない。本文に合否・指摘・後続issueを残す。修正はadditional、再評価は同じレビュー工程の新しいattemptとする。Claudeを監視しながら作業を続けている間はclaude-designを開いたままにし、作業自体を中断するときだけcancelにする。
+レビューのcompleteは結果受領を意味し、合格を意味しない。本文に合否・指摘・後続issueを残す。修正はadditional、再評価は同じレビュー工程の新しいattemptとする。UI設計・capture・レビューの作業が継続中は工程を開いたままにし、作業自体を中断するときだけcancelにする。
 
 PR作成前にdelivery以外の工程をreportで確認し、その後deliveryを開始する。マージ直前のreportではdeliveryの未終了1件だけが予定内で、他の未終了は解消する。マージ・自動クローズを確認後、閉じたissueへdeliveryの結果を追記し、最終reportで未終了がないことを確認する。reportの成功はレビュー合格・必要工程充足・マージ可否を保証しない。
 

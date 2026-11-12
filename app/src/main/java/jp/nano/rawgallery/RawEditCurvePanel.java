@@ -9,6 +9,9 @@ import android.text.InputType;
 import android.view.*;
 import android.view.accessibility.*;
 import android.widget.*;
+import androidx.appcompat.widget.AppCompatEditText;
+import com.google.android.material.button.MaterialButton;
+import com.google.android.material.color.MaterialColors;
 import java.util.Locale;
 
 /** Photo-overlay point editor. Touch gestures, keys, numeric fields and AX share the same model. */
@@ -32,7 +35,7 @@ final class RawEditCurvePanel extends FrameLayout {
   RawEditCurvePanel(Context context,RawEditState state,int bank,Listener listener){
     super(context);this.state=state;this.bank=Math.max(0,Math.min(4,bank));this.listener=listener;
     setMotionEventSplittingEnabled(false);setClipChildren(false);setClipToPadding(false);setClickable(true);setBackground(background(0xb8101012,16,0x14ededea));
-    for(int i=0;i<5;i++){final int k=i;banks[i]=new Button(context){private final Paint dot=new Paint(3);protected void onDraw(Canvas c){super.onDraw(c);if(!RawEditCurvePanel.this.state.curve(k).identity()){dot.setColor(k==RawEditCurvePanel.this.bank?0xff111111:COLORS[k]);c.drawCircle(getWidth()-dp(8.5f),dp(10.5f),dp(2.5f),dot);}}};Button b=banks[i];b.setText(NAMES[i]);b.setAllCaps(false);b.setTextSize(13);b.setPadding(0,0,0,0);b.setMinWidth(0);b.setMinimumWidth(0);b.setMinHeight(0);b.setMinimumHeight(0);b.setIncludeFontPadding(false);b.setOnClickListener(v->{finishFields();this.bank=k;selected=-1;refresh();});addView(b);}
+    for(int i=0;i<5;i++){final int k=i;banks[i]=new MaterialButton(context){private final Paint dot=new Paint(3);protected void onDraw(Canvas c){super.onDraw(c);if(!RawEditCurvePanel.this.state.curve(k).identity()){dot.setColor(k==RawEditCurvePanel.this.bank?MaterialColors.getColor(this,com.google.android.material.R.attr.colorOnPrimary):COLORS[k]);c.drawCircle(getWidth()-dp(8.5f),dp(10.5f),dp(2.5f),dot);}}};Button b=banks[i];MaterialUi.text(b);b.setText(NAMES[i]);b.setAllCaps(false);b.setTextSize(13);b.setPadding(0,0,0,0);b.setMinWidth(0);b.setMinimumWidth(0);b.setMinHeight(0);b.setMinimumHeight(0);b.setIncludeFontPadding(false);b.setOnClickListener(v->{finishFields();this.bank=k;selected=-1;refresh();});addView(b);}
     reset=new Glyph(3,"選択中のカーブをリセット",()->edit(RawEditCurvePanel.this.state.withCurve(this.bank,new RawEditCurve())));addView(reset);
     graph=new Graph(context);addView(graph);
     inLabel=label("入力",12);outLabel=label("出力",12);rollLabel=label("ロールオフ",12);addView(inLabel);addView(outLabel);addView(rollLabel);
@@ -49,20 +52,17 @@ final class RawEditCurvePanel extends FrameLayout {
       targetVisible=true;developmentTarget=targetButton("現像",false);lookTarget=targetButton("ルック",true);addView(developmentTarget);addView(lookTarget);
       lookTone=new RawEditLookPanel.Toggle(getContext(),"トーン","ルックのトーン、ルックにはロールオフなし",()->{finishFields();if(this.toneToggle!=null)this.toneToggle.accept(!this.toneEnabled);});lookTone.setTag("curve-look-tone");addView(lookTone);
     }
-    developmentTarget.setSelected(!lookMode);lookTarget.setSelected(lookMode);
-    developmentTarget.setTextColor(!lookMode?0xff111111:INK);lookTarget.setTextColor(lookMode?0xff111111:INK);
-    developmentTarget.setBackground(targetBackground(!lookMode,true));lookTarget.setBackground(targetBackground(lookMode,false));
+    MaterialUi.choice(developmentTarget,!lookMode);MaterialUi.choice(lookTarget,lookMode);
     developmentTarget.setContentDescription("現像のカーブを編集"+(!lookMode?"、選択中":""));lookTarget.setContentDescription("ルックのカーブを編集"+(lookMode?"、選択中":""));
-    rollLabel.setVisibility(lookMode?GONE:VISIBLE);roll.setVisibility(lookMode?GONE:VISIBLE);lookTone.setVisibility(lookMode?VISIBLE:GONE);lookTone.on=toneEnabled;lookTone.setStateDescription(toneEnabled?"オン":"オフ");
+    rollLabel.setVisibility(lookMode?GONE:VISIBLE);roll.setVisibility(lookMode?GONE:VISIBLE);lookTone.setVisibility(lookMode?VISIBLE:GONE);lookTone.setValue(toneEnabled);lookTone.setStateDescription(toneEnabled?"オン":"オフ");
     developmentTarget.setEnabled(isEnabled());lookTarget.setEnabled(isEnabled());lookTone.setEnabled(isEnabled());lookTone.invalidate();graph.invalidate();requestLayout();
   }
-  private Button targetButton(String title,boolean look){Button b=new Button(getContext());b.setText(title);b.setTag(look?"curve-target-look":"curve-target-development");b.setAllCaps(false);b.setTextSize(13);b.setLetterSpacing(0);b.setTextColor(INK);b.setIncludeFontPadding(false);b.setPadding(dp(8),0,dp(8),0);b.setMinWidth(dp(48));b.setMinimumWidth(dp(48));b.setMinHeight(dp(48));b.setMinimumHeight(dp(48));b.setAccessibilityDelegate(new View.AccessibilityDelegate(){public void onInitializeAccessibilityNodeInfo(View host,AccessibilityNodeInfo info){super.onInitializeAccessibilityNodeInfo(host,info);info.setClassName("android.widget.RadioButton");info.setCheckable(true);info.setChecked(host.isSelected());}});b.setOnClickListener(v->{finishFields();cancelGesture();if(selectTarget!=null)selectTarget.accept(look);});return b;}
-  private GradientDrawable targetBackground(boolean selected,boolean left){GradientDrawable d=background(selected?INK:Color.TRANSPARENT,0,selected?INK:0xff3a3a3f);float r=dp(24);d.setCornerRadii(left?new float[]{r,r,0,0,0,0,r,r}:new float[]{0,0,r,r,r,r,0,0});return d;}
+  private Button targetButton(String title,boolean look){Button b=MaterialUi.button(getContext());MaterialUi.outlined(b);b.setText(title);b.setTag(look?"curve-target-look":"curve-target-development");b.setTextSize(13);b.setLetterSpacing(0);b.setIncludeFontPadding(false);b.setPadding(dp(8),0,dp(8),0);b.setAccessibilityDelegate(new View.AccessibilityDelegate(){public void onInitializeAccessibilityNodeInfo(View host,AccessibilityNodeInfo info){super.onInitializeAccessibilityNodeInfo(host,info);info.setClassName("android.widget.RadioButton");info.setCheckable(true);info.setChecked(host.isSelected());}});b.setOnClickListener(v->{finishFields();cancelGesture();if(selectTarget!=null)selectTarget.accept(look);});return b;}
   private int dp(float value){return Math.round(value*getResources().getDisplayMetrics().density);}
   private GradientDrawable background(int color,int radius,int stroke){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));if(stroke!=0)d.setStroke(dp(1),stroke);return d;}
   private TextView label(String name,int size){TextView t=new TextView(getContext());t.setText(name);t.setTextSize(size);t.setTextColor(MUTED);t.setGravity(Gravity.CENTER_VERTICAL);t.setIncludeFontPadding(false);return t;}
   private EditText field(String name){
-    EditText f=new EditText(getContext());f.setSingleLine(true);f.setTextSize(14);f.setTextColor(INK);f.setHintTextColor(0xff77777b);f.setHint("—");f.setGravity(Gravity.CENTER);f.setPadding(0,0,0,0);f.setIncludeFontPadding(false);f.setBackground(background(0x38000000,8,0xff414146));f.setSelectAllOnFocus(true);f.setInputType(InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL);f.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);f.setContentDescription("選択中の点の"+name+"、0から100");
+    EditText f=new AppCompatEditText(getContext());f.setSingleLine(true);f.setTextSize(14);f.setTextColor(INK);f.setHintTextColor(0xff77777b);f.setHint("—");f.setGravity(Gravity.CENTER);f.setPadding(0,0,0,0);f.setIncludeFontPadding(false);f.setBackground(background(0x38000000,8,0xff414146));f.setSelectAllOnFocus(true);f.setInputType(InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL);f.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);f.setContentDescription("選択中の点の"+name+"、0から100");
     f.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int start,int count,int after){}public void onTextChanged(CharSequence s,int start,int before,int count){if(!updating){if(!inputDirty&&!outputDirty){draftCurve=RawEditCurvePanel.this.state.curve(RawEditCurvePanel.this.bank);draftBank=RawEditCurvePanel.this.bank;draftPoint=selected;}if(name.equals("入力"))inputDirty=true;else outputDirty=true;}}public void afterTextChanged(android.text.Editable e){}});
     f.setOnFocusChangeListener((v,focus)->{if(!focus&&!updating){commitFields();refresh();}});f.setOnEditorActionListener((v,action,event)->{commitFields();f.clearFocus();((android.view.inputmethod.InputMethodManager)getContext().getSystemService(Context.INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(f.getWindowToken(),0);return true;});return f;
   }
@@ -82,7 +82,7 @@ final class RawEditCurvePanel extends FrameLayout {
   }
   private void refresh(){
     if(graph==null)return;updating=true;RawEditCurve c=state.curve(bank);boolean has=selected>=0&&selected<c.size(),enabled=isEnabled();
-    if(styledBank!=bank){for(int i=0;i<5;i++){Button b=banks[i];b.setTextColor(i==bank?0xff111111:COLORS[i]);b.setBackground(background(i==bank?INK:Color.TRANSPARENT,8,0));b.setSelected(i==bank);b.setTypeface(Typeface.create(Typeface.DEFAULT,i==bank?600:500,false));}styledBank=bank;}
+    if(styledBank!=bank){for(int i=0;i<5;i++){Button b=banks[i];MaterialUi.choice(b,i==bank);b.setTypeface(Typeface.create(Typeface.DEFAULT,i==bank?600:500,false));}styledBank=bank;}
     int flags=0;for(int i=0;i<5;i++){Button b=banks[i];b.setEnabled(enabled);if(!state.curve(i).identity())flags|=1<<i;}
     if(flags!=editedFlags){for(int i=0;i<5;i++){banks[i].setContentDescription(NAMES[i]+"のカーブを編集"+((flags&(1<<i))!=0?"、編集済み":""));banks[i].invalidate();}editedFlags=flags;}
     input.setEnabled(enabled&&has);output.setEnabled(enabled&&has);setDisplay(input,has?number(c.x(selected)):"");setDisplay(output,has?number(c.y(selected)):"");
@@ -110,7 +110,7 @@ final class RawEditCurvePanel extends FrameLayout {
   private void measure(View v,int w,int h){v.measure(MeasureSpec.makeMeasureSpec(dp(w),MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(dp(h),MeasureSpec.EXACTLY));}
   private void place(View v,int x,int y){v.layout(x,y,x+v.getMeasuredWidth(),y+v.getMeasuredHeight());}
   protected void onLayout(boolean changed,int l,int t,int r,int b){int x=dp(8);for(Button v:banks){place(v,x,dp(8));x+=v.getMeasuredWidth();}place(reset,getWidth()-dp(56),dp(8));place(graph,dp(8),dp(60));int right=graph.getRight()+dp(8);place(inLabel,right,dp(60));place(input,right+inLabel.getMeasuredWidth()+dp(8),dp(60));place(outLabel,right,dp(108));place(output,right+outLabel.getMeasuredWidth()+dp(8),dp(108));place(undo,right,dp(156));place(redo,right+dp(52),dp(156));place(delete,right+dp(104),dp(156));if(targetVisible){place(developmentTarget,dp(8),dp(208));place(lookTarget,dp(8)+developmentTarget.getMeasuredWidth(),dp(208));if(lookMode)place(lookTone,getWidth()-dp(8)-lookTone.getMeasuredWidth(),dp(208));else{int left=dp(16)+developmentTarget.getMeasuredWidth()+lookTarget.getMeasuredWidth();place(rollLabel,left,dp(208));place(roll,left+rollLabel.getMeasuredWidth()+dp(8),dp(208));}}else{place(rollLabel,dp(12),dp(208));place(roll,dp(12)+rollLabel.getMeasuredWidth()+dp(10),dp(208));}}
-  private final class RollSlider extends SeekBar {
+  private final class RollSlider extends androidx.appcompat.widget.AppCompatSeekBar {
     private final Paint paint=new Paint(3);private final RawEditPad.DoubleTapReset taps;
     RollSlider(Context c){super(c);taps=new RawEditPad.DoubleTapReset(c);}
     protected void onDraw(Canvas c){float y=getHeight()/2f,x=getWidth()*getProgress()/(float)getMax();paint.setAlpha(isEnabled()?255:115);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(2));paint.setColor(isEnabled()?0xff3a3a3f:0x733a3a3f);c.drawLine(0,y,getWidth(),y,paint);paint.setColor(isEnabled()?0xff6b6b70:0x736b6b70);c.drawLine(getWidth()/2f,y-dp(6),getWidth()/2f,y+dp(6),paint);paint.setStyle(Paint.Style.FILL);paint.setColor(isEnabled()?INK:0x73ededea);c.drawCircle(x,y,dp(8),paint);if(isFocused()){paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(1));c.drawRoundRect(1,1,getWidth()-1,getHeight()-1,dp(4),dp(4),paint);}}

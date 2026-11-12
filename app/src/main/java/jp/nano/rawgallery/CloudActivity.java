@@ -45,7 +45,7 @@ public final class CloudActivity extends DiagnosticActivity {
     root.addView(status);
     LinearLayout row = new LinearLayout(this);
 
-    Button login = new Button(this);
+    Button login = MaterialUi.button(this);
     loginButton = login;
     login.setText("ログイン");
     login.setOnClickListener(
@@ -54,10 +54,10 @@ public final class CloudActivity extends DiagnosticActivity {
           web.loadUrl(ORIGIN + "/photos");
         });
     row.addView(login);
-    check = new Button(this);
+    check = MaterialUi.button(this);
     check.setText("接続を確認");
     check.setOnClickListener(v -> diagnose());
-    Button more = new Button(this);
+    Button more = MaterialUi.button(this);
     more.setText("⋯");
     more.setContentDescription("接続確認とその他の操作");
     more.setOnClickListener(
@@ -87,13 +87,13 @@ public final class CloudActivity extends DiagnosticActivity {
                 .setNegativeButton("閉じる", null)
                 .show());
     row.addView(more);
-    verify = new Button(this);
+    verify = MaterialUi.button(this);
     verify.setText("保存した写真をダウンロードして確認（読み取りのみ）");
     verify.setOnClickListener(v -> chooseVerification(false));
-    upload = new Button(this);
+    upload = MaterialUi.button(this);
     upload.setText("写真1枚を保存して内容を確認");
     upload.setOnClickListener(v -> chooseVerification(true));
-    Button sync = new Button(this);
+    Button sync = MaterialUi.button(this);
     sync.setText("自動同期・端末容量の設定");
     sync.setOnClickListener(
         v -> startActivity(new android.content.Intent(this, SyncActivity.class)));
@@ -140,7 +140,7 @@ public final class CloudActivity extends DiagnosticActivity {
     android.widget.FrameLayout browserSpace = new android.widget.FrameLayout(this);
     browserSpace.addView(web, new android.widget.FrameLayout.LayoutParams(-1, -1));
     root.addView(browserSpace, new LinearLayout.LayoutParams(-1, 0, 1));
-    Button logout = new Button(this);
+    Button logout = MaterialUi.button(this);
     logoutButton = logout;
     logout.setText("このアプリのログイン情報を消す");
     logout.setOnClickListener(

@@ -33,7 +33,7 @@ final class LibraryTabsChecks {
     return null;
   }
   private static LibraryTabs tabs(MainActivity a){return find(a.getWindow().getDecorView(),LibraryTabs.class);}
-  private static TextView tab(MainActivity a,boolean albums){return (TextView)((ViewGroup)tabs(a).getChildAt(1)).getChildAt(albums?1:0);}
+  private static View tab(MainActivity a,boolean albums){return ((ViewGroup)tabs(a).getChildAt(0)).getChildAt(albums?1:0);}
   private static void switchTo(Instrumentation t,MainActivity a,boolean albums)throws Exception{
     main(t,()->{if(tabs(a)==null)throw new AssertionError("Missing tabs");tab(a,albums).performClick();return true;});
     waitFor(t,"loaded "+albums,()->{
@@ -102,21 +102,22 @@ final class LibraryTabsChecks {
       for(float scale:new float[]{1f,1.3f})for(int width:new int[]{320,400})for(boolean selected:new boolean[]{false,true}){
         LibraryTabs[] bar={null};
         main(t,()->{
-          Configuration config=new Configuration(display.getResources().getConfiguration());config.fontScale=scale;Context c=display.createConfigurationContext(config);
+          Configuration config=new Configuration(display.getResources().getConfiguration());config.fontScale=scale;Context c=new android.view.ContextThemeWrapper(display.createConfigurationContext(config),R.style.AppTheme);
           bar[0]=new LibraryTabs(c,selected,true,x->{});LinearLayout root=new LinearLayout(display);root.setOrientation(1);root.setBackgroundColor(GalleryUi.BG);
           root.setPadding(0,GalleryUi.dp(display,64),0,0);
           root.addView(bar[0],new LinearLayout.LayoutParams(GalleryUi.dp(c,width),-2));display.setContentView(root);return true;
         });
         waitFor(t,"fixture layout",()->bar[0].getHeight()>0);
         main(t,()->{
-          ViewGroup row=(ViewGroup)bar[0].getChildAt(1);
-          AccessibilityNodeInfo.CollectionInfo collection=row.createAccessibilityNodeInfo().getCollectionInfo();
+          ViewGroup row=(ViewGroup)bar[0].getChildAt(0);
+          AccessibilityNodeInfo.CollectionInfo collection=bar[0].createAccessibilityNodeInfo().getCollectionInfo();
           if(collection==null||collection.getColumnCount()!=2||collection.getSelectionMode()!=AccessibilityNodeInfo.CollectionInfo.SELECTION_MODE_SINGLE)throw new AssertionError("tab collection");
           for(int i=0;i<2;i++){
-            TextView v=(TextView)row.getChildAt(i);AccessibilityNodeInfo info=v.createAccessibilityNodeInfo();
+            View v=row.getChildAt(i);AccessibilityNodeInfo info=v.createAccessibilityNodeInfo();
+            TextView label=find(v,TextView.class);if(label==null)throw new AssertionError("tab label missing");
             if(v.getHeight()<GalleryUi.dp(v.getContext(),48)||v.isSelected()!=(selected==(i==1))||!"android.app.ActionBar$Tab".contentEquals(info.getClassName())||info.getCollectionItemInfo()==null)throw new AssertionError("tab semantics/size");
-            for(int n=0;n<v.getLayout().getLineCount();n++)if(v.getLayout().getEllipsisCount(n)>0)throw new AssertionError("ellipsis");
-            if(v.getLayout().getHeight()+v.getPaddingTop()+v.getPaddingBottom()>v.getHeight())throw new AssertionError("clipped");
+            for(int n=0;n<label.getLayout().getLineCount();n++)if(label.getLayout().getEllipsisCount(n)>0)throw new AssertionError("ellipsis");
+            if(label.getLayout().getHeight()+label.getPaddingTop()+label.getPaddingBottom()>label.getHeight())throw new AssertionError("clipped");
           }
           if(row.getChildAt(0).getHeight()!=row.getChildAt(1).getHeight())throw new AssertionError("unequal height");return true;
         });

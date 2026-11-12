@@ -17,10 +17,13 @@ final class PhotoListUi {
     protected void onMeasure(int w,int h){int width=MeasureSpec.getSize(w),available=Math.max(0,width-getPaddingLeft()-getPaddingRight()),free=MeasureSpec.makeMeasureSpec(0,MeasureSpec.UNSPECIFIED);title.measure(free,free);count.measure(MeasureSpec.makeMeasureSpec(available,MeasureSpec.AT_MOST),free);wrapped=title.getMeasuredWidth()+dp(getContext(),12)+count.getMeasuredWidth()>available;title.measure(MeasureSpec.makeMeasureSpec(wrapped?available:Math.max(0,available-count.getMeasuredWidth()-dp(getContext(),12)),MeasureSpec.AT_MOST),free);int height=wrapped?title.getMeasuredHeight()+dp(getContext(),12)+count.getMeasuredHeight():Math.max(title.getMeasuredHeight(),count.getMeasuredHeight());setMeasuredDimension(width,getPaddingTop()+height+getPaddingBottom());}
     protected void onLayout(boolean changed,int l,int t,int r,int b){int top=getPaddingTop();title.layout(getPaddingLeft(),top,getPaddingLeft()+title.getMeasuredWidth(),top+title.getMeasuredHeight());int y=wrapped?top+title.getMeasuredHeight()+dp(getContext(),12):top+title.getBaseline()-count.getChildAt(0).getBaseline();int right=getWidth()-getPaddingRight();count.layout(right-count.getMeasuredWidth(),y,right,y+count.getMeasuredHeight());}
   }
-  static Button chip(Context c,String name,boolean selected,Runnable action){
-    Button button=GalleryUi.button(c,name,action);button.setTextSize(13);button.setIncludeFontPadding(false);button.setLineHeight(Math.round(button.getTextSize()*18/13));button.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));button.setMinWidth(0);button.setMinimumWidth(0);button.setMinHeight(dp(c,48));button.setMinimumHeight(dp(c,48));button.setPadding(dp(c,12),0,dp(c,16),0);button.setTextColor(selected?0xff111111:GalleryUi.TEXT);button.setSelected(selected);button.setContentDescription(name);button.setStateDescription(selected?"選択中":"未選択");
-    Drawable check=new Drawable(){final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);public void draw(Canvas canvas){if(!selected)return;int save=canvas.save();canvas.translate(getBounds().left,getBounds().top);canvas.scale(getBounds().width()/24f,getBounds().height()/24f);p.setColor(0xff111111);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(2.2f);p.setStrokeCap(Paint.Cap.ROUND);p.setStrokeJoin(Paint.Join.ROUND);Path path=new Path();path.moveTo(5,12.5f);path.lineTo(9.5f,17);path.lineTo(19,7.5f);canvas.drawPath(path,p);canvas.restoreToCount(save);}public void setAlpha(int alpha){}public void setColorFilter(ColorFilter f){}public int getOpacity(){return PixelFormat.TRANSLUCENT;}};check.setBounds(0,0,dp(c,16),dp(c,16));button.setCompoundDrawables(check,null,null,null);button.setCompoundDrawablePadding(dp(c,4));
-    GradientDrawable shape=GalleryUi.shape(c,selected?GalleryUi.TEXT:0,8);shape.setStroke(dp(c,1),selected?GalleryUi.TEXT:0xff3a3a3f);button.setBackground(new RippleDrawable(ColorStateList.valueOf(0x334c8dff),new InsetDrawable(shape,dp(c,4),dp(c,6),dp(c,4),dp(c,6)),null));button.setPadding(dp(c,16),0,dp(c,16),0);return button;
+  static Button chip(Context c,String name,boolean selected,Runnable action) {
+    Button button=GalleryUi.button(c,name,action);
+    button.setCompoundDrawables(null,null,null,null);
+    button.setPadding(dp(c,12),dp(c,4),dp(c,12),dp(c,4));
+    MaterialUi.choice(button,selected);
+    button.setStateDescription(selected?"選択中":"未選択");
+    return button;
   }
   static final class Filters extends ViewGroup {
     Filters(Context c){super(c);setPadding(dp(c,8),dp(c,4),dp(c,8),0);setBackgroundColor(GalleryUi.BG);}

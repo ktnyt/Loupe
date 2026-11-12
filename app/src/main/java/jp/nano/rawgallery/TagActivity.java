@@ -1,7 +1,7 @@
 package jp.nano.rawgallery;
 
 import android.app.Activity;
-import android.app.AlertDialog;
+import androidx.appcompat.app.AlertDialog;
 import android.graphics.Bitmap;
 import android.graphics.Insets;
 import android.os.Bundle;
@@ -192,21 +192,24 @@ public final class TagActivity extends DiagnosticActivity {
   }
 
   private void createTag() {
-    EditText input = new EditText(this);
+    com.google.android.material.textfield.TextInputLayout inputLayout=new com.google.android.material.textfield.TextInputLayout(this);
+    inputLayout.setHint("タグ名");inputLayout.setHelperText("1〜80文字");
+    EditText input = new com.google.android.material.textfield.TextInputEditText(inputLayout.getContext());
+    inputLayout.addView(input,new LinearLayout.LayoutParams(-1,-2));
     input.setSingleLine(true); input.setHint("タグ名"); input.setTextColor(GalleryUi.TEXT);
-    LinearLayout form=new LinearLayout(this);form.setOrientation(LinearLayout.VERTICAL);form.addView(input);form.addView(text("1〜80文字",12));
+    LinearLayout form=new LinearLayout(this);form.setOrientation(LinearLayout.VERTICAL);form.setPadding(GalleryUi.dp(this,24),0,GalleryUi.dp(this,24),0);form.addView(inputLayout,new LinearLayout.LayoutParams(-1,-2));
     StatusView inputError=new StatusView(this);form.addView(inputError);
     input.addTextChangedListener(new android.text.TextWatcher(){
       public void beforeTextChanged(CharSequence s,int start,int count,int after){}
       public void onTextChanged(CharSequence s,int start,int before,int count){}
-      public void afterTextChanged(android.text.Editable value){String name=value.toString().trim();if(!name.isEmpty()&&name.length()<=80){inputError.clear();input.setStateDescription(null);input.setBackground(GalleryUi.shape(TagActivity.this,GalleryUi.PANEL,12));}}
+      public void afterTextChanged(android.text.Editable value){String name=value.toString().trim();if(!name.isEmpty()&&name.length()<=80){inputError.clear();input.setStateDescription(null);inputLayout.setError(null);}}
     });
     AlertDialog dialog = new GalleryUi.Sheet(this).setTitle("新しいタグ").setView(form)
         .setPositiveButton("作成", null).setNegativeButton("キャンセル", null).create();
     dialog.setOnShowListener(ignored -> { dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
       String name = input.getText().toString().trim();
-      if (name.isEmpty() || name.length() > 80) { inputError.show(StatusView.Symbol.FAILED,"1〜80文字で入力してください");input.setStateDescription("入力エラー。1〜80文字で入力してください");android.graphics.drawable.GradientDrawable border=GalleryUi.shape(this,GalleryUi.PANEL,12);border.setStroke(GalleryUi.dp(this,2),0xffff8a7a);input.setBackground(border);return; }
-      inputError.clear();input.setStateDescription(null);input.setBackground(GalleryUi.shape(this,GalleryUi.PANEL,12));
+      if (name.isEmpty() || name.length() > 80) { inputError.show(StatusView.Symbol.FAILED,"1〜80文字で入力してください");input.setStateDescription("入力エラー。1〜80文字で入力してください");inputLayout.setError("1〜80文字で入力してください");return; }
+      inputError.clear();input.setStateDescription(null);inputLayout.setError(null);
       dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
       int token = generation;
       worker.execute(() -> {
@@ -515,7 +518,7 @@ public final class TagActivity extends DiagnosticActivity {
     LinearLayout actions=new LinearLayout(this);actions.setOrientation(getResources().getConfiguration().screenWidthDp<360||getResources().getConfiguration().fontScale>1.15?LinearLayout.VERTICAL:LinearLayout.HORIZONTAL);
     String[] titles={"含めない","保留","含める"};
     for(int i=0;i<3;i++){final int choice=i;Button b=TagDetailUi.action(this,titles[i],i==2,()->{if(choice==1){teachingSeen.add(teachingIndex);teachingCount++;nextTeaching();}else saveTeaching(choice==2?TagJudgments.Value.ASSIGNED:TagJudgments.Value.EXCLUDED,false);});b.setContentDescription(titles[i]+"。"+(i==1?"判断せず次へ。学習には使いません":"この写真を「"+tag.name+"」に"+titles[i]));b.setEnabled(teachingIndex>=0);teachingButtons.add(b);actions.addView(b,new LinearLayout.LayoutParams(actions.getOrientation()==LinearLayout.HORIZONTAL?0:-1,-2,actions.getOrientation()==LinearLayout.HORIZONTAL?1:0));}
-    root.addView(actions);Button undo=TagDetailUi.action(this,"取り消し",false,()->saveTeaching(null,true));undo.setBackgroundColor(android.graphics.Color.TRANSPARENT);undo.setTextSize(12);undo.setContentDescription("直前の判断を取り消す");undo.setEnabled(!teachingUndo.isEmpty());teachingButtons.add(undo);root.addView(undo);TagDetailUi.footer(root,controls);
+    root.addView(actions);Button undo=TagDetailUi.action(this,"取り消し",false,()->saveTeaching(null,true));MaterialUi.text(undo);undo.setTextSize(12);undo.setContentDescription("直前の判断を取り消す");undo.setEnabled(!teachingUndo.isEmpty());teachingButtons.add(undo);root.addView(undo);TagDetailUi.footer(root,controls);
     if(actions.getOrientation()==LinearLayout.VERTICAL)TagDetailUi.gaps(actions);else for(int i=1;i<actions.getChildCount();i++)((LinearLayout.LayoutParams)actions.getChildAt(i).getLayoutParams()).leftMargin=GalleryUi.dp(this,8);
   }
 
@@ -645,7 +648,7 @@ public final class TagActivity extends DiagnosticActivity {
         LinearLayout recovery=new LinearLayout(this);recovery.setTag("viewer-original-recovery");recovery.setOrientation(LinearLayout.VERTICAL);recovery.setGravity(Gravity.CENTER);
         loading.asPhotoFailure();loading.show(StatusView.Symbol.FAILED,"写真を読み込めませんでした");recovery.addView(loading,new LinearLayout.LayoutParams(GalleryUi.dp(this,32),GalleryUi.dp(this,32)));
         Button retry=button("再試行",()->showAssignedPhoto(position));retry.setContentDescription("写真を読み込めませんでした。再試行");retry.setTextSize(14);retry.setPadding(GalleryUi.dp(this,18),0,GalleryUi.dp(this,18),0);
-        android.graphics.drawable.GradientDrawable background=GalleryUi.shape(this,android.graphics.Color.BLACK,24);background.setStroke(GalleryUi.dp(this,1),0xff3a3a3f);retry.setBackground(background);
+        MaterialUi.outlined(retry);
         ActionIcon icon=new ActionIcon("再試行",getResources().getDisplayMetrics().density*20/26);icon.setBounds(0,0,GalleryUi.dp(this,20),GalleryUi.dp(this,20));retry.setCompoundDrawables(icon,null,null,null);retry.setCompoundDrawablePadding(GalleryUi.dp(this,6));
         LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(-2,GalleryUi.dp(this,48));rp.topMargin=GalleryUi.dp(this,12);recovery.addView(retry,rp);
         viewer.stage.addView(recovery,new android.widget.FrameLayout.LayoutParams(-2,-2,Gravity.CENTER));if(look!=null&&look.controller.applied()!=null)recovery.setVisibility(android.view.View.GONE);

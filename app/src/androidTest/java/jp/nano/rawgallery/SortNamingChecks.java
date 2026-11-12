@@ -175,7 +175,7 @@ final class SortNamingChecks {
       main(t,()->{
         for(float scale:new float[]{1f,1.3f})for(int buttonWidth:new int[]{280,320,360,412})for(String label:new String[]{"ソート","ソートを再開","ソート結果"}){
           Configuration config=new Configuration(a.getResources().getConfiguration());config.fontScale=scale;
-          Context context=a.createConfigurationContext(config);Button b=GalleryUi.neutralPrimary(GalleryUi.button(context,label,()->{}));
+          Context context=new android.view.ContextThemeWrapper(a.createConfigurationContext(config),R.style.AppTheme);Button b=GalleryUi.neutralPrimary(GalleryUi.button(context,label,()->{}));
           b.measure(View.MeasureSpec.makeMeasureSpec(GalleryUi.dp(context,buttonWidth-32),View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(0,View.MeasureSpec.UNSPECIFIED));
           b.layout(0,0,b.getMeasuredWidth(),b.getMeasuredHeight());
           if(b.getMeasuredHeight()<GalleryUi.dp(context,64)||b.getCompoundDrawables()[1]==null||!label.contentEquals(b.getContentDescription()))throw new AssertionError("button contract");
