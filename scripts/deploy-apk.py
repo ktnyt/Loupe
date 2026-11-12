@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Build recorded Loupe APKs and refuse updates that lose required features or main provenance."""
 import argparse
+from contextlib import contextmanager
+import fcntl
 import hashlib
 import json
 import os
@@ -12,11 +14,13 @@ import sys
 import tempfile
 from datetime import datetime, timezone
 import xml.etree.ElementTree as ET
+import zipfile
 
 PACKAGE = 'jp.nano.rawgallery'
 ANDROID = '{http://schemas.android.com/apk/res/android}'
 REQUIRED = {'library', 'video', 'nano-banana', 'camera-import'}
 SCHEMA = 1
+PROVENANCE = "assets/loupe-deployment.json"
 
 
 def run(parts, cwd=None, env=None):
@@ -118,7 +122,25 @@ def apk_info(apk, sdk):
         raise ValueError('APK signing certificate is unavailable')
     info['certificates'] = sorted(x.lower() for x in certificates)
     info['apk_sha256'] = sha256(apk)
+    info['provenance'] = read_provenance(apk)
     return info
+
+
+def read_provenance(apk):
+    with zipfile.ZipFile(apk) as archive:
+        entries = [x for x in archive.infolist() if x.filename == PROVENANCE]
+        if not entries:
+            return None
+        if len(entries) != 1 or entries[0].file_size > 4096:
+            raise ValueError('Duplicate or oversized APK provenance')
+        with archive.open(entries[0]) as source:
+            data = source.read(4097)
+        if len(data) > 4096:
+            raise ValueError('Oversized APK provenance')
+        value = json.loads(data)
+        if not isinstance(value, dict):
+            raise ValueError('Invalid APK provenance object')
+        return value
 
 
 def check_features(info, installed=None):
@@ -168,11 +190,18 @@ def prepare(args):
         try:
             env = environment()
             env['ANDROID_HOME'] = str(Path(args.sdk).resolve())
-            subprocess.run(['./gradlew', ':app:assembleDebug', '--console=plain'], cwd=checkout,
+            provenance = dict(schema=SCHEMA, source_commit=source, source_tree=tree, mode=args.mode, issue=args.issue)
+            assets = Path(temp) / 'assets'
+            save(assets / 'loupe-deployment.json', provenance)
+            init = Path(temp) / 'deployment.init.gradle'
+            init.write_text('allprojects { p -> p.plugins.withId("com.android.application") { p.android.sourceSets.main.assets.srcDir(' + json.dumps(str(assets)) + ') } }\n')
+            subprocess.run(['./gradlew', '-I', str(init), ':app:assembleDebug', '--console=plain'], cwd=checkout,
                            env=env, check=True)
             apk = checkout / 'app/build/outputs/apk/debug/app-debug.apk'
             info = apk_info(apk, args.sdk)
             check_features(info)
+            if info.get('provenance') != provenance:
+                raise ValueError('Signed APK does not contain the requested source provenance')
             output.mkdir(parents=True)
             shutil.copyfile(apk, output / 'loupe.apk')
             bundle = dict(info, schema=SCHEMA, source_commit=source, source_tree=tree,
@@ -205,6 +234,9 @@ def verify_bundle(bundle, actual):
     for name in ('package', 'version_code', 'version_name', 'certificates', 'apk_sha256', 'features'):
         if bundle.get(name) != actual.get(name):
             raise ValueError('Prepared APK identity mismatch: ' + name)
+    expected = {key: bundle.get(key) for key in ('schema', 'source_commit', 'source_tree', 'mode', 'issue')}
+    if actual.get('provenance') != expected:
+        raise ValueError('Signed APK source provenance differs from bundle')
     check_features(actual)
 
 
@@ -223,6 +255,13 @@ def install(args):
     apk = (bundle_path.parent / bundle.get('apk', '')).resolve()
     if apk.parent != bundle_path.parent or not apk.is_file():
         raise ValueError('Bundle APK must be inside its bundle directory')
+    with tempfile.TemporaryDirectory(prefix='loupe-candidate-') as temp:
+        snapshot = Path(temp) / 'loupe.apk'
+        shutil.copyfile(apk, snapshot)
+        install_candidate(args, repo, bundle, snapshot)
+
+
+def install_candidate(args, repo, bundle, apk):
     actual = apk_info(apk, args.sdk)
     verify_bundle(bundle, actual)
     source = bundle.get('source_commit', '')
@@ -238,14 +277,43 @@ def install(args):
         raise ValueError('Recovery is not a daily build; explicit --ack-recovery and issue are required')
     if not re.fullmatch(r'[A-Za-z0-9._:-]{1,128}', args.serial):
         raise ValueError('Invalid explicit device serial')
-    state_path = record_directory(args, repo) / (args.serial.replace(':', '_') + '.json')
+    state_path = record_path(args, repo)
+    with device_lock(state_path.parent / 'deployment'):
+        install_locked(args, repo, bundle, actual, apk, source, state_path)
+
+
+@contextmanager
+def device_lock(state_path):
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    with state_path.with_suffix('.lock').open('a') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise ValueError('Another deployment is active for this device') from error
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def install_locked(args, repo, bundle, actual, apk, source, state_path):
+    for other in state_path.parent.glob('*.json'):
+        if other != state_path and load(other).get('status') != 'installed-main':
+            raise ValueError('Pending deployment on another ADB serial; finish using its original serial')
     previous_record = load(state_path) if state_path.exists() else None
-    if previous_record and previous_record.get('mode') == 'recovery' and bundle['mode'] == 'main':
+    if previous_record and previous_record.get('serial') != args.serial:
+        raise ValueError('Deployment record belongs to another device serial')
+    if previous_record and previous_record.get('mode') == 'recovery':
         if not contains(repo, previous_record['source_commit'], source):
-            raise ValueError('The installed recovery source is not integrated into this main build')
+            raise ValueError('The installed recovery source is not integrated into this successor build')
     if adb(args, 'get-state') != 'device':
         raise ValueError('The selected device is unavailable')
     previous = installed(args)
+    installed_source = previous.get('provenance') or {}
+    if installed_source.get('mode') in {'main', 'recovery'}:
+        recovery = installed_source.get('source_commit', '')
+        if not re.fullmatch(r'[0-9a-f]{40}', recovery) or not contains(repo, recovery, source):
+            raise ValueError('The installed APK source is not integrated into this successor build')
     validate_update(actual, previous)
     record = dict(schema=SCHEMA, mode=bundle['mode'], source_commit=source, issue=bundle.get('issue'),
                   apk_sha256=actual['apk_sha256'], previous_apk_sha256=previous['apk_sha256'],
@@ -261,6 +329,11 @@ def install(args):
     record['status'] = 'installed-main' if bundle['mode'] == 'main' else 'pending-main-integration'
     save(state_path, record)
     print(json.dumps(record, ensure_ascii=False))
+
+
+def record_path(args, repo):
+    device = hashlib.sha256(args.serial.encode('utf-8')).hexdigest()
+    return record_directory(args, repo) / (device + '.json')
 
 
 def record_directory(args, repo):

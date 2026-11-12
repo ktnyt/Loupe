@@ -9,6 +9,8 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import warnings
+import zipfile
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('deploy_apk', Path(__file__).with_name('deploy-apk.py'))
@@ -40,11 +42,18 @@ class DeployTests(unittest.TestCase):
         self.info = dict(deploy.manifest_info(XML), certificates=['abc123'], apk_sha256=deploy.sha256(self.apk))
         self.bundle = dict(self.info, schema=1, mode='main', apk='loupe.apk', issue=None,
                            source_commit='a'*40, source_tree='b'*40)
+        self.stamp()
         self.bundle_path = self.root / 'bundle.json'
-        self.previous = dict(self.info, version_code=164, version_name='0.31.0', apk_sha256='prior-hash')
+        self.previous = dict(self.info, provenance=None, version_code=164, version_name='0.31.0', apk_sha256='prior-hash')
         self.args = argparse.Namespace(repo=str(self.root), sdk='synthetic-sdk', bundle=str(self.bundle_path),
             serial='fake-phone', adb='fake-adb', ack_recovery=False, records=str(self.root/'records'))
         self.calls = []
+
+    def record_path(self):
+        return deploy.record_path(self.args, self.root)
+
+    def stamp(self):
+        self.info['provenance'] = {k: self.bundle.get(k) for k in ('schema','source_commit','source_tree','mode','issue')}
 
     def tearDown(self):
         self.temp.cleanup()
@@ -131,6 +140,7 @@ class DeployTests(unittest.TestCase):
             deploy.source_allowed('recovery', 'feature-sha', 'main-sha')
         deploy.source_allowed('recovery', 'feature-sha', 'main-sha', 87)
         self.bundle.update(mode='recovery', issue=87)
+        self.stamp()
         with self.assertRaisesRegex(ValueError, 'ack-recovery'):
             self.apply(in_main=False)
         self.assert_not_installed()
@@ -146,17 +156,19 @@ class DeployTests(unittest.TestCase):
 
     def test_success_reads_back_exact_apk(self):
         self.apply()
-        record = deploy.load(self.root/'records/fake-phone.json')
+        record = deploy.load(self.record_path())
         self.assertEqual(record['status'], 'installed-main')
         self.assertEqual(record['apk_sha256'], self.info['apk_sha256'])
         installs = [x for x in self.calls if x[0] == 'install']
-        self.assertEqual(installs, [('install', '-r', str(self.apk))])
+        self.assertEqual(len(installs), 1)
+        self.assertEqual(installs[0][:2], ('install', '-r'))
+        self.assertNotEqual(installs[0][2], str(self.apk))
 
     def test_readback_mismatch_keeps_pending(self):
         wrong = dict(self.info, apk_sha256='different-installed-apk')
         with self.assertRaisesRegex(ValueError, 'read-back mismatch'):
             self.apply(after=wrong)
-        self.assertEqual(deploy.load(self.root/'records/fake-phone.json')['status'], 'pending-readback')
+        self.assertEqual(deploy.load(self.record_path())['status'], 'pending-readback')
 
     def test_disconnect_keeps_pending(self):
         deploy.save(self.bundle_path, self.bundle)
@@ -167,21 +179,143 @@ class DeployTests(unittest.TestCase):
              patch.object(deploy, 'adb', side_effect=self.fake_adb), patch('builtins.print'):
             with self.assertRaises(subprocess.CalledProcessError):
                 deploy.install(self.args)
-        self.assertEqual(deploy.load(self.root/'records/fake-phone.json')['status'], 'pending-readback')
+        self.assertEqual(deploy.load(self.record_path())['status'], 'pending-readback')
 
     def test_recovery_stays_pending_and_cannot_be_replaced_by_unintegrated_main(self):
         self.bundle.update(mode='recovery', issue=87)
+        self.stamp()
         self.args.ack_recovery = True
         self.apply(in_main=False)
-        record = deploy.load(self.root/'records/fake-phone.json')
+        record = deploy.load(self.record_path())
         self.assertEqual(record['status'], 'pending-main-integration')
         self.bundle['mode'] = 'main'
+        self.stamp()
         deploy.save(self.bundle_path, self.bundle)
         with patch.object(deploy, 'git', side_effect=self.fake_git), \
              patch.object(deploy, 'contains', side_effect=[True, False]), \
              patch.object(deploy, 'apk_info', return_value=self.info):
             with self.assertRaisesRegex(ValueError, 'recovery source'):
                 deploy.install(self.args)
+
+    def test_signed_provenance_cannot_be_relabelled(self):
+        for field, value in [('source_commit', 'c'*40), ('source_tree', 'd'*40),
+                             ('mode', 'recovery'), ('issue', 87)]:
+            original = copy.deepcopy(self.bundle)
+            self.bundle[field] = value
+            with self.assertRaisesRegex(ValueError, 'Signed APK source provenance'):
+                self.apply()
+            self.assertEqual(self.calls, [])
+            self.bundle = original
+        self.info['provenance'] = None
+        with self.assertRaisesRegex(ValueError, 'Signed APK source provenance'):
+            self.apply()
+
+    def test_unrelated_recovery_cannot_replace_pending_recovery(self):
+        self.bundle.update(mode='recovery', issue=87)
+        self.stamp()
+        self.args.ack_recovery = True
+        self.apply(in_main=False)
+        self.calls.clear()
+        # Recovery B would overwrite A's obligation and allow main(B) if accepted.
+        deploy.save(self.record_path(), dict(mode='recovery', source_commit='c'*40, serial=self.args.serial))
+        with self.assertRaisesRegex(ValueError, 'recovery source'):
+            self.apply(in_main=False)
+        self.assert_not_installed()
+        self.assertEqual(deploy.load(self.record_path())['source_commit'], 'c'*40)
+
+    def test_installed_recovery_is_enforced_without_a_host_record(self):
+        self.previous['provenance'] = dict(schema=1, mode='recovery', source_commit='c'*40,
+                                           source_tree='d'*40, issue=87)
+        deploy.save(self.bundle_path, self.bundle)
+        with patch.object(deploy, 'git', side_effect=self.fake_git), \
+             patch.object(deploy, 'contains', side_effect=[True, False]), \
+             patch.object(deploy, 'apk_info', return_value=self.info), \
+             patch.object(deploy, 'installed', return_value=self.previous), \
+             patch.object(deploy, 'adb', side_effect=self.fake_adb):
+            with self.assertRaisesRegex(ValueError, 'installed APK source'):
+                deploy.install(self.args)
+        self.assert_not_installed()
+        self.assertFalse((self.record_path()).exists())
+        self.apply(in_main=True)
+
+    def test_stale_main_cannot_replace_newer_main_with_equal_version(self):
+        self.previous['provenance'] = dict(schema=1, mode='main', source_commit='c'*40)
+        deploy.save(self.bundle_path, self.bundle)
+        with patch.object(deploy, 'git', side_effect=self.fake_git), \
+             patch.object(deploy, 'contains', side_effect=[True, False]), \
+             patch.object(deploy, 'apk_info', return_value=self.info), \
+             patch.object(deploy, 'installed', return_value=self.previous), \
+             patch.object(deploy, 'adb', side_effect=self.fake_adb):
+            with self.assertRaisesRegex(ValueError, 'installed APK source'):
+                deploy.install(self.args)
+        self.assert_not_installed()
+
+    def test_candidate_snapshot_survives_external_file_replacement(self):
+        def inspect_snapshot(apk, sdk):
+            self.assertNotEqual(apk, self.apk)
+            self.apk.write_bytes(b'replaced after verification')
+            self.assertEqual(Path(apk).read_bytes(), b'synthetic apk bytes')
+            return self.info
+        deploy.save(self.bundle_path, self.bundle)
+        with patch.object(deploy, 'git', side_effect=self.fake_git), \
+             patch.object(deploy, 'contains', return_value=True), \
+             patch.object(deploy, 'apk_info', side_effect=inspect_snapshot), \
+             patch.object(deploy, 'installed', side_effect=[self.previous,self.info]), \
+             patch.object(deploy, 'adb', side_effect=self.fake_adb), patch('builtins.print'):
+            deploy.install(self.args)
+        self.assertEqual(deploy.load(self.record_path())['status'], 'installed-main')
+
+    def test_provenance_size_duplicates_and_object_type_are_bounded(self):
+        for payloads in [[b'x'*4097], [b'{}', b'{}'], [b'[]']]:
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore', UserWarning)
+                with zipfile.ZipFile(self.apk, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+                    for payload in payloads:
+                        archive.writestr(deploy.PROVENANCE, payload)
+            with self.assertRaises(ValueError):
+                deploy.read_provenance(self.apk)
+        with zipfile.ZipFile(self.apk, 'w') as archive:
+            archive.writestr(deploy.PROVENANCE, b'{"schema":1}')
+        self.assertEqual(deploy.read_provenance(self.apk), {'schema':1})
+
+    def test_serial_filenames_are_distinct_and_records_checked(self):
+        self.args.serial = 'phone:123'
+        a = self.record_path()
+        self.args.serial = 'phone_123'
+        self.assertNotEqual(a, self.record_path())
+        deploy.save(self.record_path(), dict(serial='other-phone', mode='main'))
+        with self.assertRaisesRegex(ValueError, 'another device serial'):
+            self.apply()
+        self.assert_not_installed()
+
+    def test_recovery_must_close_with_original_transport_serial(self):
+        self.bundle.update(mode='recovery', issue=87)
+        self.stamp()
+        self.args.ack_recovery = True
+        self.apply()
+        original = self.args.serial
+        self.args.serial = 'wireless-phone:123'
+        self.bundle.update(mode='main', issue=None)
+        self.stamp()
+        self.calls.clear()
+        with self.assertRaisesRegex(ValueError, 'original serial'):
+            self.apply()
+        self.assert_not_installed()
+        with patch.object(deploy, 'git', side_effect=self.fake_git), patch('builtins.print'):
+            with self.assertRaisesRegex(ValueError, 'pending'):
+                deploy.status(self.args)
+        self.args.serial = original
+        self.apply()
+        with patch.object(deploy, 'git', side_effect=self.fake_git), patch('builtins.print'):
+            deploy.status(self.args)
+
+    def test_same_device_overlapping_installs_are_rejected(self):
+        state = self.record_path()
+        with deploy.device_lock(state.parent / 'deployment'):
+            with self.assertRaisesRegex(ValueError, 'Another deployment'):
+                self.apply()
+        self.assert_not_installed()
+        self.apply()
 
     def test_default_records_are_shared_across_worktrees(self):
         self.args.records = None
@@ -192,10 +326,10 @@ class DeployTests(unittest.TestCase):
         with patch.object(deploy, 'git', side_effect=self.fake_git), patch('builtins.print'):
             with self.assertRaisesRegex(ValueError, 'No device'):
                 deploy.status(self.args)
-            deploy.save(self.root/'records/fake-phone.json', {'status':'pending-main-integration'})
+            deploy.save(self.record_path(), {'status':'pending-main-integration'})
             with self.assertRaisesRegex(ValueError, 'pending'):
                 deploy.status(self.args)
-            deploy.save(self.root/'records/fake-phone.json', {'status':'installed-main'})
+            deploy.save(self.record_path(), {'status':'installed-main'})
             deploy.status(self.args)
 
 
