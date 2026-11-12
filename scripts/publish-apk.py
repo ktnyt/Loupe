@@ -109,8 +109,13 @@ def publish(args):
             draft_id = draft.get('id')
             if type(draft_id) is not int or draft_id <= 0:
                 raise ValueError('Draft release REST ID is unavailable')
-            # gh's FetchRelease also searches pending draft tag names through GraphQL.
-            gh(args, 'release', 'upload', tag, '--repo', REPOSITORY, snapshot, root / 'bundle.json')
+            # Bind both uploads to the created release ID, never to a mutable tag lookup.
+            for asset, content_type in ((snapshot, 'application/vnd.android.package-archive'),
+                                        (root / 'bundle.json', 'application/json')):
+                gh(args, 'api',
+                   f'https://uploads.github.com/repos/{REPOSITORY}/releases/{draft_id}/assets?name={asset.name}',
+                   '--method', 'POST', '--input', asset,
+                   '-H', 'Content-Type: ' + content_type, '-H', f'Content-Length: {asset.stat().st_size}')
             download = root / 'download'
             download.mkdir()
             metadata = json.loads(gh(args, 'api', f'repos/{REPOSITORY}/releases/{draft_id}'))

@@ -50,6 +50,7 @@ class PublishTests(unittest.TestCase):
         self.shadow_release = False
         self.binary_downloads = []
         self.final_assets_change = None
+        self.uploads = []
 
     def tearDown(self):
         self.temp.cleanup()
@@ -65,6 +66,21 @@ class PublishTests(unittest.TestCase):
             endpoint = parts[1]
             if self.network_error:
                 raise subprocess.CalledProcessError(1, 'gh', stderr='HTTP 503')
+            if endpoint.startswith('https://uploads.github.com/'):
+                self.assertTrue(self.draft_created)
+                if self.upload_error:
+                    raise subprocess.CalledProcessError(1, 'gh', stderr='HTTP 503')
+                self.assertEqual(parts[2:5], ('--method', 'POST', '--input'))
+                asset = Path(parts[5])
+                self.snapshot = asset.parent
+                self.assertNotEqual(self.snapshot, self.root)
+                self.assertIn(asset.name, ('loupe.apk', 'bundle.json'))
+                self.assertEqual(endpoint, 'https://uploads.github.com/repos/ktnyt/Loupe/releases/101/assets?name=' + asset.name)
+                expected_type = 'application/json' if asset.name == 'bundle.json' else 'application/vnd.android.package-archive'
+                self.assertEqual(parts[6:], ('-H', 'Content-Type: ' + expected_type,
+                                            '-H', f'Content-Length: {asset.stat().st_size}'))
+                self.uploads.append(endpoint)
+                return '{}'
             if endpoint.endswith('/git/ref/heads/main'):
                 return json.dumps(dict(ref='refs/heads/main', object=dict(type='commit', sha=self.official_main)))
             if endpoint == 'repos/ktnyt/Loupe/releases?per_page=100':
@@ -113,16 +129,6 @@ class PublishTests(unittest.TestCase):
             if self.exists or (self.release_exists and '/releases/' in endpoint):
                 return '{}'
             raise subprocess.CalledProcessError(1, 'gh', stderr='HTTP 404')
-        if parts[:2] == ('release', 'upload'):
-            self.assertTrue(self.draft_created)
-            if self.upload_error:
-                raise subprocess.CalledProcessError(1, 'gh', stderr='HTTP 503')
-            self.snapshot = Path(parts[-2]).parent
-            self.assertNotEqual(self.snapshot, self.root)
-            self.assertEqual(Path(parts[-2]).name, 'loupe.apk')
-            self.assertEqual(Path(parts[-1]).name, 'bundle.json')
-            self.assertNotIn('--clobber', parts)
-            return ''
         if parts[:2] == ('release', 'download'):
             if self.download_error:
                 raise subprocess.CalledProcessError(1, 'gh')
@@ -202,6 +208,15 @@ class PublishTests(unittest.TestCase):
         for value in (None, '501', -1, True):
             with self.assertRaises(ValueError):
                 publish.download_asset(self.args, value, output)
+
+    def test_switched_tag_resolution_cannot_redirect_uploads(self):
+        self.shadow_release = True
+        self.apply()
+        self.assertEqual(self.uploads, [
+            'https://uploads.github.com/repos/ktnyt/Loupe/releases/101/assets?name=loupe.apk',
+            'https://uploads.github.com/repos/ktnyt/Loupe/releases/101/assets?name=bundle.json'])
+        self.assertFalse(any(x[0] == 'release' for x in self.calls))
+        self.assertFalse(any('/releases/tags/' in str(x) for x in self.calls))
 
     def test_mode_hash_signature_source_and_tree_rejected_before_github(self):
         original = copy.deepcopy(self.bundle)

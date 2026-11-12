@@ -14,6 +14,21 @@ Releaseはvバージョンtagをsource commitへ対応させ、draftでAPK/bundl
 
 初回のOTA確認では、更新直後の端末APKを元のmain bundleと読み戻して照合する。OTAで既に更新したAPKに対してADB installをやり直さず、confirmでmain・祖先・署名・hash・版・必須機能を検査し、pendingを閉じる。
 
+配布時のコマンド例（出力先は毎回新しいディレクトリにする）:
+
+```sh
+python3 scripts/deploy-apk.py prepare --mode main --output /absolute/path/new-bundle
+python3 scripts/publish-apk.py --bundle /absolute/path/new-bundle/bundle.json --notes-file /absolute/path/release-notes.md
+```
+
+端末でOTA更新した後の照合:
+
+```sh
+python3 scripts/deploy-apk.py confirm --bundle /absolute/path/new-bundle/bundle.json --serial DEVICE_SERIAL
+```
+
+配布中に失敗した場合、作成済みdraftとtagは削除せず残す。状態を確認してから対応し、同じ版の再実行で上書きしない。
+
 更新後の実機確認とデータ保全を、単にダウンロードできたことと区別してissueへ記録する。OTAはGoogle Playの自動更新ではなく、ObtainiumとAndroidインストーラーによる配布。
 
 参照: [Obtainium](https://github.com/ImranR98/Obtainium)、[Androidの配布とインストール許可](https://developer.android.com/distribute/marketing-tools/alternative-distribution)。
