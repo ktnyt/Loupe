@@ -55,7 +55,11 @@ final class VideoChecks {
     test.waitForIdleSync();
     File directory = new File(activity.getCacheDir(), "consistency-checks");
     directory.mkdirs();
-    ConsistencyLayoutChecks.captureHardware(test, activity, content(activity), directory, name);
+    if(activity instanceof VideoActivity) {
+      Thread.sleep(1000);
+      Bitmap bitmap=test.getUiAutomation().takeScreenshot();
+      try(FileOutputStream out=new FileOutputStream(new File(directory,name+".png"))){bitmap.compress(Bitmap.CompressFormat.PNG,100,out);}finally{bitmap.recycle();}
+    }else ConsistencyLayoutChecks.captureHardware(test, activity, content(activity), directory, name);
   }
 
   static String run(Instrumentation test, int width, float font) throws Exception {
@@ -173,6 +177,14 @@ final class VideoChecks {
       TagDetailChecks.ui(test, play::performClick);
       await(test, video::isPlaying, "play action starts video");
       Thread.sleep(400);
+      capture(test,activity,"video-playing-"+width+"-"+font);
+      TagDetailChecks.ui(test,()->{
+        long now=SystemClock.uptimeMillis();
+        android.view.MotionEvent down=android.view.MotionEvent.obtain(now,now,android.view.MotionEvent.ACTION_DOWN,video.getWidth()/2f,video.getHeight()/2f,0);
+        android.view.MotionEvent up=android.view.MotionEvent.obtain(now,now+30,android.view.MotionEvent.ACTION_UP,video.getWidth()/2f,video.getHeight()/2f,0);
+        video.dispatchTouchEvent(down);video.dispatchTouchEvent(up);down.recycle();up.recycle();
+      });
+      capture(test,activity,"video-controls-"+width+"-"+font);
       TagDetailChecks.ui(test, () -> {
         TagDetailChecks.require(video.getCurrentPosition() > 0, "playback progresses");
         play.performClick();
