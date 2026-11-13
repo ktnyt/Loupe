@@ -64,19 +64,18 @@ final class ShareCapacityUiChecks {
       TagDetailChecks.ui(t,()->{
         ShareUi.Menu menu=new ShareUi.Menu(a,photos.subList(0,3),List.of(new ShareTargets.Target("fixture/.Jpeg","JPEG先",false),new ShareTargets.Target("fixture/.Raw","元形式先",true)),0,Set.of(),(raw,target)->chosen.incrementAndGet());dialogs.add(menu);
         menu.capacity(new ShareCapacityChecks.Snapshot(new ShareCapacity.Result(ShareCapacity.State.FIT,300L*1024*1024),new ShareCapacity.Result(ShareCapacity.State.OVER,768L*1024*1024)));menu.show();
-        menu.original.performClick();TagDetailChecks.require(!menu.raw&&!menu.original.isEnabled()&&menu.jpeg.isEnabled(),"over original disabled; fitting JPEG remains usable");
-        ViewGroup destinations=(ViewGroup)menu.content.getChildAt(menu.content.getChildCount()-2);destinations.getChildAt(1).performClick();TagDetailChecks.require(chosen.get()==0&&menu.isShowing(),"oversized saved target does nothing");
+        TagDetailChecks.require(menu.original.getText().toString().contains("上限超過")&&menu.continueButton.isEnabled(),"visible unavailable reason and usable primary");menu.original.performClick();TagDetailChecks.require(!menu.raw&&!menu.original.isEnabled()&&menu.jpeg.isEnabled(),"over original disabled; fitting JPEG remains usable");
+        ViewGroup destinations=menu.destinations;destinations.getChildAt(1).performClick();TagDetailChecks.require(chosen.get()==0&&menu.isShowing(),"oversized saved target does nothing");
         destinations.getChildAt(0).performClick();TagDetailChecks.require(chosen.get()==1&&!menu.isShowing(),"fitting saved target proceeds");
       });
-      if(width==320&&font==1.3f)TagDetailChecks.ui(t,()->{
-        for(int selected=0;selected<4;selected++){
-          PhotoListUi.Filters filters=new PhotoListUi.Filters(a);String[] names={"すべて","1位","順位が未決定","順位決定済み"};
-          for(int i=0;i<4;i++)filters.addView(PhotoListUi.chip(a,names[i],i==selected,()->{}),new ViewGroup.LayoutParams(-2,-2));
-          filters.measure(View.MeasureSpec.makeMeasureSpec(GalleryUi.dp(a,width),View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(0,View.MeasureSpec.UNSPECIFIED));
-          filters.layout(0,0,filters.getMeasuredWidth(),filters.getMeasuredHeight());
-          TagDetailChecks.require(filters.getMeasuredHeight()<=GalleryUi.dp(a,100),"all selected filters fit two rows");TagDetailChecks.inspect(filters);
-          TagDetailChecks.require(filters.getChildAt(2).getTop()==filters.getChildAt(3).getTop(),"long filters share second row");
-        }
+      TagDetailChecks.ui(t,()->{
+        ShareUi.Menu menu=new ShareUi.Menu(a,photos.subList(0,3),List.of(),0,Set.of(),(raw,target)->chosen.incrementAndGet());dialogs.add(menu);
+        ShareCapacity.Result over=new ShareCapacity.Result(ShareCapacity.State.OVER,768L*1024*1024);
+        menu.capacity(new ShareCapacityChecks.Snapshot(over,over));menu.show();menu.continueButton.performClick();
+        TagDetailChecks.require(!menu.continueButton.isEnabled()&&chosen.get()==1&&menu.isShowing(),"both oversized formats disable primary continuation");
+        menu.capacity(new ShareCapacityChecks.Snapshot(new ShareCapacity.Result(ShareCapacity.State.UNKNOWN,0),over));
+        TagDetailChecks.require(menu.continueButton.isEnabled()&&menu.jpeg.getText().toString().contains("準備時"),"unknown capacity remains deferred and actionable");
+        menu.closeButton.performClick();TagDetailChecks.require(!menu.isShowing()&&chosen.get()==1,"header close dismisses without sharing");
       });
       stale(t,a,photos.get(0));
       TagDetailChecks.ui(t,()->{

@@ -48,11 +48,11 @@ final class Material3Checks {
           android.view.accessibility.AccessibilityNodeInfo node=toggle.createAccessibilityNodeInfo();
           TagDetailChecks.require(node.isCheckable()&&node.isChecked(),"switch AX checked");node.recycle();
           int[] destinations={0};LibraryTabs tabs=new LibraryTabs(context,false,true,value->destinations[0]++);
-          tabs.getTabAt(1).select();TagDetailChecks.require(destinations[0]==1&&tabs.getSelectedTabPosition()==1,"tab callback");
+          tabs.setSelectedItemId(tabs.getMenu().getItem(1).getItemId());TagDetailChecks.require(destinations[0]==1&&tabs.selectedDestination()==1,"tab callback");
           root.addView(tabs,new LinearLayout.LayoutParams(-1,-2));
           LibraryTabs disabled=new LibraryTabs(context,false,false,value->{throw new AssertionError("disabled tab callback");});
-          ((android.view.ViewGroup)disabled.getChildAt(0)).getChildAt(1).performClick();
-          TagDetailChecks.require(disabled.getSelectedTabPosition()==0,"disabled tab retains selection");
+          disabled.destinationView(1).performClick();
+          TagDetailChecks.require(disabled.selectedDestination()==0,"disabled tab retains selection");
           root.addView(disabled,new LinearLayout.LayoutParams(-1,-2));
           ShareUi.FormatButton format=new ShareUi.FormatButton(context,"元の形式で共有",()->{});
           format.setText("元の形式で共有\n512 MiB");MaterialUi.choice(format,true);root.addView(format,new LinearLayout.LayoutParams(-1,-2));

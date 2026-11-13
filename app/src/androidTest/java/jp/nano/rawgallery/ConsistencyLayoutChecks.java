@@ -24,21 +24,11 @@ final class ConsistencyLayoutChecks {
       for(int width:new int[]{320,400})for(float scale:new float[]{1f,1.3f}){
         final Context[] context={null};t.runOnMainSync(()->{Configuration config=new Configuration(original);config.fontScale=scale;config.screenWidthDp=width;context[0]=new android.view.ContextThemeWrapper(a.createConfigurationContext(config),R.style.AppTheme);});Context c=context[0];
         {final LinearLayout[] albumScreen={null};
-          t.runOnMainSync(()->{LinearLayout screen=column(c);screen.setBackgroundColor(GalleryUi.BG);LinearLayout header=column(c);LinearLayout cards=GalleryCarouselUi.section(c,header,"最近の写真",true);((TextView)header.findViewWithTag("carousel-date")).setText("10月18日");
-            for(int n=0;n<3;n++)GalleryCarouselUi.photo(c,cards,"10月18日 13:13",true,actions::incrementAndGet).setImageDrawable(new android.graphics.drawable.ColorDrawable(n==0?0xff718774:0xffa4b7c3));
-            TextView count=new TextView(c);count.setText("6件");StatusView status=new StatusView(c);status.finish();header.addView(AlbumListUi.heading(c,count,status));
+          t.runOnMainSync(()->{LinearLayout screen=column(c);screen.setBackgroundColor(GalleryUi.BG);LinearLayout header=column(c);screen.addView(LibraryUi.toolbar(c,"アルバム",LibraryUi.icon(c,R.drawable.ic_settings,"設定とその他",actions::incrementAndGet)));
+            TextView count=new TextView(c);count.setText("6件");StatusView status=new StatusView(c);status.finish();header.addView(LibraryUi.metadata(c,count,status));
             ScrollingGrid grid=new ScrollingGrid(c);grid.addHeaderView(header,null,false);AlbumListUi.configureGrid(c,grid);if(grid.getDividerHeight()!=0)throw new AssertionError("album header gap");grid.setCells(new BaseAdapter(){public int getCount(){return 6;}public Object getItem(int p){return p;}public long getItemId(int p){return p;}public View getView(int p,View old,ViewGroup parent){LinearLayout cell=AlbumListUi.cell(c);((ImageView)cell.getChildAt(0)).setImageDrawable(new android.graphics.drawable.ColorDrawable(p%2==0?0xff718774:0xffa4b7c3));((TextView)cell.getChildAt(1)).setText(p==0?"嵐山 10.18":"カメラ");((TextView)cell.getChildAt(2)).setText("51枚");return cell;}});screen.addView(grid,new LinearLayout.LayoutParams(-1,0,1));
-            screen.addView(GalleryUi.dock(c,GalleryUi.button(c,"タグ",actions::incrementAndGet),GalleryUi.button(c,"その他",actions::incrementAndGet)));screen.addView(new LibraryTabs(c,true,true,value->actions.incrementAndGet()));mount(a,screen,c,width);albumScreen[0]=screen;});
+            screen.addView(new LibraryTabs(c,true,true,value->actions.incrementAndGet()));mount(a,screen,c,width);albumScreen[0]=screen;});
           t.waitForIdleSync();check(t,albumScreen[0]);capture(t,albumScreen[0],dir,"albums-full-"+width+"-"+scale);captures++;if(width==400&&scale==1f)captureHardware(t,a,albumScreen[0],dir,"albums-hardware");
-        }
-        for(boolean recent:new boolean[]{true,false}){
-          final LinearLayout[] carouselRoot={null};final LinearLayout[] cards={null};
-          t.runOnMainSync(()->{LinearLayout screen=column(c);screen.setBackgroundColor(GalleryUi.BG);cards[0]=GalleryCarouselUi.section(c,screen,recent?"最近の写真":"ほかのアルバム",recent);
-            for(int n=0;n<3;n++){ImageView photo=GalleryCarouselUi.photo(c,cards[0],recent?"10月18日 13:13":n==0?"スクリーンショットと長いアルバム名":"カメラ",recent,actions::incrementAndGet);photo.setImageDrawable(new android.graphics.drawable.ColorDrawable(n==0?0xff718774:0xffa4b7c3));}
-            mount(a,screen,c,width);carouselRoot[0]=screen;});
-          t.waitForIdleSync();check(t,carouselRoot[0]);
-          t.runOnMainSync(()->{View card=cards[0].getChildAt(0);View frame=((android.view.ViewGroup)card).getChildAt(0);if(card.getWidth()!=GalleryUi.dp(c,recent?300:104)||frame.getHeight()!=GalleryUi.dp(c,recent?225:78))throw new AssertionError("carousel photo dimensions");int before=actions.get();card.performClick();if(actions.get()!=before+1)throw new AssertionError("carousel callback");});
-          capture(t,carouselRoot[0],dir,"carousel-"+width+"-"+scale+"-"+(recent?"recent":"albums"));captures++;
         }
         for(String state:new String[]{"normal","long","empty","fail","off"}){
           final LinearLayout[] root={null};t.runOnMainSync(()->{

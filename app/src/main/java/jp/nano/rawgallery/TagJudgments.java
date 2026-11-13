@@ -10,6 +10,11 @@ import java.util.Objects;
 final class TagJudgments {
   enum Value { ASSIGNED, EXCLUDED, UNDECIDED }
 
+  /** A concurrent judgment advanced beyond the revision observed by the caller. */
+  static final class StaleRevisionException extends IllegalStateException {
+    StaleRevisionException() { super("Stale judgment"); }
+  }
+
   static final class Entry {
     final String operationId, tagId, photoId, undoneOperationId;
     final long revision;
@@ -97,7 +102,7 @@ final class TagJudgments {
     }
     Entry current = latest(tagId, photoId);
     long revision = current == null ? 0 : current.revision;
-    if (revision != expectedRevision) throw new IllegalStateException("Stale judgment");
+    if (revision != expectedRevision) throw new StaleRevisionException();
     List<Entry> next = new ArrayList<>(history);
     next.add(new Entry(operationId, tagId, photoId, revision + 1, value, undoneOperationId));
     return new TagJudgments(next);

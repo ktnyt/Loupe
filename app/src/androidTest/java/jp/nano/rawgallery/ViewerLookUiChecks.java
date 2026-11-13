@@ -282,7 +282,7 @@ ViewerScreenChecks.open(t,a,0);
 
       PhotoViewerUi initialViewer=ViewerScreenChecks.viewer(a);
 await(t,30000,()->!initialViewer.lookUi.controller.busy(),"viewer restore complete");
-click(t,TagDetailChecks.button(initialViewer,"編集"),"open real editor");
+click(t,TagDetailChecks.button(initialViewer,"手動"),"open real editor");
 Activity launched=monitor.waitForActivityWithTimeout(15000);
 require(launched instanceof RawEditActivity,"real editor launched from MainActivity");
 editor[0]=(RawEditActivity)launched;
@@ -398,10 +398,10 @@ t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
 await(t,5000,()->viewerDialog(viewer)==null,"Back closes selector");
 require(!a.isFinishing(),"Back retained viewer");
 
-      TagDetailChecks.ui(t,()->TagDetailChecks.button(viewer,"次の写真").performClick());
+      ViewerScreenChecks.clickSecondary(t,a,"次の写真");
 await(t,30000,()->(int)RankingResultChecks.get(a,"index")==1,"next photo");
 PhotoViewerUi next=ViewerScreenChecks.viewer(a);
-TagDetailChecks.ui(t,()->TagDetailChecks.button(next,"前の写真").performClick());
+ViewerScreenChecks.clickSecondary(t,a,"前の写真");
 await(t,30000,()->(int)RankingResultChecks.get(a,"index")==0,"previous photo");
 PhotoViewerUi restored=ViewerScreenChecks.viewer(a);
 settled(t,restored,savedId);

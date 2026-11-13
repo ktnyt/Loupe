@@ -40,7 +40,7 @@ final class IndexApplyRaceChecks {
       test.runOnMainSync(() -> {
         try {
           set(a,"pendingRestore",null); set(a,"albumFolder","Pictures/index-race-"+UUID.randomUUID()+"/");
-          set(a,"burstMembers",null); set(a,"selecting",false); set(a,"recentPhoto",false);
+          set(a,"burstMembers",null); set(a,"selecting",false);
           set(a,"photos",new ArrayList<>(Collections.singletonList(photo)));
           set(a,"bundles",new ArrayList<>(Collections.singletonList(new ArrayList<>(Collections.singletonList(0)))));
           call(a,"gallery");

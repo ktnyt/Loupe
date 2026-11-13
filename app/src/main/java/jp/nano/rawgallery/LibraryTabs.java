@@ -1,25 +1,22 @@
 package jp.nano.rawgallery;
 
 import android.content.Context;
-import android.graphics.*;
-import android.graphics.drawable.Drawable;
-import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.View;
-import android.view.ViewGroup;
-import com.google.android.material.tabs.TabLayout;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.accessibility.AccessibilityNodeInfoCompat;
+import com.google.android.material.bottomnavigation.BottomNavigationView;
+import com.google.android.material.navigation.NavigationBarView;
 import java.util.function.Consumer;
 
-/** Peer destinations with native Material tab selection and accessibility. */
-final class LibraryTabs extends TabLayout {
-  private Tab camera;
-  private CameraIcon cameraIcon;
+/** Persistent library destinations; import opens a separate activity without changing selection. */
+final class LibraryTabs extends BottomNavigationView {
+  private static final int PHOTOS = 1, ALBUMS = 2, IMPORT = 3;
+  private final Runnable openCamera;
+  private final Runnable startImport;
+  private boolean connected;
   private boolean importing;
-  private Runnable openCamera;
-  private Runnable startImport;
-
-  @Override public void selectTab(Tab tab, boolean updateIndicator) {
-    if(isEnabled() && tab != camera) super.selectTab(tab,updateIndicator);
-  }
+  private String cameraName;
+  private int done, total;
 
   LibraryTabs(Context context, boolean albums, boolean enabled, Consumer<Boolean> change) {
     this(context, albums, enabled, change, null, null);
@@ -28,131 +25,94 @@ final class LibraryTabs extends TabLayout {
   LibraryTabs(Context context, boolean albums, boolean enabled, Consumer<Boolean> change,
       Runnable openCamera, Runnable startImport) {
     super(context);
-    setTabMode(MODE_FIXED);
-    setTabGravity(GRAVITY_FILL);
-    setMinimumHeight(GalleryUi.dp(context, 48));
-    setBackgroundColor(GalleryUi.PANEL);
-    addTab(newTab().setText("すべての写真"), !albums);
-    addTab(newTab().setText("アルバム"), albums);
     this.openCamera = openCamera;
     this.startImport = startImport;
-    setEnabled(enabled);
-    setAlpha(enabled ? 1f : .38f);
-    ViewGroup strip = (ViewGroup) getChildAt(0);
-    for (int i = 0; i < strip.getChildCount(); i++) {
-      View tab = strip.getChildAt(i);
-      tab.setEnabled(enabled);
-      tab.setMinimumHeight(GalleryUi.dp(context, 48));
-    }
-    addOnTabSelectedListener(new OnTabSelectedListener() {
-      @Override public void onTabSelected(Tab tab) {
-        if (isEnabled()) {
-          GalleryUi.feedback(LibraryTabs.this);
-          change.accept(tab.getPosition() == 1);
+    setBackgroundColor(GalleryUi.PANEL);
+    setLabelVisibilityMode(NavigationBarView.LABEL_VISIBILITY_LABELED);
+    setItemHorizontalTranslationEnabled(false);
+    setLabelFontScalingEnabled(true);
+    setLabelMaxLines(2);
+    setItemActiveIndicatorEnabled(true);
+    setMinimumHeight(GalleryUi.dp(context, 80));
+    getMenu().add(0, PHOTOS, 0, "写真").setIcon(R.drawable.ic_nav_photos);
+    getMenu().add(0, ALBUMS, 1, "アルバム").setIcon(R.drawable.ic_nav_albums);
+    getMenu().add(0, IMPORT, 2, "取り込み").setIcon(R.drawable.ic_camera_usb);
+    setSelectedItemId(albums ? ALBUMS : PHOTOS);
+    setOnItemSelectedListener(item -> {
+      if (!isEnabled()) return false;
+      if (item.getItemId() == IMPORT) {
+        if (this.openCamera != null) {
+          GalleryUi.feedback(this);
+          this.openCamera.run();
         }
+        return false;
       }
-      @Override public void onTabUnselected(Tab tab) {}
-      @Override public void onTabReselected(Tab tab) {}
+      GalleryUi.feedback(this);
+      change.accept(item.getItemId() == ALBUMS);
+      return true;
     });
-  }
-  private void createCameraTab() {
-      cameraIcon = new CameraIcon(getContext());
-      camera = newTab().setText("カメラ").setIcon(cameraIcon);
-      camera.view.setOnClickListener(v -> {
-        if (isEnabled() && camera.getPosition() >= 0) {
-          GalleryUi.feedback(v);
-          openCamera.run();
-        }
-      });
-      camera.view.setOnLongClickListener(v -> {
-        if (!isEnabled() || camera.getPosition() < 0) return false;
-        if (!importing && startImport != null) startImport.run();
-        return true;
-      });
-      camera.view.setAccessibilityDelegate(new View.AccessibilityDelegate() {
-        @Override public void onInitializeAccessibilityNodeInfo(View host, AccessibilityNodeInfo info) {
-          super.onInitializeAccessibilityNodeInfo(host, info);
-          info.setClassName("android.widget.Button");
-          info.setSelected(false);
-          info.removeAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_LONG_CLICK);
-          if (isEnabled() && !importing) info.addAction(new AccessibilityNodeInfo.AccessibilityAction(
-              AccessibilityNodeInfo.ACTION_LONG_CLICK, "原本を削除せずに取り込む"));
-        }
+    setOnItemReselectedListener(item -> {});
+    for (int i = 0; i < 3; i++) {
+      View destination = destinationView(i);
+      destination.setOnClickListener(view -> {
+        // performClick() and accessibility can be invoked directly on a disabled view.
+        // Keep the native menu selection path behind the same guard as physical taps.
+        if (isEnabled() && view.isEnabled()) setSelectedItemId(view.getId());
       });
     }
+    setEnabled(enabled);
+    updateCameraAccessibility();
+  }
+
+  /** Index follows the stable photo / album / import visual order. */
+  View destinationView(int index) {
+    return findViewById(index == 0 ? PHOTOS : index == 1 ? ALBUMS : IMPORT);
+  }
+
+  int selectedDestination() { return getSelectedItemId() == ALBUMS ? 1 : 0; }
+
+  @Override public void setEnabled(boolean enabled) {
+    super.setEnabled(enabled);
+    if (getMenu() == null) return;
+    for (int i = 0; i < getMenu().size(); i++) getMenu().getItem(i).setEnabled(enabled);
+    setAlpha(enabled ? 1f : .38f);
+    if (getMenu().size() == 3) updateCameraAccessibility();
+  }
 
   void setCameraState(boolean connected, String name, boolean active, int done, int total) {
-    if (openCamera == null) return;
+    this.connected = connected;
+    cameraName = name;
     importing = active;
-    if (!connected) {
-      if (camera != null) {
-        boolean hadFocus = camera.view.hasFocus();
-        removeTab(camera);
-        camera = null;
-        if (hadFocus && getSelectedTabPosition() >= 0) getTabAt(getSelectedTabPosition()).view.requestFocus();
-      }
-      return;
-    }
-    if (camera == null) {
-      createCameraTab();
-      addTab(camera, false);
-    }
-    camera.view.setVisibility(VISIBLE);
-    camera.view.setEnabled(isEnabled());
-    camera.view.setLongClickable(isEnabled());
-    camera.view.setMinimumHeight(GalleryUi.dp(getContext(), 48));
-    String description = name == null || name.isBlank() ? "カメラ" : "カメラ、" + name;
-    if (active) description += total > 0 ? "、取り込み中 " + done + " / " + total + "件" : "、取り込み中";
-    if (!isEnabled()) description += "、選択中は使えません";
-    else if (!active) description += "、長押しで取り込み";
-    camera.setContentDescription(description);
-    cameraIcon.setProgress(active, done, total);
+    this.done = done;
+    this.total = total;
+    if (connected || active) {
+      var badge = getOrCreateBadge(IMPORT);
+      if (active && total > 0) badge.setNumber(Math.max(0, done));
+      else badge.clearNumber();
+      badge.setContentDescriptionNumberless(active ? "取り込み中" : "カメラ接続中");
+    } else removeBadge(IMPORT);
+    updateCameraAccessibility();
   }
 
-  private static final class CameraIcon extends Drawable {
-    private final Drawable glyph;
-    private final Paint ring = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final float stroke;
-    private boolean active;
-    private float fraction;
-    private int offsetY;
-    CameraIcon(Context c) {
-      glyph = c.getDrawable(R.drawable.ic_camera_usb).mutate();
-      int size = GalleryUi.dp(c, 32);
-      setBounds(0, 0, size, size);
-      int inset = GalleryUi.dp(c, 4);
-      glyph.setBounds(inset, inset, size - inset, size - inset);
-      stroke = GalleryUi.dp(c, 2);
-      ring.setStyle(Paint.Style.STROKE);
-      ring.setStrokeWidth(stroke);
-      ring.setStrokeCap(Paint.Cap.ROUND);
-    }
-    void setProgress(boolean value, int done, int total) {
-      float next = total > 0 ? Math.min(1f, Math.max(0f, (float) done / total)) : .25f;
-      if (active == value && fraction == next) return;
-      active = value;
-      fraction = next;
-      invalidateSelf();
-    }
-    @Override public void draw(Canvas canvas) {
-      int saved = canvas.save();
-      canvas.translate(0, offsetY);
-      if (active) {
-        float inset = stroke / 2;
-        float end = getBounds().width() - inset;
-        ring.setColor(0xff3a3a3f);
-        canvas.drawOval(inset, inset, end, end, ring);
-        if (fraction > 0) {
-          ring.setColor(GalleryUi.TEXT);
-          canvas.drawArc(inset, inset, end, end, -90, 360 * fraction, false, ring);
-        }
-      }
-      glyph.draw(canvas);
-      canvas.restoreToCount(saved);
-    }
-    @Override public void setAlpha(int alpha) { glyph.setAlpha(alpha); }
-    @Override public void setColorFilter(ColorFilter filter) { glyph.setColorFilter(filter); }
-    @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+  private void updateCameraAccessibility() {
+    View camera = destinationView(2);
+    if (camera == null) return;
+    String state = connected ? "カメラ接続中" : "カメラ未接続";
+    if (connected && cameraName != null && !cameraName.isBlank()) state += "、" + cameraName;
+    if (importing) state += total > 0 ? "、取り込み中 " + done + " / " + total + "件" : "、取り込み中";
+    if (!isEnabled()) state += "、選択中は使えません";
+    ViewCompat.setStateDescription(camera, state);
+    boolean quickImport = isEnabled() && connected && !importing && startImport != null;
+    camera.setOnLongClickListener(quickImport ? view -> {
+      // Recheck live state as device and import events can arrive between gestures.
+      if (!isEnabled() || !connected || importing) return false;
+      startImport.run();
+      return true;
+    } : null);
+    ViewCompat.removeAccessibilityAction(camera, AccessibilityNodeInfoCompat.ACTION_LONG_CLICK);
+    if (quickImport) ViewCompat.replaceAccessibilityAction(camera,
+        AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_LONG_CLICK,
+        "原本を削除せずに取り込む", (view, arguments) -> view.performLongClick());
+    camera.setLongClickable(quickImport);
   }
-
 }

@@ -36,21 +36,100 @@ final class TagDetailChecks {
   static void idle(Instrumentation t,TagActivity a)throws Exception{((ExecutorService)get(a,"worker")).submit(()->{}).get(10,TimeUnit.SECONDS);t.waitForIdleSync();if(width>0)ui(t,()->{View root=(View)get(a,"root");ViewGroup.LayoutParams params=root.getLayoutParams();params.width=Math.round(width*a.getResources().getDisplayMetrics().density);root.setLayoutParams(params);});t.waitForIdleSync();ConsistencyLayoutChecks.frame(t,(View)get(a,"root"));}
   static void photoSave(TagActivity a,boolean failed){try{Method m=TagActivity.class.getDeclaredMethod("refreshPhotoSave",boolean.class);m.setAccessible(true);m.invoke(a,failed);}catch(Exception e){throw new RuntimeException(e);}}
   static PhotoViewerUi viewer(TagActivity a){return (PhotoViewerUi)((ViewGroup)get(a,"root")).getChildAt(0);}
+  static Dialog viewerActions(Instrumentation t,TagActivity a)throws Exception{
+    PhotoViewerUi v=viewer(a);ui(t,v::openActions);t.waitForIdleSync();
+    Field field=PhotoViewerUi.class.getDeclaredField("actionSheet");field.setAccessible(true);Dialog dialog=(Dialog)field.get(v);
+    require(dialog!=null&&dialog.isShowing(),"viewer secondary sheet is showing");
+    ConsistencyLayoutChecks.frame(t,dialog.getWindow().getDecorView());
+    ui(t,()->visibleTagAction(a,dialog));return dialog;
+  }
+  static void visibleTagAction(TagActivity a,Dialog dialog){
+    View surface=dialog.getWindow().findViewById(com.google.android.material.R.id.design_bottom_sheet);
+    Button tag=viewer(a).actionButton("タグ");Rect visible=new Rect();
+    require(dialog.isShowing()&&dialog.getWindow().getDecorView().hasWindowFocus()&&surface!=null&&surface.isShown(),"secondary sheet owns a visible native window");
+    require(tag!=null&&tag.isShown()&&tag.getRootView()==dialog.getWindow().getDecorView(),"tag action is attached to active sheet");
+    require(tag.getGlobalVisibleRect(visible)&&visible.width()==tag.getWidth()&&visible.height()==tag.getHeight(),"tag save state is fully visible");
+  }
+  static String visibleSaveFeedback(TagActivity a,Dialog dialog,String expected){
+    visibleTagAction(a,dialog);TextView feedback=dialog.getWindow().getDecorView().findViewWithTag("viewer-action-feedback");Rect visible=new Rect();
+    require(feedback!=null&&feedback.isShown()&&feedback.getRootView()==dialog.getWindow().getDecorView(),"save feedback belongs to focused sheet");
+    require(feedback.getLocalVisibleRect(visible)&&visible.equals(new Rect(0,0,feedback.getWidth(),feedback.getHeight())),"save feedback text is fully visible");
+    String message=feedback.getText().toString();require(message.contains(expected)&&message.contains(viewer(a).actionButton("タグ").getText()),"visible save feedback names state and retry action");return message;
+  }
+  static void closeViewerActions(Instrumentation t,Dialog dialog)throws Exception{
+    ui(t,()->button(dialog.getWindow().getDecorView(),"閉じる").performClick());t.waitForIdleSync();
+  }
+  static void realViewerTagRetry(Instrumentation t,TagActivity a,File dir,String name)throws Exception{
+    require(a.isolatedPhotos&&a.tagDatabaseName.startsWith("tag-detail-")&&!"tags.db".equals(a.tagDatabaseName),"real save test uses named isolated database");
+    List<String> ids=(List<String>)get(a,"photoIds");int index=((List<Integer>)get(a,"browsePhotos")).get(0);
+    PhotoRepository.Photo photo=((List<PhotoRepository.Photo>)get(a,"photos")).get(index);
+    TagStore.Tag tag=(TagStore.Tag)get(a,"tag");Object originalJudgments=get(a,"judgments");String originalId=ids.get(index);
+    CountDownLatch entered=new CountDownLatch(1),release=new CountDownLatch(1);String photoId;TagJudgments seeded;
+    try(TagStore store=new TagStore(a,a.tagDatabaseName)){
+      store.getWritableDatabase().execSQL("INSERT OR IGNORE INTO tags(id,name) VALUES(?,?)",new Object[]{tag.id,tag.name});
+      photoId=store.photoId(photo,true);seeded=store.record(UUID.randomUUID().toString(),tag.id,photoId,0,TagJudgments.Value.ASSIGNED);
+      store.getWritableDatabase().execSQL("CREATE TRIGGER fixture_viewer_save_failure BEFORE INSERT ON history BEGIN SELECT RAISE(FAIL, 'fixture write failure'); END");
+    }
+    try{
+      ui(t,()->{ids.set(index,photoId);set(a,"judgments",seeded);});Dialog dialog=viewerActions(t,a);
+      ui(t,()->{View feedback=dialog.getWindow().getDecorView().findViewWithTag("viewer-action-feedback");require(feedback!=null&&feedback.getVisibility()==View.GONE,"normal action sheet has no empty feedback space");});
+      ((ExecutorService)get(a,"worker")).execute(()->{entered.countDown();try{release.await(10,TimeUnit.SECONDS);}catch(InterruptedException interrupted){Thread.currentThread().interrupt();}});
+      require(entered.await(5,TimeUnit.SECONDS),"fixture worker gate entered");
+      ui(t,()->{viewer(a).actionButton("タグ").performClick();require((boolean)get(a,"busy"),"actual tag click starts save");require(!viewer(a).actionButton("タグ").isEnabled()&&"保存中".contentEquals(viewer(a).actionButton("タグ").getStateDescription()),"actual save presents busy");visibleTagAction(a,dialog);});
+      ConsistencyLayoutChecks.captureHardware(t,dialog.getWindow(),dialog.getWindow().getDecorView(),dir,name+"-actual-save-busy");
+      release.countDown();idle(t,a);
+      ui(t,()->{require(!(boolean)get(a,"busy")&&get(a,"judgments")==seeded,"failed store write retains judgment");require(viewer(a).actionButton("タグ").isEnabled()&&viewer(a).actionButton("タグ").getContentDescription().toString().contains("保存できません"),"actual store failure presents retry");});
+      ConsistencyLayoutChecks.frame(t,dialog.getWindow().getDecorView());
+      ui(t,()->{String message=visibleSaveFeedback(a,dialog,"保存できませんでした");require(message.contains("もう一度保存")&&!message.contains("ほかの操作"),"ordinary failure visually names retry without conflict");inspect(dialog.getWindow().getDecorView());});
+      ConsistencyLayoutChecks.captureHardware(t,dialog.getWindow(),dialog.getWindow().getDecorView(),dir,name+"-actual-save-failed");
+      try(TagStore store=new TagStore(a,a.tagDatabaseName)){require(store.load().latest(tag.id,photoId).revision==1,"failed write did not persist judgment");store.getWritableDatabase().execSQL("DROP TRIGGER fixture_viewer_save_failure");}
+      ui(t,()->viewer(a).actionButton("タグ").performClick());idle(t,a);
+      try(TagStore store=new TagStore(a,a.tagDatabaseName)){TagJudgments.Entry saved=store.load().latest(tag.id,photoId);require(saved.revision==2&&saved.value==TagJudgments.Value.EXCLUDED,"retry persisted requested judgment exactly once");}
+      ui(t,()->{require(!(boolean)get(a,"busy")&&(int)get(a,"photoPosition")==0,"retry preserves photo identity");require(!dialog.isShowing()&&viewer(a).actionButton("タグ").isEnabled(),"successful save replaces viewer and dismisses old sheet");});
+      // A separate writer advances the judgment after the viewer loaded revision 2.
+      try(TagStore store=new TagStore(a,a.tagDatabaseName)){store.record(UUID.randomUUID().toString(),tag.id,photoId,2,TagJudgments.Value.ASSIGNED);}
+      Dialog staleSheet=viewerActions(t,a);ui(t,()->viewer(a).actionButton("タグ").performClick());idle(t,a);
+      // Observe the replacement sheet without opening it: opening here would mask the bug.
+      Field actionSheet=PhotoViewerUi.class.getDeclaredField("actionSheet");actionSheet.setAccessible(true);
+      Dialog conflict=(Dialog)actionSheet.get(viewer(a));require(conflict!=null&&conflict.isShowing(),"optimistic conflict reopens the replacement action sheet");
+      ConsistencyLayoutChecks.frame(t,conflict.getWindow().getDecorView());
+      ui(t,()->{
+        require(conflict!=staleSheet&&!staleSheet.isShowing(),"conflict uses the current viewer window");visibleTagAction(a,conflict);
+        Button tagAction=viewer(a).actionButton("タグ");TagJudgments latest=(TagJudgments)get(a,"judgments");
+        require(latest.latest(tag.id,photoId).revision==3&&latest.value(tag.id,photoId)==TagJudgments.Value.ASSIGNED,"conflict presents latest committed judgment");
+        require(tagAction.isEnabled()&&tagAction.getText().toString().equals("タグを外す")&&tagAction.getStateDescription().toString().contains("変更競合")&&tagAction.getContentDescription().toString().contains("最新の判断"),"visible conflict names latest state and retry");
+        String message=visibleSaveFeedback(a,conflict,"ほかの操作でタグが変更");require(message.contains("最新の判断は「タグあり」")&&message.contains("確認して")&&!message.contains("保存できませんでした"),"conflict visibly differs from ordinary failure");inspect(conflict.getWindow().getDecorView());
+      });
+      try(TagStore store=new TagStore(a,a.tagDatabaseName)){require(store.load().latest(tag.id,photoId).revision==3,"conflicting request did not overwrite newer judgment");}
+      ConsistencyLayoutChecks.captureHardware(t,conflict.getWindow(),conflict.getWindow().getDecorView(),dir,name+"-actual-save-conflict");
+      ui(t,()->viewer(a).actionButton("タグ").performClick());idle(t,a);
+      try(TagStore store=new TagStore(a,a.tagDatabaseName)){TagJudgments.Entry saved=store.load().latest(tag.id,photoId);require(saved.revision==4&&saved.value==TagJudgments.Value.EXCLUDED,"visible conflict retry commits against latest revision");}
+      ui(t,()->require(!conflict.isShowing()&&!(boolean)get(a,"busy")&&(int)get(a,"photoPosition")==0,"conflict retry returns to same photo"));
+    }finally{
+      release.countDown();((ExecutorService)get(a,"worker")).submit(()->{}).get(15,TimeUnit.SECONDS);t.waitForIdleSync();
+      try(TagStore store=new TagStore(a,a.tagDatabaseName)){store.getWritableDatabase().execSQL("DROP TRIGGER IF EXISTS fixture_viewer_save_failure");}
+      ui(t,()->{ids.set(index,originalId);set(a,"judgments",originalJudgments);set(a,"busy",false);try{Method show=TagActivity.class.getDeclaredMethod("showAssignedPhoto",int.class);show.setAccessible(true);show.invoke(a,0);}catch(Exception error){throw new RuntimeException(error);}});idle(t,a);
+    }
+  }
   static void viewerCapture(Instrumentation t,TagActivity a,File dir,String state)throws Exception{
     int[] position=new int[2];ui(t,()->{ScrollingGrid grid=(ScrollingGrid)get(a,"photoGrid");position[0]=grid.getFirstVisiblePosition();position[1]=grid.getChildAt(0)==null?0:grid.getChildAt(0).getTop();});
     ui(t,()->{try{Method m=TagActivity.class.getDeclaredMethod("showAssignedPhoto",int.class);m.setAccessible(true);m.invoke(a,0);}catch(Exception e){throw new RuntimeException(e);}});idle(t,a);
     String name="tag-viewer-"+width+"-"+a.getResources().getConfiguration().fontScale+"-"+state;
-    ui(t,()->{PhotoViewerUi v=viewer(a);require((int)get(a,"browseMode")==2&&v.dock.getChildCount()==5,"five-action tag viewer including existing editor");require(((android.graphics.drawable.ColorDrawable)v.getBackground()).getColor()==Color.BLACK,"black tag viewer");require(button(v,"共有")==null&&button(v,"情報")==null,"tag viewer has no share/info");require(button(v,"assigned".equals(state)?"タグを外す":"タグを付ける")!=null,"current tag action");require(!button(v,"前の写真").isEnabled()&&button(v,"次の写真").isEnabled(),"first endpoint");inspect(v);});
+    ui(t,()->{PhotoViewerUi v=viewer(a);require((int)get(a,"browseMode")==2&&v.actionCount()==5,"five tag viewer actions across direct and secondary controls");require(((android.graphics.drawable.ColorDrawable)v.getBackground()).getColor()==Color.BLACK,"black tag viewer");require(v.actionButton("共有")==null&&v.actionButton("情報")==null,"tag viewer has no share/info");require(v.actionButton("タグ")!=null&&v.actionButton("タグ").getText().toString().equals("assigned".equals(state)?"タグを外す":"タグを付ける"),"current tag action");require(!v.actionButton("前の写真").isEnabled()&&v.actionButton("次の写真").isEnabled(),"first endpoint");inspect(v);});
     ConsistencyLayoutChecks.captureHardware(t,a,(View)get(a,"root"),dir,name);
-    ViewerScreenChecks.pinch(t,viewer(a).image);ui(t,()->{require(viewer(a).image.isZoomed(),"tag pinch");button(viewer(a),"全体を表示").performClick();});ViewerScreenChecks.swipe(t,viewer(a).image,-1);idle(t,a);
-    ui(t,()->{require((int)get(a,"photoPosition")==1,"tag swipe next");button(viewer(a),"前の写真").performClick();});idle(t,a);ui(t,()->require((int)get(a,"photoPosition")==0,"tag previous button"));
-    Object judgments=get(a,"judgments");
-    ui(t,()->{set(a,"busy",true);photoSave(a,false);require(!button(viewer(a),"次の写真").isEnabled()&&!((Button)get(a,"photoTag")).isEnabled(),"save disables tag and paging");a.onBackPressed();require((int)get(a,"browseMode")==2,"save blocks Back");});idle(t,a);
-    ConsistencyLayoutChecks.captureHardware(t,a,(View)get(a,"root"),dir,name+"-busy");
-    ui(t,()->{set(a,"busy",false);photoSave(a,true);require(((Button)get(a,"photoTag")).isEnabled()&&((Button)get(a,"photoTag")).getContentDescription().toString().contains("保存できません"),"save failure retry affordance");require(get(a,"judgments")==judgments&&(int)get(a,"photoPosition")==0,"save failure retains judgment and photo");inspect(viewer(a));});idle(t,a);
-    ConsistencyLayoutChecks.captureHardware(t,a,(View)get(a,"root"),dir,name+"-failed");
-    ui(t,()->photoSave(a,false));
+    Dialog actions=viewerActions(t,a);ConsistencyLayoutChecks.captureHardware(t,actions.getWindow(),actions.getWindow().getDecorView(),dir,name+"-actions");closeViewerActions(t,actions);
+    ViewerScreenChecks.pinch(t,viewer(a).image);ui(t,()->{Button zoom=viewer(a).actionButton("拡大");android.view.accessibility.AccessibilityNodeInfo node=zoom.createAccessibilityNodeInfo();try{require(viewer(a).image.isZoomed()&&"全体を表示".contentEquals(zoom.getContentDescription())&&node.isChecked(),"real tag pinch updates photo and AX zoom state");}finally{node.recycle();}});viewerActions(t,a);ui(t,()->viewer(a).actionButton("拡大").performClick());
+    ViewerScreenChecks.swipe(t,viewer(a).image,-1);idle(t,a);
+    ui(t,()->require((int)get(a,"photoPosition")==1,"tag swipe next"));viewerActions(t,a);ui(t,()->viewer(a).actionButton("前の写真").performClick());idle(t,a);ui(t,()->require((int)get(a,"photoPosition")==0,"tag previous button"));
+    Object judgments=get(a,"judgments");Dialog saveSheet=viewerActions(t,a);
+    ui(t,()->{set(a,"busy",true);photoSave(a,false);require(!viewer(a).actionButton("次の写真").isEnabled()&&!((Button)get(a,"photoTag")).isEnabled(),"save disables tag and paging");a.onBackPressed();require((int)get(a,"browseMode")==2,"save blocks Back");visibleTagAction(a,saveSheet);});idle(t,a);
+    ConsistencyLayoutChecks.captureHardware(t,saveSheet.getWindow(),saveSheet.getWindow().getDecorView(),dir,name+"-busy");
+    ui(t,()->{set(a,"busy",false);photoSave(a,true);require(((Button)get(a,"photoTag")).isEnabled()&&((Button)get(a,"photoTag")).getContentDescription().toString().contains("保存できません"),"save failure retry affordance");require(get(a,"judgments")==judgments&&(int)get(a,"photoPosition")==0,"save failure retains judgment and photo");});idle(t,a);
+    ConsistencyLayoutChecks.frame(t,saveSheet.getWindow().getDecorView());ui(t,()->{visibleSaveFeedback(a,saveSheet,"保存できませんでした");inspect(saveSheet.getWindow().getDecorView());});
+    ConsistencyLayoutChecks.captureHardware(t,saveSheet.getWindow(),saveSheet.getWindow().getDecorView(),dir,name+"-failed");
+    ui(t,()->photoSave(a,false));closeViewerActions(t,saveSheet);
     if("assigned".equals(state)){
+      realViewerTagRetry(t,a,dir,name);
       List<PhotoRepository.Photo> photos=(List<PhotoRepository.Photo>)get(a,"photos");int index=((List<Integer>)get(a,"browsePhotos")).get(0);PhotoRepository.Photo original=photos.get(index);
       try{
         ui(t,()->{photos.set(index,new PhotoRepository.Photo(Uri.fromFile(new File(a.getCacheDir(),"tag-viewer-intentionally-missing.jpg")),"合成欠損.jpg","",0,0,0));try{Method method=TagActivity.class.getDeclaredMethod("showAssignedPhoto",int.class);method.setAccessible(true);method.invoke(a,0);}catch(Exception e){throw new RuntimeException(e);}});idle(t,a);
@@ -104,7 +183,7 @@ final class TagDetailChecks {
       ui(t,()->{set(a,"tag",new TagStore.Tag("detail-fixture","旅先で見つけた夕暮れの空と長い名前のタグ"));call(a,"renderTag");});idle(t,a);
       ui(t,()->inspect((View)get(a,"root")));
       ConsistencyLayoutChecks.captureHardware(t,a,(View)get(a,"root"),dir,"tag-detail-"+width+"-"+a.getResources().getConfiguration().fontScale+"-long");
-      return "PASS actual TagActivity with synthetic photos and in-memory judgments: attached/excluded filters, bulk/select-all, busy Back guard, selection cancellation, add-photo entry, empty selection disabled, tag viewer five-action layout/pinch/swipe/paging/Back/grid position, actual missing-image retry and busy/failure presentation fixtures; PixelCopy of synthetic root. No writes to the user tag database, inference or automatic removal. Separate disposable database exercised save, unavailable automatic read, idempotency, conflict and retry.\n";
+      return "PASS actual TagActivity with synthetic photos and in-memory judgments: attached/excluded filters, bulk/select-all, busy Back guard, selection cancellation, add-photo entry, empty selection disabled, tag viewer direct/secondary action layout/pinch/swipe/paging/Back/grid position, actual missing-image retry, visible sheet busy/failure presentation and injected isolated-store write failure/retry and visible optimistic-conflict/latest-state retry; PixelCopy of synthetic root. No writes to the user tag database, inference or automatic removal. Separate disposable database exercised save, unavailable automatic read, idempotency, conflict and retry.\n";
     }finally{ui(t,()->{a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);a.finish();});TagFixtureIsolation.cleanup(a);file.delete();t.getTargetContext().deleteDatabase(uiDb);t.getTargetContext().deleteDatabase(featureDb);}
   }
 }

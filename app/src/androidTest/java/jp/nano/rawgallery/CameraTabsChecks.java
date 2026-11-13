@@ -21,31 +21,42 @@ final class CameraTabsChecks {
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     var error = new AtomicReference<Throwable>();
     try {
+      File captures=new File(activity.getCacheDir(),"consistency-checks");captures.mkdirs();
+      String size=activity.getResources().getConfiguration().screenWidthDp+"-"+activity.getResources().getConfiguration().fontScale;
+      ConsistencyLayoutChecks.captureHardware(t,activity,activity.getWindow().getDecorView(),captures,"import-"+size+"-collapsed");
+      var gear=CameraImportActivity.class.getDeclaredField("settingsButton");gear.setAccessible(true);
+      TagDetailChecks.ui(t,()->{try{((View)gear.get(activity)).performClick();}catch(Exception e){throw new AssertionError(e);}});
+      ConsistencyLayoutChecks.captureHardware(t,activity,activity.getWindow().getDecorView(),captures,"import-"+size+"-settings");
+      TagDetailChecks.ui(t,()->{try{((View)gear.get(activity)).performClick();}catch(Exception e){throw new AssertionError(e);}});
       t.runOnMainSync(() -> {
         try {
+          checkImportPresentation((CameraImportActivity) activity);
           var config = new Configuration(activity.getResources().getConfiguration());
           config.fontScale = 1.3f;
           var context = new android.view.ContextThemeWrapper(activity.createConfigurationContext(config), R.style.AppTheme);
           for (boolean albums : new boolean[]{false, true}) {
             var opens = new AtomicInteger();
             var starts = new AtomicInteger();
-            var tabs = new LibraryTabs(context, albums, true, ignored -> {},
+            var changes = new AtomicInteger();
+            var tabs = new LibraryTabs(context, albums, true, ignored -> changes.incrementAndGet(),
                 opens::incrementAndGet, starts::incrementAndGet);
-            check(tabs.getTabCount() == 2, "disconnected");
+            check(tabs.getMenu().size() == 3, "disconnected import remains reachable");
             tabs.setCameraState(true, "サンプル", false, 0, 0);
-            var camera = tabs.getTabAt(2).view;
-            check(camera.getVisibility() == View.VISIBLE && tabs.getTabCount() == 3, "attached");
-            check(tabs.getSelectedTabPosition() == (albums ? 1 : 0) && !camera.isSelected(), "selected peer");
+            var camera = tabs.destinationView(2);
+            check(camera.getVisibility() == View.VISIBLE && tabs.getMenu().size() == 3, "attached");
+            check(tabs.selectedDestination() == (albums ? 1 : 0) && !camera.isSelected(), "selected peer");
             camera.performClick();
             check(opens.get() == 1 && starts.get() == 0, "tap opens");
             check(hasLongAction(camera), "long action exposed");
             camera.performAccessibilityAction(AccessibilityNodeInfo.ACTION_LONG_CLICK, null);
             check(opens.get() == 1 && starts.get() == 1, "long press starts only");
             tabs.setCameraState(true, "サンプル", true, 1, 3);
-            check(camera.performLongClick() && !hasLongAction(camera), "busy gesture swallowed");
+            check(androidx.core.view.ViewCompat.getStateDescription(camera).toString().contains("1 / 3"), "progress state announced");
+            check(tabs.getBadge(tabs.getMenu().getItem(2).getItemId()) != null, "connected/progress badge");
+            check(!camera.performLongClick() && !hasLongAction(camera), "busy quick import unavailable");
             check(opens.get() == 1 && starts.get() == 1, "no duplicate");
             layout(tabs, 320);
-            check(tabs.getSelectedTabPosition() == (albums ? 1 : 0), "camera action retains destination");
+            check(tabs.selectedDestination() == (albums ? 1 : 0), "camera action retains destination");
             check(camera.getHeight() >= GalleryUi.dp(context, 48), "touch target");
             if (!albums) {
               var bitmap = Bitmap.createBitmap(tabs.getWidth(), tabs.getHeight(), Bitmap.Config.ARGB_8888);
@@ -55,16 +66,26 @@ final class CameraTabsChecks {
               } finally { bitmap.recycle(); }
             }
             tabs.setCameraState(false, null, false, 0, 0);
-            check(tabs.getTabCount() == 2, "detached");
+            check(tabs.getMenu().size() == 3 && !hasLongAction(camera), "disconnected destination retained");
+            camera.performClick();
+            check(opens.get() == 2 && starts.get() == 1, "disconnected tap opens only");
             tabs.setCameraState(true, "再接続", false, 0, 0);
-            tabs.getTabAt(2).view.performClick();
-            check(opens.get() == 2, "reattach preserves tap");
+            tabs.destinationView(2).performClick();
+            check(opens.get() == 3 && changes.get() == 0, "reattach preserves tap without changing library");
+            tabs.destinationView(albums ? 0 : 1).performClick();
+            check(changes.get() == 1 && tabs.selectedDestination() == (albums ? 0 : 1), "peer navigation updates selection");
+            tabs.setEnabled(false);
+            tabs.destinationView(albums ? 1 : 0).performClick();
+            camera.performClick();camera.performLongClick();
+            check(changes.get() == 1 && opens.get() == 3 && starts.get() == 1, "runtime disable blocks all destinations");
+            tabs.setEnabled(true);
+            check(hasLongAction(camera), "runtime enable restores valid quick import");
           }
           var locked = new LibraryTabs(context, false, false, ignored -> {},
               () -> { throw new AssertionError("selection tap"); },
               () -> { throw new AssertionError("selection long press"); });
           locked.setCameraState(true, "サンプル", false, 0, 0);
-          var camera = locked.getTabAt(2).view;
+          var camera = locked.destinationView(2);
           camera.performClick();
           camera.performLongClick();
           check(!camera.isEnabled() && !hasLongAction(camera), "selection disabled");
@@ -89,8 +110,37 @@ final class CameraTabsChecks {
       });
       if (error.get() != null) throw new AssertionError(error.get());
       checkSettingsRoutes(t);
-      return "PASS camera settings and Nano Banana routes coexist; camera tab attach/detach, tap/long press, busy/selection guards and 320dp/1.3x layout, successful quick import returns (synthetic device).";
+      return "PASS camera settings and Nano Banana routes coexist; persistent import destination through connection changes, tap/long press, busy/selection guards and 320dp/1.3x layout, successful quick import returns (synthetic device).";
     } finally { t.runOnMainSync(activity::finish); }
+  }
+
+  private static void checkImportPresentation(CameraImportActivity activity) throws Exception {
+    var panelField = CameraImportActivity.class.getDeclaredField("importSettings");
+    var gearField = CameraImportActivity.class.getDeclaredField("settingsButton");
+    var runField = CameraImportActivity.class.getDeclaredField("run");
+    var autoField = CameraImportActivity.class.getDeclaredField("auto");
+    var migrateField = CameraImportActivity.class.getDeclaredField("migrate");
+    for (var field : new java.lang.reflect.Field[]{panelField, gearField, runField, autoField, migrateField})
+      field.setAccessible(true);
+    View panel = (View) panelField.get(activity);
+    View gear = (View) gearField.get(activity);
+    View run = (View) runField.get(activity);
+    check(panel.getVisibility() == View.GONE, "initial import screen focuses on connection and progress");
+    check(run.getMinimumHeight() >= GalleryUi.dp(activity, 56), "primary import touch target");
+    check("取り込み設定".contentEquals(gear.getContentDescription()), "settings gear accessible name");
+    gear.performClick();
+    check(panel.getVisibility() == View.VISIBLE, "settings explicitly reachable");
+    check(((View) autoField.get(activity)).getVisibility() == View.VISIBLE
+        && ((View) migrateField.get(activity)).getVisibility() == View.VISIBLE,
+        "automatic import and CameraSync migration remain reachable");
+    gear.performClick();
+    var render = CameraImportActivity.class.getDeclaredMethod("renderStatus");
+    render.setAccessible(true);
+    render.invoke(activity);
+    check(panel.getVisibility() == View.GONE, "status refresh preserves collapsed settings");
+    gear.performClick();
+    check(panel.getVisibility() == View.VISIBLE, "settings reopen without reconstruction");
+    gear.performClick();
   }
 
   private static void checkSettingsRoutes(Instrumentation test) throws Exception {

@@ -83,7 +83,6 @@ final class SelectionUi {
     if(primary)MaterialUi.filled(button);else MaterialUi.outlined(button);
     return button;
   }
-  static void allIcon(Button button){Context c=button.getContext();Drawable icon=new Drawable(){final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);public void draw(Canvas canvas){int save=canvas.save();canvas.translate(getBounds().left,getBounds().top);canvas.scale(getBounds().width()/24f,getBounds().height()/24f);p.setColor(GalleryUi.TEXT);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1.8f);p.setStrokeCap(Paint.Cap.ROUND);p.setStrokeJoin(Paint.Join.ROUND);canvas.drawRoundRect(4,4,20,20,2.5f,2.5f,p);Path tick=new Path();tick.moveTo(8.5f,12.3f);tick.lineTo(11,14.8f);tick.lineTo(15.8f,9.8f);canvas.drawPath(tick,p);canvas.restoreToCount(save);}public void setAlpha(int a){}public void setColorFilter(ColorFilter f){}public int getOpacity(){return PixelFormat.TRANSLUCENT;}};icon.setBounds(0,0,GalleryUi.dp(c,24),GalleryUi.dp(c,24));button.setCompoundDrawables(null,icon,null,null);}
   static void finishFooter(LinearLayout root, int first, IntSupplier reservedContentHeight) {
     GalleryUi.bottomControls(root, first, GalleryUi.BG, reservedContentHeight);
     ScrollView scroll = (ScrollView) root.getChildAt(root.getChildCount() - 1);
