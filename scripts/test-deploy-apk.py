@@ -21,10 +21,11 @@ XML = '''<manifest xmlns:android="http://schemas.android.com/apk/res/android" pa
 <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
 <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
 <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
 <application>
 <activity android:name=".MainActivity"/>
 <activity android:name=".VideoActivity"/>
-<activity android:name=".NanoBananaActivity"/>
+<service android:name=".NanoBananaService" android:exported="false" android:foregroundServiceType="dataSync"/>
 <activity android:name=".NanoBananaSettingsActivity"/>
 <activity android:name=".CameraImportActivity"/>
 <activity android:name=".camera.CameraAttachActivity" android:exported="true">
@@ -194,6 +195,15 @@ class DeployTests(unittest.TestCase):
     def test_manifest_complete(self):
         self.assertEqual(set(self.info['features']), deploy.REQUIRED)
         deploy.check_features(self.info)
+
+    def test_nano_requires_private_data_sync_service(self):
+        for xml in (
+            XML.replace('android:exported="false"', 'android:exported="true"'),
+            XML.replace('android:foregroundServiceType="dataSync"', ''),
+            XML.replace('<service android:name=".NanoBananaService"', '<activity android:name=".NanoBananaService"'),
+            XML.replace('<uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>', ''),
+        ):
+            self.assertNotIn('nano-banana', deploy.manifest_info(xml)['features'])
 
     def test_camera_missing_even_when_current_install_lacks_it(self):
         self.info['features'].remove('camera-import')

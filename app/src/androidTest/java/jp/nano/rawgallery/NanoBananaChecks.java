@@ -14,7 +14,6 @@ import java.lang.reflect.Method;
 
 /** Isolated local fixture. Never uses production credentials or makes an API call. */
 final class NanoBananaChecks {
-  static NanoBananaStore fixtureStore;
   static String run(Instrumentation test,int width,float font) throws Exception {
     Context context=test.getTargetContext();String namespace="nano-banana-fixture";
     SharedPreferences prefs=context.getSharedPreferences(namespace,0);prefs.edit().clear().commit();
@@ -62,7 +61,7 @@ final class NanoBananaChecks {
       test4k(test,store);
       store.deletePrompt(first.id);TagDetailChecks.require(store.prompts().size()==1,"delete one prompt");
       store.deleteKey();TagDetailChecks.require(!store.hasKey(),"delete credential");
-      return "PASS Nano Banana isolated encrypted credential roundtrip, input validation, prompt CRUD/duplicate labels, output allowlists/atomic save rollback/defaults/request body, choice dialogs Save/Cancel/restored selection, corrupt non-String preference recovery, scrolled 21:9 selection/save/reopen, settings layout and 48dp controls. 4K 4800x3584 save/readback, sampled preview and 20MP rejection verified. Durable job recovery, ambiguous POST suppression, result save and cleanup retry verified with fake network. No service request or real credentials; physical touch, IME and spoken output unverified.\n";
+      return "PASS Nano Banana isolated encrypted credential roundtrip, input validation, prompt CRUD/duplicate labels, output allowlists/atomic save rollback/defaults/request body, choice dialogs Save/Cancel/restored selection, corrupt non-String preference recovery, scrolled 21:9 selection/save/reopen, settings layout and 48dp controls. 4K 4800x3584 save/readback and 20MP rejection verified. Durable job recovery, ambiguous POST suppression, result save and cleanup retry verified with fake network. No service request or real credentials; physical touch, IME and spoken output unverified.\n";
     }finally{if(activity!=null){final NanoBananaSettingsActivity screen=activity;TagDetailChecks.ui(test,screen::finish);}prefs.edit().clear().commit();}
   }
   private static void testOutput(Context context,NanoBananaStore store,SharedPreferences prefs) throws Exception {
@@ -263,7 +262,6 @@ final class NanoBananaChecks {
       TagDetailChecks.require(failed&&store.job().getString("stage").equals("cleanup")&&fake.submits==1,"saved output survives cleanup failure");
       job.run(null,null,m->{});
       TagDetailChecks.require(store.job().getString("stage").equals("complete")&&fake.submits==1&&fake.downloads==1&&fake.deletes==2,"cleanup retry never regenerates or resaves");
-      captureRun(test,store,width,font);
       org.json.JSONObject published=store.job();published.remove("saved");published.put("stage","generating");store.job(published);
       job.discard();
       try(android.database.Cursor cursor=context.getContentResolver().query(android.net.Uri.parse(saved),new String[]{"_id"},null,null,null)){
@@ -311,8 +309,6 @@ final class NanoBananaChecks {
       android.graphics.BitmapFactory.Options size=new android.graphics.BitmapFactory.Options();size.inJustDecodeBounds=true;
       try(java.io.InputStream in=context.getContentResolver().openInputStream(android.net.Uri.parse(saved))){android.graphics.BitmapFactory.decodeStream(in,null,size);}
       TagDetailChecks.require(size.outWidth==4800&&size.outHeight==3584,"4K result saved without changing dimensions");
-      android.graphics.Bitmap preview=NanoBananaActivity.resultPreview(context,android.net.Uri.parse(saved));
-      TagDetailChecks.require(preview!=null&&Math.max(preview.getWidth(),preview.getHeight())<=1600,"4K display preview samples without changing saved JPEG");preview.recycle();
       // Bounds-only decode rejects excessive dimensions before allocating a result bitmap.
       android.graphics.Bitmap excessive=android.graphics.Bitmap.createBitmap(5000,4100,android.graphics.Bitmap.Config.ARGB_8888);
       bytes.reset();excessive.compress(android.graphics.Bitmap.CompressFormat.JPEG,90,bytes);excessive.recycle();
@@ -320,27 +316,6 @@ final class NanoBananaChecks {
       boolean rejected=false;try{new NanoBananaJob(context,store,network).run(null,null,m->{});}catch(java.io.IOException expected){rejected=true;}
       TagDetailChecks.require(rejected&&!store.job().has("saved"),"result above 20MP rejected before save");
     }finally{if(saved!=null)context.getContentResolver().delete(android.net.Uri.parse(saved),null,null);store.job(null);}
-  }
-  private static void captureRun(Instrumentation test,NanoBananaStore store,int width,float font) throws Exception {
-    org.json.JSONObject complete=store.job();
-    captureRunState(test,store,width,font,"nano-result");
-    store.job(new org.json.JSONObject(complete.toString()).put("stage","generating"));
-    captureRunState(test,store,width,font,"nano-resume");
-    store.job(complete);
-  }
-  private static void captureRunState(Instrumentation test,NanoBananaStore store,int width,float font,String name) throws Exception {
-    fixtureStore=store;NanoBananaActivity activity=null;
-    try {
-      activity=(NanoBananaActivity)test.startActivitySync(new Intent(test.getTargetContext(),NanoBananaActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-      final NanoBananaActivity screen=activity;
-      TagDetailChecks.ui(test,()->{
-        android.content.res.Configuration config=new android.content.res.Configuration(screen.getResources().getConfiguration());config.fontScale=font;
-        screen.getResources().updateConfiguration(config,screen.getResources().getDisplayMetrics());screen.getWindow().setLayout(GalleryUi.dp(screen,width),-1);
-      });test.waitForIdleSync();Thread.sleep(250);
-      File dir=new File(test.getTargetContext().getCacheDir(),"consistency-checks");dir.mkdirs();
-      View content=((ViewGroup)screen.findViewById(android.R.id.content)).getChildAt(0);
-      ConsistencyLayoutChecks.captureHardware(test,screen,content,dir,name+"-"+width+"-"+font);
-    }finally{if(activity!=null){final NanoBananaActivity screen=activity;TagDetailChecks.ui(test,screen::finish);}fixtureStore=null;}
   }
   private static void captureViewer(Instrumentation test,NanoBananaStore store,PhotoRepository.Photo photo,int width,float font) throws Exception {
     MainActivity activity=(MainActivity)test.startActivitySync(new Intent(test.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));

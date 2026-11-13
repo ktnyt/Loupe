@@ -40,7 +40,7 @@ public final class NanoBananaSettingsActivity extends AppCompatActivity {
     action(store.hasE2()?"IDrive e2を変更":"IDrive e2を登録",this::editE2);
     if(store.hasE2())action("IDrive e2の設定を削除",()->new MaterialAlertDialogBuilder(this).setTitle("e2設定を削除しますか？")
         .setNegativeButton("キャンセル",null).setPositiveButton("削除",(d,w)->{try{store.deleteE2();render();}catch(IOException e){error(e);}}).show());
-    try {if(store.job()!=null)action("進行中の処理・前回の結果",()->startActivity(new android.content.Intent(this,NanoBananaActivity.class)));}catch(IOException e){error(e);}
+    try {NanoBananaService.forgetComplete(store);if(NanoBananaService.busy()||store.job()!=null)action("生成の状態",()->NanoBananaUi.showPending(this,store));}catch(IOException e){error(e);}
     column.addView(label("e2バケットはバージョニング有効が必要です。送信用の一時画像は、生成後に削除します。",14));
     outputControls();
     TextView prompts=label("プロンプト",20);prompts.setAccessibilityHeading(true);column.addView(prompts);

@@ -11,6 +11,7 @@ import android.provider.MediaStore;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.InterruptedIOException;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.json.JSONObject;
@@ -44,24 +45,33 @@ final class NanoBananaJob {
   NanoBananaJob(Context context,NanoBananaStore store) {this(context,store,null);}
   NanoBananaJob(Context context,NanoBananaStore store,Services services) {this.context=context.getApplicationContext();this.store=store;this.services=services;}
   void run(PhotoRepository.Photo photo,NanoBananaStore.Prompt prompt,Progress progress) throws Exception {
+    run(photo,prompt,null,progress);
+  }
+  private static void checkInterrupted() throws InterruptedIOException {
+    if(Thread.currentThread().isInterrupted())throw new InterruptedIOException("処理を中断しました。AI編集メニューから確認してください");
+  }
+  void run(PhotoRepository.Photo photo,NanoBananaStore.Prompt prompt,NanoBananaOutput snapshot,Progress progress) throws Exception {
+    checkInterrupted();
     JSONObject job=store.job();
     long start=SystemClock.elapsedRealtime(), event=DiagnosticLog.id();
     DiagnosticLog.event("nano.start",event,"resume",job!=null);
     try {
       if(job==null) {
         if(photo==null||prompt==null)throw new IOException("写真とプロンプトを選び直してください");
-        NanoBananaOutput output=store.output();
+        NanoBananaOutput output=snapshot==null?store.output():snapshot;
         // Validate both credentials before touching the network or creating remote objects.
         Services network=services();
         progress.show("送信用の写真を準備しています");
         byte[] jpeg=input(new PhotoRepository(context),photo);
+        checkInterrupted();
         String object="loupe-nano-temp/"+UUID.randomUUID()+".jpg";
         job=new JSONObject().put("object",object).put("stage","uploading").put("owner",UUID.randomUUID().toString()).put("output",output.json());store.job(job);
         progress.show("IDrive e2へ送信しています");
         String version;
-        try{version=network.upload(object,jpeg,job.getString("owner"));}
+        try{checkInterrupted();version=network.upload(object,jpeg,job.getString("owner"));}
         catch(NanoBananaE2.UploadRejected rejected){job.put("stage","rejected");store.job(job);throw new IOException("e2が送信を拒否しました。一時画像を削除して終了し、設定を確認してください。");}
-        if(version!=null)job.put("version",version);
+        if(version!=null){job.put("version",version);store.job(job);}
+        checkInterrupted();
         if(version==null||version.equals("null")) {
           job.put("stage","failed");store.job(job);
           throw new IOException("e2バケットのバージョニングを有効にしてください。一時画像の削除後に設定を確認してください。");
@@ -69,10 +79,15 @@ final class NanoBananaJob {
         // Persist this boundary BEFORE POST. Crash/timeout here requires manual cleanup, never a new POST.
         job.put("stage","submitting");store.job(job);
         progress.show("Nano Bananaへ依頼しています");
+        checkInterrupted();
         String task=network.generate(prompt.text,object,version,NanoBananaOutput.fromJob(job));
         job.put("task",task).put("stage","generating");store.job(job);
+        checkInterrupted();
       }
+      recoverPending(job);
       String stage=job.getString("stage");
+      if(stage.equals("discarding")){discard();return;}
+      if(job.has("saved")&&!stage.equals("complete")){job.put("stage","cleanup");store.job(job);stage="cleanup";}
       if(stage.equals("rejected"))throw new IOException("e2が送信を拒否しました。終了して設定を確認してください。");
       if(stage.equals("uploading")||stage.equals("submitting"))
         throw new IOException("依頼の結果を確認できません。自動では再送しません。一時画像を削除して終了できます。API側の処理と課金は取り消せない場合があります。");
@@ -84,7 +99,8 @@ final class NanoBananaJob {
       long deadline=SystemClock.elapsedRealtime()+300000;
       JSONObject status;
       while(true) {
-        status=network.status(job.getString("task"));int flag=status.getInt("successFlag");
+        checkInterrupted();
+        status=network.status(job.getString("task"));checkInterrupted();int flag=status.getInt("successFlag");
         if(flag==1)break;
         if(flag==2||flag==3){job.put("stage","failed");store.job(job);throw new IOException("画像を生成できませんでした。一時画像を削除して終了してください。");}
         if(flag!=0)throw new IOException("生成状態を確認できませんでした");
@@ -94,8 +110,9 @@ final class NanoBananaJob {
       progress.show("生成画像を保存しています");
       recoverPending(job);
       if(!job.has("saved")) {
+        checkInterrupted();
         byte[] bytes=network.download(status.getJSONObject("response").getString("resultImageUrl"));
-        saveResult(job,bytes);
+        checkInterrupted();saveResult(job,bytes);
       }
       job.put("stage","cleanup");store.job(job);
       progress.show("送信用の一時画像を削除しています");cleanup(job);
@@ -103,15 +120,28 @@ final class NanoBananaJob {
       DiagnosticLog.event("nano.complete",event,"elapsed_ms",SystemClock.elapsedRealtime()-start);
     }catch(Exception error){DiagnosticLog.event("nano.failed",event,"elapsed_ms",SystemClock.elapsedRealtime()-start);throw error;}
   }
+  /** Durable cancellation intent must precede any recovery or remote cleanup. */
+  static void markDiscarding(NanoBananaStore store) throws Exception {
+    JSONObject job=store.job();if(job==null||job.optString("stage").equals("discarding"))return;
+    String stage=job.optString("stage");
+    job.put("discardDelete",!stage.equals("complete")&&!stage.equals("rejected"));
+    job.put("stage","discarding");store.job(job);
+  }
   void discard() throws Exception {
+    checkInterrupted();
+    markDiscarding(store);
     JSONObject job=store.job();if(job==null)return;
-    recoverPending(job);
-    if(!job.optString("stage").equals("complete")&&!job.optString("stage").equals("rejected"))services().delete(job.getString("object"),job.has("version")?job.getString("version"):null,job.getString("owner"));
+    recoverPending(job);checkInterrupted();
+    if(job.optBoolean("discardDelete",true)){
+      services().delete(job.getString("object"),job.has("version")?job.getString("version"):null,job.getString("owner"));
+      job.put("discardDelete",false);store.job(job);checkInterrupted();
+    }
     store.job(null);
   }
   private void cleanup(JSONObject job) throws Exception {
+    checkInterrupted();
     services().delete(job.getString("object"),job.has("version")?job.getString("version"):null,job.getString("owner"));
-    job.put("stage","complete");store.job(job);
+    job.put("stage","complete");store.job(job);checkInterrupted();
   }
   static byte[] input(PhotoRepository repository,PhotoRepository.Photo photo) throws Exception {
     if(photo.isVideo())throw new IOException("写真を選んでください");
@@ -128,13 +158,15 @@ final class NanoBananaJob {
     }finally{bitmap.recycle();}
   }
   private void recoverPending(JSONObject job) throws Exception {
+    checkInterrupted();
     if(job.has("saved")||!job.has("pending"))return;
     Uri uri=Uri.parse(job.getString("pending"));
     int state;
     try(Cursor c=context.getContentResolver().query(uri,new String[]{MediaStore.Images.Media.IS_PENDING},null,null,null)) {
       state=pendingState(c);
     }
-    if(state==0){job.put("saved",uri.toString());store.job(job);return;}
+    if(state==0){job.put("saved",uri.toString());store.job(job);checkInterrupted();return;}
+    checkInterrupted();
     if(state==1&&context.getContentResolver().delete(uri,MediaStore.Images.Media.IS_PENDING+" = ?",new String[]{"1"})!=1)
       throw new IOException("画像の保存状態を確認できませんでした。もう一度確認してください");
     job.remove("pending");store.job(job);
@@ -153,10 +185,17 @@ final class NanoBananaJob {
     BitmapFactory.decodeByteArray(bytes,0,bytes.length,bounds);
     if(bounds.outWidth<=0||bounds.outHeight<=0||(long)bounds.outWidth*bounds.outHeight>20000000)
       throw new IOException("生成結果を画像として開けませんでした");
-    Bitmap bitmap=BitmapFactory.decodeByteArray(bytes,0,bytes.length);
+    boolean jpeg="image/jpeg".equals(bounds.outMimeType);
+    BitmapFactory.Options decode=new BitmapFactory.Options();decode.inSampleSize=1;
+    if(jpeg)while((bounds.outWidth+decode.inSampleSize-1)/Math.max(1,decode.inSampleSize)>1600
+        ||(bounds.outHeight+decode.inSampleSize-1)/Math.max(1,decode.inSampleSize)>1600)
+      decode.inSampleSize*=2;
+    checkInterrupted();
+    Bitmap bitmap=BitmapFactory.decodeByteArray(bytes,0,bytes.length,decode);
     if(bitmap==null)throw new IOException("生成結果を画像として開けませんでした");
     Uri uri=null;boolean published=false;
     try {
+      checkInterrupted();
       ContentValues values=new ContentValues();values.put(MediaStore.Images.Media.DISPLAY_NAME,"NanoBanana-"+UUID.randomUUID()+".jpg");
       values.put(MediaStore.Images.Media.MIME_TYPE,"image/jpeg");values.put(MediaStore.Images.Media.RELATIVE_PATH,"Pictures/LoupeNanoBanana");
       values.put(MediaStore.Images.Media.IS_PENDING,1);
@@ -164,11 +203,15 @@ final class NanoBananaJob {
       if(uri==null)throw new IOException("画像の保存先を作れませんでした");
       job.put("pending",uri.toString());store.job(job);
       try(OutputStream out=context.getContentResolver().openOutputStream(uri)) {
-        if(out==null||!bitmap.compress(Bitmap.CompressFormat.JPEG,95,out))throw new IOException("生成画像を保存できませんでした");
+        if(out==null)throw new IOException("生成画像を保存できませんでした");
+        checkInterrupted();
+        if(jpeg)out.write(bytes);
+        else if(!bitmap.compress(Bitmap.CompressFormat.JPEG,95,out))throw new IOException("生成画像を保存できませんでした");
       }
+      checkInterrupted();
       ContentValues ready=new ContentValues();ready.put(MediaStore.Images.Media.IS_PENDING,0);
       if(context.getContentResolver().update(uri,ready,null,null)!=1)throw new IOException("生成画像を確定できませんでした");
-      published=true;job.put("saved",uri.toString());store.job(job);
+      published=true;job.put("saved",uri.toString());store.job(job);checkInterrupted();
     }finally{
       bitmap.recycle();if(!published&&uri!=null)context.getContentResolver().delete(uri,MediaStore.Images.Media.IS_PENDING+" = ?",new String[]{"1"});
     }
