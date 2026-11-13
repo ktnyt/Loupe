@@ -10,9 +10,11 @@ import java.util.*;
 public final class RankingStoreTest {
   public static void main(String[] args) throws Exception {
     Map<String, String> disk = new HashMap<>();
+    Map<String, String> memory = new HashMap<>();
     boolean[] commitSucceeds = {true};
+    boolean[] publishBeforeFailedCommit = {false};
     int[] commits = {0};
-    Map<String, String> pending = new HashMap<>();
+    Map<String, Optional<String>> pending = new HashMap<>();
     SharedPreferences.Editor editor =
         (SharedPreferences.Editor)
             Proxy.newProxyInstance(
@@ -21,11 +23,25 @@ public final class RankingStoreTest {
                 (proxy, method, values) -> {
                   switch (method.getName()) {
                     case "putString":
-                      pending.put((String) values[0], (String) values[1]);
+                      pending.put((String) values[0], Optional.of((String) values[1]));
+                      return proxy;
+                    case "remove":
+                      pending.put((String) values[0], Optional.empty());
                       return proxy;
                     case "commit":
                       commits[0]++;
-                      if (commitSucceeds[0]) disk.putAll(pending);
+                      if (commitSucceeds[0] || publishBeforeFailedCommit[0]) {
+                        for (Map.Entry<String, Optional<String>> change : pending.entrySet()) {
+                          if (change.getValue().isPresent()) memory.put(change.getKey(), change.getValue().get());
+                          else memory.remove(change.getKey());
+                        }
+                      }
+                      if (commitSucceeds[0]) {
+                        for (Map.Entry<String, Optional<String>> change : pending.entrySet()) {
+                          if (change.getValue().isPresent()) disk.put(change.getKey(), change.getValue().get());
+                          else disk.remove(change.getKey());
+                        }
+                      }
                       pending.clear();
                       return commitSucceeds[0];
                     default:
@@ -40,7 +56,7 @@ public final class RankingStoreTest {
                 (proxy, method, values) -> {
                   switch (method.getName()) {
                     case "getString":
-                      return disk.getOrDefault((String) values[0], (String) values[1]);
+                      return memory.getOrDefault((String) values[0], (String) values[1]);
                     case "edit":
                       return editor;
                     default:
@@ -56,6 +72,7 @@ public final class RankingStoreTest {
     StringBuilder legacyKey = new StringBuilder("v1-");
     for (byte value : hash) legacyKey.append(String.format(Locale.ROOT, "%02x", value));
     disk.put(legacyKey.toString(), "2");
+    memory.put(legacyKey.toString(), "2");
     PhotoRanking restored = store.load(requested);
     check(restored.journal.equals("2"), "legacy journal resumed");
     check(restored.ids.equals(List.of("写真A", "写真B", "写真C")), "canonical members");
@@ -103,15 +120,52 @@ public final class RankingStoreTest {
         "stale and unchanged confirmations do not write");
     check(store.save(best), "legacy best-only journal remains writable");
     check(store.load(requested).bestOnly(), "best-only history still reads after full-rank history");
-    disk.put(legacyKey.toString(), "invalid");
+    String photoKey = "singleton-photo";
+    String singleKey = "single-best-v1-" + PhotoRepository.digest(photoKey);
+    check(!store.singleBest(photoKey), "singleton defaults to false");
+    check(store.saveSingleBest(photoKey, false, true), "singleton mark saved");
+    check(store.singleBest(photoKey), "singleton mark reads true");
+    check(store.saveSingleBest(photoKey, true, false), "singleton unmark saved");
+    check(!new RankingStore(preferences).singleBest(photoKey), "singleton unmark survives reopen");
+    check(!store.singleBest("different-photo"), "singleton identities are isolated");
+    check(store.load(requested).bestOnly(), "singleton state does not change burst journal");
+    check(store.saveSingleBest(photoKey, false, true), "singleton marked again");
+    check(!store.saveSingleBest(photoKey, false, false), "stale singleton expectation is rejected");
+    check(store.singleBest(photoKey), "stale singleton write leaves current state intact");
+    commitSucceeds[0] = false;
+    String unmarkedKey = "failed-singleton-photo";
+    String unmarkedStorageKey = "single-best-v1-" + PhotoRepository.digest(unmarkedKey);
+    publishBeforeFailedCommit[0] = true;
+    check(!store.saveSingleBest(unmarkedKey, false, true), "failed singleton commit reported");
+    check(!memory.containsKey(unmarkedStorageKey), "failed commit memory publish is rolled back by removal");
+    check(!disk.containsKey(unmarkedStorageKey), "failed commit leaves disk value absent");
+    check(!store.singleBest(unmarkedKey), "failed singleton remains unmarked");
+    commitSucceeds[0] = true;
+    disk.put(singleKey, "corrupt");
+    memory.put(singleKey, "corrupt");
     int before = commits[0];
+    try {
+      store.singleBest(photoKey);
+      throw new AssertionError("corrupt singleton accepted");
+    } catch (java.io.IOException expected) {
+      check(commits[0] == before, "corrupt singleton read not overwritten");
+    }
+    try {
+      store.saveSingleBest(photoKey, false, true);
+      throw new AssertionError("corrupt singleton overwritten");
+    } catch (java.io.IOException expected) {
+      check(commits[0] == before, "corrupt singleton write not committed");
+    }
+    disk.put(legacyKey.toString(), "invalid");
+    memory.put(legacyKey.toString(), "invalid");
+    before = commits[0];
     try {
       store.load(requested);
       throw new AssertionError("corrupt journal accepted");
     } catch (IllegalArgumentException expected) {
       check(commits[0] == before, "corrupt journal not overwritten");
     }
-    System.out.println("Ranking storage: legacy keys/journals, ties, membership, undo, commit failure and corruption passed");
+    System.out.println("Ranking storage: burst journals, singleton state, stale writes, rollback and corruption passed");
   }
 
   private static void check(boolean condition, String message) {

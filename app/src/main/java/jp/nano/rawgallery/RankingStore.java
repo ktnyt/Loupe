@@ -27,6 +27,56 @@ final class RankingStore {
     return "v1-" + PhotoRepository.digest(String.join("|", sorted));
   }
 
+  private static String singleBestKey(String photoKey) throws IOException {
+    return "single-best-v1-" + PhotoRepository.digest(photoKey);
+  }
+
+  private static boolean decodeSingleBest(String value) throws IOException {
+    if (value == null || value.equals("0")) return false;
+    if (value.equals("1")) return true;
+    throw new IOException("Corrupt singleton best value");
+  }
+
+  /** Reads the independent singleton mark; an absent value means not marked. */
+  boolean singleBest(String photoKey) throws IOException {
+    String key = singleBestKey(photoKey);
+    synchronized (preferences) {
+      return decodeSingleBest(preferences.getString(key, null));
+    }
+  }
+
+  /** Writes only if the saved mark still matches the value the caller observed. */
+  boolean saveSingleBest(String photoKey, boolean expected, boolean next) throws IOException {
+    String key = singleBestKey(photoKey);
+    synchronized (preferences) {
+      String previous = preferences.getString(key, null);
+      if (decodeSingleBest(previous) != expected) return false;
+      if (expected == next) return true;
+
+      boolean committed;
+      try {
+        committed = preferences.edit().putString(key, next ? "1" : "0").commit();
+      } catch (RuntimeException | Error failure) {
+        rollbackSingleBest(key, previous, failure);
+        throw failure;
+      }
+      if (!committed) rollbackSingleBest(key, previous, null);
+      return committed;
+    }
+  }
+
+  private void rollbackSingleBest(String key, String previous, Throwable failure) throws IOException {
+    try {
+      SharedPreferences.Editor rollback = preferences.edit();
+      if (previous == null) rollback.remove(key);
+      else rollback.putString(key, previous);
+      rollback.commit();
+    } catch (RuntimeException | Error rollbackFailure) {
+      if (failure != null) failure.addSuppressed(rollbackFailure);
+      else throw new IOException("Could not roll back singleton best value", rollbackFailure);
+    }
+  }
+
   /** Same member set resumes the same journal; corrupt journals are not overwritten. */
   PhotoRanking load(List<String> ids) throws IOException {
     List<String> sorted = new ArrayList<>(ids);

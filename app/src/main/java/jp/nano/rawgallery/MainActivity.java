@@ -843,7 +843,12 @@ public final class MainActivity extends DiagnosticActivity {
         continue;
       }
       if (members.size() == 1) {
-        if (rankFilter == 1) displayed.add(members);
+        PhotoRepository.Photo single = photos.get(members.get(0));
+        if (!single.isVideo()) try {
+          boolean chosen = rankingStore.singleBest(ArchiveStore.key(single));
+          if ((chosen && (rankFilter == 1 || rankFilter == 3)) || (!chosen && rankFilter == 2))
+            displayed.add(members);
+        } catch (Exception e) { if (rankFilter == 2) displayed.add(members); }
         continue;
       }
       try {
@@ -1691,7 +1696,10 @@ public final class MainActivity extends DiagnosticActivity {
       cell.badges.count = members.size();
       cell.badges.rank = "";cell.badges.rankFailed=false;
       List<Integer> group = photoBundles.get(members.get(0));
-      if (group != null && group.size() > 1) {
+      if (group != null && group.size() == 1 && !p.isVideo()) {
+        try { if (rankingStore.singleBest(ArchiveStore.key(p))) cell.badges.rank = "1位"; }
+        catch (Exception e) { cell.badges.rankFailed=true;cell.setContentDescription(cell.getContentDescription()+"、順位を読み込めませんでした"); }
+      } else if (group != null && group.size() > 1) {
         try {
           PhotoRanking saved = rankingFor(group);
           cell.badges.rank = saved.done()
@@ -1719,6 +1727,53 @@ public final class MainActivity extends DiagnosticActivity {
   private boolean returnToRanking, recentPhoto;
   private ViewerLookUi viewerLook;
   private boolean restoreViewerLook;
+
+  /** Explicit singleton choice; never interpret a one-member comparison as a user choice. */
+  private void singleBestAction(PhotoViewerUi viewer, PhotoRepository.Photo photo, int screen) {
+    RankingStore store = rankingStore;
+    final String key;
+    try { key = ArchiveStore.key(photo); }
+    catch (IOException e) {
+      Button retry = viewer.action("1位", "1位", "順位を読み込めませんでした。押すと再試行", () -> showPhoto(index, false));
+      PhotoViewerUi.bestState(retry, false, false, true, true);
+      return;
+    }
+    boolean[] chosen = {false}, loaded = {false};
+    Button button = viewer.action("1位", "1位", "1位にする", () -> {});
+    try { chosen[0] = store.singleBest(key); loaded[0] = true; }
+    catch (Exception ignored) {}
+    PhotoViewerUi.bestState(button, chosen[0], false, !loaded[0], !loaded[0]);
+    button.setOnClickListener(v -> {
+      GalleryUi.feedback(v);
+      boolean expected = chosen[0], reading = !loaded[0];
+      long request = DiagnosticLog.id();
+      DiagnosticLog.event("ranking.single.start", request, "chosen", expected ? 0 : 1);
+      PhotoViewerUi.bestState(button, expected, true, false, reading);
+      actions.execute(() -> {
+        boolean success = false, result = expected;
+        try {
+          if (reading) { result = store.singleBest(key); success = true; }
+          else { success = store.saveSingleBest(key, expected, !expected); if (success) result = !expected; }
+        } catch (Exception ignored) {}
+        final boolean saved = success, value = result;
+        DiagnosticLog.event(saved ? "ranking.single.saved" : "ranking.single.failed", request);
+        main.post(() -> {
+          if (isDestroyed() || generation != screen || !detail) return;
+          if (saved) { chosen[0] = value; loaded[0] = true; }
+          PhotoViewerUi.bestState(button, chosen[0], false, !saved, !loaded[0]);
+          button.announceForAccessibility(saved ? (value ? "1位にしました" : "1位を解除しました") : "保存できませんでした。もう一度押すと再試行");
+          button.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
+            public boolean onPreDraw() {
+              button.getViewTreeObserver().removeOnPreDrawListener(this);
+              if (button.isHardwareAccelerated()) button.getViewTreeObserver().registerFrameCommitCallback(() -> DiagnosticLog.event("ranking.single.frame", request));
+              return true;
+            }
+          });
+          button.invalidate();
+        });
+      });
+    });
+  }
 
   private void showPhoto(int position, boolean fromRanking) {
     DiagnosticLog.event("screen.photo", 0, "position", position);
@@ -1761,6 +1816,8 @@ public final class MainActivity extends DiagnosticActivity {
       previous.setEnabled(adjacentPhotoPosition(-1)>=0);next.setEnabled(adjacentPhotoPosition(1)>=0);
     }
     viewer.zoom();
+    if (!fromRanking && photoBundles.get(position) != null && photoBundles.get(position).size() == 1)
+      singleBestAction(viewer, photo, token);
     Button editPhoto=PhotoEditor.add(this,viewer,photo,actions);
     viewer.action("共有","共有","共有（元のファイルを共有します）",()->shareMenu(photo));
     if(!fromRanking)viewer.action("Nano Banana","AI編集","Nano Bananaで写真を編集",()->NanoBananaUi.show(this,photo));
@@ -2094,7 +2151,10 @@ public final class MainActivity extends DiagnosticActivity {
     for(PhotoRepository.Photo photo:frozen){
       if("archive".equals(photo.uri.getScheme()))cloud++;
       int index=photos.indexOf(photo);List<Integer> group=photoBundles.get(index);
-      if(group!=null&&group.size()>1)try{PhotoRanking rank=rankingFor(group);if(rank.done()&&rank.best().contains(ArchiveStore.key(photo)))best.add(photo.uri.toString());}catch(Exception ignored){}
+      if(group!=null)try{
+        if(group.size()==1){if(!photo.isVideo()&&rankingStore.singleBest(ArchiveStore.key(photo)))best.add(photo.uri.toString());}
+        else{PhotoRanking rank=rankingFor(group);if(rank.done()&&rank.best().contains(ArchiveStore.key(photo)))best.add(photo.uri.toString());}
+      }catch(Exception ignored){}
     }
     ShareUi.Menu menu=new ShareUi.Menu(this,frozen,ShareTargets.load(this),cloud,best,(raw,target)->export(frozen,raw,target));
     capacityMenu=menu;

@@ -108,6 +108,7 @@ final class PhotoViewerUi extends ViewGroup {
       case "情報": resource=R.drawable.ic_viewer_info;break;
       case "Nano Banana": resource=R.drawable.ic_nano_banana;break;
       case "タグ": resource=R.drawable.ic_viewer_tag;break;
+      case "1位": resource=R.drawable.ic_viewer_best;break;
       default: throw new IllegalArgumentException(action);
     }
     android.graphics.drawable.Drawable drawable=button.getContext().getDrawable(resource).mutate();
@@ -218,6 +219,21 @@ final class PhotoViewerUi extends ViewGroup {
     };
     ((DockButton)button).saveFailed=failed;
     state.setBounds(0,0,GalleryUi.dp(c,24),GalleryUi.dp(c,24));button.setCompoundDrawables(null,state,null,null);button.invalidate();
+  }
+  static void bestState(Button button,boolean chosen,boolean busy,boolean failed,boolean unreadable) {
+    DockButton cell=(DockButton)button;
+    cell.widthLabels=new String[]{"1位", "1位を解除"};
+    cell.running=busy;cell.saveFailed=failed;
+    cell.setCheckable(true);cell.setToggleCheckedStateOnClick(false);
+    // MaterialButton's node initializer reads its native checked state.
+    // Apply the committed value while enabled, then disable for pending I/O.
+    cell.setEnabled(true);cell.setChecked(chosen);
+    button.setText(chosen?"1位を解除":"1位");
+    button.setEnabled(!busy);button.setSelected(chosen);
+    button.setTextColor(chosen?0xfff5b947:GalleryUi.TEXT);
+    button.setContentDescription(unreadable?"順位を読み込めませんでした。押すと再試行":(chosen?"1位を解除する":"1位にする")+(failed?"。保存できませんでした。押すと再試行":""));
+    button.setStateDescription(busy?"保存中":unreadable?"読み込み失敗":failed?"保存失敗":chosen?"1位に指定済み":"未指定");
+    icon(button,"1位");button.invalidate();
   }
   static void editState(Button button,boolean running,boolean failed,String reason) {
     DockButton cell=(DockButton)button;cell.running=running;cell.saveFailed=failed;
