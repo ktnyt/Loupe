@@ -22,4 +22,4 @@ Synthetic checks cover explicit singleton best state; draft/cancel/apply and ini
 
 The sparse-library navigation check verifies observed empty/small-list state and Back retention. Deep scroll restoration with sufficiently populated real albums/photos remains unverified. Runtime of the current-judgment scan on a densely tagged library is unmeasured. The existing cloud-badge pixel check remains tracked in #80.
 
-The implementation checkpoints preserve resumable work. They do not establish physical-device completion. This PR remains Draft and the issue stays open until the repository's remaining device/review gate is met.
+The implementation checkpoints preserve resumable work. They do not establish physical-device completion. OTA publication and physical-device completion are separate. The remaining physical-device checks stay open on issue #112 after publication; emulator verification does not establish device installation or readback.
