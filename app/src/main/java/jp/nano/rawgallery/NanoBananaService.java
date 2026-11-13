@@ -23,6 +23,7 @@ public class NanoBananaService extends Service {
   private static final Handler MAIN=new Handler(Looper.getMainLooper());
   // All admission and worker ownership changes use Store.LOCK, including BUSY.
   private static Request reserved;
+  private static Toast latestToast;
   /** In-process dependency seam; no Intent can select fixture dependencies. */
   interface Factory {
     NanoBananaStore store(Context context);
@@ -122,11 +123,20 @@ public class NanoBananaService extends Service {
       toast(app,"処理を開始できませんでした。もう一度お試しください");return false;
     }
   }
-  private static void toast(Context c,String message){MAIN.post(()->Toast.makeText(c,message,Toast.LENGTH_SHORT).show());}
+  private static void toast(Context context,String message){
+    Context app=context.getApplicationContext();
+    Runnable show=()->{
+      if(latestToast!=null)latestToast.cancel();
+      latestToast=Toast.makeText(app,message,Toast.LENGTH_SHORT);
+      latestToast.show();
+      dependencies.result(message);
+    };
+    if(Looper.myLooper()==Looper.getMainLooper())show.run();else MAIN.post(show);
+  }
   protected NanoBananaStore createStore(){return dependencies.store(this);}
   protected NanoBananaJob createJob(NanoBananaStore store){return dependencies.job(this,store);}
   /** Called on the main thread. */
-  protected void notifyResult(String message){dependencies.result(message);Toast.makeText(this,message,Toast.LENGTH_SHORT).show();}
+  protected void notifyResult(String message){toast(this,message);}
   @Override public IBinder onBind(Intent intent){return null;}
   private Notification notification(){
     NotificationManager manager=getSystemService(NotificationManager.class);

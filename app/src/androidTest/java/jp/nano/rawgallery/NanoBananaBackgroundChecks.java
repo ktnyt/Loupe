@@ -59,10 +59,11 @@ final class NanoBananaBackgroundChecks {
     }
   }
   private static final class FixtureFactory implements NanoBananaService.Factory {
-    final NanoBananaStore store;volatile Fake fake;volatile String lastResult;volatile int jobs;
+    final NanoBananaStore store;volatile Fake fake;volatile String lastResult;volatile int jobs;volatile long lastMessageAt;
+    final List<String> messages=new java.util.concurrent.CopyOnWriteArrayList<>();
     FixtureFactory(NanoBananaStore store){this.store=store;}
     public NanoBananaStore store(Context context){return store;}
-    public void result(String message){lastResult=message;}
+    public void result(String message){lastResult=message;lastMessageAt=SystemClock.uptimeMillis();messages.add(message);}
     public NanoBananaJob job(Context context,NanoBananaStore received){
       jobs++;TagDetailChecks.require(received==store&&fake!=null,"isolated service dependencies required");
       return new NanoBananaJob(context,store,fake);
@@ -102,7 +103,7 @@ final class NanoBananaBackgroundChecks {
       Dialog[] selected={null};
       TagDetailChecks.ui(test,()->selected[0]=NanoBananaUi.show(screen,input,store,NanoBananaUi.ACTUAL));
       capture(test,screen,"nano-background-ready-"+width+"-"+font);
-      TagDetailChecks.ui(test,()->{View row=findLabel(selected[0].getWindow().getDecorView(),prompt.name);TagDetailChecks.require(row!=null&&row.performClick(),"prompt selection starts service directly");});
+      TagDetailChecks.ui(test,()->{View row=findLabel(selected[0].getWindow().getDecorView(),prompt.name);verifyMenuTargets(selected[0].getWindow().getDecorView());TagDetailChecks.require(row!=null&&row.performClick(),"prompt selection starts service directly");});
       TagDetailChecks.require(NanoBananaService.busy()&&!selected[0].isShowing(),"prompt selection dismisses menu and admits foreground service");
       TagDetailChecks.require(!NanoBananaService.start(screen,photo,prompt),"duplicate admission rejected");
       store.setOutput("16:9","4K");store.savePrompt(store.prompts().get(0).id,"変更した設定","changed after admission");
@@ -117,21 +118,24 @@ final class NanoBananaBackgroundChecks {
       TagDetailChecks.ui(test,tagScreen::finish);test.waitForIdleSync();
       synchronized(created){TagDetailChecks.require(created.equals(List.of(TagActivity.class.getName())),"only requested tag navigation occurred while generating");created.clear();}
       capture(test,screen,"nano-background-viewer-"+width+"-"+font);
-      Dialog[] menu={null};TagDetailChecks.ui(test,()->menu[0]=NanoBananaUi.show(screen,next,store,NanoBananaUi.ACTUAL));
-      capture(test,screen,"nano-background-busy-"+width+"-"+font);TagDetailChecks.ui(test,()->menu[0].dismiss());
+      Dialog[] menu={null};TagDetailChecks.ui(test,()->{menu[0]=NanoBananaUi.show(screen,next,store,NanoBananaUi.ACTUAL);});
+      capture(test,screen,"nano-background-busy-"+width+"-"+font);TagDetailChecks.ui(test,()->{verifyMenuTargets(menu[0].getWindow().getDecorView());menu[0].dismiss();});
       // Home is an actual OS navigation event; the service remains independent of the Activity.
       test.getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME);test.waitForIdleSync();
       TagDetailChecks.require(NanoBananaService.busy(),"service continues after Home");
       first.release.countDown();idle(test);
       TagDetailChecks.require(first.downloads==1&&first.deletes==1&&store.job()==null,"background completion saves, cleans and clears durable record");
       synchronized(created){TagDetailChecks.require(created.isEmpty(),"generation and completion do not launch another Activity");}
+      TagDetailChecks.require(factory.messages.equals(List.of("画像の生成を開始しました","画像を生成しています","生成画像を保存しました")),"initial prompt/busy/completion Toast order exactly once: "+factory.messages);
       TagDetailChecks.require(saved.size()==1,"one automatically saved JPEG");verifySaved(context,saved.get(0),1200,800);
       context.startActivity(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));test.waitForIdleSync();
       TagDetailChecks.ui(test,screen::onBackPressed);test.waitForIdleSync();
       // A second request is accepted after automatic completion and exercises saved cleanup recovery.
+      int cleanupToastStart=factory.messages.size();
       Fake cleanup=new Fake(store,jpeg,saved);cleanup.deleteFailure=true;cleanup.release.countDown();factory.fake=cleanup;
       TagDetailChecks.require(NanoBananaService.start(screen,photo,prompt),"next request accepted after completion");idle(test);
       JSONObject pending=store.job();TagDetailChecks.require(pending!=null&&pending.optString("stage").equals("cleanup")&&pending.has("saved"),"cleanup failure retains saved URI");String retained=pending.getString("saved");
+      TagDetailChecks.require(factory.messages.subList(cleanupToastStart,factory.messages.size()).equals(List.of("画像の生成を開始しました","画像は保存済みです。後処理を再試行してください")),"cleanup failure start then saved-image notice exactly once: "+factory.messages);
       TagDetailChecks.ui(test,()->{showPhoto(screen,0);menu[0]=NanoBananaUi.show(screen,input,store,NanoBananaUi.ACTUAL);});
       capture(test,screen,"nano-background-cleanup-"+width+"-"+font);TagDetailChecks.ui(test,()->menu[0].dismiss());
       TagDetailChecks.ui(test,()->{menu[0]=NanoBananaUi.show(screen,input,store,NanoBananaUi.ACTUAL);View row=findLabel(menu[0].getWindow().getDecorView(),"後処理を再試行");TagDetailChecks.require(row!=null&&row.performClick(),"cleanup retry control responds");});idle(test);
@@ -148,10 +152,11 @@ final class NanoBananaBackgroundChecks {
       ContextCompat.startForegroundService(context,new Intent(context,NanoBananaService.class).putExtra("request_nonce","stale"));
       await("stale intent started durable discard",()->stopped.deletes==1);idle(test);
       TagDetailChecks.require(store.job().optString("stage").equals("discarding")&&stopped.submits==1&&stopped.downloads==0,"failed discard remains durable without resurrection");
-      int savedBeforeDiscard=saved.size(),statusesBeforeDiscard=stopped.statuses;factory.lastResult=null;
+      int savedBeforeDiscard=saved.size(),statusesBeforeDiscard=stopped.statuses,discardToastStart=factory.messages.size();factory.lastResult=null;
       TagDetailChecks.require(NanoBananaService.resume(screen),"discard retry admitted");idle(test);
       TagDetailChecks.require(store.job()==null&&stopped.deletes==2&&stopped.downloads==0,"discard retry only removes temporary object");
       TagDetailChecks.require("後処理が完了しました".equals(factory.lastResult)&&saved.size()==savedBeforeDiscard&&stopped.statuses==statusesBeforeDiscard,"manual discarding resume reports cleanup complete without saving or polling");
+      TagDetailChecks.require(factory.messages.subList(discardToastStart,factory.messages.size()).equals(List.of("後処理を開始しました","後処理が完了しました")),"cleanup-only retry Toast start/completion order exactly once: "+factory.messages);
       int before=stopped.submits;ContextCompat.startForegroundService(context,new Intent(context,NanoBananaService.class).putExtra("request_nonce","stale"));Thread.sleep(300);test.waitForIdleSync();
       TagDetailChecks.require(!NanoBananaService.busy()&&stopped.submits==before&&store.job()==null,"stale request without durable work never submits");
       // A missing upload version is recoverable only by explicit manual e2 cleanup.
@@ -187,7 +192,7 @@ final class NanoBananaBackgroundChecks {
       store.job(null); // Fixture-only record: there is no remote object to delete.
       Context failing=new ContextWrapper(context){public Context getApplicationContext(){return this;}public ComponentName startForegroundService(Intent i){throw new IllegalStateException("synthetic startup rejection");}};
       TagDetailChecks.require(!NanoBananaService.start(failing,photo,prompt)&&!NanoBananaService.busy()&&store.job()==null,"startup rejection rolls back reservation");
-      return "PASS nano-background: actual production Android Service with isolated fake provider; next-photo operation, busy/error menu captures, Home continuation, no generation/result Activity launch, automatic JPEG save/readback 1200x800, temporary-object cleanup, duplicate admission, immutable prompt/output snapshot, next admission, saved cleanup retry without POST/download, interrupted-worker lease, durable discard retry and cleanup-only completion text, missing-version selectable manual recovery guidance, explicit ambiguous-submission messaging, stale end-confirmation A/B identity guard and current identity cleanup, stale Intent suppression and startup rejection. Captures are synthetic layouts; OS-service runtime assertions are separate. No real API, credentials, photos, physical touch or TalkBack speech tested.\n";
+      return "PASS nano-background: actual production Android Service with isolated fake provider; next-photo operation, busy/error menu captures, Home continuation, no generation/result Activity launch, automatic JPEG save/readback 1200x800, temporary-object cleanup, duplicate admission, immutable prompt/output snapshot, next admission, saved cleanup retry without POST/download, interrupted-worker lease, durable discard retry and cleanup-only completion text, missing-version selectable manual recovery guidance, explicit ambiguous-submission messaging, stale end-confirmation A/B identity guard and current identity cleanup, stale Intent suppression and startup rejection. Captures are synthetic layouts; OS-service runtime assertions are separate. No real API, credentials, photos, physical touch or TalkBack speech tested.\nToast trace (actual shown-message hook; fixed UI text only): "+String.join(" → ",factory.messages)+"\n";
     }finally{
       if(factory.fake!=null)factory.fake.release.countDown();
       context.stopService(new Intent(context,NanoBananaService.class));
@@ -208,6 +213,11 @@ final class NanoBananaBackgroundChecks {
     if(node==null)return null;if(node.getText()!=null&&node.getText().toString().contains(part))return node;
     for(int i=0;i<node.getChildCount();i++){android.view.accessibility.AccessibilityNodeInfo found=findAccessibleText(node.getChild(i),part);if(found!=null)return found;}return null;
   }
+  private static void verifyMenuTargets(View view){
+    if(view.getVisibility()!=View.VISIBLE)return;
+    if(view instanceof Button)TagDetailChecks.require(view.getHeight()>=GalleryUi.dp(view.getContext(),48),"visible menu row has 48dp touch target");
+    if(view instanceof ViewGroup){ViewGroup group=(ViewGroup)view;for(int i=0;i<group.getChildCount();i++)verifyMenuTargets(group.getChildAt(i));}
+  }
   private static View findLabel(View view,String label){
     if(view.getVisibility()!=View.VISIBLE)return null;
     if(label.equals(view.getContentDescription()==null?null:view.getContentDescription().toString())||view instanceof android.widget.TextView&&label.contentEquals(((android.widget.TextView)view).getText()))return view;
@@ -220,7 +230,11 @@ final class NanoBananaBackgroundChecks {
     TagDetailChecks.require(size.outWidth==width&&size.outHeight==height&&"image/jpeg".equals(size.outMimeType),"saved JPEG dimensions and format read back from MediaStore");
   }
   private static void capture(Instrumentation test,Activity activity,String name)throws Exception{
-    test.waitForIdleSync();Thread.sleep(250);File dir=new File(test.getTargetContext().getCacheDir(),"consistency-checks");dir.mkdirs();
+    test.waitForIdleSync();
+    // Service Toasts cancel their predecessor; wait for the latest short Toast to leave the screen.
+    FixtureFactory factory=(FixtureFactory)NanoBananaService.dependencies;
+    while(factory.lastMessageAt>0&&SystemClock.uptimeMillis()-factory.lastMessageAt<2500)Thread.sleep(50);
+    Thread.sleep(250);File dir=new File(test.getTargetContext().getCacheDir(),"consistency-checks");dir.mkdirs();
     Bitmap image=test.getUiAutomation().takeScreenshot();try(FileOutputStream output=new FileOutputStream(new File(dir,name+".png"))){image.compress(Bitmap.CompressFormat.PNG,100,output);}finally{image.recycle();}
   }
 }
