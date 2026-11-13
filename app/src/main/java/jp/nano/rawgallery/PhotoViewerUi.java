@@ -232,7 +232,7 @@ final class PhotoViewerUi extends ViewGroup {
     button.setEnabled(!busy);button.setSelected(chosen);
     button.setTextColor(chosen?0xfff5b947:GalleryUi.TEXT);
     button.setContentDescription(unreadable?"順位を読み込めませんでした。押すと再試行":(chosen?"1位を解除する":"1位にする")+(failed?"。保存できませんでした。押すと再試行":""));
-    button.setStateDescription(busy?"保存中":unreadable?"読み込み失敗":failed?"保存失敗":chosen?"1位に指定済み":"未指定");
+    button.setStateDescription(busy?(unreadable?"読み込み中":"保存中"):unreadable?"読み込み失敗":failed?"保存失敗":chosen?"1位に指定済み":"未指定");
     icon(button,"1位");button.invalidate();
   }
   static void editState(Button button,boolean running,boolean failed,String reason) {

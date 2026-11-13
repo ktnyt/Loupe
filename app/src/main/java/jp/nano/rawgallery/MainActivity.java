@@ -39,6 +39,7 @@ public final class MainActivity extends DiagnosticActivity {
   private Map<String,List<ShareHistoryUi.Item>> shareHistory=Collections.emptyMap();
   private boolean historyLoaded, historyReadFailed, historyReading, historyReload, historyForeground, historyAnimating;
   private Runnable refreshShareBadges=()->{}, refreshShareInfo=()->{};
+  private Runnable refreshSingleBest=()->{};
   private AlertDialog shareHistoryFailure;
   private final SharedPreferences.OnSharedPreferenceChangeListener historyChanges=(prefs,key)-> {
     if("revision".equals(key))loadShareHistory();
@@ -285,6 +286,7 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private void base() {
+    refreshSingleBest=()->{};
     refreshShareBadges=()->{};refreshShareInfo=()->{};
     root = vertical();
     cameraImportBand = null;
@@ -369,6 +371,7 @@ public final class MainActivity extends DiagnosticActivity {
     activePreview = null;
     base();
     if (burstMembers != null && !selecting) { burstDetail(); return; }
+    refreshSingleBest=this::gallery;
     subtitle = label("", 14, MUTED);
     listStatus = new StatusView(this);
     PhotoListUi.Heading header = new PhotoListUi.Heading(this,
@@ -1738,14 +1741,22 @@ public final class MainActivity extends DiagnosticActivity {
       PhotoViewerUi.bestState(retry, false, false, true, true);
       return;
     }
-    boolean[] chosen = {false}, loaded = {false};
+    boolean[] chosen = {false}, loaded = {false}, busy = {false};
     Button button = viewer.action("1位", "1位", "1位にする", () -> {});
     try { chosen[0] = store.singleBest(key); loaded[0] = true; }
     catch (Exception ignored) {}
     PhotoViewerUi.bestState(button, chosen[0], false, !loaded[0], !loaded[0]);
+    refreshSingleBest = () -> {
+      if (busy[0]) return;
+      try { chosen[0] = store.singleBest(key); loaded[0] = true; }
+      catch (Exception ignored) { loaded[0] = false; }
+      PhotoViewerUi.bestState(button, chosen[0], false, !loaded[0], !loaded[0]);
+    };
     button.setOnClickListener(v -> {
+      if (busy[0]) return;
       GalleryUi.feedback(v);
       boolean expected = chosen[0], reading = !loaded[0];
+      busy[0] = true;
       long request = DiagnosticLog.id();
       DiagnosticLog.event("ranking.single.start", request, "chosen", expected ? 0 : 1);
       PhotoViewerUi.bestState(button, expected, true, false, reading);
@@ -1758,10 +1769,23 @@ public final class MainActivity extends DiagnosticActivity {
         final boolean saved = success, value = result;
         DiagnosticLog.event(saved ? "ranking.single.saved" : "ranking.single.failed", request);
         main.post(() -> {
-          if (isDestroyed() || generation != screen || !detail) return;
+          if (isDestroyed()) return;
+          if (generation != screen || !detail) {
+            // The visible viewer/filter may have read the old value while this write was queued.
+            refreshSingleBest.run();
+            return;
+          }
+          busy[0] = false;
           if (saved) { chosen[0] = value; loaded[0] = true; }
+          else if (!reading) {
+            // A rejected stale expectation must refresh before another retry.
+            try { chosen[0] = store.singleBest(key); loaded[0] = true; }
+            catch (Exception ignored) { loaded[0] = false; }
+          }
           PhotoViewerUi.bestState(button, chosen[0], false, !saved, !loaded[0]);
-          button.announceForAccessibility(saved ? (value ? "1位にしました" : "1位を解除しました") : "保存できませんでした。もう一度押すと再試行");
+          button.announceForAccessibility(reading
+              ? (saved ? "順位を読み込みました" : "順位を読み込めませんでした。もう一度押すと再試行")
+              : (saved ? (value ? "1位にしました" : "1位を解除しました") : "保存できませんでした。もう一度押すと再試行"));
           button.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
             public boolean onPreDraw() {
               button.getViewTreeObserver().removeOnPreDrawListener(this);
