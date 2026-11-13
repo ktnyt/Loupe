@@ -16,6 +16,7 @@ final class SelectedPhotoTags extends BottomSheetDialog {
   private final Supplier<TagStore> stores;
   private final LinearLayout body;
   private final StatusView status;
+  private final TextView explanation;
   private final Button close;
   private final String operation=UUID.randomUUID().toString();
   private final long event=DiagnosticLog.id();
@@ -33,7 +34,10 @@ final class SelectedPhotoTags extends BottomSheetDialog {
     LinearLayout column=new LinearLayout(activity);column.setOrientation(LinearLayout.VERTICAL);column.setPadding(dp(16),dp(8),dp(16),dp(20));
     close=LibraryUi.icon(activity,R.drawable.ic_close,"閉じる",()->{if(!busy)dismiss();});
     column.addView(LibraryUi.toolbar(activity,photos.size()+"枚にタグ",close));
-    status=new StatusView(activity);column.addView(status);
+    status=new StatusView(activity);status.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_NONE);column.addView(status);
+    explanation=PhotoListUi.text(activity,"",14,21,GalleryUi.TEXT);
+    explanation.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    explanation.setPadding(dp(12),dp(4),dp(12),dp(8));column.addView(explanation);
     body=new LinearLayout(activity);body.setOrientation(LinearLayout.VERTICAL);column.addView(body);
     ScrollView scroll=new ScrollView(activity);scroll.addView(column);setContentView(scroll);MaterialUi.sheet(this);
     setOnShowListener(dialog->load());setOnDismissListener(dialog->token++);
@@ -43,11 +47,11 @@ final class SelectedPhotoTags extends BottomSheetDialog {
     if(activity.isFinishing()||activity.isDestroyed()){dismiss();return;}
     try{worker.execute(task);}catch(java.util.concurrent.RejectedExecutionException unavailable){
       busy=false;close.setEnabled(true);setCancelable(true);setCanceledOnTouchOutside(true);
-      status.show(StatusView.Symbol.FAILED,"","処理を開始できませんでした。写真の選択は保持されています",this::dismiss,"閉じる");
+      showState(StatusView.Symbol.FAILED,"処理を開始できませんでした。写真の選択は保持されています","閉じる",this::dismiss);
     }
   }
   private void load(){
-    int request=++token;loaded=false;status.begin("タグを読み込んでいます");body.removeAllViews();
+    int request=++token;loaded=false;status.begin("タグを読み込んでいます");explain("タグを読み込んでいます");body.removeAllViews();
     enqueue(()->{
       try(TagStore store=stores.get()){
         List<TagStore.Tag> names=store.tags();
@@ -61,12 +65,12 @@ final class SelectedPhotoTags extends BottomSheetDialog {
             revisions.put(rows.getString(0)+"|"+rows.getString(1),rows.getLong(2));
         }
         activity.runOnUiThread(()->{if(!isShowing()||request!=token)return;tags=names;expected=revisions;loaded=true;render();});
-      }catch(Exception failure){activity.runOnUiThread(()->{if(isShowing()&&request==token)status.show(StatusView.Symbol.FAILED,"","タグを読み込めませんでした",this::load,"再試行");});}
+      }catch(Exception failure){activity.runOnUiThread(()->{if(isShowing()&&request==token)showState(StatusView.Symbol.FAILED,"タグを読み込めませんでした","再試行",this::load);});}
     });
   }
   private void render(){
-    body.removeAllViews();status.finish();close.setEnabled(!busy);
-    if(tags.isEmpty()){status.show(StatusView.Symbol.EMPTY,"タグがありません。ライブラリのタグ画面で作成できます");return;}
+    body.removeAllViews();status.finish();explain("");close.setEnabled(!busy);
+    if(tags.isEmpty()){showState(StatusView.Symbol.EMPTY,"タグがありません。ライブラリのタグ画面で作成できます",null,null);return;}
     for(TagStore.Tag tag:tags){
       Button row=LibraryUi.text(activity,tag.name,()->{if(busy)return;new GalleryUi.Sheet(activity)
           .setTitle(photos.size()+"枚に「"+tag.name+"」を付ける")
@@ -75,9 +79,16 @@ final class SelectedPhotoTags extends BottomSheetDialog {
       row.setEnabled(!busy);body.addView(row,new LinearLayout.LayoutParams(-1,-2));
     }
   }
+  private void explain(String message){
+    explanation.setText(message);explanation.setVisibility(message.isEmpty()?View.GONE:View.VISIBLE);
+  }
+  private void showState(StatusView.Symbol symbol,String message,String action,Runnable recovery){
+    body.removeAllViews();status.show(symbol,message);explain(message);
+    if(recovery!=null)body.addView(LibraryUi.text(activity,action,()->{if(!busy)recovery.run();}),new LinearLayout.LayoutParams(-1,-2));
+  }
   private void save(){
     if(busy||!loaded||chosen==null)return;
-    busy=true;setCancelable(false);setCanceledOnTouchOutside(false);render();status.begin("タグを保存しています");
+    busy=true;setCancelable(false);setCanceledOnTouchOutside(false);render();status.begin("タグを保存しています");explain("タグを保存しています");
     int request=token;TagStore.Tag tag=chosen;
     DiagnosticLog.event("tag.selection.start",event,"count",photos.size());
     enqueue(()->{
@@ -87,15 +98,14 @@ final class SelectedPhotoTags extends BottomSheetDialog {
         store.recordBatch(operation,tag.id,revisions,TagJudgments.Value.ASSIGNED);
         activity.runOnUiThread(()->{
           if(!isShowing()||request!=token)return;busy=false;close.setEnabled(true);setCancelable(true);setCanceledOnTouchOutside(true);
-          body.removeAllViews();status.show(StatusView.Symbol.COMPLETE,photos.size()+"枚にタグを付けました");
-          body.addView(LibraryUi.text(activity,"閉じる",this::dismiss));
+          showState(StatusView.Symbol.COMPLETE,photos.size()+"枚にタグを付けました","閉じる",this::dismiss);
           DiagnosticLog.event("tag.selection.complete",event,"count",photos.size());
         });
       }catch(Exception failure){activity.runOnUiThread(()->{
         if(!isShowing()||request!=token)return;busy=false;close.setEnabled(true);setCancelable(true);setCanceledOnTouchOutside(true);
         body.removeAllViews();
-        if(failure instanceof IllegalStateException)status.show(StatusView.Symbol.FAILED,"","ほかの操作でタグが変更されました。選択を確認してください",this::load,"タグを読み直す");
-        else status.show(StatusView.Symbol.FAILED,"","タグを保存できませんでした。写真の選択は保持されています",this::save,"再試行");
+        if(failure instanceof TagJudgments.StaleRevisionException)showState(StatusView.Symbol.FAILED,"ほかの操作でタグが変更されました。選択を確認してください","タグを読み直す",this::load);
+        else showState(StatusView.Symbol.FAILED,"タグを保存できませんでした。写真の選択は保持されています","再試行",this::save);
         DiagnosticLog.event("tag.selection.failed",event,"count",photos.size());
       });}
     });

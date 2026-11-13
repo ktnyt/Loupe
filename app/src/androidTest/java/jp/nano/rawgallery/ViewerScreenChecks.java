@@ -46,15 +46,17 @@ final class ViewerScreenChecks {
     Thread.sleep(ViewConfiguration.getDoubleTapTimeout()+40);t.waitForIdleSync();
     int[] at=new int[2];float[] center=new float[2],span=new float[2];
     TagDetailChecks.ui(t,()->{
-      Rect visible=new Rect();TagDetailChecks.require(view.hasWindowFocus()&&view.isShown()&&view.getGlobalVisibleRect(visible)&&visible.width()==view.getWidth()&&visible.height()==view.getHeight(),"pinch targets focused, fully visible photo surface");
+      Rect visible=new Rect();TagDetailChecks.require(view.hasWindowFocus()&&view.isShown()&&view.getLocalVisibleRect(visible)&&visible.equals(new Rect(0,0,view.getWidth(),view.getHeight())),"pinch targets focused, fully visible photo surface");
       if(view instanceof ZoomImageView)TagDetailChecks.require(((ZoomImageView)view).photoBounds()!=null,"pinch has a loaded photograph");
       ViewConfiguration config=ViewConfiguration.get(view.getContext());int minimum=config.getScaledMinimumScalingSpan(),slop=config.getScaledTouchSlop();
       float inset=GalleryUi.dp(view.getContext(),16),available=view.getWidth()-2*inset;
       span[1]=available*.9f;span[0]=Math.max(minimum+2f*slop,span[1]*.35f);
       TagDetailChecks.require(span[1]>span[0]+4f*slop,"photo surface has room for scaling beyond native minSpan: min="+minimum+" width="+view.getWidth());
       view.getLocationOnScreen(at);center[0]=at[0]+view.getWidth()/2f;center[1]=at[1]+view.getHeight()/2f;
-      TagDetailChecks.require(center[0]-span[1]/2>=visible.left&&center[0]+span[1]/2<visible.right&&center[1]>=visible.top&&center[1]<visible.bottom,"all pinch endpoints stay inside visible photo surface");
-      android.util.Log.i("LoupePinchFixture","widthPx="+view.getWidth()+" heightPx="+view.getHeight()+" minSpanPx="+minimum+" touchSlopPx="+slop+" startSpanPx="+span[0]+" endSpanPx="+span[1]+" focus="+view.hasWindowFocus());
+      // Visible bounds are view-local; add the screen origin only when injecting events.
+      float localX=view.getWidth()/2f,localY=view.getHeight()/2f;
+      TagDetailChecks.require(localX-span[1]/2>=visible.left&&localX+span[1]/2<visible.right&&localY>=visible.top&&localY<visible.bottom,"all pinch endpoints stay inside visible photo surface");
+      android.util.Log.i("LoupePinchFixture","widthPx="+view.getWidth()+" heightPx="+view.getHeight()+" minSpanPx="+minimum+" touchSlopPx="+slop+" startSpanPx="+span[0]+" endSpanPx="+span[1]+" screenOrigin="+at[0]+","+at[1]+" focus="+view.hasWindowFocus());
     });
     MotionEvent.PointerProperties[] props=new MotionEvent.PointerProperties[2];MotionEvent.PointerCoords[] coords=new MotionEvent.PointerCoords[2];
     for(int i=0;i<2;i++){props[i]=new MotionEvent.PointerProperties();props[i].id=i;props[i].toolType=MotionEvent.TOOL_TYPE_FINGER;coords[i]=new MotionEvent.PointerCoords();coords[i].pressure=1;coords[i].size=1;coords[i].y=center[1];coords[i].x=center[0]+(i==0?-1:1)*span[0]/2;}
@@ -66,8 +68,34 @@ final class ViewerScreenChecks {
   }
   static void touch(Instrumentation t,long down,int action,int count,MotionEvent.PointerProperties[] props,MotionEvent.PointerCoords[] coords){MotionEvent event=MotionEvent.obtain(down,android.os.SystemClock.uptimeMillis(),action,count,props,coords,0,0,1,1,0,0,InputDevice.SOURCE_TOUCHSCREEN,0);try{t.sendPointerSync(event);}finally{event.recycle();}}
   static void swipe(Instrumentation t,View view,int direction)throws Exception{
-    int[] at=new int[2];float[] center=new float[2];TagDetailChecks.ui(t,()->{view.getLocationOnScreen(at);center[0]=at[0]+view.getWidth()/2f;center[1]=at[1]+view.getHeight()/2f;});float d=view.getResources().getDisplayMetrics().density;long down=android.os.SystemClock.uptimeMillis();
-    for(int i=0;i<=8;i++){float x=center[0]+direction*(-80+i*20)*d;MotionEvent event=MotionEvent.obtain(down,android.os.SystemClock.uptimeMillis(),i==0?MotionEvent.ACTION_DOWN:i==8?MotionEvent.ACTION_UP:MotionEvent.ACTION_MOVE,x,center[1],0);try{t.sendPointerSync(event);}finally{event.recycle();}Thread.sleep(16);}t.waitForIdleSync();
+    TagDetailChecks.require(direction==-1||direction==1,"swipe direction");
+    // A dismissed native sheet returns input focus asynchronously; do not fling into its exit.
+    t.waitForIdleSync();Thread.sleep(ViewConfiguration.getDoubleTapTimeout()+40);
+    long deadline=android.os.SystemClock.uptimeMillis()+5000;long[] stableSince={0};boolean[] ready={false};Rect previous=new Rect();
+    do{
+      TagDetailChecks.ui(t,()->{
+        Rect visible=new Rect();boolean active=view.isAttachedToWindow()&&view.hasWindowFocus()&&view.isShown()&&!view.isLayoutRequested()&&view.getLocalVisibleRect(visible)&&visible.equals(new Rect(0,0,view.getWidth(),view.getHeight()));
+        int[] location=new int[2];view.getLocationOnScreen(location);Rect screenBounds=new Rect(location[0],location[1],location[0]+view.getWidth(),location[1]+view.getHeight());
+        if(active&&screenBounds.equals(previous)){if(stableSince[0]==0)stableSince[0]=android.os.SystemClock.uptimeMillis();ready[0]=android.os.SystemClock.uptimeMillis()-stableSince[0]>=250;}
+        else{stableSince[0]=0;ready[0]=false;previous.set(screenBounds);}
+      });
+      if(ready[0])break;Thread.sleep(16);
+    }while(android.os.SystemClock.uptimeMillis()<deadline);
+    TagDetailChecks.require(ready[0],"swipe waits for focused, stable, fully visible photo input surface");
+    int[] at=new int[2];float[] center=new float[2],distance={0};
+    TagDetailChecks.ui(t,()->{
+      if(view instanceof ZoomImageView)TagDetailChecks.require(((ZoomImageView)view).photoBounds()!=null&&!((ZoomImageView)view).isZoomed(),"paging swipe requires loaded photo in fit mode");
+      view.getLocationOnScreen(at);center[0]=at[0]+view.getWidth()/2f;center[1]=at[1]+view.getHeight()/2f;distance[0]=Math.min(GalleryUi.dp(view.getContext(),160),view.getWidth()-GalleryUi.dp(view.getContext(),32));
+      TagDetailChecks.require(distance[0]>=GalleryUi.dp(view.getContext(),128),"swipe has sufficient in-bounds paging distance");
+      Rect visible=new Rect();float localX=view.getWidth()/2f,localY=view.getHeight()/2f;
+      TagDetailChecks.require(view.getLocalVisibleRect(visible)&&visible.equals(new Rect(0,0,view.getWidth(),view.getHeight()))&&localX-distance[0]/2>=visible.left&&localX+distance[0]/2<visible.right&&localY>=visible.top&&localY<visible.bottom,"swipe endpoints stay inside photo surface");
+      android.util.Log.i("LoupeSwipeFixture","widthPx="+view.getWidth()+" heightPx="+view.getHeight()+" distancePx="+distance[0]+" direction="+direction+" focus="+view.hasWindowFocus());
+    });
+    MotionEvent.PointerProperties pointer=new MotionEvent.PointerProperties();pointer.id=0;pointer.toolType=MotionEvent.TOOL_TYPE_FINGER;
+    MotionEvent.PointerCoords point=new MotionEvent.PointerCoords();point.pressure=1;point.size=1;point.y=center[1];
+    MotionEvent.PointerProperties[] pointers={pointer};MotionEvent.PointerCoords[] points={point};long down=android.os.SystemClock.uptimeMillis();
+    for(int i=0;i<=8;i++){point.x=center[0]+direction*(-distance[0]/2+distance[0]*i/8);touch(t,down,i==0?MotionEvent.ACTION_DOWN:i==8?MotionEvent.ACTION_UP:MotionEvent.ACTION_MOVE,1,pointers,points);Thread.sleep(16);}t.waitForIdleSync();
+    android.util.Log.i("LoupeSwipeFixture","completed elapsedMs="+(android.os.SystemClock.uptimeMillis()-down));
   }
   static String run(Instrumentation t,int width)throws Exception{
     MainActivity a=(MainActivity)t.startActivitySync(new Intent(t.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));ArrayList<File> files=new ArrayList<>();int[] rootInsets=new int[4];
