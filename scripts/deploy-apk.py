@@ -75,7 +75,17 @@ def manifest_info(xml):
         features.add('library')
     if PACKAGE + '.VideoActivity' in activities and 'android.permission.READ_MEDIA_VIDEO' in permissions:
         features.add('video')
-    if {PACKAGE + '.NanoBananaActivity', PACKAGE + '.NanoBananaSettingsActivity'} <= activities.keys():
+    nano = services.get(PACKAGE + '.NanoBananaService')
+    nano_type = nano.get(ANDROID + 'foregroundServiceType', '') if nano is not None else ''
+    nano_sync = 'dataSync' in nano_type.split('|')
+    try:
+        nano_sync = nano_sync or bool(int(nano_type, 0) & 1)
+    except ValueError:
+        pass
+    if (PACKAGE + '.NanoBananaSettingsActivity' in activities and nano is not None
+            and nano.get(ANDROID + 'exported') == 'false' and nano_sync
+            and {'android.permission.FOREGROUND_SERVICE',
+                 'android.permission.FOREGROUND_SERVICE_DATA_SYNC'} <= permissions):
         features.add('nano-banana')
     attach = activities.get(PACKAGE + '.camera.CameraAttachActivity')
     service = services.get(PACKAGE + '.camera.ImportService')
