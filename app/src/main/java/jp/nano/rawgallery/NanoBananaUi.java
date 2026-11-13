@@ -75,7 +75,7 @@ final class NanoBananaUi {
             .setMessage("保存済みの画像は残します。送信用画像を削除しますが、API側の処理や課金は取り消せない場合があります。")
             .setNegativeButton("戻る",null).setPositiveButton("終了",(dialog,which)->dispatcher.discard(activity,job.optString("object"),job.optString("owner"))).show();
       }else if(w==key){
-        TextView text=new TextView(activity);text.setText("e2の一時画像\n"+job.optString("object")+"\n\n版を確認できない画像は安全のため自動削除できません。e2でこのキーの画像を確認して手動削除し、バケットのバージョニングを有効にしてください。その後「処理を終了」を再試行してください。");
+        TextView text=new TextView(activity);text.setText("e2の一時画像\n"+job.optString("object")+"\n\nまず「処理を終了」を試してください。e2で所有する版を確認できれば自動削除します。バージョニングが無効な画像は自動削除できません。その場合だけ、e2でこのキーの画像を確認して手動削除し、バケットのバージョニングを有効にしてから「処理を終了」を再試行してください。");
         text.setTextIsSelectable(true);text.setTextSize(16);text.setTextColor(GalleryUi.TEXT);
         int padding=Math.round(24*activity.getResources().getDisplayMetrics().density);text.setPadding(padding,padding,padding,padding);
         new MaterialAlertDialogBuilder(activity).setTitle("一時画像の場所").setView(text).setPositiveButton("閉じる",null).show();
