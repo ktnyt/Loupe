@@ -17,7 +17,24 @@ final class ShareScreenChecks {
     try{java.lang.reflect.Method m=MainActivity.class.getDeclaredMethod("export",List.class,boolean.class,ShareTargets.Target.class);m.setAccessible(true);m.invoke(a,photos,raw,null);}catch(Exception e){throw new RuntimeException(e);}
   }
   static void shot(Instrumentation t,Dialog dialog,File dir,String name)throws Exception{
+    // Layout idle does not include BottomSheetBehavior's settling animation.
+    View sheet=dialog.getWindow().findViewById(com.google.android.material.R.id.design_bottom_sheet);
+    if(sheet!=null){
+      android.graphics.Rect previous=new android.graphics.Rect();long stable=0,deadline=android.os.SystemClock.uptimeMillis()+5000;
+      while(android.os.SystemClock.uptimeMillis()<deadline){
+        android.graphics.Rect next=new android.graphics.Rect();
+        TagDetailChecks.ui(t,()->{int[] at=new int[2];sheet.getLocationOnScreen(at);next.set(at[0],at[1],at[0]+sheet.getWidth(),at[1]+sheet.getHeight());});
+        long now=android.os.SystemClock.uptimeMillis();
+        if(!next.equals(previous)||next.isEmpty()){stable=now;previous.set(next);}
+        else if(now-stable>=250)break;
+        Thread.sleep(25);
+      }
+    }
     ConsistencyLayoutChecks.captureHardware(t,dialog.getWindow(),dialog.getWindow().getDecorView(),dir,name);
+    Bitmap screen=t.getUiAutomation().takeScreenshot();
+    try(java.io.FileOutputStream out=new java.io.FileOutputStream(new File(dir,name+"-screen.png"))){
+      TagDetailChecks.require(screen!=null,"focused synthetic dialog screenshot");screen.compress(Bitmap.CompressFormat.PNG,100,out);
+    }finally{if(screen!=null)screen.recycle();}
   }
   static void outside(Instrumentation t,Dialog dialog)throws Exception{
     View decor=dialog.getWindow().findViewById(com.google.android.material.R.id.design_bottom_sheet);ConsistencyLayoutChecks.frame(t,decor);int[] point=new int[2];TagDetailChecks.ui(t,()->{decor.getLocationOnScreen(point);point[0]+=decor.getWidth()/2;point[1]-=GalleryUi.dp(decor.getContext(),24);TagDetailChecks.require(point[1]>GalleryUi.dp(decor.getContext(),48),"outside tap lies below system status area");});

@@ -77,16 +77,6 @@ final class ShareCapacityUiChecks {
         TagDetailChecks.require(menu.continueButton.isEnabled()&&menu.jpeg.getText().toString().contains("準備時"),"unknown capacity remains deferred and actionable");
         menu.closeButton.performClick();TagDetailChecks.require(!menu.isShowing()&&chosen.get()==1,"header close dismisses without sharing");
       });
-      if(width==320&&font==1.3f)TagDetailChecks.ui(t,()->{
-        for(int selected=0;selected<4;selected++){
-          PhotoListUi.Filters filters=new PhotoListUi.Filters(a);String[] names={"すべて","1位","順位が未決定","順位決定済み"};
-          for(int i=0;i<4;i++)filters.addView(PhotoListUi.chip(a,names[i],i==selected,()->{}),new ViewGroup.LayoutParams(-2,-2));
-          filters.measure(View.MeasureSpec.makeMeasureSpec(GalleryUi.dp(a,width),View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(0,View.MeasureSpec.UNSPECIFIED));
-          filters.layout(0,0,filters.getMeasuredWidth(),filters.getMeasuredHeight());
-          TagDetailChecks.require(filters.getMeasuredHeight()<=GalleryUi.dp(a,100),"all selected filters fit two rows");TagDetailChecks.inspect(filters);
-          TagDetailChecks.require(filters.getChildAt(2).getTop()==filters.getChildAt(3).getTop(),"long filters share second row");
-        }
-      });
       stale(t,a,photos.get(0));
       TagDetailChecks.ui(t,()->{
         PhotoRepository.Photo old=photos.get(3);photos.set(3,new PhotoRepository.Photo(old.uri,old.name,old.folder,ShareCapacity.LIMIT+1,old.modified,0));

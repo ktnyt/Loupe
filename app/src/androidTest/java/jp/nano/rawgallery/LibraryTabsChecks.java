@@ -46,8 +46,9 @@ final class LibraryTabsChecks {
     main(t,()->{if(tabs(a)==null)throw new AssertionError("Missing tabs");tab(a,albums).performClick();return true;});
     waitFor(t,"loaded "+albums,()->{
       ScrollingGrid grid=(ScrollingGrid)field(a,albums?"albumGridView":"grid");
-      return (boolean)field(a,"albumHome")==albums && grid!=null&&grid.isAttachedToWindow()&&grid.getCount()>10&&grid.getChildCount()>0;
+      return (boolean)field(a,"albumHome")==albums && grid!=null&&grid.isAttachedToWindow()&&tabs(a).selectedDestination()==(albums?1:0);
     });
+    GalleryScreenChecks.settle(t,a);
   }
   private static void capture(Instrumentation t,MainActivity a,LibraryTabs tabs,String name)throws Exception{
     t.waitForIdleSync();Thread.sleep(150);int[] xy=new int[2];tabs.getLocationOnScreen(xy);
@@ -55,12 +56,46 @@ final class LibraryTabsChecks {
     Bitmap bar=Bitmap.createBitmap(all,xy[0],xy[1],tabs.getWidth(),tabs.getHeight());
     try(FileOutputStream out=new FileOutputStream(new File(a.getCacheDir(),"tabs-test-"+name+".png"))){bar.compress(Bitmap.CompressFormat.PNG,100,out);}finally{bar.recycle();all.recycle();}
   }
+  private static void checkSparseLibrary(Instrumentation t,MainActivity a)throws Exception{
+    // These are activity-local committed filters; no index/store or MediaStore writes.
+    main(t,()->{set(a,"filter","__tabs_empty_camera__");set(a,"rankFilter",1);invoke(a,"gallery");invoke(a,"loadIndexedPhotos");return true;});
+    GalleryScreenChecks.settle(t,a);
+    main(t,()->{if(!((List<?>)field(a,"photos")).isEmpty())throw new AssertionError("synthetic camera condition must be empty");return true;});
+    capture(t,a,tabs(a),"sparse-photos");
+    switchTo(t,a,true);GalleryScreenChecks.settle(t,a);
+    main(t,()->{if(tabs(a).selectedDestination()!=1||!(boolean)field(a,"libraryAlbums"))throw new AssertionError("album destination disagrees with screen");return true;});
+    capture(t,a,tabs(a),"sparse-albums");
+    switchTo(t,a,false);GalleryScreenChecks.settle(t,a);
+    main(t,()->{
+      if((boolean)field(a,"albumHome")||(boolean)field(a,"libraryAlbums")||tabs(a).selectedDestination()!=0)throw new AssertionError("photo destination disagrees with screen");
+      if(!"__tabs_empty_camera__".equals(field(a,"filter"))||(int)field(a,"rankFilter")!=1)throw new AssertionError("sparse filters lost");
+      // Empty libraries cannot enter selection through the photo action. Exercise the
+      // selection presentation explicitly, without fabricating a photo or selection URI.
+      set(a,"selecting",true);invoke(a,"gallery");
+      if(tabs(a)!=null&&tabs(a).getVisibility()==View.VISIBLE)throw new AssertionError("selection navigation visible");
+      return true;
+    });
+    t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);t.waitForIdleSync();
+    main(t,()->{
+      if((boolean)field(a,"selecting")||tabs(a)==null||tabs(a).getVisibility()!=View.VISIBLE||!tab(a,true).isEnabled())throw new AssertionError("sparse selection Back did not restore navigation");
+      if(!"__tabs_empty_camera__".equals(field(a,"filter"))||(int)field(a,"rankFilter")!=1)throw new AssertionError("selection Back lost filters");
+      return true;
+    });
+  }
   static String run(Instrumentation t)throws Exception{
     MainActivity initial=(MainActivity)t.startActivitySync(new Intent(t.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     MainActivity[] current={initial};StringBuilder log=new StringBuilder();
     try{
       MainActivity a=current[0];
-      waitFor(t,"album load",()->{ScrollingGrid g=(ScrollingGrid)field(a,"albumGridView");return g!=null&&g.getCount()>10&&g.getChildCount()>0;});
+      GalleryScreenChecks.finishInitialIndex(t,a);
+      waitFor(t,"album load",()->{ScrollingGrid g=(ScrollingGrid)field(a,"albumGridView");return g!=null&&g.isAttachedToWindow()&&tabs(a)!=null;});
+      int[] counts=new int[2];
+      main(t,()->{ScrollingGrid g=(ScrollingGrid)field(a,"albumGridView");counts[0]=g.getCount()-g.getHeaderViewsCount();return true;});
+      switchTo(t,a,false);GalleryScreenChecks.settle(t,a);
+      main(t,()->{ScrollingGrid g=(ScrollingGrid)field(a,"grid");counts[1]=g.getCount()-g.getHeaderViewsCount();return true;});
+      boolean rich=counts[0]>10&&counts[1]>10;
+      if(rich){
+      switchTo(t,a,true);GalleryScreenChecks.settle(t,a);
       capture(t,a,tabs(a),"albums");
       main(t,()->{((ScrollingGrid)field(a,"albumGridView")).restoreCell(8,-37,false);return true;});
       waitFor(t,"album scroll",()->{ScrollingGrid g=(ScrollingGrid)field(a,"albumGridView");return g.firstCellPosition()==8&&g.getChildAt(0).getTop()==-37;});
@@ -106,6 +141,12 @@ final class LibraryTabsChecks {
       waitFor(t,"second albums",()->tabs(fixture)!=null);
       t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);waitFor(t,"album root exit",()->fixture.isFinishing()||!fixture.hasWindowFocus());
       main(t,()->{fixture.finish();return true;});
+      log.append("PASS rich-data navigation retains album cell8/top-37 and photos cell28/top-49, selection hiding/Back, filters, recreation and root Back exits.\n");
+      }else{
+        checkSparseLibrary(t,a);
+        log.append("PASS sparse-library native photo/album navigation, empty-result camera/rank filter retention, synthetic selection-state navigation hiding and Back restoration. Observed album rows=").append(counts[0]).append(", photo rows=").append(counts[1]).append(". UNVERIFIED scroll restoration: insufficient fixture data for album cell8/photo cell28 offsets; rich-data checks were not executed.\n");
+        main(t,()->{a.finish();return true;});
+      }
       MainActivity display=(MainActivity)t.startActivitySync(new Intent(t.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));current[0]=display;
       for(float scale:new float[]{1f,1.3f})for(int width:new int[]{320,400})for(boolean selected:new boolean[]{false,true}){
         LibraryTabs[] bar={null};
@@ -131,7 +172,7 @@ final class LibraryTabsChecks {
         });
         capture(t,display,bar[0],width+"-"+scale+"-"+selected);
       }
-      log.append("PASS real tabs retain album cell8/top-37 and photos cell28/top-49, hidden navigation preserves selection, Back exits selection, camera/rank and empty camera persist, Activity recreation retains root/filters, both root Back exit. 8 size/font/selected-state combinations, accessibility navigation role/index/selected and no clipping. Captures contain tab bars only. Photo/rank/tag stores unchanged.\n");
+      log.append("PASS 8 size/font/selected-state combinations, accessibility navigation role/index/selected and no clipping. Captures contain navigation bars only. Photo/rank/tag stores unchanged.\n");
       return log.toString();
     }finally{MainActivity a=current[0];if(!a.isFinishing())main(t,()->{a.finish();return true;});}
   }

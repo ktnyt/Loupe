@@ -4,7 +4,7 @@ This document is the current visual and interaction contract for Loupe UI work. 
 
 ## Platform and components
 
-Loupe uses Android Views with Java, Material Components for Android 1.13.0, a dark Material 3 theme, and `AppCompatActivity`. Use native Material 3 components for standard controls where they fit the existing purpose and interaction contract: `MaterialButton`, `TabLayout`, `MaterialSwitch`, and `MaterialAlertDialogBuilder`. Keep custom drawing for photo overlays, tone curves, and other controls whose direct manipulation is part of the existing behavior.
+Loupe uses Android Views with Java, Material Components for Android 1.13.0, a dark Material 3 theme, and `AppCompatActivity`. Use native Material 3 components for standard controls where they fit the existing purpose and interaction contract: `MaterialButton`, `BottomNavigationView`, `MaterialSwitch`, and `MaterialAlertDialogBuilder`. Keep custom drawing for photo overlays, tone curves, and other controls whose direct manipulation is part of the existing behavior.
 
 Use Material 3 component states, shape, typography, color roles, elevation, touch targets, and accessibility behavior. Custom-drawn controls must provide equivalent state feedback and accessible names/actions where applicable. Respect system font scaling, window insets, and dark theme.
 
@@ -24,7 +24,7 @@ Material 3 migration changes visual components and their native interaction stat
 
 | Screen/control | Native implementation | Behavior retained |
 | --- | --- | --- |
-| Library destinations | `TabLayout` | Photo/album destination, selection lock, existing scroll/filter restoration |
+| Library destinations | `BottomNavigationView` | Photo/album/import destinations, selection lock, existing scroll/filter restoration |
 | Gallery, ranking, tags, settings and viewer actions | `MaterialButton` | Existing callback, content description, cancellation and retry |
 | Share format and rank filters | Checkable `MaterialButton` | Caller owns committed selection; capacity can disable each format |
 | Best-only sharing and sync settings | `MaterialSwitch` | Existing checked listener and persisted state |
@@ -52,7 +52,7 @@ The approved Sites study (`9ba6c87`) supplies the hierarchy and entry points for
 
 - Library: photos, albums and camera import have one consistent bottom navigation. Import remains reachable without a connected camera, shows connection/progress when present, and keeps the explicit import/permission flow. Navigation is suppressed during photo selection. Photo/album scroll positions and committed filters survive return.
 - Gallery: one heading with selection, filter and settings actions replaces the always-visible rank filters and action dock. Rank and camera filters are grouped in one native sheet, with a result count and explicit apply. Dismissal leaves the prior conditions unchanged; applied conditions remain visible and clearable. The single-photo rank rules from #109 and burst journals remain authoritative.
-- Selection: exit and select-all sit above the photos; related tag/comparison actions are grouped separately from the primary share action. Counts, hidden selection, unresolved bursts, best-only sharing and bulk co-winner operations remain available. Selection never becomes an implicit ranking action.
+- Selection: exit and select-all sit above the photos; related tag/comparison actions are grouped separately from the primary share action. Counts, hidden selection, unresolved bursts, best-only sharing and bulk co-winner operations remain available. Selection tagging freezes the exact explicitly selected photo identities (including hidden selections), asks for tag confirmation, and uses the existing transactional tag batch store. Empty selection disables the action; failures keep the selected set and a visible retry; conflicts require reloading choices rather than silently overwriting another edit. Selection never becomes an implicit ranking action. Applied conditions remain visible during selection, and select-all explicitly names the displayed subset. Exit selection to change or clear the conditions so the selected set cannot silently change.
 - Viewer: pen and sparkle directly enter the existing manual editor and Nano Banana workflow. Single-photo best toggles use committed store state, pending/failed/retry semantics and native checked accessibility from #109. Information, tags, zoom and previous/next actions remain accessible through a secondary action surface; swipe/pinch/Look/Before contracts remain intact. Photo, status and editor geometry must still fit narrow windows and font scaling.
 - Sharing: JPEG and original format choices form one related group; one primary continuation opens the destination chooser. Existing configured destination formats, the 512 MiB gate, cloud download/preparation, cancellation, retry and handoff history semantics are preserved.
 - Components: use native Material surfaces and managed button state layers. Primary and supplementary actions differ in containment and size. Standard touch targets are at least 48dp; text may wrap and content may scroll rather than shrinking labels. State must not depend on color alone. Respect reduced system motion, keyboard/AX focus and system insets.

@@ -39,6 +39,21 @@ final class ExpressiveUiChecks {
   static void capture(Instrumentation t,MainActivity a,File dir,String name)throws Exception{
     View root=(View)RankingResultChecks.get(a,"root");ConsistencyLayoutChecks.frame(t,root);TagDetailChecks.ui(t,()->TagDetailChecks.inspect(root));ConsistencyLayoutChecks.captureHardware(t,a,root,dir,name);
   }
+  static void initialCountBarrier(Instrumentation t,MainActivity a)throws Exception {
+    java.util.concurrent.ExecutorService scans=(java.util.concurrent.ExecutorService)RankingResultChecks.get(a,"scans");
+    List<PhotoRepository.Photo> original=(List<PhotoRepository.Photo>)RankingResultChecks.get(a,"photos");
+    List<List<Integer>> groups=(List<List<Integer>>)RankingResultChecks.get(a,"bundles");
+    var started=new java.util.concurrent.CountDownLatch(1);var release=new java.util.concurrent.CountDownLatch(1);var counted=new java.util.concurrent.CountDownLatch(1);
+    var count=new java.util.concurrent.atomic.AtomicInteger(-1);
+    try{
+      TagDetailChecks.ui(t,()->{RankingResultChecks.set(a,"photos",new ArrayList<PhotoRepository.Photo>());RankingResultChecks.set(a,"bundles",new ArrayList<List<Integer>>());});
+      scans.execute(()->{started.countDown();try{release.await(5,java.util.concurrent.TimeUnit.SECONDS);}catch(InterruptedException e){Thread.currentThread().interrupt();}a.runOnUiThread(()->{RankingResultChecks.set(a,"photos",new ArrayList<>(original));RankingResultChecks.set(a,"bundles",new ArrayList<>(groups));});});
+      TagDetailChecks.require(started.await(5,java.util.concurrent.TimeUnit.SECONDS),"initial-load blocker started");
+      TagDetailChecks.ui(t,()->{try{var method=MainActivity.class.getDeclaredMethod("countPhotoFilter",String.class,int.class,java.util.function.IntConsumer.class);method.setAccessible(true);method.invoke(a,"すべて",0,(java.util.function.IntConsumer)value->{count.set(value);counted.countDown();});}catch(Exception e){throw new RuntimeException(e);}});
+      release.countDown();TagDetailChecks.require(counted.await(10,java.util.concurrent.TimeUnit.SECONDS),"count after pending load completes");
+      TagDetailChecks.require(count.get()==original.size(),"count observes loaded snapshot instead of stale zero");
+    }finally{release.countDown();scans.submit(()->{}).get(10,java.util.concurrent.TimeUnit.SECONDS);TagDetailChecks.ui(t,()->{RankingResultChecks.set(a,"photos",original);RankingResultChecks.set(a,"bundles",groups);});}
+  }
   static void countGeneration(Instrumentation t,MainActivity a)throws Exception{
     List<java.util.function.IntConsumer> counts=new ArrayList<>();PhotoFilterSheet[] sheet={null};
     TagDetailChecks.ui(t,()->{sheet[0]=new PhotoFilterSheet(a,"すべて",0,(camera,rank,result)->counts.add(result),(camera,rank)->{throw new AssertionError("count test must not commit");});sheet[0].show();});
@@ -64,6 +79,40 @@ final class ExpressiveUiChecks {
     Bitmap screen=t.getUiAutomation().takeScreenshot();TagDetailChecks.require(screen!=null,"composited filter screenshot");Bitmap crop=null;
     try{crop=Bitmap.createBitmap(screen,location[0],location[1],sheet.getWidth(),sheet.getHeight());try(FileOutputStream out=new FileOutputStream(new File(dir,name+".png"))){crop.compress(Bitmap.CompressFormat.PNG,100,out);}}finally{if(crop!=null&&crop!=screen)crop.recycle();screen.recycle();}
   }
+  static void awaitUi(Instrumentation t,long timeout,java.util.function.BooleanSupplier condition,String message)throws Exception{
+    long until=android.os.SystemClock.uptimeMillis()+timeout;boolean[] done={false};
+    while(android.os.SystemClock.uptimeMillis()<until){TagDetailChecks.ui(t,()->done[0]=condition.getAsBoolean());if(done[0])return;Thread.sleep(25);}throw new AssertionError(message);
+  }
+  static boolean hasText(View root,String text){
+    if(root instanceof TextView&&text.contentEquals(((TextView)root).getText()))return true;
+    if(root instanceof ViewGroup)for(int i=0;i<((ViewGroup)root).getChildCount();i++)if(hasText(((ViewGroup)root).getChildAt(i),text))return true;return false;
+  }
+  static void directEditorEntries(Instrumentation t,MainActivity a,File source,List<File> ownedCopies,File dir,String prefix)throws Exception{
+    byte[] before=java.nio.file.Files.readAllBytes(source.toPath());int index=(int)RankingResultChecks.get(a,"index");
+    Instrumentation.ActivityMonitor monitor=t.addMonitor(RawEditActivity.class.getName(),null,false);RawEditActivity[] editor={null};
+    try{
+      TagDetailChecks.ui(t,()->{PhotoViewerUi v=ViewerScreenChecks.viewer(a);Button manual=v.actionButton("編集");TagDetailChecks.require(manual!=null&&manual.getParent()==v.dock&&manual.isShown(),"manual entry is directly visible");manual.performClick();});
+      Activity launched=t.waitForMonitorWithTimeout(monitor,15000);TagDetailChecks.require(launched instanceof RawEditActivity,"one manual tap opens existing internal editor");editor[0]=(RawEditActivity)launched;
+      Uri input=editor[0].getIntent().getData();TagDetailChecks.require(input!=null&&"jp.nano.rawgallery.share".equals(input.getAuthority()),"manual editor receives prepared app-owned copy");
+      File copy=new File(a.getCacheDir(),"shares/"+input.getLastPathSegment());ownedCopies.add(copy);
+      TagDetailChecks.require(Arrays.equals(before,java.nio.file.Files.readAllBytes(copy.toPath())),"manual preparation preserves synthetic source bytes");
+      awaitUi(t,30000,()->editor[0].hasWindowFocus()&&TagDetailChecks.button(editor[0].getWindow().getDecorView(),"保存")!=null&&TagDetailChecks.button(editor[0].getWindow().getDecorView(),"保存").isEnabled(),"internal editor preview becomes ready");
+      ConsistencyLayoutChecks.captureHardware(t,editor[0],editor[0].getWindow().getDecorView(),dir,prefix+"-manual-entry");
+      TagDetailChecks.ui(t,editor[0]::onBackPressed);awaitUi(t,10000,a::hasWindowFocus,"Back from unedited manual editor restores viewer");
+      TagDetailChecks.ui(t,()->TagDetailChecks.require((boolean)RankingResultChecks.get(a,"detail")&&(int)RankingResultChecks.get(a,"index")==index,"manual Back retains photo identity"));
+    }finally{Activity observed=editor[0]!=null?editor[0]:monitor.getLastActivity();if(observed instanceof RawEditActivity&&!observed.isFinishing())TagDetailChecks.ui(t,observed::finish);t.removeMonitor(monitor);}
+    Map<String,?> stored=a.getSharedPreferences("nano-banana",Context.MODE_PRIVATE).getAll();Map<String,Object> settings=new HashMap<>(stored);settings.remove("job");
+    TagDetailChecks.ui(t,()->{PhotoViewerUi v=ViewerScreenChecks.viewer(a);Button ai=v.actionButton("Nano Banana");TagDetailChecks.require(ai!=null&&ai.getParent()==v.dock&&ai.isShown(),"AI entry is directly visible");ai.performClick();});
+    View nano=ShareScreenChecks.modal(t,a);ConsistencyLayoutChecks.frame(t,nano);
+    TagDetailChecks.ui(t,()->{
+      boolean recognized=false;for(String title:new String[]{"Nano Banana","Nano Bananaを設定","画像を生成中","後処理が残っています","生成を再確認できます","依頼の結果が不明です。自動では再送しません","生成できませんでした","Nano Bananaの設定を読み込めませんでした"})recognized|=hasText(nano,title);
+      TagDetailChecks.require(recognized&&nano.hasWindowFocus()&&TagDetailChecks.button(nano,"閉じる")!=null,"one AI tap opens native Nano Banana surface with dismissal");
+    });
+    captureFilter(t,nano,dir,prefix+"-ai-entry");TagDetailChecks.ui(t,()->TagDetailChecks.button(nano,"閉じる").performClick());awaitUi(t,10000,a::hasWindowFocus,"AI dismissal restores viewer");
+    Map<String,Object> after=new HashMap<>(a.getSharedPreferences("nano-banana",Context.MODE_PRIVATE).getAll());after.remove("job");TagDetailChecks.require(settings.equals(after),"AI entry and cancel do not change settings");
+    TagDetailChecks.require(Arrays.equals(before,java.nio.file.Files.readAllBytes(source.toPath())),"direct entry checks preserve synthetic original");
+    TagDetailChecks.ui(t,()->TagDetailChecks.require((boolean)RankingResultChecks.get(a,"detail")&&(int)RankingResultChecks.get(a,"index")==index,"AI dismissal retains photo identity"));
+  }
   static String run(Instrumentation t,int width,float font)throws Exception{
     MainActivity a=(MainActivity)t.startActivitySync(new Intent(t.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     File fixture=new File(a.getCacheDir(),"expressive-fixture-"+UUID.randomUUID());fixture.mkdirs();
@@ -84,7 +133,7 @@ final class ExpressiveUiChecks {
         ((Set<?>)RankingResultChecks.get(a,"selectedPhotos")).clear();((Map<?,?>)RankingResultChecks.get(a,"rankCache")).clear();RankingResultChecks.call(a,"gallery");
       });GalleryScreenChecks.settle(t,a);
       TagDetailChecks.ui(t,()->{View root=(View)RankingResultChecks.get(a,"root");LibraryTabs tabs=find(root,LibraryTabs.class);TagDetailChecks.require(tabs!=null&&tabs.getMenu().size()==3,"three native bottom destinations");TagDetailChecks.require(tabs.destinationView(2).isEnabled(),"import available without connected camera");TagDetailChecks.require(((List<?>)RankingResultChecks.get(a,"displayed")).size()==12,"all synthetic photos visible");});
-      capture(t,a,dir,prefix+"-gallery");countGeneration(t,a);
+      capture(t,a,dir,prefix+"-gallery");initialCountBarrier(t,a);countGeneration(t,a);
       View sheet=openFilter(t,a);TagDetailChecks.ui(t,()->{description(sheet,"順位決定済み").performClick();description(sheet,"GR").performClick();});ready(t,a,sheet);
       TagDetailChecks.ui(t,()->{TagDetailChecks.require((int)RankingResultChecks.get(a,"rankFilter")==0&&"すべて".equals(RankingResultChecks.get(a,"filter")),"draft leaves committed filters unchanged");TagDetailChecks.inspect(sheet);});
       captureFilter(t,sheet,dir,prefix+"-filter");
@@ -93,13 +142,13 @@ final class ExpressiveUiChecks {
       applyRank(t,a,1);TagDetailChecks.ui(t,()->TagDetailChecks.require(((List<?>)RankingResultChecks.get(a,"displayed")).isEmpty(),"unmarked singles excluded from best"));
       applyRank(t,a,2);TagDetailChecks.ui(t,()->TagDetailChecks.require((int)RankingResultChecks.get(a,"rankFilter")==2&&((List<?>)RankingResultChecks.get(a,"displayed")).size()==12,"explicit unresolved filter shows unmarked singles"));
       TagDetailChecks.ui(t,()->TagDetailChecks.button((View)RankingResultChecks.get(a,"root"),"選択").performClick());GalleryScreenChecks.settle(t,a);
-      GalleryScreenChecks.selectFirst(t,a,false);TagDetailChecks.ui(t,()->{View root=(View)RankingResultChecks.get(a,"root");GalleryScreenChecks.selectionFiltersVisible(root);TagDetailChecks.require(find(root,SelectionUi.BestSwitch.class)!=null,"best-only remains available");TagDetailChecks.require(((View)RankingResultChecks.get(a,"selectionAll")).getParent()==root.findViewWithTag("library-toolbar"),"select-all belongs to header");});
+      GalleryScreenChecks.selectFirst(t,a,false);TagDetailChecks.ui(t,()->{View root=(View)RankingResultChecks.get(a,"root");GalleryScreenChecks.selectionFiltersVisible(root);TagDetailChecks.require(root.findViewWithTag("photo-filter-condition")!=null&&root.findViewWithTag("photo-filter-condition").getParent()==root,"applied condition remains fixed above selection photos");TagDetailChecks.require(((Button)RankingResultChecks.get(a,"selectionAll")).getText().toString().contains("表示分"),"select-all label names its visible scope");TagDetailChecks.require(find(root,SelectionUi.BestSwitch.class)!=null,"best-only remains available");TagDetailChecks.require(((View)RankingResultChecks.get(a,"selectionAll")).getParent()==root.findViewWithTag("library-toolbar"),"select-all belongs to header");});
       capture(t,a,dir,prefix+"-selection");TagDetailChecks.ui(t,a::onBackPressed);GalleryScreenChecks.settle(t,a);
       TagDetailChecks.ui(t,()->TagDetailChecks.require(!(boolean)RankingResultChecks.get(a,"selecting")&&(int)RankingResultChecks.get(a,"rankFilter")==2,"selection Back preserves applied condition"));
       ViewerScreenChecks.open(t,a,0);TagDetailChecks.ui(t,()->{PhotoViewerUi v=ViewerScreenChecks.viewer(a);TagDetailChecks.require(v.dock.getChildCount()==3&&TagDetailChecks.button(v.dock,"手動")!=null&&TagDetailChecks.button(v.dock,"AI")!=null&&TagDetailChecks.button(v.dock,"共有")!=null,"three direct viewer entries");TagDetailChecks.require(description(v,"写真のその他の操作")!=null,"secondary action entry");});
-      capture(t,a,dir,prefix+"-viewer");TagDetailChecks.ui(t,a::onBackPressed);GalleryScreenChecks.settle(t,a);
+      capture(t,a,dir,prefix+"-viewer");directEditorEntries(t,a,files.get(0),files,dir,prefix);TagDetailChecks.ui(t,a::onBackPressed);GalleryScreenChecks.settle(t,a);
       TagDetailChecks.ui(t,()->TagDetailChecks.require(!(boolean)RankingResultChecks.get(a,"detail")&&(int)RankingResultChecks.get(a,"rankFilter")==2,"viewer Back preserves filter"));
-      return "PASS expressive UI: generated-photo gallery/filter/selection/viewer captures; native three-item bottom navigation, draft/cancel/apply, explicit singleton rank filtering, selection navigation suppression/header actions/best-only and Back retention; "+width+"dp font"+font+". No AI request, sharing handoff or rank save. Physical device and spoken accessibility remain separate evidence.\n";
+      return "PASS expressive UI: generated-photo gallery/filter/selection/viewer captures; native three-item bottom navigation, draft/cancel/apply, explicit singleton rank filtering, selection navigation suppression/header actions/best-only and Back retention; one-tap actual internal editor and native AI entry/cancel without saving; "+width+"dp font"+font+". No AI request, sharing handoff or rank save. Physical device and spoken accessibility remain separate evidence.\n";
     }finally{TagDetailChecks.ui(t,()->{a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);a.finish();});for(File f:files)f.delete();fixture.delete();}
   }
 }

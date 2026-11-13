@@ -21,6 +21,13 @@ final class CameraTabsChecks {
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     var error = new AtomicReference<Throwable>();
     try {
+      File captures=new File(activity.getCacheDir(),"consistency-checks");captures.mkdirs();
+      String size=activity.getResources().getConfiguration().screenWidthDp+"-"+activity.getResources().getConfiguration().fontScale;
+      ConsistencyLayoutChecks.captureHardware(t,activity,activity.getWindow().getDecorView(),captures,"import-"+size+"-collapsed");
+      var gear=CameraImportActivity.class.getDeclaredField("settingsButton");gear.setAccessible(true);
+      TagDetailChecks.ui(t,()->{try{((View)gear.get(activity)).performClick();}catch(Exception e){throw new AssertionError(e);}});
+      ConsistencyLayoutChecks.captureHardware(t,activity,activity.getWindow().getDecorView(),captures,"import-"+size+"-settings");
+      TagDetailChecks.ui(t,()->{try{((View)gear.get(activity)).performClick();}catch(Exception e){throw new AssertionError(e);}});
       t.runOnMainSync(() -> {
         try {
           checkImportPresentation((CameraImportActivity) activity);

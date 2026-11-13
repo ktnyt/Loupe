@@ -23,7 +23,7 @@ final class SheetChecks {
     try{
       java.util.ArrayList<PhotoRepository.Photo> photos=new java.util.ArrayList<>();java.util.ArrayList<java.util.List<Integer>> groups=new java.util.ArrayList<>();
       for(int i=0;i<16;i++){photos.add(new PhotoRepository.Photo(android.net.Uri.fromFile(photo),"合成メニュー"+i+".jpg","",photo.length(),i,0));groups.add(java.util.List.of(i));}
-      TagDetailChecks.ui(test,()->{RankingResultChecks.set(activity,"photos",photos);RankingResultChecks.set(activity,"bundles",groups);RankingResultChecks.set(activity,"selecting",false);RankingResultChecks.set(activity,"burstMembers",null);RankingResultChecks.set(activity,"albumFolder",null);RankingResultChecks.call(activity,"gallery");});GalleryScreenChecks.syntheticCarousel(test,activity);
+      TagDetailChecks.ui(test,()->{RankingResultChecks.set(activity,"photos",photos);RankingResultChecks.set(activity,"bundles",groups);RankingResultChecks.set(activity,"selecting",false);RankingResultChecks.set(activity,"burstMembers",null);RankingResultChecks.set(activity,"albumFolder",null);RankingResultChecks.call(activity,"gallery");});GalleryScreenChecks.settle(test,activity);
       for(String method:new String[]{"photoMenu","galleryMenu"})for(int dismissal=0;dismissal<3;dismissal++){
         TagDetailChecks.ui(test,()->RankingResultChecks.call(activity,method));test.waitForIdleSync();
         android.view.View[] focused={null};long deadline=android.os.SystemClock.uptimeMillis()+5000;

@@ -114,7 +114,7 @@ final class ShareHistoryScreenChecks {
         thumbs.put(PreviewPlaceholders.key(photos.get(5)) + ":400", bitmaps.get(5));
         call(activity, "gallery");
       });
-      GalleryScreenChecks.syntheticCarousel(test, activity);
+      GalleryScreenChecks.settle(test, activity);
       checkGrid(test, activity, false);
       capture(test, activity, captures, prefix + "-grid", null, width, font);
 
@@ -125,7 +125,7 @@ final class ShareHistoryScreenChecks {
       checkGrid(test, activity, true);
       capture(test, activity, captures, prefix + "-selection", null, width, font);
       ui(test, activity::onBackPressed);
-      GalleryScreenChecks.syntheticCarousel(test, activity);
+      GalleryScreenChecks.settle(test, activity);
 
       tap(test, () -> cell(activity, 3), 0.86f, 0.82f);
       GalleryScreenChecks.settle(test, activity);
@@ -154,7 +154,7 @@ final class ShareHistoryScreenChecks {
       ui(test, () -> TagDetailChecks.button(root(activity), "全体を表示").performClick());
       information(test, activity, captures, prefix + "-info-many", width, font, true);
       ui(test, () -> { activity.onBackPressed(); activity.onBackPressed(); });
-      GalleryScreenChecks.syntheticCarousel(test, activity);
+      GalleryScreenChecks.settle(test, activity);
 
       for (int i = 0; i <= 2; i++) {
         int count = i;
@@ -169,7 +169,7 @@ final class ShareHistoryScreenChecks {
         capture(test, activity, captures, prefix + "-viewer-" + count, null, width, font);
         if (i == 0) information(test, activity, captures, prefix + "-info-empty", width, font, false);
         ui(test, activity::onBackPressed);
-        GalleryScreenChecks.syntheticCarousel(test, activity);
+        GalleryScreenChecks.settle(test, activity);
       }
       return "PASS share-history screens: generated photos, actual gallery/selection/burst/viewer/info, "
           + "0/1/2/7 apps, rank and cached cloud preview, photo taps near the badges (shifted inward for system gestures if needed), AX labels and decoration, "

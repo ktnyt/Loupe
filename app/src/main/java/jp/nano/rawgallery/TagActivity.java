@@ -714,7 +714,10 @@ public final class TagActivity extends DiagnosticActivity {
           if(saved.conflict){
             refreshPhotoSave(true);
             String message="ほかの操作でタグが変更されました。最新の判断を表示しています。内容を確認してもう一度操作してください";
-            photoTag.setContentDescription(photoTag.getText()+"、タグ「"+tag.name+"」。"+message);photoTag.setStateDescription("変更競合、最新の判断を表示しています");photoTag.announceForAccessibility(message);
+            photoTag.setContentDescription(photoTag.getText()+"、タグ「"+tag.name+"」。"+message);photoTag.setStateDescription("変更競合、最新の判断を表示しています");
+            // Rebuilding applies the latest judgment and detaches the previous action sheet.
+            // Keep the conflict and retry action visible in the replacement viewer.
+            photoViewer.openActions();photoTag.announceForAccessibility(message);
           }
         });
       } catch (Exception error) { main.post(() -> { busy = false; if (current(token)) refreshPhotoSave(true); }); }

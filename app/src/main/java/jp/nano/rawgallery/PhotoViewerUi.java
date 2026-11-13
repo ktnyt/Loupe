@@ -246,7 +246,10 @@ final class PhotoViewerUi extends ViewGroup {
       if("編集".equals(icon)){b.setText("手動");MaterialUi.filled(b);cell.setCornerRadius(dp(22));}
       if("Nano Banana".equals(icon)){b.setText("AI");MaterialUi.filled(b);cell.setCornerRadius(dp(22));}
       if("Nano Banana".equals(icon))dock.addView(b,Math.min(1,dock.getChildCount()),new ViewGroup.LayoutParams(-2,-2));else dock.addView(b,new ViewGroup.LayoutParams(-2,-2));
-    }else secondary.add(b);
+    }else {
+      b.setOnClickListener(v->{if(actionSheet!=null&&!"タグ".equals(icon))actionSheet.dismiss();GalleryUi.feedback(b);try(DiagnosticLog.Scope ignored=DiagnosticLog.span("action.button")){action.run();}});
+      secondary.add(b);
+    }
     return b;
   }
   static void tagState(Button button,boolean attached,boolean busy,boolean failed){

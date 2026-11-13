@@ -18,11 +18,7 @@ import static jp.nano.rawgallery.RankingResultChecks.*;
 final class SingleBestChecks {
   private static Button toggle(MainActivity a) {
     PhotoViewerUi v=ViewerScreenChecks.viewer(a);
-    for(int i=0;i<v.dock.getChildCount();i++) {
-      Button b=(Button)v.dock.getChildAt(i);
-      if(b.getText().toString().equals("1位")||b.getText().toString().equals("1位を解除"))return b;
-    }
-    return null;
+    return (Button)v.findViewWithTag("viewer-action-1位");
   }
   private static void idle(Instrumentation t,MainActivity a)throws Exception {
     ((ExecutorService)get(a,"actions")).submit(()->{}).get(10,TimeUnit.SECONDS);

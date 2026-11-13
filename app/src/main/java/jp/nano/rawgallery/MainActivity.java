@@ -150,7 +150,8 @@ public final class MainActivity extends DiagnosticActivity {
   private List<Integer> selectionBurst;
   private SelectionUi.Summary selectionCount;
   private TextView selectionTitle;
-  private Button selectionShare, selectionAll, selectionSort;
+  private Button selectionShare, selectionAll, selectionSort, selectionTag;
+  private SelectedPhotoTags selectionTags;
   private BulkBestSheet.Entry selectionBulk;
   private TextView bulkSavedNotice;
   private GalleryAdapter adapter;
@@ -377,7 +378,7 @@ public final class MainActivity extends DiagnosticActivity {
     String title=burstMembers!=null?"連写":albumFolder==null?"写真":new File(albumFolder).getName();
     LinearLayout header;
     if(selecting) {
-      selectionAll=LibraryUi.text(this,"すべて選択",this::toggleVisibleSelection);
+      selectionAll=LibraryUi.text(this,"表示分を選択",this::toggleVisibleSelection);
       header=LibraryUi.toolbar(this,"写真を選択",selectionAll);
       selectionTitle=(TextView)header.getChildAt(0);selectionTitle.setTextSize(20);
       header.addView(LibraryUi.icon(this,R.drawable.ic_close,"選択を終了",this::endSelection),0);
@@ -389,11 +390,17 @@ public final class MainActivity extends DiagnosticActivity {
     }
     root.addView(header);
     if(!selecting)root.addView(LibraryUi.metadata(this,subtitle,listStatus));
-    if(!selecting&&(rankFilter!=0||!filter.equals("すべて"))) {
+    if(rankFilter!=0||!filter.equals("すべて")) {
       String condition=(rankFilter==0?"":PhotoFilterSheet.RANKS[rankFilter])
           +(rankFilter!=0&&!filter.equals("すべて")?" · ":"")+(filter.equals("すべて")?"":filter);
-      Button clear=LibraryUi.text(this,condition+"  ×",()->applyPhotoFilter("すべて",0));
-      clear.setContentDescription("絞り込みを解除："+condition);root.addView(clear);
+      if(selecting){
+        TextView applied=PhotoListUi.text(this,"絞り込み："+condition,13,20,MUTED);
+        applied.setTag("photo-filter-condition");applied.setPadding(dp(20),0,dp(16),dp(8));
+        applied.setContentDescription("適用中の絞り込み："+condition+"。選択を終了すると変更できます");root.addView(applied);
+      }else{
+        Button clear=LibraryUi.text(this,condition+"  ×",()->applyPhotoFilter("すべて",0));
+        clear.setContentDescription("絞り込みを解除："+condition);clear.setTag("photo-filter-condition");root.addView(clear);
+      }
     }
     if (!selecting && burstMembers == null) {
       cameraImportBand = label("", 14, TEXT);
@@ -829,6 +836,13 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private void beginSelection(){if(photos.isEmpty())return;selecting=true;bestOnly=true;selectedPhotos.clear();gallery();}
+  private void tagSelectedPhotos(){
+    LinkedHashMap<String,PhotoRepository.Photo> chosen=new LinkedHashMap<>();
+    for(PhotoRepository.Photo photo:photos)if(selectedPhotos.contains(photo.uri.toString())&&!photo.isVideo())chosen.put(photo.uri.toString(),photo);
+    if(chosen.isEmpty())return;
+    if(chosen.size()!=selectedPhotos.size()){feedback(StatusView.Symbol.FAILED,"選択した写真を確認できませんでした。選択は保持されています",null,"");return;}
+    selectionTags=new SelectedPhotoTags(this,new ArrayList<>(chosen.values()),actions);selectionTags.show();
+  }
   private void toggleVisibleSelection(){
     boolean remove=allVisibleSelected();
     for(List<Integer> members:displayed)for(int member:members){
@@ -854,8 +868,8 @@ public final class MainActivity extends DiagnosticActivity {
     }
     selectionShare = SelectionUi.action(this,"共有",true,this::shareSelection);
     selectionSort = SelectionUi.action(this,"比較",false,()->shareSelection(true));
-    Button tag=SelectionUi.action(this,"タグ",false,()->openTags(null));
-    root.addView(LibraryUi.actionBar(this,tag,selectionSort,selectionShare));
+    selectionTag=SelectionUi.action(this,"タグ",false,this::tagSelectedPhotos);
+    root.addView(LibraryUi.actionBar(this,selectionTag,selectionSort,selectionShare));
     updateSelection();
   }
 
@@ -876,6 +890,7 @@ public final class MainActivity extends DiagnosticActivity {
     if (selectionBulk != null) updateBulkBest(bulkTargets);
     if(selectionTitle!=null)selectionTitle.setText(selectedPhotos.isEmpty()?"写真を選択":selectedPhotos.size()+"枚を選択");
     selectionSort.setEnabled(!result.unresolved.isEmpty());
+    selectionTag.setEnabled(!selectedPhotos.isEmpty());
     ShareCapacityChecks.Snapshot capacity=shareCapacity.request(result.photos);
     selectionCount.capacity(result.photos.isEmpty()?null:capacity.available);
     selectionShare.setEnabled((!result.photos.isEmpty()&&capacity.available.actionable())
@@ -884,8 +899,8 @@ public final class MainActivity extends DiagnosticActivity {
     selectionShare.setStateDescription(selectionShare.isEnabled()?null:"使えません");
     String allLabel =
         allVisibleSelected()
-            ? "選択を解除"
-            : "すべて選択";
+            ? "表示分を解除"
+            : "表示分を選択";
     selectionAll.setText(allLabel);
     selectionAll.setContentDescription(allVisibleSelected()?"表示中の写真の選択を解除":"表示中の写真をすべて選択");
     selectionAll.setTooltipText(allLabel);
@@ -1081,27 +1096,39 @@ public final class MainActivity extends DiagnosticActivity {
   private void chooseFilter() {
     if(selecting)return;
     DiagnosticLog.event("screen.photoFilter",0);
-    String currentCamera=filter,folder=albumFolder;
-    List<PhotoRepository.Photo> current=List.copyOf(photos);
-    List<List<Integer>> groups=List.copyOf(bundles);
-    new PhotoFilterSheet(this,filter,rankFilter,(camera,rank,result)->scans.execute(()->{
-      int count=-1;
-      try {
-        List<PhotoRepository.Photo> candidates=current;List<List<Integer>> candidateGroups=groups;
-        if(!camera.equals(currentCamera)){try(GalleryIndex catalog=new GalleryIndex(this)){GalleryIndex.Snapshot snapshot=catalog.load(folder,camera);candidates=snapshot.photos;candidateGroups=snapshot.bundles;}}
-        final List<PhotoRepository.Photo> snapshot=candidates;
-        List<List<Integer>> shown=RankedPhotoGroups.filter(candidates,candidateGroups,false,rank,rankingStore,members->{
-          List<String> ids=new ArrayList<>();for(int member:members)ids.add(ArchiveStore.key(snapshot.get(member)));return rankingStore.load(ids);
+    new PhotoFilterSheet(this,filter,rankFilter,this::countPhotoFilter,this::applyPhotoFilter).show();
+  }
+
+  private void countPhotoFilter(String camera,int rank,java.util.function.IntConsumer result){
+    // A queued index load posts its UI snapshot before this barrier reaches the UI thread.
+    scans.execute(()->main.post(()->{
+      if(isDestroyed())return;
+      String currentCamera=filter,folder=albumFolder;
+      List<PhotoRepository.Photo> observed=photos,current=List.copyOf(photos);
+      List<List<Integer>> groups=List.copyOf(bundles);
+      scans.execute(()->{
+        int count=-1;
+        try {
+          List<PhotoRepository.Photo> candidates=current;List<List<Integer>> candidateGroups=groups;
+          if(!camera.equals(currentCamera)||current.isEmpty())try(GalleryIndex catalog=new GalleryIndex(this)){GalleryIndex.Snapshot loaded=catalog.load(folder,camera);candidates=loaded.photos;candidateGroups=loaded.bundles;}
+          final List<PhotoRepository.Photo> snapshot=candidates;
+          List<List<Integer>> shown=RankedPhotoGroups.filter(candidates,candidateGroups,false,rank,rankingStore,members->{
+            List<String> ids=new ArrayList<>();for(int member:members)ids.add(ArchiveStore.key(snapshot.get(member)));return rankingStore.load(ids);
+          });
+          count=0;for(List<Integer> group:shown)count+=group.size();
+        }catch(Exception unavailable){}
+        int value=count;main.post(()->{
+          if(isDestroyed())return;
+          if(observed!=photos&&camera.equals(filter)){countPhotoFilter(camera,rank,result);return;}
+          result.accept(value);
         });
-        count=0;for(List<Integer> group:shown)count+=group.size();
-      }catch(Exception unavailable){}
-      int value=count;main.post(()->{if(!isDestroyed())result.accept(value);});
-    }),this::applyPhotoFilter).show();
+      });
+    }));
   }
 
   private void applyPhotoFilter(String camera,int rank){
     if(selecting)return;
-    rememberGallery();boolean reload=!filter.equals(camera);filter=camera;rankFilter=rank;rankCache.clear();burstMembers=null;
+    rememberGallery();boolean reload=!filter.equals(camera)||photos.isEmpty();filter=camera;rankFilter=rank;rankCache.clear();burstMembers=null;
     if(reload){photos=new ArrayList<>();bundles=new ArrayList<>();}
     gallery();if(reload)loadIndexedPhotos();
   }
@@ -1232,7 +1259,7 @@ public final class MainActivity extends DiagnosticActivity {
     listHeader = vertical();
     for(int i=0;i<root.getChildCount();){
       View child=root.getChildAt(i);
-      if("library-toolbar".equals(child.getTag())){i++;continue;}
+      if("library-toolbar".equals(child.getTag())||"photo-filter-condition".equals(child.getTag())){i++;continue;}
       root.removeViewAt(i);listHeader.addView(child);
     }
   }
@@ -2268,6 +2295,7 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   protected void onDestroy() {
+    if(selectionTags!=null)selectionTags.dismiss();
     generation++;
     shareAttempt++;
     if (shareProgress != null) shareProgress.dismiss();
