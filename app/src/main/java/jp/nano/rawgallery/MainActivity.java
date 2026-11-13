@@ -374,14 +374,27 @@ public final class MainActivity extends DiagnosticActivity {
     refreshSingleBest=this::gallery;
     subtitle = label("", 14, MUTED);
     listStatus = new StatusView(this);
-    PhotoListUi.Heading header = new PhotoListUi.Heading(this,
-        burstMembers != null ? "連写" : albumFolder == null ? "すべての写真" : new File(albumFolder).getName(),
-        subtitle, listStatus);
-    selectionTitle = selecting ? header.title : null;
-    if(selecting)header.setPadding(dp(20),dp(40),dp(20),dp(16));
-
-    if (!selecting && burstMembers == null) addOtherAlbums();
+    String title=burstMembers!=null?"連写":albumFolder==null?"写真":new File(albumFolder).getName();
+    LinearLayout header;
+    if(selecting) {
+      selectionAll=LibraryUi.text(this,"すべて選択",this::toggleVisibleSelection);
+      header=LibraryUi.toolbar(this,"写真を選択",selectionAll);
+      selectionTitle=(TextView)header.getChildAt(0);selectionTitle.setTextSize(20);
+      header.addView(LibraryUi.icon(this,R.drawable.ic_close,"選択を終了",this::endSelection),0);
+    }else {
+      header=LibraryUi.toolbar(this,title,LibraryUi.text(this,"選択",this::beginSelection),
+          LibraryUi.icon(this,R.drawable.ic_filter,"絞り込み",this::chooseFilter),
+          LibraryUi.icon(this,R.drawable.ic_settings,"設定とその他",this::libraryMenu));
+      selectionTitle=null;
+    }
     root.addView(header);
+    if(!selecting)root.addView(LibraryUi.metadata(this,subtitle,listStatus));
+    if(!selecting&&(rankFilter!=0||!filter.equals("すべて"))) {
+      String condition=(rankFilter==0?"":PhotoFilterSheet.RANKS[rankFilter])
+          +(rankFilter!=0&&!filter.equals("すべて")?" · ":"")+(filter.equals("すべて")?"":filter);
+      Button clear=LibraryUi.text(this,condition+"  ×",()->applyPhotoFilter("すべて",0));
+      clear.setContentDescription("絞り込みを解除："+condition);root.addView(clear);
+    }
     if (!selecting && burstMembers == null) {
       cameraImportBand = label("", 14, TEXT);
       cameraImportBand.setPadding(dp(20), dp(8), dp(20), dp(8));
@@ -398,7 +411,7 @@ public final class MainActivity extends DiagnosticActivity {
     grid = new ScrollingGrid(this);
     grid.setVerticalScrollBarEnabled(false);
     grid.addHeaderView(listHeader, null, false);
-    grid.setNumColumns(4);
+    grid.setNumColumns(3);
     grid.setHorizontalSpacing(dp(2));
     grid.setVerticalSpacing(dp(2));
     grid.setPadding(0, 0, 0, 0);
@@ -452,22 +465,11 @@ public final class MainActivity extends DiagnosticActivity {
     grid.setEmptyView(empty);
     body.addView(gridFrame, new LinearLayout.LayoutParams(-1, -1));
     int controlsStart = root.getChildCount();
-    if (selecting) { selectionControls(); }
-    else {
-      addRankFilters();
-      Button select = TagDetailUi.dockButton(this,"選択", () -> {
-        if (!photos.isEmpty()) { selecting = true; bestOnly = true; gallery(); }
-      });
-      root.addView(TagDetailUi.dock(this,select, TagDetailUi.dockButton(this,"タグ", () -> openTags(null)), TagDetailUi.dockButton(this,"その他", this::photoMenu)));
-    }
     if (selecting) {
-      SelectionUi.finishFooter(root, controlsStart, burstMembers == null ? null
-          : () -> header.getMeasuredHeight() + dp(PHOTO_TILE_HEIGHT_DP));
-    } else {
-      GalleryUi.bottomControls(root, controlsStart, BG);
+      selectionControls();
+      SelectionUi.finishFooter(root,controlsStart,burstMembers==null?null:()->header.getMeasuredHeight()+dp(PHOTO_TILE_HEIGHT_DP));
     }
-    if (albumFolder == null && burstMembers == null)
-      addLibraryTabs(false, !selecting);
+    if (albumFolder == null && burstMembers == null && !selecting) addLibraryTabs(false,true);
     if (selecting) updateSelection();
     else if (!photos.isEmpty()) updateCount();
     applyPendingIndexUpdate();
@@ -818,66 +820,30 @@ public final class MainActivity extends DiagnosticActivity {
     } catch (Exception e) { return "ソート"; }
   }
 
-  private void addRankFilters() {
-    PhotoListUi.Filters chips = new PhotoListUi.Filters(this);
-    String[] names = {"すべて", "1位", "順位が未決定", "順位決定済み"};
-    for (int i = 0; i < names.length; i++) {
-      final int choice = i;
-      Button chip = PhotoListUi.chip(this, names[i], rankFilter == i, () -> {
-        if (photos.isEmpty()) return;
-        rememberGallery();
-        rankFilter = choice;
-        gallery();
-      });
-      chips.addView(chip, new ViewGroup.LayoutParams(-2,-2));
-    }
-    root.addView(chips);
-  }
 
   private void rebuildDisplayed() {
     photoBundles.clear();
-    for (List<Integer> group : bundles) for (int member : group) photoBundles.put(member, group);
-    displayed = new ArrayList<>();
-    List<List<Integer>> source = burstMembers == null ? bundles : List.of(burstMembers);
-    for (List<Integer> members : source) {
-      if (rankFilter == 0) {
-        if (burstMembers == null) displayed.add(members);
-        else for (int member : members) displayed.add(List.of(member));
-        continue;
-      }
-      if (members.size() == 1) {
-        PhotoRepository.Photo single = photos.get(members.get(0));
-        if (!single.isVideo()) try {
-          boolean chosen = rankingStore.singleBest(ArchiveStore.key(single));
-          if ((chosen && (rankFilter == 1 || rankFilter == 3)) || (!chosen && rankFilter == 2))
-            displayed.add(members);
-        } catch (Exception e) { if (rankFilter == 2) displayed.add(members); }
-        continue;
-      }
-      try {
-        PhotoRanking saved = rankingFor(members);
-        if (rankFilter == 1 && saved.done()) {
-          Set<String> winners = new HashSet<>(saved.best());
-          for (int member : members)
-            if (winners.contains(ArchiveStore.key(photos.get(member)))) displayed.add(List.of(member));
-        } else if ((rankFilter == 2 && !saved.done()) || (rankFilter == 3 && saved.done() && members.size() > 1)) {
-          if (burstMembers == null) displayed.add(members);
-          else for (int member : members) displayed.add(List.of(member));
-        }
-      } catch (Exception e) {
-        // Unreadable results must not appear as confirmed winners.
-        if (rankFilter == 2) displayed.add(members);
-      }
-    }
+    for(List<Integer> group:bundles)for(int member:group)photoBundles.put(member,group);
+    displayed=RankedPhotoGroups.filter(photos,burstMembers==null?bundles:List.of(burstMembers),
+        burstMembers!=null,rankFilter,rankingStore,this::rankingFor);
   }
+
+  private void beginSelection(){if(photos.isEmpty())return;selecting=true;bestOnly=true;selectedPhotos.clear();gallery();}
+  private void toggleVisibleSelection(){
+    boolean remove=allVisibleSelected();
+    for(List<Integer> members:displayed)for(int member:members){
+      if(photos.get(member).isVideo())continue;
+      String key=photos.get(member).uri.toString();if(remove)selectedPhotos.remove(key);else selectedPhotos.add(key);
+    }
+    adapter.notifyDataSetChanged();updateSelection();
+  }
+
+  private void libraryMenu(){MoreMenuUi.show(this,"ライブラリ",new String[]{"タグ","設定とその他"},(dialog,which)->{if(which==0)openTags(null);else galleryMenu();});}
 
   private void selectionControls() {
     DiagnosticLog.event("screen.selectionControls", 0);
     selectionCount = new SelectionUi.Summary(this);
     root.addView(selectionCount);
-    addRankFilters();
-    View filters=root.getChildAt(root.getChildCount()-1);
-    LinearLayout.LayoutParams filterParams=new LinearLayout.LayoutParams(-1,-2);filterParams.leftMargin=-dp(16);filterParams.rightMargin=-dp(16);filters.setLayoutParams(filterParams);
     SelectionUi.BestSwitch check=new SelectionUi.BestSwitch(this);check.setChecked(bestOnly);check.setOnClickListener(GalleryUi::feedback);check.setOnCheckedChangeListener((v,enabled)->{bestOnly=enabled;updateSelection();});
     root.addView(check,new LinearLayout.LayoutParams(-1,-2));
     selectionBulk = null;
@@ -887,23 +853,9 @@ public final class MainActivity extends DiagnosticActivity {
       root.addView(selectionBulk, new LinearLayout.LayoutParams(-1, -2));
     }
     selectionShare = SelectionUi.action(this,"共有",true,this::shareSelection);
-    selectionSort = SelectionUi.action(this,"ソート",false,()->shareSelection(true));
-    LinearLayout actions=row();actions.addView(selectionSort,new LinearLayout.LayoutParams(0,-2,1));LinearLayout.LayoutParams shareParams=new LinearLayout.LayoutParams(0,-2,1);shareParams.leftMargin=dp(8);actions.addView(selectionShare,shareParams);root.addView(actions);
-    selectionAll =
-        TagDetailUi.dockButton(this,
-            "すべて選択",
-            () -> {
-              boolean remove = allVisibleSelected();
-              for (List<Integer> members : displayed) for (int member : members) {
-                if (photos.get(member).isVideo()) continue;
-                String key = photos.get(member).uri.toString();
-                if (remove) selectedPhotos.remove(key); else selectedPhotos.add(key);
-              }
-              adapter.notifyDataSetChanged();
-              updateSelection();
-            });
-    SelectionUi.allIcon(selectionAll);
-    root.addView(TagDetailUi.dock(this,TagDetailUi.dockButton(this,"選択を終了",this::endSelection),selectionAll));
+    selectionSort = SelectionUi.action(this,"比較",false,()->shareSelection(true));
+    Button tag=SelectionUi.action(this,"タグ",false,()->openTags(null));
+    root.addView(LibraryUi.actionBar(this,tag,selectionSort,selectionShare));
     updateSelection();
   }
 
@@ -922,7 +874,7 @@ public final class MainActivity extends DiagnosticActivity {
     selectionCount.counts(result.photos.size(), hidden - outside, result.unresolved.size(),
         outside, !selectedPhotos.isEmpty());
     if (selectionBulk != null) updateBulkBest(bulkTargets);
-    if(selectionTitle!=null)selectionTitle.setText(selectedPhotos.isEmpty()?"写真を選択":burstMembers!=null?"連写 "+burstMembers.size()+"枚":albumFolder==null?"すべての写真":new File(albumFolder).getName());
+    if(selectionTitle!=null)selectionTitle.setText(selectedPhotos.isEmpty()?"写真を選択":selectedPhotos.size()+"枚を選択");
     selectionSort.setEnabled(!result.unresolved.isEmpty());
     ShareCapacityChecks.Snapshot capacity=shareCapacity.request(result.photos);
     selectionCount.capacity(result.photos.isEmpty()?null:capacity.available);
@@ -1127,25 +1079,31 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private void chooseFilter() {
-    String[] values = {"すべて", "GR", "OM-1", "E-P7", "Leitz", "その他"};
-    new GalleryUi.Sheet(this)
-        .setTitle("カメラで絞り込み")
-        .setSingleChoiceItems(
-            values,
-            Arrays.asList(values).indexOf(filter),
-            (d, which) -> {
-              d.dismiss();
-              rememberGallery();
-              filter = values[which];
-              rankCache.clear();
-              photos = new ArrayList<>();
-              bundles = new ArrayList<>();
-              burstMembers = null;
-              gallery();
-              refresh();
-            })
-        .setNegativeButton("閉じる", null)
-        .show();
+    if(selecting)return;
+    DiagnosticLog.event("screen.photoFilter",0);
+    String currentCamera=filter,folder=albumFolder;
+    List<PhotoRepository.Photo> current=List.copyOf(photos);
+    List<List<Integer>> groups=List.copyOf(bundles);
+    new PhotoFilterSheet(this,filter,rankFilter,(camera,rank,result)->scans.execute(()->{
+      int count=-1;
+      try {
+        List<PhotoRepository.Photo> candidates=current;List<List<Integer>> candidateGroups=groups;
+        if(!camera.equals(currentCamera)){try(GalleryIndex catalog=new GalleryIndex(this)){GalleryIndex.Snapshot snapshot=catalog.load(folder,camera);candidates=snapshot.photos;candidateGroups=snapshot.bundles;}}
+        final List<PhotoRepository.Photo> snapshot=candidates;
+        List<List<Integer>> shown=RankedPhotoGroups.filter(candidates,candidateGroups,false,rank,rankingStore,members->{
+          List<String> ids=new ArrayList<>();for(int member:members)ids.add(ArchiveStore.key(snapshot.get(member)));return rankingStore.load(ids);
+        });
+        count=0;for(List<Integer> group:shown)count+=group.size();
+      }catch(Exception unavailable){}
+      int value=count;main.post(()->{if(!isDestroyed())result.accept(value);});
+    }),this::applyPhotoFilter).show();
+  }
+
+  private void applyPhotoFilter(String camera,int rank){
+    if(selecting)return;
+    rememberGallery();boolean reload=!filter.equals(camera);filter=camera;rankFilter=rank;rankCache.clear();burstMembers=null;
+    if(reload){photos=new ArrayList<>();bundles=new ArrayList<>();}
+    gallery();if(reload)loadIndexedPhotos();
   }
 
   private void openTags(PhotoRepository.Photo photo) {
@@ -1261,106 +1219,22 @@ public final class MainActivity extends DiagnosticActivity {
     generation++;
     base();
     subtitle=new TextView(this);listStatus=new StatusView(this);listStatus.begin("アルバムを読み込んでいます");
-    addRecentPhotos();
-    root.addView(AlbumListUi.heading(this,subtitle,listStatus));
+    root.addView(LibraryUi.toolbar(this,"アルバム",LibraryUi.icon(this,R.drawable.ic_settings,"設定とその他",this::libraryMenu)));
+    root.addView(LibraryUi.metadata(this,subtitle,listStatus));
     collectListHeader();
     body = vertical();
     root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
-    dock(button("タグ", () -> openTags(null)), button("その他", this::galleryMenu));
     addLibraryTabs(true, true);
     loadAlbums();
   }
 
   private void collectListHeader() {
     listHeader = vertical();
-    while (root.getChildCount() > 0) {
-      View child = root.getChildAt(0); root.removeViewAt(0); listHeader.addView(child);
+    for(int i=0;i<root.getChildCount();){
+      View child=root.getChildAt(i);
+      if("library-toolbar".equals(child.getTag())){i++;continue;}
+      root.removeViewAt(i);listHeader.addView(child);
     }
-  }
-
-  private long photoTime(PhotoRepository.Photo photo) {
-    return photo.taken > 0 ? photo.taken : photo.added > 0 ? photo.added
-        : photo.created > 0 ? photo.created : photo.modified * 1000;
-  }
-
-  private LinearLayout carousel(String title, int height) {
-    return GalleryCarouselUi.section(this,root,title,title.equals("最近の写真"));
-  }
-
-  private ImageView carouselPhoto(LinearLayout cards, PhotoRepository.Photo photo, String name, int width, Runnable open) {
-    ImageView image=GalleryCarouselUi.photo(this,cards,(photo.isVideo()?"動画、":"")+name,width==300,open);
-    if (photo.isVideo()) {
-      image.setForeground(getDrawable(R.drawable.ic_video_play));
-      image.setForegroundGravity(Gravity.CENTER);
-    }
-    final boolean[] requested = {false};
-    Runnable loadVisible = () -> {
-      android.graphics.Rect visible = new android.graphics.Rect();
-      if (!requested[0] && image.isShown() && image.getLocalVisibleRect(visible)) {
-        requested[0] = true; previewInto(image, photo, Math.min(600, width * 3));
-      }
-    };
-    android.view.ViewTreeObserver.OnScrollChangedListener onScroll = loadVisible::run;
-    image.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
-      public void onViewAttachedToWindow(View view) {
-        view.getViewTreeObserver().addOnScrollChangedListener(onScroll); view.post(loadVisible);
-      }
-      public void onViewDetachedFromWindow(View view) {
-        if (view.getViewTreeObserver().isAlive()) view.getViewTreeObserver().removeOnScrollChangedListener(onScroll);
-      }
-    });
-    if (image.isAttachedToWindow()) image.getViewTreeObserver().addOnScrollChangedListener(onScroll);
-    image.addOnLayoutChangeListener((v, l, t, r, bottom, ol, ot, or, ob) -> loadVisible.run());
-    image.post(loadVisible); return image;
-  }
-
-  private void addRecentPhotos() {
-    LinearLayout cards = carousel("最近の写真", 156);
-    int token = generation;
-    scans.execute(() -> {
-      try (GalleryIndex catalog = new GalleryIndex(this)) {
-        List<PhotoRepository.Photo> recent = catalog.recent(20);
-        main.post(() -> {
-          if (isDestroyed() || token != generation || !albumHome) return;
-          if (recent.isEmpty()) ((View) cards.getParent().getParent()).setVisibility(View.GONE);
-          else {TextView date=((View)cards.getParent().getParent()).findViewWithTag("carousel-date");long time=photoTime(recent.get(0));date.setText(time>0?new java.text.SimpleDateFormat("M月d日",java.util.Locale.JAPAN).format(new java.util.Date(time)):"");}
-          for (int n = 0; n < recent.size(); n++) {
-            final int position = n; PhotoRepository.Photo photo = recent.get(n);
-            long time = photoTime(photo);
-            String caption = time > 0 ? new java.text.SimpleDateFormat("M月d日 HH:mm", java.util.Locale.JAPAN)
-                .format(new java.util.Date(time)) : "撮影日時不明";
-            carouselPhoto(cards, photo, caption, 300, () -> {
-              photos = new ArrayList<>(recent); bundles = new ArrayList<>();
-              burstMembers = null; recentPhoto = true; showPhoto(position);
-            });
-          }
-        });
-      } catch (Exception ignored) { main.post(() -> { if (token == generation) ((View) cards.getParent().getParent()).setVisibility(View.GONE); }); }
-    });
-  }
-
-  private void addOtherAlbums() {
-    LinearLayout cards = carousel("ほかのアルバム", 82);
-    int token = generation;
-    scans.execute(() -> {
-      try (GalleryIndex catalog = new GalleryIndex(this)) {
-        List<GalleryIndex.Album> albums = catalog.albums();
-        albums.sort((a, b) -> Long.compare(photoTime(b.cover), photoTime(a.cover)));
-        main.post(() -> {
-          if (isDestroyed() || token != generation || selecting) return;
-          for (GalleryIndex.Album album : albums) {
-            if (java.util.Objects.equals(album.folder, albumFolder)) continue;
-            carouselPhoto(cards, album.cover, album.name(), 104, () -> {
-              rememberGallery();
-              albumFolder = album.folder; filter = "すべて"; rankFilter = 0;
-              rankCache.clear(); photos = new ArrayList<>(); bundles = new ArrayList<>();
-              gallery(); loadIndexedPhotos();
-            });
-          }
-          if (cards.getChildCount() == 0) ((View) cards.getParent().getParent()).setVisibility(View.GONE);
-        });
-      } catch (Exception ignored) { main.post(() -> { if (token == generation) ((View) cards.getParent().getParent()).setVisibility(View.GONE); }); }
-    });
   }
 
   private void loadAlbums() {
@@ -1727,7 +1601,7 @@ public final class MainActivity extends DiagnosticActivity {
     showPhoto(position, false);
   }
 
-  private boolean returnToRanking, recentPhoto;
+  private boolean returnToRanking;
   private ViewerLookUi viewerLook;
   private boolean restoreViewerLook;
 
@@ -1947,7 +1821,6 @@ public final class MainActivity extends DiagnosticActivity {
     else if (selecting && !detail) endSelection();
     else if (detail) {
       if (returnToRanking) showRanking();
-      else if (recentPhoto) { recentPhoto = false; albumHome(); }
       else gallery();
     } else if (burstMembers != null) {
       burstMembers = null;

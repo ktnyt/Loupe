@@ -45,3 +45,16 @@ Modal window decor includes the full-screen scrim. Measure `design_bottom_sheet`
 ## Verified migration evidence
 
 See [physical-device captures and validation limits](design/material3/README.md) for #92. The user explicitly omitted spoken-output/TalkBack validation for this migration; programmatic native accessibility checks are separate evidence. Existing cloud-badge pixel validation remains tracked in #80.
+
+## Expressive photo workflow (#112)
+
+The approved Sites study (`9ba6c87`) supplies the hierarchy and entry points for the Android redesign. Native Android behavior, issue-defined contracts and the following requirements govern implementation; browser sample data or processing are not implementation authority.
+
+- Library: photos, albums and camera import have one consistent bottom navigation. Import remains reachable without a connected camera, shows connection/progress when present, and keeps the explicit import/permission flow. Navigation is suppressed during photo selection. Photo/album scroll positions and committed filters survive return.
+- Gallery: one heading with selection, filter and settings actions replaces the always-visible rank filters and action dock. Rank and camera filters are grouped in one native sheet, with a result count and explicit apply. Dismissal leaves the prior conditions unchanged; applied conditions remain visible and clearable. The single-photo rank rules from #109 and burst journals remain authoritative.
+- Selection: exit and select-all sit above the photos; related tag/comparison actions are grouped separately from the primary share action. Counts, hidden selection, unresolved bursts, best-only sharing and bulk co-winner operations remain available. Selection never becomes an implicit ranking action.
+- Viewer: pen and sparkle directly enter the existing manual editor and Nano Banana workflow. Single-photo best toggles use committed store state, pending/failed/retry semantics and native checked accessibility from #109. Information, tags, zoom and previous/next actions remain accessible through a secondary action surface; swipe/pinch/Look/Before contracts remain intact. Photo, status and editor geometry must still fit narrow windows and font scaling.
+- Sharing: JPEG and original format choices form one related group; one primary continuation opens the destination chooser. Existing configured destination formats, the 512 MiB gate, cloud download/preparation, cancellation, retry and handoff history semantics are preserved.
+- Components: use native Material surfaces and managed button state layers. Primary and supplementary actions differ in containment and size. Standard touch targets are at least 48dp; text may wrap and content may scroll rather than shrinking labels. State must not depend on color alone. Respect reduced system motion, keyboard/AX focus and system insets.
+
+Validate before/after Android captures and affected transitions at normal width/font1.0 and 320dp/font1.3, with independent UI/UX review. Synthetic/emulator evidence and physical-device evidence must be reported separately. A successful web prototype, build or capture does not establish device behavior, optical quality, AI processing or physical USB import.

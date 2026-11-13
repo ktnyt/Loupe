@@ -51,14 +51,8 @@ final class GalleryScreenChecks {
     ThumbnailCell first=firstPhoto(root);
     TagDetailChecks.require(first!=null,"first photo exists");
     TagDetailChecks.require(first.getHeight()==GalleryUi.dp(a,96),"96dp photos");
-    for(String name:new String[]{"すべて","1位","順位が未決定","順位決定済み"}){
-      Button filter=TagDetailChecks.button(root,name);
-      TagDetailChecks.require(filter!=null,"filter exists");
-      android.graphics.Rect visible=new android.graphics.Rect();
-      TagDetailChecks.require(filter.getGlobalVisibleRect(visible),"filter visible");
-      TagDetailChecks.require(visible.width()==filter.getWidth(),"filter fully visible");
-      TagDetailChecks.require(filter.getPaddingLeft()>=GalleryUi.dp(a,16)&&filter.getPaddingRight()>=GalleryUi.dp(a,16),"filter interior spacing");
-    }
+    TagDetailChecks.require(((ViewGroup)first.getParent()).getChildCount()==3,"three photo columns");
+    TagDetailChecks.require(TagDetailChecks.button(root,"順位が未決定")==null&&TagDetailChecks.button(root,"順位決定済み")==null,"rank choices live in filter sheet");
   }
   private static String statusState(StatusView status){
     try{String result="";for(String name:new String[]{"loading","shown","symbol","collapseWhenIdle"}){java.lang.reflect.Field field=StatusView.class.getDeclaredField(name);field.setAccessible(true);result+=name+":"+field.get(status)+",";}return result;}catch(ReflectiveOperationException e){throw new RuntimeException(e);}
@@ -67,10 +61,9 @@ final class GalleryScreenChecks {
     TextView count=(TextView)RankingResultChecks.get(a,"subtitle");
     View status=(View)RankingResultChecks.get(a,"listStatus");
     TagDetailChecks.require(status.getWidth()==0&&status.getHeight()==0,"idle status consumes no heading space");
-    TagDetailChecks.require(count.getRight()==((View)count.getParent()).getWidth(),"count right aligned");
-    TagDetailChecks.require(TagDetailChecks.button(root,"選択").getHeight()==GalleryUi.dp(a,64),"64dp gallery dock");
-    Button firstFilter=TagDetailChecks.button(root,"すべて"),lastFilter=TagDetailChecks.button(root,"順位決定済み");
-    TagDetailChecks.require(lastFilter.getTop()>firstFilter.getTop(),"filters wrap with interior spacing");
+    TagDetailChecks.require(root.findViewWithTag("library-toolbar")!=null,"gallery toolbar");
+    TagDetailChecks.require(ExpressiveUiChecks.description(root,"絞り込み")!=null,"filter toolbar entry");
+    TagDetailChecks.require((ExpressiveUiChecks.find(root,LibraryTabs.class)!=null)==(RankingResultChecks.get(a,"albumFolder")==null),"library navigation belongs to root destination");
   }
   static void finishInitialIndex(Instrumentation t,MainActivity a)throws Exception{
     TagDetailChecks.ui(t,()->{a.getContentResolver().unregisterContentObserver((android.database.ContentObserver)RankingResultChecks.get(a,"mediaObserver"));((android.os.Handler)RankingResultChecks.get(a,"main")).removeCallbacks((Runnable)RankingResultChecks.get(a,"mediaChanged"));});
@@ -100,8 +93,9 @@ final class GalleryScreenChecks {
   }
   static ThumbnailCell firstPhoto(View view){if(view instanceof ThumbnailCell)return (ThumbnailCell)view;if(view instanceof ViewGroup)for(int i=0;i<((ViewGroup)view).getChildCount();i++){ThumbnailCell found=firstPhoto(((ViewGroup)view).getChildAt(i));if(found!=null)return found;}return null;}
   static void selectionFiltersVisible(View root){
-    for(String name:new String[]{"すべて","1位","順位が未決定","順位決定済み"}){Button chip=TagDetailChecks.button(root,name);android.graphics.Rect visible=new android.graphics.Rect();TagDetailChecks.require(chip!=null&&chip.getGlobalVisibleRect(visible)&&visible.width()==chip.getWidth(),"selection filter fully visible: "+name);}
-    Button first=TagDetailChecks.button(root,"すべて");ViewGroup panel=(ViewGroup)first.getParent().getParent();TagDetailChecks.require(!panel.getClipToPadding(),"selection filter can draw in footer padding");
+    TagDetailChecks.require(TagDetailChecks.button(root,"順位が未決定")==null&&TagDetailChecks.button(root,"順位決定済み")==null,"no permanent rank choices during selection");
+    TagDetailChecks.require(ExpressiveUiChecks.find(root,LibraryTabs.class)==null,"selection suppresses library navigation");
+    TagDetailChecks.require(ExpressiveUiChecks.description(root,"選択を終了")!=null,"header exit remains available");
   }
   static void selectionPresentation(Instrumentation t,MainActivity a,boolean any)throws Exception{
     TagDetailChecks.ui(t,()->{View root=(View)RankingResultChecks.get(a,"root");TagDetailChecks.inspect(root);selectionFiltersVisible(root);Button share=(Button)RankingResultChecks.get(a,"selectionShare"),sort=(Button)RankingResultChecks.get(a,"selectionSort");TagDetailChecks.require(share.isEnabled()==any,"share enabled state");for(Button action:new Button[]{share,sort})TagDetailChecks.require(action.getCompoundDrawables()[1]==null,"single inline action icon");com.google.android.material.button.MaterialButton material=(com.google.android.material.button.MaterialButton)share;android.content.res.ColorStateList tint=material.getBackgroundTintList();TagDetailChecks.require(material.getBackground() instanceof android.graphics.drawable.RippleDrawable&&tint.getColorForState(new int[]{android.R.attr.state_enabled},0)!=tint.getColorForState(new int[]{-android.R.attr.state_enabled},0),"native share background distinguishes disabled state");TagDetailChecks.require(!sort.isEnabled(),"singleton sort disabled");});
@@ -112,7 +106,7 @@ final class GalleryScreenChecks {
     TagDetailChecks.ui(t,()->{RankingResultChecks.set(a,"photos",photos);RankingResultChecks.set(a,"bundles",List.of(undecided,decided,List.of(6),List.of(7),List.of(8)));Map<List<Integer>,PhotoRanking> cache=(Map<List<Integer>,PhotoRanking>)RankingResultChecks.get(a,"rankCache");cache.clear();cache.put(undecided,new PhotoRanking(pendingIds,"B:"));cache.put(decided,finished);Set<String> selected=(Set<String>)RankingResultChecks.get(a,"selectedPhotos");selected.clear();for(int i=0;i<7;i++)selected.add(photos.get(i).uri.toString());RankingResultChecks.set(a,"selecting",true);RankingResultChecks.set(a,"bestOnly",true);RankingResultChecks.set(a,"rankFilter",0);RankingResultChecks.set(a,"albumFolder","/synthetic/嵐山 10.18");RankingResultChecks.call(a,"gallery");});settle(t,a);
     File dir=new File(a.getCacheDir(),"consistency-checks");TagDetailChecks.ui(t,()->{Button sort=(Button)RankingResultChecks.get(a,"selectionSort");TagDetailChecks.require(sort.isEnabled()&&sort.getCurrentTextColor()==com.google.android.material.color.MaterialColors.getColor(sort,androidx.appcompat.R.attr.colorPrimary),"pending sort enabled with Material primary role");TagDetailChecks.require(((View)RankingResultChecks.get(a,"selectionCount")).getContentDescription().toString().contains("未決定の連写 1組"),"pending count");selectionFiltersVisible((View)RankingResultChecks.get(a,"root"));TagDetailChecks.inspect((View)RankingResultChecks.get(a,"root"));});
     ConsistencyLayoutChecks.captureHardware(t,a,(View)RankingResultChecks.get(a,"root"),dir,"gallery-selection-pending-"+width+"-"+a.getResources().getConfiguration().fontScale);
-    TagDetailChecks.ui(t,()->TagDetailChecks.button((View)RankingResultChecks.get(a,"root"),"順位決定済み").performClick());settle(t,a);
+    TagDetailChecks.ui(t,()->{RankingResultChecks.set(a,"rankFilter",3);RankingResultChecks.call(a,"gallery");});settle(t,a);
     TagDetailChecks.ui(t,()->{String summary=((View)RankingResultChecks.get(a,"selectionCount")).getContentDescription().toString();TagDetailChecks.require(((Set<?>)RankingResultChecks.get(a,"selectedPhotos")).size()==7&&summary.contains("見えない選択 4枚"),"hidden selection retained");});
     ConsistencyLayoutChecks.captureHardware(t,a,(View)RankingResultChecks.get(a,"root"),dir,"gallery-selection-hidden-"+width+"-"+a.getResources().getConfiguration().fontScale);
     TagDetailChecks.ui(t,()->{SelectionUi.BestSwitch toggle=findSwitch((View)RankingResultChecks.get(a,"root"));TagDetailChecks.require(toggle!=null&&toggle.isChecked(),"best switch initial");toggle.performClick();TagDetailChecks.require(!(boolean)RankingResultChecks.get(a,"bestOnly")&&!((Button)RankingResultChecks.get(a,"selectionSort")).isEnabled(),"all burst photos no pending sort");RankingResultChecks.call(a,"gallery");TagDetailChecks.require(!findSwitch((View)RankingResultChecks.get(a,"root")).isChecked(),"reconstructed switch retains OFF");((Button)RankingResultChecks.get(a,"selectionAll")).performClick();TagDetailChecks.require(((Set<?>)RankingResultChecks.get(a,"selectedPhotos")).size()==4,"visible deselection retains hidden photos");a.onBackPressed();});settle(t,a);
@@ -149,19 +143,21 @@ final class GalleryScreenChecks {
           ConsistencyLayoutChecks.captureHardware(t,a,root,dir,"gallery-geometry-failed-"+width+"-"+a.getResources().getConfiguration().fontScale+"-"+state);throw e;
         }
         ConsistencyLayoutChecks.captureHardware(t,a,root,dir,"gallery-"+width+"-"+a.getResources().getConfiguration().fontScale+"-"+state);
-        TagDetailChecks.ui(t,()->TagDetailChecks.button((View)RankingResultChecks.get(a,"root"),"1位").performClick());syntheticCarousel(t,a);
-        TagDetailChecks.ui(t,()->{TagDetailChecks.require((int)RankingResultChecks.get(a,"rankFilter")==1&&((List<?>)RankingResultChecks.get(a,"displayed")).size()==40,"best filter preserves singleton photos state="+state+" filter="+RankingResultChecks.get(a,"rankFilter")+" displayed="+((List<?>)RankingResultChecks.get(a,"displayed")).size()+" fixtureIdentity="+(RankingResultChecks.get(a,"photos")==photos));TagDetailChecks.button((View)RankingResultChecks.get(a,"root"),"選択").performClick();});syntheticCarousel(t,a);
+        ExpressiveUiChecks.applyRank(t,a,1);syntheticCarousel(t,a);
+        TagDetailChecks.ui(t,()->TagDetailChecks.require((int)RankingResultChecks.get(a,"rankFilter")==1&&((List<?>)RankingResultChecks.get(a,"displayed")).isEmpty(),"unmarked singleton photos are excluded by best filter"));
+        ExpressiveUiChecks.applyRank(t,a,0);syntheticCarousel(t,a);
+        TagDetailChecks.ui(t,()->TagDetailChecks.button((View)RankingResultChecks.get(a,"root"),"選択").performClick());syntheticCarousel(t,a);
         selectionPresentation(t,a,false);
         ConsistencyLayoutChecks.captureHardware(t,a,(View)RankingResultChecks.get(a,"root"),dir,"gallery-selection-empty-"+width+"-"+state);
         selectFirst(t,a,talkBack);
         selectionPresentation(t,a,true);
         ConsistencyLayoutChecks.captureHardware(t,a,(View)RankingResultChecks.get(a,"root"),dir,"gallery-selection-one-"+width+"-"+state);
-        TagDetailChecks.ui(t,()->{a.onBackPressed();TagDetailChecks.require(!(boolean)RankingResultChecks.get(a,"selecting")&&(int)RankingResultChecks.get(a,"rankFilter")==1,"Back leaves selection and preserves filter");});settle(t,a);
+        TagDetailChecks.ui(t,()->{a.onBackPressed();TagDetailChecks.require(!(boolean)RankingResultChecks.get(a,"selecting")&&(int)RankingResultChecks.get(a,"rankFilter")==0,"Back leaves selection and preserves filter");});settle(t,a);
       }
       selectionStates(t,a,fixtures,width);
       if(talkBack)TagDetailChecks.ui(t,()->{RankingResultChecks.set(a,"selecting",true);RankingResultChecks.call(a,"gallery");});
       if(talkBack){settle(t,a);TagDetailChecks.ui(t,()->{SelectionUi.BestSwitch toggle=findSwitch((View)RankingResultChecks.get(a,"root"));TagDetailChecks.require(toggle.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS,null),"TalkBack switch focus");android.view.accessibility.AccessibilityNodeInfo node=toggle.createAccessibilityNodeInfo();TagDetailChecks.require(node.isCheckable()&&android.widget.Switch.class.getName().contentEquals(node.getClassName()),"TalkBack switch semantics");boolean before=toggle.isChecked();TagDetailChecks.require(toggle.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK,null)&&toggle.isChecked()!=before,"TalkBack switch toggles");a.onBackPressed();});}
-      return (materialOnly?"PASS Material3 scope (cloud badge reference check excluded; tracked in #80). ":"PASS ")+(talkBack?"real TalkBack focus/AX click/switch semantics; ":"physical photo taps; ")+"selection states/backgrounds/single icons, pending sort, hidden retention, best switch, visible deselection; synthetic actual gallery captures: all/album/long title. Existing data read only; carousel replaced before captures. Text bounds, all four visible filters, 96dp photos, filtering, selection and Back checked.\n";
+      return (materialOnly?"PASS Material3 scope (cloud badge reference check excluded; tracked in #80). ":"PASS ")+(talkBack?"real TalkBack focus/AX click/switch semantics; ":"physical photo taps; ")+"selection states/backgrounds/single icons, pending sort, hidden retention, best switch, visible deselection; synthetic actual gallery captures: all/album/long title. Existing data read only; carousel replaced before captures. Text bounds, sheet filters, three-column 96dp photos, filtering, selection and Back checked.\n";
     }finally{TagDetailChecks.ui(t,()->{a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);a.setRequestedOrientation(originalOrientation);a.finish();});file.delete();for(File fixture:fixtures)fixture.delete();}
   }
 }

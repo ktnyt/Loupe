@@ -18,29 +18,20 @@ final class ViewerScreenChecks {
   static void openFromRanking(Instrumentation t,MainActivity a,int index)throws Exception{TagDetailChecks.ui(t,()->{try{java.lang.reflect.Method m=MainActivity.class.getDeclaredMethod("showPhoto",int.class,boolean.class);m.setAccessible(true);m.invoke(a,index,true);}catch(Exception e){throw new RuntimeException(e);}});((Future<?>)RankingResultChecks.get(a,"viewing")).get(30,TimeUnit.SECONDS);t.waitForIdleSync();ConsistencyLayoutChecks.frame(t,(View)RankingResultChecks.get(a,"root"));}
   static PhotoViewerUi viewer(MainActivity a){return (PhotoViewerUi)((android.widget.LinearLayout)RankingResultChecks.get(a,"root")).getChildAt(0);}
   static StatusView status(View v){if(v instanceof StatusView)return (StatusView)v;if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++){StatusView found=status(((ViewGroup)v).getChildAt(i));if(found!=null)return found;}return null;}
-  static void toolbar(PhotoViewerUi v,int expected,boolean requireNarrowWrap){
-    int count=v.dock.getChildCount();
-    TagDetailChecks.require(count==expected,"viewer dock action count: expected "+expected+", got "+count);
-    Map<Integer,List<Button>> byRow=new TreeMap<>();int requiredWidth=GalleryUi.dp(v.getContext(),48);
-    for(int i=0;i<count;i++){
-      Button b=(Button)v.dock.getChildAt(i);TagDetailChecks.require(b.getWidth()>=GalleryUi.dp(v.getContext(),48)&&b.getHeight()>=GalleryUi.dp(v.getContext(),64),"viewer action touch target");
-      byRow.computeIfAbsent(b.getTop(),key->new ArrayList<>()).add(b);
-      String[] labels=b instanceof PhotoViewerUi.DockButton&&((PhotoViewerUi.DockButton)b).widthLabels!=null?((PhotoViewerUi.DockButton)b).widthLabels:new String[]{b.getText().toString()};
-      for(String label:labels)requiredWidth=Math.max(requiredWidth,(int)Math.ceil(android.text.Layout.getDesiredWidth(label,b.getPaint()))+b.getPaddingLeft()+b.getPaddingRight());
+  static void toolbar(PhotoViewerUi v,int expected,boolean legacyNarrow){
+    TagDetailChecks.require(v.actionCount()==expected,"all viewer operations remain reachable: "+v.actionCount());
+    TagDetailChecks.require(v.dock.getChildCount()<=3,"only direct edit/AI/share in primary dock");
+    int right=0;
+    for(int i=0;i<v.dock.getChildCount();i++){
+      Button b=(Button)v.dock.getChildAt(i);
+      TagDetailChecks.require(b.getWidth()>=GalleryUi.dp(v.getContext(),48)&&b.getHeight()>=GalleryUi.dp(v.getContext(),48),"viewer direct action touch target");
+      TagDetailChecks.require(b.getLeft()>=right,"viewer direct actions do not overlap");right=b.getRight();
     }
-    int columns=v.dock.getWidth()/count>=requiredWidth?count:(count+1)/2;
-    TagDetailChecks.require(byRow.size()==(count+columns-1)/columns,"viewer dock row count follows measured label widths");
-    if(requireNarrowWrap)TagDetailChecks.require(byRow.size()==2,"narrow seven-action dock wraps into two rows");
-    for(List<Button> row:byRow.values()){
-      row.sort(Comparator.comparingInt(View::getLeft));
-      for(int i=1;i<row.size();i++)TagDetailChecks.require(row.get(i-1).getRight()<=row.get(i).getLeft(),"viewer dock cells do not overlap");
-      if(row.size()<columns){int rowLeft=row.get(0).getLeft(),rowRight=row.get(row.size()-1).getRight();TagDetailChecks.require(Math.abs((rowLeft+rowRight)-(v.dock.getWidth()))<=1,"viewer dock remainder row centered");}
-    }
-    if(byRow.size()==2)TagDetailChecks.require(byRow.values().iterator().next().size()==columns&&byRow.values().stream().skip(1).findFirst().get().size()==count-columns,"viewer dock keeps full first row and centered remainder");
-    TagDetailChecks.require(v.stage.getBottom()+GalleryUi.dp(v.getContext(),16)<=v.footer.getTop(),"photo stage remains 16dp above footer");
+    TagDetailChecks.require(v.stage.getBottom()<=v.footer.getTop(),"photo and action group do not overlap");
+    TagDetailChecks.require(v.actionButton("拡大")!=null&&v.actionButton("情報")!=null,"secondary operations retained");
   }
   static void editBeforeShare(PhotoViewerUi v){
-    int edit=-1,share=-1;for(int i=0;i<v.dock.getChildCount();i++){String label=((Button)v.dock.getChildAt(i)).getText().toString();if(label.equals("編集"))edit=i;if(label.equals("共有"))share=i;}
+    int edit=-1,share=-1;for(int i=0;i<v.dock.getChildCount();i++){String label=((Button)v.dock.getChildAt(i)).getText().toString();if(label.equals("手動"))edit=i;if(label.equals("共有"))share=i;}
     TagDetailChecks.require(edit>=0&&share>edit,"edit action precedes share in actual viewer dock");
   }
   static void shot(Instrumentation t,MainActivity a,File dir,String name)throws Exception{t.waitForIdleSync();Thread.sleep(100);ConsistencyLayoutChecks.captureHardware(t,a,(View)RankingResultChecks.get(a,"root"),dir,name);}
@@ -67,12 +58,12 @@ final class ViewerScreenChecks {
       File dir=new File(a.getCacheDir(),"consistency-checks");dir.mkdirs();
       for(int i=0;i<2;i++){open(t,a,i);TagDetailChecks.ui(t,()->{TagDetailChecks.require((boolean)RankingResultChecks.get(a,"detail")&&RankingResultChecks.get(a,"activePreview")!=null,"generated photo loaded");TagDetailChecks.inspect((View)RankingResultChecks.get(a,"root"));View measuredRoot=(View)RankingResultChecks.get(a,"root");rootInsets[0]=measuredRoot.getPaddingLeft();rootInsets[1]=measuredRoot.getPaddingTop();rootInsets[2]=measuredRoot.getPaddingRight();rootInsets[3]=measuredRoot.getPaddingBottom();PhotoViewerUi viewer=(PhotoViewerUi)((android.widget.LinearLayout)RankingResultChecks.get(a,"root")).getChildAt(0);TagDetailChecks.require(viewer.stage.getTop()==GalleryUi.dp(a,72),"72dp photo stage");TagDetailChecks.require(viewer.getHeight()-viewer.stage.getBottom()>=GalleryUi.dp(a,100),"100dp photo bottom space");toolbar(viewer,8,false);editBeforeShare(viewer);TagDetailChecks.require(((android.graphics.drawable.ColorDrawable)viewer.getBackground()).getColor()==Color.BLACK,"pure black viewer");TagDetailChecks.require(viewer.date.getText().toString().contains("10月18日"),"known capture date");});ConsistencyLayoutChecks.captureHardware(t,a,(View)RankingResultChecks.get(a,"root"),dir,"viewer-"+width+"-"+a.getResources().getConfiguration().fontScale+"-"+(i==0?"landscape":"portrait"));TagDetailChecks.ui(t,()->a.onBackPressed());GalleryScreenChecks.settle(t,a);TagDetailChecks.ui(t,()->TagDetailChecks.require(!(boolean)RankingResultChecks.get(a,"detail"),"Back restores gallery"));}
       open(t,a,0);
-      TagDetailChecks.ui(t,()->{PhotoViewerUi v=viewer(a);android.widget.Button zoom=TagDetailChecks.button(v,"拡大");zoom.performClick();android.view.accessibility.AccessibilityNodeInfo info=zoom.createAccessibilityNodeInfo();TagDetailChecks.require(v.image.isZoomed()&&zoom.getText().toString().equals("全体")&&info.isCheckable()&&info.isChecked(),"zoom button state");});
+      TagDetailChecks.ui(t,()->{PhotoViewerUi v=viewer(a);android.widget.Button zoom=v.actionButton("拡大");zoom.performClick();android.view.accessibility.AccessibilityNodeInfo info=zoom.createAccessibilityNodeInfo();TagDetailChecks.require(v.image.isZoomed()&&zoom.getText().toString().equals("全体")&&info.isCheckable()&&info.isChecked(),"zoom button state");});
       shot(t,a,dir,"viewer-zoom-"+width);
       doubleTap(t,viewer(a).image);
-      TagDetailChecks.ui(t,()->TagDetailChecks.require(!viewer(a).image.isZoomed()&&TagDetailChecks.button(viewer(a),"拡大")!=null,"double tap restores fit and label"));
-      pinch(t,viewer(a).image);TagDetailChecks.ui(t,()->{TagDetailChecks.require(viewer(a).image.isZoomed()&&TagDetailChecks.button(viewer(a),"全体を表示")!=null,"real pinch updates zoom state");TagDetailChecks.button(viewer(a),"全体を表示").performClick();});
-      swipe(t,viewer(a).image,-1);((Future<?>)RankingResultChecks.get(a,"viewing")).get(30,TimeUnit.SECONDS);t.waitForIdleSync();Thread.sleep(300);TagDetailChecks.ui(t,()->{TagDetailChecks.require((int)RankingResultChecks.get(a,"index")==1,"real swipe next");TagDetailChecks.require(!TagDetailChecks.button(viewer(a),"次の写真").isEnabled(),"last photo next disabled");TagDetailChecks.button(viewer(a),"前の写真").performClick();});((Future<?>)RankingResultChecks.get(a,"viewing")).get(30,TimeUnit.SECONDS);t.waitForIdleSync();Thread.sleep(300);TagDetailChecks.ui(t,()->TagDetailChecks.require((int)RankingResultChecks.get(a,"index")==0&&!TagDetailChecks.button(viewer(a),"前の写真").isEnabled(),"previous button and first disabled"));
+      TagDetailChecks.ui(t,()->TagDetailChecks.require(!viewer(a).image.isZoomed()&&viewer(a).actionButton("拡大")!=null,"double tap restores fit and label"));
+      pinch(t,viewer(a).image);TagDetailChecks.ui(t,()->{TagDetailChecks.require(viewer(a).image.isZoomed()&&viewer(a).actionButton("拡大")!=null,"real pinch updates zoom state");viewer(a).actionButton("拡大").performClick();});
+      swipe(t,viewer(a).image,-1);((Future<?>)RankingResultChecks.get(a,"viewing")).get(30,TimeUnit.SECONDS);t.waitForIdleSync();Thread.sleep(300);TagDetailChecks.ui(t,()->{TagDetailChecks.require((int)RankingResultChecks.get(a,"index")==1,"real swipe next");TagDetailChecks.require(!viewer(a).actionButton("次の写真").isEnabled(),"last photo next disabled");viewer(a).actionButton("前の写真").performClick();});((Future<?>)RankingResultChecks.get(a,"viewing")).get(30,TimeUnit.SECONDS);t.waitForIdleSync();Thread.sleep(300);TagDetailChecks.ui(t,()->TagDetailChecks.require((int)RankingResultChecks.get(a,"index")==0&&!viewer(a).actionButton("前の写真").isEnabled(),"previous button and first disabled"));
       TagDetailChecks.ui(t,()->{StatusView loading=status(viewer(a).stage);loading.begin("合成の読込状態");loading.companion(StatusView.Symbol.PREVIEW);viewer(a).refreshStatus();});Thread.sleep(500);t.waitForIdleSync();
       TagDetailChecks.ui(t,()->{PhotoViewerUi v=viewer(a);StatusView loading=status(v.stage);FrameLayout.LayoutParams lp=(FrameLayout.LayoutParams)loading.getLayoutParams();TagDetailChecks.require(lp.topMargin==Math.round(v.image.photoBounds().top)+GalleryUi.dp(a,2),"preview marker follows fit photo top");});
       shot(t,a,dir,"viewer-preview-"+width);
@@ -108,7 +99,7 @@ final class ViewerScreenChecks {
       // Cloud-badge presentation is isolated from archive/network retrieval.
       Bitmap cloudBitmap=BitmapFactory.decodeFile(files.get(0).getPath());
       TagDetailChecks.ui(t,()->{PhotoRepository.Photo cloudPhoto=new PhotoRepository.Photo(Uri.parse("archive://viewer-synthetic"),"合成cloud.jpg","",0,0,0);android.widget.LinearLayout root=(android.widget.LinearLayout)RankingResultChecks.get(a,"root");root.removeAllViews();PhotoViewerUi v=new PhotoViewerUi(a,cloudPhoto);root.addView(v,new android.widget.LinearLayout.LayoutParams(-1,0,1));v.action("前の写真","前へ","前の写真",()->{});v.action("次の写真","次へ","次の写真",()->{});v.zoom();v.action("共有","共有","共有",()->{});v.action("情報","情報","写真の情報",()->{});v.image.setBitmap(cloudBitmap);TagDetailChecks.require(v.date.getText().toString().equals("—"),"unknown date");});
-      t.waitForIdleSync();shot(t,a,dir,"viewer-cloud-"+width);TagDetailChecks.ui(t,()->TagDetailChecks.button(viewer(a),"拡大").performClick());shot(t,a,dir,"viewer-cloud-zoom-"+width);
+      t.waitForIdleSync();shot(t,a,dir,"viewer-cloud-"+width);TagDetailChecks.ui(t,()->viewer(a).actionButton("拡大").performClick());shot(t,a,dir,"viewer-cloud-zoom-"+width);
       return "PASS rootPaddingPx="+java.util.Arrays.toString(rootInsets)+"; generated actual viewer landscape/portrait loaded; edit/share ordering and 8/9/4-action dock geometry, text bounds/Back, zoom button/AX state/real double tap/pinch/swipe and paging endpoints, preview marker placement (presentation fixture), missing-file failure, comparison/result share/info Back, content tag condition, modified/unknown date, cloud presentation checked. No edit chooser, photo/ranking/tag save or send invoked by test; existing startup index may update browsing DB.\n";
     }finally{TagDetailChecks.ui(t,()->{a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);a.finish();});for(File f:files)f.delete();}
   }

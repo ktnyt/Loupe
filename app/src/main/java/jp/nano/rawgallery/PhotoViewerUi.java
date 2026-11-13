@@ -18,6 +18,9 @@ final class PhotoViewerUi extends ViewGroup {
   final LinearLayout footer;
   final ViewGroup dock;
   final TextView date;
+  private final LinearLayout header;
+  private final java.util.List<Button> secondary=new ArrayList<>();
+  private com.google.android.material.bottomsheet.BottomSheetDialog actionSheet;
   private Button zoom;
   Runnable editFocusLost;
   private final View cloud, placeholder;
@@ -33,7 +36,12 @@ final class PhotoViewerUi extends ViewGroup {
     date.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
     date.setGravity(Gravity.CENTER);
     date.setContentDescription(date(photo, true));
-    addView(date);
+    header=new LinearLayout(context);header.setGravity(Gravity.CENTER_VERTICAL);
+    header.setPadding(dp(4),0,dp(4),0);
+    header.addView(LibraryUi.icon(context,R.drawable.ic_back,"写真一覧に戻る",this::goBack));
+    header.addView(date,new LinearLayout.LayoutParams(0,-2,1));
+    header.addView(LibraryUi.icon(context,R.drawable.ic_more,"写真のその他の操作",this::openActions));
+    addView(header);
     stage = new FrameLayout(context);
     stage.setTag("viewer-stage");
     image = new ZoomImageView(context);
@@ -68,9 +76,11 @@ final class PhotoViewerUi extends ViewGroup {
     addView(stage);
     footer = new LinearLayout(context);
     footer.setOrientation(LinearLayout.VERTICAL);
-    footer.setPadding(0, 0, 0, dp(20));
+    footer.setPadding(dp(12), dp(6), dp(12), dp(10));
     footer.setBackgroundColor(Color.BLACK);
     dock = new ViewerDock(context);
+    dock.setPadding(dp(6),dp(6),dp(6),dp(6));
+    dock.setBackground(GalleryUi.shape(context,GalleryUi.PANEL,28));
     footer.addView(dock, new LinearLayout.LayoutParams(-1,-2));
     addView(footer);
     image.setZoomListener(expanded -> {
@@ -79,12 +89,26 @@ final class PhotoViewerUi extends ViewGroup {
         icon(zoom,expanded?"全体":"拡大");
         zoom.setContentDescription(expanded ? "全体を表示" : "拡大");
         zoom.setSelected(expanded);
+        ((MaterialButton)zoom).setChecked(expanded);
         zoom.setStateDescription(expanded ? "拡大中" : "全体表示");
       }
       cloud.invalidate();
       shared.invalidate();
       refreshStatus();
     });
+  }
+
+  private void goBack(){
+    Context context=getContext();
+    while(context instanceof android.content.ContextWrapper&&!(context instanceof android.app.Activity))context=((android.content.ContextWrapper)context).getBaseContext();
+    if(context instanceof android.app.Activity)((android.app.Activity)context).onBackPressed();
+  }
+  @Override protected void onDetachedFromWindow(){if(actionSheet!=null)actionSheet.dismiss();super.onDetachedFromWindow();}
+  int actionCount(){return dock.getChildCount()+secondary.size()+(findViewWithTag("viewer-action-1位")==null?0:1);}
+  Button actionButton(String icon){
+    View attached=findViewWithTag("viewer-action-"+icon);if(attached instanceof Button)return (Button)attached;
+    for(Button button:secondary)if(("viewer-action-"+icon).equals(button.getTag()))return button;
+    return null;
   }
 
   @Override public void onWindowFocusChanged(boolean focused) {
@@ -150,6 +174,7 @@ final class PhotoViewerUi extends ViewGroup {
     private android.graphics.drawable.Drawable glyph;
     private boolean saveFailed, running;
     String[] widthLabels;
+    boolean compact,inline;
     private final Paint badge=new Paint(Paint.ANTI_ALIAS_FLAG);
     DockButton(Context c){super(c);}
     private int dp(float value){return GalleryUi.dp(getContext(),value);}
@@ -163,12 +188,23 @@ final class PhotoViewerUi extends ViewGroup {
     @Override protected boolean verifyDrawable(android.graphics.drawable.Drawable value){return value==glyph||super.verifyDrawable(value);}
     @Override protected void onMeasure(int w,int h){
       super.onMeasure(w,h);
+      if(compact){setMeasuredDimension(dp(48),dp(48));return;}
+      if(inline){setMeasuredDimension(getMeasuredWidth(),resolveSizeAndState(Math.max(dp(52),getMeasuredHeight()),h,0));return;}
       int lines=getLayout()==null?1:getLayout().getLineCount();
       int desired=Math.max(dp(64),Math.round(dp(36)+lines*getTextSize()*16/12));
       setMeasuredDimension(getMeasuredWidth(),resolveSizeAndState(desired,h,0));
     }
     @Override protected void onDraw(Canvas canvas){
       android.text.Layout layout=getLayout();if(layout==null)return;
+      if(compact||inline){
+        float textWidth=compact?0:getPaint().measureText(getText().toString());
+        int left=Math.round((getWidth()-dp(24)-(compact?0:dp(6)+textWidth))/2f),top=(getHeight()-dp(24))/2;
+        if(!running&&glyph!=null){glyph.setTint(getCurrentTextColor());glyph.setBounds(left,top,left+dp(24),top+dp(24));glyph.draw(canvas);}
+        if(!compact){getPaint().setColor(getCurrentTextColor());canvas.drawText(getText().toString(),left+dp(30),(getHeight()-getPaint().ascent()-getPaint().descent())/2,getPaint());}
+        if(running){StatusView.glyph(canvas,badge,StatusView.Symbol.RUNNING,left,top,dp(24),getCurrentTextColor(),android.animation.ValueAnimator.areAnimatorsEnabled()?(android.os.SystemClock.uptimeMillis()%1000)*.36f:0);if(isShown())postInvalidateDelayed(80);}
+        if(saveFailed)StatusView.glyph(canvas,badge,StatusView.Symbol.FAILED,getWidth()-dp(18),dp(2),dp(16),0xffff8a7a,0);
+        return;
+      }
       float lineHeight=getTextSize()*16/12;
       float top=(getHeight()-dp(28)-layout.getLineCount()*lineHeight)/2f;
       if(running){
@@ -200,9 +236,17 @@ final class PhotoViewerUi extends ViewGroup {
     Button b = button(getContext(),icon,label,spoken,action);
     DockButton cell=(DockButton)b;
     if("拡大".equals(icon))cell.widthLabels=new String[]{"拡大","全体"};
-    else if("編集".equals(icon))cell.widthLabels=new String[]{"編集","中止"};
+    else if("編集".equals(icon))cell.widthLabels=new String[]{"手動","中止"};
     else if("タグ".equals(icon)&&label.startsWith("タグを"))cell.widthLabels=new String[]{"タグを付ける","タグを外す"};
-    dock.addView(b,new ViewGroup.LayoutParams(-2,-2));
+    b.setTag("viewer-action-"+icon);
+    if("1位".equals(icon)) {
+      cell.compact=true;header.addView(b,header.getChildCount()-1,new LinearLayout.LayoutParams(dp(48),dp(48)));
+    }else if("編集".equals(icon)||"Nano Banana".equals(icon)||"共有".equals(icon)) {
+      cell.inline=true;b.setTextSize(14);b.setMinHeight(dp(52));b.setMinimumHeight(dp(52));
+      if("編集".equals(icon)){b.setText("手動");MaterialUi.filled(b);cell.setCornerRadius(dp(22));}
+      if("Nano Banana".equals(icon)){b.setText("AI");MaterialUi.filled(b);cell.setCornerRadius(dp(22));}
+      if("Nano Banana".equals(icon))dock.addView(b,Math.min(1,dock.getChildCount()),new ViewGroup.LayoutParams(-2,-2));else dock.addView(b,new ViewGroup.LayoutParams(-2,-2));
+    }else secondary.add(b);
     return b;
   }
   static void tagState(Button button,boolean attached,boolean busy,boolean failed){
@@ -233,48 +277,49 @@ final class PhotoViewerUi extends ViewGroup {
     button.setTextColor(chosen?0xfff5b947:GalleryUi.TEXT);
     button.setContentDescription(unreadable?"順位を読み込めませんでした。押すと再試行":(chosen?"1位を解除する":"1位にする")+(failed?"。保存できませんでした。押すと再試行":""));
     button.setStateDescription(busy?(unreadable?"読み込み中":"保存中"):unreadable?"読み込み失敗":failed?"保存失敗":chosen?"1位に指定済み":"未指定");
-    icon(button,"1位");button.invalidate();
+    if(chosen)icon(button,"1位");else{android.graphics.drawable.Drawable outline=button.getContext().getDrawable(R.drawable.ic_viewer_best_outline).mutate();outline.setBounds(0,0,GalleryUi.dp(button.getContext(),24),GalleryUi.dp(button.getContext(),24));button.setCompoundDrawables(null,outline,null,null);}
+    button.invalidate();
   }
   static void editState(Button button,boolean running,boolean failed,String reason) {
     DockButton cell=(DockButton)button;cell.running=running;cell.saveFailed=failed;
-    button.setText(running?"中止":"編集");
+    button.setText(running?"中止":"手動");
     button.setContentDescription(running?"編集の準備をしています。押すと中止":"編集。現像（実験）を開きます。長押しで外部のアプリで編集"+(failed?"。"+reason+"。もう一度押すと再試行":""));
     button.setStateDescription(running?"準備中":failed?"失敗、再試行できます":null);
     icon(button,"編集");button.invalidate();
   }
 
-  /** At most two balanced rows; the last row keeps the same cell width and is centered. */
+  /** Direct manual/AI actions share one group; sharing is spatially separated. */
   private static final class ViewerDock extends ViewGroup {
-    private int columns=1,rowHeight;
     ViewerDock(Context c){super(c);}
     protected void onMeasure(int ws,int hs){
-      int width=MeasureSpec.getSize(ws),count=getChildCount();
-      int need=GalleryUi.dp(getContext(),48);
+      int width=MeasureSpec.getSize(ws),count=getChildCount(),available=width-getPaddingLeft()-getPaddingRight()-GalleryUi.dp(getContext(),count==3?10:8),height=0;
       for(int i=0;i<count;i++){
-        DockButton button=(DockButton)getChildAt(i);
-        String[] labels=button.widthLabels==null?new String[]{button.getText().toString()}:button.widthLabels;
-        for(String label:labels)need=Math.max(need,(int)Math.ceil(android.text.Layout.getDesiredWidth(label,button.getPaint()))+button.getPaddingLeft()+button.getPaddingRight());
+        View child=getChildAt(i);int cell=count==0?available:available/count;
+        if(count==3&&i<2){MaterialButton edit=(MaterialButton)child;float outer=GalleryUi.dp(getContext(),22),inner=GalleryUi.dp(getContext(),4);edit.setShapeAppearanceModel(edit.getShapeAppearanceModel().toBuilder().setTopLeftCornerSize(i==0?outer:inner).setBottomLeftCornerSize(i==0?outer:inner).setTopRightCornerSize(i==0?inner:outer).setBottomRightCornerSize(i==0?inner:outer).build());}
+        child.measure(MeasureSpec.makeMeasureSpec(cell,MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(0,MeasureSpec.UNSPECIFIED));height=Math.max(height,child.getMeasuredHeight());
       }
-      columns=count==0?1:width/count>=need?count:(count+1)/2;
-      int cell=width/columns;rowHeight=0;
-      for(int i=0;i<count;i++){
-        getChildAt(i).measure(MeasureSpec.makeMeasureSpec(cell,MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(0,MeasureSpec.UNSPECIFIED));
-        rowHeight=Math.max(rowHeight,getChildAt(i).getMeasuredHeight());
-      }
-      setMeasuredDimension(width,resolveSize(rowHeight*((count+columns-1)/columns),hs));
+      setMeasuredDimension(width,resolveSize(height+getPaddingTop()+getPaddingBottom(),hs));
     }
     protected void onLayout(boolean changed,int l,int t,int r,int b){
-      int count=getChildCount(),cell=getWidth()/columns;
-      for(int i=0;i<count;i++){
-        int row=i/columns,col=i%columns,inRow=Math.min(columns,count-row*columns);
-        int x=(getWidth()-cell*inRow)/2+col*cell,y=row*rowHeight;
-        getChildAt(i).layout(x,y,x+cell,y+rowHeight);
-      }
+      int x=getPaddingLeft();for(int i=0;i<getChildCount();i++){View child=getChildAt(i);if(i>0)x+=GalleryUi.dp(getContext(),"viewer-action-共有".equals(child.getTag())?8:2);child.layout(x,getPaddingTop(),x+child.getMeasuredWidth(),getPaddingTop()+child.getMeasuredHeight());x+=child.getMeasuredWidth();}
     }
+  }
+
+  void openActions(){
+    if(actionSheet!=null&&actionSheet.isShowing())return;
+    Context c=getContext();actionSheet=new com.google.android.material.bottomsheet.BottomSheetDialog(c);
+    LinearLayout list=new LinearLayout(c);list.setOrientation(LinearLayout.VERTICAL);list.setPadding(dp(16),dp(12),dp(16),dp(20));
+    list.addView(LibraryUi.toolbar(c,"写真の操作",LibraryUi.icon(c,R.drawable.ic_close,"閉じる",()->actionSheet.dismiss())));
+    for(Button action:secondary){
+      if(action.getParent() instanceof ViewGroup)((ViewGroup)action.getParent()).removeView(action);
+      list.addView(action,new LinearLayout.LayoutParams(-1,-2));
+    }
+    ScrollView scroll=new ScrollView(c);scroll.addView(list);actionSheet.setContentView(scroll);MaterialUi.sheet(actionSheet);actionSheet.show();
   }
 
   void zoom() {
     zoom = action("拡大","拡大","拡大",image::toggleZoom);
+    ((MaterialButton)zoom).setCheckable(true);((MaterialButton)zoom).setToggleCheckedStateOnClick(false);
     zoom.setAccessibilityDelegate(new View.AccessibilityDelegate(){
       public void onInitializeAccessibilityNodeInfo(View host,android.view.accessibility.AccessibilityNodeInfo info){
         super.onInitializeAccessibilityNodeInfo(host,info);
@@ -299,22 +344,17 @@ final class PhotoViewerUi extends ViewGroup {
 
   protected void onMeasure(int widthSpec,int heightSpec) {
     int width=MeasureSpec.getSize(widthSpec),height=MeasureSpec.getSize(heightSpec);
-    date.measure(MeasureSpec.makeMeasureSpec(Math.max(0,width-dp(32)),MeasureSpec.AT_MOST),MeasureSpec.makeMeasureSpec(0,MeasureSpec.UNSPECIFIED));
+    header.measure(MeasureSpec.makeMeasureSpec(width,MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(0,MeasureSpec.UNSPECIFIED));
     footer.measure(MeasureSpec.makeMeasureSpec(width,MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(height,MeasureSpec.AT_MOST));
-    boolean two=lookUi!=null && date.getMeasuredWidth()+dp(224)>width;
-    int top=Math.max(two?dp(100):dp(72),date.getMeasuredHeight()+dp(8));
-    int bottom=Math.max(dp(100),footer.getMeasuredHeight()+dp(16));
-    stage.measure(MeasureSpec.makeMeasureSpec(width,MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(Math.max(0,height-top-bottom),MeasureSpec.EXACTLY));
-    if(lookUi!=null){for(String tag:new String[]{"viewer-look","viewer-before"}){View v=findViewWithTag(tag);if(v!=null)v.measure(MeasureSpec.makeMeasureSpec(width,MeasureSpec.AT_MOST),MeasureSpec.makeMeasureSpec(dp(48),MeasureSpec.EXACTLY));}}
+    int top=header.getMeasuredHeight()+(lookUi==null?0:dp(56));
+    stage.measure(MeasureSpec.makeMeasureSpec(width,MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(Math.max(0,height-top-footer.getMeasuredHeight()),MeasureSpec.EXACTLY));
+    if(lookUi!=null)for(String tag:new String[]{"viewer-look","viewer-before"}){View v=findViewWithTag(tag);if(v!=null)v.measure(MeasureSpec.makeMeasureSpec(Math.max(0,width-dp(16)),MeasureSpec.AT_MOST),MeasureSpec.makeMeasureSpec(dp(48),MeasureSpec.EXACTLY));}
     setMeasuredDimension(width,height);
   }
   protected void onLayout(boolean changed,int l,int t,int r,int b) {
-    int width=getWidth(),height=getHeight();
-    boolean two=lookUi!=null && date.getMeasuredWidth()+dp(224)>width;
-    int dateBottom=Math.max(dp(two?92:64),date.getMeasuredHeight());
-    if(lookUi!=null){View chip=findViewWithTag("viewer-look"),before=findViewWithTag("viewer-before");if(chip!=null)chip.layout(width-dp(8)-chip.getMeasuredWidth(),dp(8),width-dp(8),dp(56));if(before!=null)before.layout(dp(8),dp(8),dp(8)+before.getMeasuredWidth(),dp(56));}
-    int top=Math.max(dp(72),dateBottom+dp(8));
-    date.layout((width-date.getMeasuredWidth())/2,dateBottom-date.getMeasuredHeight(),(width+date.getMeasuredWidth())/2,dateBottom);
+    int width=getWidth(),height=getHeight(),top=header.getMeasuredHeight();
+    header.layout(0,0,width,top);
+    if(lookUi!=null){View chip=findViewWithTag("viewer-look"),before=findViewWithTag("viewer-before");if(chip!=null)chip.layout(width-dp(8)-chip.getMeasuredWidth(),top,width-dp(8),top+dp(48));if(before!=null)before.layout(dp(8),top,dp(8)+before.getMeasuredWidth(),top+dp(48));top+=dp(56);}
     stage.layout(0,top,width,top+stage.getMeasuredHeight());
     footer.layout(0,height-footer.getMeasuredHeight(),width,height);
   }

@@ -32,8 +32,16 @@ final class LibraryTabsChecks {
     if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++){T found=find(((ViewGroup)v).getChildAt(i),type);if(found!=null)return found;}
     return null;
   }
+  private static TextView visibleLabel(View v){
+    if(v.getVisibility()!=View.VISIBLE)return null;
+    if(v instanceof TextView && v.getHeight()>0)return (TextView)v;
+    if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++){
+      TextView found=visibleLabel(((ViewGroup)v).getChildAt(i));if(found!=null)return found;
+    }
+    return null;
+  }
   private static LibraryTabs tabs(MainActivity a){return find(a.getWindow().getDecorView(),LibraryTabs.class);}
-  private static View tab(MainActivity a,boolean albums){return ((ViewGroup)tabs(a).getChildAt(0)).getChildAt(albums?1:0);}
+  private static View tab(MainActivity a,boolean albums){return tabs(a).destinationView(albums?1:0);}
   private static void switchTo(Instrumentation t,MainActivity a,boolean albums)throws Exception{
     main(t,()->{if(tabs(a)==null)throw new AssertionError("Missing tabs");tab(a,albums).performClick();return true;});
     waitFor(t,"loaded "+albums,()->{
@@ -65,8 +73,8 @@ final class LibraryTabsChecks {
       waitFor(t,"photo restored",()->{ScrollingGrid g=(ScrollingGrid)field(a,"grid");return g.firstCellPosition()==28&&g.getChildAt(0).getTop()==-49;});
       // Enter selection using the existing screen behavior, then attempt the disabled peer tab.
       main(t,()->{set(a,"selecting",true);Set<String> selected=(Set<String>)field(a,"selectedPhotos");selected.add(((List<PhotoRepository.Photo>)field(a,"photos")).get(0).uri.toString());invoke(a,"gallery");return true;});
-      capture(t,a,tabs(a),"disabled");
-      main(t,()->{if(tab(a,true).isEnabled()||tab(a,false).isEnabled())throw new AssertionError("selection tabs enabled");tab(a,true).performClick();if((boolean)field(a,"albumHome")||((Set<?>)field(a,"selectedPhotos")).size()!=1)throw new AssertionError("selection lost");return true;});
+
+      main(t,()->{if(tabs(a)!=null&&tabs(a).getVisibility()==View.VISIBLE)throw new AssertionError("selection navigation visible");if((boolean)field(a,"albumHome")||((Set<?>)field(a,"selectedPhotos")).size()!=1)throw new AssertionError("selection lost");return true;});
       t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);t.waitForIdleSync();
       main(t,()->{if((boolean)field(a,"selecting")||!tab(a,true).isEnabled())throw new AssertionError("selection back");return true;});
       // No matching camera photos: preserve the chosen condition even without a scroll anchor.
@@ -109,13 +117,13 @@ final class LibraryTabsChecks {
         });
         waitFor(t,"fixture layout",()->bar[0].getHeight()>0);
         main(t,()->{
-          ViewGroup row=(ViewGroup)bar[0].getChildAt(0);
-          AccessibilityNodeInfo.CollectionInfo collection=bar[0].createAccessibilityNodeInfo().getCollectionInfo();
-          if(collection==null||collection.getColumnCount()!=2||collection.getSelectionMode()!=AccessibilityNodeInfo.CollectionInfo.SELECTION_MODE_SINGLE)throw new AssertionError("tab collection");
-          for(int i=0;i<2;i++){
-            View v=row.getChildAt(i);AccessibilityNodeInfo info=v.createAccessibilityNodeInfo();
-            TextView label=find(v,TextView.class);if(label==null)throw new AssertionError("tab label missing");
-            if(v.getHeight()<GalleryUi.dp(v.getContext(),48)||v.isSelected()!=(selected==(i==1))||!"android.app.ActionBar$Tab".contentEquals(info.getClassName())||info.getCollectionItemInfo()==null)throw new AssertionError("tab semantics/size");
+          ViewGroup row=bar[0].getMenuViewGroup();
+          AccessibilityNodeInfo.CollectionInfo collection=row.createAccessibilityNodeInfo().getCollectionInfo();
+          if(collection==null||collection.getColumnCount()!=3||collection.getSelectionMode()!=AccessibilityNodeInfo.CollectionInfo.SELECTION_MODE_SINGLE)throw new AssertionError("tab collection");
+          for(int i=0;i<3;i++){
+            View v=bar[0].destinationView(i);AccessibilityNodeInfo info=v.createAccessibilityNodeInfo();
+            TextView label=visibleLabel(v);if(label==null)throw new AssertionError("tab label missing");
+            if(v.getHeight()<GalleryUi.dp(v.getContext(),48)||v.isSelected()!=((selected?1:0)==i)||androidx.core.view.accessibility.AccessibilityNodeInfoCompat.wrap(info).getRoleDescription()==null||info.getCollectionItemInfo()==null)throw new AssertionError("tab semantics/size");
             for(int n=0;n<label.getLayout().getLineCount();n++)if(label.getLayout().getEllipsisCount(n)>0)throw new AssertionError("ellipsis");
             if(label.getLayout().getHeight()+label.getPaddingTop()+label.getPaddingBottom()>label.getHeight())throw new AssertionError("clipped");
           }
@@ -123,7 +131,7 @@ final class LibraryTabsChecks {
         });
         capture(t,display,bar[0],width+"-"+scale+"-"+selected);
       }
-      log.append("PASS real tabs retain album cell8/top-37 and photos cell28/top-49, disabled tabs preserve selection, Back exits selection, camera/rank and empty camera persist, Activity recreation retains root/filters, both root Back exit. 8 size/font/selected-state combinations, accessibility tab role/index/selected and no clipping. Captures contain tab bars only. Photo/rank/tag stores unchanged.\n");
+      log.append("PASS real tabs retain album cell8/top-37 and photos cell28/top-49, hidden navigation preserves selection, Back exits selection, camera/rank and empty camera persist, Activity recreation retains root/filters, both root Back exit. 8 size/font/selected-state combinations, accessibility navigation role/index/selected and no clipping. Captures contain tab bars only. Photo/rank/tag stores unchanged.\n");
       return log.toString();
     }finally{MainActivity a=current[0];if(!a.isFinishing())main(t,()->{a.finish();return true;});}
   }

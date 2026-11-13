@@ -46,7 +46,9 @@ public final class CameraImportActivity extends AppCompatActivity {
     private TextView connection, result, migrationResult;
     private ProgressBar progress;
     private Button run, stop, migrate, notifyButton;
-    private LinearLayout cameras;
+    private LinearLayout cameras, importSettings;
+    private MaterialButton settingsButton;
+    private boolean settingsExpanded;
     private MaterialSwitch auto;
     private Closeable permission;
     private boolean migrating, starting, wasActive;
@@ -67,6 +69,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         if (state != null) {
             quickImportFlow = state.getBoolean("quick_import_flow");
             quickRequestId = state.getString("quick_import_request");
+            settingsExpanded = state.getBoolean("import_settings_expanded");
         }
         LinearLayout frame = new LinearLayout(this);
         frame.setOrientation(LinearLayout.VERTICAL);
@@ -76,49 +79,62 @@ public final class CameraImportActivity extends AppCompatActivity {
             v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
             return insets;
         });
+        settingsButton = LibraryUi.icon(this, R.drawable.ic_settings, "取り込み設定", () -> {
+            settingsExpanded = !settingsExpanded;
+            renderSettingsVisibility();
+        });
+        settingsButton.setCheckable(true);
+        settingsButton.setToggleCheckedStateOnClick(false);
+        LinearLayout toolbar = LibraryUi.toolbar(this, "取り込み", settingsButton);
+        toolbar.addView(LibraryUi.icon(this, R.drawable.ic_back, "戻る", this::finish),
+                0, new LinearLayout.LayoutParams(-2, -2));
+        frame.addView(toolbar);
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(GalleryUi.BG);
-        root.setPadding(dp(16), dp(20), dp(16), dp(16));
+        root.setPadding(dp(16), 0, dp(16), dp(16));
         scroll.addView(root);
         frame.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         setContentView(frame);
-        root.addView(text("設定", 13, GalleryUi.MUTED));
-        TextView title = text("カメラから取り込む", 24, GalleryUi.TEXT);
-        title.setTypeface(null, Typeface.BOLD);
-        title.setAccessibilityHeading(true);
-        root.addView(title);
         LinearLayout attached = card(root, "カメラ");
         TextView cameraHeading = (TextView) attached.getChildAt(0);
         cameraHeading.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_camera_usb, 0, 0, 0);
         cameraHeading.setCompoundDrawablePadding(dp(10));
         connection = text("", 14, GalleryUi.TEXT);
         attached.addView(connection);
-        LinearLayout importing = card(root, "取り込み");
+        LinearLayout importing = card(root, "取り込み状況");
         result = status(importing);
         progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progress.setContentDescription("取り込みの進捗");
         importing.addView(progress);
         run = button(importing, "今すぐ取り込む", this::startFromScreen);
+        MaterialUi.filled(run);
+        run.setMinHeight(dp(56));
+        run.setMinimumHeight(dp(56));
         stop = button(importing, "中止", () -> {
             PROGRESS.requestStop();
             renderStatus();
         });
+        importSettings = new LinearLayout(this);
+        importSettings.setOrientation(LinearLayout.VERTICAL);
+        importSettings.setTag("import-settings");
+        root.addView(importSettings, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout preferences = card(importSettings, "取り込み設定");
         auto = new MaterialSwitch(this);
         auto.setText("つないだら自動で取り込む");
         auto.setMinHeight(dp(48));
         auto.setChecked(settings.getBoolean("auto", true));
         auto.setOnCheckedChangeListener((v, checked) -> settings.edit().putBoolean("auto", checked).apply());
-        importing.addView(auto);
+        preferences.addView(auto);
         if (Build.VERSION.SDK_INT >= 33 &&
                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            notifyButton = button(importing, "取り込みの通知を許可する",
+            notifyButton = button(preferences, "取り込みの通知を許可する",
                     () -> requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 402));
         }
-        cameras = card(root, "取り込むもの");
-        LinearLayout history = card(root, "CameraSyncの記録");
+        cameras = card(importSettings, "カメラごとの設定");
+        LinearLayout history = card(importSettings, "CameraSyncの記録");
         history.addView(text("取り込み済みの記録を引き継ぐと、同じファイルを再び取り込まずに済みます。CameraSyncと保存済みの写真は残ります。",
                 14, GalleryUi.MUTED));
         migrationResult = status(history);
@@ -128,21 +144,11 @@ public final class CameraImportActivity extends AppCompatActivity {
                     .setType("*/*");
             startActivityForResult(intent, PICK_DB);
         });
-        ((MaterialButton) migrate).setStrokeWidth(dp(1));
-        ((MaterialButton) migrate).setStrokeColor(android.content.res.ColorStateList.valueOf(GalleryUi.MUTED));
+        MaterialUi.outlined(migrate);
         var migrationButtonLayout = (LinearLayout.LayoutParams) migrate.getLayoutParams();
         migrationButtonLayout.topMargin = dp(8);
         migrate.setLayoutParams(migrationButtonLayout);
-        LinearLayout dock = new LinearLayout(this);
-        dock.setOrientation(LinearLayout.VERTICAL);
-        dock.setBackgroundColor(GalleryUi.BG);
-        dock.setPadding(dp(16), 0, dp(16), 0);
-        var back = button(dock, "‹\n戻る", this::finish);
-        back.setContentDescription("戻る");
-
-        back.setTextSize(13);
-        back.setMinHeight(dp(64));
-        frame.addView(dock);
+        renderSettingsVisibility();
         renderStatus();
     }
 
@@ -168,6 +174,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         super.onSaveInstanceState(state);
         state.putBoolean("quick_import_flow", quickImportFlow);
         state.putString("quick_import_request", quickRequestId);
+        state.putBoolean("import_settings_expanded", settingsExpanded);
     }
 
     @Override protected void onPostResume() {
@@ -228,11 +235,8 @@ public final class CameraImportActivity extends AppCompatActivity {
         setText(run, device != null && !granted ? "USBの使用を許可する"
                 : (settings.getBoolean("configured", false) ? "今すぐ取り込む" : "取り込みの設定をする"));
         run.setEnabled(device != null && !active && !starting && permission == null && !migrating);
-        boolean configured = settings.getBoolean("configured", false);
-        run.setVisibility(active || (!configured && device == null) ? View.GONE : View.VISIBLE);
-        auto.setVisibility(configured ? View.VISIBLE : View.GONE);
-        cameras.setVisibility(configured ? View.VISIBLE : View.GONE);
-        if (notifyButton != null) notifyButton.setVisibility(configured &&
+        run.setVisibility(active ? View.GONE : View.VISIBLE);
+        if (notifyButton != null) notifyButton.setVisibility(
                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
                 ? View.VISIBLE : View.GONE);
         stop.setVisibility(active ? View.VISIBLE : View.GONE);
@@ -240,6 +244,13 @@ public final class CameraImportActivity extends AppCompatActivity {
         setText(stop, PROGRESS.getStopRequested() ? "中止しています" : "中止");
         auto.setEnabled(!active && !migrating && !manualOnly);
         migrate.setEnabled(!active && !starting && !migrating);
+    }
+
+    private void renderSettingsVisibility() {
+        importSettings.setVisibility(settingsExpanded ? View.VISIBLE : View.GONE);
+        settingsButton.setChecked(settingsExpanded);
+        androidx.core.view.ViewCompat.setStateDescription(settingsButton,
+                settingsExpanded ? "開いています" : "閉じています");
     }
 
     private void startFromScreen() { startFromScreen(quickImportFlow); }
@@ -483,7 +494,7 @@ public final class CameraImportActivity extends AppCompatActivity {
     }
 
     private Button button(LinearLayout parent, String label, Runnable click) {
-        Button button = new MaterialButton(this);
+        Button button = MaterialUi.button(this);
         button.setAllCaps(false);
         button.setText(label);
         button.setMinHeight(dp(48));
