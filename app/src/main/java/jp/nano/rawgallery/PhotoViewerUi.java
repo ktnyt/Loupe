@@ -22,6 +22,8 @@ final class PhotoViewerUi extends ViewGroup {
   private final java.util.List<Button> secondary=new ArrayList<>();
   private com.google.android.material.bottomsheet.BottomSheetDialog actionSheet;
   private Button zoom;
+  private TextView actionFeedback;
+  private String actionFeedbackMessage="";
   Runnable editFocusLost;
   private final View cloud, placeholder;
   final ShareHistoryUi.Overlay shared;
@@ -308,11 +310,19 @@ final class PhotoViewerUi extends ViewGroup {
     }
   }
 
+  void actionFeedback(String message){
+    actionFeedbackMessage=message==null?"":message;
+    if(actionFeedback!=null){actionFeedback.setText(actionFeedbackMessage);actionFeedback.setVisibility(actionFeedbackMessage.isEmpty()?GONE:VISIBLE);}
+  }
+
   void openActions(){
     if(actionSheet!=null&&actionSheet.isShowing())return;
     Context c=getContext();actionSheet=new com.google.android.material.bottomsheet.BottomSheetDialog(c);
     LinearLayout list=new LinearLayout(c);list.setOrientation(LinearLayout.VERTICAL);list.setPadding(dp(16),dp(12),dp(16),dp(20));
     list.addView(LibraryUi.toolbar(c,"写真の操作",LibraryUi.icon(c,R.drawable.ic_close,"閉じる",()->actionSheet.dismiss())));
+    actionFeedback=PhotoListUi.text(c,"",14,21,GalleryUi.TEXT);actionFeedback.setTag("viewer-action-feedback");
+    actionFeedback.setPadding(dp(12),dp(8),dp(12),dp(8));actionFeedback.setAccessibilityLiveRegion(ACCESSIBILITY_LIVE_REGION_POLITE);
+    list.addView(actionFeedback,new LinearLayout.LayoutParams(-1,-2));actionFeedback(actionFeedbackMessage);
     for(Button action:secondary){
       if(action.getParent() instanceof ViewGroup)((ViewGroup)action.getParent()).removeView(action);
       list.addView(action,new LinearLayout.LayoutParams(-1,-2));

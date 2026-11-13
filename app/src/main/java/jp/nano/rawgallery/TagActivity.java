@@ -663,6 +663,7 @@ public final class TagActivity extends DiagnosticActivity {
     photoTag.setContentDescription(label+"、タグ「"+tag.name+"」"+(busy?"。保存しています":failed?"。保存できませんでした。判断はそのままです。もう一度押すと保存します":""));
     photoTag.setStateDescription(busy?"保存中":failed?"保存失敗、再試行できます":photoAttached?"タグあり":"タグなし");
     PhotoViewerUi.tagState(photoTag,photoAttached,busy,failed);
+    photoViewer.actionFeedback(busy?"タグを保存しています":failed?"保存できませんでした。判断はそのままです。\n「"+label+"」でもう一度保存します。":"");
   }
 
   private void clearAutomatic() {
@@ -717,6 +718,7 @@ public final class TagActivity extends DiagnosticActivity {
             photoTag.setContentDescription(photoTag.getText()+"、タグ「"+tag.name+"」。"+message);photoTag.setStateDescription("変更競合、最新の判断を表示しています");
             // Rebuilding applies the latest judgment and detaches the previous action sheet.
             // Keep the conflict and retry action visible in the replacement viewer.
+            photoViewer.actionFeedback("ほかの操作でタグが変更されました。\n最新の判断は「"+(photoAttached?"タグあり":"タグなし")+"」です。確認して「"+photoTag.getText()+"」を押してください。");
             photoViewer.openActions();photoTag.announceForAccessibility(message);
           }
         });
