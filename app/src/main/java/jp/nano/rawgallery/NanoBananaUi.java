@@ -3,6 +3,7 @@ package jp.nano.rawgallery;
 import android.app.Activity;
 import android.app.Dialog;
 import android.content.Intent;
+import android.widget.TextView;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import java.util.ArrayList;
 import java.util.List;
@@ -13,13 +14,13 @@ final class NanoBananaUi {
   interface Dispatcher {
     boolean start(Activity activity,PhotoRepository.Photo photo,NanoBananaStore.Prompt prompt);
     boolean resume(Activity activity);
-    boolean discard(Activity activity);
+    boolean discard(Activity activity,String object,String owner);
     boolean busy();
   }
   static final Dispatcher ACTUAL=new Dispatcher(){
     public boolean start(Activity a,PhotoRepository.Photo p,NanoBananaStore.Prompt prompt){return NanoBananaService.start(a,p,prompt);}
     public boolean resume(Activity a){return NanoBananaService.resume(a);}
-    public boolean discard(Activity a){return NanoBananaService.discard(a);}
+    public boolean discard(Activity a,String object,String owner){return NanoBananaService.discard(a,object,owner);}
     public boolean busy(){return NanoBananaService.busy();}
   };
   static void show(Activity activity,PhotoRepository.Photo photo){show(activity,photo,new NanoBananaStore(activity),ACTUAL);}
@@ -59,14 +60,25 @@ final class NanoBananaUi {
     String stage=job.optString("stage");
     boolean cleanup=stage.equals("cleanup")||stage.equals("discarding");
     boolean retry=cleanup||stage.equals("generating");
-    String title=cleanup?"後処理が残っています":stage.equals("generating")?"生成を再確認できます":"処理を完了できませんでした";
-    String[] items=retry?new String[]{cleanup?"後処理を再試行":"状態を再確認","処理を終了","設定"}:new String[]{"処理を終了","設定"};
-    return MoreMenuUi.show(activity,title,items,(d,w)->{
+    boolean unknown=stage.equals("uploading")||stage.equals("submitting");
+    String title=cleanup?"後処理が残っています":stage.equals("generating")?"生成を再確認できます":unknown?"依頼の結果が不明です。自動では再送しません":"生成できませんでした";
+    List<String> items=new ArrayList<>();
+    if(retry)items.add(cleanup?"後処理を再試行":"状態を再確認");
+    int end=items.size();items.add("処理を終了");
+    boolean location=!job.optString("object").isEmpty()&&(job.optString("version").isEmpty()||job.optString("version").equals("null"));
+    int key=location?items.size():-1;if(location)items.add("一時画像の場所");
+    items.add("設定");
+    return MoreMenuUi.show(activity,title,items.toArray(new String[0]),(d,w)->{
       if(retry&&w==0){dispatcher.resume(activity);return;}
-      if(w==(retry?1:0)){
+      if(w==end){
         new MaterialAlertDialogBuilder(activity).setTitle("処理を終了しますか？")
             .setMessage("保存済みの画像は残します。送信用画像を削除しますが、API側の処理や課金は取り消せない場合があります。")
-            .setNegativeButton("戻る",null).setPositiveButton("終了",(dialog,which)->dispatcher.discard(activity)).show();
+            .setNegativeButton("戻る",null).setPositiveButton("終了",(dialog,which)->dispatcher.discard(activity,job.optString("object"),job.optString("owner"))).show();
+      }else if(w==key){
+        TextView text=new TextView(activity);text.setText("e2の一時画像\n"+job.optString("object")+"\n\n版を確認できない画像は安全のため自動削除できません。e2でこのキーの画像を確認して手動削除し、バケットのバージョニングを有効にしてください。その後「処理を終了」を再試行してください。");
+        text.setTextIsSelectable(true);text.setTextSize(16);text.setTextColor(GalleryUi.TEXT);
+        int padding=Math.round(24*activity.getResources().getDisplayMetrics().density);text.setPadding(padding,padding,padding,padding);
+        new MaterialAlertDialogBuilder(activity).setTitle("一時画像の場所").setView(text).setPositiveButton("閉じる",null).show();
       }else settings(activity);
     });
   }

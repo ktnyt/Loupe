@@ -38,31 +38,33 @@ final class NanoBananaBackgroundChecks {
   private static void idle(Instrumentation test)throws Exception{await("service worker released lease",()->!NanoBananaService.busy());test.waitForIdleSync();}
   private static final class Fake implements NanoBananaJob.Services {
     final NanoBananaStore store;final byte[] jpeg;final List<String> saved;
-    final CountDownLatch entered=new CountDownLatch(1),release=new CountDownLatch(1);
-    volatile int submits,downloads,deletes;volatile boolean deleteFailure,ignoreInterrupt;
+    final CountDownLatch entered=new CountDownLatch(1),release=new CountDownLatch(1),interrupted=new CountDownLatch(1);
+    volatile int submits,statuses,downloads,deletes;volatile boolean deleteFailure,ignoreInterrupt,requireVersion;
     volatile String prompt;volatile NanoBananaOutput output;
     Fake(NanoBananaStore store,byte[] jpeg,List<String> saved){this.store=store;this.jpeg=jpeg;this.saved=saved;}
     public String upload(String object,byte[] bytes,String owner){return "synthetic-version";}
     public String generate(String text,String object,String version,NanoBananaOutput requested){submits++;prompt=text;output=requested;return "synthetic-task";}
     public JSONObject status(String task)throws Exception{
-      entered.countDown();
-      boolean interrupted=false;
-      while(true){try{if(!release.await(15,TimeUnit.SECONDS))throw new java.io.IOException("fixture timed out");break;}catch(InterruptedException e){if(!ignoreInterrupt)throw e;interrupted=true;}}
-      if(interrupted)Thread.currentThread().interrupt();
+      statuses++;entered.countDown();
+      boolean wasInterrupted=false;
+      while(true){try{if(!release.await(15,TimeUnit.SECONDS))throw new java.io.IOException("fixture timed out");break;}catch(InterruptedException e){interrupted.countDown();if(!ignoreInterrupt)throw e;wasInterrupted=true;}}
+      if(wasInterrupted)Thread.currentThread().interrupt();
       return new JSONObject().put("successFlag",1).put("response",new JSONObject().put("resultImageUrl","https://synthetic.invalid/result.jpg"));
     }
     public byte[] download(String url){downloads++;return jpeg;}
     public void delete(String object,String version,String owner)throws Exception{
       deletes++;JSONObject record=store.job();if(record!=null&&record.has("saved")){synchronized(saved){if(!saved.contains(record.getString("saved")))saved.add(record.getString("saved"));}}
+      if(requireVersion&&version==null)throw new java.io.IOException("synthetic object version missing");
       if(deleteFailure){deleteFailure=false;throw new java.io.IOException("synthetic cleanup interruption");}
     }
   }
   private static final class FixtureFactory implements NanoBananaService.Factory {
-    final NanoBananaStore store;volatile Fake fake;
+    final NanoBananaStore store;volatile Fake fake;volatile String lastResult;volatile int jobs;
     FixtureFactory(NanoBananaStore store){this.store=store;}
     public NanoBananaStore store(Context context){return store;}
+    public void result(String message){lastResult=message;}
     public NanoBananaJob job(Context context,NanoBananaStore received){
-      TagDetailChecks.require(received==store&&fake!=null,"isolated service dependencies required");
+      jobs++;TagDetailChecks.require(received==store&&fake!=null,"isolated service dependencies required");
       return new NanoBananaJob(context,store,fake);
     }
   }
@@ -137,21 +139,55 @@ final class NanoBananaBackgroundChecks {
       // Stop while a provider ignores interruption: the lease must remain held until it returns.
       Fake stopped=new Fake(store,jpeg,saved);stopped.ignoreInterrupt=true;factory.fake=stopped;
       TagDetailChecks.require(NanoBananaService.start(screen,photo,prompt),"interruption request admitted");TagDetailChecks.require(stopped.entered.await(15,TimeUnit.SECONDS),"worker blocks in provider");
-      context.stopService(new Intent(context,NanoBananaService.class));test.waitForIdleSync();
+      context.stopService(new Intent(context,NanoBananaService.class));
+      TagDetailChecks.require(stopped.interrupted.await(15,TimeUnit.SECONDS),"OS Service destruction interrupted blocked worker before fixture release");test.waitForIdleSync();
       TagDetailChecks.require(NanoBananaService.busy()&&!NanoBananaService.start(screen,photo,prompt),"destroy cannot release a live worker lease");
-      stopped.release.countDown();idle(test);TagDetailChecks.require(stopped.downloads==0&&store.job().optString("stage").equals("generating"),"interrupted worker preserves resumable task");
+      stopped.release.countDown();idle(test);JSONObject interruptedRecord=store.job();TagDetailChecks.require(stopped.downloads==0&&interruptedRecord!=null&&interruptedRecord.optString("stage").equals("generating"),"interrupted worker preserves resumable task: downloads="+stopped.downloads+", statuses="+stopped.statuses+", stage="+(interruptedRecord==null?"none":interruptedRecord.optString("stage")));
       // Mark discard before launch; stale/redelivered intents may only execute this cleanup.
       NanoBananaJob.markDiscarding(store);stopped.deleteFailure=true;
       ContextCompat.startForegroundService(context,new Intent(context,NanoBananaService.class).putExtra("request_nonce","stale"));
       await("stale intent started durable discard",()->stopped.deletes==1);idle(test);
       TagDetailChecks.require(store.job().optString("stage").equals("discarding")&&stopped.submits==1&&stopped.downloads==0,"failed discard remains durable without resurrection");
+      int savedBeforeDiscard=saved.size(),statusesBeforeDiscard=stopped.statuses;factory.lastResult=null;
       TagDetailChecks.require(NanoBananaService.resume(screen),"discard retry admitted");idle(test);
       TagDetailChecks.require(store.job()==null&&stopped.deletes==2&&stopped.downloads==0,"discard retry only removes temporary object");
+      TagDetailChecks.require("後処理が完了しました".equals(factory.lastResult)&&saved.size()==savedBeforeDiscard&&stopped.statuses==statusesBeforeDiscard,"manual discarding resume reports cleanup complete without saving or polling");
       int before=stopped.submits;ContextCompat.startForegroundService(context,new Intent(context,NanoBananaService.class).putExtra("request_nonce","stale"));Thread.sleep(300);test.waitForIdleSync();
       TagDetailChecks.require(!NanoBananaService.busy()&&stopped.submits==before&&store.job()==null,"stale request without durable work never submits");
+      // A missing upload version is recoverable only by explicit manual e2 cleanup.
+      Fake missing=new Fake(store,jpeg,saved);missing.requireVersion=true;factory.fake=missing;
+      String object="loupe-nano-temp/00000000-0000-0000-0000-000000000107.jpg";
+      store.job(new JSONObject().put("stage","uploading").put("object",object).put("owner","synthetic-owner"));
+      factory.lastResult=null;int savedBeforeMissing=saved.size();
+      TagDetailChecks.require(NanoBananaService.discard(screen),"missing-version cleanup admitted");idle(test);
+      TagDetailChecks.require(store.job()!=null&&store.job().optString("stage").equals("discarding")&&!store.job().has("version")&&missing.deletes==1&&missing.submits==0&&missing.statuses==0&&missing.downloads==0&&saved.size()==savedBeforeMissing,"missing-version cleanup failure retains recovery location without generation or save");
+      TagDetailChecks.ui(test,()->{menu[0]=NanoBananaUi.show(screen,input,store,NanoBananaUi.ACTUAL);View location=findLabel(menu[0].getWindow().getDecorView(),"一時画像の場所");TagDetailChecks.require(location!=null&&location.performClick(),"missing-version recovery exposes temporary-object location");});test.waitForIdleSync();
+      android.view.accessibility.AccessibilityNodeInfo location=findAccessibleText(test.getUiAutomation().getRootInActiveWindow(),object);
+      TagDetailChecks.require(location!=null&&location.getText()!=null&&location.getText().toString().contains("自動削除できません")&&location.getText().toString().contains("手動削除")&&location.getText().toString().contains("バージョニング")&&location.getText().toString().contains("処理を終了"),"recovery dialog names the object and explains manual cleanup, versioning and retry");
+      TagDetailChecks.require(location.getActionList().contains(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_SELECTION),"temporary-object location text supports selection");
+      capture(test,screen,"nano-background-missing-version-"+width+"-"+font);test.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);test.waitForIdleSync();
+      store.job(new JSONObject().put("stage","submitting").put("object",object).put("owner","synthetic-owner").put("version","synthetic-version"));
+      TagDetailChecks.ui(test,()->{menu[0]=NanoBananaUi.show(screen,input,store,NanoBananaUi.ACTUAL);View decor=menu[0].getWindow().getDecorView();TagDetailChecks.require(findLabel(decor,"依頼の結果が不明です。自動では再送しません")!=null&&findLabel(decor,"状態を再確認")==null&&findLabel(decor,"後処理を再試行")==null,"ambiguous submission explicitly says unknown and never offers automatic resend");});
+      capture(test,screen,"nano-background-submitting-"+width+"-"+font);TagDetailChecks.ui(test,()->menu[0].dismiss());
+      TagDetailChecks.require(missing.submits==0&&missing.statuses==0&&missing.downloads==0,"opening recovery menus performs no provider request");
+      // A dialog describes one durable request. Its confirmation must not target a replacement.
+      Fake guarded=new Fake(store,jpeg,saved);factory.fake=guarded;
+      String objectA="loupe-nano-temp/00000000-0000-0000-0000-00000000010a.jpg",ownerA="synthetic-owner-a";
+      String objectB="loupe-nano-temp/00000000-0000-0000-0000-00000000010b.jpg",ownerB="synthetic-owner-b";
+      store.job(new JSONObject().put("stage","submitting").put("object",objectA).put("owner",ownerA).put("version","synthetic-version-a"));
+      TagDetailChecks.ui(test,()->{menu[0]=NanoBananaUi.show(screen,input,store,NanoBananaUi.ACTUAL);View end=findLabel(menu[0].getWindow().getDecorView(),"処理を終了");TagDetailChecks.require(end!=null&&end.performClick(),"request A opens explicit end confirmation");});test.waitForIdleSync();
+      android.view.accessibility.AccessibilityNodeInfo confirmation=findAccessibleExact(test.getUiAutomation().getRootInActiveWindow(),"終了");
+      TagDetailChecks.require(confirmation!=null&&confirmation.isClickable(),"request A confirmation is visible before request replacement");
+      JSONObject replacement=new JSONObject().put("stage","generating").put("task","synthetic-task-b").put("object",objectB).put("owner",ownerB).put("version","synthetic-version-b");
+      store.job(replacement);String replacementText=store.job().toString();int jobsBeforeStale=factory.jobs;
+      TagDetailChecks.require(confirmation.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK),"stale request A confirmation clicked");test.waitForIdleSync();TagDetailChecks.ui(test,()->{});test.waitForIdleSync();
+      TagDetailChecks.require(!NanoBananaService.busy()&&store.job()!=null&&store.job().toString().equals(replacementText)&&factory.jobs==jobsBeforeStale&&guarded.deletes==0&&guarded.submits==0&&guarded.statuses==0&&guarded.downloads==0,"stale confirmation for A leaves request B unchanged without starting service or provider operations");
+      TagDetailChecks.require(NanoBananaService.discard(screen,objectB,ownerB),"current request B identity admits cleanup");idle(test);
+      TagDetailChecks.require(store.job()==null&&guarded.deletes==1&&guarded.submits==0&&guarded.statuses==0&&guarded.downloads==0&&factory.jobs==jobsBeforeStale+1,"current request cleanup removes B once without generation or polling");
+      store.job(null); // Fixture-only record: there is no remote object to delete.
       Context failing=new ContextWrapper(context){public Context getApplicationContext(){return this;}public ComponentName startForegroundService(Intent i){throw new IllegalStateException("synthetic startup rejection");}};
       TagDetailChecks.require(!NanoBananaService.start(failing,photo,prompt)&&!NanoBananaService.busy()&&store.job()==null,"startup rejection rolls back reservation");
-      return "PASS nano-background: actual production Android Service with isolated fake provider; next-photo operation, busy/error menu captures, Home continuation, no generation/result Activity launch, automatic JPEG save/readback 1200x800, temporary-object cleanup, duplicate admission, immutable prompt/output snapshot, next admission, saved cleanup retry without POST/download, interrupted-worker lease, durable discard retry, stale Intent suppression and startup rejection. Captures are synthetic layouts; OS-service runtime assertions are separate. No real API, credentials, photos, physical touch or TalkBack speech tested.\n";
+      return "PASS nano-background: actual production Android Service with isolated fake provider; next-photo operation, busy/error menu captures, Home continuation, no generation/result Activity launch, automatic JPEG save/readback 1200x800, temporary-object cleanup, duplicate admission, immutable prompt/output snapshot, next admission, saved cleanup retry without POST/download, interrupted-worker lease, durable discard retry and cleanup-only completion text, missing-version selectable manual recovery guidance, explicit ambiguous-submission messaging, stale end-confirmation A/B identity guard and current identity cleanup, stale Intent suppression and startup rejection. Captures are synthetic layouts; OS-service runtime assertions are separate. No real API, credentials, photos, physical touch or TalkBack speech tested.\n";
     }finally{
       if(factory.fake!=null)factory.fake.release.countDown();
       context.stopService(new Intent(context,NanoBananaService.class));
@@ -163,6 +199,14 @@ final class NanoBananaBackgroundChecks {
       store.job(null);context.getSharedPreferences(namespace,0).edit().clear().commit();context.getContentResolver().delete(fixture,null,null);
       NanoBananaService.dependencies=NanoBananaService.PRODUCTION;
     }
+  }
+  private static android.view.accessibility.AccessibilityNodeInfo findAccessibleExact(android.view.accessibility.AccessibilityNodeInfo node,String text){
+    if(node==null)return null;if(node.getText()!=null&&text.contentEquals(node.getText()))return node;
+    for(int i=0;i<node.getChildCount();i++){android.view.accessibility.AccessibilityNodeInfo found=findAccessibleExact(node.getChild(i),text);if(found!=null)return found;}return null;
+  }
+  private static android.view.accessibility.AccessibilityNodeInfo findAccessibleText(android.view.accessibility.AccessibilityNodeInfo node,String part){
+    if(node==null)return null;if(node.getText()!=null&&node.getText().toString().contains(part))return node;
+    for(int i=0;i<node.getChildCount();i++){android.view.accessibility.AccessibilityNodeInfo found=findAccessibleText(node.getChild(i),part);if(found!=null)return found;}return null;
   }
   private static View findLabel(View view,String label){
     if(view.getVisibility()!=View.VISIBLE)return null;

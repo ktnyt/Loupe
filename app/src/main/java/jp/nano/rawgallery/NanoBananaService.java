@@ -57,6 +57,10 @@ public class NanoBananaService extends Service {
   }
   static boolean resume(Context c){return resume(c,dependencies.store(c),NanoBananaService.class);}
   static boolean discard(Context c){return discard(c,dependencies.store(c),NanoBananaService.class);}
+  static boolean discard(Context c,String expectedObject,String expectedOwner){
+    return launch(c,dependencies.store(c),NanoBananaService.class,null,null,true,true,
+        true,expectedObject,expectedOwner);
+  }
   static boolean start(Context c,NanoBananaStore store,Class<? extends NanoBananaService> type,
       PhotoRepository.Photo photo,NanoBananaStore.Prompt prompt){
     return launch(c,store,type,photo,prompt,false,false);
@@ -76,10 +80,23 @@ public class NanoBananaService extends Service {
   }
   private static boolean launch(Context context,NanoBananaStore store,Class<? extends NanoBananaService> type,
       PhotoRepository.Photo photo,NanoBananaStore.Prompt prompt,boolean resume,boolean discard){
+    return launch(context,store,type,photo,prompt,resume,discard,false,null,null);
+  }
+  private static boolean launch(Context context,NanoBananaStore store,Class<? extends NanoBananaService> type,
+      PhotoRepository.Photo photo,NanoBananaStore.Prompt prompt,boolean resume,boolean discard,
+      boolean guardDiscard,String expectedObject,String expectedOwner){
     Context app=context.getApplicationContext();
     Request request=null;
     try {
       synchronized(NanoBananaStore.LOCK){
+        if(guardDiscard){
+          JSONObject current=store.job();
+          if(expectedObject==null||expectedObject.isEmpty()||expectedOwner==null||expectedOwner.isEmpty()
+              ||current==null||!expectedObject.equals(current.optString("object"))
+              ||!expectedOwner.equals(current.optString("owner"))){
+            toast(app,"処理が変わりました。メニューを開き直してください");return false;
+          }
+        }
         if(busy()){toast(app,"画像を生成しています");return false;}
         forgetComplete(store);
         JSONObject job=store.job();
@@ -88,13 +105,15 @@ public class NanoBananaService extends Service {
           toast(app,job!=null?"残っている処理を確認してください":"写真とプロンプトを選び直してください");return false;
         }
         NanoBananaOutput output=resume?null:store.output();
-        if(discard)NanoBananaJob.markDiscarding(store);
+        // Manual resume must retain a durable cancellation's operation and result wording.
+        boolean discardOperation=discard||(resume&&job.optString("stage").equals("discarding"));
+        if(discardOperation)NanoBananaJob.markDiscarding(store);
         NanoBananaStore.Prompt snapshot=prompt==null?null:new NanoBananaStore.Prompt(prompt.id,prompt.name,prompt.text);
-        request=new Request(store,photo,snapshot,output,discard);
+        request=new Request(store,photo,snapshot,output,discardOperation);
         reserved=request;NanoBananaJob.BUSY.set(true);
       }
       ContextCompat.startForegroundService(app,new Intent(app,type).putExtra(EXTRA_NONCE,request.nonce));
-      toast(app,discard?"後処理を開始しました":"画像の生成を開始しました");
+      toast(app,request.discard?"後処理を開始しました":"画像の生成を開始しました");
       return true;
     }catch(Exception failure){
       synchronized(NanoBananaStore.LOCK){
