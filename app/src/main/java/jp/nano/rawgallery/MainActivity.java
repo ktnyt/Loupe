@@ -295,11 +295,13 @@ public final class MainActivity extends DiagnosticActivity {
     root.setBackgroundColor(BG);
     root.setOnApplyWindowInsetsListener(
         (v, insets) -> {
-          Insets i = insets.getInsets(WindowInsets.Type.systemBars());
+          Insets i = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
           v.setPadding(i.left, i.top, i.right, i.bottom);
           return insets;
         });
     setContentView(root);
+    // Each rendered screen replaces this root; request the current OS insets again.
+    root.requestApplyInsets();
   }
 
   private LibraryTabs libraryTabs;
