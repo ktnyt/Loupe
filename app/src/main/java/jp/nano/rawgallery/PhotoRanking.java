@@ -8,6 +8,7 @@ public final class PhotoRanking {
   public final List<String> order = new ArrayList<>();
   public final String journal;
   private final List<List<String>> groups = new ArrayList<>();
+  private final Map<String, Integer> selectionCounts = new HashMap<>();
   private int next = 1, low = 0, high = 1;
 
   public PhotoRanking(List<String> ids, String journal) {
@@ -20,6 +21,7 @@ public final class PhotoRanking {
       for (char c : journal.substring(2).toCharArray()) {
         if (next >= ids.size() || (c != '0' && c != '1'))
           throw new IllegalArgumentException("Invalid best-only journal");
+        selectionCounts.merge(c == '0' ? ids.get(next) : winner, 1, Integer::sum);
         if (c == '0') winner = ids.get(next);
         next++;
       }
@@ -36,6 +38,7 @@ public final class PhotoRanking {
     for (char c : (journal.startsWith("A:") ? journal.substring(2) : journal).toCharArray()) {
       if (done() || (c != '0' && c != '1' && c != '2'))
         throw new IllegalArgumentException("Invalid journal");
+      if (c != '2') selectionCounts.merge(c == '0' ? upper() : lower(), 1, Integer::sum);
       if (c == '2') {
         groups.get(middle()).add(ids.get(next++));
         low = 0;
@@ -56,6 +59,14 @@ public final class PhotoRanking {
   public boolean bestOnly() { return journal.startsWith("B:"); }
 
   public int decisions() { return journal.length() - (bestOnly() || journal.startsWith("A:") ? 2 : 0); }
+
+  /** Explicit A/B selections in the current journal; ties and inferred wins add nothing.
+   * Replaying after undo/resume restores the counts without changing the persisted format.
+   */
+  public int selectionCount(String id) {
+    if (!ids.contains(id)) throw new IllegalArgumentException("Unknown photo");
+    return selectionCounts.getOrDefault(id, 0);
+  }
 
   private int middle() {
     return (low + high) / 2;

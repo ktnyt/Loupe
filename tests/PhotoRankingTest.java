@@ -3,7 +3,39 @@ package jp.nano.rawgallery;
 import java.util.*;
 
 public final class PhotoRankingTest {
+  private static void selectionCounts() {
+    List<String> ids=List.of("a","b","c","d","e");
+    for (String mode:List.of("", "A:", "B:")) {
+      Random choices=new Random(123);
+      for (int trial=0;trial<100;trial++) {
+        PhotoRanking ranking=new PhotoRanking(ids,mode);
+        Map<String,Integer> expected=new HashMap<>();
+        while (!ranking.done()) {
+          for (String id:ids) check(ranking.selectionCount(id)==expected.getOrDefault(id,0),"selection count before choice");
+          PhotoRanking before=ranking;
+          boolean tie=!ranking.bestOnly() && choices.nextInt(3)==0;
+          boolean upper=choices.nextBoolean();
+          if (!tie) expected.merge(upper?ranking.upper():ranking.lower(),1,Integer::sum);
+          ranking=tie?ranking.tie():ranking.choose(upper);
+          PhotoRanking restored=new PhotoRanking(ids,ranking.journal);
+          for (String id:ids) {
+            check(ranking.selectionCount(id)==expected.getOrDefault(id,0),"only explicitly selected candidate increments");
+            check(restored.selectionCount(id)==ranking.selectionCount(id),"selection count resume");
+            check(ranking.undo().selectionCount(id)==before.selectionCount(id),"selection count undo");
+          }
+        }
+        for(String id:ids) check(new PhotoRanking(ids,mode).selectionCount(id)==0,"reset count");
+      }
+    }
+    PhotoRanking tied=new PhotoRanking(ids,"A:").tie().choose(false);
+    check(tied.selectionCount("a")==1 && tied.selectionCount("b")==0,"tie group does not infer selections for other members");
+    try { tied.selectionCount("unknown");throw new AssertionError("unknown photo"); }
+    catch(IllegalArgumentException expected) {}
+    System.out.println("Selection counts: both modes and legacy journals, explicit choices, ties, undo, resume, reset and unknown ids passed");
+  }
+
   public static void main(String[] args) {
+    selectionCounts();
     Random random = new Random(42);
     for (int size = 2; size <= 60; size++) {
       List<String> ids = new ArrayList<>();
