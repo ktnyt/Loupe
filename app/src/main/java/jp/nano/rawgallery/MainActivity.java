@@ -1951,7 +1951,7 @@ public final class MainActivity extends DiagnosticActivity {
     LinearLayout controls=vertical();controls.setPadding(dp(16),dp(10),dp(16),dp(20));
     RankingUi.action(chooseA,true,52,15,null);RankingUi.action(chooseB,true,52,15,null);
     RankingUi.choice(chooseA,"A");RankingUi.choice(chooseB,"B");
-    RankingUi.add(controls,RankingUi.pair(this,chooseA,chooseB),0);
+    RankingUi.add(controls,RankingUi.pair(this,RankingUi.countedChoice(this,chooseA,ranking.selectionCount(ranking.upper())),RankingUi.countedChoice(this,chooseB,ranking.selectionCount(ranking.lower()))),0);
     Button zoomA=RankingUi.action(button("Aを拡大",()->showRankedPhoto(rankingMembers.get(ranking.upper()))),false,48,13,"拡大");
     Button zoomB=RankingUi.action(button("Bを拡大",()->showRankedPhoto(rankingMembers.get(ranking.lower()))),false,48,13,"拡大");
     RankingUi.action(tie,false,48,13,"同じ順位");
@@ -2020,7 +2020,7 @@ public final class MainActivity extends DiagnosticActivity {
       double[] ratios,
       Runnable arrange) {
     PhotoRepository.Photo photo = photos.get(rankingMembers.get(key));
-    ComparisonPhotoView image = new ComparisonPhotoView(this, upper ? "A" : "B", photo.name);
+    ComparisonPhotoView image = new ComparisonPhotoView(this, upper ? "A" : "B", photo.name, ranking.selectionCount(key));
     image.setOnClickListener(
         v -> {
           if (rankingScreen && token == generation && ratios[0] > 0 && ratios[1] > 0) {

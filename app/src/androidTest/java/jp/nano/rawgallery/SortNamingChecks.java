@@ -33,6 +33,20 @@ final class SortNamingChecks {
     if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++){TextView found=find(((ViewGroup)v).getChildAt(i),text);if(found!=null)return found;}
     return null;
   }
+  private static void counts(Instrumentation t,MainActivity a,int expectedA,int expectedB) {
+    main(t,()->{
+      for(String letter:new String[]{"A","B"}) {
+        int expected=letter.equals("A")?expectedA:expectedB;
+        ComparisonPhotoView image=ComparisonLabelChecks.candidate(a,letter);
+        if(image==null || !image.getContentDescription().toString().contains("選択 "+expected+"回"))
+          throw new AssertionError("candidate selection count "+letter);
+        TextView button=require(a,letter+"を選ぶ");
+        if(!("これまでに選択 "+expected+"回").contentEquals(button.getStateDescription()))
+          throw new AssertionError("button count state "+letter);
+      }
+      require(a,"選択 "+expectedA+"回");require(a,"選択 "+expectedB+"回");
+    });
+  }
   private static ListView results(View v){
     if(v instanceof ListView)return (ListView)v;
     if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++){ListView l=results(((ViewGroup)v).getChildAt(i));if(l!=null)return l;}return null;
@@ -140,8 +154,14 @@ final class SortNamingChecks {
       main(t,()->{try{set(a,"rankingStore",store);}catch(Exception e){throw new RuntimeException(e);}});
       click(t,a,width,font,"1位を決める");dialog(t,"変更",true);
       if(!((PhotoRanking)field(a,"ranking")).bestOnly())throw new AssertionError("best mode not restored");
-      capture(t,a,width,font,"comparison");click(t,a,width,font,"Aを選ぶ");back(t);
-      main(t,()->require(a,"ソートを再開"));capture(t,a,width,font,"resume");click(t,a,width,font,"ソートを再開");click(t,a,width,font,"Aを選ぶ");
+      counts(t,a,0,0);
+      capture(t,a,width,font,"comparison");click(t,a,width,font,"Aを選ぶ");counts(t,a,0,1);
+      capture(t,a,width,font,"selection-count");
+      click(t,a,width,font,"直前の操作を取り消す");counts(t,a,0,0);
+      click(t,a,width,font,"Bを選ぶ");counts(t,a,0,1);
+      click(t,a,width,font,"直前の操作を取り消す");counts(t,a,0,0);
+      click(t,a,width,font,"Aを選ぶ");back(t);
+      main(t,()->require(a,"ソートを再開"));capture(t,a,width,font,"resume");click(t,a,width,font,"ソートを再開");counts(t,a,0,1);click(t,a,width,font,"Aを選ぶ");
       main(t,()->require(a,"ソート結果"));capture(t,a,width,font,"result");
       String resultJournal=((PhotoRanking)field(a,"ranking")).journal;
       waitFor(t,()->results(a.getWindow().getDecorView()).getChildCount()>0);
@@ -193,7 +213,7 @@ final class SortNamingChecks {
           int required=b.getLayout().getHeight()+b.getCompoundPaddingTop()+b.getCompoundPaddingBottom();if(required>b.getMeasuredHeight())throw new AssertionError("vertical clipping "+label);
         }
       });
-      return "PASS synthetic actual screens: start, compare, resume, finish, result, redo cancel/execute, mode cancel, share guidance/return; mode same/cancel/confirm/save failure; AX ACTION_CLICK opens result; 40-result scroll/open/Back restores first row and pixel offset; isolated rankings; 24 button size/font checks; accessibility names/headings. Screenshots cache/sort-test-*.png. TalkBack spoken order not tested.\n";
+      return "PASS selection counts initial/choose A/choose B/undo/resume and button AX states; synthetic actual screens: start, compare, resume, finish, result, redo cancel/execute, mode cancel, share guidance/return; mode same/cancel/confirm/save failure; AX ACTION_CLICK opens result; 40-result scroll/open/Back restores first row and pixel offset; isolated rankings; 24 button size/font checks; accessibility names/headings. Screenshots cache/sort-test-*.png. TalkBack spoken order not tested.\n";
     }finally{main(t,a::finish);prefs.edit().clear().commit();for(File f:files)f.delete();}
   }
 }

@@ -61,6 +61,17 @@ final class RankingUi {
       public void setAlpha(int a){}public void setColorFilter(android.graphics.ColorFilter f){}public int getOpacity(){return android.graphics.PixelFormat.TRANSLUCENT;}
     };inline(b,icon,"を選ぶ",24);
   }
+  static View countedChoice(Context c,Button button,int count){
+    LinearLayout column=column(c);
+    column.addView(button,new LinearLayout.LayoutParams(-1,-2));
+    TextView label=new TextView(c);label.setText("選択 "+count+"回");label.setTextSize(12);
+    label.setTextColor(GalleryUi.MUTED);label.setGravity(Gravity.CENTER);
+    label.setPadding(0,dp(c,4),0,0);
+    label.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    column.addView(label,new LinearLayout.LayoutParams(-1,-2));
+    button.setStateDescription("これまでに選択 "+count+"回");
+    return column;
+  }
   static View zooms(Context c,Button a,Button tie,Button b){return new ViewGroup(c){
     boolean three;int firstHeight,secondHeight;
     {addView(a);if(tie!=null)addView(tie);addView(b);}
