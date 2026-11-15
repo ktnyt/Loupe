@@ -4,7 +4,7 @@
 
 Allow a user to select a nearby compatible camera, supply its displayed Bluetooth passcode, and request access for Wi-Fi importing. BLE protocol acceptance is separate from Wi-Fi readiness and from successful importing. No background auto-wake, camera reset, shutter operation, pairing bypass, or credential extraction is implemented.
 
-E-P7 and OM-1 Mark II are experimental targets. Their actual GATT characteristics, firmware compatibility, standby transitions and Wi-Fi activation have not been tested. A matching advertisement identifies a candidate, not an authenticated camera. The user must select it and provide the passcode from that camera.
+E-P7 and OM-1 Mark II are experimental targets. An E-P7 has accepted a BLE transfer-wake operation and exposed Wi-Fi without a physical camera operation; the device evidence is recorded in issue #124. Exact power-switch state, firmware version, negative-passcode behavior and controlled standby/disconnection coverage remain unverified. OM-1 Mark II has not been physically tested. A matching advertisement identifies a candidate, not an authenticated camera. The user must select it and provide the passcode from that camera.
 
 ## Official operating constraints
 
@@ -79,4 +79,4 @@ In the inspected APK, `N2/a.java` maps advertisement bit `08` to `M2.a.l()`, exp
 
 A separate public source, [db_link CameraBleManager](https://github.com/azqeurio/db_link/blob/33b1f7e3d311967ed17a675a8561748977623fe3/app/src/main/java/dev/dblink/core/bluetooth/CameraBleManager.kt), uses the same UUIDs, authentication, outgoing checksum, ACK and Wi-Fi-start command. Its [MIT license](https://github.com/azqeurio/db_link/blob/33b1f7e3d311967ed17a675a8561748977623fe3/LICENSE) covers that project. Loupe implements protocol facts independently rather than copying its implementation. db_link unconditionally queues power-on then Wi-Fi-start for reconnection; Loupe follows the more specific APK flag condition. Its [compatibility table](https://github.com/azqeurio/db_link/blob/33b1f7e3d311967ed17a675a8561748977623fe3/README.md) marks E-P7 and OM-1 Wi-Fi/import/source switching Tested, and OM-1 Mark II Expected. This does not separately establish power-off BLE wake testing, and it does not establish Loupe compatibility on either target model.
 
-Host tests cover the Wi-Fi-start vector/status, Bluetooth-mode branch including combined `08|20`, ordinary zero/ASIC-on flags, location-only handling and rejected authentication producing no next command. Android callback ordering and physical Wi-Fi activation remain device-test requirements.
+Host tests cover the Wi-Fi-start vector/status, Bluetooth-mode branch including combined `08|20`, ordinary zero/ASIC-on flags, location-only handling and rejected authentication producing no next command. Controlled target-specific callback, cancellation and standby-transition coverage remain device-test requirements.

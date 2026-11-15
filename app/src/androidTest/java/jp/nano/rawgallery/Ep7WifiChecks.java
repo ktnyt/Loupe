@@ -31,6 +31,8 @@ final class Ep7WifiChecks {
         require(root, "共通履歴");
       });
       capture(t, camera, "camera-import");
+      TagDetailChecks.ui(t,()->findScroll(camera.getWindow().getDecorView()).fullScroll(View.FOCUS_DOWN));
+      capture(t,camera,"camera-import-bottom");
       wifi = (Ep7WifiActivity) t.startActivitySync(new Intent(t.getTargetContext(), Ep7WifiActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       t.waitForIdleSync();
       final Ep7WifiActivity screen = wifi;
@@ -53,6 +55,27 @@ final class Ep7WifiChecks {
         check(xy[1] >= safe.top && xy[1] + scroll.getHeight() <= safe.bottom, "scroll stays inside safe bounds");
       });
       capture(t, wifi, "wifi-import");
+      TagDetailChecks.ui(t,()->findScroll(screen.getWindow().getDecorView()).fullScroll(View.FOCUS_DOWN));
+      capture(t,wifi,"wifi-import-bottom");
+      if(screen.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)!=android.content.pm.PackageManager.PERMISSION_GRANTED
+          && !((android.widget.CompoundButton)require(screen.getWindow().getDecorView(),"内容も確認する")).isChecked()
+          && !screen.getSharedPreferences("camera_import",0).getBoolean("wifi_identity_asked",false)) {
+        TagDetailChecks.ui(t,()->{
+          try{var method=Ep7WifiActivity.class.getDeclaredMethod("startWifi");method.setAccessible(true);method.invoke(screen);}
+          catch(Exception error){throw new AssertionError(error);}
+        });
+        t.waitForIdleSync();
+        View[] dialog={null};
+        TagDetailChecks.ui(t,()->{
+          for(View candidate:android.view.inspector.WindowInspector.getGlobalWindowViews())if(find(candidate,"カメラのWi-Fiを識別")!=null&&candidate.hasWindowFocus())dialog[0]=candidate;
+          check(dialog[0]!=null,"identity rationale is a focused dialog");
+          require(dialog[0],"許可して開始");require(dialog[0],"内容を確認して開始");
+        });
+        capture(t,wifi,"wifi-identity-rationale",dialog[0]);
+        check(t.getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK),"dismiss rationale without starting import");
+        t.waitForIdleSync();
+        check(!screen.getSharedPreferences("camera_import",0).getBoolean("wifi_identity_asked",false),"cancel rationale keeps preferences unchanged");
+      }
       ble = (CameraBleActivity) t.startActivitySync(new Intent(t.getTargetContext(), CameraBleActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       t.waitForIdleSync();
       final CameraBleActivity bleScreen = ble;
@@ -81,8 +104,8 @@ final class Ep7WifiChecks {
     if (root instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) root).getChildCount(); i++) { ScrollView v = findScroll(((ViewGroup) root).getChildAt(i)); if (v != null) return v; }
     return null;
   }
-  private static void capture(Instrumentation t, Activity activity, String name) throws Exception {
-    View decor=activity.getWindow().getDecorView();
+  private static void capture(Instrumentation t,Activity activity,String name)throws Exception {capture(t,activity,name,activity.getWindow().getDecorView());}
+  private static void capture(Instrumentation t, Activity activity, String name,View decor) throws Exception {
     long deadline=android.os.SystemClock.uptimeMillis()+5000; boolean[] focused={false};
     do { TagDetailChecks.ui(t,()->focused[0]=decor.hasWindowFocus()); if(focused[0])break; Thread.sleep(50); } while(android.os.SystemClock.uptimeMillis()<deadline);
     check(focused[0],"target window focus before capture");

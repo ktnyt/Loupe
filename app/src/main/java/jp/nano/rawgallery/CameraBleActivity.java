@@ -41,7 +41,7 @@ public final class CameraBleActivity extends AppCompatActivity {
         toolbar.addView(LibraryUi.icon(this, R.drawable.ic_back, "戻る", this::finish), 0); frame.addView(toolbar);
         ScrollView scroll = new ScrollView(this); LinearLayout body = new LinearLayout(this); body.setOrientation(LinearLayout.VERTICAL);
         body.setPadding(dp(16), dp(8), dp(16), dp(24)); scroll.addView(body); frame.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        text(body, "E-P7 / OM-1 Mark II向けの実験機能です。実機での動作は未確認です。カメラを選び、パスコードを入力してください。");
+        text(body, "転送用Wi-Fiを起動する実験機能です。OM-1 Mark IIは実機未確認です。カメラを選び、パスコードを入力してください。");
         button(body, "カメラを探す", this::requestScan);
         devices = new LinearLayout(this); devices.setOrientation(LinearLayout.VERTICAL); body.addView(devices);
         passcode = new EditText(this); passcode.setHint("カメラのパスコード"); passcode.setContentDescription("カメラのパスコード");

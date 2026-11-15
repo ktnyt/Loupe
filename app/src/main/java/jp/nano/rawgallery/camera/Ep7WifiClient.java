@@ -7,7 +7,7 @@ import java.security.*;
 import java.util.*;
 import java.util.function.BooleanSupplier;
 
-/** Read-only OPC experiment. E-P7 compatibility remains subject to physical-camera validation. */
+/** Read-only E-P7 OPC original-photo client with explicit per-Network connections. */
 public final class Ep7WifiClient {
     public static final String HOST = "192.168.0.10";
     public static final long MAX_FILE_BYTES = 512L * 1024 * 1024;
