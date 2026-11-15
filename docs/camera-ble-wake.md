@@ -63,6 +63,8 @@ Manufacturer advertisement data is eight bytes including company ID `04D0` or `0
 
 Connection has a 20-second timeout; discovery and each descriptor write have a 10-second timeout. Authentication, including its response ACK, has a 10-second timeout. Wake, including its ACK, has a 20-second timeout. Cancellation and disconnection terminate the session without an automatic retry.
 
+The helper retains one local result in `camera_ble_diagnostics`: closed-enum outcome/reason/stage/operation, subscription index, numeric GATT and camera status, notification role and byte count, attempted-wake flag and monotonic elapsed milliseconds. It replaces the previous record. It never records credentials, frames, device identifiers or exception messages. Discovery callback timing is also logged, including callbacks arriving after termination; this distinguishes a late callback from a callback accepted by the session.
+
 The ASIC-off transition is unresolved: the official app delays before connecting and may rely on rescanning/reconnecting before discovery. This helper makes one bounded connection/discovery attempt; it does not implement guessed hardware-wake writes or automatic retries. Failure asks for a fresh explicit attempt or manual camera activation.
 
 ## Validation

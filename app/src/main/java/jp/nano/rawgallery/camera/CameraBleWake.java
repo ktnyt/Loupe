@@ -20,6 +20,12 @@ public final class CameraBleWake {
         PROTOCOL_ACCEPTED, LOCATION_MODE_UNVERIFIED, AUTH_REJECTED, PROTOCOL_ERROR, TIMEOUT, DISCONNECTED, CANCELLED,
         PERMISSION_DENIED, BLUETOOTH_UNAVAILABLE, UNSUPPORTED_CAMERA, INVALID_INPUT
     }
+    private enum Reason {
+        STATE, DEADLINE, CONNECTION, DISCOVERY_START, DISCOVERY_CALLBACK, DESCRIPTOR_CALLBACK,
+        WRITE_CALLBACK, NOTIFICATION_BOUNDS, RECEIPT_FORMAT, RESPONSE_ORDER, RESPONSE_FORMAT,
+        CAMERA_REJECTED, WRITE_START, ACK_WRITE_START, SUBSCRIPTION_START
+    }
+    private enum NotificationRole { NONE, COMMAND, RESPONSE, EVENT, OTHER }
     public static final class Result {
         public final Outcome outcome;
         public final int cameraStatus;
@@ -136,22 +142,27 @@ public final class CameraBleWake {
         final UUID[] subscriptions = {CameraBleProtocol.COMMAND, CameraBleProtocol.RESPONSE, CameraBleProtocol.EVENT};
         int subscription, sequence = 1;
         boolean done, wakeSent;
+        final long started = SystemClock.elapsedRealtime();
+        int gattStatus = -1;
+        NotificationRole notificationRole = NotificationRole.NONE;
+        int notificationBytes = -1;
         int advertisementFlags;
         Stage stage;
         CameraBleProtocol.Operation operation;
         CameraBleProtocol.Response parsed;
         byte[] pendingResponse, sensitiveFrame;
-        final Runnable timeout = () -> finish(Outcome.TIMEOUT, -1);
+        final Runnable timeout = () -> finish(Outcome.TIMEOUT, -1, Reason.DEADLINE);
         final BluetoothGattCallback callback = new BluetoothGattCallback() {
             @Override public void onConnectionStateChange(BluetoothGatt source, int status, int state) {
                 dispatch(() -> {
                     if (!current(source)) return;
+                    gattStatus = status;
                     if (status != BluetoothGatt.GATT_SUCCESS || state == BluetoothProfile.STATE_DISCONNECTED) {
-                        finish(Outcome.DISCONNECTED, -1); return;
+                        finish(Outcome.DISCONNECTED, -1, Reason.CONNECTION); return;
                     }
                     if (state == BluetoothProfile.STATE_CONNECTED && stage == Stage.CONNECT) {
                         stage = Stage.DISCOVER; arm(10000);
-                        try { if (!source.discoverServices()) finish(Outcome.PROTOCOL_ERROR, -1); }
+                        try { if (!source.discoverServices()) finish(Outcome.PROTOCOL_ERROR, -1, Reason.DISCOVERY_START); }
                         catch (SecurityException revoked) { finish(Outcome.PERMISSION_DENIED, -1); }
                         catch (RuntimeException error) { finish(Outcome.PROTOCOL_ERROR, -1); }
                     }
@@ -159,8 +170,12 @@ public final class CameraBleWake {
             }
             @Override public void onServicesDiscovered(BluetoothGatt source, int status) {
                 dispatch(() -> {
-                    if (!current(source) || stage != Stage.DISCOVER) return;
-                    if (status != BluetoothGatt.GATT_SUCCESS) { finish(Outcome.PROTOCOL_ERROR, -1); return; }
+                    boolean accepted = current(source) && stage == Stage.DISCOVER;
+                    android.util.Log.i("LoupeCameraBle", "discovery_callback accepted=" + accepted
+                            + " gattStatus=" + status + " elapsedMs=" + (SystemClock.elapsedRealtime() - started));
+                    if (!accepted) return;
+                    gattStatus = status;
+                    if (status != BluetoothGatt.GATT_SUCCESS) { finish(Outcome.PROTOCOL_ERROR, -1, Reason.DISCOVERY_CALLBACK); return; }
                     BluetoothGattService service = source.getService(CameraBleProtocol.SERVICE);
                     if (service == null) { finish(Outcome.UNSUPPORTED_CAMERA, -1); return; }
                     command = service.getCharacteristic(CameraBleProtocol.COMMAND);
@@ -172,9 +187,10 @@ public final class CameraBleWake {
             @Override public void onDescriptorWrite(BluetoothGatt source, BluetoothGattDescriptor descriptor, int status) {
                 dispatch(() -> {
                     if (!current(source) || stage != Stage.SUBSCRIBE) return;
+                    gattStatus = status;
                     if (!CameraBleProtocol.CCCD.equals(descriptor.getUuid())
                             || !subscriptions[subscription].equals(descriptor.getCharacteristic().getUuid())
-                            || status != BluetoothGatt.GATT_SUCCESS) { finish(Outcome.PROTOCOL_ERROR, -1); return; }
+                            || status != BluetoothGatt.GATT_SUCCESS) { finish(Outcome.PROTOCOL_ERROR, -1, Reason.DESCRIPTOR_CALLBACK); return; }
                     if (++subscription < subscriptions.length) subscribe();
                     else send(CameraBleProtocol.Operation.AUTHENTICATE);
                 });
@@ -182,10 +198,11 @@ public final class CameraBleWake {
             @Override public void onCharacteristicWrite(BluetoothGatt source, BluetoothGattCharacteristic characteristic, int status) {
                 dispatch(() -> {
                     if (!current(source)) return;
+                    gattStatus = status;
                     UUID expected = stage == Stage.COMMAND_WRITE ? CameraBleProtocol.COMMAND
                             : stage == Stage.ACK_WRITE ? CameraBleProtocol.RESPONSE : null;
                     if (expected == null || !expected.equals(characteristic.getUuid()) || status != BluetoothGatt.GATT_SUCCESS) {
-                        finish(Outcome.PROTOCOL_ERROR, -1); return;
+                        finish(Outcome.PROTOCOL_ERROR, -1, Reason.WRITE_CALLBACK); return;
                     }
                     if (stage == Stage.COMMAND_WRITE) {
                         eraseFrame(); stage = Stage.RESPONSE;
@@ -243,10 +260,10 @@ public final class CameraBleWake {
             if (done || cancelled.get()) return;
             try {
                 if (!gatt.setCharacteristicNotification(characteristic, true)) {
-                    finish(Outcome.PROTOCOL_ERROR, -1); return;
+                    finish(Outcome.PROTOCOL_ERROR, -1, Reason.SUBSCRIPTION_START); return;
                 }
                 descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
-                if (!gatt.writeDescriptor(descriptor)) finish(Outcome.PROTOCOL_ERROR, -1);
+                if (!gatt.writeDescriptor(descriptor)) finish(Outcome.PROTOCOL_ERROR, -1, Reason.SUBSCRIPTION_START);
             } catch (SecurityException revoked) { finish(Outcome.PERMISSION_DENIED, -1); }
             catch (RuntimeException error) { finish(Outcome.PROTOCOL_ERROR, -1); }
         }
@@ -264,43 +281,55 @@ public final class CameraBleWake {
             command.setValue(sensitiveFrame);
             if (done || cancelled.get()) return;
             if (next != CameraBleProtocol.Operation.AUTHENTICATE) wakeSent = true;
-            try { if (!gatt.writeCharacteristic(command)) finish(Outcome.PROTOCOL_ERROR, -1); }
+            try { if (!gatt.writeCharacteristic(command)) finish(Outcome.PROTOCOL_ERROR, -1, Reason.WRITE_START); }
             catch (SecurityException revoked) { finish(Outcome.PERMISSION_DENIED, -1); }
             catch (RuntimeException error) { finish(Outcome.PROTOCOL_ERROR, -1); }
         }
         void notifyValue(BluetoothGatt source, UUID uuid, byte[] value) {
             if (value == null || value.length > CameraBleProtocol.ATT_BYTES) {
-                dispatch(() -> { if (current(source)) finish(Outcome.PROTOCOL_ERROR, -1); }); return;
+                int length = value == null ? -1 : value.length;
+                dispatch(() -> { if (current(source)) {
+                    noteNotification(uuid, length);
+                    finish(Outcome.PROTOCOL_ERROR, -1, Reason.NOTIFICATION_BOUNDS);
+                } }); return;
             }
             byte[] copy = value.clone();
             dispatch(() -> {
-                if (!current(source) || CameraBleProtocol.EVENT.equals(uuid)) return;
+                if (!current(source)) return;
+                noteNotification(uuid, copy.length);
+                if (CameraBleProtocol.EVENT.equals(uuid)) return;
                 if (CameraBleProtocol.COMMAND.equals(uuid)) {
-                    if (operation == null || !CameraBleProtocol.receipt(copy)) finish(Outcome.PROTOCOL_ERROR, -1);
+                    if (operation == null || !CameraBleProtocol.receipt(copy)) finish(Outcome.PROTOCOL_ERROR, -1, Reason.RECEIPT_FORMAT);
                     return;
                 }
-                if (!CameraBleProtocol.RESPONSE.equals(uuid) || operation == null) { finish(Outcome.PROTOCOL_ERROR, -1); return; }
+                if (!CameraBleProtocol.RESPONSE.equals(uuid) || operation == null) { finish(Outcome.PROTOCOL_ERROR, -1, Reason.RESPONSE_ORDER); return; }
                 if (stage == Stage.COMMAND_WRITE) {
-                    if (pendingResponse != null && !Arrays.equals(pendingResponse, copy)) finish(Outcome.PROTOCOL_ERROR, -1);
+                    if (pendingResponse != null && !Arrays.equals(pendingResponse, copy)) finish(Outcome.PROTOCOL_ERROR, -1, Reason.RESPONSE_ORDER);
                     else pendingResponse = copy;
                 } else if (stage == Stage.RESPONSE) acceptResponse(copy);
-                else if (stage != Stage.ACK_WRITE || !Arrays.equals(pendingResponse, copy)) finish(Outcome.PROTOCOL_ERROR, -1);
+                else if (stage != Stage.ACK_WRITE || !Arrays.equals(pendingResponse, copy)) finish(Outcome.PROTOCOL_ERROR, -1, Reason.RESPONSE_ORDER);
             });
+        }
+        void noteNotification(UUID uuid, int bytes) {
+            notificationRole = CameraBleProtocol.COMMAND.equals(uuid) ? NotificationRole.COMMAND
+                    : CameraBleProtocol.RESPONSE.equals(uuid) ? NotificationRole.RESPONSE
+                    : CameraBleProtocol.EVENT.equals(uuid) ? NotificationRole.EVENT : NotificationRole.OTHER;
+            notificationBytes = bytes;
         }
         void acceptResponse(byte[] frame) {
             try { parsed = CameraBleProtocol.response(frame, operation); }
-            catch (IllegalArgumentException error) { finish(Outcome.PROTOCOL_ERROR, -1); return; }
+            catch (IllegalArgumentException error) { finish(Outcome.PROTOCOL_ERROR, -1, Reason.RESPONSE_FORMAT); return; }
             pendingResponse = frame; stage = Stage.ACK_WRITE;
             response.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
             response.setValue(parsed.acknowledgement());
             if (done || cancelled.get()) return;
-            try { if (!gatt.writeCharacteristic(response)) finish(Outcome.PROTOCOL_ERROR, -1); }
+            try { if (!gatt.writeCharacteristic(response)) finish(Outcome.PROTOCOL_ERROR, -1, Reason.ACK_WRITE_START); }
             catch (SecurityException revoked) { finish(Outcome.PERMISSION_DENIED, -1); }
             catch (RuntimeException error) { finish(Outcome.PROTOCOL_ERROR, -1); }
         }
         void completeOperation() {
             if (!parsed.accepted(operation)) {
-                finish(operation == CameraBleProtocol.Operation.AUTHENTICATE ? Outcome.AUTH_REJECTED : Outcome.PROTOCOL_ERROR, parsed.status);
+                finish(operation == CameraBleProtocol.Operation.AUTHENTICATE ? Outcome.AUTH_REJECTED : Outcome.PROTOCOL_ERROR, parsed.status, Reason.CAMERA_REJECTED);
             } else if (operation == CameraBleProtocol.Operation.AUTHENTICATE) {
                 CameraBleProtocol.Operation next = CameraBleProtocol.afterAuthentication(advertisementFlags, parsed);
                 if (next == null) finish(Outcome.LOCATION_MODE_UNVERIFIED, parsed.status);
@@ -313,6 +342,9 @@ public final class CameraBleWake {
             if (command != null) command.setValue(new byte[0]);
         }
         void finish(Outcome outcome, int status) {
+            finish(outcome, status, Reason.STATE);
+        }
+        void finish(Outcome outcome, int status, Reason reason) {
             if (done) return; done = true; main.removeCallbacks(timeout); erasePasscode(); eraseFrame(); pendingResponse = null;
             if (gatt != null) {
                 BluetoothGatt closing = gatt; gatt = null;
@@ -324,6 +356,16 @@ public final class CameraBleWake {
                 catch (RuntimeException ignored) { }
             }
             command = null; response = null;
+            // One bounded, local result. Never include names, addresses, frames, inputs or exception text.
+            boolean saved = context.getSharedPreferences("camera_ble_diagnostics", Context.MODE_PRIVATE).edit().clear()
+                    .putString("outcome", outcome.name()).putString("reason", reason.name())
+                    .putString("stage", stage == null ? "NONE" : stage.name())
+                    .putString("operation", operation == null ? "NONE" : operation.name())
+                    .putInt("subscription", subscription).putInt("gatt_status", gattStatus)
+                    .putString("notification_role", notificationRole.name()).putInt("notification_bytes", notificationBytes)
+                    .putInt("camera_status", status).putBoolean("wake_sent", wakeSent)
+                    .putLong("elapsed_ms", SystemClock.elapsedRealtime() - started).commit();
+            android.util.Log.i("LoupeCameraBle", "diagnostic_saved=" + saved);
             observer.onFinished(new Result(outcome, status, wakeSent));
         }
         @Override public void close() { cancelled.set(true); dispatch(() -> finish(Outcome.CANCELLED, -1)); }
