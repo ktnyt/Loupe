@@ -39,3 +39,10 @@
 既存の取り込み画面にWi-Fi取り込みを統合する。許可、接続待ち、一覧/候補判定、転送/公開、完了、取消、失敗・再試行を区別する。Material 3標準部品、48dp以上、縦スクロール、OS安全領域、文字倍率と読み上げを保持する。自動開始は初回設定後の明示選択で有効化する。SD成功時にカードをカメラへ戻す案内を出し、実際に戻したことを検知したとは表示しない。
 
 原本保全、同名別内容、別名同内容、JPEG/RAW、旧履歴/EXIF補正、経路間の受領記録、公開各境界の失敗・再起動回復を検査する。UI変更はAndroid captureと独立UI評価、コードはCold/Security Reviewで確認する。物理Wi-Fi/SD確認と合成検査を区別する。
+
+### Camera connection entry
+
+The Wi-Fi screen offers Android's Wi-Fi panel so saved camera credentials stay in the system.
+A connect-and-import request waits for the panel to close and a Wi-Fi network to become available,
+then validates the fixed camera endpoint through its VER_100 list before importing.
+No saved Wi-Fi password is extracted or logged, and changing networks does not grant a stable camera identity.

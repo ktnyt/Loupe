@@ -17,7 +17,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /** Explicit experimental transfer wake. No pairing reset, credential persistence, or Wi-Fi readiness claim. */
 public final class CameraBleWake {
     public enum Outcome {
-        PROTOCOL_ACCEPTED, AUTH_REJECTED, PROTOCOL_ERROR, TIMEOUT, DISCONNECTED, CANCELLED,
+        PROTOCOL_ACCEPTED, LOCATION_MODE_UNVERIFIED, AUTH_REJECTED, PROTOCOL_ERROR, TIMEOUT, DISCONNECTED, CANCELLED,
         PERMISSION_DENIED, BLUETOOTH_UNAVAILABLE, UNSUPPORTED_CAMERA, INVALID_INPUT
     }
     public static final class Result {
@@ -135,7 +135,8 @@ public final class CameraBleWake {
         BluetoothGattCharacteristic command, response;
         final UUID[] subscriptions = {CameraBleProtocol.COMMAND, CameraBleProtocol.RESPONSE, CameraBleProtocol.EVENT};
         int subscription, sequence = 1;
-        boolean done, wakeSent, requestWake;
+        boolean done, wakeSent;
+        int advertisementFlags;
         Stage stage;
         CameraBleProtocol.Operation operation;
         CameraBleProtocol.Response parsed;
@@ -220,7 +221,7 @@ public final class CameraBleWake {
             if (device == null || selected == null || SystemClock.elapsedRealtime() - selected.time > 60000) {
                 finish(Outcome.UNSUPPORTED_CAMERA, -1); return;
             }
-            requestWake = CameraBleProtocol.requiresWakeCommand(selected.flags);
+            advertisementFlags = selected.flags;
             try {
                 BluetoothAdapter adapter = adapter();
                 if (adapter == null || !adapter.isEnabled()) { finish(Outcome.BLUETOOTH_UNAVAILABLE, -1); return; }
@@ -253,14 +254,16 @@ public final class CameraBleWake {
             operation = next; parsed = null; pendingResponse = null;
             try {
                 sensitiveFrame = next == CameraBleProtocol.Operation.AUTHENTICATE
-                        ? CameraBleProtocol.authenticate(sequence++, passcode) : CameraBleProtocol.transferWake(sequence++);
+                        ? CameraBleProtocol.authenticate(sequence++, passcode)
+                        : next == CameraBleProtocol.Operation.WIFI_START ? CameraBleProtocol.wifiStart(sequence++)
+                        : CameraBleProtocol.transferWake(sequence++);
             } catch (IllegalArgumentException error) { finish(Outcome.INVALID_INPUT, -1); return; }
             erasePasscode();
-            stage = Stage.COMMAND_WRITE; arm(next == CameraBleProtocol.Operation.TRANSFER_WAKE ? 20000 : 10000);
+            stage = Stage.COMMAND_WRITE; arm(next == CameraBleProtocol.Operation.AUTHENTICATE ? 10000 : 20000);
             command.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
             command.setValue(sensitiveFrame);
-            if (next == CameraBleProtocol.Operation.TRANSFER_WAKE) wakeSent = true;
             if (done || cancelled.get()) return;
+            if (next != CameraBleProtocol.Operation.AUTHENTICATE) wakeSent = true;
             try { if (!gatt.writeCharacteristic(command)) finish(Outcome.PROTOCOL_ERROR, -1); }
             catch (SecurityException revoked) { finish(Outcome.PERMISSION_DENIED, -1); }
             catch (RuntimeException error) { finish(Outcome.PROTOCOL_ERROR, -1); }
@@ -298,8 +301,10 @@ public final class CameraBleWake {
         void completeOperation() {
             if (!parsed.accepted(operation)) {
                 finish(operation == CameraBleProtocol.Operation.AUTHENTICATE ? Outcome.AUTH_REJECTED : Outcome.PROTOCOL_ERROR, parsed.status);
-            } else if (operation == CameraBleProtocol.Operation.AUTHENTICATE && requestWake) {
-                send(CameraBleProtocol.Operation.TRANSFER_WAKE);
+            } else if (operation == CameraBleProtocol.Operation.AUTHENTICATE) {
+                CameraBleProtocol.Operation next = CameraBleProtocol.afterAuthentication(advertisementFlags, parsed);
+                if (next == null) finish(Outcome.LOCATION_MODE_UNVERIFIED, parsed.status);
+                else send(next);
             } else finish(Outcome.PROTOCOL_ACCEPTED, parsed.status);
         }
         void erasePasscode() { if (passcode != null) { Arrays.fill(passcode, '\0'); passcode = null; } }

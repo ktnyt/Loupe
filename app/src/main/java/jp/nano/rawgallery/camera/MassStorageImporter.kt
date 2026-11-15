@@ -94,7 +94,7 @@ object MassStorageImporter {
                         }
                     } else {
                         val source = CameraImportFile(
-                            "sd:" + java.lang.Long.toHexString(exfat.volumeSerial).padStart(8, '0').uppercase(),
+                            "sd-usb:" + exfat.volumeId,
                             node.relativePath, node.length, (node.modifiedEpochSec * 1000).toString(), node.modifiedEpochSec)
                         val result = photos.importPhoto(source, { out -> exfat.copyTo(node, out) },
                             camera.folder, exfat.volumeSerialReliable, true, { isCancelled() })
@@ -118,6 +118,10 @@ object MassStorageImporter {
                 } catch (e: Exception) {
                     ImportLog.w(TAG, "import failed: ${node.name}", e)
                     failed++
+                    if (!MediaTypes.isVideo(node.name)) {
+                        // Do not publish later photos after a destination/journal verification failure.
+                        return MtpImporter.Result(imported, skipped, failed, elapsed(start), true, error = true)
+                    }
                     consecutiveFailures++
                     // 1 件も成功しないまま失敗が続くのは接続自体の不調。1 件ごとの再試行は
                     // 秒単位かかるので全件なめずに見切り、呼び出し側の再接続やり直しに任せる

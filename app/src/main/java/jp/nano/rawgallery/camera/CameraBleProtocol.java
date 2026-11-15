@@ -17,7 +17,7 @@ public final class CameraBleProtocol {
     public static final UUID CCCD = UUID.fromString("00002902-0000-1000-8000-00805F9B34FB");
     public static final int ATT_BYTES = 20;
     public enum Operation {
-        AUTHENTICATE(0x0c, 0x02), TRANSFER_WAKE(0x0f, 0x01);
+        AUTHENTICATE(0x0c, 0x02), TRANSFER_WAKE(0x0f, 0x01), WIFI_START(0x1d, 0x01);
         final int family, command;
         Operation(int family, int command) { this.family = family; this.command = command; }
     }
@@ -53,6 +53,15 @@ public final class CameraBleProtocol {
     }
     public static byte[] transferWake(int sequence) {
         return command(Operation.TRANSFER_WAKE, sequence, new byte[]{2});
+    }
+    public static byte[] wifiStart(int sequence) {
+        return command(Operation.WIFI_START, sequence, new byte[]{2});
+    }
+    /** Null means no verified post-auth command; rejection never authorizes a write. */
+    public static Operation afterAuthentication(int flags, Response authentication) {
+        if (authentication == null || !authentication.accepted(Operation.AUTHENTICATE)) return null;
+        if ((flags & 8) != 0) return Operation.WIFI_START;
+        return (flags & 32) == 0 ? Operation.TRANSFER_WAKE : null;
     }
     private static byte[] command(Operation operation, int sequence, byte[] payload) {
         if (sequence < 0 || sequence > 255) throw new IllegalArgumentException("Invalid sequence");

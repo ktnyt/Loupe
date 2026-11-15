@@ -103,6 +103,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         scroll.addView(root);
         frame.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         setContentView(frame);
+        frame.post(() -> { var bars=getWindow().getInsetsController(); if(bars!=null)bars.setSystemBarsAppearance(0, android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS); });
         LinearLayout attached = card(root, "カメラ");
         TextView cameraHeading = (TextView) attached.getChildAt(0);
         cameraHeading.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_camera_usb, 0, 0, 0);

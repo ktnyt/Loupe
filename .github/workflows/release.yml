@@ -38,6 +38,7 @@ jobs:
           sh tests/preparation-storage.sh
           sh tests/camera-import-copy.sh
           sh tests/camera-ble.sh
+          sh tests/camera-connection.sh
           sh tests/ep7-wifi.sh
       - name: Android build and lint
         run: ./gradlew :app:assembleDebug :app:lintDebug --console=plain

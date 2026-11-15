@@ -19,6 +19,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
@@ -42,13 +43,16 @@ final class CameraImportLedgerChecks {
         Set<String> databaseNames = new HashSet<>();
         String mainDb = "camera-ledger-check-" + runId + ".db";
         databaseNames.add(mainDb);
+        String destinationDb = "camera-ledger-destination-check-" + runId + ".db";
+        databaseNames.add(destinationDb);
         try {
             crossRouteAndAssociation(context, runId, mainDb, ownedFolders);
+            savedDestinationRegressions(context, runId, destinationDb, ownedFolders);
             for (CameraPhotoPublisher.Boundary boundary : CameraPhotoPublisher.Boundary.values()) {
                 recoverBoundary(context, runId, boundary, ownedFolders, databaseNames);
             }
             return "PASS camera ledger: cross-route receipts, strict content identity, JPEG/RAW association, " +
-                    "and recovery at every publication boundary";
+                    "missing/corrupt saved-copy recovery, and recovery at every publication boundary";
         } finally {
             Exception cleanupFailure = null;
             try {
@@ -64,6 +68,100 @@ final class CameraImportLedgerChecks {
                 }
             }
             if (cleanupFailure != null) throw cleanupFailure;
+        }
+    }
+
+    private static void savedDestinationRegressions(
+            Context context, String runId, String databaseName, Set<String> ownedFolders) throws Exception {
+        CameraImportLedger ledger = new CameraImportLedger(context, databaseName);
+        try {
+            CameraPhotoImporter importer = new CameraPhotoImporter(context, ledger);
+
+            String missingFolderName = "LoupeSynthetic-" + runId + "-missing";
+            String missingFolder = CameraPhotoPublisher.folder(missingFolderName, false);
+            ownedFolders.add(missingFolder);
+            byte[] missingFixture = jpegWithComment(0x551L, "MISSING1");
+            CameraImportFile missingSource = source("wifi:missing-fixture",
+                    "DCIM/100CAM/MISSING.JPG", missingFixture, "missing-stamp", 1794738100L);
+            CameraPhotoImporter.Result initial = importPhoto(
+                    importer, missingSource, missingFixture, missingFolderName, false, true);
+            require(initial.imported && ledger.contentCount() == 1 && ledger.receiptCount() == 1,
+                    "initial missing-destination fixture is published and recorded");
+            CameraImportLedger.Content beforeDelete = ledger.known(missingSource);
+            require(beforeDelete != null && beforeDelete.uri.equals(initial.uri.toString()),
+                    "missing-destination fixture has a verified source receipt");
+
+            // Delete only the exact, test-owned URI after rechecking its owner and folder.
+            deleteAfterOwnershipCheck(context, initial.uri, missingFolder);
+            require(countOwnedVisible(context, missingFolder) == 0,
+                    "test-owned destination is absent before retry");
+            final int[] sourceReads = {0};
+            CameraPhotoImporter.Result restored = importer.importPhoto(missingSource, out -> {
+                sourceReads[0]++;
+                out.write(missingFixture);
+            }, missingFolderName, true, false, () -> false);
+            require(sourceReads[0] == 1 && restored.imported && !restored.uri.equals(initial.uri),
+                    "missing fast-path destination is forgotten and republished from source bytes");
+            require(ledger.pending().isEmpty() && ledger.contentCount() == 1 && ledger.receiptCount() == 1,
+                    "missing-destination retry leaves one content, one receipt, and no pending row");
+            require(countOwnedVisible(context, missingFolder) == 1,
+                    "missing-destination retry creates exactly one visible test row");
+            CameraImportLedger.Content restoredContent = ledger.known(missingSource);
+            require(restoredContent != null && restoredContent.uri.equals(restored.uri.toString()) &&
+                            restoredContent.sourceSha.equals(beforeDelete.sourceSha),
+                    "restored receipt points to the new URI with the same original fingerprint");
+
+            String corruptFolderName = "LoupeSynthetic-" + runId + "-corrupt";
+            String corruptFolder = CameraPhotoPublisher.folder(corruptFolderName, false);
+            ownedFolders.add(corruptFolder);
+            byte[] sourceFixture = jpegWithComment(0x552L, "SOURCE01");
+            byte[] alteredFixture = jpegWithComment(0x552L, "ALTERED1");
+            require(sourceFixture.length == alteredFixture.length &&
+                            !sha256(sourceFixture).equals(sha256(alteredFixture)),
+                    "corruption fixtures differ while retaining the same byte length");
+            CameraImportFile corruptSource = source("wifi:corrupt-fixture",
+                    "DCIM/100CAM/CORRUPT.JPG", sourceFixture, "corrupt-stamp", 1794738101L);
+            CameraPhotoImporter.Result corruptInitial = importPhoto(
+                    importer, corruptSource, sourceFixture, corruptFolderName, false, true);
+            require(corruptInitial.imported && ledger.contentCount() == 2 && ledger.receiptCount() == 2,
+                    "initial corruption fixture is separately recorded");
+            CameraImportLedger.Content contentBeforeMutation = ledger.known(corruptSource);
+            require(contentBeforeMutation != null && contentBeforeMutation.uri.equals(corruptInitial.uri.toString()),
+                    "corruption fixture is linked to its owned saved copy");
+
+            try (java.io.OutputStream output = context.getContentResolver()
+                    .openOutputStream(corruptInitial.uri, "wt")) {
+                if (output == null) throw new IOException("Could not rewrite owned synthetic media");
+                output.write(alteredFixture);
+            }
+            require(Arrays.equals(alteredFixture, readMedia(context, corruptInitial.uri)),
+                    "owned saved copy contains the same-length synthetic mutation");
+            require(countOwnedVisible(context, corruptFolder) == 1,
+                    "corruption fixture still has exactly one owned public row");
+
+            boolean corruptionRejected = false;
+            try {
+                importPhoto(importer, corruptSource, sourceFixture, corruptFolderName, false, true);
+            } catch (IOException expected) {
+                corruptionRejected = expected.getMessage() != null && expected.getMessage().contains("Saved photo changed");
+            }
+            require(corruptionRejected,
+                    "verifyAll rejects a same-length changed saved copy with IOException");
+            CameraImportLedger.Content afterRejectedRetry = ledger.known(corruptSource);
+            require(afterRejectedRetry != null &&
+                            afterRejectedRetry.sourceSha.equals(contentBeforeMutation.sourceSha) &&
+                            afterRejectedRetry.storedSha.equals(contentBeforeMutation.storedSha) &&
+                            afterRejectedRetry.uri.equals(contentBeforeMutation.uri) &&
+                            afterRejectedRetry.storedBytes == contentBeforeMutation.storedBytes &&
+                            afterRejectedRetry.captureGroup.equals(contentBeforeMutation.captureGroup),
+                    "corrupt destination rejection leaves its original receipt/content unchanged");
+            require(ledger.pending().isEmpty() && ledger.contentCount() == 2 && ledger.receiptCount() == 2 &&
+                            countOwnedVisible(context, corruptFolder) == 1,
+                    "corrupt destination rejection neither republishes nor changes row counts");
+            require(Arrays.equals(alteredFixture, readMedia(context, corruptInitial.uri)),
+                    "strict check does not overwrite the externally changed saved copy");
+        } finally {
+            ledger.close();
         }
     }
 
@@ -256,6 +354,17 @@ final class CameraImportLedgerChecks {
 
     private static String syntheticHash(String value) throws Exception {
         return sha256(value.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static byte[] readMedia(Context context, Uri uri) throws IOException {
+        try (java.io.InputStream input = context.getContentResolver().openInputStream(uri)) {
+            if (input == null) throw new IOException("Could not read owned synthetic media");
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int count;
+            while ((count = input.read(buffer)) != -1) bytes.write(buffer, 0, count);
+            return bytes.toByteArray();
+        }
     }
 
     private static long countOwnedVisible(Context context, String relativeFolder) throws IOException {

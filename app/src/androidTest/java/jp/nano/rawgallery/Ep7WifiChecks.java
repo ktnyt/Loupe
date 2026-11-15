@@ -34,12 +34,16 @@ final class Ep7WifiChecks {
       final Ep7WifiActivity screen = wifi;
       TagDetailChecks.ui(t, () -> {
         View root = screen.getWindow().getDecorView();
-        for (String label : new String[]{"Wi-Fi設定を開く", "Bluetoothでカメラの起動を試す", "写真を取り込む", "中止", "内容も確認する", "カメラのWi-Fi接続時に自動で取り込む"}) {
+        for (String label : new String[]{"カメラに接続して取り込む", "Wi-Fi設定を開く", "写真のアクセス権限を確認", "アプリの権限設定を開く", "Bluetoothでカメラの起動を試す", "写真を取り込む", "中止", "内容も確認する", "カメラのWi-Fi接続時に自動で取り込む"}) {
           TextView v = require(root, label);
           check(v.getMinimumHeight() >= GalleryUi.dp(screen, 48), label + " touch minimum");
         }
+        check(require(root, "カメラに接続して取り込む").isEnabled(), "connect entry enabled while idle");
         View status = root.findViewWithTag("ep7-status");
         check(status != null && status.getAccessibilityLiveRegion() == View.ACCESSIBILITY_LIVE_REGION_POLITE, "status live region");
+        String before = ((TextView) status).getText().toString();
+        screen.onActivityResult(407, Activity.RESULT_CANCELED, null);
+        check(before.contentEquals(((TextView) status).getText()), "unsolicited panel result does not begin connection");
         check(find(root, "選んだ1枚を試験転送") == null && find(root, "試験用コピーを削除") == null, "old experiment controls removed");
         ScrollView scroll = findScroll(root); check(scroll != null, "scrolling container");
         Rect safe = new Rect(); root.getWindowVisibleDisplayFrame(safe); int[] xy = new int[2]; scroll.getLocationOnScreen(xy);
@@ -75,8 +79,20 @@ final class Ep7WifiChecks {
     return null;
   }
   private static void capture(Instrumentation t, Activity activity, String name) throws Exception {
-    ConsistencyLayoutChecks.frame(t, activity.getWindow().getDecorView());
-    Bitmap image = t.getUiAutomation().takeScreenshot(); check(image != null, "screenshot");
+    View decor=activity.getWindow().getDecorView();
+    long deadline=android.os.SystemClock.uptimeMillis()+5000; boolean[] focused={false};
+    do { TagDetailChecks.ui(t,()->focused[0]=decor.hasWindowFocus()); if(focused[0])break; Thread.sleep(50); } while(android.os.SystemClock.uptimeMillis()<deadline);
+    check(focused[0],"target window focus before capture");
+    ConsistencyLayoutChecks.frame(t, decor);
+    TagDetailChecks.ui(t,()->check((activity.getWindow().getInsetsController().getSystemBarsAppearance() & android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS)==0,"light status ink on dark screen"));
+    Bitmap image=null;
+    for(int attempt=0;attempt<20;attempt++) {
+      Bitmap next=t.getUiAutomation().takeScreenshot(); check(next!=null,"screenshot");
+      if(image!=null&&image.sameAs(next)){image.recycle();image=next;break;}
+      if(image!=null)image.recycle();image=next;
+      if(attempt==19){image.recycle();throw new AssertionError("screen compositor did not settle");}
+      Thread.sleep(150);
+    }
     File dir = new File(activity.getCacheDir(), "consistency-checks"); dir.mkdirs();
     String config = activity.getResources().getConfiguration().screenWidthDp + "-" + activity.getResources().getConfiguration().fontScale;
     try (FileOutputStream out = new FileOutputStream(new File(dir, name + "-" + config + ".png"))) { check(image.compress(Bitmap.CompressFormat.PNG, 100, out), "capture"); } finally { image.recycle(); }

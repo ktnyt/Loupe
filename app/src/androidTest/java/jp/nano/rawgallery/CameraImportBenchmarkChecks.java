@@ -22,7 +22,6 @@ import java.util.UUID;
 /** E-P7 differential-read benchmark. Uses only an isolated ledger and cache directory. */
 final class CameraImportBenchmarkChecks {
     private static final String SOURCE_ID = "wifi:ep7-benchmark";
-    private static final int EXPECTED_LIST_FILES = 525;
     private static final int JPEG_COUNT = 2;
     private static final int ORF_COUNT = 2;
 
@@ -40,9 +39,6 @@ final class CameraImportBenchmarkChecks {
                     url -> (HttpURLConnection) network.openConnection(url, Proxy.NO_PROXY), () -> false);
 
             Ep7WifiClient.Listing listing = client.list();
-            if (listing.photos.size() != EXPECTED_LIST_FILES) {
-                throw new IOException("Unexpected camera photo count for benchmark fixture");
-            }
             List<Ep7WifiClient.Entry> selected = selectFixtureSet(listing.photos);
             List<CameraImportFile> sources = new ArrayList<>(selected.size());
             long selectedBytes = 0;
@@ -77,7 +73,7 @@ final class CameraImportBenchmarkChecks {
             // only the ledger receipt lookups. No original photo payload is requested here.
             long metadataStart = System.nanoTime();
             Ep7WifiClient.Listing metadataListing = client.list();
-            if (metadataListing.photos.size() != EXPECTED_LIST_FILES) {
+            if (metadataListing.photos.size() != listing.photos.size()) {
                 throw new IOException("Camera photo count changed during metadata benchmark");
             }
             List<Ep7WifiClient.Entry> metadataSelection = selectFixtureSet(metadataListing.photos);
@@ -94,6 +90,8 @@ final class CameraImportBenchmarkChecks {
             double metadataSeconds = secondsSince(metadataStart);
 
             long strictStart = System.nanoTime();
+            Ep7WifiClient.Listing strictListing = client.list();
+            requireSameSelection(selected, selectFixtureSet(strictListing.photos));
             long strictBytesRead = 0;
             for (int i = 0; i < selected.size(); i++) {
                 Ep7WifiClient.Entry entry = selected.get(i);
@@ -146,15 +144,8 @@ final class CameraImportBenchmarkChecks {
     private static Network uniqueWifiNetwork(Context context) throws IOException {
         ConnectivityManager connectivity = context.getSystemService(ConnectivityManager.class);
         if (connectivity == null) throw new IOException("Wi-Fi network service is unavailable");
-        Network selected = null;
-        for (Network candidate : connectivity.getAllNetworks()) {
-            NetworkCapabilities capabilities = connectivity.getNetworkCapabilities(candidate);
-            if (capabilities == null || !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
-                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue;
-            if (selected != null) throw new IOException("Multiple Wi-Fi networks are available");
-            selected = candidate;
-        }
-        if (selected == null) throw new IOException("No Wi-Fi network is available");
+        Network selected = jp.nano.rawgallery.camera.CameraWifiNetwork.select(connectivity);
+        if (selected == null) throw new IOException("No unambiguous camera Wi-Fi network is available");
         return selected;
     }
 

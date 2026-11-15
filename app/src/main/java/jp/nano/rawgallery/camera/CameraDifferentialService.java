@@ -68,16 +68,25 @@ public final class CameraDifferentialService extends Service {
             finally{if(locked)CameraImportGate.lock.unlock();running=false;if(!destroyed){if(watching())getSystemService(NotificationManager.class).notify(781,notification("カメラの接続を待っています"));else stopSelf();}}
         });
     }
+    private static final class WifiSession {
+        final Network network; final Ep7WifiClient client; final Ep7WifiClient.Listing listing;
+        WifiSession(Network network,Ep7WifiClient client,Ep7WifiClient.Listing listing){this.network=network;this.client=client;this.listing=listing;}
+    }
     private void wifi(CameraPhotoImporter importer,boolean verify)throws IOException{
-        ConnectivityManager cm=getSystemService(ConnectivityManager.class);Network selected=null;
-        for(Network n:cm.getAllNetworks()){NetworkCapabilities cap=cm.getNetworkCapabilities(n);if(cap!=null&&cap.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)&&!cap.hasTransport(NetworkCapabilities.TRANSPORT_VPN)){if(selected!=null)throw new IOException("複数のWi-Fi接続があります");selected=n;}}
-        if(selected==null)throw new IOException("Wi-Fi接続がありません");
-        final Network network=selected;
-        WifiManager wm=(WifiManager)getApplicationContext().getSystemService(WIFI_SERVICE);
-        WifiInfo info=wm==null?null:wm.getConnectionInfo();int networkId=info==null?-1:info.getNetworkId();
-        String source="wifi-session:"+network.getNetworkHandle();
-        Ep7WifiClient client=new Ep7WifiClient(url->(HttpURLConnection)network.openConnection(url,java.net.Proxy.NO_PROXY),cancelled);
-        long start=System.nanoTime();Ep7WifiClient.Listing listing=client.list();
+        ConnectivityManager cm=getSystemService(ConnectivityManager.class);
+        long start=System.nanoTime();
+        WifiSession session=CameraConnectionWait.await(15000,waitingCancelled->{
+            Network selected=CameraWifiNetwork.select(cm);
+            if(selected==null)return null;
+            final Network network=selected;
+            // The short deadline applies to discovery; a validated session keeps its bound Network for the import.
+            java.util.concurrent.atomic.AtomicBoolean connecting=new java.util.concurrent.atomic.AtomicBoolean(true);
+            Ep7WifiClient client=new Ep7WifiClient(url->(HttpURLConnection)network.openConnection(url,java.net.Proxy.NO_PROXY),()->cancelled.getAsBoolean()||(connecting.get()&&waitingCancelled.getAsBoolean()));
+            Ep7WifiClient.Listing listing=client.list();connecting.set(false);
+            return new WifiSession(network,client,listing);
+        },cancelled);
+        Ep7WifiClient client=session.client;Ep7WifiClient.Listing listing=session.listing;
+        String source="wifi-session:"+session.network.getNetworkHandle();
         ImportProgress.INSTANCE.begin("E-P7 Wi-Fi");int added=0,done=0;long bytes=0;
         for(Ep7WifiClient.Entry e:listing.photos){
             CameraPhotoPublisher.check(cancelled);
@@ -97,7 +106,7 @@ public final class CameraDifferentialService extends Service {
     private void sd(CameraPhotoImporter importer,Uri tree,boolean verify)throws IOException{
         if(!DocumentsContract.isTreeUri(tree))throw new IOException("SDフォルダを選択してください");
         String root=DocumentsContract.getTreeDocumentId(tree);String volume=root.split(":",2)[0];
-        boolean stable=volume.matches("(?i)[0-9a-f]{4}-[0-9a-f]{4}");
+        boolean stable=false; // SAF does not expose card geometry; metadata is not sufficient identity.
         String source=stable?"sd:"+volume.replace("-","").toUpperCase(Locale.ROOT):"saf:"+tree;
         List<Document> files=new ArrayList<>();int[] visited={0};
         String rootName=root.contains(":")?root.substring(root.indexOf(':')+1):"";

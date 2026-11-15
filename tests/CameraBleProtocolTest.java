@@ -17,6 +17,11 @@ public final class CameraBleProtocolTest {
         byte[] wake = CameraBleProtocol.transferWake(2);
         require(Arrays.equals(wake, new byte[]{1, 2, 4, 15, 1, 1, 2, 19, 0}), "documented wake vector");
         require(CameraBleProtocol.validCommand(wake, Operation.TRANSFER_WAKE), "wake frame validity");
+        byte[] wifi = CameraBleProtocol.wifiStart(2);
+        require(Arrays.equals(wifi, new byte[]{1,2,4,29,1,1,2,33,0}), "Wi-Fi start vector");
+        require(CameraBleProtocol.validCommand(wifi, Operation.WIFI_START), "Wi-Fi start checksum");
+        require(CameraBleProtocol.response(response(29,1,0), Operation.WIFI_START).accepted(Operation.WIFI_START), "Wi-Fi status zero");
+        require(!CameraBleProtocol.response(response(29,1,1), Operation.WIFI_START).accepted(Operation.WIFI_START), "Wi-Fi status one rejected");
         byte[] corrupt = wake.clone(); corrupt[7] ^= 1;
         require(!CameraBleProtocol.validCommand(corrupt, Operation.TRANSFER_WAKE), "checksum corruption");
         corrupt = wake.clone(); corrupt[2]++;
@@ -43,6 +48,11 @@ public final class CameraBleProtocolTest {
         Arrays.fill(auth, (byte) 0); Arrays.fill(utf8, (byte) 0); Arrays.fill(synthetic, '\0');
 
         var accepted = CameraBleProtocol.response(response(12, 2, 0), Operation.AUTHENTICATE);
+        for (int flags : new int[]{0,1}) require(CameraBleProtocol.afterAuthentication(flags, accepted) == Operation.TRANSFER_WAKE, "normal wake regression");
+        for (int flags : new int[]{8,9,40}) require(CameraBleProtocol.afterAuthentication(flags, accepted) == Operation.WIFI_START, "Bluetooth flag selects Wi-Fi start");
+        require(CameraBleProtocol.afterAuthentication(32, accepted) == null, "location-only has no verified command");
+        var denied = CameraBleProtocol.response(response(12,2,1), Operation.AUTHENTICATE);
+        for (int flags : new int[]{0,1,8,32,40}) require(CameraBleProtocol.afterAuthentication(flags, denied) == null, "auth rejection sends no command");
         require(accepted.accepted(Operation.AUTHENTICATE), "auth status zero");
         require(Arrays.equals(accepted.acknowledgement(), new byte[]{2, 9, 0, 0, 0}), "ACK uses response sequence");
         require(!CameraBleProtocol.response(response(12,2,1), Operation.AUTHENTICATE).accepted(Operation.AUTHENTICATE), "auth rejection distinct");

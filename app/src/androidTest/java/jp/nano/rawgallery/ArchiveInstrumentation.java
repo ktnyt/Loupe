@@ -21,7 +21,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private float tagFont;
   @Override public void callActivityOnCreate(android.app.Activity activity, Bundle state) {
     if(nanoBackgroundTest)NanoBananaBackgroundChecks.activityCreated(activity);
-    if(ep7WifiTest && (activity instanceof Ep7WifiActivity || activity instanceof CameraImportActivity)) {
+    if(ep7WifiTest && (activity instanceof Ep7WifiActivity || activity instanceof CameraImportActivity || activity instanceof CameraBleActivity)) {
       var config = new android.content.res.Configuration(activity.getBaseContext().getResources().getConfiguration());
       config.fontScale = tagFont; config.screenWidthDp = tagWidth;
       activity.getResources().updateConfiguration(config, activity.getResources().getDisplayMetrics());
