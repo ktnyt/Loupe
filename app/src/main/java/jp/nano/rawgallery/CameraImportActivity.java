@@ -133,6 +133,9 @@ public final class CameraImportActivity extends AppCompatActivity {
             notifyButton = button(preferences, "取り込みの通知を許可する",
                     () -> requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 402));
         }
+        LinearLayout wifiTrial = card(importSettings, "Wi-Fi転送の試験");
+        button(wifiTrial, "E-P7のWi-Fi転送を試す",
+                () -> startActivity(new Intent(this, Ep7WifiActivity.class)));
         cameras = card(importSettings, "カメラごとの設定");
         LinearLayout history = card(importSettings, "CameraSyncの記録");
         history.addView(text("取り込み済みの記録を引き継ぐと、同じファイルを再び取り込まずに済みます。CameraSyncと保存済みの写真は残ります。",

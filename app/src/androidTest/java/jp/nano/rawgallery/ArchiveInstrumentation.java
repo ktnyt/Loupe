@@ -21,6 +21,11 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private float tagFont;
   @Override public void callActivityOnCreate(android.app.Activity activity, Bundle state) {
     if(nanoBackgroundTest)NanoBananaBackgroundChecks.activityCreated(activity);
+    if(ep7WifiTest && (activity instanceof Ep7WifiActivity || activity instanceof CameraImportActivity)) {
+      var config = new android.content.res.Configuration(activity.getBaseContext().getResources().getConfiguration());
+      config.fontScale = tagFont; config.screenWidthDp = tagWidth;
+      activity.getResources().updateConfiguration(config, activity.getResources().getDisplayMetrics());
+    }
 
     if ((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || videoTest || removeLookTest) && (activity instanceof TagActivity || activity instanceof MainActivity || activity instanceof VideoActivity || removeLookTest && activity instanceof RawEditActivity) && tagWidth > 0) {
       android.content.res.Configuration config = new android.content.res.Configuration(activity.getBaseContext().getResources().getConfiguration());
@@ -31,11 +36,12 @@ public final class ArchiveInstrumentation extends Instrumentation {
     if((confidenceUiTest||tagDetailTest||removeLookTest)&&activity instanceof TagActivity)TagFixtureIsolation.install((TagActivity)activity);
     if(removeLookTest&&activity instanceof RawEditActivity&&state==null&&activity.getIntent().getBooleanExtra("removeLookLegacyFixture",false))state=LookRemovalChecks.legacyState(activity.getIntent());
     super.callActivityOnCreate(activity, state);
+    if(ep7WifiTest)activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
     if ((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || videoTest || removeLookTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
   }
   private boolean shareHistoryTest, shareHistoryScreenTest, shareHistoryHandoffTest, shareHistoryCallbackTest;
   private boolean shareHistoryRestartSeed, shareHistoryRestartVerify;
-  private boolean cameraTabsTest;
+  private boolean cameraTabsTest, ep7WifiTest;
   private boolean shareCapacityTest, shareToggleTest, galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest;
   private boolean photoEditTest;
   private boolean consistencyTest, syncControlsTest, tagDetailTest, resultTest, resultTalkBack;
@@ -137,6 +143,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
     actionLabelsTest = args != null && "action-labels".equals(args.getString("mode"));
     comparisonLabelsTest = args != null && "comparison-labels".equals(args.getString("mode"));
     albumTagsTest = args != null && "album-tags".equals(args.getString("mode"));
+    ep7WifiTest = args != null && "ep7-wifi".equals(args.getString("mode"));
+    if(ep7WifiTest){tagWidth=Integer.parseInt(args.getString("width","400"));tagFont=Float.parseFloat(args.getString("font","1.0"));}
     cameraTabsTest = args != null && "camera-tabs".equals(args.getString("mode"));
     tabsTest = args != null && "library-tabs".equals(args.getString("mode"));
     positionTest = args != null && "gallery-position".equals(args.getString("mode"));
@@ -241,6 +249,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if (comparisonLabelsTest) { results.putString("stream", ComparisonLabelChecks.run(this)); finish(-1, results); return; }
       if (albumTagsTest) { results.putString("stream", AlbumTagEntryChecks.run(this)); finish(-1, results); return; }
       if (material3Test) { results.putString("stream", Material3Checks.run(this)); finish(-1, results); return; }
+      if (ep7WifiTest) { results.putString("stream", Ep7WifiChecks.run(this)); finish(-1, results); return; }
       if (cameraTabsTest) { results.putString("stream", CameraTabsChecks.run(this)); finish(-1, results); return; }
       if (tabsTest) { results.putString("stream", LibraryTabsChecks.run(this)); finish(-1, results); return; }
       if (bulkWinnerTest) { results.putString("stream", BurstBulkWinnerChecks.run(this,tagWidth,tagFont)); finish(-1, results); return; }
