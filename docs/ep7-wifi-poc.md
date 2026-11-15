@@ -6,7 +6,7 @@ E-P7のWi-Fi転送がLoupeで実用になるか、Androidで一覧・原本の�
 
 - 機能: カメラのDCIMを走査し、JPEG・ORFを1枚ずつ試験転送する。
 - 要件: カメラ原本と既存USB取り込み履歴を保持し、転送・保存を確認できたファイルだけ成功として扱う。
-- 状態: #121の実装前契約を具体化した仮実装。E-P7固有の互換性と実速度は未検査。
+- 状態: #121の実装前契約を具体化した仮実装。E-P7実機で一覧取得、JPEG/ORFの少量転送・保存読戻し、背景移行による中止と再試行を確認済み。共通履歴と自動取り込みは後続工程。
 - 参照: [USB取り込み](camera-import-contract.md)、[Material 3 UI契約](material3-ui.md)。
 
 ## 契約
@@ -33,7 +33,9 @@ UIはAppCompatActivity、MaterialButton、LinearProgressIndicator、標準Spinne
 
 `sh tests/ep7-wifi.sh` は合成HTTPで再帰列挙、パス検証、サイズ変更・短縮応答・リダイレクト拒否、受信/保存SHA一致、中止・再試行と後始末を検査する。Android画面の合成検査は `ep7-wifi` instrumentation modeで行う。
 
-実E-P7での一覧形式、Wi-Fi接続、原寸JPEG/ORF取得可否、タイムアウト・再接続、転送速度、実際のTalkBack音声は別途確認が必要。公開OPC仕様はE-P7の実測結果を代替しない。
+2026-11-15、実E-P7と24129PN74Gで、525件の一覧、JPEG1件、同一ORFの成功2件、中止と再試行、試験コピーの削除を確認した。検査対象はソース `77864ad` の別applicationId `jp.nano.rawgallery.ep7poc`。測定値・条件・保全確認は [実機検証の記録](https://github.com/ktnyt/Loupe/issues/121#issuecomment-6894140552) を参照する。
+
+大量連写・長時間転送、電波断やカメラ切断からの再接続、実TalkBack音声、常用本体への統合導入は未確認。受信と保存のSHA一致はカメラ側のハッシュとの照合を意味しない。
 
 ## 後続工程
 
