@@ -1,9 +1,12 @@
 package jp.nano.rawgallery;
 
 import android.content.Context;
+import android.animation.ValueAnimator;
+import android.os.Build;
 import android.view.View;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat;
+import com.google.android.material.badge.BadgeDrawable;
 import com.google.android.material.bottomnavigation.BottomNavigationView;
 import com.google.android.material.navigation.NavigationBarView;
 import java.util.function.Consumer;
@@ -17,6 +20,8 @@ final class LibraryTabs extends BottomNavigationView {
   private boolean importing;
   private String cameraName;
   private int done, total;
+  private boolean waiting;
+  private ValueAnimator waitingPulse;
 
   LibraryTabs(Context context, boolean albums, boolean enabled, Consumer<Boolean> change) {
     this(context, albums, enabled, change, null, null);
@@ -80,17 +85,23 @@ final class LibraryTabs extends BottomNavigationView {
   }
 
   void setCameraState(boolean connected, String name, boolean active, int done, int total) {
+    setCameraState(connected, name, active, done, total, false);
+  }
+
+  void setCameraState(boolean connected, String name, boolean active, int done, int total, boolean waiting) {
     this.connected = connected;
     cameraName = name;
     importing = active;
     this.done = done;
     this.total = total;
+    this.waiting = active && waiting;
     if (connected || active) {
       var badge = getOrCreateBadge(IMPORT);
       if (active && total > 0) badge.setNumber(Math.max(0, done));
       else badge.clearNumber();
-      badge.setContentDescriptionNumberless(active ? "取り込み中" : "カメラ接続中");
+      badge.setContentDescriptionNumberless(this.waiting ? "カメラ接続待ち" : active ? "取り込み中" : "カメラ接続中");
     } else removeBadge(IMPORT);
+    updateWaitingPulse();
     updateCameraAccessibility();
   }
 
@@ -99,7 +110,7 @@ final class LibraryTabs extends BottomNavigationView {
     if (camera == null) return;
     String state = connected ? "カメラ接続中" : "カメラ未接続";
     if (connected && cameraName != null && !cameraName.isBlank()) state += "、" + cameraName;
-    if (importing) state += total > 0 ? "、取り込み中 " + done + " / " + total + "件" : "、取り込み中";
+    if (importing) state += waiting ? "、カメラ接続待ち" : total > 0 ? "、取り込み中 " + done + " / " + total + "件" : "、取り込み中";
     if (!isEnabled()) state += "、選択中は使えません";
     ViewCompat.setStateDescription(camera, state);
     boolean quickImport = isEnabled() && connected && !importing && startImport != null;
@@ -114,5 +125,62 @@ final class LibraryTabs extends BottomNavigationView {
         AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_LONG_CLICK,
         "原本を削除せずに取り込む", (view, arguments) -> view.performLongClick());
     camera.setLongClickable(quickImport);
+  }
+
+  private void updateWaitingPulse() {
+    boolean shouldPulse = waiting && isAttachedToWindow() && isShown()
+        && getWindowVisibility() == View.VISIBLE && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+        && ValueAnimator.areAnimatorsEnabled() && cameraBadge() != null;
+    if (shouldPulse) {
+      if (waitingPulse != null && waitingPulse.isStarted()) return;
+      BadgeDrawable badge = cameraBadge();
+      if (badge == null) return;
+      badge.setAlpha(255);
+      waitingPulse = ValueAnimator.ofInt(255, 150);
+      waitingPulse.setDuration(1200);
+      waitingPulse.setRepeatMode(ValueAnimator.REVERSE);
+      waitingPulse.setRepeatCount(ValueAnimator.INFINITE);
+      waitingPulse.addUpdateListener(animation -> setBadgeAlpha((Integer) animation.getAnimatedValue()));
+      waitingPulse.start();
+      return;
+    }
+    stopWaitingPulse();
+  }
+
+  private void setBadgeAlpha(int alpha) {
+    BadgeDrawable badge = cameraBadge();
+    if (badge != null) badge.setAlpha(alpha);
+  }
+
+  private BadgeDrawable cameraBadge() {
+    return connected || importing ? getBadge(IMPORT) : null;
+  }
+
+  private void stopWaitingPulse() {
+    if (waitingPulse != null) {
+      waitingPulse.cancel();
+      waitingPulse = null;
+    }
+    setBadgeAlpha(255);
+  }
+
+  @Override protected void onAttachedToWindow() {
+    super.onAttachedToWindow();
+    updateWaitingPulse();
+  }
+
+  @Override protected void onDetachedFromWindow() {
+    stopWaitingPulse();
+    super.onDetachedFromWindow();
+  }
+
+  @Override protected void onVisibilityChanged(View changedView, int visibility) {
+    super.onVisibilityChanged(changedView, visibility);
+    updateWaitingPulse();
+  }
+
+  @Override protected void onWindowVisibilityChanged(int visibility) {
+    super.onWindowVisibilityChanged(visibility);
+    updateWaitingPulse();
   }
 }

@@ -22,6 +22,9 @@ object ImportProgress {
     @Volatile var done = 0
     @Volatile var total = 0
     @Volatile var lastMessage: String? = null
+    /** Explicit connection/open/retry wait state until begin() confirms scanning; independent of totals. */
+    @Volatile var waiting = false
+        private set
 
     /** スキャン前 (接続・再試行) の状態表示。begin で消える */
     @Volatile var status: String? = null
@@ -45,6 +48,7 @@ object ImportProgress {
         total = 0
         lastMessage = null
         status = message
+        waiting = true
         stopRequested = false
         active = true
         changed()
@@ -56,8 +60,23 @@ object ImportProgress {
         total = 0
         lastMessage = null
         status = null
+        waiting = false
         // stopRequested はここでは触らない。接続中に押された停止を消さないため
         active = true
+        changed()
+    }
+
+    /** Publish a connection/retry wait without inferring it from progress totals. */
+    fun waiting(message: String) {
+        status = message
+        waiting = true
+        changed()
+    }
+
+    /** Publish an active open attempt; it remains a connection wait until begin() starts scanning. */
+    fun attempting(message: String) {
+        status = message
+        waiting = true
         changed()
     }
 
@@ -70,6 +89,7 @@ object ImportProgress {
     fun finish(message: String) {
         active = false
         status = null
+        waiting = false
         lastMessage = message
         changed()
     }

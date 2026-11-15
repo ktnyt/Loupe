@@ -8,6 +8,7 @@ public final class DiagnosticApplication extends Application {
   @Override public void onCreate() {
     super.onCreate();
     DiagnosticLog.init(this);
+    GenerationIndicator.install(this);
     registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {
       public void onActivityStarted(Activity a) { PreviewPreparationJob.enter(); }
       public void onActivityStopped(Activity a) { PreviewPreparationJob.leave(DiagnosticApplication.this); }

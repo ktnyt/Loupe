@@ -14,7 +14,7 @@ import org.json.JSONObject;
  */
 public final class ArchiveInstrumentation extends Instrumentation {
   private boolean systemInsetsTest, singleBestTest, expressiveUiTest, selectedTagsTest;
-  private boolean videoTest, nanoBananaTest, nanoBackgroundTest;
+  private boolean videoTest, nanoBananaTest, nanoBackgroundTest, generationIndicatorTest;
   private boolean material3Test, materialGalleryTest;
   private int tagWidth;
   private boolean sortDimensionsSpecified;
@@ -81,6 +81,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     super.onCreate(args);
     videoTest=args!=null&&"video".equals(args.getString("mode"));
     nanoBananaTest=args!=null&&"nano-banana".equals(args.getString("mode"));
+    generationIndicatorTest=args!=null&&"generation-indicator".equals(args.getString("mode"));
     nanoBackgroundTest=args!=null&&"nano-background".equals(args.getString("mode"));
     material3Test=args!=null&&"material3".equals(args.getString("mode"));
     materialGalleryTest=args!=null&&"gallery-material3".equals(args.getString("mode"));
@@ -124,7 +125,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     resultTalkBack=args!=null&&"ranking-result-talkback".equals(args.getString("mode"));
     resultTest=resultTalkBack||(args!=null&&"ranking-result".equals(args.getString("mode")));
     tagDetailTest=args!=null&&"tag-detail".equals(args.getString("mode"));
-    if((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || viewerLookTest || viewerLookUiTest || videoTest || nanoBananaTest || nanoBackgroundTest) && args.containsKey("width")){tagWidth=Integer.parseInt(args.getString("width"));tagFont=Float.parseFloat(args.getString("font","1.0"));}
+    if((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || viewerLookTest || viewerLookUiTest || videoTest || nanoBananaTest || nanoBackgroundTest || generationIndicatorTest) && args.containsKey("width")){tagWidth=Integer.parseInt(args.getString("width"));tagFont=Float.parseFloat(args.getString("font","1.0"));}
     sortDimensionsSpecified=sortTest && args.containsKey("width");
     syncControlsTest=args!=null&&"sync-controls".equals(args.getString("mode"));
     consistencyTest=args!=null&&"consistency-layout".equals(args.getString("mode"));
@@ -177,6 +178,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if(expressiveUiTest){results.putString("stream",ExpressiveUiChecks.run(this,tagWidth>0?tagWidth:400,tagFont>0?tagFont:1f));finish(-1,results);return;}
       if(systemInsetsTest){results.putString("stream",WindowInsetsChecks.run(this,tagWidth>0?tagWidth:400,tagFont>0?tagFont:1f));finish(-1,results);return;}
       if(singleBestTest){results.putString("stream",SingleBestChecks.run(this,tagWidth>0?tagWidth:400,tagFont>0?tagFont:1f));finish(-1,results);return;}
+      if(generationIndicatorTest){results.putString("stream",GenerationIndicatorChecks.run(this,tagWidth>0?tagWidth:400,tagFont>0?tagFont:1f));finish(-1,results);return;}
       if(nanoBackgroundTest){results.putString("stream",NanoBananaBackgroundChecks.run(this,tagWidth>0?tagWidth:400,tagFont>0?tagFont:1f));finish(-1,results);return;}
       if (nanoBananaTest) {
         results.putString("stream", NanoBananaChecks.run(this, tagWidth > 0 ? tagWidth : 400, tagFont > 0 ? tagFont : 1f));

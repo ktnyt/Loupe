@@ -192,6 +192,8 @@ public final class MainActivity extends DiagnosticActivity {
   private long burstRequest;
   private int burstPosition;
 
+  static final String GENERATED_IMAGE="jp.nano.rawgallery.GENERATED_IMAGE";
+
   public void onCreate(Bundle state) {
     super.onCreate(state);
     repository = new PhotoRepository(this);
@@ -229,12 +231,31 @@ public final class MainActivity extends DiagnosticActivity {
         || (Build.VERSION.SDK_INT >= 33
             && checkSelfPermission(Manifest.permission.READ_MEDIA_VIDEO) != PackageManager.PERMISSION_GRANTED))
       requestPhotoAccess();
+    openGeneratedImage(state==null?getIntent().getStringExtra(GENERATED_IMAGE):state.getString(GENERATED_IMAGE));
+  }
+
+  /** Only a published MediaStore image can enter the saved-result viewer. */
+  private void openGeneratedImage(String value) {
+    if(value==null)return;
+    Uri uri=Uri.parse(value);
+    if(!"content".equals(uri.getScheme())||!"media".equals(uri.getAuthority())
+        ||!uri.getPath().matches("/(external|external_primary)/images/media/[0-9]+"))return;
+    try(android.database.Cursor cursor=getContentResolver().query(uri,
+        new String[]{android.provider.MediaStore.Images.Media.DISPLAY_NAME,android.provider.MediaStore.Images.Media.SIZE,
+          android.provider.MediaStore.Images.Media.DATE_MODIFIED,android.provider.MediaStore.Images.Media.DATE_TAKEN,
+          android.provider.MediaStore.Images.Media.IS_PENDING,android.provider.MediaStore.Images.Media.OWNER_PACKAGE_NAME},null,null,null)){
+      if(cursor==null||!cursor.moveToFirst()||cursor.getInt(4)!=0||!getPackageName().equals(cursor.getString(5)))return;
+      albumHome=false;libraryAlbums=false;pendingRestore=null;burstMembers=null;
+      photos=new ArrayList<>(java.util.List.of(new PhotoRepository.Photo(uri,cursor.getString(0),"Nano Banana",cursor.getLong(1),cursor.getLong(2),cursor.getLong(3))));
+      bundles=new ArrayList<>();showPhoto(0);
+    }catch(RuntimeException error){android.widget.Toast.makeText(this,"生成画像を開けませんでした",android.widget.Toast.LENGTH_SHORT).show();}
   }
 
   @Override
   protected void onSaveInstanceState(Bundle state) {
     super.onSaveInstanceState(state);
     rememberGallery(); rememberAlbums();
+    if(detail&&getIntent().hasExtra(GENERATED_IMAGE))state.putString(GENERATED_IMAGE,getIntent().getStringExtra(GENERATED_IMAGE));
     state.putBoolean("libraryAlbums", libraryAlbums);
     state.putString("allPhotosFilter", allPhotosFilter);
     state.putInt("allPhotosRankFilter", allPhotosRankFilter);
@@ -322,7 +343,7 @@ public final class MainActivity extends DiagnosticActivity {
     var device = CameraImportActivity.connected(this);
     var state = ImportProgress.INSTANCE;
     libraryTabs.setCameraState(device != null, device == null ? null : device.getProductName(),
-        state.getActive(), state.getDone(), state.getTotal());
+        state.getActive(), state.getDone(), state.getTotal(), state.getWaiting());
   }
   private void startCameraImportFromTab() {
     if (selecting || ImportProgress.INSTANCE.getActive()) return;

@@ -114,6 +114,7 @@ public class NanoBananaService extends Service {
         reserved=request;NanoBananaJob.BUSY.set(true);
       }
       ContextCompat.startForegroundService(app,new Intent(app,type).putExtra(EXTRA_NONCE,request.nonce));
+      GenerationIndicator.running(request.discard?"送信用画像の後処理中":"画像を生成しています");
       toast(app,request.discard?"後処理を開始しました":"画像の生成を開始しました");
       return true;
     }catch(Exception failure){
@@ -164,6 +165,7 @@ public class NanoBananaService extends Service {
         }
         // A consumed lease belongs to its worker until that thread actually exits.
       }
+      GenerationIndicator.finished("処理を開始できませんでした。もう一度お試しください",null,true);
       notifyResult("処理を開始できませんでした。もう一度お試しください");
       return START_NOT_STICKY;
     }
@@ -201,45 +203,53 @@ public class NanoBananaService extends Service {
   }
   private void execute(Request request){
     String message;
+    android.net.Uri saved=null;
+    boolean attention=false;
     try {
       Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
       NanoBananaJob job=createJob(request.store);
       if(request.discard)job.discard();
-      else job.run(request.photo,request.prompt,request.output,ignored->{});
+      else job.run(request.photo,request.prompt,request.output,GenerationIndicator::running);
       synchronized(NanoBananaStore.LOCK){
         JSONObject record=request.store.job();
+        if(record!=null&&record.has("saved"))saved=android.net.Uri.parse(record.optString("saved"));
         if(record!=null&&record.optString("stage").equals("complete"))request.store.job(null);
       }
       message=request.discard?"後処理が完了しました":"生成画像を保存しました";
     }catch(Exception|OutOfMemoryError error){
+      attention=true;
       message="処理を続けられませんでした。AI編集メニューから確認してください";
       try {
         synchronized(NanoBananaStore.LOCK){
           JSONObject record=request.store.job();
           if(record!=null&&record.optString("stage").equals("complete")){
-            request.store.job(null);message="生成画像を保存しました";
+            if(record.has("saved"))saved=android.net.Uri.parse(record.optString("saved"));
+            request.store.job(null);message="生成画像を保存しました";attention=false;
           }else if(record!=null&&record.has("saved"))message="画像は保存済みです。後処理を再試行してください";
         }
       }catch(IOException ignored){}
     }
     final String result=message;
-    MAIN.post(()->finish(request,result));
+    final android.net.Uri resultUri=saved;final boolean needsAttention=attention;
+    MAIN.post(()->finish(request,result,resultUri,needsAttention));
   }
-  private void finish(Request request,String message){
+  private void finish(Request request,String message){finish(request,message,null,true);}
+  private void finish(Request request,String message,android.net.Uri saved,boolean attention){
     synchronized(NanoBananaStore.LOCK){
       if(running!=request)return;
       // Posting from the worker can race its return; never release a still-live lease.
-      if(worker!=null&&worker.isAlive()){MAIN.postDelayed(()->finish(request,message),10);return;}
+      if(worker!=null&&worker.isAlive()){MAIN.postDelayed(()->finish(request,message,saved,attention),10);return;}
       running=null;worker=null;
       if(!destroyed){stopForeground(STOP_FOREGROUND_REMOVE);stopSelf();}
       // Stop/instance state transitions precede release, so a new launch cannot be dropped.
       if(reserved==request){reserved=null;NanoBananaJob.BUSY.set(false);}
     }
-    if(!stopping)notifyResult(message);
+    if(!stopping){GenerationIndicator.finished(message,saved,attention);notifyResult(message);}
   }
   @Override public void onTimeout(int startId,int fgsType){stopWorker();stopSelf();}
   private void stopWorker(){
     stopping=true;
+    if(running!=null)GenerationIndicator.finished("AI編集の処理状況を確認してください",null,true);
     if(worker!=null)worker.interrupt();
     stopForeground(STOP_FOREGROUND_REMOVE);
   }

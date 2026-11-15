@@ -149,7 +149,7 @@ class ImportService : Service() {
             attempt++
             // 応答待ちは最大 30 秒あるので、試行の開始時点から画面に経過を出す
             // (出さないと長い待ちがハングに見える)
-            ImportProgress.status = getString(R.string.camera_import_notif_attempting, attempt)
+            ImportProgress.attempting(getString(R.string.camera_import_notif_attempting, attempt))
             // 他のセッションを抱えたカメラを開くと GetDeviceInfo が 15〜21 秒かけて
             // 失敗する。空くまで待ってから開けば、その空振りを丸ごと省ける
             if (isMtp) waitUntilNotBusy(device, deadline)
@@ -176,7 +176,7 @@ class ImportService : Service() {
             val waiting =
                 if (attempt >= REPLUG_HINT_AFTER_FAILURES) getString(R.string.camera_import_notif_waiting_replug, attempt)
                 else getString(R.string.camera_import_notif_waiting_camera, attempt)
-            ImportProgress.status = waiting
+            ImportProgress.waiting(waiting)
             notify(NOTIF_PROGRESS, notification(waiting, ongoing = true))
             // リセットで殴る対処は 2026-08-22 にすべて外した。PTP Device Reset は
             // 「失敗後に送ると次の open が 1.1 秒で通る」実測があったが、正常な端末では
@@ -471,7 +471,7 @@ class ImportService : Service() {
             }
             if (!announced) {
                 ImportLog.w(TAG, "camera reports DeviceBusy (another session is open); waiting")
-                ImportProgress.status = getString(R.string.camera_import_notif_waiting_busy)
+                ImportProgress.waiting(getString(R.string.camera_import_notif_waiting_busy))
                 announced = true
             }
             try { Thread.sleep(BUSY_POLL_MS) } catch (e: InterruptedException) { return }
