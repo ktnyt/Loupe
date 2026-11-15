@@ -115,7 +115,8 @@ public class NanoBananaService extends Service {
       }
       ContextCompat.startForegroundService(app,new Intent(app,type).putExtra(EXTRA_NONCE,request.nonce));
       GenerationIndicator.running(request.discard?"送信用画像の後処理中":"画像を生成しています");
-      toast(app,request.discard?"後処理を開始しました":"画像の生成を開始しました");
+      final String startMessage=request.discard?"後処理を開始しました":"画像の生成を開始しました";
+      MAIN.post(()->{if(GenerationIndicator.foreground())dependencies.result(startMessage);else toast(app,startMessage);});
       return true;
     }catch(Exception failure){
       synchronized(NanoBananaStore.LOCK){
@@ -137,7 +138,7 @@ public class NanoBananaService extends Service {
   protected NanoBananaStore createStore(){return dependencies.store(this);}
   protected NanoBananaJob createJob(NanoBananaStore store){return dependencies.job(this,store);}
   /** Called on the main thread. */
-  protected void notifyResult(String message){toast(this,message);}
+  protected void notifyResult(String message){if(GenerationIndicator.foreground()){if(latestToast!=null)latestToast.cancel();dependencies.result(message);}else toast(this,message);}
   @Override public IBinder onBind(Intent intent){return null;}
   private Notification notification(){
     NotificationManager manager=getSystemService(NotificationManager.class);
@@ -192,6 +193,7 @@ public class NanoBananaService extends Service {
       }
       request.consumed=true;running=request;
     }
+    GenerationIndicator.running(request.discard?"AI編集の後処理中":"AI編集の処理を続けています");
     final Request owned=request;
     try {
       worker=new Thread(()->execute(owned),"nano-banana");worker.start();

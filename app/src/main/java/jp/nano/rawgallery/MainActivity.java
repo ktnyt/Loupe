@@ -192,6 +192,7 @@ public final class MainActivity extends DiagnosticActivity {
   private long burstRequest;
   private int burstPosition;
 
+  private String generatedViewerUri;
   static final String GENERATED_IMAGE="jp.nano.rawgallery.GENERATED_IMAGE";
 
   public void onCreate(Bundle state) {
@@ -245,6 +246,7 @@ public final class MainActivity extends DiagnosticActivity {
           android.provider.MediaStore.Images.Media.DATE_MODIFIED,android.provider.MediaStore.Images.Media.DATE_TAKEN,
           android.provider.MediaStore.Images.Media.IS_PENDING,android.provider.MediaStore.Images.Media.OWNER_PACKAGE_NAME},null,null,null)){
       if(cursor==null||!cursor.moveToFirst()||cursor.getInt(4)!=0||!getPackageName().equals(cursor.getString(5)))return;
+      generatedViewerUri=value;getIntent().removeExtra(GENERATED_IMAGE);
       albumHome=false;libraryAlbums=false;pendingRestore=null;burstMembers=null;
       photos=new ArrayList<>(java.util.List.of(new PhotoRepository.Photo(uri,cursor.getString(0),"Nano Banana",cursor.getLong(1),cursor.getLong(2),cursor.getLong(3))));
       bundles=new ArrayList<>();showPhoto(0);
@@ -255,7 +257,7 @@ public final class MainActivity extends DiagnosticActivity {
   protected void onSaveInstanceState(Bundle state) {
     super.onSaveInstanceState(state);
     rememberGallery(); rememberAlbums();
-    if(detail&&getIntent().hasExtra(GENERATED_IMAGE))state.putString(GENERATED_IMAGE,getIntent().getStringExtra(GENERATED_IMAGE));
+    if(detail&&generatedViewerUri!=null&&index>=0&&index<photos.size()&&generatedViewerUri.equals(photos.get(index).uri.toString()))state.putString(GENERATED_IMAGE,generatedViewerUri);
     state.putBoolean("libraryAlbums", libraryAlbums);
     state.putString("allPhotosFilter", allPhotosFilter);
     state.putInt("allPhotosRankFilter", allPhotosRankFilter);

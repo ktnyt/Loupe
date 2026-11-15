@@ -30,6 +30,7 @@ final class LibraryTabs extends BottomNavigationView {
   LibraryTabs(Context context, boolean albums, boolean enabled, Consumer<Boolean> change,
       Runnable openCamera, Runnable startImport) {
     super(context);
+    setTag("library-navigation");
     this.openCamera = openCamera;
     this.startImport = startImport;
     setBackgroundColor(GalleryUi.PANEL);

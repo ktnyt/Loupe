@@ -77,6 +77,7 @@ final class PhotoViewerUi extends ViewGroup {
     stage.addView(shared,new FrameLayout.LayoutParams(-1,-1));
     addView(stage);
     footer = new LinearLayout(context);
+    footer.setTag("viewer-actions");
     footer.setOrientation(LinearLayout.VERTICAL);
     footer.setPadding(dp(12), dp(6), dp(12), dp(10));
     footer.setBackgroundColor(Color.BLACK);
