@@ -128,10 +128,11 @@ public final class TagActivity extends DiagnosticActivity {
     root = new LinearLayout(this);
     root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(GalleryUi.BG);
     root.setOnApplyWindowInsetsListener((view, insets) -> {
-      Insets safe = insets.getInsets(WindowInsets.Type.systemBars());
+      Insets safe = insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());
       view.setPadding(safe.left, safe.top, safe.right, safe.bottom); return insets;
     });
     setContentView(root); root.addView(text(title, 22));
+    root.requestApplyInsets();
     return generation;
   }
 

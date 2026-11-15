@@ -121,7 +121,7 @@ final class GenerationIndicator implements Application.ActivityLifecycleCallback
   private int[] placement(View target){
     WindowInsets insets=resumed.getWindow().getDecorView().getRootWindowInsets();
     android.graphics.Insets safe=insets==null?android.graphics.Insets.NONE:insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());
-    // Keep the full hit target clear of controls, including viewer Look and settings buttons.
+    // Keep the full hit target clear of controls, including viewer actions and settings buttons.
     View decor=resumed.getWindow().getDecorView();int[] origin=new int[2];decor.getLocationOnScreen(origin);
     int right=origin[0]+decor.getWidth()-safe.right;
     int x=right-dp(56);

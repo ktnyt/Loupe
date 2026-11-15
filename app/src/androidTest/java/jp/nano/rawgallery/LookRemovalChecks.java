@@ -52,6 +52,13 @@ final class LookRemovalChecks {
     if(view instanceof android.widget.TextView)TagDetailChecks.require(!((android.widget.TextView)view).getText().toString().contains("ルック"),"removed look label");
     if(view instanceof ViewGroup)for(int i=0;i<((ViewGroup)view).getChildCount();i++)noLook(((ViewGroup)view).getChildAt(i));
   }
+  static void safe(Activity activity,PhotoViewerUi viewer){
+    android.view.WindowInsets insets=activity.getWindow().getDecorView().getRootWindowInsets();TagDetailChecks.require(insets!=null,"actual OS insets");
+    android.graphics.Insets bars=insets.getInsets(android.view.WindowInsets.Type.systemBars()|android.view.WindowInsets.Type.displayCutout());
+    android.graphics.Rect available=new android.graphics.Rect(activity.getWindowManager().getCurrentWindowMetrics().getBounds());available.inset(bars.left,bars.top,bars.right,bars.bottom);
+    List<View> actions=new ArrayList<>();actions.add(ExpressiveUiChecks.description(viewer,"写真一覧に戻る"));actions.add(ExpressiveUiChecks.description(viewer,"写真のその他の操作"));for(int i=0;i<viewer.dock.getChildCount();i++)actions.add(viewer.dock.getChildAt(i));
+    for(View action:actions){TagDetailChecks.require(action!=null&&action.isShown(),"viewer action is visible");int[] xy=new int[2];action.getLocationOnScreen(xy);TagDetailChecks.require(available.contains(new android.graphics.Rect(xy[0],xy[1],xy[0]+action.getWidth(),xy[1]+action.getHeight())),"viewer action fits actual OS safe bounds");}
+  }
   static Set<Uri> outputs(Context c){Set<Uri> result=new HashSet<>();try(android.database.Cursor cursor=c.getContentResolver().query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,new String[]{"_id"},"relative_path = ? AND owner_package_name = ?",new String[]{"Pictures/LoupeDevelop/",c.getPackageName()},null)){if(cursor!=null)while(cursor.moveToNext())result.add(android.content.ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,cursor.getLong(0)));}return result;}
   static String run(Instrumentation t,int width,float font)throws Exception{
     Context c=t.getTargetContext();List<File> created=new ArrayList<>();List<Uri> owned=new ArrayList<>();Set<Uri> previous=outputs(c);
@@ -73,16 +80,16 @@ final class LookRemovalChecks {
       GalleryScreenChecks.finishInitialIndex(t,gallery);GalleryScreenChecks.portraitFixture(t,gallery,width,font);
       ui(t,()->{set(gallery,"albumHome",false);set(gallery,"photos",new ArrayList<>(List.of(photo)));call(gallery,"showPhoto",new Class<?>[]{int.class},0);return true;});
       GenerationIndicatorChecks.await(t,"viewer original loaded",()->get(gallery,"activePreview")!=null&&ViewerScreenChecks.viewer(gallery).image.photoBounds()!=null);
-      ui(t,()->{PhotoViewerUi viewer=ViewerScreenChecks.viewer(gallery);noLook(viewer);TagDetailChecks.require(GenerationIndicatorChecks.find(viewer,"viewer-look")==null&&GenerationIndicatorChecks.find(viewer,"viewer-before")==null,"no viewer look controls");return true;});
+      ui(t,()->{PhotoViewerUi viewer=ViewerScreenChecks.viewer(gallery);noLook(viewer);safe(gallery,viewer);TagDetailChecks.require(GenerationIndicatorChecks.find(viewer,"viewer-look")==null&&GenerationIndicatorChecks.find(viewer,"viewer-before")==null,"no viewer look controls");return true;});
       Bitmap expectedImage=BitmapFactory.decodeByteArray(jpeg,0,jpeg.length);
       ui(t,()->{Bitmap actual=(Bitmap)get(ViewerScreenChecks.viewer(gallery).image,"bitmap");TagDetailChecks.require(actual.sameAs(expectedImage),"saved look never auto-applies to original pixels");return true;});expectedImage.recycle();
       GenerationIndicatorChecks.capture(t,"look-removed-viewer-"+width);TagDetailChecks.require(snapshot(c).equals(expected),"viewer preserves all legacy data");
       tags=(TagActivity)t.startActivitySync(TagFixtureIsolation.intent(c,tagDb,featureDb));final TagActivity tagScreen=tags;TagDetailChecks.idle(t,tags);
-      File tagFile=new File(tags.photoContext.getCacheDir(),"look-removal-tag.jpg");try(FileOutputStream output=new FileOutputStream(tagFile)){output.write(jpeg);}
+      File tagFile=new File(tags.getCacheDir(),"tag-detail-synthetic.jpg");TagDetailChecks.require(!tagFile.exists(),"never overwrite an existing tag fixture");created.add(tagFile);try(FileOutputStream output=new FileOutputStream(tagFile)){output.write(jpeg);}
       PhotoRepository.Photo tagPhoto=new PhotoRepository.Photo(Uri.fromFile(tagFile),"tag-synthetic.jpg","",jpeg.length,1,1);
       ui(t,()->{set(tagScreen,"tag",new TagStore.Tag("remove-look-fixture","確認用"));set(tagScreen,"photos",new ArrayList<>(List.of(tagPhoto)));set(tagScreen,"photoIds",new ArrayList<>(List.of("fixture")));set(tagScreen,"browsePhotos",new ArrayList<>(List.of(0)));set(tagScreen,"judgments",new TagJudgments());set(tagScreen,"automatic",new HashMap<>());call(tagScreen,"showAssignedPhoto",new Class<?>[]{int.class},0);return true;});
       GenerationIndicatorChecks.await(t,"tag viewer loaded",()->((PhotoViewerUi)get(tagScreen,"photoViewer")).image.photoBounds()!=null);
-      ui(t,()->{noLook((View)get(tagScreen,"root"));return true;});GenerationIndicatorChecks.capture(t,"look-removed-tag-"+width);ui(t,()->{tagScreen.finish();return true;});
+      ui(t,()->{noLook((View)get(tagScreen,"root"));safe(tagScreen,(PhotoViewerUi)get(tagScreen,"photoViewer"));return true;});GenerationIndicatorChecks.capture(t,"look-removed-tag-"+width);ui(t,()->{tagScreen.finish();return true;});
       editor=(RawEditActivity)t.startActivitySync(new Intent(c,RawEditActivity.class).setData(uri).putExtra("removeLookLegacyFixture",true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));final RawEditActivity raw=editor;
       GenerationIndicatorChecks.await(t,"ordinary editor restored",()->(boolean)get(raw,"ready")&&get(raw,"fullSession")!=null);
       ui(t,()->{noLook((View)get(raw,"root"));TagDetailChecks.require(Math.abs(((RawEditState)get(raw,"state")).get(RawEditState.EXPOSURE)-.25f)<.0001,"legacy development values restored");Bundle saved=new Bundle();raw.onSaveInstanceState(saved);TagDetailChecks.require(!saved.containsKey("lookToken")&&!saved.containsKey("lookPreset"),"legacy look flags never written back");((Button)get(raw,"compare")).performClick();TagDetailChecks.require((boolean)get(raw,"before"),"editor original compare retained");((Button)get(raw,"compare")).performClick();return true;});

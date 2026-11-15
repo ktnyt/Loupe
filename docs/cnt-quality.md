@@ -6,7 +6,7 @@
 
 CNT-like uses an independently fitted color transform and brightness-protected vignette, measured from the same input rendered by Gallery CNT at maximum strength. It targets SDR photographic output comparable to the tested reference images. Engine correctness, numerical fit, independent visual assessment, Android execution and user preference are separate checks. Passing a synthetic chart alone does not establish photographic quality parity.
 
-The frozen model is [gallery-cnt-v1.json](calibration/gallery-cnt-v1.json). It contains only measurements/model coefficients from generated charts, with no source photograph, location, camera APK, or vendor LUT asset. [RawEditCntCalibration](https://github.com/ktnyt/Loupe/blob/d9b83ed/app/src/main/java/jp/nano/rawgallery/RawEditCntCalibration.java) is a deterministic generated representation of its red-fastest 7³ controls. The existing factory bakes these controls into a 33³ float LUT. Generation is checked with:
+The frozen model is [gallery-cnt-v1.json](calibration/gallery-cnt-v1.json). It contains only measurements/model coefficients from generated charts, with no source photograph, location, camera APK, or vendor LUT asset. [RawEditCntCalibration](https://github.com/ktnyt/Loupe/blob/dc4176c9a64bbcf1b7888930d79852b6efcc12fc/app/src/main/java/jp/nano/rawgallery/RawEditCntCalibration.java) is a deterministic generated representation of its red-fastest 7³ controls. The existing factory bakes these controls into a 33³ float LUT. Generation is checked with:
 
 ```sh
 python3 scripts/export-cnt-calibration.py --model docs/calibration/gallery-cnt-v1.json --output app/src/main/java/jp/nano/rawgallery/RawEditCntCalibration.java --check
