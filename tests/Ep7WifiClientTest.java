@@ -23,7 +23,7 @@ public final class Ep7WifiClientTest {
         StringBuilder hidden = new StringBuilder("VER_100\n");
         for(int i=0;i<20001;i++) hidden.append("/DCIM,H").append(i).append(".JPG,1,2,0,0\n");
         fails(() -> Ep7WifiClient.parseList(hidden.toString(), "/DCIM"));
-        AtomicInteger mode = new AtomicInteger(); AtomicInteger gets = new AtomicInteger();
+        AtomicInteger mode = new AtomicInteger(); AtomicInteger gets = new AtomicInteger(); AtomicInteger subdirectories = new AtomicInteger();
         byte[] content = new byte[65537]; new Random(123).nextBytes(content);
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", exchange -> {
@@ -33,6 +33,7 @@ public final class Ep7WifiClientTest {
                 String path = exchange.getRequestURI().getPath(); byte[] response;
                 if (path.equals("/get_imglist.cgi")) {
                     String dir = URLDecoder.decode(exchange.getRequestURI().getQuery().substring(4), "UTF-8");
+                    if(!dir.equals("/DCIM"))subdirectories.incrementAndGet();
                     response = (dir.equals("/DCIM") ? "VER_100\n/DCIM,100OLYMP,0,16,0,0\n" : file(content.length)).getBytes();
                 } else {
                     require(path.equals("/DCIM/100OLYMP/P1010001.ORF"), "original path only"); gets.incrementAndGet();
@@ -53,13 +54,16 @@ public final class Ep7WifiClientTest {
                 require(url.getHost().equals(Ep7WifiClient.HOST) && url.getProtocol().equals("http"), "fixed camera origin");
                 return (HttpURLConnection) new URL("http://127.0.0.1:" + server.getAddress().getPort() + url.getFile()).openConnection(Proxy.NO_PROXY);
             }, cancel::get);
+            client.probe();require(subdirectories.get()==0,"connection probe must not recurse");
             var listing = client.list(); require(listing.photos.size() == 1 && listing.seconds > 0, "recursive list");
-            var entry = listing.photos.get(0); var result = client.download(entry, dir);
+            var entry = listing.photos.get(0);
+            ByteArrayOutputStream streamed=new ByteArrayOutputStream();client.copyOriginal(entry,streamed);require(Arrays.equals(content,streamed.toByteArray()),"common import original-byte stream");
+            var result = client.download(entry, dir);
             require(Arrays.equals(content, Files.readAllBytes(result.file.toPath())), "saved bytes read back");
             require(result.sha256.length() == 64 && result.bytes == content.length && result.transferSeconds > 0 && result.totalSeconds >= result.transferSeconds && result.mibPerSecond() > 0, "metrics");
             var again = client.download(entry, dir); require(!again.file.equals(result.file) && result.file.exists(), "no overwrite");
             for (int m : new int[]{1, 2, 3, 4}) {
-                mode.set(m); fails(() -> client.download(entry, dir));
+                mode.set(m); fails(() -> client.download(entry, dir)); fails(()->client.copyOriginal(entry,new ByteArrayOutputStream()));
                 require(Objects.requireNonNull(dir.list()).length == 2, "failed copies removed, previous successes retained");
             }
             mode.set(0);

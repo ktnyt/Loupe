@@ -42,6 +42,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean shareHistoryTest, shareHistoryScreenTest, shareHistoryHandoffTest, shareHistoryCallbackTest;
   private boolean shareHistoryRestartSeed, shareHistoryRestartVerify;
   private boolean cameraTabsTest, ep7WifiTest, cameraLedgerTest, cameraBenchmarkTest;
+  private String cameraPilotMode;
   private boolean shareCapacityTest, shareToggleTest, galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest;
   private boolean photoEditTest;
   private boolean consistencyTest, syncControlsTest, tagDetailTest, resultTest, resultTalkBack;
@@ -143,6 +144,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
     actionLabelsTest = args != null && "action-labels".equals(args.getString("mode"));
     comparisonLabelsTest = args != null && "comparison-labels".equals(args.getString("mode"));
     albumTagsTest = args != null && "album-tags".equals(args.getString("mode"));
+    cameraPilotMode = args == null ? null : args.getString("mode");
+    if(cameraPilotMode!=null&&!cameraPilotMode.startsWith("camera-pilot-"))cameraPilotMode=null;
     cameraBenchmarkTest = args != null && "camera-benchmark".equals(args.getString("mode"));
     cameraLedgerTest = args != null && "camera-ledger".equals(args.getString("mode"));
     ep7WifiTest = args != null && "ep7-wifi".equals(args.getString("mode"));
@@ -251,6 +254,14 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if (comparisonLabelsTest) { results.putString("stream", ComparisonLabelChecks.run(this)); finish(-1, results); return; }
       if (albumTagsTest) { results.putString("stream", AlbumTagEntryChecks.run(this)); finish(-1, results); return; }
       if (material3Test) { results.putString("stream", Material3Checks.run(this)); finish(-1, results); return; }
+      if (cameraPilotMode!=null) {
+        String result;
+        if(cameraPilotMode.equals("camera-pilot-wifi"))result=CameraImportPilotChecks.runWifi(this);
+        else if(cameraPilotMode.equals("camera-pilot-sd"))result=CameraImportPilotChecks.runSd(this);
+        else if(cameraPilotMode.equals("camera-pilot-cleanup"))result=CameraImportPilotChecks.cleanup(this);
+        else throw new IllegalArgumentException("Unknown pilot mode");
+        results.putString("stream",result);finish(-1,results);return;
+      }
       if (cameraBenchmarkTest) { results.putString("stream", CameraImportBenchmarkChecks.run(this)); finish(-1, results); return; }
       if (cameraLedgerTest) { results.putString("stream", CameraImportLedgerChecks.run(this)); finish(-1, results); return; }
       if (ep7WifiTest) { results.putString("stream", Ep7WifiChecks.run(this)); finish(-1, results); return; }

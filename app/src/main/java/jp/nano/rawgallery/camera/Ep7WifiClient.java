@@ -98,6 +98,20 @@ public final class Ep7WifiClient {
         }
         return entries;
     }
+    private List<Entry> directory(String dir,long start)throws IOException {
+        path(dir);
+        HttpURLConnection c=open("/get_imglist.cgi?DIR="+URLEncoder.encode(dir,"UTF-8"));
+        try {
+            response(c);ByteArrayOutputStream body=new ByteArrayOutputStream();
+            try(InputStream in=c.getInputStream()) {
+                byte[] buffer=new byte[8192];int n;
+                while((n=in.read(buffer))!=-1){check(start);if(body.size()+n>MAX_LIST_BYTES)throw new IOException("Image list too large");body.write(buffer,0,n);}
+            }
+            return parseList(body.toString(StandardCharsets.UTF_8.name()),dir);
+        }finally{c.disconnect();}
+    }
+    /** Confirm the endpoint using one bounded VER_100 response; do not scan the whole card here. */
+    public void probe()throws IOException {long start=System.nanoTime();directory("/DCIM",start);check(start);}
     public Listing list() throws IOException {
         long start = System.nanoTime();
         ArrayDeque<String> pending = new ArrayDeque<>(); pending.add("/DCIM");
@@ -106,21 +120,7 @@ public final class Ep7WifiClient {
         while (!pending.isEmpty()) {
             check(start); String dir = pending.remove();
             if (!visited.add(dir) || visited.size() > 1000) throw new IOException("Excessive camera directories");
-            HttpURLConnection c = open("/get_imglist.cgi?DIR=" + URLEncoder.encode(dir, "UTF-8"));
-            List<Entry> entries;
-            try {
-                response(c);
-                ByteArrayOutputStream body = new ByteArrayOutputStream();
-                try (InputStream in = c.getInputStream()) {
-                    byte[] buffer = new byte[8192]; int n;
-                    while ((n = in.read(buffer)) != -1) {
-                        check(start);
-                        if (body.size() + n > MAX_LIST_BYTES) throw new IOException("Image list too large");
-                        body.write(buffer, 0, n);
-                    }
-                }
-                entries = parseList(body.toString(StandardCharsets.UTF_8.name()), dir);
-            } finally { c.disconnect(); }
+            List<Entry> entries=directory(dir,start);
             count += entries.size();
             if (count > MAX_ENTRIES) throw new IOException("Too many camera files");
             for (Entry e : entries) {

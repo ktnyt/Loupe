@@ -97,7 +97,7 @@ object MassStorageImporter {
                             "sd-usb:" + exfat.volumeId,
                             node.relativePath, node.length, (node.modifiedEpochSec * 1000).toString(), node.modifiedEpochSec)
                         val result = photos.importPhoto(source, { out -> exfat.copyTo(node, out) },
-                            camera.folder, exfat.volumeSerialReliable, true, { isCancelled() })
+                            camera.folder, exfat.volumeSerialReliable, context.getSharedPreferences("camera_import", 0).getBoolean("sd_verify_all", false), { isCancelled() })
                         if (!result.imported) {
                             db.recordImport(camera.model, camera.serial, key, result.uri.toString())
                             skipped++

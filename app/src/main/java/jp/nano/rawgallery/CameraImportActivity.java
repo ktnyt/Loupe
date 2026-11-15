@@ -28,6 +28,7 @@ import android.widget.TextView;
 import jp.nano.rawgallery.camera.Camera;
 import jp.nano.rawgallery.camera.CameraDifferentialService;
 import jp.nano.rawgallery.camera.CameraImportGate;
+import jp.nano.rawgallery.camera.CameraImportLedger;
 import jp.nano.rawgallery.camera.CameraUsb;
 import jp.nano.rawgallery.camera.HistoryDb;
 import jp.nano.rawgallery.camera.ImportProgress;
@@ -47,7 +48,7 @@ public final class CameraImportActivity extends AppCompatActivity {
     private static final java.util.concurrent.Executor IO = Executors.newSingleThreadExecutor();
     private static final ImportProgress PROGRESS = ImportProgress.INSTANCE;
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private TextView connection, result, migrationResult, sdStatus;
+    private TextView connection, result, migrationResult, sdStatus, ledgerStatus;
     private MaterialSwitch sdVerify, sdAuto;
     private ProgressBar progress;
     private Button run, stop, migrate, notifyButton;
@@ -151,8 +152,8 @@ public final class CameraImportActivity extends AppCompatActivity {
             try { startActivityForResult(intent, PICK_SD_TREE); }
             catch (RuntimeException failure) { sdStatus.setText("フォルダ選択を開けませんでした。"); }
         });
-        sdVerify = new MaterialSwitch(this); sdVerify.setChecked(true); sdVerify.setText("内容も確認する"); sdVerify.setMinHeight(dp(48)); sd.addView(sdVerify);
-        sd.addView(text("取り込み済みの写真も内容を読み直して確認します。時間がかかります。", 14, GalleryUi.MUTED));
+        sdVerify = new MaterialSwitch(this); sdVerify.setChecked(settings.getBoolean("sd_verify_all", false)); sdVerify.setOnCheckedChangeListener((v, checked) -> settings.edit().putBoolean("sd_verify_all", checked).apply()); sdVerify.setText("内容も確認する"); sdVerify.setMinHeight(dp(48)); sd.addView(sdVerify);
+        sd.addView(text("通常は履歴を優先します。同じ名前・サイズ・日時のまま内容だけ変わった写真は見逃す場合があります。内容も確認すると読み直すため時間がかかります。", 14, GalleryUi.MUTED));
         button(sd, "SDカードの写真を取り込む", this::startSd);
         sdAuto = new MaterialSwitch(this); sdAuto.setText("SDカード接続時に自動で取り込む"); sdAuto.setMinHeight(dp(48));
         sdAuto.setChecked(settings.getBoolean("sd_auto", false));
@@ -168,6 +169,9 @@ public final class CameraImportActivity extends AppCompatActivity {
         button(sd, "写真のアクセス権限を確認", this::ensurePhotoPermission);
         button(sd, "アプリの権限設定を開く", () -> startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", getPackageName(), null))));
         sdStatus.setText(readableSdTree() == null ? "フォルダを選んでください" : "フォルダを選択済み");
+        LinearLayout ledger = card(root, "共通履歴");
+        ledgerStatus = status(ledger);
+        ledgerStatus.setText("件数を確認しています");
         cameras = card(importSettings, "カメラごとの設定");
         LinearLayout history = card(importSettings, "CameraSyncの記録");
         history.addView(text("取り込み済みの記録を引き継ぐと、同じファイルを再び取り込まずに済みます。CameraSyncと保存済みの写真は残ります。",
@@ -191,6 +195,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         super.onStart();
         handler.post(refresh);
         loadCameras();
+        loadLedgerCounts();
     }
 
     @Override protected void onStop() {
@@ -247,7 +252,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         boolean manualOnly = device != null && !CameraUsb.knownCamera(device);
         boolean granted = device != null && getSystemService(UsbManager.class).hasPermission(device);
         boolean active = PROGRESS.getActive();
-        if (wasActive && !active) loadCameras();
+        if (wasActive && !active) { loadCameras(); loadLedgerCounts(); }
         wasActive = active;
         if (active) starting = false;
         setText(connection, device == null ? "USBケーブルでカメラをつないでください"
@@ -453,6 +458,18 @@ public final class CameraImportActivity extends AppCompatActivity {
         if (PROGRESS.getActive()) { sdStatus.setText("取り込みが終わってから再試行してください。"); return; }
         try { CameraDifferentialService.startDocumentTree(this, tree, sdVerify.isChecked()); sdStatus.setText("SDカードの取り込みを開始します。"); }
         catch (RuntimeException failure) { sdStatus.setText("取り込みを開始できませんでした。フォルダと権限を確認してください。"); }
+    }
+
+    private void loadLedgerCounts() {
+        IO.execute(() -> {
+            String counts;
+            try {
+                CameraImportLedger ledger = CameraImportLedger.get(this);
+                counts = "原本 " + ledger.contentCount() + "件 · 受領記録 " + ledger.receiptCount() + "件";
+            } catch (RuntimeException failure) { counts = "共通履歴の件数を確認できませんでした"; }
+            String result = counts;
+            runOnUiThread(() -> { if (!isFinishing() && !isDestroyed()) ledgerStatus.setText(result); });
+        });
     }
 
     private void loadCameras() {

@@ -61,16 +61,16 @@ public final class CameraDifferentialService extends Service {
                 if(checkSelfPermission(permission)!=PackageManager.PERMISSION_GRANTED)throw new IOException("重複を確認するため写真全体へのアクセスを許可してください");
                 ImportProgress.INSTANCE.connecting("写真を確認しています");
                 CameraPhotoImporter importer=new CameraPhotoImporter(this);importer.recover(cancelled);
-                if(WIFI.equals(request.getAction()))wifi(importer,request.getBooleanExtra("verify",true));
-                else if(SD.equals(request.getAction())&&request.getData()!=null)sd(importer,request.getData(),request.getBooleanExtra("verify",true));
+                if(WIFI.equals(request.getAction()))wifi(importer,request.getBooleanExtra("verify",getSharedPreferences("camera_import",0).getBoolean("wifi_verify_all",false)));
+                else if(SD.equals(request.getAction())&&request.getData()!=null)sd(importer,request.getData(),request.getBooleanExtra("verify",getSharedPreferences("camera_import",0).getBoolean("sd_verify_all",false)));
                 else throw new IOException("接続元がありません");
             }catch(Exception e){if(locked)ImportProgress.INSTANCE.finish(cancelled.getAsBoolean()?"取り込みを中断しました":"取り込みを完了できませんでした。接続と写真へのアクセスを確認してください");android.util.Log.w("CameraDifferential","Import failed: "+e.getClass().getSimpleName());}
             finally{if(locked)CameraImportGate.lock.unlock();running=false;if(!destroyed){if(watching())getSystemService(NotificationManager.class).notify(781,notification("カメラの接続を待っています"));else stopSelf();}}
         });
     }
     private static final class WifiSession {
-        final Network network; final Ep7WifiClient client; final Ep7WifiClient.Listing listing;
-        WifiSession(Network network,Ep7WifiClient client,Ep7WifiClient.Listing listing){this.network=network;this.client=client;this.listing=listing;}
+        final Network network; final Ep7WifiClient client;
+        WifiSession(Network network,Ep7WifiClient client){this.network=network;this.client=client;}
     }
     private void wifi(CameraPhotoImporter importer,boolean verify)throws IOException{
         ConnectivityManager cm=getSystemService(ConnectivityManager.class);
@@ -82,16 +82,22 @@ public final class CameraDifferentialService extends Service {
             // The short deadline applies to discovery; a validated session keeps its bound Network for the import.
             java.util.concurrent.atomic.AtomicBoolean connecting=new java.util.concurrent.atomic.AtomicBoolean(true);
             Ep7WifiClient client=new Ep7WifiClient(url->(HttpURLConnection)network.openConnection(url,java.net.Proxy.NO_PROXY),()->cancelled.getAsBoolean()||(connecting.get()&&waitingCancelled.getAsBoolean()));
-            Ep7WifiClient.Listing listing=client.list();connecting.set(false);
-            return new WifiSession(network,client,listing);
+            client.probe();connecting.set(false);
+            return new WifiSession(network,client);
         },cancelled);
-        Ep7WifiClient client=session.client;Ep7WifiClient.Listing listing=session.listing;
-        String source="wifi-session:"+session.network.getNetworkHandle();
+        Ep7WifiClient client=session.client;Ep7WifiClient.Listing listing=client.list();
+        String identity=CameraSourceIdentity.wifi(this,session.network);
+        boolean stable=identity!=null;
+        String source=stable?identity:"wifi-session:"+session.network.getNetworkHandle();
         ImportProgress.INSTANCE.begin("E-P7 Wi-Fi");int added=0,done=0;long bytes=0;
         for(Ep7WifiClient.Entry e:listing.photos){
             CameraPhotoPublisher.check(cancelled);
-            CameraImportFile file=new CameraImportFile(source,e.path.substring(1),e.bytes,e.date+":"+e.time,fatTime(e.date,e.time));
-            CameraPhotoImporter.Result r=retry(importer,file,out->client.copyOriginal(e,out),false,verify);
+            if(cm.getNetworkCapabilities(session.network)==null)throw new IOException("Camera disconnected");
+            String currentIdentity=CameraSourceIdentity.wifi(this,session.network);
+            if(stable&&currentIdentity!=null&&!identity.equals(currentIdentity))throw new IOException("Camera connection changed");
+            boolean verifiedIdentity=stable&&currentIdentity!=null;
+            CameraImportFile file=new CameraImportFile(verifiedIdentity?source:"wifi-session:"+session.network.getNetworkHandle(),e.path.substring(1),e.bytes,e.date+":"+e.time,fatTime(e.date,e.time));
+            CameraPhotoImporter.Result r=retry(importer,file,out->client.copyOriginal(e,out),verifiedIdentity,verify);
             if(r.imported)added++;bytes+=r.sourceBytesRead;ImportProgress.INSTANCE.update(++done,listing.photos.size());
         }
         finish(added,done,bytes,start,false);
@@ -102,35 +108,15 @@ public final class CameraDifferentialService extends Service {
         throw first;
     }
     private static long fatTime(int date,int time){try{return java.time.LocalDateTime.of(1980+(date>>9),(date>>5)&15,date&31,time>>11,(time>>5)&63,(time&31)*2).atZone(java.time.ZoneId.systemDefault()).toEpochSecond();}catch(Exception e){return 0;}}
-    private static final class Document {final Uri uri;final CameraImportFile file;Document(Uri u,CameraImportFile f){uri=u;file=f;}}
     private void sd(CameraPhotoImporter importer,Uri tree,boolean verify)throws IOException{
-        if(!DocumentsContract.isTreeUri(tree))throw new IOException("SDフォルダを選択してください");
-        String root=DocumentsContract.getTreeDocumentId(tree);String volume=root.split(":",2)[0];
-        boolean stable=false; // SAF does not expose card geometry; metadata is not sufficient identity.
-        String source=stable?"sd:"+volume.replace("-","").toUpperCase(Locale.ROOT):"saf:"+tree;
-        List<Document> files=new ArrayList<>();int[] visited={0};
-        String rootName=root.contains(":")?root.substring(root.indexOf(':')+1):"";
-        if(!rootName.isEmpty()&&!rootName.equalsIgnoreCase("DCIM"))throw new IOException("SDカードのルートまたはDCIMを選択してください");
-        long start=System.nanoTime();scan(tree,root,rootName.isEmpty()?"":"DCIM",source,files,visited,0);
+        long start=System.nanoTime();CameraDocumentSource.Listing listing=CameraDocumentSource.list(this,tree,cancelled);
         ImportProgress.INSTANCE.begin("SDカード");int added=0,done=0;long bytes=0;
-        for(Document d:files){CameraPhotoPublisher.check(cancelled);CameraPhotoImporter.Result r=retry(importer,d.file,out->{try(InputStream in=getContentResolver().openInputStream(d.uri)){if(in==null)throw new IOException("SD read failed");byte[] b=new byte[65536];int n;while((n=in.read(b))!=-1){CameraPhotoPublisher.check(cancelled);out.write(b,0,n);}}},stable,verify);if(r.imported)added++;bytes+=r.sourceBytesRead;ImportProgress.INSTANCE.update(++done,files.size());}
-        finish(added,done,bytes,start,true);
-    }
-    private void scan(Uri tree,String id,String path,String source,List<Document> files,int[] visited,int depth)throws IOException{
-        CameraPhotoPublisher.check(cancelled);if(depth>5||++visited[0]>1000)throw new IOException("SD directory limit");
-        String[] projection={DocumentsContract.Document.COLUMN_DOCUMENT_ID,DocumentsContract.Document.COLUMN_DISPLAY_NAME,DocumentsContract.Document.COLUMN_MIME_TYPE,DocumentsContract.Document.COLUMN_SIZE,DocumentsContract.Document.COLUMN_LAST_MODIFIED};
-        try(Cursor c=getContentResolver().query(DocumentsContract.buildChildDocumentsUriUsingTree(tree,id),projection,null,null,null)){
-            if(c==null)throw new IOException("SD listing failed");
-            while(c.moveToNext()){
-                CameraPhotoPublisher.check(cancelled);String name=c.getString(1);if(name==null||name.contains("/")||name.contains("\\")||name.equals(".")||name.equals(".."))throw new IOException("Invalid SD name");
-                String child=c.getString(0),mime=c.getString(2),relative=path.isEmpty()?name:path+"/"+name;
-                if(DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)){if(!path.isEmpty()||name.equalsIgnoreCase("DCIM"))scan(tree,child,relative,source,files,visited,depth+1);}
-                else if(!path.isEmpty()&&MediaTypes.INSTANCE.kindOf(name)!=null&&!MediaTypes.INSTANCE.isVideo(name)){
-                    if(files.size()>=20000)throw new IOException("SD file limit");long size=c.getLong(3),modified=c.getLong(4);if(size<=0||size>Ep7WifiClient.MAX_FILE_BYTES)throw new IOException("Unsupported photo size");
-                    files.add(new Document(DocumentsContract.buildDocumentUriUsingTree(tree,child),new CameraImportFile(source,relative,size,Long.toString(modified),modified/1000)));
-                }
-            }
+        for(CameraDocumentSource.Entry entry:listing.photos){
+            CameraPhotoPublisher.check(cancelled);
+            CameraPhotoImporter.Result result=retry(importer,entry.file,out->CameraDocumentSource.copy(this,entry,out,cancelled),listing.stable,verify);
+            if(result.imported)added++;bytes+=result.sourceBytesRead;ImportProgress.INSTANCE.update(++done,listing.photos.size());
         }
+        finish(added,done,bytes,start,true);
     }
     private void finish(int added,int count,long bytes,long start,boolean card){
         double seconds=(System.nanoTime()-start)/1e9;

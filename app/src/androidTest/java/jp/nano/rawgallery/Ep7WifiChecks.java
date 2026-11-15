@@ -26,7 +26,9 @@ final class Ep7WifiChecks {
         require(root, "SDカードのフォルダを選ぶ");
         require(root, "SDカードの写真を取り込む");
         require(root, "SDカード接続時に自動で取り込む");
-        require(root, "内容も確認する");
+        TextView sdVerify = require(root, "内容も確認する");
+        check(((android.widget.CompoundButton) sdVerify).isChecked() == camera.getSharedPreferences("camera_import", 0).getBoolean("sd_verify_all", false), "SD verify reflects saved preference");
+        require(root, "共通履歴");
       });
       capture(t, camera, "camera-import");
       wifi = (Ep7WifiActivity) t.startActivitySync(new Intent(t.getTargetContext(), Ep7WifiActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
@@ -39,6 +41,7 @@ final class Ep7WifiChecks {
           check(v.getMinimumHeight() >= GalleryUi.dp(screen, 48), label + " touch minimum");
         }
         check(require(root, "カメラに接続して取り込む").isEnabled(), "connect entry enabled while idle");
+        check(((android.widget.CompoundButton) require(root, "内容も確認する")).isChecked() == screen.getSharedPreferences("camera_import", 0).getBoolean("wifi_verify_all", false), "Wi-Fi verify reflects saved preference");
         View status = root.findViewWithTag("ep7-status");
         check(status != null && status.getAccessibilityLiveRegion() == View.ACCESSIBILITY_LIVE_REGION_POLITE, "status live region");
         String before = ((TextView) status).getText().toString();
