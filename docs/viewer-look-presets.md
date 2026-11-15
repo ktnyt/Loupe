@@ -1,5 +1,7 @@
 # Saved Looks in the photo viewer
 
+> 過去の実装・研究の記録です。現在のアプリにルック機能はありません。現在の契約は [ルック保存領域の保全](look-removal.md) を参照してください。
+
 ## Purpose and agreed scope
 
 Issue #69: save a tuned Look as a reusable named preset, apply it without entering the editor, and optionally save a separate JPEG. User confirmed both display application and optional JPEG saving. Existing CNT-like coefficients remain unchanged. The following contracts are implementation decisions within that scope, recorded before implementation.

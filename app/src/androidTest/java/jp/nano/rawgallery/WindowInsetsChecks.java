@@ -64,7 +64,7 @@ final class WindowInsetsChecks {
         inside(a,ExpressiveUiChecks.description(viewer,"写真のその他の操作"),"viewer menu");
         for(int n=0;n<viewer.dock.getChildCount();n++)inside(a,viewer.dock.getChildAt(n),"viewer primary action");
         Button star=(Button)viewer.findViewWithTag("viewer-action-1位");if(star!=null)inside(a,star,"singleton best");
-        View look=viewer.findViewWithTag("viewer-look");if(look!=null)inside(a,look,"viewer Look");
+        require(viewer.findViewWithTag("viewer-look")==null,"removed Look control is absent");
       }
     });
   }

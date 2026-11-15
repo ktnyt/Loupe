@@ -12,7 +12,6 @@ import java.util.*;
 /** The photo-first S08 layout; navigation and data changes belong to the activity. */
 final class PhotoViewerUi extends ViewGroup {
   final PhotoRepository.Photo photo;
-  ViewerLookUi lookUi;
   final FrameLayout stage;
   final ZoomImageView image;
   final LinearLayout footer;
@@ -360,15 +359,13 @@ final class PhotoViewerUi extends ViewGroup {
     int width=MeasureSpec.getSize(widthSpec),height=MeasureSpec.getSize(heightSpec);
     header.measure(MeasureSpec.makeMeasureSpec(width,MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(0,MeasureSpec.UNSPECIFIED));
     footer.measure(MeasureSpec.makeMeasureSpec(width,MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(height,MeasureSpec.AT_MOST));
-    int top=header.getMeasuredHeight()+(lookUi==null?0:dp(56));
+    int top=header.getMeasuredHeight();
     stage.measure(MeasureSpec.makeMeasureSpec(width,MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(Math.max(0,height-top-footer.getMeasuredHeight()),MeasureSpec.EXACTLY));
-    if(lookUi!=null)for(String tag:new String[]{"viewer-look","viewer-before"}){View v=findViewWithTag(tag);if(v!=null)v.measure(MeasureSpec.makeMeasureSpec(Math.max(0,width-dp(16)),MeasureSpec.AT_MOST),MeasureSpec.makeMeasureSpec(dp(48),MeasureSpec.EXACTLY));}
     setMeasuredDimension(width,height);
   }
   protected void onLayout(boolean changed,int l,int t,int r,int b) {
     int width=getWidth(),height=getHeight(),top=header.getMeasuredHeight();
     header.layout(0,0,width,top);
-    if(lookUi!=null){View chip=findViewWithTag("viewer-look"),before=findViewWithTag("viewer-before");if(chip!=null)chip.layout(width-dp(8)-chip.getMeasuredWidth(),top,width-dp(8),top+dp(48));if(before!=null)before.layout(dp(8),top,dp(8)+before.getMeasuredWidth(),top+dp(48));top+=dp(56);}
     stage.layout(0,top,width,top+stage.getMeasuredHeight());
     footer.layout(0,height-footer.getMeasuredHeight(),width,height);
   }

@@ -110,14 +110,7 @@ final class GenerationIndicatorChecks {
       TagDetailChecks.ui(t,()->invoke(main,"showPhoto",0));
       await(t,"viewer ready",()->RankingResultChecks.get(main,"activePreview")!=null&&indicator()!=null);
       verifyBounds(t);
-      await(t,"Look not covered",()->{
-        android.graphics.Rect a=new android.graphics.Rect(),b=new android.graphics.Rect();
-        View look=find(main.getWindow().getDecorView(),"viewer-look");
-        TagDetailChecks.require(look!=null,"Look exists");
-        int[] l=new int[2],i=new int[2];look.getLocationOnScreen(l);indicator().getLocationOnScreen(i);
-        a.set(l[0],l[1],l[0]+look.getWidth(),l[1]+look.getHeight());b.set(i[0],i[1],i[0]+indicator().getWidth(),i[1]+indicator().getHeight());
-        return !android.graphics.Rect.intersects(a,b);
-      });
+      TagDetailChecks.ui(t,()->TagDetailChecks.require(find(main.getWindow().getDecorView(),"viewer-look")==null&&find(main.getWindow().getDecorView(),"viewer-before")==null,"removed Look controls never return"));
       capture(t,"generating-viewer-"+width);
       t.getUiAutomation().adoptShellPermissionIdentity("android.permission.WRITE_SECURE_SETTINGS");
       float motion=android.provider.Settings.Global.getFloat(context.getContentResolver(),"animator_duration_scale",1f);
