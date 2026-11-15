@@ -22,8 +22,9 @@ public final class Ep7WifiClient {
         public final long bytes;
         public final int date, time;
         public final boolean directory;
-        private Entry(String path, long bytes, int date, int time, boolean directory) {
-            this.path = path; this.bytes = bytes; this.date = date; this.time = time; this.directory = directory;
+        private final boolean accessible;
+        private Entry(String path, long bytes, int date, int time, boolean directory, boolean accessible) {
+            this.path = path; this.bytes = bytes; this.date = date; this.time = time; this.directory = directory; this.accessible = accessible;
         }
         public String name() { return path.substring(path.lastIndexOf('/') + 1); }
         public boolean photo() { return path.toUpperCase(Locale.ROOT).matches(".*\\.(JPG|JPEG|ORF)$"); }
@@ -92,7 +93,7 @@ public final class Ep7WifiClient {
                 if (size < 0 || attr < 0 || attr > 255 || date < 0 || date > 65535 || time < 0 || time > 65535)
                     throw new NumberFormatException();
                 if (!seen.add(full) || entries.size() >= MAX_ENTRIES) throw new IOException("Duplicate or excessive image list");
-                if ((attr & 14) == 0) entries.add(new Entry(full, size, date, time, (attr & 16) != 0));
+                entries.add(new Entry(full, size, date, time, (attr & 16) != 0, (attr & 14) == 0));
             } catch (NumberFormatException e) { throw new IOException("Invalid image list numbers", e); }
         }
         return entries;
@@ -123,6 +124,7 @@ public final class Ep7WifiClient {
             count += entries.size();
             if (count > MAX_ENTRIES) throw new IOException("Too many camera files");
             for (Entry e : entries) {
+                if (!e.accessible) continue;
                 if (e.directory) pending.add(e.path);
                 else if (e.photo() && e.bytes > 0 && e.bytes <= MAX_FILE_BYTES) photos.add(e);
             }

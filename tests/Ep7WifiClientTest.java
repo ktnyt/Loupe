@@ -20,6 +20,9 @@ public final class Ep7WifiClientTest {
                 "VER_100\n/DCIM,a.jpg,-1,32,0,0\n", "VER_100\n/OTHER,a.jpg,1,32,0,0\n",
                 "VER_100\n/DCIM,a.jpg,1,32,0,0\n/DCIM,a.jpg,1,32,0,0\n",
                 "VER_100\n/DCIM,a.jpg,1,32,0\n")) fails(() -> Ep7WifiClient.parseList(bad, "/DCIM"));
+        StringBuilder hidden = new StringBuilder("VER_100\n");
+        for(int i=0;i<20001;i++) hidden.append("/DCIM,H").append(i).append(".JPG,1,2,0,0\n");
+        fails(() -> Ep7WifiClient.parseList(hidden.toString(), "/DCIM"));
         AtomicInteger mode = new AtomicInteger(); AtomicInteger gets = new AtomicInteger();
         byte[] content = new byte[65537]; new Random(123).nextBytes(content);
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
