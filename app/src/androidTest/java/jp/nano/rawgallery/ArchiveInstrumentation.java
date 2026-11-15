@@ -256,7 +256,18 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if (material3Test) { results.putString("stream", Material3Checks.run(this)); finish(-1, results); return; }
       if (cameraPilotMode!=null) {
         String result;
-        if(cameraPilotMode.equals("camera-pilot-wifi"))result=CameraImportPilotChecks.runWifi(this);
+        if(cameraPilotMode.equals("camera-pilot-wifi")) {
+          android.app.Activity pilotUi=startActivitySync(new android.content.Intent(getTargetContext(),Ep7WifiActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+          try {
+            runOnMainSync(()->{
+              pilotUi.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+              disablePilotActions(pilotUi.getWindow().getDecorView());
+              android.widget.TextView status=pilotUi.getWindow().getDecorView().findViewWithTag("ep7-status");
+              if(status!=null)status.setText("4枚の保存と差分取り込みを検査しています…");
+            });
+            result=CameraImportPilotChecks.runWifi(this);
+          } finally {runOnMainSync(()->{pilotUi.getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);pilotUi.finish();});}
+        }
         else if(cameraPilotMode.equals("camera-pilot-sd"))result=CameraImportPilotChecks.runSd(this);
         else if(cameraPilotMode.equals("camera-pilot-cleanup"))result=CameraImportPilotChecks.cleanup(this);
         else throw new IllegalArgumentException("Unknown pilot mode");
@@ -653,4 +664,9 @@ public final class ArchiveInstrumentation extends Instrumentation {
       }
     }
   }
+  private static void disablePilotActions(android.view.View view) {
+    if(view instanceof android.widget.Button)view.setEnabled(false);
+    if(view instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)view).getChildCount();i++)disablePilotActions(((android.view.ViewGroup)view).getChildAt(i));
+  }
+
 }
