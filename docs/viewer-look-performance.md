@@ -1,5 +1,7 @@
 # Viewer Look response
 
+> 過去の実装・研究の記録です。現在のアプリにルック機能はありません。現在の契約は [ルック保存領域の保全](look-removal.md) を参照してください。
+
 ## Purpose and pre-implementation contract (#71)
 
 Reduce the user's wait on every RAW Look application, including a new viewer/controller. Maintain #69 recipe, RAW quality, linear/encoded color boundaries, precision, output resolution and original protection. Same-controller repeats are a separate condition; no warm-cache result represents a fresh application.

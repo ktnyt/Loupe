@@ -14,7 +14,7 @@ import org.json.JSONObject;
  */
 public final class ArchiveInstrumentation extends Instrumentation {
   private boolean systemInsetsTest, singleBestTest, expressiveUiTest, selectedTagsTest;
-  private boolean videoTest, nanoBananaTest, nanoBackgroundTest;
+  private boolean videoTest, nanoBananaTest, nanoBackgroundTest, generationIndicatorTest, removeLookTest;
   private boolean material3Test, materialGalleryTest;
   private int tagWidth;
   private boolean sortDimensionsSpecified;
@@ -22,22 +22,22 @@ public final class ArchiveInstrumentation extends Instrumentation {
   @Override public void callActivityOnCreate(android.app.Activity activity, Bundle state) {
     if(nanoBackgroundTest)NanoBananaBackgroundChecks.activityCreated(activity);
 
-    if ((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || viewerLookTest || viewerLookUiTest || videoTest) && (activity instanceof TagActivity || activity instanceof MainActivity || activity instanceof VideoActivity || viewerLookUiTest && activity instanceof RawEditActivity) && tagWidth > 0) {
+    if ((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || videoTest || removeLookTest) && (activity instanceof TagActivity || activity instanceof MainActivity || activity instanceof VideoActivity || removeLookTest && activity instanceof RawEditActivity) && tagWidth > 0) {
       android.content.res.Configuration config = new android.content.res.Configuration(activity.getBaseContext().getResources().getConfiguration());
       config.fontScale = tagFont; config.screenWidthDp = tagWidth;
       // Test process resources only; never writes system settings.
       activity.getResources().updateConfiguration(config, activity.getResources().getDisplayMetrics());
     }
-    if((confidenceUiTest||tagDetailTest)&&activity instanceof TagActivity)TagFixtureIsolation.install((TagActivity)activity);
+    if((confidenceUiTest||tagDetailTest||removeLookTest)&&activity instanceof TagActivity)TagFixtureIsolation.install((TagActivity)activity);
+    if(removeLookTest&&activity instanceof RawEditActivity&&state==null&&activity.getIntent().getBooleanExtra("removeLookLegacyFixture",false))state=LookRemovalChecks.legacyState(activity.getIntent());
     super.callActivityOnCreate(activity, state);
-    if ((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || viewerLookTest || viewerLookUiTest || videoTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
-    if(viewerLookTest&&activity instanceof RawEditActivity)ViewerLookChecks.rawEditActivityLaunches++;
+    if ((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || videoTest || removeLookTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
   }
   private boolean shareHistoryTest, shareHistoryScreenTest, shareHistoryHandoffTest, shareHistoryCallbackTest;
   private boolean shareHistoryRestartSeed, shareHistoryRestartVerify;
   private boolean cameraTabsTest;
-  private boolean shareCapacityTest, shareToggleTest, galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest, viewerLookTest, viewerLookUiTest, viewerRawLookTest;
-  private boolean photoEditTest, lookTimingRaw, lookTimingJpeg;
+  private boolean shareCapacityTest, shareToggleTest, galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest;
+  private boolean photoEditTest;
   private boolean consistencyTest, syncControlsTest, tagDetailTest, resultTest, resultTalkBack;
   private boolean dashboardTalkBackTest;
   private boolean dashboardLayoutTest;
@@ -81,6 +81,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
     super.onCreate(args);
     videoTest=args!=null&&"video".equals(args.getString("mode"));
     nanoBananaTest=args!=null&&"nano-banana".equals(args.getString("mode"));
+    removeLookTest=args!=null&&"look-removal".equals(args.getString("mode"));
+    generationIndicatorTest=args!=null&&"generation-indicator".equals(args.getString("mode"));
     nanoBackgroundTest=args!=null&&"nano-background".equals(args.getString("mode"));
     material3Test=args!=null&&"material3".equals(args.getString("mode"));
     materialGalleryTest=args!=null&&"gallery-material3".equals(args.getString("mode"));
@@ -112,19 +114,14 @@ public final class ArchiveInstrumentation extends Instrumentation {
     expressiveUiTest=args!=null&&"expressive-ui".equals(args.getString("mode"));
     selectedTagsTest=args!=null&&"selected-tags".equals(args.getString("mode"));
     viewerScreenTest=args!=null&&"viewer-screen".equals(args.getString("mode"));
-    viewerLookTest=args!=null&&"viewer-look".equals(args.getString("mode"));
-    viewerLookUiTest=args!=null&&"viewer-look-ui".equals(args.getString("mode"));
-    viewerRawLookTest=args!=null&&"viewer-look-raw".equals(args.getString("mode"));
     photoEditTest=args!=null&&"photo-edit".equals(args.getString("mode"));
-    lookTimingRaw=args!=null&&"viewer-look-timing-raw".equals(args.getString("mode"));
-    lookTimingJpeg=args!=null&&"viewer-look-timing-jpeg".equals(args.getString("mode"));
     shareToggleTest=args!=null&&"share-toggle".equals(args.getString("mode"));
     galleryTalkBack=args!=null&&"gallery-screen-talkback".equals(args.getString("mode"));
     galleryScreenTest=expressiveUiTest||materialGalleryTest||shareCapacityTest||shareToggleTest||shareScreenTest||viewerScreenTest||galleryTalkBack||(args!=null&&"gallery-screen".equals(args.getString("mode")));
     resultTalkBack=args!=null&&"ranking-result-talkback".equals(args.getString("mode"));
     resultTest=resultTalkBack||(args!=null&&"ranking-result".equals(args.getString("mode")));
     tagDetailTest=args!=null&&"tag-detail".equals(args.getString("mode"));
-    if((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || viewerLookTest || viewerLookUiTest || videoTest || nanoBananaTest || nanoBackgroundTest) && args.containsKey("width")){tagWidth=Integer.parseInt(args.getString("width"));tagFont=Float.parseFloat(args.getString("font","1.0"));}
+    if((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || videoTest || nanoBananaTest || nanoBackgroundTest || generationIndicatorTest || removeLookTest) && args.containsKey("width")){tagWidth=Integer.parseInt(args.getString("width"));tagFont=Float.parseFloat(args.getString("font","1.0"));}
     sortDimensionsSpecified=sortTest && args.containsKey("width");
     syncControlsTest=args!=null&&"sync-controls".equals(args.getString("mode"));
     consistencyTest=args!=null&&"consistency-layout".equals(args.getString("mode"));
@@ -177,6 +174,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if(expressiveUiTest){results.putString("stream",ExpressiveUiChecks.run(this,tagWidth>0?tagWidth:400,tagFont>0?tagFont:1f));finish(-1,results);return;}
       if(systemInsetsTest){results.putString("stream",WindowInsetsChecks.run(this,tagWidth>0?tagWidth:400,tagFont>0?tagFont:1f));finish(-1,results);return;}
       if(singleBestTest){results.putString("stream",SingleBestChecks.run(this,tagWidth>0?tagWidth:400,tagFont>0?tagFont:1f));finish(-1,results);return;}
+      if(removeLookTest){results.putString("stream",LookRemovalChecks.run(this,tagWidth>0?tagWidth:400,tagFont>0?tagFont:1f));finish(-1,results);return;}
+      if(generationIndicatorTest){results.putString("stream",GenerationIndicatorChecks.run(this,tagWidth>0?tagWidth:400,tagFont>0?tagFont:1f));finish(-1,results);return;}
       if(nanoBackgroundTest){results.putString("stream",NanoBananaBackgroundChecks.run(this,tagWidth>0?tagWidth:400,tagFont>0?tagFont:1f));finish(-1,results);return;}
       if (nanoBananaTest) {
         results.putString("stream", NanoBananaChecks.run(this, tagWidth > 0 ? tagWidth : 400, tagFont > 0 ? tagFont : 1f));
@@ -223,10 +222,6 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if(shareScreenTest){results.putString("stream",ShareScreenChecks.run(this,tagWidth));finish(-1,results);return;}
       if(shareCapacityTest){results.putString("stream",ShareCapacityUiChecks.run(this,tagWidth,tagFont));finish(-1,results);return;}
       if(photoEditTest){results.putString("stream",PhotoEditChecks.run(this));finish(-1,results);return;}
-      if(viewerRawLookTest){results.putString("stream",ViewerRawLookChecks.run(this));finish(-1,results);return;}
-      if(lookTimingRaw||lookTimingJpeg){results.putString("stream",ViewerLookTimingChecks.run(this,lookTimingRaw));finish(-1,results);return;}
-      if(viewerLookUiTest){results.putString("stream",ViewerLookUiChecks.run(this,tagWidth,tagFont));finish(-1,results);return;}
-      if(viewerLookTest){results.putString("stream",ViewerLookChecks.run(this,tagWidth,tagFont));finish(-1,results);return;}
       if(viewerScreenTest){results.putString("stream",ViewerScreenChecks.run(this,tagWidth));finish(-1,results);return;}
       if(galleryScreenTest){results.putString("stream",GalleryScreenChecks.run(this,tagWidth,galleryTalkBack,shareToggleTest,materialGalleryTest));finish(-1,results);return;}
       if(resultTest){results.putString("stream",RankingResultChecks.run(this,tagWidth,resultTalkBack));finish(-1,results);return;}

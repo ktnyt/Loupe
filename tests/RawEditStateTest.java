@@ -18,7 +18,7 @@ public final class RawEditStateTest {
     c=c.move(0,.1f,.2f); // constrained by next point's y=0
     check(c.at(-1)==c.y(0)&&c.at(2)==1,"constant endpoints outside domain");
     RawEditState state=initial.with(RawEditState.EXPOSURE,2).withCurve(0,identity.add(.3f,.4f)).withCurve(4,identity.add(.8f,.7f));
-    float[] snap=state.snapshot();check(new RawEditState(snap).equals(state),"all banks round trip");snap[1]=100;check(state.get(0)==0,"snapshot defensive");
+    float[] snap=state.snapshot(),neutralSnapshot=initial.snapshot();check(neutralSnapshot[0]==6302&&neutralSnapshot.length==42,"FORMAT6302 neutral schema remains stable");check(new RawEditState(snap).equals(state),"all banks round trip");snap[1]=100;check(state.get(0)==0,"snapshot defensive");
     check(state.resetCurves().get(RawEditState.EXPOSURE)==2&&state.resetCurves().curve(0).identity(),"curve reset preserves exposure");
     for(float[] bad:new float[][]{new float[16],new float[17],new float[0]})try{new RawEditState(bad);throw new AssertionError("legacy accepted");}catch(IllegalArgumentException expected){}
     float[] bad=state.snapshot();bad[18]=Float.NaN;try{new RawEditState(bad);throw new AssertionError("NaN accepted");}catch(IllegalArgumentException expected){}

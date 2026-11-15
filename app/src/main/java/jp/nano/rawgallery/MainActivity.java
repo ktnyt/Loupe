@@ -192,6 +192,9 @@ public final class MainActivity extends DiagnosticActivity {
   private long burstRequest;
   private int burstPosition;
 
+  private String generatedViewerUri;
+  static final String GENERATED_IMAGE="jp.nano.rawgallery.GENERATED_IMAGE";
+
   public void onCreate(Bundle state) {
     super.onCreate(state);
     repository = new PhotoRepository(this);
@@ -229,12 +232,32 @@ public final class MainActivity extends DiagnosticActivity {
         || (Build.VERSION.SDK_INT >= 33
             && checkSelfPermission(Manifest.permission.READ_MEDIA_VIDEO) != PackageManager.PERMISSION_GRANTED))
       requestPhotoAccess();
+    openGeneratedImage(state==null?getIntent().getStringExtra(GENERATED_IMAGE):state.getString(GENERATED_IMAGE));
+  }
+
+  /** Only a published MediaStore image can enter the saved-result viewer. */
+  private void openGeneratedImage(String value) {
+    if(value==null)return;
+    Uri uri=Uri.parse(value);
+    if(!"content".equals(uri.getScheme())||!"media".equals(uri.getAuthority())
+        ||!uri.getPath().matches("/(external|external_primary)/images/media/[0-9]+"))return;
+    try(android.database.Cursor cursor=getContentResolver().query(uri,
+        new String[]{android.provider.MediaStore.Images.Media.DISPLAY_NAME,android.provider.MediaStore.Images.Media.SIZE,
+          android.provider.MediaStore.Images.Media.DATE_MODIFIED,android.provider.MediaStore.Images.Media.DATE_TAKEN,
+          android.provider.MediaStore.Images.Media.IS_PENDING,android.provider.MediaStore.Images.Media.OWNER_PACKAGE_NAME},null,null,null)){
+      if(cursor==null||!cursor.moveToFirst()||cursor.getInt(4)!=0||!getPackageName().equals(cursor.getString(5)))return;
+      generatedViewerUri=value;getIntent().removeExtra(GENERATED_IMAGE);
+      albumHome=false;libraryAlbums=false;pendingRestore=null;burstMembers=null;
+      photos=new ArrayList<>(java.util.List.of(new PhotoRepository.Photo(uri,cursor.getString(0),"Nano Banana",cursor.getLong(1),cursor.getLong(2),cursor.getLong(3))));
+      bundles=new ArrayList<>();showPhoto(0);
+    }catch(RuntimeException error){android.widget.Toast.makeText(this,"生成画像を開けませんでした",android.widget.Toast.LENGTH_SHORT).show();}
   }
 
   @Override
   protected void onSaveInstanceState(Bundle state) {
     super.onSaveInstanceState(state);
     rememberGallery(); rememberAlbums();
+    if(detail&&generatedViewerUri!=null&&index>=0&&index<photos.size()&&generatedViewerUri.equals(photos.get(index).uri.toString()))state.putString(GENERATED_IMAGE,generatedViewerUri);
     state.putBoolean("libraryAlbums", libraryAlbums);
     state.putString("allPhotosFilter", allPhotosFilter);
     state.putInt("allPhotosRankFilter", allPhotosRankFilter);
@@ -322,7 +345,7 @@ public final class MainActivity extends DiagnosticActivity {
     var device = CameraImportActivity.connected(this);
     var state = ImportProgress.INSTANCE;
     libraryTabs.setCameraState(device != null, device == null ? null : device.getProductName(),
-        state.getActive(), state.getDone(), state.getTotal());
+        state.getActive(), state.getDone(), state.getTotal(), state.getWaiting());
   }
   private void startCameraImportFromTab() {
     if (selecting || ImportProgress.INSTANCE.getActive()) return;
@@ -1496,7 +1519,6 @@ public final class MainActivity extends DiagnosticActivity {
     historyForeground=true;
     getSharedPreferences(ShareHistoryReceiver.PREFS,0).registerOnSharedPreferenceChangeListener(historyChanges);
     loadShareHistory();showShareHistoryFailure();
-    if(restoreViewerLook&&detail){restoreViewerLook=false;showPhoto(index,returnToRanking);}
     if (repository != null) {
       if (resumed) refresh();
       else {
@@ -1631,8 +1653,6 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private boolean returnToRanking;
-  private ViewerLookUi viewerLook;
-  private boolean restoreViewerLook;
 
   /** Explicit singleton choice; never interpret a one-member comparison as a user choice. */
   private void singleBestAction(PhotoViewerUi viewer, PhotoRepository.Photo photo, int screen) {
@@ -1722,15 +1742,13 @@ public final class MainActivity extends DiagnosticActivity {
     base();
     root.setBackgroundColor(Color.BLACK);
     PhotoViewerUi viewer=new PhotoViewerUi(this,photo);
-    try{viewerLook=new ViewerLookUi(this,photo,viewer);viewer.lookUi=viewerLook;}catch(java.io.IOException error){viewerLook=null;}
-    final ViewerLookUi look=viewerLook;
     root.addView(viewer,new LinearLayout.LayoutParams(-1,0,1));
     FrameLayout photoFrame=viewer.stage;
     ZoomImageView image=viewer.image;
     String photoDescription=image.getContentDescription().toString();
     refreshShareBadges=()->{viewer.shared.items(historyFor(photo),historyAnimating);image.setContentDescription(photoDescription+ShareHistoryUi.description(historyFor(photo)));};
     refreshShareBadges.run();
-    image.setPageListener(direction->{if(!fromRanking){if(look!=null)look.runWhenReady("写真の移動",()->adjacentPhoto(direction));else adjacentPhoto(direction);}});
+    image.setPageListener(direction->{if(!fromRanking)adjacentPhoto(direction);});
     StatusView loadStatus=new StatusView(this);
     loadStatus.asPhotoOverlay();viewer.status(loadStatus);
     loadStatus.begin("元のファイルを読み込んでいます");
@@ -1738,8 +1756,8 @@ public final class MainActivity extends DiagnosticActivity {
     if(!fromRanking){
       int within=burstMembers==null?position:burstMembers.indexOf(position);
       int count=burstMembers==null?photos.size():burstMembers.size();
-      Button previous=viewer.action("前の写真","前へ","前の写真",()->{if(look!=null)look.runWhenReady("前の写真へ移動",()->adjacentPhoto(-1));else adjacentPhoto(-1);});
-      Button next=viewer.action("次の写真","次へ","次の写真",()->{if(look!=null)look.runWhenReady("次の写真へ移動",()->adjacentPhoto(1));else adjacentPhoto(1);});
+      Button previous=viewer.action("前の写真","前へ","前の写真",()->adjacentPhoto(-1));
+      Button next=viewer.action("次の写真","次へ","次の写真",()->adjacentPhoto(1));
       previous.setEnabled(adjacentPhotoPosition(-1)>=0);next.setEnabled(adjacentPhotoPosition(1)>=0);
     }
     viewer.zoom();
@@ -1759,7 +1777,7 @@ public final class MainActivity extends DiagnosticActivity {
       dialog.setOnDismissListener(d->refreshShareInfo=()->{});dialog.show();
       if(!historyLoaded||historyReadFailed)loadShareHistory();
     });
-    if(fromRanking&&!ranking.done())viewer.choose(()->{Runnable choose=()->saveRanking(ranking.choose(rankingMembers.get(ranking.upper())==position));if(look!=null)look.runWhenReady("写真の選択",choose);else choose.run();});
+    if(fromRanking&&!ranking.done())viewer.choose(()->saveRanking(ranking.choose(rankingMembers.get(ranking.upper())==position)));
     viewing =
         actions.submit(
             () -> {
@@ -1773,7 +1791,7 @@ public final class MainActivity extends DiagnosticActivity {
                         return;
                       }
                       activePreview = preview;
-                      if(look!=null)look.original(bitmap);else image.setBitmap(bitmap);
+                      image.setBitmap(bitmap);
                       model.setText(preview.model);
                       dimensions.setText(photo.name);
                       loadStatus.companion(StatusView.Symbol.PREVIEW);viewer.refreshStatus();
@@ -1803,7 +1821,7 @@ public final class MainActivity extends DiagnosticActivity {
                       loadStatus.companion(null);loadStatus.finish();viewer.refreshStatus();
                       image.setStateDescription("元のファイルを表示しています");
                       activePreview = full;
-                      if(look!=null)look.original(high);else image.setBitmap(high);
+                      image.setBitmap(high);
                       model.setText(
                           full.model
                               .replace("RICOH IMAGING COMPANY, LTD.", "RICOH")
@@ -1831,7 +1849,7 @@ public final class MainActivity extends DiagnosticActivity {
                           ActionIcon retryIcon=new ActionIcon("再試行",getResources().getDisplayMetrics().density*20/26);retryIcon.setBounds(0,0,dp(20),dp(20));retry.setCompoundDrawables(retryIcon,null,null,null);retry.setCompoundDrawablePadding(dp(6));recovery.addView(retry,new LinearLayout.LayoutParams(-2,dp(48)));
                           MaterialUi.outlined(retry);
                           LinearLayout.LayoutParams retryPosition=(LinearLayout.LayoutParams)retry.getLayoutParams();retryPosition.topMargin=dp(12);retry.setLayoutParams(retryPosition);
-                          photoFrame.addView(recovery,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER));if(look!=null&&look.controller.applied()!=null)recovery.setVisibility(View.GONE);
+                          photoFrame.addView(recovery,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER));
                         }else loadStatus.show(StatusView.Symbol.FAILED,"",failure,()->showPhoto(position,fromRanking),"再試行");
                         viewer.refreshStatus();
                         image.setStateDescription(failure);
@@ -1845,7 +1863,6 @@ public final class MainActivity extends DiagnosticActivity {
 
   public void onBackPressed() {
     DiagnosticLog.event("action.back", 0, "screen", "MainActivity");
-    if(detail&&viewerLook!=null){if(viewerLook.back())return;ViewerLookUi look=viewerLook;look.runWhenReady("戻る",()->{viewerLook=null;onBackPressed();});return;}
     if (rankingScreen) leaveRanking();
     else if (selecting && !detail) endSelection();
     else if (detail) {
@@ -2277,11 +2294,6 @@ public final class MainActivity extends DiagnosticActivity {
         .setNegativeButton("キャンセル", (d, w) -> editTargets())
         .setOnCancelListener(d -> editTargets())
         .show();
-  }
-
-  protected void onStop() {
-    if(detail&&viewerLook!=null){restoreViewerLook=true;viewerLook.close();viewerLook=null;}
-    super.onStop();
   }
 
   @Override protected void onPause(){

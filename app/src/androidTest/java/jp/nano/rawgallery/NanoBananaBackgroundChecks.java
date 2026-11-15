@@ -109,10 +109,10 @@ final class NanoBananaBackgroundChecks {
       store.setOutput("16:9","4K");store.savePrompt(store.prompts().get(0).id,"変更した設定","changed after admission");
       TagDetailChecks.require(first.entered.await(15,TimeUnit.SECONDS),"real OS service reached fake provider");
       TagDetailChecks.require(first.submits==1&&first.prompt.equals(prompt.text)&&first.output.aspectRatio.equals("4:3")&&first.output.resolution.equals("1K"),"admission captures prompt and output before settings edits");
-      TagDetailChecks.ui(test,()->{View nextControl=findLabel(screen.getWindow().getDecorView(),"次の写真");TagDetailChecks.require(nextControl!=null&&nextControl.isEnabled()&&nextControl.performClick(),"normal next-photo control responds during generation");});
+      TagDetailChecks.ui(test,()->{View more=findLabel(screen.getWindow().getDecorView(),"写真のその他の操作");TagDetailChecks.require(more!=null&&more.performClick(),"open current viewer action sheet");View nextControl=findWindowLabel("次の写真");TagDetailChecks.require(nextControl!=null&&nextControl.isEnabled()&&nextControl.performClick(),"normal next-photo control responds during generation");});
       await("next photo usable while service waits",()->((Integer)RankingResultChecks.get(screen,"index"))==1);test.waitForIdleSync();
       Instrumentation.ActivityMonitor tags=test.addMonitor(TagActivity.class.getName(),null,false);
-      TagDetailChecks.ui(test,()->{View tag=findLabel(screen.getWindow().getDecorView(),"タグ");TagDetailChecks.require(tag!=null&&tag.performClick(),"normal viewer tag control responds during generation");});
+      TagDetailChecks.ui(test,()->{View more=findLabel(screen.getWindow().getDecorView(),"写真のその他の操作");TagDetailChecks.require(more!=null&&more.performClick(),"open current viewer tag sheet");View tag=findWindowLabel("タグ");TagDetailChecks.require(tag!=null&&tag.performClick(),"normal viewer tag control responds during generation");});
       Activity tagScreen=tags.waitForActivityWithTimeout(10000);test.removeMonitor(tags);
       TagDetailChecks.require(tagScreen instanceof TagActivity,"normal tag screen opens during generation");
       TagDetailChecks.ui(test,tagScreen::finish);test.waitForIdleSync();
@@ -192,7 +192,7 @@ final class NanoBananaBackgroundChecks {
       store.job(null); // Fixture-only record: there is no remote object to delete.
       Context failing=new ContextWrapper(context){public Context getApplicationContext(){return this;}public ComponentName startForegroundService(Intent i){throw new IllegalStateException("synthetic startup rejection");}};
       TagDetailChecks.require(!NanoBananaService.start(failing,photo,prompt)&&!NanoBananaService.busy()&&store.job()==null,"startup rejection rolls back reservation");
-      return "PASS nano-background: actual production Android Service with isolated fake provider; next-photo operation, busy/error menu captures, Home continuation, no generation/result Activity launch, automatic JPEG save/readback 1200x800, temporary-object cleanup, duplicate admission, immutable prompt/output snapshot, next admission, saved cleanup retry without POST/download, interrupted-worker lease, durable discard retry and cleanup-only completion text, missing-version selectable manual recovery guidance, explicit ambiguous-submission messaging, stale end-confirmation A/B identity guard and current identity cleanup, stale Intent suppression and startup rejection. Captures are synthetic layouts; OS-service runtime assertions are separate. No real API, credentials, photos, physical touch or TalkBack speech tested.\nToast trace (actual shown-message hook; fixed UI text only): "+String.join(" → ",factory.messages)+"\n";
+      return "PASS nano-background: actual production Android Service with isolated fake provider; next-photo operation, busy/error menu captures, Home continuation, no generation/result Activity launch, automatic JPEG save/readback 1200x800, temporary-object cleanup, duplicate admission, immutable prompt/output snapshot, next admission, saved cleanup retry without POST/download, interrupted-worker lease, durable discard retry and cleanup-only completion text, missing-version selectable manual recovery guidance, explicit ambiguous-submission messaging, stale end-confirmation A/B identity guard and current identity cleanup, stale Intent suppression and startup rejection. Captures are synthetic layouts; OS-service runtime assertions are separate. No real API, credentials, photos, physical touch or TalkBack speech tested.\nStatus trace (delivery hook; fixed UI text only): "+String.join(" → ",factory.messages)+"\n";
     }finally{
       if(factory.fake!=null)factory.fake.release.countDown();
       context.stopService(new Intent(context,NanoBananaService.class));
@@ -217,6 +217,9 @@ final class NanoBananaBackgroundChecks {
     if(view.getVisibility()!=View.VISIBLE)return;
     if(view instanceof Button)TagDetailChecks.require(view.getHeight()>=GalleryUi.dp(view.getContext(),48),"visible menu row has 48dp touch target");
     if(view instanceof ViewGroup){ViewGroup group=(ViewGroup)view;for(int i=0;i<group.getChildCount();i++)verifyMenuTargets(group.getChildAt(i));}
+  }
+  private static View findWindowLabel(String text){
+    for(View root:android.view.inspector.WindowInspector.getGlobalWindowViews()){View found=findLabel(root,text);if(found!=null)return found;}return null;
   }
   private static View findLabel(View view,String label){
     if(view.getVisibility()!=View.VISIBLE)return null;

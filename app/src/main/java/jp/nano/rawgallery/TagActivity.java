@@ -89,8 +89,6 @@ public final class TagActivity extends DiagnosticActivity {
   private volatile int generation;
   private boolean busy, reviewing;
   private PhotoViewerUi photoViewer;
-  private ViewerLookUi viewerLook;
-  private boolean restoreViewerLook;
   private Button photoPrevious, photoNext, photoTag, photoEdit;
   private int photoPosition;
   private boolean photoAttached;
@@ -130,10 +128,11 @@ public final class TagActivity extends DiagnosticActivity {
     root = new LinearLayout(this);
     root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(GalleryUi.BG);
     root.setOnApplyWindowInsetsListener((view, insets) -> {
-      Insets safe = insets.getInsets(WindowInsets.Type.systemBars());
+      Insets safe = insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());
       view.setPadding(safe.left, safe.top, safe.right, safe.bottom); return insets;
     });
     setContentView(root); root.addView(text(title, 22));
+    root.requestApplyInsets();
     return generation;
   }
 
@@ -622,13 +621,11 @@ public final class TagActivity extends DiagnosticActivity {
     root.removeAllViews();root.setBackgroundColor(android.graphics.Color.BLACK);
     PhotoViewerUi viewer = new PhotoViewerUi(this,photo);
     photoViewer=viewer;photoPosition=position;
-    try{viewerLook=new ViewerLookUi(this,photo,viewer);viewer.lookUi=viewerLook;}catch(java.io.IOException error){viewerLook=null;}
-    final ViewerLookUi look=viewerLook;
     root.addView(viewer,new LinearLayout.LayoutParams(-1,0,1));
     photoAttached=isAutomatic(index)||value(index)==TagJudgments.Value.ASSIGNED;
     viewer.image.setContentDescription(viewer.image.getContentDescription()+"、タグ「"+tag.name+"」、"+(photoAttached?(isAutomatic(index)?"自動で付けました":"自分で付けました"):"タグなし"));
-    Runnable previous=()->{if(position>0){if(look!=null)look.runWhenReady("前の写真へ移動",()->showAssignedPhoto(position-1));else showAssignedPhoto(position-1);}};
-    Runnable next=()->{if(position+1<browsePhotos.size()){if(look!=null)look.runWhenReady("次の写真へ移動",()->showAssignedPhoto(position+1));else showAssignedPhoto(position+1);}};
+    Runnable previous=()->{if(position>0){showAssignedPhoto(position-1);}};
+    Runnable next=()->{if(position+1<browsePhotos.size()){showAssignedPhoto(position+1);}};
     viewer.image.setPageListener(direction->{if(direction>0)next.run();else previous.run();});
     photoPrevious=viewer.action("前の写真","前へ","前の写真",previous);
     photoNext=viewer.action("次の写真","次へ","次の写真",next);
@@ -642,7 +639,7 @@ public final class TagActivity extends DiagnosticActivity {
     worker.execute(()->{
       try{
         Bitmap bitmap=PhotoRepository.bitmap(photoPreview(photo),1600);
-        main.post(()->{if(current(token)){if(look!=null)look.original(bitmap);else viewer.image.setBitmap(bitmap);loading.finish();viewer.refreshStatus();}else bitmap.recycle();});
+        main.post(()->{if(current(token)){viewer.image.setBitmap(bitmap);loading.finish();viewer.refreshStatus();}else bitmap.recycle();});
       }catch(Exception error){main.post(()->{if(current(token)){
         viewer.failed();viewer.stage.removeView(loading);
         LinearLayout recovery=new LinearLayout(this);recovery.setTag("viewer-original-recovery");recovery.setOrientation(LinearLayout.VERTICAL);recovery.setGravity(Gravity.CENTER);
@@ -651,7 +648,7 @@ public final class TagActivity extends DiagnosticActivity {
         MaterialUi.outlined(retry);
         ActionIcon icon=new ActionIcon("再試行",getResources().getDisplayMetrics().density*20/26);icon.setBounds(0,0,GalleryUi.dp(this,20),GalleryUi.dp(this,20));retry.setCompoundDrawables(icon,null,null,null);retry.setCompoundDrawablePadding(GalleryUi.dp(this,6));
         LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(-2,GalleryUi.dp(this,48));rp.topMargin=GalleryUi.dp(this,12);recovery.addView(retry,rp);
-        viewer.stage.addView(recovery,new android.widget.FrameLayout.LayoutParams(-2,-2,Gravity.CENTER));if(look!=null&&look.controller.applied()!=null)recovery.setVisibility(android.view.View.GONE);
+        viewer.stage.addView(recovery,new android.widget.FrameLayout.LayoutParams(-2,-2,Gravity.CENTER));
       }});}
     });
   }
@@ -904,7 +901,6 @@ public final class TagActivity extends DiagnosticActivity {
   public void onBackPressed() {
     DiagnosticLog.event("action.back", 0, "screen", "TagActivity");
     if (busy) return;
-    if(browseMode==2&&viewerLook!=null){if(viewerLook.back())return;ViewerLookUi look=viewerLook;look.runWhenReady("戻る",()->{viewerLook=null;onBackPressed();});return;}
     if (browseMode == 1 && selecting) { selecting = false; selectedPhotos.clear(); refreshSelection(); }
     else if (browseMode == 3) {showTag();}
     else if (browseMode == 2) {
@@ -922,7 +918,6 @@ public final class TagActivity extends DiagnosticActivity {
   }
 
   protected void onStop() {
-    if(browseMode==2&&viewerLook!=null){restoreViewerLook=true;viewerLook.close();viewerLook=null;}
     // Finish the current image, then pause at a safe boundary. Do not interrupt native inference.
     analysisPaused = true;
     super.onStop();
@@ -930,7 +925,6 @@ public final class TagActivity extends DiagnosticActivity {
 
   protected void onRestart() {
     super.onRestart();
-    if(restoreViewerLook&&browseMode==2){restoreViewerLook=false;showAssignedPhoto(photoPosition);}
     analysisPaused = false;
     if (related) {
       resumeAnalysis();
