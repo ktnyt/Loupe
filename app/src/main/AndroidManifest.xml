@@ -4,6 +4,8 @@
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
@@ -44,6 +46,7 @@
                  android:foregroundServiceType="connectedDevice" />
         <service android:name=".camera.CameraDifferentialService" android:exported="false" android:foregroundServiceType="connectedDevice" />
         <activity android:name=".CameraBleActivity" android:exported="false" />
+        <activity android:name=".CameraQrScanActivity" android:exported="false" />
         <activity android:name=".Ep7WifiActivity" android:exported="false" android:screenOrientation="portrait" />
         <activity android:name=".CameraImportActivity" android:exported="false" />
         <activity android:name=".RawEditActivity" android:exported="false" android:screenOrientation="portrait" />

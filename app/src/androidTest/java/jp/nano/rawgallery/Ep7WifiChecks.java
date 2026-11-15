@@ -81,10 +81,19 @@ final class Ep7WifiChecks {
       final CameraBleActivity bleScreen = ble;
       TagDetailChecks.ui(t, () -> {
         View root = bleScreen.getWindow().getDecorView();
+        check((bleScreen.getWindow().getAttributes().flags & android.view.WindowManager.LayoutParams.FLAG_SECURE) != 0, "BLE credential screen protected");
+        if (android.os.Build.HARDWARE.equals("ranchu") || android.os.Build.HARDWARE.equals("goldfish")) {
+          try { check(new jp.nano.rawgallery.camera.CameraCredentialStore(bleScreen).names().isEmpty(), "Capture requires no registered user camera"); }
+          catch(java.io.IOException error) { throw new AssertionError("Capture registration state unavailable"); }
+          bleScreen.getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+        }
+        require(root, "カメラのQRを撮影する"); require(root, "写真のQRを読み取る");
         require(root, "カメラを探す"); require(root, "選んだカメラの起動を試す");
         check(!require(root, "選んだカメラの起動を試す").isEnabled(), "wake disabled before selection");
       });
       capture(t, ble, "ble-wake");
+      TagDetailChecks.ui(t,()->findScroll(bleScreen.getWindow().getDecorView()).fullScroll(View.FOCUS_DOWN));
+      capture(t,ble,"ble-wake-bottom");
       return "PASS offline Wi-Fi, SD and BLE entry, controls, safe scroll bounds, and live-region checks; no camera or import exercised.";
     } finally {
       if (ble != null) { CameraBleActivity a = ble; TagDetailChecks.ui(t, a::finish); }
@@ -104,7 +113,7 @@ final class Ep7WifiChecks {
     if (root instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) root).getChildCount(); i++) { ScrollView v = findScroll(((ViewGroup) root).getChildAt(i)); if (v != null) return v; }
     return null;
   }
-  private static void capture(Instrumentation t,Activity activity,String name)throws Exception {capture(t,activity,name,activity.getWindow().getDecorView());}
+  static void capture(Instrumentation t,Activity activity,String name)throws Exception {capture(t,activity,name,activity.getWindow().getDecorView());}
   private static void capture(Instrumentation t, Activity activity, String name,View decor) throws Exception {
     long deadline=android.os.SystemClock.uptimeMillis()+5000; boolean[] focused={false};
     do { TagDetailChecks.ui(t,()->focused[0]=decor.hasWindowFocus()); if(focused[0])break; Thread.sleep(50); } while(android.os.SystemClock.uptimeMillis()<deadline);
