@@ -182,13 +182,14 @@ final class CameraImportPilotChecks {
         Context context = instrumentation.getTargetContext();
         if (!CameraImportGate.lock.tryLock()) throw new IOException("Another camera import is active");
         PilotSession session = null;
+        boolean success = false;
         try {
             session = loadCurrentSession(context);
-            if (session != null && !context.getDatabasePath(session.databaseName).exists()) {
-                cleanupSession(context, session);
-                session = null;
+            if (session == null || !context.getDatabasePath(session.databaseName).exists()) {
+                throw new IOException("Wi-Fi pilot baseline is missing; run Wi-Fi pilot first");
             }
-            if (session == null) session = createSession(context);
+            List<WifiProof> wifiProof = loadWifiProof(session);
+            if (wifiProof.size() != MAX_FILES) throw new IOException("Wi-Fi pilot proof is incomplete");
             String treeValue = context.getSharedPreferences("camera_import", Context.MODE_PRIVATE)
                     .getString("sd_tree_uri", null);
             if (treeValue == null) throw new IOException("No saved SD card tree is available");
@@ -201,11 +202,8 @@ final class CameraImportPilotChecks {
                 importer.recover(() -> false);
                 long scanStart = System.nanoTime();
                 CameraDocumentSource.Listing listing = CameraDocumentSource.list(context, tree, () -> false);
-                List<WifiProof> wifiProof = loadWifiProof(session);
-                boolean crossRoute = !wifiProof.isEmpty();
-                List<CameraDocumentSource.Entry> selected = crossRoute
-                        ? selectSdForWifi(listing.photos, wifiProof)
-                        : selectSd(listing.photos);
+                boolean crossRoute = true;
+                List<CameraDocumentSource.Entry> selected = selectSdForWifi(listing.photos, wifiProof);
                 long selectedBytes = totalSdBytes(selected);
                 double scanSeconds = elapsed(scanStart);
                 long contentsBefore = ledger.contentCount();
@@ -217,8 +215,9 @@ final class CameraImportPilotChecks {
                 int crossMatches = 0;
                 for (int i = 0; i < selected.size(); i++) {
                     CameraDocumentSource.Entry entry = selected.get(i);
+                    WifiProof expectedProof = wifiProof.get(i);
                     CameraPhotoImporter.Result result = importer.importPhoto(entry.file,
-                            out -> CameraDocumentSource.copy(context, entry, out, () -> false),
+                            out -> copySdChecked(context, entry, out, expectedProof.sourceSha),
                             session.folderName, listing.stable, true, () -> false);
                     require(result.contentChecked && result.sourceBytesRead == entry.file.bytes,
                             "SD first pass did not read and verify the selected source");
@@ -249,9 +248,10 @@ final class CameraImportPilotChecks {
                 for (int i = 0; i < selected.size(); i++) {
                     CameraDocumentSource.Entry entry = selected.get(i);
                     final int[] copies = {0};
+                    WifiProof expectedProof = wifiProof.get(i);
                     CameraPhotoImporter.Result result = importer.importPhoto(entry.file, out -> {
                         copies[0]++;
-                        CameraDocumentSource.copy(context, entry, out, () -> false);
+                        copySdChecked(context, entry, out, expectedProof.sourceSha);
                     }, session.folderName, listing.stable, false, () -> false);
                     require(!result.imported && result.uri.toString().equals(firstUris.get(i)),
                             "SD history pass created a new publication");
@@ -271,7 +271,8 @@ final class CameraImportPilotChecks {
                 require(ledger.contentCount() == contentsBefore + newContents &&
                                 ledger.receiptCount() == receiptsBefore + newReceipts,
                         "SD history pass changed content or receipt counts");
-                return "PASS " + (crossRoute ? "pilot-sd" : "pilot-sd-only") +
+                success = true;
+                return "PASS pilot-sd" +
                         " crossRouteVerified=" + crossRoute +
                         " stable=" + listing.stable +
                         " selectedFiles=" + selected.size() +
@@ -290,11 +291,45 @@ final class CameraImportPilotChecks {
             }
         } finally {
             try {
-                if (session != null) cleanupSession(context, session);
+                if (success && session != null) cleanupSession(context, session);
             } finally {
                 CameraImportGate.lock.unlock();
             }
         }
+    }
+
+    // A mismatch throws before importPhoto can publish or commit a source receipt.
+    private static void copySdChecked(Context context, CameraDocumentSource.Entry entry,
+            java.io.OutputStream output, String expectedSha) throws IOException {
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            java.security.DigestOutputStream checked = new java.security.DigestOutputStream(output, digest);
+            CameraDocumentSource.copy(context, entry, checked, () -> false);
+            StringBuilder actual = new StringBuilder();
+            for (byte value : digest.digest()) actual.append(String.format(Locale.ROOT, "%02x", value & 255));
+            require(expectedSha.equals(actual.toString()), "SD source SHA does not match Wi-Fi proof");
+        } catch (java.security.NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
+    }
+
+    static String runSdGuardChecks(Instrumentation instrumentation) throws Exception {
+        Context context = instrumentation.getTargetContext();
+        require(loadCurrentSession(context) == null, "Guard check requires no active pilot");
+        try { runSd(instrumentation); throw new AssertionError("Missing baseline was accepted"); }
+        catch (IOException expected) { require(loadCurrentSession(context) == null, "Missing baseline created a run"); }
+        PilotSession session = createSession(context);
+        try {
+            try (CameraImportLedger ledger = new CameraImportLedger(context, session.databaseName)) {
+                ledger.getWritableDatabase();
+            }
+            require(context.getDatabasePath(session.databaseName).exists(), "Guard baseline database was not created");
+            try { runSd(instrumentation); throw new AssertionError("Incomplete proof was accepted"); }
+            catch (IOException expected) {
+                PilotSession retained = loadCurrentSession(context);
+                require(retained != null && retained.runId.equals(session.runId) &&
+                        context.getDatabasePath(session.databaseName).exists(), "Failed SD erased baseline");
+            }
+            return "PASS pilot-sd-guards missingBaselineRejected=true failedProofPreserved=true";
+        } finally { cleanupSession(context, session); }
     }
 
     static String cleanup(Instrumentation instrumentation) throws Exception {

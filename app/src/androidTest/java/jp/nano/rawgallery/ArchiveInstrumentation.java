@@ -268,6 +268,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
             result=CameraImportPilotChecks.runWifi(this);
           } finally {runOnMainSync(()->{pilotUi.getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);pilotUi.finish();});}
         }
+        else if(cameraPilotMode.equals("camera-pilot-sd-guards"))result=CameraImportPilotChecks.runSdGuardChecks(this);
         else if(cameraPilotMode.equals("camera-pilot-sd"))result=CameraImportPilotChecks.runSd(this);
         else if(cameraPilotMode.equals("camera-pilot-cleanup"))result=CameraImportPilotChecks.cleanup(this);
         else throw new IllegalArgumentException("Unknown pilot mode");
