@@ -6,6 +6,13 @@
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
@@ -34,6 +41,8 @@
         </activity>
         <service android:name=".camera.ImportService" android:exported="false"
                  android:foregroundServiceType="connectedDevice" />
+        <service android:name=".camera.CameraDifferentialService" android:exported="false" android:foregroundServiceType="connectedDevice" />
+        <activity android:name=".CameraBleActivity" android:exported="false" />
         <activity android:name=".Ep7WifiActivity" android:exported="false" android:screenOrientation="portrait" />
         <activity android:name=".CameraImportActivity" android:exported="false" />
         <activity android:name=".RawEditActivity" android:exported="false" android:screenOrientation="portrait" />

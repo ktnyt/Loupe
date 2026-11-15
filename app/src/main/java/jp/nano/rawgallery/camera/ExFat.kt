@@ -20,7 +20,18 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
         val length: Long,
         val noFatChain: Boolean,
         val modifiedEpochSec: Long,
-    )
+        val relativePath: String,
+    ) {
+        /** Preserve the original Java/Kotlin six-argument constructor for existing callers. */
+        constructor(
+            name: String,
+            isDir: Boolean,
+            firstCluster: Long,
+            length: Long,
+            noFatChain: Boolean,
+            modifiedEpochSec: Long,
+        ) : this(name, isDir, firstCluster, length, noFatChain, modifiedEpochSec, name)
+    }
 
     private var bytesPerSector = 512
     private var sectorsPerCluster = 8
@@ -28,7 +39,19 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
     private var clusterHeapOffsetSectors = 0L
     private var rootDirCluster = 0L
     private var clusterCount = 0L
+    private var volumeLength = 0L
+    private var fatLengthSectors = 0L
+    private var numberOfFats = 0
     private val bytesPerCluster get() = bytesPerSector * sectorsPerCluster
+
+    /** Raw unsigned exFAT VolumeSerialNumber from the main boot sector (offset 100). */
+    var volumeSerial: Long = 0L
+        private set
+    /** Zero is exposed as unreliable so callers can avoid trusting it for fast deduplication. */
+    val volumeSerialReliable: Boolean get() = volumeSerial != 0L
+    /** Stable transport-independent descriptor for this volume and its parsed geometry. */
+    var volumeId: String = ""
+        private set
 
     fun mount() {
         require(dev.blockSize in 512..4096) { "Unsupported USB block size" }
@@ -38,29 +61,47 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
         val sig = String(boot, 3, 8, Charsets.US_ASCII)
         require(sig == "EXFAT   ") { "not exFAT (sig='$sig')" }
         val bb = ByteBuffer.wrap(boot).order(ByteOrder.LITTLE_ENDIAN)
+        volumeLength = le64(boot, 72)
         fatOffsetSectors = bb.getInt(80).toLong() and 0xFFFFFFFFL
+        fatLengthSectors = bb.getInt(84).toLong() and 0xFFFFFFFFL
         clusterHeapOffsetSectors = bb.getInt(88).toLong() and 0xFFFFFFFFL
         rootDirCluster = bb.getInt(96).toLong() and 0xFFFFFFFFL
         clusterCount = bb.getInt(92).toLong() and 0xFFFFFFFFL
+        volumeSerial = le32(boot, 100)
         val sectorShift = boot[108].toInt() and 0xFF
         val clusterShift = boot[109].toInt() and 0xFF
+        numberOfFats = boot[110].toInt() and 0xFF
         require(sectorShift in 9..12 && clusterShift <= 25 - sectorShift) { "Invalid exFAT geometry" }
         bytesPerSector = 1 shl sectorShift
         sectorsPerCluster = 1 shl clusterShift
         require(bytesPerSector % dev.blockSize == 0 && validCluster(rootDirCluster) &&
             fatOffsetSectors > 0 && clusterHeapOffsetSectors > fatOffsetSectors) { "Invalid exFAT volume" }
+        volumeId = listOf(
+            "exfat",
+            java.lang.Long.toUnsignedString(volumeSerial, 16).padStart(8, '0'),
+            java.lang.Long.toUnsignedString(partitionLba),
+            java.lang.Long.toUnsignedString(volumeLength),
+            java.lang.Long.toUnsignedString(fatOffsetSectors),
+            java.lang.Long.toUnsignedString(fatLengthSectors),
+            java.lang.Long.toUnsignedString(clusterHeapOffsetSectors),
+            java.lang.Long.toUnsignedString(clusterCount),
+            java.lang.Long.toUnsignedString(rootDirCluster),
+            bytesPerSector.toString(),
+            sectorsPerCluster.toString(),
+            numberOfFats.toString(),
+        ).joinToString(":")
     }
 
     /** DCIM を辿って取り込み対象 (写真・RAW・動画) のノードを機種フォルダ順に列挙する */
     fun listMediaUnderDcim(): List<Node> {
         val budget = ScanBudget()
-        val dcim = listDir(rootDirCluster, noFatChain = false, length = -1, budget = budget)
+        val dcim = listDir(rootDirCluster, noFatChain = false, length = -1, relativePath = "", budget = budget)
             .firstOrNull { it.isDir && it.name.equals("DCIM", ignoreCase = true) }
             ?: return emptyList()
         val out = ArrayList<Node>()
-        for (sub in listDir(dcim.firstCluster, dcim.noFatChain, dcim.length, budget).sortedBy { it.name }) {
+        for (sub in listDir(dcim.firstCluster, dcim.noFatChain, dcim.length, dcim.relativePath, budget).sortedBy { it.name }) {
             if (!sub.isDir) continue
-            for (f in listDir(sub.firstCluster, sub.noFatChain, sub.length, budget).sortedBy { it.name }) {
+            for (f in listDir(sub.firstCluster, sub.noFatChain, sub.length, sub.relativePath, budget).sortedBy { it.name }) {
                 if (!f.isDir && MediaTypes.isTarget(f.name)) out.add(f)
             }
         }
@@ -124,7 +165,13 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
     }
 
     /** ディレクトリのエントリ集合を Node にまとめる */
-    private fun listDir(firstCluster: Long, noFatChain: Boolean, length: Long, budget: ScanBudget): List<Node> {
+    private fun listDir(
+        firstCluster: Long,
+        noFatChain: Boolean,
+        length: Long,
+        relativePath: String,
+        budget: ScanBudget,
+    ): List<Node> {
         val bytes = readDirBytes(firstCluster, noFatChain, length, budget)
         val nodes = ArrayList<Node>()
         var i = 0
@@ -165,14 +212,16 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
                 j += 32
             }
             budget.entry()
+            val name = nameSb.toString()
             nodes.add(
                 Node(
-                    name = nameSb.toString(),
+                    name = name,
                     isDir = isDir,
                     firstCluster = firstClusterOfNode,
                     length = dataLen,
                     noFatChain = noChain,
                     modifiedEpochSec = modified,
+                    relativePath = if (relativePath.isEmpty()) name else "$relativePath/$name",
                 )
             )
             i = j

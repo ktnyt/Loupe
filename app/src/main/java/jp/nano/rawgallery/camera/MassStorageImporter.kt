@@ -35,6 +35,8 @@ object MassStorageImporter {
             val exfat = ExFat(ums, partitionLba)
             exfat.mount()
 
+            val photos = CameraPhotoImporter(context)
+            photos.recover { isCancelled() }
             val known = db.importedKeys(camera.model, camera.serial)
             val existing = MediaSaver.existingFiles(context, camera) // 整合チェックは一度だけ取る
             val all = exfat.listMediaUnderDcim()
@@ -50,7 +52,9 @@ object MassStorageImporter {
                 val kind = MediaTypes.kindOf(node.name) ?: continue
                 if (kind !in kinds) continue
                 val key = ImportedKey(node.name, node.length, node.modifiedEpochSec)
-                if (key.asString() in known) {
+                if (!MediaTypes.isVideo(node.name)) {
+                    targets.add(Target(node, node.name))
+                } else if (key.asString() in known) {
                     skipped++
                 } else {
                     // 履歴に無くても保存先に同一ファイルが実在すれば取り込まない (整合チェック)。
@@ -89,14 +93,19 @@ object MassStorageImporter {
                             exfat.copyTo(node, out)
                         }
                     } else {
-                        PhotoImportCopy.prepare(context.cacheDir, node.name, node.length,
-                            { out -> exfat.copyTo(node, out) },
-                            { file ->
-                                MediaSaver.save(context, t.saveName, node.modifiedEpochSec, camera) { out ->
-                                    file.inputStream().use { it.copyTo(out) }
-                                }
-                            },
-                        )
+                        val source = CameraImportFile(
+                            "sd:" + java.lang.Long.toHexString(exfat.volumeSerial).padStart(8, '0').uppercase(),
+                            node.relativePath, node.length, (node.modifiedEpochSec * 1000).toString(), node.modifiedEpochSec)
+                        val result = photos.importPhoto(source, { out -> exfat.copyTo(node, out) },
+                            camera.folder, exfat.volumeSerialReliable, true, { isCancelled() })
+                        if (!result.imported) {
+                            db.recordImport(camera.model, camera.serial, key, result.uri.toString())
+                            skipped++
+                            consecutiveFailures = 0
+                            onProgress(MtpImporter.Progress(targets.size, i + 1))
+                            continue
+                        }
+                        result.uri
                     }
                     totalMs += System.currentTimeMillis() - t0
                     bytesTotal += node.length

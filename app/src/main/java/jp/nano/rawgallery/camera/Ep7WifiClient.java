@@ -132,6 +132,23 @@ public final class Ep7WifiClient {
         check(start);
         return new Listing(photos, seconds(start));
     }
+    /** Stream an original into the common verifier without a second staging file. */
+    public void copyOriginal(Entry entry,OutputStream output)throws IOException {
+        path(entry.path);
+        if(entry.directory||!entry.photo()||entry.bytes<=0||entry.bytes>MAX_FILE_BYTES)throw new IOException("Unsupported original");
+        long start=System.nanoTime();check(start);
+        HttpURLConnection c=open(entry.path);
+        try {
+            response(c);long size=c.getContentLengthLong();
+            if(size>=0&&size!=entry.bytes)throw new IOException("Camera size changed");
+            try(InputStream in=c.getInputStream()) {
+                byte[] buffer=new byte[65536];long received=0;int n;
+                while((n=in.read(buffer))!=-1){check(start);received+=n;if(received>entry.bytes)throw new IOException("Camera file too long");output.write(buffer,0,n);}
+                if(received!=entry.bytes)throw new IOException("Camera file incomplete");
+            }
+            check(start);
+        }finally{c.disconnect();}
+    }
     /** Receive -> exact length -> sync -> SHA readback -> unique final file. No MediaStore/history writes. */
     public Download download(Entry entry, File directory) throws IOException {
         path(entry.path);
