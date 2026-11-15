@@ -14,6 +14,8 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Proxy;
+import java.util.ArrayList;
+import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -30,7 +32,8 @@ final class Ep7WifiChecks {
     try {
       t.waitForIdleSync();
       Fields f = new Fields(activity);
-      t.runOnMainSync(() -> {
+      t.getUiAutomation().waitForIdle(300, 5000);
+      TagDetailChecks.ui(t, () -> {
         check(!f.busy(), "launch remains idle; no automatic fetch");
         check("待機中".contentEquals(f.status().getText()), "initial status");
         check(f.status().getAccessibilityLiveRegion() == View.ACCESSIBILITY_LIVE_REGION_POLITE,
@@ -39,7 +42,7 @@ final class Ep7WifiChecks {
         check(f.files().getAdapter() == null || f.files().getAdapter().getCount() == 0, "no listed files initially");
         checkSafeParents(activity, f);
       });
-      capture(t, captures, prefix + "initial-" + width + "-" + font + ".png");
+      capture(t, activity, captures, prefix + "initial-" + width + "-" + font + ".png");
       NetworkSecurityPolicy policy = NetworkSecurityPolicy.getInstance();
       check(policy.isCleartextTrafficPermitted("192.168.0.10"), "camera address cleartext exception");
       check(!policy.isCleartextTrafficPermitted("example.com"), "cleartext denied for public host");
@@ -50,23 +53,23 @@ final class Ep7WifiChecks {
       CountDownLatch release = new CountDownLatch(1);
       invokeOperation(activity, "合成処理中…", cancel -> {
         entered.countDown();
-        if (!release.await(5, TimeUnit.SECONDS)) throw new IOException("fixture timeout");
+        if (!release.await(30, TimeUnit.SECONDS)) throw new IOException("fixture timeout");
         throw new IOException("synthetic list failure");
       });
-      check(entered.await(5, TimeUnit.SECONDS), "synthetic operation entered");
-      t.waitForIdleSync();
-      t.runOnMainSync(() -> {
-        check(f.busy(), "busy during synthetic operation");
-        check(f.progress().getVisibility() == View.VISIBLE, "busy progress visible");
-        check(!f.download().isEnabled() && f.stop().isEnabled(), "transfer remains disabled and cancel is available while busy");
-      });
-      capture(t, captures, prefix + "busy-" + width + "-" + font + ".png");
-      release.countDown();
+      try {
+        check(entered.await(5, TimeUnit.SECONDS), "synthetic operation entered");
+        TagDetailChecks.ui(t, () -> {
+          check(f.busy(), "busy during synthetic operation");
+          check(f.progress().getVisibility() == View.VISIBLE, "busy progress visible");
+          check(!f.download().isEnabled() && f.stop().isEnabled(), "transfer remains disabled and cancel is available while busy");
+        });
+        capture(t, activity, captures, prefix + "busy-" + width + "-" + font + ".png");
+      } finally { release.countDown(); }
       waitFor(t, activity, () -> !f.busy() && f.status().getText().toString().startsWith("試験に失敗しました。"));
-      t.runOnMainSync(() -> {
+      TagDetailChecks.ui(t, () -> {
         check(f.progress().getVisibility() == View.GONE, "progress hidden after failure");
       });
-      capture(t, captures, prefix + "failure-" + width + "-" + font + ".png");
+      capture(t, activity, captures, prefix + "failure-" + width + "-" + font + ".png");
 
       CountDownLatch cancelEntered = new CountDownLatch(1);
       CountDownLatch cancelRelease = new CountDownLatch(1);
@@ -78,7 +81,7 @@ final class Ep7WifiChecks {
         return "合成結果 fixture";
       });
       check(cancelEntered.await(5, TimeUnit.SECONDS), "cancel fixture entered");
-      t.runOnMainSync(() -> {
+      TagDetailChecks.ui(t, () -> {
         check(f.busy() && f.stop().isEnabled(), "cancel control available while operation is busy");
         try {
           var onStop = Ep7WifiActivity.class.getDeclaredMethod("onStop");
@@ -90,12 +93,62 @@ final class Ep7WifiChecks {
       cancelRelease.countDown();
       waitFor(t, activity, () -> !f.busy() && f.status().getText().toString().startsWith("中止しました。"));
 
-      t.runOnMainSync(() -> {
+      var listedPhotos = jp.nano.rawgallery.camera.Ep7WifiClient.parseList(
+          "VER_100\n/DCIM/100OLYMP,P1010001.JPG,2097152,0,0,0\n/DCIM/100OLYMP,P1010001.ORF,4194304,0,0,0\n",
+          "/DCIM/100OLYMP");
+      TagDetailChecks.ui(t, () -> {
+        try {
+          var entries = Ep7WifiActivity.class.getDeclaredField("entries");
+          entries.setAccessible(true);
+          entries.set(activity, new ArrayList<>(listedPhotos));
+          var render = Ep7WifiActivity.class.getDeclaredMethod("render");
+          render.setAccessible(true);
+          render.invoke(activity);
+        } catch (ReflectiveOperationException error) { throw new AssertionError(error); }
+        f.files().setAdapter(activity.photoAdapter(listedPhotos));
+        f.status().setText("合成一覧 fixture（実際のカメラ一覧ではありません）\n2枚のJPEG・ORF · 一覧取得 0.02秒");
+        check(!f.busy() && f.list().isEnabled() && f.download().isEnabled(), "synthetic list enables selection and transfer controls");
+        check(f.files().getAdapter().getCount() == 2, "synthetic fixture uses core parser entries");
+      });
+      ConsistencyLayoutChecks.frame(t, activity.getWindow().getDecorView());
+      TagDetailChecks.ui(t, () -> {
+        f.files().requestRectangleOnScreen(new Rect(0, 0, f.files().getWidth(), f.files().getHeight()), true);
+      });
+      ConsistencyLayoutChecks.frame(t, activity.getWindow().getDecorView());
+      TagDetailChecks.ui(t, () -> {
+        TextView selected = (TextView) f.files().getSelectedView();
+        check(selected != null && selected.getText().toString().startsWith("JPG · "), "selected JPEG format visible");
+        check(selected.getLayout().getEllipsisCount(0) == 0 && selected.getLineCount() >= 2, "selected photo wraps without losing its format");
+        f.files().performClick();
+      });
+      t.getUiAutomation().waitForIdle(200, 5000);
+      var tree = t.getUiAutomation().getRootInActiveWindow();
+      check(tree != null && !tree.findAccessibilityNodeInfosByText("ORF · 4.0 MiB").isEmpty()
+          && !tree.findAccessibilityNodeInfosByText("JPG · 2.0 MiB").isEmpty(), "dropdown exposes both formats for matching basenames");
+      capture(t, activity, captures, prefix + "dropdown-" + width + "-" + font + ".png");
+      t.getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);
+      t.getUiAutomation().waitForIdle(200, 5000);
+      capture(t, activity, captures, prefix + "list-" + width + "-" + font + ".png");
+
+      String syntheticSuccess = "合成表示 fixture（実際の転送ではありません）\n保存と読戻し照合が完了しました\n"
+          + "2.00 MiB · 転送 0.50秒 · 4.00 MiB/s\n保存検証を含む全体 0.75秒\n受信・保存SHA-256\n"
+          + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+      invokeOperation(activity, "合成成功表示を準備しています…", cancel -> syntheticSuccess);
+      waitFor(t, activity, () -> !f.busy() && syntheticSuccess.contentEquals(f.status().getText()));
+      TagDetailChecks.ui(t, () -> {
+        check(!f.busy() && f.list().isEnabled() && f.download().isEnabled(), "synthetic success returns to idle with list and transfer enabled");
+      });
+      ConsistencyLayoutChecks.frame(t, activity.getWindow().getDecorView());
+      TagDetailChecks.ui(t, () -> f.status().requestRectangleOnScreen(new Rect(0, 0, f.status().getWidth(), f.status().getHeight()), true));
+      capture(t, activity, captures, prefix + "success-fixture-" + width + "-" + font + ".png");
+
+      ConsistencyLayoutChecks.frame(t, activity.getWindow().getDecorView());
+      TagDetailChecks.ui(t, () -> {
         ScrollView scroll = f.scroll();
         scroll.fullScroll(View.FOCUS_DOWN);
       });
-      t.waitForIdleSync();
-      t.runOnMainSync(() -> {
+      ConsistencyLayoutChecks.frame(t, activity.getWindow().getDecorView());
+      TagDetailChecks.ui(t, () -> {
         checkVisibleInParent(f.stop(), f.scroll(), "cancel action reachable in scroll viewport");
         checkVisibleInParent(f.clear(), f.scroll(), "cleanup action reachable in scroll viewport");
         check(f.wifi().getMinimumHeight() >= GalleryUi.dp(activity, 48), "Wi-Fi settings touch target");
@@ -105,21 +158,21 @@ final class Ep7WifiChecks {
         check(f.clear().getMinimumHeight() >= GalleryUi.dp(activity, 48), "cleanup touch target");
       });
 
-      checkSettingsRoute(t);
-      return "PASS E-P7 Wi-Fi idle/no-autofetch state, disabled transfer/cancel, status live region, safe toolbar/scroll bounds, 48dp actions, synthetic busy/failure/cancel states, CameraImport settings route, and scoped cleartext policy; no network request issued.";
+      checkSettingsRoute(t, captures, width, font);
+      return "PASS E-P7 Wi-Fi idle/no-autofetch state, disabled transfer/cancel, status live region, safe toolbar/scroll bounds, 48dp actions, synthetic list/busy/failure/cancel/success states, CameraImport settings route, and scoped cleartext policy; no network request issued.";
     } finally {
-      t.runOnMainSync(activity::finish);
+      TagDetailChecks.ui(t, activity::finish);
     }
   }
 
-  private static void checkSettingsRoute(Instrumentation t) throws Exception {
+  private static void checkSettingsRoute(Instrumentation t, File parentCaptures, int width, String font) throws Exception {
     CameraImportActivity camera = (CameraImportActivity) t.startActivitySync(
         new Intent(t.getTargetContext(), CameraImportActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     try {
       t.waitForIdleSync();
       var monitor = t.addMonitor(Ep7WifiActivity.class.getName(), null, false);
       try {
-        t.runOnMainSync(() -> {
+        TagDetailChecks.ui(t, () -> {
           try {
             var settings = CameraImportActivity.class.getDeclaredField("settingsButton");
             settings.setAccessible(true);
@@ -130,14 +183,27 @@ final class Ep7WifiChecks {
             check(panel.getVisibility() == View.VISIBLE, "camera settings expanded");
             var route = findText(panel, "E-P7のWi-Fi転送を試す");
             check(route != null, "Wi-Fi trial route is present in camera settings");
+            ScrollView scroll = findScroll(camera.getWindow().getDecorView());
+            check(scroll != null, "camera import settings scroll parent exists");
+            scroll.fullScroll(View.FOCUS_DOWN);
+          } catch (ReflectiveOperationException error) { throw new AssertionError(error); }
+        });
+        t.waitForIdleSync();
+        capture(t, camera, parentCaptures, "ep7-wifi-settings-" + width + "-" + font + ".png");
+        TagDetailChecks.ui(t, () -> {
+          try {
+            var field = CameraImportActivity.class.getDeclaredField("importSettings");
+            field.setAccessible(true);
+            var route = findText((View) field.get(camera), "E-P7のWi-Fi転送を試す");
+            check(route != null, "Wi-Fi trial route remains present after capture");
             route.performClick();
           } catch (ReflectiveOperationException error) { throw new AssertionError(error); }
         });
         var opened = t.waitForMonitorWithTimeout(monitor, 5000);
         check(opened instanceof Ep7WifiActivity, "CameraImport opens E-P7 Wi-Fi trial");
-        if (opened != null) t.runOnMainSync(opened::finish);
+        if (opened != null) TagDetailChecks.ui(t, opened::finish);
       } finally { t.removeMonitor(monitor); }
-    } finally { t.runOnMainSync(camera::finish); }
+    } finally { TagDetailChecks.ui(t, camera::finish); }
   }
 
   private static void checkSafeParents(Ep7WifiActivity activity, Fields f) {
@@ -183,7 +249,17 @@ final class Ep7WifiChecks {
     return null;
   }
 
-  private static void capture(Instrumentation t, File dir, String name) {
+  private static ScrollView findScroll(View view) {
+    if (view instanceof ScrollView) return (ScrollView) view;
+    if (view instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++) {
+      ScrollView found = findScroll(((ViewGroup) view).getChildAt(i));
+      if (found != null) return found;
+    }
+    return null;
+  }
+
+  private static void capture(Instrumentation t, android.app.Activity activity, File dir, String name) throws Exception {
+    ConsistencyLayoutChecks.frame(t, activity.getWindow().getDecorView());
     Bitmap image = t.getUiAutomation().takeScreenshot();
     if (image == null) throw new AssertionError("screenshot unavailable: " + name);
     try (FileOutputStream out = new FileOutputStream(new File(dir, name))) {
@@ -214,7 +290,7 @@ final class Ep7WifiChecks {
     long deadline = System.currentTimeMillis() + 5000;
     while (System.currentTimeMillis() < deadline) {
       final boolean[] done = {false};
-      t.runOnMainSync(() -> done[0] = condition.ok());
+      TagDetailChecks.ui(t, () -> done[0] = condition.ok());
       if (done[0]) return;
       Thread.sleep(25);
     }
@@ -251,14 +327,6 @@ final class Ep7WifiChecks {
     View clear() { return get(clear, View.class); }
     ScrollView scroll() { return scrollView; }
     View toolbar() { return toolbarView; }
-    private ScrollView findScroll(View view) {
-      if (view instanceof ScrollView) return (ScrollView) view;
-      if (view instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++) {
-        ScrollView found = findScroll(((ViewGroup) view).getChildAt(i));
-        if (found != null) return found;
-      }
-      return null;
-    }
     private <T> T get(java.lang.reflect.Field f, Class<T> type) { try { return type.cast(f.get(a)); } catch (IllegalAccessException e) { throw new AssertionError(e); } }
   }
 

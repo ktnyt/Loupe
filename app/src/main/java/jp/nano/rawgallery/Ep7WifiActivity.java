@@ -128,13 +128,19 @@ public final class Ep7WifiActivity extends AppCompatActivity {
             runOnUiThread(() -> {
                 if (isDestroyed() || cancel.get()) return;
                 entries = result.photos; listedNetwork = network;
-                List<String> labels = new ArrayList<>();
-                for (var e : entries) labels.add(e.name() + " · " + String.format(Locale.JAPAN, "%.1f MiB", e.bytes / 1048576.0));
-                ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, labels);
-                files.setAdapter(adapter);
+                files.setAdapter(photoAdapter(entries));
             });
             return String.format(Locale.JAPAN, "%d枚のJPEG・ORF · 一覧取得 %.2f秒", result.photos.size(), result.seconds);
         });
+    }
+    ArrayAdapter<String> photoAdapter(List<Ep7WifiClient.Entry> photos) {
+        List<String> labels = new ArrayList<>();
+        for (var photo : photos) {
+            String format = photo.name().substring(photo.name().lastIndexOf('.') + 1).toUpperCase(Locale.ROOT);
+            labels.add(format + " · " + String.format(Locale.JAPAN, "%.1f MiB", photo.bytes / 1048576.0)
+                    + "\n" + photo.path.substring("/DCIM/".length()));
+        }
+        return new ArrayAdapter<>(this, R.layout.ep7_photo_item, labels);
     }
     private void transfer() {
         int selected = files.getSelectedItemPosition();
