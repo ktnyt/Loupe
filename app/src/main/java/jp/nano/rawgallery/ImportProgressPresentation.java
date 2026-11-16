@@ -49,15 +49,12 @@ public final class ImportProgressPresentation {
         if (p.getKnown() >= 0) secondary += " · 保存済み " + p.getKnown() + "件";
         break;
       case CONTENT:
-        primary = "原本の内容を確認中";
+      case SAVING:
+        primary = "写真を確認・取り込み中";
         secondary = "要確認 " + count(p.getProcessed(), p.getTotal());
         if (p.getKnown() >= 0) secondary += " · 保存済み " + p.getKnown() + "件";
         if (p.getSaved() >= 0) secondary += " · 新規保存 " + p.getSaved() + "件";
         if (p.getSourceBytes() >= 0) secondary += " · 読取 " + bytes(p.getSourceBytes());
-        break;
-      case SAVING:
-        primary = "新しい写真を保存中";
-        secondary = p.getSaved() >= 0 ? "新規保存 " + p.getSaved() + "件" : "保存を確認中";
         break;
       default:
         primary = switch (p.getStage()) {
@@ -72,8 +69,7 @@ public final class ImportProgressPresentation {
         break;
     }
     if (state.getActive() && state.getStopRequested()) primary = "取り込みを中止しています";
-    return new ImportProgressPresentation(primary, secondary, p.getProcessed(),
-        p.getStage() == ImportProgress.PhotoStage.SAVING ? -1 : p.getTotal(), true);
+    return new ImportProgressPresentation(primary, secondary, p.getProcessed(), p.getTotal(), true);
   }
 
   private static String summary(ImportProgress.PhotoState p) {

@@ -56,10 +56,27 @@ final class CameraImportProgressChecks {
         p.begin("Synthetic SD"); p.photoHistory(4802, 4802, 4800);
         p.photoContent(0, 2, 0, 0, -1, -1); refresh.run();
         String text = ImportProgressPresentation.current().text();
-        require(text.contains("内容を確認中") && text.contains("要確認 0 / 2件") && text.contains("新規保存 0件"), "two candidates not planned new saves");
+        require(text.contains("確認・取り込み中") && text.contains("要確認 0 / 2件") && text.contains("新規保存 0件"), "two candidates not planned new saves");
         require(!text.contains("読取"), "unknown bytes not zero");
       });
       capture(t, screen, dir, size + "-content-two");
+      TagDetailChecks.ui(t, () -> { p.photoContent(1,20,1,0,4096,4096); refresh.run(); });
+      capture(t, screen, dir, size + "-stable-content");
+      TagDetailChecks.ui(t, () -> { p.photoSaving(1); refresh.run(); });
+      capture(t, screen, dir, size + "-stable-saving");
+      TagDetailChecks.ui(t, () -> {
+        for (int i=1; i<=20; i++) {
+          p.photoContent(i,20,i,0,i*4096L,i*4096L); refresh.run();
+          var content=ImportProgressPresentation.current();
+          p.photoSaving(i); refresh.run();
+          var saving=ImportProgressPresentation.current();
+          require(content.primary.equals(saving.primary), "per-photo saving must not replace processing heading");
+          require(content.secondary.equals(saving.secondary), "per-photo saving must retain counter fields");
+          require(saving.done==content.done && saving.total==20, "per-photo saving retains progress denominator");
+          var bar=(android.widget.ProgressBar)control(activity,"progress");
+          require(!bar.isIndeterminate() && bar.getMax()==20 && bar.getProgress()==i, "per-photo saving must not toggle progress mode");
+        }
+      });
       TagDetailChecks.ui(t, () -> {
         p.photoContent(2, 2, 0, 2, 4096, 0); p.photoTerminal("complete", "完了"); p.finish("完了"); refresh.run();
         require(ImportProgressPresentation.current().text().contains("新規保存 0件"), "unchanged import saves zero");
@@ -115,7 +132,7 @@ final class CameraImportProgressChecks {
         p.connecting("接続中"); p.begin("Synthetic SD"); p.photoTerminal("cancelled","中止");
         p.waiting("再接続待ち"); require(!p.getActive(), "explicit cancelled result cannot be revived without stop flag");
       });
-      return "PASS synthetic listing unknown total, 4800 known history, two content candidates, zero actual saves, bytes unknown, cancel/failure, failed attempt/retry/cumulative success and concurrent stop, shared tab AX and selection lock; native captures " + size + ". No physical USB/TalkBack verification.";
+      return "PASS synthetic listing unknown total, 4800 known history, two content candidates, zero actual saves, bytes unknown, cancel/failure, failed attempt/retry/cumulative success and concurrent stop, 20 alternating content/save events keep heading/counters/progress stable, shared tab AX and selection lock; native captures " + size + ". No physical USB/TalkBack verification.";
     } finally {
       if (screen != null) { CameraImportActivity activity = screen; t.runOnMainSync(activity::finish); t.waitForIdleSync(); }
       t.runOnMainSync(() -> { for (var entry : before.entrySet()) try { entry.getKey().set(null,entry.getValue()); } catch (Exception e) { throw new AssertionError(e); } });
@@ -123,6 +140,13 @@ final class CameraImportProgressChecks {
   }
   private static void capture(Instrumentation t, CameraImportActivity screen, File dir, String name) throws Exception {
     ConsistencyLayoutChecks.captureHardware(t,screen,screen.getWindow().getDecorView(),dir,"import-progress-"+name);
+    if (name.endsWith("-stable-content") || name.endsWith("-stable-saving")) {
+      android.graphics.Bitmap full=t.getUiAutomation().takeScreenshot();
+      require(full!=null,"composed full display capture available");
+      try(java.io.FileOutputStream out=new java.io.FileOutputStream(new File(dir,"import-progress-"+name+"-full.png"))) {
+        full.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);
+      } finally { full.recycle(); }
+    }
   }
   private static View control(CameraImportActivity activity, String name) {
     try { Field field = CameraImportActivity.class.getDeclaredField(name); field.setAccessible(true); return (View)field.get(activity); }
