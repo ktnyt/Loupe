@@ -32,6 +32,8 @@ import java.util.concurrent.Executors;
 
 /** Explicit experimental Bluetooth wake with encrypted, camera-specific credentials. */
 public final class CameraBleActivity extends AppCompatActivity {
+    static final String EXTRA_QUICK_PROFILE_ID = "quick_profile_id";
+    private boolean quickConsumed, resumed, connectingRegistered, permissionReady;
     private CameraBleWake helper;
     private Closeable operation;
     private BluetoothDevice selected;
@@ -54,7 +56,11 @@ public final class CameraBleActivity extends AppCompatActivity {
         super.onCreate(state);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         helper = new CameraBleWake(this);
-        if (state != null) pendingProfileId = state.getString("pending_camera_profile");
+        if (state != null) {
+            pendingProfileId = state.getString("pending_camera_profile");
+            quickConsumed = state.getBoolean("quick_profile_consumed");
+            permissionReady = state.getBoolean("profile_permission_ready");
+        }
         LinearLayout frame = new LinearLayout(this); frame.setOrientation(LinearLayout.VERTICAL); frame.setBackgroundColor(GalleryUi.BG);
         frame.setOnApplyWindowInsetsListener((v, insets) -> { var safe = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout()); v.setPadding(safe.left, safe.top, safe.right, safe.bottom); return insets; });
         LinearLayout toolbar = LibraryUi.toolbar(this, "カメラに接続");
@@ -80,7 +86,23 @@ public final class CameraBleActivity extends AppCompatActivity {
     @Override protected void onSaveInstanceState(Bundle state) {
         super.onSaveInstanceState(state);
         if (pendingProfileId != null) state.putString("pending_camera_profile", pendingProfileId);
+        state.putBoolean("quick_profile_consumed", quickConsumed);
+        state.putBoolean("profile_permission_ready", permissionReady);
     }
+    @Override protected void onPostResume() {
+        super.onPostResume(); resumed = true;
+        connectingRegistered = false;
+        if (permissionReady && pendingProfileId != null) {
+            String id = pendingProfileId; pendingProfileId = null; permissionReady = false;
+            connectRegistered(id);
+        } else if (!quickConsumed && getIntent().hasExtra(EXTRA_QUICK_PROFILE_ID)) {
+            quickConsumed = true;
+            String id = getIntent().getStringExtra(EXTRA_QUICK_PROFILE_ID);
+            getIntent().removeExtra(EXTRA_QUICK_PROFILE_ID);
+            connectRegistered(id);
+        }
+    }
+    @Override protected void onPause() { resumed = false; super.onPause(); }
     @Override protected void onStart() { super.onStart(); foreground = true; loadRegistrations(); if (pendingMessage != null) { status.setText(pendingMessage); pendingMessage = null; } }
     @Override protected void onStop() { foreground = false; cancelPending(); selected = null; selectedName = null; wake.setEnabled(false); passcode.getText().clear(); devices.removeAllViews(); status.setText("再度カメラを探してください"); super.onStop(); }
     @Override protected void onDestroy() { io.shutdown(); super.onDestroy(); }
@@ -92,11 +114,18 @@ public final class CameraBleActivity extends AppCompatActivity {
     @Override public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(request, permissions, results);
         if (request == 407) {
-            String id = pendingProfileId; pendingProfileId = null;
             for (int result : results) if (result != PackageManager.PERMISSION_GRANTED) {
-                status.setText("Bluetooth・Wi-Fi接続と写真すべてへのアクセスを許可してください。"); return;
+                pendingProfileId = null;
+                showResult("Bluetooth・Wi-Fi接続と写真すべてへのアクセスを許可してください。"); return;
             }
-            if (results.length > 0 && foreground && id != null) connectRegistered(id);
+            if (results.length == 0) {
+                pendingProfileId = null; showResult("接続の許可をキャンセルしました。"); return;
+            }
+            permissionReady = pendingProfileId != null;
+            if (resumed && permissionReady) {
+                String id = pendingProfileId; pendingProfileId = null; permissionReady = false;
+                connectRegistered(id);
+            }
             return;
         }
         if (request != 404) return;
@@ -231,6 +260,13 @@ public final class CameraBleActivity extends AppCompatActivity {
         });
     }
     private void connectRegistered(String id) {
+        if (!resumed || connectingRegistered || pendingProfileId != null || jp.nano.rawgallery.camera.ImportProgress.INSTANCE.getActive()
+                || jp.nano.rawgallery.camera.CameraImportGate.lock.isLocked()) {
+            showResult("別の取り込みが終わってから、もう一度操作してください。"); return;
+        }
+        if (id == null || !id.matches("[0-9a-f]{64}")) {
+            showResult("カメラの登録を確認してください。"); return;
+        }
         java.util.ArrayList<String> permissions = new java.util.ArrayList<>();
         if (Build.VERSION.SDK_INT >= 31) { permissions.add(Manifest.permission.BLUETOOTH_SCAN); permissions.add(Manifest.permission.BLUETOOTH_CONNECT); }
         if (Build.VERSION.SDK_INT >= 33) permissions.add(Manifest.permission.NEARBY_WIFI_DEVICES);
@@ -240,10 +276,11 @@ public final class CameraBleActivity extends AppCompatActivity {
             pendingProfileId = id; requestPermissions(permissions.toArray(new String[0]), 407); return;
         }
         cancelPending();
+        connectingRegistered = true;
         try {
             CameraDifferentialService.startRegistered(this, id, getSharedPreferences("camera_import", 0).getBoolean("wifi_verify_all", false));
             startActivity(new Intent(this, CameraImportActivity.class));
-        } catch (RuntimeException failure) { status.setText("接続を開始できませんでした。もう一度操作してください。"); }
+        } catch (RuntimeException failure) { connectingRegistered = false; status.setText("接続を開始できませんでした。もう一度操作してください。"); }
     }
     private void removeRegistration(String name) {
         cancelPending(); wake.setEnabled(selected != null);

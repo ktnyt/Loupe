@@ -66,9 +66,11 @@ final class CameraTabsChecks {
               } finally { bitmap.recycle(); }
             }
             tabs.setCameraState(false, null, false, 0, 0);
-            check(tabs.getMenu().size() == 3 && !hasLongAction(camera), "disconnected destination retained");
+            check(tabs.getMenu().size() == 3 && hasLongAction(camera), "disconnected quick import action remains available");
             camera.performClick();
             check(opens.get() == 2 && starts.get() == 1, "disconnected tap opens only");
+            camera.performAccessibilityAction(AccessibilityNodeInfo.ACTION_LONG_CLICK, null);
+            check(opens.get() == 2 && starts.get() == 2, "disconnected AX long press starts source resolution only");
             tabs.setCameraState(true, "再接続", false, 0, 0);
             tabs.destinationView(2).performClick();
             check(opens.get() == 3 && changes.get() == 0, "reattach preserves tap without changing library");
@@ -77,7 +79,7 @@ final class CameraTabsChecks {
             tabs.setEnabled(false);
             tabs.destinationView(albums ? 1 : 0).performClick();
             camera.performClick();camera.performLongClick();
-            check(changes.get() == 1 && opens.get() == 3 && starts.get() == 1, "runtime disable blocks all destinations");
+            check(changes.get() == 1 && opens.get() == 3 && starts.get() == 2, "runtime disable blocks all destinations");
             tabs.setEnabled(true);
             check(hasLongAction(camera), "runtime enable restores valid quick import");
           }
@@ -173,6 +175,31 @@ final class CameraTabsChecks {
           test.waitForIdleSync();
         } finally { test.removeMonitor(monitor); }
       }
+      var quickCount = new AtomicInteger();
+      var quickIntent = new AtomicReference<Intent>();
+      Instrumentation.ActivityMonitor quickMonitor = new Instrumentation.ActivityMonitor() {
+        @Override public Instrumentation.ActivityResult onStartActivity(Intent intent) {
+          if (intent.getComponent() != null && CameraImportActivity.class.getName().equals(intent.getComponent().getClassName())) {
+            quickIntent.set(new Intent(intent)); quickCount.incrementAndGet();
+            return new Instrumentation.ActivityResult(android.app.Activity.RESULT_CANCELED, null);
+          }
+          return null;
+        }
+      };
+      test.addMonitor(quickMonitor);
+      try {
+        TagDetailChecks.ui(test, () -> {
+          try {
+            var field = MainActivity.class.getDeclaredField("libraryTabs"); field.setAccessible(true);
+            LibraryTabs actual = (LibraryTabs) field.get(main);
+            check(actual != null && actual.destinationView(2).performLongClick(), "real library long-press handled");
+            actual.destinationView(2).performLongClick();
+          } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
+        });
+        check(quickCount.get() == 1, "real library duplicate long-press guarded");
+        check(quickIntent.get() != null && quickIntent.get().getBooleanExtra(CameraImportActivity.START_IMPORT_KEEP_ORIGINALS, false),
+            "real library long-press dispatches preserved-original source resolution");
+      } finally { test.removeMonitor(quickMonitor); }
     } finally { TagDetailChecks.ui(test, main::finish); }
   }
   private static boolean hasLongAction(View view) {

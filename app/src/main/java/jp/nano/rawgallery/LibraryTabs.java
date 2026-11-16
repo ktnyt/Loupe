@@ -114,10 +114,10 @@ final class LibraryTabs extends BottomNavigationView {
     if (importing) state += waiting ? "、カメラ接続待ち" : total > 0 ? "、取り込み中 " + done + " / " + total + "件" : "、取り込み中";
     if (!isEnabled()) state += "、選択中は使えません";
     ViewCompat.setStateDescription(camera, state);
-    boolean quickImport = isEnabled() && connected && !importing && startImport != null;
+    boolean quickImport = isEnabled() && !importing && startImport != null;
     camera.setOnLongClickListener(quickImport ? view -> {
       // Recheck live state as device and import events can arrive between gestures.
-      if (!isEnabled() || !connected || importing) return false;
+      if (!isEnabled() || importing) return false;
       startImport.run();
       return true;
     } : null);

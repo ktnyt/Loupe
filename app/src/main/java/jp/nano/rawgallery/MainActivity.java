@@ -328,6 +328,7 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private LibraryTabs libraryTabs;
+  private boolean quickImportOpening;
   private boolean usbReceiverRegistered;
   private final BroadcastReceiver usbChanges = new BroadcastReceiver() {
     @Override public void onReceive(Context context, Intent intent) {
@@ -348,21 +349,8 @@ public final class MainActivity extends DiagnosticActivity {
         state.getActive(), state.getDone(), state.getTotal(), state.getWaiting());
   }
   private void startCameraImportFromTab() {
-    if (selecting || ImportProgress.INSTANCE.getActive()) return;
-    var device = CameraImportActivity.connected(this);
-    if (device == null) {
-      updateCameraTab();
-      return;
-    }
-    if (getSharedPreferences("camera_import", MODE_PRIVATE).getBoolean("configured", false)
-        && getSystemService(UsbManager.class).hasPermission(device)) {
-      try {
-        ImportService.start(this, device);
-        return;
-      } catch (RuntimeException unavailable) {
-        // Re-check the device and permissions in the import screen.
-      }
-    }
+    if (selecting || ImportProgress.INSTANCE.getActive() || quickImportOpening) return;
+    quickImportOpening = true;
     startActivity(new Intent(this, CameraImportActivity.class)
         .putExtra(CameraImportActivity.START_IMPORT_KEEP_ORIGINALS, true));
   }
@@ -1509,6 +1497,7 @@ public final class MainActivity extends DiagnosticActivity {
 
   protected void onResume() {
     super.onResume();
+    quickImportOpening = false;
     var filter = new IntentFilter(UsbManager.ACTION_USB_DEVICE_ATTACHED);
     filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
     if (Build.VERSION.SDK_INT >= 33) registerReceiver(usbChanges, filter, Context.RECEIVER_EXPORTED);

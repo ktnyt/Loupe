@@ -61,6 +61,15 @@ public final class CameraImportActivity extends AppCompatActivity {
     private String connectionFailure;
     private boolean quickImportFlow;
     private String quickRequestId;
+    private boolean quickConsumed, quickResumed, pendingSdPermission, resumeSd, pendingUsbPermission, resumeUsb;
+    private android.os.CancellationSignal sourceCancellation;
+    private int sourceGeneration;
+    private String pendingSdTree;
+    private int pendingUsbDeviceId = -1, pendingUsbVendorId = -1, pendingUsbProductId = -1;
+    private String pendingUsbDeviceName;
+    private static final java.util.concurrent.Executor SOURCE_IO = new java.util.concurrent.ThreadPoolExecutor(
+            0, 2, 30, java.util.concurrent.TimeUnit.SECONDS, new java.util.concurrent.SynchronousQueue<>());
+
     private SharedPreferences settings;
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
@@ -73,6 +82,17 @@ public final class CameraImportActivity extends AppCompatActivity {
         super.onCreate(state);
         settings = getSharedPreferences("camera_import", MODE_PRIVATE);
         if (state != null) {
+            pendingUsbDeviceId = state.getInt("quick_usb_device_id", -1);
+            pendingUsbDeviceName = state.getString("quick_usb_device_name");
+            pendingUsbVendorId = state.getInt("quick_usb_vendor_id", -1);
+            pendingUsbProductId = state.getInt("quick_usb_product_id", -1);
+            pendingUsbPermission = state.getBoolean("quick_usb_permission");
+            resumeUsb = state.getBoolean("quick_usb_resume");
+            quickConsumed = state.getBoolean("quick_consumed");
+            if (state.getBoolean("quick_source_pending")) connectionFailure = "取り込み元の確認を中止しました。もう一度長押ししてください。";
+            pendingSdTree = state.getString("quick_sd_tree");
+            pendingSdPermission = state.getBoolean("quick_sd_permission");
+            resumeSd = state.getBoolean("quick_sd_resume");
             quickImportFlow = state.getBoolean("quick_import_flow");
             quickRequestId = state.getString("quick_import_request");
             settingsExpanded = state.getBoolean("import_settings_expanded");
@@ -146,12 +166,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         LinearLayout sd = card(root, "SDカードから取り込む");
         sd.addView(text("写真のあるフォルダを選びます。SDカードの写真は削除しません。", 14, GalleryUi.MUTED));
         sdStatus = status(sd);
-        button(sd, "SDカードのフォルダを選ぶ", () -> {
-            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
-            try { startActivityForResult(intent, PICK_SD_TREE); }
-            catch (RuntimeException failure) { sdStatus.setText("フォルダ選択を開けませんでした。"); }
-        });
+        button(sd, "SDカードのフォルダを選ぶ", this::pickSdTree);
         sdVerify = new MaterialSwitch(this); sdVerify.setChecked(settings.getBoolean("sd_verify_all", false)); sdVerify.setOnCheckedChangeListener((v, checked) -> settings.edit().putBoolean("sd_verify_all", checked).apply()); sdVerify.setText("内容も確認する"); sdVerify.setMinHeight(dp(48)); sd.addView(sdVerify);
         sd.addView(text("通常は履歴を優先します。同じ名前・サイズ・日時のまま内容だけ変わった写真は見逃す場合があります。内容も確認すると読み直すため時間がかかります。", 14, GalleryUi.MUTED));
         button(sd, "SDカードの写真を取り込む", this::startSd);
@@ -212,6 +227,17 @@ public final class CameraImportActivity extends AppCompatActivity {
 
     @Override protected void onSaveInstanceState(Bundle state) {
         super.onSaveInstanceState(state);
+        state.putInt("quick_usb_device_id", pendingUsbDeviceId);
+        state.putString("quick_usb_device_name", pendingUsbDeviceName);
+        state.putInt("quick_usb_vendor_id", pendingUsbVendorId);
+        state.putInt("quick_usb_product_id", pendingUsbProductId);
+        state.putBoolean("quick_usb_permission", pendingUsbPermission);
+        state.putBoolean("quick_usb_resume", resumeUsb);
+        state.putBoolean("quick_source_pending", sourceCancellation != null);
+        state.putBoolean("quick_consumed", quickConsumed);
+        state.putString("quick_sd_tree", pendingSdTree);
+        state.putBoolean("quick_sd_permission", pendingSdPermission);
+        state.putBoolean("quick_sd_resume", resumeSd);
         state.putBoolean("quick_import_flow", quickImportFlow);
         state.putString("quick_import_request", quickRequestId);
         state.putBoolean("import_settings_expanded", settingsExpanded);
@@ -219,11 +245,103 @@ public final class CameraImportActivity extends AppCompatActivity {
 
     @Override protected void onPostResume() {
         super.onPostResume();
-        if (getIntent().getBooleanExtra(START_IMPORT_KEEP_ORIGINALS, false)) {
+        quickResumed = true;
+        if (resumeUsb || (pendingUsbPermission && permission == null)) continuePendingUsb();
+        else if (resumeSd) { resumeSd = false; discoverQuickSource(true); }
+        else if (!quickConsumed && getIntent().getBooleanExtra(START_IMPORT_KEEP_ORIGINALS, false)) {
+            quickConsumed = true;
             getIntent().removeExtra(START_IMPORT_KEEP_ORIGINALS);
             quickImportFlow = true;
-            startFromScreen(true);
+            discoverQuickSource(false);
         }
+    }
+
+    @Override protected void onPause() {
+        quickResumed = false;
+        if (sourceCancellation != null) {
+            sourceGeneration++;
+            sourceCancellation.cancel();
+            sourceCancellation = null;
+            starting = false;
+            connectionFailure = "取り込み元の確認を中止しました。もう一度長押ししてください。";
+        }
+        super.onPause();
+    }
+
+    private boolean quickAvailable() {
+        return quickResumed && !isFinishing() && !isDestroyed() && !PROGRESS.getActive()
+                && !CameraImportGate.lock.isLocked() && !migrating;
+    }
+
+    private void discoverQuickSource(boolean sdOnly) {
+        if (!quickAvailable() || starting || sourceCancellation != null) return;
+        if (!sdOnly && connected() != null) { startFromScreen(true); return; }
+        String expectedSd = pendingSdTree;
+        int generation = ++sourceGeneration;
+        var cancellation = new android.os.CancellationSignal();
+        sourceCancellation = cancellation;
+        starting = true;
+        connectionFailure = "取り込み元を確認しています…";
+        renderStatus();
+        Runnable timeout = () -> {
+            if (sourceCancellation != cancellation) return;
+            sourceGeneration++;
+            cancellation.cancel(); sourceCancellation = null; starting = false;
+            connectionFailure = "取り込み元を確認できませんでした。接続を確認してもう一度長押ししてください。";
+            renderStatus();
+        };
+        handler.postDelayed(timeout, 3000);
+        try {
+            SOURCE_IO.execute(() -> {
+                CameraQuickImportSources.Sources sources = null;
+                try {
+                    if (sdOnly) {
+                        Uri reachable = CameraQuickImportSources.reachableSdTree(getApplicationContext(), cancellation);
+                        sources = new CameraQuickImportSources.Sources(reachable != null
+                                && reachable.toString().equals(expectedSd) ? reachable : null, List.of());
+                    } else sources = CameraQuickImportSources.resolve(getApplicationContext(), cancellation);
+                } catch (IOException | RuntimeException ignored) { }
+                var outcome = sources;
+                handler.post(() -> {
+                    if (generation != sourceGeneration || sourceCancellation != cancellation) return;
+                    handler.removeCallbacks(timeout); sourceCancellation = null; starting = false;
+                    if (!quickAvailable()) return;
+                    if (!sdOnly && connected() != null) { startFromScreen(true); return; }
+                    if (outcome == null) { connectionFailure = "登録情報を確認できませんでした。QRの登録を確認してください。"; renderStatus(); return; }
+                    connectionFailure = "取り込み元を選んでください。";
+                    renderStatus();
+                    if (outcome.sd != null) {
+                        pendingSdTree = outcome.sd.toString();
+                        pendingSdPermission = true;
+                        if (ensureSdPermissions()) {
+                            pendingSdPermission = false;
+                            startSd();
+                        }
+                    } else if (sdOnly) { connectionFailure = "SDカードに接続できません。接続とフォルダを確認してください。"; renderStatus(); }
+                    else if (outcome.profiles.size() == 1) openQuickProfile(outcome.profiles.get(0).id);
+                    else if (outcome.profiles.size() > 1) {
+                        String[] names = outcome.profiles.stream().map(p -> p.name).toArray(String[]::new);
+                        new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                                .setTitle("取り込むカメラを選択")
+                                .setItems(names, (dialog, index) -> openQuickProfile(outcome.profiles.get(index).id))
+                                .setNegativeButton("キャンセル", (d, w) -> quickCancelled()).setOnCancelListener(d -> quickCancelled()).show();
+                    } else {
+                        new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                                .setTitle("取り込み元を登録")
+                                .setMessage("カメラのQRを登録するか、SDカードのフォルダを選んでください。Wi-Fi情報のない登録はQRの再登録が必要です。")
+                                .setPositiveButton("カメラを登録", (d, w) -> { if (quickAvailable()) startActivity(new Intent(this, CameraBleActivity.class)); })
+                                .setNeutralButton("SDを選ぶ", (d, w) -> { if (quickAvailable()) pickSdTree(); })
+                                .setNegativeButton("キャンセル", (d, w) -> quickCancelled()).setOnCancelListener(d -> quickCancelled()).show();
+                    }
+                });
+            });
+        } catch (java.util.concurrent.RejectedExecutionException busy) { timeout.run(); }
+    }
+
+    private void quickCancelled() { connectionFailure = "取り込みをキャンセルしました。"; renderStatus(); }
+    private void openQuickProfile(String id) {
+        if (!quickAvailable()) return;
+        startActivity(new Intent(this, CameraBleActivity.class).putExtra(CameraBleActivity.EXTRA_QUICK_PROFILE_ID, id));
     }
 
     private UsbDevice connected() { return connected(this); }
@@ -238,7 +356,41 @@ public final class CameraImportActivity extends AppCompatActivity {
                 .findFirst().orElse(null);
     }
 
+    private void rememberPendingUsb(UsbDevice device) {
+        pendingUsbDeviceId = device.getDeviceId();
+        pendingUsbDeviceName = device.getDeviceName();
+        pendingUsbVendorId = device.getVendorId();
+        pendingUsbProductId = device.getProductId();
+        pendingUsbPermission = true;
+    }
+
+    private boolean matchesPendingUsb(UsbDevice device) {
+        return device != null && pendingUsbDeviceName != null
+                && device.getDeviceId() == pendingUsbDeviceId
+                && pendingUsbDeviceName.equals(device.getDeviceName())
+                && device.getVendorId() == pendingUsbVendorId && device.getProductId() == pendingUsbProductId;
+    }
+
+    private void continuePendingUsb() {
+        if (!quickAvailable() || permission != null || (!pendingUsbPermission && !resumeUsb)) return;
+        UsbDevice device = connected();
+        if (!matchesPendingUsb(device)) {
+            pendingUsbPermission = false; resumeUsb = false;
+            connectionFailure = "許可を求めたカメラの接続が変わりました。もう一度操作してください。";
+            return;
+        }
+        if (!getSystemService(UsbManager.class).hasPermission(device)) {
+            connectionFailure = "USBの接続と使用許可を確認してください。許可を取り消した場合は、取り込みボタンで再試行できます。";
+            return;
+        }
+        pendingUsbPermission = false; resumeUsb = false;
+        prepareImport(device, true);
+    }
+
     private void renderStatus() {
+        // A USB permission broadcast can target the pre-recreation activity.
+        // Recover only the original request, consuming it before any UI/import side effect.
+        if ((pendingUsbPermission || resumeUsb) && permission == null && quickAvailable()) continuePendingUsb();
         var completion = PROGRESS.getCompletion();
         if (quickRequestId != null && completion != null && quickRequestId.equals(completion.getRequestId())) {
             quickRequestId = null;
@@ -303,13 +455,26 @@ public final class CameraImportActivity extends AppCompatActivity {
         if (getSystemService(UsbManager.class).hasPermission(device)) prepareImport(device, keepOriginals);
         else {
             try {
+                if (quickImportFlow) rememberPendingUsb(device);
                 permission = CameraUsb.request(this, device, granted -> {
+                    // Consume before renderStatus: rendering also recovers recreated USB requests.
+                    pendingUsbPermission = false;
                     permission = null;
+                    if (granted && !isFinishing() && !isDestroyed()) {
+                        if (quickImportFlow) {
+                            resumeUsb = true;
+                            continuePendingUsb();
+                        } else {
+                            UsbDevice current = connected();
+                            if (current != null && current.getDeviceId() == device.getDeviceId()
+                                    && current.getDeviceName().equals(device.getDeviceName())) prepareImport(device, keepOriginals);
+                            else connectionFailure = "カメラの接続が変わりました。もう一度操作してください。";
+                        }
+                    } else { resumeUsb = false; connectionFailure = "USBの使用が許可されませんでした"; }
                     renderStatus();
-                    if (granted) prepareImport(device, keepOriginals);
-                    else { connectionFailure = "USBの使用が許可されませんでした"; renderStatus(); }
                 });
             } catch (RuntimeException failure) {
+                pendingUsbPermission = false; resumeUsb = false;
                 connectionFailure = "USBの使用許可を確認できませんでした";
                 renderStatus();
             }
@@ -362,6 +527,7 @@ public final class CameraImportActivity extends AppCompatActivity {
     }
 
     private void launch(UsbDevice device, boolean delete) {
+        if (quickImportFlow && !quickAvailable()) return;
         if (starting || migrating || PROGRESS.getActive()) return;
         if (quickImportFlow) quickRequestId = java.util.UUID.randomUUID().toString();
         starting = true;
@@ -374,6 +540,13 @@ public final class CameraImportActivity extends AppCompatActivity {
         }
         handler.postDelayed(() -> { starting = false; renderStatus(); }, 4000);
         renderStatus();
+    }
+
+    private void pickSdTree() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        try { startActivityForResult(intent, PICK_SD_TREE); }
+        catch (RuntimeException failure) { sdStatus.setText("フォルダ選択を開けませんでした。"); }
     }
 
     @Override protected void onActivityResult(int request, int code, Intent data) {
@@ -448,7 +621,11 @@ public final class CameraImportActivity extends AppCompatActivity {
             showSdPermissionStatus("写真すべてへのアクセスが必要です。再度許可するか、アプリの権限設定を確認してください。");
         else if (checkSelfPermission(Manifest.permission.ACCESS_MEDIA_LOCATION) != PackageManager.PERMISSION_GRANTED)
             showSdPermissionStatus("原本の保存には写真の位置情報へのアクセスが必要です。再度操作するか、アプリの権限設定を確認してください。");
-        else showSdPermissionStatus("写真の原本へのアクセスを許可しました。もう一度操作してください。");
+        else {
+            showSdPermissionStatus("写真の原本へのアクセスを許可しました。");
+            if (pendingSdPermission) { resumeSd = true; if (quickResumed) { resumeSd = false; discoverQuickSource(true); } }
+        }
+        pendingSdPermission = false;
     }
 
     private void showSdPermissionStatus(String message) {
@@ -471,6 +648,7 @@ public final class CameraImportActivity extends AppCompatActivity {
     }
 
     private void startSd() {
+        if (PROGRESS.getActive() || starting || migrating) return;
         if (!ensureSdPermissions()) return;
         Uri tree = readableSdTree();
         if (tree == null) { sdStatus.setText("フォルダの読み取り権限がありません。もう一度選んでください。"); return; }

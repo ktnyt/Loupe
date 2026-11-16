@@ -21,7 +21,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private float tagFont;
   @Override public void callActivityOnCreate(android.app.Activity activity, Bundle state) {
     if(nanoBackgroundTest)NanoBananaBackgroundChecks.activityCreated(activity);
-    if((ep7WifiTest || "camera-pilot-qr-ui".equals(cameraPilotMode)) && (activity instanceof Ep7WifiActivity || activity instanceof CameraImportActivity || activity instanceof CameraBleActivity)) {
+    if((ep7WifiTest || ("camera-pilot-qr-ui".equals(cameraPilotMode) || "camera-pilot-quick-import".equals(cameraPilotMode))) && (activity instanceof Ep7WifiActivity || activity instanceof CameraImportActivity || activity instanceof CameraBleActivity)) {
       var config = new android.content.res.Configuration(activity.getBaseContext().getResources().getConfiguration());
       config.fontScale = tagFont; config.screenWidthDp = tagWidth;
       activity.getResources().updateConfiguration(config, activity.getResources().getDisplayMetrics());
@@ -36,7 +36,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     if((confidenceUiTest||tagDetailTest||removeLookTest)&&activity instanceof TagActivity)TagFixtureIsolation.install((TagActivity)activity);
     if(removeLookTest&&activity instanceof RawEditActivity&&state==null&&activity.getIntent().getBooleanExtra("removeLookLegacyFixture",false))state=LookRemovalChecks.legacyState(activity.getIntent());
     super.callActivityOnCreate(activity, state);
-    if(ep7WifiTest || "camera-pilot-qr-ui".equals(cameraPilotMode))activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+    if(ep7WifiTest || ("camera-pilot-qr-ui".equals(cameraPilotMode) || "camera-pilot-quick-import".equals(cameraPilotMode)))activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
     if ((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || videoTest || removeLookTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
   }
   private boolean shareHistoryTest, shareHistoryScreenTest, shareHistoryHandoffTest, shareHistoryCallbackTest;
@@ -149,7 +149,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     albumTagsTest = args != null && "album-tags".equals(args.getString("mode"));
     cameraPilotMode = args == null ? null : args.getString("mode");
     if(cameraPilotMode!=null&&!cameraPilotMode.startsWith("camera-pilot-"))cameraPilotMode=null;
-    if ("camera-pilot-qr-ui".equals(cameraPilotMode)) { tagWidth=Integer.parseInt(args.getString("width","400"));tagFont=Float.parseFloat(args.getString("font","1.0")); }
+    if (("camera-pilot-qr-ui".equals(cameraPilotMode) || "camera-pilot-quick-import".equals(cameraPilotMode))) { tagWidth=Integer.parseInt(args.getString("width","400"));tagFont=Float.parseFloat(args.getString("font","1.0")); }
     cameraBenchmarkTest = args != null && "camera-benchmark".equals(args.getString("mode"));
     cameraLedgerTest = args != null && "camera-ledger".equals(args.getString("mode"));
     ep7WifiTest = args != null && "ep7-wifi".equals(args.getString("mode"));
@@ -272,6 +272,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
             result=CameraImportPilotChecks.runWifi(this);
           } finally {runOnMainSync(()->{pilotUi.getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);pilotUi.finish();});}
         }
+        else if(cameraPilotMode.equals("camera-pilot-quick-import"))result=CameraQuickImportChecks.run(this);
         else if(cameraPilotMode.equals("camera-pilot-qr-ui"))result=CameraQrUiChecks.run(this);
         else if(cameraPilotMode.equals("camera-pilot-qr-image"))result=CameraQrImageChecks.run(this);
         else if(cameraPilotMode.equals("camera-pilot-qr-status"))result=CameraSavedWakeChecks.status(this);
