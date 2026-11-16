@@ -23,7 +23,11 @@ object CameraImportLegacy {
         Metadata(exif.getAttribute(ExifInterface.TAG_MODEL).orEmpty(),if(captured>0)captured else fallbackSeconds)
     } catch (_: Exception) { Metadata("",fallbackSeconds) }
 
-    @JvmStatic fun existing(context: Context, source: CameraImportFile, raw: File, cancelled: BooleanSupplier): Evidence? {
+    @JvmStatic fun existing(context: Context, source: CameraImportFile, raw: File, cancelled: BooleanSupplier): Evidence? =
+        existing(context, source, raw, cancelled, java.util.function.LongConsumer { })
+
+    @JvmStatic fun existing(context: Context, source: CameraImportFile, raw: File, cancelled: BooleanSupplier,
+        readCounter: java.util.function.LongConsumer): Evidence? {
         val resolver=context.contentResolver
         var unreadable=false
         resolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
@@ -42,7 +46,7 @@ object CameraImportLegacy {
                         resolver.openInputStream(uri)?.use { input ->
                             candidate.outputStream().use { out ->
                                 val buffer=ByteArray(65536);var count=0L
-                                while(true){CameraPhotoPublisher.check(cancelled);val n=input.read(buffer);if(n<0)break;count+=n;if(count>wanted)throw IOException("Existing size changed");out.write(buffer,0,n)}
+                                while(true){CameraPhotoPublisher.check(cancelled);val n=input.read(buffer);if(n<0)break;count+=n;readCounter.accept(n.toLong());if(count>wanted)throw IOException("Existing size changed");out.write(buffer,0,n)}
                                 if(count!=wanted)throw IOException("Existing size changed")
                             }
                         }?:throw IOException("Existing photo unavailable")

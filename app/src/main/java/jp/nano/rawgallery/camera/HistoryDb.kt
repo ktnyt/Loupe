@@ -29,7 +29,7 @@ data class ImportedKey(
  * 取り込み履歴とカメラ別設定。スキーマは仕様書 5.2 に従う
  * (Room ではなく素の SQLite。テーブル 2 つの規模で依存を増やさないため)
  */
-class HistoryDb(context: Context) : SQLiteOpenHelper(context, "camera-import-history.db", null, 4) {
+class HistoryDb @JvmOverloads constructor(context: Context, databaseName: String = "camera-import-history.db") : SQLiteOpenHelper(context, databaseName, null, 4) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -150,6 +150,24 @@ class HistoryDb(context: Context) : SQLiteOpenHelper(context, "camera-import-his
             }
             map
         }
+
+    /** SD fast classification preserves destination identity and camera deletion evidence. */
+    fun photoImportRecords(model: String, serial: String): List<CameraImportHistoryPlan.Entry> =
+        readableDatabase.rawQuery(
+            "SELECT file_name,file_size,shot_at,dest_uri,deleted_at FROM imported " +
+                "WHERE camera_model=? AND camera_serial=?", arrayOf(model, serial),
+        ).use { c ->
+            buildList {
+                while (c.moveToNext()) add(CameraImportHistoryPlan.Entry(
+                    c.getString(0), c.getLong(1), c.getLong(2), c.getString(3), !c.isNull(4)))
+            }
+        }
+
+    /** Reuse an unambiguous legacy destination; last transport does not define folder ownership. */
+    fun defaultPhotoFolder(): String? = readableDatabase.rawQuery(
+        "SELECT DISTINCT c.folder FROM camera c WHERE trim(c.folder)<>'' AND EXISTS " +
+            "(SELECT 1 FROM imported i WHERE i.camera_model=c.model AND i.camera_serial=c.serial)", null,
+    ).use { c -> if (c.count == 1 && c.moveToFirst()) c.getString(0) else null }
 
     /** カメラ側からの削除に成功した記録。復活検出の基準になる */
     fun markDeleted(model: String, serial: String, key: ImportedKey) {

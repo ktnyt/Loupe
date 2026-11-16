@@ -51,6 +51,7 @@ public final class CameraImportActivity extends AppCompatActivity {
     private TextView connection, result, migrationResult, sdStatus, ledgerStatus;
     private MaterialSwitch sdVerify, sdAuto;
     private ProgressBar progress;
+    private TextView progressDetail;
     private Button run, stop, migrate, notifyButton;
     private LinearLayout cameras, importSettings;
     private MaterialButton settingsButton;
@@ -133,6 +134,12 @@ public final class CameraImportActivity extends AppCompatActivity {
         attached.addView(connection);
         LinearLayout importing = card(root, "取り込み状況");
         result = status(importing);
+        result.setTag("camera-import-stage");
+        result.setTextColor(GalleryUi.TEXT);
+        result.setTextSize(16);
+        progressDetail = text("", 14, GalleryUi.MUTED);
+        progressDetail.setTag("camera-import-counts");
+        importing.addView(progressDetail);
         progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progress.setContentDescription("取り込みの進捗");
         importing.addView(progress);
@@ -410,18 +417,17 @@ public final class CameraImportActivity extends AppCompatActivity {
         setText(connection, device == null ? "USBケーブルでカメラをつないでください"
                 : (device.getProductName() == null ? "カメラ" : device.getProductName())
                   + (granted ? (manualOnly ? " · 手動取り込み" : " · 接続済み") : " · USBの使用許可が必要です"));
-        int total = PROGRESS.getTotal();
-        setText(result, active
-                ? (total > 0 ? PROGRESS.getDone() + " / " + total + " 件"
-                    : java.util.Objects.toString(PROGRESS.getStatus(), "カメラを確認しています"))
-                : java.util.Objects.toString(connectionFailure,
-                    java.util.Objects.toString(PROGRESS.getLastMessage(), "まだ取り込んでいません")));
+        ImportProgressPresentation presentation = ImportProgressPresentation.current();
+        setText(result, !active && connectionFailure != null ? connectionFailure : presentation.primary);
+        setText(progressDetail, presentation.secondary);
+        progressDetail.setVisibility(presentation.secondary.isEmpty() ? View.GONE : View.VISIBLE);
         progress.setVisibility(active ? View.VISIBLE : View.GONE);
         if (active) {
-            progress.setIndeterminate(total <= 0);
-            if (total > 0) {
-                progress.setMax(total);
-                progress.setProgress(PROGRESS.getDone());
+            progress.setContentDescription(presentation.accessibility());
+            progress.setIndeterminate(presentation.total <= 0);
+            if (presentation.total > 0) {
+                progress.setMax(presentation.total);
+                progress.setProgress(presentation.done);
             }
         }
         setText(run, device != null && !granted ? "USBの使用を許可する"

@@ -346,7 +346,8 @@ public final class MainActivity extends DiagnosticActivity {
     var device = CameraImportActivity.connected(this);
     var state = ImportProgress.INSTANCE;
     libraryTabs.setCameraState(device != null, device == null ? null : device.getProductName(),
-        state.getActive(), state.getDone(), state.getTotal(), state.getWaiting());
+        state.getActive(), state.getDone(), state.getTotal(), state.getWaiting(),
+        ImportProgressPresentation.current());
   }
   private void startCameraImportFromTab() {
     if (selecting || ImportProgress.INSTANCE.getActive() || quickImportOpening) return;
@@ -361,10 +362,8 @@ public final class MainActivity extends DiagnosticActivity {
     TextView band = cameraImportBand;
     if (band == null) return;
     var state = jp.nano.rawgallery.camera.ImportProgress.INSTANCE;
-    String text = state.getActive()
-        ? (state.getTotal() == 0 ? "カメラを確認しています"
-            : "カメラから取り込み中 · " + state.getDone() + " / " + state.getTotal())
-        : state.getLastMessage();
+    String text = state.getActive() || state.getLastMessage() != null
+        ? ImportProgressPresentation.current().text() : null;
     band.setVisibility(text == null ? View.GONE : View.VISIBLE);
     if (!android.text.TextUtils.equals(band.getText(), text)) band.setText(text);
   };

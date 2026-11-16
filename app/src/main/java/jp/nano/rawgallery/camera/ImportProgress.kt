@@ -3,6 +3,49 @@ package jp.nano.rawgallery.camera
 
 /** 取り込みの進捗をサービスから UI へ共有するためのシングルトン */
 object ImportProgress {
+    enum class PhotoStage { LISTING, HISTORY, CONTENT, SAVING, COMPLETE, CANCELLED, FAILED, ENDED }
+    /** Unknown counts/bytes are -1; total is the current stage's work, never planned saves. */
+    data class PhotoState(
+        val stage: PhotoStage, val processed: Int = 0, val total: Int = -1,
+        val known: Int = -1, val saved: Int = -1, val contentMatches: Int = -1,
+        val sourceBytes: Long = -1, val destinationBytes: Long = -1
+    )
+    @Volatile var photo: PhotoState? = null
+        private set
+
+    @Synchronized fun photoListing(scanned: Int, total: Int) {
+        photo = (photo ?: PhotoState(PhotoStage.LISTING)).copy(stage = PhotoStage.LISTING, processed = scanned, total = total)
+        changed()
+    }
+    @Synchronized fun photoHistory(checked: Int, total: Int, known: Int) {
+        photo = (photo ?: PhotoState(PhotoStage.HISTORY)).copy(stage = PhotoStage.HISTORY, processed = checked, total = total, known = known)
+        changed()
+    }
+    @Synchronized fun photoContent(processed: Int, candidates: Int, saved: Int, contentMatches: Int, sourceBytes: Long, destinationBytes: Long) {
+        photo = (photo ?: PhotoState(PhotoStage.CONTENT)).copy(stage = PhotoStage.CONTENT,
+            processed = processed, total = candidates, saved = saved, contentMatches = contentMatches,
+            sourceBytes = sourceBytes, destinationBytes = destinationBytes)
+        changed()
+    }
+    @Synchronized fun photoSaving(saved: Int) {
+        photo = (photo ?: PhotoState(PhotoStage.SAVING)).copy(stage = PhotoStage.SAVING, saved = saved)
+        changed()
+    }
+    @Synchronized fun photoTerminal(outcome: String, message: String) {
+        val stage = when (outcome) {
+            "complete" -> PhotoStage.COMPLETE
+            "cancelled" -> PhotoStage.CANCELLED
+            "failed" -> PhotoStage.FAILED
+            else -> PhotoStage.ENDED
+        }
+        photo = (photo ?: PhotoState(stage)).copy(stage = stage)
+        lastMessage = message
+        active = false
+        status = null
+        waiting = false
+        changed()
+    }
+
     data class Completion(val requestId: String, val succeeded: Boolean)
     @Volatile var completion: Completion? = null
         private set
@@ -34,8 +77,9 @@ object ImportProgress {
     var stopRequested: Boolean = false
         private set
 
-    fun requestStop() {
+    @Synchronized fun requestStop() {
         stopRequested = true
+        changed()
     }
 
     /**
@@ -43,6 +87,7 @@ object ImportProgress {
      * 「動いていないように見えてもう一度押す」を防ぐ
      */
     fun connecting(message: String) {
+        photo = null
         model = ""
         done = 0
         total = 0
@@ -56,6 +101,7 @@ object ImportProgress {
 
     /** Start a queued explicit connection without clearing a concurrent stop request. */
     fun handoffConnection(message: String) {
+        photo = null
         model = ""
         done = 0
         total = 0
@@ -67,6 +113,7 @@ object ImportProgress {
     }
 
     fun begin(model: String) {
+        photo = null
         this.model = model
         done = 0
         total = 0
@@ -78,19 +125,18 @@ object ImportProgress {
         changed()
     }
 
-    /** Publish a connection/retry wait without inferring it from progress totals. */
-    fun waiting(message: String) {
+    /** Retry owns the same operation and counters; never undo a concurrent user stop. */
+    @Synchronized fun waiting(message: String) {
+        if (stopRequested || photo?.stage == PhotoStage.CANCELLED ||
+            (!active && photo?.stage == PhotoStage.COMPLETE)) return
         status = message
         waiting = true
+        active = true
         changed()
     }
 
-    /** Publish an active open attempt; it remains a connection wait until begin() starts scanning. */
-    fun attempting(message: String) {
-        status = message
-        waiting = true
-        changed()
-    }
+    /** An open attempt has the same cancellable waiting presentation as its retry delay. */
+    fun attempting(message: String) = waiting(message)
 
     fun update(done: Int, total: Int) {
         this.done = done
@@ -98,7 +144,11 @@ object ImportProgress {
         changed()
     }
 
-    fun finish(message: String) {
+    @Synchronized fun finish(message: String) {
+        photo?.let {
+            if (it.stage !in setOf(PhotoStage.COMPLETE, PhotoStage.CANCELLED, PhotoStage.FAILED, PhotoStage.ENDED))
+                photo = it.copy(stage = if (stopRequested) PhotoStage.CANCELLED else PhotoStage.ENDED)
+        }
         active = false
         status = null
         waiting = false

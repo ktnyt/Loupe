@@ -16,9 +16,13 @@ public final class CameraPhotoImporter {
     private final Context context;
     private final CameraImportLedger ledger;
     private final CameraPhotoPublisher publisher;
+    private final String defaultFolder;
+    private CameraImportMetrics metrics;
+    public void setMetrics(CameraImportMetrics metrics){this.metrics=metrics;publisher.setReadCounter(n->{if(this.metrics!=null)this.metrics.destinationBytes+=n;});}
     public CameraPhotoImporter(Context context) { this(context,CameraImportLedger.get(context)); }
     public CameraPhotoImporter(Context context,CameraImportLedger ledger) {
         this.context=context.getApplicationContext();this.ledger=ledger;this.publisher=new CameraPhotoPublisher(this.context,ledger);
+        this.defaultFolder=HistoryDb.Companion.get(this.context).defaultPhotoFolder();
     }
     public void recover(BooleanSupplier cancelled)throws IOException {publisher.recover(cancelled);}
     private boolean available(CameraImportLedger.Content content,BooleanSupplier cancelled)throws IOException {
@@ -31,7 +35,7 @@ public final class CameraPhotoImporter {
             if(in==null)throw new IOException("Saved photo unavailable");
             java.security.MessageDigest digest=java.security.MessageDigest.getInstance("SHA-256");
             byte[] buf=new byte[65536];int n;long size=0;
-            while((n=in.read(buf))!=-1){CameraPhotoPublisher.check(cancelled);size+=n;if(size>content.storedBytes)throw new IOException("Saved photo changed");digest.update(buf,0,n);}
+            while((n=in.read(buf))!=-1){CameraPhotoPublisher.check(cancelled);size+=n;if(metrics!=null)metrics.destinationBytes+=n;if(size>content.storedBytes)throw new IOException("Saved photo changed");digest.update(buf,0,n);}
             StringBuilder sha=new StringBuilder();for(byte b:digest.digest())sha.append(String.format(java.util.Locale.ROOT,"%02x",b&255));
             if(size!=content.storedBytes||!sha.toString().equals(content.storedSha))throw new IOException("Saved photo changed");
             return true;
@@ -45,10 +49,10 @@ public final class CameraPhotoImporter {
             CameraImportLedger.Content known=ledger.known(source);
             if(known!=null&&available(known,cancelled))return new Result(Uri.parse(known.uri),false,false,0);
         }
-        try(CameraImportCopy.Prepared prepared=CameraImportCopy.prepare(context.getCacheDir(),source,copy,cancelled)) {
+        try(CameraImportCopy.Prepared prepared=CameraImportCopy.prepare(context.getCacheDir(),source,metrics==null?copy:metrics.countSource(copy),cancelled)) {
             CameraImportLedger.Content existing=ledger.find(prepared.sourceSha256,source.bytes);
             if(existing!=null&&!available(existing,cancelled))existing=null;
-            CameraImportLegacy.Evidence adopted=existing==null?CameraImportLegacy.existing(context,source,prepared.file,cancelled):null;
+            CameraImportLegacy.Evidence adopted=existing==null?CameraImportLegacy.existing(context,source,prepared.file,cancelled,n->{if(metrics!=null)metrics.legacyBytes+=n;}):null;
             // Preserve the original digest; only this owned temporary copy may be repaired.
             ExifOffsetFix.INSTANCE.patchIfBroken(prepared.file);
             CameraImportLegacy.Metadata metadata=CameraImportLegacy.metadata(prepared.file,source.captureSeconds);
@@ -63,7 +67,8 @@ public final class CameraPhotoImporter {
                 CameraImportLedger.Content content=ledger.adopt(eventSource,prepared.sourceSha256,adopted.getSha256(),adopted.getBytes(),adopted.getUri(),kind,group);
                 return new Result(Uri.parse(content.uri),false,true,source.bytes);
             }
-            String folder=folderHint==null||folderHint.isEmpty()?metadata.getModel():folderHint;
+            String folder=folderHint==null||folderHint.isEmpty()?(defaultFolder==null?metadata.getModel():defaultFolder):folderHint;
+            if(metrics!=null)metrics.saving();
             Uri uri=publisher.publish(eventSource,prepared.file,prepared.sourceSha256,kind,CameraPhotoPublisher.folder(folder,kind.equals("RAW")),group,cancelled);
             return new Result(uri,true,true,source.bytes);
         }

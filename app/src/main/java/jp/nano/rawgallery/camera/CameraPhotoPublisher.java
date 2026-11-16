@@ -19,6 +19,8 @@ public final class CameraPhotoPublisher {
     private final ContentResolver resolver;
     private final CameraImportLedger ledger;
     private final Faults faults;
+    private java.util.function.LongConsumer readCounter=n->{};
+    public void setReadCounter(java.util.function.LongConsumer counter){this.readCounter=counter;}
     public CameraPhotoPublisher(Context context,CameraImportLedger ledger) { this(context,ledger,b -> {}); }
     public CameraPhotoPublisher(Context context,CameraImportLedger ledger,Faults faults) {
         this.context=context.getApplicationContext();this.resolver=this.context.getContentResolver();this.ledger=ledger;this.faults=faults;
@@ -106,7 +108,7 @@ public final class CameraPhotoPublisher {
         try(InputStream in=resolver.openInputStream(uri)) {
             if(in==null)throw new IOException("Saved photo could not be read");
             MessageDigest sha=MessageDigest.getInstance("SHA-256");byte[] buf=new byte[65536];int n;long count=0;
-            while((n=in.read(buf))!=-1){check(cancelled);count+=n;if(count>p.storedBytes)throw new IOException("Saved photo length mismatch");sha.update(buf,0,n);}
+            while((n=in.read(buf))!=-1){check(cancelled);count+=n;readCounter.accept(n);if(count>p.storedBytes)throw new IOException("Saved photo length mismatch");sha.update(buf,0,n);}
             if(count!=p.storedBytes||!hex(sha.digest()).equals(p.storedSha))throw new IOException("Saved photo fingerprint mismatch");
         }catch(NoSuchAlgorithmException impossible){throw new AssertionError(impossible);}
     }

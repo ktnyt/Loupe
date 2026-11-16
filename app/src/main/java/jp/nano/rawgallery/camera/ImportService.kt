@@ -115,7 +115,18 @@ class ImportService : Service() {
         // 始めたマスストレージは init が空振りして 1 回目の試行を必ず落としていた
         // (2026-08-22 実測: G99M2 で 18.5 秒の空振り。31 秒のうち 21 秒がここで消えた)
         val isMtp = !UsbMassStorage.isMassStorage(usbDevice)
-        try { Thread.sleep(INITIAL_SETTLE_MS) } catch (e: InterruptedException) { return false }
+        val operationMetrics = if (isMtp) null else CameraImportMetrics(this, "usb-sd")
+        fun wasCancelled() = cancelled.get() || ImportProgress.stopRequested || Thread.currentThread().isInterrupted
+        fun finishOperation(outcome: String, message: String) {
+            operationMetrics?.terminal(outcome)
+            if (ImportProgress.photo != null) ImportProgress.photoTerminal(outcome, message)
+            ImportProgress.finish(message)
+            notify(NOTIF_DONE, notification(message))
+        }
+        try { Thread.sleep(INITIAL_SETTLE_MS) } catch (e: InterruptedException) {
+            finishOperation("cancelled", getString(R.string.camera_import_notif_aborted, 0))
+            return false
+        }
 
         // 開く前に Device Reset を送る案は 2026-08-22 に実測して却下した。
         // open は速くなる (15.4 秒 → 1.1 秒) が、その後のスキャンが壊れる:
@@ -162,8 +173,10 @@ class ImportService : Service() {
                 // 省いた縮退スキャンに切り替えて、全滅よりは取りこぼしを選ぶ
                 fullScan = attempt <= FULL_SCAN_ATTEMPTS,
                 failures = failures,
+                operationMetrics = operationMetrics,
             )
             val r = outcome?.second
+            if (wasCancelled()) break
             if (r != null && !r.error) break
             if (r?.aborted == true) break // ケーブル抜去。やり直しても無駄
             if (System.currentTimeMillis() > deadline) {
@@ -190,30 +203,32 @@ class ImportService : Service() {
         }
 
         // 取り外し (5 秒以内に挿し直しなし) は失敗ではなく中止。休ませ案内などは出さない
-        if (detached) {
-            val n = outcome?.second?.imported ?: 0
+        if (detached || wasCancelled()) {
+            val n = operationMetrics?.saved ?: outcome?.second?.imported ?: 0
             val msg =
-                if (n > 0) getString(R.string.camera_import_notif_aborted, n)
-                else getString(R.string.camera_import_notif_detached_cancel)
-            ImportProgress.finish(msg)
-            notify(NOTIF_DONE, notification(msg))
+                if (detached && n == 0) getString(R.string.camera_import_notif_detached_cancel)
+                else getString(R.string.camera_import_notif_aborted, n)
+            finishOperation("cancelled", msg)
             return false
         }
 
-        val (camera, result) = outcome ?: run {
+        val (camera, attemptResult) = outcome ?: run {
             // 全試行が失敗。失敗の内訳で復旧手順の案内を出し分ける。
             // 途中で応答が止まった形跡があれば、実測上それを直すのはカメラの電源入れ直し。
             // 一度も開けていなければ、まず USB モード未確定を疑う (仕様書 5.4)
             val msg =
-                if (FailureKind.STALL in failures) getString(R.string.camera_import_notif_stalled_all)
+                if ((operationMetrics?.saved ?: 0) > 0) getString(R.string.camera_import_notif_read_error, operationMetrics!!.saved)
+                else if (FailureKind.STALL in failures) getString(R.string.camera_import_notif_stalled_all)
                 else getString(R.string.camera_import_notif_open_failed)
-            ImportProgress.finish(msg)
-            notify(NOTIF_DONE, notification(msg))
+            finishOperation("failed", msg)
             return false
         }
 
+        val result = if (operationMetrics == null) attemptResult else attemptResult.copy(imported = operationMetrics.saved)
+        val finalOutcome = CameraImportOutcome.resolve(wasCancelled(), result.aborted, result.error, result.failed)
         val seconds = result.elapsedMs / 1000.0
         var msg = when {
+            finalOutcome == "cancelled" -> getString(R.string.camera_import_notif_aborted, result.imported)
             result.error -> getString(R.string.camera_import_notif_read_error, result.imported)
             result.aborted -> getString(R.string.camera_import_notif_aborted, result.imported)
             result.failed > 0 -> getString(R.string.camera_import_notif_done_partial, result.imported, result.failed)
@@ -242,12 +257,11 @@ class ImportService : Service() {
             msg += "。カメラへカードを戻しましたか"
         }
         ImportLog.i(TAG, "result=$result")
-        ImportProgress.finish(msg)
-        notify(NOTIF_DONE, notification(msg))
+        finishOperation(finalOutcome, msg)
         scope.launch(Dispatchers.Main) {
             Toast.makeText(this@ImportService, msg, Toast.LENGTH_LONG).show()
         }
-        return !result.error && !result.aborted && !result.degraded && result.failed == 0
+        return finalOutcome == "complete" && !result.degraded
     }
 
     /** 全滅時の案内文の出し分け用。試行が何で失敗したかの分類 */
@@ -280,9 +294,10 @@ class ImportService : Service() {
         allowDeletion: Boolean,
         fullScan: Boolean,
         failures: MutableList<FailureKind>,
+        operationMetrics: CameraImportMetrics?,
     ): Pair<Camera, MtpImporter.Result>? {
         val att = Attempt()
-        val task = FutureTask { attemptImport(usbDevice, db, att, requestedKinds, allowDeletion, fullScan) }
+        val task = FutureTask { attemptImport(usbDevice, db, att, requestedKinds, allowDeletion, fullScan, operationMetrics) }
         thread(name = "import-attempt", isDaemon = true) { task.run() }
         while (true) {
             try {
@@ -339,8 +354,10 @@ class ImportService : Service() {
         requestedKinds: Set<MediaTypes.Kind>?,
         allowDeletion: Boolean,
         fullScan: Boolean,
+        operationMetrics: CameraImportMetrics?,
     ): Pair<Camera, MtpImporter.Result>? {
         val isCancelled = { cancelled.get() || ImportProgress.stopRequested || att.invalidated }
+        if (isCancelled()) return null
         if (UsbMassStorage.isMassStorage(usbDevice)) {
             val camera = findOrRegister(db, MassStorageImporter.identity(usbDevice), massStorage = true)
             ImportProgress.begin(camera.model)
@@ -349,6 +366,7 @@ class ImportService : Service() {
                 kinds = requestedKinds ?: camera.defaultKinds,
                 onProgress = progressReporter(camera, att),
                 isCancelled = isCancelled,
+                operationMetrics = operationMetrics,
             )
         }
         val mtp = MtpImporter.open(this, usbDevice) { conn ->
@@ -442,7 +460,9 @@ class ImportService : Service() {
             notify(
                 NOTIF_PROGRESS,
                 notification(
-                    getString(R.string.camera_import_notif_progress, camera.model, p.done, p.total),
+                    jp.nano.rawgallery.ImportProgressPresentation.current().let {
+                        if (it.rich) it.accessibility() else getString(R.string.camera_import_notif_progress, camera.model, p.done, p.total)
+                    },
                     ongoing = true,
                     progress = p,
                 ),
