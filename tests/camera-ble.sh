@@ -7,3 +7,5 @@ javac -d "$work" "$root/app/src/main/java/jp/nano/rawgallery/camera/CameraBlePro
 java -cp "$work" CameraBleProtocolTest
 javac -d "$work" "$root/app/src/main/java/jp/nano/rawgallery/camera/CameraQrCredentials.java" "$root/tests/CameraQrCredentialsTest.java"
 java -cp "$work" CameraQrCredentialsTest
+javac -d "$work" "$root/app/src/main/java/jp/nano/rawgallery/camera/CameraBleRecovery.java" "$root/tests/CameraBleRecoveryTest.java"
+java -cp "$work" jp.nano.rawgallery.camera.CameraBleRecoveryTest

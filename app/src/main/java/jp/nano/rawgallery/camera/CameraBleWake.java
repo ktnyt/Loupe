@@ -23,7 +23,7 @@ public final class CameraBleWake {
     private enum Reason {
         STATE, DEADLINE, CONNECTION, DISCOVERY_START, DISCOVERY_CALLBACK, DESCRIPTOR_CALLBACK,
         WRITE_CALLBACK, NOTIFICATION_BOUNDS, RECEIPT_FORMAT, RESPONSE_ORDER, RESPONSE_FORMAT,
-        CAMERA_REJECTED, WRITE_START, ACK_WRITE_START, SUBSCRIPTION_START
+        CAMERA_REJECTED, WRITE_START, ACK_WRITE_START, SUBSCRIPTION_START, FRESH_ADVERTISEMENT
     }
     private enum NotificationRole { NONE, COMMAND, RESPONSE, EVENT, OTHER }
     public static final class Result {
@@ -42,11 +42,14 @@ public final class CameraBleWake {
     }
     private final Context context;
     private final Handler main = new Handler(Looper.getMainLooper());
+    private Scan activeScan;
+    private Wake activeWake;
     private final Map<BluetoothDevice, Seen> seen = new HashMap<>();
     private static final class Seen {
         final int flags;
-        final long time = SystemClock.elapsedRealtime();
-        Seen(int flags) { this.flags = flags; }
+        final String name;
+        final long time;
+        Seen(int flags, String name, long time) { this.flags = flags; this.name = name; this.time = time; }
     }
     public CameraBleWake(Context context) { this.context = context.getApplicationContext(); }
     private void dispatch(Runnable action) {
@@ -88,6 +91,9 @@ public final class CameraBleWake {
         Scan(ScanObserver observer) { this.observer = observer; }
         void start() {
             if (cancelled.get()) { finish(Outcome.CANCELLED); return; }
+            if (activeWake != null) { finish(Outcome.CANCELLED); return; }
+            if (activeScan != null) activeScan.close();
+            activeScan = this;
             if (!permission(true)) { finish(Outcome.PERMISSION_DENIED); return; }
             try {
                 BluetoothAdapter adapter = adapter();
@@ -104,23 +110,17 @@ public final class CameraBleWake {
         }
         void found(ScanResult result) {
             if (done || cancelled.get() || result == null || result.getDevice() == null) return;
-            ScanRecord record = result.getScanRecord();
-            if (record == null || record.getServiceUuids() == null
-                    || !record.getServiceUuids().contains(new ParcelUuid(CameraBleProtocol.SERVICE))) return;
-            byte[] data = record.getManufacturerSpecificData(0x04d0);
-            if (!CameraBleProtocol.manufacturer(0x04d0, data)) {
-                data = record.getManufacturerSpecificData(0x09f1);
-                if (!CameraBleProtocol.manufacturer(0x09f1, data)) return;
-            }
-            String name = record.getDeviceName();
-            if (name == null || name.isEmpty() || name.length() > 128) return;
+            Seen advertisement = advertisement(result);
+            if (advertisement == null) return;
+            String name = advertisement.name;
             BluetoothDevice device = result.getDevice();
             if (!seen.containsKey(device) && seen.size() >= 32) return;
-            seen.put(device, new Seen(CameraBleProtocol.advertisementFlags(data)));
+            seen.put(device, advertisement);
             if (emitted.add(device)) observer.onCamera(device, name);
         }
         void finish(Outcome error) {
             if (done) return; done = true; main.removeCallbacks(timeout);
+            if (activeScan == this) activeScan = null;
             if (scanner != null) {
                 try { scanner.stopScan(callback); }
                 catch (SecurityException revoked) { if (error == null) error = Outcome.PERMISSION_DENIED; }
@@ -131,7 +131,21 @@ public final class CameraBleWake {
         }
         @Override public void close() { cancelled.set(true); dispatch(() -> finish(Outcome.CANCELLED)); }
     }
-    private enum Stage { CONNECT, DISCOVER, SUBSCRIBE, COMMAND_WRITE, RESPONSE, ACK_WRITE }
+    private Seen advertisement(ScanResult result) {
+        if (result == null || result.getDevice() == null) return null;
+        ScanRecord record = result.getScanRecord();
+        if (record == null || record.getServiceUuids() == null
+                || !record.getServiceUuids().contains(new ParcelUuid(CameraBleProtocol.SERVICE))) return null;
+        byte[] data = record.getManufacturerSpecificData(0x04d0);
+        if (!CameraBleProtocol.manufacturer(0x04d0, data)) {
+            data = record.getManufacturerSpecificData(0x09f1);
+            if (!CameraBleProtocol.manufacturer(0x09f1, data)) return null;
+        }
+        String name = record.getDeviceName();
+        if (name == null || name.isEmpty() || name.length() > 128) return null;
+        return new Seen(CameraBleProtocol.advertisementFlags(data), name, result.getTimestampNanos() / 1000000);
+    }
+    private enum Stage { WARM_CONNECT, WARM_WAIT_DISCONNECT, WARM_SETTLE, FRESH_SCAN, CONNECT, DISCOVER, SUBSCRIBE, COMMAND_WRITE, RESPONSE, ACK_WRITE }
     private final class Wake implements Closeable {
         final BluetoothDevice device;
         final Observer observer;
@@ -141,12 +155,27 @@ public final class CameraBleWake {
         BluetoothGattCharacteristic command, response;
         final UUID[] subscriptions = {CameraBleProtocol.COMMAND, CameraBleProtocol.RESPONSE, CameraBleProtocol.EVENT};
         int subscription, sequence = 1;
-        boolean done, wakeSent;
+        boolean done, wakeSent, warmConnected, warmDisconnected, freshAsicOn;
+        int connectionCount;
         final long started = SystemClock.elapsedRealtime();
         int gattStatus = -1;
         NotificationRole notificationRole = NotificationRole.NONE;
         int notificationBytes = -1;
         int advertisementFlags;
+        String selectedName;
+        final CameraBleRecovery recovery = new CameraBleRecovery(started);
+        BluetoothLeScanner scanner;
+        long freshScanStarted;
+        final Runnable settled = this::freshScan;
+        final ScanCallback freshCallback = new ScanCallback() {
+            @Override public void onScanResult(int type, ScanResult result) { dispatch(() -> freshFound(result)); }
+            @Override public void onBatchScanResults(List<ScanResult> results) {
+                dispatch(() -> { for (ScanResult result : results) freshFound(result); });
+            }
+            @Override public void onScanFailed(int error) { dispatch(() -> {
+                if (!done && !cancelled.get() && stage == Stage.FRESH_SCAN) finish(Outcome.PROTOCOL_ERROR, -1);
+            }); }
+        };
         Stage stage;
         CameraBleProtocol.Operation operation;
         CameraBleProtocol.Response parsed;
@@ -157,6 +186,22 @@ public final class CameraBleWake {
                 dispatch(() -> {
                     if (!current(source)) return;
                     gattStatus = status;
+                    if (stage == Stage.WARM_CONNECT || stage == Stage.WARM_WAIT_DISCONNECT) {
+                        if (state == BluetoothProfile.STATE_DISCONNECTED) {
+                            if (!recovery.disconnected()) { finish(Outcome.DISCONNECTED, -1, Reason.CONNECTION); return; }
+                            warmDisconnected = true;
+                            if (!closeWarmGatt()) return;
+                            stage = Stage.WARM_SETTLE; main.removeCallbacks(timeout);
+                            main.postDelayed(timeout, recovery.remaining(SystemClock.elapsedRealtime(), 90000));
+                            main.postDelayed(settled, recovery.remaining(SystemClock.elapsedRealtime(), 3000));
+                        } else if (status != BluetoothGatt.GATT_SUCCESS) {
+                            finish(Outcome.DISCONNECTED, -1, Reason.CONNECTION);
+                        } else if (state == BluetoothProfile.STATE_CONNECTED && recovery.connected()) {
+                            warmConnected = true;
+                            stage = Stage.WARM_WAIT_DISCONNECT; arm(30000);
+                        }
+                        return;
+                    }
                     if (status != BluetoothGatt.GATT_SUCCESS || state == BluetoothProfile.STATE_DISCONNECTED) {
                         finish(Outcome.DISCONNECTED, -1, Reason.CONNECTION); return;
                     }
@@ -197,7 +242,7 @@ public final class CameraBleWake {
             }
             @Override public void onCharacteristicWrite(BluetoothGatt source, BluetoothGattCharacteristic characteristic, int status) {
                 dispatch(() -> {
-                    if (!current(source)) return;
+                    if (!current(source) || !normalPhase()) return;
                     gattStatus = status;
                     UUID expected = stage == Stage.COMMAND_WRITE ? CameraBleProtocol.COMMAND
                             : stage == Stage.ACK_WRITE ? CameraBleProtocol.RESPONSE : null;
@@ -222,6 +267,7 @@ public final class CameraBleWake {
         }
         boolean current(BluetoothGatt source) {
             if (done || cancelled.get()) return false;
+            if (recovery.remaining(SystemClock.elapsedRealtime(), 90000) == 0) { finish(Outcome.TIMEOUT, -1, Reason.DEADLINE); return false; }
             return source == gatt;
         }
         boolean canWrite(BluetoothGattCharacteristic characteristic) {
@@ -229,26 +275,76 @@ public final class CameraBleWake {
         }
         void start() {
             if (cancelled.get()) { finish(Outcome.CANCELLED, -1); return; }
+            if (activeScan != null) activeScan.close();
+            if (activeWake != null) activeWake.close();
+            activeWake = this;
             if (!permission(false)) { finish(Outcome.PERMISSION_DENIED, -1); return; }
-            try {
-                byte[] validation = CameraBleProtocol.authenticate(1, passcode);
-                Arrays.fill(validation, (byte) 0);
-            } catch (IllegalArgumentException error) { finish(Outcome.INVALID_INPUT, -1); return; }
+            if (!validPasscode()) { finish(Outcome.INVALID_INPUT, -1); return; }
             Seen selected = seen.get(device);
-            if (device == null || selected == null || SystemClock.elapsedRealtime() - selected.time > 60000) {
+            if (device == null || selected == null || selected.time > SystemClock.elapsedRealtime() || SystemClock.elapsedRealtime() - selected.time > 60000) {
                 finish(Outcome.UNSUPPORTED_CAMERA, -1); return;
             }
-            advertisementFlags = selected.flags;
+            advertisementFlags = selected.flags; selectedName = selected.name;
+            recovery.start((advertisementFlags & 1) != 0);
+            connect(recovery.phase == CameraBleRecovery.Phase.WARM_CONNECT);
+        }
+        void connect(boolean warm) {
+            if (done || cancelled.get()) return;
+            if (recovery.remaining(SystemClock.elapsedRealtime(), 90000) == 0) { finish(Outcome.TIMEOUT, -1); return; }
             try {
                 BluetoothAdapter adapter = adapter();
                 if (adapter == null || !adapter.isEnabled()) { finish(Outcome.BLUETOOTH_UNAVAILABLE, -1); return; }
-                stage = Stage.CONNECT; arm(20000);
+                stage = warm ? Stage.WARM_CONNECT : Stage.CONNECT; arm(20000);
+                connectionCount++;
                 gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE);
                 if (gatt == null) finish(Outcome.DISCONNECTED, -1);
             } catch (SecurityException error) { finish(Outcome.PERMISSION_DENIED, -1); }
             catch (RuntimeException error) { finish(Outcome.PROTOCOL_ERROR, -1); }
         }
-        void arm(long millis) { main.removeCallbacks(timeout); main.postDelayed(timeout, millis); }
+        void arm(long millis) {
+            main.removeCallbacks(timeout);
+            main.postDelayed(timeout, recovery.remaining(SystemClock.elapsedRealtime(), millis));
+        }
+        void freshScan() {
+            if (done || cancelled.get() || stage != Stage.WARM_SETTLE) return;
+            if (recovery.remaining(SystemClock.elapsedRealtime(), 90000) == 0) { finish(Outcome.TIMEOUT, -1); return; }
+            if (!recovery.settled()) return;
+            if (!permission(true)) { finish(Outcome.PERMISSION_DENIED, -1); return; }
+            try {
+                BluetoothAdapter adapter = adapter();
+                if (adapter == null || !adapter.isEnabled() || (scanner = adapter.getBluetoothLeScanner()) == null) {
+                    finish(Outcome.BLUETOOTH_UNAVAILABLE, -1); return;
+                }
+                stage = Stage.FRESH_SCAN; arm(15000); freshScanStarted = SystemClock.elapsedRealtimeNanos();
+                scanner.startScan(Collections.singletonList(new ScanFilter.Builder()
+                                .setServiceUuid(new ParcelUuid(CameraBleProtocol.SERVICE)).build()),
+                        new ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), freshCallback);
+            } catch (SecurityException error) { finish(Outcome.PERMISSION_DENIED, -1); }
+            catch (RuntimeException error) { finish(Outcome.PROTOCOL_ERROR, -1); }
+        }
+        void freshFound(ScanResult result) {
+            if (done || cancelled.get() || stage != Stage.FRESH_SCAN) return;
+            if (recovery.remaining(SystemClock.elapsedRealtime(), 90000) == 0) { finish(Outcome.TIMEOUT, -1); return; }
+            Seen fresh = advertisement(result);
+            if (fresh == null || result.getTimestampNanos() < freshScanStarted) return;
+            boolean same = device.equals(result.getDevice()) && selectedName.equals(fresh.name);
+            if (!recovery.advertisement(same, (fresh.flags & 1) != 0)) {
+                finish(Outcome.UNSUPPORTED_CAMERA, -1, Reason.FRESH_ADVERTISEMENT); return;
+            }
+            freshAsicOn = true;
+            stage = Stage.CONNECT; // Retire scan callbacks before stopping its resource.
+            stopFreshScan();
+            if (done) return;
+            advertisementFlags = fresh.flags;
+            connect(false);
+        }
+        void stopFreshScan() {
+            if (scanner == null) return;
+            BluetoothLeScanner closing = scanner; scanner = null;
+            try { closing.stopScan(freshCallback); }
+            catch (SecurityException error) { finish(Outcome.PERMISSION_DENIED, -1); }
+            catch (RuntimeException error) { finish(Outcome.PROTOCOL_ERROR, -1); }
+        }
         void subscribe() {
             BluetoothGattCharacteristic characteristic = gatt.getService(CameraBleProtocol.SERVICE).getCharacteristic(subscriptions[subscription]);
             if (characteristic == null || (characteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_NOTIFY) == 0) {
@@ -288,14 +384,14 @@ public final class CameraBleWake {
         void notifyValue(BluetoothGatt source, UUID uuid, byte[] value) {
             if (value == null || value.length > CameraBleProtocol.ATT_BYTES) {
                 int length = value == null ? -1 : value.length;
-                dispatch(() -> { if (current(source)) {
+                dispatch(() -> { if (current(source) && normalPhase()) {
                     noteNotification(uuid, length);
                     finish(Outcome.PROTOCOL_ERROR, -1, Reason.NOTIFICATION_BOUNDS);
                 } }); return;
             }
             byte[] copy = value.clone();
             dispatch(() -> {
-                if (!current(source)) return;
+                if (!current(source) || !normalPhase()) return;
                 noteNotification(uuid, copy.length);
                 if (CameraBleProtocol.EVENT.equals(uuid)) return;
                 if (CameraBleProtocol.COMMAND.equals(uuid)) {
@@ -336,6 +432,30 @@ public final class CameraBleWake {
                 else send(next);
             } else finish(Outcome.PROTOCOL_ACCEPTED, parsed.status);
         }
+        boolean normalPhase() {
+            return stage == Stage.SUBSCRIBE || stage == Stage.COMMAND_WRITE || stage == Stage.RESPONSE || stage == Stage.ACK_WRITE;
+        }
+        boolean closeWarmGatt() {
+            BluetoothGatt closing = gatt; gatt = null;
+            try { closing.close(); return true; }
+            catch (SecurityException error) { finish(Outcome.PERMISSION_DENIED, -1); }
+            catch (RuntimeException error) { finish(Outcome.PROTOCOL_ERROR, -1); }
+            return false;
+        }
+        // Validate UTF-8 size without materializing an authentication frame during warm recovery.
+        boolean validPasscode() {
+            if (passcode == null || passcode.length == 0 || passcode.length > CameraBleProtocol.ATT_BYTES - 8) return false;
+            int bytes = 0;
+            for (int i = 0; i < passcode.length; i++) {
+                char c = passcode[i];
+                if (Character.isHighSurrogate(c)) {
+                    if (++i == passcode.length || !Character.isLowSurrogate(passcode[i])) return false;
+                    bytes += 4;
+                } else if (Character.isLowSurrogate(c)) return false;
+                else bytes += c < 0x80 ? 1 : c < 0x800 ? 2 : 3;
+            }
+            return bytes <= CameraBleProtocol.ATT_BYTES - 8;
+        }
         void erasePasscode() { if (passcode != null) { Arrays.fill(passcode, '\0'); passcode = null; } }
         void eraseFrame() {
             if (sensitiveFrame != null) { Arrays.fill(sensitiveFrame, (byte) 0); sensitiveFrame = null; }
@@ -345,7 +465,9 @@ public final class CameraBleWake {
             finish(outcome, status, Reason.STATE);
         }
         void finish(Outcome outcome, int status, Reason reason) {
-            if (done) return; done = true; main.removeCallbacks(timeout); erasePasscode(); eraseFrame(); pendingResponse = null;
+            if (done) return; done = true; recovery.finish(); main.removeCallbacks(timeout); main.removeCallbacks(settled);
+            if (activeWake == this) activeWake = null;
+            erasePasscode(); eraseFrame(); pendingResponse = null; selectedName = null; stopFreshScan();
             if (gatt != null) {
                 BluetoothGatt closing = gatt; gatt = null;
                 try { closing.disconnect(); }
@@ -364,6 +486,8 @@ public final class CameraBleWake {
                     .putInt("subscription", subscription).putInt("gatt_status", gattStatus)
                     .putString("notification_role", notificationRole.name()).putInt("notification_bytes", notificationBytes)
                     .putInt("camera_status", status).putBoolean("wake_sent", wakeSent)
+                    .putBoolean("warm_connected", warmConnected).putBoolean("warm_disconnected", warmDisconnected)
+                    .putBoolean("fresh_asic_on", freshAsicOn).putInt("connection_count", connectionCount)
                     .putLong("elapsed_ms", SystemClock.elapsedRealtime() - started).commit();
             android.util.Log.i("LoupeCameraBle", "diagnostic_saved=" + saved);
             observer.onFinished(new Result(outcome, status, wakeSent));

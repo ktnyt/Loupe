@@ -4,7 +4,7 @@
 
 Allow a user to register a camera once from its displayed connection QR, reuse its locally saved Bluetooth passcode, and request access for Wi-Fi importing. BLE protocol acceptance is separate from Wi-Fi readiness and from successful importing. No background auto-wake, camera reset, shutter operation, pairing bypass, or reading of another application's credentials is implemented.
 
-E-P7 and OM-1 Mark II are experimental targets. An E-P7 has accepted a BLE transfer-wake operation and exposed Wi-Fi without a physical camera operation; the device evidence is recorded in issue #124. Exact power-switch state, firmware version, negative-passcode behavior and controlled standby/disconnection coverage remain unverified. OM-1 Mark II has not been physically tested. A matching advertisement identifies a candidate, not an authenticated camera. A saved passcode is used only for the exact Bluetooth name registered by that camera's QR.
+E-P7 and OM-1 Mark II are experimental targets. On the E-P7, a physical QR photo has been registered and its encrypted credential decrypted after a process restart. With the camera on its normal shooting screen and ASIC-on advertisement flags `09`, saved authentication and the Wi-Fi-start command response/ACK succeeded. With the user-confirmed power switch off and ASIC-off flags `00`, the original immediate-discovery path disconnected before authentication. Command acceptance does not establish current Wi-Fi availability; an earlier observation of Wi-Fi appearance did not establish the exact power-switch state. Firmware version, negative-passcode behavior and controlled recovery coverage remain unverified. OM-1 Mark II has not been physically tested. A matching advertisement identifies a candidate, not an authenticated camera. A saved passcode is used only for the exact Bluetooth name registered by that camera's QR.
 
 ## One-time QR registration contract
 
@@ -17,6 +17,16 @@ E-P7 and OM-1 Mark II are experimental targets. An E-P7 has accepted a BLE trans
 - Validate parsing with synthetic QR vectors, persistence/replacement/removal/tampering with the real Android Keystore on the emulator, scanner cancellation/permission states and a physical camera QR. Report emulator evidence separately from physical registration and BLE wake.
 
 The QR field order and reversible character substitution are independently described from the same inspected official APK and the [MIT reference parser](https://github.com/azqeurio/db_link/blob/33b1f7e3d311967ed17a675a8561748977623fe3/app/src/main/java/dev/dblink/feature/qr/WifiQrParser.kt). Substitution is not encryption. Scanning uses the local [ZXing Android Embedded](https://github.com/journeyapps/zxing-android-embedded) decoder; storage uses the [Android Keystore](https://developer.android.com/privacy-and-security/keystore).
+
+## Bounded ASIC-off recovery contract
+
+An ASIC-on advertisement uses the existing normal authentication path. An ASIC-off advertisement starts one experimental warm connection with no service discovery, notification setup, reads, authentication or characteristic writes. Only a real disconnect callback after a successful connection permits closing GATT, waiting three seconds, and scanning once again. A local timeout or cancellation never substitutes for that disconnect.
+
+The fresh scan must match the originally selected BluetoothDevice and exact advertisement name, pass the same service/manufacturer validation, and advertise ASIC-on before a single normal connection can start. A still-off advertisement, another candidate, scan expiry, transport failure before connection, or permission loss fails without authentication. An address change fails closed. Never retry rejected authentication.
+
+The whole operation has a monotonic 90-second deadline. Warm connection establishment is limited to 20 seconds, connected disconnect-wait to 30 seconds, settling to three seconds and fresh scan to 15 seconds; all stage timers are clipped to the remaining overall budget. At most one scan or GATT is active, with at most one warm and one normal connection. Cancel, terminal error and timeout clear operation-owned credentials, close resources and remove timers. Late callbacks cannot advance a later phase.
+
+Warm connection, disconnect and ASIC-on advertising are intermediate observations. Success still requires authentication and the selected command response/ACK; Wi-Fi readiness and actual import are separate device checks. Connecting without discovery as a wake trigger remains a hypothesis until the complete transition is observed on the physical camera. The inspected official app retains GATT after a successful Bluetooth-mode Wi-Fi-start response during Wi-Fi transition; Loupe's immediate close differs, and this lifecycle must be isolated in a subsequent comparison rather than conflated with warm recovery.
 
 ## Official operating constraints
 
@@ -75,9 +85,9 @@ Manufacturer advertisement data is eight bytes including company ID `04D0` or `0
 
 Connection has a 20-second timeout; discovery and each descriptor write have a 10-second timeout. Authentication, including its response ACK, has a 10-second timeout. Wake, including its ACK, has a 20-second timeout. Cancellation and disconnection terminate the session without an automatic retry.
 
-The helper retains one local result in `camera_ble_diagnostics`: closed-enum outcome/reason/stage/operation, subscription index, numeric GATT and camera status, notification role and byte count, attempted-wake flag and monotonic elapsed milliseconds. It replaces the previous record. It never records credentials, frames, device identifiers or exception messages. Discovery callback timing is also logged, including callbacks arriving after termination; this distinguishes a late callback from a callback accepted by the session.
+The helper retains one local result in `camera_ble_diagnostics`: closed-enum outcome/reason/stage/operation, subscription index, numeric GATT and camera status, notification role and byte count, attempted-wake flag, monotonic elapsed milliseconds, three warm-transition booleans and a connection-attempt count bounded to two. It replaces the previous record. It never records credentials, frames, device identifiers or exception messages. Discovery callback timing is also logged, including callbacks arriving after termination; this distinguishes a late callback from a callback accepted by the session.
 
-The ASIC-off transition is unresolved: the official app delays before connecting and may rely on rescanning/reconnecting before discovery. This helper makes one bounded connection/discovery attempt; it does not implement guessed hardware-wake writes or automatic retries. Failure asks for a fresh explicit attempt or manual camera activation.
+The ASIC-off path follows the bounded warm/disconnect/fresh-scan contract above. Its physical transition is experimental and must be established separately from ASIC-on authentication. No guessed hardware-wake writes or automatic authentication retries are implemented. Failure asks for a fresh explicit attempt or manual camera activation.
 
 ## Validation
 
@@ -87,7 +97,7 @@ Android helper compilation can be checked with the project build. Host compilati
 
 ## Bluetooth-mode Wi-Fi start evidence
 
-The verified Wi-Fi-start vector is `01 sequence 04 1D 01 01 02 21 00`. It uses the same response/ACK framing and 20-second helper timeout as transfer wake. `wakeCommandSent` includes an attempted Wi-Fi-start write. Authentication failure never schedules either command. Protocol acceptance remains separate from Wi-Fi readiness; this helper does not connect to Wi-Fi or claim that the radio is ready.
+The verified Wi-Fi-start vector is `01 sequence 04 1D 01 01 02 21 00`. It uses the same response/ACK framing and 20-second command-stage timeout as transfer wake, clipped to the overall operation deadline. `wakeCommandSent` includes an attempted Wi-Fi-start write. Authentication failure never schedules either command. Protocol acceptance remains separate from Wi-Fi readiness; this helper does not connect to Wi-Fi or claim that the radio is ready.
 
 In the inspected APK, `N2/a.java` maps advertisement bit `08` to `M2.a.l()`, exposed by the connection manager's `isBluetoothFlag`. `BlePowOnActivity` checks this flag after connection/authentication success and only then calls `M2.b.M(2, 10000)`, which sends family `1D`/subcommand `01`. Status 0 schedules Wi-Fi connection after 5500 ms; other statuses fail. The ordinary branch closes BLE and waits 3000 ms. These waits are official-app behavior, not measured camera readiness or delays implemented by this BLE-only helper.
 

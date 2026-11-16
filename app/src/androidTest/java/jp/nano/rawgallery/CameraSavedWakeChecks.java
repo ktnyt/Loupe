@@ -86,7 +86,13 @@ final class CameraSavedWakeChecks {
                     + " stage=" + diagnostics.getString("stage", "NONE")
                     + " reason=" + diagnostics.getString("reason", "NONE")
                     + " cameraStatus=" + diagnostics.getInt("camera_status", -1)
-                    + " wakeSent=" + diagnostics.getBoolean("wake_sent", false) + advertisementInfo;
+                    + " wakeSent=" + diagnostics.getBoolean("wake_sent", false)
+                    + " warmConnected=" + diagnostics.getBoolean("warm_connected", false)
+                    + " warmDisconnected=" + diagnostics.getBoolean("warm_disconnected", false)
+                    + " freshAsicOn=" + diagnostics.getBoolean("fresh_asic_on", false)
+                    + " connectionCount=" + diagnostics.getInt("connection_count", -1)
+                    + " gattStatus=" + diagnostics.getInt("gatt_status", -1)
+                    + " elapsedMs=" + diagnostics.getLong("elapsed_ms", -1) + advertisementInfo;
         } finally {
             instrumentation.runOnMainSync(() -> { screen.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); screen.finish(); });
         }

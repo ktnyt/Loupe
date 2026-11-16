@@ -35,11 +35,14 @@ final class CameraBleDiagnosticsChecks {
             Map<String, ?> values = prefs.getAll();
             HashSet<String> schema = new HashSet<>(Arrays.asList("outcome", "reason", "stage", "operation",
                     "subscription", "gatt_status", "camera_status", "wake_sent", "elapsed_ms",
-                    "notification_role", "notification_bytes"));
+                    "notification_role", "notification_bytes", "warm_connected", "warm_disconnected", "fresh_asic_on", "connection_count"));
             if (!values.keySet().equals(schema)) throw new AssertionError("Unexpected diagnostic schema");
             if (!expected.name().equals(values.get("outcome")) || !"NONE".equals(values.get("stage"))
                     || !"NONE".equals(values.get("operation")) || !Boolean.FALSE.equals(values.get("wake_sent")))
                 throw new AssertionError("Termination diagnostics do not match the operation");
+            if (!Boolean.FALSE.equals(values.get("warm_connected")) || !Boolean.FALSE.equals(values.get("warm_disconnected"))
+                    || !Boolean.FALSE.equals(values.get("fresh_asic_on")) || !Integer.valueOf(0).equals(values.get("connection_count")))
+                throw new AssertionError("Preflight termination started recovery");
             if (((Long) values.get("elapsed_ms")) < 0) throw new AssertionError("Negative elapsed time");
         } finally { Arrays.fill(input, '\0'); }
     }
