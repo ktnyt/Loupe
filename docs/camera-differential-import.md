@@ -50,3 +50,13 @@ No saved Wi-Fi password is extracted or logged, and changing networks does not g
 高速省略は媒体識別子とファイル属性が保たれることを前提とする。識別子を複製した媒体や、同じパス・サイズ・日時のまま原本内容だけ差し替えた変更は、高速省略では検知できない。内容確認で検査する。接続元が別だと分かった場合は、名前・属性一致だけで受領済みにしない。
 
 共通履歴の原本件数と接続元の受領記録件数を取り込み画面に表示する。旧USB設定と履歴移行を保持し、旧履歴の操作を共通台帳の削除と誤表示しない。
+
+### Original-byte SD reads
+
+The purpose is to preserve camera originals and compare the same bytes over Wi-Fi and Android-mounted SD. Before manual SD import or enabling SD auto-import, request photo-library access and `ACCESS_MEDIA_LOCATION` with an explanation that photo metadata is needed for original preservation. Denial is recoverable and does not enable SD auto-import. Bring the permission result into the visible scroll area after the native dialog returns. The SD service also checks this permission before recovery, listing or receipt-based skipping; Wi-Fi and USB permission flows remain unchanged.
+
+Read selected SD documents through their mapped MediaStore URI with `setRequireOriginal`. Missing mapping, denied permission or an unavailable original stops the operation with actionable original-access guidance; never silently import a potentially redacted representation or loosen SHA equality. Original acquisition is streaming, read-only and honors cancellation checks. Do not edit source metadata or source files.
+
+Version the SAF source receipt namespace for original-byte reading so receipts created by the previous representation cannot authorize skipping. Preserve all old content and receipts; new original-byte reads may bind to existing content only after full SHA verification. Subsequent verified source receipts retain the measured history-first policy.
+
+Validate permission denial/revocation before any SD history shortcut, unavailable mapping/original failures, immutable source bytes, legacy receipt revalidation, and original-SHA equality across both physical paths for the same four-file pilot. Capture the updated permission guidance at 320dp/font1.3 and normal width/font1.0 and independently review it. Diagnostic equality for two files does not replace that four-file import check.

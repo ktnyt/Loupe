@@ -31,6 +31,31 @@ final class Ep7WifiChecks {
         require(root, "共通履歴");
       });
       capture(t, camera, "camera-import");
+      TagDetailChecks.ui(t, () -> {
+        View root = camera.getWindow().getDecorView();
+        TextView heading = require(root, "SDカードから取り込む");
+        require(root, "原本をそのまま保存して重複を確認するため、写真すべてと写真の位置情報へのアクセスが必要です。");
+        findScroll(root).scrollTo(0, ((View) heading.getParent()).getTop());
+      });
+      capture(t, camera, "camera-import-sd");
+      TagDetailChecks.ui(t, () -> {
+        TextView permission = require(camera.getWindow().getDecorView(), "写真のアクセス権限を確認");
+        permission.requestRectangleOnScreen(new Rect(0, 0, permission.getWidth(), permission.getHeight()), true);
+      });
+      capture(t, camera, "camera-import-sd-permissions");
+      if (camera.checkSelfPermission(android.Manifest.permission.ACCESS_MEDIA_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED
+          && camera.checkSelfPermission(android.Manifest.permission.READ_MEDIA_IMAGES) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+        // Exercise the app result state; this does not simulate a native permission dialog.
+        TagDetailChecks.ui(t, () -> camera.onRequestPermissionsResult(406,
+            new String[]{android.Manifest.permission.ACCESS_MEDIA_LOCATION}, new int[]{android.content.pm.PackageManager.PERMISSION_DENIED}));
+        t.waitForIdleSync();
+        TagDetailChecks.ui(t, () -> {
+          TextView denied = require(camera.getWindow().getDecorView(), "原本の保存には写真の位置情報へのアクセスが必要です。再度操作するか、アプリの権限設定を確認してください。");
+          Rect visible = new Rect();
+          check(denied.getGlobalVisibleRect(visible) && visible.height() == denied.getHeight(), "Denied original access guidance stays fully visible");
+        });
+        capture(t, camera, "camera-import-sd-denied");
+      }
       TagDetailChecks.ui(t,()->findScroll(camera.getWindow().getDecorView()).fullScroll(View.FOCUS_DOWN));
       capture(t,camera,"camera-import-bottom");
       wifi = (Ep7WifiActivity) t.startActivitySync(new Intent(t.getTargetContext(), Ep7WifiActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));

@@ -158,15 +158,15 @@ public final class CameraImportActivity extends AppCompatActivity {
         sdAuto = new MaterialSwitch(this); sdAuto.setText("SDカード接続時に自動で取り込む"); sdAuto.setMinHeight(dp(48));
         sdAuto.setChecked(settings.getBoolean("sd_auto", false));
         sdAuto.setOnCheckedChangeListener((v, checked) -> {
-            if (checked && !ensurePhotoPermission()) { sdAuto.setChecked(false); return; }
+            if (checked && !ensureSdPermissions()) { sdAuto.setChecked(false); return; }
             if (checked && readableSdTree() == null) { sdAuto.setChecked(false); sdStatus.setText("先に読み取り可能なフォルダを選んでください。"); return; }
             settings.edit().putBoolean("sd_auto", checked).apply(); CameraDifferentialService.updateAuto(this);
             if (checked && Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
                 requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 403);
         });
         sd.addView(sdAuto);
-        sd.addView(text("重複を確認するため、端末内の写真すべてへのアクセスが必要です。", 14, GalleryUi.MUTED));
-        button(sd, "写真のアクセス権限を確認", this::ensurePhotoPermission);
+        sd.addView(text("原本をそのまま保存して重複を確認するため、写真すべてと写真の位置情報へのアクセスが必要です。", 14, GalleryUi.MUTED));
+        button(sd, "写真のアクセス権限を確認", this::ensureSdPermissions);
         button(sd, "アプリの権限設定を開く", () -> startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", getPackageName(), null))));
         sdStatus.setText(readableSdTree() == null ? "フォルダを選んでください" : "フォルダを選択済み");
         LinearLayout ledger = card(root, "共通履歴");
@@ -425,19 +425,38 @@ public final class CameraImportActivity extends AppCompatActivity {
     }
 
     private String photoPermission() { return Build.VERSION.SDK_INT >= 33 ? Manifest.permission.READ_MEDIA_IMAGES : Manifest.permission.READ_EXTERNAL_STORAGE; }
-    private boolean ensurePhotoPermission() {
-        if (checkSelfPermission(photoPermission()) == PackageManager.PERMISSION_GRANTED) return true;
-        sdStatus.setText("写真すべてへのアクセスを許可してください。選択した写真のみでは取り込めません。許可後にもう一度操作してください。");
-        requestPermissions(Build.VERSION.SDK_INT >= 34
-                ? new String[]{photoPermission(), Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED}
-                : new String[]{photoPermission()}, 406);
+    private boolean ensureSdPermissions() {
+        boolean photos = checkSelfPermission(photoPermission()) == PackageManager.PERMISSION_GRANTED;
+        boolean originals = checkSelfPermission(Manifest.permission.ACCESS_MEDIA_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        if (photos && originals) return true;
+        showSdPermissionStatus(photos
+                ? "原本をそのまま保存するため、写真の位置情報へのアクセスを許可してください。許可後にもう一度操作してください。"
+                : "写真すべてと写真の位置情報へのアクセスを許可してください。選択した写真のみでは取り込めません。許可後にもう一度操作してください。");
+        java.util.ArrayList<String> permissions = new java.util.ArrayList<>();
+        if (!photos) {
+            permissions.add(photoPermission());
+            if (Build.VERSION.SDK_INT >= 34) permissions.add(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED);
+        }
+        if (!originals) permissions.add(Manifest.permission.ACCESS_MEDIA_LOCATION);
+        requestPermissions(permissions.toArray(new String[0]), 406);
         return false;
     }
     @Override public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(request, permissions, results);
-        if (request == 406) sdStatus.setText(checkSelfPermission(photoPermission()) == PackageManager.PERMISSION_GRANTED
-                ? "写真へのアクセスを許可しました。もう一度操作してください。"
-                : "写真すべてへのアクセスが必要です。再度許可するか、アプリの権限設定を確認してください。");
+        if (request != 406) return;
+        if (checkSelfPermission(photoPermission()) != PackageManager.PERMISSION_GRANTED)
+            showSdPermissionStatus("写真すべてへのアクセスが必要です。再度許可するか、アプリの権限設定を確認してください。");
+        else if (checkSelfPermission(Manifest.permission.ACCESS_MEDIA_LOCATION) != PackageManager.PERMISSION_GRANTED)
+            showSdPermissionStatus("原本の保存には写真の位置情報へのアクセスが必要です。再度操作するか、アプリの権限設定を確認してください。");
+        else showSdPermissionStatus("写真の原本へのアクセスを許可しました。もう一度操作してください。");
+    }
+
+    private void showSdPermissionStatus(String message) {
+        sdStatus.setText(message);
+        sdStatus.post(() -> {
+            if (!isFinishing() && !isDestroyed())
+                sdStatus.requestRectangleOnScreen(new android.graphics.Rect(0, 0, sdStatus.getWidth(), sdStatus.getHeight()), true);
+        });
     }
 
     private Uri readableSdTree() {
@@ -452,7 +471,7 @@ public final class CameraImportActivity extends AppCompatActivity {
     }
 
     private void startSd() {
-        if (!ensurePhotoPermission()) return;
+        if (!ensureSdPermissions()) return;
         Uri tree = readableSdTree();
         if (tree == null) { sdStatus.setText("フォルダの読み取り権限がありません。もう一度選んでください。"); return; }
         if (PROGRESS.getActive()) { sdStatus.setText("取り込みが終わってから再試行してください。"); return; }

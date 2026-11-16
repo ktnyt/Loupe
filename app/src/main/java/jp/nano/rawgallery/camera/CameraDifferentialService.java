@@ -76,12 +76,13 @@ public final class CameraDifferentialService extends Service {
                         CameraPhotoPublisher.check(cancelled);
                         String permission=Build.VERSION.SDK_INT>=33?Manifest.permission.READ_MEDIA_IMAGES:Manifest.permission.READ_EXTERNAL_STORAGE;
                         if(checkSelfPermission(permission)!=PackageManager.PERMISSION_GRANTED)throw new IOException("重複を確認するため写真全体へのアクセスを許可してください");
+                        if(SD.equals(request.getAction()))CameraDocumentSource.requireOriginalPermission(this);
                         CameraPhotoImporter importer=new CameraPhotoImporter(this);importer.recover(cancelled);
                         if(PAIRED.equals(request.getAction()))paired(importer,request.getStringExtra("profile_id"),request.getBooleanExtra("verify",getSharedPreferences("camera_import",0).getBoolean("wifi_verify_all",false)));
                         else if(WIFI.equals(request.getAction()))wifi(importer,request.getBooleanExtra("verify",getSharedPreferences("camera_import",0).getBoolean("wifi_verify_all",false)));
                         else if(SD.equals(request.getAction())&&request.getData()!=null)sd(importer,request.getData(),request.getBooleanExtra("verify",getSharedPreferences("camera_import",0).getBoolean("sd_verify_all",false)));
                         else throw new IOException("接続元がありません");
-                    }catch(Exception e){ImportProgress.INSTANCE.finish(cancelled.getAsBoolean()?"取り込みを中断しました":e instanceof CameraPairedSession.MissingWifiException?e.getMessage():"取り込みを完了できませんでした。接続と写真へのアクセスを確認してください");android.util.Log.w("CameraDifferential","Import failed: "+e.getClass().getSimpleName());}
+                    }catch(Exception e){ImportProgress.INSTANCE.finish(cancelled.getAsBoolean()?"取り込みを中断しました":(e instanceof CameraPairedSession.MissingWifiException||e instanceof CameraDocumentSource.OriginalAccessException)?e.getMessage():"取り込みを完了できませんでした。接続と写真へのアクセスを確認してください");android.util.Log.w("CameraDifferential","Import failed: "+e.getClass().getSimpleName());}
                 });
                 if(!accepted&&!destroyed)getSystemService(NotificationManager.class).notify(783,
                         new Notification.Builder(this,CHANNEL).setSmallIcon(android.R.drawable.ic_menu_camera)
@@ -154,19 +155,32 @@ public final class CameraDifferentialService extends Service {
         return retry(importer,f,copy,stable,verify,cancelled);
     }
     private CameraPhotoImporter.Result retry(CameraPhotoImporter importer,CameraImportFile f,CameraImportCopy.Copy copy,boolean stable,boolean verify,BooleanSupplier operationCancelled)throws IOException{
+        return retry(importer,f,copy,stable,verify,operationCancelled,false);
+    }
+    private CameraPhotoImporter.Result retry(CameraPhotoImporter importer,CameraImportFile f,CameraImportCopy.Copy copy,boolean stable,boolean verify,BooleanSupplier operationCancelled,boolean sdOriginal)throws IOException{
         IOException first=null;
-        for(int i=0;i<2;i++)try{return importer.importPhoto(f,copy,null,stable,verify,operationCancelled);}catch(InterruptedIOException e){throw e;}catch(IOException e){if(first==null)first=e;CameraPhotoPublisher.check(operationCancelled);importer.recover(operationCancelled);}
+        for(int i=0;i<2;i++)try{
+            if(sdOriginal)CameraDocumentSource.requireOriginalPermission(this);
+            return importer.importPhoto(f,copy,null,stable,verify,operationCancelled);
+        }catch(InterruptedIOException e){throw e;}catch(CameraDocumentSource.OriginalAccessException e){throw e;}catch(IOException e){
+            if(first==null)first=e;CameraPhotoPublisher.check(operationCancelled);
+            if(sdOriginal)CameraDocumentSource.requireOriginalPermission(this);
+            importer.recover(operationCancelled);
+        }
         throw first;
     }
     private static long fatTime(int date,int time){try{return java.time.LocalDateTime.of(1980+(date>>9),(date>>5)&15,date&31,time>>11,(time>>5)&63,(time&31)*2).atZone(java.time.ZoneId.systemDefault()).toEpochSecond();}catch(Exception e){return 0;}}
     private void sd(CameraPhotoImporter importer,Uri tree,boolean verify)throws IOException{
+        CameraDocumentSource.requireOriginalPermission(this);
         long start=System.nanoTime();CameraDocumentSource.Listing listing=CameraDocumentSource.list(this,tree,cancelled);
         ImportProgress.INSTANCE.begin("SDカード");int added=0,done=0;long bytes=0;
         for(CameraDocumentSource.Entry entry:listing.photos){
             CameraPhotoPublisher.check(cancelled);
-            CameraPhotoImporter.Result result=retry(importer,entry.file,out->CameraDocumentSource.copy(this,entry,out,cancelled),listing.stable,verify);
+            CameraPhotoImporter.Result result=retry(importer,entry.file,out->CameraDocumentSource.copy(this,entry,out,cancelled),listing.stable,verify,cancelled,true);
             if(result.imported)added++;bytes+=result.sourceBytesRead;ImportProgress.INSTANCE.update(++done,listing.photos.size());
         }
+        CameraDocumentSource.requireOriginalPermission(this);
+        CameraPhotoPublisher.check(cancelled);
         finish(added,done,bytes,start,true);
     }
     private void finish(int added,int count,long bytes,long start,boolean card){

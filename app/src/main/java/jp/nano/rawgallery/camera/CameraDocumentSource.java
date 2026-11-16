@@ -1,9 +1,12 @@
 package jp.nano.rawgallery.camera;
 
+import android.Manifest;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
 import android.provider.DocumentsContract;
+import android.provider.MediaStore;
 import java.io.*;
 import java.util.*;
 import java.util.function.BooleanSupplier;
@@ -22,13 +25,14 @@ public final class CameraDocumentSource {
     private int visited,rows;
     private CameraDocumentSource(Context context,Uri tree,String source,BooleanSupplier cancelled){this.context=context;this.tree=tree;this.source=source;this.cancelled=cancelled;}
     public static Listing list(Context context,Uri tree,BooleanSupplier cancelled)throws IOException {
+        CameraPhotoPublisher.check(cancelled);
         if(tree==null||!DocumentsContract.isTreeUri(tree))throw new IOException("Choose the SD card DCIM folder");
         String root=DocumentsContract.getTreeDocumentId(tree);
         String path=root.contains(":")?root.substring(root.indexOf(':')+1):"";
         if(!path.isEmpty()&&!path.equalsIgnoreCase("DCIM")&&!path.regionMatches(true,0,"DCIM/",0,5))throw new IOException("Choose the SD card DCIM folder");
         if(!path.isEmpty())try{new CameraImportFile("path-check",path+"/check.JPG",1,"",0);}catch(IllegalArgumentException invalid){throw new IOException("Invalid DCIM tree path",invalid);}
         String identity=CameraSourceIdentity.sd(context,tree);
-        CameraDocumentSource reader=new CameraDocumentSource(context,tree,identity==null?"saf:"+tree:identity,cancelled);
+        CameraDocumentSource reader=new CameraDocumentSource(context,tree,originalSourceId(identity==null?"saf:"+tree:identity),cancelled);
         List<Entry> files=new ArrayList<>();reader.scan(root,path,files,0);return new Listing(files,identity!=null);
     }
     private void scan(String id,String path,List<Entry> files,int depth)throws IOException {
@@ -50,10 +54,87 @@ public final class CameraDocumentSource {
             }
         }
     }
+    /** SAF receipts from potentially redacted reads cannot authorize an original-byte shortcut. */
+    static String originalSourceId(String previousSourceId) { return "original-byte-v1:"+previousSourceId; }
+    public static final class OriginalAccessException extends IOException {
+        public enum Reason { PERMISSION, MAPPING, UNAVAILABLE, LENGTH }
+        public final Reason reason;
+        private OriginalAccessException(Reason reason) {
+            super(reason==Reason.PERMISSION
+                    ?"写真の原本を取り込むには、写真の位置情報へのアクセスを許可してください"
+                    :"写真の原本を取得できません。SDカードのDCIMフォルダを選び直し、写真へのアクセスを確認してください");
+            this.reason=reason;
+        }
+    }
+    public static void requireOriginalPermission(Context context)throws OriginalAccessException {
+        try{
+            if(context.checkSelfPermission(Manifest.permission.ACCESS_MEDIA_LOCATION)!=PackageManager.PERMISSION_GRANTED)
+                throw new OriginalAccessException(OriginalAccessException.Reason.PERMISSION);
+        }catch(SecurityException denied){throw new OriginalAccessException(OriginalAccessException.Reason.PERMISSION);}
+    }
+    /** Minimal read seam: production and synthetic checks share permission, mapping and streaming logic. */
+    interface OriginalAccess {
+        boolean permitted();
+        Uri mediaUri(Uri document)throws IOException;
+        InputStream openOriginal(Uri requiredOriginal)throws IOException;
+    }
     public static void copy(Context context,Entry entry,OutputStream out,BooleanSupplier cancelled)throws IOException {
-        try(InputStream in=context.getContentResolver().openInputStream(entry.uri)) {
-            if(in==null)throw new IOException("SD read failed");byte[] buffer=new byte[65536];int n;
-            while((n=in.read(buffer))!=-1){CameraPhotoPublisher.check(cancelled);out.write(buffer,0,n);}
+        copy(new OriginalAccess(){
+            public boolean permitted(){return context.checkSelfPermission(Manifest.permission.ACCESS_MEDIA_LOCATION)==PackageManager.PERMISSION_GRANTED;}
+            public Uri mediaUri(Uri document){return MediaStore.getMediaUri(context,document);}
+            public InputStream openOriginal(Uri original)throws IOException {
+                android.os.ParcelFileDescriptor descriptor=context.getContentResolver().openFileDescriptor(original,"r");
+                return descriptor==null?null:new android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor);
+            }
+        },entry,out,cancelled);
+    }
+    private static void requireOriginalPermission(OriginalAccess access)throws OriginalAccessException {
+        try{if(!access.permitted())throw new OriginalAccessException(OriginalAccessException.Reason.PERMISSION);}
+        catch(SecurityException denied){throw new OriginalAccessException(OriginalAccessException.Reason.PERMISSION);}
+    }
+    static void copy(OriginalAccess access,Entry entry,OutputStream out,BooleanSupplier cancelled)throws IOException {
+        CameraPhotoPublisher.check(cancelled);
+        requireOriginalPermission(access);
+        Uri media;
+        try{media=access.mediaUri(entry.uri);}
+        catch(SecurityException denied){throw new OriginalAccessException(OriginalAccessException.Reason.PERMISSION);}
+        catch(IOException|RuntimeException unavailable){throw new OriginalAccessException(OriginalAccessException.Reason.MAPPING);}
+        if(media==null||!"content".equals(media.getScheme())||!"media".equals(media.getAuthority()))
+            throw new OriginalAccessException(OriginalAccessException.Reason.MAPPING);
+        CameraPhotoPublisher.check(cancelled);
+        requireOriginalPermission(access);
+        InputStream input;
+        try{input=access.openOriginal(MediaStore.setRequireOriginal(media));}
+        catch(SecurityException denied){throw new OriginalAccessException(OriginalAccessException.Reason.PERMISSION);}
+        catch(IOException|RuntimeException unavailable){throw new OriginalAccessException(OriginalAccessException.Reason.UNAVAILABLE);}
+        if(input==null)throw new OriginalAccessException(OriginalAccessException.Reason.UNAVAILABLE);
+        byte[] buffer=new byte[65536];
+        boolean completed=false;
+        try{
+            InputStream in=input;
+            long bytes=0;
+            while(true){
+                CameraPhotoPublisher.check(cancelled);requireOriginalPermission(access);
+                int count;
+                try{count=in.read(buffer,0,(int)Math.min(buffer.length,entry.file.bytes-bytes+1));}
+                catch(SecurityException denied){throw new OriginalAccessException(OriginalAccessException.Reason.PERMISSION);}
+                catch(IOException|RuntimeException unavailable){throw new OriginalAccessException(OriginalAccessException.Reason.UNAVAILABLE);}
+                CameraPhotoPublisher.check(cancelled);requireOriginalPermission(access);
+                if(count<0)break;
+                bytes+=count;
+                if(bytes>entry.file.bytes||bytes>Ep7WifiClient.MAX_FILE_BYTES)
+                    throw new OriginalAccessException(OriginalAccessException.Reason.LENGTH);
+                out.write(buffer,0,count);
+            }
+            if(bytes!=entry.file.bytes)throw new OriginalAccessException(OriginalAccessException.Reason.LENGTH);
+            completed=true;
+        }catch(InterruptedIOException cancelledRead){throw cancelledRead;}
+        catch(OriginalAccessException closed){throw closed;}
+        catch(SecurityException denied){throw new OriginalAccessException(OriginalAccessException.Reason.PERMISSION);}
+        finally{
+            Arrays.fill(buffer,(byte)0);
+            try{input.close();}
+            catch(IOException|RuntimeException closeFailed){if(completed)throw new OriginalAccessException(OriginalAccessException.Reason.UNAVAILABLE);}
         }
     }
 }
