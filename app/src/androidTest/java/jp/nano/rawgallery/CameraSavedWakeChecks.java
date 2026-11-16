@@ -23,6 +23,12 @@ final class CameraSavedWakeChecks {
         return "PASS camera-registration registeredCount=" + names.size() + " decryptable=true";
     }
     static String run(Instrumentation instrumentation) throws Exception {
+        return run(instrumentation, false);
+    }
+    static String advertisement(Instrumentation instrumentation) throws Exception {
+        return run(instrumentation, true);
+    }
+    private static String run(Instrumentation instrumentation, boolean advertisementOnly) throws Exception {
         List<String> names = new CameraCredentialStore(instrumentation.getTargetContext()).names();
         if (names.size() != 1) throw new AssertionError("Saved-wake check requires one registered camera");
         String name = names.get(0);
@@ -45,6 +51,27 @@ final class CameraSavedWakeChecks {
                 if (!selected[0]) Thread.sleep(100);
             }
             if (!selected[0]) throw new AssertionError("Registered camera was not discovered");
+            long[] advertisement = {-1, -1};
+            instrumentation.runOnMainSync(() -> {
+                try {
+                    java.lang.reflect.Field helperField = CameraBleActivity.class.getDeclaredField("helper"); helperField.setAccessible(true);
+                    Object helper = helperField.get(screen);
+                    java.lang.reflect.Field deviceField = CameraBleActivity.class.getDeclaredField("selected"); deviceField.setAccessible(true);
+                    Object device = deviceField.get(screen);
+                    java.lang.reflect.Field seenField = helper.getClass().getDeclaredField("seen"); seenField.setAccessible(true);
+                    Object seen = ((java.util.Map<?, ?>) seenField.get(helper)).get(device);
+                    if (seen == null) throw new AssertionError("Fresh advertisement unavailable");
+                    java.lang.reflect.Field flags = seen.getClass().getDeclaredField("flags"); flags.setAccessible(true);
+                    java.lang.reflect.Field time = seen.getClass().getDeclaredField("time"); time.setAccessible(true);
+                    advertisement[0] = flags.getInt(seen);
+                    advertisement[1] = android.os.SystemClock.elapsedRealtime() - time.getLong(seen);
+                    if (advertisement[0] < 0 || advertisement[0] > 255 || advertisement[1] < 0)
+                        throw new AssertionError("Advertisement metadata unavailable");
+                } catch (ReflectiveOperationException error) { throw new AssertionError("Advertisement metadata unavailable"); }
+            });
+            String advertisementInfo = " flags=" + advertisement[0] + " asicOn=" + ((advertisement[0] & 1) != 0)
+                    + " advertisementAgeMs=" + advertisement[1];
+            if (advertisementOnly) return "PASS saved-camera-advertisement" + advertisementInfo;
             instrumentation.runOnMainSync(() -> button(screen.getWindow().getDecorView(), "選んだカメラの起動を試す").performClick());
             String[] text = {""}; deadline = android.os.SystemClock.elapsedRealtime() + 100000;
             do {
@@ -59,7 +86,7 @@ final class CameraSavedWakeChecks {
                     + " stage=" + diagnostics.getString("stage", "NONE")
                     + " reason=" + diagnostics.getString("reason", "NONE")
                     + " cameraStatus=" + diagnostics.getInt("camera_status", -1)
-                    + " wakeSent=" + diagnostics.getBoolean("wake_sent", false);
+                    + " wakeSent=" + diagnostics.getBoolean("wake_sent", false) + advertisementInfo;
         } finally {
             instrumentation.runOnMainSync(() -> { screen.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); screen.finish(); });
         }
