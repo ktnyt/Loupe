@@ -4,8 +4,20 @@
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
@@ -20,7 +32,7 @@
         <intent><action android:name="android.intent.action.SEND" /><data android:mimeType="image/*" /></intent>
         <intent><action android:name="android.intent.action.SEND_MULTIPLE" /><data android:mimeType="image/*" /></intent>
     </queries>
-    <application android:name=".DiagnosticApplication" android:label="Loupe" android:theme="@style/AppTheme" android:allowBackup="false" android:fullBackupContent="false" android:dataExtractionRules="@xml/data_extraction_rules" android:icon="@drawable/ic_loupe_padded" android:usesCleartextTraffic="false" android:supportsRtl="true">
+    <application android:name=".DiagnosticApplication" android:label="Loupe" android:theme="@style/AppTheme" android:allowBackup="false" android:fullBackupContent="false" android:dataExtractionRules="@xml/data_extraction_rules" android:icon="@drawable/ic_loupe_padded" android:usesCleartextTraffic="false" android:networkSecurityConfig="@xml/network_security_config" android:supportsRtl="true">
         <activity android:name=".MainActivity" android:exported="true" android:configChanges="orientation|screenSize|smallestScreenSize">
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
         </activity>
@@ -34,6 +46,10 @@
         </activity>
         <service android:name=".camera.ImportService" android:exported="false"
                  android:foregroundServiceType="connectedDevice" />
+        <service android:name=".camera.CameraDifferentialService" android:exported="false" android:foregroundServiceType="connectedDevice" />
+        <activity android:name=".CameraBleActivity" android:exported="false" />
+        <activity android:name=".CameraQrScanActivity" android:exported="false" />
+        <activity android:name=".Ep7WifiActivity" android:exported="false" android:screenOrientation="portrait" />
         <activity android:name=".CameraImportActivity" android:exported="false" />
         <activity android:name=".RawEditActivity" android:exported="false" android:screenOrientation="portrait" />
         <activity android:name=".DashboardActivity" android:exported="false" />

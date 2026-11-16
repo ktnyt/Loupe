@@ -54,6 +54,18 @@ object ImportProgress {
         changed()
     }
 
+    /** Start a queued explicit connection without clearing a concurrent stop request. */
+    fun handoffConnection(message: String) {
+        model = ""
+        done = 0
+        total = 0
+        lastMessage = null
+        status = message
+        waiting = true
+        active = true
+        changed()
+    }
+
     fun begin(model: String) {
         this.model = model
         done = 0

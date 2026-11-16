@@ -238,6 +238,9 @@ class ImportService : Service() {
         if (result.degraded) {
             msg += getString(R.string.camera_import_notif_degraded_suffix)
         }
+        if (!isMtp && !result.error && !result.aborted && !result.degraded && result.failed == 0) {
+            msg += "。カメラへカードを戻しましたか"
+        }
         ImportLog.i(TAG, "result=$result")
         ImportProgress.finish(msg)
         notify(NOTIF_DONE, notification(msg))

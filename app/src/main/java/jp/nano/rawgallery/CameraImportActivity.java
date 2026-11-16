@@ -5,6 +5,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.materialswitch.MaterialSwitch;
 import android.content.Intent;
+import android.net.Uri;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Typeface;
@@ -15,6 +16,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.Settings;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
@@ -24,7 +26,9 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import jp.nano.rawgallery.camera.Camera;
+import jp.nano.rawgallery.camera.CameraDifferentialService;
 import jp.nano.rawgallery.camera.CameraImportGate;
+import jp.nano.rawgallery.camera.CameraImportLedger;
 import jp.nano.rawgallery.camera.CameraUsb;
 import jp.nano.rawgallery.camera.HistoryDb;
 import jp.nano.rawgallery.camera.ImportProgress;
@@ -40,10 +44,12 @@ import java.util.concurrent.Executors;
 public final class CameraImportActivity extends AppCompatActivity {
     static final String START_IMPORT_KEEP_ORIGINALS = "start_import_keep_originals";
     private static final int PICK_DB = 401;
+    private static final int PICK_SD_TREE = 405;
     private static final java.util.concurrent.Executor IO = Executors.newSingleThreadExecutor();
     private static final ImportProgress PROGRESS = ImportProgress.INSTANCE;
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private TextView connection, result, migrationResult;
+    private TextView connection, result, migrationResult, sdStatus, ledgerStatus;
+    private MaterialSwitch sdVerify, sdAuto;
     private ProgressBar progress;
     private Button run, stop, migrate, notifyButton;
     private LinearLayout cameras, importSettings;
@@ -98,6 +104,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         scroll.addView(root);
         frame.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         setContentView(frame);
+        frame.post(() -> { var bars=getWindow().getInsetsController(); if(bars!=null)bars.setSystemBarsAppearance(0, android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS); });
         LinearLayout attached = card(root, "カメラ");
         TextView cameraHeading = (TextView) attached.getChildAt(0);
         cameraHeading.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_camera_usb, 0, 0, 0);
@@ -133,6 +140,38 @@ public final class CameraImportActivity extends AppCompatActivity {
             notifyButton = button(preferences, "取り込みの通知を許可する",
                     () -> requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 402));
         }
+        LinearLayout wifiTrial = card(root, "Wi-Fi取り込み");
+        button(wifiTrial, "E-P7からWi-Fiで取り込む",
+                () -> startActivity(new Intent(this, Ep7WifiActivity.class)));
+        LinearLayout sd = card(root, "SDカードから取り込む");
+        sd.addView(text("写真のあるフォルダを選びます。SDカードの写真は削除しません。", 14, GalleryUi.MUTED));
+        sdStatus = status(sd);
+        button(sd, "SDカードのフォルダを選ぶ", () -> {
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+            try { startActivityForResult(intent, PICK_SD_TREE); }
+            catch (RuntimeException failure) { sdStatus.setText("フォルダ選択を開けませんでした。"); }
+        });
+        sdVerify = new MaterialSwitch(this); sdVerify.setChecked(settings.getBoolean("sd_verify_all", false)); sdVerify.setOnCheckedChangeListener((v, checked) -> settings.edit().putBoolean("sd_verify_all", checked).apply()); sdVerify.setText("内容も確認する"); sdVerify.setMinHeight(dp(48)); sd.addView(sdVerify);
+        sd.addView(text("通常は履歴を優先します。同じ名前・サイズ・日時のまま内容だけ変わった写真は見逃す場合があります。内容も確認すると読み直すため時間がかかります。", 14, GalleryUi.MUTED));
+        button(sd, "SDカードの写真を取り込む", this::startSd);
+        sdAuto = new MaterialSwitch(this); sdAuto.setText("SDカード接続時に自動で取り込む"); sdAuto.setMinHeight(dp(48));
+        sdAuto.setChecked(settings.getBoolean("sd_auto", false));
+        sdAuto.setOnCheckedChangeListener((v, checked) -> {
+            if (checked && !ensureSdPermissions()) { sdAuto.setChecked(false); return; }
+            if (checked && readableSdTree() == null) { sdAuto.setChecked(false); sdStatus.setText("先に読み取り可能なフォルダを選んでください。"); return; }
+            settings.edit().putBoolean("sd_auto", checked).apply(); CameraDifferentialService.updateAuto(this);
+            if (checked && Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 403);
+        });
+        sd.addView(sdAuto);
+        sd.addView(text("原本をそのまま保存して重複を確認するため、写真すべてと写真の位置情報へのアクセスが必要です。", 14, GalleryUi.MUTED));
+        button(sd, "写真のアクセス権限を確認", this::ensureSdPermissions);
+        button(sd, "アプリの権限設定を開く", () -> startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", getPackageName(), null))));
+        sdStatus.setText(readableSdTree() == null ? "フォルダを選んでください" : "フォルダを選択済み");
+        LinearLayout ledger = card(root, "共通履歴");
+        ledgerStatus = status(ledger);
+        ledgerStatus.setText("件数を確認しています");
         cameras = card(importSettings, "カメラごとの設定");
         LinearLayout history = card(importSettings, "CameraSyncの記録");
         history.addView(text("取り込み済みの記録を引き継ぐと、同じファイルを再び取り込まずに済みます。CameraSyncと保存済みの写真は残ります。",
@@ -156,6 +195,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         super.onStart();
         handler.post(refresh);
         loadCameras();
+        loadLedgerCounts();
     }
 
     @Override protected void onStop() {
@@ -212,7 +252,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         boolean manualOnly = device != null && !CameraUsb.knownCamera(device);
         boolean granted = device != null && getSystemService(UsbManager.class).hasPermission(device);
         boolean active = PROGRESS.getActive();
-        if (wasActive && !active) loadCameras();
+        if (wasActive && !active) { loadCameras(); loadLedgerCounts(); }
         wasActive = active;
         if (active) starting = false;
         setText(connection, device == null ? "USBケーブルでカメラをつないでください"
@@ -338,6 +378,17 @@ public final class CameraImportActivity extends AppCompatActivity {
 
     @Override protected void onActivityResult(int request, int code, Intent data) {
         super.onActivityResult(request, code, data);
+        if (request == PICK_SD_TREE) {
+            if (code != RESULT_OK || data == null || data.getData() == null) return;
+            Uri tree = data.getData();
+            try {
+                if ((data.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION) == 0) throw new SecurityException();
+                getContentResolver().takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                settings.edit().putString("sd_tree_uri", tree.toString()).apply();
+                sdStatus.setText("フォルダを選択しました"); CameraDifferentialService.updateAuto(this);
+            } catch (SecurityException | IllegalArgumentException failure) { sdStatus.setText("フォルダの読み取り権限を保存できませんでした。もう一度選んでください。"); }
+            return;
+        }
         if (request != PICK_DB || code != RESULT_OK || data == null || data.getData() == null) return;
         var document = data.getData();
         migrating = true;
@@ -370,6 +421,73 @@ public final class CameraImportActivity extends AppCompatActivity {
                 loadCameras();
                 renderStatus();
             });
+        });
+    }
+
+    private String photoPermission() { return Build.VERSION.SDK_INT >= 33 ? Manifest.permission.READ_MEDIA_IMAGES : Manifest.permission.READ_EXTERNAL_STORAGE; }
+    private boolean ensureSdPermissions() {
+        boolean photos = checkSelfPermission(photoPermission()) == PackageManager.PERMISSION_GRANTED;
+        boolean originals = checkSelfPermission(Manifest.permission.ACCESS_MEDIA_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        if (photos && originals) return true;
+        showSdPermissionStatus(photos
+                ? "原本をそのまま保存するため、写真の位置情報へのアクセスを許可してください。許可後にもう一度操作してください。"
+                : "写真すべてと写真の位置情報へのアクセスを許可してください。選択した写真のみでは取り込めません。許可後にもう一度操作してください。");
+        java.util.ArrayList<String> permissions = new java.util.ArrayList<>();
+        if (!photos) {
+            permissions.add(photoPermission());
+            if (Build.VERSION.SDK_INT >= 34) permissions.add(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED);
+        }
+        if (!originals) permissions.add(Manifest.permission.ACCESS_MEDIA_LOCATION);
+        requestPermissions(permissions.toArray(new String[0]), 406);
+        return false;
+    }
+    @Override public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(request, permissions, results);
+        if (request != 406) return;
+        if (checkSelfPermission(photoPermission()) != PackageManager.PERMISSION_GRANTED)
+            showSdPermissionStatus("写真すべてへのアクセスが必要です。再度許可するか、アプリの権限設定を確認してください。");
+        else if (checkSelfPermission(Manifest.permission.ACCESS_MEDIA_LOCATION) != PackageManager.PERMISSION_GRANTED)
+            showSdPermissionStatus("原本の保存には写真の位置情報へのアクセスが必要です。再度操作するか、アプリの権限設定を確認してください。");
+        else showSdPermissionStatus("写真の原本へのアクセスを許可しました。もう一度操作してください。");
+    }
+
+    private void showSdPermissionStatus(String message) {
+        sdStatus.setText(message);
+        sdStatus.post(() -> {
+            if (!isFinishing() && !isDestroyed())
+                sdStatus.requestRectangleOnScreen(new android.graphics.Rect(0, 0, sdStatus.getWidth(), sdStatus.getHeight()), true);
+        });
+    }
+
+    private Uri readableSdTree() {
+        String value = settings.getString("sd_tree_uri", null);
+        if (value == null) return null;
+        try {
+            Uri uri = Uri.parse(value);
+            for (android.content.UriPermission grant : getContentResolver().getPersistedUriPermissions())
+                if (grant.isReadPermission() && grant.getUri().equals(uri)) return uri;
+        } catch (RuntimeException ignored) { }
+        return null;
+    }
+
+    private void startSd() {
+        if (!ensureSdPermissions()) return;
+        Uri tree = readableSdTree();
+        if (tree == null) { sdStatus.setText("フォルダの読み取り権限がありません。もう一度選んでください。"); return; }
+        if (PROGRESS.getActive()) { sdStatus.setText("取り込みが終わってから再試行してください。"); return; }
+        try { CameraDifferentialService.startDocumentTree(this, tree, sdVerify.isChecked()); sdStatus.setText("SDカードの取り込みを開始します。"); }
+        catch (RuntimeException failure) { sdStatus.setText("取り込みを開始できませんでした。フォルダと権限を確認してください。"); }
+    }
+
+    private void loadLedgerCounts() {
+        IO.execute(() -> {
+            String counts;
+            try {
+                CameraImportLedger ledger = CameraImportLedger.get(this);
+                counts = "原本 " + ledger.contentCount() + "件 · 受領記録 " + ledger.receiptCount() + "件";
+            } catch (RuntimeException failure) { counts = "共通履歴の件数を確認できませんでした"; }
+            String result = counts;
+            runOnUiThread(() -> { if (!isFinishing() && !isDestroyed()) ledgerStatus.setText(result); });
         });
     }
 

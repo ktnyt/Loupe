@@ -21,6 +21,11 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private float tagFont;
   @Override public void callActivityOnCreate(android.app.Activity activity, Bundle state) {
     if(nanoBackgroundTest)NanoBananaBackgroundChecks.activityCreated(activity);
+    if((ep7WifiTest || "camera-pilot-qr-ui".equals(cameraPilotMode)) && (activity instanceof Ep7WifiActivity || activity instanceof CameraImportActivity || activity instanceof CameraBleActivity)) {
+      var config = new android.content.res.Configuration(activity.getBaseContext().getResources().getConfiguration());
+      config.fontScale = tagFont; config.screenWidthDp = tagWidth;
+      activity.getResources().updateConfiguration(config, activity.getResources().getDisplayMetrics());
+    }
 
     if ((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || videoTest || removeLookTest) && (activity instanceof TagActivity || activity instanceof MainActivity || activity instanceof VideoActivity || removeLookTest && activity instanceof RawEditActivity) && tagWidth > 0) {
       android.content.res.Configuration config = new android.content.res.Configuration(activity.getBaseContext().getResources().getConfiguration());
@@ -31,11 +36,13 @@ public final class ArchiveInstrumentation extends Instrumentation {
     if((confidenceUiTest||tagDetailTest||removeLookTest)&&activity instanceof TagActivity)TagFixtureIsolation.install((TagActivity)activity);
     if(removeLookTest&&activity instanceof RawEditActivity&&state==null&&activity.getIntent().getBooleanExtra("removeLookLegacyFixture",false))state=LookRemovalChecks.legacyState(activity.getIntent());
     super.callActivityOnCreate(activity, state);
+    if(ep7WifiTest || "camera-pilot-qr-ui".equals(cameraPilotMode))activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
     if ((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || videoTest || removeLookTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
   }
   private boolean shareHistoryTest, shareHistoryScreenTest, shareHistoryHandoffTest, shareHistoryCallbackTest;
   private boolean shareHistoryRestartSeed, shareHistoryRestartVerify;
-  private boolean cameraTabsTest;
+  private boolean cameraTabsTest, ep7WifiTest, cameraLedgerTest, cameraBenchmarkTest;
+  private String cameraPilotMode;
   private boolean shareCapacityTest, shareToggleTest, galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest;
   private boolean photoEditTest;
   private boolean consistencyTest, syncControlsTest, tagDetailTest, resultTest, resultTalkBack;
@@ -77,8 +84,11 @@ public final class ArchiveInstrumentation extends Instrumentation {
     if (importLatencyTest && activity instanceof MainActivity) importResumes++;
   }
 
+  private Bundle cameraPilotArguments;
+
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    cameraPilotArguments = args == null ? new Bundle() : new Bundle(args);
     videoTest=args!=null&&"video".equals(args.getString("mode"));
     nanoBananaTest=args!=null&&"nano-banana".equals(args.getString("mode"));
     removeLookTest=args!=null&&"look-removal".equals(args.getString("mode"));
@@ -137,6 +147,13 @@ public final class ArchiveInstrumentation extends Instrumentation {
     actionLabelsTest = args != null && "action-labels".equals(args.getString("mode"));
     comparisonLabelsTest = args != null && "comparison-labels".equals(args.getString("mode"));
     albumTagsTest = args != null && "album-tags".equals(args.getString("mode"));
+    cameraPilotMode = args == null ? null : args.getString("mode");
+    if(cameraPilotMode!=null&&!cameraPilotMode.startsWith("camera-pilot-"))cameraPilotMode=null;
+    if ("camera-pilot-qr-ui".equals(cameraPilotMode)) { tagWidth=Integer.parseInt(args.getString("width","400"));tagFont=Float.parseFloat(args.getString("font","1.0")); }
+    cameraBenchmarkTest = args != null && "camera-benchmark".equals(args.getString("mode"));
+    cameraLedgerTest = args != null && "camera-ledger".equals(args.getString("mode"));
+    ep7WifiTest = args != null && "ep7-wifi".equals(args.getString("mode"));
+    if(ep7WifiTest){tagWidth=Integer.parseInt(args.getString("width","400"));tagFont=Float.parseFloat(args.getString("font","1.0"));}
     cameraTabsTest = args != null && "camera-tabs".equals(args.getString("mode"));
     tabsTest = args != null && "library-tabs".equals(args.getString("mode"));
     positionTest = args != null && "gallery-position".equals(args.getString("mode"));
@@ -241,6 +258,44 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if (comparisonLabelsTest) { results.putString("stream", ComparisonLabelChecks.run(this)); finish(-1, results); return; }
       if (albumTagsTest) { results.putString("stream", AlbumTagEntryChecks.run(this)); finish(-1, results); return; }
       if (material3Test) { results.putString("stream", Material3Checks.run(this)); finish(-1, results); return; }
+      if (cameraPilotMode!=null) {
+        String result;
+        if(cameraPilotMode.equals("camera-pilot-wifi")) {
+          android.app.Activity pilotUi=startActivitySync(new android.content.Intent(getTargetContext(),Ep7WifiActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+          try {
+            runOnMainSync(()->{
+              pilotUi.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+              disablePilotActions(pilotUi.getWindow().getDecorView());
+              android.widget.TextView status=pilotUi.getWindow().getDecorView().findViewWithTag("ep7-status");
+              if(status!=null)status.setText("4枚の保存と差分取り込みを検査しています…");
+            });
+            result=CameraImportPilotChecks.runWifi(this);
+          } finally {runOnMainSync(()->{pilotUi.getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);pilotUi.finish();});}
+        }
+        else if(cameraPilotMode.equals("camera-pilot-qr-ui"))result=CameraQrUiChecks.run(this);
+        else if(cameraPilotMode.equals("camera-pilot-qr-image"))result=CameraQrImageChecks.run(this);
+        else if(cameraPilotMode.equals("camera-pilot-qr-status"))result=CameraSavedWakeChecks.status(this);
+        else if(cameraPilotMode.equals("camera-pilot-sd-source-diagnostic"))result=CameraImportPilotChecks.runSdSourceDiagnostic(this,cameraPilotArguments);
+        else if(cameraPilotMode.equals("camera-pilot-sd-source-synthetic"))result=CameraImportPilotChecks.runSdSourceDiagnosticSyntheticChecks();
+        else if(cameraPilotMode.equals("camera-pilot-sd-original"))result=jp.nano.rawgallery.camera.CameraDocumentSourceChecks.run(this);
+        else if(cameraPilotMode.equals("camera-pilot-paired-guards"))result=CameraPairedPilotChecks.guardChecks(this);
+        else if(cameraPilotMode.equals("camera-pilot-paired-wifi"))result=CameraPairedPilotChecks.run(this);
+        else if(cameraPilotMode.equals("camera-pilot-paired-session"))result=jp.nano.rawgallery.camera.CameraPairedSessionChecks.run();
+        else if(cameraPilotMode.equals("camera-pilot-ble-advertisement"))result=CameraSavedWakeChecks.advertisement(this);
+        else if(cameraPilotMode.equals("camera-pilot-ble-saved"))result=CameraSavedWakeChecks.run(this);
+        else if(cameraPilotMode.equals("camera-pilot-qr-credentials"))result=jp.nano.rawgallery.camera.CameraCredentialChecks.run(this);
+        else if(cameraPilotMode.equals("camera-pilot-qr-seed"))result=jp.nano.rawgallery.camera.CameraCredentialChecks.seed(this);
+        else if(cameraPilotMode.equals("camera-pilot-qr-verify"))result=jp.nano.rawgallery.camera.CameraCredentialChecks.verify(this);
+        else if(cameraPilotMode.equals("camera-pilot-ble-diagnostics"))result=CameraBleDiagnosticsChecks.run(this);
+        else if(cameraPilotMode.equals("camera-pilot-sd-guards"))result=CameraImportPilotChecks.runSdGuardChecks(this);
+        else if(cameraPilotMode.equals("camera-pilot-sd"))result=CameraImportPilotChecks.runSd(this);
+        else if(cameraPilotMode.equals("camera-pilot-cleanup"))result=CameraImportPilotChecks.cleanup(this);
+        else throw new IllegalArgumentException("Unknown pilot mode");
+        results.putString("stream",result);finish(-1,results);return;
+      }
+      if (cameraBenchmarkTest) { results.putString("stream", CameraImportBenchmarkChecks.run(this)); finish(-1, results); return; }
+      if (cameraLedgerTest) { results.putString("stream", CameraImportLedgerChecks.run(this)); finish(-1, results); return; }
+      if (ep7WifiTest) { results.putString("stream", Ep7WifiChecks.run(this)); finish(-1, results); return; }
       if (cameraTabsTest) { results.putString("stream", CameraTabsChecks.run(this)); finish(-1, results); return; }
       if (tabsTest) { results.putString("stream", LibraryTabsChecks.run(this)); finish(-1, results); return; }
       if (bulkWinnerTest) { results.putString("stream", BurstBulkWinnerChecks.run(this,tagWidth,tagFont)); finish(-1, results); return; }
@@ -629,4 +684,9 @@ public final class ArchiveInstrumentation extends Instrumentation {
       }
     }
   }
+  private static void disablePilotActions(android.view.View view) {
+    if(view instanceof android.widget.Button)view.setEnabled(false);
+    if(view instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)view).getChildCount();i++)disablePilotActions(((android.view.ViewGroup)view).getChildAt(i));
+  }
+
 }

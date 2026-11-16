@@ -1,0 +1,62 @@
+# Wi-Fi・SD共通の差分取り込み
+
+## 目的と合意
+
+- 目的: 接続方法を変えても未取り込み写真をLoupeに追加し、原本と既存の設定・履歴を保持する。
+- 機能: E-P7 Wi-FiとUSB/SDの写真取り込み、共通履歴、手動再試行、任意の接続時自動開始、SD完了時のカード戻し案内。
+- 要件: Wi-Fi/SDで原本内容を共有して照合する。JPEG/RAWは別原本として保存し、撮影の関連付けは重複判定から分ける。カメラ/カードを自動削除しない。
+- 通常方式: 安定識別した接続元の受領履歴が一致すると写真の再転送を省く。初回・経路変更・識別不足・明示の内容確認では全内容を照合する。方式の決定根拠と計測値は #123 の作業記録へ残す。
+- 参照: USB取り込み契約、E-P7 PoCと実測記録 #121。BLEは #124として独立して扱う。
+
+## 原本と接続元の識別
+
+- 原本の識別はEXIF補正前の全バイトのSHA-256とサイズ。保存したバイトのSHA-256とサイズは別に記録する。
+- 接続元の受領記録は、接続元ID・DCIM内の相対パス・サイズ・転送元の日時トークンを長さ付きで連結してハッシュ化する。リーダーの製品名やカメラ機種名だけを原本IDにしない。
+- SDは非ゼロのvolume serial/UUIDと取得可能なgeometryを識別材料にし、相対パスを保持する。BOTはexFATのboot geometry、SAFは同じUUIDのremovable StorageVolumeで取得したfilesystem総容量を使う。UUID・volume・容量を確認できない場合や内部ストレージでは高速省略しない。現行BOT/exFAT対応を保持し、対応外ファイルシステムを成功0件にしない。
+- Wi-Fiは検証済みカメラへのNetwork束縛を維持する。直接カメラLANのIPv4と一致するWifiInfoからSSIDとBSSIDを取得できる場合だけ、その組のhashを接続元IDにする。マスク値、異なるIP、権限不足、識別取得失敗では接続単位IDで全内容照合する。SSID・BSSIDの生値を保存・ログ出力せず、GPS位置は取得しない。AndroidがWi-Fi識別に求める位置情報権限は用途を説明し、拒否時も全内容照合で取り込める。
+- 新しい接続元で候補が一致しただけでは保存済みとしない。原本内容が一致したときだけ、共通原本へ新しい受領記録を結び付ける。同名別内容は別に保存し、別名同内容は同じ原本へ結び付ける。
+- 旧CameraSync/Loupe履歴を内容検証済みと偽って変換しない。既存メディアを候補として全内容で照合できた場合だけ新しい共通台帳へ記録する。既存EXIF補正を許容する照合は、補正対象だったOffsetTimeだけを比較用コピーでそろえ、それ以外のバイト差は一致としない。
+
+## 保存・公開・履歴の契約
+
+- 事前条件: 読み取り権限、保存先、媒体/Networkが有効。通常の取り込みと旧履歴移行は既存CameraImportGateで直列化する。
+- 不変条件: 元媒体へ書かない。名前・日時だけで原本内容を同一にしない。未完了を完了履歴へ登録しない。履歴に含む識別値・写真名・資格情報は外部ログへ出さない。
+- 準備: 写真をアプリcacheの一時ファイルへ読み、受信長・原本SHAを確定し、読戻しを確認する。JPEG/RAWの上限は1ファイル512 MiB、メモリへ全体を載せない。動画は既存の対応経路を保持し、この写真用一時コピーへ強制しない。
+- 保存: 補正前SHAと補正後SHAを分け、検証済みコピーだけをMediaStoreへ書く。所有するpending行を台帳に結び付け、保存長と読戻しSHAを確認してから公開する。
+- 公開の回復: SQLiteとMediaStoreは一つのtransactionにしない。挿入前に固有のpending表示名・保存先をjournalへ保存し、挿入URIを記録してから書く。公開直前には検証済みURI・保存ハッシュ・最終表示名をjournalへ記録する。公開後に台帳を確定してjournalを閉じる。
+- 停止/失敗: 公開前の未完了は所有するpending行だけを片付ける。公開後はコピーを消さず、検証して受領記録を回復する。保存先の照合に失敗したら次の取り込みを止め、黙ってもう一つ公開しない。挿入URI記録前の停止は固有のpending表示名と所有者で照会して回復する。
+- 再試行: 各ファイルの成功を保持し、読めなかったファイルを先頭から再試行する。切断とユーザー中止は成功0件と混同しない。自動再試行は回数と待ち時間を制限する。
+- JPEG/RAW関連: 内容の重複とは別の撮影キーを持つ。EXIF機種/シリアル/撮影日時と名前stemを使い、情報不足時は接続元の範囲へ限定する。別の撮影や別カメラを推測で同じ撮影にしない。
+
+## 履歴と内容照合の計測
+
+- 同じ実写真セット、同じ接続条件で、一覧・履歴照会・内容取得とハッシュ・公開・ライブラリ反映を分ける。秒、bytes、件数、成功/失敗/取消と温度を記録する。
+- 新規ファイル、経路を変えた初回、名前/日時衝突は内容照合する。内容検証済みの同一接続元でメタデータ一致を高速省略する場合、同じ属性のまま内容だけ変更したケースは検出できないことを明記する。
+- 全量照合も実行できるようにする。Wi-Fi/SDの内容確認設定を保存し、USB/SAFは同じSD設定を使う。通常は履歴優先、明示設定で全量照合へ切り替える。受領履歴で省く場合も、保存済みのローカルファイルの存在・保存SHAを確認する。未計測を0として扱わない。
+
+## UIと検証
+
+既存の取り込み画面にWi-Fi取り込みを統合する。許可、接続待ち、一覧/候補判定、転送/公開、完了、取消、失敗・再試行を区別する。Material 3標準部品、48dp以上、縦スクロール、OS安全領域、文字倍率と読み上げを保持する。自動開始は初回設定後の明示選択で有効化する。SD成功時にカードをカメラへ戻す案内を出し、実際に戻したことを検知したとは表示しない。
+
+原本保全、同名別内容、別名同内容、JPEG/RAW、旧履歴/EXIF補正、経路間の受領記録、公開各境界の失敗・再起動回復を検査する。UI変更はAndroid captureと独立UI評価、コードはCold/Security Reviewで確認する。物理Wi-Fi/SD確認と合成検査を区別する。
+
+### Camera connection entry
+
+The Wi-Fi screen offers Android's Wi-Fi panel so saved camera credentials stay in the system.
+A connect-and-import request waits for the panel to close and a Wi-Fi network to become available,
+then validates the fixed camera endpoint through its VER_100 list before importing.
+No saved Wi-Fi password is extracted or logged, and changing networks does not grant a stable camera identity.
+
+高速省略は媒体識別子とファイル属性が保たれることを前提とする。識別子を複製した媒体や、同じパス・サイズ・日時のまま原本内容だけ差し替えた変更は、高速省略では検知できない。内容確認で検査する。接続元が別だと分かった場合は、名前・属性一致だけで受領済みにしない。
+
+共通履歴の原本件数と接続元の受領記録件数を取り込み画面に表示する。旧USB設定と履歴移行を保持し、旧履歴の操作を共通台帳の削除と誤表示しない。
+
+### Original-byte SD reads
+
+The purpose is to preserve camera originals and compare the same bytes over Wi-Fi and Android-mounted SD. Before manual SD import or enabling SD auto-import, request photo-library access and `ACCESS_MEDIA_LOCATION` with an explanation that photo metadata is needed for original preservation. Denial is recoverable and does not enable SD auto-import. Bring the permission result into the visible scroll area after the native dialog returns. The SD service also checks this permission before recovery, listing or receipt-based skipping; Wi-Fi and USB permission flows remain unchanged.
+
+Read selected SD documents through their mapped MediaStore URI with `setRequireOriginal`. Missing mapping, denied permission or an unavailable original stops the operation with actionable original-access guidance; never silently import a potentially redacted representation or loosen SHA equality. Original acquisition is streaming, read-only and honors cancellation checks. Do not edit source metadata or source files.
+
+Version the SAF source receipt namespace for original-byte reading so receipts created by the previous representation cannot authorize skipping. Preserve all old content and receipts; new original-byte reads may bind to existing content only after full SHA verification. Subsequent verified source receipts retain the measured history-first policy.
+
+Validate permission denial/revocation before any SD history shortcut, unavailable mapping/original failures, immutable source bytes, legacy receipt revalidation, and original-SHA equality across both physical paths for the same four-file pilot. Capture the updated permission guidance at 320dp/font1.3 and normal width/font1.0 and independently review it. Diagnostic equality for two files does not replace that four-file import check.

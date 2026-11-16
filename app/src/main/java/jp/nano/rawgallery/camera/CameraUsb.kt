@@ -22,7 +22,7 @@ object CameraUsb {
         if (intent.action != UsbManager.ACTION_USB_DEVICE_ATTACHED) return null
         val claimed = runCatching { deviceExtra(intent) }.getOrNull() ?: return null
         return context.getSystemService(UsbManager::class.java).deviceList[claimed.deviceName]
-            ?.takeIf { knownCamera(it) && it.deviceId == claimed.deviceId }
+            ?.takeIf { supported(it) && it.deviceId == claimed.deviceId }
     }
 
     @Suppress("DEPRECATION")
