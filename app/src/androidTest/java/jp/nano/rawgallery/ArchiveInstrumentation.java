@@ -84,8 +84,11 @@ public final class ArchiveInstrumentation extends Instrumentation {
     if (importLatencyTest && activity instanceof MainActivity) importResumes++;
   }
 
+  private Bundle cameraPilotArguments;
+
   public void onCreate(Bundle args) {
     super.onCreate(args);
+    cameraPilotArguments = args == null ? new Bundle() : new Bundle(args);
     videoTest=args!=null&&"video".equals(args.getString("mode"));
     nanoBananaTest=args!=null&&"nano-banana".equals(args.getString("mode"));
     removeLookTest=args!=null&&"look-removal".equals(args.getString("mode"));
@@ -272,6 +275,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
         else if(cameraPilotMode.equals("camera-pilot-qr-ui"))result=CameraQrUiChecks.run(this);
         else if(cameraPilotMode.equals("camera-pilot-qr-image"))result=CameraQrImageChecks.run(this);
         else if(cameraPilotMode.equals("camera-pilot-qr-status"))result=CameraSavedWakeChecks.status(this);
+        else if(cameraPilotMode.equals("camera-pilot-sd-source-diagnostic"))result=CameraImportPilotChecks.runSdSourceDiagnostic(this,cameraPilotArguments);
+        else if(cameraPilotMode.equals("camera-pilot-sd-source-synthetic"))result=CameraImportPilotChecks.runSdSourceDiagnosticSyntheticChecks();
         else if(cameraPilotMode.equals("camera-pilot-paired-guards"))result=CameraPairedPilotChecks.guardChecks(this);
         else if(cameraPilotMode.equals("camera-pilot-paired-wifi"))result=CameraPairedPilotChecks.run(this);
         else if(cameraPilotMode.equals("camera-pilot-paired-session"))result=jp.nano.rawgallery.camera.CameraPairedSessionChecks.run();

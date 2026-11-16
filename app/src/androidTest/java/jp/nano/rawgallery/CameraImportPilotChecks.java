@@ -181,6 +181,402 @@ final class CameraImportPilotChecks {
         }
     }
 
+    /** Read representations only: no importer, publication, receipt, ledger or failed-journal writes. */
+    static String runSdSourceDiagnostic(Instrumentation instrumentation) throws IOException {
+        throw new IOException("DIAGNOSTIC_TARGET_REQUIRED");
+    }
+    static String runSdSourceDiagnostic(Instrumentation instrumentation, Bundle arguments) throws IOException {
+        if (arguments == null) throw new IOException("DIAGNOSTIC_TARGET_REQUIRED");
+        try {
+            return runSdSourceDiagnostic(instrumentation,
+                    Integer.parseInt(arguments.getString("diagnosticIndex", "-1")),
+                    Long.parseLong(arguments.getString("diagnosticBytes", "-1")),
+                    arguments.getString("diagnosticRunFingerprint"));
+        } catch (NumberFormatException invalid) { throw new IOException("DIAGNOSTIC_TARGET_REQUIRED"); }
+    }
+    static String runSdSourceDiagnostic(Instrumentation instrumentation, int targetIndex, long expectedBytes,
+            String expectedRunFingerprint) throws IOException {
+        Context context = instrumentation.getTargetContext();
+        if (!CameraImportGate.lock.tryLock()) throw new IOException("DIAGNOSTIC_GATE_BUSY");
+        try {
+            PilotSession session;
+            List<WifiProof> proof;
+            try {
+                session = loadCurrentSession(context);
+                if (session == null || !context.getDatabasePath(session.databaseName).exists())
+                    throw new IOException("DIAGNOSTIC_MISSING_PROOF");
+                validateSession(session);
+                proof = loadWifiProof(session);
+                if (proof.size() != MAX_FILES) throw new IOException("DIAGNOSTIC_MISSING_PROOF");
+                int jpegs = 0, raws = 0;
+                for (WifiProof file : proof) {
+                    if (isJpeg(file.relativePath)) jpegs++;
+                    else if (isRaw(file.relativePath)) raws++;
+                }
+                if (jpegs != JPEG_COUNT || raws != RAW_COUNT) throw new IOException("DIAGNOSTIC_MISSING_PROOF");
+            } catch (IOException | RuntimeException invalid) { throw new IOException("DIAGNOSTIC_MISSING_PROOF"); }
+            List<Integer> indexes = diagnosticIndexes(session.runId, proof, targetIndex, expectedBytes, expectedRunFingerprint);
+            String treeValue = context.getSharedPreferences("camera_import", Context.MODE_PRIVATE).getString("sd_tree_uri", null);
+            Uri tree;
+            try {
+                tree = treeValue == null ? null : Uri.parse(treeValue);
+                if (tree == null || !DocumentsContract.isTreeUri(tree)) throw new IllegalArgumentException();
+                boolean retained = false;
+                for (android.content.UriPermission permission : context.getContentResolver().getPersistedUriPermissions())
+                    if (permission.isReadPermission() && tree.equals(permission.getUri())) retained = true;
+                if (!retained) throw new IllegalArgumentException();
+            } catch (RuntimeException invalid) { throw new IOException("DIAGNOSTIC_SD_TREE_UNAVAILABLE"); }
+            List<CameraDocumentSource.Entry> selected;
+            try { selected = selectSdForWifi(CameraDocumentSource.list(context, tree, () -> Thread.currentThread().isInterrupted()).photos, proof); }
+            catch (IOException | RuntimeException failure) { throw new IOException("DIAGNOSTIC_SD_SELECTION_UNAVAILABLE"); }
+            long selectedBytes = 0;
+            for (int index : indexes) selectedBytes = Math.addExact(selectedBytes, proof.get(index).bytes);
+            if (selectedBytes > MAX_PILOT_BYTES) throw new IOException("DIAGNOSTIC_READ_BUDGET");
+            boolean permission = context.checkSelfPermission(android.Manifest.permission.ACCESS_MEDIA_LOCATION)
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED;
+            SharedPreferences baseline = context.getSharedPreferences("camera_sd_source_diagnostic_baseline", Context.MODE_PRIVATE);
+            DiagnosticBudget budget = new DiagnosticBudget();
+            StringBuilder report = new StringBuilder();
+            int files = 0;
+            boolean needsPermission = !permission;
+            for (int index : indexes) {
+                CameraDocumentSource.Entry entry = selected.get(index);
+                WifiProof expected = proof.get(index);
+                DiagnosticRead first = diagnosticDefault(context, entry.uri, expected.bytes, budget);
+                DiagnosticRead repeat = first.valid() ? diagnosticDefault(context, entry.uri, expected.bytes, budget) : DiagnosticRead.unread();
+                boolean stable = first.valid() && repeat.valid() && first.sha.equals(repeat.sha);
+                String reason = !first.valid() ? first.reason : !repeat.valid() ? repeat.reason : !stable ? "DEFAULT_UNSTABLE" : "NONE";
+                boolean mapped = false, originalAvailable = false, originalMatches = false;
+                DiagnosticRead original = DiagnosticRead.unread();
+                boolean baselineAvailable = false, defaultMatchesBaseline = false, originalMatchesBaseline = false;
+                if (stable) {
+                    String baselineSha = diagnosticBaseline(baseline, session, index, expected);
+                    baselineAvailable = baselineSha != null;
+                    if (!permission) {
+                        // Preserve the earliest stable, proof-bound pre-permission representation.
+                        if (!baselineAvailable) {
+                            SharedPreferences.Editor editor = baseline.edit();
+                            if (!session.runId.equals(baseline.getString("run_id", null))) editor.clear();
+                            editor.putString("run_id", session.runId).putString("proof_" + index, expected.sourceSha)
+                                    .putLong("bytes_" + index, expected.bytes).putString("default_" + index, first.sha);
+                            if (!editor.commit()) { reason = "BASELINE_SAVE_FAILED"; needsPermission = false; }
+                            else baselineAvailable = true;
+                        }
+                    } else if (baselineAvailable) defaultMatchesBaseline = baselineSha.equals(first.sha);
+                    Uri media = null;
+                    try { media = MediaStore.getMediaUri(context, entry.uri); }
+                    catch (RuntimeException unavailable) { /* Closed category below; never use another URI. */ }
+                    mapped = media != null;
+                    if (!mapped && reason.equals("NONE")) reason = "MAPPING_UNAVAILABLE";
+                    else if (!permission && reason.equals("NONE")) reason = "PERMISSION_DENIED";
+                    else if (mapped && permission) {
+                        original = diagnosticOriginal(context, media, expected.bytes, budget);
+                        originalAvailable = original.valid();
+                        originalMatches = originalAvailable && original.sha.equals(expected.sourceSha);
+                        if (baselineAvailable && originalAvailable) originalMatchesBaseline = baselineSha.equals(original.sha);
+                        if (!originalAvailable && reason.equals("NONE")) reason = original.reason;
+                    }
+                }
+                String key = " file" + files;
+                report.append(key).append("Index=").append(index)
+                        .append(key).append("Kind=").append(isRaw(entry.file.name) ? "RAW" : "JPEG")
+                        .append(key).append("ExpectedBytes=").append(expected.bytes)
+                        .append(key).append("DefaultRead1=").append(first.bytes)
+                        .append(key).append("DefaultRead2=").append(repeat.bytes)
+                        .append(key).append("RepeatStable=").append(stable)
+                        .append(key).append("DefaultMatches=").append(stable && first.sha.equals(expected.sourceSha))
+                        .append(key).append("Mapped=").append(mapped)
+                        .append(key).append("OriginalAvailable=").append(originalAvailable)
+                        .append(key).append("OriginalRead=").append(original.bytes)
+                        .append(key).append("OriginalMatches=").append(originalMatches)
+                        .append(key).append("BaselineAvailable=").append(baselineAvailable)
+                        .append(key).append("DefaultMatchesBaseline=").append(defaultMatchesBaseline)
+                        .append(key).append("OriginalMatchesBaseline=").append(originalMatchesBaseline)
+                        .append(key).append("Reason=").append(reason);
+                files++;
+                if (!stable) { needsPermission = false; break; } // Do not interpret mapping/originals or other files after unstable reads.
+            }
+            return "DIAGNOSTIC sd-source permission=" + permission + " needsPermission=" + needsPermission + " files=" + files + " readBytes=" + budget.used + report;
+        } finally { CameraImportGate.lock.unlock(); }
+    }
+
+    private static List<Integer> diagnosticIndexes(String runId, List<WifiProof> proof, int targetIndex,
+            long expectedBytes, String expectedRunFingerprint) throws IOException {
+        if (targetIndex < 0 || targetIndex >= proof.size() || expectedBytes <= 0 || !validSha(expectedRunFingerprint))
+            throw new IOException("DIAGNOSTIC_TARGET_REQUIRED");
+        if (!diagnosticRunFingerprint(runId).equals(expectedRunFingerprint) || proof.get(targetIndex).bytes != expectedBytes)
+            throw new IOException("DIAGNOSTIC_TARGET_MISMATCH");
+        List<Integer> indexes = new ArrayList<>();
+        indexes.add(targetIndex);
+        for (int i = 0; i < proof.size(); i++) if (isRaw(proof.get(i).relativePath)) {
+            if (i != targetIndex) indexes.add(i);
+            break;
+        }
+        return indexes;
+    }
+    private static String diagnosticRunFingerprint(String runId) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(runId.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder value = new StringBuilder();
+            try { for (byte item : digest) value.append(String.format(Locale.ROOT, "%02x", item & 255)); }
+            finally { java.util.Arrays.fill(digest, (byte)0); }
+            return value.toString();
+        } catch (java.security.NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
+    }
+    private static String diagnosticBaseline(SharedPreferences baseline, PilotSession session, int index, WifiProof proof) {
+        if (!session.runId.equals(baseline.getString("run_id", null))
+                || !proof.sourceSha.equals(baseline.getString("proof_" + index, null))
+                || proof.bytes != baseline.getLong("bytes_" + index, -1)) return null;
+        String sha = baseline.getString("default_" + index, null);
+        return validSha(sha) ? sha : null;
+    }
+    private static DiagnosticRead diagnosticDefault(Context context, Uri uri, long bytes, DiagnosticBudget budget) {
+        return diagnosticDescriptor(context, uri, bytes, budget, "DEFAULT");
+    }
+    private static DiagnosticRead diagnosticOriginal(Context context, Uri media, long bytes, DiagnosticBudget budget) {
+        try { return diagnosticDescriptor(context, MediaStore.setRequireOriginal(media), bytes, budget, "ORIGINAL"); }
+        catch (RuntimeException unavailable) { return new DiagnosticRead(0, null, "ORIGINAL_UNAVAILABLE"); }
+    }
+    private static DiagnosticRead diagnosticDescriptor(Context context, Uri uri, long bytes, DiagnosticBudget budget, String kind) {
+        android.os.CancellationSignal signal = new android.os.CancellationSignal();
+        DiagnosticDeadline deadline = new DiagnosticDeadline(120000, signal::cancel);
+        DiagnosticRead result = DiagnosticRead.unread();
+        try {
+            java.io.InputStream input = null;
+            if (kind.equals("DEFAULT")) {
+                // openInputStream uses the asset-descriptor path; preserve that representation while
+                // adding the cancellation signal omitted by the convenience API.
+                android.content.res.AssetFileDescriptor descriptor = context.getContentResolver().openAssetFileDescriptor(uri, "r", signal);
+                if (descriptor != null) {
+                    deadline.attach(descriptor);
+                    if (deadline.reason() == null) input = descriptor.createInputStream();
+                }
+            } else {
+                android.os.ParcelFileDescriptor descriptor = context.getContentResolver().openFileDescriptor(uri, "r", signal);
+                if (descriptor != null) {
+                    deadline.attach(descriptor);
+                    if (deadline.reason() == null) input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor);
+                }
+            }
+            if (input == null) result = new DiagnosticRead(0, null, kind + "_UNAVAILABLE");
+            else {
+                deadline.attach(input);
+                result = diagnosticDigest(input, bytes, budget, kind, deadline);
+            }
+        } catch (SecurityException denied) { result = new DiagnosticRead(result.bytes, null, kind + "_PERMISSION"); }
+        catch (IOException | RuntimeException unavailable) { result = new DiagnosticRead(result.bytes, null, kind + "_UNAVAILABLE"); }
+        finally { deadline.close(); }
+        String stopped = deadline.reason();
+        if (stopped != null) return new DiagnosticRead(result.bytes, null, stopped);
+        if (deadline.closeFailed && result.valid()) return new DiagnosticRead(result.bytes, null, kind + "_CLOSE");
+        return result;
+    }
+    private static DiagnosticRead diagnosticDigest(java.io.InputStream input, long expected, DiagnosticBudget budget, String kind) {
+        return diagnosticDigestOwned(input, expected, budget, kind, 120000);
+    }
+    private static DiagnosticRead diagnosticDigestOwned(java.io.InputStream input, long expected, DiagnosticBudget budget, String kind, long timeoutMillis) {
+        DiagnosticDeadline deadline = new DiagnosticDeadline(timeoutMillis, () -> { });
+        DiagnosticRead result;
+        deadline.attach(input);
+        try { result = diagnosticDigest(input, expected, budget, kind, deadline); }
+        finally { deadline.close(); }
+        String stopped = deadline.reason();
+        if (stopped != null) return new DiagnosticRead(result.bytes, null, stopped);
+        if (deadline.closeFailed && result.valid()) return new DiagnosticRead(result.bytes, null, kind + "_CLOSE");
+        return result;
+    }
+    private static DiagnosticRead diagnosticDigest(java.io.InputStream input, long expected, DiagnosticBudget budget, String kind, DiagnosticDeadline deadline) {
+        byte[] buffer = new byte[65536];
+        long count = 0;
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            while (true) {
+                String stopped = deadline.reason();
+                if (stopped != null) return new DiagnosticRead(count, null, stopped);
+                long room = Math.min(expected + 1 - count, MAX_PILOT_BYTES - budget.used);
+                if (room <= 0) return new DiagnosticRead(count, null, "READ_BUDGET");
+                int read = input.read(buffer, 0, (int)Math.min(buffer.length, room));
+                if (read > 0) { count += read; budget.used += read; }
+                stopped = deadline.reason(); // A late read/EOF must never become a successful digest.
+                if (stopped != null) return new DiagnosticRead(count, null, stopped);
+                if (read < 0) break;
+                if (read == 0) continue;
+                if (count > expected) return new DiagnosticRead(count, null, kind + "_LENGTH");
+                digest.update(buffer, 0, read);
+            }
+            if (count != expected) return new DiagnosticRead(count, null, kind + "_LENGTH");
+            StringBuilder sha = new StringBuilder();
+            byte[] hash = digest.digest();
+            try { for (byte value : hash) sha.append(String.format(Locale.ROOT, "%02x", value & 255)); }
+            finally { java.util.Arrays.fill(hash, (byte)0); }
+            String stopped = deadline.reason();
+            return stopped == null ? new DiagnosticRead(count, sha.toString(), "NONE") : new DiagnosticRead(count, null, stopped);
+        } catch (java.security.NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
+        catch (SecurityException denied) { return new DiagnosticRead(count, null, kind + "_PERMISSION"); }
+        catch (IOException | RuntimeException failure) {
+            String stopped = deadline.reason();
+            return new DiagnosticRead(count, null, stopped == null ? kind + "_READ" : stopped);
+        } finally { java.util.Arrays.fill(buffer, (byte)0); }
+    }
+    /** Cancels provider open and closes an attached descriptor/stream on deadline or owner interruption. */
+    private static final class DiagnosticDeadline implements AutoCloseable {
+        final Thread owner = Thread.currentThread();
+        final long until;
+        final Runnable cancelProvider;
+        final java.util.concurrent.atomic.AtomicReference<java.io.Closeable> resource = new java.util.concurrent.atomic.AtomicReference<>();
+        final java.util.concurrent.atomic.AtomicReference<String> stopped = new java.util.concurrent.atomic.AtomicReference<>();
+        final java.util.concurrent.ScheduledExecutorService timer;
+        volatile boolean finished, closeFailed;
+        DiagnosticDeadline(long timeoutMillis, Runnable cancelProvider) {
+            this.until = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+            this.cancelProvider = cancelProvider;
+            timer = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(task -> {
+                Thread thread = new Thread(task, "sd-source-diagnostic-deadline"); thread.setDaemon(true); return thread;
+            });
+            timer.scheduleWithFixedDelay(() -> {
+                if (!finished && reason() != null) {
+                    closeResource();
+                    try { cancelProvider.run(); } catch (RuntimeException ignored) { }
+                }
+            }, Math.min(10, timeoutMillis), 10, java.util.concurrent.TimeUnit.MILLISECONDS);
+        }
+        String reason() {
+            if (owner.isInterrupted()) stopped.compareAndSet(null, "READ_CANCELLED");
+            if (System.nanoTime() >= until) stopped.compareAndSet(null, "READ_TIMEOUT");
+            return stopped.get();
+        }
+        void attach(java.io.Closeable value) {
+            resource.set(value);
+            if (reason() != null) closeResource();
+        }
+        private void closeResource() {
+            java.io.Closeable value = resource.getAndSet(null);
+            if (value != null) try { value.close(); }
+            catch (IOException | RuntimeException failed) { closeFailed = true; }
+        }
+        @Override public void close() {
+            closeResource();
+            reason(); // Closing itself may have crossed the deadline.
+            finished = true;
+            timer.shutdownNow();
+        }
+    }
+    /** Synthetic stream bounds only; does not establish anything about Android redaction. */
+    static String runSdSourceDiagnosticSyntheticChecks() throws IOException {
+        byte[] value = {97, 98, 99};
+        DiagnosticRead first = diagnosticDigest(new java.io.ByteArrayInputStream(value), 3, new DiagnosticBudget(), "DEFAULT");
+        require(first.valid() && first.bytes == 3 && first.sha.equals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"), "Synthetic SHA vector");
+        DiagnosticRead shortRead = diagnosticDigest(new java.io.ByteArrayInputStream(value), 4, new DiagnosticBudget(), "DEFAULT");
+        require(!shortRead.valid() && shortRead.bytes == 3 && shortRead.reason.equals("DEFAULT_LENGTH"), "Short source rejected");
+        DiagnosticRead surplus = diagnosticDigest(new java.io.ByteArrayInputStream(new byte[100]), 3, new DiagnosticBudget(), "DEFAULT");
+        require(!surplus.valid() && surplus.bytes == 4 && surplus.reason.equals("DEFAULT_LENGTH"), "Surplus bounded at expected plus one");
+        DiagnosticBudget budget = new DiagnosticBudget(); budget.used = MAX_PILOT_BYTES - 2;
+        DiagnosticRead bounded = diagnosticDigest(new java.io.ByteArrayInputStream(value), 3, budget, "DEFAULT");
+        require(!bounded.valid() && bounded.bytes == 2 && budget.used == MAX_PILOT_BYTES && bounded.reason.equals("READ_BUDGET"), "Shared read budget enforced");
+        final byte[][] observed = {null};
+        java.io.InputStream failing = new java.io.InputStream() {
+            int reads;
+            public int read() { throw new AssertionError("Bulk read expected"); }
+            @Override public int read(byte[] buffer, int offset, int count) throws IOException {
+                observed[0] = buffer;
+                if (reads++ > 0) throw new IOException("Synthetic failure");
+                buffer[offset] = 97; return 1;
+            }
+        };
+        DiagnosticRead failed = diagnosticDigest(failing, 3, new DiagnosticBudget(), "DEFAULT");
+        require(!failed.valid() && failed.bytes == 1 && failed.reason.equals("DEFAULT_READ"), "Read failure retains observed byte count");
+        require(observed[0] != null, "Read buffer observed");
+        for (byte item : observed[0]) require(item == 0, "Read buffer erased after failure");
+        java.io.InputStream untilClosed = new java.io.InputStream() {
+            boolean closed;
+            public int read() { throw new AssertionError("Bulk read expected"); }
+            @Override public synchronized int read(byte[] buffer, int offset, int count) throws IOException {
+                while (!closed) try { wait(); }
+                catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new IOException("Interrupted"); }
+                throw new IOException("Closed");
+            }
+            @Override public synchronized void close() { closed = true; notifyAll(); }
+        };
+        long timeoutStart = System.nanoTime();
+        DiagnosticRead timed = diagnosticDigestOwned(untilClosed, 3, new DiagnosticBudget(), "DEFAULT", 40);
+        require(!timed.valid() && timed.reason.equals("READ_TIMEOUT") && System.nanoTime() - timeoutStart < 2_000_000_000L, "Deadline closes blocked stream");
+        java.util.concurrent.CountDownLatch reading = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicBoolean cancelledClosed = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.atomic.AtomicReference<DiagnosticRead> cancelledResult = new java.util.concurrent.atomic.AtomicReference<>();
+        java.io.InputStream untilCancelledClose = new java.io.InputStream() {
+            public int read() { throw new AssertionError("Bulk read expected"); }
+            @Override public int read(byte[] buffer, int offset, int count) throws IOException {
+                reading.countDown();
+                while (!cancelledClosed.get()) java.util.concurrent.locks.LockSupport.parkNanos(1_000_000);
+                throw new IOException("Closed");
+            }
+            @Override public void close() { cancelledClosed.set(true); }
+        };
+        Thread interruptedReader = new Thread(() -> cancelledResult.set(
+                diagnosticDigestOwned(untilCancelledClose, 3, new DiagnosticBudget(), "DEFAULT", 5000)));
+        interruptedReader.setDaemon(true);
+        interruptedReader.start();
+        try {
+            require(reading.await(2, java.util.concurrent.TimeUnit.SECONDS), "Cancellation reader started");
+            interruptedReader.interrupt();
+            interruptedReader.join(2000);
+            require(!interruptedReader.isAlive() && cancelledClosed.get() && cancelledResult.get() != null
+                    && cancelledResult.get().reason.equals("READ_CANCELLED"), "Owner cancellation closes blocked stream");
+        } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new IOException("Synthetic cancellation test interrupted"); }
+        finally { untilCancelledClose.close(); }
+        java.io.InputStream lateEof = new java.io.ByteArrayInputStream(value) {
+            boolean ended;
+            @Override public int read(byte[] buffer, int offset, int count) {
+                if (!ended) { ended = true; return super.read(buffer, offset, count); }
+                long until = System.nanoTime() + 80_000_000L;
+                while (System.nanoTime() < until) Thread.yield();
+                return -1;
+            }
+        };
+        DiagnosticRead late = diagnosticDigestOwned(lateEof, 3, new DiagnosticBudget(), "DEFAULT", 40);
+        require(!late.valid() && late.bytes == 3 && late.reason.equals("READ_TIMEOUT"), "Late EOF never succeeds");
+        java.util.List<WifiProof> targets = java.util.Arrays.asList(
+                new WifiProof("DCIM/first.JPG", 3, first.sha, ""),
+                new WifiProof("DCIM/second.JPG", 4, first.sha, ""),
+                new WifiProof("DCIM/control.ORF", 5, first.sha, ""));
+        String runFingerprint = diagnosticRunFingerprint("synthetic-run");
+        require(diagnosticIndexes("synthetic-run", targets, 1, 4, runFingerprint).equals(java.util.Arrays.asList(1, 2)), "Explicit index1 is selected before RAW control");
+        try { diagnosticIndexes("synthetic-run", targets, 1, 3, runFingerprint); throw new AssertionError("Wrong target size accepted"); }
+        catch (IOException expected) { }
+        try { diagnosticIndexes("other-run", targets, 1, 4, runFingerprint); throw new AssertionError("Different target run accepted"); }
+        catch (IOException expected) { }
+        try { diagnosticIndexes("synthetic-run", targets, -1, -1, null); throw new AssertionError("Implicit target accepted"); }
+        catch (IOException expected) { }
+        java.util.Map<String, Object> stored = new java.util.HashMap<>();
+        SharedPreferences baseline = (SharedPreferences) java.lang.reflect.Proxy.newProxyInstance(
+                SharedPreferences.class.getClassLoader(), new Class<?>[]{SharedPreferences.class}, (proxy, method, arguments) -> {
+                    if (method.getName().equals("getString") || method.getName().equals("getLong"))
+                        return stored.containsKey(arguments[0]) ? stored.get(arguments[0]) : arguments[1];
+                    throw new AssertionError("Synthetic baseline must remain read-only");
+                });
+        PilotSession session = new PilotSession("synthetic-run", "", "", "", null);
+        WifiProof proof = new WifiProof("synthetic", 3, first.sha, "");
+        stored.put("run_id", session.runId); stored.put("proof_0", first.sha);
+        stored.put("bytes_0", 3L); stored.put("default_0", first.sha);
+        require(first.sha.equals(diagnosticBaseline(baseline, session, 0, proof)), "Matching baseline available");
+        require(diagnosticBaseline(baseline, session, 1, proof) == null, "Different proof index rejected");
+        stored.put("run_id", "different-run");
+        require(diagnosticBaseline(baseline, session, 0, proof) == null, "Different run baseline rejected");
+        stored.put("run_id", session.runId); stored.put("proof_0", "different-proof");
+        require(diagnosticBaseline(baseline, session, 0, proof) == null, "Different source proof rejected");
+        stored.put("proof_0", first.sha); stored.put("bytes_0", 4L);
+        require(diagnosticBaseline(baseline, session, 0, proof) == null, "Different source size rejected");
+        return "PASS sd-source-diagnostic-synthetic digest=true shortRejected=true surplusBounded=true sharedBudget=true failedCount=true bufferErased=true baselineGuards=true explicitTarget=true blockedReadClosed=true interruptedReadClosed=true lateEofRejected=true";
+    }
+    private static final class DiagnosticBudget { long used; }
+    private static final class DiagnosticRead {
+        final long bytes;
+        final String sha, reason;
+        DiagnosticRead(long bytes, String sha, String reason) { this.bytes = bytes; this.sha = sha; this.reason = reason; }
+        boolean valid() { return sha != null && reason.equals("NONE"); }
+        static DiagnosticRead unread() { return new DiagnosticRead(0, null, "NOT_READ"); }
+    }
+
     static String runSd(Instrumentation instrumentation) throws Exception {
         Context context = instrumentation.getTargetContext();
         if (!CameraImportGate.lock.tryLock()) throw new IOException("Another camera import is active");
