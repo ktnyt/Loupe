@@ -31,6 +31,11 @@ public final class ImportProgressPresentation {
           ? count(state.getDone(), state.getTotal()) : "";
       return new ImportProgressPresentation(label, count, state.getDone(), state.getTotal(), false);
     }
+    if (state.getActive() && state.getWaiting()) {
+      String primary = state.getStopRequested() ? "取り込みを中止しています"
+          : value(state.getStatus(), "カメラ接続待ち");
+      return new ImportProgressPresentation(primary, summary(p), 0, -1, true);
+    }
     String primary;
     String secondary;
     switch (p.getStage()) {
@@ -61,10 +66,7 @@ public final class ImportProgressPresentation {
           case FAILED -> "取り込みに失敗しました";
           default -> "取り込み終了";
         };
-        secondary = p.getSaved() >= 0 ? "新規保存 " + p.getSaved() + "件" : "";
-        int existing = p.getKnown() < 0 ? p.getContentMatches() : p.getKnown() + Math.max(0, p.getContentMatches());
-        if (existing >= 0) secondary += (secondary.isEmpty() ? "" : " · ") + "保存済み " + existing + "件";
-        if (p.getSourceBytes() >= 0) secondary += (secondary.isEmpty() ? "" : " · ") + "読取 " + bytes(p.getSourceBytes());
+        secondary = summary(p);
         if (p.getStage() == ImportProgress.PhotoStage.FAILED && state.getLastMessage() != null)
           primary += " · " + state.getLastMessage();
         break;
@@ -72,6 +74,14 @@ public final class ImportProgressPresentation {
     if (state.getActive() && state.getStopRequested()) primary = "取り込みを中止しています";
     return new ImportProgressPresentation(primary, secondary, p.getProcessed(),
         p.getStage() == ImportProgress.PhotoStage.SAVING ? -1 : p.getTotal(), true);
+  }
+
+  private static String summary(ImportProgress.PhotoState p) {
+    String text = p.getSaved() >= 0 ? "新規保存 " + p.getSaved() + "件" : "";
+    int existing = p.getKnown() < 0 ? p.getContentMatches() : p.getKnown() + Math.max(0, p.getContentMatches());
+    if (existing >= 0) text += (text.isEmpty() ? "" : " · ") + "保存済み " + existing + "件";
+    if (p.getSourceBytes() >= 0) text += (text.isEmpty() ? "" : " · ") + "読取 " + bytes(p.getSourceBytes());
+    return text;
   }
 
   private static String value(String text, String fallback) { return text == null ? fallback : text; }

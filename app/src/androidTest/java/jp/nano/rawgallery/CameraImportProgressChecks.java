@@ -80,7 +80,42 @@ final class CameraImportProgressChecks {
         require(((TextView)activity.getWindow().getDecorView().findViewWithTag("camera-import-stage")).getText().toString().contains("失敗"), "failure visible");
       });
       capture(t, screen, dir, size + "-failed");
-      return "PASS synthetic listing unknown total, 4800 known history, two content candidates, zero actual saves, bytes unknown, cancel/failure, shared tab AX and selection lock; native captures " + size + ". No physical USB/TalkBack verification.";
+      TagDetailChecks.ui(t, () -> {
+        p.connecting("接続中"); p.begin("Synthetic SD");
+        p.photoHistory(4802,4802,4800); p.photoContent(1,2,1,0,4096,4096);
+        p.photoTerminal("failed","試行の合成エラー");
+        p.waiting("カメラの再接続を待っています"); refresh.run();
+        require(p.getActive() && p.getWaiting() && !p.getStopRequested(), "retry retains active cancellable operation");
+        var presentation = ImportProgressPresentation.current();
+        require(presentation.primary.equals("カメラの再接続を待っています"), "retry message supersedes prior failed rich phase");
+        require(presentation.secondary.contains("新規保存 1件") && !presentation.secondary.contains("新規保存 0件"), "retry retains published actual saves");
+        require(presentation.total < 0, "retry uses indeterminate progress instead of prior failed attempt total");
+        require(control(activity,"stop").getVisibility() == View.VISIBLE && control(activity,"stop").isEnabled(), "retry exposes enabled stop");
+        require(control(activity,"run").getVisibility() == View.GONE, "retry cannot start a second operation");
+        p.attempting("カメラに再接続しています"); refresh.run();
+        require(ImportProgressPresentation.current().primary.equals("カメラに再接続しています"), "attempt message supersedes prior snapshot");
+      });
+      capture(t, screen, dir, size + "-retry-wait");
+      TagDetailChecks.ui(t, () -> {
+        // The service republishes operation-wide counters after a retry starts scanning.
+        p.begin("Synthetic SD"); p.photoHistory(4802,4802,4800);
+        p.photoContent(2,2,2,0,8192,8192); p.photoTerminal("complete","完了"); refresh.run();
+        require(ImportProgressPresentation.current().text().contains("新規保存 2件"), "retry success displays cumulative actual saves");
+        require(!p.getActive() && !p.getWaiting(), "overall success ends retry ownership");
+      });
+      capture(t, screen, dir, size + "-retry-success");
+      TagDetailChecks.ui(t, () -> {
+        p.connecting("接続中"); p.begin("Synthetic SD"); p.photoContent(1,2,1,0,4096,4096);
+        p.requestStop(); p.waiting("再接続待ち"); p.attempting("再接続中"); refresh.run();
+        require(p.getStopRequested(), "retry never clears concurrent stop");
+        require(ImportProgressPresentation.current().primary.contains("中止しています"), "concurrent stop remains visible");
+        require(!control(activity,"stop").isEnabled() && control(activity,"run").getVisibility() == View.GONE, "stopping operation blocks duplicate start");
+        p.photoTerminal("cancelled","中止"); p.waiting("再接続待ち"); p.attempting("再接続中");
+        require(!p.getActive() && !p.getWaiting(), "stopped terminal operation is never revived");
+        p.connecting("接続中"); p.begin("Synthetic SD"); p.photoTerminal("cancelled","中止");
+        p.waiting("再接続待ち"); require(!p.getActive(), "explicit cancelled result cannot be revived without stop flag");
+      });
+      return "PASS synthetic listing unknown total, 4800 known history, two content candidates, zero actual saves, bytes unknown, cancel/failure, failed attempt/retry/cumulative success and concurrent stop, shared tab AX and selection lock; native captures " + size + ". No physical USB/TalkBack verification.";
     } finally {
       if (screen != null) { CameraImportActivity activity = screen; t.runOnMainSync(activity::finish); t.waitForIdleSync(); }
       t.runOnMainSync(() -> { for (var entry : before.entrySet()) try { entry.getKey().set(null,entry.getValue()); } catch (Exception e) { throw new AssertionError(e); } });
@@ -88,6 +123,10 @@ final class CameraImportProgressChecks {
   }
   private static void capture(Instrumentation t, CameraImportActivity screen, File dir, String name) throws Exception {
     ConsistencyLayoutChecks.captureHardware(t,screen,screen.getWindow().getDecorView(),dir,"import-progress-"+name);
+  }
+  private static View control(CameraImportActivity activity, String name) {
+    try { Field field = CameraImportActivity.class.getDeclaredField(name); field.setAccessible(true); return (View)field.get(activity); }
+    catch (Exception e) { throw new AssertionError(e); }
   }
   private static void require(boolean value,String message) { if (!value) throw new AssertionError(message); }
 }

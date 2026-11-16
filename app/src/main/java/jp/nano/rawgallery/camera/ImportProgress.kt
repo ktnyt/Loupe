@@ -77,7 +77,7 @@ object ImportProgress {
     var stopRequested: Boolean = false
         private set
 
-    fun requestStop() {
+    @Synchronized fun requestStop() {
         stopRequested = true
         changed()
     }
@@ -125,19 +125,18 @@ object ImportProgress {
         changed()
     }
 
-    /** Publish a connection/retry wait without inferring it from progress totals. */
-    fun waiting(message: String) {
+    /** Retry owns the same operation and counters; never undo a concurrent user stop. */
+    @Synchronized fun waiting(message: String) {
+        if (stopRequested || photo?.stage == PhotoStage.CANCELLED ||
+            (!active && photo?.stage == PhotoStage.COMPLETE)) return
         status = message
         waiting = true
+        active = true
         changed()
     }
 
-    /** Publish an active open attempt; it remains a connection wait until begin() starts scanning. */
-    fun attempting(message: String) {
-        status = message
-        waiting = true
-        changed()
-    }
+    /** An open attempt has the same cancellable waiting presentation as its retry delay. */
+    fun attempting(message: String) = waiting(message)
 
     fun update(done: Int, total: Int) {
         this.done = done

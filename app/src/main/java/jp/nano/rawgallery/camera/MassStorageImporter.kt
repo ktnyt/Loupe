@@ -10,6 +10,7 @@ object MassStorageImporter {
     private const val TAG = "MassStorageImporter"
     private const val EARLY_BAIL_FAILURES = 3
 
+    @JvmOverloads
     fun importAll(
         context: Context,
         usbDevice: UsbDevice,
@@ -19,16 +20,22 @@ object MassStorageImporter {
         kinds: Set<MediaTypes.Kind>,
         onProgress: (MtpImporter.Progress) -> Unit,
         isCancelled: () -> Boolean,
+        operationMetrics: CameraImportMetrics? = null,
     ): MtpImporter.Result {
         val start = System.currentTimeMillis()
-        val metrics = CameraImportMetrics(context, "usb-sd")
+        val metrics = operationMetrics ?: CameraImportMetrics(context, "usb-sd")
+        metrics.beginAttempt()
+        metrics.content() // Re-publish operation totals after begin() resets the phase UI.
         metrics.setSavingListener {
             onProgress(MtpImporter.Progress(metrics.candidates.coerceAtLeast(0), metrics.processed))
         }
         fun complete(result: MtpImporter.Result): MtpImporter.Result {
-            metrics.terminal(if (isCancelled() || result.aborted && !result.error) "cancelled" else if (result.error || result.failed > 0) "failed" else "complete")
-            return result
+            val cancelled = isCancelled() || Thread.currentThread().isInterrupted
+            val normalized = if (cancelled) result.copy(aborted = true, error = false) else result
+            metrics.recordAttempt(CameraImportOutcome.resolve(cancelled, normalized.aborted, normalized.error, normalized.failed))
+            return normalized
         }
+        if (isCancelled()) return complete(MtpImporter.Result(0, 0, 0, elapsed(start), true))
         val manager = context.getSystemService(Context.USB_SERVICE) as UsbManager
         val conn = manager.openDevice(usbDevice)
             ?: return complete(MtpImporter.Result(0, 0, 0, elapsed(start), false, error = true))
@@ -150,11 +157,12 @@ object MassStorageImporter {
                         }
                         result.uri
                     }
+                    // Publication/receipt already committed; a later legacy-history failure must not erase this save.
+                    metrics.saved++
                     totalMs += System.currentTimeMillis() - t0
                     bytesTotal += node.length
                     db.recordImport(camera.model, camera.serial, key, uri.toString())
                     imported++
-                    metrics.saved++
                     if (imported % 20 == 0) {
                         val mb = bytesTotal / 1048576.0
                         ImportLog.i(TAG, "perf n=$imported totalMs=$totalMs MBps=%.1f".format(mb / (totalMs / 1000.0)))
@@ -166,7 +174,8 @@ object MassStorageImporter {
                     metrics.content()
                     if (!MediaTypes.isVideo(node.name)) {
                         // Do not publish later photos after a destination/journal verification failure.
-                        return complete(MtpImporter.Result(imported, skipped, failed, elapsed(start), true, error = true))
+                        val cancelled = isCancelled() || e is java.io.InterruptedIOException || Thread.currentThread().isInterrupted
+                        return complete(MtpImporter.Result(imported, skipped, failed, elapsed(start), true, error = !cancelled))
                     }
                     consecutiveFailures++
                     // 1 件も成功しないまま失敗が続くのは接続自体の不調。1 件ごとの再試行は
