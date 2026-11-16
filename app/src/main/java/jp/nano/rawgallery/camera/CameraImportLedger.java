@@ -64,6 +64,14 @@ public final class CameraImportLedger extends SQLiteOpenHelper {
             return out;
         }
     }
+    /** One read-only snapshot for an SD run; no legacy evidence is adopted here. */
+    public synchronized Map<String,Content> sourceSnapshot(String sourceId) {
+        Map<String,Content> out=new HashMap<>();
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT c.source_sha,c.source_bytes,c.stored_sha,c.stored_bytes,c.dest_uri,c.kind,c.capture_group,r.source_key FROM receipts r JOIN contents c ON r.source_sha=c.source_sha WHERE r.source_id=?",new String[]{sourceId})) {
+            while(c.moveToNext())out.put(c.getString(7),new Content(c));
+        }
+        return out;
+    }
     public synchronized Content find(String sourceSha,long sourceBytes) {
         hash(sourceSha);
         try(Cursor c=getReadableDatabase().rawQuery("SELECT "+CONTENT_FIELDS+" FROM contents WHERE source_sha=?",new String[]{sourceSha})) {

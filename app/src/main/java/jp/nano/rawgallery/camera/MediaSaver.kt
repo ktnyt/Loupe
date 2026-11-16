@@ -87,6 +87,34 @@ object MediaSaver {
         return out
     }
 
+    /** One metadata query for the complete SD history. A failed/null query stays unknown. */
+    fun photoDestinationSnapshot(context: Context): Map<String, CameraImportHistoryPlan.Destination>? {
+        val permission = if (android.os.Build.VERSION.SDK_INT >= 33)
+            android.Manifest.permission.READ_MEDIA_IMAGES else android.Manifest.permission.READ_EXTERNAL_STORAGE
+        if (context.checkSelfPermission(permission) != android.content.pm.PackageManager.PERMISSION_GRANTED) return null
+        return try {
+            val out = HashMap<String, CameraImportHistoryPlan.Destination>()
+            val args = android.os.Bundle().apply {
+                putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
+                putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_INCLUDE)
+            }
+            val cursor = context.contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.SIZE,
+                    MediaStore.MediaColumns.IS_PENDING, MediaStore.MediaColumns.IS_TRASHED,
+                    MediaStore.MediaColumns.VOLUME_NAME), args, null) ?: return null
+            cursor.use { c ->
+                while (c.moveToNext()) {
+                    if (c.isNull(1)) continue
+                    val row = CameraImportHistoryPlan.Destination(c.getLong(1), c.getInt(2) == 0 && c.getInt(3) == 0)
+                    val id = c.getLong(0)
+                    out["content://media/external/images/media/$id"] = row
+                    if (c.getString(4) == "external_primary") out["content://media/external_primary/images/media/$id"] = row
+                }
+            }
+            out
+        } catch (_: RuntimeException) { null }
+    }
+
     private fun collectFiles(
         context: Context,
         collection: Uri,

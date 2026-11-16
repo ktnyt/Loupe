@@ -22,6 +22,7 @@ public final class CameraDifferentialService extends Service {
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private volatile boolean running, destroyed;
     private volatile CameraPairedSession pairedSession;
+    private CameraImportMetrics runMetrics;
     private final CameraRegisteredQueue registeredQueue=new CameraRegisteredQueue();
     private ConnectivityManager.NetworkCallback networkCallback;
     private BroadcastReceiver mediaReceiver;
@@ -72,17 +73,19 @@ public final class CameraDifferentialService extends Service {
                     // An owned direct request may reset an earlier stop; a queued handoff must preserve it.
                     if(continuation)ImportProgress.INSTANCE.handoffConnection("写真を確認しています");
                     else ImportProgress.INSTANCE.connecting("写真を確認しています");
+                    runMetrics=new CameraImportMetrics(this,SD.equals(request.getAction())?"saf-sd":"wifi");
+                    runMetrics.setSavingListener(this::notifyProgress);
                     try{
                         CameraPhotoPublisher.check(cancelled);
                         String permission=Build.VERSION.SDK_INT>=33?Manifest.permission.READ_MEDIA_IMAGES:Manifest.permission.READ_EXTERNAL_STORAGE;
                         if(checkSelfPermission(permission)!=PackageManager.PERMISSION_GRANTED)throw new IOException("重複を確認するため写真全体へのアクセスを許可してください");
                         if(SD.equals(request.getAction()))CameraDocumentSource.requireOriginalPermission(this);
-                        CameraPhotoImporter importer=new CameraPhotoImporter(this);importer.recover(cancelled);
+                        CameraPhotoImporter importer=new CameraPhotoImporter(this);importer.setMetrics(runMetrics);importer.recover(cancelled);
                         if(PAIRED.equals(request.getAction()))paired(importer,request.getStringExtra("profile_id"),request.getBooleanExtra("verify",getSharedPreferences("camera_import",0).getBoolean("wifi_verify_all",false)));
                         else if(WIFI.equals(request.getAction()))wifi(importer,request.getBooleanExtra("verify",getSharedPreferences("camera_import",0).getBoolean("wifi_verify_all",false)));
                         else if(SD.equals(request.getAction())&&request.getData()!=null)sd(importer,request.getData(),request.getBooleanExtra("verify",getSharedPreferences("camera_import",0).getBoolean("sd_verify_all",false)));
                         else throw new IOException("接続元がありません");
-                    }catch(Exception e){ImportProgress.INSTANCE.finish(cancelled.getAsBoolean()?"取り込みを中断しました":(e instanceof CameraPairedSession.MissingWifiException||e instanceof CameraDocumentSource.OriginalAccessException)?e.getMessage():"取り込みを完了できませんでした。接続と写真へのアクセスを確認してください");android.util.Log.w("CameraDifferential","Import failed: "+e.getClass().getSimpleName());}
+                    }catch(Exception e){runMetrics.terminal(cancelled.getAsBoolean()?"cancelled":"failed");ImportProgress.INSTANCE.finish(cancelled.getAsBoolean()?"取り込みを中断しました":(e instanceof CameraPairedSession.MissingWifiException||e instanceof CameraDocumentSource.OriginalAccessException)?e.getMessage():"取り込みを完了できませんでした。接続と写真へのアクセスを確認してください");android.util.Log.w("CameraDifferential","Import failed: "+e.getClass().getSimpleName());}
                 });
                 if(!accepted&&!destroyed)getSystemService(NotificationManager.class).notify(783,
                         new Notification.Builder(this,CHANNEL).setSmallIcon(android.R.drawable.ic_menu_camera)
@@ -133,11 +136,16 @@ public final class CameraDifferentialService extends Service {
     private void wifi(CameraPhotoImporter importer,WifiSession session,boolean verify,BooleanSupplier sessionCancelled,long start)throws IOException{
         ConnectivityManager cm=getSystemService(ConnectivityManager.class);
         CameraPhotoPublisher.check(sessionCancelled);
+        ImportProgress.INSTANCE.begin("E-P7 Wi-Fi");ImportProgress.INSTANCE.photoListing(0,-1);notifyProgress();
+        long listStart=android.os.SystemClock.elapsedRealtime();
         Ep7WifiClient client=session.client;Ep7WifiClient.Listing listing=client.list();
+        runMetrics.listingMs=android.os.SystemClock.elapsedRealtime()-listStart;
+        runMetrics.listed=listing.photos.size();runMetrics.candidates=listing.photos.size();
+        ImportProgress.INSTANCE.photoListing(listing.photos.size(),listing.photos.size());
         String identity=CameraSourceIdentity.wifi(this,session.network);
         boolean stable=identity!=null;
         String source=stable?identity:"wifi-session:"+session.network.getNetworkHandle();
-        ImportProgress.INSTANCE.begin("E-P7 Wi-Fi");int added=0,done=0;long bytes=0;
+        int added=0,done=0;long bytes=0;runMetrics.content();notifyProgress();
         for(Ep7WifiClient.Entry e:listing.photos){
             CameraPhotoPublisher.check(sessionCancelled);
             if(cm.getNetworkCapabilities(session.network)==null)throw new IOException("Camera disconnected");
@@ -146,7 +154,9 @@ public final class CameraDifferentialService extends Service {
             boolean verifiedIdentity=stable&&currentIdentity!=null;
             CameraImportFile file=new CameraImportFile(verifiedIdentity?source:"wifi-session:"+session.network.getNetworkHandle(),e.path.substring(1),e.bytes,e.date+":"+e.time,fatTime(e.date,e.time));
             CameraPhotoImporter.Result r=retry(importer,file,out->client.copyOriginal(e,out),verifiedIdentity,verify,sessionCancelled);
-            if(r.imported)added++;bytes+=r.sourceBytesRead;ImportProgress.INSTANCE.update(++done,listing.photos.size());
+            if(r.imported){added++;runMetrics.saved++;}else runMetrics.matches++;
+            bytes+=r.sourceBytesRead;runMetrics.processed++;runMetrics.content();
+            ImportProgress.INSTANCE.update(++done,listing.photos.size());notifyProgress();
         }
         CameraPhotoPublisher.check(sessionCancelled);
         finish(added,done,bytes,start,false);
@@ -172,18 +182,27 @@ public final class CameraDifferentialService extends Service {
     private static long fatTime(int date,int time){try{return java.time.LocalDateTime.of(1980+(date>>9),(date>>5)&15,date&31,time>>11,(time>>5)&63,(time&31)*2).atZone(java.time.ZoneId.systemDefault()).toEpochSecond();}catch(Exception e){return 0;}}
     private void sd(CameraPhotoImporter importer,Uri tree,boolean verify)throws IOException{
         CameraDocumentSource.requireOriginalPermission(this);
-        long start=System.nanoTime();CameraDocumentSource.Listing listing=CameraDocumentSource.list(this,tree,cancelled);
-        ImportProgress.INSTANCE.begin("SDカード");int added=0,done=0;long bytes=0;
+        long start=System.nanoTime();ImportProgress.INSTANCE.begin("SDカード");ImportProgress.INSTANCE.photoListing(0,-1);notifyProgress();
+        long listStart=android.os.SystemClock.elapsedRealtime();
+        CameraDocumentSource.Listing listing=CameraDocumentSource.list(this,tree,cancelled);
+        runMetrics.listingMs=android.os.SystemClock.elapsedRealtime()-listStart;
+        runMetrics.listed=listing.photos.size();runMetrics.candidates=listing.photos.size();
+        ImportProgress.INSTANCE.photoListing(listing.photos.size(),listing.photos.size());
+        int added=0,done=0;long bytes=0;runMetrics.content();notifyProgress();
         for(CameraDocumentSource.Entry entry:listing.photos){
             CameraPhotoPublisher.check(cancelled);
             CameraPhotoImporter.Result result=retry(importer,entry.file,out->CameraDocumentSource.copy(this,entry,out,cancelled),listing.stable,verify,cancelled,true);
-            if(result.imported)added++;bytes+=result.sourceBytesRead;ImportProgress.INSTANCE.update(++done,listing.photos.size());
+            if(result.imported){added++;runMetrics.saved++;}else runMetrics.matches++;
+            bytes+=result.sourceBytesRead;runMetrics.processed++;runMetrics.content();
+            ImportProgress.INSTANCE.update(++done,listing.photos.size());notifyProgress();
         }
         CameraDocumentSource.requireOriginalPermission(this);
         CameraPhotoPublisher.check(cancelled);
         finish(added,done,bytes,start,true);
     }
+    private void notifyProgress(){getSystemService(NotificationManager.class).notify(781,notification(jp.nano.rawgallery.ImportProgressPresentation.current().accessibility()));}
     private void finish(int added,int count,long bytes,long start,boolean card){
+        runMetrics.terminal("complete");
         double seconds=(System.nanoTime()-start)/1e9;
         android.util.Log.i("CameraDifferential",String.format(Locale.ROOT,"files=%d added=%d readBytes=%d seconds=%.3f",count,added,bytes,seconds));
         ImportProgress.INSTANCE.finish(added+"枚追加・"+(count-added)+"枚取り込み済み"+(card?"。カメラへカードを戻しましたか":""));

@@ -21,13 +21,21 @@ object MassStorageImporter {
         isCancelled: () -> Boolean,
     ): MtpImporter.Result {
         val start = System.currentTimeMillis()
+        val metrics = CameraImportMetrics(context, "usb-sd")
+        metrics.setSavingListener {
+            onProgress(MtpImporter.Progress(metrics.candidates.coerceAtLeast(0), metrics.processed))
+        }
+        fun complete(result: MtpImporter.Result): MtpImporter.Result {
+            metrics.terminal(if (isCancelled() || result.aborted && !result.error) "cancelled" else if (result.error || result.failed > 0) "failed" else "complete")
+            return result
+        }
         val manager = context.getSystemService(Context.USB_SERVICE) as UsbManager
         val conn = manager.openDevice(usbDevice)
-            ?: return MtpImporter.Result(0, 0, 0, elapsed(start), false, error = true)
+            ?: return complete(MtpImporter.Result(0, 0, 0, elapsed(start), false, error = true))
         val ums = UsbMassStorage.fromDevice(usbDevice, conn)
         if (ums == null) {
             conn.close()
-            return MtpImporter.Result(0, 0, 0, elapsed(start), false, error = true)
+            return complete(MtpImporter.Result(0, 0, 0, elapsed(start), false, error = true))
         }
         try {
             ums.init()
@@ -36,24 +44,49 @@ object MassStorageImporter {
             exfat.mount()
 
             val photos = CameraPhotoImporter(context)
+            photos.setMetrics(metrics)
             photos.recover { isCancelled() }
+            val verifyAll = context.getSharedPreferences("camera_import", 0).getBoolean("sd_verify_all", false)
+            val sourceId = "sd-usb:" + exfat.volumeId
+            val receipts = CameraImportLedger.get(context).sourceSnapshot(sourceId)
+            val historyStart = System.currentTimeMillis()
+            val plan = CameraImportHistoryPlan(db.photoImportRecords(camera.model, camera.serial),
+                if (verifyAll) null else MediaSaver.photoDestinationSnapshot(context))
+            metrics.historyMs = System.currentTimeMillis() - historyStart
             val known = db.importedKeys(camera.model, camera.serial)
-            val existing = MediaSaver.existingFiles(context, camera) // 整合チェックは一度だけ取る
+            val existing by lazy { MediaSaver.existingFiles(context, camera) } // 動画の候補が必要な場合だけ取得
+            ImportProgress.photoListing(0, -1)
+            onProgress(MtpImporter.Progress(0, 0))
+            val listingStart = System.currentTimeMillis()
             val all = exfat.listMediaUnderDcim()
+            metrics.listingMs = System.currentTimeMillis() - listingStart
+            metrics.listed = all.count { MediaTypes.kindOf(it.name) in kinds }
+            ImportProgress.photoListing(metrics.listed, metrics.listed)
             ImportLog.i(TAG, "found ${all.size} media files")
 
             var skipped = 0
             // saveName は保存時の表示名。番号使い回しの衝突時だけカメラ側の名前と変える
             data class Target(val node: ExFat.Node, val saveName: String)
             val targets = ArrayList<Target>()
+            val classificationStart = System.currentTimeMillis()
             for (node in all) {
                 // 指定外の種別は履歴照合より前に外す。スキップ件数にも数えない
-                if (isCancelled()) return MtpImporter.Result(0, skipped, 0, elapsed(start), true)
+                if (isCancelled()) return complete(MtpImporter.Result(0, skipped, 0, elapsed(start), true))
                 val kind = MediaTypes.kindOf(node.name) ?: continue
                 if (kind !in kinds) continue
                 val key = ImportedKey(node.name, node.length, node.modifiedEpochSec)
                 if (!MediaTypes.isVideo(node.name)) {
-                    targets.add(Target(node, node.name))
+                    // Optional common evidence must not reject a legacy-known large RAW.
+                    val receipt = if (receipts.isEmpty()) null else runCatching {
+                        val source = CameraImportFile(sourceId, node.relativePath, node.length,
+                            (node.modifiedEpochSec * 1000).toString(), node.modifiedEpochSec)
+                        receipts[source.sourceKey()]
+                    }.getOrNull()
+                    if (plan.known(node.name, node.length, node.modifiedEpochSec, verifyAll,
+                            receipt?.uri, receipt?.storedBytes ?: -1)) {
+                        skipped++
+                        metrics.known++
+                    } else targets.add(Target(node, node.name))
                 } else if (key.asString() in known) {
                     skipped++
                 } else {
@@ -72,8 +105,15 @@ object MassStorageImporter {
                         targets.add(Target(node, MediaSaver.collisionName(node.name, node.modifiedEpochSec)))
                     }
                 }
+                metrics.checked++
+                ImportProgress.photoHistory(metrics.checked, metrics.listed, metrics.known)
+                if (metrics.checked % 50 == 0 || metrics.checked == metrics.listed)
+                    onProgress(MtpImporter.Progress(metrics.listed, metrics.checked))
             }
 
+            metrics.historyMs += System.currentTimeMillis() - classificationStart
+            metrics.candidates = targets.size
+            metrics.content()
             onProgress(MtpImporter.Progress(targets.size, 0))
             var imported = 0
             var failed = 0
@@ -90,17 +130,20 @@ object MassStorageImporter {
                     val uri = if (MediaTypes.isVideo(node.name)) {
                         // Videos may be several GiB; keep the existing streaming path.
                         MediaSaver.save(context, t.saveName, node.modifiedEpochSec, camera) { out ->
-                            exfat.copyTo(node, out)
+                            metrics.countSource { counted -> exfat.copyTo(node, counted) }.write(out)
                         }
                     } else {
                         val source = CameraImportFile(
-                            "sd-usb:" + exfat.volumeId,
+                            sourceId,
                             node.relativePath, node.length, (node.modifiedEpochSec * 1000).toString(), node.modifiedEpochSec)
                         val result = photos.importPhoto(source, { out -> exfat.copyTo(node, out) },
-                            camera.folder, exfat.volumeSerialReliable, context.getSharedPreferences("camera_import", 0).getBoolean("sd_verify_all", false), { isCancelled() })
+                            camera.folder, exfat.volumeSerialReliable, verifyAll, { isCancelled() })
                         if (!result.imported) {
                             db.recordImport(camera.model, camera.serial, key, result.uri.toString())
                             skipped++
+                            metrics.matches++
+                            metrics.processed++
+                            metrics.content()
                             consecutiveFailures = 0
                             onProgress(MtpImporter.Progress(targets.size, i + 1))
                             continue
@@ -111,36 +154,41 @@ object MassStorageImporter {
                     bytesTotal += node.length
                     db.recordImport(camera.model, camera.serial, key, uri.toString())
                     imported++
+                    metrics.saved++
                     if (imported % 20 == 0) {
                         val mb = bytesTotal / 1048576.0
                         ImportLog.i(TAG, "perf n=$imported totalMs=$totalMs MBps=%.1f".format(mb / (totalMs / 1000.0)))
                     }
                 } catch (e: Exception) {
-                    ImportLog.w(TAG, "import failed: ${node.name}", e)
+                    ImportLog.w(TAG, "import failed (${e.javaClass.simpleName})")
                     failed++
+                    metrics.processed++
+                    metrics.content()
                     if (!MediaTypes.isVideo(node.name)) {
                         // Do not publish later photos after a destination/journal verification failure.
-                        return MtpImporter.Result(imported, skipped, failed, elapsed(start), true, error = true)
+                        return complete(MtpImporter.Result(imported, skipped, failed, elapsed(start), true, error = true))
                     }
                     consecutiveFailures++
                     // 1 件も成功しないまま失敗が続くのは接続自体の不調。1 件ごとの再試行は
                     // 秒単位かかるので全件なめずに見切り、呼び出し側の再接続やり直しに任せる
                     if (imported == 0 && consecutiveFailures >= EARLY_BAIL_FAILURES) {
                         ImportLog.w(TAG, "bailing out: first $consecutiveFailures reads all failed")
-                        return MtpImporter.Result(0, skipped, failed, elapsed(start), false, error = true)
+                        return complete(MtpImporter.Result(0, skipped, failed, elapsed(start), false, error = true))
                     }
                     onProgress(MtpImporter.Progress(targets.size, i + 1))
                     continue
                 }
                 consecutiveFailures = 0
+                metrics.processed++
+                metrics.content()
                 onProgress(MtpImporter.Progress(targets.size, i + 1))
             }
             // 走査後に読み取りが全滅したとき (全件失敗) もエラー扱いにする
             val scanError = targets.isNotEmpty() && imported == 0 && failed == targets.size && !aborted
-            return MtpImporter.Result(imported, skipped, failed, elapsed(start), aborted, error = scanError)
+            return complete(MtpImporter.Result(imported, skipped, failed, elapsed(start), aborted, error = scanError))
         } catch (e: Exception) {
-            ImportLog.w(TAG, "mass storage import error", e)
-            return MtpImporter.Result(0, 0, 0, elapsed(start), false, error = true)
+            ImportLog.w(TAG, "mass storage import error (${e.javaClass.simpleName})")
+            return complete(MtpImporter.Result(0, 0, 0, elapsed(start), false, error = true))
         } finally {
             ums.close()
         }

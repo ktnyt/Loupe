@@ -195,6 +195,7 @@ class ImportService : Service() {
             val msg =
                 if (n > 0) getString(R.string.camera_import_notif_aborted, n)
                 else getString(R.string.camera_import_notif_detached_cancel)
+            if (ImportProgress.photo != null) ImportProgress.photoTerminal("cancelled", msg)
             ImportProgress.finish(msg)
             notify(NOTIF_DONE, notification(msg))
             return false
@@ -242,6 +243,8 @@ class ImportService : Service() {
             msg += "。カメラへカードを戻しましたか"
         }
         ImportLog.i(TAG, "result=$result")
+        if (ImportProgress.photo != null) ImportProgress.photoTerminal(
+            if (result.aborted && !result.error) "cancelled" else if (result.error || result.failed > 0) "failed" else "complete", msg)
         ImportProgress.finish(msg)
         notify(NOTIF_DONE, notification(msg))
         scope.launch(Dispatchers.Main) {
@@ -442,7 +445,9 @@ class ImportService : Service() {
             notify(
                 NOTIF_PROGRESS,
                 notification(
-                    getString(R.string.camera_import_notif_progress, camera.model, p.done, p.total),
+                    jp.nano.rawgallery.ImportProgressPresentation.current().let {
+                        if (it.rich) it.accessibility() else getString(R.string.camera_import_notif_progress, camera.model, p.done, p.total)
+                    },
                     ongoing = true,
                     progress = p,
                 ),

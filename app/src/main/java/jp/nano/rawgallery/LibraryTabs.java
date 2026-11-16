@@ -21,6 +21,7 @@ final class LibraryTabs extends BottomNavigationView {
   private String cameraName;
   private int done, total;
   private boolean waiting;
+  private ImportProgressPresentation presentation;
   private ValueAnimator waitingPulse;
 
   LibraryTabs(Context context, boolean albums, boolean enabled, Consumer<Boolean> change) {
@@ -90,6 +91,12 @@ final class LibraryTabs extends BottomNavigationView {
   }
 
   void setCameraState(boolean connected, String name, boolean active, int done, int total, boolean waiting) {
+    setCameraState(connected, name, active, done, total, waiting, null);
+  }
+
+  void setCameraState(boolean connected, String name, boolean active, int done, int total,
+      boolean waiting, ImportProgressPresentation presentation) {
+    this.presentation = presentation;
     this.connected = connected;
     cameraName = name;
     importing = active;
@@ -98,9 +105,9 @@ final class LibraryTabs extends BottomNavigationView {
     this.waiting = active && waiting;
     if (connected || active) {
       var badge = getOrCreateBadge(IMPORT);
-      if (active && total > 0) badge.setNumber(Math.max(0, done));
+      if (active && total > 0 && (presentation == null || !presentation.rich)) badge.setNumber(Math.max(0, done));
       else badge.clearNumber();
-      badge.setContentDescriptionNumberless(this.waiting ? "カメラ接続待ち" : active ? "取り込み中" : "カメラ接続中");
+      badge.setContentDescriptionNumberless(presentation != null && active ? presentation.accessibility() : this.waiting ? "カメラ接続待ち" : active ? "取り込み中" : "カメラ接続中");
     } else removeBadge(IMPORT);
     updateWaitingPulse();
     updateCameraAccessibility();
@@ -111,7 +118,7 @@ final class LibraryTabs extends BottomNavigationView {
     if (camera == null) return;
     String state = connected ? "カメラ接続中" : "カメラ未接続";
     if (connected && cameraName != null && !cameraName.isBlank()) state += "、" + cameraName;
-    if (importing) state += waiting ? "、カメラ接続待ち" : total > 0 ? "、取り込み中 " + done + " / " + total + "件" : "、取り込み中";
+    if (importing) state += presentation != null ? "、" + presentation.accessibility() : waiting ? "、カメラ接続待ち" : total > 0 ? "、取り込み中 " + done + " / " + total + "件" : "、取り込み中";
     if (!isEnabled()) state += "、選択中は使えません";
     ViewCompat.setStateDescription(camera, state);
     boolean quickImport = isEnabled() && !importing && startImport != null;
