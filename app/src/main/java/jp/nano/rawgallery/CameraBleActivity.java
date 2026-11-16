@@ -20,6 +20,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import jp.nano.rawgallery.camera.CameraBleWake;
+import jp.nano.rawgallery.camera.CameraDifferentialService;
 import jp.nano.rawgallery.camera.CameraQrCredentials;
 import jp.nano.rawgallery.camera.CameraCredentialStore;
 import java.io.Closeable;
@@ -47,18 +48,20 @@ public final class CameraBleActivity extends AppCompatActivity {
     private char[] pendingManual;
     private char[] pendingStored;
     private final Object credentialLock = new Object();
+    private String pendingProfileId;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         helper = new CameraBleWake(this);
+        if (state != null) pendingProfileId = state.getString("pending_camera_profile");
         LinearLayout frame = new LinearLayout(this); frame.setOrientation(LinearLayout.VERTICAL); frame.setBackgroundColor(GalleryUi.BG);
         frame.setOnApplyWindowInsetsListener((v, insets) -> { var safe = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout()); v.setPadding(safe.left, safe.top, safe.right, safe.bottom); return insets; });
-        LinearLayout toolbar = LibraryUi.toolbar(this, "Bluetoothで起動を試す");
+        LinearLayout toolbar = LibraryUi.toolbar(this, "カメラに接続");
         toolbar.addView(LibraryUi.icon(this, R.drawable.ic_back, "戻る", this::finish), 0); frame.addView(toolbar);
         ScrollView scroll = new ScrollView(this); LinearLayout body = new LinearLayout(this); body.setOrientation(LinearLayout.VERTICAL);
         body.setPadding(dp(16), dp(8), dp(16), dp(24)); scroll.addView(body); frame.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        text(body, "カメラの接続画面のQRを一度登録すると、次回からパスコード入力を省けます。転送用Wi-Fiの起動は実験機能です。OM-1 Mark IIは未確認です。");
+        text(body, "カメラのQRを一度登録すると、Bluetoothで復帰し、Wi-Fi接続から取り込みまで進めます。初回はAndroidの接続確認が出ます。E-P7で検証中です。");
         button(body, "カメラのQRを撮影する", () -> startActivityForResult(new Intent(this, CameraQrScanActivity.class), 410));
         button(body, "写真のQRを読み取る", this::pickQrImage);
         text(body, "登録したカメラ");
@@ -67,12 +70,16 @@ public final class CameraBleActivity extends AppCompatActivity {
         devices = new LinearLayout(this); devices.setOrientation(LinearLayout.VERTICAL); body.addView(devices);
         passcode = new EditText(this); passcode.setHint("未登録時のパスコード"); passcode.setContentDescription("カメラのパスコード");
         passcode.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD); passcode.setSaveEnabled(false); passcode.setMinHeight(dp(48)); body.addView(passcode);
-        wake = button(body, "選んだカメラの起動を試す", this::wake); wake.setEnabled(false); MaterialUi.filled(wake);
+        wake = button(body, "選んだカメラの起動を試す", this::wake); wake.setEnabled(false); MaterialUi.outlined(wake);
         status = text(body, "カメラを探してください"); status.setTag("ble-status"); status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         button(body, "Wi-Fi設定を開く", () -> startActivity(new Intent(Settings.ACTION_WIFI_SETTINGS)));
-        text(body, "操作後、カメラの状態を確認し、Wi-Fi設定で接続してください。");
+        text(body, "手動の起動検査では、操作後にWi-Fi設定で接続します。");
         setContentView(frame);
         frame.post(() -> { var bars=getWindow().getInsetsController(); if(bars!=null)bars.setSystemBarsAppearance(0, android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS); });
+    }
+    @Override protected void onSaveInstanceState(Bundle state) {
+        super.onSaveInstanceState(state);
+        if (pendingProfileId != null) state.putString("pending_camera_profile", pendingProfileId);
     }
     @Override protected void onStart() { super.onStart(); foreground = true; loadRegistrations(); if (pendingMessage != null) { status.setText(pendingMessage); pendingMessage = null; } }
     @Override protected void onStop() { foreground = false; cancelPending(); selected = null; selectedName = null; wake.setEnabled(false); passcode.getText().clear(); devices.removeAllViews(); status.setText("再度カメラを探してください"); super.onStop(); }
@@ -84,6 +91,14 @@ public final class CameraBleActivity extends AppCompatActivity {
     }
     @Override public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(request, permissions, results);
+        if (request == 407) {
+            String id = pendingProfileId; pendingProfileId = null;
+            for (int result : results) if (result != PackageManager.PERMISSION_GRANTED) {
+                status.setText("Bluetooth・Wi-Fi接続と写真すべてへのアクセスを許可してください。"); return;
+            }
+            if (results.length > 0 && foreground && id != null) connectRegistered(id);
+            return;
+        }
         if (request != 404) return;
         for (int result : results) if (result != PackageManager.PERMISSION_GRANTED) { status.setText("Bluetoothの権限が必要です。"); return; }
         if (results.length > 0 && foreground) scan();
@@ -147,7 +162,7 @@ public final class CameraBleActivity extends AppCompatActivity {
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (request == 410) {
-            String message = result == CameraQrScanActivity.SAVED ? "QRを登録しました。カメラを再度探してください。"
+            String message = result == CameraQrScanActivity.SAVED ? "QRを登録しました。登録したカメラから接続できます。"
                     : result == CameraQrScanActivity.INVALID ? "対応するカメラのQRではありません。"
                     : result == CameraQrScanActivity.DENIED ? "カメラの使用が許可されませんでした。"
                     : result == CameraQrScanActivity.CAMERA_FAILED ? "カメラを開けませんでした。写真のQRも読み取れます。"
@@ -167,7 +182,7 @@ public final class CameraBleActivity extends AppCompatActivity {
                 try (CameraQrCredentials credentials = CameraQrCredentials.parse(raw)) {
                     try {
                         new CameraCredentialStore(getApplicationContext()).save(credentials);
-                        message = "QRを登録しました。カメラを再度探してください。";
+                        message = "QRを登録しました。登録したカメラから接続できます。";
                     } catch (IOException | RuntimeException failure) { message = "登録できませんでした。保存済みの登録を確認してください。"; }
                 } catch (IllegalArgumentException failure) { message = "対応するカメラのQRではありません。"; }
             }
@@ -176,24 +191,59 @@ public final class CameraBleActivity extends AppCompatActivity {
         });
     }
     private void showResult(String message) { if (foreground) status.setText(message); else pendingMessage = message; }
+    private static final class RegisteredCamera {
+        final String name, id; final boolean wifiComplete;
+        RegisteredCamera(String name, String id, boolean wifiComplete) { this.name = name; this.id = id; this.wifiComplete = wifiComplete; }
+    }
     private void loadRegistrations() {
         io.execute(() -> {
-            List<String> names = null;
-            try { names = new CameraCredentialStore(getApplicationContext()).names(); } catch (IOException | RuntimeException ignored) { }
-            List<String> entries = names;
+            List<RegisteredCamera> cameras = null;
+            try {
+                CameraCredentialStore store = new CameraCredentialStore(getApplicationContext());
+                cameras = new java.util.ArrayList<>();
+                for (String name : store.names()) {
+                    String id = CameraCredentialStore.profileId(name);
+                    try (CameraCredentialStore.Registration registration = store.registration(id)) {
+                        if (registration != null) cameras.add(new RegisteredCamera(name, id, registration.hasWifi()));
+                    }
+                }
+            } catch (IOException | RuntimeException ignored) { cameras = null; }
+            List<RegisteredCamera> entries = cameras;
             runOnUiThread(() -> {
                 if (!foreground || isDestroyed()) return;
                 registrations.removeAllViews();
                 if (entries == null) { text(registrations, "登録情報を読み取れません。QRを再登録してください。"); return; }
                 if (entries.isEmpty()) { text(registrations, "登録はありません"); return; }
-                for (String name : entries) {
-                    text(registrations, name);
-                    button(registrations, name + "の登録を忘れる", () -> new MaterialAlertDialogBuilder(this)
-                            .setMessage(name + "の登録をこの端末から削除します。写真やカメラの設定は変わりません。")
-                            .setNegativeButton("キャンセル", null).setPositiveButton("削除", (d, w) -> removeRegistration(name)).show());
+                for (RegisteredCamera camera : entries) {
+                    text(registrations, camera.name);
+                    if (camera.wifiComplete) {
+                        MaterialButton paired = button(registrations, camera.name + "に接続して取り込む", () -> connectRegistered(camera.id));
+                        paired.setTag("paired-camera-connect"); MaterialUi.filled(paired);
+                    } else {
+                        text(registrations, "Wi-Fi接続情報を追加するため、QRをもう一度登録してください。");
+                        button(registrations, "写真のQRで更新する", this::pickQrImage);
+                    }
+                    button(registrations, camera.name + "の登録を忘れる", () -> new MaterialAlertDialogBuilder(this)
+                            .setMessage(camera.name + "の登録をこの端末から削除します。写真やカメラの設定は変わりません。")
+                            .setNegativeButton("キャンセル", null).setPositiveButton("削除", (d, w) -> removeRegistration(camera.name)).show());
                 }
             });
         });
+    }
+    private void connectRegistered(String id) {
+        java.util.ArrayList<String> permissions = new java.util.ArrayList<>();
+        if (Build.VERSION.SDK_INT >= 31) { permissions.add(Manifest.permission.BLUETOOTH_SCAN); permissions.add(Manifest.permission.BLUETOOTH_CONNECT); }
+        if (Build.VERSION.SDK_INT >= 33) permissions.add(Manifest.permission.NEARBY_WIFI_DEVICES);
+        permissions.add(Manifest.permission.ACCESS_COARSE_LOCATION); permissions.add(Manifest.permission.ACCESS_FINE_LOCATION);
+        permissions.add(Build.VERSION.SDK_INT >= 33 ? Manifest.permission.READ_MEDIA_IMAGES : Manifest.permission.READ_EXTERNAL_STORAGE);
+        for (String permission : permissions) if (checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
+            pendingProfileId = id; requestPermissions(permissions.toArray(new String[0]), 407); return;
+        }
+        cancelPending();
+        try {
+            CameraDifferentialService.startRegistered(this, id, getSharedPreferences("camera_import", 0).getBoolean("wifi_verify_all", false));
+            startActivity(new Intent(this, CameraImportActivity.class));
+        } catch (RuntimeException failure) { status.setText("接続を開始できませんでした。もう一度操作してください。"); }
     }
     private void removeRegistration(String name) {
         cancelPending(); wake.setEnabled(selected != null);

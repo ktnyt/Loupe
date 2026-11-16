@@ -272,6 +272,9 @@ public final class ArchiveInstrumentation extends Instrumentation {
         else if(cameraPilotMode.equals("camera-pilot-qr-ui"))result=CameraQrUiChecks.run(this);
         else if(cameraPilotMode.equals("camera-pilot-qr-image"))result=CameraQrImageChecks.run(this);
         else if(cameraPilotMode.equals("camera-pilot-qr-status"))result=CameraSavedWakeChecks.status(this);
+        else if(cameraPilotMode.equals("camera-pilot-paired-guards"))result=CameraPairedPilotChecks.guardChecks(this);
+        else if(cameraPilotMode.equals("camera-pilot-paired-wifi"))result=CameraPairedPilotChecks.run(this);
+        else if(cameraPilotMode.equals("camera-pilot-paired-session"))result=jp.nano.rawgallery.camera.CameraPairedSessionChecks.run();
         else if(cameraPilotMode.equals("camera-pilot-ble-advertisement"))result=CameraSavedWakeChecks.advertisement(this);
         else if(cameraPilotMode.equals("camera-pilot-ble-saved"))result=CameraSavedWakeChecks.run(this);
         else if(cameraPilotMode.equals("camera-pilot-qr-credentials"))result=jp.nano.rawgallery.camera.CameraCredentialChecks.run(this);

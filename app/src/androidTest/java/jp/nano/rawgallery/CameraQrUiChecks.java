@@ -45,6 +45,9 @@ public final class CameraQrUiChecks {
         View root = screen.getWindow().getDecorView();
         TagDetailChecks.require((screen.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE) != 0,
             "BLE credential screen is secure before fixture capture");
+        TextView paired = findText(root, FIXTURE_NAME + "に接続して取り込む");
+        TagDetailChecks.require(paired != null && paired.isEnabled() && paired.getHeight() >= GalleryUi.dp(screen, 48), "registered connection action is available and touch-sized");
+        TagDetailChecks.require(findText(root, "12345678") == null, "Wi-Fi passphrase is not displayed");
         TextView forget = findText(root, FIXTURE_NAME + "の登録を忘れる");
         TagDetailChecks.require(forget != null, "fixture forget action is displayed");
         TagDetailChecks.require(forget.getHeight() >= GalleryUi.dp(screen, 48), "forget action touch height");

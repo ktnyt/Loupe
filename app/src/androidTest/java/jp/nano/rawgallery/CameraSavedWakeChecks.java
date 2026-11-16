@@ -15,12 +15,16 @@ final class CameraSavedWakeChecks {
     static String status(Instrumentation instrumentation) throws Exception {
         CameraCredentialStore store = new CameraCredentialStore(instrumentation.getTargetContext());
         List<String> names = store.names();
+        int wifiComplete = 0;
         for (String name : names) {
+            try (CameraCredentialStore.Registration profile = store.registration(CameraCredentialStore.profileId(name))) {
+                if (profile != null && profile.hasWifi()) wifiComplete++;
+            }
             char[] code = store.passcode(name);
             try { if (code == null || code.length < 1 || code.length > 12) throw new AssertionError("Stored credential unavailable"); }
             finally { if (code != null) java.util.Arrays.fill(code, '\0'); }
         }
-        return "PASS camera-registration registeredCount=" + names.size() + " decryptable=true";
+        return "PASS camera-registration registeredCount=" + names.size() + " decryptable=true wifiCompleteCount=" + wifiComplete;
     }
     static String run(Instrumentation instrumentation) throws Exception {
         return run(instrumentation, false);

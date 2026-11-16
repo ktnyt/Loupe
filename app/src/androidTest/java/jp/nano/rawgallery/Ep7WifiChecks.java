@@ -38,7 +38,7 @@ final class Ep7WifiChecks {
       final Ep7WifiActivity screen = wifi;
       TagDetailChecks.ui(t, () -> {
         View root = screen.getWindow().getDecorView();
-        for (String label : new String[]{"カメラに接続して取り込む", "Wi-Fi設定を開く", "写真のアクセス権限を確認", "アプリの権限設定を開く", "Bluetoothでカメラの起動を試す", "写真を取り込む", "中止", "内容も確認する", "カメラのWi-Fi接続時に自動で取り込む"}) {
+        for (String label : new String[]{"カメラに接続して取り込む", "Wi-Fi設定を開く", "写真のアクセス権限を確認", "アプリの権限設定を開く", "登録したカメラに接続する", "写真を取り込む", "中止", "内容も確認する", "カメラのWi-Fi接続時に自動で取り込む"}) {
           TextView v = require(root, label);
           check(v.getMinimumHeight() >= GalleryUi.dp(screen, 48), label + " touch minimum");
         }

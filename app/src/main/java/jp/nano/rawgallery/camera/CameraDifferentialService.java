@@ -18,13 +18,16 @@ import jp.nano.rawgallery.CameraImportActivity;
 
 /** Read-only Wi-Fi and mounted SD imports, serialized with the existing USB importer. */
 public final class CameraDifferentialService extends Service {
-    private static final String WIFI="wifi", SD="sd", WATCH="watch", CHANNEL="camera-differential";
+    private static final String WIFI="wifi", PAIRED="paired", SD="sd", WATCH="watch", CHANNEL="camera-differential";
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private volatile boolean running, destroyed;
+    private volatile CameraPairedSession pairedSession;
+    private final CameraRegisteredQueue registeredQueue=new CameraRegisteredQueue();
     private ConnectivityManager.NetworkCallback networkCallback;
     private BroadcastReceiver mediaReceiver;
     private final BooleanSupplier cancelled=()->destroyed||ImportProgress.INSTANCE.getStopRequested();
     public static void startWifi(Context c,boolean verifyAll){start(c,new Intent(c,CameraDifferentialService.class).setAction(WIFI).putExtra("verify",verifyAll));}
+    public static void startRegistered(Context c,String profileId,boolean verifyAll){start(c,new Intent(c,CameraDifferentialService.class).setAction(PAIRED).putExtra("profile_id",profileId).putExtra("verify",verifyAll));}
     public static void startDocumentTree(Context c,Uri uri,boolean verifyAll){start(c,new Intent(c,CameraDifferentialService.class).setAction(SD).setData(uri).putExtra("verify",verifyAll));}
     public static void updateAuto(Context c){start(c,new Intent(c,CameraDifferentialService.class).setAction(WATCH));}
     private static void start(Context c,Intent i){c.startForegroundService(i);}
@@ -33,9 +36,9 @@ public final class CameraDifferentialService extends Service {
     private Notification notification(String text){return new Notification.Builder(this,CHANNEL).setSmallIcon(android.R.drawable.stat_sys_download).setContentTitle("Loupe").setContentText(text).setOngoing(true).setContentIntent(PendingIntent.getActivity(this,0,new Intent(this,CameraImportActivity.class),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT)).build();}
     @Override public int onStartCommand(Intent i,int flags,int id){
         startForeground(781,notification("カメラの接続を待っています"));
-        configureWatch();
         if(i!=null&&!WATCH.equals(i.getAction()))enqueue(i);
-        else if(!watching()&&!running)stopSelf();
+        configureWatch();
+        if((i==null||WATCH.equals(i.getAction()))&&!watching()&&!running)stopSelf();
         return START_NOT_STICKY;
     }
     private boolean watching(){android.content.SharedPreferences p=getSharedPreferences("camera_import",0);return p.getBoolean("wifi_auto",false)||p.getBoolean("sd_auto",false);}
@@ -51,26 +54,65 @@ public final class CameraDifferentialService extends Service {
             IntentFilter f=new IntentFilter(Intent.ACTION_MEDIA_MOUNTED);f.addDataScheme("file");if(Build.VERSION.SDK_INT>=33)registerReceiver(mediaReceiver,f,Context.RECEIVER_NOT_EXPORTED);else registerReceiver(mediaReceiver,f);
         }else if(!p.getBoolean("sd_auto",false)&&mediaReceiver!=null){unregisterReceiver(mediaReceiver);mediaReceiver=null;}
     }
-    private synchronized void enqueue(Intent request){
-        if(running||destroyed)return;running=true;
+    private synchronized void enqueue(Intent request){enqueue(request,false);}
+    private synchronized void enqueue(Intent request,boolean continuation){
+        if(destroyed)return;
+        if(running){
+            if(PAIRED.equals(request.getAction())&&!cancelled.getAsBoolean())
+                registeredQueue.offer(request.getStringExtra("profile_id"),request.getBooleanExtra("verify",false));
+            return;
+        }
+        if(continuation&&cancelled.getAsBoolean())return;
+        running=true;
+        registeredQueue.started(PAIRED.equals(request.getAction())?request.getStringExtra("profile_id"):null);
         worker.execute(()->{
-            boolean locked=CameraImportGate.lock.tryLock();
             try{
-                if(!locked)throw new IOException("別の取り込みが実行中です");
-                String permission=Build.VERSION.SDK_INT>=33?Manifest.permission.READ_MEDIA_IMAGES:Manifest.permission.READ_EXTERNAL_STORAGE;
-                if(checkSelfPermission(permission)!=PackageManager.PERMISSION_GRANTED)throw new IOException("重複を確認するため写真全体へのアクセスを許可してください");
-                ImportProgress.INSTANCE.connecting("写真を確認しています");
-                CameraPhotoImporter importer=new CameraPhotoImporter(this);importer.recover(cancelled);
-                if(WIFI.equals(request.getAction()))wifi(importer,request.getBooleanExtra("verify",getSharedPreferences("camera_import",0).getBoolean("wifi_verify_all",false)));
-                else if(SD.equals(request.getAction())&&request.getData()!=null)sd(importer,request.getData(),request.getBooleanExtra("verify",getSharedPreferences("camera_import",0).getBoolean("sd_verify_all",false)));
-                else throw new IOException("接続元がありません");
-            }catch(Exception e){if(locked)ImportProgress.INSTANCE.finish(cancelled.getAsBoolean()?"取り込みを中断しました":"取り込みを完了できませんでした。接続と写真へのアクセスを確認してください");android.util.Log.w("CameraDifferential","Import failed: "+e.getClass().getSimpleName());}
-            finally{if(locked)CameraImportGate.lock.unlock();running=false;if(!destroyed){if(watching())getSystemService(NotificationManager.class).notify(781,notification("カメラの接続を待っています"));else stopSelf();}}
+                boolean accepted=CameraImportOperationGate.runIfAvailable(CameraImportGate.lock,()->{
+                    if(destroyed)return;
+                    // An owned direct request may reset an earlier stop; a queued handoff must preserve it.
+                    if(continuation)ImportProgress.INSTANCE.handoffConnection("写真を確認しています");
+                    else ImportProgress.INSTANCE.connecting("写真を確認しています");
+                    try{
+                        CameraPhotoPublisher.check(cancelled);
+                        String permission=Build.VERSION.SDK_INT>=33?Manifest.permission.READ_MEDIA_IMAGES:Manifest.permission.READ_EXTERNAL_STORAGE;
+                        if(checkSelfPermission(permission)!=PackageManager.PERMISSION_GRANTED)throw new IOException("重複を確認するため写真全体へのアクセスを許可してください");
+                        CameraPhotoImporter importer=new CameraPhotoImporter(this);importer.recover(cancelled);
+                        if(PAIRED.equals(request.getAction()))paired(importer,request.getStringExtra("profile_id"),request.getBooleanExtra("verify",getSharedPreferences("camera_import",0).getBoolean("wifi_verify_all",false)));
+                        else if(WIFI.equals(request.getAction()))wifi(importer,request.getBooleanExtra("verify",getSharedPreferences("camera_import",0).getBoolean("wifi_verify_all",false)));
+                        else if(SD.equals(request.getAction())&&request.getData()!=null)sd(importer,request.getData(),request.getBooleanExtra("verify",getSharedPreferences("camera_import",0).getBoolean("sd_verify_all",false)));
+                        else throw new IOException("接続元がありません");
+                    }catch(Exception e){ImportProgress.INSTANCE.finish(cancelled.getAsBoolean()?"取り込みを中断しました":e instanceof CameraPairedSession.MissingWifiException?e.getMessage():"取り込みを完了できませんでした。接続と写真へのアクセスを確認してください");android.util.Log.w("CameraDifferential","Import failed: "+e.getClass().getSimpleName());}
+                });
+                if(!accepted&&!destroyed)getSystemService(NotificationManager.class).notify(783,
+                        new Notification.Builder(this,CHANNEL).setSmallIcon(android.R.drawable.ic_menu_camera)
+                        .setContentTitle("取り込みを開始できませんでした")
+                        .setContentText("別の取り込みが実行中です。完了後にもう一度お試しください")
+                        .setContentIntent(PendingIntent.getActivity(this,0,new Intent(this,CameraImportActivity.class),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT))
+                        .setAutoCancel(true).build());
+            }finally{operationFinished();}
         });
+    }
+    private synchronized void operationFinished(){
+        CameraRegisteredQueue.Request next=registeredQueue.finished(cancelled.getAsBoolean());
+        running=false;
+        if(destroyed)return;
+        if(next!=null){
+            enqueue(new Intent().setAction(PAIRED).putExtra("profile_id",next.profileId).putExtra("verify",next.verify),true);
+            if(running)return;
+        }
+        if(watching())getSystemService(NotificationManager.class).notify(781,notification("カメラの接続を待っています"));
+        else stopSelf();
     }
     private static final class WifiSession {
         final Network network; final Ep7WifiClient client;
         WifiSession(Network network,Ep7WifiClient client){this.network=network;this.client=client;}
+    }
+    private void paired(CameraPhotoImporter importer,String profileId,boolean verify)throws IOException{
+        try(CameraPairedSession session=CameraPairedSession.connect(this,profileId,cancelled,
+                text->ImportProgress.INSTANCE.waiting(text))){
+            pairedSession=session;
+            wifi(importer,new WifiSession(session.network,session.client),verify,session::isCancelled,System.nanoTime());
+        }finally{pairedSession=null;}
     }
     private void wifi(CameraPhotoImporter importer,boolean verify)throws IOException{
         ConnectivityManager cm=getSystemService(ConnectivityManager.class);
@@ -85,26 +127,35 @@ public final class CameraDifferentialService extends Service {
             client.probe();connecting.set(false);
             return new WifiSession(network,client);
         },cancelled);
+        wifi(importer,session,verify,cancelled,start);
+    }
+    private void wifi(CameraPhotoImporter importer,WifiSession session,boolean verify,BooleanSupplier sessionCancelled,long start)throws IOException{
+        ConnectivityManager cm=getSystemService(ConnectivityManager.class);
+        CameraPhotoPublisher.check(sessionCancelled);
         Ep7WifiClient client=session.client;Ep7WifiClient.Listing listing=client.list();
         String identity=CameraSourceIdentity.wifi(this,session.network);
         boolean stable=identity!=null;
         String source=stable?identity:"wifi-session:"+session.network.getNetworkHandle();
         ImportProgress.INSTANCE.begin("E-P7 Wi-Fi");int added=0,done=0;long bytes=0;
         for(Ep7WifiClient.Entry e:listing.photos){
-            CameraPhotoPublisher.check(cancelled);
+            CameraPhotoPublisher.check(sessionCancelled);
             if(cm.getNetworkCapabilities(session.network)==null)throw new IOException("Camera disconnected");
             String currentIdentity=CameraSourceIdentity.wifi(this,session.network);
             if(stable&&currentIdentity!=null&&!identity.equals(currentIdentity))throw new IOException("Camera connection changed");
             boolean verifiedIdentity=stable&&currentIdentity!=null;
             CameraImportFile file=new CameraImportFile(verifiedIdentity?source:"wifi-session:"+session.network.getNetworkHandle(),e.path.substring(1),e.bytes,e.date+":"+e.time,fatTime(e.date,e.time));
-            CameraPhotoImporter.Result r=retry(importer,file,out->client.copyOriginal(e,out),verifiedIdentity,verify);
+            CameraPhotoImporter.Result r=retry(importer,file,out->client.copyOriginal(e,out),verifiedIdentity,verify,sessionCancelled);
             if(r.imported)added++;bytes+=r.sourceBytesRead;ImportProgress.INSTANCE.update(++done,listing.photos.size());
         }
+        CameraPhotoPublisher.check(sessionCancelled);
         finish(added,done,bytes,start,false);
     }
     private CameraPhotoImporter.Result retry(CameraPhotoImporter importer,CameraImportFile f,CameraImportCopy.Copy copy,boolean stable,boolean verify)throws IOException{
+        return retry(importer,f,copy,stable,verify,cancelled);
+    }
+    private CameraPhotoImporter.Result retry(CameraPhotoImporter importer,CameraImportFile f,CameraImportCopy.Copy copy,boolean stable,boolean verify,BooleanSupplier operationCancelled)throws IOException{
         IOException first=null;
-        for(int i=0;i<2;i++)try{return importer.importPhoto(f,copy,null,stable,verify,cancelled);}catch(InterruptedIOException e){throw e;}catch(IOException e){if(first==null)first=e;CameraPhotoPublisher.check(cancelled);importer.recover(cancelled);}
+        for(int i=0;i<2;i++)try{return importer.importPhoto(f,copy,null,stable,verify,operationCancelled);}catch(InterruptedIOException e){throw e;}catch(IOException e){if(first==null)first=e;CameraPhotoPublisher.check(operationCancelled);importer.recover(operationCancelled);}
         throw first;
     }
     private static long fatTime(int date,int time){try{return java.time.LocalDateTime.of(1980+(date>>9),(date>>5)&15,date&31,time>>11,(time>>5)&63,(time&31)*2).atZone(java.time.ZoneId.systemDefault()).toEpochSecond();}catch(Exception e){return 0;}}
@@ -124,5 +175,5 @@ public final class CameraDifferentialService extends Service {
         ImportProgress.INSTANCE.finish(added+"枚追加・"+(count-added)+"枚取り込み済み"+(card?"。カメラへカードを戻しましたか":""));
         if(card)getSystemService(NotificationManager.class).notify(782,new Notification.Builder(this,CHANNEL).setSmallIcon(android.R.drawable.ic_menu_camera).setContentTitle("カメラへカードを戻しましたか").setContentText("SDカードの取り込みが完了しました").setAutoCancel(true).build());
     }
-    @Override public void onDestroy(){destroyed=true;if(networkCallback!=null)getSystemService(ConnectivityManager.class).unregisterNetworkCallback(networkCallback);if(mediaReceiver!=null)unregisterReceiver(mediaReceiver);worker.shutdownNow();super.onDestroy();}
+    @Override public void onDestroy(){destroyed=true;synchronized(this){registeredQueue.clear();}CameraPairedSession session=pairedSession;if(session!=null)session.close();if(networkCallback!=null)getSystemService(ConnectivityManager.class).unregisterNetworkCallback(networkCallback);if(mediaReceiver!=null)unregisterReceiver(mediaReceiver);worker.shutdownNow();super.onDestroy();}
 }

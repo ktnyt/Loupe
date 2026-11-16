@@ -30,8 +30,9 @@ public final class CameraBleWake {
         public final Outcome outcome;
         public final int cameraStatus;
         public final boolean wakeCommandSent;
-        private Result(Outcome outcome, int cameraStatus, boolean wakeCommandSent) {
-            this.outcome = outcome; this.cameraStatus = cameraStatus; this.wakeCommandSent = wakeCommandSent;
+        public final boolean wifiStart;
+        private Result(Outcome outcome, int cameraStatus, boolean wakeCommandSent, boolean wifiStart) {
+            this.outcome = outcome; this.cameraStatus = cameraStatus; this.wakeCommandSent = wakeCommandSent; this.wifiStart = wifiStart;
         }
     }
     public interface Observer { void onFinished(Result result); }
@@ -71,7 +72,15 @@ public final class CameraBleWake {
     }
     /** Retain this helper after scan. Copies passcode; caller must erase its own char array. */
     public Closeable wake(BluetoothDevice device, char[] passcode, Observer observer) {
-        Wake task = new Wake(device, passcode == null ? null : passcode.clone(), Objects.requireNonNull(observer));
+        return wake(device, passcode, observer, false);
+    }
+    /** Caller owns the returned handle through Wi-Fi verification. Only Wi-Fi-start holds GATT after ACK.
+     * Credentials are erased before notification; retained GATT is released by close or after 180 seconds. */
+    public Closeable wakeForWifi(BluetoothDevice device, char[] passcode, Observer observer) {
+        return wake(device, passcode, observer, true);
+    }
+    private Closeable wake(BluetoothDevice device, char[] passcode, Observer observer, boolean retainForWifi) {
+        Wake task = new Wake(device, passcode == null ? null : passcode.clone(), Objects.requireNonNull(observer), retainForWifi);
         main.post(task::start); return task;
     }
     private final class Scan implements Closeable {
@@ -156,6 +165,8 @@ public final class CameraBleWake {
         final UUID[] subscriptions = {CameraBleProtocol.COMMAND, CameraBleProtocol.RESPONSE, CameraBleProtocol.EVENT};
         int subscription, sequence = 1;
         boolean done, wakeSent, warmConnected, warmDisconnected, freshAsicOn;
+        final boolean retainForWifi;
+        final Runnable retainedDeadline = this::releaseRetainedGatt;
         int connectionCount;
         final long started = SystemClock.elapsedRealtime();
         int gattStatus = -1;
@@ -262,8 +273,8 @@ public final class CameraBleWake {
                 notifyValue(source, characteristic.getUuid(), value);
             }
         };
-        Wake(BluetoothDevice device, char[] passcode, Observer observer) {
-            this.device = device; this.passcode = passcode; this.observer = observer;
+        Wake(BluetoothDevice device, char[] passcode, Observer observer, boolean retainForWifi) {
+            this.device = device; this.passcode = passcode; this.observer = observer; this.retainForWifi = retainForWifi;
         }
         boolean current(BluetoothGatt source) {
             if (done || cancelled.get()) return false;
@@ -466,9 +477,12 @@ public final class CameraBleWake {
         }
         void finish(Outcome outcome, int status, Reason reason) {
             if (done) return; done = true; recovery.finish(); main.removeCallbacks(timeout); main.removeCallbacks(settled);
-            if (activeWake == this) activeWake = null;
+            boolean retained = retainForWifi && outcome == Outcome.PROTOCOL_ACCEPTED
+                    && operation == CameraBleProtocol.Operation.WIFI_START && gatt != null;
+            if (!retained && activeWake == this) activeWake = null;
             erasePasscode(); eraseFrame(); pendingResponse = null; selectedName = null; stopFreshScan();
-            if (gatt != null) {
+            if (retained) main.postDelayed(retainedDeadline, 180000);
+            else if (gatt != null) {
                 BluetoothGatt closing = gatt; gatt = null;
                 try { closing.disconnect(); }
                 catch (SecurityException revoked) { if (outcome == Outcome.PROTOCOL_ACCEPTED) outcome = Outcome.PERMISSION_DENIED; }
@@ -490,8 +504,19 @@ public final class CameraBleWake {
                     .putBoolean("fresh_asic_on", freshAsicOn).putInt("connection_count", connectionCount)
                     .putLong("elapsed_ms", SystemClock.elapsedRealtime() - started).commit();
             android.util.Log.i("LoupeCameraBle", "diagnostic_saved=" + saved);
-            observer.onFinished(new Result(outcome, status, wakeSent));
+            observer.onFinished(new Result(outcome, status, wakeSent, operation == CameraBleProtocol.Operation.WIFI_START));
         }
-        @Override public void close() { cancelled.set(true); dispatch(() -> finish(Outcome.CANCELLED, -1)); }
+        void releaseRetainedGatt() {
+            main.removeCallbacks(retainedDeadline);
+            if (activeWake == this) activeWake = null;
+            BluetoothGatt closing = gatt; gatt = null;
+            if (closing == null) return;
+            try { closing.disconnect(); } catch (SecurityException revoked) { } catch (RuntimeException ignored) { }
+            try { closing.close(); } catch (SecurityException revoked) { } catch (RuntimeException ignored) { }
+        }
+        @Override public void close() {
+            cancelled.set(true);
+            dispatch(() -> { if (done) releaseRetainedGatt(); else finish(Outcome.CANCELLED, -1); });
+        }
     }
 }

@@ -51,6 +51,9 @@ final class CameraImportPilotChecks {
     private CameraImportPilotChecks() { }
 
     static String runWifi(Instrumentation instrumentation) throws Exception {
+        return runWifi(instrumentation, null);
+    }
+    static String runWifi(Instrumentation instrumentation, jp.nano.rawgallery.camera.CameraPairedSession paired) throws Exception {
         Context context = instrumentation.getTargetContext();
         if (!CameraImportGate.lock.tryLock()) throw new IOException("Another camera import is active");
         PilotSession session = null;
@@ -60,13 +63,13 @@ final class CameraImportPilotChecks {
             session = createSession(context);
             ConnectivityManager connectivity = context.getSystemService(ConnectivityManager.class);
             if (connectivity == null) throw new IOException("Wi-Fi network service is unavailable");
-            Network network = CameraWifiNetwork.select(connectivity);
+            Network network = paired == null ? CameraWifiNetwork.select(connectivity) : paired.network;
             if (network == null) throw new IOException("No unambiguous camera Wi-Fi network is available");
             String identity = CameraSourceIdentity.wifi(context, network);
             boolean stable = identity != null;
             String sourceId = stable ? identity : "wifi-session:" + network.getNetworkHandle();
-            Ep7WifiClient client = new Ep7WifiClient(
-                    url -> (HttpURLConnection) network.openConnection(url, Proxy.NO_PROXY), () -> false);
+            Ep7WifiClient client = paired == null ? new Ep7WifiClient(
+                    url -> (HttpURLConnection) network.openConnection(url, Proxy.NO_PROXY), () -> false) : paired.client;
 
             long listStart = System.nanoTime();
             Ep7WifiClient.Listing listing = client.list();

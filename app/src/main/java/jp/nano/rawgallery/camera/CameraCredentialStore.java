@@ -39,7 +39,7 @@ public final class CameraCredentialStore {
         synchronized (LOCK) {
             List<String> names = new ArrayList<>();
             for (String filename : files()) {
-                try (Profile profile = read(filename)) { names.add(profile.name); }
+                try (Registration profile = read(filename)) { names.add(profile.bleName); }
             }
             Collections.sort(names);
             return names;
@@ -49,10 +49,22 @@ public final class CameraCredentialStore {
         synchronized (LOCK) {
             String filename = filename(exactBleName);
             if (!files().contains(filename)) return null;
-            try (Profile profile = read(filename)) {
-                if (!profile.name.equals(exactBleName)) throw failure();
+            try (Registration profile = read(filename)) {
+                if (!profile.bleName.equals(exactBleName)) throw failure();
                 return profile.code.clone();
             }
+        }
+    }
+    /** Opaque profile reference; never contains a camera name or credential. */
+    public static String profileId(String exactBleName) {
+        try { return filename(exactBleName).substring(0, 64); }
+        catch (IOException invalid) { throw new IllegalArgumentException("Invalid camera name"); }
+    }
+    public Registration registration(String opaqueId) throws IOException {
+        synchronized (LOCK) {
+            if (opaqueId == null || !opaqueId.matches("[0-9a-f]{64}")) throw failure();
+            String filename = opaqueId + ".bin";
+            return files().contains(filename) ? read(filename) : null;
         }
     }
     public void save(CameraQrCredentials credentials) throws IOException {
@@ -62,27 +74,34 @@ public final class CameraCredentialStore {
             if (!existing.contains(filename) && existing.size() >= MAX_CAMERAS)
                 throw new IOException("Camera registration limit reached");
             if (!directory.isDirectory() && !directory.mkdirs() && !directory.isDirectory()) throw failure();
-            char[] code = credentials.passcode();
+            char[] code = credentials.passcode(), wifi = null;
             byte[] plain = null, encrypted = null;
             byte[] previous = null, record = null;
             File target = new File(directory, filename), rollback = new File(directory, filename + ".rollback");
             try {
-                byte[] name = credentials.bleName.getBytes(StandardCharsets.US_ASCII);
-                if (code.length < 1 || code.length > 12) throw failure();
-                plain = new byte[2 + name.length + code.length];
-                plain[0] = (byte) name.length;
-                System.arraycopy(name, 0, plain, 1, name.length);
-                plain[1 + name.length] = (byte) code.length;
-                for (int i = 0; i < code.length; i++) {
-                    if (code[i] < 0x20 || code[i] > 0x7e) throw failure();
-                    plain[2 + name.length + i] = (byte) code[i];
-                }
+                wifi = credentials.wifiPassphrase();
+                byte[] name = ascii(credentials.bleName, 1, 32), ssid = ascii(credentials.ssid, 1, 32);
+                if (!valid(code, 1, 12) || !valid(wifi, 8, 63)
+                        || (credentials.wifiSecurity != 1 && credentials.wifiSecurity != 2)) throw failure();
+                // Version 2: length/name, length/code, security, length/SSID, length/passphrase.
+                plain = new byte[5 + name.length + code.length + ssid.length + wifi.length];
+                int at = 0;
+                plain[at++] = (byte) name.length;
+                System.arraycopy(name, 0, plain, at, name.length); at += name.length;
+                plain[at++] = (byte) code.length;
+                for (char c : code) plain[at++] = (byte) c;
+                plain[at++] = (byte) credentials.wifiSecurity;
+                plain[at++] = (byte) ssid.length;
+                System.arraycopy(ssid, 0, plain, at, ssid.length); at += ssid.length;
+                plain[at++] = (byte) wifi.length;
+                for (char c : wifi) plain[at++] = (byte) c;
                 Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
                 cipher.init(Cipher.ENCRYPT_MODE, key(filename, true));
+                cipher.updateAAD(new byte[]{2});
                 cipher.updateAAD(filename.getBytes(StandardCharsets.US_ASCII));
                 encrypted = cipher.doFinal(plain);
                 if (cipher.getIV().length != 12) throw failure();
-                record = new byte[13 + encrypted.length]; record[0] = 1;
+                record = new byte[13 + encrypted.length]; record[0] = 2;
                 System.arraycopy(cipher.getIV(), 0, record, 1, 12);
                 System.arraycopy(encrypted, 0, record, 13, encrypted.length);
                 // The old ciphertext remains authoritative until the new file has been verified.
@@ -91,14 +110,16 @@ public final class CameraCredentialStore {
                 write(rollback, previous);
                 write(target, record);
                 faults.afterReplacement();
-                try (Profile saved = decode(filename, bytes(target))) {
-                    if (!saved.name.equals(credentials.bleName) || !Arrays.equals(saved.code, code)) throw failure();
+                try (Registration saved = decode(filename, bytes(target))) {
+                    if (!saved.bleName.equals(credentials.bleName) || !Arrays.equals(saved.code, code)
+                            || !Objects.equals(saved.ssid, credentials.ssid) || saved.wifiSecurity != credentials.wifiSecurity
+                            || !Arrays.equals(saved.wifi, wifi)) throw failure();
                 }
                 erase(rollback); // Commit point. A crash or failure before this keeps the old registration.
             } catch (Exception error) {
                 throw failure();
             } finally {
-                Arrays.fill(code, '\0'); wipe(plain); wipe(encrypted); wipe(previous); wipe(record);
+                Arrays.fill(code, '\0'); if (wifi != null) Arrays.fill(wifi, '\0'); wipe(plain); wipe(encrypted); wipe(previous); wipe(record);
             }
         }
     }
@@ -128,7 +149,7 @@ public final class CameraCredentialStore {
         if (result.size() > MAX_CAMERAS) throw failure();
         return result;
     }
-    private Profile read(String filename) throws IOException {
+    private Registration read(String filename) throws IOException {
         File rollback = new File(directory, filename + ".rollback");
         return decode(filename, bytes(exists(rollback) ? rollback : new File(directory, filename)));
     }
@@ -157,25 +178,61 @@ public final class CameraCredentialStore {
         new AtomicFile(file).delete();
         if (exists(file) || new File(file + ".new").exists()) throw failure();
     }
-    private Profile decode(String filename, byte[] record) throws IOException {
+    private Registration decode(String filename, byte[] record) throws IOException {
         byte[] plain = null;
+        char[] code = null, wifi = null;
         try {
-            if (record.length < 31 || record[0] != 1) throw failure();
+            if (record.length < 31 || record.length > 256 || (record[0] != 1 && record[0] != 2)) throw failure();
+            int version = record[0];
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
             cipher.init(Cipher.DECRYPT_MODE, key(filename, false), new GCMParameterSpec(128, record, 1, 12));
+            if (version == 2) cipher.updateAAD(new byte[]{2});
             cipher.updateAAD(filename.getBytes(StandardCharsets.US_ASCII));
             plain = cipher.doFinal(record, 13, record.length - 13);
-            int nameLength = plain[0] & 255;
+            int at = 0, nameLength = plain[at++] & 255;
             if (nameLength < 1 || nameLength > 32 || plain.length < nameLength + 3) throw failure();
-            String name = new String(plain, 1, nameLength, StandardCharsets.US_ASCII);
-            int codeLength = plain[1 + nameLength] & 255;
-            if (!filename(name).equals(filename) || codeLength < 1 || codeLength > 12
-                    || plain.length != nameLength + codeLength + 2) throw failure();
-            char[] code = new char[codeLength];
-            for (int i = 0; i < codeLength; i++) code[i] = (char) (plain[nameLength + 2 + i] & 255);
-            return new Profile(name, code);
+            String name = new String(plain, at, nameLength, StandardCharsets.US_ASCII); at += nameLength;
+            if (!filename(name).equals(filename)) throw failure();
+            int codeLength = plain[at++] & 255;
+            code = chars(plain, at, codeLength, 1, 12); at += codeLength;
+            String ssid = null; int security = 0;
+            if (version == 2) {
+                security = plain[at++] & 255;
+                if (security != 1 && security != 2) throw failure();
+                int ssidLength = plain[at++] & 255;
+                char[] ssidChars = chars(plain, at, ssidLength, 1, 32); at += ssidLength;
+                try { ssid = new String(ssidChars); } finally { Arrays.fill(ssidChars, '\0'); }
+                int wifiLength = plain[at++] & 255;
+                wifi = chars(plain, at, wifiLength, 8, 63); at += wifiLength;
+            }
+            if (at != plain.length) throw failure();
+            Registration profile = new Registration(filename.substring(0, 64), name, ssid, security, code, wifi);
+            code = null; wifi = null;
+            return profile;
         } catch (Exception error) { throw failure(); }
-        finally { wipe(record); wipe(plain); }
+        finally {
+            wipe(record); wipe(plain);
+            if (code != null) Arrays.fill(code, '\0');
+            if (wifi != null) Arrays.fill(wifi, '\0');
+        }
+    }
+    private static byte[] ascii(String text, int min, int max) throws IOException {
+        if (text == null || text.length() < min || text.length() > max || text.trim().isEmpty()) throw failure();
+        for (int i = 0; i < text.length(); i++) if (text.charAt(i) < 0x20 || text.charAt(i) > 0x7e) throw failure();
+        return text.getBytes(StandardCharsets.US_ASCII);
+    }
+    private static boolean valid(char[] value, int min, int max) {
+        if (value == null || value.length < min || value.length > max) return false;
+        boolean nonblank = false;
+        for (char c : value) { if (c < 0x20 || c > 0x7e) return false; if (c != ' ') nonblank = true; }
+        return nonblank;
+    }
+    private static char[] chars(byte[] plain, int at, int length, int min, int max) throws IOException {
+        if (length < min || length > max || at < 0 || at > plain.length - length) throw failure();
+        char[] result = new char[length];
+        for (int i = 0; i < length; i++) result[i] = (char) (plain[at + i] & 255);
+        if (!valid(result, min, max)) { Arrays.fill(result, '\0'); throw failure(); }
+        return result;
     }
     private SecretKey key(String filename, boolean create) throws Exception {
         KeyStore store = keys(); String alias = alias(filename);
@@ -200,10 +257,26 @@ public final class CameraCredentialStore {
             return result + ".bin";
         } catch (java.security.NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
     }
-    private static final class Profile implements AutoCloseable {
-        final String name; final char[] code;
-        Profile(String name, char[] code) { this.name = name; this.code = code; }
-        public void close() { Arrays.fill(code, '\0'); }
+    public static final class Registration implements AutoCloseable {
+        public final String id, bleName, ssid;
+        public final int wifiSecurity;
+        private char[] code, wifi;
+        private boolean closed;
+        private Registration(String id, String bleName, String ssid, int wifiSecurity, char[] code, char[] wifi) {
+            this.id = id; this.bleName = bleName; this.ssid = ssid; this.wifiSecurity = wifiSecurity;
+            this.code = code; this.wifi = wifi;
+        }
+        public boolean hasWifi() { return ssid != null && (wifiSecurity == 1 || wifiSecurity == 2); }
+        public synchronized char[] passcode() { checkOpen(); return code.clone(); }
+        /** Null for a legacy version-1 BLE-only profile. */
+        public synchronized char[] wifiPassphrase() { checkOpen(); return wifi == null ? null : wifi.clone(); }
+        private void checkOpen() { if (closed) throw new IllegalStateException("Camera registration is closed"); }
+        public synchronized void close() {
+            closed = true;
+            if (code != null) Arrays.fill(code, '\0');
+            if (wifi != null) Arrays.fill(wifi, '\0');
+            code = null; wifi = null;
+        }
     }
     private static void wipe(byte[] value) { if (value != null) Arrays.fill(value, (byte) 0); }
     private static IOException failure() { return new IOException("Camera registration could not be read or saved"); }

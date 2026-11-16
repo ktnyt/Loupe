@@ -58,7 +58,7 @@ public final class Ep7WifiActivity extends AppCompatActivity {
         connect = button(body, "カメラに接続して取り込む", this::openWifiPanel);
         text(body, "Wi-Fiパネルでカメラを選び、閉じると取り込みを開始します。", 14);
         button(body, "Wi-Fi設定を開く", () -> startActivity(new Intent(Settings.ACTION_WIFI_SETTINGS)));
-        button(body, "Bluetoothでカメラの起動を試す", () -> startActivity(new Intent(this, CameraBleActivity.class)));
+        button(body, "登録したカメラに接続する", () -> startActivity(new Intent(this, CameraBleActivity.class)));
         var prefs = getSharedPreferences("camera_import", MODE_PRIVATE);
         verify = new MaterialSwitch(this);
         verify.setChecked(prefs.getBoolean("wifi_verify_all", false)); verify.setText("内容も確認する"); verify.setMinHeight(dp(48));

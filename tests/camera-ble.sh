@@ -9,3 +9,7 @@ javac -d "$work" "$root/app/src/main/java/jp/nano/rawgallery/camera/CameraQrCred
 java -cp "$work" CameraQrCredentialsTest
 javac -d "$work" "$root/app/src/main/java/jp/nano/rawgallery/camera/CameraBleRecovery.java" "$root/tests/CameraBleRecoveryTest.java"
 java -cp "$work" jp.nano.rawgallery.camera.CameraBleRecoveryTest
+javac -d "$work" "$root/app/src/main/java/jp/nano/rawgallery/camera/CameraRegisteredQueue.java" "$root/tests/CameraRegisteredQueueTest.java"
+java -cp "$work" jp.nano.rawgallery.camera.CameraRegisteredQueueTest
+javac -d "$work" "$root/app/src/main/java/jp/nano/rawgallery/camera/CameraImportOperationGate.java" "$root/tests/CameraImportOperationGateTest.java"
+java -cp "$work" jp.nano.rawgallery.camera.CameraImportOperationGateTest
