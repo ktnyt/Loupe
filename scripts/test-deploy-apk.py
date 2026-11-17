@@ -36,6 +36,14 @@ XML = '''<manifest xmlns:android="http://schemas.android.com/apk/res/android" pa
 </application></manifest>'''
 
 
+USB_ALIAS = '<activity-alias android:name=".camera.UsbAttachEntry" android:targetActivity=".camera.CameraAttachActivity" android:enabled="false" android:exported="true">'
+ALIAS_XML = XML.replace(
+    '<activity android:name=".camera.CameraAttachActivity" android:exported="true">',
+    '<activity android:name=".camera.CameraAttachActivity" android:exported="false"/>' + USB_ALIAS,
+).replace('</activity>\n<service android:name=".camera.ImportService"',
+          '</activity-alias>\n<service android:name=".camera.ImportService"')
+
+
 class DeployTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -226,6 +234,65 @@ class DeployTests(unittest.TestCase):
                     XML.replace('android:name=".camera.CameraAttachActivity"',
                                 'android:name=".camera.CameraAttachActivity" android:enabled="false"')]:
             self.assertNotIn('camera-import', deploy.manifest_info(xml)['features'])
+
+    def test_opt_in_usb_alias_preserves_required_features(self):
+        for xml in (
+            ALIAS_XML,
+            ALIAS_XML.replace('android:enabled="false"', 'android:enabled="true"'),
+            ALIAS_XML.replace(' android:enabled="false"', ''),
+            ALIAS_XML.replace('@xml/camera_import_devices', '@0x7f120001'),
+            ALIAS_XML.replace('@xml/camera_import_devices', '@ref/0x7f120001'),
+            ALIAS_XML.replace('android:targetActivity=".camera.CameraAttachActivity"',
+                              'android:targetActivity="jp.nano.rawgallery.camera.CameraAttachActivity"'),
+        ):
+            with self.subTest(xml=xml):
+                info = deploy.manifest_info(xml)
+                self.assertEqual(set(info['features']), deploy.REQUIRED)
+                deploy.check_features(info)
+
+    def test_opt_in_usb_alias_requires_exact_enabled_private_target(self):
+        target = '<activity android:name=".camera.CameraAttachActivity" android:exported="false"/>'
+        for xml in (
+            ALIAS_XML.replace(target, ''),
+            ALIAS_XML.replace(target, target.replace('/>', ' android:enabled="false"/>')),
+            ALIAS_XML.replace(target, target.replace('exported="false"', 'exported="true"')),
+            ALIAS_XML.replace(target, target.replace('activity ', 'service ')),
+            ALIAS_XML.replace('android:targetActivity=".camera.CameraAttachActivity"', ''),
+            ALIAS_XML.replace('android:targetActivity=".camera.CameraAttachActivity"',
+                              'android:targetActivity=".CameraImportActivity"'),
+            ALIAS_XML.replace('android:name=".camera.UsbAttachEntry"',
+                              'android:name=".camera.OtherEntry"'),
+        ):
+            with self.subTest(xml=xml):
+                self.assertNotIn('camera-import', deploy.manifest_info(xml)['features'])
+
+    def test_opt_in_usb_alias_requires_exported_usb_registration(self):
+        for xml in (
+            ALIAS_XML.replace(USB_ALIAS, USB_ALIAS.replace('exported="true"', 'exported="false"')),
+            ALIAS_XML.replace(USB_ALIAS, USB_ALIAS.replace(' android:exported="true"', '')),
+            ALIAS_XML.replace('<intent-filter><action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"/></intent-filter>', ''),
+            ALIAS_XML.replace('<meta-data android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" android:resource="@xml/camera_import_devices"/>', ''),
+            ALIAS_XML.replace('USB_DEVICE_ATTACHED', 'OTHER'),
+            ALIAS_XML.replace('android:resource="@xml/camera_import_devices"', ''),
+            ALIAS_XML.replace('@xml/camera_import_devices', '@xml/other'),
+            ALIAS_XML.replace('@xml/camera_import_devices', 'camera_import_devices'),
+        ):
+            with self.subTest(xml=xml):
+                self.assertNotIn('camera-import', deploy.manifest_info(xml)['features'])
+
+    def test_opt_in_usb_alias_retains_manual_import_service_and_permissions(self):
+        for xml in (
+            ALIAS_XML.replace('<activity android:name=".CameraImportActivity"/>', ''),
+            ALIAS_XML.replace('android:name=".CameraImportActivity"',
+                              'android:name=".CameraImportActivity" android:enabled="false"'),
+            ALIAS_XML.replace('android:name=".camera.ImportService"',
+                              'android:name=".camera.ImportService" android:enabled="false"'),
+            ALIAS_XML.replace('connectedDevice', 'dataSync'),
+            ALIAS_XML.replace('<uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>', ''),
+            ALIAS_XML.replace('<uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>', ''),
+        ):
+            with self.subTest(xml=xml):
+                self.assertNotIn('camera-import', deploy.manifest_info(xml)['features'])
 
     def test_camera_requires_foreground_permissions_and_component_types(self):
         for permission in ('FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_CONNECTED_DEVICE'):
