@@ -74,6 +74,21 @@ final class CameraUsbLaunchChecks {
       if(screen!=null){CameraImportActivity close=screen;t.runOnMainSync(close::finish);t.waitForIdleSync();}
     }
   }
+  static String choice(Instrumentation t,android.os.Bundle args) {
+    var context=t.getTargetContext();
+    require(!ImportProgress.INSTANCE.getActive(),"no active import");
+    String choice=args.getString("choice","");
+    switch(choice) {
+      case "on": UsbLaunchSettings.setEnabled(context,true); break;
+      case "off": UsbLaunchSettings.setEnabled(context,false); break;
+      case "default": context.getPackageManager().setComponentEnabledSetting(UsbLaunchSettings.component(context),PackageManager.COMPONENT_ENABLED_STATE_DEFAULT,PackageManager.DONT_KILL_APP); break;
+      case "verify-on": case "verify-off": break;
+      default: throw new IllegalArgumentException("Unknown USB choice check");
+    }
+    boolean wanted=choice.equals("on")||choice.equals("verify-on");
+    require(UsbLaunchSettings.isEnabled(context)==wanted && candidates(t)==(wanted?1:0),"actual stored choice and resolver agree");
+    return "PASS USB choice "+choice+" actual stored state and resolver verified; app UID only, no source operation";
+  }
   private static int candidates(Instrumentation t) {
     var context=t.getTargetContext();var list=context.getPackageManager().queryIntentActivities(
         new Intent(UsbManager.ACTION_USB_DEVICE_ATTACHED).setPackage(context.getPackageName()),0);

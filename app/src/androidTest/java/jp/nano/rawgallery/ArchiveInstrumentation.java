@@ -272,6 +272,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
             result=CameraImportPilotChecks.runWifi(this);
           } finally {runOnMainSync(()->{pilotUi.getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);pilotUi.finish();});}
         }
+        else if(cameraPilotMode.equals("camera-pilot-usb-launch-choice"))result=CameraUsbLaunchChecks.choice(this,cameraPilotArguments);
         else if(cameraPilotMode.equals("camera-pilot-usb-launch"))result=CameraUsbLaunchChecks.run(this);
         else if(cameraPilotMode.equals("camera-pilot-import-progress"))result=CameraImportProgressChecks.run(this);
         else if(cameraPilotMode.equals("camera-pilot-import-history"))result=CameraImportHistoryChecks.run(this);
