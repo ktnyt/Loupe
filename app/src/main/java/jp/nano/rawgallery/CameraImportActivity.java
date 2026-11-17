@@ -492,6 +492,11 @@ public final class CameraImportActivity extends AppCompatActivity {
                 action.setTag("wifi-import-profile:" + profile.id);
                 MaterialUi.filled(action);
                 action.setMinHeight(dp(56));
+                if (wifiActions.getChildCount() > 1) {
+                    LinearLayout.LayoutParams spacing = (LinearLayout.LayoutParams) action.getLayoutParams();
+                    spacing.topMargin = dp(8);
+                    action.setLayoutParams(spacing);
+                }
             }
         }
         renderWifiEnabled();

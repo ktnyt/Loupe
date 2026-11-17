@@ -48,7 +48,10 @@ public final class CameraPairedSession implements Closeable {
     private final ConnectivityManager.NetworkCallback callback = new ConnectivityManager.NetworkCallback() {
         @Override public void onAvailable(Network value) {
             synchronized (CameraPairedSession.this) {
-                if (closed || unavailable || selected != null) return;
+                // The timer can still be queued when Android delivers this callback. Only a
+                // network acquired within the budget may authorize a later BLE fallback.
+                if (closed || unavailable || selected != null || externalCancelled()
+                        || (deadline > 0 && SystemClock.elapsedRealtime() >= deadline)) return;
                 selected = value;
             }
             available.countDown();

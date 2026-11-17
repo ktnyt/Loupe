@@ -4,6 +4,7 @@ import android.net.NetworkCapabilities;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.os.Parcel;
+import android.os.SystemClock;
 import java.net.*;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -79,6 +80,9 @@ public final class CameraPairedSessionChecks {
         }
         public void request(NetworkRequest request, ConnectivityManager.NetworkCallback value, int timeout) {
             callback = value;
+            // register() has not posted its expiry runnable while request() is executing.
+            // Deliver after the budget here to reproduce a late callback before that timer.
+            if (mode == 7) SystemClock.sleep(timeout + 20L);
             if (mode == 3) callback.onUnavailable();
             else if (mode != 4) callback.onAvailable(requested);
         }
@@ -103,7 +107,7 @@ public final class CameraPairedSessionChecks {
         }
     }
     private static void recovery(NetworkRequest request) throws Exception {
-        for (int mode : new int[]{0, 1, 2, 3, 4, 5, 6}) {
+        for (int mode : new int[]{0, 1, 2, 3, 4, 5, 6, 7}) {
             AtomicBoolean cancelled = new AtomicBoolean();
             List<FakeAccess> attempts = new ArrayList<>();
             int[] ble = {0};
@@ -118,7 +122,7 @@ public final class CameraPairedSessionChecks {
                         require(attempts.get(0).released == 1, "Tentative released before BLE fallback");
                         require(attempts.get(0).disconnected, "Tentative HTTP disconnected before fallback");
                     }
-                    session.acquire(request, value -> { }, mode == 4 && !wake ? 100 : budget);
+                    session.acquire(request, value -> { }, (mode == 4 || mode == 7) && !wake ? 100 : budget);
                 });
                 require(mode <= 2, "Refusal, pre-acquisition deadline and cancellation must end");
                 require(attempts.size() == (mode == 0 ? 1 : 2), "Fresh fallback session count");
@@ -137,6 +141,7 @@ public final class CameraPairedSessionChecks {
             } catch (IOException failure) {
                 require(mode >= 3, "Only refusal, pre-acquisition deadline or external cancel end without fallback");
                 require(attempts.size() == 1 && ble[0] == 0 && attempts.get(0).released == 1, "No reprompt after refusal, deadline or cancel");
+                if (mode == 7) require(attempts.get(0).opens == 0, "Late availability cannot acquire, probe or authorize BLE fallback");
             } finally { if (mode == 6) Thread.interrupted(); }
         }
         // A later explicit import starts independently after the previous import lost its network.

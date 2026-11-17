@@ -75,6 +75,14 @@ final class CameraWifiQuickChecks {
             fixture = (context, cancel) -> List.of(new CameraQuickImportSources.Profile("opaque-one", "OM SYSTEM E-P7"),
                     new CameraQuickImportSources.Profile("opaque-two", "OLYMPUS 長いカメラ名のテスト"));
             screen = open(t); await(t, screen, "wifi-import-profile:opaque-two"); capture(t, screen, "multiple-cameras");
+            CameraImportActivity multiple = screen;
+            t.runOnMainSync(() -> {
+                View first = find(multiple.getWindow().getDecorView(), "wifi-import-profile:opaque-one");
+                View second = find(multiple.getWindow().getDecorView(), "wifi-import-profile:opaque-two");
+                float density = multiple.getResources().getDisplayMetrics().density;
+                require(second.getTop() - first.getBottom() >= Math.round(8 * density), "distinct camera targets");
+                require(first.getHeight() >= Math.round(48 * density) && second.getHeight() >= Math.round(48 * density), "camera touch heights");
+            });
             require(ble.get() == 1, "no automatic selection"); click(t, screen, "wifi-import-profile:opaque-two");
             require(ble.get() == 2 && "opaque-two".equals(captured.get().getStringExtra(CameraBleActivity.EXTRA_QUICK_PROFILE_ID)), "direct second camera");
             finish(t, screen); screen = null;
