@@ -75,6 +75,20 @@ public final class CameraImportActivity extends AppCompatActivity {
     private static final java.util.concurrent.Executor SOURCE_IO = new java.util.concurrent.ThreadPoolExecutor(
             0, 2, 30, java.util.concurrent.TimeUnit.SECONDS, new java.util.concurrent.SynchronousQueue<>());
 
+    // Instance-scoped loader lets instrumentation supply metadata without touching registrations.
+    interface WifiProfileLoader {
+        List<CameraQuickImportSources.Profile> load(android.content.Context context,
+                android.os.CancellationSignal cancellation) throws IOException;
+    }
+    WifiProfileLoader wifiProfileLoader = CameraQuickImportSources::wifiProfiles;
+    private LinearLayout wifiActions;
+    private TextView wifiStatus;
+    private MaterialButton wifiSettings;
+    private android.os.CancellationSignal wifiCancellation;
+    private int wifiGeneration;
+    private boolean wifiLaunching;
+    private Runnable wifiTimeout;
+
     private SharedPreferences settings;
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
@@ -191,8 +205,21 @@ public final class CameraImportActivity extends AppCompatActivity {
                     () -> requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 402));
         }
         LinearLayout wifiTrial = card(root, "Wi-Fi取り込み");
-        button(wifiTrial, "E-P7からWi-Fiで取り込む",
-                () -> startActivity(new Intent(this, Ep7WifiActivity.class)));
+        wifiTrial.setTag("wifi-import-card");
+        TextView wifiHeading = (TextView) wifiTrial.getChildAt(0);
+        wifiTrial.removeView(wifiHeading);
+        LinearLayout wifiHeader = new LinearLayout(this);
+        wifiHeader.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        wifiHeader.addView(wifiHeading, new LinearLayout.LayoutParams(0, -2, 1));
+        wifiSettings = LibraryUi.icon(this, R.drawable.ic_viewer_edit, "Wi-Fi取り込み設定", this::openWifiSettings);
+        wifiSettings.setTag("wifi-import-settings");
+        wifiHeader.addView(wifiSettings);
+        wifiTrial.addView(wifiHeader);
+        wifiStatus = status(wifiTrial);
+        wifiStatus.setTag("wifi-import-status");
+        wifiActions = new LinearLayout(this);
+        wifiActions.setOrientation(LinearLayout.VERTICAL);
+        wifiTrial.addView(wifiActions, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout sd = card(root, "SDカードから取り込む");
         sd.addView(text("写真のあるフォルダを選びます。SDカードの写真は削除しません。", 14, GalleryUi.MUTED));
         sdStatus = status(sd);
@@ -241,10 +268,12 @@ public final class CameraImportActivity extends AppCompatActivity {
         handler.post(refresh);
         loadCameras();
         loadLedgerCounts();
+        loadWifiProfiles();
     }
 
     @Override protected void onStop() {
         handler.removeCallbacks(refresh);
+        cancelWifiLoad();
         super.onStop();
     }
 
@@ -276,6 +305,8 @@ public final class CameraImportActivity extends AppCompatActivity {
     @Override protected void onPostResume() {
         super.onPostResume();
         quickResumed = true;
+        wifiLaunching = false;
+        renderStatus();
         if (resumeUsb || (pendingUsbPermission && permission == null)) continuePendingUsb();
         else if (resumeSd) { resumeSd = false; discoverQuickSource(true); }
         else if (!quickConsumed && getIntent().getBooleanExtra(START_IMPORT_KEEP_ORIGINALS, false)) {
@@ -366,6 +397,109 @@ public final class CameraImportActivity extends AppCompatActivity {
                 });
             });
         } catch (java.util.concurrent.RejectedExecutionException busy) { timeout.run(); }
+    }
+
+    private boolean wifiAvailable() {
+        return quickAvailable() && !starting && permission == null && !pendingSdPermission
+                && !pendingUsbPermission && !resumeSd && !resumeUsb && !wifiLaunching;
+    }
+
+    private void openWifiSettings() {
+        if (!wifiAvailable()) return;
+        wifiLaunching = true;
+        renderWifiEnabled();
+        try { startActivity(new Intent(this, Ep7WifiActivity.class)); }
+        catch (RuntimeException unavailable) {
+            wifiLaunching = false;
+            wifiStatus.setText("設定を開けませんでした。もう一度お試しください。");
+            renderWifiEnabled();
+        }
+    }
+
+    private void startWifiProfile(String id) {
+        if (!wifiAvailable() || wifiCancellation != null) return;
+        wifiLaunching = true; // Consume before Activity launch, including two clicks in one UI turn.
+        renderWifiEnabled();
+        try {
+            startActivity(new Intent(this, CameraBleActivity.class)
+                    .putExtra(CameraBleActivity.EXTRA_QUICK_PROFILE_ID, id));
+        } catch (RuntimeException unavailable) {
+            wifiLaunching = false;
+            wifiStatus.setText("接続を開始できませんでした。設定を確認してもう一度お試しください。");
+            renderWifiEnabled();
+        }
+    }
+
+    private void renderWifiEnabled() {
+        boolean enabled = wifiAvailable();
+        if (wifiSettings != null) wifiSettings.setEnabled(enabled);
+        if (wifiActions != null) for (int i = 0; i < wifiActions.getChildCount(); i++)
+            wifiActions.getChildAt(i).setEnabled(enabled && wifiCancellation == null);
+    }
+
+    private void cancelWifiLoad() {
+        wifiGeneration++;
+        if (wifiTimeout != null) handler.removeCallbacks(wifiTimeout);
+        wifiTimeout = null;
+        if (wifiCancellation != null) wifiCancellation.cancel();
+        wifiCancellation = null;
+    }
+
+    private void loadWifiProfiles() {
+        cancelWifiLoad();
+        int generation = wifiGeneration;
+        var cancellation = new android.os.CancellationSignal();
+        wifiCancellation = cancellation;
+        wifiActions.removeAllViews();
+        wifiStatus.setText("登録カメラを確認しています…");
+        renderWifiEnabled();
+        wifiTimeout = () -> {
+            if (wifiCancellation != cancellation || generation != wifiGeneration) return;
+            cancelWifiLoad();
+            showWifiProfiles(null);
+        };
+        handler.postDelayed(wifiTimeout, 3000);
+        try {
+            SOURCE_IO.execute(() -> {
+                List<CameraQuickImportSources.Profile> profiles = null;
+                try { profiles = wifiProfileLoader.load(getApplicationContext(), cancellation); }
+                catch (IOException | RuntimeException unavailable) { }
+                var outcome = profiles;
+                handler.post(() -> {
+                    if (wifiCancellation != cancellation || generation != wifiGeneration
+                            || isFinishing() || isDestroyed()) return;
+                    handler.removeCallbacks(wifiTimeout);
+                    wifiTimeout = null;
+                    wifiCancellation = null;
+                    showWifiProfiles(outcome);
+                });
+            });
+        } catch (java.util.concurrent.RejectedExecutionException busy) { wifiTimeout.run(); }
+    }
+
+    private void showWifiProfiles(List<CameraQuickImportSources.Profile> profiles) {
+        wifiActions.removeAllViews();
+        if (profiles == null) {
+            wifiStatus.setText("登録カメラを確認できませんでした。");
+            button(wifiActions, "もう一度確認する", this::loadWifiProfiles).setTag("wifi-import-retry");
+        } else if (profiles.isEmpty()) {
+            wifiStatus.setText("QRでカメラを登録すると、ここから取り込めます。");
+            button(wifiActions, "カメラを登録・接続する", this::openWifiSettings).setTag("wifi-import-setup");
+        } else {
+            wifiStatus.setText("カメラをタップすると接続して取り込みます。");
+            for (var profile : profiles) {
+                Button action = button(wifiActions, profile.name + "から取り込む", () -> startWifiProfile(profile.id));
+                action.setTag("wifi-import-profile:" + profile.id);
+                MaterialUi.filled(action);
+                action.setMinHeight(dp(56));
+                if (wifiActions.getChildCount() > 1) {
+                    LinearLayout.LayoutParams spacing = (LinearLayout.LayoutParams) action.getLayoutParams();
+                    spacing.topMargin = dp(8);
+                    action.setLayoutParams(spacing);
+                }
+            }
+        }
+        renderWifiEnabled();
     }
 
     private void quickCancelled() { connectionFailure = "取り込みをキャンセルしました。"; renderStatus(); }
@@ -463,6 +597,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         stop.setVisibility(active ? View.VISIBLE : View.GONE);
         stop.setEnabled(active && !PROGRESS.getStopRequested());
         setText(stop, PROGRESS.getStopRequested() ? "中止しています" : "中止");
+        renderWifiEnabled();
         auto.setEnabled(UsbLaunchSettings.isEnabled(this) && !active && !migrating && !manualOnly);
         migrate.setEnabled(!active && !starting && !migrating);
     }

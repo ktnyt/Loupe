@@ -47,6 +47,11 @@ final class CameraQuickImportSources {
     static Sources resolve(Context context, CancellationSignal cancelled) throws IOException {
         Uri sd = reachableSdTree(context, cancelled);
         if (sd != null) return new Sources(sd, List.of());
+        return new Sources(null, wifiProfiles(context, cancelled));
+    }
+    /** Registered Wi-Fi metadata only: never enumerates USB or probes an SD provider. */
+    static List<Profile> wifiProfiles(Context context, CancellationSignal cancelled) throws IOException {
+        cancelled.throwIfCanceled();
         List<Profile> profiles = new ArrayList<>();
         CameraCredentialStore store = new CameraCredentialStore(context);
         for (String name : store.names()) {
@@ -56,6 +61,6 @@ final class CameraQuickImportSources {
                 if (registration != null && registration.hasWifi()) profiles.add(new Profile(id, name));
             }
         }
-        return new Sources(null, profiles);
+        return List.copyOf(profiles);
     }
 }

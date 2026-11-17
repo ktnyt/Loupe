@@ -22,7 +22,7 @@ final class Ep7WifiChecks {
       t.waitForIdleSync();
       TagDetailChecks.ui(t, () -> {
         View root = camera.getWindow().getDecorView();
-        require(root, "E-P7からWi-Fiで取り込む");
+        check(root.findViewWithTag("wifi-import-settings") != null, "Wi-Fi pencil settings entry available");
         require(root, "SDカードのフォルダを選ぶ");
         require(root, "SDカードの写真を取り込む");
         require(root, "SDカード接続時に自動で取り込む");
@@ -63,12 +63,12 @@ final class Ep7WifiChecks {
       final Ep7WifiActivity screen = wifi;
       TagDetailChecks.ui(t, () -> {
         View root = screen.getWindow().getDecorView();
-        for (String label : new String[]{"カメラに接続して取り込む", "Wi-Fi設定を開く", "写真のアクセス権限を確認", "アプリの権限設定を開く", "登録したカメラに接続する", "写真を取り込む", "中止", "内容も確認する", "カメラのWi-Fi接続時に自動で取り込む"}) {
+        for (String label : new String[]{"手動でWi-Fiに接続して取り込む", "Wi-Fi設定を開く", "写真のアクセス権限を確認", "アプリの権限設定を開く", "カメラの登録を編集", "写真を取り込む", "中止", "カメラの原本も確認する", "カメラのWi-Fi接続時に自動で取り込む"}) {
           TextView v = require(root, label);
           check(v.getMinimumHeight() >= GalleryUi.dp(screen, 48), label + " touch minimum");
         }
-        check(require(root, "カメラに接続して取り込む").isEnabled(), "connect entry enabled while idle");
-        check(((android.widget.CompoundButton) require(root, "内容も確認する")).isChecked() == screen.getSharedPreferences("camera_import", 0).getBoolean("wifi_verify_all", false), "Wi-Fi verify reflects saved preference");
+        check(require(root, "手動でWi-Fiに接続して取り込む").isEnabled(), "connect entry enabled while idle");
+        check(((android.widget.CompoundButton) require(root, "カメラの原本も確認する")).isChecked() == screen.getSharedPreferences("camera_import", 0).getBoolean("wifi_verify_all", false), "Wi-Fi verify reflects saved preference");
         View status = root.findViewWithTag("ep7-status");
         check(status != null && status.getAccessibilityLiveRegion() == View.ACCESSIBILITY_LIVE_REGION_POLITE, "status live region");
         String before = ((TextView) status).getText().toString();
@@ -83,7 +83,7 @@ final class Ep7WifiChecks {
       TagDetailChecks.ui(t,()->findScroll(screen.getWindow().getDecorView()).fullScroll(View.FOCUS_DOWN));
       capture(t,wifi,"wifi-import-bottom");
       if(screen.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)!=android.content.pm.PackageManager.PERMISSION_GRANTED
-          && !((android.widget.CompoundButton)require(screen.getWindow().getDecorView(),"内容も確認する")).isChecked()
+          && !((android.widget.CompoundButton)require(screen.getWindow().getDecorView(),"カメラの原本も確認する")).isChecked()
           && !screen.getSharedPreferences("camera_import",0).getBoolean("wifi_identity_asked",false)) {
         TagDetailChecks.ui(t,()->{
           try{var method=Ep7WifiActivity.class.getDeclaredMethod("startWifi");method.setAccessible(true);method.invoke(screen);}
