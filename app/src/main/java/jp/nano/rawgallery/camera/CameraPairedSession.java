@@ -7,6 +7,7 @@ import android.net.wifi.WifiNetworkSpecifier;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.util.Log;
 import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.Proxy;
@@ -23,13 +24,22 @@ public final class CameraPairedSession implements Closeable {
         MissingWifiException() { super("Wi-Fi情報がありません。カメラのQRコードをもう一度登録してください"); }
     }
     static final long NETWORK_TIMEOUT_MS = 180000;
-    private final ConnectivityManager manager;
+    static final long RECONNECT_TIMEOUT_MS = 10000;
+    interface NetworkAccess {
+        void request(NetworkRequest request, ConnectivityManager.NetworkCallback callback, int timeout) throws IOException;
+        void release(ConnectivityManager.NetworkCallback callback);
+        HttpURLConnection open(Network network, java.net.URL url) throws IOException;
+        default void probe(Ep7WifiClient client) throws IOException { client.probe(); }
+    }
+    interface SessionFactory { CameraPairedSession create(); }
+    interface Acquisition { void connect(CameraPairedSession session, boolean wake, long budget) throws IOException; }
+    private final NetworkAccess access;
     private final BooleanSupplier cancelled;
     private final Handler timer = new Handler(Looper.getMainLooper());
     private final CountDownLatch available = new CountDownLatch(1);
     private final AtomicReference<HttpURLConnection> connection = new AtomicReference<>();
     private volatile Network selected;
-    private volatile boolean closed, lost, unavailable, acquiring = true;
+    private volatile boolean closed, lost, unavailable, refused, acquiring = true;
     private boolean registered;
     private long deadline;
     private final Runnable expired = () -> { if (acquiring) { unavailable = true; available.countDown(); abortHttp(); } };
@@ -43,67 +53,117 @@ public final class CameraPairedSession implements Closeable {
             }
             available.countDown();
         }
-        @Override public void onUnavailable() { if (!closed) { unavailable = true; available.countDown(); abortHttp(); } }
+        @Override public void onUnavailable() { if (!closed) { refused = true; unavailable = true; available.countDown(); abortHttp(); } }
         @Override public void onLost(Network value) {
             if (!closed && value.equals(selected)) { lost = true; available.countDown(); abortHttp(); }
         }
     };
     private CameraPairedSession(Context context, BooleanSupplier cancelled) {
-        this.manager = context.getSystemService(ConnectivityManager.class);
+        this(new NetworkAccess() {
+            final ConnectivityManager manager = context.getSystemService(ConnectivityManager.class);
+            public void request(NetworkRequest request, ConnectivityManager.NetworkCallback callback, int timeout) throws IOException {
+                if (manager == null) throw new IOException("Wi-Fi unavailable");
+                manager.requestNetwork(request, callback, timeout);
+            }
+            public void release(ConnectivityManager.NetworkCallback callback) { manager.unregisterNetworkCallback(callback); }
+            public HttpURLConnection open(Network network, java.net.URL url) throws IOException {
+                return (HttpURLConnection) network.openConnection(url, Proxy.NO_PROXY);
+            }
+        }, cancelled);
+    }
+    CameraPairedSession(NetworkAccess access, BooleanSupplier cancelled) {
+        this.access = access;
         this.cancelled = cancelled;
     }
     /** Must run off main. Profile IDs, never credentials, are passed from the visible Activity. */
     public static CameraPairedSession connect(Context context, String id, BooleanSupplier cancelled,
             Consumer<String> progress) throws IOException {
         if (Looper.myLooper() == Looper.getMainLooper()) throw new IllegalStateException("Connect off main");
-        CameraPairedSession session = new CameraPairedSession(context, cancelled);
         try (CameraCredentialStore.Registration registration = new CameraCredentialStore(context).registration(id)) {
             if (registration == null || !registration.hasWifi()) throw new MissingWifiException();
-            progress.accept("登録したカメラを探しています");
-            CameraBleWake helper = new CameraBleWake(context);
-            BluetoothDevice device = find(helper, registration.bleName, session);
-            progress.accept("カメラを起動しています");
-            CountDownLatch accepted = new CountDownLatch(1);
-            AtomicReference<CameraBleWake.Result> result = new AtomicReference<>();
-            char[] code = registration.passcode();
-            Closeable wake;
-            try { wake = helper.wakeForWifi(device, code, value -> { result.set(value); accepted.countDown(); }); }
-            finally { Arrays.fill(code, '\0'); }
-            try (Closeable heldWake = wake) {
-                session.await(accepted, SystemClock.elapsedRealtime() + 95000);
-                CameraBleWake.Result outcome = result.get();
-                if (outcome == null || outcome.outcome != CameraBleWake.Outcome.PROTOCOL_ACCEPTED)
-                    throw new IOException("カメラを起動できませんでした。Bluetoothの権限とカメラを確認してください");
-                session.pause(outcome.wifiStart ? 5500 : 3000);
-                progress.accept("カメラのWi-Fiに接続しています。Androidの接続確認を許可してください");
-                char[] phrase = registration.wifiPassphrase();
-                NetworkRequest request;
-                try { request = request(registration.ssid, registration.wifiSecurity, phrase); }
-                finally { Arrays.fill(phrase, '\0'); }
-                session.deadline = SystemClock.elapsedRealtime() + NETWORK_TIMEOUT_MS;
-                session.register(request);
-                session.await(session.available, session.deadline);
-                session.check();
-                if (session.selected == null) throw new IOException("カメラのWi-Fiに接続できませんでした");
-                session.network = session.selected;
-                session.client = new Ep7WifiClient(url -> {
-                    session.check();
-                    HttpURLConnection current = (HttpURLConnection)session.network.openConnection(url, Proxy.NO_PROXY);
-                    session.connection.set(current);
-                    try { session.check(); return current; }
-                    catch (IOException failure) { current.disconnect(); throw failure; }
-                }, session::isCancelled);
-                progress.accept("カメラへの接続を確認しています");
-                session.client.probe();
-                session.check();
-                session.acquiring = false;
-                session.timer.removeCallbacks(session.expired);
-                // Retained Bluetooth is released after the exact requested network passes VER_100.
-            }
-            return session;
+            boolean eligible = CameraWifiNetwork.selectRegistered(context, registration.ssid) != null;
+            return connectWithRecovery(eligible, () -> new CameraPairedSession(context, cancelled), (session, wake, budget) -> {
+                if (wake) session.wakeAndAcquire(context, registration, progress);
+                else session.acquire(registration, progress, budget);
+            });
         } catch (SecurityException failure) {
-            session.close(); throw new IOException("BluetoothとWi-Fiの接続権限を許可してください", failure);
-        } catch (IOException | RuntimeException failure) { session.close(); throw failure; }
+            throw new IOException("BluetoothとWi-Fiの接続権限を許可してください", failure);
+        }
+    }
+    // Each attempt owns a distinct callback, timer, cancellation state and HTTP connection.
+    static CameraPairedSession connectWithRecovery(boolean eligible, SessionFactory factory, Acquisition acquisition) throws IOException {
+        if (eligible) {
+            CameraPairedSession tentative = factory.create();
+            try {
+                acquisition.connect(tentative, false, RECONNECT_TIMEOUT_MS);
+                Log.i("CameraPairedSession", "owned_reconnect_success");
+                return tentative;
+            } catch (IOException failure) {
+                boolean retry = tentative.selected != null && !tentative.refused && !tentative.externalCancelled();
+                tentative.close();
+                if (!retry) {
+                    Log.i("CameraPairedSession", "owned_reconnect_stopped");
+                    throw failure;
+                }
+                Log.i("CameraPairedSession", "owned_reconnect_fallback");
+            } catch (RuntimeException failure) { tentative.close(); throw failure; }
+        }
+        CameraPairedSession fresh = factory.create();
+        try {
+            fresh.check();
+            acquisition.connect(fresh, true, NETWORK_TIMEOUT_MS);
+            return fresh;
+        } catch (IOException | RuntimeException failure) { fresh.close(); throw failure; }
+    }
+    private void wakeAndAcquire(Context context, CameraCredentialStore.Registration registration,
+            Consumer<String> progress) throws IOException {
+        progress.accept("登録したカメラを探しています");
+        CameraBleWake helper = new CameraBleWake(context);
+        BluetoothDevice device = find(helper, registration.bleName, this);
+        progress.accept("カメラを起動しています");
+        CountDownLatch accepted = new CountDownLatch(1);
+        AtomicReference<CameraBleWake.Result> result = new AtomicReference<>();
+        char[] code = registration.passcode();
+        Closeable wake;
+        try { wake = helper.wakeForWifi(device, code, value -> { result.set(value); accepted.countDown(); }); }
+        finally { Arrays.fill(code, '\0'); }
+        try (Closeable heldWake = wake) {
+            await(accepted, SystemClock.elapsedRealtime() + 95000);
+            CameraBleWake.Result outcome = result.get();
+            if (outcome == null || outcome.outcome != CameraBleWake.Outcome.PROTOCOL_ACCEPTED)
+                throw new IOException("カメラを起動できませんでした。Bluetoothの権限とカメラを確認してください");
+            pause(outcome.wifiStart ? 5500 : 3000);
+            acquire(registration, progress, NETWORK_TIMEOUT_MS);
+            // Retained Bluetooth is released after the exact requested network passes VER_100.
+        }
+    }
+    private void acquire(CameraCredentialStore.Registration registration, Consumer<String> progress, long budget) throws IOException {
+        progress.accept("カメラのWi-Fiに接続しています。Androidの接続確認を許可してください");
+        char[] phrase = registration.wifiPassphrase();
+        NetworkRequest request;
+        try { request = request(registration.ssid, registration.wifiSecurity, phrase); }
+        finally { Arrays.fill(phrase, '\0'); }
+        acquire(request, progress, budget);
+    }
+    void acquire(NetworkRequest request, Consumer<String> progress, long budget) throws IOException {
+        deadline = SystemClock.elapsedRealtime() + budget;
+        register(request, budget);
+        await(available, deadline);
+        check();
+        if (selected == null) throw new IOException("カメラのWi-Fiに接続できませんでした");
+        network = selected;
+        client = new Ep7WifiClient(url -> {
+            check();
+            HttpURLConnection current = access.open(network, url);
+            connection.set(current);
+            try { check(); return current; }
+            catch (IOException failure) { current.disconnect(); throw failure; }
+        }, this::isCancelled);
+        progress.accept("カメラへの接続を確認しています");
+        access.probe(client);
+        check();
+        acquiring = false;
+        timer.removeCallbacks(expired);
     }
     static NetworkRequest request(String ssid, int security, char[] phrase) throws IOException {
         if (ssid == null || phrase == null) throw new IOException("Wi-Fi registration incomplete");
@@ -117,10 +177,9 @@ public final class CameraPairedSession implements Closeable {
                 .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 .setNetworkSpecifier(specifier.build()).build();
     }
-    private synchronized void register(NetworkRequest request) throws IOException {
+    private synchronized void register(NetworkRequest request, long budget) throws IOException {
         check();
-        if (manager == null) throw new IOException("Wi-Fi unavailable");
-        manager.requestNetwork(request, callback, (int)NETWORK_TIMEOUT_MS);
+        access.request(request, callback, (int)budget);
         registered = true;
         timer.postDelayed(expired, Math.max(1, deadline - SystemClock.elapsedRealtime()));
     }
@@ -154,6 +213,7 @@ public final class CameraPairedSession implements Closeable {
             catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new InterruptedIOException("Cancelled"); }
         }
     }
+    private boolean externalCancelled() { return cancelled.getAsBoolean() || Thread.currentThread().isInterrupted(); }
     public boolean isCancelled() {
         return closed || lost || unavailable || cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()
                 || (acquiring && deadline > 0 && SystemClock.elapsedRealtime() >= deadline);
@@ -172,7 +232,7 @@ public final class CameraPairedSession implements Closeable {
             timer.removeCallbacks(expired);
             if (registered) {
                 registered = false;
-                try { manager.unregisterNetworkCallback(callback); }
+                try { access.release(callback); }
                 catch (RuntimeException ignored) { /* Permission revocation and system removal also end the request. */ }
             }
         }
