@@ -87,22 +87,38 @@ def manifest_info(xml):
             and {'android.permission.FOREGROUND_SERVICE',
                  'android.permission.FOREGROUND_SERVICE_DATA_SYNC'} <= permissions):
         features.add('nano-banana')
-    attach = activities.get(PACKAGE + '.camera.CameraAttachActivity')
+    attach_name = PACKAGE + '.camera.CameraAttachActivity'
+    attach = activities.get(attach_name)
+    # An opt-in alias may be disabled by default: its enabled target and complete
+    # registration still provide USB import once the user enables the setting.
+    alias = next((x for x in app.findall('activity-alias')
+                  if qualified(x.get(ANDROID + 'name', '')) == PACKAGE + '.camera.UsbAttachEntry'), None)
     service = services.get(PACKAGE + '.camera.ImportService')
     if (PACKAGE + '.CameraImportActivity' in activities and attach is not None and service is not None
             and {'android.permission.FOREGROUND_SERVICE',
                  'android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE'} <= permissions):
         action = 'android.hardware.usb.action.USB_DEVICE_ATTACHED'
-        actions = {x.get(ANDROID + 'name') for x in attach.findall('./intent-filter/action')}
-        metadata = any(x.get(ANDROID + 'name') == action and x.get(ANDROID + 'resource')
-                       for x in attach.findall('meta-data'))
+        def usb_registration(node, exact_resource=False):
+            return (node is not None and node.get(ANDROID + 'exported') == 'true'
+                    and any(x.get(ANDROID + 'name') == action
+                            for x in node.findall('./intent-filter/action'))
+                    and any(x.get(ANDROID + 'name') == action
+                            and (bool(re.fullmatch(r'@(?:xml/camera_import_devices|(?:ref/)?0x[0-9a-fA-F]+)',
+                                                   x.get(ANDROID + 'resource', '')))
+                                 if exact_resource else bool(x.get(ANDROID + 'resource')))
+                            for x in node.findall('meta-data')))
+
+        legacy = usb_registration(attach)
+        opt_in = (attach.get(ANDROID + 'exported') == 'false' and alias is not None
+                  and qualified(alias.get(ANDROID + 'targetActivity', '')) == attach_name
+                  and usb_registration(alias, exact_resource=True))
         foreground = service.get(ANDROID + 'foregroundServiceType', '')
         connected = 'connectedDevice' in foreground.split('|')
         try:
             connected = connected or bool(int(foreground, 0) & 16)
         except ValueError:
             pass
-        if action in actions and metadata and connected and attach.get(ANDROID + 'exported') == 'true':
+        if connected and (legacy or opt_in):
             features.add('camera-import')
     return {'package': root.get('package'),
             'version_code': int(root.get(ANDROID + 'versionCode', '0'), 0),

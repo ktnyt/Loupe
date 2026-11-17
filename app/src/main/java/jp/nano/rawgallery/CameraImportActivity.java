@@ -24,12 +24,14 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import jp.nano.rawgallery.camera.Camera;
 import jp.nano.rawgallery.camera.CameraDifferentialService;
 import jp.nano.rawgallery.camera.CameraImportGate;
 import jp.nano.rawgallery.camera.CameraImportLedger;
 import jp.nano.rawgallery.camera.CameraUsb;
+import jp.nano.rawgallery.camera.UsbLaunchSettings;
 import jp.nano.rawgallery.camera.HistoryDb;
 import jp.nano.rawgallery.camera.ImportProgress;
 import jp.nano.rawgallery.camera.ImportService;
@@ -57,6 +59,8 @@ public final class CameraImportActivity extends AppCompatActivity {
     private MaterialButton settingsButton;
     private boolean settingsExpanded;
     private MaterialSwitch auto;
+    private MaterialSwitch usbAutoOpen;
+    private boolean updatingUsbAutoOpen;
     private Closeable permission;
     private boolean migrating, starting, wasActive;
     private String connectionFailure;
@@ -156,8 +160,27 @@ public final class CameraImportActivity extends AppCompatActivity {
         importSettings.setTag("import-settings");
         root.addView(importSettings, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout preferences = card(importSettings, "取り込み設定");
+        usbAutoOpen = new MaterialSwitch(this);
+        usbAutoOpen.setText("USB接続時にLoupeを開く");
+        usbAutoOpen.setTag("usb-auto-open");
+        usbAutoOpen.setMinHeight(dp(48));
+        usbAutoOpen.setChecked(UsbLaunchSettings.isEnabled(this));
+        usbAutoOpen.setOnCheckedChangeListener((v, checked) -> {
+            if (updatingUsbAutoOpen) return;
+            try {
+                UsbLaunchSettings.setEnabled(this, checked);
+            } catch (RuntimeException error) {
+                updatingUsbAutoOpen = true;
+                try { usbAutoOpen.setChecked(UsbLaunchSettings.isEnabled(this)); }
+                finally { updatingUsbAutoOpen = false; }
+                Toast.makeText(this, "USB接続時の起動設定を変更できませんでした", Toast.LENGTH_LONG).show();
+            }
+            renderStatus();
+        });
+        preferences.addView(usbAutoOpen);
+        preferences.addView(text("オンの場合、接続時にAndroidの起動確認が表示されることがあります。", 14, GalleryUi.MUTED));
         auto = new MaterialSwitch(this);
-        auto.setText("つないだら自動で取り込む");
+        auto.setText("開いたら自動で取り込む");
         auto.setMinHeight(dp(48));
         auto.setChecked(settings.getBoolean("auto", true));
         auto.setOnCheckedChangeListener((v, checked) -> settings.edit().putBoolean("auto", checked).apply());
@@ -440,7 +463,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         stop.setVisibility(active ? View.VISIBLE : View.GONE);
         stop.setEnabled(active && !PROGRESS.getStopRequested());
         setText(stop, PROGRESS.getStopRequested() ? "中止しています" : "中止");
-        auto.setEnabled(!active && !migrating && !manualOnly);
+        auto.setEnabled(UsbLaunchSettings.isEnabled(this) && !active && !migrating && !manualOnly);
         migrate.setEnabled(!active && !starting && !migrating);
     }
 

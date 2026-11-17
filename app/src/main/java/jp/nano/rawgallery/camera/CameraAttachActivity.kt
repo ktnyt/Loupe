@@ -21,12 +21,8 @@ class CameraAttachActivity : Activity() {
             return
         }
         val settings = getSharedPreferences("camera_import", MODE_PRIVATE)
-        if (!settings.getBoolean("configured", false)) {
-            startActivity(Intent(this, CameraImportActivity::class.java))
-            finish()
-            return
-        }
-        if (!settings.getBoolean("auto", true)) {
+        startActivity(Intent(this, CameraImportActivity::class.java))
+        if (!settings.getBoolean("configured", false) || !settings.getBoolean("auto", true)) {
             finish()
             return
         }

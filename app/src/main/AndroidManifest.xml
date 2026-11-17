@@ -37,13 +37,16 @@
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
         </activity>
         <activity android:name=".VideoActivity" android:exported="false" android:screenOrientation="portrait" />
-        <activity android:name=".camera.CameraAttachActivity" android:exported="true"
+        <activity android:name=".camera.CameraAttachActivity" android:exported="false"
                   android:theme="@android:style/Theme.Translucent.NoTitleBar"
-                  android:excludeFromRecents="true" android:taskAffinity="">
+                  android:excludeFromRecents="true" android:taskAffinity="" />
+        <activity-alias android:name=".camera.UsbAttachEntry"
+                        android:targetActivity=".camera.CameraAttachActivity"
+                        android:enabled="false" android:exported="true">
             <intent-filter><action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" /></intent-filter>
             <meta-data android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
                        android:resource="@xml/camera_import_devices" />
-        </activity>
+        </activity-alias>
         <service android:name=".camera.ImportService" android:exported="false"
                  android:foregroundServiceType="connectedDevice" />
         <service android:name=".camera.CameraDifferentialService" android:exported="false" android:foregroundServiceType="connectedDevice" />
