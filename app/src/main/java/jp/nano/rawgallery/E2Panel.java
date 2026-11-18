@@ -99,7 +99,12 @@ final class E2Panel {
       String directory = state.getString("e2-verified-directory", "");
       if (directory.matches("e2-export-[0-9]+")) {
         File file = new File(new File(activity.getCacheDir(), directory), "original");
-        if (file.isFile()) verified = file;
+        try {
+          E2Photos.holdForPicker(file);
+          verified = file;
+        } catch (java.io.IOException ignored) {
+          // A discarded cache file can be fetched again from the cloud catalog.
+        }
       }
     }
     Object retained = activity.getLastCustomNonConfigurationInstance();
@@ -265,10 +270,7 @@ final class E2Panel {
         E2Photos.discard(file);
         message("復元先の選択を中止しました", GalleryUi.TEXT);
         reloadAfterExport();
-      } else {
-        E2Photos.releasePickerHold(file);
-        runExport(file, uri);
-      }
+      } else runExport(file, uri);
     }
   }
 

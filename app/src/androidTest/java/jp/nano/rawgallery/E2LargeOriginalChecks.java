@@ -87,7 +87,11 @@ final class E2LargeOriginalChecks {
     File protectedCopy = new File(Files.createTempDirectory(cache.toPath(), "e2-export-").toFile(), "original");
     Files.write(orphan.toPath(), new byte[] {1});
     Files.write(protectedCopy.toPath(), new byte[] {2});
+    File marker = new File(protectedCopy.getParentFile(), "picker");
+    Files.createFile(marker.toPath());
+    Files.setLastModifiedTime(marker.toPath(), java.nio.file.attribute.FileTime.fromMillis(1));
     E2Photos.holdForPicker(protectedCopy);
+    Files.setLastModifiedTime(marker.toPath(), java.nio.file.attribute.FileTime.fromMillis(1));
     try (E2Photos photos = new E2Photos(context)) {
       try {
         photos.save(Uri.fromFile(new File(cache, "absent-e2-fixture")), "cache-check.mp4", "loupe-test");
@@ -96,13 +100,19 @@ final class E2LargeOriginalChecks {
         if (interrupted.exists() || orphan.exists() || !protectedCopy.isFile())
           throw new AssertionError("Staging cleanup did not protect the current picker only");
       }
+      try {
+        photos.stage(() -> new java.io.ByteArrayInputStream(new byte[] {1}), 2);
+        throw new AssertionError("Truncated source was accepted");
+      } catch (java.io.IOException expected) {
+        if (!"原本のサイズが変わりました".equals(expected.getMessage())) throw expected;
+      }
       android.content.SharedPreferences settings = E2AutoSync.state(context);
       int before = settings.getInt("fullMediaConsent", 0);
       try {
         settings.edit().putInt("fullMediaConsent", 1).commit();
         if (E2SyncJob.fullMediaConsent(context)) throw new AssertionError("Old size consent still accepted");
       } finally { settings.edit().putInt("fullMediaConsent", before).commit(); }
-      return "PASS large original staging: incomplete/orphan removed, pending picker protected, old consent rejected";
+      return "PASS large original staging: incomplete/orphan removed, reclaimed picker protected, truncated source and old consent rejected";
     } finally {
       Files.deleteIfExists(interrupted.toPath());
       E2Photos.discard(orphan);
