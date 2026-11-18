@@ -39,6 +39,61 @@ final class E2BackgroundChecks {
   private static final String BUCKET = "loupe-test";
   private static final String CATALOG_JPEG = "loupe-e2-catalog-stage3.jpg";
 
+  static String cleanupBoundary(Instrumentation test) throws Exception {
+    Context context = test.getTargetContext();
+    if (!APP.equals(context.getPackageName()) || !"ranchu".equals(Build.HARDWARE)
+        || !E2AutoSync.candidates(context).isEmpty())
+      throw new AssertionError("Requires an empty isolated emulator APK");
+    byte[] expected = jpeg();
+    Uri files = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL);
+    Uri changedImage = original(context, "loupe-cleanup-retain-" + UUID.randomUUID() + ".jpg", expected);
+    Uri eligibleImage = original(context, "loupe-cleanup-remove-" + UUID.randomUUID() + ".jpg", expected);
+    Uri changed = android.content.ContentUris.withAppendedId(files,
+        android.content.ContentUris.parseId(changedImage));
+    Uri eligible = android.content.ContentUris.withAppendedId(files,
+        android.content.ContentUris.parseId(eligibleImage));
+    android.content.ContentResolver resolver = context.getContentResolver();
+    long oldGeneration = generation(resolver, changed);
+    ContentValues metadata = new ContentValues();
+    metadata.put(MediaStore.MediaColumns.DATE_TAKEN, System.currentTimeMillis());
+    if (resolver.update(changed, metadata, null, null) != 1
+        || generation(resolver, changed) == oldGeneration)
+      throw new AssertionError("The synthetic MediaStore revision did not change");
+
+    String generationMatches = MediaStore.MediaColumns.GENERATION_MODIFIED + "=?";
+    int stale = resolver.delete(changed, generationMatches, new String[]{Long.toString(oldGeneration)});
+    if (stale != 0) throw new AssertionError("MediaStore accepted a stale generation condition");
+    try (InputStream source = resolver.openInputStream(changed)) {
+      if (source == null || !Arrays.equals(expected, source.readAllBytes()))
+        throw new AssertionError("The stale original bytes did not survive");
+    }
+
+    long unchangedGeneration = generation(resolver, eligible);
+    int removed = resolver.delete(eligible, generationMatches,
+        new String[]{Long.toString(unchangedGeneration)});
+    if (removed != 1) throw new AssertionError("An exact generation did not delete one owned fixture");
+    try (android.database.Cursor found = resolver.query(eligible,
+        new String[]{MediaStore.MediaColumns._ID}, null, null, null)) {
+      if (found == null || found.moveToFirst()) throw new AssertionError("Deleted fixture is still indexed");
+    }
+    try (InputStream result = resolver.openInputStream(eligible)) {
+      if (result != null) throw new AssertionError("Deleted fixture is still readable");
+    } catch (java.io.FileNotFoundException expectedMissing) {
+      // Both the original bytes and the MediaStore entry must be gone.
+    }
+    return "PASS e2-cleanup-boundary: stale MediaStore generation preserved the original; "
+        + "matching generation deleted one owned synthetic JPEG";
+  }
+
+  private static long generation(android.content.ContentResolver resolver, Uri uri) {
+    try (android.database.Cursor row = resolver.query(uri,
+        new String[]{MediaStore.MediaColumns.GENERATION_MODIFIED}, null, null, null)) {
+      if (row == null || !row.moveToFirst() || row.getLong(0) <= 0)
+        throw new AssertionError("Photo generation is unavailable");
+      return row.getLong(0);
+    }
+  }
+
   static String catalog(Instrumentation test, String mode) throws Exception {
     Context context = test.getTargetContext();
     if (!APP.equals(context.getPackageName()) || !"ranchu".equals(Build.HARDWARE))

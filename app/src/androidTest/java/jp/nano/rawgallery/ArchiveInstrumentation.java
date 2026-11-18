@@ -65,6 +65,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean cleanupTest;
   private boolean compactTest;
   private boolean e2ArchiveTest, e2BackgroundTest;
+  private boolean e2CleanupBoundaryTest;
   private String e2CatalogMode;
   private String e2RunId;
   private boolean jpegTest;
@@ -174,6 +175,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     e2ArchiveTest = args != null && "e2-archive".equals(args.getString("mode"));
     if (e2ArchiveTest) e2RunId = args.getString("e2-run");
     e2BackgroundTest = args != null && "e2-background".equals(args.getString("mode"));
+    e2CleanupBoundaryTest = args != null && "e2-cleanup-boundary".equals(args.getString("mode"));
     if (args != null && java.util.Set.of("e2-catalog-publish", "e2-catalog-republish",
         "e2-catalog-restore", "e2-catalog-previous")
         .contains(args.getString("mode", ""))) e2CatalogMode = args.getString("mode");
@@ -208,6 +210,10 @@ public final class ArchiveInstrumentation extends Instrumentation {
         results.putString("stream", VideoChecks.run(this, tagWidth > 0 ? tagWidth : 400, tagFont > 0 ? tagFont : 1f));
         finish(-1, results);
         return;
+      }
+      if (e2CleanupBoundaryTest) {
+        results.putString("stream", E2BackgroundChecks.cleanupBoundary(this));
+        finish(-1, results); return;
       }
       if (e2CatalogMode != null) {
         results.putString("stream", E2BackgroundChecks.catalog(this, e2CatalogMode));
