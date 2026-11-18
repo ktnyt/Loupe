@@ -346,11 +346,7 @@ final class E2Panel {
           }
           showCatalogStatus(outcome);
           message(outcome, GalleryUi.TEXT);
-          if (!save && result != null && list.getChildCount() > 0) {
-            View first = list.getChildAt(0);
-            first.post(() -> first.requestRectangleOnScreen(
-                new android.graphics.Rect(0, 0, first.getWidth(), first.getHeight()), true));
-          }
+          if (!save && result != null) revealFirstPhoto();
         });
       } catch (Exception failure) {
         post(() -> showCatalogStatus(save ? "復元一覧を保存できませんでした" :
@@ -363,6 +359,24 @@ final class E2Panel {
   private void showCatalogStatus(String label) {
     catalogStatus.setText(label);
     catalogStatus.setVisibility(View.VISIBLE);
+  }
+
+  private void revealFirstPhoto() {
+    View first = list.getChildAt(0);
+    if (first == null) return;
+    Runnable reveal = () -> first.requestRectangleOnScreen(
+        new android.graphics.Rect(0, 0, first.getWidth(), first.getHeight()), true);
+    if (first.isLaidOut() && !first.isLayoutRequested()) {
+      first.post(reveal);
+      return;
+    }
+    first.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+      @Override public void onLayoutChange(View row, int left, int top, int right, int bottom,
+          int oldLeft, int oldTop, int oldRight, int oldBottom) {
+        row.removeOnLayoutChangeListener(this);
+        row.post(reveal);
+      }
+    });
   }
 
   private void timing(String phase, long start, String detail) {

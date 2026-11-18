@@ -220,12 +220,22 @@ final class E2Archive {
       xml.setInput(new ByteArrayInputStream(response), "UTF-8");
       List<String> result = new ArrayList<>();
       boolean insideVersion = false;
-      boolean truncated = false;
+      Boolean truncated = null;
+      boolean versionsRoot = false;
       String key = null, versionId = null;
       for (int event = xml.next(); event != XmlPullParser.END_DOCUMENT; event = xml.next()) {
-        if (event == XmlPullParser.START_TAG && xml.getDepth() == 2) {
+        if (event == XmlPullParser.START_TAG && xml.getDepth() == 1) {
+          if (!"ListVersionsResult".equals(xml.getName()))
+            throw new IOException("カタログの世代一覧の応答形式が不正です");
+          versionsRoot = true;
+        } else if (event == XmlPullParser.START_TAG && xml.getDepth() == 2) {
           insideVersion = "Version".equals(xml.getName());
-          if ("IsTruncated".equals(xml.getName())) truncated = "true".equals(xml.nextText());
+          if ("IsTruncated".equals(xml.getName())) {
+            String value = xml.nextText();
+            if (truncated != null || !("true".equals(value) || "false".equals(value)))
+              throw new IOException("カタログの世代一覧の続きが不明です");
+            truncated = "true".equals(value);
+          }
           key = null;
           versionId = null;
         } else if (insideVersion && event == XmlPullParser.START_TAG && xml.getDepth() == 3) {
@@ -236,7 +246,8 @@ final class E2Archive {
           insideVersion = false;
         }
       }
-      if (result.size() > 16) throw new IOException("カタログの世代一覧が不正です");
+      if (!versionsRoot || truncated == null || result.size() > 16)
+        throw new IOException("カタログの世代一覧が不正です");
       if (truncated && result.isEmpty()) throw new IOException("カタログの前世代を確認できません");
       return result;
     } finally {
