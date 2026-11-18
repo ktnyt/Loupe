@@ -42,7 +42,7 @@ final class E2AutoSync {
         publish(preferences, JobState.Kind.PAUSED, 0, 0, 0, false);
         return;
       }
-      if (!e2.settings.configured() || !E2SyncActivity.hasPhotoAccess(context)) {
+      if (!e2.settings.configured() || !E2Settings.hasPhotoAccess(context)) {
         publish(preferences, JobState.Kind.AUTH_REQUIRED, 0, 0, 0, false);
         return;
       }
@@ -90,7 +90,7 @@ final class E2AutoSync {
 
   /** Keeps MediaStore identities separate from unrelated document-tree and Amazon rows. */
   static List<Candidate> candidates(Context context) throws Exception {
-    if (!E2SyncActivity.hasPhotoAccess(context)) throw new SecurityException("原本へのアクセスが必要です");
+    if (!E2Settings.hasPhotoAccess(context)) throw new SecurityException("原本へのアクセスが必要です");
     Uri files = MediaStore.Files.getContentUri("external");
     String[] columns = {"_id", "_display_name", "relative_path", "_size", "date_modified",
         "datetaken", "date_added", MediaStore.MediaColumns.GENERATION_MODIFIED,

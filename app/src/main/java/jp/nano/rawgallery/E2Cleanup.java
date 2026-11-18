@@ -43,7 +43,7 @@ final class E2Cleanup {
   static void setEnabled(Context c, String bucket, int retention) throws IOException {
     boolean enabled = retention > 0;
     synchronized (E2Settings.DESTINATION_LOCK) {
-      if (enabled && (retention != days(c) || !Environment.isExternalStorageManager() || !E2SyncActivity.hasPhotoAccess(c)
+      if (enabled && (retention != days(c) || !Environment.isExternalStorageManager() || !E2Settings.hasPhotoAccess(c)
           || !E2SyncJob.enabled(c) || !bucket.equals(E2Settings.configuredBucket(c))
           || !bucket.equals(options(c).getString("destination", ""))
           || c.getSharedPreferences("settings", 0).getBoolean("cleanupEnabled", false)))
@@ -61,7 +61,7 @@ final class E2Cleanup {
   static void sweep(Context c, E2Photos photos, List<E2AutoSync.Candidate> candidates,
       String bucket, BooleanSupplier stopped) {
     try {
-      if (!E2SyncActivity.hasPhotoAccess(c) || !Environment.isExternalStorageManager()) {
+      if (!E2Settings.hasPhotoAccess(c) || !Environment.isExternalStorageManager()) {
         if (enabled(c, bucket)) updateStatus(c, "容量整理には全ファイルへのアクセスが必要です");
         return;
       }
@@ -106,7 +106,7 @@ final class E2Cleanup {
 
   private static boolean allowed(Context c, String bucket, BooleanSupplier stopped) {
     return !stopped.getAsBoolean() && !Thread.currentThread().isInterrupted()
-        && enabled(c, bucket) && E2SyncJob.enabled(c) && E2SyncActivity.hasPhotoAccess(c)
+        && enabled(c, bucket) && E2SyncJob.enabled(c) && E2Settings.hasPhotoAccess(c)
         && Environment.isExternalStorageManager()
         && bucket.equals(E2Settings.configuredBucket(c))
         && bucket.equals(options(c).getString("destination", ""))
@@ -170,7 +170,7 @@ final class E2Cleanup {
 
   static void reconcile(Context c, ArchiveStore store, String bucket, BooleanSupplier stopped)
       throws Exception {
-    if (!Environment.isExternalStorageManager() || !E2SyncActivity.hasPhotoAccess(c)) return;
+    if (!Environment.isExternalStorageManager() || !E2Settings.hasPhotoAccess(c)) return;
     for (JSONObject record : store.all()) {
       if (stopped.getAsBoolean()) return;
       if (!RELEASING.equals(record.optString("state")) || !bucket.equals(record.optString("bucket"))) continue;

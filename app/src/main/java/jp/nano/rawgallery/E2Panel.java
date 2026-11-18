@@ -190,7 +190,7 @@ final class E2Panel {
       if (cleaning && !E2SyncJob.enabled(activity))
         message("端末原本の整理も停止しました。再開後に設定できます", GalleryUi.TEXT);
     } else if (activeBucket != null) {
-      if (!E2SyncActivity.hasPhotoAccess(activity)) {
+      if (!E2Settings.hasPhotoAccess(activity)) {
         new GalleryUi.Sheet(activity).setTitle("写真の読み取りを許可してください")
             .setMessage("自動バックアップには、端末のすべての写真と原本の読み取り許可が必要です。")
             .setNegativeButton("キャンセル", null)
