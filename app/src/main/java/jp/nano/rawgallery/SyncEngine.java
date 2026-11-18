@@ -169,7 +169,10 @@ final class SyncEngine {
             if (Thread.currentThread().isInterrupted()
                 || !settings.getBoolean("cleanupEnabled", false)
                 || !settings.getBoolean("syncEnabled", false)) {reachedEnd=false;break;}
-            E2SyncJob.ORIGINALS.lockInterruptibly();
+            if (!E2SyncJob.ORIGINALS.tryLock()) {
+              reachedEnd = false;
+              break;
+            }
             try {
               if (Thread.currentThread().isInterrupted()
                   || !settings.getBoolean("cleanupEnabled", false)
