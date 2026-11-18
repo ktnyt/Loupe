@@ -51,12 +51,12 @@ final class E2BackgroundChecks {
       Files.deleteIfExists(input.toPath());
     }
     if (config.size() != 3 || !BUCKET.equals(config.get(0))
-        || !SyncEngine.candidates(context).isEmpty())
+        || !E2AutoSync.candidates(context).isEmpty())
       throw new AssertionError("Requires an empty photo collection and loupe-test");
     String name = "loupe-e2-" + UUID.randomUUID() + ".jpg";
     byte[] expected = jpeg();
     Uri original = original(context, name, expected);
-    if (SyncEngine.candidates(context).size() != 1)
+    if (E2AutoSync.candidates(context).size() != 1)
       throw new AssertionError("Expected only one synthetic JPEG");
     Activity activity = test.startActivitySync(new Intent(context, E2SyncActivity.class)
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
@@ -111,10 +111,15 @@ final class E2BackgroundChecks {
       }));
       waitFor("document picker", 20000, () -> activePackage(test, "com.google.android.documentsui")
           || activePackage(test, "com.android.documentsui"));
-      waitFor("save document", 15000, () -> clickActive(test, "com.google.android.documentsui", "Save")
-          || clickActive(test, "com.android.documentsui", "Save")
-          || clickActive(test, "com.google.android.documentsui", "保存")
-          || clickActive(test, "com.android.documentsui", "保存"));
+      waitFor("save document", 15000, () -> {
+        AccessibilityNodeInfo picker = test.getUiAutomation().getRootInActiveWindow();
+        if (picker == null || !List.of("com.google.android.documentsui", "com.android.documentsui")
+            .contains(String.valueOf(picker.getPackageName()))) return false;
+        for (AccessibilityNodeInfo button : picker.findAccessibilityNodeInfosByViewId("android:id/button1"))
+          if (button.isEnabled() && button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true;
+        AccessibilityNodeInfo save = node(picker, "SAVE");
+        return save != null && save.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+      });
       waitFor("restore success", 20000,
           () -> activeContains(test, APP, "原本を復元しました"));
       capture(test, context, "e2-restored.png");

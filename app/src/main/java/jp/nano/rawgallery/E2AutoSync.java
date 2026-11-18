@@ -22,7 +22,7 @@ import org.json.JSONObject;
 final class E2AutoSync {
   private static final int TRANSFERS = 1;
   private static final String STATE = "e2_auto_sync";
-  record Candidate(PhotoRepository.Photo photo, long generation) {}
+  record Candidate(PhotoRepository.Photo photo, String volume, String version, long generation) {}
 
   static SharedPreferences state(Context context) {
     return context.getSharedPreferences(STATE, Context.MODE_PRIVATE);
@@ -53,7 +53,7 @@ final class E2AutoSync {
       }
       e2.settings.archive(bucket).checkConnection();
       PhotoRepository repository = new PhotoRepository(context, true);
-      List<Candidate> photos = candidates(context, e2.settings.records);
+      List<Candidate> photos = candidates(context);
       total = photos.size();
       counted = true;
       if (!photos.isEmpty()) {
@@ -87,15 +87,17 @@ final class E2AutoSync {
   }
 
   /** Keeps MediaStore identities separate from unrelated document-tree and Amazon rows. */
-  static List<Candidate> candidates(Context context, ArchiveStore store) throws Exception {
+  static List<Candidate> candidates(Context context) throws Exception {
     if (!E2SyncActivity.hasPhotoAccess(context)) throw new SecurityException("原本へのアクセスが必要です");
     Uri files = MediaStore.Files.getContentUri("external");
     String[] columns = {"_id", "_display_name", "relative_path", "_size", "date_modified",
-        "datetaken", "date_added", MediaStore.MediaColumns.GENERATION_MODIFIED};
+        "datetaken", "date_added", MediaStore.MediaColumns.GENERATION_MODIFIED,
+        MediaStore.MediaColumns.VOLUME_NAME};
     String[] patterns = RawFormats.patterns();
     String where = "(" + String.join(" OR ", Collections.nCopies(patterns.length,
         MediaStore.MediaColumns.DISPLAY_NAME + " LIKE ?")) + ")";
     List<Candidate> photos = new ArrayList<>();
+    java.util.Map<String, String> versions = new java.util.HashMap<>();
     try (Cursor rows = context.getContentResolver().query(files, columns, where, patterns, null)) {
       if (rows == null) throw new IOException("写真を取得できません");
       while (rows.moveToNext() && !Thread.currentThread().isInterrupted()) {
@@ -105,13 +107,18 @@ final class E2AutoSync {
             rows.getString(2), rows.getLong(3), rows.getLong(4), rows.getLong(5),
             SyncPolicy.secondsToMillis(rows.getLong(6)), 0);
         if (!photo.isJpeg()) {
-          try {
-            if (!SyncPolicy.supported(store.metadata(photo).model)) continue;
+          try (PhotoRepository.DescriptorSource raw =
+              new PhotoRepository.DescriptorSource(context.getContentResolver(), photo.uri, photo.size)) {
+            if (!SyncPolicy.supported(RawPreview.inspect(raw).model)) continue;
           } catch (Exception unreadable) {
             // Keep unreadable candidates in the totals; the transfer reports them as failed.
           }
         }
-        photos.add(new Candidate(photo, rows.getLong(7)));
+        String volume = rows.getString(8);
+        if (volume == null || volume.isEmpty()) throw new IOException("写真の保存先を取得できません");
+        String version = versions.computeIfAbsent(volume, v -> MediaStore.getVersion(context, v));
+        if (version == null || version.isEmpty()) throw new IOException("写真の変更履歴を取得できません");
+        photos.add(new Candidate(photo, volume, version, rows.getLong(7)));
       }
     }
     return photos;
@@ -156,7 +163,8 @@ final class E2AutoSync {
       }
     }
     String key = PhotoRepository.digest("e2-auto\n" + bucket + "\n"
-        + photo.uri + "\n" + ArchiveStore.key(photo) + "\n" + revision).substring(0, 32);
+        + photo.uri + "\n" + ArchiveStore.key(photo) + "\n" + candidate.volume() + "\n"
+        + candidate.version() + "\n" + revision).substring(0, 32);
     File directory = new File(context.getFilesDir(), "e2-previews");
     File preview = new File(directory, key + ".webp");
     File thumbnail = new File(directory, key + "-thumb.webp");

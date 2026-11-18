@@ -70,7 +70,16 @@ final class E2Photos implements AutoCloseable {
   void saveIndexed(PhotoRepository.Photo photo, String id, String bucket) throws Exception {
     File staged = stage(() -> PhotoRepository.original(context, photo), photo.size);
     try {
-      ArchiveStore.RawMetadata inspected = settings.records.metadata(photo);
+      ArchiveStore.RawMetadata inspected;
+      if (photo.isJpeg()) {
+        inspected = settings.records.metadata(photo);
+      } else {
+        try (RawPreview.FileSource source = new RawPreview.FileSource(staged)) {
+          RawPreview.Result raw = RawPreview.inspect(source);
+          if (!SyncPolicy.supported(raw.model)) throw new IOException("対応するRAWを確認できません");
+          inspected = new ArchiveStore.RawMetadata(raw.model, raw.taken);
+        }
+      }
       JSONObject metadata = ArchiveStore.base(photo).put("mime", RawFormats.mime(photo.name))
           .put("model", inspected.model)
           .put("taken", inspected.taken > 0 ? inspected.taken : photo.taken);
