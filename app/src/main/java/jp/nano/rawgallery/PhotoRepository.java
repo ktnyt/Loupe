@@ -446,7 +446,7 @@ public final class PhotoRepository {
     }
   }
 
-  void removePreparedPreview(Photo photo) {
+  void removePreparedPreview(Photo photo) throws IOException {
     String key = digest("raw-preview-v2:" + photo.uri + ":" + photo.size + ":" + photo.modified);
     synchronized (PUBLISH_LOCK) {
       for (File root : new File[]{prepared, legacyPreviews}) {
