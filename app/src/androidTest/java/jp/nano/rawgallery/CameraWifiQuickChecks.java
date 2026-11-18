@@ -2,12 +2,15 @@ package jp.nano.rawgallery;
 
 import android.app.Activity;
 import android.app.Instrumentation;
+import android.app.PendingIntent;
 import android.content.Intent;
 import android.os.Build;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.TextView;
 import jp.nano.rawgallery.camera.ImportProgress;
 import jp.nano.rawgallery.camera.CameraImportGate;
 import java.io.File;
@@ -104,13 +107,105 @@ final class CameraWifiQuickChecks {
             fixture = (context, cancel) -> List.of(); screen = open(t); await(t, screen, "wifi-import-setup");
             SystemClock.sleep(200); require(find(screen.getWindow().getDecorView(), "wifi-import-profile:stale") == null, "stopped load ignored");
             require(ble.get() == 2, "no lifecycle replay");
-            return "PASS Wi-Fi card 0/1/multiple/loading/error/retry, settings-only pencil, opaque-only profile Intent, double tap, busy, recreation and stale-load guards; metadata fixtures only, outgoing radio/settings Activities blocked.";
+            t.removeMonitor(monitor);
+            checkBackStack(t, screen);
+
+            return "PASS Wi-Fi card 0/1/multiple/loading/error/retry, settings-only pencil, opaque-only profile Intent, double tap, busy, recreation stale-load guards, and real Activities for Wi-Fi settings Back and return to import progress. No radio operations.";
         } finally {
             if (screen != null) finish(t, screen);
             fixture = null; t.removeMonitor(monitor);
             t.runOnMainSync(() -> progress.setActive(priorActive));
         }
     }
+    private static void checkBackStack(Instrumentation t, CameraImportActivity original) throws Exception {
+        var settingsMonitor = t.addMonitor(Ep7WifiActivity.class.getName(), null, false);
+        var bleMonitor = t.addMonitor(CameraBleActivity.class.getName(), null, false);
+        Ep7WifiActivity settings = null;
+        CameraBleActivity registration = null;
+        try {
+            click(t, original, "wifi-import-settings");
+            settings = (Ep7WifiActivity) settingsMonitor.waitForActivityWithTimeout(5000);
+            require(settings != null, "real Wi-Fi settings opened");
+            awaitState(t, settings::hasWindowFocus, "Wi-Fi settings focused");
+            Ep7WifiChecks.capture(t, settings, "wifi-navigation-settings");
+            t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
+            awaitState(t, original::hasWindowFocus, "Back from Wi-Fi settings returns to the original import screen");
+
+            click(t, original, "wifi-import-settings");
+            settings = (Ep7WifiActivity) settingsMonitor.waitForActivityWithTimeout(5000);
+            require(settings != null, "reopened Wi-Fi settings");
+            Ep7WifiActivity reopened = settings;
+            awaitState(t, reopened::hasWindowFocus, "reopened Wi-Fi settings focused");
+            t.runOnMainSync(() -> {
+                View edit = findText(reopened.getWindow().getDecorView(), "カメラの登録を編集");
+                require(edit != null && edit.isEnabled(), "registered camera editor available");
+                edit.performClick();
+            });
+            registration = (CameraBleActivity) bleMonitor.waitForActivityWithTimeout(5000);
+            require(registration != null, "registered camera editor opened");
+            CameraBleActivity child = registration;
+            awaitState(t, child::hasWindowFocus, "registered camera editor focused");
+            // Exercise the same progress navigation used after the service starts, without starting a radio operation.
+            t.runOnMainSync(() -> child.startActivity(CameraImportActivity.showProgressIntent(child)));
+            awaitState(t, original::hasWindowFocus, "progress returns to the original import screen");
+            awaitState(t, () -> reopened.isDestroyed() && child.isDestroyed(),
+                    "settings and registration removed from the back stack");
+            capture(t, original, "navigation-returned");
+            click(t, original, "wifi-import-settings");
+            settings = (Ep7WifiActivity) settingsMonitor.waitForActivityWithTimeout(5000);
+            require(settings != null, "Wi-Fi settings available after progress return");
+            Ep7WifiActivity beforeNotification = settings;
+            awaitState(t, beforeNotification::hasWindowFocus, "settings focused before opening notification");
+            var context = t.getTargetContext();
+            int testRequestCode = 140;
+            PendingIntent usb = PendingIntent.getActivity(context, testRequestCode, new Intent(context, CameraImportActivity.class),
+                    PendingIntent.FLAG_IMMUTABLE);
+            PendingIntent differential = PendingIntent.getActivity(context, testRequestCode,
+                    CameraImportActivity.showProgressIntent(context).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+            try {
+                require(!differential.equals(usb), "differential notification does not reuse the USB launch");
+                differential.send();
+                awaitState(t, original::hasWindowFocus, "notification returns to the original import screen");
+                awaitState(t, beforeNotification::isDestroyed, "notification removes settings above progress");
+            } finally {
+                differential.cancel();
+                usb.cancel();
+            }
+
+            t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
+            awaitState(t, original::isDestroyed, "Back from import exits the import screen");
+        } finally {
+            if (registration != null) finish(t, registration);
+            if (settings != null) finish(t, settings);
+            t.removeMonitor(bleMonitor);
+            t.removeMonitor(settingsMonitor);
+        }
+    }
+
+    private static void awaitState(Instrumentation t, java.util.function.BooleanSupplier condition, String label) {
+        long deadline = SystemClock.uptimeMillis() + 5000;
+        var ready = new java.util.concurrent.atomic.AtomicBoolean();
+        do {
+            t.runOnMainSync(() -> ready.set(condition.getAsBoolean()));
+            if (ready.get()) return;
+            SystemClock.sleep(50);
+        } while (SystemClock.uptimeMillis() < deadline);
+        throw new AssertionError(label);
+    }
+
+    private static View findText(View root, String label) {
+        if (root instanceof TextView && label.contentEquals(((TextView) root).getText())) return root;
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                View result = findText(group.getChildAt(i), label);
+                if (result != null) return result;
+            }
+        }
+        return null;
+    }
+
     private static CameraImportActivity open(Instrumentation t) { return (CameraImportActivity) t.startActivitySync(new Intent(t.getTargetContext(), CameraImportActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); }
     private static void finish(Instrumentation t, Activity a) { t.runOnMainSync(a::finish); t.waitForIdleSync(); }
     private static View find(View v, String tag) { if (tag.equals(v.getTag())) return v; if (v instanceof ViewGroup) for (int i=0;i<((ViewGroup)v).getChildCount();i++) { View found=find(((ViewGroup)v).getChildAt(i),tag); if(found!=null)return found; } return null; }

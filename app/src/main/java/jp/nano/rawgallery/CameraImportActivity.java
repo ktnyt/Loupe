@@ -4,6 +4,7 @@ import android.Manifest;
 import androidx.appcompat.app.AppCompatActivity;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.materialswitch.MaterialSwitch;
+import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.content.SharedPreferences;
@@ -45,6 +46,14 @@ import java.util.concurrent.Executors;
 
 public final class CameraImportActivity extends AppCompatActivity {
     static final String START_IMPORT_KEEP_ORIGINALS = "start_import_keep_originals";
+
+    /** Return to import progress in the current task, or open it if it isn't there yet. */
+    public static Intent showProgressIntent(Context context) {
+        return new Intent(context, CameraImportActivity.class)
+                .setAction("jp.nano.rawgallery.SHOW_IMPORT_PROGRESS")
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+    }
+
     private static final int PICK_DB = 401;
     private static final int PICK_SD_TREE = 405;
     private static final java.util.concurrent.Executor IO = Executors.newSingleThreadExecutor();

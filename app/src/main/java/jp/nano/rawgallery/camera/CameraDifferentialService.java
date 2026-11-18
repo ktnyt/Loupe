@@ -34,7 +34,11 @@ public final class CameraDifferentialService extends Service {
     private static void start(Context c,Intent i){c.startForegroundService(i);}
     @Override public IBinder onBind(Intent i){return null;}
     @Override public void onCreate(){super.onCreate();getSystemService(NotificationManager.class).createNotificationChannel(new NotificationChannel(CHANNEL,"写真の取り込み",NotificationManager.IMPORTANCE_LOW));}
-    private Notification notification(String text){return new Notification.Builder(this,CHANNEL).setSmallIcon(android.R.drawable.stat_sys_download).setContentTitle("Loupe").setContentText(text).setOngoing(true).setContentIntent(PendingIntent.getActivity(this,0,new Intent(this,CameraImportActivity.class),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT)).build();}
+    private PendingIntent progressPendingIntent() {
+        Intent intent = CameraImportActivity.showProgressIntent(this).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        return PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+    }
+    private Notification notification(String text){return new Notification.Builder(this,CHANNEL).setSmallIcon(android.R.drawable.stat_sys_download).setContentTitle("Loupe").setContentText(text).setOngoing(true).setContentIntent(progressPendingIntent()).build();}
     @Override public int onStartCommand(Intent i,int flags,int id){
         startForeground(781,notification("カメラの接続を待っています"));
         if(i!=null&&!WATCH.equals(i.getAction()))enqueue(i);
@@ -91,7 +95,7 @@ public final class CameraDifferentialService extends Service {
                         new Notification.Builder(this,CHANNEL).setSmallIcon(android.R.drawable.ic_menu_camera)
                         .setContentTitle("取り込みを開始できませんでした")
                         .setContentText("別の取り込みが実行中です。完了後にもう一度お試しください")
-                        .setContentIntent(PendingIntent.getActivity(this,0,new Intent(this,CameraImportActivity.class),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT))
+                        .setContentIntent(progressPendingIntent())
                         .setAutoCancel(true).build());
             }finally{operationFinished();}
         });
