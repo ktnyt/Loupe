@@ -43,12 +43,15 @@ final class E2BackgroundChecks {
     Context context = test.getTargetContext();
     if (!APP.equals(context.getPackageName()) || !"ranchu".equals(Build.HARDWARE))
       throw new AssertionError("Requires the isolated emulator APK");
-    boolean publish = "e2-catalog-publish".equals(mode);
+    boolean republish = "e2-catalog-republish".equals(mode);
+    boolean publish = republish || "e2-catalog-publish".equals(mode);
     boolean previous = "e2-catalog-previous".equals(mode);
     String user = new String(shell(test, "am get-current-user")).trim();
+    List<E2AutoSync.Candidate> initial = E2AutoSync.candidates(context);
     if (!(publish ? "0".equals(user) : user.matches("[1-9][0-9]{0,3}"))
-        || !E2AutoSync.candidates(context).isEmpty())
-      throw new AssertionError("Requires an empty isolated publisher or separate Android user");
+        || initial.size() != (republish ? 1 : 0)
+        || (republish && !CATALOG_JPEG.equals(initial.get(0).photo().name)))
+      throw new AssertionError("Requires the isolated publisher or a separate empty Android user");
     File input = new File(context.getCacheDir(), "e2-background-credentials");
     List<String> config;
     try {
@@ -60,9 +63,11 @@ final class E2BackgroundChecks {
     if (config.size() != 3 || !BUCKET.equals(config.get(0)))
       throw new AssertionError("Requires loupe-test");
     try (E2Photos photos = new E2Photos(context)) {
-      if (photos.settings.configured() || !photos.settings.records.all().isEmpty()
-          || !photos.saved(BUCKET).isEmpty())
-        throw new AssertionError("The catalog test must begin without app data");
+      List<JSONObject> rows = photos.saved(BUCKET);
+      if (photos.settings.configured() || photos.settings.records.all().size() != (republish ? 1 : 0)
+          || rows.size() != (republish ? 1 : 0)
+          || (republish && !CATALOG_JPEG.equals(rows.get(0).getString("name"))))
+        throw new AssertionError("Unexpected starting catalog or connection state");
     }
     byte[] expected = jpeg();
     Activity activity = test.startActivitySync(new Intent(context, E2SyncActivity.class)
@@ -77,10 +82,10 @@ final class E2BackgroundChecks {
       });
       waitFor("connect", 30000, () -> onUi(test, () -> find(root, "接続しました", false) != null));
       if (publish) {
-        Uri fixture = original(context, CATALOG_JPEG, expected);
+        Uri fixture = republish ? initial.get(0).photo().uri : original(context, CATALOG_JPEG, expected);
         if (E2AutoSync.candidates(context).size() != 1) throw new AssertionError("Expected one JPEG");
         try (E2Photos photos = new E2Photos(context)) {
-          photos.save(fixture, CATALOG_JPEG, BUCKET);
+          if (!republish) photos.save(fixture, CATALOG_JPEG, BUCKET);
         }
         clickView(test, root, "復元一覧をクラウドに保存", false);
         waitFor("catalog publication consent", 10000, () -> clickActive(test, APP, "保存"));
@@ -102,6 +107,12 @@ final class E2BackgroundChecks {
             || !CATALOG_JPEG.equals(rows.get(0).getString("name")))
           throw new AssertionError("Expected one recoverable row in the separate cache");
       }
+      waitFor("restoration action is visible", 10000, () -> onUi(test, () -> {
+        View restore = findDescription(root, CATALOG_JPEG + "を復元");
+        android.graphics.Rect visible = new android.graphics.Rect();
+        return restore != null && restore.getGlobalVisibleRect(visible)
+            && visible.height() >= restore.getHeight();
+      }));
       capture(test, context, "e2-catalog-loaded.png");
       clickView(test, root, CATALOG_JPEG + "を復元", true);
       waitFor("save document", 25000, () -> {

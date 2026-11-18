@@ -22,6 +22,7 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
   static final int MAX_BYTES = 512 * 1024;
   private static final int MAX_ROWS = 2000;
   private static final Object PUBLISH_LOCK = new Object();
+  private static final Object CACHE_LOCK = new Object();
 
   record Snapshot(long created, Map<String, JSONObject> records,
                   byte[] encoded, boolean previous) {}
@@ -49,10 +50,21 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
     Snapshot candidate = remote(archive, bucket);
     if (candidate == null) return null;
     merged(bucket, candidate, local);
-    ContentValues values = new ContentValues();
-    values.put("bucket", bucket);
-    values.put("body", candidate.encoded());
-    getWritableDatabase().replaceOrThrow("snapshots", null, values);
+    synchronized (CACHE_LOCK) {
+      Snapshot previous = cached(bucket);
+      if (previous != null) {
+        for (Map.Entry<String, JSONObject> row : previous.records().entrySet()) {
+          JSONObject incoming = candidate.records().get(row.getKey());
+          if (incoming == null || !sameOriginal(row.getValue(), incoming))
+            throw new IOException("新しい復元一覧に不足または競合があります");
+        }
+      }
+      if (Thread.currentThread().isInterrupted()) throw new IOException("取得を中止しました");
+      ContentValues values = new ContentValues();
+      values.put("bucket", bucket);
+      values.put("body", candidate.encoded());
+      getWritableDatabase().replaceOrThrow("snapshots", null, values);
+    }
     return candidate;
   }
 
@@ -77,7 +89,7 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
       JSONObject clean = normalize(bucket, entry);
       String key = clean.getString("key");
       JSONObject previous = result.get(key);
-      if (previous != null && !previous.toString().equals(clean.toString()))
+      if (previous != null && !sameOriginal(previous, clean))
         throw new IOException("保管記録と復元一覧で写真の内容が一致しません");
       result.put(key, clean);
     }
@@ -86,22 +98,26 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
 
   private static Snapshot remote(E2Archive archive, String bucket) throws Exception {
     E2Archive.CatalogObject latest = archive.readCatalog("");
-    if (latest == null) return null;
-    try {
-      return decode(bucket, latest.body(), false);
-    } catch (InvalidCatalog invalidLatest) {
-      for (String version : archive.previousCatalogVersions()) {
-        if (version.equals(latest.version())) continue;
-        E2Archive.CatalogObject earlier = archive.readCatalog(version);
-        if (earlier == null) continue;
-        try {
-          return decode(bucket, earlier.body(), true);
-        } catch (InvalidCatalog ignored) {
-          // Try the next retained generation. Network and permission failures still propagate.
-        }
+    if (latest != null) {
+      try {
+        return decode(bucket, latest.body(), false);
+      } catch (InvalidCatalog ignored) {
+        // Read the retained generations if the return value cannot be validated.
       }
-      throw invalidLatest;
     }
+    List<String> versions = archive.previousCatalogVersions();
+    if (latest == null && versions.isEmpty()) return null;
+    for (String version : versions) {
+      if (latest != null && version.equals(latest.version())) continue;
+      E2Archive.CatalogObject earlier = archive.readCatalog(version);
+      if (earlier == null) continue;
+      try {
+        return decode(bucket, earlier.body(), true);
+      } catch (InvalidCatalog ignored) {
+        // Network and permission failures still propagate.
+      }
+    }
+    throw new InvalidCatalog();
   }
 
   private static Snapshot encode(String bucket, long created, Map<String, JSONObject> records)
@@ -172,15 +188,26 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
     String version = E2Archive.checkedVersion(string(row, "version"));
     long size = integer(row, "size");
     long taken = row.has("taken") ? integer(row, "taken") : 0;
+    long verifiedAt = row.has("verifiedAt") ? integer(row, "verifiedAt") : 0;
     if (!bucket.equals(string(row, "bucket")) || !"idrive-e2".equals(string(row, "provider"))
         || !"verified".equals(string(row, "state")) || !key.matches("[0-9a-f]{32}")
         || !sha.matches("[0-9a-f]{64}") || size <= 0 || size > E2Archive.LIMIT || taken < 0
-        || name.length() > 255 || name.startsWith(".") || !RawFormats.accepts(name)
+        || verifiedAt < 0 || name.length() > 255 || name.lastIndexOf('.') <= 0
+        || !RawFormats.accepts(name)
         || name.matches("(?s).*[\\\\/\\p{Cntrl}].*"))
       throw new IOException("復元一覧の保管記録が不正です");
     return new JSONObject().put("key", key).put("sha", sha).put("name", name)
-        .put("version", version).put("size", size).put("taken", taken).put("bucket", bucket)
+        .put("version", version).put("size", size).put("taken", taken)
+        .put("verifiedAt", verifiedAt).put("bucket", bucket)
         .put("provider", "idrive-e2").put("state", "verified").put("mime", RawFormats.mime(name));
+  }
+
+  private static boolean sameOriginal(JSONObject left, JSONObject right) throws Exception {
+    return string(left, "key").equals(string(right, "key"))
+        && string(left, "name").equals(string(right, "name"))
+        && string(left, "sha").equals(string(right, "sha"))
+        && string(left, "version").equals(string(right, "version"))
+        && integer(left, "size") == integer(right, "size");
   }
 
   private static long integer(JSONObject doc, String key) throws Exception {

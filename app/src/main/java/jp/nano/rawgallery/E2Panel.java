@@ -346,6 +346,11 @@ final class E2Panel {
           }
           showCatalogStatus(outcome);
           message(outcome, GalleryUi.TEXT);
+          if (!save && result != null && list.getChildCount() > 0) {
+            View first = list.getChildAt(0);
+            first.post(() -> first.requestRectangleOnScreen(
+                new android.graphics.Rect(0, 0, first.getWidth(), first.getHeight()), true));
+          }
         });
       } catch (Exception failure) {
         post(() -> showCatalogStatus(save ? "復元一覧を保存できませんでした" :
@@ -399,8 +404,10 @@ final class E2Panel {
       item.addView(detail, new LinearLayout.LayoutParams(0, -2, 1));
       detail.addView(text(row.optString("name"), 14));
       String size = android.text.format.Formatter.formatShortFileSize(activity, row.optLong("size"));
-      String date = android.text.format.DateFormat.format("yyyy/MM/dd", row.optLong("verifiedAt")).toString();
-      detail.addView(text(size + " · " + date, 12));
+      long verifiedAt = row.optLong("verifiedAt");
+      String verification = verifiedAt > 0 ? " · "
+          + android.text.format.DateFormat.format("yyyy/MM/dd", verifiedAt) : "";
+      detail.addView(text(size + verification, 12));
       Button restore = new SyncSettingsUi.ActionButton(activity, "復元", () -> restore(row));
       restore.setContentDescription(row.optString("name") + "を復元");
       restore.setMinWidth(dp(72));

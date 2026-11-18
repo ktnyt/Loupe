@@ -174,7 +174,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
     e2ArchiveTest = args != null && "e2-archive".equals(args.getString("mode"));
     if (e2ArchiveTest) e2RunId = args.getString("e2-run");
     e2BackgroundTest = args != null && "e2-background".equals(args.getString("mode"));
-    if (args != null && java.util.Set.of("e2-catalog-publish", "e2-catalog-restore", "e2-catalog-previous")
+    if (args != null && java.util.Set.of("e2-catalog-publish", "e2-catalog-republish",
+        "e2-catalog-restore", "e2-catalog-previous")
         .contains(args.getString("mode", ""))) e2CatalogMode = args.getString("mode");
     sheetTest = args != null && "sheets".equals(args.getString("mode"));
     start();
