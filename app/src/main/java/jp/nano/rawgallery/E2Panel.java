@@ -34,7 +34,7 @@ final class E2Panel {
   private String activeBucket, pickerBucket;
   private Uri pendingPick;
   private Export export;
-  private File verified;
+  private E2Photos.PreparedRestore verified;
   private volatile Thread operation;
   private volatile boolean cancelled;
   private boolean busy, connecting, catalogPending;
@@ -100,9 +100,11 @@ final class E2Panel {
       if (directory.matches("e2-export-[0-9]+")) {
         File file = new File(new File(activity.getCacheDir(), directory), "original");
         try {
+          E2Photos.PreparedRestore prepared = new E2Photos.PreparedRestore(file,
+              state.getLong("e2-verified-size"), state.getString("e2-verified-sha"));
           E2Photos.holdForPicker(file);
-          verified = file;
-        } catch (java.io.IOException ignored) {
+          verified = prepared;
+        } catch (java.io.IOException | IllegalArgumentException ignored) {
           // A discarded cache file can be fetched again from the cloud catalog.
         }
       }
@@ -128,7 +130,11 @@ final class E2Panel {
   void saveState(Bundle state) {
     state.putString("e2-picker-bucket", pickerBucket);
     state.putBoolean("e2-exporting", export != null);
-    if (verified != null) state.putString("e2-verified-directory", verified.getParentFile().getName());
+    if (verified != null) {
+      state.putString("e2-verified-directory", verified.file().getParentFile().getName());
+      state.putLong("e2-verified-size", verified.size());
+      state.putString("e2-verified-sha", verified.sha());
+    }
   }
 
   void refreshAuto() {
@@ -261,13 +267,13 @@ final class E2Panel {
         consumePick();
       } else pickerBucket = null;
     } else if (request == CREATE) {
-      File file = verified;
+      E2Photos.PreparedRestore file = verified;
       verified = null;
       if (file == null) {
         if (result == Activity.RESULT_OK)
           message("復元を再開できませんでした。原本をもう一度選んでください", 0xffffb4a8);
       } else if (result != Activity.RESULT_OK || uri == null) {
-        E2Photos.discard(file);
+        E2Photos.discard(file.file());
         message("復元先の選択を中止しました", GalleryUi.TEXT);
         reloadAfterExport();
       } else runExport(file, uri);
@@ -329,16 +335,16 @@ final class E2Panel {
 
     Export(E2Panel panel) { this.panel = panel; }
 
-    void copy(E2Photos photos, File file, Uri destination) {
+    void copy(E2Photos photos, E2Photos.PreparedRestore file, Uri destination) {
       boolean ok = false;
       try {
-        bytes = file.length();
+        bytes = file.size();
         photos.export(file, destination);
         ok = true;
       } catch (Exception ignored) {
         // Report through the panel without disclosing the destination.
       } finally {
-        E2Photos.discard(file);
+        E2Photos.discard(file.file());
       }
       boolean success = ok;
       new Handler(Looper.getMainLooper()).post(() -> {
@@ -348,7 +354,7 @@ final class E2Panel {
     }
   }
 
-  private void runExport(File file, Uri uri) {
+  private void runExport(E2Photos.PreparedRestore file, Uri uri) {
     Export current = new Export(this);
     export = current;
     setBusy(true);
@@ -379,10 +385,14 @@ final class E2Panel {
   private void restore(JSONObject record) {
     long started = SystemClock.elapsedRealtime();
     run("原本を確認しています", () -> {
+      long size = record.getLong("size");
+      String sha = record.getString("sha");
       File file = photos.downloadRecord(record);
+      E2Photos.PreparedRestore prepared;
       try {
+        prepared = new E2Photos.PreparedRestore(file, size, sha);
         E2Photos.holdForPicker(file);
-      } catch (java.io.IOException failure) {
+      } catch (java.io.IOException | IllegalArgumentException failure) {
         E2Photos.discard(file);
         throw failure;
       }
@@ -391,7 +401,7 @@ final class E2Panel {
           E2Photos.discard(file);
           return;
         }
-        verified = file;
+        verified = prepared;
         Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT)
             .addCategory(Intent.CATEGORY_OPENABLE).setType(record.optString("mime"))
             .putExtra(Intent.EXTRA_LOCAL_ONLY, true)
@@ -606,7 +616,7 @@ final class E2Panel {
 
   void close() {
     cancelled = true;
-    if (verified != null && !activity.isChangingConfigurations()) E2Photos.discard(verified);
+    if (verified != null && !activity.isChangingConfigurations()) E2Photos.discard(verified.file());
     worker.execute(photos::close);
     Thread thread = operation;
     if (export != null) export.panel = null;

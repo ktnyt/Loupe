@@ -23,8 +23,10 @@ import org.json.JSONObject;
 /** Bridges user-selected files and the separate SQLite catalog of e2 originals. */
 final class E2Photos implements AutoCloseable {
   private static final Object SAVE_LOCK = new Object();
-  private static final Set<File> activePickerFiles = new HashSet<>();
+  private static final Set<File> ACTIVE_PICKER_FILES = new HashSet<>();
+  private static final long PICKER_LIFETIME_MS = TimeUnit.DAYS.toMillis(1);
   private static boolean checkedInterruptedStaging;
+  private static long nextPickerCleanupAt;
   private final Context context;
   private final E2RecoveryCatalog catalog;
   final E2Settings settings;
@@ -110,7 +112,7 @@ final class E2Photos implements AutoCloseable {
     if (!"content".equals(source.getScheme())) return -1;
     try (Cursor row = context.getContentResolver()
         .query(source, new String[]{OpenableColumns.SIZE}, null, null, null)) {
-      return row != null && row.moveToFirst() && !row.isNull(0) ? row.getLong(0) : -1;
+      return row != null && row.moveToFirst() && !row.isNull(0) ? Math.max(-1, row.getLong(0)) : -1;
     } catch (RuntimeException unavailable) {
       return -1;
     }
@@ -120,21 +122,32 @@ final class E2Photos implements AutoCloseable {
     InputStream open() throws IOException;
   }
 
-  private static synchronized void discardInterruptedStaging(File cache) {
-    if (checkedInterruptedStaging) return;
-    checkedInterruptedStaging = true;
+  static synchronized void discardInterruptedStaging(File cache, long now) {
+    boolean firstScan = !checkedInterruptedStaging;
+    if (!firstScan && now < nextPickerCleanupAt) return;
     File[] files = cache.listFiles();
     if (files == null) return;
+    checkedInterruptedStaging = true;
+    nextPickerCleanupAt = Long.MAX_VALUE;
     for (File file : files) {
       String name = file.getName();
-      if (file.isFile() && name.startsWith("e2-save-") && name.endsWith(".part")) {
+      if (firstScan && file.isFile() && name.startsWith("e2-save-") && name.endsWith(".part")) {
         file.delete();
       } else if (file.isDirectory() && name.startsWith("e2-export-")) {
         File original = new File(file, "original");
-        if (activePickerFiles.contains(original)) continue;
+        if (ACTIVE_PICKER_FILES.contains(original)) continue;
         File lease = new File(file, "picker");
-        long age = System.currentTimeMillis() - lease.lastModified();
-        if (lease.isFile() && age >= 0 && age < TimeUnit.DAYS.toMillis(1)) continue;
+        if (lease.isFile()) {
+          long lastModified = lease.lastModified();
+          long expires = lastModified + PICKER_LIFETIME_MS;
+          if (lastModified <= now && now < expires) {
+            nextPickerCleanupAt = Math.min(nextPickerCleanupAt, expires);
+            continue;
+          }
+        } else if (!firstScan) {
+          // Only the first scan can reclaim unmarked files without racing a live download.
+          continue;
+        }
         lease.delete();
         original.delete();
         File[] incomplete = file.listFiles((directory, part) ->
@@ -148,14 +161,14 @@ final class E2Photos implements AutoCloseable {
   File stage(Source source, long expected) throws IOException {
     if (expected > E2Archive.ORIGINAL_LIMIT) throw new IOException("原本のサイズが対応範囲外です");
     File cache = context.getCacheDir();
-    discardInterruptedStaging(cache);
+    discardInterruptedStaging(cache, System.currentTimeMillis());
     E2Archive.requireTemporarySpace(cache, expected);
     File staged = File.createTempFile("e2-save-", ".part", cache);
     boolean complete = false;
     try {
       long size = 0;
       try (InputStream in = source.open();
-          FileOutputStream out = new FileOutputStream(staged)) {
+          FileOutputStream out = new E2Archive.TemporaryOutput(staged)) {
         if (in == null) throw new IOException("原本を読み込めません");
         byte[] buffer = new byte[65536];
         for (int read; (read = in.read(buffer)) != -1; ) {
@@ -181,7 +194,7 @@ final class E2Photos implements AutoCloseable {
   File downloadRecord(JSONObject record) throws Exception {
     if (record == null) throw new IOException("原本の保管記録が見つかりません");
     File cache = context.getCacheDir();
-    discardInterruptedStaging(cache);
+    discardInterruptedStaging(cache, System.currentTimeMillis());
     File directory = Files.createTempDirectory(cache.toPath(), "e2-export-").toFile();
     File verified = new File(directory, "original");
     try {
@@ -193,25 +206,38 @@ final class E2Photos implements AutoCloseable {
     }
   }
 
-  void export(File verified, Uri destination) throws Exception {
+  record PreparedRestore(File file, long size, String sha) {
+    PreparedRestore {
+      if (size <= 0 || size > E2Archive.ORIGINAL_LIMIT || sha == null || !sha.matches("[0-9a-f]{64}"))
+        throw new IllegalArgumentException("復元の照合値が不正です");
+    }
+
+    void verifyStagedFile() throws Exception {
+      try (InputStream source = Files.newInputStream(file.toPath())) {
+        if (!sha.equals(E2Archive.readHash(source, null, size)))
+          throw new IOException("復元した一時ファイルが原本と一致しません");
+      }
+    }
+  }
+
+  void export(PreparedRestore verified, Uri destination) throws Exception {
     if (!DocumentsContract.isDocumentUri(context, destination))
       throw new IOException("新しいファイルを復元先に選んでください");
-    long size = verified.length();
-    String sha;
-    try (InputStream source = Files.newInputStream(verified.toPath())) {
-      sha = E2Archive.readHash(source, null, size);
-    }
-    E2Cleanup.keepRestored(context, sha);
+    verified.verifyStagedFile();
+    E2Cleanup.keepRestored(context, verified.sha());
     ParcelFileDescriptor descriptor =
         context.getContentResolver().openFileDescriptor(destination, "rw");
     if (descriptor == null) throw new IOException("復元先を開けません");
     try (FileOutputStream out = new ParcelFileDescriptor.AutoCloseOutputStream(descriptor)) {
       if (descriptor.getStatSize() != 0) throw new IOException("復元先にファイルがあります");
-      Files.copy(verified.toPath(), out);
+      try (InputStream source = Files.newInputStream(verified.file().toPath())) {
+        if (!verified.sha().equals(E2Archive.readHash(source, out, verified.size())))
+          throw new IOException("書き出し中に原本が変わりました");
+      }
       out.getFD().sync();
     }
     try (InputStream copy = context.getContentResolver().openInputStream(destination)) {
-      if (copy == null || !sha.equals(E2Archive.readHash(copy, null, size)))
+      if (copy == null || !verified.sha().equals(E2Archive.readHash(copy, null, verified.size())))
         throw new IOException("書き出した原本が一致しません");
     }
   }
@@ -221,11 +247,11 @@ final class E2Photos implements AutoCloseable {
     if (!verified.isFile()) throw new IOException("復元した一時ファイルが見つかりません");
     if (!marker.createNewFile())
       Files.setLastModifiedTime(marker.toPath(), FileTime.fromMillis(System.currentTimeMillis()));
-    activePickerFiles.add(verified);
+    ACTIVE_PICKER_FILES.add(verified);
   }
 
   static synchronized void discard(File verified) {
-    activePickerFiles.remove(verified);
+    ACTIVE_PICKER_FILES.remove(verified);
     new File(verified.getParentFile(), "picker").delete();
     verified.delete();
     verified.getParentFile().delete();

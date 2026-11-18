@@ -87,6 +87,9 @@ final class E2LargeOriginalChecks {
     File protectedCopy = new File(Files.createTempDirectory(cache.toPath(), "e2-export-").toFile(), "original");
     Files.write(orphan.toPath(), new byte[] {1});
     Files.write(protectedCopy.toPath(), new byte[] {2});
+    File waitingExpiry = new File(Files.createTempDirectory(cache.toPath(), "e2-export-").toFile(), "original");
+    Files.write(waitingExpiry.toPath(), new byte[] {3});
+    Files.createFile(new File(waitingExpiry.getParentFile(), "picker").toPath());
     File marker = new File(protectedCopy.getParentFile(), "picker");
     Files.createFile(marker.toPath());
     Files.setLastModifiedTime(marker.toPath(), java.nio.file.attribute.FileTime.fromMillis(1));
@@ -97,8 +100,8 @@ final class E2LargeOriginalChecks {
         photos.save(Uri.fromFile(new File(cache, "absent-e2-fixture")), "cache-check.mp4", "loupe-test");
         throw new AssertionError("Expected source to be missing");
       } catch (java.io.IOException expected) {
-        if (interrupted.exists() || orphan.exists() || !protectedCopy.isFile())
-          throw new AssertionError("Staging cleanup did not protect the current picker only");
+        if (interrupted.exists() || orphan.exists() || !protectedCopy.isFile() || !waitingExpiry.isFile())
+          throw new AssertionError("Initial staging cleanup ignored a current picker or valid lease");
       }
       try {
         photos.stage(() -> new java.io.ByteArrayInputStream(new byte[] {1}), 2);
@@ -106,17 +109,57 @@ final class E2LargeOriginalChecks {
       } catch (java.io.IOException expected) {
         if (!"原本のサイズが変わりました".equals(expected.getMessage())) throw expected;
       }
+      E2Photos.discardInterruptedStaging(cache,
+          System.currentTimeMillis() + java.util.concurrent.TimeUnit.DAYS.toMillis(1));
+      if (waitingExpiry.exists() || !protectedCopy.isFile())
+        throw new AssertionError("Same-process cleanup did not reclaim the expired lease");
+      verifyProtectedBytes(protectedCopy);
+      verifyDiskReserve(cache);
       android.content.SharedPreferences settings = E2AutoSync.state(context);
       int before = settings.getInt("fullMediaConsent", 0);
       try {
         settings.edit().putInt("fullMediaConsent", 1).commit();
         if (E2SyncJob.fullMediaConsent(context)) throw new AssertionError("Old size consent still accepted");
       } finally { settings.edit().putInt("fullMediaConsent", before).commit(); }
-      return "PASS large original staging: incomplete/orphan removed, reclaimed picker protected, truncated source and old consent rejected";
+      return "PASS large original staging: orphan and expired lease removed, active picker protected, "
+          + "short and altered originals rejected, storage reserve protected, old consent rejected";
     } finally {
       Files.deleteIfExists(interrupted.toPath());
       E2Photos.discard(orphan);
+      E2Photos.discard(waitingExpiry);
       E2Photos.discard(protectedCopy);
+    }
+  }
+
+  private static void verifyProtectedBytes(File file) throws Exception {
+    byte[] bytes = {7, 8};
+    var restore = new E2Photos.PreparedRestore(file, bytes.length, E2Archive.sha256(bytes));
+    Files.write(file.toPath(), bytes);
+    restore.verifyStagedFile();
+    for (byte[] wrong : new byte[][] {{7}, {7, 9}}) {
+      Files.write(file.toPath(), wrong);
+      try {
+        restore.verifyStagedFile();
+        throw new AssertionError("Altered staged restore was accepted");
+      } catch (java.io.IOException expected) {
+        // The verified original must be checked before opening the SAF destination.
+      }
+    }
+  }
+
+  private static void verifyDiskReserve(File cache) throws Exception {
+    File file = File.createTempFile("e2-budget-", ".part", cache);
+    try (var output = new E2Archive.TemporaryOutput(file,
+        () -> E2Archive.STORAGE_RESERVE + 2 - file.length())) {
+      output.write(new byte[] {1, 2});
+      try {
+        output.write(new byte[] {3});
+        throw new AssertionError("Temporary write crossed the storage reserve");
+      } catch (java.io.IOException expected) {
+        if (file.length() != 2) throw new AssertionError("Refused write changed the file");
+      }
+    } finally {
+      Files.deleteIfExists(file.toPath());
     }
   }
 

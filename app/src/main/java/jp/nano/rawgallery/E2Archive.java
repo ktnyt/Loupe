@@ -23,6 +23,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import javax.net.ssl.HttpsURLConnection;
@@ -38,6 +39,8 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
   static final long LIMIT = 512L * 1024 * 1024;
   // IDrive e2 publishes a 50 TB size limit for a single PUT.
   static final long ORIGINAL_LIMIT = 50_000_000_000_000L;
+  static final long STORAGE_RESERVE = 64L * 1024 * 1024;
+  private static final Object TEMPORARY_WRITE_LOCK = new Object();
   private static final String PHOTO_PREFIX = "loupe/originals";
   private static final ScheduledExecutorService TRANSFER_WATCHER = Executors.newSingleThreadScheduledExecutor(task -> {
     Thread thread = new Thread(task, "E2Archive.transfer-watch");
@@ -186,7 +189,7 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
     File temp = File.createTempFile("e2-restore-", ".part", destination.getParentFile());
     long start = SystemClock.elapsedRealtimeNanos();
     try {
-      try (FileOutputStream out = new FileOutputStream(temp)) {
+      try (FileOutputStream out = new TemporaryOutput(temp)) {
         get(path, version, size, sha, out);
         out.getFD().sync();
       }
@@ -503,8 +506,43 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
   }
 
   static void requireTemporarySpace(File directory, long bytes) throws IOException {
-    if (bytes > 0 && (directory == null || directory.getUsableSpace() < bytes))
+    requireTemporarySpace(directory == null ? 0 : directory.getUsableSpace(), Math.max(0, bytes));
+  }
+
+  private static void requireTemporarySpace(long usable, long bytes) throws IOException {
+    if (bytes > usable - STORAGE_RESERVE)
       throw new IOException("原本を照合するための端末の空き容量が不足しています");
+  }
+
+  static final class TemporaryOutput extends FileOutputStream {
+    private final LongSupplier usable;
+
+    TemporaryOutput(File file) throws IOException {
+      this(file, file.getParentFile()::getUsableSpace);
+    }
+
+    TemporaryOutput(File file, LongSupplier usable) throws IOException {
+      super(file);
+      this.usable = usable;
+    }
+
+    @Override public void write(int value) throws IOException {
+      synchronized (TEMPORARY_WRITE_LOCK) {
+        requireTemporarySpace(usable.getAsLong(), 1);
+        super.write(value);
+      }
+    }
+
+    @Override public void write(byte[] bytes) throws IOException {
+      write(bytes, 0, bytes.length);
+    }
+
+    @Override public void write(byte[] bytes, int offset, int length) throws IOException {
+      synchronized (TEMPORARY_WRITE_LOCK) {
+        requireTemporarySpace(usable.getAsLong(), length);
+        super.write(bytes, offset, length);
+      }
+    }
   }
 
   private static long millis(long start) { return (SystemClock.elapsedRealtimeNanos() - start) / 1000000; }
