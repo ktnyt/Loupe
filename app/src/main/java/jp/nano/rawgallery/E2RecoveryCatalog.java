@@ -120,6 +120,12 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
     throw new InvalidCatalog();
   }
 
+  static Snapshot latest(E2Archive archive, String bucket) throws Exception {
+    E2Archive.CatalogObject object = archive.readCatalog("");
+    if (object == null) throw new IOException("最新の復元一覧がありません");
+    return decode(bucket, object.body(), false);
+  }
+
   private static Snapshot encode(String bucket, long created, Map<String, JSONObject> records)
       throws Exception {
     if (records.isEmpty() || records.size() > MAX_ROWS)
@@ -202,7 +208,7 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
         .put("provider", "idrive-e2").put("state", "verified").put("mime", RawFormats.mime(name));
   }
 
-  private static boolean sameOriginal(JSONObject left, JSONObject right) throws Exception {
+  static boolean sameOriginal(JSONObject left, JSONObject right) throws Exception {
     return string(left, "key").equals(string(right, "key"))
         && string(left, "name").equals(string(right, "name"))
         && string(left, "sha").equals(string(right, "sha"))

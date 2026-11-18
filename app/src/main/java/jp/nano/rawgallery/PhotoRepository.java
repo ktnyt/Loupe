@@ -37,6 +37,10 @@ public final class PhotoRepository {
 
     public boolean isVideo() { return VideoFormats.accepts(name); }
 
+    public boolean isArchived() {
+      return uri != null && ("archive".equals(uri.getScheme()) || E2Cleanup.archived(uri));
+    }
+
     public boolean isJpeg() {
       return name.toLowerCase(Locale.ROOT).matches(".*\\.(jpg|jpeg)$");
     }
@@ -177,14 +181,31 @@ public final class PhotoRepository {
           throw new IOException("フォルダの読み取り許可が失効しています", e);
         }
       }
+    java.util.Map<String, String> amazonHashes = new java.util.HashMap<>();
     try (ArchiveStore store = new ArchiveStore(context)) {
       for (JSONObject record : store.all())
         if (record.has("sha")) {
           String path = record.getString("folder") + record.getString("name");
-          if (!result.containsKey(path)) result.put(path, store.cloudPhoto(record));
+          if (!result.containsKey(path)) {
+            result.put(path, store.cloudPhoto(record));
+            amazonHashes.put(path, record.getString("sha"));
+          }
         }
     } catch (Exception e) {
       throw new IOException("クラウド原本の記録を読めません", e);
+    }
+    try (ArchiveStore archive = E2Settings.openRecords(context)) {
+      for (JSONObject record : archive.all()) {
+        if (!E2Cleanup.released(record) && !E2Cleanup.releasing(record)) continue;
+        String path = record.getString("folder") + record.getString("name");
+        Photo local = result.get(path);
+        if (local != null && !local.isArchived() && E2Cleanup.releasing(record)) continue;
+        if (record.getString("sha").equals(amazonHashes.get(path))) result.remove(path);
+        Photo cloud = E2Cleanup.galleryPhoto(record);
+        result.put(cloud.uri.toString(), cloud);
+      }
+    } catch (Exception e) {
+      throw new IOException("IDrive e2の保管記録を読めません", e);
     }
     List<Photo> photos = new ArrayList<>();
     for (Photo p : result.values())
@@ -359,6 +380,7 @@ public final class PhotoRepository {
 
   private Preview previewLocked(Photo p, java.util.function.BooleanSupplier cancelled) throws IOException {
     if (p.isVideo()) throw new IOException("動画は写真プレビューの対象外です");
+    if (E2Cleanup.archived(p.uri)) return E2Cleanup.preview(context, p.uri);
     if ("archive".equals(p.uri.getScheme())) {
       try (ArchiveStore store = new ArchiveStore(context)) {
         return store.preview(p.uri.getHost());
@@ -424,6 +446,16 @@ public final class PhotoRepository {
     }
   }
 
+  void removePreparedPreview(Photo photo) throws IOException {
+    String key = digest("raw-preview-v2:" + photo.uri + ":" + photo.size + ":" + photo.modified);
+    synchronized (PUBLISH_LOCK) {
+      for (File root : new File[]{prepared, legacyPreviews}) {
+        new File(root, key + ".webp").delete();
+        new File(root, key + ".webp.json").delete();
+      }
+    }
+  }
+
   /** Only derived prepared files receive invalidation; originals/archive previews never do. */
   private static Preview preparedPreview(File webp, File meta, String model, int width, int height)
       throws IOException {
@@ -481,6 +513,7 @@ public final class PhotoRepository {
 
   private Preview sourcePreviewLocked(Photo p) throws IOException {
     if (p.isVideo()) throw new IOException("動画はRAW解析の対象外です");
+    if (E2Cleanup.archived(p.uri)) return E2Cleanup.preview(context, p.uri);
     if ("archive".equals(p.uri.getScheme())) {
       try (ArchiveStore store = new ArchiveStore(context)) {
         return store.preview(p.uri.getHost());

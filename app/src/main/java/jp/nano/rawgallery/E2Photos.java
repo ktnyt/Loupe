@@ -150,6 +150,12 @@ final class E2Photos implements AutoCloseable {
   void export(File verified, Uri destination) throws Exception {
     if (!DocumentsContract.isDocumentUri(context, destination))
       throw new IOException("新しいファイルを復元先に選んでください");
+    long size = verified.length();
+    String sha;
+    try (InputStream source = Files.newInputStream(verified.toPath())) {
+      sha = E2Archive.readHash(source, null, size);
+    }
+    E2Cleanup.keepRestored(context, sha);
     ParcelFileDescriptor descriptor =
         context.getContentResolver().openFileDescriptor(destination, "rw");
     if (descriptor == null) throw new IOException("復元先を開けません");
@@ -158,11 +164,8 @@ final class E2Photos implements AutoCloseable {
       Files.copy(verified.toPath(), out);
       out.getFD().sync();
     }
-    long size = verified.length();
-    try (InputStream source = Files.newInputStream(verified.toPath());
-         InputStream copy = context.getContentResolver().openInputStream(destination)) {
-      if (copy == null || !E2Archive.readHash(source, null, size)
-          .equals(E2Archive.readHash(copy, null, size)))
+    try (InputStream copy = context.getContentResolver().openInputStream(destination)) {
+      if (copy == null || !sha.equals(E2Archive.readHash(copy, null, size)))
         throw new IOException("書き出した原本が一致しません");
     }
   }
@@ -192,8 +195,8 @@ final class E2Photos implements AutoCloseable {
   private List<JSONObject> localSaved(String bucket) throws Exception {
     List<JSONObject> results = new ArrayList<>();
     for (JSONObject record : settings.records.all()) {
-      if ("verified".equals(record.getString("state"))
-          && bucket.equals(record.getString("bucket"))) results.add(record);
+      if (E2Cleanup.recoverable(record) && bucket.equals(record.getString("bucket")))
+        results.add(record.put("state", "verified"));
     }
     return results;
   }

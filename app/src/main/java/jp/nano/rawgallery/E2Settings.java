@@ -1,6 +1,8 @@
 package jp.nano.rawgallery;
 
 import android.content.Context;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.content.SharedPreferences;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
@@ -36,6 +38,17 @@ final class E2Settings {
     this.network = network;
     preferences = context.getSharedPreferences("e2_connection", Context.MODE_PRIVATE);
     records = openRecords(context);
+  }
+
+  static boolean hasPhotoAccess(Context context) {
+    return context.checkSelfPermission(imagePermission()) == PackageManager.PERMISSION_GRANTED
+        && context.checkSelfPermission(android.Manifest.permission.ACCESS_MEDIA_LOCATION)
+            == PackageManager.PERMISSION_GRANTED;
+  }
+
+  static String imagePermission() {
+    return Build.VERSION.SDK_INT >= 33 ? android.Manifest.permission.READ_MEDIA_IMAGES
+        : android.Manifest.permission.READ_EXTERNAL_STORAGE;
   }
 
   static String configuredBucket(Context context) {
