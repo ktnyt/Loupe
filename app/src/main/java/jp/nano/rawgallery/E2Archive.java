@@ -1,6 +1,11 @@
 package jp.nano.rawgallery;
 
 import android.os.SystemClock;
+import android.content.Context;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.util.Xml;
 import java.io.*;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -15,6 +20,7 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import javax.net.ssl.HttpsURLConnection;
 import org.json.JSONObject;
+import org.xmlpull.v1.XmlPullParser;
 
 /** Stores and restores checked originals in the Tokyo archive. The caller owns the archive DB. */
 final class E2Archive {
@@ -22,35 +28,96 @@ final class E2Archive {
   private static final String SCOPE_SUFFIX = "/ap-northeast-1/s3/aws4_request";
   private static final String EMPTY_SHA =
       "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-  private static final long LIMIT = 512L * 1024 * 1024;
+  static final long LIMIT = 512L * 1024 * 1024;
   private static final DateTimeFormatter TIME =
       DateTimeFormatter.ofPattern("uuuuMMdd'T'HHmmss'Z'", Locale.ROOT).withZone(ZoneOffset.UTC);
   private final String bucket, keyId, secret;
   private final ArchiveStore store;
+  private final String prefix;
+  private final Context context;
+  private final Network network;
 
   E2Archive(ArchiveStore store, String bucket, String keyId, String secret) {
+    this(store, bucket, keyId, secret, "loupe-transfer-pilot/android", null, null);
+  }
+
+  static E2Archive forPhotos(ArchiveStore store, String bucket, String keyId, String secret) {
+    return forPhotos(store, bucket, keyId, secret, null, null);
+  }
+
+  static E2Archive forPhotos(ArchiveStore store, String bucket, String keyId, String secret,
+      Context context, Network network) {
+    return new E2Archive(store, bucket, keyId, secret, "loupe/originals", context, network);
+  }
+
+  private E2Archive(ArchiveStore store, String bucket, String keyId, String secret, String prefix,
+      Context context, Network network) {
     if (!bucket.matches("[a-z0-9][a-z0-9-]{1,61}[a-z0-9]")
         || !keyId.matches("[A-Za-z0-9]{20}") || !secret.matches("[A-Za-z0-9+/=_-]{40}"))
       throw new IllegalArgumentException("IDrive e2の設定が不正です");
     this.store = store;
+    this.prefix = prefix;
+    this.context = context;
+    this.network = network;
     this.bucket = bucket;
     this.keyId = keyId;
     this.secret = secret;
   }
 
+  void checkConnection() throws Exception {
+    HttpsURLConnection connection = open("GET", "/" + bucket, "versioning=", EMPTY_SHA);
+    try {
+      requireOk(connection.getResponseCode());
+      try (InputStream in = connection.getInputStream()) {
+        ByteArrayOutputStream response = new ByteArrayOutputStream();
+        byte[] buffer = new byte[1024];
+        for (int n; (n = in.read(buffer)) != -1; ) {
+          if (response.size() + n > 8192) throw new IOException("保存先の応答が不正です");
+          response.write(buffer, 0, n);
+        }
+        XmlPullParser xml = Xml.newPullParser();
+        xml.setInput(new ByteArrayInputStream(response.toByteArray()), "UTF-8");
+        for (int event = xml.next(); event != XmlPullParser.END_DOCUMENT; event = xml.next()) {
+          if (event == XmlPullParser.START_TAG && xml.getDepth() == 2
+              && "Status".equals(xml.getName()) && "Enabled".equals(xml.nextText())) return;
+        }
+      }
+      throw new IOException("バケットのバージョニングを有効にしてください");
+    } finally {
+      connection.disconnect();
+    }
+  }
+
   /** A retry may find an existing object. Only a confirmed absence permits another PUT. */
   synchronized long save(String id, File source) throws Exception {
+    return save(id, source, null);
+  }
+
+  synchronized long savePhoto(File source, String name, String mime) throws Exception {
+    return save(null, source, new JSONObject().put("name", name).put("mime", mime));
+  }
+
+  synchronized void saveIndexed(String id, File source, JSONObject metadata) throws Exception {
+    save(id, source, metadata);
+  }
+
+  private long save(String id, File source, JSONObject metadata) throws Exception {
     long size = source.length();
     checkSize(size);
     String sha;
     try (InputStream in = new FileInputStream(source)) {
       sha = readHash(in, null, size);
     }
+    if (id == null) {
+      id = hex(MessageDigest.getInstance("SHA-256")
+          .digest(bytes(bucket + "\n" + sha + "\n" + metadata.getString("name")))).substring(0, 32);
+    }
     String path = path(id, sha);
     JSONObject record = store.get(id);
     boolean fresh = record == null;
     if (fresh) {
-      record = new JSONObject().put("key", id).put("provider", "idrive-e2")
+      record = (metadata == null ? new JSONObject() : metadata)
+          .put("key", id).put("provider", "idrive-e2")
           .put("bucket", bucket).put("size", size).put("sha", sha);
       store.put(record, "pending");
     } else {
@@ -61,7 +128,7 @@ final class E2Archive {
       if (!"pending".equals(record.getString("state"))) throw new IOException("保管状態が不正です");
       String version = get(path, "", size, sha, null, true);
       if (version != null) {
-        store.put(record.put("version", version), "verified");
+        store.put(record.put("version", version).put("verifiedAt", System.currentTimeMillis()), "verified");
         return 0;
       }
     }
@@ -82,7 +149,7 @@ final class E2Archive {
     }
     long putMillis = millis(start);
     get(path, version, size, sha, null, false);
-    store.put(record.put("version", version), "verified");
+    store.put(record.put("version", version).put("verifiedAt", System.currentTimeMillis()), "verified");
     return putMillis;
   }
 
@@ -120,7 +187,7 @@ final class E2Archive {
   private String path(String id, String sha) {
     if (!id.matches("[0-9a-f]{32}") || !sha.matches("[0-9a-f]{64}"))
       throw new IllegalArgumentException("原本の識別子が不正です");
-    return "/" + bucket + "/loupe-transfer-pilot/android/" + id + "/" + sha;
+    return "/" + bucket + "/" + prefix + "/" + id + "/" + sha;
   }
 
   private String get(String path, String version, long size, String sha, OutputStream out,
@@ -160,8 +227,15 @@ final class E2Archive {
     byte[] regionKey = hmac(dateKey, "ap-northeast-1");
     byte[] serviceKey = hmac(regionKey, "s3");
     String signature = hex(hmac(hmac(serviceKey, "aws4_request"), toSign));
-    HttpsURLConnection conn = (HttpsURLConnection) new URL("https://" + HOST + path
-        + (query.isEmpty() ? "" : "?" + query)).openConnection();
+    if (Thread.currentThread().isInterrupted()) throw new IOException("通信を中断しました");
+    URL url = new URL("https://" + HOST + path + (query.isEmpty() ? "" : "?" + query));
+    HttpsURLConnection conn;
+    if (context == null) {
+      conn = (HttpsURLConnection) url.openConnection();
+    } else {
+      if (!unmetered(context, network)) throw new IOException("従量制でない回線を待っています");
+      conn = (HttpsURLConnection) network.openConnection(url);
+    }
     conn.setInstanceFollowRedirects(false);
     conn.setUseCaches(false);
     conn.setConnectTimeout(15000);
@@ -175,7 +249,15 @@ final class E2Archive {
     return conn;
   }
 
-  private static String readHash(InputStream in, OutputStream out, long size) throws Exception {
+  static boolean unmetered(Context context, Network network) {
+    if (network == null) return false;
+    NetworkCapabilities capabilities =
+        context.getSystemService(ConnectivityManager.class).getNetworkCapabilities(network);
+    return capabilities != null
+        && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED);
+  }
+
+  static String readHash(InputStream in, OutputStream out, long size) throws Exception {
     MessageDigest digest = MessageDigest.getInstance("SHA-256");
     byte[] buffer = new byte[65536];
     long count = 0;

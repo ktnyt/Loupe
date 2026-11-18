@@ -167,6 +167,11 @@ public final class SyncActivity extends DiagnosticActivity {
     verificationStatus=new StatusView(this);
     Button verify=new SyncSettingsUi.ActionButton(this,"確認する",()->startActivity(new Intent(this,CloudActivity.class).putExtra("verify-on-open",true)));
     SyncSettingsUi.verification(this,root,verificationStatus,verify);
+    Button e2 = new SyncSettingsUi.ActionButton(this, "IDrive e2 バックアップ",
+        () -> startActivity(new Intent(this, E2SyncActivity.class)));
+    LinearLayout.LayoutParams e2Params = new LinearLayout.LayoutParams(-1, -2);
+    e2Params.setMargins(GalleryUi.dp(this,16),0,GalleryUi.dp(this,16),GalleryUi.dp(this,24));
+    root.addView(e2, e2Params);
 
 
   }
@@ -220,6 +225,11 @@ public final class SyncActivity extends DiagnosticActivity {
 
   private StatusView requirement(StatusView.Symbol kind,String message){StatusView view=new StatusView(this);view.show(kind,message);return view;}
   private void confirm(boolean cleanup) {
+    if (cleanup && (E2SyncJob.enabled(this) || E2SyncJob.running())) {
+      new GalleryUi.Sheet(this).setTitle("IDrive e2の自動バックアップを一時停止してください")
+          .setPositiveButton("閉じる", null).show();
+      return;
+    }
     if (!Environment.isExternalStorageManager()
         && checkSelfPermission(android.Manifest.permission.ACCESS_MEDIA_LOCATION)
             != android.content.pm.PackageManager.PERMISSION_GRANTED) {
@@ -268,6 +278,10 @@ public final class SyncActivity extends DiagnosticActivity {
                       .setPositiveButton(
                           cleanup ? "端末の写真の自動削除を有効にする" : "自動同期を開始",
                           (d, w) -> {
+                            if (cleanup && (E2SyncJob.enabled(this) || E2SyncJob.running())) {
+                              confirm(true);
+                              return;
+                            }
                             getSharedPreferences("settings", 0)
                                 .edit()
                                 .putBoolean(cleanup ? "cleanupEnabled" : "syncEnabled", true)

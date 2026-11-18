@@ -64,7 +64,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean automaticTest, confidenceStoreTest, confidenceUiTest;
   private boolean cleanupTest;
   private boolean compactTest;
-  private boolean e2ArchiveTest;
+  private boolean e2ArchiveTest, e2BackgroundTest;
   private String e2RunId;
   private boolean jpegTest;
   private boolean jpegCloudTest;
@@ -172,6 +172,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     compactTest = args != null && "compact".equals(args.getString("mode"));
     e2ArchiveTest = args != null && "e2-archive".equals(args.getString("mode"));
     if (e2ArchiveTest) e2RunId = args.getString("e2-run");
+    e2BackgroundTest = args != null && "e2-background".equals(args.getString("mode"));
     sheetTest = args != null && "sheets".equals(args.getString("mode"));
     start();
   }
@@ -201,6 +202,11 @@ public final class ArchiveInstrumentation extends Instrumentation {
       }
       if (videoTest) {
         results.putString("stream", VideoChecks.run(this, tagWidth > 0 ? tagWidth : 400, tagFont > 0 ? tagFont : 1f));
+        finish(-1, results);
+        return;
+      }
+      if (e2BackgroundTest) {
+        results.putString("stream", E2BackgroundChecks.run(this));
         finish(-1, results);
         return;
       }

@@ -169,10 +169,25 @@ final class SyncEngine {
             if (Thread.currentThread().isInterrupted()
                 || !settings.getBoolean("cleanupEnabled", false)
                 || !settings.getBoolean("syncEnabled", false)) {reachedEnd=false;break;}
-            store.put(record, "releasing");
-            if (c.getContentResolver().delete(p.uri, null, null) != 1)
-              throw new java.io.IOException("Delete refused");
-            store.put(record, "released");
+            if (!E2SyncJob.ORIGINALS.tryLock()) {
+              reachedEnd = false;
+              break;
+            }
+            try {
+              if (Thread.currentThread().isInterrupted()
+                  || !settings.getBoolean("cleanupEnabled", false)
+                  || !settings.getBoolean("syncEnabled", false)
+                  || E2SyncJob.enabled(c) || E2SyncJob.running()) {
+                reachedEnd = false;
+                break;
+              }
+              store.put(record, "releasing");
+              if (c.getContentResolver().delete(p.uri, null, null) != 1)
+                throw new java.io.IOException("Delete refused");
+              store.put(record, "released");
+            } finally {
+              E2SyncJob.ORIGINALS.unlock();
+            }
           }
         } catch (CloudVerifier.AuthException e) {
           throw e;
