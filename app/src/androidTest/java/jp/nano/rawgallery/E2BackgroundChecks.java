@@ -95,13 +95,16 @@ final class E2BackgroundChecks {
       shell(test, "svc wifi disable");
       waitFor("network disabled", 20000, () -> !hasUnmeteredNetwork(c));
       clickView(test, root, "開始", false);
-      waitFor("backup consent", 10000, () -> clickActive(test, APP, "開始"));
+      SystemClock.sleep(500);
+      capture(test, c, "e2-product-backup.png");
+      waitFor("backup consent", 12000,
+          () -> clickPositive(test, "自動バックアップを開始しますか？"));
       waitFor("backup enabled", 10000, () -> E2SyncJob.enabled(c));
       clickView(test, root, "端末原本の整理を有効にする", false);
       waitFor("cleanup consent visible", 10000, () -> activeContains(test, APP, "端末原本の整理を有効にしますか？"));
       SystemClock.sleep(350);
       capture(test, c, "e2-product-consent.png");
-      waitFor("cleanup consent", 10000, () -> clickActive(test, APP, "有効にする"));
+      waitFor("cleanup consent", 10000, () -> clickPositive(test, "端末原本の整理を有効にしますか？"));
       waitFor("cleanup enabled", 10000, () -> E2Cleanup.enabled(c, BUCKET));
       SystemClock.sleep(350);
       capture(test, c, "e2-product-enabled.png");
@@ -200,6 +203,14 @@ final class E2BackgroundChecks {
     } finally {
       Files.deleteIfExists(file.toPath());
     }
+  }
+
+  private static boolean clickPositive(Instrumentation test, String title) {
+    AccessibilityNodeInfo root = test.getUiAutomation().getRootInActiveWindow();
+    if (root == null || !APP.contentEquals(root.getPackageName()) || node(root, title) == null) return false;
+    for (AccessibilityNodeInfo button : root.findAccessibilityNodeInfosByViewId("android:id/button1"))
+      if (button.isEnabled() && button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true;
+    return false;
   }
 
   private static View findDescriptionPrefix(View view, String label) {
