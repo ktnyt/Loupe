@@ -48,7 +48,10 @@ final class E2BackgroundChecks {
     Context context = test.getTargetContext();
     if (!"ranchu".equals(Build.HARDWARE)) throw new AssertionError("Requires an isolated emulator");
     if ("e2-cleanup-shared-seed".equals(mode)) return sharedSeed(context);
-    if (!APP.equals(context.getPackageName()) || staleId <= 0 || matchId <= 0 || staleId == matchId)
+    if (!APP.equals(context.getPackageName())) throw new AssertionError("Requires the verification APK");
+    boolean live = "e2-cleanup-shared-live".equals(mode);
+    List<String> cloudConfig = live ? sharedCloudCredentials(context) : List.of();
+    if (staleId <= 0 || matchId <= 0 || staleId == matchId)
       throw new AssertionError("Requires the verification APK and both synthetic IDs");
     List<E2AutoSync.Candidate> rows = E2AutoSync.candidates(context);
     E2AutoSync.Candidate changed = exactFixture(rows, SHARED_STALE, staleId);
@@ -88,22 +91,30 @@ final class E2BackgroundChecks {
       verifyFixtureBytes(context, exactUri);
       return "PASS e2-cleanup-shared-denied: read access alone preserved another app's JPEG";
     }
-    boolean live = "e2-cleanup-shared-live".equals(mode);
     if ((!live && !"e2-cleanup-shared-allowed".equals(mode))
         || !android.os.Environment.isExternalStorageManager())
       throw new AssertionError("The test mode and all-files permission are required");
-    int stale = resolver.delete(changedUri, condition, new String[]{Long.toString(oldGeneration)});
-    if (stale != 0) throw new AssertionError("A stale revision was deleted");
-    verifyFixtureBytes(context, changedUri);
 
+    android.content.SharedPreferences connection =
+        context.getSharedPreferences("e2_connection", Context.MODE_PRIVATE);
+    boolean probeConnection = false;
     try (E2Photos photos = new E2Photos(context)) {
-      JSONObject remote = live ? sharedCloudReference(context, photos) : null;
-      if (remote != null) verifyCloudReference(photos, remote);
+      JSONObject remote = null;
+      if (live) {
+        if (!connection.getAll().isEmpty() || !photos.settings.records.all().isEmpty())
+          throw new AssertionError("The probe requires an empty local connection and archive");
+        probeConnection = true;
+        remote = sharedCloudReference(photos, cloudConfig);
+        verifyCloudReference(photos, remote);
+      }
+      int stale = resolver.delete(changedUri, condition, new String[]{Long.toString(oldGeneration)});
+      if (stale != 0) throw new AssertionError("A stale revision was deleted");
+      verifyFixtureBytes(context, changedUri);
       removeSharedFixture(context, exactUri, condition, current);
       if (remote != null) verifyCloudReference(photos, remote);
     } finally {
-      if (live) context.getSharedPreferences("e2_connection", Context.MODE_PRIVATE)
-          .edit().clear().commit();
+      if (probeConnection && !connection.edit().clear().commit())
+        throw new AssertionError("Could not clear the temporary e2 connection");
     }
     verifyFixtureBytes(context, changedUri);
     if (live) return "PASS e2-cleanup-shared-live: same loupe-test version read and matched "
@@ -126,7 +137,7 @@ final class E2BackgroundChecks {
       throw new AssertionError("A matching synthetic original did not disappear");
   }
 
-  private static JSONObject sharedCloudReference(Context context, E2Photos photos) throws Exception {
+  private static List<String> sharedCloudCredentials(Context context) throws Exception {
     File input = new File(context.getCacheDir(), "e2-background-credentials");
     List<String> config;
     try {
@@ -135,9 +146,13 @@ final class E2BackgroundChecks {
     } finally {
       Files.deleteIfExists(input.toPath());
     }
-    if (config.size() != 3 || !BUCKET.equals(config.get(0))
-        || photos.settings.configured() || !photos.settings.records.all().isEmpty())
+    if (config.size() != 3 || !BUCKET.equals(config.get(0)))
       throw new AssertionError("The probe requires a fresh loupe-test connection");
+    return config;
+  }
+
+  private static JSONObject sharedCloudReference(E2Photos photos, List<String> config)
+      throws Exception {
     photos.settings.connect(BUCKET, config.get(1), config.get(2));
     E2RecoveryCatalog.Snapshot snapshot = photos.loadCatalog(BUCKET);
     List<JSONObject> rows = photos.saved(BUCKET);
