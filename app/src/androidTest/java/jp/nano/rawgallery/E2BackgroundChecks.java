@@ -125,6 +125,12 @@ final class E2BackgroundChecks {
       if (activePackage(test, APP)) throw new AssertionError("The cleanup did not stay in the background");
       return "PASS e2-cleanup-product-sync: scheduled e2 cleanup removed only the old synthetic JPEG";
     }
+    if ("restore".equals(mode) && E2Settings.configuredBucket(c).isEmpty()) {
+      List<String> config = sharedCloudCredentials(c);
+      try (E2Settings settings = new E2Settings(c)) {
+        settings.connect(BUCKET, config.get(1), config.get(2));
+      }
+    }
     if (!BUCKET.equals(E2Settings.configuredBucket(c))) throw new AssertionError("Requires loupe-test");
     if ("offline".equals(mode)) {
       ConnectivityManager manager = c.getSystemService(ConnectivityManager.class);
@@ -139,7 +145,11 @@ final class E2BackgroundChecks {
       Activity gallery = test.startActivitySync(new Intent(c, MainActivity.class)
           .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       View root = gallery.getWindow().getDecorView();
-      if (onUi(test, () -> findDescription(root, "写真") != null)) clickView(test, root, "写真", true);
+      waitFor("photo tab", 15000, () -> onUi(test, () -> {
+        View navigation = root.findViewWithTag("library-navigation");
+        return navigation instanceof LibraryTabs tabs && tabs.isEnabled()
+            && (tabs.selectedDestination() == 0 || tabs.destinationView(0).performClick());
+      }));
       waitFor("archived thumbnail bound to the gallery", 22000, () -> onUi(test, () -> {
         View cell = findDescriptionPrefix(root, old);
         return cell != null && (cell instanceof android.widget.ImageView image
