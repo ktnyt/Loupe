@@ -37,6 +37,115 @@ import org.json.JSONObject;
 final class E2BackgroundChecks {
   private static final String APP = "jp.nano.rawgallery.e2verify";
   private static final String BUCKET = "loupe-test";
+  private static final String CATALOG_JPEG = "loupe-e2-catalog-stage3.jpg";
+
+  static String catalog(Instrumentation test, String mode) throws Exception {
+    Context context = test.getTargetContext();
+    if (!APP.equals(context.getPackageName()) || !"ranchu".equals(Build.HARDWARE))
+      throw new AssertionError("Requires the isolated emulator APK");
+    boolean publish = "e2-catalog-publish".equals(mode);
+    boolean previous = "e2-catalog-previous".equals(mode);
+    String user = new String(shell(test, "am get-current-user")).trim();
+    if (!(publish ? "0".equals(user) : user.matches("[1-9][0-9]{0,3}"))
+        || !E2AutoSync.candidates(context).isEmpty())
+      throw new AssertionError("Requires an empty isolated publisher or separate Android user");
+    File input = new File(context.getCacheDir(), "e2-background-credentials");
+    List<String> config;
+    try {
+      if (input.length() > 512) throw new AssertionError("Invalid credential input");
+      config = Files.readAllLines(input.toPath());
+    } finally {
+      Files.deleteIfExists(input.toPath());
+    }
+    if (config.size() != 3 || !BUCKET.equals(config.get(0)))
+      throw new AssertionError("Requires loupe-test");
+    try (E2Photos photos = new E2Photos(context)) {
+      if (photos.settings.configured() || !photos.settings.records.all().isEmpty()
+          || !photos.saved(BUCKET).isEmpty())
+        throw new AssertionError("The catalog test must begin without app data");
+    }
+    byte[] expected = jpeg();
+    Activity activity = test.startActivitySync(new Intent(context, E2SyncActivity.class)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    try {
+      View root = activity.getWindow().getDecorView();
+      test.runOnMainSync(() -> {
+        ((EditText) find(root, "バケット", true)).setText(BUCKET);
+        ((EditText) find(root, "アクセスキー", true)).setText(config.get(1));
+        ((EditText) find(root, "シークレットキー", true)).setText(config.get(2));
+        find(root, "接続して保存", false).performClick();
+      });
+      waitFor("connect", 30000, () -> onUi(test, () -> find(root, "接続しました", false) != null));
+      if (publish) {
+        Uri fixture = original(context, CATALOG_JPEG, expected);
+        if (E2AutoSync.candidates(context).size() != 1) throw new AssertionError("Expected one JPEG");
+        try (E2Photos photos = new E2Photos(context)) {
+          photos.save(fixture, CATALOG_JPEG, BUCKET);
+        }
+        clickView(test, root, "復元一覧をクラウドに保存", false);
+        waitFor("catalog publication consent", 10000, () -> clickActive(test, APP, "保存"));
+        waitFor("catalog publication readback", 30000,
+            () -> onUi(test, () -> hasTextPrefix(root, "復元一覧を保存しました")));
+        try (InputStream source = context.getContentResolver().openInputStream(fixture)) {
+          if (source == null || !Arrays.equals(expected, source.readAllBytes()))
+            throw new AssertionError("Publisher original changed");
+        }
+        capture(test, context, "e2-catalog-publish.png");
+        return "PASS e2-catalog: published and read back one JPEG; publisher source retained";
+      }
+      clickView(test, root, "クラウドから復元一覧を取得", false);
+      String result = previous ? "前の復元一覧を読み込みました" : "復元一覧を読み込みました";
+      waitFor("catalog import", 30000, () -> onUi(test, () -> hasTextPrefix(root, result)));
+      try (E2Photos photos = new E2Photos(context)) {
+        List<JSONObject> rows = photos.saved(BUCKET);
+        if (!photos.settings.records.all().isEmpty() || rows.size() != 1
+            || !CATALOG_JPEG.equals(rows.get(0).getString("name")))
+          throw new AssertionError("Expected one recoverable row in the separate cache");
+      }
+      capture(test, context, "e2-catalog-loaded.png");
+      clickView(test, root, CATALOG_JPEG + "を復元", true);
+      waitFor("save document", 25000, () -> {
+        AccessibilityNodeInfo picker = test.getUiAutomation().getRootInActiveWindow();
+        if (picker == null || !List.of("com.google.android.documentsui", "com.android.documentsui")
+            .contains(String.valueOf(picker.getPackageName()))) return false;
+        for (AccessibilityNodeInfo button : picker.findAccessibilityNodeInfosByViewId("android:id/button1"))
+          if (button.isEnabled() && button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true;
+        return false;
+      });
+      waitFor("restore success", 20000, () -> activeContains(test, APP, "原本を復元しました"));
+      byte[] resultRows = shell(test, "content query --user " + user
+          + " --uri content://media/external_primary/downloads --projection _id:_display_name");
+      java.util.regex.Matcher row = java.util.regex.Pattern.compile(
+          "_id=(\\d+), _display_name=" + java.util.regex.Pattern.quote(CATALOG_JPEG))
+          .matcher(new String(resultRows));
+      if (!row.find()) throw new AssertionError("No fresh JPEG in Downloads");
+      byte[] restored = shell(test, "content read --user " + user
+          + " --uri content://media/external_primary/downloads/" + row.group(1));
+      if (!Arrays.equals(expected, restored)) throw new AssertionError("Restored JPEG bytes differ");
+      return "PASS e2-catalog: empty Android user read " + (previous ? "previous" : "latest")
+          + " generation and restored matching JPEG; bytes=" + restored.length;
+    } finally {
+      test.runOnMainSync(activity::finish);
+      context.getSharedPreferences("e2_connection", Context.MODE_PRIVATE).edit().clear().commit();
+    }
+  }
+
+  private static void clickView(Instrumentation test, View root, String label, boolean description) {
+    waitFor(label, 12000, () -> onUi(test, () -> {
+      View view = description ? findDescription(root, label) : find(root, label, false);
+      if (view == null || !view.isEnabled()) return false;
+      view.requestRectangleOnScreen(new android.graphics.Rect(0, 0, view.getWidth(), view.getHeight()), true);
+      return view.performClick();
+    }));
+  }
+
+  private static boolean hasTextPrefix(View view, String prefix) {
+    if (view instanceof TextView text && text.getText().toString().startsWith(prefix)) return true;
+    if (view instanceof ViewGroup group)
+      for (int i = 0; i < group.getChildCount(); i++)
+        if (hasTextPrefix(group.getChildAt(i), prefix)) return true;
+    return false;
+  }
 
   static String run(Instrumentation test) throws Exception {
     Context context = test.getTargetContext();

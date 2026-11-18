@@ -26,8 +26,8 @@ final class E2Panel {
   private final E2SyncActivity activity;
   private final LinearLayout card, list;
   private final EditText bucket, access, secret;
-  private final TextView status, autoStatus;
-  private final Button connect, save, cancel, autoToggle;
+  private final TextView status, autoStatus, catalogStatus;
+  private final Button connect, save, cancel, autoToggle, catalogLoad, catalogSave;
   private final ExecutorService worker = new DiagnosticExecutor("E2Panel.worker", 1);
   private final E2Photos photos;
   private String activeBucket, pickerBucket;
@@ -79,6 +79,12 @@ final class E2Panel {
         activity.startActivity(new Intent(activity, DashboardActivity.class)));
     add(card, text("保存した原本", 16));
     button(card, "保存した原本を更新", 48, () -> run("一覧を読み込んでいます", this::refresh));
+    catalogLoad = button(card, "クラウドから復元一覧を取得", 48, () -> catalog(false));
+    catalogSave = button(card, "復元一覧をクラウドに保存", 48, () -> catalog(true));
+    catalogStatus = text("", 14);
+    catalogStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    catalogStatus.setVisibility(View.GONE);
+    add(card, catalogStatus);
     list = column();
     add(card, list);
     setBusy(false);
@@ -293,7 +299,7 @@ final class E2Panel {
   private void restore(JSONObject record) {
     long started = SystemClock.elapsedRealtime();
     run("原本を確認しています", () -> {
-      File file = photos.download(record.getString("key"));
+      File file = photos.downloadRecord(record);
       activity.runOnUiThread(() -> {
         if (activity.isDestroyed() || cancelled) {
           E2Photos.discard(file);
@@ -308,6 +314,50 @@ final class E2Panel {
         timing("restore_fetch", started, " bytes=" + file.length());
       });
     });
+  }
+
+  private void catalog(boolean save) {
+    String bucket = activeBucket;
+    if (bucket == null) return;
+    if (save) {
+      new GalleryUi.Sheet(activity).setTitle("復元一覧を保存しますか？")
+          .setMessage(bucket + " に保存します。機種変更後にこの一覧から原本を選べます。")
+          .setNegativeButton("キャンセル", null)
+          .setPositiveButton("保存", (dialog, which) -> transferCatalog(bucket, true)).show();
+    } else transferCatalog(bucket, false);
+  }
+
+  private void transferCatalog(String bucket, boolean save) {
+    String progress = save ? "復元一覧を保存しています" : "復元一覧を取得しています";
+    showCatalogStatus(progress);
+    run(progress, () -> {
+      try {
+        E2RecoveryCatalog.Snapshot result = save
+            ? photos.publishCatalog(bucket) : photos.loadCatalog(bucket);
+        if (!save && result != null) refresh();
+        post(() -> {
+          String outcome = "クラウドに復元一覧がありません";
+          if (result != null) {
+            String time = java.text.DateFormat.getDateTimeInstance().format(
+                new java.util.Date(result.created()));
+            outcome = (save ? "復元一覧を保存しました" :
+                result.previous() ? "前の復元一覧を読み込みました" : "復元一覧を読み込みました")
+                + "\n" + result.records().size() + "枚 · " + time;
+          }
+          showCatalogStatus(outcome);
+          message(outcome, GalleryUi.TEXT);
+        });
+      } catch (Exception failure) {
+        post(() -> showCatalogStatus(save ? "復元一覧を保存できませんでした" :
+            "復元一覧を取得できませんでした"));
+        throw failure;
+      }
+    });
+  }
+
+  private void showCatalogStatus(String label) {
+    catalogStatus.setText(label);
+    catalogStatus.setVisibility(View.VISIBLE);
   }
 
   private void timing(String phase, long start, String detail) {
@@ -328,6 +378,7 @@ final class E2Panel {
   }
 
   private void showSaved(String name, List<JSONObject> rows) {
+    if (!name.equals(activeBucket)) catalogStatus.setVisibility(View.GONE);
     activeBucket = name;
     savedRows.clear();
     savedRows.addAll(rows);
@@ -419,6 +470,8 @@ final class E2Panel {
     access.setEnabled(!value);
     secret.setEnabled(!value);
     save.setEnabled(!value && activeBucket != null);
+    catalogLoad.setEnabled(!value && activeBucket != null);
+    catalogSave.setEnabled(!value && activeBucket != null);
     cancel.setVisibility(value && !connecting && export == null && verified == null ? View.VISIBLE : View.GONE);
     for (int i = 0; i < list.getChildCount(); i++) {
       if (list.getChildAt(i) instanceof LinearLayout) {
