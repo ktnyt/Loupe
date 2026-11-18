@@ -181,11 +181,15 @@ public final class PhotoRepository {
           throw new IOException("フォルダの読み取り許可が失効しています", e);
         }
       }
+    java.util.Map<String, String> amazonHashes = new java.util.HashMap<>();
     try (ArchiveStore store = new ArchiveStore(context)) {
       for (JSONObject record : store.all())
         if (record.has("sha")) {
           String path = record.getString("folder") + record.getString("name");
-          if (!result.containsKey(path)) result.put(path, store.cloudPhoto(record));
+          if (!result.containsKey(path)) {
+            result.put(path, store.cloudPhoto(record));
+            amazonHashes.put(path, record.getString("sha"));
+          }
         }
     } catch (Exception e) {
       throw new IOException("クラウド原本の記録を読めません", e);
@@ -196,6 +200,7 @@ public final class PhotoRepository {
         String path = record.getString("folder") + record.getString("name");
         Photo local = result.get(path);
         if (local != null && !local.isArchived() && E2Cleanup.releasing(record)) continue;
+        if (record.getString("sha").equals(amazonHashes.get(path))) result.remove(path);
         Photo cloud = E2Cleanup.galleryPhoto(record);
         result.put(cloud.uri.toString(), cloud);
       }

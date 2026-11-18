@@ -96,7 +96,7 @@ final class E2BackgroundChecks {
       waitFor("backup consent", 10000, () -> clickActive(test, APP, "開始"));
       waitFor("backup enabled", 10000, () -> E2SyncJob.enabled(c));
       clickView(test, root, "端末原本の整理を有効にする", false);
-      waitFor("cleanup consent visible", 10000, () -> activeContains(test, APP, "小さいサムネイルは端末に残ります。"));
+      waitFor("cleanup consent visible", 10000, () -> activeContains(test, APP, "端末原本の整理を有効にしますか？"));
       SystemClock.sleep(350);
       capture(test, c, "e2-product-consent.png");
       waitFor("cleanup consent", 10000, () -> clickActive(test, APP, "有効にする"));

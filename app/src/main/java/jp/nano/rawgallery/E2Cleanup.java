@@ -76,6 +76,7 @@ final class E2Cleanup {
         if (record == null || !"verified".equals(record.optString("state"))) continue;
         long date = SyncPolicy.retentionDate(p.taken, p.added, p.created, true);
         if (SyncPolicy.eligible(date, now, retention, true, true, true)
+            && !recentlyRestored(c, record.getString("sha"), retention)
             && bucket.equals(record.optString("bucket")) && p.uri.toString().equals(record.optString("uri")))
           eligible.add(new Eligible(candidate, record));
       }
