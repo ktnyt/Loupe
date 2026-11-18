@@ -112,6 +112,17 @@ final class E2CatalogChecks {
   static String run(Context context) throws Exception { return exercise(context); }
 
   private static String exercise(Context context) throws Exception {
+    long largeSize = E2Archive.LIMIT + 1024L * 1024;
+    JSONObject large = row(1, "large.MP4", "large-version").put("size", largeSize);
+    Bucket largeLegacy = new Bucket();
+    largeLegacy.seed(LEGACY, legacy(large));
+    rejected(() -> E2RecoveryCatalog.remote(largeLegacy, BUCKET));
+    Bucket largeModern = new Bucket();
+    E2RecoveryCatalog.publish(largeModern, BUCKET, List.of(large));
+    JSONObject restoredLarge = E2RecoveryCatalog.remote(largeModern, BUCKET).records()
+        .get(large.getString("key"));
+    check(largeSize == restoredLarge.getLong("size") && "video/mp4".equals(restoredLarge.getString("mime")),
+        "New catalog omitted the large video");
     Bucket bucket = new Bucket();
     JSONObject original = row(0, "original.ORF", "original-v1");
     byte[] v1 = legacy(original);

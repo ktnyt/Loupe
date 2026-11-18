@@ -369,7 +369,11 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
       if (created <= 0 || photos.length() < 1 || photos.length() > MAX_LEGACY_ROWS
           || photos.length() != integer(doc, "count")) throw new InvalidCatalog();
       Map<String, JSONObject> records = new LinkedHashMap<>();
-      for (int i = 0; i < photos.length(); i++) addRow(records, bucket, photos.getJSONObject(i));
+      for (int i = 0; i < photos.length(); i++) {
+        JSONObject row = photos.getJSONObject(i);
+        if (integer(row, "size") > E2Archive.LIMIT) throw new InvalidCatalog();
+        addRow(records, bucket, row);
+      }
       return new Snapshot(bucket, created, records, previous, null, Collections.emptyMap());
     } catch (Exception invalid) {
       throw new InvalidCatalog();
@@ -441,7 +445,7 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
     long verifiedAt = row.has("verifiedAt") ? integer(row, "verifiedAt") : 0;
     if (!bucket.equals(string(row, "bucket")) || !"idrive-e2".equals(string(row, "provider"))
         || !"verified".equals(string(row, "state")) || !key.matches("[0-9a-f]{32}")
-        || !sha.matches("[0-9a-f]{64}") || size <= 0 || size > E2Archive.LIMIT || taken < 0
+        || !sha.matches("[0-9a-f]{64}") || size <= 0 || size > E2Archive.ORIGINAL_LIMIT || taken < 0
         || verifiedAt < 0 || name.length() > 255 || name.lastIndexOf('.') <= 0
         || !(RawFormats.accepts(name) || VideoFormats.accepts(name))
         || name.matches("(?s).*[\\\\/\\p{Cntrl}].*"))

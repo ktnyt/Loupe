@@ -204,7 +204,7 @@ final class E2Panel {
         return;
       }
       new GalleryUi.Sheet(activity).setTitle("自動バックアップを開始しますか？")
-          .setMessage("今あるRAW・JPEG・動画と今後追加する原本をIDrive e2（東京）に保存し、読み戻して照合します（1ファイル512 MiBまで）。"
+          .setMessage("今あるRAW・JPEG・動画と今後追加する原本をIDrive e2（東京）に保存し、読み戻して照合します。一時領域に原本のサイズに応じた空き容量が必要です。"
               + "\n保存済みの原本もクラウドの復元一覧に反映します。\n保存先バケット " + activeBucket)
           .setNegativeButton("キャンセル", null)
           .setPositiveButton("開始", (dialog, which) -> setAuto(true)).show();
@@ -265,7 +265,10 @@ final class E2Panel {
         E2Photos.discard(file);
         message("復元先の選択を中止しました", GalleryUi.TEXT);
         reloadAfterExport();
-      } else runExport(file, uri);
+      } else {
+        E2Photos.releasePickerHold(file);
+        runExport(file, uri);
+      }
     }
   }
 
@@ -375,6 +378,12 @@ final class E2Panel {
     long started = SystemClock.elapsedRealtime();
     run("原本を確認しています", () -> {
       File file = photos.downloadRecord(record);
+      try {
+        E2Photos.holdForPicker(file);
+      } catch (java.io.IOException failure) {
+        E2Photos.discard(file);
+        throw failure;
+      }
       activity.runOnUiThread(() -> {
         if (activity.isDestroyed() || cancelled) {
           E2Photos.discard(file);

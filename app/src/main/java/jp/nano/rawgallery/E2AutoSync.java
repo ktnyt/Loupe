@@ -193,8 +193,8 @@ final class E2AutoSync {
   private static void prepare(Context context, PhotoRepository repository, E2Photos e2,
       Candidate candidate, String bucket, BooleanSupplier stopped) throws Exception {
     PhotoRepository.Photo photo = candidate.photo();
-    if (photo.size > E2Archive.LIMIT)
-      throw new IOException("原本が1ファイル512 MiBの上限を超えています");
+    if (photo.size > E2Archive.ORIGINAL_LIMIT)
+      throw new IOException("原本のサイズが対応範囲外です");
     requireCurrentRevision(context, candidate);
     String revision = Long.toString(candidate.generation());
     String fallbackHash = null;

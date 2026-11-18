@@ -18,6 +18,11 @@ import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import javax.net.ssl.HttpsURLConnection;
@@ -31,6 +36,14 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
   private static final String EMPTY_SHA =
       "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
   static final long LIMIT = 512L * 1024 * 1024;
+  // IDrive e2 publishes a 50 TB size limit for a single PUT.
+  static final long ORIGINAL_LIMIT = 50_000_000_000_000L;
+  private static final String PHOTO_PREFIX = "loupe/originals";
+  private static final ScheduledExecutorService TRANSFER_WATCHER = Executors.newSingleThreadScheduledExecutor(task -> {
+    Thread thread = new Thread(task, "E2Archive.transfer-watch");
+    thread.setDaemon(true);
+    return thread;
+  });
   private static final DateTimeFormatter TIME =
       DateTimeFormatter.ofPattern("uuuuMMdd'T'HHmmss'Z'", Locale.ROOT).withZone(ZoneOffset.UTC);
   private final String bucket, keyId, secret;
@@ -49,7 +62,7 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
 
   static E2Archive forPhotos(ArchiveStore store, String bucket, String keyId, String secret,
       Context context, Network network) {
-    return new E2Archive(store, bucket, keyId, secret, "loupe/originals", context, network);
+    return new E2Archive(store, bucket, keyId, secret, PHOTO_PREFIX, context, network);
   }
 
   private E2Archive(ArchiveStore store, String bucket, String keyId, String secret, String prefix,
@@ -138,11 +151,11 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
     long start = SystemClock.elapsedRealtimeNanos();
     HttpsURLConnection put = open("PUT", path, "", sha);
     String version;
-    try {
+    try (TransferWatch progress = new TransferWatch(put, size)) {
       put.setDoOutput(true);
       put.setFixedLengthStreamingMode(size);
       try (InputStream in = new FileInputStream(source); OutputStream out = put.getOutputStream()) {
-        if (!sha.equals(readHash(in, out, size))) throw new IOException("送信中に原本が変わりました");
+        if (!sha.equals(readHash(in, out, size, progress))) throw new IOException("送信中に原本が変わりました");
       }
       requireOk(put.getResponseCode());
       version = version(put);
@@ -168,6 +181,7 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
     long size = record.getLong("size");
     String version = checkedVersion(record.getString("version"));
     checkSize(size);
+    requireTemporarySpace(destination.getParentFile(), size);
     String path = path(record.getString("key"), sha);
     File temp = File.createTempFile("e2-restore-", ".part", destination.getParentFile());
     long start = SystemClock.elapsedRealtimeNanos();
@@ -339,14 +353,14 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
   private void get(String path, String version, long size, String sha, OutputStream out)
       throws Exception {
     HttpsURLConnection conn = open("GET", path, "versionId=" + checkedVersion(version), EMPTY_SHA);
-    try {
+    try (TransferWatch progress = new TransferWatch(conn, size)) {
       requireOk(conn.getResponseCode());
       if (!version.equals(version(conn)))
         throw new IOException("取得した版が一致しません");
       long length = conn.getContentLengthLong();
       if (length >= 0 && length != size) throw new IOException("取得したサイズが一致しません");
       try (InputStream in = conn.getInputStream()) {
-        if (!sha.equals(readHash(in, out, size))) throw new IOException("取得したSHA-256が一致しません");
+        if (!sha.equals(readHash(in, out, size, progress))) throw new IOException("取得したSHA-256が一致しません");
       }
     } finally {
       conn.disconnect();
@@ -398,7 +412,37 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
         && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED);
   }
 
+  /**
+   * Closing an active large transfer helps a cancelled worker leave blocked socket reads and
+   * writes. An idle transfer has a fixed deadline even when the original has no small size cap.
+   */
+  private static final class TransferWatch implements AutoCloseable {
+    private final AtomicLong lastProgress = new AtomicLong(SystemClock.elapsedRealtime());
+    private final ScheduledFuture<?> check;
+
+    TransferWatch(HttpsURLConnection connection, long size) {
+      Thread owner = Thread.currentThread();
+      check = size <= LIMIT ? null : TRANSFER_WATCHER.scheduleAtFixedRate(() -> {
+        if (owner.isInterrupted() || SystemClock.elapsedRealtime() - lastProgress.get() > 30_000)
+          connection.disconnect();
+      }, 1, 1, TimeUnit.SECONDS);
+    }
+
+    void progress() {
+      if (check != null) lastProgress.set(SystemClock.elapsedRealtime());
+    }
+
+    @Override public void close() {
+      if (check != null) check.cancel(false);
+    }
+  }
+
   static String readHash(InputStream in, OutputStream out, long size) throws Exception {
+    return readHash(in, out, size, null);
+  }
+
+  private static String readHash(InputStream in, OutputStream out, long size, TransferWatch watch)
+      throws Exception {
     MessageDigest digest = MessageDigest.getInstance("SHA-256");
     byte[] buffer = new byte[65536];
     long count = 0;
@@ -406,10 +450,13 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
     for (int n; (n = in.read(buffer)) != -1; ) {
       count += n;
       if (count > size || Thread.currentThread().isInterrupted()
-          || SystemClock.elapsedRealtime() > deadline) throw new IOException("原本の転送を中止しました");
+          || (size <= LIMIT && SystemClock.elapsedRealtime() > deadline))
+        throw new IOException("原本の転送を中止しました");
       digest.update(buffer, 0, n);
       if (out != null) out.write(buffer, 0, n);
+      if (watch != null) watch.progress();
     }
+    if (Thread.currentThread().isInterrupted()) throw new IOException("原本の転送を中止しました");
     if (count != size) throw new IOException("原本のサイズが一致しません");
     return hex(digest.digest());
   }
@@ -450,8 +497,14 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
     if (code != 200) throw new IOException("IDrive e2の転送失敗 (HTTP " + code + ")");
   }
 
-  private static void checkSize(long size) throws IOException {
-    if (size <= 0 || size > LIMIT) throw new IOException("原本のサイズが試行範囲外です");
+  private void checkSize(long size) throws IOException {
+    if (size <= 0 || size > (PHOTO_PREFIX.equals(prefix) ? ORIGINAL_LIMIT : LIMIT))
+      throw new IOException("原本のサイズが対応範囲外です");
+  }
+
+  static void requireTemporarySpace(File directory, long bytes) throws IOException {
+    if (bytes > 0 && (directory == null || directory.getUsableSpace() < bytes))
+      throw new IOException("原本を照合するための端末の空き容量が不足しています");
   }
 
   private static long millis(long start) { return (SystemClock.elapsedRealtimeNanos() - start) / 1000000; }

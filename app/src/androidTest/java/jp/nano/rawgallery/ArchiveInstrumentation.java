@@ -65,7 +65,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean cleanupTest;
   private boolean compactTest;
   private boolean e2ArchiveTest, e2BackgroundTest, e2CatalogLocalTest;
-  private String e2MixedMediaOperation, e2MixedMediaToken;
+  private String e2MixedMediaOperation, e2MixedMediaToken, e2LargeOriginalToken;
+  private boolean e2LargeOriginalTest, e2LargeCacheTest;
   private boolean e2CleanupBoundaryTest;
   private String e2SharedCleanupMode, e2ProductCleanupMode, e2ProductCleanupToken;
   private long e2StaleGeneration, e2StaleId, e2MatchId;
@@ -175,6 +176,9 @@ public final class ArchiveInstrumentation extends Instrumentation {
     jpegCloudTest = args != null && "jpeg-cloud".equals(args.getString("mode"));
     jpegCleanupTest = args != null && "jpeg-cleanup".equals(args.getString("mode"));
     compactTest = args != null && "compact".equals(args.getString("mode"));
+    e2LargeOriginalTest = args != null && "e2-large-original".equals(args.getString("mode"));
+    e2LargeCacheTest = args != null && "e2-large-cache".equals(args.getString("mode"));
+    if (e2LargeOriginalTest) e2LargeOriginalToken = args.getString("fixture");
     e2CatalogLocalTest = args != null && "e2-catalog-local".equals(args.getString("mode"));
     if (args != null && args.getString("mode", "").startsWith("e2-mixed-")) {
       e2MixedMediaOperation = args.getString("mode").substring("e2-mixed-".length());
@@ -228,6 +232,14 @@ public final class ArchiveInstrumentation extends Instrumentation {
         results.putString("stream", VideoChecks.run(this, tagWidth > 0 ? tagWidth : 400, tagFont > 0 ? tagFont : 1f));
         finish(-1, results);
         return;
+      }
+      if (e2LargeCacheTest) {
+        results.putString("stream", E2LargeOriginalChecks.cache(this));
+        finish(-1, results); return;
+      }
+      if (e2LargeOriginalTest) {
+        results.putString("stream", E2LargeOriginalChecks.run(this, e2LargeOriginalToken));
+        finish(-1, results); return;
       }
       if (e2CatalogLocalTest) {
         results.putString("stream", E2CatalogChecks.run(context));

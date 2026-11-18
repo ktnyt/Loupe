@@ -13,6 +13,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class E2SyncJob extends JobService {
   private static final int PERIODIC = 77;
   private static final int FIRST = 78;
+  private static final int MEDIA_CONSENT_VERSION = 2;
   private static final AtomicBoolean RUNNING = new AtomicBoolean();
   static final java.util.concurrent.locks.ReentrantLock ORIGINALS =
       new java.util.concurrent.locks.ReentrantLock();
@@ -26,7 +27,7 @@ public final class E2SyncJob extends JobService {
   }
 
   static boolean fullMediaConsent(Context context) {
-    return E2AutoSync.state(context).getInt("fullMediaConsent", 0) == 1;
+    return E2AutoSync.state(context).getInt("fullMediaConsent", 0) == MEDIA_CONSENT_VERSION;
   }
 
   static boolean running() {
@@ -80,7 +81,7 @@ public final class E2SyncJob extends JobService {
     android.content.SharedPreferences.Editor setting =
         E2AutoSync.state(context).edit().putBoolean("enabled", enabled)
             .putString("destination", enabled ? bucket : "");
-    if (enabled) setting.putInt("fullMediaConsent", 1);
+    if (enabled) setting.putInt("fullMediaConsent", MEDIA_CONSENT_VERSION);
     else setting.remove("cleanupBucket").remove("cleanupDays").remove("fullMediaConsent");
     if (!setting.commit())
       throw new IllegalStateException("自動同期の設定を保存できません");
