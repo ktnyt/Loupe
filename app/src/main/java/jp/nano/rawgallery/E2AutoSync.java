@@ -52,6 +52,7 @@ final class E2AutoSync {
         return;
       }
       e2.settings.archive(bucket).checkConnection();
+      E2Cleanup.reconcile(context, e2.settings.records, bucket, stopped);
       PhotoRepository repository = new PhotoRepository(context, true);
       List<Candidate> photos = candidates(context);
       total = photos.size();
@@ -77,6 +78,7 @@ final class E2AutoSync {
           stopTransfers(transfers);
         }
       }
+      if (!stopped.getAsBoolean()) E2Cleanup.sweep(context, e2, photos, bucket, stopped);
       publish(preferences, stopped.getAsBoolean() ? JobState.Kind.PAUSED
           : failed == 0 ? JobState.Kind.COMPLETE
           : ready == 0 ? JobState.Kind.FAILED : JobState.Kind.PARTIAL, ready, total, failed, true);
@@ -165,9 +167,7 @@ final class E2AutoSync {
         revision = fallbackHash;
       }
     }
-    String key = PhotoRepository.digest("e2-auto\n" + bucket + "\n"
-        + photo.uri + "\n" + ArchiveStore.key(photo) + "\n" + candidate.volume() + "\n"
-        + candidate.version() + "\n" + revision).substring(0, 32);
+    String key = key(candidate, bucket, revision);
     File directory = new File(context.getFilesDir(), "e2-previews");
     File preview = new File(directory, key + ".webp");
     File thumbnail = new File(directory, key + "-thumb.webp");
@@ -184,6 +184,13 @@ final class E2AutoSync {
       e2.saveIndexed(candidate, key, bucket, fallbackHash);
     }
     if (stopped.getAsBoolean()) throw new IOException("同期を中断しました");
+  }
+
+  static String key(Candidate candidate, String bucket, String revision) throws IOException {
+    PhotoRepository.Photo photo = candidate.photo();
+    return PhotoRepository.digest("e2-auto\n" + bucket + "\n"
+        + photo.uri + "\n" + ArchiveStore.key(photo) + "\n" + candidate.volume() + "\n"
+        + candidate.version() + "\n" + revision).substring(0, 32);
   }
 
   static void requireCurrentRevision(Context context, Candidate candidate) throws IOException {

@@ -66,7 +66,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean compactTest;
   private boolean e2ArchiveTest, e2BackgroundTest;
   private boolean e2CleanupBoundaryTest;
-  private String e2SharedCleanupMode;
+  private String e2SharedCleanupMode, e2ProductCleanupMode, e2ProductCleanupToken;
   private long e2StaleGeneration, e2StaleId, e2MatchId;
   private String e2CatalogMode;
   private String e2RunId;
@@ -178,6 +178,10 @@ public final class ArchiveInstrumentation extends Instrumentation {
     if (e2ArchiveTest) e2RunId = args.getString("e2-run");
     e2BackgroundTest = args != null && "e2-background".equals(args.getString("mode"));
     e2CleanupBoundaryTest = args != null && "e2-cleanup-boundary".equals(args.getString("mode"));
+    if (args != null && args.getString("mode", "").startsWith("e2-cleanup-product-")) {
+      e2ProductCleanupMode = args.getString("mode").substring("e2-cleanup-product-".length());
+      e2ProductCleanupToken = args.getString("fixture");
+    }
     if (args != null && args.getString("mode", "").startsWith("e2-cleanup-shared-")) {
       e2SharedCleanupMode = args.getString("mode");
       e2StaleGeneration = Long.parseLong(args.getString("generation", "0"));
@@ -221,6 +225,10 @@ public final class ArchiveInstrumentation extends Instrumentation {
       }
       if (e2CleanupBoundaryTest) {
         results.putString("stream", E2BackgroundChecks.cleanupBoundary(this));
+        finish(-1, results); return;
+      }
+      if (e2ProductCleanupMode != null) {
+        results.putString("stream", E2BackgroundChecks.product(this, e2ProductCleanupMode, e2ProductCleanupToken));
         finish(-1, results); return;
       }
       if (e2SharedCleanupMode != null) {

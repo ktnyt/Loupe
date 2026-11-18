@@ -73,8 +73,11 @@ public final class E2SyncJob extends JobService {
     if (enabled && (bucket == null || !bucket.equals(E2Settings.configuredBucket(context))))
       throw new IllegalStateException("保存先が変わりました。設定を開き直してください");
     JobScheduler scheduler = context.getSystemService(JobScheduler.class);
-    if (!E2AutoSync.state(context).edit().putBoolean("enabled", enabled)
-        .putString("destination", enabled ? bucket : "").commit())
+    android.content.SharedPreferences.Editor setting =
+        E2AutoSync.state(context).edit().putBoolean("enabled", enabled)
+            .putString("destination", enabled ? bucket : "");
+    if (!enabled) setting.remove("cleanupBucket");
+    if (!setting.commit())
       throw new IllegalStateException("自動同期の設定を保存できません");
     if (!enabled) {
       scheduler.cancel(PERIODIC);

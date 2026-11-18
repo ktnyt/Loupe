@@ -135,9 +135,14 @@ final class GalleryIndex extends SQLiteOpenHelper {
     try (ArchiveStore archive = new ArchiveStore(c)) {
       archiveRevision = archive.indexRevision();
     }
+    long e2Revision;
+    try (ArchiveStore archive = E2Settings.openRecords(c)) {
+      e2Revision = archive.indexRevision();
+    }
     return media
         + ":capture-order-v1:video-v1:archive-v3:"
         + archiveRevision
+        + ":" + e2Revision
         + ":"
         + c.getSharedPreferences("settings", 0).getInt("burstGapSeconds", 1)
         + ":"
@@ -184,8 +189,9 @@ final class GalleryIndex extends SQLiteOpenHelper {
           // Capture dates also determine gallery order when burst grouping is disabled.
           if (meta == null)
             try {
-              if ("archive".equals(p.uri.getScheme())) {
-                org.json.JSONObject record = store.get(p.uri.getHost());
+              if (p.isArchived()) {
+                org.json.JSONObject record = E2Cleanup.archived(p.uri)
+                    ? E2Cleanup.localRecord(c, p.uri) : store.get(p.uri.getHost());
                 meta =
                     new ArchiveStore.RawMetadata(
                         record.optString("model", ""), record.optLong("taken", 0));

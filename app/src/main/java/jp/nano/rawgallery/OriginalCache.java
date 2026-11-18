@@ -24,7 +24,9 @@ final class OriginalCache {
             dir,
             key + "." + RawFormats.originalExtension(p.name));
     JSONObject record = null;
-    if ("archive".equals(p.uri.getScheme())) {
+    if (E2Cleanup.archived(p.uri)) {
+      record = E2Cleanup.localRecord(c, p.uri);
+    } else if ("archive".equals(p.uri.getScheme())) {
       try (ArchiveStore store = new ArchiveStore(c)) {
         record = store.get(p.uri.getHost());
       }
@@ -42,7 +44,12 @@ final class OriginalCache {
     trim(dir, null, p.size);
     File partial = new File(dir, key + ".part");
     try {
-      if (record != null) {
+      if (E2Cleanup.archived(p.uri)) {
+        E2Settings settings = new E2Settings(c);
+        try (ArchiveStore archive = settings.records) {
+          settings.archive(record.getString("bucket")).restoreRecord(record, partial);
+        }
+      } else if (record != null) {
         String cookies =
             CookieManager.getInstance().getCookie(CloudVerifier.ORIGIN + "/drive/v1/nodes");
         if (cookies == null || cookies.isBlank()) throw new IOException("Amazonへの再ログインが必要です");

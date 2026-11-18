@@ -47,7 +47,7 @@ final class PhotoViewerUi extends ViewGroup {
     stage.setTag("viewer-stage");
     image = new ZoomImageView(context);
     image.setContentDescription("写真、" + date(photo, true)
-        + ("archive".equals(photo.uri.getScheme()) ? "、クラウドにあります" : ""));
+        + (photo.isArchived() ? "、クラウドにあります" : ""));
     placeholder=new View(context){private final Paint p=new Paint();protected void onDraw(Canvas canvas){if(failed){p.setColor(0xff19191b);canvas.drawRect(photoRect(),p);}}};
     placeholder.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
     stage.addView(placeholder,new FrameLayout.LayoutParams(-1,-1));
@@ -57,7 +57,7 @@ final class PhotoViewerUi extends ViewGroup {
       private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
       protected void onDraw(Canvas canvas) {
         RectF bounds = image.photoBounds();
-        if (bounds == null || image.isZoomed() || !"archive".equals(photo.uri.getScheme())) return;
+        if (bounds == null || image.isZoomed() || !photo.isArchived()) return;
         float density = getResources().getDisplayMetrics().density;
         int saved = canvas.save();
         canvas.translate(Math.max(0, bounds.left) + 12*density,

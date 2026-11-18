@@ -1587,7 +1587,7 @@ public final class MainActivity extends DiagnosticActivity {
               + "、"
               + (p.isVideo() ? "動画、" : "")
               + p.cameraGroup()
-              + ("archive".equals(p.uri.getScheme()) ? "、クラウド" : "、端末")
+              + (p.isArchived() ? "、クラウド" : "、端末")
               + (members.size() > 1 ? "、連写" + members.size() + "枚" : ""));
       image.setImageDrawable(null);
       cell.badges.selectionMode = selecting;
@@ -1608,7 +1608,7 @@ public final class MainActivity extends DiagnosticActivity {
       cell.setContentDescription(cell.getContentDescription()+ShareHistoryUi.description(cell.badges.shared));
       cell.badges.camera = "";
       cell.badges.video = p.isVideo();
-      cell.badges.cloud = "archive".equals(p.uri.getScheme());
+      cell.badges.cloud = p.isArchived();
       cell.badges.count = members.size();
       cell.badges.rank = "";cell.badges.rankFailed=false;
       List<Integer> group = photoBundles.get(members.get(0));
@@ -2080,7 +2080,7 @@ public final class MainActivity extends DiagnosticActivity {
     List<PhotoRepository.Photo> frozen = List.copyOf(selection);
     Set<String> best = new HashSet<>();int cloud=0;
     for(PhotoRepository.Photo photo:frozen){
-      if("archive".equals(photo.uri.getScheme()))cloud++;
+      if(photo.isArchived())cloud++;
       int index=photos.indexOf(photo);List<Integer> group=photoBundles.get(index);
       if(group!=null)try{
         if(group.size()==1){if(!photo.isVideo()&&rankingStore.singleBest(ArchiveStore.key(photo)))best.add(photo.uri.toString());}

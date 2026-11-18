@@ -27,8 +27,8 @@ final class E2Panel {
   private final android.widget.ScrollView scroll;
   private final LinearLayout card, list;
   private final EditText bucket, access, secret;
-  private final TextView status, autoStatus, catalogStatus;
-  private final Button connect, save, cancel, autoToggle, catalogLoad, catalogSave;
+  private final TextView status, autoStatus, catalogStatus, cleanupStatus;
+  private final Button connect, save, cancel, autoToggle, catalogLoad, catalogSave, cleanupToggle;
   private final ExecutorService worker = new DiagnosticExecutor("E2Panel.worker", 1);
   private final E2Photos photos;
   private String activeBucket, pickerBucket;
@@ -73,10 +73,14 @@ final class E2Panel {
     TextView autoTitle = text("自動バックアップ", 16);
     autoTitle.setAccessibilityHeading(true);
     add(card, autoTitle);
-    add(card, text("従量制でない回線で対応RAWとJPEGを保存します。端末の原本は残ります。", 14));
+    add(card, text("従量制でない回線で対応RAWとJPEGを保存します。", 14));
     autoStatus = text("", 14);
     add(card, autoStatus);
     autoToggle = button(card, "開始", 48, this::toggleAuto);
+    cleanupStatus = text("", 14);
+    cleanupStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    add(card, cleanupStatus);
+    cleanupToggle = button(card, "端末原本の整理を有効にする", 48, this::toggleCleanup);
     button(card, "処理の状況で見る", 48, () ->
         activity.startActivity(new Intent(activity, DashboardActivity.class)));
     add(card, text("保存した原本", 16));
@@ -129,11 +133,61 @@ final class E2Panel {
     autoToggle.setText(enabled ? "一時停止" : state.updatedAt == 0 ? "開始" : "再開");
     autoToggle.setEnabled(!busy && (enabled || activeBucket != null));
     connect.setEnabled(!busy && !enabled && !E2SyncJob.running());
+    boolean cleaning = E2Cleanup.enabled(activity, activeBucket);
+    String cleanupText = cleaning ? E2Cleanup.status(activity) : "";
+    if (!cleanupText.contentEquals(cleanupStatus.getText())) cleanupStatus.setText(cleanupText);
+    cleanupStatus.setVisibility(cleanupText.isEmpty() ? View.GONE : View.VISIBLE);
+    cleanupToggle.setText(cleaning ? "端末原本の整理を停止" : "端末原本の整理を有効にする");
+    cleanupToggle.setEnabled(!busy && enabled && activeBucket != null);
+  }
+
+  private void toggleCleanup() {
+    String bucket = activeBucket;
+    if (bucket == null) return;
+    if (E2Cleanup.enabled(activity, bucket)) {
+      setCleanup(bucket, false);
+      return;
+    }
+    if (!android.os.Environment.isExternalStorageManager()) {
+      new GalleryUi.Sheet(activity).setTitle("写真を整理する権限")
+          .setMessage("端末から原本を削除するには、Androidで全ファイルへのアクセスを許可してください。")
+          .setNegativeButton("キャンセル", null)
+          .setPositiveButton("Android設定を開く", (dialog, which) -> {
+            Intent settings = new Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                Uri.parse("package:" + activity.getPackageName()));
+            try {
+              activity.startActivity(settings);
+            } catch (android.content.ActivityNotFoundException ignored) {
+              message("Androidの設定から全ファイルへのアクセスを許可してください", 0xffffb4a8);
+            }
+          }).show();
+      return;
+    }
+    new GalleryUi.Sheet(activity).setTitle("端末原本の整理を有効にしますか？")
+        .setMessage(bucket + " に復元できる状態で保管したJPEGのうち、"
+            + E2Cleanup.days(activity) + "日以上経った原本を端末から削除します。"
+            + "小さいサムネイルは端末に残ります。")
+        .setNegativeButton("キャンセル", null)
+        .setPositiveButton("有効にする", (dialog, which) -> setCleanup(bucket, true)).show();
+  }
+
+  private void setCleanup(String bucket, boolean enabled) {
+    try {
+      E2Cleanup.setEnabled(activity, bucket, enabled);
+      message(enabled ? "次の自動バックアップで整理対象を確認します" : "端末原本の整理を停止しました",
+          GalleryUi.TEXT);
+    } catch (java.io.IOException failed) {
+      message("容量整理の設定を保存できません。保存先や権限を確認してください", 0xffffb4a8);
+    }
+    refreshAuto();
   }
 
   private void toggleAuto() {
     if (E2SyncJob.enabled(activity)) {
+      boolean cleaning = E2Cleanup.enabled(activity, activeBucket);
       setAuto(false);
+      if (cleaning && !E2SyncJob.enabled(activity))
+        message("端末原本の整理も停止しました。再開後に設定できます", GalleryUi.TEXT);
     } else if (activeBucket != null) {
       if (!E2SyncActivity.hasPhotoAccess(activity)) {
         new GalleryUi.Sheet(activity).setTitle("写真の読み取りを許可してください")

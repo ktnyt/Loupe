@@ -46,7 +46,7 @@ final class ShareCapacity {
       if(!original&&!photo.isJpeg()&&photo.size>OriginalCache.LIMIT)sourceLimit=true;
       Long size = original || photo.isJpeg() ? Long.valueOf(photo.size) : jpegLengths.get(key(photo));
       if (size == null) {
-        if (checking && !"archive".equals(photo.uri == null ? "" : photo.uri.getScheme())) pending = true;
+        if (checking && !photo.isArchived()) pending = true;
         else unknown = true;
       } else if (size <= 0) {
         if (!original && !photo.isJpeg()) failed = true;
