@@ -94,8 +94,10 @@ final class E2Cleanup {
       for (Eligible item : eligible) {
         if (!allowed(c, bucket, stopped)) break;
         JSONObject entry = catalog.records().get(item.receipt().getString("key"));
-        if (entry == null || !E2RecoveryCatalog.sameOriginal(entry, item.receipt()))
+        if (entry == null || !E2RecoveryCatalog.sameContent(entry, item.receipt()))
           throw new IOException("復元一覧と端末の保管記録が一致しません");
+        // Release reads back this exact published version before the local deletion.
+        item.receipt().put("version", entry.getString("version"));
         if (release(c, photos, item, bucket, retention, stopped)) removed++;
       }
       updateStatus(c, "端末原本を整理 · " + removed + "枚");

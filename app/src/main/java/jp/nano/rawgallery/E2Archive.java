@@ -117,8 +117,7 @@ final class E2Archive {
     }
     String path = path(id, sha);
     JSONObject record = store.get(id);
-    boolean fresh = record == null;
-    if (fresh) {
+    if (record == null) {
       record = (metadata == null ? new JSONObject() : metadata)
           .put("key", id).put("provider", "idrive-e2")
           .put("bucket", bucket).put("size", size).put("sha", sha);
@@ -129,11 +128,12 @@ final class E2Archive {
         throw new IOException("同じ写真IDの内容が変わりました");
       if ("verified".equals(record.getString("state"))) return 0;
       if (!"pending".equals(record.getString("state"))) throw new IOException("保管状態が不正です");
-      String version = get(path, "", size, sha, null, true);
-      if (version != null) {
-        store.put(record.put("version", version).put("verifiedAt", System.currentTimeMillis()), "verified");
-        return 0;
-      }
+    }
+    String existing = currentVersion(path);
+    if (existing != null) {
+      get(path, existing, size, sha, null);
+      store.put(record.put("version", existing).put("verifiedAt", System.currentTimeMillis()), "verified");
+      return 0;
     }
 
     long start = SystemClock.elapsedRealtimeNanos();
@@ -151,7 +151,7 @@ final class E2Archive {
       put.disconnect();
     }
     long putMillis = millis(start);
-    get(path, version, size, sha, null, false);
+    get(path, version, size, sha, null);
     store.put(record.put("version", version).put("verifiedAt", System.currentTimeMillis()), "verified");
     return putMillis;
   }
@@ -174,7 +174,7 @@ final class E2Archive {
     long start = SystemClock.elapsedRealtimeNanos();
     try {
       try (FileOutputStream out = new FileOutputStream(temp)) {
-        get(path, version, size, sha, out, false);
+        get(path, version, size, sha, out);
         out.getFD().sync();
       }
       Files.move(temp.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE);
@@ -182,6 +182,15 @@ final class E2Archive {
     } finally {
       temp.delete();
     }
+  }
+
+  void verifyVersion(JSONObject record) throws Exception {
+    requireRecord(record);
+    String sha = record.getString("sha");
+    long size = record.getLong("size");
+    checkSize(size);
+    get(path(record.getString("key"), sha), checkedVersion(record.getString("version")),
+        size, sha, null);
   }
 
   record CatalogObject(byte[] body, String version) {}
@@ -307,23 +316,30 @@ final class E2Archive {
     return "/" + bucket + "/" + prefix + "/" + id + "/" + sha;
   }
 
-  private String get(String path, String version, long size, String sha, OutputStream out,
-      boolean allowMissing) throws Exception {
-    String query = version.isEmpty() ? "" : "versionId=" + checkedVersion(version);
-    HttpsURLConnection conn = open("GET", path, query, EMPTY_SHA);
+  private String currentVersion(String path) throws Exception {
+    HttpsURLConnection conn = open("HEAD", path, "", EMPTY_SHA);
     try {
       int code = conn.getResponseCode();
-      if (allowMissing && code == 404) return null;
+      if (code == 404) return null;
       requireOk(code);
-      String actualVersion = version(conn);
-      if (!version.isEmpty() && !version.equals(actualVersion))
+      return version(conn);
+    } finally {
+      conn.disconnect();
+    }
+  }
+
+  private void get(String path, String version, long size, String sha, OutputStream out)
+      throws Exception {
+    HttpsURLConnection conn = open("GET", path, "versionId=" + checkedVersion(version), EMPTY_SHA);
+    try {
+      requireOk(conn.getResponseCode());
+      if (!version.equals(version(conn)))
         throw new IOException("取得した版が一致しません");
       long length = conn.getContentLengthLong();
       if (length >= 0 && length != size) throw new IOException("取得したサイズが一致しません");
       try (InputStream in = conn.getInputStream()) {
         if (!sha.equals(readHash(in, out, size))) throw new IOException("取得したSHA-256が一致しません");
       }
-      return actualVersion;
     } finally {
       conn.disconnect();
     }

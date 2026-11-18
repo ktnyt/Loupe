@@ -49,14 +49,16 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
   Snapshot load(E2Archive archive, String bucket, List<JSONObject> local) throws Exception {
     Snapshot candidate = remote(archive, bucket);
     if (candidate == null) return null;
-    merged(bucket, candidate, local);
+    merged(bucket, candidate, local, archive);
     synchronized (CACHE_LOCK) {
       Snapshot previous = cached(bucket);
       if (previous != null) {
         for (Map.Entry<String, JSONObject> row : previous.records().entrySet()) {
           JSONObject incoming = candidate.records().get(row.getKey());
-          if (incoming == null || !sameOriginal(row.getValue(), incoming))
+          JSONObject saved = row.getValue();
+          if (incoming == null || !sameContent(saved, incoming))
             throw new IOException("新しい復元一覧に不足または競合があります");
+          if (!sameOriginal(saved, incoming)) archive.verifyVersion(incoming);
         }
       }
       if (Thread.currentThread().isInterrupted()) throw new IOException("取得を中止しました");
@@ -72,7 +74,7 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
     if (local.isEmpty()) throw new IOException("カタログに保存できる原本がありません");
     synchronized (PUBLISH_LOCK) {
       Snapshot current = remote(archive, bucket);
-      Map<String, JSONObject> all = merged(bucket, current, local);
+      Map<String, JSONObject> all = merged(bucket, current, local, archive);
       Snapshot next = encode(bucket, System.currentTimeMillis(), all);
       if (current != null && !current.previous()
           && entries(current.records()).toString().equals(entries(all).toString())) return current;
@@ -81,16 +83,23 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
     }
   }
 
-  static Map<String, JSONObject> merged(String bucket, Snapshot snapshot, List<JSONObject> local)
-      throws Exception {
+  // The archive is present for online catalog operations. A cached restore list is read-only:
+  // actual restoration always verifies the selected version before exporting any bytes.
+  static Map<String, JSONObject> merged(String bucket, Snapshot snapshot, List<JSONObject> local,
+      E2Archive archive) throws Exception {
     Map<String, JSONObject> result = new TreeMap<>();
     if (snapshot != null) result.putAll(snapshot.records());
     for (JSONObject entry : local) {
       JSONObject clean = normalize(bucket, entry);
       String key = clean.getString("key");
       JSONObject previous = result.get(key);
-      if (previous != null && !sameOriginal(previous, clean))
-        throw new IOException("保管記録と復元一覧で写真の内容が一致しません");
+      if (previous != null && !sameOriginal(previous, clean)) {
+        if (!sameContent(previous, clean))
+          throw new IOException("保管記録と復元一覧で写真の内容が一致しません");
+        if (archive != null) archive.verifyVersion(previous);
+        // Keep the published version so older recovery lists remain valid.
+        continue;
+      }
       result.put(key, clean);
     }
     return result;
@@ -209,10 +218,14 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
   }
 
   static boolean sameOriginal(JSONObject left, JSONObject right) throws Exception {
-    return string(left, "key").equals(string(right, "key"))
+    return sameContent(left, right) && string(left, "version").equals(string(right, "version"));
+  }
+
+  static boolean sameContent(JSONObject left, JSONObject right) throws Exception {
+    return string(left, "bucket").equals(string(right, "bucket"))
+        && string(left, "key").equals(string(right, "key"))
         && string(left, "name").equals(string(right, "name"))
         && string(left, "sha").equals(string(right, "sha"))
-        && string(left, "version").equals(string(right, "version"))
         && integer(left, "size") == integer(right, "size");
   }
 
