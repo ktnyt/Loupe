@@ -46,18 +46,27 @@ final class E2BackgroundChecks {
       throw new AssertionError("Requires an empty isolated emulator APK");
     byte[] expected = jpeg();
     Uri files = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL);
-    Uri changedImage = original(context, "loupe-cleanup-retain-" + UUID.randomUUID() + ".jpg", expected);
-    Uri eligibleImage = original(context, "loupe-cleanup-remove-" + UUID.randomUUID() + ".jpg", expected);
+    String changedName = "loupe-cleanup-retain-" + UUID.randomUUID() + ".jpg";
+    String eligibleName = "loupe-cleanup-remove-" + UUID.randomUUID() + ".jpg";
+    Uri changedImage = original(context, changedName, expected);
+    Uri eligibleImage = original(context, eligibleName, expected);
     Uri changed = android.content.ContentUris.withAppendedId(files,
         android.content.ContentUris.parseId(changedImage));
     Uri eligible = android.content.ContentUris.withAppendedId(files,
         android.content.ContentUris.parseId(eligibleImage));
     android.content.ContentResolver resolver = context.getContentResolver();
-    long oldGeneration = generation(resolver, changed);
+    long oldGeneration = fixtureGeneration(resolver, changed, changedName);
+    long unchangedGeneration = fixtureGeneration(resolver, eligible, eligibleName);
+    File folder = new File(android.os.Environment.getExternalStoragePublicDirectory(
+        android.os.Environment.DIRECTORY_PICTURES), "LoupeE2Verify");
+    File eligibleFile = new File(folder, eligibleName);
+    if (!eligibleFile.isFile() || !Arrays.equals(expected, Files.readAllBytes(eligibleFile.toPath())))
+      throw new AssertionError("The exact synthetic JPEG must be readable as a file before removal");
+    String changedAfterRename = "renamed-" + changedName;
     ContentValues metadata = new ContentValues();
-    metadata.put(MediaStore.MediaColumns.DATE_TAKEN, System.currentTimeMillis());
-    if (resolver.update(changed, metadata, null, null) != 1
-        || generation(resolver, changed) == oldGeneration)
+    metadata.put(MediaStore.MediaColumns.DISPLAY_NAME, changedAfterRename);
+    if (resolver.update(changedImage, metadata, null, null) != 1
+        || fixtureGeneration(resolver, changed, changedAfterRename) == oldGeneration)
       throw new AssertionError("The synthetic MediaStore revision did not change");
 
     String generationMatches = MediaStore.MediaColumns.GENERATION_MODIFIED + "=?";
@@ -68,7 +77,6 @@ final class E2BackgroundChecks {
         throw new AssertionError("The stale original bytes did not survive");
     }
 
-    long unchangedGeneration = generation(resolver, eligible);
     int removed = resolver.delete(eligible, generationMatches,
         new String[]{Long.toString(unchangedGeneration)});
     if (removed != 1) throw new AssertionError("An exact generation did not delete one owned fixture");
@@ -79,17 +87,22 @@ final class E2BackgroundChecks {
     try (InputStream result = resolver.openInputStream(eligible)) {
       if (result != null) throw new AssertionError("Deleted fixture is still readable");
     } catch (java.io.FileNotFoundException expectedMissing) {
-      // Both the original bytes and the MediaStore entry must be gone.
+      // Confirm disappearance of the actual file below, independent of MediaStore lookup.
     }
+    if (eligibleFile.exists()) throw new AssertionError("The original backing file still exists");
     return "PASS e2-cleanup-boundary: stale MediaStore generation preserved the original; "
         + "matching generation deleted one owned synthetic JPEG";
   }
 
-  private static long generation(android.content.ContentResolver resolver, Uri uri) {
+  private static long fixtureGeneration(android.content.ContentResolver resolver, Uri uri, String name) {
     try (android.database.Cursor row = resolver.query(uri,
-        new String[]{MediaStore.MediaColumns.GENERATION_MODIFIED}, null, null, null)) {
-      if (row == null || !row.moveToFirst() || row.getLong(0) <= 0)
-        throw new AssertionError("Photo generation is unavailable");
+        new String[]{MediaStore.MediaColumns.GENERATION_MODIFIED, MediaStore.MediaColumns.DISPLAY_NAME,
+            MediaStore.MediaColumns.RELATIVE_PATH, MediaStore.MediaColumns.OWNER_PACKAGE_NAME,
+            MediaStore.MediaColumns.VOLUME_NAME}, null, null, null)) {
+      if (row == null || !row.moveToFirst() || row.getLong(0) <= 0
+          || !name.equals(row.getString(1)) || !"Pictures/LoupeE2Verify/".equals(row.getString(2))
+          || !APP.equals(row.getString(3)) || !MediaStore.VOLUME_EXTERNAL_PRIMARY.equals(row.getString(4)))
+        throw new AssertionError("An exact owned synthetic photo and its generation are required");
       return row.getLong(0);
     }
   }
