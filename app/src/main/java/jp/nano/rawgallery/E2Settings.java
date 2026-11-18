@@ -60,6 +60,7 @@ final class E2Settings {
     String encoded = Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP) + "."
         + Base64.encodeToString(encrypted, Base64.NO_WRAP);
     synchronized (DESTINATION_LOCK) {
+      if (Thread.currentThread().isInterrupted()) throw new IOException("接続を中断しました");
       Context owner = recordsContext;
       if (E2SyncJob.enabled(owner) || E2SyncJob.running())
         throw new IOException("自動バックアップの停止を待ってください");

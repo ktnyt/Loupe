@@ -156,10 +156,13 @@ final class E2AutoSync {
   private static void prepare(Context context, PhotoRepository repository, E2Photos e2,
       Candidate candidate, String bucket, BooleanSupplier stopped) throws Exception {
     PhotoRepository.Photo photo = candidate.photo();
+    requireCurrentRevision(context, candidate);
     String revision = Long.toString(candidate.generation());
+    String fallbackHash = null;
     if (candidate.generation() <= 0) {
       try (java.io.InputStream input = PhotoRepository.original(context, photo)) {
-        revision = E2Archive.readHash(input, null, photo.size);
+        fallbackHash = E2Archive.readHash(input, null, photo.size);
+        revision = fallbackHash;
       }
     }
     String key = PhotoRepository.digest("e2-auto\n" + bucket + "\n"
@@ -178,9 +181,24 @@ final class E2AutoSync {
       CompactPreview.save(original, thumbnail, 256);
     }
     if (!verified && !stopped.getAsBoolean()) {
-      e2.saveIndexed(photo, key, bucket);
+      e2.saveIndexed(candidate, key, bucket, fallbackHash);
     }
     if (stopped.getAsBoolean()) throw new IOException("同期を中断しました");
+  }
+
+  static void requireCurrentRevision(Context context, Candidate candidate) throws IOException {
+    PhotoRepository.Photo photo = candidate.photo();
+    String[] fields = {MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.RELATIVE_PATH,
+        MediaStore.MediaColumns.SIZE, MediaStore.MediaColumns.DATE_MODIFIED,
+        MediaStore.MediaColumns.GENERATION_MODIFIED, MediaStore.MediaColumns.VOLUME_NAME};
+    try (Cursor row = context.getContentResolver().query(photo.uri, fields, null, null, null)) {
+      if (row == null || !row.moveToFirst() || !photo.name.equals(row.getString(0))
+          || !photo.folder.equals(row.getString(1)) || photo.size != row.getLong(2)
+          || photo.modified != row.getLong(3) || candidate.generation() != row.getLong(4)
+          || !candidate.volume().equals(row.getString(5))
+          || !candidate.version().equals(MediaStore.getVersion(context, candidate.volume())))
+        throw new IOException("原本が変わりました。次回の同期で確認します");
+    }
   }
 
   private static void publish(SharedPreferences prefs, JobState.Kind kind, int ready,

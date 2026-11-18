@@ -67,9 +67,19 @@ final class E2Photos implements AutoCloseable {
     }
   }
 
-  void saveIndexed(PhotoRepository.Photo photo, String id, String bucket) throws Exception {
+  void saveIndexed(E2AutoSync.Candidate candidate, String id, String bucket, String fallbackHash)
+      throws Exception {
+    PhotoRepository.Photo photo = candidate.photo();
+    E2AutoSync.requireCurrentRevision(context, candidate);
     File staged = stage(() -> PhotoRepository.original(context, photo), photo.size);
     try {
+      E2AutoSync.requireCurrentRevision(context, candidate);
+      if (fallbackHash != null) {
+        try (InputStream in = Files.newInputStream(staged.toPath())) {
+          if (!fallbackHash.equals(E2Archive.readHash(in, null, photo.size)))
+            throw new IOException("原本が変わりました。次回の同期で確認します");
+        }
+      }
       ArchiveStore.RawMetadata inspected;
       if (photo.isJpeg()) {
         inspected = settings.records.metadata(photo);

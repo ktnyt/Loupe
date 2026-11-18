@@ -14,6 +14,8 @@ public final class E2SyncJob extends JobService {
   private static final int PERIODIC = 77;
   private static final int FIRST = 78;
   private static final AtomicBoolean RUNNING = new AtomicBoolean();
+  static final java.util.concurrent.locks.ReentrantLock ORIGINALS =
+      new java.util.concurrent.locks.ReentrantLock();
   private final ExecutorService worker = new DiagnosticExecutor("E2SyncJob.worker", 1);
   private JobParameters current;
   private AtomicBoolean stopped;
@@ -53,8 +55,14 @@ public final class E2SyncJob extends JobService {
   }
 
   static void setEnabled(Context context, boolean enabled, String bucket) {
-    synchronized (E2Settings.DESTINATION_LOCK) {
-      setEnabledLocked(context, enabled, bucket);
+    if (enabled && !ORIGINALS.tryLock())
+      throw new IllegalStateException("端末原本の整理が終わるまで待ってください");
+    try {
+      synchronized (E2Settings.DESTINATION_LOCK) {
+        setEnabledLocked(context, enabled, bucket);
+      }
+    } finally {
+      if (enabled) ORIGINALS.unlock();
     }
   }
 
@@ -80,7 +88,7 @@ public final class E2SyncJob extends JobService {
         .setPeriodic(15 * 60 * 1000L).build());
     int first = scheduler.schedule(job(FIRST, service).build());
     if (periodic != JobScheduler.RESULT_SUCCESS || first != JobScheduler.RESULT_SUCCESS) {
-      setEnabled(context, false);
+      setEnabledLocked(context, false, null);
       throw new IllegalStateException("自動同期を予約できません");
     }
   }

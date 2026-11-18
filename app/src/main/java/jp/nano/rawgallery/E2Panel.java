@@ -36,7 +36,7 @@ final class E2Panel {
   private File verified;
   private volatile Thread operation;
   private volatile boolean cancelled;
-  private boolean busy;
+  private boolean busy, connecting;
   private final List<JSONObject> savedRows = new java.util.ArrayList<>();
   private int savedPage;
   private static final int PAGE_SIZE = 25;
@@ -158,6 +158,7 @@ final class E2Panel {
     if (id.isEmpty()) access.setError("入力してください");
     if (key.isEmpty()) secret.setError("入力してください");
     if (name.isEmpty() || id.isEmpty() || key.isEmpty()) return;
+    connecting = true;
     run("接続を確認しています", () -> {
       photos.settings.connect(name, id, key);
       post(() -> {
@@ -394,6 +395,7 @@ final class E2Panel {
         operation = null;
         activity.runOnUiThread(() -> {
           if (activity.isDestroyed()) return;
+          connecting = false;
           if (cancelled) message("中止しました", GalleryUi.TEXT);
           if (verified == null) {
             setBusy(false);
@@ -417,7 +419,7 @@ final class E2Panel {
     access.setEnabled(!value);
     secret.setEnabled(!value);
     save.setEnabled(!value && activeBucket != null);
-    cancel.setVisibility(value && export == null && verified == null ? View.VISIBLE : View.GONE);
+    cancel.setVisibility(value && !connecting && export == null && verified == null ? View.VISIBLE : View.GONE);
     for (int i = 0; i < list.getChildCount(); i++) {
       if (list.getChildAt(i) instanceof LinearLayout) {
         LinearLayout row = (LinearLayout) list.getChildAt(i);
@@ -428,7 +430,7 @@ final class E2Panel {
 
   boolean confirmBack() {
     if (!busy) return false;
-    if (export != null) return true;
+    if (export != null || connecting) return true;
     new GalleryUi.Sheet(activity).setTitle("処理を中止して戻りますか？")
         .setNegativeButton("続ける", null)
         .setPositiveButton("中止して戻る", (dialog, which) -> activity.finish()).show();
