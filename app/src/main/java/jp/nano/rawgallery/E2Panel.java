@@ -37,6 +37,9 @@ final class E2Panel {
   private volatile Thread operation;
   private volatile boolean cancelled;
   private boolean busy;
+  private final List<JSONObject> savedRows = new java.util.ArrayList<>();
+  private int savedPage;
+  private static final int PAGE_SIZE = 25;
 
   E2Panel(E2SyncActivity activity, LinearLayout root, Bundle state) {
     this.activity = activity;
@@ -124,6 +127,13 @@ final class E2Panel {
     if (E2SyncJob.enabled(activity)) {
       setAuto(false);
     } else if (activeBucket != null) {
+      if (!E2SyncActivity.hasPhotoAccess(activity)) {
+        new GalleryUi.Sheet(activity).setTitle("写真の読み取りを許可してください")
+            .setMessage("自動バックアップには、端末のすべての写真と原本の読み取り許可が必要です。")
+            .setNegativeButton("キャンセル", null)
+            .setPositiveButton("許可", (dialog, which) -> activity.requestPhotoAccess()).show();
+        return;
+      }
       new GalleryUi.Sheet(activity).setTitle("自動バックアップを開始しますか？")
           .setMessage("端末のRAW・JPEGをIDrive e2（東京）に保存します。\n" + activeBucket)
           .setNegativeButton("キャンセル", null)
@@ -133,9 +143,9 @@ final class E2Panel {
 
   private void setAuto(boolean enabled) {
     try {
-      E2SyncJob.setEnabled(activity, enabled);
+      E2SyncJob.setEnabled(activity, enabled, enabled ? activeBucket : null);
     } catch (RuntimeException e) {
-      message("自動バックアップを開始できません。端末の自動削除が有効なら停止してください。", 0xffffb4a8);
+      message("自動バックアップを開始できません。保存先や端末の自動削除の設定を確認してください。", 0xffffb4a8);
     }
     refreshAuto();
   }
@@ -318,9 +328,18 @@ final class E2Panel {
 
   private void showSaved(String name, List<JSONObject> rows) {
     activeBucket = name;
+    savedRows.clear();
+    savedRows.addAll(rows);
+    savedPage = 0;
+    drawSavedPage();
+  }
+
+  private void drawSavedPage() {
     list.removeAllViews();
-    if (rows.isEmpty()) add(list, text("まだありません", 14));
-    for (JSONObject row : rows) {
+    if (savedRows.isEmpty()) add(list, text("まだありません", 14));
+    int start = savedPage * PAGE_SIZE;
+    int end = Math.min(start + PAGE_SIZE, savedRows.size());
+    for (JSONObject row : savedRows.subList(start, end)) {
       LinearLayout item = new LinearLayout(activity);
       item.setGravity(android.view.Gravity.CENTER_VERTICAL);
       item.setMinimumHeight(dp(64));
@@ -336,6 +355,17 @@ final class E2Panel {
       restore.setMinHeight(dp(48));
       item.addView(restore, new LinearLayout.LayoutParams(-2, -2));
       add(list, item);
+    }
+    if (savedRows.size() > PAGE_SIZE) {
+      add(list, text((start + 1) + "〜" + end + " / " + savedRows.size(), 14));
+      if (savedPage > 0) button(list, "前の写真", 48, () -> {
+        savedPage--;
+        drawSavedPage();
+      });
+      if (end < savedRows.size()) button(list, "次の写真", 48, () -> {
+        savedPage++;
+        drawSavedPage();
+      });
     }
     setBusy(busy);
   }

@@ -18,13 +18,28 @@ import org.json.JSONObject;
 final class E2Settings {
   private static final String ALIAS = "loupe-e2-connection";
   private static final String CONFIG = "connection";
+  static final Object DESTINATION_LOCK = new Object();
   static final String DATABASE = "e2_photo_archive.db";
   private final SharedPreferences preferences;
+  private final Context context;
+  private final Context recordsContext;
+  private final android.net.Network network;
   final ArchiveStore records;
 
   E2Settings(Context context) {
+    this(context, null);
+  }
+
+  E2Settings(Context context, android.net.Network network) {
+    recordsContext = context.getApplicationContext();
+    this.context = network == null ? null : recordsContext;
+    this.network = network;
     preferences = context.getSharedPreferences("e2_connection", Context.MODE_PRIVATE);
     records = openRecords(context);
+  }
+
+  static String configuredBucket(Context context) {
+    return context.getSharedPreferences("e2_connection", Context.MODE_PRIVATE).getString("bucket", "");
   }
 
   static ArchiveStore openRecords(Context context) {
@@ -44,8 +59,13 @@ final class E2Settings {
     byte[] encrypted = cipher.doFinal(config.toString().getBytes(StandardCharsets.UTF_8));
     String encoded = Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP) + "."
         + Base64.encodeToString(encrypted, Base64.NO_WRAP);
-    if (!preferences.edit().putString(CONFIG, encoded).commit())
-      throw new IOException("接続設定を保存できません");
+    synchronized (DESTINATION_LOCK) {
+      Context owner = recordsContext;
+      if (E2SyncJob.enabled(owner) || E2SyncJob.running())
+        throw new IOException("自動バックアップの停止を待ってください");
+      if (!preferences.edit().putString(CONFIG, encoded).putString("bucket", bucket).commit())
+        throw new IOException("接続設定を保存できません");
+    }
   }
 
   synchronized JSONObject configuration() throws Exception {
@@ -69,7 +89,7 @@ final class E2Settings {
     if (expectedBucket != null && !expectedBucket.equals(config.getString("bucket")))
       throw new IOException("保存先が変わりました");
     return E2Archive.forPhotos(records, config.getString("bucket"),
-        config.getString("access"), config.getString("secret"));
+        config.getString("access"), config.getString("secret"), context, network);
   }
 
   private static synchronized SecretKey key(boolean create) throws Exception {

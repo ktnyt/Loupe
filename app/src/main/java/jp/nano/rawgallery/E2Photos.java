@@ -24,8 +24,12 @@ final class E2Photos implements AutoCloseable {
   final E2Settings settings;
 
   E2Photos(Context context) {
+    this(context, null);
+  }
+
+  E2Photos(Context context, android.net.Network network) {
     this.context = context.getApplicationContext();
-    settings = new E2Settings(context);
+    settings = new E2Settings(context, network);
   }
 
   String name(Uri uri) throws IOException {

@@ -49,11 +49,24 @@ public final class E2SyncJob extends JobService {
   }
 
   static void setEnabled(Context context, boolean enabled) {
+    setEnabled(context, enabled, null);
+  }
+
+  static void setEnabled(Context context, boolean enabled, String bucket) {
+    synchronized (E2Settings.DESTINATION_LOCK) {
+      setEnabledLocked(context, enabled, bucket);
+    }
+  }
+
+  private static void setEnabledLocked(Context context, boolean enabled, String bucket) {
     if (enabled && (RUNNING.get()
         || context.getSharedPreferences("settings", 0).getBoolean("cleanupEnabled", false)))
       throw new IllegalStateException("既存の原本整理を停止してから開始してください");
+    if (enabled && (bucket == null || !bucket.equals(E2Settings.configuredBucket(context))))
+      throw new IllegalStateException("保存先が変わりました。設定を開き直してください");
     JobScheduler scheduler = context.getSystemService(JobScheduler.class);
-    if (!E2AutoSync.state(context).edit().putBoolean("enabled", enabled).commit())
+    if (!E2AutoSync.state(context).edit().putBoolean("enabled", enabled)
+        .putString("destination", enabled ? bucket : "").commit())
       throw new IllegalStateException("自動同期の設定を保存できません");
     if (!enabled) {
       scheduler.cancel(PERIODIC);
@@ -79,14 +92,17 @@ public final class E2SyncJob extends JobService {
   }
 
   @Override public boolean onStartJob(JobParameters params) {
-    if (!enabled(this) || !RUNNING.compareAndSet(false, true)) return false;
+    android.net.Network network = params.getNetwork();
+    if (!enabled(this) || !E2Archive.unmetered(this, network)
+        || !RUNNING.compareAndSet(false, true)) return false;
     current = params;
     AtomicBoolean cancel = new AtomicBoolean();
     stopped = cancel;
     worker.execute(() -> {
       runningThread = Thread.currentThread();
       try {
-        E2AutoSync.run(getApplicationContext(), () -> cancel.get() || !enabled(this));
+        E2AutoSync.run(getApplicationContext(), network,
+            () -> cancel.get() || !enabled(this) || !E2Archive.unmetered(this, network));
       } finally {
         runningThread = null;
         RUNNING.set(false);

@@ -1,6 +1,9 @@
 package jp.nano.rawgallery;
 
+import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.graphics.Insets;
 import android.os.Bundle;
 import android.os.Handler;
@@ -35,6 +38,27 @@ public final class E2SyncActivity extends DiagnosticActivity {
     });
     setContentView(scroll);
     panel = new E2Panel(this, content, saved);
+  }
+
+  static boolean hasPhotoAccess(Context context) {
+    return context.checkSelfPermission(imagePermission()) == PackageManager.PERMISSION_GRANTED
+        && context.checkSelfPermission(android.Manifest.permission.ACCESS_MEDIA_LOCATION)
+            == PackageManager.PERMISSION_GRANTED;
+  }
+
+  private static String imagePermission() {
+    return Build.VERSION.SDK_INT >= 33 ? android.Manifest.permission.READ_MEDIA_IMAGES
+        : android.Manifest.permission.READ_EXTERNAL_STORAGE;
+  }
+
+  void requestPhotoAccess() {
+    java.util.ArrayList<String> permissions = new java.util.ArrayList<>();
+    for (String permission : new String[] {imagePermission(),
+        android.Manifest.permission.ACCESS_MEDIA_LOCATION}) {
+      if (checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED)
+        permissions.add(permission);
+    }
+    if (!permissions.isEmpty()) requestPermissions(permissions.toArray(new String[0]), 703);
   }
 
   @Override protected void onResume() {

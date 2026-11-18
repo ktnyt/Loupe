@@ -1,6 +1,10 @@
 package jp.nano.rawgallery;
 
 import android.os.SystemClock;
+import android.content.Context;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.util.Xml;
 import java.io.*;
 import java.net.URL;
@@ -30,21 +34,31 @@ final class E2Archive {
   private final String bucket, keyId, secret;
   private final ArchiveStore store;
   private final String prefix;
+  private final Context context;
+  private final Network network;
 
   E2Archive(ArchiveStore store, String bucket, String keyId, String secret) {
-    this(store, bucket, keyId, secret, "loupe-transfer-pilot/android");
+    this(store, bucket, keyId, secret, "loupe-transfer-pilot/android", null, null);
   }
 
   static E2Archive forPhotos(ArchiveStore store, String bucket, String keyId, String secret) {
-    return new E2Archive(store, bucket, keyId, secret, "loupe/originals");
+    return forPhotos(store, bucket, keyId, secret, null, null);
   }
 
-  private E2Archive(ArchiveStore store, String bucket, String keyId, String secret, String prefix) {
+  static E2Archive forPhotos(ArchiveStore store, String bucket, String keyId, String secret,
+      Context context, Network network) {
+    return new E2Archive(store, bucket, keyId, secret, "loupe/originals", context, network);
+  }
+
+  private E2Archive(ArchiveStore store, String bucket, String keyId, String secret, String prefix,
+      Context context, Network network) {
     if (!bucket.matches("[a-z0-9][a-z0-9-]{1,61}[a-z0-9]")
         || !keyId.matches("[A-Za-z0-9]{20}") || !secret.matches("[A-Za-z0-9+/=_-]{40}"))
       throw new IllegalArgumentException("IDrive e2の設定が不正です");
     this.store = store;
     this.prefix = prefix;
+    this.context = context;
+    this.network = network;
     this.bucket = bucket;
     this.keyId = keyId;
     this.secret = secret;
@@ -213,8 +227,15 @@ final class E2Archive {
     byte[] regionKey = hmac(dateKey, "ap-northeast-1");
     byte[] serviceKey = hmac(regionKey, "s3");
     String signature = hex(hmac(hmac(serviceKey, "aws4_request"), toSign));
-    HttpsURLConnection conn = (HttpsURLConnection) new URL("https://" + HOST + path
-        + (query.isEmpty() ? "" : "?" + query)).openConnection();
+    if (Thread.currentThread().isInterrupted()) throw new IOException("通信を中断しました");
+    URL url = new URL("https://" + HOST + path + (query.isEmpty() ? "" : "?" + query));
+    HttpsURLConnection conn;
+    if (context == null) {
+      conn = (HttpsURLConnection) url.openConnection();
+    } else {
+      if (!unmetered(context, network)) throw new IOException("従量制でない回線を待っています");
+      conn = (HttpsURLConnection) network.openConnection(url);
+    }
     conn.setInstanceFollowRedirects(false);
     conn.setUseCaches(false);
     conn.setConnectTimeout(15000);
@@ -226,6 +247,14 @@ final class E2Archive {
     conn.setRequestProperty("Authorization", "AWS4-HMAC-SHA256 Credential=" + keyId + "/" + scope
         + ", SignedHeaders=" + headers + ", Signature=" + signature);
     return conn;
+  }
+
+  static boolean unmetered(Context context, Network network) {
+    if (network == null) return false;
+    NetworkCapabilities capabilities =
+        context.getSystemService(ConnectivityManager.class).getNetworkCapabilities(network);
+    return capabilities != null
+        && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED);
   }
 
   static String readHash(InputStream in, OutputStream out, long size) throws Exception {

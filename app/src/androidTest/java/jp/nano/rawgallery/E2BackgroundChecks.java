@@ -96,9 +96,12 @@ final class E2BackgroundChecks {
           throw new AssertionError("Unexpected verified photo");
         row = saved.get(0);
       }
-      Activity restoredActivity = test.startActivitySync(new Intent(context, E2SyncActivity.class)
-          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-      View restoreRoot = restoredActivity.getWindow().getDecorView();
+      context.startActivity(new Intent(context, E2SyncActivity.class)
+          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP
+              | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+      waitFor("return to app", 12000, () -> activePackage(test, APP));
+      View restoreRoot = owner.getWindow().getDecorView();
+      test.runOnMainSync(() -> find(restoreRoot, "保存した原本を更新", false).performClick());
       waitFor("restore button", 12000, () -> onUi(test, () -> {
         View button = findDescription(restoreRoot, name + "を復元");
         if (button == null || !button.isEnabled()) return false;
@@ -121,7 +124,7 @@ final class E2BackgroundChecks {
         if (in == null || !Arrays.equals(expected, in.readAllBytes()))
           throw new AssertionError("Original JPEG bytes changed");
       }
-      test.runOnMainSync(() -> { restoredActivity.finish(); owner.finish(); });
+      test.runOnMainSync(owner::finish);
       return "PASS e2-background: native scheduler after Home, 1/1, versioned restore, "
           + "SAF output and source match; bytes=" + expected.length + " elapsed_ms=" + elapsed
           + " object_path=loupe/originals/" + row.getString("key") + "/" + row.getString("sha");
