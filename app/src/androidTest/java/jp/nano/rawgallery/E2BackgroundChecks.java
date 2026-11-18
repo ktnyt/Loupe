@@ -107,12 +107,17 @@ final class E2BackgroundChecks {
             || !CATALOG_JPEG.equals(rows.get(0).getString("name")))
           throw new AssertionError("Expected one recoverable row in the separate cache");
       }
-      waitFor("restoration action is visible", 10000, () -> onUi(test, () -> {
-        View restore = findDescription(root, CATALOG_JPEG + "を復元");
-        android.graphics.Rect visible = new android.graphics.Rect();
-        return restore != null && restore.getGlobalVisibleRect(visible)
-            && visible.height() >= restore.getHeight();
-      }));
+      try {
+        waitFor("restoration action is visible", 10000, () -> onUi(test, () -> {
+          View restore = findDescription(root, CATALOG_JPEG + "を復元");
+          android.graphics.Rect visible = new android.graphics.Rect();
+          return restore != null && restore.getGlobalVisibleRect(visible)
+              && visible.height() >= restore.getHeight();
+        }));
+      } catch (AssertionError failure) {
+        capture(test, context, "e2-catalog-visibility-failed.png");
+        throw failure;
+      }
       capture(test, context, "e2-catalog-loaded.png");
       clickView(test, root, CATALOG_JPEG + "を復元", true);
       waitFor("save document", 25000, () -> {

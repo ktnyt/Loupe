@@ -239,9 +239,16 @@ final class E2Archive {
           key = null;
           versionId = null;
         } else if (insideVersion && event == XmlPullParser.START_TAG && xml.getDepth() == 3) {
-          if ("Key".equals(xml.getName())) key = xml.nextText();
-          else if ("VersionId".equals(xml.getName())) versionId = xml.nextText();
+          if ("Key".equals(xml.getName())) {
+            if (key != null) throw new IOException("カタログの世代情報が重複しています");
+            key = xml.nextText();
+          } else if ("VersionId".equals(xml.getName())) {
+            if (versionId != null) throw new IOException("カタログの世代情報が重複しています");
+            versionId = xml.nextText();
+          }
         } else if (insideVersion && event == XmlPullParser.END_TAG && xml.getDepth() == 2) {
+          if (key == null || key.isEmpty() || versionId == null || versionId.isEmpty())
+            throw new IOException("カタログの世代情報が不完全です");
           if (CATALOG.equals(key)) result.add(checkedVersion(versionId));
           insideVersion = false;
         }

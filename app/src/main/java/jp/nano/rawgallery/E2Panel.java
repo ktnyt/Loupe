@@ -24,6 +24,7 @@ import org.json.JSONObject;
 final class E2Panel {
   private static final int PICK = 701, CREATE = 702;
   private final E2SyncActivity activity;
+  private final android.widget.ScrollView scroll;
   private final LinearLayout card, list;
   private final EditText bucket, access, secret;
   private final TextView status, autoStatus, catalogStatus;
@@ -41,8 +42,9 @@ final class E2Panel {
   private int savedPage;
   private static final int PAGE_SIZE = 25;
 
-  E2Panel(E2SyncActivity activity, LinearLayout root, Bundle state) {
+  E2Panel(E2SyncActivity activity, android.widget.ScrollView scroll, LinearLayout root, Bundle state) {
     this.activity = activity;
+    this.scroll = scroll;
     photos = new E2Photos(activity);
     card = column();
     card.setPadding(dp(16), dp(16), dp(16), dp(16));
@@ -364,8 +366,13 @@ final class E2Panel {
   private void revealFirstPhoto() {
     View first = list.getChildAt(0);
     if (first == null) return;
-    Runnable reveal = () -> first.requestRectangleOnScreen(
-        new android.graphics.Rect(0, 0, first.getWidth(), first.getHeight()), true);
+    Runnable reveal = () -> {
+      if (first.getParent() != list) return;
+      android.graphics.Rect bounds = new android.graphics.Rect();
+      first.getDrawingRect(bounds);
+      scroll.offsetDescendantRectToMyCoords(first, bounds);
+      scroll.scrollTo(0, Math.max(0, bounds.top - dp(64)));
+    };
     if (first.isLaidOut() && !first.isLayoutRequested()) {
       first.post(reveal);
       return;

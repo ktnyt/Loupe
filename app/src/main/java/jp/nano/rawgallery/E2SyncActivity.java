@@ -37,7 +37,7 @@ public final class E2SyncActivity extends DiagnosticActivity {
       return insets;
     });
     setContentView(scroll);
-    panel = new E2Panel(this, content, saved);
+    panel = new E2Panel(this, scroll, content, saved);
   }
 
   static boolean hasPhotoAccess(Context context) {
