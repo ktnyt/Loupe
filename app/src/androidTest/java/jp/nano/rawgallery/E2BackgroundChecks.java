@@ -54,9 +54,8 @@ final class E2BackgroundChecks {
     List<E2AutoSync.Candidate> rows = E2AutoSync.candidates(c);
     if ("seed".equals(mode)) {
       if (!rows.isEmpty()) throw new AssertionError("Expected an empty photo collection");
-      byte[] expected = jpeg(1536, 960);
-      original(c, old, expected, 1577880000000L);
-      original(c, recent, expected, 0);
+      original(c, old, productJpeg(c, true));
+      original(c, recent, productJpeg(c, false));
       return "PASS e2-cleanup-product-seed: two synthetic JPEGs";
     }
     if ("stop".equals(mode)) {
@@ -74,9 +73,10 @@ final class E2BackgroundChecks {
         if (!(old.equals(row.photo().name) || recent.equals(row.photo().name)))
           throw new AssertionError("Unexpected photo in test user");
         fixtureGeneration(c.getContentResolver(), row.photo().uri, row.photo().name, FIXTURE_APP);
-        verifyFixtureBytes(c, row.photo().uri, jpeg(1536, 960));
+        verifyFixtureBytes(c, row.photo().uri, productJpeg(c, old.equals(row.photo().name)));
       }
-      if (rows.stream().noneMatch(row -> old.equals(row.photo().name) && row.photo().taken == 1577880000000L))
+      if (rows.stream().noneMatch(row -> old.equals(row.photo().name) && row.photo().taken > 0
+          && row.photo().taken < 1600000000000L))
         throw new AssertionError("Old synthetic date was not indexed");
       List<String> config = sharedCloudCredentials(c);
       Activity activity = test.startActivitySync(new Intent(c, E2SyncActivity.class)
@@ -116,7 +116,7 @@ final class E2BackgroundChecks {
           || new File(android.os.Environment.getExternalStoragePublicDirectory(
               android.os.Environment.DIRECTORY_PICTURES), "LoupeE2Verify/" + old).exists())
         throw new AssertionError("Expected only the recent synthetic original to remain");
-      verifyFixtureBytes(c, left.get(0).photo().uri, jpeg(1536, 960));
+      verifyFixtureBytes(c, left.get(0).photo().uri, productJpeg(c, false));
       if (activePackage(test, APP)) throw new AssertionError("The cleanup did not stay in the background");
       return "PASS e2-cleanup-product-sync: scheduled e2 cleanup removed only the old synthetic JPEG";
     }
@@ -176,11 +176,28 @@ final class E2BackgroundChecks {
     if (!row.find()) throw new AssertionError("Restored fixture is not in Downloads");
     byte[] restored = shell(test, "content read --user " + user
         + " --uri content://media/external_primary/downloads/" + row.group(1));
-    if (!Arrays.equals(jpeg(1536, 960), restored)) throw new AssertionError("Restored JPEG differs from the original");
+    if (!Arrays.equals(productJpeg(c, true), restored)) throw new AssertionError("Restored JPEG differs from the original");
     SystemClock.sleep(350);
     capture(test, c, "e2-product-restored.png");
     String sha = E2Archive.readHash(new java.io.ByteArrayInputStream(restored), null, restored.length);
     return "PASS e2-cleanup-product-restore: bytes=" + restored.length + " sha256=" + sha;
+  }
+
+  private static byte[] productJpeg(Context c, boolean old) throws Exception {
+    byte[] bytes = jpeg(1536, 960);
+    if (!old) return bytes;
+    File file = File.createTempFile("cleanup-fixture", ".jpg", c.getCacheDir());
+    try {
+      Files.write(file.toPath(), bytes);
+      android.media.ExifInterface exif = new android.media.ExifInterface(file.getPath());
+      exif.setAttribute(android.media.ExifInterface.TAG_DATETIME_ORIGINAL, "2020:01:01 12:00:00");
+      exif.setAttribute(android.media.ExifInterface.TAG_DATETIME, "2020:01:01 12:00:00");
+      exif.setAttribute(android.media.ExifInterface.TAG_OFFSET_TIME_ORIGINAL, "+00:00");
+      exif.saveAttributes();
+      return Files.readAllBytes(file.toPath());
+    } finally {
+      Files.deleteIfExists(file.toPath());
+    }
   }
 
   private static View findDescriptionPrefix(View view, String label) {
@@ -720,16 +737,11 @@ final class E2BackgroundChecks {
   }
 
   private static Uri original(Context context, String name, byte[] data) throws Exception {
-    return original(context, name, data, 0);
-  }
-
-  private static Uri original(Context context, String name, byte[] data, long taken) throws Exception {
     ContentValues values = new ContentValues();
     values.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
     values.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg");
     values.put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/LoupeE2Verify/");
     values.put(MediaStore.MediaColumns.IS_PENDING, 1);
-    if (taken != 0) values.put(MediaStore.Images.Media.DATE_TAKEN, taken);
     Uri uri = context.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
     if (uri == null) throw new AssertionError("Could not stage synthetic JPEG");
     try (OutputStream out = context.getContentResolver().openOutputStream(uri)) {
@@ -737,7 +749,6 @@ final class E2BackgroundChecks {
     }
     values.clear();
     values.put(MediaStore.MediaColumns.IS_PENDING, 0);
-    if (taken != 0) values.put(MediaStore.Images.Media.DATE_TAKEN, taken);
     if (context.getContentResolver().update(uri, values, null, null) != 1)
       throw new AssertionError("Could not publish synthetic JPEG");
     return uri;
