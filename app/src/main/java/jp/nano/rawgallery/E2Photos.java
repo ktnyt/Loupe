@@ -21,6 +21,7 @@ import org.json.JSONObject;
 final class E2Photos implements AutoCloseable {
   private static final Object SAVE_LOCK = new Object();
   private final Context context;
+  private final E2RecoveryCatalog catalog;
   final E2Settings settings;
 
   E2Photos(Context context) {
@@ -30,6 +31,7 @@ final class E2Photos implements AutoCloseable {
   E2Photos(Context context, android.net.Network network) {
     this.context = context.getApplicationContext();
     settings = new E2Settings(context, network);
+    catalog = new E2RecoveryCatalog(this.context);
   }
 
   String name(Uri uri) throws IOException {
@@ -129,10 +131,15 @@ final class E2Photos implements AutoCloseable {
   }
 
   File download(String id) throws Exception {
+    return downloadRecord(settings.records.get(id));
+  }
+
+  File downloadRecord(JSONObject record) throws Exception {
+    if (record == null) throw new IOException("原本の保管記録が見つかりません");
     File directory = Files.createTempDirectory(context.getCacheDir().toPath(), "e2-export-").toFile();
     File verified = new File(directory, "original");
     try {
-      settings.archive().restore(id, verified);
+      settings.archive(record.getString("bucket")).restoreRecord(record, verified);
       return verified;
     } catch (Exception e) {
       discard(verified);
@@ -166,16 +173,33 @@ final class E2Photos implements AutoCloseable {
   }
 
   List<JSONObject> saved(String bucket) throws Exception {
+    List<JSONObject> results = localSaved(bucket);
+    E2RecoveryCatalog.Snapshot imported = catalog.cached(bucket);
+    if (imported != null)
+      results = new ArrayList<>(E2RecoveryCatalog.merged(bucket, imported, results).values());
+    results.sort((a, b) -> a.optString("name").compareToIgnoreCase(b.optString("name")));
+    return results;
+  }
+
+  E2RecoveryCatalog.Snapshot publishCatalog(String bucket) throws Exception {
+    return E2RecoveryCatalog.publish(settings.archive(bucket), bucket, localSaved(bucket));
+  }
+
+  E2RecoveryCatalog.Snapshot loadCatalog(String bucket) throws Exception {
+    return catalog.load(settings.archive(bucket), bucket, localSaved(bucket));
+  }
+
+  private List<JSONObject> localSaved(String bucket) throws Exception {
     List<JSONObject> results = new ArrayList<>();
     for (JSONObject record : settings.records.all()) {
       if ("verified".equals(record.getString("state"))
           && bucket.equals(record.getString("bucket"))) results.add(record);
     }
-    results.sort((a, b) -> a.optString("name").compareToIgnoreCase(b.optString("name")));
     return results;
   }
 
   @Override public void close() {
+    catalog.close();
     settings.records.close();
   }
 }

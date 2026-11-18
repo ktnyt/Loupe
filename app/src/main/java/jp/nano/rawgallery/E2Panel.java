@@ -24,10 +24,11 @@ import org.json.JSONObject;
 final class E2Panel {
   private static final int PICK = 701, CREATE = 702;
   private final E2SyncActivity activity;
+  private final android.widget.ScrollView scroll;
   private final LinearLayout card, list;
   private final EditText bucket, access, secret;
-  private final TextView status, autoStatus;
-  private final Button connect, save, cancel, autoToggle;
+  private final TextView status, autoStatus, catalogStatus;
+  private final Button connect, save, cancel, autoToggle, catalogLoad, catalogSave;
   private final ExecutorService worker = new DiagnosticExecutor("E2Panel.worker", 1);
   private final E2Photos photos;
   private String activeBucket, pickerBucket;
@@ -41,8 +42,9 @@ final class E2Panel {
   private int savedPage;
   private static final int PAGE_SIZE = 25;
 
-  E2Panel(E2SyncActivity activity, LinearLayout root, Bundle state) {
+  E2Panel(E2SyncActivity activity, android.widget.ScrollView scroll, LinearLayout root, Bundle state) {
     this.activity = activity;
+    this.scroll = scroll;
     photos = new E2Photos(activity);
     card = column();
     card.setPadding(dp(16), dp(16), dp(16), dp(16));
@@ -79,6 +81,12 @@ final class E2Panel {
         activity.startActivity(new Intent(activity, DashboardActivity.class)));
     add(card, text("保存した原本", 16));
     button(card, "保存した原本を更新", 48, () -> run("一覧を読み込んでいます", this::refresh));
+    catalogLoad = button(card, "クラウドから復元一覧を取得", 48, () -> catalog(false));
+    catalogSave = button(card, "復元一覧をクラウドに保存", 48, () -> catalog(true));
+    catalogStatus = text("", 14);
+    catalogStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    catalogStatus.setVisibility(View.GONE);
+    add(card, catalogStatus);
     list = column();
     add(card, list);
     setBusy(false);
@@ -293,7 +301,7 @@ final class E2Panel {
   private void restore(JSONObject record) {
     long started = SystemClock.elapsedRealtime();
     run("原本を確認しています", () -> {
-      File file = photos.download(record.getString("key"));
+      File file = photos.downloadRecord(record);
       activity.runOnUiThread(() -> {
         if (activity.isDestroyed() || cancelled) {
           E2Photos.discard(file);
@@ -307,6 +315,74 @@ final class E2Panel {
         activity.startActivityForResult(intent, CREATE);
         timing("restore_fetch", started, " bytes=" + file.length());
       });
+    });
+  }
+
+  private void catalog(boolean save) {
+    String bucket = activeBucket;
+    if (bucket == null) return;
+    if (save) {
+      new GalleryUi.Sheet(activity).setTitle("復元一覧を保存しますか？")
+          .setMessage(bucket + " に保存します。機種変更後にこの一覧から原本を選べます。")
+          .setNegativeButton("キャンセル", null)
+          .setPositiveButton("保存", (dialog, which) -> transferCatalog(bucket, true)).show();
+    } else transferCatalog(bucket, false);
+  }
+
+  private void transferCatalog(String bucket, boolean save) {
+    String progress = save ? "復元一覧を保存しています" : "復元一覧を取得しています";
+    showCatalogStatus(progress);
+    run(progress, () -> {
+      try {
+        E2RecoveryCatalog.Snapshot result = save
+            ? photos.publishCatalog(bucket) : photos.loadCatalog(bucket);
+        if (!save && result != null) refresh();
+        post(() -> {
+          String outcome = "クラウドに復元一覧がありません";
+          if (result != null) {
+            String time = java.text.DateFormat.getDateTimeInstance().format(
+                new java.util.Date(result.created()));
+            outcome = (save ? "復元一覧を保存しました" :
+                result.previous() ? "前の復元一覧を読み込みました" : "復元一覧を読み込みました")
+                + "\n" + result.records().size() + "枚 · " + time;
+          }
+          showCatalogStatus(outcome);
+          message(outcome, GalleryUi.TEXT);
+          if (!save && result != null) revealFirstPhoto();
+        });
+      } catch (Exception failure) {
+        post(() -> showCatalogStatus(save ? "復元一覧を保存できませんでした" :
+            "復元一覧を取得できませんでした"));
+        throw failure;
+      }
+    });
+  }
+
+  private void showCatalogStatus(String label) {
+    catalogStatus.setText(label);
+    catalogStatus.setVisibility(View.VISIBLE);
+  }
+
+  private void revealFirstPhoto() {
+    View first = list.getChildAt(0);
+    if (first == null) return;
+    Runnable reveal = () -> {
+      if (first.getParent() != list) return;
+      android.graphics.Rect bounds = new android.graphics.Rect();
+      first.getDrawingRect(bounds);
+      scroll.offsetDescendantRectToMyCoords(first, bounds);
+      scroll.scrollTo(0, Math.max(0, bounds.top - dp(64)));
+    };
+    if (first.isLaidOut() && !first.isLayoutRequested()) {
+      first.post(reveal);
+      return;
+    }
+    first.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+      @Override public void onLayoutChange(View row, int left, int top, int right, int bottom,
+          int oldLeft, int oldTop, int oldRight, int oldBottom) {
+        row.removeOnLayoutChangeListener(this);
+        row.post(reveal);
+      }
     });
   }
 
@@ -328,6 +404,7 @@ final class E2Panel {
   }
 
   private void showSaved(String name, List<JSONObject> rows) {
+    if (!java.util.Objects.equals(name, activeBucket)) catalogStatus.setVisibility(View.GONE);
     activeBucket = name;
     savedRows.clear();
     savedRows.addAll(rows);
@@ -348,8 +425,10 @@ final class E2Panel {
       item.addView(detail, new LinearLayout.LayoutParams(0, -2, 1));
       detail.addView(text(row.optString("name"), 14));
       String size = android.text.format.Formatter.formatShortFileSize(activity, row.optLong("size"));
-      String date = android.text.format.DateFormat.format("yyyy/MM/dd", row.optLong("verifiedAt")).toString();
-      detail.addView(text(size + " · " + date, 12));
+      long verifiedAt = row.optLong("verifiedAt");
+      String verification = verifiedAt > 0 ? " · "
+          + android.text.format.DateFormat.format("yyyy/MM/dd", verifiedAt) : "";
+      detail.addView(text(size + verification, 12));
       Button restore = new SyncSettingsUi.ActionButton(activity, "復元", () -> restore(row));
       restore.setContentDescription(row.optString("name") + "を復元");
       restore.setMinWidth(dp(72));
@@ -419,6 +498,8 @@ final class E2Panel {
     access.setEnabled(!value);
     secret.setEnabled(!value);
     save.setEnabled(!value && activeBucket != null);
+    catalogLoad.setEnabled(!value && activeBucket != null);
+    catalogSave.setEnabled(!value && activeBucket != null);
     cancel.setVisibility(value && !connecting && export == null && verified == null ? View.VISIBLE : View.GONE);
     for (int i = 0; i < list.getChildCount(); i++) {
       if (list.getChildAt(i) instanceof LinearLayout) {

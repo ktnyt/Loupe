@@ -16,6 +16,8 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
+import java.util.ArrayList;
+import java.util.List;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import javax.net.ssl.HttpsURLConnection;
@@ -29,6 +31,7 @@ final class E2Archive {
   private static final String EMPTY_SHA =
       "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
   static final long LIMIT = 512L * 1024 * 1024;
+  private static final String CATALOG = "loupe/catalog/v1.json";
   private static final DateTimeFormatter TIME =
       DateTimeFormatter.ofPattern("uuuuMMdd'T'HHmmss'Z'", Locale.ROOT).withZone(ZoneOffset.UTC);
   private final String bucket, keyId, secret;
@@ -155,7 +158,10 @@ final class E2Archive {
 
   /** Reads the confirmed version into a temporary file and only publishes checked bytes. */
   long restore(String id, File destination) throws Exception {
-    JSONObject record = store.get(id);
+    return restoreRecord(store.get(id), destination);
+  }
+
+  long restoreRecord(JSONObject record, File destination) throws Exception {
     requireRecord(record);
     if (!"verified".equals(record.getString("state")) || destination.exists())
       throw new IOException("復元の前提を満たしていません");
@@ -163,7 +169,7 @@ final class E2Archive {
     long size = record.getLong("size");
     String version = checkedVersion(record.getString("version"));
     checkSize(size);
-    String path = path(id, sha);
+    String path = path(record.getString("key"), sha);
     File temp = File.createTempFile("e2-restore-", ".part", destination.getParentFile());
     long start = SystemClock.elapsedRealtimeNanos();
     try {
@@ -176,6 +182,117 @@ final class E2Archive {
     } finally {
       temp.delete();
     }
+  }
+
+  record CatalogObject(byte[] body, String version) {}
+
+  CatalogObject readCatalog(String requested) throws Exception {
+    String query = requested.isEmpty() ? "" : "versionId=" + checkedVersion(requested);
+    HttpsURLConnection connection = open("GET", "/" + bucket + "/" + CATALOG, query, EMPTY_SHA);
+    try {
+      int code = connection.getResponseCode();
+      if (code == 404) return null;
+      requireOk(code);
+      String actual = version(connection);
+      if (!requested.isEmpty() && !requested.equals(actual))
+        throw new IOException("取得したカタログの版が一致しません");
+      byte[] body;
+      try (InputStream in = connection.getInputStream()) {
+        body = readBounded(in, E2RecoveryCatalog.MAX_BYTES + 1);
+      }
+      return new CatalogObject(body, actual);
+    } finally {
+      connection.disconnect();
+    }
+  }
+
+  List<String> previousCatalogVersions() throws Exception {
+    HttpsURLConnection connection = open("GET", "/" + bucket,
+        "max-keys=16&prefix=loupe%2Fcatalog%2Fv1.json&versions=", EMPTY_SHA);
+    try {
+      requireOk(connection.getResponseCode());
+      byte[] response;
+      try (InputStream in = connection.getInputStream()) {
+        response = readBounded(in, 65537);
+      }
+      if (response.length > 65536) throw new IOException("カタログの世代一覧が大きすぎます");
+      XmlPullParser xml = Xml.newPullParser();
+      xml.setInput(new ByteArrayInputStream(response), "UTF-8");
+      List<String> result = new ArrayList<>();
+      boolean insideVersion = false;
+      Boolean truncated = null;
+      boolean versionsRoot = false;
+      String key = null, versionId = null;
+      for (int event = xml.next(); event != XmlPullParser.END_DOCUMENT; event = xml.next()) {
+        if (event == XmlPullParser.START_TAG && xml.getDepth() == 1) {
+          if (!"ListVersionsResult".equals(xml.getName()))
+            throw new IOException("カタログの世代一覧の応答形式が不正です");
+          versionsRoot = true;
+        } else if (event == XmlPullParser.START_TAG && xml.getDepth() == 2) {
+          insideVersion = "Version".equals(xml.getName());
+          if ("IsTruncated".equals(xml.getName())) {
+            String value = xml.nextText();
+            if (truncated != null || !("true".equals(value) || "false".equals(value)))
+              throw new IOException("カタログの世代一覧の続きが不明です");
+            truncated = "true".equals(value);
+          }
+          key = null;
+          versionId = null;
+        } else if (insideVersion && event == XmlPullParser.START_TAG && xml.getDepth() == 3) {
+          if ("Key".equals(xml.getName())) {
+            if (key != null) throw new IOException("カタログの世代情報が重複しています");
+            key = xml.nextText();
+          } else if ("VersionId".equals(xml.getName())) {
+            if (versionId != null) throw new IOException("カタログの世代情報が重複しています");
+            versionId = xml.nextText();
+          }
+        } else if (insideVersion && event == XmlPullParser.END_TAG && xml.getDepth() == 2) {
+          if (key == null || key.isEmpty() || versionId == null || versionId.isEmpty())
+            throw new IOException("カタログの世代情報が不完全です");
+          if (CATALOG.equals(key)) result.add(checkedVersion(versionId));
+          insideVersion = false;
+        }
+      }
+      if (!versionsRoot || truncated == null || result.size() > 16)
+        throw new IOException("カタログの世代一覧が不正です");
+      if (truncated && result.isEmpty()) throw new IOException("カタログの前世代を確認できません");
+      return result;
+    } finally {
+      connection.disconnect();
+    }
+  }
+
+  void writeCatalog(byte[] body) throws Exception {
+    HttpsURLConnection connection = open("PUT", "/" + bucket + "/" + CATALOG, "", sha256(body));
+    String saved;
+    try {
+      connection.setDoOutput(true);
+      connection.setFixedLengthStreamingMode(body.length);
+      try (OutputStream out = connection.getOutputStream()) {
+        out.write(body);
+      }
+      requireOk(connection.getResponseCode());
+      saved = version(connection);
+    } finally {
+      connection.disconnect();
+    }
+    CatalogObject verified = readCatalog(saved);
+    if (verified == null || !java.util.Arrays.equals(body, verified.body()))
+      throw new IOException("保存したカタログの読み戻しが一致しません");
+  }
+
+  private static byte[] readBounded(InputStream input, int limit) throws IOException {
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    byte[] buffer = new byte[8192];
+    long deadline = SystemClock.elapsedRealtime() + 60000;
+    while (out.size() < limit) {
+      if (Thread.currentThread().isInterrupted() || SystemClock.elapsedRealtime() > deadline)
+        throw new IOException("カタログの受信を中止しました");
+      int count = input.read(buffer, 0, Math.min(buffer.length, limit - out.size()));
+      if (count < 0) break;
+      out.write(buffer, 0, count);
+    }
+    return out.toByteArray();
   }
 
   private void requireRecord(JSONObject record) throws Exception {
@@ -295,10 +412,14 @@ final class E2Archive {
     return checkedVersion(conn.getHeaderField("x-amz-version-id"));
   }
 
-  private static String checkedVersion(String v) throws IOException {
+  static String checkedVersion(String v) throws IOException {
     if (v == null || "null".equals(v) || !v.matches("[A-Za-z0-9_-]{1,512}"))
       throw new IOException("IDrive e2の版を確認できません");
     return v;
+  }
+
+  static String sha256(byte[] value) throws java.security.NoSuchAlgorithmException {
+    return hex(MessageDigest.getInstance("SHA-256").digest(value));
   }
 
   private static void requireOk(int code) throws IOException {
