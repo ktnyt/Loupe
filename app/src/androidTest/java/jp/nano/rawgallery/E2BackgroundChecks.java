@@ -38,6 +38,119 @@ final class E2BackgroundChecks {
   private static final String APP = "jp.nano.rawgallery.e2verify";
   private static final String BUCKET = "loupe-test";
   private static final String CATALOG_JPEG = "loupe-e2-catalog-stage3.jpg";
+  private static final String FIXTURE_APP = "jp.nano.rawgallery.e2fixture";
+  private static final String SHARED_STALE = "loupe-shared-changed.jpg";
+  private static final String SHARED_MATCH = "loupe-shared-match.jpg";
+
+  static String sharedCleanup(Instrumentation test, String mode, long oldGeneration)
+      throws Exception {
+    Context context = test.getTargetContext();
+    if (!"ranchu".equals(Build.HARDWARE)) throw new AssertionError("Requires an isolated emulator");
+    if ("e2-cleanup-shared-seed".equals(mode)) return sharedSeed(context);
+    if (!APP.equals(context.getPackageName())) throw new AssertionError("Requires the verification APK");
+    List<E2AutoSync.Candidate> rows = E2AutoSync.candidates(context);
+    E2AutoSync.Candidate changed = exactFixture(rows, SHARED_STALE);
+    if ("e2-cleanup-shared-preview".equals(mode)) {
+      if (rows.size() != 1) throw new AssertionError("Expected only the preserved synthetic original");
+      verifyFixtureBytes(context, changed.photo().uri);
+      Bitmap preview = android.graphics.BitmapFactory.decodeFile(sharedPreview(context).getPath());
+      if (preview == null) throw new AssertionError("Retained thumbnail is unreadable");
+      try {
+        if (Math.max(preview.getWidth(), preview.getHeight()) != 64)
+          throw new AssertionError("The durable thumbnail has unexpected dimensions");
+      } finally {
+        preview.recycle();
+      }
+      return "PASS e2-cleanup-shared-preview: durable thumbnail survived process restart";
+    }
+
+    if (rows.size() != 2 || oldGeneration <= 0 || changed.generation() <= oldGeneration)
+      throw new AssertionError("Expected only both seeded photos and a genuinely stale generation");
+    E2AutoSync.Candidate exact = exactFixture(rows, SHARED_MATCH);
+    Uri changedUri = changed.photo().uri, exactUri = exact.photo().uri;
+    verifyFixtureBytes(context, changedUri);
+    verifyFixtureBytes(context, exactUri);
+    android.content.ContentResolver resolver = context.getContentResolver();
+    String condition = MediaStore.MediaColumns.GENERATION_MODIFIED + "=?";
+    String[] current = {Long.toString(exact.generation())};
+    if ("e2-cleanup-shared-denied".equals(mode)) {
+      if (android.os.Environment.isExternalStorageManager())
+        throw new AssertionError("The all-files permission must be off");
+      int removed;
+      try {
+        removed = resolver.delete(exactUri, condition, current);
+      } catch (SecurityException denied) {
+        removed = 0;
+      }
+      if (removed != 0) throw new AssertionError("Delete unexpectedly succeeded with read-only access");
+      verifyFixtureBytes(context, exactUri);
+      return "PASS e2-cleanup-shared-denied: read access alone preserved another app's JPEG";
+    }
+    if (!"e2-cleanup-shared-allowed".equals(mode)
+        || !android.os.Environment.isExternalStorageManager())
+      throw new AssertionError("The test mode and all-files permission are required");
+    int stale = resolver.delete(changedUri, condition, new String[]{Long.toString(oldGeneration)});
+    if (stale != 0) throw new AssertionError("A stale revision was deleted");
+    verifyFixtureBytes(context, changedUri);
+
+    File folder = new File(android.os.Environment.getExternalStoragePublicDirectory(
+        android.os.Environment.DIRECTORY_PICTURES), "LoupeE2Verify");
+    File exactFile = new File(folder, SHARED_MATCH);
+    if (!Arrays.equals(jpeg(), Files.readAllBytes(exactFile.toPath())))
+      throw new AssertionError("Unexpected backing file");
+    File thumbnail = sharedPreview(context);
+    CompactPreview.save(new PhotoRepository.Preview(exactFile, "JPEG", 160, 96, 1), thumbnail, 64);
+    if (!thumbnail.isFile() || thumbnail.length() <= 0)
+      throw new AssertionError("Durable thumbnail was not written before deletion");
+    if (resolver.delete(exactUri, condition, current) != 1 || exactFile.exists())
+      throw new AssertionError("A matching synthetic original did not disappear");
+    verifyFixtureBytes(context, changedUri);
+    return "PASS e2-cleanup-shared-allowed: stale photo retained; matching photo removed after thumbnail";
+  }
+
+  private static String sharedSeed(Context context) throws Exception {
+    if (!FIXTURE_APP.equals(context.getPackageName()) || !E2AutoSync.candidates(context).isEmpty())
+      throw new AssertionError("Requires the empty, separate fixture APK");
+    byte[] expected = jpeg();
+    Uri source = original(context, "loupe-shared-before.jpg", expected);
+    original(context, SHARED_MATCH, expected);
+    long generation = fixtureGeneration(context.getContentResolver(), source, "loupe-shared-before.jpg",
+        FIXTURE_APP);
+    ContentValues rename = new ContentValues();
+    rename.put(MediaStore.MediaColumns.DISPLAY_NAME, SHARED_STALE);
+    if (context.getContentResolver().update(source, rename, null, null) != 1
+        || fixtureGeneration(context.getContentResolver(), source, SHARED_STALE, FIXTURE_APP) <= generation)
+      throw new AssertionError("Expected a new generation after the fixture rename");
+    return "PASS e2-cleanup-shared-seed: stale_generation=" + generation;
+  }
+
+  private static E2AutoSync.Candidate exactFixture(List<E2AutoSync.Candidate> rows, String name) {
+    E2AutoSync.Candidate found = null;
+    for (E2AutoSync.Candidate row : rows) {
+      if (!name.equals(row.photo().name)) continue;
+      if (found != null || !"Pictures/LoupeE2Verify/".equals(row.photo().folder)
+          || !MediaStore.VOLUME_EXTERNAL_PRIMARY.equals(row.volume()))
+        throw new AssertionError("Unexpected synthetic fixture identity");
+      found = row;
+    }
+    if (found == null) throw new AssertionError("Synthetic fixture is missing");
+    return found;
+  }
+
+  private static void verifyFixtureBytes(Context context, Uri uri) throws Exception {
+    try (InputStream input = context.getContentResolver().openInputStream(uri)) {
+      byte[] expected = jpeg();
+      if (input == null) throw new AssertionError("Synthetic original is missing");
+      byte[] actual = new byte[expected.length];
+      new java.io.DataInputStream(input).readFully(actual);
+      if (input.read() != -1 || !Arrays.equals(expected, actual))
+        throw new AssertionError("Synthetic original bytes did not match");
+    }
+  }
+
+  private static File sharedPreview(Context context) {
+    return new File(context.getFilesDir(), "loupe-shared-cleanup-test.webp");
+  }
 
   static String cleanupBoundary(Instrumentation test) throws Exception {
     Context context = test.getTargetContext();
@@ -55,8 +168,8 @@ final class E2BackgroundChecks {
     Uri eligible = android.content.ContentUris.withAppendedId(files,
         android.content.ContentUris.parseId(eligibleImage));
     android.content.ContentResolver resolver = context.getContentResolver();
-    long oldGeneration = fixtureGeneration(resolver, changed, changedName);
-    long unchangedGeneration = fixtureGeneration(resolver, eligible, eligibleName);
+    long oldGeneration = fixtureGeneration(resolver, changed, changedName, APP);
+    long unchangedGeneration = fixtureGeneration(resolver, eligible, eligibleName, APP);
     File folder = new File(android.os.Environment.getExternalStoragePublicDirectory(
         android.os.Environment.DIRECTORY_PICTURES), "LoupeE2Verify");
     File eligibleFile = new File(folder, eligibleName);
@@ -66,7 +179,7 @@ final class E2BackgroundChecks {
     ContentValues metadata = new ContentValues();
     metadata.put(MediaStore.MediaColumns.DISPLAY_NAME, changedAfterRename);
     if (resolver.update(changedImage, metadata, null, null) != 1
-        || fixtureGeneration(resolver, changed, changedAfterRename) == oldGeneration)
+        || fixtureGeneration(resolver, changed, changedAfterRename, APP) == oldGeneration)
       throw new AssertionError("The synthetic MediaStore revision did not change");
 
     String generationMatches = MediaStore.MediaColumns.GENERATION_MODIFIED + "=?";
@@ -94,14 +207,15 @@ final class E2BackgroundChecks {
         + "matching generation deleted one owned synthetic JPEG";
   }
 
-  private static long fixtureGeneration(android.content.ContentResolver resolver, Uri uri, String name) {
+  private static long fixtureGeneration(android.content.ContentResolver resolver, Uri uri,
+      String name, String owner) {
     try (android.database.Cursor row = resolver.query(uri,
         new String[]{MediaStore.MediaColumns.GENERATION_MODIFIED, MediaStore.MediaColumns.DISPLAY_NAME,
             MediaStore.MediaColumns.RELATIVE_PATH, MediaStore.MediaColumns.OWNER_PACKAGE_NAME,
             MediaStore.MediaColumns.VOLUME_NAME}, null, null, null)) {
       if (row == null || !row.moveToFirst() || row.getLong(0) <= 0
           || !name.equals(row.getString(1)) || !"Pictures/LoupeE2Verify/".equals(row.getString(2))
-          || !APP.equals(row.getString(3)) || !MediaStore.VOLUME_EXTERNAL_PRIMARY.equals(row.getString(4)))
+          || !owner.equals(row.getString(3)) || !MediaStore.VOLUME_EXTERNAL_PRIMARY.equals(row.getString(4)))
         throw new AssertionError("An exact owned synthetic photo and its generation are required");
       return row.getLong(0);
     }
