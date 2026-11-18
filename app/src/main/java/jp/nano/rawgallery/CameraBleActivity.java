@@ -279,7 +279,7 @@ public final class CameraBleActivity extends AppCompatActivity {
         connectingRegistered = true;
         try {
             CameraDifferentialService.startRegistered(this, id, getSharedPreferences("camera_import", 0).getBoolean("wifi_verify_all", false));
-            startActivity(new Intent(this, CameraImportActivity.class));
+            startActivity(CameraImportActivity.showProgressIntent(this));
         } catch (RuntimeException failure) { connectingRegistered = false; status.setText("接続を開始できませんでした。もう一度操作してください。"); }
     }
     private void removeRegistration(String name) {
