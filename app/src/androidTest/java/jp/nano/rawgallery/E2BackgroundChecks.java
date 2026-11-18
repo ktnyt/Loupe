@@ -42,14 +42,16 @@ final class E2BackgroundChecks {
   private static final String SHARED_STALE = "loupe-shared-changed.jpg";
   private static final String SHARED_MATCH = "loupe-shared-match.jpg";
 
-  static String sharedCleanup(Instrumentation test, String mode, long oldGeneration)
+  static String sharedCleanup(Instrumentation test, String mode, long oldGeneration,
+      long staleId, long matchId)
       throws Exception {
     Context context = test.getTargetContext();
     if (!"ranchu".equals(Build.HARDWARE)) throw new AssertionError("Requires an isolated emulator");
     if ("e2-cleanup-shared-seed".equals(mode)) return sharedSeed(context);
-    if (!APP.equals(context.getPackageName())) throw new AssertionError("Requires the verification APK");
+    if (!APP.equals(context.getPackageName()) || staleId <= 0 || matchId <= 0 || staleId == matchId)
+      throw new AssertionError("Requires the verification APK and both synthetic IDs");
     List<E2AutoSync.Candidate> rows = E2AutoSync.candidates(context);
-    E2AutoSync.Candidate changed = exactFixture(rows, SHARED_STALE);
+    E2AutoSync.Candidate changed = exactFixture(rows, SHARED_STALE, staleId);
     if ("e2-cleanup-shared-preview".equals(mode)) {
       if (rows.size() != 1) throw new AssertionError("Expected only the preserved synthetic original");
       verifyFixtureBytes(context, changed.photo().uri);
@@ -66,7 +68,7 @@ final class E2BackgroundChecks {
 
     if (rows.size() != 2 || oldGeneration <= 0 || changed.generation() <= oldGeneration)
       throw new AssertionError("Expected only both seeded photos and a genuinely stale generation");
-    E2AutoSync.Candidate exact = exactFixture(rows, SHARED_MATCH);
+    E2AutoSync.Candidate exact = exactFixture(rows, SHARED_MATCH, matchId);
     Uri changedUri = changed.photo().uri, exactUri = exact.photo().uri;
     verifyFixtureBytes(context, changedUri);
     verifyFixtureBytes(context, exactUri);
@@ -113,7 +115,8 @@ final class E2BackgroundChecks {
       throw new AssertionError("Requires the empty, separate fixture APK");
     byte[] expected = jpeg();
     Uri source = original(context, "loupe-shared-before.jpg", expected);
-    original(context, SHARED_MATCH, expected);
+    Uri exact = original(context, SHARED_MATCH, expected);
+    fixtureGeneration(context.getContentResolver(), exact, SHARED_MATCH, FIXTURE_APP);
     long generation = fixtureGeneration(context.getContentResolver(), source, "loupe-shared-before.jpg",
         FIXTURE_APP);
     ContentValues rename = new ContentValues();
@@ -121,14 +124,18 @@ final class E2BackgroundChecks {
     if (context.getContentResolver().update(source, rename, null, null) != 1
         || fixtureGeneration(context.getContentResolver(), source, SHARED_STALE, FIXTURE_APP) <= generation)
       throw new AssertionError("Expected a new generation after the fixture rename");
-    return "PASS e2-cleanup-shared-seed: stale_generation=" + generation;
+    return "PASS e2-cleanup-shared-seed: stale_generation=" + generation + " stale_id="
+        + android.content.ContentUris.parseId(source) + " match_id="
+        + android.content.ContentUris.parseId(exact);
   }
 
-  private static E2AutoSync.Candidate exactFixture(List<E2AutoSync.Candidate> rows, String name) {
+  private static E2AutoSync.Candidate exactFixture(List<E2AutoSync.Candidate> rows, String name,
+      long seededId) {
     E2AutoSync.Candidate found = null;
     for (E2AutoSync.Candidate row : rows) {
       if (!name.equals(row.photo().name)) continue;
-      if (found != null || !"Pictures/LoupeE2Verify/".equals(row.photo().folder)
+      if (found != null || seededId != android.content.ContentUris.parseId(row.photo().uri)
+          || !"Pictures/LoupeE2Verify/".equals(row.photo().folder)
           || !MediaStore.VOLUME_EXTERNAL_PRIMARY.equals(row.volume()))
         throw new AssertionError("Unexpected synthetic fixture identity");
       found = row;

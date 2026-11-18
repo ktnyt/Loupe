@@ -67,7 +67,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean e2ArchiveTest, e2BackgroundTest;
   private boolean e2CleanupBoundaryTest;
   private String e2SharedCleanupMode;
-  private long e2StaleGeneration;
+  private long e2StaleGeneration, e2StaleId, e2MatchId;
   private String e2CatalogMode;
   private String e2RunId;
   private boolean jpegTest;
@@ -181,6 +181,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
     if (args != null && args.getString("mode", "").startsWith("e2-cleanup-shared-")) {
       e2SharedCleanupMode = args.getString("mode");
       e2StaleGeneration = Long.parseLong(args.getString("generation", "0"));
+      e2StaleId = Long.parseLong(args.getString("stale-id", "0"));
+      e2MatchId = Long.parseLong(args.getString("match-id", "0"));
     }
     if (args != null && java.util.Set.of("e2-catalog-publish", "e2-catalog-republish",
         "e2-catalog-restore", "e2-catalog-previous")
@@ -223,7 +225,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       }
       if (e2SharedCleanupMode != null) {
         results.putString("stream", E2BackgroundChecks.sharedCleanup(
-            this, e2SharedCleanupMode, e2StaleGeneration));
+            this, e2SharedCleanupMode, e2StaleGeneration, e2StaleId, e2MatchId));
         finish(-1, results); return;
       }
       if (e2CatalogMode != null) {
