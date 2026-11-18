@@ -250,6 +250,13 @@ final class E2Photos implements AutoCloseable {
     ACTIVE_PICKER_FILES.add(verified);
   }
 
+  static synchronized void releasePickerOwnership(File verified) {
+    ACTIVE_PICKER_FILES.remove(verified);
+    File marker = new File(verified.getParentFile(), "picker");
+    if (marker.isFile())
+      nextPickerCleanupAt = Math.min(nextPickerCleanupAt, marker.lastModified() + PICKER_LIFETIME_MS);
+  }
+
   static synchronized void discard(File verified) {
     ACTIVE_PICKER_FILES.remove(verified);
     new File(verified.getParentFile(), "picker").delete();

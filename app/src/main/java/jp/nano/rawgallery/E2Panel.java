@@ -616,7 +616,10 @@ final class E2Panel {
 
   void close() {
     cancelled = true;
-    if (verified != null && !activity.isChangingConfigurations()) E2Photos.discard(verified.file());
+    if (verified != null) {
+      if (activity.isFinishing()) E2Photos.discard(verified.file());
+      else if (!activity.isChangingConfigurations()) E2Photos.releasePickerOwnership(verified.file());
+    }
     worker.execute(photos::close);
     Thread thread = operation;
     if (export != null) export.panel = null;
