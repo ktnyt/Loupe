@@ -378,7 +378,7 @@ final class E2Panel {
   }
 
   private void showSaved(String name, List<JSONObject> rows) {
-    if (!name.equals(activeBucket)) catalogStatus.setVisibility(View.GONE);
+    if (!java.util.Objects.equals(name, activeBucket)) catalogStatus.setVisibility(View.GONE);
     activeBucket = name;
     savedRows.clear();
     savedRows.addAll(rows);
