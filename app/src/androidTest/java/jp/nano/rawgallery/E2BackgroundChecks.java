@@ -127,8 +127,8 @@ final class E2BackgroundChecks {
     }
     if ("restore".equals(mode) && E2Settings.configuredBucket(c).isEmpty()) {
       List<String> config = sharedCloudCredentials(c);
-      try (E2Settings settings = new E2Settings(c)) {
-        settings.connect(BUCKET, config.get(1), config.get(2));
+      try (E2Photos photos = new E2Photos(c)) {
+        photos.settings.connect(BUCKET, config.get(1), config.get(2));
       }
     }
     if (!BUCKET.equals(E2Settings.configuredBucket(c))) throw new AssertionError("Requires loupe-test");
