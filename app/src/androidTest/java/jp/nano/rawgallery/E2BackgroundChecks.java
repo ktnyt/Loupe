@@ -40,7 +40,7 @@ final class E2BackgroundChecks {
   private static final String CATALOG_JPEG = "loupe-e2-catalog-stage3.jpg";
   private static final String FIXTURE_APP = "jp.nano.rawgallery.e2fixture";
   private static final String SHARED_STALE = "loupe-shared-changed.jpg";
-  private static final String SHARED_MATCH = "loupe-shared-match.jpg";
+  private static final String SHARED_MATCH = CATALOG_JPEG;
 
   static String sharedCleanup(Instrumentation test, String mode, long oldGeneration,
       long staleId, long matchId)
@@ -88,13 +88,31 @@ final class E2BackgroundChecks {
       verifyFixtureBytes(context, exactUri);
       return "PASS e2-cleanup-shared-denied: read access alone preserved another app's JPEG";
     }
-    if (!"e2-cleanup-shared-allowed".equals(mode)
+    boolean live = "e2-cleanup-shared-live".equals(mode);
+    if ((!live && !"e2-cleanup-shared-allowed".equals(mode))
         || !android.os.Environment.isExternalStorageManager())
       throw new AssertionError("The test mode and all-files permission are required");
     int stale = resolver.delete(changedUri, condition, new String[]{Long.toString(oldGeneration)});
     if (stale != 0) throw new AssertionError("A stale revision was deleted");
     verifyFixtureBytes(context, changedUri);
 
+    try (E2Photos photos = new E2Photos(context)) {
+      JSONObject remote = live ? sharedCloudReference(context, photos) : null;
+      if (remote != null) verifyCloudReference(photos, remote);
+      removeSharedFixture(context, exactUri, condition, current);
+      if (remote != null) verifyCloudReference(photos, remote);
+    } finally {
+      if (live) context.getSharedPreferences("e2_connection", Context.MODE_PRIVATE)
+          .edit().clear().commit();
+    }
+    verifyFixtureBytes(context, changedUri);
+    if (live) return "PASS e2-cleanup-shared-live: same loupe-test version read and matched "
+        + "before and after removing only the verified synthetic JPEG";
+    return "PASS e2-cleanup-shared-allowed: stale photo retained; matching photo removed after thumbnail";
+  }
+
+  private static void removeSharedFixture(Context context, Uri exactUri, String condition,
+      String[] current) throws Exception {
     File folder = new File(android.os.Environment.getExternalStoragePublicDirectory(
         android.os.Environment.DIRECTORY_PICTURES), "LoupeE2Verify");
     File exactFile = new File(folder, SHARED_MATCH);
@@ -104,10 +122,42 @@ final class E2BackgroundChecks {
     CompactPreview.save(new PhotoRepository.Preview(exactFile, "JPEG", 160, 96, 1), thumbnail, 64);
     if (!thumbnail.isFile() || thumbnail.length() <= 0)
       throw new AssertionError("Durable thumbnail was not written before deletion");
-    if (resolver.delete(exactUri, condition, current) != 1 || exactFile.exists())
+    if (context.getContentResolver().delete(exactUri, condition, current) != 1 || exactFile.exists())
       throw new AssertionError("A matching synthetic original did not disappear");
-    verifyFixtureBytes(context, changedUri);
-    return "PASS e2-cleanup-shared-allowed: stale photo retained; matching photo removed after thumbnail";
+  }
+
+  private static JSONObject sharedCloudReference(Context context, E2Photos photos) throws Exception {
+    File input = new File(context.getCacheDir(), "e2-background-credentials");
+    List<String> config;
+    try {
+      if (input.length() > 512) throw new AssertionError("Invalid credential input");
+      config = Files.readAllLines(input.toPath());
+    } finally {
+      Files.deleteIfExists(input.toPath());
+    }
+    if (config.size() != 3 || !BUCKET.equals(config.get(0))
+        || photos.settings.configured() || !photos.settings.records.all().isEmpty())
+      throw new AssertionError("The probe requires a fresh loupe-test connection");
+    photos.settings.connect(BUCKET, config.get(1), config.get(2));
+    E2RecoveryCatalog.Snapshot snapshot = photos.loadCatalog(BUCKET);
+    List<JSONObject> rows = photos.saved(BUCKET);
+    if (snapshot == null || rows.size() != 1 || !CATALOG_JPEG.equals(rows.get(0).getString("name")))
+      throw new AssertionError("Expected the existing one-photo test catalog");
+    return rows.get(0);
+  }
+
+  private static void verifyCloudReference(E2Photos photos, JSONObject record) throws Exception {
+    byte[] expected = jpeg();
+    if (record.getLong("size") != expected.length
+        || !E2Archive.sha256(expected).equals(record.getString("sha")))
+      throw new AssertionError("Cloud catalog differs from synthetic original");
+    File downloaded = photos.downloadRecord(record);
+    try {
+      if (!Arrays.equals(expected, Files.readAllBytes(downloaded.toPath())))
+        throw new AssertionError("Versioned restoration differs from synthetic original");
+    } finally {
+      E2Photos.discard(downloaded);
+    }
   }
 
   private static String sharedSeed(Context context) throws Exception {
