@@ -106,11 +106,20 @@ public final class SyncActivity extends DiagnosticActivity {
                 .setItems(
                     new String[] {"7日間", "30日間", "90日間"},
                     (d, w) -> {
-                      getSharedPreferences("settings", 0)
-                          .edit()
-                          .putInt("retentionDays", new int[] {7, 30, 90}[w])
-                          .putBoolean("cleanupEnabled", false)
-                          .apply();
+                      synchronized (E2Settings.DESTINATION_LOCK) {
+                        int retention = new int[] {7, 30, 90}[w];
+                        if (retention != E2Cleanup.days(this)) {
+                          try {
+                            E2Cleanup.setEnabled(this, null, 0);
+                          } catch (java.io.IOException failure) {
+                            android.widget.Toast.makeText(this,
+                                "写真を残す期間を変更できませんでした", android.widget.Toast.LENGTH_LONG).show();
+                            return;
+                          }
+                        }
+                        getSharedPreferences("settings", 0).edit().putInt("retentionDays", retention)
+                            .putBoolean("cleanupEnabled", false).apply();
+                      }
                       refresh();
                     })
                 .setNegativeButton("閉じる", null)

@@ -54,7 +54,7 @@ final class E2BackgroundChecks {
     List<E2AutoSync.Candidate> rows = E2AutoSync.candidates(c);
     if ("seed".equals(mode)) {
       if (!rows.isEmpty()) throw new AssertionError("Expected an empty photo collection");
-      byte[] expected = jpeg();
+      byte[] expected = jpeg(1536, 960);
       original(c, old, expected, 1577880000000L);
       original(c, recent, expected, 0);
       return "PASS e2-cleanup-product-seed: two synthetic JPEGs";
@@ -74,7 +74,7 @@ final class E2BackgroundChecks {
         if (!(old.equals(row.photo().name) || recent.equals(row.photo().name)))
           throw new AssertionError("Unexpected photo in test user");
         fixtureGeneration(c.getContentResolver(), row.photo().uri, row.photo().name, FIXTURE_APP);
-        verifyFixtureBytes(c, row.photo().uri);
+        verifyFixtureBytes(c, row.photo().uri, jpeg(1536, 960));
       }
       if (rows.stream().noneMatch(row -> old.equals(row.photo().name) && row.photo().taken == 1577880000000L))
         throw new AssertionError("Old synthetic date was not indexed");
@@ -116,7 +116,7 @@ final class E2BackgroundChecks {
           || new File(android.os.Environment.getExternalStoragePublicDirectory(
               android.os.Environment.DIRECTORY_PICTURES), "LoupeE2Verify/" + old).exists())
         throw new AssertionError("Expected only the recent synthetic original to remain");
-      verifyFixtureBytes(c, left.get(0).photo().uri);
+      verifyFixtureBytes(c, left.get(0).photo().uri, jpeg(1536, 960));
       if (activePackage(test, APP)) throw new AssertionError("The cleanup did not stay in the background");
       return "PASS e2-cleanup-product-sync: scheduled e2 cleanup removed only the old synthetic JPEG";
     }
@@ -130,7 +130,7 @@ final class E2BackgroundChecks {
           .filter(p -> old.equals(p.name) && E2Cleanup.archived(p.uri)).findFirst().orElseThrow();
       PhotoRepository.Preview preview = E2Cleanup.preview(c, released.uri);
       int edge = Math.max(preview.width, preview.height);
-      if (edge < 1 || edge > 256) throw new AssertionError("Unexpected persisted thumbnail dimensions");
+      if (edge != 256) throw new AssertionError("Unexpected persisted thumbnail dimensions");
       Activity gallery = test.startActivitySync(new Intent(c, MainActivity.class)
           .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       View root = gallery.getWindow().getDecorView();
@@ -176,7 +176,7 @@ final class E2BackgroundChecks {
     if (!row.find()) throw new AssertionError("Restored fixture is not in Downloads");
     byte[] restored = shell(test, "content read --user " + user
         + " --uri content://media/external_primary/downloads/" + row.group(1));
-    if (!Arrays.equals(jpeg(), restored)) throw new AssertionError("Restored JPEG differs from the original");
+    if (!Arrays.equals(jpeg(1536, 960), restored)) throw new AssertionError("Restored JPEG differs from the original");
     SystemClock.sleep(350);
     capture(test, c, "e2-product-restored.png");
     String sha = E2Archive.readHash(new java.io.ByteArrayInputStream(restored), null, restored.length);
@@ -372,8 +372,11 @@ final class E2BackgroundChecks {
   }
 
   private static void verifyFixtureBytes(Context context, Uri uri) throws Exception {
+    verifyFixtureBytes(context, uri, jpeg());
+  }
+
+  private static void verifyFixtureBytes(Context context, Uri uri, byte[] expected) throws Exception {
     try (InputStream input = context.getContentResolver().openInputStream(uri)) {
-      byte[] expected = jpeg();
       if (input == null) throw new AssertionError("Synthetic original is missing");
       byte[] actual = new byte[expected.length];
       new java.io.DataInputStream(input).readFully(actual);
@@ -703,7 +706,11 @@ final class E2BackgroundChecks {
   }
 
   private static byte[] jpeg() {
-    Bitmap bitmap = Bitmap.createBitmap(160, 96, Bitmap.Config.ARGB_8888);
+    return jpeg(160, 96);
+  }
+
+  private static byte[] jpeg(int width, int height) {
+    Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
     bitmap.eraseColor(Color.rgb(77, 123, 191));
     ByteArrayOutputStream encoded = new ByteArrayOutputStream();
     boolean ok = bitmap.compress(Bitmap.CompressFormat.JPEG, 95, encoded);

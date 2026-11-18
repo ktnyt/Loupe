@@ -145,7 +145,7 @@ final class E2Panel {
     String bucket = activeBucket;
     if (bucket == null) return;
     if (E2Cleanup.enabled(activity, bucket)) {
-      setCleanup(bucket, false);
+      setCleanup(bucket, 0);
       return;
     }
     if (!android.os.Environment.isExternalStorageManager()) {
@@ -163,18 +163,19 @@ final class E2Panel {
           }).show();
       return;
     }
+    int retention = E2Cleanup.days(activity);
     new GalleryUi.Sheet(activity).setTitle("端末原本の整理を有効にしますか？")
         .setMessage(bucket + " に復元できる状態で保管したJPEGのうち、"
-            + E2Cleanup.days(activity) + "日以上経った原本を端末から削除します。"
+            + retention + "日以上経った原本を端末から削除します。"
             + "小さいサムネイルは端末に残ります。")
         .setNegativeButton("キャンセル", null)
-        .setPositiveButton("有効にする", (dialog, which) -> setCleanup(bucket, true)).show();
+        .setPositiveButton("有効にする", (dialog, which) -> setCleanup(bucket, retention)).show();
   }
 
-  private void setCleanup(String bucket, boolean enabled) {
+  private void setCleanup(String bucket, int retention) {
     try {
-      E2Cleanup.setEnabled(activity, bucket, enabled);
-      message(enabled ? "次の自動バックアップで整理対象を確認します" : "端末原本の整理を停止しました",
+      E2Cleanup.setEnabled(activity, bucket, retention);
+      message(retention > 0 ? "次の自動バックアップで整理対象を確認します" : "端末原本の整理を停止しました",
           GalleryUi.TEXT);
     } catch (java.io.IOException failed) {
       message("容量整理の設定を保存できません。保存先や権限を確認してください", 0xffffb4a8);

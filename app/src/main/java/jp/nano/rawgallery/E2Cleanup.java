@@ -31,7 +31,8 @@ final class E2Cleanup {
 
   static boolean enabled(Context c, String bucket) {
     return bucket != null && !bucket.isEmpty()
-        && bucket.equals(options(c).getString("cleanupBucket", ""));
+        && bucket.equals(options(c).getString("cleanupBucket", ""))
+        && days(c) == options(c).getInt("cleanupDays", 0);
   }
 
   static int days(Context c) {
@@ -39,14 +40,16 @@ final class E2Cleanup {
     return value >= 1 && value <= 365 ? value : 7;
   }
 
-  static void setEnabled(Context c, String bucket, boolean enabled) throws IOException {
+  static void setEnabled(Context c, String bucket, int retention) throws IOException {
+    boolean enabled = retention > 0;
     synchronized (E2Settings.DESTINATION_LOCK) {
-      if (enabled && (!Environment.isExternalStorageManager() || !E2SyncActivity.hasPhotoAccess(c)
+      if (enabled && (retention != days(c) || !Environment.isExternalStorageManager() || !E2SyncActivity.hasPhotoAccess(c)
           || !E2SyncJob.enabled(c) || !bucket.equals(E2Settings.configuredBucket(c))
           || !bucket.equals(options(c).getString("destination", ""))
           || c.getSharedPreferences("settings", 0).getBoolean("cleanupEnabled", false)))
         throw new IOException("自動バックアップと写真の整理権限を確認してください");
-      if (!options(c).edit().putString("cleanupBucket", enabled ? bucket : "").commit())
+      if (!options(c).edit().putString("cleanupBucket", enabled ? bucket : "")
+          .putInt("cleanupDays", retention).commit())
         throw new IOException("容量整理の設定を保存できません");
     }
   }
