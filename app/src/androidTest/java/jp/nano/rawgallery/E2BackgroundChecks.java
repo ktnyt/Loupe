@@ -72,7 +72,9 @@ final class E2BackgroundChecks {
       for (E2AutoSync.Candidate row : rows) {
         if (!(old.equals(row.photo().name) || recent.equals(row.photo().name)))
           throw new AssertionError("Unexpected photo in test user");
-        fixtureGeneration(c.getContentResolver(), row.photo().uri, row.photo().name, FIXTURE_APP);
+        if (row.generation() <= 0 || !"Pictures/LoupeE2Verify/".equals(row.photo().folder)
+            || !MediaStore.VOLUME_EXTERNAL_PRIMARY.equals(row.volume()))
+          throw new AssertionError("Fixture must have a current generation on primary storage");
         verifyFixtureBytes(c, row.photo().uri, productJpeg(c, old.equals(row.photo().name)));
       }
       if (rows.stream().noneMatch(row -> old.equals(row.photo().name) && row.photo().taken > 0
