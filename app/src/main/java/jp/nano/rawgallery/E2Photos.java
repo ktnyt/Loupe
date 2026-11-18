@@ -179,7 +179,7 @@ final class E2Photos implements AutoCloseable {
     List<JSONObject> results = localSaved(bucket);
     E2RecoveryCatalog.Snapshot imported = catalog.cached(bucket);
     if (imported != null)
-      results = new ArrayList<>(E2RecoveryCatalog.merged(bucket, imported, results).values());
+      results = new ArrayList<>(E2RecoveryCatalog.merged(bucket, imported, results, null).values());
     results.sort((a, b) -> a.optString("name").compareToIgnoreCase(b.optString("name")));
     return results;
   }
