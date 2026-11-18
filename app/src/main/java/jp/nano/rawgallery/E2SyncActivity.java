@@ -63,7 +63,20 @@ public final class E2SyncActivity extends DiagnosticActivity {
 
   @Override protected void onResume() {
     super.onResume();
+    applySystemBarAppearance();
     main.post(refresh);
+  }
+
+  @Override public void onWindowFocusChanged(boolean focused) {
+    super.onWindowFocusChanged(focused);
+    if (focused) applySystemBarAppearance();
+  }
+
+  private void applySystemBarAppearance() {
+    android.view.WindowInsetsController controller = getWindow().getInsetsController();
+    if (controller != null) controller.setSystemBarsAppearance(0,
+        android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+            | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
   }
 
   @Override protected void onPause() {
