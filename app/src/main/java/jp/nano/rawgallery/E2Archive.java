@@ -25,13 +25,12 @@ import org.json.JSONObject;
 import org.xmlpull.v1.XmlPullParser;
 
 /** Stores and restores checked originals in the Tokyo archive. The caller owns the archive DB. */
-final class E2Archive {
+final class E2Archive implements E2RecoveryCatalog.Storage {
   private static final String HOST = "s3.ap-northeast-1.idrivee2.com";
   private static final String SCOPE_SUFFIX = "/ap-northeast-1/s3/aws4_request";
   private static final String EMPTY_SHA =
       "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
   static final long LIMIT = 512L * 1024 * 1024;
-  private static final String CATALOG = "loupe/catalog/v1.json";
   private static final DateTimeFormatter TIME =
       DateTimeFormatter.ofPattern("uuuuMMdd'T'HHmmss'Z'", Locale.ROOT).withZone(ZoneOffset.UTC);
   private final String bucket, keyId, secret;
@@ -184,7 +183,7 @@ final class E2Archive {
     }
   }
 
-  void verifyVersion(JSONObject record) throws Exception {
+  @Override public void verifyVersion(JSONObject record) throws Exception {
     requireRecord(record);
     String sha = record.getString("sha");
     long size = record.getLong("size");
@@ -193,11 +192,11 @@ final class E2Archive {
         size, sha, null);
   }
 
-  record CatalogObject(byte[] body, String version) {}
+  record CatalogObject(byte[] body, String version, String etag) {}
 
-  CatalogObject readCatalog(String requested) throws Exception {
+  @Override public CatalogObject readCatalog(String key, String requested) throws Exception {
     String query = requested.isEmpty() ? "" : "versionId=" + checkedVersion(requested);
-    HttpsURLConnection connection = open("GET", "/" + bucket + "/" + CATALOG, query, EMPTY_SHA);
+    HttpsURLConnection connection = open("GET", "/" + bucket + "/" + key, query, EMPTY_SHA);
     try {
       int code = connection.getResponseCode();
       if (code == 404) return null;
@@ -207,17 +206,19 @@ final class E2Archive {
         throw new IOException("取得したカタログの版が一致しません");
       byte[] body;
       try (InputStream in = connection.getInputStream()) {
-        body = readBounded(in, E2RecoveryCatalog.MAX_BYTES + 1);
+        int limit = key.equals(E2RecoveryCatalog.INDEX) || key.equals(E2RecoveryCatalog.LEGACY)
+            ? E2RecoveryCatalog.MAX_BYTES : E2RecoveryCatalog.PART_BYTES;
+        body = readBounded(in, limit + 1);
       }
-      return new CatalogObject(body, actual);
+      return new CatalogObject(body, actual, connection.getHeaderField("ETag"));
     } finally {
       connection.disconnect();
     }
   }
 
-  List<String> previousCatalogVersions() throws Exception {
+  @Override public List<String> previousCatalogVersions(String root) throws Exception {
     HttpsURLConnection connection = open("GET", "/" + bucket,
-        "max-keys=16&prefix=loupe%2Fcatalog%2Fv1.json&versions=", EMPTY_SHA);
+        "max-keys=16&prefix=" + root.replace("/", "%2F") + "&versions=", EMPTY_SHA);
     try {
       requireOk(connection.getResponseCode());
       byte[] response;
@@ -258,7 +259,7 @@ final class E2Archive {
         } else if (insideVersion && event == XmlPullParser.END_TAG && xml.getDepth() == 2) {
           if (key == null || key.isEmpty() || versionId == null || versionId.isEmpty())
             throw new IOException("カタログの世代情報が不完全です");
-          if (CATALOG.equals(key)) result.add(checkedVersion(versionId));
+          if (root.equals(key)) result.add(checkedVersion(versionId));
           insideVersion = false;
         }
       }
@@ -271,10 +272,16 @@ final class E2Archive {
     }
   }
 
-  void writeCatalog(byte[] body) throws Exception {
-    HttpsURLConnection connection = open("PUT", "/" + bucket + "/" + CATALOG, "", sha256(body));
+  @Override public CatalogObject writeCatalog(String key, byte[] body, CatalogObject expected)
+      throws Exception {
+    if (expected != null && (expected.etag() == null
+        || !expected.etag().matches("\"[A-Za-z0-9_-]{1,128}\"")))
+      throw new IOException("復元一覧の更新前の状態を確認できません");
+    HttpsURLConnection connection = open("PUT", "/" + bucket + "/" + key, "", sha256(body));
     String saved;
     try {
+      if (expected == null) connection.setRequestProperty("If-None-Match", "*");
+      else connection.setRequestProperty("If-Match", expected.etag());
       connection.setDoOutput(true);
       connection.setFixedLengthStreamingMode(body.length);
       try (OutputStream out = connection.getOutputStream()) {
@@ -285,9 +292,10 @@ final class E2Archive {
     } finally {
       connection.disconnect();
     }
-    CatalogObject verified = readCatalog(saved);
+    CatalogObject verified = readCatalog(key, saved);
     if (verified == null || !java.util.Arrays.equals(body, verified.body()))
       throw new IOException("保存したカタログの読み戻しが一致しません");
+    return verified;
   }
 
   private static byte[] readBounded(InputStream input, int limit) throws IOException {

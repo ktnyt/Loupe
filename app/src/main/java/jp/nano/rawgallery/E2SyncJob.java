@@ -25,6 +25,10 @@ public final class E2SyncJob extends JobService {
     return E2AutoSync.state(context).getBoolean("enabled", false);
   }
 
+  static boolean fullMediaConsent(Context context) {
+    return E2AutoSync.state(context).getInt("fullMediaConsent", 0) == 1;
+  }
+
   static boolean running() {
     return RUNNING.get();
   }
@@ -76,7 +80,8 @@ public final class E2SyncJob extends JobService {
     android.content.SharedPreferences.Editor setting =
         E2AutoSync.state(context).edit().putBoolean("enabled", enabled)
             .putString("destination", enabled ? bucket : "");
-    if (!enabled) setting.remove("cleanupBucket").remove("cleanupDays");
+    if (enabled) setting.putInt("fullMediaConsent", 1);
+    else setting.remove("cleanupBucket").remove("cleanupDays").remove("fullMediaConsent");
     if (!setting.commit())
       throw new IllegalStateException("自動同期の設定を保存できません");
     if (!enabled) {

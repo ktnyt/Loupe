@@ -59,7 +59,7 @@ final class E2Cleanup {
   }
 
   static void sweep(Context c, E2Photos photos, List<E2AutoSync.Candidate> candidates,
-      String bucket, BooleanSupplier stopped) {
+      String bucket, BooleanSupplier stopped, E2RecoveryCatalog.Snapshot published) {
     try {
       if (!E2Settings.hasPhotoAccess(c) || !Environment.isExternalStorageManager()) {
         if (enabled(c, bucket)) updateStatus(c, "容量整理には全ファイルへのアクセスが必要です");
@@ -88,12 +88,11 @@ final class E2Cleanup {
         return;
       }
       if (!allowed(c, bucket, stopped)) return;
-      photos.publishCatalog(bucket);
-      E2RecoveryCatalog.Snapshot catalog = E2RecoveryCatalog.latest(photos.settings.archive(bucket), bucket);
+      E2RecoveryCatalog.confirmLatest(photos.settings.archive(bucket), published);
       int removed = 0;
       for (Eligible item : eligible) {
         if (!allowed(c, bucket, stopped)) break;
-        JSONObject entry = catalog.records().get(item.receipt().getString("key"));
+        JSONObject entry = published.records().get(item.receipt().getString("key"));
         if (entry == null || !E2RecoveryCatalog.sameContent(entry, item.receipt()))
           throw new IOException("復元一覧と端末の保管記録が一致しません");
         // Release reads back this exact published version before the local deletion.

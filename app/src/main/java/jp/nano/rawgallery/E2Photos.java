@@ -14,7 +14,6 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import org.json.JSONObject;
 
 /** Bridges user-selected files and the separate SQLite catalog of e2 originals. */
@@ -41,24 +40,20 @@ final class E2Photos implements AutoCloseable {
       String name = cursor.getString(0);
       if (name == null || name.isEmpty() || name.length() > 255
           || name.matches("(?s).*[\\\\/\\p{Cntrl}].*") || mime(name) == null)
-        throw new IOException("RAWまたはJPEGを選んでください");
+        throw new IOException("RAW・JPEG・動画を選んでください");
       return name;
     }
   }
 
-  private static String mime(String name) {
-    int dot = name.lastIndexOf('.');
-    if (dot <= 0) return null;
-    switch (name.substring(dot + 1).toLowerCase(Locale.ROOT)) {
-      case "jpg": case "jpeg": return "image/jpeg";
-      case "arw": case "cr2": case "cr3": case "dng": case "nef": case "nrw":
-      case "orf": case "raf": case "rw2": case "pef": case "srw":
-        return "application/octet-stream";
-      default: return null;
-    }
+  static String mime(String name) {
+    if (name == null || name.lastIndexOf('.') <= 0 || name.length() > 255
+        || name.matches("(?s).*[\\\\/\\p{Cntrl}].*")) return null;
+    if (RawFormats.accepts(name)) return RawFormats.mime(name);
+    return VideoFormats.accepts(name) ? VideoFormats.mime(name) : null;
   }
 
   long save(Uri source, String name, String bucket) throws Exception {
+    if (mime(name) == null) throw new IOException("RAW・JPEG・動画を選んでください");
     File staged = stage(() -> context.getContentResolver().openInputStream(source), -1);
     try {
       synchronized (SAVE_LOCK) {
@@ -72,6 +67,7 @@ final class E2Photos implements AutoCloseable {
   void saveIndexed(E2AutoSync.Candidate candidate, String id, String bucket, String fallbackHash)
       throws Exception {
     PhotoRepository.Photo photo = candidate.photo();
+    if (mime(photo.name) == null) throw new IOException("原本のファイル名を確認できません");
     E2AutoSync.requireCurrentRevision(context, candidate);
     File staged = stage(() -> PhotoRepository.original(context, photo), photo.size);
     try {
@@ -82,17 +78,18 @@ final class E2Photos implements AutoCloseable {
             throw new IOException("原本が変わりました。次回の同期で確認します");
         }
       }
-      ArchiveStore.RawMetadata inspected;
+      // Original backup does not depend on a RAW decoder or video preview.
+      ArchiveStore.RawMetadata inspected = new ArchiveStore.RawMetadata(
+          photo.isVideo() ? "動画" : photo.isJpeg() ? "JPEG" : "RAW", photo.taken);
       if (photo.isJpeg()) {
-        inspected = settings.records.metadata(photo);
-      } else {
-        try (RawPreview.FileSource source = new RawPreview.FileSource(staged)) {
-          RawPreview.Result raw = RawPreview.inspect(source);
-          if (!SyncPolicy.supported(raw.model)) throw new IOException("対応するRAWを確認できません");
-          inspected = new ArchiveStore.RawMetadata(raw.model, raw.taken);
+        try {
+          inspected = settings.records.metadata(photo);
+        } catch (Exception unavailableMetadata) {
+          if (Thread.currentThread().isInterrupted())
+            throw new IOException("同期を中断しました", unavailableMetadata);
         }
       }
-      JSONObject metadata = ArchiveStore.base(photo).put("mime", RawFormats.mime(photo.name))
+      JSONObject metadata = ArchiveStore.base(photo).put("mime", mime(photo.name))
           .put("model", inspected.model)
           .put("taken", inspected.taken > 0 ? inspected.taken : photo.taken);
       // The automatic sweep submits each indexed ID only once. Manual saves have separate IDs.
@@ -186,6 +183,12 @@ final class E2Photos implements AutoCloseable {
 
   E2RecoveryCatalog.Snapshot publishCatalog(String bucket) throws Exception {
     return E2RecoveryCatalog.publish(settings.archive(bucket), bucket, localSaved(bucket));
+  }
+
+  E2RecoveryCatalog.Snapshot publishCatalogIfAny(String bucket) throws Exception {
+    List<JSONObject> records = localSaved(bucket);
+    return records.isEmpty() ? null
+        : E2RecoveryCatalog.publish(settings.archive(bucket), bucket, records);
   }
 
   E2RecoveryCatalog.Snapshot loadCatalog(String bucket) throws Exception {

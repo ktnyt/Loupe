@@ -69,11 +69,11 @@ final class E2Panel {
       Thread thread = operation;
       if (thread != null) thread.interrupt();
     });
-    save = button(card, "写真を1枚選んで保存", 52, this::pick);
+    save = button(card, "原本を1つ選んで保存", 52, this::pick);
     TextView autoTitle = text("自動バックアップ", 16);
     autoTitle.setAccessibilityHeading(true);
     add(card, autoTitle);
-    add(card, text("従量制でない回線で対応RAWとJPEGを保存します。", 14));
+    add(card, text("従量制でない回線でRAW・JPEG・動画の原本を保存します。", 14));
     autoStatus = text("", 14);
     add(card, autoStatus);
     autoToggle = button(card, "開始", 48, this::toggleAuto);
@@ -129,7 +129,12 @@ final class E2Panel {
   void refreshAuto() {
     boolean enabled = E2SyncJob.enabled(activity);
     JobState state = E2SyncJob.snapshot(activity);
-    autoStatus.setText(E2SyncJob.describe(enabled, state));
+    String reason = E2AutoSync.state(activity).getString("failureReason", "");
+    if (enabled && !E2SyncJob.fullMediaConsent(activity))
+      reason = "写真・動画のバックアップ範囲の確認が必要です。一時停止してから再開してください";
+    if (reason.isEmpty() && E2AutoSync.state(activity).getBoolean(E2AutoSync.CATALOG_PENDING, false))
+      reason = "復元一覧の更新を待っています";
+    autoStatus.setText(E2SyncJob.describe(enabled, state) + (reason.isEmpty() ? "" : "\n" + reason));
     autoToggle.setText(enabled ? "一時停止" : state.updatedAt == 0 ? "開始" : "再開");
     autoToggle.setEnabled(!busy && (enabled || activeBucket != null));
     connect.setEnabled(!busy && !enabled && !E2SyncJob.running());
@@ -138,7 +143,8 @@ final class E2Panel {
     if (!cleanupText.contentEquals(cleanupStatus.getText())) cleanupStatus.setText(cleanupText);
     cleanupStatus.setVisibility(cleanupText.isEmpty() ? View.GONE : View.VISIBLE);
     cleanupToggle.setText(cleaning ? "端末原本の整理を停止" : "端末原本の整理を有効にする");
-    cleanupToggle.setEnabled(!busy && enabled && activeBucket != null);
+    cleanupToggle.setEnabled(!busy && enabled && E2SyncJob.fullMediaConsent(activity)
+        && activeBucket != null);
   }
 
   private void toggleCleanup() {
@@ -190,15 +196,15 @@ final class E2Panel {
       if (cleaning && !E2SyncJob.enabled(activity))
         message("端末原本の整理も停止しました。再開後に設定できます", GalleryUi.TEXT);
     } else if (activeBucket != null) {
-      if (!E2Settings.hasPhotoAccess(activity)) {
-        new GalleryUi.Sheet(activity).setTitle("写真の読み取りを許可してください")
-            .setMessage("自動バックアップには、端末のすべての写真と原本の読み取り許可が必要です。")
+      if (!E2Settings.hasMediaAccess(activity)) {
+        new GalleryUi.Sheet(activity).setTitle("写真と動画の読み取りを許可してください")
+            .setMessage("自動バックアップには、端末のすべての写真・動画と原本の読み取り許可が必要です。")
             .setNegativeButton("キャンセル", null)
             .setPositiveButton("許可", (dialog, which) -> activity.requestPhotoAccess()).show();
         return;
       }
       new GalleryUi.Sheet(activity).setTitle("自動バックアップを開始しますか？")
-          .setMessage("端末のRAW・JPEGをIDrive e2（東京）に保存します。\n" + activeBucket)
+          .setMessage("現在と今後追加される端末のRAW・JPEG・動画の原本（1ファイル512MiBまで）をIDrive e2（東京）に保存し、再取得して一致を確認します。\n" + activeBucket)
           .setNegativeButton("キャンセル", null)
           .setPositiveButton("開始", (dialog, which) -> setAuto(true)).show();
     }
@@ -275,15 +281,26 @@ final class E2Panel {
     run("写真を確認しています", () -> {
       String name = photos.name(uri);
       post(() -> new GalleryUi.Sheet(activity).setTitle("原本を保存しますか？")
-          .setMessage(name + "\nIDrive e2（東京） · " + target)
+          .setMessage(name + "\nIDrive e2（東京） · " + target
+              + "\n保存済みの原本も復元一覧に反映します。")
           .setNegativeButton("キャンセル", null)
           .setPositiveButton("保存", (dialog, which) -> {
             long started = SystemClock.elapsedRealtime();
             run("原本を保存しています", () -> {
               long put = photos.save(uri, name, target);
+              boolean catalogSaved;
+              try {
+                photos.publishCatalog(target);
+                catalogSaved = true;
+              } catch (Exception publicationFailed) {
+                catalogSaved = false;
+              }
               refresh();
+              boolean recovered = catalogSaved;
               post(() -> {
-                message("原本を保存しました", 0xff9fe0b5);
+                message(recovered ? "原本と復元一覧を保存しました"
+                    : "原本は保存しました。復元一覧を保存できませんでした。「復元一覧をクラウドに保存」で再試行してください",
+                    recovered ? 0xff9fe0b5 : 0xffffb4a8);
                 timing("save " + (name.toLowerCase(java.util.Locale.ROOT).endsWith(".orf")
                     ? "orf" : "other"), started, " put_ms=" + put);
               });

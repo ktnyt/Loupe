@@ -7,46 +7,102 @@ import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 import android.util.JsonReader;
 import android.util.JsonToken;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-/** A versioned recovery point. Imported rows never become local verified backup records. */
+/** Versioned recovery points. Imported rows never become local verified backup records. */
 final class E2RecoveryCatalog extends SQLiteOpenHelper {
+  static final String LEGACY = "loupe/catalog/v1.json";
+  static final String INDEX = "loupe/catalog/v2.json";
   static final int MAX_BYTES = 512 * 1024;
-  private static final int MAX_ROWS = 2000;
+  private static final int MAX_LEGACY_ROWS = 2000;
+  static final int PART_BYTES = 256 * 1024;
+  private static final int PART_ROWS = 256;
+  private static final int MAX_PARTS = 512;
+  private static final int MAX_ROWS = 50_000;
   private static final Object PUBLISH_LOCK = new Object();
   private static final Object CACHE_LOCK = new Object();
 
-  record Snapshot(long created, Map<String, JSONObject> records,
-                  byte[] encoded, boolean previous) {}
+  interface Storage {
+    E2Archive.CatalogObject readCatalog(String key, String version) throws Exception;
+    List<String> previousCatalogVersions(String root) throws Exception;
+    // Conditional write followed by an exact-version GET and byte comparison.
+    E2Archive.CatalogObject writeCatalog(String key, byte[] body, E2Archive.CatalogObject expected)
+        throws Exception;
+    void verifyVersion(JSONObject record) throws Exception;
+  }
+
+  record Snapshot(String bucket, long created, Map<String, JSONObject> records, boolean previous,
+                  E2Archive.CatalogObject index, Map<String, String> partVersions) {}
 
   E2RecoveryCatalog(Context context) {
-    super(context, "e2_recovery_catalog.db", null, 1);
+    this(context, "e2_recovery_catalog.db");
+  }
+
+  E2RecoveryCatalog(Context context, String databaseName) {
+    super(context, databaseName, null, 2);
   }
 
   @Override public void onCreate(SQLiteDatabase db) {
     db.execSQL("CREATE TABLE snapshots (bucket TEXT PRIMARY KEY, body BLOB NOT NULL)");
+    createRowCache(db);
   }
 
   @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-    throw new IllegalStateException("Unsupported e2 recovery cache migration");
+    if (oldVersion == 1 && newVersion == 2) createRowCache(db);
+    else throw new IllegalStateException("Unsupported e2 recovery cache migration");
+  }
+
+  private static void createRowCache(SQLiteDatabase db) {
+    db.execSQL("CREATE TABLE generations (bucket TEXT PRIMARY KEY, created INTEGER NOT NULL,"
+        + " count INTEGER NOT NULL, digest BLOB NOT NULL)");
+    db.execSQL("CREATE TABLE catalog_rows (bucket TEXT NOT NULL, ordinal INTEGER NOT NULL,"
+        + " body BLOB NOT NULL, PRIMARY KEY(bucket, ordinal))");
   }
 
   Snapshot cached(String bucket) throws Exception {
-    try (Cursor row = getReadableDatabase().query("snapshots", new String[]{"body"},
-        "bucket = ?", new String[]{bucket}, null, null, null)) {
-      return row.moveToFirst() ? decode(bucket, row.getBlob(0), false) : null;
+    synchronized (CACHE_LOCK) {
+      String[] args = {bucket};
+      SQLiteDatabase db = getReadableDatabase();
+      try (Cursor meta = db.rawQuery("SELECT created,count,digest FROM generations WHERE bucket=?", args)) {
+        if (meta.moveToFirst()) {
+          long created = meta.getLong(0), count = meta.getLong(1);
+          if (created <= 0 || count <= 0 || count > MAX_ROWS) throw new InvalidCatalog();
+          MessageDigest digest = MessageDigest.getInstance("SHA-256");
+          Map<String, JSONObject> records = new LinkedHashMap<>();
+          try (Cursor rows = db.rawQuery("SELECT body FROM catalog_rows WHERE bucket=? ORDER BY ordinal", args)) {
+            while (rows.moveToNext()) {
+              if (records.size() >= count) throw new InvalidCatalog();
+              byte[] body = rows.getBlob(0);
+              digest.update(body);
+              addRow(records, bucket, object(new String(body, StandardCharsets.UTF_8)));
+            }
+          }
+          if (records.size() != count || !Arrays.equals(digest.digest(), meta.getBlob(2)))
+            throw new InvalidCatalog();
+          return new Snapshot(bucket, created, records, false, null, Collections.emptyMap());
+        }
+      }
+      // Keep the v1 cache usable offline until the first successful online import.
+      try (Cursor row = db.rawQuery("SELECT body FROM snapshots WHERE bucket=?", args)) {
+        return row.moveToFirst() ? decodeLegacy(bucket, row.getBlob(0), false) : null;
+      }
     }
   }
 
-  Snapshot load(E2Archive archive, String bucket, List<JSONObject> local) throws Exception {
+  Snapshot load(Storage archive, String bucket, List<JSONObject> local) throws Exception {
     Snapshot candidate = remote(archive, bucket);
     if (candidate == null) return null;
     merged(bucket, candidate, local, archive);
@@ -61,123 +117,303 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
           if (!sameOriginal(saved, incoming)) archive.verifyVersion(incoming);
         }
       }
-      if (Thread.currentThread().isInterrupted()) throw new IOException("取得を中止しました");
-      ContentValues values = new ContentValues();
-      values.put("bucket", bucket);
-      values.put("body", candidate.encoded());
-      getWritableDatabase().replaceOrThrow("snapshots", null, values);
+      cache(bucket, candidate);
     }
     return candidate;
   }
 
-  static Snapshot publish(E2Archive archive, String bucket, List<JSONObject> local) throws Exception {
-    if (local.isEmpty()) throw new IOException("カタログに保存できる原本がありません");
-    synchronized (PUBLISH_LOCK) {
-      Snapshot current = remote(archive, bucket);
-      Map<String, JSONObject> all = merged(bucket, current, local, archive);
-      Snapshot next = encode(bucket, System.currentTimeMillis(), all);
-      if (current != null && !current.previous()
-          && entries(current.records()).toString().equals(entries(all).toString())) return current;
-      archive.writeCatalog(next.encoded());
-      return next;
+  private void cache(String bucket, Snapshot candidate) throws Exception {
+    SQLiteDatabase db = getWritableDatabase();
+    String[] args = {bucket};
+    MessageDigest digest = MessageDigest.getInstance("SHA-256");
+    db.beginTransaction();
+    try {
+      db.delete("catalog_rows", "bucket=?", args);
+      ContentValues values = new ContentValues();
+      values.put("bucket", bucket);
+      int ordinal = 0;
+      for (JSONObject row : candidate.records().values()) {
+        if (Thread.currentThread().isInterrupted()) throw new IOException("取得を中止しました");
+        byte[] body = bytes(row.toString());
+        digest.update(body);
+        values.put("ordinal", ordinal++);
+        values.put("body", body);
+        db.insertOrThrow("catalog_rows", null, values);
+      }
+      values.clear();
+      values.put("bucket", bucket);
+      values.put("created", candidate.created());
+      values.put("count", ordinal);
+      values.put("digest", digest.digest());
+      db.replaceOrThrow("generations", null, values);
+      db.delete("snapshots", "bucket=?", args);
+      db.setTransactionSuccessful();
+    } finally {
+      db.endTransaction();
     }
   }
 
-  // The archive is present for online catalog operations. A cached restore list is read-only:
-  // actual restoration always verifies the selected version before exporting any bytes.
-  static Map<String, JSONObject> merged(String bucket, Snapshot snapshot, List<JSONObject> local,
-      E2Archive archive) throws Exception {
-    Map<String, JSONObject> result = new TreeMap<>();
-    if (snapshot != null) result.putAll(snapshot.records());
-    for (JSONObject entry : local) {
-      JSONObject clean = normalize(bucket, entry);
-      String key = clean.getString("key");
-      JSONObject previous = result.get(key);
-      if (previous != null && !sameOriginal(previous, clean)) {
-        if (!sameContent(previous, clean))
-          throw new IOException("保管記録と復元一覧で写真の内容が一致しません");
-        if (archive != null) archive.verifyVersion(previous);
-        // Keep the published version so older recovery lists remain valid.
-        continue;
+  static Snapshot publish(Storage archive, String bucket, List<JSONObject> local) throws Exception {
+    if (local.isEmpty()) throw new IOException("カタログに保存できる原本がありません");
+    synchronized (PUBLISH_LOCK) {
+      Snapshot current = generation(archive, bucket, INDEX, false);
+      Snapshot legacy = generation(archive, bucket, LEGACY, false);
+      Map<String, JSONObject> all = new LinkedHashMap<>();
+      if (current != null) all.putAll(current.records());
+      // A still-active older installation can publish additional v1 rows after migration.
+      if (legacy != null) mergeRows(bucket, all, legacy.records().values(), archive);
+      mergeRows(bucket, all, local, archive);
+      if (all.size() > MAX_ROWS) throw new IOException("復元一覧の件数が対応範囲外です");
+
+      JSONArray parts = new JSONArray();
+      Map<String, String> versions = new HashMap<>();
+      Map<String, String> reusable = current == null ? Collections.emptyMap() : current.partVersions();
+      ByteArrayOutputStream body = new ByteArrayOutputStream();
+      body.write('[');
+      int count = 0;
+      for (JSONObject row : all.values()) {
+        byte[] encoded = bytes(row.toString());
+        if (count == PART_ROWS || body.size() + encoded.length + 2 > PART_BYTES) {
+          appendPart(archive, parts, reusable, versions, body, count);
+          body.reset();
+          body.write('[');
+          count = 0;
+        }
+        if (count++ > 0) body.write(',');
+        body.write(encoded);
       }
-      result.put(key, clean);
+      appendPart(archive, parts, reusable, versions, body, count);
+      if (current != null && current.partVersions().equals(versions)) return current;
+      long created = System.currentTimeMillis();
+      JSONObject doc = new JSONObject().put("schema", 2).put("bucket", bucket)
+          .put("created", created).put("count", all.size()).put("parts", parts);
+      byte[] encoded = envelope(doc);
+      if (encoded.length > MAX_BYTES) throw new IOException("復元一覧の索引が大きすぎます");
+      E2Archive.CatalogObject saved = archive.writeCatalog(INDEX, encoded,
+          current == null ? null : current.index());
+      return new Snapshot(bucket, created, all, false, saved, versions);
     }
+  }
+
+  private static void appendPart(Storage archive, JSONArray parts, Map<String, String> reusable,
+      Map<String, String> versions, ByteArrayOutputStream buffer, int count) throws Exception {
+    buffer.write(']');
+    byte[] body = buffer.toByteArray();
+    if (count < 1 || count > PART_ROWS || body.length > PART_BYTES || parts.length() >= MAX_PARTS)
+      throw new IOException("復元一覧の分割サイズが対応範囲外です");
+    String sha = E2Archive.sha256(body);
+    String version = reusable.get(sha);
+    if (version == null) {
+      String key = partKey(sha);
+      E2Archive.CatalogObject existing = archive.readCatalog(key, "");
+      if (existing == null) existing = archive.writeCatalog(key, body, null);
+      else existing = archive.readCatalog(key, existing.version());
+      if (existing == null || !Arrays.equals(body, existing.body())) throw new InvalidCatalog();
+      version = existing.version();
+    }
+    if (versions.put(sha, version) != null) throw new InvalidCatalog();
+    parts.put(new JSONObject().put("sha256", sha).put("version", version).put("count", count));
+  }
+
+  static void confirmLatest(Storage archive, Snapshot snapshot) throws Exception {
+    if (snapshot.previous() || snapshot.index() == null) throw new InvalidCatalog();
+    // Re-read every pinned part. The root can remain unchanged while a part becomes unavailable.
+    decode(archive, snapshot.bucket(), INDEX, snapshot.index(), false);
+    E2Archive.CatalogObject current = archive.readCatalog(INDEX, "");
+    if (current == null || !snapshot.index().version().equals(current.version())
+        || !Arrays.equals(snapshot.index().body(), current.body()))
+      throw new IOException("公開後に復元一覧の最新版が変わりました");
+  }
+
+  static Map<String, JSONObject> merged(String bucket, Snapshot snapshot, List<JSONObject> local,
+      Storage archive) throws Exception {
+    Map<String, JSONObject> result = new LinkedHashMap<>();
+    if (snapshot != null) result.putAll(snapshot.records());
+    mergeRows(bucket, result, local, archive);
     return result;
   }
 
-  private static Snapshot remote(E2Archive archive, String bucket) throws Exception {
-    E2Archive.CatalogObject latest = archive.readCatalog("");
+  private static void mergeRows(String bucket, Map<String, JSONObject> result,
+      Iterable<JSONObject> incoming, Storage archive) throws Exception {
+    for (JSONObject entry : incoming) {
+      JSONObject clean = normalize(bucket, entry);
+      String key = clean.getString("key");
+      JSONObject previous = result.get(key);
+      if (previous != null) {
+        if (!sameContent(previous, clean))
+          throw new IOException("保管記録と復元一覧で原本の内容が一致しません");
+        if (!previous.getString("version").equals(clean.getString("version"))) {
+          if (archive != null) archive.verifyVersion(previous);
+          continue;
+        }
+        if (previous.getLong("taken") == clean.getLong("taken")
+            && previous.getLong("verifiedAt") == clean.getLong("verifiedAt")) continue;
+      }
+      result.put(key, clean);
+    }
+  }
+
+  static Snapshot remote(Storage archive, String bucket) throws Exception {
+    Snapshot modern;
+    try {
+      modern = generation(archive, bucket, INDEX, true);
+    } catch (InvalidCatalog invalid) {
+      Snapshot legacy = generation(archive, bucket, LEGACY, true);
+      if (legacy == null) throw invalid;
+      return new Snapshot(bucket, legacy.created(), legacy.records(), true, null, Collections.emptyMap());
+    }
+    if (modern == null) return generation(archive, bucket, LEGACY, true);
+    Snapshot legacy;
+    try {
+      legacy = generation(archive, bucket, LEGACY, true);
+    } catch (InvalidCatalog invalid) {
+      // An intact v2 generation can still be restored when all retained v1 generations are invalid.
+      return new Snapshot(bucket, modern.created(), modern.records(), true, null, Collections.emptyMap());
+    }
+    if (legacy == null) return modern;
+    Map<String, JSONObject> all = new LinkedHashMap<>(modern.records());
+    mergeRows(bucket, all, legacy.records().values(), archive);
+    if (all.size() > MAX_ROWS) throw new IOException("復元一覧の件数が対応範囲外です");
+    // This read-only view may span two independent writers and has no single published root.
+    return new Snapshot(bucket, Math.max(modern.created(), legacy.created()), all,
+        modern.previous() || legacy.previous(), null, Collections.emptyMap());
+  }
+
+  static Snapshot latest(Storage archive, String bucket) throws Exception {
+    Snapshot snapshot = generation(archive, bucket, INDEX, false);
+    if (snapshot == null) snapshot = generation(archive, bucket, LEGACY, false);
+    if (snapshot == null) throw new IOException("最新の復元一覧がありません");
+    return snapshot;
+  }
+
+  private static Snapshot generation(Storage archive, String bucket, String root, boolean recover)
+      throws Exception {
+    E2Archive.CatalogObject latest = archive.readCatalog(root, "");
     if (latest != null) {
       try {
-        return decode(bucket, latest.body(), false);
-      } catch (InvalidCatalog ignored) {
-        // Read the retained generations if the return value cannot be validated.
+        return decode(archive, bucket, root, latest, false);
+      } catch (InvalidCatalog invalid) {
+        if (!recover) throw invalid;
       }
     }
-    List<String> versions = archive.previousCatalogVersions();
+    List<String> versions = archive.previousCatalogVersions(root);
     if (latest == null && versions.isEmpty()) return null;
-    for (String version : versions) {
-      if (latest != null && version.equals(latest.version())) continue;
-      E2Archive.CatalogObject earlier = archive.readCatalog(version);
-      if (earlier == null) continue;
-      try {
-        return decode(bucket, earlier.body(), true);
-      } catch (InvalidCatalog ignored) {
-        // Network and permission failures still propagate.
+    if (recover) {
+      for (String version : versions) {
+        if (latest != null && version.equals(latest.version())) continue;
+        E2Archive.CatalogObject earlier = archive.readCatalog(root, version);
+        if (earlier == null) continue;
+        try {
+          return decode(archive, bucket, root, earlier, true);
+        } catch (InvalidCatalog ignored) {
+          // Only invalid or missing generations permit fallback. Transport failures propagate.
+        }
       }
     }
     throw new InvalidCatalog();
   }
 
-  static Snapshot latest(E2Archive archive, String bucket) throws Exception {
-    E2Archive.CatalogObject object = archive.readCatalog("");
-    if (object == null) throw new IOException("最新の復元一覧がありません");
-    return decode(bucket, object.body(), false);
-  }
+  private record Part(String sha, String version, int count) {}
 
-  private static Snapshot encode(String bucket, long created, Map<String, JSONObject> records)
-      throws Exception {
-    if (records.isEmpty() || records.size() > MAX_ROWS)
-      throw new IOException("復元一覧の件数が対応範囲外です");
-    String payload = new JSONObject().put("schema", 1).put("bucket", bucket)
-        .put("created", created).put("count", records.size()).put("photos", entries(records)).toString();
-    byte[] encoded = new JSONObject().put("payload", payload)
-        .put("sha256", E2Archive.sha256(payload.getBytes(StandardCharsets.UTF_8)))
-        .toString().getBytes(StandardCharsets.UTF_8);
-    return decode(bucket, encoded, false);
-  }
-
-  private static JSONArray entries(Map<String, JSONObject> records) {
-    return new JSONArray(new ArrayList<>(records.values()));
-  }
-
-  private static Snapshot decode(String bucket, byte[] encoded, boolean previous)
-      throws InvalidCatalog {
+  private static Snapshot decode(Storage archive, String bucket, String root,
+      E2Archive.CatalogObject obj, boolean previous) throws Exception {
+    if (LEGACY.equals(root)) return decodeLegacy(bucket, obj.body(), previous);
+    JSONObject doc = payload(bucket, 2, obj.body());
+    List<Part> parts = new ArrayList<>();
+    Map<String, String> versions = new HashMap<>();
+    long created;
     try {
-      if (encoded.length > MAX_BYTES) throw new IOException();
-      JSONObject envelope = object(new String(encoded, StandardCharsets.UTF_8));
-      String payload = string(envelope, "payload");
-      if (!E2Archive.sha256(payload.getBytes(StandardCharsets.UTF_8))
-          .equals(string(envelope, "sha256"))) throw new IOException();
-      JSONObject doc = object(payload);
-      if (integer(doc, "schema") != 1 || !bucket.equals(string(doc, "bucket")))
-        throw new IOException();
+      long total = integer(doc, "count");
+      created = integer(doc, "created");
+      JSONArray list = doc.getJSONArray("parts");
+      if (created <= 0 || total < 1 || total > MAX_ROWS || list.length() < 1
+          || list.length() > MAX_PARTS) throw new InvalidCatalog();
+      long sum = 0;
+      for (int i = 0; i < list.length(); i++) {
+        JSONObject ref = list.getJSONObject(i);
+        String sha = string(ref, "sha256"), version = E2Archive.checkedVersion(string(ref, "version"));
+        long count = integer(ref, "count");
+        if (!sha.matches("[0-9a-f]{64}") || count < 1 || count > PART_ROWS
+            || versions.put(sha, version) != null) throw new InvalidCatalog();
+        parts.add(new Part(sha, version, (int) count));
+        sum += count;
+      }
+      if (sum != total) throw new InvalidCatalog();
+    } catch (Exception invalid) {
+      throw new InvalidCatalog();
+    }
+    Map<String, JSONObject> records = new LinkedHashMap<>();
+    for (Part part : parts) {
+      E2Archive.CatalogObject piece = archive.readCatalog(partKey(part.sha()), part.version());
+      if (piece == null || !part.version().equals(piece.version()) || piece.body().length > PART_BYTES
+          || !part.sha().equals(E2Archive.sha256(piece.body()))) throw new InvalidCatalog();
+      try {
+        String json = new String(piece.body(), StandardCharsets.UTF_8);
+        validateJson(json);
+        JSONArray rows = new JSONArray(json);
+        if (rows.length() != part.count()) throw new InvalidCatalog();
+        for (int i = 0; i < rows.length(); i++) addRow(records, bucket, rows.getJSONObject(i));
+      } catch (Exception invalid) {
+        throw new InvalidCatalog();
+      }
+    }
+    return new Snapshot(bucket, created, records, previous, obj, versions);
+  }
+
+  private static Snapshot decodeLegacy(String bucket, byte[] encoded, boolean previous)
+      throws InvalidCatalog {
+    JSONObject doc = payload(bucket, 1, encoded);
+    try {
       long created = integer(doc, "created");
       JSONArray photos = doc.getJSONArray("photos");
-      if (created <= 0 || photos.length() == 0 || photos.length() > MAX_ROWS
-          || photos.length() != integer(doc, "count")) throw new IOException();
-      Map<String, JSONObject> records = new TreeMap<>();
-      for (int i = 0; i < photos.length(); i++) {
-        JSONObject clean = normalize(bucket, photos.getJSONObject(i));
-        if (records.put(clean.getString("key"), clean) != null) throw new IOException();
-      }
-      return new Snapshot(created, records, encoded, previous);
+      if (created <= 0 || photos.length() < 1 || photos.length() > MAX_LEGACY_ROWS
+          || photos.length() != integer(doc, "count")) throw new InvalidCatalog();
+      Map<String, JSONObject> records = new LinkedHashMap<>();
+      for (int i = 0; i < photos.length(); i++) addRow(records, bucket, photos.getJSONObject(i));
+      return new Snapshot(bucket, created, records, previous, null, Collections.emptyMap());
+    } catch (Exception invalid) {
+      throw new InvalidCatalog();
+    }
+  }
+
+  private static void addRow(Map<String, JSONObject> records, String bucket, JSONObject row)
+      throws Exception {
+    JSONObject clean = normalize(bucket, row);
+    if (records.put(clean.getString("key"), clean) != null) throw new InvalidCatalog();
+  }
+
+  private static String partKey(String sha) { return "loupe/catalog/parts/" + sha + ".json"; }
+
+  private static byte[] bytes(String s) { return s.getBytes(StandardCharsets.UTF_8); }
+
+  private static byte[] envelope(JSONObject doc) throws Exception {
+    String payload = doc.toString();
+    return bytes(new JSONObject().put("payload", payload)
+        .put("sha256", E2Archive.sha256(bytes(payload))).toString());
+  }
+
+  private static JSONObject payload(String bucket, int schema, byte[] encoded) throws InvalidCatalog {
+    try {
+      if (encoded.length > MAX_BYTES) throw new InvalidCatalog();
+      JSONObject envelope = object(new String(encoded, StandardCharsets.UTF_8));
+      String payload = string(envelope, "payload");
+      if (!E2Archive.sha256(bytes(payload)).equals(string(envelope, "sha256")))
+        throw new InvalidCatalog();
+      JSONObject doc = object(payload);
+      if (integer(doc, "schema") != schema || !bucket.equals(string(doc, "bucket")))
+        throw new InvalidCatalog();
+      return doc;
     } catch (Exception invalid) {
       throw new InvalidCatalog();
     }
   }
 
   private static JSONObject object(String json) throws Exception {
+    validateJson(json);
+    return new JSONObject(json);
+  }
+
+  private static void validateJson(String json) throws Exception {
     try (JsonReader reader = new JsonReader(new StringReader(json))) {
       int depth = 0;
       while (reader.peek() != JsonToken.END_DOCUMENT) {
@@ -195,7 +431,6 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
         if (depth > 8) throw new IOException("Catalog nesting exceeds its schema");
       }
     }
-    return new JSONObject(json);
   }
 
   private static JSONObject normalize(String bucket, JSONObject row) throws Exception {
@@ -208,13 +443,14 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
         || !"verified".equals(string(row, "state")) || !key.matches("[0-9a-f]{32}")
         || !sha.matches("[0-9a-f]{64}") || size <= 0 || size > E2Archive.LIMIT || taken < 0
         || verifiedAt < 0 || name.length() > 255 || name.lastIndexOf('.') <= 0
-        || !RawFormats.accepts(name)
+        || !(RawFormats.accepts(name) || VideoFormats.accepts(name))
         || name.matches("(?s).*[\\\\/\\p{Cntrl}].*"))
       throw new IOException("復元一覧の保管記録が不正です");
     return new JSONObject().put("key", key).put("sha", sha).put("name", name)
         .put("version", version).put("size", size).put("taken", taken)
         .put("verifiedAt", verifiedAt).put("bucket", bucket)
-        .put("provider", "idrive-e2").put("state", "verified").put("mime", RawFormats.mime(name));
+        .put("provider", "idrive-e2").put("state", "verified")
+        .put("mime", VideoFormats.accepts(name) ? VideoFormats.mime(name) : RawFormats.mime(name));
   }
 
   static boolean sameOriginal(JSONObject left, JSONObject right) throws Exception {

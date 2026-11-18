@@ -45,6 +45,10 @@ public final class E2SyncActivity extends DiagnosticActivity {
       if (checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED)
         permissions.add(permission);
     }
+    if (android.os.Build.VERSION.SDK_INT >= 33
+        && checkSelfPermission(android.Manifest.permission.READ_MEDIA_VIDEO)
+            != PackageManager.PERMISSION_GRANTED)
+      permissions.add(android.Manifest.permission.READ_MEDIA_VIDEO);
     if (!permissions.isEmpty()) requestPermissions(permissions.toArray(new String[0]), 703);
   }
 
