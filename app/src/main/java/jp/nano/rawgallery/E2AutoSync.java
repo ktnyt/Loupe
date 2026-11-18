@@ -22,7 +22,6 @@ import org.json.JSONObject;
 /** Persists observations of each sweep and prepares offline images for verified copies. */
 final class E2AutoSync {
   private static final int TRANSFERS = 1;
-  static final String CATALOG_PENDING = "catalogPublicationPending";
   private static final int CHECKPOINT_FILES = 32;
   private static final long CHECKPOINT_MS = 60_000;
   private static final String STATE = "e2_auto_sync";
@@ -69,11 +68,12 @@ final class E2AutoSync {
       total = photos.size();
       counted = true;
       Publication published = null;
-      if (preferences.getBoolean(CATALOG_PENDING, false))
-        published = publishCatalog(context, e2, bucket, stopped);
+      boolean deferred = false;
+      if (e2.catalogPending(bucket)) {
+        published = tryPublishCatalog(context, e2, bucket, stopped);
+        deferred = published == null;
+      }
       if (!photos.isEmpty()) {
-        if (!preferences.edit().putBoolean(CATALOG_PENDING, true).commit())
-          throw new IOException("復元一覧の処理状態を保存できません");
         long checkedRevision = e2.settings.records.indexRevision();
         long checkpointAt = SystemClock.elapsedRealtime() + CHECKPOINT_MS;
         int processed = 0;
@@ -94,8 +94,10 @@ final class E2AutoSync {
             publish(preferences, JobState.Kind.RUNNING, ready, total, failed, true);
             if (++processed >= CHECKPOINT_FILES || SystemClock.elapsedRealtime() >= checkpointAt) {
               long revision = e2.settings.records.indexRevision();
-              if (revision != checkedRevision && !stopped.getAsBoolean())
-                published = publishCatalog(context, e2, bucket, stopped);
+              if (!deferred && revision != checkedRevision && !stopped.getAsBoolean()) {
+                published = tryPublishCatalog(context, e2, bucket, stopped);
+                deferred = published == null;
+              }
               checkedRevision = revision;
               processed = 0;
               checkpointAt = SystemClock.elapsedRealtime() + CHECKPOINT_MS;
@@ -107,10 +109,13 @@ final class E2AutoSync {
       }
       if (!stopped.getAsBoolean()) {
         if (published == null || published.revision() != e2.settings.records.indexRevision())
-          published = publishCatalog(context, e2, bucket, stopped);
+          published = tryPublishCatalog(context, e2, bucket, stopped);
         requireDestination(context, bucket, stopped);
-        if (!preferences.edit().remove(CATALOG_PENDING).commit())
-          throw new IOException("復元一覧の処理状態を保存できません");
+        if (published == null) {
+          publish(preferences, ready > 0 ? JobState.Kind.PARTIAL : JobState.Kind.FAILED,
+              ready, total, failed, true);
+          return;
+        }
         if (published.snapshot() != null)
           E2Cleanup.sweep(context, e2, photos, bucket, stopped, published.snapshot());
       }
@@ -226,19 +231,20 @@ final class E2AutoSync {
       throw new IOException("同期を中断しました");
   }
 
-  private static Publication publishCatalog(Context context, E2Photos photos, String bucket,
+  private static Publication tryPublishCatalog(Context context, E2Photos photos, String bucket,
       BooleanSupplier stopped) throws Exception {
     requireDestination(context, bucket, stopped);
     long revision = photos.settings.records.indexRevision();
     try {
       E2RecoveryCatalog.Snapshot snapshot = photos.publishCatalogIfAny(bucket);
       requireDestination(context, bucket, stopped);
+      state(context).edit().remove("failureReason").apply();
       return new Publication(snapshot, revision);
     } catch (Exception failure) {
-      if (!stopped.getAsBoolean() && !Thread.currentThread().isInterrupted())
-        state(context).edit().putString("failureReason",
-            "復元一覧をクラウドに保存できませんでした。端末原本は整理せず、次回の同期で再試行します").apply();
-      throw failure;
+      requireDestination(context, bucket, stopped);
+      state(context).edit().putString("failureReason",
+          "復元一覧をクラウドに保存できませんでした。端末原本は整理せず、次回の同期で再試行します").apply();
+      return null;
     }
   }
 

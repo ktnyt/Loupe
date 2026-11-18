@@ -34,14 +34,8 @@ final class E2MixedMediaChecks {
 
   static String run(Instrumentation test, String operation, String token) throws Exception {
     Context context = test.getTargetContext();
-    String current = shell(test, "am get-current-user");
-    if (!"jp.nano.rawgallery.e2verify".equals(context.getPackageName())
-        || !"1".equals(shell(test, "getprop ro.kernel.qemu"))
-        || !current.matches("[1-9][0-9]{0,3}") || Process.myUid() / 100000 != Integer.parseInt(current)
-        || token == null || !token.matches("[0-9a-f]{12}")
-        || !E2AutoSync.candidates(context).isEmpty() || !E2Settings.configuredBucket(context).isEmpty())
-      throw new AssertionError("Requires an empty verification app in a dedicated emulator user");
-    List<Sample> samples = samples(test, token);
+    if (!"jp.nano.rawgallery.e2verify".equals(context.getPackageName()))
+      throw new AssertionError("Requires the verification app");
     File input = new File(context.getCacheDir(), "e2-background-credentials");
     List<String> config;
     try {
@@ -50,7 +44,14 @@ final class E2MixedMediaChecks {
     } finally {
       Files.deleteIfExists(input.toPath());
     }
+    String current = shell(test, "am get-current-user");
+    if (!"1".equals(shell(test, "getprop ro.kernel.qemu"))
+        || !current.matches("[1-9][0-9]{0,3}") || Process.myUid() / 100000 != Integer.parseInt(current)
+        || token == null || !token.matches("[0-9a-f]{12}")
+        || !E2AutoSync.candidates(context).isEmpty() || !E2Settings.configuredBucket(context).isEmpty())
+      throw new AssertionError("Requires an empty verification app in a dedicated emulator user");
     if (config.size() != 3 || !BUCKET.equals(config.get(0))) throw new AssertionError("Requires loupe-test");
+    List<Sample> samples = samples(test, token);
     try (E2Photos photos = new E2Photos(context)) {
       photos.settings.connect(BUCKET, config.get(1), config.get(2));
       switch (operation) {
@@ -74,6 +75,14 @@ final class E2MixedMediaChecks {
           if (state.kind != JobState.Kind.COMPLETE || state.ready != samples.size() || state.failed != 0)
             throw new AssertionError("Expected all three originals and catalog published by JobScheduler");
           verify(photos, E2RecoveryCatalog.latest(photos.settings.archive(BUCKET), BUCKET), samples);
+          if (photos.catalogPending(BUCKET)) throw new AssertionError("Published originals remain pending");
+          JSONObject saved = photos.settings.records.all().get(0);
+          photos.settings.records.put(saved, "verified");
+          try (E2Photos reopened = new E2Photos(context)) {
+            if (!reopened.catalogPending(BUCKET)) throw new AssertionError("Lost pending state after reopen");
+            reopened.publishCatalog(BUCKET);
+            if (reopened.catalogPending(BUCKET)) throw new AssertionError("Retry did not acknowledge publication");
+          }
           break;
         case "consent":
           showConsent(test, context, false);
@@ -123,7 +132,9 @@ final class E2MixedMediaChecks {
       if (!screenshot.compress(Bitmap.CompressFormat.PNG, 100, output)) throw new AssertionError();
     } finally { screenshot.recycle(); }
     AccessibilityNodeInfo dialog = test.getUiAutomation().getRootInActiveWindow();
-    if (dialog == null || dialog.findAccessibilityNodeInfosByText("RAW・JPEG・動画").isEmpty())
+    if (dialog == null || dialog.findAccessibilityNodeInfosByText("RAW・JPEG・動画").isEmpty()
+        || dialog.findAccessibilityNodeInfosByText(BUCKET).isEmpty()
+        || dialog.findAccessibilityNodeInfosByText("保存済みの原本もクラウドの復元一覧に反映します。").isEmpty())
       throw new AssertionError("Missing scope description");
     if (!accept) return;
     boolean accepted = false;

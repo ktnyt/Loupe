@@ -37,7 +37,7 @@ final class E2Panel {
   private File verified;
   private volatile Thread operation;
   private volatile boolean cancelled;
-  private boolean busy, connecting;
+  private boolean busy, connecting, catalogPending;
   private final List<JSONObject> savedRows = new java.util.ArrayList<>();
   private int savedPage;
   private static final int PAGE_SIZE = 25;
@@ -129,11 +129,11 @@ final class E2Panel {
   void refreshAuto() {
     boolean enabled = E2SyncJob.enabled(activity);
     JobState state = E2SyncJob.snapshot(activity);
-    String reason = E2AutoSync.state(activity).getString("failureReason", "");
+    String reason = enabled ? E2AutoSync.state(activity).getString("failureReason", "") : "";
     if (enabled && !E2SyncJob.fullMediaConsent(activity))
       reason = "写真・動画のバックアップ範囲の確認が必要です。一時停止してから再開してください";
-    if (reason.isEmpty() && E2AutoSync.state(activity).getBoolean(E2AutoSync.CATALOG_PENDING, false))
-      reason = "復元一覧の更新を待っています";
+    if (!enabled && catalogPending && reason.isEmpty())
+      reason = "復元一覧の更新が必要な場合があります。「復元一覧をクラウドに保存」で更新できます";
     autoStatus.setText(E2SyncJob.describe(enabled, state) + (reason.isEmpty() ? "" : "\n" + reason));
     autoToggle.setText(enabled ? "一時停止" : state.updatedAt == 0 ? "開始" : "再開");
     autoToggle.setEnabled(!busy && (enabled || activeBucket != null));
@@ -204,7 +204,8 @@ final class E2Panel {
         return;
       }
       new GalleryUi.Sheet(activity).setTitle("自動バックアップを開始しますか？")
-          .setMessage("現在と今後追加される端末のRAW・JPEG・動画の原本（1ファイル512MiBまで）をIDrive e2（東京）に保存し、再取得して一致を確認します。\n" + activeBucket)
+          .setMessage("今あるRAW・JPEG・動画と今後追加する原本をIDrive e2（東京）に保存し、読み戻して照合します（1ファイル512 MiBまで）。"
+              + "\n保存済みの原本もクラウドの復元一覧に反映します。\n保存先バケット " + activeBucket)
           .setNegativeButton("キャンセル", null)
           .setPositiveButton("開始", (dialog, which) -> setAuto(true)).show();
     }
@@ -282,7 +283,7 @@ final class E2Panel {
       String name = photos.name(uri);
       post(() -> new GalleryUi.Sheet(activity).setTitle("原本を保存しますか？")
           .setMessage(name + "\nIDrive e2（東京） · " + target
-              + "\n保存済みの原本も復元一覧に反映します。")
+              + "\n保存済みの原本もクラウドの復元一覧に反映します。")
           .setNegativeButton("キャンセル", null)
           .setPositiveButton("保存", (dialog, which) -> {
             long started = SystemClock.elapsedRealtime();
@@ -408,7 +409,7 @@ final class E2Panel {
       try {
         E2RecoveryCatalog.Snapshot result = save
             ? photos.publishCatalog(bucket) : photos.loadCatalog(bucket);
-        if (!save && result != null) refresh();
+        if (result != null) refresh();
         post(() -> {
           String outcome = "クラウドに復元一覧がありません";
           if (result != null) {
@@ -467,8 +468,10 @@ final class E2Panel {
   private void refresh() throws Exception {
     String name = photos.settings.configuration().getString("bucket");
     List<JSONObject> rows = photos.saved(name);
+    boolean pending = photos.catalogPending(name);
     post(() -> {
       if (!name.equals(activeBucket)) bucket.setText(name);
+      catalogPending = pending;
       showSaved(name, rows);
       if (status.getText().toString().equals("保存先を読み込んでいます"))
         message("接続済み", 0xff9fe0b5);

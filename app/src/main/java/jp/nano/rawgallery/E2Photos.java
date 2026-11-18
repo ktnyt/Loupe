@@ -182,13 +182,32 @@ final class E2Photos implements AutoCloseable {
   }
 
   E2RecoveryCatalog.Snapshot publishCatalog(String bucket) throws Exception {
-    return E2RecoveryCatalog.publish(settings.archive(bucket), bucket, localSaved(bucket));
+    return publishCatalog(bucket, false);
   }
 
   E2RecoveryCatalog.Snapshot publishCatalogIfAny(String bucket) throws Exception {
-    List<JSONObject> records = localSaved(bucket);
-    return records.isEmpty() ? null
-        : E2RecoveryCatalog.publish(settings.archive(bucket), bucket, records);
+    return publishCatalog(bucket, true);
+  }
+
+  boolean catalogPending(String bucket) throws Exception {
+    return settings.records.indexRevision() != publishedRevision(bucket)
+        && !localSaved(bucket).isEmpty();
+  }
+
+  private long publishedRevision(String bucket) {
+    return context.getSharedPreferences("e2_catalog_publication", Context.MODE_PRIVATE)
+        .getLong(bucket, -1);
+  }
+
+  private E2RecoveryCatalog.Snapshot publishCatalog(String bucket, boolean allowEmpty) throws Exception {
+    long revision = settings.records.indexRevision();
+    List<JSONObject> local = localSaved(bucket);
+    if (allowEmpty && local.isEmpty()) return null;
+    E2RecoveryCatalog.Snapshot result = E2RecoveryCatalog.publish(settings.archive(bucket), bucket, local);
+    if (!context.getSharedPreferences("e2_catalog_publication", Context.MODE_PRIVATE).edit()
+        .putLong(bucket, revision).commit())
+      throw new IOException("復元一覧の公開結果を端末に保存できません");
+    return result;
   }
 
   E2RecoveryCatalog.Snapshot loadCatalog(String bucket) throws Exception {
