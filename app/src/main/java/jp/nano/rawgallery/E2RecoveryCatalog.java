@@ -5,6 +5,7 @@ import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
+import android.icu.text.Normalizer2;
 import android.util.JsonReader;
 import android.util.JsonToken;
 import java.io.ByteArrayOutputStream;
@@ -70,6 +71,30 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
     }
   }
 
+  static final class SavedRows extends AbstractList<JSONObject> {
+    private final String bucket;
+    private final List<Row> order;
+
+    private SavedRows(String bucket, List<Row> order) {
+      this.bucket = bucket;
+      this.order = order;
+    }
+
+    @Override public int size() { return order.size(); }
+    @Override public JSONObject get(int index) { return order.get(index).json(bucket); }
+
+    SavedRows matchingFilename(String query) {
+      Normalizer2 fold = Normalizer2.getNFKCCasefoldInstance();
+      String needle = fold.normalize(query).trim();
+      if (needle.isEmpty()) return this;
+      List<Row> matches = new ArrayList<>();
+      for (Row row : order) {
+        if (fold.normalize(row.name()).contains(needle)) matches.add(row);
+      }
+      return new SavedRows(bucket, matches);
+    }
+  }
+
   /** Keep validated rows compact and only build a JSON object at the original API boundary. */
   static final class Rows extends AbstractMap<String, JSONObject> {
     private final String bucket;
@@ -112,13 +137,10 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
       };
     }
 
-    List<JSONObject> sorted() {
+    SavedRows sorted() {
       List<Row> order = new ArrayList<>(rows.values());
       order.sort((a, b) -> a.name().compareToIgnoreCase(b.name()));
-      return new AbstractList<>() {
-        @Override public int size() { return order.size(); }
-        @Override public JSONObject get(int index) { return order.get(index).json(bucket); }
-      };
+      return new SavedRows(bucket, order);
     }
 
     void add(JSONObject input) throws Exception {

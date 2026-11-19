@@ -9,26 +9,37 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.text.Editable;
 import android.text.InputType;
+import android.text.TextWatcher;
 import android.view.View;
+import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import com.google.android.material.textfield.TextInputEditText;
+import com.google.android.material.textfield.TextInputLayout;
 import java.io.File;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import org.json.JSONObject;
 
 final class E2Panel {
   private static final int PICK = 701, CREATE = 702;
+  private static final int PAGE_SIZE = 25;
+  private static final int SEARCH_DELAY_MS = 150;
   private final E2SyncActivity activity;
   private final android.widget.ScrollView scroll;
   private final LinearLayout card, list;
   private final EditText bucket, access, secret;
-  private final TextView status, autoStatus, catalogStatus, cleanupStatus;
+  private final TextInputLayout searchBox;
+  private final TextInputEditText searchInput;
+  private final TextView status, autoStatus, catalogStatus, cleanupStatus, searchCount;
   private final Button connect, save, cancel, autoToggle, catalogLoad, catalogSave, cleanupToggle;
+  private final Handler main = new Handler(Looper.getMainLooper());
   private final ExecutorService worker = new DiagnosticExecutor("E2Panel.worker", 1);
   private final E2Photos photos;
   private String activeBucket, pickerBucket;
@@ -38,9 +49,11 @@ final class E2Panel {
   private volatile Thread operation;
   private volatile boolean cancelled;
   private boolean busy, connecting, catalogPending;
-  private List<JSONObject> savedRows = Collections.emptyList();
+  private E2RecoveryCatalog.SavedRows savedRows;
+  private List<JSONObject> visibleRows = Collections.emptyList();
   private int savedPage;
-  private static final int PAGE_SIZE = 25;
+  private Runnable pendingSearch;
+  private volatile int searchGeneration;
 
   E2Panel(E2SyncActivity activity, android.widget.ScrollView scroll, LinearLayout root, Bundle state) {
     this.activity = activity;
@@ -91,6 +104,28 @@ final class E2Panel {
     catalogStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
     catalogStatus.setVisibility(View.GONE);
     add(card, catalogStatus);
+    searchBox = new TextInputLayout(activity);
+    searchBox.setHint("ファイル名で検索");
+    searchBox.setEndIconMode(TextInputLayout.END_ICON_CLEAR_TEXT);
+    searchBox.setImportantForContentCapture(View.IMPORTANT_FOR_CONTENT_CAPTURE_NO_EXCLUDE_DESCENDANTS);
+    searchBox.setVisibility(View.GONE);
+    searchInput = new TextInputEditText(searchBox.getContext());
+    searchInput.setSingleLine(true);
+    searchInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+    searchInput.setImeOptions(EditorInfo.IME_ACTION_DONE | EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING);
+    searchInput.setSaveEnabled(false);
+    searchInput.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+    searchBox.addView(searchInput, new LinearLayout.LayoutParams(-1, -2));
+    searchInput.addTextChangedListener(new TextWatcher() {
+      @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) {}
+      @Override public void onTextChanged(CharSequence value, int start, int before, int count) {}
+      @Override public void afterTextChanged(Editable value) { searchSaved(value.toString()); }
+    });
+    add(card, searchBox);
+    searchCount = text("", 14);
+    searchCount.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    searchCount.setVisibility(View.GONE);
+    add(card, searchCount);
     list = column();
     add(card, list);
     setBusy(false);
@@ -120,7 +155,7 @@ final class E2Panel {
       setBusy(true);
       message("復元先を選んでください", GalleryUi.TEXT);
     } else if (photos.settings.configured()) run("保存先を読み込んでいます", this::refresh);
-    else showSaved(null, Collections.emptyList());
+    else showSaved(null, null);
     if (!(retained instanceof Export) && state != null && state.getBoolean("e2-exporting"))
       message("書き出し結果を確認できませんでした", 0xffffb4a8);
   }
@@ -442,7 +477,7 @@ final class E2Panel {
           }
           showCatalogStatus(outcome);
           message(outcome, GalleryUi.TEXT);
-          if (!save && result != null) revealFirstPhoto();
+          if (!save && result != null) revealRecoveryList();
         });
       } catch (Exception failure) {
         post(() -> showCatalogStatus(save ? "復元一覧を保存できませんでした" :
@@ -457,11 +492,11 @@ final class E2Panel {
     catalogStatus.setVisibility(View.VISIBLE);
   }
 
-  private void revealFirstPhoto() {
-    View first = list.getChildAt(0);
+  private void revealRecoveryList() {
+    View first = searchBox.getVisibility() == View.VISIBLE ? searchBox : list.getChildAt(0);
     if (first == null) return;
     Runnable reveal = () -> {
-      if (first.getParent() != list) return;
+      if (!first.isAttachedToWindow() || first.getVisibility() != View.VISIBLE) return;
       android.graphics.Rect bounds = new android.graphics.Rect();
       first.getDrawingRect(bounds);
       scroll.offsetDescendantRectToMyCoords(first, bounds);
@@ -488,7 +523,7 @@ final class E2Panel {
 
   private void refresh() throws Exception {
     String name = photos.settings.configuration().getString("bucket");
-    List<JSONObject> rows = photos.saved(name);
+    E2RecoveryCatalog.SavedRows rows = photos.saved(name);
     boolean pending = photos.catalogPending(name);
     post(() -> {
       if (!name.equals(activeBucket)) bucket.setText(name);
@@ -499,20 +534,61 @@ final class E2Panel {
     });
   }
 
-  private void showSaved(String name, List<JSONObject> rows) {
-    if (!java.util.Objects.equals(name, activeBucket)) catalogStatus.setVisibility(View.GONE);
+  private void showSaved(String name, E2RecoveryCatalog.SavedRows rows) {
+    boolean changedBucket = !Objects.equals(name, activeBucket);
+    if (changedBucket) catalogStatus.setVisibility(View.GONE);
     activeBucket = name;
     savedRows = rows;
+    boolean available = rows != null && !rows.isEmpty();
+    searchBox.setVisibility(available ? View.VISIBLE : View.GONE);
+    setBusy(busy);
+    if ((changedBucket || !available) && searchInput.length() > 0) searchInput.setText("");
+    else searchSaved(searchInput.getText().toString());
+  }
+
+  private void searchSaved(String query) {
+    int generation = ++searchGeneration;
+    if (pendingSearch != null) main.removeCallbacks(pendingSearch);
+    pendingSearch = null;
     savedPage = 0;
+    E2RecoveryCatalog.SavedRows source = savedRows;
+    if (source == null || source.isEmpty() || query.isEmpty()) {
+      showSearchResults(source == null ? Collections.emptyList() : source);
+      return;
+    }
+    // Keep previous matches out of the restore flow while their replacement is being computed.
+    list.removeAllViews();
+    searchCount.setVisibility(View.GONE);
+    searchCount.setText("");
+    pendingSearch = () -> {
+      pendingSearch = null;
+      worker.execute(() -> {
+        if (generation != searchGeneration) return;
+        E2RecoveryCatalog.SavedRows matches = source.matchingFilename(query);
+        activity.runOnUiThread(() -> {
+          if (!activity.isDestroyed() && generation == searchGeneration) showSearchResults(matches);
+        });
+      });
+    };
+    main.postDelayed(pendingSearch, SEARCH_DELAY_MS);
+  }
+
+  private void showSearchResults(List<JSONObject> matches) {
+    visibleRows = matches;
+    boolean available = savedRows != null && !savedRows.isEmpty();
+    searchCount.setVisibility(available ? View.VISIBLE : View.GONE);
+    if (available) {
+      searchCount.setText(matches.isEmpty() ? "一致するファイル名はありません（0件）" : matches.size() + "件");
+    }
     drawSavedPage();
   }
 
   private void drawSavedPage() {
     list.removeAllViews();
-    if (savedRows.isEmpty()) add(list, text("まだありません", 14));
+    if (savedRows == null || savedRows.isEmpty()) add(list, text("まだありません", 14));
     int start = savedPage * PAGE_SIZE;
-    int end = Math.min(start + PAGE_SIZE, savedRows.size());
-    for (JSONObject row : savedRows.subList(start, end)) {
+    int end = Math.min(start + PAGE_SIZE, visibleRows.size());
+    for (JSONObject row : visibleRows.subList(start, end)) {
       LinearLayout item = new LinearLayout(activity);
       item.setGravity(android.view.Gravity.CENTER_VERTICAL);
       item.setMinimumHeight(dp(64));
@@ -528,21 +604,21 @@ final class E2Panel {
       restore.setContentDescription(row.optString("name") + "を復元");
       restore.setMinWidth(dp(72));
       restore.setMinHeight(dp(48));
+      restore.setEnabled(!busy);
       item.addView(restore, new LinearLayout.LayoutParams(-2, -2));
       add(list, item);
     }
-    if (savedRows.size() > PAGE_SIZE) {
-      add(list, text((start + 1) + "〜" + end + " / " + savedRows.size(), 14));
+    if (visibleRows.size() > PAGE_SIZE) {
+      add(list, text((start + 1) + "〜" + end + " / " + visibleRows.size(), 14));
       if (savedPage > 0) button(list, "前の写真", 48, () -> {
         savedPage--;
         drawSavedPage();
       });
-      if (end < savedRows.size()) button(list, "次の写真", 48, () -> {
+      if (end < visibleRows.size()) button(list, "次の写真", 48, () -> {
         savedPage++;
         drawSavedPage();
       });
     }
-    setBusy(busy);
   }
 
   private interface Task { void run() throws Exception; }
@@ -592,6 +668,7 @@ final class E2Panel {
     bucket.setEnabled(!value);
     access.setEnabled(!value);
     secret.setEnabled(!value);
+    searchBox.setEnabled(!value);
     save.setEnabled(!value && activeBucket != null);
     catalogLoad.setEnabled(!value && activeBucket != null);
     catalogSave.setEnabled(!value && activeBucket != null);
@@ -615,6 +692,8 @@ final class E2Panel {
 
   void close() {
     cancelled = true;
+    searchGeneration++;
+    if (pendingSearch != null) main.removeCallbacks(pendingSearch);
     if (verified != null) {
       if (activity.isFinishing()) E2Photos.discard(verified.file());
       else if (!activity.isChangingConfigurations()) E2Photos.releasePickerOwnership(verified.file());
