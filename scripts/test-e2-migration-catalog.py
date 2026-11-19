@@ -51,7 +51,8 @@ class FakeS3:
             def paginate(self, Bucket, Prefix):
                 keys = sorted(key for key in client.objects if key.startswith(Prefix))
                 if operation == 'list_objects_v2':
-                    return [{ 'Contents': [{'Key': key} for key in keys]}]
+                    return [{'Contents': [{'Key': key, 'Size': len(client.objects[key][client.latest(key)]),
+                                           'ETag': client.etag(key)} for key in keys]}]
                 if operation == 'list_object_versions':
                     return [{'Versions': [{'Key': key} for key in keys]}]
                 raise AssertionError(operation)
@@ -65,11 +66,17 @@ class FakeS3:
             raise S3Error('NoSuchVersion') from error
         return {'ContentLength': len(data), 'VersionId': VersionId}
 
-    def get_object(self, Bucket, Key, VersionId=None):
+    def etag(self, key, version=None):
+        return '"' + migration.digest(self.objects[key][version or self.latest(key)]) + '"'
+
+    def get_object(self, Bucket, Key, VersionId=None, IfMatch=None):
         version = VersionId or self.latest(Key)
         result = self.head_object(Bucket, Key, version)
         data = self.objects[Key][version]
-        return {**result, 'ETag': '"' + migration.digest(data) + '"', 'Body': io.BytesIO(data)}
+        tag = self.etag(Key, version)
+        if IfMatch is not None and IfMatch != tag:
+            raise S3Error('PreconditionFailed')
+        return {**result, 'ETag': tag, 'Body': io.BytesIO(data)}
 
     def put_object(self, Bucket, Key, Body, ContentType, **condition):
         self.puts.append((Key, condition))
@@ -148,7 +155,7 @@ class MigrationTests(unittest.TestCase):
     def test_invalid_reference_and_unexpected_count_never_write(self):
         with self.assertRaisesRegex(migration.Invalid, 'count differs'):
             self.publish(count=2)
-        row = migration.migration_row(self.storage, self.addition)
+        row = migration.migration_row(self.storage, next(iter(migration.migration_pages(self.storage)))[0])
         original = migration.ORIGINALS + row['key'] + '/' + row['sha']
         self.client.objects[original]['v1'] += b'extra'
         with self.assertRaisesRegex(migration.Invalid, 'declared version and size'):
@@ -156,7 +163,7 @@ class MigrationTests(unittest.TestCase):
         self.assertFalse(self.client.puts)
 
     def test_refuses_conflict_with_legacy(self):
-        row = migration.migration_row(self.storage, self.addition)
+        row = migration.migration_row(self.storage, next(iter(migration.migration_pages(self.storage)))[0])
         row['name'] = 'different.jpg'
         legacy = migration.envelope({'schema': 1, 'bucket': self.storage.bucket, 'created': 1,
                                      'count': 1, 'photos': [row]})
@@ -164,6 +171,76 @@ class MigrationTests(unittest.TestCase):
         with self.assertRaisesRegex(migration.Invalid, 'conflicts'):
             self.publish()
         self.assertFalse(self.client.puts)
+
+    def test_existing_different_version_must_hash_to_expected_bytes(self):
+        self.publish()
+        [row] = self.rows()
+        key = migration.ORIGINALS + row['key'] + '/' + row['sha']
+        self.client.objects[key]['v1'] = b'X' * row['size']
+        valid = self.client.insert(key, b'fixture-one')
+        document = migration.decode(self.storage.read(self.addition, 16384).data)
+        document['photos'][0]['version'] = valid
+        self.client.insert(self.addition, migration.encode(document))
+        with self.assertRaisesRegex(migration.Invalid, 'does not match its SHA-256'):
+            self.publish()
+        self.assertEqual(len(self.client.puts), 2)
+
+    def test_reports_missing_pinned_part_after_index_write(self):
+        put = self.client.put_object
+
+        def losing_part(**options):
+            result = put(**options)
+            if options['Key'] == migration.INDEX:
+                part = next(key for key in self.client.objects if key.startswith(migration.PARTS))
+                del self.client.objects[part]
+            return result
+
+        self.client.put_object = losing_part
+        with self.assertRaisesRegex(migration.Invalid, 'lost a pinned part'):
+            self.publish()
+
+    def test_rejects_native_invalid_legacy_generations(self):
+        listed = next(iter(migration.migration_pages(self.storage)))[0]
+        row = migration.migration_row(self.storage, listed)
+        invalid = (
+            [row, row],
+            [dict(row, size=migration.LEGACY_ORIGINAL + 1)],
+            [dict(row, ignored=[[[[[[[[]]]]]]]])],
+        )
+        for entries in invalid:
+            with self.subTest(count=len(entries)):
+                root = migration.envelope({'schema': 1, 'bucket': self.storage.bucket, 'created': 1,
+                                           'count': len(entries), 'photos': entries})
+                self.client.insert(migration.LEGACY, root)
+                with self.assertRaises(migration.Invalid):
+                    self.publish()
+        self.assertEqual(self.client.puts, [])
+
+    def test_get_uses_etag_from_migration_listing(self):
+        listed = next(iter(migration.migration_pages(self.storage)))[0]
+        document = migration.decode(self.storage.read(self.addition, 16384).data)
+        document['photos'][0]['name'] = 'replaced.jpg'
+        self.client.insert(self.addition, migration.encode(document))
+        with self.assertRaises(S3Error):
+            migration.migration_row(self.storage, listed)
+        self.assertEqual(self.client.puts, [])
+
+    def test_getting_new_records_while_running_can_be_retried(self):
+        verify = self.storage.verify_original
+        appended = False
+
+        def append_after_first_verification(row, **kwargs):
+            nonlocal appended
+            verify(row, **kwargs)
+            if not appended:
+                self.seed(b'added after list', 'late.jpg')
+                appended = True
+
+        self.storage.verify_original = append_after_first_verification
+        self.publish()
+        self.assertEqual(len(self.rows()), 1)
+        self.publish(count=2)
+        self.assertEqual(len(self.rows()), 2)
 
     def test_split_respects_rows_and_bytes(self):
         parts = migration.split([{'name': 'a.jpeg'}] * (migration.PART_ROWS + 1))
