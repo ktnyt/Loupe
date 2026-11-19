@@ -74,8 +74,11 @@ public final class E2SyncJob extends JobService {
         .putString("destination", enabled ? bucket : "");
     E2AutoSync.clearBatch(setting);
     if (!observed.isEmpty()) setting.putString("observationBucket", observed);
-    if (enabled) setting.putInt("fullMediaConsent", MEDIA_CONSENT_VERSION);
-    else setting.remove("cleanupBucket").remove("cleanupDays").remove("fullMediaConsent");
+    if (enabled) {
+      setting.putInt("fullMediaConsent", MEDIA_CONSENT_VERSION);
+      JobState.write(setting, "", JobState.Kind.WAITING, System.currentTimeMillis())
+          .putBoolean("CountsKnown", false);
+    } else setting.remove("cleanupBucket").remove("cleanupDays").remove("fullMediaConsent");
     if (!setting.commit())
       throw new IllegalStateException("自動同期の設定を保存できません");
     if (!enabled) {
@@ -84,8 +87,6 @@ public final class E2SyncJob extends JobService {
       scheduler.cancel(CONTINUATION);
       return;
     }
-    JobState.write(E2AutoSync.state(context).edit(), "", JobState.Kind.WAITING,
-        System.currentTimeMillis()).putBoolean("CountsKnown", false).apply();
     ComponentName service = new ComponentName(context, E2SyncJob.class);
     int periodic = scheduler.schedule(job(PERIODIC, service).setPersisted(true)
         .setPeriodic(15 * 60 * 1000L).build());
