@@ -94,7 +94,8 @@ final class E2AutoSync {
             publish(preferences, JobState.Kind.RUNNING, ready, total, failed, true);
             if (++processed >= CHECKPOINT_FILES || SystemClock.elapsedRealtime() >= checkpointAt) {
               long revision = e2.settings.records.indexRevision();
-              if (!deferred && revision != checkedRevision && !stopped.getAsBoolean()) {
+              if (!deferred && revision != checkedRevision && !stopped.getAsBoolean()
+                  && e2.catalogPending(bucket)) {
                 published = tryPublishCatalog(context, e2, bucket, stopped);
                 deferred = published == null;
               }
@@ -108,16 +109,23 @@ final class E2AutoSync {
         }
       }
       if (!stopped.getAsBoolean()) {
-        if (published == null || published.revision() != e2.settings.records.indexRevision())
-          published = tryPublishCatalog(context, e2, bucket, stopped);
         requireDestination(context, bucket, stopped);
-        if (published == null) {
-          publish(preferences, ready > 0 ? JobState.Kind.PARTIAL : JobState.Kind.FAILED,
-              ready, total, failed, true);
-          return;
+        E2Cleanup.Plan cleanup = E2Cleanup.plan(context, e2, photos, bucket, stopped);
+        Long snapshotRevision = published != null && published.snapshot() != null
+            ? published.revision() : null;
+        if (needsCatalog(e2, bucket, cleanup != null, snapshotRevision)) {
+          published = tryPublishCatalog(context, e2, bucket, stopped);
+          if (published == null) {
+            publish(preferences, ready > 0 ? JobState.Kind.PARTIAL : JobState.Kind.FAILED,
+                ready, total, failed, true);
+            return;
+          }
+        } else if (deferred) {
+          preferences.edit().remove("failureReason").apply();
         }
-        if (published.snapshot() != null)
-          E2Cleanup.sweep(context, e2, photos, bucket, stopped, published.snapshot());
+        requireDestination(context, bucket, stopped);
+        if (cleanup != null && published != null && published.snapshot() != null)
+          E2Cleanup.sweep(context, e2, cleanup, bucket, stopped, published.snapshot());
       }
       publish(preferences, stopped.getAsBoolean() ? JobState.Kind.PAUSED
           : failed == 0 ? JobState.Kind.COMPLETE
@@ -127,6 +135,12 @@ final class E2AutoSync {
           : ready > 0 ? JobState.Kind.PARTIAL : JobState.Kind.FAILED,
           ready, total, failed, counted);
     }
+  }
+
+  static boolean needsCatalog(E2Photos photos, String bucket, boolean hasCleanup,
+      Long snapshotRevision) throws Exception {
+    return photos.catalogPending(bucket) || (hasCleanup && (snapshotRevision == null
+        || snapshotRevision != photos.settings.records.indexRevision()));
   }
 
   /** Keeps MediaStore identities separate from unrelated document-tree and Amazon rows. */

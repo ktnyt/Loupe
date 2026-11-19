@@ -2,6 +2,7 @@ package jp.nano.rawgallery;
 
 import android.content.ContentResolver;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.ParcelFileDescriptor;
@@ -21,6 +22,8 @@ import org.json.JSONObject;
 /** Bridges user-selected files and the separate SQLite catalog of e2 originals. */
 final class E2Photos implements AutoCloseable {
   private static final Object SAVE_LOCK = new Object();
+  private static final Object CATALOG_PUBLICATION_LOCK = new Object();
+  private static final Object CATALOG_ACK_LOCK = new Object();
   private static final Set<File> ACTIVE_PICKER_FILES = new HashSet<>();
   private static final long PICKER_LIFETIME_MS = TimeUnit.DAYS.toMillis(1);
   private static boolean checkedInterruptedStaging;
@@ -277,24 +280,59 @@ final class E2Photos implements AutoCloseable {
   }
 
   boolean catalogPending(String bucket) throws Exception {
-    return settings.records.indexRevision() != publishedRevision(bucket)
-        && !settings.records.visitReceipts(record -> !isRecoverable(bucket, record));
+    synchronized (CATALOG_ACK_LOCK) {
+      SharedPreferences publication = catalogPublication();
+      long revision = settings.records.indexRevision();
+      long acknowledged = publication.getLong(bucket, -1);
+      String identityKey = catalogIdentityKey(bucket);
+      String identity = publication.getString(identityKey, null);
+      if (revision == acknowledged && identity != null) return false;
+
+      E2RecoveryCatalog.Rows local;
+      String currentIdentity;
+      try {
+        local = localSaved(settings.records, bucket);
+        currentIdentity = local.fingerprint();
+      } catch (Exception unavailable) {
+        // Retry through publication, which reports why the catalog could not be saved.
+        return true;
+      }
+      if (settings.records.indexRevision() != revision) return true;
+      if (!local.isEmpty() && revision != acknowledged && !currentIdentity.equals(identity))
+        return true;
+
+      // An exact legacy revision also proves which local rows were acknowledged.
+      // An empty bucket needs no upload, so retain its previous published fingerprint.
+      SharedPreferences.Editor editor = publication.edit().putLong(bucket, revision);
+      if (identity == null) editor.putString(identityKey, currentIdentity);
+      editor.apply();
+      return false;
+    }
   }
 
-  private long publishedRevision(String bucket) {
-    return context.getSharedPreferences("e2_catalog_publication", Context.MODE_PRIVATE)
-        .getLong(bucket, -1);
+  private SharedPreferences catalogPublication() {
+    return context.getSharedPreferences("e2_catalog_publication", Context.MODE_PRIVATE);
+  }
+
+  private static String catalogIdentityKey(String bucket) {
+    return "fingerprint:v1:" + bucket;
   }
 
   private E2RecoveryCatalog.Snapshot publishCatalog(String bucket, boolean allowEmpty) throws Exception {
-    long revision = settings.records.indexRevision();
-    E2RecoveryCatalog.Rows local = localSaved(settings.records, bucket);
-    if (allowEmpty && local.isEmpty()) return null;
-    E2RecoveryCatalog.Snapshot result = E2RecoveryCatalog.publish(settings.archive(bucket), bucket, local);
-    if (!context.getSharedPreferences("e2_catalog_publication", Context.MODE_PRIVATE).edit()
-        .putLong(bucket, revision).commit())
-      throw new IOException("復元一覧の公開結果を端末に保存できません");
-    return result;
+    synchronized (CATALOG_PUBLICATION_LOCK) {
+      long revision = settings.records.indexRevision();
+      E2RecoveryCatalog.Rows local = localSaved(settings.records, bucket);
+      if (allowEmpty && local.isEmpty()) return null;
+      String fingerprint = local.fingerprint();
+      E2RecoveryCatalog.Snapshot result = E2RecoveryCatalog.publish(settings.archive(bucket), bucket, local);
+      synchronized (CATALOG_ACK_LOCK) {
+        // Acknowledge the submitted rows using the revision read before their scan.
+        if (!catalogPublication().edit().putLong(bucket, revision)
+            .putString(catalogIdentityKey(bucket), fingerprint).commit())
+          throw new IOException("復元一覧の公開結果を端末に保存できません");
+      }
+      return result;
+    }
   }
 
   E2RecoveryCatalog.Snapshot loadCatalog(String bucket) throws Exception {

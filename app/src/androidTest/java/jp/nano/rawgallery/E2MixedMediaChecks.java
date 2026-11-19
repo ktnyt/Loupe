@@ -75,14 +75,7 @@ final class E2MixedMediaChecks {
           if (state.kind != JobState.Kind.COMPLETE || state.ready != samples.size() || state.failed != 0)
             throw new AssertionError("Expected all three originals and catalog published by JobScheduler");
           verify(photos, E2RecoveryCatalog.latest(photos.settings.archive(BUCKET), BUCKET), samples);
-          if (photos.catalogPending(BUCKET)) throw new AssertionError("Published originals remain pending");
-          JSONObject saved = photos.settings.records.all().get(0);
-          photos.settings.records.put(saved, "verified");
-          try (E2Photos reopened = new E2Photos(context)) {
-            if (!reopened.catalogPending(BUCKET)) throw new AssertionError("Lost pending state after reopen");
-            reopened.publishCatalog(BUCKET);
-            if (reopened.catalogPending(BUCKET)) throw new AssertionError("Retry did not acknowledge publication");
-          }
+          checkScheduledCatalog(photos, context);
           break;
         case "consent":
           showConsent(test, context, false);
@@ -103,6 +96,49 @@ final class E2MixedMediaChecks {
         shell(test, "svc data enable");
       }
       context.getSharedPreferences("e2_connection", Context.MODE_PRIVATE).edit().clear().commit();
+    }
+  }
+
+  private static void checkScheduledCatalog(E2Photos photos, Context context) throws Exception {
+    long revision = photos.settings.records.indexRevision();
+    if (E2AutoSync.needsCatalog(photos, BUCKET, false, null))
+      throw new AssertionError("Unchanged backup would read the catalog");
+    if (!E2AutoSync.needsCatalog(photos, BUCKET, true, null)
+        || !E2AutoSync.needsCatalog(photos, BUCKET, true, revision - 1)
+        || E2AutoSync.needsCatalog(photos, BUCKET, true, revision))
+      throw new AssertionError("Cleanup must obtain a catalog unless this run has a current snapshot");
+
+    JSONObject saved = photos.settings.records.all().stream()
+        .filter(row -> row.optString("name").endsWith(".jpg")).findFirst().orElseThrow();
+    String syntheticKey = PhotoRepository.digest("catalog-gate-test:" + saved.getString("key"))
+        .substring(0, 32);
+    JSONObject foreign = new JSONObject(saved.toString()).put("key", syntheticKey)
+        .put("bucket", "loupe-catalog-other-test");
+    try (E2Photos reopened = new E2Photos(context)) {
+      try {
+        for (String state : List.of(E2Cleanup.RELEASING, E2Cleanup.RELEASED, "verified")) {
+          reopened.settings.records.put(saved, state);
+          if (E2AutoSync.needsCatalog(reopened, BUCKET, false, null))
+            throw new AssertionError("A cleanup-state change would read the catalog: " + state);
+        }
+        reopened.settings.records.put(foreign, "verified");
+        if (E2AutoSync.needsCatalog(reopened, BUCKET, false, null))
+          throw new AssertionError("A write for another bucket would read the catalog");
+        reopened.settings.records.put(foreign.put("bucket", BUCKET), "verified");
+        if (!E2AutoSync.needsCatalog(reopened, BUCKET, false, null))
+          throw new AssertionError("A new verified receipt was treated as published");
+        reopened.settings.records.getWritableDatabase().delete("photos", "key=?", new String[]{syntheticKey});
+
+        JSONObject changed = new JSONObject(saved.toString()).put("version", "different-version");
+        reopened.settings.records.put(changed, "verified");
+        if (!E2AutoSync.needsCatalog(reopened, BUCKET, false, null))
+          throw new AssertionError("A different version was treated as published");
+      } finally {
+        reopened.settings.records.getWritableDatabase().delete("photos", "key=?", new String[]{syntheticKey});
+        reopened.settings.records.put(saved, "verified");
+      }
+      if (E2AutoSync.needsCatalog(reopened, BUCKET, false, null))
+        throw new AssertionError("The acknowledged catalog would be read again");
     }
   }
 

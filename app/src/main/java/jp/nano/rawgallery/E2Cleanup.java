@@ -22,6 +22,7 @@ final class E2Cleanup {
   static final String RELEASING = "releasing", RELEASED = "released";
   private static final int EDGE = 256;
   private record Eligible(E2AutoSync.Candidate candidate, JSONObject receipt) {}
+  record Plan(int retention, List<Eligible> eligible) {}
 
   static boolean archived(Uri uri) {
     return uri != null && SCHEME.equals(uri.getScheme());
@@ -58,19 +59,15 @@ final class E2Cleanup {
     return options(c).getString("cleanupStatus", "");
   }
 
-  static void sweep(Context c, E2Photos photos, List<E2AutoSync.Candidate> candidates,
-      String bucket, BooleanSupplier stopped, E2RecoveryCatalog.Snapshot published) {
+  static Plan plan(Context c, E2Photos photos, List<E2AutoSync.Candidate> candidates,
+      String bucket, BooleanSupplier stopped) {
     try {
-      if (!E2Settings.hasPhotoAccess(c) || !Environment.isExternalStorageManager()) {
-        if (enabled(c, bucket)) updateStatus(c, "容量整理には全ファイルへのアクセスが必要です");
-        return;
-      }
-      if (!allowed(c, bucket, stopped)) return;
+      if (!canStart(c, bucket, stopped)) return null;
       long now = System.currentTimeMillis();
       int retention = days(c);
       List<Eligible> eligible = new ArrayList<>();
       for (E2AutoSync.Candidate candidate : candidates) {
-        if (!allowed(c, bucket, stopped)) return;
+        if (!allowed(c, bucket, stopped)) return null;
         PhotoRepository.Photo p = candidate.photo();
         if (!p.isJpeg() || candidate.generation() <= 0
             || !MediaStore.VOLUME_EXTERNAL_PRIMARY.equals(candidate.volume())) continue;
@@ -78,31 +75,55 @@ final class E2Cleanup {
             Long.toString(candidate.generation())));
         if (record == null || !"verified".equals(record.optString("state"))) continue;
         long date = SyncPolicy.retentionDate(p.taken, p.added, p.created, true);
-        if (SyncPolicy.eligible(date, now, retention, true, true, true)
-            && !recentlyRestored(c, record.getString("sha"), retention)
-            && bucket.equals(record.optString("bucket")) && p.uri.toString().equals(record.optString("uri")))
-          eligible.add(new Eligible(candidate, record));
+        if (!SyncPolicy.eligible(date, now, retention, true, true, true)
+            || !bucket.equals(record.optString("bucket")) || !p.uri.toString().equals(record.optString("uri"))
+            || recentlyRestored(c, record.getString("sha"), retention)) continue;
+        try {
+          E2AutoSync.requireCurrentRevision(c, candidate);
+        } catch (IOException changed) {
+          continue;
+        }
+        eligible.add(new Eligible(candidate, record));
       }
+      if (!canStart(c, bucket, stopped) || days(c) != retention) return null;
       if (eligible.isEmpty()) {
         updateStatus(c, "整理対象のJPEGはありません");
-        return;
+        return null;
       }
-      if (!allowed(c, bucket, stopped)) return;
+      return new Plan(retention, eligible);
+    } catch (Exception failure) {
+      if (!stopped.getAsBoolean()) updateStatus(c, "容量整理を中断しました。保存先や権限を確認してください");
+      return null;
+    }
+  }
+
+  static void sweep(Context c, E2Photos photos, Plan plan, String bucket, BooleanSupplier stopped,
+      E2RecoveryCatalog.Snapshot published) {
+    try {
+      if (!canStart(c, bucket, stopped) || days(c) != plan.retention()) return;
       E2RecoveryCatalog.confirmLatest(photos.settings.archive(bucket), published);
       int removed = 0;
-      for (Eligible item : eligible) {
+      for (Eligible item : plan.eligible()) {
         if (!allowed(c, bucket, stopped)) break;
         JSONObject entry = published.records().get(item.receipt().getString("key"));
         if (entry == null || !E2RecoveryCatalog.sameContent(entry, item.receipt()))
           throw new IOException("復元一覧と端末の保管記録が一致しません");
         // Release reads back this exact published version before the local deletion.
         item.receipt().put("version", entry.getString("version"));
-        if (release(c, photos, item, bucket, retention, stopped)) removed++;
+        if (release(c, photos, item, bucket, plan.retention(), stopped)) removed++;
       }
       updateStatus(c, "端末原本を整理 · " + removed + "枚");
     } catch (Exception failure) {
       if (!stopped.getAsBoolean()) updateStatus(c, "容量整理を中断しました。保存先や権限を確認してください");
     }
+  }
+
+  private static boolean canStart(Context c, String bucket, BooleanSupplier stopped) {
+    if (!E2Settings.hasPhotoAccess(c) || !Environment.isExternalStorageManager()) {
+      if (enabled(c, bucket)) updateStatus(c, "容量整理には全ファイルへのアクセスが必要です");
+      return false;
+    }
+    return allowed(c, bucket, stopped);
   }
 
   private static boolean allowed(Context c, String bucket, BooleanSupplier stopped) {
