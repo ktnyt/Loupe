@@ -107,11 +107,12 @@ final class E2Panel {
     searchBox = new TextInputLayout(activity);
     searchBox.setHint("ファイル名で検索");
     searchBox.setEndIconMode(TextInputLayout.END_ICON_CLEAR_TEXT);
+    searchBox.setImportantForContentCapture(View.IMPORTANT_FOR_CONTENT_CAPTURE_NO_EXCLUDE_DESCENDANTS);
     searchBox.setVisibility(View.GONE);
     searchInput = new TextInputEditText(searchBox.getContext());
     searchInput.setSingleLine(true);
     searchInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-    searchInput.setImeOptions(EditorInfo.IME_ACTION_DONE);
+    searchInput.setImeOptions(EditorInfo.IME_ACTION_DONE | EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING);
     searchInput.setSaveEnabled(false);
     searchInput.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
     searchBox.addView(searchInput, new LinearLayout.LayoutParams(-1, -2));
