@@ -64,7 +64,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean automaticTest, confidenceStoreTest, confidenceUiTest;
   private boolean cleanupTest;
   private boolean compactTest;
-  private boolean e2ArchiveTest, e2BackgroundTest, e2CatalogLocalTest;
+  private boolean e2ArchiveTest, e2BackgroundTest, e2CatalogLocalTest, e2CatalogScaleTest;
   private String e2MixedMediaOperation, e2MixedMediaToken, e2LargeOriginalToken;
   private boolean e2LargeOriginalTest, e2LargeCacheTest;
   private boolean e2CleanupBoundaryTest;
@@ -180,6 +180,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     e2LargeCacheTest = args != null && "e2-large-cache".equals(args.getString("mode"));
     if (e2LargeOriginalTest) e2LargeOriginalToken = args.getString("fixture");
     e2CatalogLocalTest = args != null && "e2-catalog-local".equals(args.getString("mode"));
+    e2CatalogScaleTest = args != null && "e2-catalog-scale".equals(args.getString("mode"));
     if (args != null && args.getString("mode", "").startsWith("e2-mixed-")) {
       e2MixedMediaOperation = args.getString("mode").substring("e2-mixed-".length());
       e2MixedMediaToken = args.getString("fixture");
@@ -240,6 +241,11 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if (e2LargeOriginalTest) {
         results.putString("stream", E2LargeOriginalChecks.run(this, e2LargeOriginalToken));
         finish(-1, results); return;
+      }
+      if (e2CatalogScaleTest) {
+        results.putString("stream", E2CatalogChecks.runScale(context));
+        finish(-1, results);
+        return;
       }
       if (e2CatalogLocalTest) {
         results.putString("stream", E2CatalogChecks.run(context));

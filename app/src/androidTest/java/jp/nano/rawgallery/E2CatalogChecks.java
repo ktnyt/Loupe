@@ -3,8 +3,10 @@ package jp.nano.rawgallery;
 import android.content.ContentValues;
 import android.content.Context;
 import android.database.sqlite.SQLiteDatabase;
+import android.os.SystemClock;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -110,6 +112,89 @@ final class E2CatalogChecks {
   static String run() throws Exception { return exercise(null); }
 
   static String run(Context context) throws Exception { return exercise(context); }
+
+  /** Opt-in device scale check; kept separate from the fast host and regular instrumentation suite. */
+  static String runScale(Context context) throws Exception {
+    if (context == null) throw new IllegalArgumentException("Scale check requires Android context");
+    final int count = 70_001;
+    String bucketName = BUCKET;
+    Bucket bucket = new Bucket();
+    List<JSONObject> rows = new AbstractList<>() {
+      @Override public JSONObject get(int index) {
+        try {
+          return row(index, "scale-" + index + (index % 2 == 0 ? ".ORF" : ".MP4"),
+              "scale-version-" + index);
+        } catch (Exception failure) {
+          throw new IllegalStateException(failure);
+        }
+      }
+
+      @Override public int size() { return count; }
+    };
+    Runtime runtime = Runtime.getRuntime();
+    long start = SystemClock.elapsedRealtime();
+    long beforeMemory = usedMemory(runtime);
+    E2RecoveryCatalog.Snapshot published = E2RecoveryCatalog.publish(bucket, bucketName, rows);
+    long afterPublish = SystemClock.elapsedRealtime();
+    long publishMemory = usedMemory(runtime);
+    check(published.records().size() == count, "Scale publish count mismatch");
+    check(published.records().containsKey(String.format(Locale.ROOT, "%032x", 0)),
+        "Scale publish lost first row");
+    check(published.records().containsKey(String.format(Locale.ROOT, "%032x", count - 1)),
+        "Scale publish lost last row");
+
+    String database = "e2-catalog-scale-" + UUID.randomUUID() + ".db";
+    long afterFreshLoad;
+    long loadMemory;
+    long afterCorruptTailCheck;
+    long afterReopen;
+    String tail = partKey(published, published.partVersions().size() - 1);
+    try {
+      try (E2RecoveryCatalog receiver = new E2RecoveryCatalog(context, database)) {
+        E2RecoveryCatalog.Snapshot loaded = receiver.load(bucket, bucketName, List.of());
+        check(loaded != null && loaded.records().size() == count, "Scale fresh load count mismatch");
+        afterFreshLoad = SystemClock.elapsedRealtime();
+        loadMemory = usedMemory(runtime);
+        bucket.corrupt = tail;
+        rejected(() -> receiver.load(bucket, bucketName, List.of()));
+        E2RecoveryCatalog.Snapshot preserved = receiver.cached(bucketName);
+        check(preserved != null && preserved.records().size() == count,
+            "Corrupt catalog tail replaced the complete cached generation");
+        afterCorruptTailCheck = SystemClock.elapsedRealtime();
+      }
+      long reopenStart = SystemClock.elapsedRealtime();
+      try (E2RecoveryCatalog reopened = new E2RecoveryCatalog(context, database)) {
+        E2RecoveryCatalog.Snapshot cached = reopened.cached(bucketName);
+        check(cached != null && cached.records().size() == count,
+            "Scale cache reopen count mismatch");
+        JSONObject first = cached.records().get(String.format(Locale.ROOT, "%032x", 0));
+        JSONObject last = cached.records().get(String.format(Locale.ROOT, "%032x", count - 1));
+        JSONObject lastVideo = cached.records().get(String.format(Locale.ROOT, "%032x", count - 2));
+        check(first != null && "scale-0.ORF".equals(first.getString("name"))
+            && "image/x-olympus-orf".equals(first.getString("mime")),
+            "Scale reopen lost first RAW row");
+        check(last != null && "scale-70000.ORF".equals(last.getString("name"))
+            && "image/x-olympus-orf".equals(last.getString("mime")),
+            "Scale reopen lost last RAW row");
+        check(lastVideo != null && "video/mp4".equals(lastVideo.getString("mime")),
+            "Scale reopen lost video row");
+        afterReopen = SystemClock.elapsedRealtime();
+      }
+      long finishedMemory = usedMemory(runtime);
+      return "PASS e2 catalog scale: " + count + " RAW/video rows, publish="
+          + (afterPublish - start) + "ms, freshLoad=" + (afterFreshLoad - afterPublish)
+          + "ms, corrupt-tail-check=" + (afterCorruptTailCheck - afterFreshLoad)
+          + "ms, reopen=" + (afterReopen - reopenStart)
+          + "ms; used-heap samples before/publish/load/finish=" + beforeMemory + "/"
+          + publishMemory + "/" + loadMemory + "/" + finishedMemory + " bytes";
+    } finally {
+      context.deleteDatabase(database);
+    }
+  }
+
+  private static long usedMemory(Runtime runtime) {
+    return runtime.totalMemory() - runtime.freeMemory();
+  }
 
   private static String exercise(Context context) throws Exception {
     long largeSize = E2Archive.LIMIT + 1024L * 1024;

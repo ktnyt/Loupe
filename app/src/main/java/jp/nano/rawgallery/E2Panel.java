@@ -38,7 +38,7 @@ final class E2Panel {
   private volatile Thread operation;
   private volatile boolean cancelled;
   private boolean busy, connecting, catalogPending;
-  private final List<JSONObject> savedRows = new java.util.ArrayList<>();
+  private List<JSONObject> savedRows = Collections.emptyList();
   private int savedPage;
   private static final int PAGE_SIZE = 25;
 
@@ -502,8 +502,7 @@ final class E2Panel {
   private void showSaved(String name, List<JSONObject> rows) {
     if (!java.util.Objects.equals(name, activeBucket)) catalogStatus.setVisibility(View.GONE);
     activeBucket = name;
-    savedRows.clear();
-    savedRows.addAll(rows);
+    savedRows = rows;
     savedPage = 0;
     drawSavedPage();
   }

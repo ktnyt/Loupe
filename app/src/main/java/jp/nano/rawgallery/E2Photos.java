@@ -13,7 +13,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.attribute.FileTime;
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -265,12 +264,9 @@ final class E2Photos implements AutoCloseable {
   }
 
   List<JSONObject> saved(String bucket) throws Exception {
-    List<JSONObject> results = localSaved(bucket);
+    E2RecoveryCatalog.Rows local = localSaved(bucket);
     E2RecoveryCatalog.Snapshot imported = catalog.cached(bucket);
-    if (imported != null)
-      results = new ArrayList<>(E2RecoveryCatalog.merged(bucket, imported, results, null).values());
-    results.sort((a, b) -> a.optString("name").compareToIgnoreCase(b.optString("name")));
-    return results;
+    return (imported == null ? local : E2RecoveryCatalog.merged(bucket, imported, local, null)).sorted();
   }
 
   E2RecoveryCatalog.Snapshot publishCatalog(String bucket) throws Exception {
@@ -283,7 +279,7 @@ final class E2Photos implements AutoCloseable {
 
   boolean catalogPending(String bucket) throws Exception {
     return settings.records.indexRevision() != publishedRevision(bucket)
-        && !localSaved(bucket).isEmpty();
+        && !settings.records.visitReceipts(record -> !isRecoverable(bucket, record));
   }
 
   private long publishedRevision(String bucket) {
@@ -293,7 +289,7 @@ final class E2Photos implements AutoCloseable {
 
   private E2RecoveryCatalog.Snapshot publishCatalog(String bucket, boolean allowEmpty) throws Exception {
     long revision = settings.records.indexRevision();
-    List<JSONObject> local = localSaved(bucket);
+    E2RecoveryCatalog.Rows local = localSaved(bucket);
     if (allowEmpty && local.isEmpty()) return null;
     E2RecoveryCatalog.Snapshot result = E2RecoveryCatalog.publish(settings.archive(bucket), bucket, local);
     if (!context.getSharedPreferences("e2_catalog_publication", Context.MODE_PRIVATE).edit()
@@ -306,12 +302,16 @@ final class E2Photos implements AutoCloseable {
     return catalog.load(settings.archive(bucket), bucket, localSaved(bucket));
   }
 
-  private List<JSONObject> localSaved(String bucket) throws Exception {
-    List<JSONObject> results = new ArrayList<>();
-    for (JSONObject record : settings.records.all()) {
-      if (E2Cleanup.recoverable(record) && bucket.equals(record.getString("bucket")))
-        results.add(record.put("state", "verified"));
-    }
+  private static boolean isRecoverable(String bucket, JSONObject record) throws Exception {
+    return E2Cleanup.recoverable(record) && bucket.equals(record.getString("bucket"));
+  }
+
+  private E2RecoveryCatalog.Rows localSaved(String bucket) throws Exception {
+    E2RecoveryCatalog.Rows results = new E2RecoveryCatalog.Rows(bucket);
+    settings.records.visitReceipts(record -> {
+      if (isRecoverable(bucket, record)) results.add(record.put("state", "verified"));
+      return true;
+    });
     return results;
   }
 
