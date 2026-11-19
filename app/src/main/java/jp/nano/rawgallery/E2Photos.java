@@ -264,7 +264,7 @@ final class E2Photos implements AutoCloseable {
   }
 
   List<JSONObject> saved(String bucket) throws Exception {
-    E2RecoveryCatalog.Rows local = localSaved(bucket);
+    E2RecoveryCatalog.Rows local = localSaved(settings.records, bucket);
     E2RecoveryCatalog.Snapshot imported = catalog.cached(bucket);
     return (imported == null ? local : E2RecoveryCatalog.merged(bucket, imported, local, null)).sorted();
   }
@@ -289,7 +289,7 @@ final class E2Photos implements AutoCloseable {
 
   private E2RecoveryCatalog.Snapshot publishCatalog(String bucket, boolean allowEmpty) throws Exception {
     long revision = settings.records.indexRevision();
-    E2RecoveryCatalog.Rows local = localSaved(bucket);
+    E2RecoveryCatalog.Rows local = localSaved(settings.records, bucket);
     if (allowEmpty && local.isEmpty()) return null;
     E2RecoveryCatalog.Snapshot result = E2RecoveryCatalog.publish(settings.archive(bucket), bucket, local);
     if (!context.getSharedPreferences("e2_catalog_publication", Context.MODE_PRIVATE).edit()
@@ -299,17 +299,20 @@ final class E2Photos implements AutoCloseable {
   }
 
   E2RecoveryCatalog.Snapshot loadCatalog(String bucket) throws Exception {
-    return catalog.load(settings.archive(bucket), bucket, localSaved(bucket));
+    return catalog.load(settings.archive(bucket), bucket, localSaved(settings.records, bucket));
   }
 
   private static boolean isRecoverable(String bucket, JSONObject record) throws Exception {
     return E2Cleanup.recoverable(record) && bucket.equals(record.getString("bucket"));
   }
 
-  private E2RecoveryCatalog.Rows localSaved(String bucket) throws Exception {
+  static E2RecoveryCatalog.Rows localSaved(ArchiveStore store, String bucket) throws Exception {
     E2RecoveryCatalog.Rows results = new E2RecoveryCatalog.Rows(bucket);
-    settings.records.visitReceipts(record -> {
-      if (isRecoverable(bucket, record)) results.add(record.put("state", "verified"));
+    store.visitReceipts(record -> {
+      if (isRecoverable(bucket, record)) {
+        if (record.optLong("taken") < 0) record.put("taken", 0);
+        results.add(record.put("state", "verified"));
+      }
       return true;
     });
     return results;

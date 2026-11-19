@@ -197,6 +197,12 @@ final class E2CatalogChecks {
   }
 
   private static String exercise(Context context) throws Exception {
+    E2RecoveryCatalog.Rows wrongBucket = new E2RecoveryCatalog.Rows(BUCKET);
+    wrongBucket.add(row(998, "bucket.jpg", "version-a"));
+    Bucket isolated = new Bucket();
+    rejected(() -> E2RecoveryCatalog.publish(isolated, "different-bucket", wrongBucket));
+    check(isolated.writes == 0, "A mismatched bucket was written");
+    if (context != null) checkLocalReceipts(context);
     long largeSize = E2Archive.LIMIT + 1024L * 1024;
     JSONObject large = row(1, "large.MP4", "large-version").put("size", largeSize);
     Bucket largeLegacy = new Bucket();
@@ -290,6 +296,28 @@ final class E2CatalogChecks {
     if (context != null) cache(context, bucket, original, v1, tail);
     String cache = context == null ? "" : ", SQLite v1 migration and atomic preservation";
     return "PASS e2 catalog: v1 replay, 2503 rows, multipart publish/read, prior generation, fail-closed writes" + cache;
+  }
+
+  private static void checkLocalReceipts(Context context) throws Exception {
+    String database = "e2-receipts-scale-" + UUID.randomUUID() + ".db";
+    try (ArchiveStore store = new ArchiveStore(context, database)) {
+      SQLiteDatabase db = store.getWritableDatabase();
+      // A state-filtered read must never parse the unrelated payloads.
+      db.execSQL("WITH RECURSIVE ids(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM ids WHERE n<70000)"
+          + " INSERT INTO photos SELECT 'unrelated-' || n, 'verified', 'invalid-json' FROM ids");
+      JSONObject old = row(0, "historical.jpg", "version-old").put("taken", -1);
+      store.put(old, "released");
+      List<JSONObject> selected = store.inStates("released", "releasing");
+      check(selected.size() == 1 && "historical.jpg".equals(selected.get(0).getString("name")),
+          "State query opened unrelated receipts");
+      check(store.inStates("releasing").isEmpty(), "Picked archive rows without a pending deletion");
+      db.delete("photos", "state=?", new String[] {"verified"});
+      E2RecoveryCatalog.Rows local = E2Photos.localSaved(store, BUCKET);
+      check(local.size() == 1 && local.sorted().get(0).getLong("taken") == 0,
+          "A verified historical local original was omitted");
+    } finally {
+      context.deleteDatabase(database);
+    }
   }
 
   private static void cache(Context context, Bucket bucket, JSONObject original, byte[] v1,

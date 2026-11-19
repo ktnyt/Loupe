@@ -187,9 +187,10 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
   }
 
   Snapshot load(Storage archive, String bucket, Rows local) throws Exception {
+    requireBucket(bucket, local);
     Snapshot candidate = remote(archive, bucket);
     if (candidate == null) return null;
-    merged(bucket, candidate, local, archive);
+    if (!local.isEmpty()) merged(bucket, candidate, local, archive);
     synchronized (CACHE_LOCK) {
       Snapshot previous = cached(bucket);
       if (previous != null) {
@@ -241,6 +242,7 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
   }
 
   static Snapshot publish(Storage archive, String bucket, Rows local) throws Exception {
+    requireBucket(bucket, local);
     if (local.isEmpty()) throw new IOException("カタログに保存できる原本がありません");
     synchronized (PUBLISH_LOCK) {
       Snapshot current = generation(archive, bucket, INDEX, false);
@@ -321,12 +323,18 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
   }
 
   static Rows merged(String bucket, Snapshot snapshot, Rows local, Storage archive) throws Exception {
+    if (snapshot != null) requireBucket(bucket, snapshot.records());
     Rows result = snapshot == null ? new Rows(bucket) : snapshot.records().copy();
     mergeRows(result, local, archive);
     return result;
   }
 
+  private static void requireBucket(String bucket, Rows rows) throws IOException {
+    if (!bucket.equals(rows.bucket)) throw new IOException("復元一覧の保存先が一致しません");
+  }
+
   private static void mergeRows(Rows result, Rows incoming, Storage archive) throws Exception {
+    requireBucket(result.bucket, incoming);
     for (Row row : incoming.rows.values()) mergeRow(result, row, archive);
   }
 

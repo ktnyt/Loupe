@@ -195,8 +195,7 @@ public final class PhotoRepository {
       throw new IOException("クラウド原本の記録を読めません", e);
     }
     try (ArchiveStore archive = E2Settings.openRecords(context)) {
-      for (JSONObject record : archive.all()) {
-        if (!E2Cleanup.released(record) && !E2Cleanup.releasing(record)) continue;
+      for (JSONObject record : archive.inStates(E2Cleanup.RELEASING, E2Cleanup.RELEASED)) {
         String path = record.getString("folder") + record.getString("name");
         Photo local = result.get(path);
         if (local != null && !local.isArchived() && E2Cleanup.releasing(record)) continue;

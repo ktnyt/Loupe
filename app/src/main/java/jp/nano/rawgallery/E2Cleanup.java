@@ -19,7 +19,7 @@ import org.json.JSONObject;
 /** Releases local JPEGs; the e2 receipt and thumbnail stay available to the gallery. */
 final class E2Cleanup {
   private static final String SCHEME = "e2archive";
-  private static final String RELEASING = "releasing", RELEASED = "released";
+  static final String RELEASING = "releasing", RELEASED = "released";
   private static final int EDGE = 256;
   private record Eligible(E2AutoSync.Candidate candidate, JSONObject receipt) {}
 
@@ -172,9 +172,9 @@ final class E2Cleanup {
   static void reconcile(Context c, ArchiveStore store, String bucket, BooleanSupplier stopped)
       throws Exception {
     if (!Environment.isExternalStorageManager() || !E2Settings.hasPhotoAccess(c)) return;
-    for (JSONObject record : store.all()) {
+    for (JSONObject record : store.inStates(RELEASING)) {
       if (stopped.getAsBoolean()) return;
-      if (!RELEASING.equals(record.optString("state")) || !bucket.equals(record.optString("bucket"))) continue;
+      if (!bucket.equals(record.optString("bucket"))) continue;
       String volume = record.getString("cleanupVolume");
       if (!MediaStore.getExternalVolumeNames(c).contains(volume)
           || !record.getString("cleanupDb").equals(MediaStore.getVersion(c, volume))) continue;
