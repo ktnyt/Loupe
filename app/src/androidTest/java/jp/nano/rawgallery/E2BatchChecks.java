@@ -168,10 +168,12 @@ final class E2BatchChecks {
     E2AutoSync.Candidate second = candidate(2, 0);
     List<E2AutoSync.Candidate> photos = List.of(first, second, candidate(3, 11));
     String identity = E2AutoSync.batchIdentity("parallel", photos);
-    byte[] firstBytes = {1};
-    byte[] secondBytes = {2};
-    String firstHash = E2Archive.readHash(new ByteArrayInputStream(firstBytes), null, 1);
-    String secondHash = E2Archive.readHash(new ByteArrayInputStream(secondBytes), null, 1);
+    byte[] firstBytes = new byte[(int) first.photo().size];
+    byte[] secondBytes = new byte[(int) second.photo().size];
+    firstBytes[0] = 1;
+    secondBytes[0] = 2;
+    String firstHash = E2Archive.readHash(new ByteArrayInputStream(firstBytes), null, firstBytes.length);
+    String secondHash = E2Archive.readHash(new ByteArrayInputStream(secondBytes), null, secondBytes.length);
     CountDownLatch secondStarted = new CountDownLatch(1);
     AtomicReference<Thread> laterWorker = new AtomicReference<>();
     E2AutoSync.Batch interrupted = new E2AutoSync.Batch(preferences, identity, photos.size());
