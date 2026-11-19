@@ -300,10 +300,11 @@ final class E2Panel {
           + "件 · 失敗 " + number(failed) + "件";
     }
     if (known && state.kind == JobState.Kind.RUNNING && !publishing && ready + failed < total) {
-      E2AutoSync.Rate rate = E2AutoSync.rate(target, total - ready - failed);
+      E2AutoSync.Rate rate = E2AutoSync.rate(target);
       if (rate != null) {
         counts += "\n実効速度 " + transferSpeed(rate.bytesPerSecond());
-        if (failed == 0) counts += " · 転送残り " + estimate(rate.remainingSeconds());
+        if (failed == 0 && rate.remainingSeconds() >= 0)
+          counts += " · 転送残り " + estimate(rate.remainingSeconds());
       }
     }
     if (!reason.isEmpty()) counts = counts.isEmpty() ? reason : counts + "\n" + reason;

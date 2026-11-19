@@ -119,19 +119,23 @@ final class E2AutoSync {
     final String bucket;
     final long started = SystemClock.elapsedRealtime();
     private final ArrayDeque<Sample> samples = new ArrayDeque<>();
+    private long remainingBytes;
 
-    RecentTransfers(String bucket) {
+    RecentTransfers(String bucket, long remainingBytes) {
       this.bucket = bucket;
+      this.remainingBytes = remainingBytes;
     }
 
-    synchronized void add(long bytes, long putMs) {
+    synchronized void verified(long bytes, long putMs) {
+      if (remainingBytes >= 0) remainingBytes = Math.max(0, remainingBytes - bytes);
+      if (putMs <= 0) return;
       long now = SystemClock.elapsedRealtime();
       trim(now - WINDOW_MS);
       samples.addLast(new Sample(now, bytes));
       Log.i("LoupeE2Rate", "verified bytes=" + bytes + " put_ms=" + putMs + " elapsed_ms=" + now);
     }
 
-    synchronized Rate estimate(int remaining) {
+    synchronized Rate estimate() {
       long now = SystemClock.elapsedRealtime();
       long from = Math.max(started, now - WINDOW_MS);
       trim(from);
@@ -140,8 +144,8 @@ final class E2AutoSync {
         return null;
       long bytes = 0;
       for (Sample sample : samples) bytes += sample.bytes();
-      return new Rate(bytes * 1000.0 / elapsed,
-          (long) Math.ceil(remaining * (elapsed / 1000.0) / samples.size()));
+      double speed = bytes * 1000.0 / elapsed;
+      return new Rate(speed, remainingBytes > 0 ? (long) Math.ceil(remainingBytes / speed) : -1);
     }
 
     private void trim(long from) {
@@ -149,10 +153,30 @@ final class E2AutoSync {
     }
   }
 
-  static Rate rate(String bucket, int remaining) {
+  static Rate rate(String bucket) {
     RecentTransfers current = currentRate;
-    return current != null && current.bucket.equals(bucket) && remaining > 0
-        ? current.estimate(remaining) : null;
+    return current != null && current.bucket.equals(bucket) ? current.estimate() : null;
+  }
+
+  private static long remainingBytes(ArchiveStore store, List<Candidate> candidates, int processed,
+      String bucket, BooleanSupplier stopped) {
+    try {
+      var verified = store.verifiedKeys();
+      long bytes = 0;
+      for (int i = processed; i < candidates.size(); i++) {
+        Candidate candidate = candidates.get(i);
+        // Without a MediaStore generation the key requires hashing the original. Only the
+        // transfer worker does that work; an unknown estimate must never delay backup.
+        long size = candidate.photo().size;
+        if (stopped.getAsBoolean() || candidate.generation() <= 0 || size <= 0
+            || size > E2Archive.ORIGINAL_LIMIT) return -1;
+        if (!verified.contains(key(candidate, bucket, Long.toString(candidate.generation()))))
+          bytes = Math.addExact(bytes, size);
+      }
+      return bytes;
+    } catch (Exception unavailable) {
+      return -1;
+    }
   }
 
   /** Returns the destination if this batch made progress and has another batch to run. */
@@ -193,7 +217,8 @@ final class E2AutoSync {
       publish(preferences, JobState.Kind.RUNNING, batch.ready, total, batch.failed, true);
       Publication published = e2.catalogPending(bucket) ? tryPublishCatalog(context, e2, bucket, stopped) : null;
       PhotoRepository repository = new PhotoRepository(context, true);
-      RecentTransfers recent = new RecentTransfers(bucket);
+      RecentTransfers recent = new RecentTransfers(bucket,
+          remainingBytes(e2.settings.records, photos, batch.processed(), bucket, stopped));
       currentRate = recent;
       transferBatch(preferences, photos, batch, stopped,
           () -> SystemClock.elapsedRealtime() < admissionDeadline,
@@ -422,7 +447,7 @@ final class E2AutoSync {
     boolean verified = record != null && "verified".equals(record.optString("state"));
     if (!verified && !stopped.getAsBoolean()) {
       long putMs = e2.saveIndexed(candidate, key, bucket, fallbackHash);
-      if (putMs > 0) recent.add(photo.size, putMs);
+      recent.verified(photo.size, putMs);
     }
     if (photo.isJpeg() && (!thumbnail.isFile() || !preview.isFile())
         && !stopped.getAsBoolean()) {
