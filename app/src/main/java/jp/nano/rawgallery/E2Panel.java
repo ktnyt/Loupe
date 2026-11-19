@@ -257,8 +257,9 @@ final class E2Panel {
 
   private boolean backupObserved() {
     String target = E2Settings.configuredBucket(activity);
-    return !target.isEmpty()
-        && target.equals(E2AutoSync.state(activity).getString("observationBucket", ""));
+    android.content.SharedPreferences preferences = E2AutoSync.state(activity);
+    return !target.isEmpty() && (target.equals(preferences.getString("observationBucket", ""))
+        || target.equals(preferences.getString("lastCountBucket", "")));
   }
 
   private void refreshTransfers(boolean enabled, JobState state, String reason) {
@@ -276,7 +277,7 @@ final class E2Panel {
     int total = scopedCounts ? state.total : preferences.getInt("lastTotal", 0);
     int failed = scopedCounts ? state.failed : preferences.getInt("lastFailed", 0);
     String backupState = publishing ? "復元一覧に反映中"
-        : !current ? (previous || backupObserved() ? "一時停止中" : "未開始")
+        : !current ? (backupObserved() ? "一時停止中" : "未開始")
         : switch (state.kind) {
           case RUNNING -> !known ? "対象を確認中"
               : ready + failed >= total ? "同期結果を確認中" : "アップロード中";
