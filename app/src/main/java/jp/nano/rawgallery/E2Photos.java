@@ -14,7 +14,6 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.attribute.FileTime;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.json.JSONObject;
@@ -263,7 +262,7 @@ final class E2Photos implements AutoCloseable {
     verified.getParentFile().delete();
   }
 
-  List<JSONObject> saved(String bucket) throws Exception {
+  E2RecoveryCatalog.SavedRows saved(String bucket) throws Exception {
     E2RecoveryCatalog.Rows local = localSaved(settings.records, bucket);
     E2RecoveryCatalog.Snapshot imported = catalog.cached(bucket);
     return (imported == null ? local : E2RecoveryCatalog.merged(bucket, imported, local, null)).sorted();
