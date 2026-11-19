@@ -237,7 +237,7 @@ final class E2AutoSync {
       if (needsCatalog(e2, bucket, cleanup != null, snapshotRevision)) {
         published = tryPublishCatalog(context, e2, bucket, stopped);
         if (published == null) {
-          publish(preferences, failureKind(batch), batch.ready, total, batch.failed, true);
+          publish(preferences, failureKind(batch), batch.reportedReady, total, batch.reportedFailed, true);
           return null;
         }
       }
@@ -255,7 +255,7 @@ final class E2AutoSync {
       boolean resume = batch.shouldContinue(total, readyBefore);
       JobState.Kind kind = resume ? JobState.Kind.WAITING
           : unfinished || batch.failed != 0 ? failureKind(batch) : JobState.Kind.COMPLETE;
-      publish(preferences, kind, batch.ready, total, batch.failed, true);
+      publish(preferences, kind, batch.reportedReady, total, batch.reportedFailed, true);
       return resume ? bucket : null;
     } catch (Exception e) {
       publish(preferences, stopped.getAsBoolean() || Thread.currentThread().isInterrupted()
