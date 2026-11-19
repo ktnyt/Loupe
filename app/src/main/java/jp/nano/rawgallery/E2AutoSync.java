@@ -19,10 +19,12 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
@@ -46,6 +48,7 @@ final class E2AutoSync {
   static final class Batch {
     final String identity;
     int ready, failed;
+    int reportedReady, reportedFailed;
     String fallbackIdentity = "";
 
     Batch(SharedPreferences preferences, String identity, int total) {
@@ -54,8 +57,8 @@ final class E2AutoSync {
       int savedReady = preferences.getInt("batchReady", 0);
       int savedFailed = preferences.getInt("batchFailed", 0);
       if (savedReady < 0 || savedFailed < 0 || (long) savedReady + savedFailed >= total) return;
-      ready = savedReady;
-      failed = savedFailed;
+      ready = reportedReady = savedReady;
+      failed = reportedFailed = savedFailed;
     }
 
     int processed() { return ready + failed; }
@@ -78,8 +81,8 @@ final class E2AutoSync {
         extendFallback(hash);
       }
       if (!fallbackIdentity.equals(preferences.getString("batchFallbackIdentity", ""))) {
-        ready = 0;
-        failed = 0;
+        ready = reportedReady = 0;
+        failed = reportedFailed = 0;
         fallbackIdentity = "";
       }
     }
@@ -234,7 +237,7 @@ final class E2AutoSync {
       if (needsCatalog(e2, bucket, cleanup != null, snapshotRevision)) {
         published = tryPublishCatalog(context, e2, bucket, stopped);
         if (published == null) {
-          publish(preferences, failureKind(batch), batch.ready, total, batch.failed, true);
+          publish(preferences, failureKind(batch), batch.reportedReady, total, batch.reportedFailed, true);
           return null;
         }
       }
@@ -252,12 +255,13 @@ final class E2AutoSync {
       boolean resume = batch.shouldContinue(total, readyBefore);
       JobState.Kind kind = resume ? JobState.Kind.WAITING
           : unfinished || batch.failed != 0 ? failureKind(batch) : JobState.Kind.COMPLETE;
-      publish(preferences, kind, batch.ready, total, batch.failed, true);
+      publish(preferences, kind, batch.reportedReady, total, batch.reportedFailed, true);
       return resume ? bucket : null;
     } catch (Exception e) {
       publish(preferences, stopped.getAsBoolean() || Thread.currentThread().isInterrupted()
           ? JobState.Kind.PAUSED : failureKind(batch),
-          batch == null ? 0 : batch.ready, total, batch == null ? 0 : batch.failed, batch != null);
+          batch == null ? 0 : batch.reportedReady, total,
+          batch == null ? 0 : batch.reportedFailed, batch != null);
       return null;
     } finally {
       currentRate = null;
@@ -265,7 +269,7 @@ final class E2AutoSync {
   }
 
   private static JobState.Kind failureKind(Batch batch) {
-    return batch != null && batch.ready > 0 ? JobState.Kind.PARTIAL : JobState.Kind.FAILED;
+    return batch != null && batch.reportedReady > 0 ? JobState.Kind.PARTIAL : JobState.Kind.FAILED;
   }
 
   static void transferBatch(SharedPreferences preferences, List<Candidate> photos, Batch batch,
@@ -273,34 +277,44 @@ final class E2AutoSync {
       Function<Candidate, Transfer> transfer) throws Exception {
     if (batch.processed() >= photos.size() || stopped.getAsBoolean()) return;
     DiagnosticExecutor transfers = new DiagnosticExecutor("E2AutoSync.transfer", TRANSFERS);
-    // The durable checkpoint counts a consecutive prefix, even when workers finish out of order.
-    ArrayDeque<Future<Transfer>> inOrder = new ArrayDeque<>(TRANSFERS);
+    ExecutorCompletionService<Transfer> completions = new ExecutorCompletionService<>(transfers);
+    Map<Future<Transfer>, Integer> inFlight = new HashMap<>();
+    Map<Integer, Transfer> completed = new HashMap<>();
     int start = batch.processed();
     int next = start;
     try {
       while (!stopped.getAsBoolean()) {
-        // A slow connection or catalog read still leaves one candidate to try.
-        while (next < photos.size() && inOrder.size() < TRANSFERS
+        // An expired startup budget still allows the first candidate. When refilling the second
+        // slot, size the staging check against the one transfer still in flight.
+        while (next < photos.size() && inFlight.size() < TRANSFERS
             && !stopped.getAsBoolean() && (next == start || mayAdmit.getAsBoolean())
-            && (inOrder.isEmpty() || canStageTogether(usableSpace.getAsLong(),
-                photos.get(batch.processed()).photo().size, photos.get(next).photo().size))) {
-          Candidate photo = photos.get(next++);
-          inOrder.addLast(transfers.submit(() -> transfer.apply(photo)));
+            && (inFlight.isEmpty() || canStageTogether(usableSpace.getAsLong(),
+                photos.get(inFlight.values().iterator().next()).photo().size,
+                photos.get(next).photo().size))) {
+          Candidate photo = photos.get(next);
+          inFlight.put(completions.submit(() -> transfer.apply(photo)), next++);
         }
-        if (inOrder.isEmpty()) break;
-        Transfer outcome;
-        try {
-          outcome = inOrder.getFirst().get(250, TimeUnit.MILLISECONDS);
-        } catch (TimeoutException stillRunning) {
-          continue;
-        }
+        if (inFlight.isEmpty()) break;
+        Future<Transfer> finished = completions.poll(250, TimeUnit.MILLISECONDS);
+        if (finished == null) continue;
         if (stopped.getAsBoolean()) break;
-        inOrder.removeFirst();
-        boolean usesFallback = photos.get(batch.processed()).generation() <= 0;
-        if (usesFallback) batch.extendFallback(outcome.fallbackHash());
-        if (outcome.ready() && (!usesFallback || outcome.fallbackHash() != null)) batch.ready++;
-        else batch.failed++;
-        publish(preferences, JobState.Kind.RUNNING, batch.ready, photos.size(), batch.failed, true);
+        int index = inFlight.remove(finished);
+        Transfer outcome = finished.get();
+        if (outcome.ready() && photos.get(index).generation() <= 0 && outcome.fallbackHash() == null)
+          outcome = new Transfer(false, null);
+        if (outcome.ready()) batch.reportedReady++;
+        else batch.reportedFailed++;
+        completed.put(index, outcome);
+        // Actual completions free slots immediately. Only the uninterrupted prefix can advance the
+        // durable checkpoint, which also hashes fallback identities in candidate order.
+        for (Transfer prefix; (prefix = completed.remove(batch.processed())) != null; ) {
+          if (photos.get(batch.processed()).generation() <= 0)
+            batch.extendFallback(prefix.fallbackHash());
+          if (prefix.ready()) batch.ready++;
+          else batch.failed++;
+        }
+        publish(preferences, JobState.Kind.RUNNING, batch.reportedReady, photos.size(),
+            batch.reportedFailed, true);
       }
     } finally {
       stopTransfers(transfers);
