@@ -177,6 +177,10 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
   }
 
   long restoreRecord(JSONObject record, File destination) throws Exception {
+    return restoreRecord(record, destination, null);
+  }
+
+  long restoreRecord(JSONObject record, File destination, E2TransferStatus observation) throws Exception {
     requireRecord(record);
     if (!"verified".equals(record.getString("state")) || destination.exists())
       throw new IOException("復元の前提を満たしていません");
@@ -190,7 +194,7 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
     long start = SystemClock.elapsedRealtimeNanos();
     try {
       try (FileOutputStream out = new TemporaryOutput(temp)) {
-        get(path, version, size, sha, out);
+        get(path, version, size, sha, out, observation);
         out.getFD().sync();
       }
       Files.move(temp.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE);
@@ -355,6 +359,11 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
 
   private void get(String path, String version, long size, String sha, OutputStream out)
       throws Exception {
+    get(path, version, size, sha, out, null);
+  }
+
+  private void get(String path, String version, long size, String sha, OutputStream out,
+      E2TransferStatus observation) throws Exception {
     HttpsURLConnection conn = open("GET", path, "versionId=" + checkedVersion(version), EMPTY_SHA);
     try (TransferWatch progress = new TransferWatch(conn, size)) {
       requireOk(conn.getResponseCode());
@@ -363,7 +372,7 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
       long length = conn.getContentLengthLong();
       if (length >= 0 && length != size) throw new IOException("取得したサイズが一致しません");
       try (InputStream in = conn.getInputStream()) {
-        if (!sha.equals(readHash(in, out, size, progress))) throw new IOException("取得したSHA-256が一致しません");
+        if (!sha.equals(readHash(in, out, size, progress, observation))) throw new IOException("取得したSHA-256が一致しません");
       }
     } finally {
       conn.disconnect();
@@ -446,6 +455,11 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
 
   private static String readHash(InputStream in, OutputStream out, long size, TransferWatch watch)
       throws Exception {
+    return readHash(in, out, size, watch, null);
+  }
+
+  private static String readHash(InputStream in, OutputStream out, long size, TransferWatch watch,
+      E2TransferStatus observation) throws Exception {
     MessageDigest digest = MessageDigest.getInstance("SHA-256");
     byte[] buffer = new byte[65536];
     long count = 0;
@@ -458,6 +472,7 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
       digest.update(buffer, 0, n);
       if (out != null) out.write(buffer, 0, n);
       if (watch != null) watch.progress();
+      if (observation != null) observation.bytesRead(count);
     }
     if (Thread.currentThread().isInterrupted()) throw new IOException("原本の転送を中止しました");
     if (count != size) throw new IOException("原本のサイズが一致しません");

@@ -112,7 +112,7 @@ final class E2AutoSync {
   static String run(Context context, Network network, BooleanSupplier stopped) {
     long admissionDeadline = SystemClock.elapsedRealtime() + ADMISSION_MS;
     SharedPreferences preferences = state(context);
-    preferences.edit().remove("failureReason").apply();
+    preferences.edit().remove("failureReason").putBoolean("publishingCatalog", false).apply();
     publish(preferences, JobState.Kind.RUNNING, 0, 0, 0, false);
     Batch batch = null;
     int total = 0;
@@ -143,6 +143,7 @@ final class E2AutoSync {
       OriginalSource originals = photo -> PhotoRepository.original(context, photo.photo());
       batch.validateFallback(preferences, photos, originals, stopped);
       int readyBefore = batch.ready;
+      publish(preferences, JobState.Kind.RUNNING, batch.ready, total, batch.failed, true);
       Publication published = e2.catalogPending(bucket) ? tryPublishCatalog(context, e2, bucket, stopped) : null;
       PhotoRepository repository = new PhotoRepository(context, true);
       transferBatch(preferences, photos, batch, stopped,
@@ -377,6 +378,7 @@ final class E2AutoSync {
     long revision = photos.settings.records.indexRevision();
     long start = SystemClock.elapsedRealtime();
     try {
+      state(context).edit().putBoolean("publishingCatalog", true).apply();
       E2RecoveryCatalog.Snapshot snapshot = photos.publishCatalogIfAny(bucket);
       requireDestination(context, bucket, stopped);
       state(context).edit().remove("failureReason").apply();
@@ -391,6 +393,8 @@ final class E2AutoSync {
       state(context).edit().putString("failureReason",
           "復元一覧をクラウドに保存できませんでした。端末原本は整理せず、次回の同期で再試行します").apply();
       return null;
+    } finally {
+      state(context).edit().putBoolean("publishingCatalog", false).apply();
     }
   }
 
@@ -428,8 +432,12 @@ final class E2AutoSync {
 
   private static void publish(SharedPreferences prefs, JobState.Kind kind, int ready,
       int total, int failed, boolean known) {
-    JobState.write(prefs.edit(), "", kind, System.currentTimeMillis())
+    SharedPreferences.Editor edit = JobState.write(prefs.edit(), "", kind, System.currentTimeMillis())
         .putBoolean("CountsKnown", known).putInt("ready", ready)
-        .putInt("total", total).putInt("failed", failed).apply();
+        .putInt("total", total).putInt("failed", failed);
+    String destination = prefs.getString("destination", "");
+    if (known && !destination.isEmpty()) edit.putString("lastCountBucket", destination)
+        .putInt("lastReady", ready).putInt("lastTotal", total).putInt("lastFailed", failed);
+    edit.apply();
   }
 }
