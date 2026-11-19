@@ -17,6 +17,7 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -146,30 +147,29 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
       if ("verified".equals(record.getString("state"))) return 0;
       if (!"pending".equals(record.getString("state"))) throw new IOException("保管状態が不正です");
     }
-    String existing = currentVersion(path);
-    if (existing != null) {
-      get(path, existing, size, sha, null);
-      store.put(record.put("version", existing).put("verifiedAt", System.currentTimeMillis()), "verified");
-      return 0;
+    String checksum = base64Hash(sha);
+    String version = currentVersion(path);
+    long putMillis = 0;
+    if (version == null) {
+      long start = SystemClock.elapsedRealtimeNanos();
+      HttpsURLConnection put = open("PUT", path, "", sha, "x-amz-checksum-sha256", checksum);
+      try (TransferWatch progress = new TransferWatch(put, size)) {
+        put.setDoOutput(true);
+        put.setFixedLengthStreamingMode(size);
+        if (observation != null) observation.startBytes(size);
+        try (InputStream in = new FileInputStream(source); OutputStream out = put.getOutputStream()) {
+          if (!sha.equals(readHash(in, out, size, progress, observation)))
+            throw new IOException("送信中に原本が変わりました");
+        }
+        requireOk(put.getResponseCode());
+        version = version(put);
+      } finally {
+        put.disconnect();
+      }
+      putMillis = millis(start);
     }
 
-    long start = SystemClock.elapsedRealtimeNanos();
-    HttpsURLConnection put = open("PUT", path, "", sha);
-    String version;
-    try (TransferWatch progress = new TransferWatch(put, size)) {
-      put.setDoOutput(true);
-      put.setFixedLengthStreamingMode(size);
-      if (observation != null) observation.startBytes(size);
-      try (InputStream in = new FileInputStream(source); OutputStream out = put.getOutputStream()) {
-        if (!sha.equals(readHash(in, out, size, progress, observation))) throw new IOException("送信中に原本が変わりました");
-      }
-      requireOk(put.getResponseCode());
-      version = version(put);
-    } finally {
-      put.disconnect();
-    }
-    long putMillis = millis(start);
-    get(path, version, size, sha, null);
+    verifySavedVersion(path, version, size, sha, checksum);
     store.put(record.put("version", version).put("verifiedAt", System.currentTimeMillis()), "verified");
     return putMillis;
   }
@@ -383,14 +383,48 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
     }
   }
 
+  private void verifySavedVersion(String path, String savedVersion, long size, String sha,
+      String checksum) throws Exception {
+    HttpsURLConnection head = open("HEAD", path, "versionId=" + checkedVersion(savedVersion),
+        EMPTY_SHA, "x-amz-checksum-mode", "ENABLED");
+    try {
+      requireOk(head.getResponseCode());
+      if (!savedVersion.equals(version(head))) throw new IOException("取得した版が一致しません");
+      long length = head.getContentLengthLong();
+      if (length >= 0 && length != size) throw new IOException("取得したサイズが一致しません");
+      String returned = head.getHeaderField("x-amz-checksum-sha256");
+      if (returned != null && !checksum.equals(returned))
+        throw new IOException("取得したSHA-256が一致しません");
+      if (returned != null && length == size) return;
+    } finally {
+      head.disconnect();
+    }
+    // Originals stored before checksum uploads may have no SHA-256 header.
+    get(path, savedVersion, size, sha, null);
+  }
+
+  private static String base64Hash(String hex) {
+    byte[] hash = new byte[hex.length() / 2];
+    for (int i = 0; i < hash.length; i++)
+      hash[i] = (byte) Integer.parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+    return Base64.getEncoder().encodeToString(hash);
+  }
+
   private HttpsURLConnection open(String method, String path, String query, String sha)
       throws Exception {
+    return open(method, path, query, sha, "", "");
+  }
+
+  private HttpsURLConnection open(String method, String path, String query, String sha,
+      String checksumHeader, String checksumValue) throws Exception {
     String stamp = TIME.format(Instant.now());
     String day = stamp.substring(0, 8);
     String scope = day + SCOPE_SUFFIX;
-    String headers = "host;x-amz-content-sha256;x-amz-date";
+    String headers = "host;" + (checksumHeader.isEmpty() ? "" : checksumHeader + ";")
+        + "x-amz-content-sha256;x-amz-date";
+    String checksumLine = checksumHeader.isEmpty() ? "" : checksumHeader + ":" + checksumValue + "\n";
     String canonical = method + "\n" + path + "\n" + query + "\nhost:" + HOST
-        + "\nx-amz-content-sha256:" + sha + "\nx-amz-date:" + stamp + "\n\n"
+        + "\n" + checksumLine + "x-amz-content-sha256:" + sha + "\nx-amz-date:" + stamp + "\n\n"
         + headers + "\n" + sha;
     String toSign = "AWS4-HMAC-SHA256\n" + stamp + "\n" + scope + "\n"
         + hex(MessageDigest.getInstance("SHA-256").digest(bytes(canonical)));
@@ -413,6 +447,7 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
     conn.setReadTimeout(30000);
     conn.setRequestMethod(method);
     conn.setRequestProperty("Accept-Encoding", "identity");
+    if (!checksumHeader.isEmpty()) conn.setRequestProperty(checksumHeader, checksumValue);
     conn.setRequestProperty("x-amz-content-sha256", sha);
     conn.setRequestProperty("x-amz-date", stamp);
     conn.setRequestProperty("Authorization", "AWS4-HMAC-SHA256 Credential=" + keyId + "/" + scope
