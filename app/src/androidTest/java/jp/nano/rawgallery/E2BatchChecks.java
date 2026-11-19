@@ -13,9 +13,13 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.LongSupplier;
 
 /** Exercises the bounded transfer loop and durable cursor without accessing media or the network. */
 final class E2BatchChecks {
+  private static final LongSupplier ENOUGH_SPACE = () -> Long.MAX_VALUE;
+
   static String run(Context context) throws Exception {
     String name = "e2-batch-check-" + UUID.randomUUID();
     SharedPreferences preferences = context.getSharedPreferences(name, Context.MODE_PRIVATE);
@@ -33,7 +37,7 @@ final class E2BatchChecks {
         // Wait for the running transfer to exhaust the admission budget.
         await(expired);
         return false;
-      }, candidate -> {
+      }, ENOUGH_SPACE, candidate -> {
         attempted.add(candidate);
         expired.countDown();
         return new E2AutoSync.Transfer(true, null);
@@ -53,7 +57,7 @@ final class E2BatchChecks {
           "Another destination must start from the beginning");
 
       E2AutoSync.Batch resumed = new E2AutoSync.Batch(preferences, identity, total);
-      E2AutoSync.transferBatch(preferences, candidates, resumed, () -> false, () -> true, candidate -> {
+      E2AutoSync.transferBatch(preferences, candidates, resumed, () -> false, () -> true, ENOUGH_SPACE, candidate -> {
         attempted.add(candidate);
         return new E2AutoSync.Transfer(true, null);
       });
@@ -64,19 +68,19 @@ final class E2BatchChecks {
 
       E2AutoSync.Batch failed = new E2AutoSync.Batch(preferences, identity, total);
       E2AutoSync.transferBatch(preferences, candidates, failed, () -> false,
-          () -> false, candidate -> new E2AutoSync.Transfer(false, null));
+          () -> false, ENOUGH_SPACE, candidate -> new E2AutoSync.Transfer(false, null));
       check(failed.ready == 1 && failed.failed == 1 && !failed.shouldContinue(total, 1),
           "Failure alone must not trigger a rapid retry");
       E2AutoSync.Batch warmedUp = new E2AutoSync.Batch(preferences, identity, total);
       AtomicInteger admittedAfterDeadline = new AtomicInteger();
-      E2AutoSync.transferBatch(preferences, candidates, warmedUp, () -> false, () -> false, candidate -> {
+      E2AutoSync.transferBatch(preferences, candidates, warmedUp, () -> false, () -> false, ENOUGH_SPACE, candidate -> {
         check(candidate.equals(second), "The expired batch must still resume at the next candidate");
         admittedAfterDeadline.incrementAndGet();
         return new E2AutoSync.Transfer(true, null);
       });
       check(admittedAfterDeadline.get() == 1 && warmedUp.ready == 2 && warmedUp.shouldContinue(total, 1),
           "An expired startup budget must still admit one candidate");
-      E2AutoSync.transferBatch(preferences, candidates, warmedUp, () -> true, () -> false, candidate -> {
+      E2AutoSync.transferBatch(preferences, candidates, warmedUp, () -> true, () -> false, ENOUGH_SPACE, candidate -> {
         throw new AssertionError("Cancellation must prevent the first admission");
       });
       check(!warmedUp.shouldContinue(total, 2), "No progress must not trigger a retry");
@@ -87,8 +91,9 @@ final class E2BatchChecks {
           "Reset must discard the old cursor");
       fallback(preferences);
       outOfOrder(preferences);
+      lowSpace(preferences);
       return "PASS e2-batches: drain, resume, metadata/content drift, provider failure, warm-up, "
-          + "zero progress, reset, parallel ordering and interruption";
+          + "zero progress, reset, parallel ordering and interruption, low-space fallback";
     } finally {
       context.deleteSharedPreferences(name);
     }
@@ -103,7 +108,7 @@ final class E2BatchChecks {
     changed[0] = 7;
     String originalHash = E2Archive.readHash(new ByteArrayInputStream(original), null, original.length);
     E2AutoSync.Batch prior = new E2AutoSync.Batch(preferences, identity, photos.size());
-    E2AutoSync.transferBatch(preferences, photos, prior, () -> false, () -> false, candidate ->
+    E2AutoSync.transferBatch(preferences, photos, prior, () -> false, () -> false, ENOUGH_SPACE, candidate ->
         new E2AutoSync.Transfer(true, originalHash));
     SharedPreferences.Editor editor = preferences.edit();
     prior.save(editor);
@@ -140,7 +145,7 @@ final class E2BatchChecks {
       check(stopped.get(), "Resume validation should stop when requested");
     }
 
-    E2AutoSync.transferBatch(preferences, photos, unavailable, () -> false, () -> false, candidate ->
+    E2AutoSync.transferBatch(preferences, photos, unavailable, () -> false, () -> false, ENOUGH_SPACE, candidate ->
         new E2AutoSync.Transfer(true, null));
     check(unavailable.ready == 0 && unavailable.failed == 1,
         "Missing fallback hash cannot produce a ready result");
@@ -151,7 +156,7 @@ final class E2BatchChecks {
     resumed.validateFallback(preferences, photos, candidate -> {
       throw new UnsupportedOperationException("Synthetic provider cannot open original");
     }, () -> false);
-    E2AutoSync.transferBatch(preferences, photos, resumed, () -> false, () -> false, candidate -> {
+    E2AutoSync.transferBatch(preferences, photos, resumed, () -> false, () -> false, ENOUGH_SPACE, candidate -> {
       check(candidate.equals(photos.get(1)), "The transfer should continue beyond the known failure");
       return new E2AutoSync.Transfer(true, null);
     });
@@ -167,32 +172,37 @@ final class E2BatchChecks {
     byte[] secondBytes = {2};
     String firstHash = E2Archive.readHash(new ByteArrayInputStream(firstBytes), null, 1);
     String secondHash = E2Archive.readHash(new ByteArrayInputStream(secondBytes), null, 1);
-    CountDownLatch secondDone = new CountDownLatch(1);
+    CountDownLatch secondStarted = new CountDownLatch(1);
+    AtomicReference<Thread> laterWorker = new AtomicReference<>();
     E2AutoSync.Batch interrupted = new E2AutoSync.Batch(preferences, identity, photos.size());
     AtomicBoolean stopped = new AtomicBoolean();
-    E2AutoSync.transferBatch(preferences, photos, interrupted, stopped::get, () -> true, candidate -> {
+    E2AutoSync.transferBatch(preferences, photos, interrupted, stopped::get, () -> true, ENOUGH_SPACE, candidate -> {
       if (candidate.equals(second)) {
-        stopped.set(true);
-        secondDone.countDown();
+        laterWorker.set(Thread.currentThread());
+        secondStarted.countDown();
         return new E2AutoSync.Transfer(true, secondHash);
       }
       check(candidate.equals(first), "The pending prefix must bound admissions");
-      await(secondDone);
+      await(secondStarted);
+      awaitIdle(laterWorker.get());
+      stopped.set(true);
       return new E2AutoSync.Transfer(true, firstHash);
     });
     check(interrupted.processed() == 0, "A result beyond an interrupted prefix is not a checkpoint");
 
     E2AutoSync.Batch resumed = new E2AutoSync.Batch(preferences, identity, photos.size());
-    CountDownLatch secondProcessed = new CountDownLatch(1);
+    CountDownLatch laterStarted = new CountDownLatch(1);
     AtomicInteger permits = new AtomicInteger(1);
     E2AutoSync.transferBatch(preferences, photos, resumed, () -> false,
-        () -> permits.getAndDecrement() > 0, candidate -> {
+        () -> permits.getAndDecrement() > 0, ENOUGH_SPACE, candidate -> {
           if (candidate.equals(first)) {
-            await(secondProcessed);
+            await(laterStarted);
+            awaitIdle(laterWorker.get());
             return new E2AutoSync.Transfer(false, firstHash);
           }
           check(candidate.equals(second), "Only the first two candidates are admitted");
-          secondProcessed.countDown();
+          laterWorker.set(Thread.currentThread());
+          laterStarted.countDown();
           return new E2AutoSync.Transfer(true, secondHash);
         });
     check(resumed.ready == 1 && resumed.failed == 1, "Both outcomes must be counted exactly once");
@@ -205,6 +215,32 @@ final class E2BatchChecks {
         () -> false);
     check(restored.ready == 1 && restored.failed == 1,
         "Reverse completion must preserve fallback hashes in candidate order");
+  }
+
+  private static void lowSpace(SharedPreferences preferences) throws Exception {
+    E2AutoSync.Candidate first = candidate(1, 11);
+    E2AutoSync.Candidate second = candidate(2, 12);
+    List<E2AutoSync.Candidate> photos = List.of(first, second);
+    String identity = E2AutoSync.batchIdentity("low-space", photos);
+    E2AutoSync.Batch batch = new E2AutoSync.Batch(preferences, identity, photos.size());
+    check(preferences.edit().putInt("ready", 0).commit(), "Reset previous test progress");
+    E2AutoSync.transferBatch(preferences, photos, batch, () -> false, () -> true,
+        () -> E2Archive.STORAGE_RESERVE + 350, candidate -> {
+          if (candidate.equals(second))
+            check(preferences.getInt("ready", 0) == 1, "Wait until the first stage has been freed");
+          return new E2AutoSync.Transfer(true, null);
+        });
+    check(batch.ready == 2, "Both originals must still fit one at a time");
+  }
+
+  private static void awaitIdle(Thread worker) {
+    // This worker has no further admitted task. Entering its queue wait proves its Future completed.
+    long deadline = android.os.SystemClock.elapsedRealtime() + 5000;
+    while (android.os.SystemClock.elapsedRealtime() < deadline) {
+      if (worker.getState() == Thread.State.WAITING) return;
+      android.os.SystemClock.sleep(2);
+    }
+    throw new AssertionError("The later Future must finish first");
   }
 
   private static void await(CountDownLatch latch) {

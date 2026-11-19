@@ -25,6 +25,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
+import java.util.function.LongSupplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.json.JSONObject;
@@ -149,6 +150,7 @@ final class E2AutoSync {
       PhotoRepository repository = new PhotoRepository(context, true);
       transferBatch(preferences, photos, batch, stopped,
           () -> SystemClock.elapsedRealtime() < admissionDeadline,
+          context.getCacheDir()::getUsableSpace,
           photo -> transfer(context, repository, e2, photo, bucket, originals, stopped));
 
       requireDestination(context, bucket, stopped);
@@ -192,7 +194,8 @@ final class E2AutoSync {
   }
 
   static void transferBatch(SharedPreferences preferences, List<Candidate> photos, Batch batch,
-      BooleanSupplier stopped, BooleanSupplier mayAdmit, Function<Candidate, Transfer> transfer) throws Exception {
+      BooleanSupplier stopped, BooleanSupplier mayAdmit, LongSupplier usableSpace,
+      Function<Candidate, Transfer> transfer) throws Exception {
     if (batch.processed() >= photos.size() || stopped.getAsBoolean()) return;
     DiagnosticExecutor transfers = new DiagnosticExecutor("E2AutoSync.transfer", TRANSFERS);
     // The durable checkpoint counts a consecutive prefix, even when workers finish out of order.
@@ -203,7 +206,9 @@ final class E2AutoSync {
       while (!stopped.getAsBoolean()) {
         // A slow connection or catalog read still leaves one candidate to try.
         while (next < photos.size() && inOrder.size() < TRANSFERS
-            && !stopped.getAsBoolean() && (next == start || mayAdmit.getAsBoolean())) {
+            && !stopped.getAsBoolean() && (next == start || mayAdmit.getAsBoolean())
+            && (inOrder.isEmpty() || canStageTogether(usableSpace.getAsLong(),
+                photos.get(batch.processed()).photo().size, photos.get(next).photo().size))) {
           Candidate photo = photos.get(next++);
           inOrder.addLast(transfers.submit(() -> transfer.apply(photo)));
         }
@@ -225,6 +230,13 @@ final class E2AutoSync {
     } finally {
       stopTransfers(transfers);
     }
+  }
+
+  private static boolean canStageTogether(long usable, long first, long second) {
+    // Counting the whole first file even if already staged is conservative. Wait for its cleanup
+    // when the available space cannot cover both, so each can still run by itself.
+    return first > 0 && second > 0 && first <= E2Archive.ORIGINAL_LIMIT
+        && second <= E2Archive.ORIGINAL_LIMIT && E2Archive.hasTemporarySpace(usable, first + second);
   }
 
   static String batchIdentity(String bucket, List<Candidate> photos) throws Exception {
