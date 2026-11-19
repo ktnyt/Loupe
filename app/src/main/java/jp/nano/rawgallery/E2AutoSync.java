@@ -48,6 +48,7 @@ final class E2AutoSync {
   static final class Batch {
     final String identity;
     int ready, failed;
+    int reportedReady, reportedFailed;
     String fallbackIdentity = "";
 
     Batch(SharedPreferences preferences, String identity, int total) {
@@ -56,8 +57,8 @@ final class E2AutoSync {
       int savedReady = preferences.getInt("batchReady", 0);
       int savedFailed = preferences.getInt("batchFailed", 0);
       if (savedReady < 0 || savedFailed < 0 || (long) savedReady + savedFailed >= total) return;
-      ready = savedReady;
-      failed = savedFailed;
+      ready = reportedReady = savedReady;
+      failed = reportedFailed = savedFailed;
     }
 
     int processed() { return ready + failed; }
@@ -80,8 +81,8 @@ final class E2AutoSync {
         extendFallback(hash);
       }
       if (!fallbackIdentity.equals(preferences.getString("batchFallbackIdentity", ""))) {
-        ready = 0;
-        failed = 0;
+        ready = reportedReady = 0;
+        failed = reportedFailed = 0;
         fallbackIdentity = "";
       }
     }
@@ -259,7 +260,8 @@ final class E2AutoSync {
     } catch (Exception e) {
       publish(preferences, stopped.getAsBoolean() || Thread.currentThread().isInterrupted()
           ? JobState.Kind.PAUSED : failureKind(batch),
-          batch == null ? 0 : batch.ready, total, batch == null ? 0 : batch.failed, batch != null);
+          batch == null ? 0 : batch.reportedReady, total,
+          batch == null ? 0 : batch.reportedFailed, batch != null);
       return null;
     } finally {
       currentRate = null;
@@ -267,7 +269,7 @@ final class E2AutoSync {
   }
 
   private static JobState.Kind failureKind(Batch batch) {
-    return batch != null && batch.ready > 0 ? JobState.Kind.PARTIAL : JobState.Kind.FAILED;
+    return batch != null && batch.reportedReady > 0 ? JobState.Kind.PARTIAL : JobState.Kind.FAILED;
   }
 
   static void transferBatch(SharedPreferences preferences, List<Candidate> photos, Batch batch,
@@ -280,8 +282,6 @@ final class E2AutoSync {
     Map<Integer, Transfer> completed = new HashMap<>();
     int start = batch.processed();
     int next = start;
-    int ready = batch.ready;
-    int failed = batch.failed;
     try {
       while (!stopped.getAsBoolean()) {
         // An expired startup budget still allows the first candidate. When refilling the second
@@ -302,8 +302,8 @@ final class E2AutoSync {
         Transfer outcome = finished.get();
         if (outcome.ready() && photos.get(index).generation() <= 0 && outcome.fallbackHash() == null)
           outcome = new Transfer(false, null);
-        if (outcome.ready()) ready++;
-        else failed++;
+        if (outcome.ready()) batch.reportedReady++;
+        else batch.reportedFailed++;
         completed.put(index, outcome);
         // Actual completions free slots immediately. Only the uninterrupted prefix can advance the
         // durable checkpoint, which also hashes fallback identities in candidate order.
@@ -313,7 +313,8 @@ final class E2AutoSync {
           if (prefix.ready()) batch.ready++;
           else batch.failed++;
         }
-        publish(preferences, JobState.Kind.RUNNING, ready, photos.size(), failed, true);
+        publish(preferences, JobState.Kind.RUNNING, batch.reportedReady, photos.size(),
+            batch.reportedFailed, true);
       }
     } finally {
       stopTransfers(transfers);

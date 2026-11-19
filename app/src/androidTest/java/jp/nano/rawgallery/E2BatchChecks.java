@@ -195,6 +195,8 @@ final class E2BatchChecks {
         });
     check(stopped.get() && interrupted.processed() == 0,
         "Interrupting after a refill must not checkpoint past the pending first candidate");
+    check(interrupted.reportedReady == 1 && interrupted.reportedFailed == 0,
+        "The completed second transfer must still be reportable at interruption");
     SharedPreferences.Editor interruptedCheckpoint = preferences.edit();
     interrupted.save(interruptedCheckpoint);
     check(interruptedCheckpoint.commit(), "Could not persist the interrupted checkpoint");
