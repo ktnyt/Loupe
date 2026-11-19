@@ -176,7 +176,7 @@ public final class SyncActivity extends DiagnosticActivity {
     verificationStatus=new StatusView(this);
     Button verify=new SyncSettingsUi.ActionButton(this,"確認する",()->startActivity(new Intent(this,CloudActivity.class).putExtra("verify-on-open",true)));
     SyncSettingsUi.verification(this,root,verificationStatus,verify);
-    Button e2 = new SyncSettingsUi.ActionButton(this, "IDrive e2 バックアップ",
+    Button e2 = new SyncSettingsUi.ActionButton(this, "IDrive e2 · 同期の状況",
         () -> startActivity(new Intent(this, E2SyncActivity.class)));
     LinearLayout.LayoutParams e2Params = new LinearLayout.LayoutParams(-1, -2);
     e2Params.setMargins(GalleryUi.dp(this,16),0,GalleryUi.dp(this,16),GalleryUi.dp(this,24));

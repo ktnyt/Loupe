@@ -256,6 +256,10 @@ public final class ArchiveInstrumentation extends Instrumentation {
         results.putString("stream", E2MixedMediaChecks.run(this, e2MixedMediaOperation, e2MixedMediaToken));
         finish(-1, results); return;
       }
+      if ("e2-transfer-dashboard".equals(cameraPilotArguments.getString("mode"))) {
+        results.putString("stream", E2TransferDashboardChecks.run(this));
+        finish(-1, results); return;
+      }
       if (e2BatchTest) {
         results.putString("stream", E2BatchChecks.run(context));
         finish(-1, results); return;

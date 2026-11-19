@@ -47,7 +47,12 @@ final class OriginalCache {
       if (E2Cleanup.archived(p.uri)) {
         E2Settings settings = new E2Settings(c);
         try (ArchiveStore archive = settings.records) {
-          settings.archive(record.getString("bucket")).restoreRecord(record, partial);
+          String bucket = record.getString("bucket");
+          try (E2TransferStatus transfer = E2TransferStatus.begin(
+              E2TransferStatus.Kind.ORIGINAL_DOWNLOAD, bucket, record.getLong("size"))) {
+            settings.archive(bucket).restoreRecord(record, partial, transfer);
+            transfer.complete(-1);
+          }
         }
       } else if (record != null) {
         String cookies =

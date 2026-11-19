@@ -193,13 +193,17 @@ final class E2Photos implements AutoCloseable {
   }
 
   File downloadRecord(JSONObject record) throws Exception {
+    return downloadRecord(record, null);
+  }
+
+  File downloadRecord(JSONObject record, E2TransferStatus observation) throws Exception {
     if (record == null) throw new IOException("原本の保管記録が見つかりません");
     File cache = context.getCacheDir();
     discardInterruptedStaging(cache, System.currentTimeMillis());
     File directory = Files.createTempDirectory(cache.toPath(), "e2-export-").toFile();
     File verified = new File(directory, "original");
     try {
-      settings.archive(record.getString("bucket")).restoreRecord(record, verified);
+      settings.archive(record.getString("bucket")).restoreRecord(record, verified, observation);
       return verified;
     } catch (Exception e) {
       discard(verified);

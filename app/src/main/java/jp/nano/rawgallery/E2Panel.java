@@ -37,7 +37,8 @@ final class E2Panel {
   private final EditText bucket, access, secret;
   private final TextInputLayout searchBox;
   private final TextInputEditText searchInput;
-  private final TextView status, autoStatus, catalogStatus, cleanupStatus, searchCount;
+  private final TextView status, catalogStatus, cleanupStatus, searchCount, transferBucket, uploadCounts;
+  private final TransferRow backup, manualUpload, catalogDownload, originalDownload;
   private final Button connect, save, cancel, autoToggle, catalogLoad, catalogSave, cleanupToggle;
   private final Handler main = new Handler(Looper.getMainLooper());
   private final ExecutorService worker = new DiagnosticExecutor("E2Panel.worker", 1);
@@ -59,6 +60,26 @@ final class E2Panel {
     this.activity = activity;
     this.scroll = scroll;
     photos = new E2Photos(activity);
+    LinearLayout dashboard = column();
+    dashboard.setPadding(dp(16), dp(16), dp(16), dp(16));
+    background(dashboard, 0xff19191b, 16);
+    LinearLayout.LayoutParams dashboardSize = new LinearLayout.LayoutParams(-1, -2);
+    dashboardSize.setMargins(dp(16), dp(12), dp(16), 0);
+    root.addView(dashboard, dashboardSize);
+    TextView dashboardTitle = text("クラウド同期の状況", 20);
+    dashboardTitle.setTypeface(null, Typeface.BOLD);
+    dashboardTitle.setAccessibilityHeading(true);
+    dashboard.addView(dashboardTitle);
+    transferBucket = text("", 14);
+    add(dashboard, transferBucket);
+    addHeading(dashboard, "アップロード");
+    backup = new TransferRow(dashboard, "自動バックアップ");
+    uploadCounts = text("", 14);
+    add(backup.container, uploadCounts);
+    manualUpload = new TransferRow(dashboard, "手動保存");
+    addHeading(dashboard, "ダウンロード");
+    catalogDownload = new TransferRow(dashboard, "復元一覧");
+    originalDownload = new TransferRow(dashboard, "原本");
     card = column();
     card.setPadding(dp(16), dp(16), dp(16), dp(16));
     background(card, 0xff19191b, 16);
@@ -87,8 +108,6 @@ final class E2Panel {
     autoTitle.setAccessibilityHeading(true);
     add(card, autoTitle);
     add(card, text("従量制でない回線でRAW・JPEG・動画の原本を保存します。", 14));
-    autoStatus = text("", 14);
-    add(card, autoStatus);
     autoToggle = button(card, "開始", 48, this::toggleAuto);
     cleanupStatus = text("", 14);
     cleanupStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
@@ -180,7 +199,7 @@ final class E2Panel {
       reason = "写真・動画のバックアップ範囲の確認が必要です。一時停止してから再開してください";
     if (!enabled && catalogPending && reason.isEmpty())
       reason = "復元一覧の更新が必要な場合があります。「復元一覧をクラウドに保存」で更新できます";
-    autoStatus.setText(E2SyncJob.describe(enabled, state) + (reason.isEmpty() ? "" : "\n" + reason));
+    refreshTransfers(enabled, state, reason);
     autoToggle.setText(enabled ? "一時停止" : state.updatedAt == 0 ? "開始" : "再開");
     autoToggle.setEnabled(!busy && (enabled || activeBucket != null));
     connect.setEnabled(!busy && !enabled && !E2SyncJob.running());
@@ -233,6 +252,123 @@ final class E2Panel {
       message("容量整理の設定を保存できません。保存先や権限を確認してください", 0xffffb4a8);
     }
     refreshAuto();
+  }
+
+  private void refreshTransfers(boolean enabled, JobState state, String reason) {
+    String target = E2Settings.configuredBucket(activity);
+    android.content.SharedPreferences preferences = E2AutoSync.state(activity);
+    boolean current = enabled && !target.isEmpty()
+        && target.equals(preferences.getString("destination", ""));
+    boolean publishing = current && state.kind == JobState.Kind.RUNNING
+        && preferences.getBoolean("publishingCatalog", false);
+    boolean scopedCounts = current && state.countsKnown;
+    boolean known = scopedCounts && state.kind != JobState.Kind.UNKNOWN;
+    boolean previous = !known && (scopedCounts || (!target.isEmpty()
+        && target.equals(preferences.getString("lastCountBucket", ""))));
+    int ready = scopedCounts ? state.ready : preferences.getInt("lastReady", 0);
+    int total = scopedCounts ? state.total : preferences.getInt("lastTotal", 0);
+    int failed = scopedCounts ? state.failed : preferences.getInt("lastFailed", 0);
+    String backupState = publishing ? "復元一覧に反映中"
+        : !current ? (previous ? "一時停止中" : "未開始")
+        : switch (state.kind) {
+          case RUNNING -> known ? "アップロード中" : "対象を確認中";
+          case COMPLETE -> "完了";
+          case PARTIAL -> "一部失敗";
+          case FAILED -> "失敗";
+          case AUTH_REQUIRED -> "設定の確認が必要";
+          default -> "待機中";
+        };
+    updateText(transferBucket, target.isEmpty() ? "IDrive e2 未接続" : "IDrive e2 · " + target);
+    backup.render(backupState, current && state.kind == JobState.Kind.RUNNING
+        && (!known || publishing || total == 0 || ready == total), known ? ready : 0,
+        known && !publishing ? total : 0);
+    String counts = "";
+    if (known || previous) {
+      counts = (previous ? "前回の計測 · " : "") + "確認済み "
+          + number(ready) + " / " + number(total)
+          + "件\n残り " + number(Math.max(0, total - ready - failed))
+          + "件 · 失敗 " + number(failed) + "件";
+    }
+    if (!reason.isEmpty()) counts = counts.isEmpty() ? reason : counts + "\n" + reason;
+    updateText(uploadCounts, counts);
+    uploadCounts.setVisibility(counts.isEmpty() ? View.GONE : View.VISIBLE);
+
+    showTransfer(manualUpload, E2TransferStatus.Kind.MANUAL_UPLOAD, target, "保存中", "保存済み");
+    showTransfer(catalogDownload, E2TransferStatus.Kind.CATALOG_DOWNLOAD, target, "取得中", "取得済み");
+    showTransfer(originalDownload, E2TransferStatus.Kind.ORIGINAL_DOWNLOAD, target, "取得中", "取得済み");
+  }
+
+  private void showTransfer(TransferRow row, E2TransferStatus.Kind kind, String target,
+      String running, String completed) {
+    E2TransferStatus.Snapshot item = E2TransferStatus.snapshot(kind, target);
+    if (item == null) {
+      row.render("未実行", false, 0, 0);
+      return;
+    }
+    long total = item.totalBytes();
+    long bytes = item.bytes();
+    boolean active = item.state() == E2TransferStatus.State.RUNNING;
+    boolean verifying = active && total > 0 && bytes == total;
+    String label = switch (item.state()) {
+      case RUNNING -> verifying ? "照合中" : running;
+      case COMPLETE -> item.count() == 0 ? "クラウドに一覧なし"
+          : item.count() > 0 ? completed + " · " + number(item.count()) + "件" : completed;
+      case FAILED -> "失敗";
+      case CANCELLED -> "中止";
+    };
+    if (active && total > 0) {
+      label += " · " + android.text.format.Formatter.formatShortFileSize(activity, bytes)
+          + " / " + android.text.format.Formatter.formatShortFileSize(activity, total);
+    }
+    row.render(label, active && (total <= 0 || verifying), bytes,
+        active && !verifying ? total : 0);
+  }
+
+  private String number(int value) {
+    return java.text.NumberFormat.getIntegerInstance(
+        activity.getResources().getConfiguration().getLocales().get(0)).format(value);
+  }
+
+  private void addHeading(LinearLayout parent, String label) {
+    TextView heading = text(label, 16);
+    heading.setTypeface(null, Typeface.BOLD);
+    heading.setAccessibilityHeading(true);
+    add(parent, heading);
+  }
+
+  private final class TransferRow {
+    final LinearLayout container;
+    final String name;
+    final TextView label;
+    final com.google.android.material.progressindicator.LinearProgressIndicator indicator;
+
+    TransferRow(LinearLayout parent, String name) {
+      this.name = name;
+      container = column();
+      add(parent, container);
+      label = text("", 14);
+      container.addView(label);
+      indicator = new com.google.android.material.progressindicator.LinearProgressIndicator(activity);
+      indicator.setMax(1000);
+      indicator.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+      indicator.setVisibility(View.GONE);
+      add(container, indicator);
+    }
+
+    void render(String state, boolean indeterminate, long progress, long total) {
+      updateText(label, name + " · " + state);
+      boolean visible = indeterminate || total > 0;
+      if (indicator.isIndeterminate() != indeterminate) {
+        indicator.setVisibility(View.GONE);
+        indicator.setIndeterminate(indeterminate);
+      }
+      if (!indeterminate && total > 0) indicator.setProgress((int) (1000.0 * progress / total));
+      indicator.setVisibility(visible ? View.VISIBLE : View.GONE);
+    }
+  }
+
+  private static void updateText(TextView view, String value) {
+    if (!value.contentEquals(view.getText())) view.setText(value);
   }
 
   private void toggleAuto() {
@@ -333,7 +469,8 @@ final class E2Panel {
           .setNegativeButton("キャンセル", null)
           .setPositiveButton("保存", (dialog, which) -> {
             long started = SystemClock.elapsedRealtime();
-            run("原本を保存しています", () -> {
+            runTransfer("原本を保存しています", E2TransferStatus.Kind.MANUAL_UPLOAD, target,
+                -1, transfer -> {
               long put = photos.save(uri, name, target);
               boolean catalogSaved;
               try {
@@ -344,6 +481,7 @@ final class E2Panel {
               }
               refresh();
               boolean recovered = catalogSaved;
+              if (recovered && !cancelled) transfer.complete(-1);
               post(() -> {
                 message(recovered ? "原本と復元一覧を保存しました"
                     : "原本は保存しました。復元一覧を保存できませんでした。「復元一覧をクラウドに保存」で再試行してください",
@@ -419,14 +557,16 @@ final class E2Panel {
 
   private void restore(JSONObject record) {
     long started = SystemClock.elapsedRealtime();
-    run("原本を確認しています", () -> {
+    runTransfer("原本を取得しています", E2TransferStatus.Kind.ORIGINAL_DOWNLOAD,
+        record.optString("bucket"), record.optLong("size", -1), transfer -> {
       long size = record.getLong("size");
       String sha = record.getString("sha");
-      File file = photos.downloadRecord(record);
+      File file = photos.downloadRecord(record, transfer);
       E2Photos.PreparedRestore prepared;
       try {
         prepared = new E2Photos.PreparedRestore(file, size, sha);
         E2Photos.holdForPicker(file);
+        if (!cancelled) transfer.complete(-1);
       } catch (java.io.IOException | IllegalArgumentException failure) {
         E2Photos.discard(file);
         throw failure;
@@ -461,10 +601,12 @@ final class E2Panel {
   private void transferCatalog(String bucket, boolean save) {
     String progress = save ? "復元一覧を保存しています" : "復元一覧を取得しています";
     showCatalogStatus(progress);
-    run(progress, () -> {
+    runTransfer(progress, save ? E2TransferStatus.Kind.MANUAL_UPLOAD
+        : E2TransferStatus.Kind.CATALOG_DOWNLOAD, bucket, -1, transfer -> {
       try {
         E2RecoveryCatalog.Snapshot result = save
             ? photos.publishCatalog(bucket) : photos.loadCatalog(bucket);
+        if (!cancelled) transfer.complete(save ? -1 : result == null ? 0 : result.records().size());
         if (result != null) refresh();
         post(() -> {
           String outcome = "クラウドに復元一覧がありません";
@@ -622,6 +764,21 @@ final class E2Panel {
   }
 
   private interface Task { void run() throws Exception; }
+
+  private interface ObservedTask { void run(E2TransferStatus transfer) throws Exception; }
+
+  private void runTransfer(String label, E2TransferStatus.Kind kind, String target, long totalBytes,
+      ObservedTask task) {
+    run(label, () -> {
+      try (E2TransferStatus transfer = E2TransferStatus.begin(kind, target, totalBytes)) {
+        try {
+          task.run(transfer);
+        } finally {
+          if (cancelled) transfer.cancel();
+        }
+      }
+    });
+  }
 
   private void run(String label, Task task) {
     if (busy) return;

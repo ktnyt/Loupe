@@ -100,7 +100,7 @@ public final class E2SyncJob extends JobService {
       return;
     }
     JobState.write(E2AutoSync.state(context).edit(), "", JobState.Kind.WAITING,
-        System.currentTimeMillis()).apply();
+        System.currentTimeMillis()).putBoolean("CountsKnown", false).apply();
     ComponentName service = new ComponentName(context, E2SyncJob.class);
     int periodic = scheduler.schedule(job(PERIODIC, service).setPersisted(true)
         .setPeriodic(15 * 60 * 1000L).build());
