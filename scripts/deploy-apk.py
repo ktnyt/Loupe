@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 import xml.etree.ElementTree as ET
 import zipfile
 
+import ci_gradle
+
 PACKAGE = 'jp.nano.rawgallery'
 ANDROID = '{http://schemas.android.com/apk/res/android}'
 REQUIRED = {'library', 'video', 'nano-banana', 'camera-import'}
@@ -226,8 +228,13 @@ def prepare(args):
             save(assets / 'loupe-deployment.json', provenance)
             init = Path(temp) / 'deployment.init.gradle'
             init.write_text('allprojects { p -> p.plugins.withId("com.android.application") { p.android.sourceSets.main.assets.srcDir(' + json.dumps(str(assets)) + ') } }\n')
-            subprocess.run(['./gradlew', '-I', str(init), ':app:assembleDebug', '--console=plain'], cwd=checkout,
-                           env=env, check=True)
+            command = ['./gradlew', '-I', str(init), ':app:assembleDebug', '--console=plain']
+            if env.get('GITHUB_ACTIONS') == 'true':
+                status = ci_gradle.run(command, cwd=checkout, env=env)
+                if status:
+                    raise subprocess.CalledProcessError(status, command)
+            else:
+                subprocess.run(command, cwd=checkout, env=env, check=True)
             apk = checkout / 'app/build/outputs/apk/debug/app-debug.apk'
             info = apk_info(apk, args.sdk)
             check_features(info)
