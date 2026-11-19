@@ -185,11 +185,11 @@ final class E2BatchChecks {
         () -> permits.getAndDecrement() > 0, ENOUGH_SPACE, candidate -> {
           if (candidate.equals(first)) {
             await(thirdStartedBeforeStop);
-            stopped.set(true);
             return new E2AutoSync.Transfer(true, firstHash);
           }
           if (candidate.equals(second)) return new E2AutoSync.Transfer(true, secondHash);
           check(candidate.equals(third), "The deadline must leave the fourth candidate for another batch");
+          stopped.set(true);
           thirdStartedBeforeStop.countDown();
           return new E2AutoSync.Transfer(true, thirdHash);
         });
