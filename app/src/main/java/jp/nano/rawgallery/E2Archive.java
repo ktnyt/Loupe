@@ -210,7 +210,7 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
     long size = record.getLong("size");
     checkSize(size);
     get(path(record.getString("key"), sha), checkedVersion(record.getString("version")),
-        size, sha, null, null);
+        size, sha, null);
   }
 
   record CatalogObject(byte[] body, String version, String etag) {}

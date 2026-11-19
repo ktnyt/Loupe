@@ -18,8 +18,10 @@ final class E2TransferStatus implements AutoCloseable {
   private volatile long bytes;
   private State state = State.RUNNING;
   private int count = -1;
+  private boolean publishing, originalSaved;
 
-  record Snapshot(State state, long bytes, long totalBytes, int count) {}
+  record Snapshot(State state, long bytes, long totalBytes, int count,
+      boolean publishing, boolean originalSaved) {}
 
   private E2TransferStatus(Kind kind, String bucket, long totalBytes) {
     this.kind = kind;
@@ -42,11 +44,22 @@ final class E2TransferStatus implements AutoCloseable {
   }
 
   private Snapshot snapshot() {
-    return new Snapshot(state, bytes, totalBytes, count);
+    return new Snapshot(state, bytes, totalBytes, count, publishing, originalSaved);
   }
 
   void bytesRead(long value) {
     bytes = value;
+  }
+
+  void publishing(boolean savedOriginal) {
+    synchronized (E2TransferStatus.class) {
+      publishing = true;
+      originalSaved = savedOriginal;
+    }
+  }
+
+  void fail() {
+    finish(State.FAILED, -1);
   }
 
   void complete(int resultCount) {

@@ -45,23 +45,6 @@ public final class E2SyncJob extends JobService {
     return E2AutoSync.snapshot(context, RUNNING.get());
   }
 
-  static String describe(boolean enabled, JobState state) {
-    String label;
-    if (!enabled) label = state.updatedAt == 0 ? "未開始" : "一時停止中";
-    else label = switch (state.kind) {
-      case RUNNING -> "処理中";
-      case COMPLETE -> "完了";
-      case PARTIAL -> "一部失敗";
-      case FAILED -> "失敗";
-      case AUTH_REQUIRED -> "接続の確認が必要";
-      default -> "待機中";
-    };
-    if (!state.countsKnown) return label;
-    int waiting = Math.max(0, state.total - state.ready - state.failed);
-    return label + " · 確認済み " + state.ready + " / " + state.total
-        + "枚 · 待ち " + waiting + "枚 · 失敗 " + state.failed + "枚";
-  }
-
   static void setEnabled(Context context, boolean enabled) {
     setEnabled(context, enabled, null);
   }
@@ -85,10 +68,12 @@ public final class E2SyncJob extends JobService {
     if (enabled && (bucket == null || !bucket.equals(E2Settings.configuredBucket(context))))
       throw new IllegalStateException("保存先が変わりました。設定を開き直してください");
     JobScheduler scheduler = context.getSystemService(JobScheduler.class);
-    android.content.SharedPreferences.Editor setting =
-        E2AutoSync.state(context).edit().putBoolean("enabled", enabled)
-            .putString("destination", enabled ? bucket : "");
+    android.content.SharedPreferences state = E2AutoSync.state(context);
+    String observed = enabled ? bucket : state.getString("destination", "");
+    android.content.SharedPreferences.Editor setting = state.edit().putBoolean("enabled", enabled)
+        .putString("destination", enabled ? bucket : "");
     E2AutoSync.clearBatch(setting);
+    if (!observed.isEmpty()) setting.putString("observationBucket", observed);
     if (enabled) setting.putInt("fullMediaConsent", MEDIA_CONSENT_VERSION);
     else setting.remove("cleanupBucket").remove("cleanupDays").remove("fullMediaConsent");
     if (!setting.commit())

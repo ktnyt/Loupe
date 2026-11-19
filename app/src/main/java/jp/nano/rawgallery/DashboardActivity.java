@@ -72,13 +72,11 @@ public final class DashboardActivity extends DiagnosticActivity {
     heading.setText(detail<0?"処理の状況":NAMES[detail]);
     if(detail<0){
       label("表示の準備",4);job();condition();card(0);card(1);label("タグ",16);card(2);card(3);
-      if (E2SyncJob.enabled(this) || E2SyncJob.snapshot(this).updatedAt != 0) {
+      if (!E2Settings.configuredBucket(this).isEmpty()) {
         label("クラウド",16);
-        Button e2 = new SyncSettingsUi.ActionButton(this, "", () -> startActivity(
-            new android.content.Intent(this, E2SyncActivity.class)));
+        Button e2 = new SyncSettingsUi.ActionButton(this, E2Panel.DASHBOARD_TITLE, () ->
+            startActivity(new android.content.Intent(this, E2SyncActivity.class)));
         margin(e2,16,0,16,8);
-        bindings.add(() -> e2.setText("IDrive e2："
-            + E2SyncJob.describe(E2SyncJob.enabled(this), E2SyncJob.snapshot(this))));
       }
     }else{
       LinearLayout panel=row();panel.setPadding(dp(14),dp(12),dp(14),dp(12));panel.setMinimumHeight(dp(56));panel.setBackground(GalleryUi.shape(this,GalleryUi.PANEL,14));

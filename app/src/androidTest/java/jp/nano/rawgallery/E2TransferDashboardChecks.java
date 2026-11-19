@@ -23,7 +23,7 @@ final class E2TransferDashboardChecks {
       throw new AssertionError("Use a fresh Android test profile without a cloud configuration");
     String bucket = "loupe-test";
     connection.edit().putString("bucket", bucket).commit();
-    upload.edit().putBoolean("enabled", true).putString("destination", bucket).commit();
+    upload.edit().putString("observationBucket", bucket).commit();
     record(upload, JobState.Kind.WAITING, false);
     var field = E2SyncJob.class.getDeclaredField("RUNNING");
     field.setAccessible(true);
@@ -35,6 +35,8 @@ final class E2TransferDashboardChecks {
       requireText(test, activity, "クラウド同期の状況", true);
       requireText(test, activity, "アップロード", true);
       requireText(test, activity, "ダウンロード", true);
+      requireText(test, activity, "自動バックアップ · 一時停止中", false);
+      upload.edit().putBoolean("enabled", true).putString("destination", bucket).commit();
       requireText(test, activity, "自動バックアップ · 待機中", false);
       requireText(test, activity, "復元一覧 · 未実行", false);
       requireText(test, activity, "原本 · 未実行", false);
@@ -74,8 +76,18 @@ final class E2TransferDashboardChecks {
       requireText(test, activity, "自動バックアップ · 対象を確認中", false);
       requireText(test, activity, "前回の計測 · 確認済み 1,124 / 7,021件", false);
       worker.set(false);
+      record(upload, JobState.Kind.PAUSED, false);
+      requireText(test, activity, "自動バックアップ · 中断 · 再開待ち", false);
       record(upload, JobState.Kind.COMPLETE, true);
       requireText(test, activity, "自動バックアップ · 完了", false);
+      requireText(test, activity, "確認済み 7,021 / 7,021件", false);
+      try (E2TransferStatus manual = E2TransferStatus.begin(
+          E2TransferStatus.Kind.MANUAL_UPLOAD, bucket, -1)) {
+        manual.publishing(true);
+        requireText(test, activity, "手動保存 · 原本保存済み · 復元一覧に反映中", false);
+        manual.fail();
+      }
+      requireText(test, activity, "手動保存 · 原本保存済み · 復元一覧の反映に失敗", false);
 
       connection.edit().putString("bucket", "another-test-bucket").commit();
       requireText(test, activity, "IDrive e2 · another-test-bucket", false);
@@ -95,8 +107,8 @@ final class E2TransferDashboardChecks {
 
   private static void record(SharedPreferences upload, JobState.Kind kind, boolean known) {
     JobState.write(upload.edit(), "", kind, System.currentTimeMillis())
-        .putBoolean("CountsKnown", known).putInt("ready", 1124).putInt("total", 7021)
-        .putInt("failed", 2).commit();
+        .putBoolean("CountsKnown", known).putInt("ready", kind == JobState.Kind.COMPLETE ? 7021 : 1124)
+        .putInt("total", 7021).putInt("failed", kind == JobState.Kind.COMPLETE ? 0 : 2).commit();
   }
 
   private static void capture(Context context, Instrumentation test) throws Exception {

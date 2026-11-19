@@ -43,16 +43,14 @@ final class OriginalCache {
     if (!supportsSize(p.size)) throw new IOException("原本の一時保存上限は512 MiBです");
     trim(dir, null, p.size);
     File partial = new File(dir, key + ".part");
-    try {
-      if (E2Cleanup.archived(p.uri)) {
+    E2TransferStatus transfer = E2Cleanup.archived(p.uri)
+        ? E2TransferStatus.begin(E2TransferStatus.Kind.ORIGINAL_DOWNLOAD,
+            record.getString("bucket"), record.getLong("size")) : null;
+    try (transfer) {
+      if (transfer != null) {
         E2Settings settings = new E2Settings(c);
         try (ArchiveStore archive = settings.records) {
-          String bucket = record.getString("bucket");
-          try (E2TransferStatus transfer = E2TransferStatus.begin(
-              E2TransferStatus.Kind.ORIGINAL_DOWNLOAD, bucket, record.getLong("size"))) {
-            settings.archive(bucket).restoreRecord(record, partial, transfer);
-            transfer.complete(-1);
-          }
+          settings.archive(transfer.bucket).restoreRecord(record, partial, transfer);
         }
       } else if (record != null) {
         String cookies =
@@ -82,6 +80,7 @@ final class OriginalCache {
           target.toPath(),
           StandardCopyOption.REPLACE_EXISTING,
           StandardCopyOption.ATOMIC_MOVE);
+      if (transfer != null) transfer.complete(-1);
       return local(p, target);
     } finally {
       partial.delete();
