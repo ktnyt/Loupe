@@ -148,6 +148,7 @@ final class E2CatalogChecks {
     long loadMemory;
     long afterCorruptTailCheck;
     long afterReopen;
+    long filenameSearchMs;
     String tail = partKey(published, published.partVersions().size() - 1);
     try {
       try (E2RecoveryCatalog receiver = new E2RecoveryCatalog(context, database)) {
@@ -168,7 +169,8 @@ final class E2CatalogChecks {
         check(cached != null && cached.records().size() == count,
             "Scale cache reopen count mismatch");
         JSONObject first = cached.records().get(String.format(Locale.ROOT, "%032x", 0));
-        JSONObject last = cached.records().get(String.format(Locale.ROOT, "%032x", count - 1));
+        String lastKey = String.format(Locale.ROOT, "%032x", count - 1);
+        JSONObject last = cached.records().get(lastKey);
         JSONObject lastVideo = cached.records().get(String.format(Locale.ROOT, "%032x", count - 2));
         check(first != null && "scale-0.ORF".equals(first.getString("name"))
             && "image/x-olympus-orf".equals(first.getString("mime")),
@@ -179,12 +181,24 @@ final class E2CatalogChecks {
         check(lastVideo != null && "video/mp4".equals(lastVideo.getString("mime")),
             "Scale reopen lost video row");
         afterReopen = SystemClock.elapsedRealtime();
+
+        E2RecoveryCatalog.SavedRows order = cached.records().sorted();
+        long searchStart = SystemClock.elapsedRealtime();
+        E2RecoveryCatalog.SavedRows matches = order.matchingFilename("ＳＣＡＬＥ-７００００.orf");
+        filenameSearchMs = SystemClock.elapsedRealtime() - searchStart;
+        check(matches.size() == 1, "Scale filename search did not return exactly one row");
+        JSONObject match = matches.get(0);
+        check(lastKey.equals(match.getString("key"))
+            && "scale-version-70000".equals(match.getString("version"))
+            && "image/x-olympus-orf".equals(match.getString("mime")),
+            "Scale filename search did not preserve the last RAW row's restore identity");
       }
       long finishedMemory = usedMemory(runtime);
       return "PASS e2 catalog scale: " + count + " RAW/video rows, publish="
           + (afterPublish - start) + "ms, freshLoad=" + (afterFreshLoad - afterPublish)
           + "ms, corrupt-tail-check=" + (afterCorruptTailCheck - afterFreshLoad)
           + "ms, reopen=" + (afterReopen - reopenStart)
+          + "ms, filenameSearch=" + filenameSearchMs
           + "ms; used-heap samples before/publish/load/finish=" + beforeMemory + "/"
           + publishMemory + "/" + loadMemory + "/" + finishedMemory + " bytes";
     } finally {
