@@ -242,6 +242,16 @@ class MigrationTests(unittest.TestCase):
         self.publish(count=2)
         self.assertEqual(len(self.rows()), 2)
 
+    def test_existing_catalog_requires_utf8(self):
+        listed = next(iter(migration.migration_pages(self.storage)))[0]
+        row = migration.migration_row(self.storage, listed)
+        root = migration.envelope({'schema': 1, 'bucket': self.storage.bucket, 'created': 1,
+                                   'count': 1, 'photos': [row]})
+        self.client.insert(migration.LEGACY, root.decode().encode('utf-16'))
+        with self.assertRaisesRegex(migration.Invalid, 'Invalid catalog JSON'):
+            self.publish()
+        self.assertFalse(self.client.puts)
+
     def test_split_respects_rows_and_bytes(self):
         parts = migration.split([{'name': 'a.jpeg'}] * (migration.PART_ROWS + 1))
         self.assertEqual([count for _, count in parts], [migration.PART_ROWS, 1])

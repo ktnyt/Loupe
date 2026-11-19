@@ -56,7 +56,8 @@ def decode(data):
         raise Invalid('Invalid JSON number')
 
     try:
-        parsed = json.loads(data, object_pairs_hook=unique, parse_constant=invalid_constant)
+        parsed = json.loads(data.decode('utf-8'), object_pairs_hook=unique,
+                            parse_constant=invalid_constant)
         check_depth(parsed)
         return parsed
     except (ValueError, UnicodeError, RecursionError) as error:
@@ -320,9 +321,15 @@ def publish(storage, current, legacy, rows, parts, listing):
             verified = storage.read(key, PART_BYTES, existing.version)
         require(verified is not None and verified.data == body, 'Existing part does not match its content key')
         refs.append({'sha256': sha, 'version': verified.version, 'count': count})
-    latest = {item for page in migration_pages(storage) for item in page}
-    require(set(listing) <= latest, 'A verified migration record changed during preparation')
-    deferred = len(latest) - len(listing)
+    remaining, deferred = set(listing), 0
+    for page in migration_pages(storage):
+        for item in page:
+            if item in remaining:
+                remaining.remove(item)
+            else:
+                deferred += 1
+            require(len(listing) + deferred <= MAX_ROWS, 'Migration namespace exceeds the index limit')
+    require(not remaining, 'A verified migration record changed during preparation')
     if deferred:
         print(f'New records deferred to the next run: {deferred}', flush=True)
     require(storage.root(LEGACY) == legacy, 'Legacy catalog changed during preparation')
