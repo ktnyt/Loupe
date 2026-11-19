@@ -36,7 +36,10 @@ final class E2TransferDashboardChecks {
       requireText(test, activity, "アップロード", true);
       requireText(test, activity, "ダウンロード", true);
       requireText(test, activity, "自動バックアップ · 一時停止中", false);
-      upload.edit().putBoolean("enabled", true).putString("destination", bucket).commit();
+      var consent = E2SyncJob.class.getDeclaredField("MEDIA_CONSENT_VERSION");
+      consent.setAccessible(true);
+      upload.edit().putBoolean("enabled", true).putString("destination", bucket)
+          .putInt("fullMediaConsent", consent.getInt(null)).commit();
       requireText(test, activity, "自動バックアップ · 待機中", false);
       requireText(test, activity, "復元一覧 · 未実行", false);
       requireText(test, activity, "原本 · 未実行", false);
@@ -95,14 +98,48 @@ final class E2TransferDashboardChecks {
       requireText(test, activity, "原本 · 未実行", false);
       if (hasText(test, activity, "確認済み", false))
         throw new AssertionError("A different bucket must not display the earlier upload counts");
+      test.runOnMainSync(activity::finish);
+      activity = openFromProcessingDashboard(test, context);
+
       return "PASS e2 transfer dashboard: independent live directions, counters, bytes, checking, "
-          + "publication, completion, cancellation, failure, previous counts and bucket isolation.\n";
+          + "publication, completion, cancellation, failure, previous counts, bucket isolation "
+          + "and navigation from processing dashboard.\n";
     } finally {
       worker.set(false);
       if (activity != null) test.runOnMainSync(activity::finish);
       connection.edit().clear().commit();
       upload.edit().clear().commit();
     }
+  }
+
+  private static E2SyncActivity openFromProcessingDashboard(Instrumentation test, Context context) {
+    var dashboard = test.startActivitySync(new Intent(context, DashboardActivity.class)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    var monitor = test.addMonitor(E2SyncActivity.class.getName(), null, false);
+    try {
+      test.runOnMainSync(() -> {
+        if (!openDashboardLink(dashboard.getWindow().getDecorView()))
+          throw new AssertionError("Missing cloud dashboard link");
+      });
+      var destination = test.waitForMonitorWithTimeout(monitor, 5000);
+      if (!(destination instanceof E2SyncActivity e2))
+        throw new AssertionError("Link must open the dashboard");
+      requireText(test, e2, E2Panel.DASHBOARD_TITLE, true);
+      return e2;
+    } finally {
+      test.removeMonitor(monitor);
+      test.runOnMainSync(dashboard::finish);
+    }
+  }
+
+  private static boolean openDashboardLink(View view) {
+    if (view instanceof android.widget.Button button
+        && E2Panel.DASHBOARD_TITLE.contentEquals(button.getText())) return button.performClick();
+    if (view instanceof ViewGroup group) {
+      for (int i = 0; i < group.getChildCount(); i++)
+        if (openDashboardLink(group.getChildAt(i))) return true;
+    }
+    return false;
   }
 
   private static void record(SharedPreferences upload, JobState.Kind kind, boolean known) {
