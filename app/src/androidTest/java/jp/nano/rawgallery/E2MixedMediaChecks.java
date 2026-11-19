@@ -75,14 +75,7 @@ final class E2MixedMediaChecks {
           if (state.kind != JobState.Kind.COMPLETE || state.ready != samples.size() || state.failed != 0)
             throw new AssertionError("Expected all three originals and catalog published by JobScheduler");
           verify(photos, E2RecoveryCatalog.latest(photos.settings.archive(BUCKET), BUCKET), samples);
-          if (photos.catalogPending(BUCKET)) throw new AssertionError("Published originals remain pending");
-          JSONObject saved = photos.settings.records.all().get(0);
-          photos.settings.records.put(saved, "verified");
-          try (E2Photos reopened = new E2Photos(context)) {
-            if (!reopened.catalogPending(BUCKET)) throw new AssertionError("Lost pending state after reopen");
-            reopened.publishCatalog(BUCKET);
-            if (reopened.catalogPending(BUCKET)) throw new AssertionError("Retry did not acknowledge publication");
-          }
+          checkScheduledCatalog(photos, context);
           break;
         case "consent":
           showConsent(test, context, false);
@@ -103,6 +96,29 @@ final class E2MixedMediaChecks {
         shell(test, "svc data enable");
       }
       context.getSharedPreferences("e2_connection", Context.MODE_PRIVATE).edit().clear().commit();
+    }
+  }
+
+  private static void checkScheduledCatalog(E2Photos photos, Context context) throws Exception {
+    long revision = photos.settings.records.indexRevision();
+    if (E2AutoSync.needsCatalog(photos, BUCKET, false, null))
+      throw new AssertionError("Unchanged backup would read the catalog");
+    if (!E2AutoSync.needsCatalog(photos, BUCKET, true, null)
+        || !E2AutoSync.needsCatalog(photos, BUCKET, true, revision - 1)
+        || E2AutoSync.needsCatalog(photos, BUCKET, true, revision))
+      throw new AssertionError("Cleanup must obtain a catalog unless this run has a current snapshot");
+
+    JSONObject saved = photos.settings.records.all().stream()
+        .filter(row -> row.optString("name").endsWith(".jpg")).findFirst().orElseThrow();
+    // The index revision conservatively tracks cleanup-state changes as well as new receipts.
+    photos.settings.records.put(saved, E2Cleanup.RELEASING);
+    try (E2Photos reopened = new E2Photos(context)) {
+      if (!E2AutoSync.needsCatalog(reopened, BUCKET, false, null))
+        throw new AssertionError("Lost pending acknowledgement after reopen");
+      reopened.settings.records.put(saved, "verified");
+      reopened.publishCatalog(BUCKET);
+      if (E2AutoSync.needsCatalog(reopened, BUCKET, false, null))
+        throw new AssertionError("Acknowledged cleanup revision would read the catalog again");
     }
   }
 
