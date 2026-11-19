@@ -192,14 +192,37 @@ final class ArchiveStore extends SQLiteOpenHelper {
     new File(dir, key + ".jpg").delete();
   }
 
+  interface ReceiptVisitor {
+    boolean visit(JSONObject row) throws Exception;
+  }
+
+  /** Returns false when the visitor found what it needed and stopped the scan. */
+  boolean visitReceipts(ReceiptVisitor visitor) throws Exception {
+    return visitReceipts(null, null, visitor);
+  }
+
+  private boolean visitReceipts(String where, String[] args, ReceiptVisitor visitor) throws Exception {
+    try (Cursor c = getReadableDatabase()
+        .query("photos", new String[] {"state", "payload"}, where, args, null, null, null)) {
+      while (c.moveToNext())
+        if (!visitor.visit(new JSONObject(c.getString(1)).put("state", c.getString(0)))) return false;
+    }
+    return true;
+  }
+
   List<JSONObject> all() throws Exception {
     List<JSONObject> values = new ArrayList<>();
-    try (Cursor c =
-        getReadableDatabase()
-            .query("photos", new String[] {"state", "payload"}, null, null, null, null, null)) {
-      while (c.moveToNext())
-        values.add(new JSONObject(c.getString(1)).put("state", c.getString(0)));
-    }
+    visitReceipts(values::add);
+    return values;
+  }
+
+  List<JSONObject> inStates(String state, String... other) throws Exception {
+    List<JSONObject> values = new ArrayList<>();
+    String[] states = new String[other.length + 1];
+    states[0] = state;
+    System.arraycopy(other, 0, states, 1, other.length);
+    String place = String.join(",", Collections.nCopies(states.length, "?"));
+    visitReceipts("state IN (" + place + ")", states, values::add);
     return values;
   }
 
