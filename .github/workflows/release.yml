@@ -21,6 +21,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
       - name: Install pinned Android build tools
         run: |
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.0.12077973' 'cmake;3.22.1'
@@ -42,7 +43,7 @@ jobs:
           sh tests/camera-source.sh
           sh tests/ep7-wifi.sh
       - name: Android build and lint
-        run: ./gradlew :app:assembleDebug :app:lintDebug --console=plain
+        run: python3 scripts/ci_gradle.py :app:assembleDebug :app:lintDebug
       - name: exFAT parser regression
         run: python3 tests/camera-exfat.py
       - name: Inspect APK signature and required features
@@ -70,6 +71,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
       - name: Install pinned Android build tools
         run: |
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.0.12077973' 'cmake;3.22.1'
