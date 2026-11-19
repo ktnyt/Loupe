@@ -19,10 +19,12 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
@@ -273,34 +275,45 @@ final class E2AutoSync {
       Function<Candidate, Transfer> transfer) throws Exception {
     if (batch.processed() >= photos.size() || stopped.getAsBoolean()) return;
     DiagnosticExecutor transfers = new DiagnosticExecutor("E2AutoSync.transfer", TRANSFERS);
-    // The durable checkpoint counts a consecutive prefix, even when workers finish out of order.
-    ArrayDeque<Future<Transfer>> inOrder = new ArrayDeque<>(TRANSFERS);
+    ExecutorCompletionService<Transfer> completions = new ExecutorCompletionService<>(transfers);
+    Map<Future<Transfer>, Integer> inFlight = new HashMap<>();
+    Map<Integer, Transfer> completed = new HashMap<>();
     int start = batch.processed();
     int next = start;
+    int ready = batch.ready;
+    int failed = batch.failed;
     try {
       while (!stopped.getAsBoolean()) {
-        // A slow connection or catalog read still leaves one candidate to try.
-        while (next < photos.size() && inOrder.size() < TRANSFERS
+        // An expired startup budget still allows the first candidate. When refilling the second
+        // slot, size the staging check against the one transfer still in flight.
+        while (next < photos.size() && inFlight.size() < TRANSFERS
             && !stopped.getAsBoolean() && (next == start || mayAdmit.getAsBoolean())
-            && (inOrder.isEmpty() || canStageTogether(usableSpace.getAsLong(),
-                photos.get(batch.processed()).photo().size, photos.get(next).photo().size))) {
-          Candidate photo = photos.get(next++);
-          inOrder.addLast(transfers.submit(() -> transfer.apply(photo)));
+            && (inFlight.isEmpty() || canStageTogether(usableSpace.getAsLong(),
+                photos.get(inFlight.values().iterator().next()).photo().size,
+                photos.get(next).photo().size))) {
+          Candidate photo = photos.get(next);
+          inFlight.put(completions.submit(() -> transfer.apply(photo)), next++);
         }
-        if (inOrder.isEmpty()) break;
-        Transfer outcome;
-        try {
-          outcome = inOrder.getFirst().get(250, TimeUnit.MILLISECONDS);
-        } catch (TimeoutException stillRunning) {
-          continue;
-        }
+        if (inFlight.isEmpty()) break;
+        Future<Transfer> finished = completions.poll(250, TimeUnit.MILLISECONDS);
+        if (finished == null) continue;
         if (stopped.getAsBoolean()) break;
-        inOrder.removeFirst();
-        boolean usesFallback = photos.get(batch.processed()).generation() <= 0;
-        if (usesFallback) batch.extendFallback(outcome.fallbackHash());
-        if (outcome.ready() && (!usesFallback || outcome.fallbackHash() != null)) batch.ready++;
-        else batch.failed++;
-        publish(preferences, JobState.Kind.RUNNING, batch.ready, photos.size(), batch.failed, true);
+        int index = inFlight.remove(finished);
+        Transfer outcome = finished.get();
+        if (outcome.ready() && photos.get(index).generation() <= 0 && outcome.fallbackHash() == null)
+          outcome = new Transfer(false, null);
+        if (outcome.ready()) ready++;
+        else failed++;
+        completed.put(index, outcome);
+        // Actual completions free slots immediately. Only the uninterrupted prefix can advance the
+        // durable checkpoint, which also hashes fallback identities in candidate order.
+        for (Transfer prefix; (prefix = completed.remove(batch.processed())) != null; ) {
+          if (photos.get(batch.processed()).generation() <= 0)
+            batch.extendFallback(prefix.fallbackHash());
+          if (prefix.ready()) batch.ready++;
+          else batch.failed++;
+        }
+        publish(preferences, JobState.Kind.RUNNING, ready, photos.size(), failed, true);
       }
     } finally {
       stopTransfers(transfers);
