@@ -75,11 +75,17 @@ final class E2Cleanup {
             Long.toString(candidate.generation())));
         if (record == null || !"verified".equals(record.optString("state"))) continue;
         long date = SyncPolicy.retentionDate(p.taken, p.added, p.created, true);
-        if (SyncPolicy.eligible(date, now, retention, true, true, true)
-            && !recentlyRestored(c, record.getString("sha"), retention)
-            && bucket.equals(record.optString("bucket")) && p.uri.toString().equals(record.optString("uri")))
-          eligible.add(new Eligible(candidate, record));
+        if (!SyncPolicy.eligible(date, now, retention, true, true, true)
+            || !bucket.equals(record.optString("bucket")) || !p.uri.toString().equals(record.optString("uri"))
+            || recentlyRestored(c, record.getString("sha"), retention)) continue;
+        try {
+          E2AutoSync.requireCurrentRevision(c, candidate);
+        } catch (IOException changed) {
+          continue;
+        }
+        eligible.add(new Eligible(candidate, record));
       }
+      if (!canStart(c, bucket, stopped) || days(c) != retention) return null;
       if (eligible.isEmpty()) {
         updateStatus(c, "整理対象のJPEGはありません");
         return null;

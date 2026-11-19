@@ -18,6 +18,7 @@ import java.util.AbstractMap;
 import java.util.AbstractSet;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -141,6 +142,17 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
       List<Row> order = new ArrayList<>(rows.values());
       order.sort((a, b) -> a.name().compareToIgnoreCase(b.name()));
       return new SavedRows(bucket, order);
+    }
+
+    String fingerprint() throws Exception {
+      List<String> keys = new ArrayList<>(rows.keySet());
+      Collections.sort(keys);
+      MessageDigest digest = MessageDigest.getInstance("SHA-256");
+      for (String key : keys) {
+        digest.update(bytes(rows.get(key).json(bucket).toString()));
+        digest.update((byte) '\n');
+      }
+      return Base64.getEncoder().encodeToString(digest.digest());
     }
 
     void add(JSONObject input) throws Exception {
