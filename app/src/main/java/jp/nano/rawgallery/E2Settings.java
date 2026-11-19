@@ -46,6 +46,12 @@ final class E2Settings {
             == PackageManager.PERMISSION_GRANTED;
   }
 
+  static boolean hasMediaAccess(Context context) {
+    return hasPhotoAccess(context) && (Build.VERSION.SDK_INT < 33
+        || context.checkSelfPermission(android.Manifest.permission.READ_MEDIA_VIDEO)
+            == PackageManager.PERMISSION_GRANTED);
+  }
+
   static String imagePermission() {
     return Build.VERSION.SDK_INT >= 33 ? android.Manifest.permission.READ_MEDIA_IMAGES
         : android.Manifest.permission.READ_EXTERNAL_STORAGE;

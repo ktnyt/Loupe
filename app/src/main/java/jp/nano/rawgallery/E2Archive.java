@@ -18,6 +18,12 @@ import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import javax.net.ssl.HttpsURLConnection;
@@ -25,13 +31,22 @@ import org.json.JSONObject;
 import org.xmlpull.v1.XmlPullParser;
 
 /** Stores and restores checked originals in the Tokyo archive. The caller owns the archive DB. */
-final class E2Archive {
+final class E2Archive implements E2RecoveryCatalog.Storage {
   private static final String HOST = "s3.ap-northeast-1.idrivee2.com";
   private static final String SCOPE_SUFFIX = "/ap-northeast-1/s3/aws4_request";
   private static final String EMPTY_SHA =
       "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
   static final long LIMIT = 512L * 1024 * 1024;
-  private static final String CATALOG = "loupe/catalog/v1.json";
+  // IDrive e2 publishes a 50 TB size limit for a single PUT.
+  static final long ORIGINAL_LIMIT = 50_000_000_000_000L;
+  static final long STORAGE_RESERVE = 64L * 1024 * 1024;
+  private static final Object TEMPORARY_WRITE_LOCK = new Object();
+  private static final String PHOTO_PREFIX = "loupe/originals";
+  private static final ScheduledExecutorService TRANSFER_WATCHER = Executors.newSingleThreadScheduledExecutor(task -> {
+    Thread thread = new Thread(task, "E2Archive.transfer-watch");
+    thread.setDaemon(true);
+    return thread;
+  });
   private static final DateTimeFormatter TIME =
       DateTimeFormatter.ofPattern("uuuuMMdd'T'HHmmss'Z'", Locale.ROOT).withZone(ZoneOffset.UTC);
   private final String bucket, keyId, secret;
@@ -50,7 +65,7 @@ final class E2Archive {
 
   static E2Archive forPhotos(ArchiveStore store, String bucket, String keyId, String secret,
       Context context, Network network) {
-    return new E2Archive(store, bucket, keyId, secret, "loupe/originals", context, network);
+    return new E2Archive(store, bucket, keyId, secret, PHOTO_PREFIX, context, network);
   }
 
   private E2Archive(ArchiveStore store, String bucket, String keyId, String secret, String prefix,
@@ -139,11 +154,11 @@ final class E2Archive {
     long start = SystemClock.elapsedRealtimeNanos();
     HttpsURLConnection put = open("PUT", path, "", sha);
     String version;
-    try {
+    try (TransferWatch progress = new TransferWatch(put, size)) {
       put.setDoOutput(true);
       put.setFixedLengthStreamingMode(size);
       try (InputStream in = new FileInputStream(source); OutputStream out = put.getOutputStream()) {
-        if (!sha.equals(readHash(in, out, size))) throw new IOException("送信中に原本が変わりました");
+        if (!sha.equals(readHash(in, out, size, progress))) throw new IOException("送信中に原本が変わりました");
       }
       requireOk(put.getResponseCode());
       version = version(put);
@@ -169,11 +184,12 @@ final class E2Archive {
     long size = record.getLong("size");
     String version = checkedVersion(record.getString("version"));
     checkSize(size);
+    requireTemporarySpace(destination.getParentFile(), size);
     String path = path(record.getString("key"), sha);
     File temp = File.createTempFile("e2-restore-", ".part", destination.getParentFile());
     long start = SystemClock.elapsedRealtimeNanos();
     try {
-      try (FileOutputStream out = new FileOutputStream(temp)) {
+      try (FileOutputStream out = new TemporaryOutput(temp)) {
         get(path, version, size, sha, out);
         out.getFD().sync();
       }
@@ -184,7 +200,7 @@ final class E2Archive {
     }
   }
 
-  void verifyVersion(JSONObject record) throws Exception {
+  @Override public void verifyVersion(JSONObject record) throws Exception {
     requireRecord(record);
     String sha = record.getString("sha");
     long size = record.getLong("size");
@@ -193,11 +209,11 @@ final class E2Archive {
         size, sha, null);
   }
 
-  record CatalogObject(byte[] body, String version) {}
+  record CatalogObject(byte[] body, String version, String etag) {}
 
-  CatalogObject readCatalog(String requested) throws Exception {
+  @Override public CatalogObject readCatalog(String key, String requested) throws Exception {
     String query = requested.isEmpty() ? "" : "versionId=" + checkedVersion(requested);
-    HttpsURLConnection connection = open("GET", "/" + bucket + "/" + CATALOG, query, EMPTY_SHA);
+    HttpsURLConnection connection = open("GET", "/" + bucket + "/" + key, query, EMPTY_SHA);
     try {
       int code = connection.getResponseCode();
       if (code == 404) return null;
@@ -207,17 +223,19 @@ final class E2Archive {
         throw new IOException("取得したカタログの版が一致しません");
       byte[] body;
       try (InputStream in = connection.getInputStream()) {
-        body = readBounded(in, E2RecoveryCatalog.MAX_BYTES + 1);
+        int limit = key.equals(E2RecoveryCatalog.INDEX) || key.equals(E2RecoveryCatalog.LEGACY)
+            ? E2RecoveryCatalog.MAX_BYTES : E2RecoveryCatalog.PART_BYTES;
+        body = readBounded(in, limit + 1);
       }
-      return new CatalogObject(body, actual);
+      return new CatalogObject(body, actual, connection.getHeaderField("ETag"));
     } finally {
       connection.disconnect();
     }
   }
 
-  List<String> previousCatalogVersions() throws Exception {
+  @Override public List<String> previousCatalogVersions(String root) throws Exception {
     HttpsURLConnection connection = open("GET", "/" + bucket,
-        "max-keys=16&prefix=loupe%2Fcatalog%2Fv1.json&versions=", EMPTY_SHA);
+        "max-keys=16&prefix=" + root.replace("/", "%2F") + "&versions=", EMPTY_SHA);
     try {
       requireOk(connection.getResponseCode());
       byte[] response;
@@ -258,7 +276,7 @@ final class E2Archive {
         } else if (insideVersion && event == XmlPullParser.END_TAG && xml.getDepth() == 2) {
           if (key == null || key.isEmpty() || versionId == null || versionId.isEmpty())
             throw new IOException("カタログの世代情報が不完全です");
-          if (CATALOG.equals(key)) result.add(checkedVersion(versionId));
+          if (root.equals(key)) result.add(checkedVersion(versionId));
           insideVersion = false;
         }
       }
@@ -271,10 +289,16 @@ final class E2Archive {
     }
   }
 
-  void writeCatalog(byte[] body) throws Exception {
-    HttpsURLConnection connection = open("PUT", "/" + bucket + "/" + CATALOG, "", sha256(body));
+  @Override public CatalogObject writeCatalog(String key, byte[] body, CatalogObject expected)
+      throws Exception {
+    if (expected != null && (expected.etag() == null
+        || !expected.etag().matches("\"[A-Za-z0-9_-]{1,128}\"")))
+      throw new IOException("復元一覧の更新前の状態を確認できません");
+    HttpsURLConnection connection = open("PUT", "/" + bucket + "/" + key, "", sha256(body));
     String saved;
     try {
+      if (expected == null) connection.setRequestProperty("If-None-Match", "*");
+      else connection.setRequestProperty("If-Match", expected.etag());
       connection.setDoOutput(true);
       connection.setFixedLengthStreamingMode(body.length);
       try (OutputStream out = connection.getOutputStream()) {
@@ -285,9 +309,10 @@ final class E2Archive {
     } finally {
       connection.disconnect();
     }
-    CatalogObject verified = readCatalog(saved);
+    CatalogObject verified = readCatalog(key, saved);
     if (verified == null || !java.util.Arrays.equals(body, verified.body()))
       throw new IOException("保存したカタログの読み戻しが一致しません");
+    return verified;
   }
 
   private static byte[] readBounded(InputStream input, int limit) throws IOException {
@@ -331,14 +356,14 @@ final class E2Archive {
   private void get(String path, String version, long size, String sha, OutputStream out)
       throws Exception {
     HttpsURLConnection conn = open("GET", path, "versionId=" + checkedVersion(version), EMPTY_SHA);
-    try {
+    try (TransferWatch progress = new TransferWatch(conn, size)) {
       requireOk(conn.getResponseCode());
       if (!version.equals(version(conn)))
         throw new IOException("取得した版が一致しません");
       long length = conn.getContentLengthLong();
       if (length >= 0 && length != size) throw new IOException("取得したサイズが一致しません");
       try (InputStream in = conn.getInputStream()) {
-        if (!sha.equals(readHash(in, out, size))) throw new IOException("取得したSHA-256が一致しません");
+        if (!sha.equals(readHash(in, out, size, progress))) throw new IOException("取得したSHA-256が一致しません");
       }
     } finally {
       conn.disconnect();
@@ -390,7 +415,37 @@ final class E2Archive {
         && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED);
   }
 
+  /**
+   * Closing an active large transfer helps a cancelled worker leave blocked socket reads and
+   * writes. An idle transfer has a fixed deadline even when the original has no small size cap.
+   */
+  private static final class TransferWatch implements AutoCloseable {
+    private final AtomicLong lastProgress = new AtomicLong(SystemClock.elapsedRealtime());
+    private final ScheduledFuture<?> check;
+
+    TransferWatch(HttpsURLConnection connection, long size) {
+      Thread owner = Thread.currentThread();
+      check = size <= LIMIT ? null : TRANSFER_WATCHER.scheduleAtFixedRate(() -> {
+        if (owner.isInterrupted() || SystemClock.elapsedRealtime() - lastProgress.get() > 30_000)
+          connection.disconnect();
+      }, 1, 1, TimeUnit.SECONDS);
+    }
+
+    void progress() {
+      if (check != null) lastProgress.set(SystemClock.elapsedRealtime());
+    }
+
+    @Override public void close() {
+      if (check != null) check.cancel(false);
+    }
+  }
+
   static String readHash(InputStream in, OutputStream out, long size) throws Exception {
+    return readHash(in, out, size, null);
+  }
+
+  private static String readHash(InputStream in, OutputStream out, long size, TransferWatch watch)
+      throws Exception {
     MessageDigest digest = MessageDigest.getInstance("SHA-256");
     byte[] buffer = new byte[65536];
     long count = 0;
@@ -398,10 +453,13 @@ final class E2Archive {
     for (int n; (n = in.read(buffer)) != -1; ) {
       count += n;
       if (count > size || Thread.currentThread().isInterrupted()
-          || SystemClock.elapsedRealtime() > deadline) throw new IOException("原本の転送を中止しました");
+          || (size <= LIMIT && SystemClock.elapsedRealtime() > deadline))
+        throw new IOException("原本の転送を中止しました");
       digest.update(buffer, 0, n);
       if (out != null) out.write(buffer, 0, n);
+      if (watch != null) watch.progress();
     }
+    if (Thread.currentThread().isInterrupted()) throw new IOException("原本の転送を中止しました");
     if (count != size) throw new IOException("原本のサイズが一致しません");
     return hex(digest.digest());
   }
@@ -442,8 +500,49 @@ final class E2Archive {
     if (code != 200) throw new IOException("IDrive e2の転送失敗 (HTTP " + code + ")");
   }
 
-  private static void checkSize(long size) throws IOException {
-    if (size <= 0 || size > LIMIT) throw new IOException("原本のサイズが試行範囲外です");
+  private void checkSize(long size) throws IOException {
+    if (size <= 0 || size > (PHOTO_PREFIX.equals(prefix) ? ORIGINAL_LIMIT : LIMIT))
+      throw new IOException("原本のサイズが対応範囲外です");
+  }
+
+  static void requireTemporarySpace(File directory, long bytes) throws IOException {
+    requireTemporarySpace(directory == null ? 0 : directory.getUsableSpace(), Math.max(0, bytes));
+  }
+
+  private static void requireTemporarySpace(long usable, long bytes) throws IOException {
+    if (bytes > usable - STORAGE_RESERVE)
+      throw new IOException("原本を照合するための端末の空き容量が不足しています");
+  }
+
+  static final class TemporaryOutput extends FileOutputStream {
+    private final LongSupplier usable;
+
+    TemporaryOutput(File file) throws IOException {
+      this(file, file.getParentFile()::getUsableSpace);
+    }
+
+    TemporaryOutput(File file, LongSupplier usable) throws IOException {
+      super(file);
+      this.usable = usable;
+    }
+
+    @Override public void write(int value) throws IOException {
+      synchronized (TEMPORARY_WRITE_LOCK) {
+        requireTemporarySpace(usable.getAsLong(), 1);
+        super.write(value);
+      }
+    }
+
+    @Override public void write(byte[] bytes) throws IOException {
+      write(bytes, 0, bytes.length);
+    }
+
+    @Override public void write(byte[] bytes, int offset, int length) throws IOException {
+      synchronized (TEMPORARY_WRITE_LOCK) {
+        requireTemporarySpace(usable.getAsLong(), length);
+        super.write(bytes, offset, length);
+      }
+    }
   }
 
   private static long millis(long start) { return (SystemClock.elapsedRealtimeNanos() - start) / 1000000; }
