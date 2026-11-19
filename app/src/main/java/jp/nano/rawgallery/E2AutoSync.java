@@ -15,13 +15,14 @@ import java.io.InputStream;
 import java.io.InterruptedIOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.regex.Matcher;
@@ -30,7 +31,7 @@ import org.json.JSONObject;
 
 /** Persists observations of each sweep and prepares offline images for verified copies. */
 final class E2AutoSync {
-  private static final int TRANSFERS = 1;
+  private static final int TRANSFERS = 2;
   private static final long ADMISSION_MS = 120_000;
   private static final String STATE = "e2_auto_sync";
   private static final Pattern ARCHIVE_HTTP_FAILURE =
@@ -194,23 +195,27 @@ final class E2AutoSync {
       BooleanSupplier stopped, BooleanSupplier mayAdmit, Function<Candidate, Transfer> transfer) throws Exception {
     if (batch.processed() >= photos.size() || stopped.getAsBoolean()) return;
     DiagnosticExecutor transfers = new DiagnosticExecutor("E2AutoSync.transfer", TRANSFERS);
-    ExecutorCompletionService<Transfer> completed = new ExecutorCompletionService<>(transfers);
+    // The durable checkpoint counts a consecutive prefix, even when workers finish out of order.
+    ArrayDeque<Future<Transfer>> inOrder = new ArrayDeque<>(TRANSFERS);
     int start = batch.processed();
     int next = start;
     try {
       while (!stopped.getAsBoolean()) {
         // A slow connection or catalog read still leaves one candidate to try.
-        while (next < photos.size() && next - batch.processed() < TRANSFERS
+        while (next < photos.size() && inOrder.size() < TRANSFERS
             && !stopped.getAsBoolean() && (next == start || mayAdmit.getAsBoolean())) {
           Candidate photo = photos.get(next++);
-          completed.submit(() -> transfer.apply(photo));
+          inOrder.addLast(transfers.submit(() -> transfer.apply(photo)));
         }
-        if (next == batch.processed()) break;
-        Future<Transfer> result = completed.poll(250, TimeUnit.MILLISECONDS);
-        if (result == null) continue;
+        if (inOrder.isEmpty()) break;
+        Transfer outcome;
+        try {
+          outcome = inOrder.getFirst().get(250, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException stillRunning) {
+          continue;
+        }
         if (stopped.getAsBoolean()) break;
-        Transfer outcome = result.get();
-        // The single transfer worker completes candidates in MediaStore order.
+        inOrder.removeFirst();
         boolean usesFallback = photos.get(batch.processed()).generation() <= 0;
         if (usesFallback) batch.extendFallback(outcome.fallbackHash());
         if (outcome.ready() && (!usesFallback || outcome.fallbackHash() != null)) batch.ready++;
