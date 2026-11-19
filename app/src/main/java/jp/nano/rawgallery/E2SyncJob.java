@@ -4,8 +4,13 @@ import android.app.job.JobInfo;
 import android.app.job.JobParameters;
 import android.app.job.JobScheduler;
 import android.app.job.JobService;
+import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.Intent;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.Log;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -13,6 +18,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class E2SyncJob extends JobService {
   private static final int PERIODIC = 77;
   private static final int FIRST = 78;
+  private static final int CONTINUATION = 79;
+  private static final long CONTINUATION_DELAY_MS = 15_000;
   private static final int MEDIA_CONSENT_VERSION = 2;
   private static final AtomicBoolean RUNNING = new AtomicBoolean();
   static final java.util.concurrent.locks.ReentrantLock ORIGINALS =
@@ -81,6 +88,7 @@ public final class E2SyncJob extends JobService {
     android.content.SharedPreferences.Editor setting =
         E2AutoSync.state(context).edit().putBoolean("enabled", enabled)
             .putString("destination", enabled ? bucket : "");
+    E2AutoSync.clearBatch(setting);
     if (enabled) setting.putInt("fullMediaConsent", MEDIA_CONSENT_VERSION);
     else setting.remove("cleanupBucket").remove("cleanupDays").remove("fullMediaConsent");
     if (!setting.commit())
@@ -88,6 +96,7 @@ public final class E2SyncJob extends JobService {
     if (!enabled) {
       scheduler.cancel(PERIODIC);
       scheduler.cancel(FIRST);
+      scheduler.cancel(CONTINUATION);
       return;
     }
     JobState.write(E2AutoSync.state(context).edit(), "", JobState.Kind.WAITING,
@@ -108,6 +117,32 @@ public final class E2SyncJob extends JobService {
         .setRequiresStorageNotLow(true);
   }
 
+  private static void scheduleContinuation(Context context, String bucket, int finishedJobId) {
+    synchronized (E2Settings.DESTINATION_LOCK) {
+      if (!enabled(context) || !fullMediaConsent(context) || !E2Settings.hasMediaAccess(context)
+          || bucket == null || bucket.isEmpty()
+          || !bucket.equals(E2AutoSync.state(context).getString("destination", ""))
+          || !bucket.equals(E2Settings.configuredBucket(context))) return;
+      int jobId = finishedJobId == CONTINUATION ? FIRST : CONTINUATION;
+      JobScheduler scheduler = context.getSystemService(JobScheduler.class);
+      ComponentName service = new ComponentName(context, E2SyncJob.class);
+      try {
+        if (scheduler.schedule(job(jobId, service).setMinimumLatency(CONTINUATION_DELAY_MS).build())
+            != JobScheduler.RESULT_SUCCESS) Log.w("LoupeE2Sync", "Continuation scheduling declined");
+      } catch (IllegalStateException unavailable) {
+        Log.w("LoupeE2Sync", "Continuation scheduler unavailable");
+      }
+    }
+  }
+
+  public static final class AfterUpdate extends BroadcastReceiver {
+    @Override public void onReceive(Context context, Intent intent) {
+      if (Intent.ACTION_MY_PACKAGE_REPLACED.equals(intent.getAction())) {
+        scheduleContinuation(context, E2AutoSync.state(context).getString("destination", ""), 0);
+      }
+    }
+  }
+
   @Override public boolean onStartJob(JobParameters params) {
     android.net.Network network = params.getNetwork();
     if (!enabled(this) || !E2Archive.unmetered(this, network)
@@ -117,16 +152,20 @@ public final class E2SyncJob extends JobService {
     stopped = cancel;
     worker.execute(() -> {
       runningThread = Thread.currentThread();
+      String continuation = null;
       try {
-        E2AutoSync.run(getApplicationContext(), network,
+        continuation = E2AutoSync.run(getApplicationContext(), network,
             () -> cancel.get() || !enabled(this) || !E2Archive.unmetered(this, network));
       } finally {
         runningThread = null;
-        RUNNING.set(false);
-        new android.os.Handler(getMainLooper()).post(() -> {
+        String destination = continuation;
+        new Handler(Looper.getMainLooper()).post(() -> {
+          RUNNING.set(false);
           if (current != params) return;
           current = null;
           jobFinished(params, false);
+          if (destination != null && !cancel.get())
+            scheduleContinuation(this, destination, params.getJobId());
         });
       }
     });

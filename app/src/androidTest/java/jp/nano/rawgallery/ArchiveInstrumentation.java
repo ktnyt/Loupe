@@ -67,7 +67,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean e2ArchiveTest, e2BackgroundTest, e2CatalogLocalTest, e2CatalogScaleTest;
   private String e2MixedMediaOperation, e2MixedMediaToken, e2LargeOriginalToken;
   private boolean e2LargeOriginalTest, e2LargeCacheTest;
-  private boolean e2CleanupBoundaryTest;
+  private boolean e2CleanupBoundaryTest, e2BatchTest;
   private String e2SharedCleanupMode, e2ProductCleanupMode, e2ProductCleanupToken;
   private long e2StaleGeneration, e2StaleId, e2MatchId;
   private String e2CatalogMode;
@@ -188,6 +188,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     e2ArchiveTest = args != null && "e2-archive".equals(args.getString("mode"));
     if (e2ArchiveTest) e2RunId = args.getString("e2-run");
     e2BackgroundTest = args != null && "e2-background".equals(args.getString("mode"));
+    e2BatchTest = args != null && "e2-batches".equals(args.getString("mode"));
     e2CleanupBoundaryTest = args != null && "e2-cleanup-boundary".equals(args.getString("mode"));
     if (args != null && args.getString("mode", "").startsWith("e2-cleanup-product-")) {
       e2ProductCleanupMode = args.getString("mode").substring("e2-cleanup-product-".length());
@@ -253,6 +254,10 @@ public final class ArchiveInstrumentation extends Instrumentation {
       }
       if (e2MixedMediaOperation != null) {
         results.putString("stream", E2MixedMediaChecks.run(this, e2MixedMediaOperation, e2MixedMediaToken));
+        finish(-1, results); return;
+      }
+      if (e2BatchTest) {
+        results.putString("stream", E2BatchChecks.run(context));
         finish(-1, results); return;
       }
       if (e2CleanupBoundaryTest) {
