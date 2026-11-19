@@ -299,6 +299,13 @@ final class E2Panel {
           + "件\n残り " + number(Math.max(0, total - ready - failed))
           + "件 · 失敗 " + number(failed) + "件";
     }
+    if (known && state.kind == JobState.Kind.RUNNING && !publishing && ready + failed < total) {
+      E2AutoSync.Rate rate = E2AutoSync.rate(target, total - ready - failed);
+      if (rate != null) {
+        counts += "\n実効速度 " + transferSpeed(rate.bytesPerSecond());
+        if (failed == 0) counts += " · 転送残り " + estimate(rate.remainingSeconds());
+      }
+    }
     if (!reason.isEmpty()) counts = counts.isEmpty() ? reason : counts + "\n" + reason;
     updateText(uploadCounts, counts);
     uploadCounts.setVisibility(counts.isEmpty() ? View.GONE : View.VISIBLE);
@@ -332,8 +339,23 @@ final class E2Panel {
       label += " · " + android.text.format.Formatter.formatShortFileSize(activity, bytes)
           + " / " + android.text.format.Formatter.formatShortFileSize(activity, total);
     }
+    if (active && !verifying && !item.publishing() && total > bytes && item.bytesPerSecond() > 0)
+      label += "\n" + transferSpeed(item.bytesPerSecond()) + " · 転送残り "
+          + estimate((long) Math.ceil((total - bytes) / item.bytesPerSecond()));
     row.render(label, active && (total <= 0 || verifying), bytes,
         active && !verifying ? total : 0);
+  }
+
+  private String transferSpeed(double bytesPerSecond) {
+    return android.text.format.Formatter.formatShortFileSize(activity, (long) bytesPerSecond) + "/s";
+  }
+
+  private String estimate(long seconds) {
+    if (seconds < 60) return "1分未満";
+    long minutes = (seconds + 59) / 60;
+    if (minutes < 60) return "約" + minutes + "分";
+    long remainder = minutes % 60;
+    return "約" + minutes / 60 + "時間" + (remainder == 0 ? "" : remainder + "分");
   }
 
   private String number(int value) {
@@ -483,7 +505,7 @@ final class E2Panel {
             long started = SystemClock.elapsedRealtime();
             runTransfer("原本を保存しています", E2TransferStatus.Kind.MANUAL_UPLOAD, target,
                 -1, transfer -> {
-              long put = photos.save(uri, name, target);
+              long put = photos.save(uri, name, target, transfer);
               transfer.publishing(true);
               boolean catalogSaved;
               try {

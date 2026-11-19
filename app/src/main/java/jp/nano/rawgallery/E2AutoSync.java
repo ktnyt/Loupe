@@ -34,6 +34,7 @@ import org.json.JSONObject;
 final class E2AutoSync {
   private static final int TRANSFERS = 2;
   private static final long ADMISSION_MS = 120_000;
+  private static volatile RecentTransfers currentRate;
   private static final String STATE = "e2_auto_sync";
   private static final Pattern ARCHIVE_HTTP_FAILURE =
       Pattern.compile("IDrive e2の転送失敗 \\(HTTP ([0-9]{3})\\)");
@@ -110,6 +111,50 @@ final class E2AutoSync {
     return JobState.read(state(context), "", running, true);
   }
 
+  record Rate(double bytesPerSecond, long remainingSeconds) {}
+
+  private static final class RecentTransfers {
+    private static final long WINDOW_MS = 60_000;
+    private record Sample(long time, long bytes) {}
+    final String bucket;
+    final long started = SystemClock.elapsedRealtime();
+    private final ArrayDeque<Sample> samples = new ArrayDeque<>();
+
+    RecentTransfers(String bucket) {
+      this.bucket = bucket;
+    }
+
+    synchronized void add(long bytes, long putMs) {
+      long now = SystemClock.elapsedRealtime();
+      trim(now - WINDOW_MS);
+      samples.addLast(new Sample(now, bytes));
+      Log.i("LoupeE2Rate", "verified bytes=" + bytes + " put_ms=" + putMs + " elapsed_ms=" + now);
+    }
+
+    synchronized Rate estimate(int remaining) {
+      long now = SystemClock.elapsedRealtime();
+      long from = Math.max(started, now - WINDOW_MS);
+      trim(from);
+      long elapsed = now - from;
+      if (samples.size() < 2 || elapsed < 2000 || now - samples.getLast().time() > 15_000)
+        return null;
+      long bytes = 0;
+      for (Sample sample : samples) bytes += sample.bytes();
+      return new Rate(bytes * 1000.0 / elapsed,
+          (long) Math.ceil(remaining * (elapsed / 1000.0) / samples.size()));
+    }
+
+    private void trim(long from) {
+      while (!samples.isEmpty() && samples.getFirst().time() <= from) samples.removeFirst();
+    }
+  }
+
+  static Rate rate(String bucket, int remaining) {
+    RecentTransfers current = currentRate;
+    return current != null && current.bucket.equals(bucket) && remaining > 0
+        ? current.estimate(remaining) : null;
+  }
+
   /** Returns the destination if this batch made progress and has another batch to run. */
   static String run(Context context, Network network, BooleanSupplier stopped) {
     long admissionDeadline = SystemClock.elapsedRealtime() + ADMISSION_MS;
@@ -148,10 +193,13 @@ final class E2AutoSync {
       publish(preferences, JobState.Kind.RUNNING, batch.ready, total, batch.failed, true);
       Publication published = e2.catalogPending(bucket) ? tryPublishCatalog(context, e2, bucket, stopped) : null;
       PhotoRepository repository = new PhotoRepository(context, true);
+      RecentTransfers recent = new RecentTransfers(bucket);
+      currentRate = recent;
       transferBatch(preferences, photos, batch, stopped,
           () -> SystemClock.elapsedRealtime() < admissionDeadline,
           context.getCacheDir()::getUsableSpace,
-          photo -> transfer(context, repository, e2, photo, bucket, originals, stopped));
+          photo -> transfer(context, repository, e2, photo, bucket, originals, stopped, recent));
+      currentRate = null;
 
       requireDestination(context, bucket, stopped);
       boolean unfinished = batch.processed() < total;
@@ -186,6 +234,8 @@ final class E2AutoSync {
           ? JobState.Kind.PAUSED : failureKind(batch),
           batch == null ? 0 : batch.ready, total, batch == null ? 0 : batch.failed, batch != null);
       return null;
+    } finally {
+      currentRate = null;
     }
   }
 
@@ -308,14 +358,15 @@ final class E2AutoSync {
   }
 
   private static Transfer transfer(Context context, PhotoRepository repository, E2Photos e2,
-      Candidate candidate, String bucket, OriginalSource originals, BooleanSupplier stopped) {
+      Candidate candidate, String bucket, OriginalSource originals, BooleanSupplier stopped,
+      RecentTransfers recent) {
     BooleanSupplier cancelled = () -> stopped.getAsBoolean() || Thread.currentThread().isInterrupted();
     String fallbackHash = null;
     try {
       requireRunning(cancelled);
       requireCurrentRevision(context, candidate);
       if (candidate.generation() <= 0) fallbackHash = readFallback(candidate, originals, cancelled);
-      prepare(context, repository, e2, candidate, bucket, fallbackHash, cancelled);
+      prepare(context, repository, e2, candidate, bucket, fallbackHash, cancelled, recent);
       return new Transfer(true, fallbackHash);
     } catch (Exception e) {
       return new Transfer(false, fallbackHash);
@@ -357,7 +408,8 @@ final class E2AutoSync {
   }
 
   private static void prepare(Context context, PhotoRepository repository, E2Photos e2,
-      Candidate candidate, String bucket, String fallbackHash, BooleanSupplier stopped) throws Exception {
+      Candidate candidate, String bucket, String fallbackHash, BooleanSupplier stopped,
+      RecentTransfers recent) throws Exception {
     PhotoRepository.Photo photo = candidate.photo();
     if (photo.size > E2Archive.ORIGINAL_LIMIT)
       throw new IOException("原本のサイズが対応範囲外です");
@@ -369,7 +421,8 @@ final class E2AutoSync {
     JSONObject record = e2.settings.records.get(key);
     boolean verified = record != null && "verified".equals(record.optString("state"));
     if (!verified && !stopped.getAsBoolean()) {
-      e2.saveIndexed(candidate, key, bucket, fallbackHash);
+      long putMs = e2.saveIndexed(candidate, key, bucket, fallbackHash);
+      if (putMs > 0) recent.add(photo.size, putMs);
     }
     if (photo.isJpeg() && (!thumbnail.isFile() || !preview.isFile())
         && !stopped.getAsBoolean()) {
