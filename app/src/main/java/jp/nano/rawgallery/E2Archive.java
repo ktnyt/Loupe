@@ -525,8 +525,12 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
   }
 
   private static void requireTemporarySpace(long usable, long bytes) throws IOException {
-    if (bytes > usable - STORAGE_RESERVE)
+    if (!hasTemporarySpace(usable, bytes))
       throw new IOException("原本を照合するための端末の空き容量が不足しています");
+  }
+
+  static boolean hasTemporarySpace(long usable, long bytes) {
+    return bytes <= usable - STORAGE_RESERVE;
   }
 
   static final class TemporaryOutput extends FileOutputStream {
