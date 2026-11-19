@@ -66,10 +66,30 @@ class GradleRetryTests(unittest.TestCase):
         code, attempts, _, _ = self.run_build(diagnostic, recover=True)
         self.assertEqual((code, attempts), (0, ['False', 'True']))
 
+    def test_public_repository_dns_or_no_response_is_retried(self):
+        for message in ('Name or service not known', 'failed to respond'):
+            with self.subTest(message=message):
+                diagnostic = f"""\
+* What went wrong:
+> Could not resolve all artifacts for configuration 'classpath'.
+   > Could not GET 'https://repo.maven.apache.org/maven2/module.pom'.
+      > repo.maven.apache.org: {message}
+"""
+                code, attempts, _, _ = self.run_build(diagnostic, recover=True)
+                self.assertEqual((code, attempts), (0, ['False', 'True']))
+
     def test_other_build_errors_are_not_retried(self):
         diagnostics = (
             "* What went wrong:\nExecution failed for task ':app:lintDebug'.\nLint found errors.",
             MAVEN_FAILURE.replace('https://repo.maven.apache.org/maven2/', 'https://custom.invalid/'),
+            MAVEN_FAILURE + "\n* What went wrong:\nLint found errors.\n",
+            """\
+* What went wrong:
+> Could not resolve all artifacts for configuration 'classpath'.
+    > Could not GET 'https://repo.maven.apache.org/maven2/pkg.pom'. Received status code 401.
+    > Could not GET 'https://custom.invalid/pkg.pom'.
+      > Read timed out.
+""",
             MAVEN_FAILURE.replace('Could not find org.jetbrains.kotlin:kotlin-gradle-plugins-bom:2.1.21.',
                                   'Received status code 401.'),
         )
