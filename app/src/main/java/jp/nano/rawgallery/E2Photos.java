@@ -62,19 +62,23 @@ final class E2Photos implements AutoCloseable {
   }
 
   long save(Uri source, String name, String bucket) throws Exception {
+    return save(source, name, bucket, null);
+  }
+
+  long save(Uri source, String name, String bucket, E2TransferStatus observation) throws Exception {
     if (mime(name) == null) throw new IOException("RAW・JPEG・動画を選んでください");
     File staged = stage(() -> context.getContentResolver().openInputStream(source),
         sizeHint(source));
     try {
       synchronized (SAVE_LOCK) {
-        return settings.archive(bucket).savePhoto(staged, name, mime(name));
+        return settings.archive(bucket).savePhoto(staged, name, mime(name), observation);
       }
     } finally {
       staged.delete();
     }
   }
 
-  void saveIndexed(E2AutoSync.Candidate candidate, String id, String bucket, String fallbackHash)
+  long saveIndexed(E2AutoSync.Candidate candidate, String id, String bucket, String fallbackHash)
       throws Exception {
     PhotoRepository.Photo photo = candidate.photo();
     if (mime(photo.name) == null) throw new IOException("原本のファイル名を確認できません");
@@ -103,7 +107,7 @@ final class E2Photos implements AutoCloseable {
           .put("model", inspected.model)
           .put("taken", inspected.taken > 0 ? inspected.taken : photo.taken);
       // The automatic sweep submits each indexed ID only once. Manual saves have separate IDs.
-      settings.archive(bucket).saveIndexed(id, staged, metadata);
+      return settings.archive(bucket).saveIndexed(id, staged, metadata);
     } finally {
       staged.delete();
     }

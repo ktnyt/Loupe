@@ -1,5 +1,6 @@
 package jp.nano.rawgallery;
 
+import android.os.SystemClock;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
@@ -14,14 +15,14 @@ final class E2TransferStatus implements AutoCloseable {
 
   final Kind kind;
   final String bucket;
-  final long totalBytes;
-  private volatile long bytes;
+  private volatile long totalBytes;
+  private volatile long bytes, startedAt, lastBytesAt;
   private State state = State.RUNNING;
   private int count = -1;
   private boolean publishing, originalSaved;
 
   record Snapshot(State state, long bytes, long totalBytes, int count,
-      boolean publishing, boolean originalSaved) {}
+      boolean publishing, boolean originalSaved, double bytesPerSecond) {}
 
   private E2TransferStatus(Kind kind, String bucket, long totalBytes) {
     this.kind = kind;
@@ -44,10 +45,21 @@ final class E2TransferStatus implements AutoCloseable {
   }
 
   private Snapshot snapshot() {
-    return new Snapshot(state, bytes, totalBytes, count, publishing, originalSaved);
+    long received = bytes;
+    long now = SystemClock.elapsedRealtime();
+    long elapsed = now - startedAt;
+    double rate = startedAt > 0 && elapsed >= 1000 && now - lastBytesAt <= 5000
+        ? 1000.0 * received / elapsed : 0;
+    return new Snapshot(state, received, totalBytes, count, publishing, originalSaved, rate);
+  }
+
+  void startBytes(long total) {
+    totalBytes = total;
+    startedAt = SystemClock.elapsedRealtime();
   }
 
   void bytesRead(long value) {
+    lastBytesAt = SystemClock.elapsedRealtime();
     bytes = value;
   }
 

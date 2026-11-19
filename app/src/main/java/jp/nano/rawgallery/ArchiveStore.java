@@ -47,6 +47,14 @@ final class ArchiveStore extends SQLiteOpenHelper {
           + " ON photos BEGIN UPDATE index_revision SET value=value+1 WHERE id=1; END");
   }
 
+  java.util.Set<String> verifiedKeys() {
+    java.util.Set<String> keys = new java.util.HashSet<>();
+    try (Cursor c = getReadableDatabase().rawQuery("SELECT key FROM photos WHERE state='verified'", null)) {
+      while (c.moveToNext()) keys.add(c.getString(0));
+    }
+    return keys;
+  }
+
   long indexRevision() {
     try (Cursor c = getReadableDatabase().rawQuery("SELECT value FROM index_revision WHERE id=1", null)) {
       if (!c.moveToFirst()) throw new IllegalStateException("Archive index revision missing");

@@ -108,18 +108,20 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
 
   /** A retry may find an existing object. Only a confirmed absence permits another PUT. */
   synchronized long save(String id, File source) throws Exception {
-    return save(id, source, null);
+    return save(id, source, null, null);
   }
 
-  synchronized long savePhoto(File source, String name, String mime) throws Exception {
-    return save(null, source, new JSONObject().put("name", name).put("mime", mime));
+  synchronized long savePhoto(File source, String name, String mime,
+      E2TransferStatus observation) throws Exception {
+    return save(null, source, new JSONObject().put("name", name).put("mime", mime), observation);
   }
 
-  synchronized void saveIndexed(String id, File source, JSONObject metadata) throws Exception {
-    save(id, source, metadata);
+  synchronized long saveIndexed(String id, File source, JSONObject metadata) throws Exception {
+    return save(id, source, metadata, null);
   }
 
-  private long save(String id, File source, JSONObject metadata) throws Exception {
+  private long save(String id, File source, JSONObject metadata, E2TransferStatus observation)
+      throws Exception {
     long size = source.length();
     checkSize(size);
     String sha;
@@ -157,8 +159,9 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
     try (TransferWatch progress = new TransferWatch(put, size)) {
       put.setDoOutput(true);
       put.setFixedLengthStreamingMode(size);
+      if (observation != null) observation.startBytes(size);
       try (InputStream in = new FileInputStream(source); OutputStream out = put.getOutputStream()) {
-        if (!sha.equals(readHash(in, out, size, progress))) throw new IOException("送信中に原本が変わりました");
+        if (!sha.equals(readHash(in, out, size, progress, observation))) throw new IOException("送信中に原本が変わりました");
       }
       requireOk(put.getResponseCode());
       version = version(put);
@@ -371,6 +374,7 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
         throw new IOException("取得した版が一致しません");
       long length = conn.getContentLengthLong();
       if (length >= 0 && length != size) throw new IOException("取得したサイズが一致しません");
+      if (observation != null) observation.startBytes(size);
       try (InputStream in = conn.getInputStream()) {
         if (!sha.equals(readHash(in, out, size, progress, observation))) throw new IOException("取得したSHA-256が一致しません");
       }
@@ -450,12 +454,7 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
   }
 
   static String readHash(InputStream in, OutputStream out, long size) throws Exception {
-    return readHash(in, out, size, null);
-  }
-
-  private static String readHash(InputStream in, OutputStream out, long size, TransferWatch watch)
-      throws Exception {
-    return readHash(in, out, size, watch, null);
+    return readHash(in, out, size, null, null);
   }
 
   private static String readHash(InputStream in, OutputStream out, long size, TransferWatch watch,
