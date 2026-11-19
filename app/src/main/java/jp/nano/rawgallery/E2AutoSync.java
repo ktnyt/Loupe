@@ -17,16 +17,47 @@ import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
+import java.util.function.Predicate;
 import org.json.JSONObject;
 
 /** Persists observations of each sweep and prepares offline images for verified copies. */
 final class E2AutoSync {
   private static final int TRANSFERS = 1;
-  private static final int CHECKPOINT_FILES = 32;
-  private static final long CHECKPOINT_MS = 60_000;
+  private static final long ADMISSION_MS = 120_000;
   private static final String STATE = "e2_auto_sync";
   record Candidate(PhotoRepository.Photo photo, String volume, String version, long generation) {}
   private record Publication(E2RecoveryCatalog.Snapshot snapshot, long revision) {}
+
+  static final class Batch {
+    final String identity;
+    int ready, failed;
+
+    Batch(SharedPreferences preferences, String identity, int total) {
+      this.identity = identity;
+      if (!identity.equals(preferences.getString("batchIdentity", ""))) return;
+      int savedReady = preferences.getInt("batchReady", 0);
+      int savedFailed = preferences.getInt("batchFailed", 0);
+      if (savedReady < 0 || savedFailed < 0 || (long) savedReady + savedFailed >= total) return;
+      ready = savedReady;
+      failed = savedFailed;
+    }
+
+    int processed() { return ready + failed; }
+
+    boolean shouldContinue(int total, int readyBefore, int processedBefore, boolean publishedAtStart) {
+      return processed() < total && (ready > readyBefore
+          || (processed() == processedBefore && publishedAtStart));
+    }
+
+    void save(SharedPreferences.Editor editor) {
+      editor.putString("batchIdentity", identity).putInt("batchReady", ready)
+          .putInt("batchFailed", failed);
+    }
+  }
+
+  static void clearBatch(SharedPreferences.Editor editor) {
+    editor.remove("batchIdentity").remove("batchReady").remove("batchFailed");
+  }
 
   static SharedPreferences state(Context context) {
     return context.getSharedPreferences(STATE, Context.MODE_PRIVATE);
@@ -36,105 +67,124 @@ final class E2AutoSync {
     return JobState.read(state(context), "", running, true);
   }
 
-  static void run(Context context, Network network, BooleanSupplier stopped) {
+  /** Returns the destination if this batch made progress and has another batch to run. */
+  static String run(Context context, Network network, BooleanSupplier stopped) {
+    long admissionDeadline = SystemClock.elapsedRealtime() + ADMISSION_MS;
     SharedPreferences preferences = state(context);
     preferences.edit().remove("failureReason").apply();
     publish(preferences, JobState.Kind.RUNNING, 0, 0, 0, false);
-    int ready = 0, failed = 0, total = 0;
-    boolean counted = false;
+    Batch batch = null;
+    int total = 0;
     try (E2Photos e2 = new E2Photos(context, network)) {
       if (stopped.getAsBoolean()) {
         publish(preferences, JobState.Kind.PAUSED, 0, 0, 0, false);
-        return;
+        return null;
       }
       if (!e2.settings.configured() || !E2Settings.hasMediaAccess(context)) {
         publish(preferences, JobState.Kind.AUTH_REQUIRED, 0, 0, 0, false);
-        return;
+        return null;
       }
       if (!E2SyncJob.fullMediaConsent(context)) {
         preferences.edit().putString("failureReason", "写真・動画のバックアップ範囲の確認が必要です。一時停止してから再開してください").apply();
         publish(preferences, JobState.Kind.AUTH_REQUIRED, 0, 0, 0, false);
-        return;
+        return null;
       }
       String bucket = preferences.getString("destination", "");
       if (bucket.isEmpty() || !bucket.equals(e2.settings.configuration().getString("bucket"))) {
         publish(preferences, JobState.Kind.AUTH_REQUIRED, 0, 0, 0, false);
-        return;
+        return null;
       }
       e2.settings.archive(bucket).checkConnection();
       E2Cleanup.reconcile(context, e2.settings.records, bucket, stopped);
-      PhotoRepository repository = new PhotoRepository(context, true);
       List<Candidate> photos = candidates(context);
       total = photos.size();
-      counted = true;
-      Publication published = null;
-      boolean deferred = false;
-      if (e2.catalogPending(bucket)) {
+      batch = new Batch(preferences, batchIdentity(bucket, photos), total);
+      int readyBefore = batch.ready;
+      int processedBefore = batch.processed();
+      Publication published = e2.catalogPending(bucket) ? tryPublishCatalog(context, e2, bucket, stopped) : null;
+      boolean publishedAtStart = published != null;
+      PhotoRepository repository = new PhotoRepository(context, true);
+      transferBatch(preferences, photos, batch, stopped,
+          () -> SystemClock.elapsedRealtime() < admissionDeadline,
+          photo -> transfer(context, repository, e2, photo, bucket, stopped));
+
+      requireDestination(context, bucket, stopped);
+      boolean unfinished = batch.processed() < total;
+      E2Cleanup.Plan cleanup = unfinished ? null : E2Cleanup.plan(context, e2, photos, bucket, stopped);
+      Long snapshotRevision = published != null && published.snapshot() != null
+          ? published.revision() : null;
+      if (needsCatalog(e2, bucket, cleanup != null, snapshotRevision)) {
         published = tryPublishCatalog(context, e2, bucket, stopped);
-        deferred = published == null;
-      }
-      if (!photos.isEmpty()) {
-        long checkedRevision = e2.settings.records.indexRevision();
-        long checkpointAt = SystemClock.elapsedRealtime() + CHECKPOINT_MS;
-        int processed = 0;
-        DiagnosticExecutor transfers = new DiagnosticExecutor("E2AutoSync.transfer",
-            Math.min(TRANSFERS, total));
-        ExecutorCompletionService<Boolean> completed = new ExecutorCompletionService<>(transfers);
-        int next = 0;
-        try {
-          while (ready + failed < total && !stopped.getAsBoolean()) {
-            while (next < total && next - ready - failed < TRANSFERS && !stopped.getAsBoolean()) {
-              Candidate photo = photos.get(next++);
-              completed.submit(() -> transfer(context, repository, e2, photo, bucket, stopped));
-            }
-            Future<Boolean> result = completed.poll(250, TimeUnit.MILLISECONDS);
-            if (result == null) continue;
-            if (result.get()) ready++;
-            else if (!stopped.getAsBoolean()) failed++;
-            publish(preferences, JobState.Kind.RUNNING, ready, total, failed, true);
-            if (++processed >= CHECKPOINT_FILES || SystemClock.elapsedRealtime() >= checkpointAt) {
-              long revision = e2.settings.records.indexRevision();
-              if (!deferred && revision != checkedRevision && !stopped.getAsBoolean()
-                  && e2.catalogPending(bucket)) {
-                published = tryPublishCatalog(context, e2, bucket, stopped);
-                deferred = published == null;
-              }
-              checkedRevision = revision;
-              processed = 0;
-              checkpointAt = SystemClock.elapsedRealtime() + CHECKPOINT_MS;
-            }
-          }
-        } finally {
-          stopTransfers(transfers);
+        if (published == null) {
+          publish(preferences, failureKind(batch), batch.ready, total, batch.failed, true);
+          return null;
         }
       }
-      if (!stopped.getAsBoolean()) {
+      requireDestination(context, bucket, stopped);
+      if (cleanup != null && published != null && published.snapshot() != null)
+        E2Cleanup.sweep(context, e2, cleanup, bucket, stopped, published.snapshot());
+
+      synchronized (E2Settings.DESTINATION_LOCK) {
         requireDestination(context, bucket, stopped);
-        E2Cleanup.Plan cleanup = E2Cleanup.plan(context, e2, photos, bucket, stopped);
-        Long snapshotRevision = published != null && published.snapshot() != null
-            ? published.revision() : null;
-        if (needsCatalog(e2, bucket, cleanup != null, snapshotRevision)) {
-          published = tryPublishCatalog(context, e2, bucket, stopped);
-          if (published == null) {
-            publish(preferences, ready > 0 ? JobState.Kind.PARTIAL : JobState.Kind.FAILED,
-                ready, total, failed, true);
-            return;
-          }
-        } else if (deferred) {
-          preferences.edit().remove("failureReason").apply();
-        }
-        requireDestination(context, bucket, stopped);
-        if (cleanup != null && published != null && published.snapshot() != null)
-          E2Cleanup.sweep(context, e2, cleanup, bucket, stopped, published.snapshot());
+        SharedPreferences.Editor editor = preferences.edit();
+        if (unfinished) batch.save(editor);
+        else clearBatch(editor);
+        if (!editor.commit()) throw new IOException("同期の進捗を保存できません");
       }
-      publish(preferences, stopped.getAsBoolean() ? JobState.Kind.PAUSED
-          : failed == 0 ? JobState.Kind.COMPLETE
-          : ready == 0 ? JobState.Kind.FAILED : JobState.Kind.PARTIAL, ready, total, failed, true);
+      boolean resume = batch.shouldContinue(total, readyBefore, processedBefore, publishedAtStart);
+      JobState.Kind kind = resume ? JobState.Kind.WAITING
+          : unfinished || batch.failed != 0 ? failureKind(batch) : JobState.Kind.COMPLETE;
+      publish(preferences, kind, batch.ready, total, batch.failed, true);
+      return resume ? bucket : null;
     } catch (Exception e) {
-      publish(preferences, stopped.getAsBoolean() ? JobState.Kind.PAUSED
-          : ready > 0 ? JobState.Kind.PARTIAL : JobState.Kind.FAILED,
-          ready, total, failed, counted);
+      publish(preferences, stopped.getAsBoolean() || Thread.currentThread().isInterrupted()
+          ? JobState.Kind.PAUSED : failureKind(batch),
+          batch == null ? 0 : batch.ready, total, batch == null ? 0 : batch.failed, batch != null);
+      return null;
     }
+  }
+
+  private static JobState.Kind failureKind(Batch batch) {
+    return batch != null && batch.ready > 0 ? JobState.Kind.PARTIAL : JobState.Kind.FAILED;
+  }
+
+  static void transferBatch(SharedPreferences preferences, List<Candidate> photos, Batch batch,
+      BooleanSupplier stopped, BooleanSupplier mayAdmit, Predicate<Candidate> transfer) throws Exception {
+    if (batch.processed() >= photos.size() || stopped.getAsBoolean()) return;
+    DiagnosticExecutor transfers = new DiagnosticExecutor("E2AutoSync.transfer", TRANSFERS);
+    ExecutorCompletionService<Boolean> completed = new ExecutorCompletionService<>(transfers);
+    int next = batch.processed();
+    try {
+      while (!stopped.getAsBoolean()) {
+        while (next < photos.size() && next - batch.processed() < TRANSFERS
+            && !stopped.getAsBoolean() && mayAdmit.getAsBoolean()) {
+          Candidate photo = photos.get(next++);
+          completed.submit(() -> transfer.test(photo));
+        }
+        if (next == batch.processed()) break;
+        Future<Boolean> result = completed.poll(250, TimeUnit.MILLISECONDS);
+        if (result == null) continue;
+        if (stopped.getAsBoolean()) break;
+        if (result.get()) batch.ready++;
+        else batch.failed++;
+        publish(preferences, JobState.Kind.RUNNING, batch.ready, photos.size(), batch.failed, true);
+      }
+    } finally {
+      stopTransfers(transfers);
+    }
+  }
+
+  static String batchIdentity(String bucket, List<Candidate> photos) throws IOException {
+    StringBuilder snapshot = new StringBuilder(bucket);
+    for (Candidate candidate : photos) {
+      PhotoRepository.Photo photo = candidate.photo();
+      snapshot.append('\0').append(photo.uri).append('\0').append(candidate.volume())
+          .append('\0').append(candidate.version()).append('\0').append(candidate.generation())
+          .append('\0').append(photo.name).append('\0').append(photo.folder)
+          .append('\0').append(photo.size).append('\0').append(photo.modified)
+          .append('\0').append(photo.taken).append('\0').append(photo.added);
+    }
+    return PhotoRepository.digest(snapshot.toString());
   }
 
   static boolean needsCatalog(E2Photos photos, String bucket, boolean hasCleanup,
@@ -157,7 +207,8 @@ final class E2AutoSync {
         MediaStore.MediaColumns.DISPLAY_NAME + " LIKE ?")) + ")";
     List<Candidate> photos = new ArrayList<>();
     java.util.Map<String, String> versions = new java.util.HashMap<>();
-    try (Cursor rows = context.getContentResolver().query(files, columns, where, patterns, null)) {
+    try (Cursor rows = context.getContentResolver().query(files, columns, where, patterns,
+        MediaStore.MediaColumns._ID + " ASC, " + MediaStore.MediaColumns.VOLUME_NAME + " ASC")) {
       if (rows == null) throw new IOException("写真を取得できません");
       while (rows.moveToNext() && !Thread.currentThread().isInterrupted()) {
         if (rows.isNull(1) || rows.isNull(2)) throw new IOException("写真の情報を取得できません");
@@ -265,7 +316,8 @@ final class E2AutoSync {
   private static void requireDestination(Context context, String bucket, BooleanSupplier stopped)
       throws IOException {
     if (stopped.getAsBoolean() || Thread.currentThread().isInterrupted()
-        || !E2SyncJob.enabled(context)
+        || !E2SyncJob.enabled(context) || !E2SyncJob.fullMediaConsent(context)
+        || !E2Settings.hasMediaAccess(context)
         || !bucket.equals(state(context).getString("destination", ""))
         || !bucket.equals(E2Settings.configuredBucket(context)))
       throw new IOException("同期を中断したか、保存先が変わりました");
