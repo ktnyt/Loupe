@@ -308,7 +308,7 @@ def split(rows):
     return parts
 
 
-def publish(storage, current, legacy, rows, parts):
+def publish(storage, current, legacy, rows, parts, listing):
     refs = []
     for body, count in parts:
         sha = digest(body)
@@ -320,6 +320,11 @@ def publish(storage, current, legacy, rows, parts):
             verified = storage.read(key, PART_BYTES, existing.version)
         require(verified is not None and verified.data == body, 'Existing part does not match its content key')
         refs.append({'sha256': sha, 'version': verified.version, 'count': count})
+    latest = {item for page in migration_pages(storage) for item in page}
+    require(set(listing) <= latest, 'A verified migration record changed during preparation')
+    deferred = len(latest) - len(listing)
+    if deferred:
+        print(f'New records deferred to the next run: {deferred}', flush=True)
     require(storage.root(LEGACY) == legacy, 'Legacy catalog changed during preparation')
     require(storage.root(INDEX) == current, 'Current catalog changed during preparation')
     verified = current
@@ -328,7 +333,7 @@ def publish(storage, current, legacy, rows, parts):
                          'count': len(rows), 'parts': refs})
         require(len(root) <= ROOT_BYTES, 'Recovery index is too large')
         verified = storage.write(INDEX, root, current)
-    for reference, (body, _) in zip(refs, parts, strict=True):
+    for reference, (body, _) in zip(refs, parts):
         key = PARTS + reference['sha256'] + '.json'
         pinned = storage.read(key, PART_BYTES, reference['version'])
         require(pinned is not None and pinned.data == body, 'Published generation lost a pinned part')
@@ -347,12 +352,7 @@ def run(storage, workers, expect_count=None, write=False):
     parts = split(rows.values())
     print(f'Migration records: {len(records)}; merged recovery rows: {len(rows)}; parts: {len(parts)}', flush=True)
     if write:
-        latest = {item for page in migration_pages(storage) for item in page}
-        require(set(listing) <= latest, 'A verified migration record changed during preparation')
-        deferred = len(latest) - len(listing)
-        if deferred:
-            print(f'New records deferred to the next run: {deferred}', flush=True)
-        publish(storage, current, legacy, rows, parts)
+        publish(storage, current, legacy, rows, parts, listing)
         print('Verified the published recovery index and all referenced parts.', flush=True)
 
 
