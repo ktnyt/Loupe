@@ -12,6 +12,7 @@ import android.util.Log;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -66,7 +67,9 @@ final class E2AutoSync {
         String hash = null;
         try {
           hash = readFallback(photo, originals, stopped);
-        } catch (IOException unavailable) {
+        } catch (InterruptedIOException interrupted) {
+          throw interrupted;
+        } catch (IOException | RuntimeException unavailable) {
           requireRunning(stopped);
         }
         extendFallback(hash);

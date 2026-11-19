@@ -82,7 +82,7 @@ final class E2BatchChecks {
       check(cleared.commit() && new E2AutoSync.Batch(preferences, identity, total).processed() == 0,
           "Reset must discard the old cursor");
       fallback(preferences);
-      return "PASS e2-batches: drain, resume, metadata/content drift, warm-up, zero progress, reset";
+      return "PASS e2-batches: drain, resume, metadata/content drift, provider failure, warm-up, zero progress, reset";
     } finally {
       context.deleteSharedPreferences(name);
     }
@@ -117,10 +117,39 @@ final class E2BatchChecks {
       throw new IOException("Synthetic unavailable original");
     }, () -> false);
     check(unavailable.processed() == 0, "Unreadable bytes cannot match an acknowledged fallback");
+    E2AutoSync.Batch denied = new E2AutoSync.Batch(preferences, identity, photos.size());
+    denied.validateFallback(preferences, photos, candidate -> {
+      throw new SecurityException("Synthetic denied original");
+    }, () -> false);
+    check(denied.processed() == 0, "A provider access error must invalidate an acknowledged fallback");
+
+    AtomicBoolean stopped = new AtomicBoolean();
+    try {
+      new E2AutoSync.Batch(preferences, identity, photos.size()).validateFallback(preferences, photos, candidate -> {
+        stopped.set(true);
+        throw new SecurityException("Synthetic stop while opening original");
+      }, stopped::get);
+      throw new AssertionError("A stop during provider failure must halt resume validation");
+    } catch (IOException expected) {
+      check(stopped.get(), "Resume validation should stop when requested");
+    }
+
     E2AutoSync.transferBatch(preferences, photos, unavailable, () -> false, () -> false, candidate ->
         new E2AutoSync.Transfer(true, null));
     check(unavailable.ready == 0 && unavailable.failed == 1,
         "Missing fallback hash cannot produce a ready result");
+    SharedPreferences.Editor failed = preferences.edit();
+    unavailable.save(failed);
+    check(failed.commit(), "Could not persist the unavailable-original marker");
+    E2AutoSync.Batch resumed = new E2AutoSync.Batch(preferences, identity, photos.size());
+    resumed.validateFallback(preferences, photos, candidate -> {
+      throw new UnsupportedOperationException("Synthetic provider cannot open original");
+    }, () -> false);
+    E2AutoSync.transferBatch(preferences, photos, resumed, () -> false, () -> false, candidate -> {
+      check(candidate.equals(photos.get(1)), "The transfer should continue beyond the known failure");
+      return new E2AutoSync.Transfer(true, null);
+    });
+    check(resumed.ready == 1 && resumed.failed == 1, "Keep the failed result while later rows progress");
   }
 
   private static E2AutoSync.Candidate candidate(long id, long generation) {
