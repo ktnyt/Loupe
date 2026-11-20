@@ -52,6 +52,8 @@ final class E2Cleanup {
       if (!options(c).edit().putString("cleanupBucket", enabled ? bucket : "")
           .putInt("cleanupDays", retention).commit())
         throw new IOException("容量整理の設定を保存できません");
+      if (!E2SyncJob.ensureRecoverySchedule(c))
+        android.util.Log.w("LoupeE2Sync", "Recovery scheduling declined");
     }
   }
 
