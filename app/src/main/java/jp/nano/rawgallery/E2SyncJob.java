@@ -12,6 +12,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.MediaStore;
 import android.util.Log;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -26,6 +27,7 @@ public final class E2SyncJob extends JobService {
   private static final long CONTINUATION_DELAY_MS = 15_000;
   private static final int MEDIA_CONSENT_VERSION = 2;
   private static final AtomicBoolean RUNNING = new AtomicBoolean();
+  private static final AtomicBoolean OPEN_RECOVERY_QUEUED = new AtomicBoolean();
   static final java.util.concurrent.locks.ReentrantLock ORIGINALS =
       new java.util.concurrent.locks.ReentrantLock();
   private final ExecutorService worker = new DiagnosticExecutor("E2SyncJob.worker", 1);
@@ -138,27 +140,62 @@ public final class E2SyncJob extends JobService {
 
   private static void ensureMediaJob(Context context) {
     synchronized (E2Settings.DESTINATION_LOCK) {
-      if (enabled(context) && context.getSystemService(JobScheduler.class).getPendingJob(MEDIA_CHANGED) == null
+      if (enabled(context) && fullMediaConsent(context) && E2Settings.hasMediaAccess(context)
+          && context.getSystemService(JobScheduler.class).getPendingJob(MEDIA_CHANGED) == null
           && !scheduleMediaJob(context)) Log.w("LoupeE2Sync", "Media observation scheduling declined");
     }
   }
 
-  private static void scheduleContinuation(Context context, String bucket, int finishedJobId,
+  static void recoverOnOpen(Context context) {
+    if (!OPEN_RECOVERY_QUEUED.compareAndSet(false, true)) return;
+    CompletableFuture.runAsync(() -> {
+      try {
+        recoverSchedules(context, false);
+      } finally {
+        OPEN_RECOVERY_QUEUED.set(false);
+      }
+    });
+  }
+
+  private static void recoverSchedules(Context context, boolean systemRestart) {
+    synchronized (E2Settings.DESTINATION_LOCK) {
+      if (!enabled(context)) return;
+      try {
+        if (!ensureRecoverySchedule(context)) Log.w("LoupeE2Sync", "Recovery scheduling declined");
+        JobScheduler scheduler = context.getSystemService(JobScheduler.class);
+        boolean missingObserver = scheduler.getPendingJob(MEDIA_CHANGED) == null;
+        // Schedule the catch-up first so a refused request leaves the observer eligible
+        // for on-open repair. Existing active or pending work can perform the catch-up.
+        if ((missingObserver || systemRestart) && !RUNNING.get()
+            && scheduler.getPendingJob(FIRST) == null
+            && scheduler.getPendingJob(CONTINUATION) == null
+            && !scheduleContinuation(context, E2AutoSync.state(context).getString("destination", ""),
+                0, systemRestart ? CONTINUATION_DELAY_MS : 0)) return;
+        if (missingObserver) ensureMediaJob(context);
+      } catch (IllegalStateException unavailable) {
+        Log.w("LoupeE2Sync", "Recovery scheduler unavailable");
+      }
+    }
+  }
+
+  private static boolean scheduleContinuation(Context context, String bucket, int finishedJobId,
       long delay) {
     synchronized (E2Settings.DESTINATION_LOCK) {
       if (!enabled(context) || !fullMediaConsent(context) || !E2Settings.hasMediaAccess(context)
           || bucket == null || bucket.isEmpty()
           || !bucket.equals(E2AutoSync.state(context).getString("destination", ""))
-          || !bucket.equals(E2Settings.configuredBucket(context))) return;
+          || !bucket.equals(E2Settings.configuredBucket(context))) return false;
       int jobId = finishedJobId == CONTINUATION ? FIRST : CONTINUATION;
       JobScheduler scheduler = context.getSystemService(JobScheduler.class);
       ComponentName service = new ComponentName(context, E2SyncJob.class);
       try {
         if (scheduler.schedule(job(jobId, service).setMinimumLatency(delay).build())
-            != JobScheduler.RESULT_SUCCESS) Log.w("LoupeE2Sync", "Continuation scheduling declined");
+            == JobScheduler.RESULT_SUCCESS) return true;
+        Log.w("LoupeE2Sync", "Continuation scheduling declined");
       } catch (IllegalStateException unavailable) {
         Log.w("LoupeE2Sync", "Continuation scheduler unavailable");
       }
+      return false;
     }
   }
 
@@ -166,10 +203,7 @@ public final class E2SyncJob extends JobService {
     @Override public void onReceive(Context context, Intent intent) {
       if (Intent.ACTION_MY_PACKAGE_REPLACED.equals(intent.getAction())
           || Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) {
-        ensureMediaJob(context);
-        if (!ensureRecoverySchedule(context)) Log.w("LoupeE2Sync", "Recovery scheduling declined");
-        scheduleContinuation(context, E2AutoSync.state(context).getString("destination", ""), 0,
-            CONTINUATION_DELAY_MS);
+        recoverSchedules(context, true);
       }
     }
   }
