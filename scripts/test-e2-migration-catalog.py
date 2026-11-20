@@ -300,6 +300,82 @@ class MigrationTests(unittest.TestCase):
         self.publish(count=2)
         self.assertEqual({row['name'] for row in self.rows()}, {'はじめ.jpg', 'late.mov'})
 
+    def test_watch_publishes_additions_and_skips_unchanged_polls(self):
+        self.publish()
+        monitor = migration.CatalogWatch(self.storage, 2)
+        baseline = self.storage.root(migration.INDEX)
+        writes = len(self.client.puts)
+        self.assertFalse(monitor.poll())
+        self.assertEqual(len(self.client.puts), writes)
+        self.seed(b'late watched movie', 'monitored.mov', video=True)
+
+        verify = self.storage.verify_original
+        checked = []
+
+        def observe(row, **kwargs):
+            checked.append(row['name'])
+            return verify(row, **kwargs)
+
+        self.storage.verify_original = observe
+        self.assertTrue(monitor.poll())
+        self.assertEqual(checked, ['monitored.mov'])
+        self.assertNotEqual(self.storage.root(migration.INDEX), baseline)
+        self.assertEqual({row['name'] for row in self.rows()}, {'はじめ.jpg', 'monitored.mov'})
+        writes = len(self.client.puts)
+        self.assertFalse(monitor.poll())
+        self.assertEqual(len(self.client.puts), writes)
+        self.assertEqual(checked, ['monitored.mov'])
+
+    def test_watch_retries_when_conditional_publication_fails(self):
+        self.publish()
+        monitor = migration.CatalogWatch(self.storage, 2)
+        self.assertFalse(monitor.poll())
+        baseline = self.storage.root(migration.INDEX)
+        self.seed(b'late watched photo', 'monitored.jpg')
+        put = self.client.put_object
+
+        def temporarily_busy(**options):
+            if options['Key'] == migration.INDEX:
+                raise S3Error('PreconditionFailed')
+            return put(**options)
+
+        self.client.put_object = temporarily_busy
+        with self.assertRaises(S3Error):
+            monitor.poll()
+        self.assertEqual(self.storage.root(migration.INDEX), baseline)
+        self.client.put_object = put
+        self.assertTrue(monitor.poll())
+        self.assertEqual({row['name'] for row in self.rows()}, {'はじめ.jpg', 'monitored.jpg'})
+
+    def test_watch_rechecks_cached_original_when_a_new_generation_omits_it(self):
+        self.publish()
+        older = self.storage.root(migration.INDEX)
+        movie = self.seed(b'cached movie', 'cached.mov', video=True)
+        monitor = migration.CatalogWatch(self.storage, 2)
+        self.assertTrue(monitor.poll())
+        self.client.insert(migration.INDEX, older.data)
+        doc = migration.decode(self.storage.read(movie, 16384).data)
+        object_key = doc['videos'][0]['object']
+        original = self.client.objects.pop(object_key)
+        writes = len(self.client.puts)
+        with self.assertRaises(S3Error):
+            monitor.poll()
+        self.assertEqual(len(self.client.puts), writes)
+        self.client.objects[object_key] = original
+        self.assertTrue(monitor.poll())
+        self.assertEqual({row['name'] for row in self.rows()}, {'はじめ.jpg', 'cached.mov'})
+
+    def test_watch_waits_for_first_compatible_ledger_entry(self):
+        del self.client.objects[self.addition]
+        monitor = migration.CatalogWatch(self.storage, 2)
+        self.assertFalse(monitor.poll())
+        self.seed(b'unrestorable container', 'clip.avi', video=True)
+        self.assertFalse(monitor.poll())
+        self.assertFalse(self.client.puts)
+        self.seed(b'verified video bytes', 'clip.mov', video=True)
+        self.assertTrue(monitor.poll())
+        self.assertEqual([row['name'] for row in self.rows()], ['clip.mov'])
+
     def test_existing_catalog_requires_utf8(self):
         listed = next(iter(migration.migration_pages(self.storage)))[0]
         row = migration.migration_row(self.storage, listed)
