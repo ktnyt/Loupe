@@ -235,10 +235,17 @@ public final class E2SyncJob extends JobService {
           RUNNING.set(false);
           if (current != params) return;
           current = null;
-          JobState.Kind kind = E2AutoSync.snapshot(this, false).kind;
+          JobState.Kind kind;
           synchronized (E2Settings.DESTINATION_LOCK) {
-            if (!media || !enabled(this) || !scheduleMediaJob(this))
-              jobFinished(params, media && enabled(this));
+            kind = E2AutoSync.snapshot(this, false).kind;
+            boolean rearmed = media && enabled(this) && scheduleMediaJob(this);
+            if (!rearmed) jobFinished(params, media && enabled(this));
+            if (!cancel.get() && destination == null && kind == JobState.Kind.COMPLETE
+                && enabled(this)) {
+              JobScheduler scheduler = getSystemService(JobScheduler.class);
+              if (rearmed || (!media && scheduler.getPendingJob(MEDIA_CHANGED) != null))
+                cancelDeferredRetries(scheduler, params.getJobId());
+            }
           }
           if (!ensureRecoverySchedule(this)) Log.w("LoupeE2Sync", "Recovery scheduling declined");
           if (cancel.get()) return;
@@ -253,6 +260,15 @@ public final class E2SyncJob extends JobService {
       }
     });
     return true;
+  }
+
+  private static void cancelDeferredRetries(JobScheduler scheduler, int finishedJobId) {
+    for (int id : new int[] {FIRST, CONTINUATION}) {
+      if (id == finishedJobId) continue;
+      JobInfo pending = scheduler.getPendingJob(id);
+      // The original delay distinguishes both new and already scheduled retries from catch-up jobs.
+      if (pending != null && pending.getMinLatencyMillis() == RETRY_DELAY_MS) scheduler.cancel(id);
+    }
   }
 
   @Override public boolean onStopJob(JobParameters params) {
