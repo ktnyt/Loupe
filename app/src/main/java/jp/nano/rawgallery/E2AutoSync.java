@@ -197,8 +197,12 @@ final class E2AutoSync {
     }
   }
 
-  /** Returns the destination if this batch made progress and has another batch to run. */
-  static String run(Context context, Network network, BooleanSupplier stopped) {
+  record FollowUp(String destination, boolean retryUnnecessary) {
+    static final FollowUp NONE = new FollowUp(null, false);
+    static final FollowUp CLEAR_RETRY = new FollowUp(null, true);
+  }
+
+  static FollowUp run(Context context, Network network, BooleanSupplier stopped) {
     long admissionDeadline = SystemClock.elapsedRealtime() + ADMISSION_MS;
     SharedPreferences preferences = state(context);
     if (preferences.contains("failureReason") || preferences.getBoolean("publishingCatalog", false))
@@ -208,21 +212,21 @@ final class E2AutoSync {
     try (E2Photos e2 = new E2Photos(context, network)) {
       if (stopped.getAsBoolean()) {
         publish(preferences, JobState.Kind.PAUSED, 0, 0, 0, false);
-        return null;
+        return FollowUp.NONE;
       }
       if (!e2.settings.configured() || !E2Settings.hasMediaAccess(context)) {
         publish(preferences, JobState.Kind.AUTH_REQUIRED, 0, 0, 0, false);
-        return null;
+        return FollowUp.NONE;
       }
       if (!E2SyncJob.fullMediaConsent(context)) {
         preferences.edit().putString("failureReason", "写真・動画のバックアップ範囲の確認が必要です。一時停止してから再開してください").apply();
         publish(preferences, JobState.Kind.AUTH_REQUIRED, 0, 0, 0, false);
-        return null;
+        return FollowUp.NONE;
       }
       String bucket = preferences.getString("destination", "");
       if (bucket.isEmpty() || !bucket.equals(E2Settings.configuredBucket(context))) {
         publish(preferences, JobState.Kind.AUTH_REQUIRED, 0, 0, 0, false);
-        return null;
+        return FollowUp.NONE;
       }
       // A sweep can settle only the media state observed before opening the cursor.
       String media = mediaStamp(context, bucket);
@@ -251,7 +255,7 @@ final class E2AutoSync {
             if (!E2Cleanup.enabled(context, bucket)) {
               if (!sameMedia && !preferences.edit().putString(SETTLED_MEDIA, media).commit())
                 throw new IOException("同期の進捗を保存できません");
-              return null;
+              return FollowUp.CLEAR_RETRY;
             }
           }
         }
@@ -259,7 +263,7 @@ final class E2AutoSync {
 
       if (!bucket.equals(e2.settings.configuration().getString("bucket"))) {
         publish(preferences, JobState.Kind.AUTH_REQUIRED, 0, 0, 0, false);
-        return null;
+        return FollowUp.NONE;
       }
       SharedPreferences.Editor start = preferences.edit();
       clearSettled(start);
@@ -298,7 +302,7 @@ final class E2AutoSync {
         published = tryPublishCatalog(context, e2, bucket, stopped);
         if (published == null) {
           publish(preferences, failureKind(batch), batch.reportedReady, total, batch.reportedFailed, true);
-          return null;
+          return FollowUp.NONE;
         }
       }
       requireDestination(context, bucket, stopped);
@@ -322,13 +326,15 @@ final class E2AutoSync {
       JobState.Kind kind = resume ? JobState.Kind.WAITING
           : unfinished || batch.failed != 0 ? failureKind(batch) : JobState.Kind.COMPLETE;
       publish(preferences, kind, batch.reportedReady, total, batch.reportedFailed, true);
-      return resume ? bucket : null;
+      if (resume) return new FollowUp(bucket, false);
+      return kind == JobState.Kind.COMPLETE && !batch.missingPreviews
+          && !E2Cleanup.enabled(context, bucket) ? FollowUp.CLEAR_RETRY : FollowUp.NONE;
     } catch (Exception e) {
       publish(preferences, stopped.getAsBoolean() || Thread.currentThread().isInterrupted()
           ? JobState.Kind.PAUSED : failureKind(batch),
           batch == null ? 0 : batch.reportedReady, total,
           batch == null ? 0 : batch.reportedFailed, batch != null);
-      return null;
+      return FollowUp.NONE;
     } finally {
       currentRate = null;
     }
