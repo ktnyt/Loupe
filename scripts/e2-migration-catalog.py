@@ -13,6 +13,10 @@ import time
 import unicodedata
 
 MIGRATION = 'loupe/migration/amazon-photos/v1/'
+VIDEO_MIGRATION = 'loupe/migration/amazon-photos/videos/v1/'
+# These extensions can be migrated by Themis but the Android recovery index cannot read them.
+UNSUPPORTED_MIGRATED_VIDEOS = frozenset('avi mts m2ts 3g2 wmv mpeg mpg mod tod'.split())
+RECOVERABLE_VIDEOS = frozenset('mp4 m4v mov 3gp 3gpp mkv webm'.split())
 ORIGINALS = 'loupe/originals/'
 PARTS = 'loupe/catalog/parts/'
 INDEX = 'loupe/catalog/v2.json'
@@ -26,7 +30,7 @@ MAX_ORIGINAL = 50_000_000_000_000
 LEGACY_ORIGINAL = 512 * 1024 * 1024
 SUPPORTED = frozenset('''3fr ari arq arw bay bmq cap cr2 cr3 crw cs1 dc2 dcr dng drf eip erf fff gpr ia iiq
 k25 kc2 kdc mdc mef mos mrw nef nrw obm orf ori pef ptx pxn qtk raf raw rdc rw1 rw2 rwl rwz sr2 srf srw
-sti tif tiff x3f jpg jpeg mp4 m4v mov 3gp 3gpp mkv webm'''.split())
+sti tif tiff x3f jpg jpeg'''.split()) | RECOVERABLE_VIDEOS
 
 
 class Invalid(ValueError):
@@ -99,7 +103,7 @@ def integer(value, lower, upper=2**63 - 1):
     return type(value) is int and lower <= value <= upper
 
 
-def native(row, bucket):
+def native(row, bucket, *, supported=SUPPORTED):
     require(isinstance(row, dict), 'Invalid catalog row')
     key, sha, name, version = (row.get(x) for x in ('key', 'sha', 'name', 'version'))
     require(matches(key, r'[0-9a-f]{32}') and matches(sha, r'[0-9a-f]{64}')
@@ -108,7 +112,7 @@ def native(row, bucket):
             and row.get('bucket') == bucket and row.get('provider') == 'idrive-e2'
             and row.get('state') == 'verified'
             and isinstance(name, str) and len(name.encode('utf-16-le', errors='surrogatepass')) <= 510
-            and name.rfind('.') > 0 and name.rsplit('.', 1)[1].lower() in SUPPORTED
+            and name.rfind('.') > 0 and name.rsplit('.', 1)[1].lower() in supported
             and not any(c in '/\\' or ord(c) < 32 or ord(c) == 127
                         or unicodedata.category(c) == 'Cs' for c in name), 'Invalid catalog row')
     return {'key': key, 'sha': sha, 'name': name, 'version': version, 'size': row['size'],
@@ -196,17 +200,24 @@ def migration_row(storage, listed):
     key, etag, size = listed
     saved = storage.read(key, 16 * 1024, etag=etag)
     require(saved is not None and len(saved.data) == size, 'Listed migration record changed while reading')
+    is_video = key.startswith(VIDEO_MIGRATION)
+    prefix, field = (VIDEO_MIGRATION, 'videos') if is_video else (MIGRATION, 'photos')
     data = decode(saved.data)
-    require(isinstance(data, dict) and integer(data.get('format'), 1, 1) and isinstance(data.get('photos'), list)
-            and len(data['photos']) == 1 and isinstance(data['photos'][0], dict),
+    require(isinstance(data, dict) and integer(data.get('format'), 1, 1)
+            and isinstance(data.get(field), list)
+            and len(data[field]) == 1 and isinstance(data[field][0], dict),
             'Unexpected Amazon migration record format')
-    item = data['photos'][0]
+    item = data[field][0]
     sha, short = item.get('sha256'), item.get('id')
-    require(matches(sha, r'[0-9a-f]{64}') and short == sha[:32] and key == MIGRATION + sha + '.json'
+    require(matches(sha, r'[0-9a-f]{64}') and short == sha[:32] and key == prefix + sha + '.json'
             and item.get('object') == ORIGINALS + short + '/' + sha, 'Invalid original reference')
+    video_types = RECOVERABLE_VIDEOS | UNSUPPORTED_MIGRATED_VIDEOS
     row = native({'key': short, 'sha': sha, 'version': item.get('version'), 'size': item.get('size'),
                   'name': item.get('name'), 'taken': item.get('taken', 0), 'verifiedAt': 0,
-                  'bucket': storage.bucket, 'provider': 'idrive-e2', 'state': 'verified'}, storage.bucket)
+                  'bucket': storage.bucket, 'provider': 'idrive-e2', 'state': 'verified'}, storage.bucket,
+                 supported=video_types if is_video else SUPPORTED)
+    if is_video and row['name'].rsplit('.', 1)[1].lower() in UNSUPPORTED_MIGRATED_VIDEOS:
+        return None
     # The migration writer publishes this record only after comparing the original bytes.
     # Reconfirm its immutable object version and size without downloading the original again.
     storage.verify_original(row)
@@ -215,25 +226,28 @@ def migration_row(storage, listed):
 
 def migration_pages(storage):
     paginator = storage.client.get_paginator('list_objects_v2')
-    for page in paginator.paginate(Bucket=storage.bucket, Prefix=MIGRATION):
-        records = [(obj['Key'], obj.get('ETag'), obj.get('Size')) for obj in page.get('Contents', [])]
-        require(all(matches(key, re.escape(MIGRATION) + r'[0-9a-f]{64}\.json')
-                    and matches(etag, r'"[A-Za-z0-9_-]{1,128}"') and integer(size, 1, 16 * 1024)
-                    for key, etag, size in records),
-                'Unexpected object in the Amazon migration namespace')
-        yield records
+    for prefix in (MIGRATION, VIDEO_MIGRATION):
+        for page in paginator.paginate(Bucket=storage.bucket, Prefix=prefix):
+            records = [(obj['Key'], obj.get('ETag'), obj.get('Size')) for obj in page.get('Contents', [])]
+            require(all(matches(key, re.escape(prefix) + r'[0-9a-f]{64}\.json')
+                        and matches(etag, r'"[A-Za-z0-9_-]{1,128}"') and integer(size, 1, 16 * 1024)
+                        for key, etag, size in records),
+                    'Unexpected object in the Amazon migration namespace')
+            yield records
 
 
 def migration_rows(storage, workers):
     rows, listing = [], []
     with ThreadPoolExecutor(max_workers=workers) as pool:
         for page in migration_pages(storage):
-            require(len(rows) + len(page) <= MAX_ROWS, 'Too many migration records for the recovery index')
+            require(len(listing) + len(page) <= MAX_ROWS, 'Too many migration records for the recovery index')
             listing.extend(page)
-            rows.extend(pool.map(lambda item: migration_row(storage, item), page))
-            if rows and len(rows) % 5000 == 0:
-                print(f'Verified migration records: {len(rows)}', file=sys.stderr, flush=True)
-    require(rows, 'No Amazon migration records found')
+            rows.extend(row for row in pool.map(lambda item: migration_row(storage, item), page)
+                        if row is not None)
+            if listing and len(listing) % 5000 == 0:
+                print(f'Read migration records: {len(listing)}', file=sys.stderr, flush=True)
+    require(listing, 'No Amazon migration records found')
+    require(rows, 'No migration records supported by Loupe')
     require(len({key for key, _, _ in listing}) == len(listing), 'Migration listing contained a duplicate key')
     return rows, listing
 
@@ -353,11 +367,13 @@ def run(storage, workers, expect_count=None, write=False):
             'Bucket versioning is required')
     current, legacy = storage.root(INDEX), storage.root(LEGACY)
     records, listing = migration_rows(storage, workers)
-    require(expect_count is None or len(records) == expect_count, 'Migration record count differs from expected')
+    require(expect_count is None or len(listing) == expect_count, 'Migration record count differs from expected')
     rows = merge(storage, existing_rows(storage, current, legacy), records)
     require(len(rows) <= MAX_ROWS, 'Too many rows for the recovery index')
     parts = split(rows.values())
-    print(f'Migration records: {len(records)}; merged recovery rows: {len(rows)}; parts: {len(parts)}', flush=True)
+    skipped = len(listing) - len(records)
+    print(f'Migration records: {len(listing)}; unsupported videos: {skipped}; '
+          f'merged recovery rows: {len(rows)}; parts: {len(parts)}', flush=True)
     if write:
         publish(storage, current, legacy, rows, parts, listing)
         print('Verified the published recovery index and all referenced parts.', flush=True)
