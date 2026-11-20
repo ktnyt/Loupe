@@ -98,14 +98,15 @@ class MigrationTests(unittest.TestCase):
         self.storage = migration.Storage(self.client, 'loupe-test')
         self.addition = self.seed(b'fixture-one', 'はじめ.jpg')
 
-    def seed(self, original, name):
+    def seed(self, original, name, video=False):
         sha = migration.digest(original)
         object_key = f'{migration.ORIGINALS}{sha[:32]}/{sha}'
         version = self.client.insert(object_key, original)
-        key = migration.MIGRATION + sha + '.json'
+        prefix, field = (migration.VIDEO_MIGRATION, 'videos') if video else (migration.MIGRATION, 'photos')
+        key = prefix + sha + '.json'
         entry = {'format': 1, 'id': sha[:32], 'object': object_key, 'version': version, 'sha256': sha,
                  'size': len(original), 'name': name, 'taken': 0}
-        self.client.insert(key, migration.encode({'format': 1, 'photos': [entry]}))
+        self.client.insert(key, migration.encode({'format': 1, field: [entry]}))
         return key
 
     def publish(self, count=1):
@@ -145,6 +146,46 @@ class MigrationTests(unittest.TestCase):
         self.publish(count=2)
         self.assertEqual({row['name'] for row in self.rows()}, {'はじめ.jpg', 'twice.dng'})
         self.assertIn('IfMatch', self.client.puts[-1][1])
+
+    def test_video_ledger_imports_an_original_alongside_photos(self):
+        self.publish()
+        data = b'verified video bytes'
+        self.seed(data, 'clip.MOV', video=True)
+        self.publish(count=2)
+        results = {row['name']: row for row in self.rows()}
+        self.assertEqual(set(results), {'はじめ.jpg', 'clip.MOV'})
+        row = results['clip.MOV']
+        self.assertEqual(row['sha'], migration.digest(data))
+        self.storage.verify_original(row, verify_sha=True)
+        writes = len(self.client.puts)
+        self.publish(count=2)
+        self.assertEqual(len(self.client.puts), writes)
+
+    def test_video_only_ledger_is_valid(self):
+        del self.client.objects[self.addition]
+        self.seed(b'verified video bytes', 'clip.mov', video=True)
+        self.publish()
+        self.assertEqual([row['name'] for row in self.rows()], ['clip.mov'])
+
+    def test_known_unsupported_video_stays_out_of_the_index(self):
+        self.seed(b'old container', 'archive.MTS', video=True)
+        self.seed(b'restorable container', 'clip.mov', video=True)
+        self.publish(count=3)
+        self.assertEqual({row['name'] for row in self.rows()}, {'はじめ.jpg', 'clip.mov'})
+
+    def test_video_namespace_rejects_an_unexpected_schema_and_name(self):
+        key = self.seed(b'video with incorrect namespace', 'video.mov', video=True)
+        data = migration.decode(self.storage.read(key, 16384).data)
+        with self.subTest('photo collection'):
+            self.client.insert(key, migration.encode({'format': 1, 'photos': data['videos']}))
+            with self.assertRaisesRegex(migration.Invalid, 'record format'):
+                self.publish(count=2)
+        with self.subTest('photo filename'):
+            data['videos'][0]['name'] = 'photo.jpg'
+            self.client.insert(key, migration.encode(data))
+            with self.assertRaisesRegex(migration.Invalid, 'Invalid catalog row'):
+                self.publish(count=2)
+        self.assertFalse(self.client.puts)
 
     def test_cannot_replace_concurrent_index(self):
         self.client.override_index = True
@@ -241,6 +282,23 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(len(self.rows()), 1)
         self.publish(count=2)
         self.assertEqual(len(self.rows()), 2)
+
+    def test_video_added_during_original_checks_waits_for_next_publication(self):
+        verify = self.storage.verify_original
+        appended = False
+
+        def append_after_first_verification(row, **kwargs):
+            nonlocal appended
+            verify(row, **kwargs)
+            if not appended:
+                self.seed(b'late video', 'late.mov', video=True)
+                appended = True
+
+        self.storage.verify_original = append_after_first_verification
+        self.publish()
+        self.assertEqual([row['name'] for row in self.rows()], ['はじめ.jpg'])
+        self.publish(count=2)
+        self.assertEqual({row['name'] for row in self.rows()}, {'はじめ.jpg', 'late.mov'})
 
     def test_existing_catalog_requires_utf8(self):
         listed = next(iter(migration.migration_pages(self.storage)))[0]
