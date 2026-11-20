@@ -238,17 +238,20 @@ def migration_pages(storage):
 
 def migration_rows(storage, workers):
     rows, listing = [], []
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        for page in migration_pages(storage):
-            require(len(listing) + len(page) <= MAX_ROWS, 'Too many migration records for the recovery index')
-            listing.extend(page)
-            rows.extend(row for row in pool.map(lambda item: migration_row(storage, item), page)
-                        if row is not None)
-            if listing and len(listing) % 5000 == 0:
-                print(f'Read migration records: {len(listing)}', file=sys.stderr, flush=True)
+    for page in migration_pages(storage):
+        require(len(listing) + len(page) <= MAX_ROWS, 'Too many migration records for the recovery index')
+        listing.extend(page)
     require(listing, 'No Amazon migration records found')
-    require(rows, 'No migration records supported by Loupe')
     require(len({key for key, _, _ in listing}) == len(listing), 'Migration listing contained a duplicate key')
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for offset in range(0, len(listing), 1000):
+            batch = listing[offset:offset + 1000]
+            rows.extend(row for row in pool.map(lambda item: migration_row(storage, item), batch)
+                        if row is not None)
+            read = offset + len(batch)
+            if read % 5000 == 0:
+                print(f'Read migration records: {read}', file=sys.stderr, flush=True)
+    require(rows, 'No migration records supported by Loupe')
     return rows, listing
 
 

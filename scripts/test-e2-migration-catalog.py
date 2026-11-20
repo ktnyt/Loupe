@@ -283,6 +283,23 @@ class MigrationTests(unittest.TestCase):
         self.publish(count=2)
         self.assertEqual(len(self.rows()), 2)
 
+    def test_video_added_during_original_checks_waits_for_next_publication(self):
+        verify = self.storage.verify_original
+        appended = False
+
+        def append_after_first_verification(row, **kwargs):
+            nonlocal appended
+            verify(row, **kwargs)
+            if not appended:
+                self.seed(b'late video', 'late.mov', video=True)
+                appended = True
+
+        self.storage.verify_original = append_after_first_verification
+        self.publish()
+        self.assertEqual([row['name'] for row in self.rows()], ['はじめ.jpg'])
+        self.publish(count=2)
+        self.assertEqual({row['name'] for row in self.rows()}, {'はじめ.jpg', 'late.mov'})
+
     def test_existing_catalog_requires_utf8(self):
         listed = next(iter(migration.migration_pages(self.storage)))[0]
         row = migration.migration_row(self.storage, listed)
