@@ -236,21 +236,29 @@ def migration_pages(storage):
             yield records
 
 
-def migration_rows(storage, workers):
-    rows, listing = [], []
+def migration_listing(storage):
+    listing = []
     for page in migration_pages(storage):
         require(len(listing) + len(page) <= MAX_ROWS, 'Too many migration records for the recovery index')
         listing.extend(page)
-    require(listing, 'No Amazon migration records found')
     require(len({key for key, _, _ in listing}) == len(listing), 'Migration listing contained a duplicate key')
+    return listing
+
+
+def verify_listing(storage, workers, listing):
     with ThreadPoolExecutor(max_workers=workers) as pool:
         for offset in range(0, len(listing), 1000):
             batch = listing[offset:offset + 1000]
-            rows.extend(row for row in pool.map(lambda item: migration_row(storage, item), batch)
-                        if row is not None)
+            yield from pool.map(lambda item: migration_row(storage, item), batch)
             read = offset + len(batch)
             if read % 5000 == 0:
                 print(f'Read migration records: {read}', file=sys.stderr, flush=True)
+
+
+def migration_rows(storage, workers):
+    listing = migration_listing(storage)
+    require(listing, 'No Amazon migration records found')
+    rows = [row for row in verify_listing(storage, workers, listing) if row is not None]
     require(rows, 'No migration records supported by Loupe')
     return rows, listing
 
@@ -382,13 +390,81 @@ def run(storage, workers, expect_count=None, write=False):
         print('Verified the published recovery index and all referenced parts.', flush=True)
 
 
+class CatalogWatch:
+    def __init__(self, storage, workers):
+        self.storage = storage
+        self.workers = workers
+        # Cache lives only for this process. A restart rechecks the full ledger.
+        self.verified = {}
+        self.roots = None
+
+    def poll(self):
+        storage = self.storage
+        listing = migration_listing(storage)
+        current, legacy = storage.root(INDEX), storage.root(LEGACY)
+        if not listing or (self.roots == (current, legacy) and self.verified.keys() == set(listing)):
+            return False
+        require(storage.client.get_bucket_versioning(Bucket=storage.bucket).get('Status') == 'Enabled',
+                'Bucket versioning is required')
+
+        changed = [item for item in listing if item not in self.verified]
+        checked = dict(zip(changed, verify_listing(storage, self.workers, changed)))
+        verified = {item: checked[item] if item in checked else self.verified[item] for item in listing}
+        records = [row for row in verified.values() if row is not None]
+        present = {row['key']: row for row in existing_rows(storage, current, None)}
+        if records:
+            existing = list(present.values()) + list(existing_rows(storage, None, legacy))
+            rows = merge(storage, existing, records)
+            require(len(rows) <= MAX_ROWS, 'Too many rows for the recovery index')
+        else:
+            rows = present
+        updated = rows != present
+        if updated:
+            # Cached ledger entries may need publishing again after a different index is selected.
+            for item, row in verified.items():
+                if row is not None and item not in checked and row['key'] not in present:
+                    storage.verify_original(row)
+            version = publish(storage, current, legacy, rows, split(rows.values()), listing)
+            current = storage.read(INDEX, ROOT_BYTES, version)
+            require(current is not None, 'Published migration index version is unavailable')
+            print(f'Published recovery index with {len(rows)} rows; '
+                  f'unsupported videos: {len(verified) - len(records)}.', flush=True)
+        self.verified = verified
+        self.roots = current, legacy
+        return updated
+
+
+def error_message(error):
+    if isinstance(error, Invalid):
+        return str(error)
+    code = getattr(error, 'response', {}).get('Error', {}).get('Code', '')
+    reason = code if matches(code, r'[A-Za-z0-9_-]{1,80}') else type(error).__name__
+    return 'Migration check failed: ' + reason
+
+
+def watch(storage, workers, interval):
+    monitor = CatalogWatch(storage, workers)
+    print(f'Watching migration ledgers in {storage.bucket} every {interval} seconds.', flush=True)
+    while True:
+        try:
+            monitor.poll()
+        except Exception as error:
+            print(error_message(error) + '; retrying on the next poll.', file=sys.stderr, flush=True)
+        time.sleep(interval)
+
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bucket', required=True, choices=('loupe-test', 'loupe-data'))
     parser.add_argument('--workers', type=int, default=16, choices=range(1, 33), metavar='1-32')
     parser.add_argument('--expect-count', type=int, help='Expected number of individual migration records')
     parser.add_argument('--publish', action='store_true', help='Publish the resulting recovery index')
+    parser.add_argument('--watch', nargs='?', type=int, const=900, metavar='SECONDS',
+                        help='Poll and publish changes every 900 seconds, or the specified interval')
     args = parser.parse_args()
+    if args.watch is not None and (not args.publish or args.expect_count is not None or not 10 <= args.watch <= 86400):
+        parser.error('--watch needs --publish and an interval of 10 to 86400 seconds, without --expect-count')
     try:
         import boto3
         from botocore.config import Config
@@ -404,14 +480,15 @@ def main():
                                             response_checksum_validation='when_required',
                                             connect_timeout=10, read_timeout=30,
                                             retries={'mode': 'standard', 'max_attempts': 3}))
-        run(Storage(client, args.bucket), args.workers, args.expect_count, args.publish)
-    except Invalid as error:
-        print(str(error), file=sys.stderr)
-        return 2
+        storage = Storage(client, args.bucket)
+        if args.watch is None:
+            run(storage, args.workers, args.expect_count, args.publish)
+        else:
+            watch(storage, args.workers, args.watch)
+    except KeyboardInterrupt:
+        return 130
     except Exception as error:
-        code = getattr(error, 'response', {}).get('Error', {}).get('Code', '')
-        reason = code if matches(code, r'[A-Za-z0-9_-]{1,80}') else type(error).__name__
-        print('Migration check failed: ' + reason, file=sys.stderr)
+        print(error_message(error), file=sys.stderr)
         return 2
     return 0
 
