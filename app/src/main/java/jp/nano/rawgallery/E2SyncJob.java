@@ -224,13 +224,14 @@ public final class E2SyncJob extends JobService {
     stopped = cancel;
     worker.execute(() -> {
       runningThread = Thread.currentThread();
-      String continuation = null;
+      E2AutoSync.FollowUp followUp = E2AutoSync.FollowUp.NONE;
       try {
-        continuation = E2AutoSync.run(getApplicationContext(), network,
+        followUp = E2AutoSync.run(getApplicationContext(), network,
             () -> cancel.get() || !enabled(this) || !E2Archive.unmetered(this, network));
       } finally {
         runningThread = null;
-        String destination = continuation;
+        E2AutoSync.FollowUp result = followUp;
+        String destination = result.destination();
         new Handler(Looper.getMainLooper()).post(() -> {
           RUNNING.set(false);
           if (current != params) return;
@@ -240,7 +241,7 @@ public final class E2SyncJob extends JobService {
             kind = E2AutoSync.snapshot(this, false).kind;
             boolean rearmed = media && enabled(this) && scheduleMediaJob(this);
             if (!rearmed) jobFinished(params, media && enabled(this));
-            if (!cancel.get() && destination == null && kind == JobState.Kind.COMPLETE
+            if (!cancel.get() && result.retryUnnecessary() && kind == JobState.Kind.COMPLETE
                 && enabled(this)) {
               JobScheduler scheduler = getSystemService(JobScheduler.class);
               if (rearmed || (!media && scheduler.getPendingJob(MEDIA_CHANGED) != null))
