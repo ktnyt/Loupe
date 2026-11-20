@@ -13,7 +13,9 @@ public final class DiagnosticApplication extends Application {
       public void onActivityStarted(Activity a) { PreviewPreparationJob.enter(); }
       public void onActivityStopped(Activity a) { PreviewPreparationJob.leave(DiagnosticApplication.this); }
       public void onActivityCreated(Activity a, Bundle b) {}
-      public void onActivityResumed(Activity a) {}
+      public void onActivityResumed(Activity a) {
+        E2SyncJob.recoverOnOpen(DiagnosticApplication.this);
+      }
       public void onActivityPaused(Activity a) {}
       public void onActivitySaveInstanceState(Activity a, Bundle b) {}
       public void onActivityDestroyed(Activity a) {}
