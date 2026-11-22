@@ -15,6 +15,7 @@ import java.io.InterruptedIOException;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.json.JSONObject;
+import jp.nano.rawgallery.camera.CameraImportHistoryPlan;
 
 /** One durable generation at a time. An ambiguous POST is never resubmitted. */
 final class NanoBananaJob {
@@ -86,9 +87,9 @@ final class NanoBananaJob {
         job.put("task",task).put("stage","generating");store.job(job);
         checkInterrupted();
       }
-      recoverPending(job);
       String stage=job.getString("stage");
       if(stage.equals("discarding")){discard();return;}
+      recoverPending(job);
       if(job.has("saved")&&!stage.equals("complete")){job.put("stage","cleanup");store.job(job);stage="cleanup";}
       if(stage.equals("rejected"))throw new IOException("e2が送信を拒否しました。終了して設定を確認してください。");
       if(stage.equals("uploading")||stage.equals("submitting"))
@@ -133,18 +134,27 @@ final class NanoBananaJob {
     checkInterrupted();
     markDiscarding(store);
     JSONObject job=store.job();if(job==null)return;
-    recoverPending(job);checkInterrupted();
     if(job.optBoolean("discardDelete",true)){
-      services().delete(job.getString("object"),job.has("version")?job.getString("version"):null,job.getString("owner"));
+      deleteInput(job);
       job.put("discardDelete",false);store.job(job);checkInterrupted();
     }
+    // Local reconciliation can need a detached SD card. Keep the cancelled job and
+    // pending URI so retries can finish it without repeating the remote deletion.
+    recoverPending(job);
     store.job(null);
   }
   private void cleanup(JSONObject job) throws Exception {
     checkInterrupted();
-    services().delete(job.getString("object"),job.has("version")?job.getString("version"):null,job.getString("owner"));
+    deleteInput(job);
     job.put("stage","complete");store.job(job);checkInterrupted();
   }
+  private void deleteInput(JSONObject job) throws Exception {
+    String object=job.getString("object"), version=job.has("version")?job.getString("version"):null;
+    String owner=job.getString("owner");
+    if(services!=null)services.delete(object,version,owner);
+    else store.e2().delete(object,version,owner);
+  }
+
   static byte[] input(PhotoRepository repository,PhotoRepository.Photo photo) throws Exception {
     if(photo.isVideo())throw new IOException("写真を選んでください");
     PhotoRepository.Preview preview=repository.preview(photo);Bitmap bitmap=PhotoRepository.bitmap(preview,1600);
@@ -162,15 +172,31 @@ final class NanoBananaJob {
   private void recoverPending(JSONObject job) throws Exception {
     checkInterrupted();
     if(job.has("saved")||!job.has("pending"))return;
-    Uri uri=Uri.parse(job.getString("pending"));
+    String location=job.getString("pending");
+    if(!CameraImportHistoryPlan.validUri(location))throw new IOException("画像の保存先を確認できませんでした");
+    Uri uri=Uri.parse(location);
+    if(!PhotoStorage.volumeOf(uri).equals(job.optString("photo_volume",PhotoStorage.PRIMARY)))
+      throw new IOException("画像の保存先を確認できませんでした");
     PhotoStorage.requireMounted(context,uri);
+    String pending=MediaStore.MediaColumns.IS_PENDING, owner=MediaStore.MediaColumns.OWNER_PACKAGE_NAME;
+    String path=MediaStore.MediaColumns.RELATIVE_PATH, name=MediaStore.MediaColumns.DISPLAY_NAME;
+    String directory="Pictures/LoupeNanoBanana/";
     int state;
-    try(Cursor c=context.getContentResolver().query(uri,new String[]{MediaStore.Images.Media.IS_PENDING},null,null,null)) {
+    String filename=null;
+    try(Cursor c=context.getContentResolver().query(uri,new String[]{pending,owner,path,name},null,null,null)) {
       state=pendingState(c);
+      if(state>=0) {
+        filename=c.getString(3);
+        if(!context.getPackageName().equals(c.getString(1))||!directory.equals(c.getString(2))
+            ||filename==null||!filename.matches("NanoBanana-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\\.jpg"))
+          throw new IOException("画像の所有情報を確認できませんでした");
+      }
     }
+    PhotoStorage.requireMounted(context,uri);
     if(state==0){job.put("saved",uri.toString());store.job(job);checkInterrupted();return;}
     checkInterrupted();
-    if(state==1&&context.getContentResolver().delete(uri,MediaStore.Images.Media.IS_PENDING+" = ?",new String[]{"1"})!=1)
+    if(state==1&&context.getContentResolver().delete(uri,pending+"=1 AND "+owner+"=? AND "+path+"=? AND "+name+"=?",
+        new String[]{context.getPackageName(),directory,filename})!=1)
       throw new IOException("画像の保存状態を確認できませんでした。もう一度確認してください");
     job.remove("pending");store.job(job);
   }

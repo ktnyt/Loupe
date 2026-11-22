@@ -15,14 +15,20 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import androidx.core.content.ContextCompat;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.Method;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import jp.nano.rawgallery.camera.MediaSaver;
 import org.json.JSONObject;
 
 /** Synthetic OS-service integration. All network operations fail closed through an in-process seam. */
@@ -92,6 +98,8 @@ final class NanoBananaBackgroundChecks {
     final PhotoRepository.Photo input=photo,next=second;
     NanoBananaService.dependencies=factory;
     try{
+      verifyMtpDeletionProof();
+      verifyDiscardWithDetachedResult(context,store,new Fake(store,jpeg,saved));
       store.setKey("synthetic-only");store.setE2("synthetic-bucket","ABCDEFGHIJKLMNOPQRST","a".repeat(40));store.savePrompt(null,prompt.name,prompt.text);store.setOutput("4:3","1K");
       activity=(MainActivity)test.startActivitySync(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       final MainActivity screen=activity;GalleryScreenChecks.finishInitialIndex(test,screen);GalleryScreenChecks.portraitFixture(test,screen,width,font);
@@ -192,7 +200,7 @@ final class NanoBananaBackgroundChecks {
       store.job(null); // Fixture-only record: there is no remote object to delete.
       Context failing=new ContextWrapper(context){public Context getApplicationContext(){return this;}public ComponentName startForegroundService(Intent i){throw new IllegalStateException("synthetic startup rejection");}};
       TagDetailChecks.require(!NanoBananaService.start(failing,photo,prompt)&&!NanoBananaService.busy()&&store.job()==null,"startup rejection rolls back reservation");
-      return "PASS nano-background: actual production Android Service with isolated fake provider; next-photo operation, busy/error menu captures, Home continuation, no generation/result Activity launch, automatic JPEG save/readback 1200x800, temporary-object cleanup, duplicate admission, immutable prompt/output snapshot, next admission, saved cleanup retry without POST/download, interrupted-worker lease, durable discard retry and cleanup-only completion text, missing-version selectable manual recovery guidance, explicit ambiguous-submission messaging, stale end-confirmation A/B identity guard and current identity cleanup, stale Intent suppression and startup rejection. Captures are synthetic layouts; OS-service runtime assertions are separate. No real API, credentials, photos, physical touch or TalkBack speech tested.\nStatus trace (delivery hook; fixed UI text only): "+String.join(" → ",factory.messages)+"\n";
+      return "PASS nano-background: actual production Android Service with isolated fake provider; next-photo operation, busy/error menu captures, Home continuation, no generation/result Activity launch, automatic JPEG save/readback 1200x800, temporary-object cleanup, duplicate admission, immutable prompt/output snapshot, next admission, saved cleanup retry without POST/download, interrupted-worker lease, durable discard retry and cleanup-only completion text, missing-version selectable manual recovery guidance, explicit ambiguous-submission messaging, stale end-confirmation A/B identity guard and current identity cleanup, stale Intent suppression and startup rejection, remote-first discard with a detached result volume, MTP same-size corruption and read error checks. Captures are synthetic layouts; OS-service runtime assertions are separate. No real API, credentials, photos, physical touch or TalkBack speech tested.\nStatus trace (delivery hook; fixed UI text only): "+String.join(" → ",factory.messages)+"\n";
     }finally{
       if(factory.fake!=null)factory.fake.release.countDown();
       context.stopService(new Intent(context,NanoBananaService.class));
@@ -205,6 +213,62 @@ final class NanoBananaBackgroundChecks {
       NanoBananaService.dependencies=NanoBananaService.PRODUCTION;
     }
   }
+  private static void verifyMtpDeletionProof() throws Exception {
+    byte[] staged=new byte[128*1024+17];
+    StringBuilder expected=new StringBuilder(64);
+    for(byte value:MessageDigest.getInstance("SHA-256").digest(staged))
+      expected.append(String.format(Locale.ROOT,"%02x",value&255));
+    MediaSaver media=MediaSaver.INSTANCE;
+    TagDetailChecks.require(media.matchesSavedBytes(new ByteArrayInputStream(staged),staged.length,
+        expected.toString(),()->false),"MTP deletion allows the independently fingerprinted bytes");
+    byte[] corrupted=staged.clone();corrupted[corrupted.length-1]=1;
+    TagDetailChecks.require(!media.matchesSavedBytes(new ByteArrayInputStream(corrupted),staged.length,
+        expected.toString(),()->false),"MTP deletion rejects a same-size mutation beyond the first 128 KiB");
+    InputStream unreadable=new InputStream(){
+      private boolean deliveredPrefix;
+      @Override public int read() throws IOException {throw new IOException("synthetic SD read failure");}
+      @Override public int read(byte[] bytes,int offset,int length) throws IOException {
+        if(deliveredPrefix)throw new IOException("synthetic SD read failure");
+        deliveredPrefix=true;
+        int count=Math.min(1024,length);
+        System.arraycopy(staged,0,bytes,offset,count);
+        return count;
+      }
+    };
+    TagDetailChecks.require(!media.matchesSavedBytes(unreadable,staged.length,expected.toString(),()->false),
+        "MTP deletion rejects a read failure after a matching prefix");
+    TagDetailChecks.require(!media.matchesSavedBytes(new ByteArrayInputStream(staged),staged.length,
+        expected.toString(),()->true),"MTP deletion does not proceed after cancellation");
+  }
+
+  private static void verifyDiscardWithDetachedResult(Context context,NanoBananaStore store,Fake network) throws Exception {
+    String volume="dead-beef";
+    TagDetailChecks.require(!android.provider.MediaStore.getExternalVolumeNames(context).contains(volume),
+        "fixture refers to an unavailable volume");
+    String pending="content://media/"+volume+"/images/media/1";
+    store.job(new JSONObject().put("stage","generating").put("task","synthetic-detached-result")
+        .put("object","loupe-nano-temp/00000000-0000-0000-0000-000000000106.jpg")
+        .put("owner","synthetic-detached-owner").put("version","synthetic-version")
+        .put("photo_volume",volume).put("pending",pending));
+    try {
+      NanoBananaJob first=new NanoBananaJob(context,store,network);
+      try {first.discard();throw new AssertionError("Discard silently forgot the detached result");}
+      catch(PhotoStorage.Unavailable expected) { /* Remote cleanup has a separate durable boundary. */ }
+      JSONObject record=store.job();
+      TagDetailChecks.require(network.deletes==1&&record!=null&&record.getString("stage").equals("discarding")
+          &&record.getString("pending").equals(pending)&&!record.getBoolean("discardDelete"),
+          "Remote deletion completes once and detached local cleanup remains journaled");
+      NanoBananaJob reopened=new NanoBananaJob(context,store,network);
+      try {reopened.run(null,null,message->{});throw new AssertionError("Retry forgot the detached result");}
+      catch(PhotoStorage.Unavailable expected) { /* A retry still awaits the original card. */ }
+      TagDetailChecks.require(network.deletes==1&&network.submits==0&&network.statuses==0&&network.downloads==0
+          &&store.job().getString("pending").equals(pending),
+          "Resuming a canceled job never regenerates or repeats its finished remote deletion");
+    } finally {
+      store.job(null); // The fixture used a non-existent volume and no live provider objects.
+    }
+  }
+
   private static android.view.accessibility.AccessibilityNodeInfo findAccessibleExact(android.view.accessibility.AccessibilityNodeInfo node,String text){
     if(node==null)return null;if(node.getText()!=null&&text.contentEquals(node.getText()))return node;
     for(int i=0;i<node.getChildCount();i++){android.view.accessibility.AccessibilityNodeInfo found=findAccessibleExact(node.getChild(i),text);if(found!=null)return found;}return null;
