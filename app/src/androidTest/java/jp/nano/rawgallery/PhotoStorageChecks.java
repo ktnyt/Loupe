@@ -698,8 +698,10 @@ final class PhotoStorageChecks {
       try (PhotoMove move = f.move(ledger, history, boundary -> {})) {
         var beforeInventory = move.inventory(f.secondary);
         require(beforeInventory.photos().size() == 2 && beforeInventory.unresolved().stream()
-            .mapToInt(PhotoStorageInventory.History::count).sum() == 1,
-            "Read-only inventory deduplicates ledger and legacy aggregate evidence and does not include unrelated photos");
+            .mapToInt(PhotoStorageInventory.History::count).sum() == 2
+            && beforeInventory.unresolved().stream().anyMatch(row -> row.name().equals(source.name)
+                && row.reason() == PhotoStorageInventory.Reason.AMBIGUOUS_REFERENCE),
+            "Read-only inventory retains the unbound aggregate history and missing record without unrelated photos");
         requireInventoryPhoto(beforeInventory, first.uri, source.name, f.path, PhotoStorageInventory.Status.ELIGIBLE);
         requireInventoryPhoto(beforeInventory, legacy, legacyKey.getFileName(), f.path, PhotoStorageInventory.Status.ELIGIBLE);
         require(Arrays.equals(original, f.read(first.uri)) && Arrays.equals(legacyBytes, f.read(legacy))
@@ -729,7 +731,12 @@ final class PhotoStorageChecks {
                 && f.secondary.equals(photo.location().volume()))
             && movedInventory.unresolved().stream().mapToInt(PhotoStorageInventory.History::count).sum() == 1,
             "Completed move remains listed at the actual card while the missing history is still unresolved");
-        requireInventoryPhoto(movedInventory, moved, source.name, f.path, PhotoStorageInventory.Status.ALREADY_THERE);
+        String publishedName;
+        try (Cursor row = f.context.getContentResolver().query(moved, new String[]{DISPLAY_NAME}, null, null, null)) {
+          require(row != null && row.moveToFirst(), "Published destination still resolves");
+          publishedName = row.getString(0);
+        }
+        requireInventoryPhoto(movedInventory, moved, publishedName, f.path, PhotoStorageInventory.Status.ALREADY_THERE);
       }
       require(f.rows(PRIMARY).stream().map(Row::uri).collect(java.util.stream.Collectors.toList()).equals(List.of(unrelated)),
           "Only primary originals in import history are removed");
@@ -1274,6 +1281,8 @@ final class PhotoStorageChecks {
       recordFixtureHistory(history, f, "CONFLICT-A.JPG", bytes.length, CAPTURE, uri.toString());
       var before = move.plan(secondary);
       var listing = move.inventory(secondary);
+      require(listing.photos().stream().allMatch(photo -> new java.util.HashSet<>(photo.reasons()).size()
+          == photo.reasons().size()), "Exclusion reasons are displayed once");
       require(listing.unresolved().stream().anyMatch(row -> row.name().equals("CONFLICT-A.JPG")
               && row.reasons().contains(PhotoStorageInventory.Reason.CONFLICTING_HISTORY))
           && listing.unresolved().stream().anyMatch(row -> row.name().equals("CONFLICT-B.JPG")

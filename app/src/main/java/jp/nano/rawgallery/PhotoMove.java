@@ -308,7 +308,6 @@ final class PhotoMove implements AutoCloseable {
 
     boolean historyMatches = proof.matches() && !sizeContradiction;
     List<Reason> reasons = new ArrayList<>();
-    if ("".equals(planProof.expected())) reasons.add(Reason.CONFLICTING_HISTORY);
     Reason sourceIssue = sourceIssue(row);
     if (sourceIssue != null) reasons.add(sourceIssue);
     boolean alreadyThere = targetVolume.equals(row.volume());
@@ -316,6 +315,8 @@ final class PhotoMove implements AutoCloseable {
     boolean targetWritable = evidence.writableSources().contains(targetVolume);
     if (!alreadyThere && !sourceWritable) reasons.add(Reason.VOLUME_UNAVAILABLE);
     if (!historyMatches) reasons.addAll(mismatch.reasons());
+    if ("".equals(planProof.expected()) && !reasons.contains(Reason.CONFLICTING_HISTORY))
+      reasons.add(Reason.CONFLICTING_HISTORY);
     if (!alreadyThere && !targetWritable) reasons.add(Reason.DESTINATION_UNAVAILABLE);
     // Plan checks the SHA while moving. Display disagreements must not silently change its membership.
     boolean planned = planProof.matches() && sourceIssue == null && sourceWritable && targetWritable;
