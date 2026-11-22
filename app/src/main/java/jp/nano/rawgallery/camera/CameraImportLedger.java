@@ -198,6 +198,19 @@ public final class CameraImportLedger extends SQLiteOpenHelper {
         return out;
     }
 
+    /** Stored file size by destination. A negative value marks conflicting sizes for the same URI. */
+    public synchronized Map<String, Long> importStoredSizes() {
+        Map<String, Long> sizes = new HashMap<>();
+        try (Cursor rows = getReadableDatabase().rawQuery(
+                "SELECT dest_uri, MIN(stored_bytes), MAX(stored_bytes) FROM contents GROUP BY dest_uri", null)) {
+            while (rows.moveToNext()) {
+                long smallest = rows.getLong(1);
+                sizes.put(rows.getString(0), smallest == rows.getLong(2) ? smallest : -1L);
+            }
+        }
+        return sizes;
+    }
+
     /** Move only the locations; the contents and per-transport receipts keep their keys. */
     public record MoveReceipt(String name, long bytes, long capture, long sourceModified) {}
 

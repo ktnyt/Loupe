@@ -1,5 +1,6 @@
 package jp.nano.rawgallery;
 
+import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -15,25 +16,37 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.progressindicator.LinearProgressIndicator;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import jp.nano.rawgallery.camera.CameraImportGate;
 
 /** Shows the selected volume, then separately asks before moving existing files. */
 public final class PhotoStorageActivity extends AppCompatActivity {
+  private record VolumeChoice(String volume, String label) {}
+  private record StorageOptions(String volume, String label, List<VolumeChoice> choices) {
+    boolean writable(String name) {
+      return choices.stream().anyMatch(choice -> choice.volume().equals(name));
+    }
+  }
+
   private final Handler handler = new Handler(Looper.getMainLooper());
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
   private final Runnable refresh = this::render;
   private final StorageManager.StorageVolumeCallback volumeChanges = new StorageManager.StorageVolumeCallback() {
-    @Override public void onStateChanged(StorageVolume volume) { render(); }
+    @Override public void onStateChanged(StorageVolume volume) { if (visible) loadOverview(); }
   };
   private LinearLayout content;
-  private TextView destination, status;
-  private MaterialButton choose, move, stop, abandon;
+  private TextView destination, storageSummary, status;
+  private MaterialButton choose, inventory, move, stop, abandon;
   private LinearProgressIndicator progress;
-  private boolean visible, planning;
+  private boolean visible, planning, selecting, journalReady;
+  private StorageOptions options;
+  private Future<?> overviewLoad;
+  private volatile int overviewRequest;
   private PhotoMoveStore.Batch unfinished;
   private PhotoMoveService.State lastState;
   private String screenMessage;
@@ -62,8 +75,13 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     section.setText("取り込み済みの写真");
     section.setTextSize(20);
     section.setAccessibilityHeading(true);
+    storageSummary = label();
+    storageSummary.setTextColor(GalleryUi.MUTED);
+    inventory = button("保存場所と移動対象外の理由を見る", this::openInventory);
+    MaterialUi.outlined(inventory);
     move = button("取り込み済みの写真を移動", this::plan);
     MaterialUi.filled(move);
+    ((LinearLayout.LayoutParams) move.getLayoutParams()).topMargin = dp(8);
     progress = new LinearProgressIndicator(this);
     progress.setContentDescription("写真の移動の進捗");
     content.addView(progress, new LinearLayout.LayoutParams(-1, -2));
@@ -82,14 +100,15 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     super.onResume();
     visible = true;
     getSystemService(StorageManager.class).registerStorageVolumeCallback(getMainExecutor(), volumeChanges);
-    loadJournal();
-    render();
+    loadOverview();
   }
 
   @Override public void onPause() {
     visible = false;
+    ++overviewRequest;
     getSystemService(StorageManager.class).unregisterStorageVolumeCallback(volumeChanges);
     handler.removeCallbacks(refresh);
+    if (overviewLoad != null) overviewLoad.cancel(false);
     super.onPause();
   }
 
@@ -98,34 +117,76 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     super.onDestroy();
   }
 
-  private void loadJournal() {
-    worker.execute(() -> {
-      try (PhotoMoveStore store = new PhotoMoveStore(this)) {
-        var batch = store.batch();
-        runOnUiThread(() -> { unfinished = batch; render(); });
+  private void loadOverview() {
+    if (!visible || selecting || isFinishing() || isDestroyed()) return;
+    if (overviewLoad != null) overviewLoad.cancel(false);
+    int request = ++overviewRequest;
+    PhotoMoveService.State moveState = PhotoMoveService.state();
+    lastState = moveState;
+    journalReady = false;
+    display(storageSummary, moveState.running() ? "保存場所は移動の終了後に確認できます。" : "保存場所を確認しています。");
+    overviewLoad = PhotoStorageInventoryActivity.READS.submit(() -> {
+      try {
+        StorageOptions current = storageOptions();
+        PhotoMoveStore.Batch batch = null;
+        if (!moveState.running()) {
+          try (PhotoMoveStore store = new PhotoMoveStore(this)) {
+            batch = store.batch();
+          }
+        }
+        PhotoMoveStore.Batch pending = batch;
+        updateOverview(request, moveState, () -> {
+          options = current;
+          unfinished = pending;
+          journalReady = true;
+        });
+        if (moveState.running() || request != overviewRequest) return;
+        try (PhotoMove mover = new PhotoMove(this)) {
+          String summary = PhotoStorageInventoryActivity.summary(mover.inventory(current.volume()));
+          updateOverview(request, moveState, () -> display(storageSummary, summary));
+        } catch (PhotoMove.Failure | PhotoStorage.Unavailable unavailable) {
+          updateOverview(request, moveState, () -> display(storageSummary, unavailable.getMessage()));
+        } catch (IOException | RuntimeException unavailable) {
+          updateOverview(request, moveState, () -> display(storageSummary, "保存場所を確認できませんでした。"));
+        }
+      } catch (RuntimeException unavailable) {
+        updateOverview(request, moveState, () -> display(storageSummary, "保存先の状態を読み取れませんでした。"));
       }
+    });
+    render();
+  }
+
+  private void updateOverview(int request, PhotoMoveService.State moveState, Runnable update) {
+    runOnUiThread(() -> {
+      PhotoMoveService.State current = PhotoMoveService.state();
+      if (request != overviewRequest || !visible || isFinishing() || isDestroyed()
+          || (current != moveState && !(current.running() && moveState.running()))) return;
+      update.run();
+      render();
     });
   }
 
   private void render() {
     if (!visible || isFinishing() || isDestroyed()) return;
-    String volume = PhotoStorage.selected(this);
-    String label = PhotoStorage.label(this, volume);
-    boolean writable = PhotoStorage.directoryIfWritable(this, volume) != null;
-    display(destination, label + (writable ? "" : "（書き込み不可）"));
     PhotoMoveService.State state = PhotoMoveService.state();
     boolean running = state.running();
-    if (!running && lastState != state && lastState != null && lastState.running()) {
-      unfinished = null;
-      loadJournal();
-    }
+    boolean refreshOverview = lastState != state && (!running || !lastState.running());
     lastState = state;
+    if (refreshOverview && !selecting) {
+      loadOverview();
+      return;
+    }
+    boolean writable = options != null && options.writable(options.volume());
+    display(destination, options == null ? "保存先を確認しています。"
+        : options.label() + (writable ? "" : "（書き込み不可）"));
+    boolean ready = !running && !planning && !selecting && !CameraImportGate.lock.isLocked() && journalReady;
     move.setText(unfinished == null ? "取り込み済みの写真を移動" : "移動を再開");
-    move.setEnabled(!running && !planning && !CameraImportGate.lock.isLocked() && (unfinished != null || writable));
-    choose.setEnabled(!running && !planning && !CameraImportGate.lock.isLocked());
+    move.setEnabled(ready && (unfinished != null || writable));
+    choose.setEnabled(ready);
+    inventory.setEnabled(!planning && !selecting);
     stop.setVisibility(running ? View.VISIBLE : View.GONE);
     abandon.setVisibility(!running && unfinished != null ? View.VISIBLE : View.GONE);
-    abandon.setEnabled(!CameraImportGate.lock.isLocked());
+    abandon.setEnabled(ready);
     if (!running) stop.setEnabled(true);
     PhotoMoveStore.Batch batch = running ? state.batch() : unfinished;
     progress.setVisibility(running && batch != null ? View.VISIBLE : View.GONE);
@@ -134,61 +195,87 @@ public final class PhotoStorageActivity extends AppCompatActivity {
       progress.setProgressCompat(batch.done(), false);
     }
     String message = screenMessage != null ? screenMessage : state.message();
+    if (selecting) message = "保存先を変更しています。";
     if (batch != null) {
-      String action = running || PhotoStorage.directoryIfWritable(this, batch.volume()) != null
-          ? "" : " " + PhotoStorage.label(this, batch.volume()) + "を接続して再開してください。";
+      String action = running || options == null || options.writable(batch.volume())
+          ? "" : " 移動先を接続して再開してください。";
       message = (message == null ? "" : message + " ") + batch.done() + " / " + batch.total()
           + "枚" + PhotoMoveService.skipped(batch) + action;
     }
-    if (message == null && !writable) message = "カードを接続するか、保存先を変更してください。";
-    if (message == null && available().size() <= 1) message = "書き込めるSDカードが見つかりません。";
+    if (message == null && options != null && !writable) message = "カードを接続するか、保存先を変更してください。";
+    if (message == null && options != null && options.choices().size() <= 1)
+      message = "書き込めるSDカードが見つかりません。";
     display(status, message == null ? "" : message);
     status.setVisibility(status.length() == 0 ? View.GONE : View.VISIBLE);
     handler.removeCallbacks(refresh);
     handler.postDelayed(refresh, running ? 400 : 1000);
   }
 
-  private List<String> available() {
-    List<String> result = new ArrayList<>();
+  private StorageOptions storageOptions() {
+    String selected = PhotoStorage.selected(this);
+    List<VolumeChoice> choices = new ArrayList<>();
     for (StorageVolume volume : PhotoStorage.volumes(this)) {
       String name = volume.getMediaStoreVolumeName();
-      if (PhotoStorage.directoryIfWritable(this, name) != null) result.add(name);
+      if (PhotoStorage.directoryIfWritable(this, name) != null)
+        choices.add(new VolumeChoice(name, PhotoStorage.label(this, name)));
     }
-    return result;
+    return new StorageOptions(selected, PhotoStorage.label(this, selected), choices);
   }
 
   private void choose() {
-    List<String> choices = available();
+    List<VolumeChoice> choices = options.choices();
     if (choices.isEmpty()) {
       screenMessage = "書き込める保存先が見つかりません。";
       render();
       return;
     }
-    var selected = new int[]{choices.indexOf(PhotoStorage.selected(this))};
-    String[] labels = choices.stream().map(volume -> PhotoStorage.label(this, volume)).toArray(String[]::new);
+    var selected = new int[]{-1};
+    for (int i = 0; i < choices.size(); i++) {
+      if (choices.get(i).volume().equals(options.volume())) selected[0] = i;
+    }
+    String[] labels = choices.stream().map(VolumeChoice::label).toArray(String[]::new);
     new MaterialAlertDialogBuilder(this).setTitle("写真・動画の保存先")
         .setSingleChoiceItems(labels, selected[0], (dialog, which) -> selected[0] = which)
         .setNegativeButton("キャンセル", null)
         .setPositiveButton("設定", (dialog, which) -> {
           if (selected[0] < 0) return;
-          var lock = CameraImportGate.lock;
-          if (!lock.tryLock()) screenMessage = "取り込みが終わってから保存先を変更してください。";
-          else {
-            try {
-              String volume = choices.get(selected[0]);
-              PhotoStorage.requireWritable(this, volume);
-              if (!PhotoStorage.select(this, volume)) throw new IllegalStateException();
-              screenMessage = null;
-            } catch (PhotoStorage.Unavailable unavailable) {
-              screenMessage = unavailable.getMessage();
-            } catch (RuntimeException unavailable) {
-              screenMessage = "保存先を変更できませんでした。";
-            } finally {
-              lock.unlock();
-            }
-          }
-          render();
+          select(choices.get(selected[0]).volume());
         }).show();
+  }
+
+  private void select(String volume) {
+    selecting = true;
+    ++overviewRequest;
+    if (overviewLoad != null) overviewLoad.cancel(false);
+    render();
+    PhotoStorageInventoryActivity.READS.execute(() -> {
+      String message = null;
+      var lock = CameraImportGate.lock;
+      if (!lock.tryLock()) message = "取り込みが終わってから保存先を変更してください。";
+      else {
+        try {
+          PhotoStorage.requireWritable(this, volume);
+          if (!PhotoStorage.select(this, volume)) throw new IllegalStateException();
+        } catch (PhotoStorage.Unavailable unavailable) {
+          message = unavailable.getMessage();
+        } catch (RuntimeException unavailable) {
+          message = "保存先を変更できませんでした。";
+        } finally {
+          lock.unlock();
+        }
+      }
+      String result = message;
+      runOnUiThread(() -> {
+        selecting = false;
+        screenMessage = result;
+        if (visible && !isFinishing() && !isDestroyed()) loadOverview();
+      });
+    });
+  }
+
+  private void openInventory() {
+    if (visible && !planning && !selecting && !isFinishing() && !isDestroyed())
+      startActivity(new Intent(this, PhotoStorageInventoryActivity.class));
   }
 
   private void confirmAbandon() {
@@ -212,48 +299,50 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     planning = true;
     screenMessage = "取り込み済みの写真を確認しています。";
     render();
-    String volume = PhotoStorage.selected(this);
+    StorageOptions target = options;
     worker.execute(() -> {
       var lock = CameraImportGate.lock;
       if (!lock.tryLock()) {
-        runOnUiThread(() -> showPlan(null, "取り込みが終わってからもう一度お試しください。"));
+        runOnUiThread(() -> showPlan(null, "取り込みが終わってからもう一度お試しください。", target.label()));
         return;
       }
       try (PhotoMove mover = new PhotoMove(this)) {
-        PhotoMove.Plan proposal = mover.plan(volume);
-        runOnUiThread(() -> showPlan(proposal, null));
+        PhotoMove.Plan proposal = mover.plan(target.volume());
+        runOnUiThread(() -> showPlan(proposal, null, target.label()));
       } catch (PhotoStorage.Unavailable unavailable) {
-        runOnUiThread(() -> showPlan(null, unavailable.getMessage()));
+        runOnUiThread(() -> showPlan(null, unavailable.getMessage(), target.label()));
       } catch (Exception unavailable) {
-        runOnUiThread(() -> showPlan(null, "取り込み済みの写真を確認できません。"));
+        runOnUiThread(() -> showPlan(null, "取り込み済みの写真を確認できません。", target.label()));
       } finally {
         lock.unlock();
       }
     });
   }
 
-  private void showPlan(PhotoMove.Plan proposal, String message) {
+  private void showPlan(PhotoMove.Plan proposal, String message, String targetLabel) {
     if (isFinishing() || isDestroyed()) return;
     planning = false;
     screenMessage = message;
     if (proposal != null) {
       int count = proposal.items().size();
-      String skipped = proposal.skipped() == 0 ? "" : "\n\n移動できない写真が" + proposal.skipped()
-          + "枚あります。元のアプリが所有する写真や、現在読み取れない写真は対象外です。";
+      String skipped = proposal.skipped() == 0 ? "" :
+          "\n\n移動対象外の項目があります。保存場所の一覧で写真と理由を確認できます。";
       if (count == 0) {
         screenMessage = "移動できる取り込み済みの写真はありません。" + skipped;
       } else {
         long bytes = proposal.items().stream().mapToLong(PhotoMoveStore.Item::bytes).sum();
-        new MaterialAlertDialogBuilder(this)
+        var confirmation = new MaterialAlertDialogBuilder(this)
             .setTitle("取り込み済みの写真を移動しますか？")
-            .setMessage(PhotoStorage.label(this, proposal.volume()) + "に" + count + "枚（"
-                + Formatter.formatFileSize(this, bytes) + "）を移動します。"
-                + (proposal.skipped() == 0 ? "\n\n移動できない写真は0枚です。" : skipped))
+            .setMessage(targetLabel + "に" + count + "枚（"
+                + Formatter.formatFileSize(this, bytes) + "）の移動を開始します。"
+                + "\n照合できない写真は元の場所に残ります。" + skipped)
             .setNegativeButton("キャンセル", null)
             .setPositiveButton("移動", (dialog, which) -> {
               PhotoMoveService.launch(this, proposal);
               render();
-            }).show();
+            });
+        if (proposal.skipped() > 0) confirmation.setNeutralButton("理由を見る", (dialog, which) -> openInventory());
+        confirmation.show();
       }
     }
     render();
@@ -275,7 +364,7 @@ public final class PhotoStorageActivity extends AppCompatActivity {
   private MaterialButton button(String text, Runnable action) {
     MaterialButton button = MaterialUi.button(this);
     button.setText(text);
-    button.setMinHeight(dp(48));
+    button.setSingleLine(false);
     button.setOnClickListener(view -> action.run());
     content.addView(button, new LinearLayout.LayoutParams(-1, -2));
     return button;
