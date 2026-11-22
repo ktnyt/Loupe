@@ -239,7 +239,7 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     if (proposal != null) {
       int count = proposal.items().size();
       String skipped = proposal.skipped() == 0 ? "" : "\n\n移動できない写真が" + proposal.skipped()
-          + "件あります。元のアプリが所有する写真や、現在読み取れない写真は対象外です。";
+          + "枚あります。元のアプリが所有する写真や、現在読み取れない写真は対象外です。";
       if (count == 0) {
         screenMessage = "移動できる取り込み済みの写真はありません。" + skipped;
       } else {
@@ -247,7 +247,8 @@ public final class PhotoStorageActivity extends AppCompatActivity {
         new MaterialAlertDialogBuilder(this)
             .setTitle("取り込み済みの写真を移動しますか？")
             .setMessage(PhotoStorage.label(this, proposal.volume()) + "に" + count + "枚（"
-                + Formatter.formatFileSize(this, bytes) + "）を移動します。" + skipped)
+                + Formatter.formatFileSize(this, bytes) + "）を移動します。"
+                + (proposal.skipped() == 0 ? "\n\n移動できない写真は0枚です。" : skipped))
             .setNegativeButton("キャンセル", null)
             .setPositiveButton("移動", (dialog, which) -> {
               PhotoMoveService.launch(this, proposal);

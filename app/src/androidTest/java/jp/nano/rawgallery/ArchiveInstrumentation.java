@@ -38,14 +38,18 @@ public final class ArchiveInstrumentation extends Instrumentation {
     if(removeLookTest&&activity instanceof RawEditActivity&&state==null&&activity.getIntent().getBooleanExtra("removeLookLegacyFixture",false))state=LookRemovalChecks.legacyState(activity.getIntent());
     boolean photoStorageUi = photoStorageUiMode() && activity instanceof PhotoStorageActivity;
     if (photoStorageUi) {
+      int availablePx = PhotoStorageChecks.availableDisplay(activity).width();
+      float density = activity.getResources().getDisplayMetrics().density;
+      photoStorageEffectiveWidth = Math.min(tagWidth, (int) Math.floor(availablePx / density));
       var config = new android.content.res.Configuration(activity.getResources().getConfiguration());
       config.fontScale = tagFont;
-      config.screenWidthDp = tagWidth;
+      config.screenWidthDp = photoStorageEffectiveWidth;
       activity.getResources().updateConfiguration(config, activity.getResources().getDisplayMetrics());
     }
     super.callActivityOnCreate(activity, state);
     if (photoStorageUi)
-      activity.getWindow().setLayout(GalleryUi.dp(activity, tagWidth), android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+      activity.getWindow().setLayout(GalleryUi.dp(activity, photoStorageEffectiveWidth),
+          android.view.ViewGroup.LayoutParams.MATCH_PARENT);
     if(ep7WifiTest || ("camera-pilot-qr-ui".equals(cameraPilotMode) || (("camera-pilot-wifi-quick".equals(cameraPilotMode) || "camera-pilot-quick-import".equals(cameraPilotMode)) || ("camera-pilot-import-progress".equals(cameraPilotMode) || "camera-pilot-usb-launch".equals(cameraPilotMode)))))activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
     if ((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || videoTest || removeLookTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
   }
@@ -53,9 +57,13 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean shareHistoryRestartSeed, shareHistoryRestartVerify;
   private boolean cameraTabsTest, ep7WifiTest, cameraLedgerTest, cameraBenchmarkTest;
   private String photoStorageMode;
+  private int photoStorageEffectiveWidth;
+
+  int photoStorageEffectiveWidth() { return photoStorageEffectiveWidth; }
 
   private boolean photoStorageUiMode() {
-    return "photo-storage-ui".equals(photoStorageMode) || "photo-storage-ui-run".equals(photoStorageMode);
+    return "photo-storage-ui".equals(photoStorageMode) || "photo-storage-ui-run".equals(photoStorageMode)
+        || "photo-storage-ui-run-skipped".equals(photoStorageMode);
   }
   private String cameraPilotMode;
   private boolean shareCapacityTest, shareToggleTest, galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest;
@@ -173,7 +181,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     if (("camera-pilot-qr-ui".equals(cameraPilotMode) || (("camera-pilot-wifi-quick".equals(cameraPilotMode) || "camera-pilot-quick-import".equals(cameraPilotMode)) || ("camera-pilot-import-progress".equals(cameraPilotMode) || "camera-pilot-usb-launch".equals(cameraPilotMode))))) { tagWidth=Integer.parseInt(args.getString("width","400"));tagFont=Float.parseFloat(args.getString("font","1.0")); }
     cameraBenchmarkTest = args != null && "camera-benchmark".equals(args.getString("mode"));
     cameraLedgerTest = args != null && "camera-ledger".equals(args.getString("mode"));
-    if (args != null && java.util.List.of("photo-storage", "photo-storage-ui", "photo-storage-ui-run", "photo-storage-detach-seed",
+    if (args != null && java.util.List.of("photo-storage", "photo-storage-ui", "photo-storage-ui-run", "photo-storage-ui-run-skipped", "photo-storage-detach-seed",
         "photo-storage-detach-absent", "photo-storage-detach-restored", "photo-storage-saf-seed",
         "photo-storage-saf-verify", "photo-storage-abandon-detach-seed", "photo-storage-abandon-detach-absent",
         "photo-storage-abandon-detach-restored").contains(args.getString("mode", "")))
@@ -410,7 +418,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if (photoStorageMode != null) {
         String secondary = cameraPilotArguments.getString("secondaryVolume");
         results.putString("stream", photoStorageUiMode()
-            ? PhotoStorageChecks.captureUi(this, secondary, tagWidth, tagFont, "photo-storage-ui-run".equals(photoStorageMode))
+            ? PhotoStorageChecks.captureUi(this, secondary, tagWidth, tagFont, !"photo-storage-ui".equals(photoStorageMode),
+                "photo-storage-ui-run".equals(photoStorageMode) ? 0 : 1)
             : PhotoStorageChecks.run(this, photoStorageMode, secondary));
         finish(-1, results);
         return;

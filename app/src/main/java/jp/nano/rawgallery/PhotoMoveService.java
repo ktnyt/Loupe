@@ -87,11 +87,13 @@ public final class PhotoMoveService extends Service {
           if (abandon) {
             batch = mover.abandon();
             message = "移動を終了しました。" + batch.done() + "枚の移動が完了し、"
-                + (batch.total() - batch.done()) + "枚は未完了です。" + skipped(batch);
+                + (batch.total() - batch.done()) + "枚は未完了です。 移動できない写真は"
+                + batch.skipped() + "枚です。";
           } else {
             if (plan != null) mover.begin(plan);
             batch = mover.run(stopped::get, this::progress);
-            message = "写真を" + batch.done() + "枚移動しました。" + skipped(batch);
+            message = "写真を" + batch.done() + "枚移動しました。 未処理"
+                + (batch.total() - batch.done()) + "枚、移動できない写真は" + batch.skipped() + "枚です。";
           }
         } catch (InterruptedIOException cancelled) {
           batch = mover.batch();
@@ -121,7 +123,7 @@ public final class PhotoMoveService extends Service {
   }
 
   static String skipped(PhotoMoveStore.Batch batch) {
-    return batch.skipped() == 0 ? "" : " 移動できない写真が" + batch.skipped() + "件あります。";
+    return batch.skipped() == 0 ? "" : " 移動できない写真が" + batch.skipped() + "枚あります。";
   }
 
   private void progress(PhotoMoveStore.Batch batch) {

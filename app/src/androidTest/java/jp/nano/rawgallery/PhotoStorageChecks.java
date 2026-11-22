@@ -1,5 +1,6 @@
 package jp.nano.rawgallery;
 
+import android.app.Activity;
 import android.app.Instrumentation;
 import android.app.UiAutomation;
 import android.content.ContentResolver;
@@ -21,7 +22,12 @@ import android.os.Bundle;
 import android.os.SystemClock;
 import android.provider.DocumentsContract;
 import android.provider.MediaStore;
+import android.view.Choreographer;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.WindowInsets;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.widget.TextView;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -43,6 +49,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
 import jp.nano.rawgallery.camera.CameraImportFile;
@@ -377,15 +386,20 @@ final class PhotoStorageChecks {
     byte[] image = jpeg(0xff335555);
     Uri wrongName = f.insert(PRIMARY, "OTHER.JPG", image);
     Uri wrongSize = f.insert(PRIMARY, "WRONGSIZE.JPG", image);
+    Uri noCapture = f.insert(PRIMARY, "NO-CAPTURE.JPG", image, 0);
+    require(f.awaitCaptureTime(noCapture, 0) == 0, "Owned EXIF-free fixture has no MediaStore capture time");
     try (CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
          PhotoMove move = f.move(ledger, history, boundary -> {})) {
       history.recordImport(MODEL, f.id, new ImportedKey("PREVIOUS.JPG", image.length, CAPTURE), wrongName.toString());
       history.recordImport(MODEL, f.id, new ImportedKey("WRONGSIZE.JPG", image.length + 16, CAPTURE), wrongSize.toString());
+      history.recordImport(MODEL, f.id, new ImportedKey("NO-CAPTURE.JPG", image.length, CAPTURE), noCapture.toString());
       PhotoMove.Plan plan = move.plan(f.secondary);
-      require(plan.items().isEmpty() && plan.skipped() == 2, "Stale filename or size is insufficient proof of import ownership");
+      require(plan.items().isEmpty() && plan.skipped() == 3,
+          "Stale filename, size, or absent MediaStore capture time cannot prove a legacy-only import");
       require(f.rows(f.secondary).isEmpty() && Arrays.equals(image, f.read(wrongName))
-          && Arrays.equals(image, f.read(wrongSize)) && history.importedCount(MODEL, f.id) == 2,
-          "Unrelated bytes and stale history remain untouched");
+          && Arrays.equals(image, f.read(wrongSize)) && Arrays.equals(image, f.read(noCapture))
+          && history.importDestinations().equals(Set.of(wrongName.toString(), wrongSize.toString(), noCapture.toString())),
+          "All unrelated bytes and legacy history references remain untouched");
     }
   }
 
@@ -754,7 +768,8 @@ final class PhotoStorageChecks {
     }
   }
 
-  static String captureUi(Instrumentation test, String secondaryArg, int width, float font, boolean runMove) throws Exception {
+  static String captureUi(ArchiveInstrumentation test, String secondaryArg, int width, float font, boolean runMove,
+      int skipped) throws Exception {
     Context base = test.getTargetContext();
     require(TARGET_PACKAGE.equals(base.getPackageName()), "Photo storage checks require the isolated APK");
     String secondary = secondaryArg == null ? secondaryVolume(base) : secondaryArg.toLowerCase(Locale.ROOT);
@@ -771,7 +786,8 @@ final class PhotoStorageChecks {
 
     File captures = new File(base.getCacheDir(), "photo-storage-checks");
     require(captures.isDirectory() || captures.mkdirs(), "Create capture directory");
-    String profile = width + "-" + font + (runMove ? "-run" : "");
+    String profile = width + "-" + font;
+    if (runMove) profile += skipped == 0 ? "-run" : "-run-skipped";
     boolean observedProgress;
     try (Fixture f = new Fixture(base, secondary)) {
       byte[] bytes = jpeg(0xff264167);
@@ -780,10 +796,13 @@ final class PhotoStorageChecks {
       ImportedKey imported = new ImportedKey(name, bytes.length, CAPTURE);
       PhotoRepository.Photo sourcePhoto = runMove ? f.photo(original) : null;
       history.recordImport(MODEL, f.id, imported, original.toString());
+      Uri missing = ContentUris.withAppendedId(MediaStore.Images.Media.getContentUri(PRIMARY), Long.MAX_VALUE);
+      ImportedKey missingKey = new ImportedKey("MISSING.JPG", bytes.length, CAPTURE);
+      if (skipped != 0) history.recordImport(MODEL, f.id, missingKey, missing.toString());
       try {
         require(PhotoStorage.select(base, PRIMARY), "Set initial UI storage");
-        observedProgress = captureActivity(test, base, secondary, captures, profile, runMove);
-        if (runMove) verifyUiMove(base, f, history, imported, bytes, sourcePhoto);
+        observedProgress = captureActivity(test, base, secondary, captures, profile, runMove, skipped);
+        if (runMove) verifyUiMove(base, f, history, imported, bytes, sourcePhoto, skipped, missingKey, missing);
         else require(Arrays.equals(bytes, f.read(original)) && f.rows(secondary).isEmpty(),
             "Cancelling confirmation leaves the original in place");
       } finally {
@@ -796,22 +815,28 @@ final class PhotoStorageChecks {
       require(restore.commit(), "Restore original isolated app preference");
     }
     String result = runMove
-        ? "confirmed using Android accessibility controls, foreground service completed, source absence and SD bytes/history checked, "
+        ? "foreground service completed: 1 moved, 0 unprocessed, " + skipped
+            + " skipped; source absence, exact SD bytes and history checked; "
             + (observedProgress ? "progress captured" : "move finished before visible progress")
-        : "settings, single selection, move confirmation and cancel";
-    return "PASS photo storage UI " + profile + ": " + result + ". " + captures.getAbsolutePath();
+        : "settings, single selection, one eligible and one skipped with explanation, confirmation and cancel";
+    return "PASS photo storage UI " + profile + ": requested " + width + "dp, effective "
+        + test.photoStorageEffectiveWidth() + "dp. " + result + ". " + captures.getAbsolutePath();
   }
 
   private static void verifyUiMove(Context base, Fixture f, HistoryDb history, ImportedKey key, byte[] bytes,
-      PhotoRepository.Photo original) throws IOException {
+      PhotoRepository.Photo original, int skipped, ImportedKey missingKey, Uri missing) throws IOException {
     List<Row> targets = f.rows(f.secondary);
     require(f.rows(PRIMARY).isEmpty() && targets.size() == 1 && !targets.get(0).pending && !targets.get(0).trashed,
         "Android UI move leaves exactly one published SD file and no source");
     Uri target = targets.get(0).uri;
     require(Arrays.equals(bytes, f.read(target)), "Android UI move retains all original bytes");
     List<CameraImportHistoryPlan.Entry> entries = history.photoImportRecords(MODEL, f.id);
-    require(entries.size() == 1 && entries.get(0).key.equals(key.asString()) && entries.get(0).uri.equals(target.toString()),
+    require(entries.size() == 1 + skipped && entries.stream().anyMatch(entry ->
+            entry.key.equals(key.asString()) && entry.uri.equals(target.toString())),
         "Foreground move updates the exact legacy receipt to the SD file");
+    if (skipped != 0) require(entries.stream().anyMatch(entry ->
+            entry.key.equals(missingKey.asString()) && entry.uri.equals(missing.toString())),
+        "The skipped missing receipt remains unchanged");
     try (PhotoMoveStore store = new PhotoMoveStore(base)) {
       require(store.batch() == null, "Foreground move closes the durable batch");
       for (PhotoRepository.Photo synthetic : List.of(original, f.photo(target))) {
@@ -821,56 +846,81 @@ final class PhotoStorageChecks {
     }
   }
 
-  private static boolean captureActivity(Instrumentation test, Context base, String secondary,
-      File captures, String profile, boolean runMove) throws Exception {
+  private static boolean captureActivity(ArchiveInstrumentation test, Context base, String secondary,
+      File captures, String profile, boolean runMove, int skipped) throws Exception {
     PhotoStorageActivity activity = (PhotoStorageActivity) test.startActivitySync(
         new Intent(base, PhotoStorageActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     try {
       UiAutomation automation = test.getUiAutomation();
-      AccessibilityNodeInfo choose = awaitNode(automation, node -> hasText(node, "保存先を変更"));
-      assertTouchTarget(activity, choose, "Storage selector");
-      assertTouchTarget(activity, awaitNode(automation, node -> hasText(node, "取り込み済みの写真を移動")), "Move action");
-      capture(automation, captures, profile + "-settings");
-      click(choose);
+      Predicate<AccessibilityNodeInfo> choosing = node -> hasText(node, "保存先を変更");
+      awaitNode(automation, choosing);
+      captureSettled(test, automation, captures, profile + "-settings", choosing);
+      assertWindowWidth(test, activity);
+      assertTouchTarget(test, activity, awaitNode(automation, choosing), "保存先を変更");
+      assertTouchTarget(test, activity, awaitNode(automation, node -> hasText(node, "取り込み済みの写真を移動")),
+          "取り込み済みの写真を移動");
+      click(awaitNode(automation, choosing));
 
       String label = PhotoStorage.label(base, secondary);
       awaitNode(automation, node -> hasText(node, "内部ストレージ") && node.isCheckable() && node.isChecked());
-      AccessibilityNodeInfo option = awaitNode(automation, node -> hasText(node, label) && node.isCheckable());
-      capture(automation, captures, profile + "-choices");
-      click(option);
+      Predicate<AccessibilityNodeInfo> sdOption = node -> hasText(node, label) && node.isCheckable();
+      awaitNode(automation, sdOption);
+      captureSettled(test, automation, captures, profile + "-choices", sdOption);
+      click(awaitNode(automation, sdOption));
       click(awaitNode(automation, node -> hasText(node, "設定")));
       awaitNode(automation, node -> hasText(node, label) && !node.isCheckable());
       require(secondary.equals(PhotoStorage.selected(base)), "Radio selection persists the secondary volume");
 
       click(awaitNode(automation, node -> hasText(node, "取り込み済みの写真を移動")));
-      awaitNode(automation, node -> node.getText() != null && node.getText().toString().contains(label + "に1枚"));
-      capture(automation, captures, profile + "-confirm");
+      Predicate<AccessibilityNodeInfo> confirmation = node -> {
+        String message = node.getText() == null ? "" : node.getText().toString();
+        return message.contains(label + "に1枚") && (skipped == 0 ? message.contains("移動できない写真は0枚です。")
+            : message.contains("移動できない写真が1枚あります。")
+                && message.contains("現在読み取れない写真は対象外です。"));
+      };
+      awaitNode(automation, confirmation);
+      captureSettled(test, automation, captures, profile + "-confirm", confirmation);
       if (!runMove) {
         click(awaitNode(automation, node -> hasText(node, "キャンセル")));
         return false;
       }
 
       click(awaitNode(automation, node -> hasText(node, "移動")));
-      return captureMoveResult(automation, captures, profile);
+      return captureMoveResult(test, automation, captures, profile, skipped);
     } finally {
       test.runOnMainSync(activity::finish);
       test.waitForIdleSync();
     }
   }
 
-  private static boolean captureMoveResult(UiAutomation automation, File captures, String profile) throws IOException {
+  private static boolean captureMoveResult(Instrumentation test, UiAutomation automation, File captures, String profile,
+      int skipped) throws Exception {
     long deadline = SystemClock.uptimeMillis() + 12000;
     boolean progress = false;
+    Predicate<AccessibilityNodeInfo> completed = node -> node.getText() != null
+        && node.getText().toString().contains("写真を1枚移動しました。")
+        && node.getText().toString().contains("未処理0枚、移動できない写真は" + skipped + "枚です。");
+    Predicate<AccessibilityNodeInfo> moving = node -> node.getContentDescription() != null
+        && "写真の移動の進捗".contentEquals(node.getContentDescription());
     while (SystemClock.uptimeMillis() < deadline) {
       AccessibilityNodeInfo screen = automation.getRootInActiveWindow();
-      if (findNode(screen, node -> hasText(node, "写真を1枚移動しました。")) != null) {
-        capture(automation, captures, profile + "-completed");
+      if (findNode(screen, completed) != null) {
+        captureSettled(test, automation, captures, profile + "-completed", completed);
         return progress;
       }
-      if (!progress && findNode(screen, node -> "写真の移動の進捗".contentEquals(
-          node.getContentDescription() == null ? "" : node.getContentDescription())) != null) {
-        capture(automation, captures, profile + "-progress");
-        progress = true;
+      if (!progress && findNode(screen, moving) != null) {
+        awaitPresentedFrames(test);
+        Bitmap bitmap = automation.takeScreenshot();
+        if (bitmap != null) {
+          try {
+            if (findNode(automation.getRootInActiveWindow(), moving) != null) {
+              writeCapture(bitmap, captures, profile + "-progress");
+              progress = true;
+            }
+          } finally {
+            bitmap.recycle();
+          }
+        }
       }
       SystemClock.sleep(25);
     }
@@ -912,20 +962,106 @@ final class PhotoStorageChecks {
     throw new AssertionError("No clickable parent for " + node.getText());
   }
 
-  private static void assertTouchTarget(Context context, AccessibilityNodeInfo node, String name) {
-    Rect bounds = new Rect();
-    node.getBoundsInScreen(bounds);
-    int minimum = GalleryUi.dp(context, 48);
-    require(bounds.height() >= minimum && bounds.width() >= minimum, name + " has a 48dp touch target");
+  static Rect availableDisplay(Activity activity) {
+    var metrics = activity.getWindowManager().getMaximumWindowMetrics();
+    var insets = metrics.getWindowInsets().getInsetsIgnoringVisibility(
+        WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+    Rect bounds = new Rect(metrics.getBounds());
+    bounds.inset(insets.left, insets.top, insets.right, insets.bottom);
+    return bounds;
   }
 
-  private static void capture(UiAutomation automation, File directory, String name) throws IOException {
-    Bitmap bitmap = automation.takeScreenshot();
-    require(bitmap != null, "Capture visible Android UI");
+  private static Rect screenBounds(View view) {
+    int[] position = new int[2];
+    view.getLocationOnScreen(position);
+    return new Rect(position[0], position[1], position[0] + view.getWidth(), position[1] + view.getHeight());
+  }
+
+  private static void assertWindowWidth(ArchiveInstrumentation test, PhotoStorageActivity activity) {
+    test.runOnMainSync(() -> {
+      int effectiveWidth = test.photoStorageEffectiveWidth();
+      Rect display = availableDisplay(activity);
+      Rect window = screenBounds(activity.getWindow().getDecorView());
+      require(activity.getResources().getConfiguration().screenWidthDp == effectiveWidth
+          && window.width() == GalleryUi.dp(activity, effectiveWidth)
+          && window.left >= display.left && window.right <= display.right,
+          "Configured " + effectiveWidth + "dp window must fit the available " + display.width() + "px width");
+    });
+  }
+
+  private static void assertTouchTarget(Instrumentation test, PhotoStorageActivity activity,
+      AccessibilityNodeInfo node, String name) {
+    Rect accessBounds = new Rect();
+    node.getBoundsInScreen(accessBounds);
+    test.runOnMainSync(() -> {
+      Rect display = availableDisplay(activity);
+      View button = findButton(activity.getWindow().getDecorView(), name);
+      require(button != null && button.isShown(), "Native button is visible: " + name);
+      Rect fullBounds = screenBounds(button);
+      int minimum = GalleryUi.dp(activity, 48);
+      require(fullBounds.width() >= minimum && fullBounds.height() >= minimum
+          && accessBounds.width() >= minimum && accessBounds.height() >= minimum
+          && display.contains(fullBounds) && display.contains(accessBounds),
+          name + " has an unclipped 48dp touch target within the visible display");
+    });
+  }
+
+  private static View findButton(View view, String label) {
+    if (view instanceof TextView text && view.isClickable() && label.contentEquals(text.getText())) return view;
+    if (view instanceof ViewGroup group) {
+      for (int i = 0; i < group.getChildCount(); i++) {
+        View match = findButton(group.getChildAt(i), label);
+        if (match != null) return match;
+      }
+    }
+    return null;
+  }
+
+  private static void awaitPresentedFrames(Instrumentation test) throws InterruptedException {
+    CountDownLatch frames = new CountDownLatch(1);
+    test.runOnMainSync(() -> {
+      Choreographer choreographer = Choreographer.getInstance();
+      choreographer.postFrameCallback(first -> choreographer.postFrameCallback(second -> frames.countDown()));
+    });
+    require(frames.await(1, TimeUnit.SECONDS), "Android did not present two frame boundaries");
+  }
+
+  private static void captureSettled(Instrumentation test, UiAutomation automation, File directory, String name,
+      Predicate<AccessibilityNodeInfo> expected) throws Exception {
+    test.waitForIdleSync();
+    try {
+      automation.waitForIdle(300, 1500);
+    } catch (TimeoutException animationsStillRunning) {
+      // Continue with the bounded frame comparison below.
+    }
+    long deadline = SystemClock.uptimeMillis() + 1400;
+    Bitmap previous = null;
+    try {
+      while (SystemClock.uptimeMillis() < deadline) {
+        awaitPresentedFrames(test);
+        Bitmap current = automation.takeScreenshot();
+        require(current != null, "Capture visible Android UI");
+        if (previous != null && previous.sameAs(current)
+            && findNode(automation.getRootInActiveWindow(), expected) != null) {
+          try {
+            writeCapture(current, directory, name);
+          } finally {
+            current.recycle();
+          }
+          return;
+        }
+        if (previous != null) previous.recycle();
+        previous = current;
+      }
+    } finally {
+      if (previous != null) previous.recycle();
+    }
+    throw new CheckFailure("Screen did not settle for " + name);
+  }
+
+  private static void writeCapture(Bitmap bitmap, File directory, String name) throws IOException {
     try (FileOutputStream output = new FileOutputStream(new File(directory, name + ".png"))) {
       require(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output), "Write Android UI capture");
-    } finally {
-      bitmap.recycle();
     }
   }
 
@@ -1296,11 +1432,15 @@ final class PhotoStorageChecks {
     }
 
     Uri insert(String volume, String name, byte[] bytes) throws IOException {
+      return insert(volume, name, bytes, CAPTURE * 1000);
+    }
+
+    Uri insert(String volume, String name, byte[] bytes, long dateTaken) throws IOException {
       ContentValues values = new ContentValues();
       values.put(DISPLAY_NAME, name);
       values.put(RELATIVE_PATH, path);
       values.put(MIME_TYPE, "image/jpeg");
-      values.put(DATE_TAKEN, CAPTURE * 1000);
+      values.put(DATE_TAKEN, dateTaken);
       values.put(IS_PENDING, 1);
       Uri uri = resolver.insert(MediaStore.Images.Media.getContentUri(volume), values);
       require(uri != null, "Insert fixture under unique folder");
