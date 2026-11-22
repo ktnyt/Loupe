@@ -11,6 +11,9 @@ import android.os.ParcelFileDescriptor;
 import android.os.SystemClock;
 import android.os.storage.StorageVolume;
 import android.provider.MediaStore;
+import android.system.ErrnoException;
+import android.system.Os;
+import android.system.OsConstants;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InterruptedIOException;
@@ -50,6 +53,7 @@ final class PhotoMove implements AutoCloseable {
   interface Faults { void after(Boundary boundary); }
   interface Progress { void update(PhotoMoveStore.Batch batch); }
   interface OriginalOpen { InputStream open(Uri requiredOriginal) throws IOException; }
+  interface TargetOpen { ParcelFileDescriptor open(Uri target, String mode) throws IOException; }
   record Plan(String volume, List<PhotoMoveStore.Item> items, int skipped, int archiveRejected,
       ArchivePreflight archivePreflight) {
     Plan {
@@ -115,6 +119,7 @@ final class PhotoMove implements AutoCloseable {
   private final PhotoMoveStore store;
   private final Faults faults;
   private final OriginalOpen originalOpen;
+  private final TargetOpen targetOpen;
 
   PhotoMove(Context context) {
     this(context, CameraImportLedger.get(context), HistoryDb.Companion.get(context), new PhotoMoveStore(context), b -> {});
@@ -126,6 +131,11 @@ final class PhotoMove implements AutoCloseable {
 
   PhotoMove(Context context, CameraImportLedger ledger, HistoryDb history, PhotoMoveStore store, Faults faults,
       OriginalOpen originalOpen) {
+    this(context, ledger, history, store, faults, originalOpen, context.getContentResolver()::openFileDescriptor);
+  }
+
+  PhotoMove(Context context, CameraImportLedger ledger, HistoryDb history, PhotoMoveStore store, Faults faults,
+      OriginalOpen originalOpen, TargetOpen targetOpen) {
     this.context = context.getApplicationContext();
     resolver = context.getContentResolver();
     this.ledger = ledger;
@@ -133,6 +143,7 @@ final class PhotoMove implements AutoCloseable {
     this.store = store;
     this.faults = faults;
     this.originalOpen = originalOpen;
+    this.targetOpen = targetOpen;
   }
 
   private record ImportEvidence(Map<String, String> checksums,
@@ -1234,10 +1245,12 @@ final class PhotoMove implements AutoCloseable {
       RunMetrics metrics) throws IOException {
     long started = SystemClock.elapsedRealtimeNanos();
     try (InputStream in = original(source.uri())) {
-      if (item.hasHistoricalProof()) requireHistoricalPending(item, requireOwned(target), source, volume);
-      ParcelFileDescriptor fd = resolver.openFileDescriptor(target, "rwt");
+      boolean historical = item.hasHistoricalProof();
+      if (historical) requireHistoricalPending(item, requireOwned(target), source, volume);
+      ParcelFileDescriptor fd = historical ? targetOpen.open(target, "rw") : resolver.openFileDescriptor(target, "rwt");
       if (fd == null) throw new Failure("移動先に書き込めません。");
       try (ParcelFileDescriptor.AutoCloseOutputStream out = new ParcelFileDescriptor.AutoCloseOutputStream(fd)) {
+        if (historical) prepareHistoricalWrite(item, source, target, volume, fd, stopped);
         String sha = hash(in, out, source.bytes(), stopped);
         long syncing = SystemClock.elapsedRealtimeNanos();
         try {
@@ -1249,6 +1262,28 @@ final class PhotoMove implements AutoCloseable {
       }
     } finally {
       metrics.copyNs += SystemClock.elapsedRealtimeNanos() - started;
+    }
+  }
+
+  private void prepareHistoricalWrite(PhotoMoveStore.Item item, Media source, Uri target, String volume,
+      ParcelFileDescriptor write, BooleanSupplier stopped) throws IOException {
+    requireHistoricalPending(item, requireOwned(target), source, volume);
+    try (ParcelFileDescriptor read = resolver.openFileDescriptor(MediaStore.setRequireOriginal(target), "r")) {
+      if (read == null) throw targetChanged();
+      var current = Os.fstat(read.getFileDescriptor());
+      var fd = write.getFileDescriptor();
+      var opened = Os.fstat(fd);
+      if (!OsConstants.S_ISREG(opened.st_mode) || !OsConstants.S_ISREG(current.st_mode)
+          || current.st_ino <= 0 || opened.st_nlink <= 0 || current.st_nlink <= 0
+          || opened.st_dev != current.st_dev || opened.st_ino != current.st_ino)
+        throw targetChanged();
+      requireHistoricalPending(item, requireOwned(target), source, volume);
+      check(stopped);
+      // From here on, change only the already checked descriptor. Never reopen the writable URI.
+      Os.lseek(fd, 0, OsConstants.SEEK_SET);
+      Os.ftruncate(fd, 0);
+    } catch (ErrnoException unavailable) {
+      throw targetChanged();
     }
   }
 

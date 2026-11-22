@@ -256,12 +256,15 @@ public final class PhotoStorageInventoryActivity extends AppCompatActivity {
   }
 
   private static String candidateCounts(List<PhotoStorageInventory.Photo> photos) {
-    int pendingContent = 0, otherReferences = 0;
+    int pendingContent = 0, pendingWithHistory = 0, otherReferences = 0;
     for (var photo : photos) {
-      if (photo.reasons().contains(PhotoStorageInventory.Reason.ARCHIVE_CHECK_REQUIRED)) pendingContent++;
-      else if (!photo.historyMatches()) otherReferences++;
+      if (photo.reasons().contains(PhotoStorageInventory.Reason.ARCHIVE_CHECK_REQUIRED)) {
+        pendingContent++;
+        if (photo.historyMatches()) pendingWithHistory++;
+      } else if (!photo.historyMatches()) otherReferences++;
     }
     String pending = pendingContent == 0 ? "" : "\n内容の確認待ち " + pendingContent + "枚";
+    if (pendingWithHistory > 0) pending += "（履歴と一致した" + pendingWithHistory + "枚を含む）";
     String references = otherReferences == 0 ? "" : "\n参照先の写真 " + otherReferences + "枚";
     return pending + references;
   }

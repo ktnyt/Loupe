@@ -12,6 +12,8 @@ import android.database.Cursor;
 import android.database.DatabaseUtils;
 import android.database.sqlite.SQLiteDatabase;
 import android.graphics.Rect;
+import android.media.ExifInterface;
+import android.media.MediaScannerConnection;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -25,15 +27,21 @@ import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
 import jp.nano.rawgallery.PhotoStorageChecks.Fixture;
@@ -73,6 +81,8 @@ final class LegacyArchiveMoveChecks {
     checkPublishedTargetDrift(base, secondary, true);
     checkTargetPinDrift(base, secondary, PhotoMove.Boundary.ATTACHED);
     checkTargetPinDrift(base, secondary, PhotoMove.Boundary.PUBLISHED);
+    checkTargetChangesWhileOpening(base, secondary, true);
+    checkTargetChangesWhileOpening(base, secondary, false);
     checkPublishedRevisionDriftBeforeDelete(base, secondary);
     checkLostHistory(base, secondary);
     for (var boundary : List.of(PhotoMove.Boundary.HISTORY_UPDATED, PhotoMove.Boundary.REMAPPED)) {
@@ -205,6 +215,11 @@ final class LegacyArchiveMoveChecks {
       boolean wrongSha) throws Exception {
     byte[] bytes = missingDate ? jpeg(rgb) : jpegWithCaptureTime(f, rgb, SHOT + 1, SHOT + 2);
     long taken = missingDate ? 0 : (SHOT + 1) * 1000;
+    return seed(f, history, archive, name, bytes, taken, wrongSha);
+  }
+
+  private static Seed seed(Fixture f, HistoryDb history, ArchiveStore archive, String name, byte[] bytes, long taken, boolean wrongSha)
+      throws Exception {
     Uri uri = f.insert(PRIMARY, name, bytes, taken);
     require(f.awaitCaptureTime(uri, taken) == taken, "The published fixture has the expected capture time");
     String[] columns = {DISPLAY_NAME, RELATIVE_PATH, SIZE, DATE_MODIFIED, DATE_TAKEN, DATE_ADDED, GENERATION_ADDED, GENERATION_MODIFIED};
@@ -386,31 +401,32 @@ final class LegacyArchiveMoveChecks {
     try (Fixture f = new Fixture(base, secondary); Fixture relocated = new Fixture(base, secondary);
          CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
          ArchiveStore archive = E2Settings.openRecords(f.isolatedContext()); PhotoMoveStore journal = new PhotoMoveStore(f.isolatedContext())) {
-      Seed seed = seed(f, history, archive, "PUBLISHED-DRIFT.JPG", 0xff698a59, false, false);
+      String scenario = changeFolder ? "published folder drift" : "published capture-time drift";
+      Seed seed = changeFolder ? seed(f, history, archive, "PUBLISHED-DRIFT.JPG", 0xff698a59, false, false)
+          : seed(f, history, archive, "PUBLISHED-DRIFT.JPG", captureWithoutOffset(f), 0, false);
       String archiveBefore = archive.get(seed.archiveKey()).toString();
       require(PhotoStorage.select(f.isolatedContext(), secondary), "Choose the synthetic move destination");
       Uri[] changedTarget = new Uri[1];
       try (PhotoMove mover = f.move(ledger, history, reached -> {
         if (reached == PhotoMove.Boundary.HISTORY_UPDATED)
-          throw new PhotoStorageChecks.CheckFailure("Published target metadata drift reached relocation of the selected history");
+          throw new PhotoStorageChecks.CheckFailure(scenario + " reached relocation of the selected history");
         if (reached != PhotoMove.Boundary.PUBLISHED) return;
         try {
           var targets = f.rows(secondary);
           require(targets.size() == 1 && !targets.get(0).pending() && f.isolatedContext().getPackageName().equals(targets.get(0).owner()),
-              "Only the published owned replacement fixture can be changed");
+              scenario + ": only the published owned replacement fixture can be changed");
           Uri target = targets.get(0).uri();
-          long revised = (SHOT + 61) * 1000;
-          ContentValues values = new ContentValues();
-          if (changeFolder) values.put(RELATIVE_PATH, relocated.path);
-          else values.put(DATE_TAKEN, revised);
-          require(f.resolver.update(target, values, null, null) == 1, "Change exactly one published fixture row");
           if (changeFolder) {
+            ContentValues values = new ContentValues();
+            values.put(RELATIVE_PATH, relocated.path);
+            int updated = f.resolver.update(target, values, null, null);
+            require(updated == 1, scenario + ": expected exactly one relative-path update, actual=" + updated);
             try (Cursor row = f.resolver.query(target, new String[]{RELATIVE_PATH}, null, null, null)) {
               require(row != null && row.moveToFirst() && relocated.path.equals(row.getString(0)),
-                  "Observe the changed relative folder at the exact published destination URI");
+                  scenario + ": observe the new relative folder at the exact published URI");
             }
           } else {
-            require(f.awaitCaptureTime(target, revised) == revised, "Observe the changed capture timestamp at the exact published URI");
+            rescanWithCaptureHint(f, target, seed.name());
           }
           require(Arrays.equals(seed.bytes(), f.read(target)), "The target metadata changed without changing its bytes");
           changedTarget[0] = target;
@@ -419,13 +435,63 @@ final class LegacyArchiveMoveChecks {
         }
       })) {
         mover.begin(preflight(mover, mover.plan(secondary), () -> false));
-        expectMoveFailure(() -> mover.run(() -> false, ignored -> {}), "A published target with changed metadata cannot relocate history");
+        expectMoveFailure(() -> mover.run(() -> false, ignored -> {}), scenario + ": changed metadata cannot relocate history");
         require(changedTarget[0] != null && mover.batch() != null && mover.batch().done() == 0 && journal.completed(seed.history().getId()) == null
             && history.moveEvidence().equals(List.of(seed.history())) && archiveBefore.equals(archive.get(seed.archiveKey()).toString())
             && ledger.receiptCount() == 0 && Arrays.equals(seed.bytes(), f.read(seed.uri()))
             && Arrays.equals(seed.bytes(), f.read(changedTarget[0])),
             "Capture-time or folder drift preserves both byte-exact copies and all histories without completed proof");
       }
+    }
+  }
+
+  private static byte[] captureWithoutOffset(Fixture f) throws IOException {
+    File jpeg = File.createTempFile("loupe-archive-no-offset-", ".jpg", f.isolatedContext().getCacheDir());
+    try {
+      Files.write(jpeg.toPath(), jpeg(0xff698a59));
+      ExifInterface exif = new ExifInterface(jpeg);
+      String original = DateTimeFormatter.ofPattern("uuuu:MM:dd HH:mm:ss", Locale.ROOT).withZone(ZoneOffset.UTC)
+          .format(Instant.ofEpochSecond(SHOT + 1));
+      exif.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, original);
+      exif.saveAttributes();
+      require(!exif.hasAttribute(ExifInterface.TAG_OFFSET_TIME_ORIGINAL), "Capture-time drift fixture must omit its EXIF timezone");
+      return Files.readAllBytes(jpeg.toPath());
+    } finally {
+      Files.deleteIfExists(jpeg.toPath());
+    }
+  }
+
+  private static void rescanWithCaptureHint(Fixture f, Uri target, String name) throws IOException {
+    Context context = f.isolatedContext();
+    File root = PhotoStorage.requireWritable(context, f.secondary);
+    File path = new File(root, f.path + name).getCanonicalFile();
+    try (Cursor row = f.resolver.query(target, new String[]{DATA, DATE_TAKEN, IS_PENDING}, null, null, null)) {
+      require(row != null && row.moveToFirst() && row.getString(0) != null && row.getLong(1) == 0 && row.getInt(2) == 0
+          && path.equals(new File(row.getString(0)).getCanonicalFile()),
+          "Published capture-time drift: verify the exact owned path initially has unknown capture time");
+    }
+    // DATE_TAKEN on a public row belongs to MediaScanner. A nearby file mtime gives the same JPEG's
+    // missing EXIF timezone an inference hint, without editing photo bytes or faking a provider row.
+    long hint = (SHOT + 61) * 1000;
+    require(path.setLastModified(hint) && path.lastModified() == hint,
+        "Published capture-time drift: set the mtime on the exact owned fixture path");
+    var finished = new CountDownLatch(1);
+    var scanned = new AtomicReference<Uri>();
+    MediaScannerConnection.scanFile(context, new String[]{path.getPath()}, new String[]{"image/jpeg"}, (ignored, result) -> {
+      scanned.set(result);
+      finished.countDown();
+    });
+    try {
+      require(finished.await(8, TimeUnit.SECONDS) && scanned.get() != null
+          && ContentUris.parseId(scanned.get()) == ContentUris.parseId(target),
+          "Published capture-time drift: scanner must return the original target ID");
+    } catch (InterruptedException stopped) {
+      Thread.currentThread().interrupt();
+      throw new InterruptedIOException("Capture-time drift fixture scan interrupted");
+    }
+    try (Cursor row = f.resolver.query(target, new String[]{DATE_TAKEN, DATE_MODIFIED, IS_PENDING}, null, null, null)) {
+      require(row != null && row.moveToFirst() && row.getLong(0) > 0 && row.getLong(1) == hint / 1000 && row.getInt(2) == 0,
+          "Published capture-time drift: observe known capture time on the same still-published URI after rescanning");
     }
   }
 
@@ -480,6 +546,61 @@ final class LegacyArchiveMoveChecks {
     }
   }
 
+  private static void checkTargetChangesWhileOpening(Context base, String secondary, boolean differentDescriptor) throws Exception {
+    try (Fixture f = new Fixture(base, secondary); CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         ArchiveStore archive = E2Settings.openRecords(f.isolatedContext()); PhotoMoveStore journal = new PhotoMoveStore(f.isolatedContext())) {
+      Seed seed = seed(f, history, archive, "OPEN-RACE.JPG", 0xff284e76, false, false);
+      require(PhotoStorage.select(f.isolatedContext(), secondary), "Choose the synthetic move destination");
+      try (PhotoMove stopped = f.move(ledger, history, reached -> {
+        if (reached == PhotoMove.Boundary.ATTACHED) throw new InterruptedMove();
+      })) {
+        stopped.begin(preflight(stopped, stopped.plan(secondary), () -> false));
+        expectCrash(stopped, PhotoMove.Boundary.ATTACHED);
+      }
+      var before = journal.next();
+      Uri attached = Uri.parse(before.target());
+      byte[] attachedSentinel = jpeg(0xff916977);
+      var attachedRow = f.row(attached);
+      require(attachedRow.pending() && f.isolatedContext().getPackageName().equals(attachedRow.owner()),
+          "Preload only the exact attached owned fixture");
+      f.write(attached, attachedSentinel);
+      byte[] otherSentinel = jpeg(0xff579254);
+      Uri opened = differentDescriptor
+          ? f.insertPending(secondary, "UNRELATED-SENTINEL.JPG", otherSentinel, (SHOT + 1) * 1000)
+          : attached;
+      require(f.row(opened).pending() && f.isolatedContext().getPackageName().equals(f.row(opened).owner()),
+          "The substituted descriptor can refer only to another disposable owned fixture");
+      var openMode = new AtomicReference<String>();
+      Context scope = f.isolatedContext();
+      try (PhotoMove reopened = new PhotoMove(scope, ledger, history, new PhotoMoveStore(scope), ignored -> {},
+          f.resolver::openInputStream, (uri, mode) -> {
+            require(attached.equals(uri) && openMode.compareAndSet(null, mode), "Exercise one target-open boundary at the pinned URI");
+            if (!differentDescriptor) {
+              ContentValues rename = new ContentValues();
+              rename.put(DISPLAY_NAME, "CHANGED-BEFORE-OPEN.JPG");
+              Bundle pending = new Bundle();
+              pending.putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE);
+              int changed = f.resolver.update(uri, rename, pending);
+              try (Cursor row = f.resolver.query(uri, new String[]{DISPLAY_NAME}, pending, null)) {
+                require(changed == 1 && row != null && row.moveToFirst() && "CHANGED-BEFORE-OPEN.JPG".equals(row.getString(0)),
+                    "Observe the renamed pending target before handing its open descriptor back");
+              }
+            }
+            var file = f.resolver.openFileDescriptor(opened, mode);
+            require(file != null, "Open the intended owned sentinel for the simulated race");
+            return file;
+          })) {
+        expectMoveFailure(() -> reopened.run(() -> false, ignored -> {}),
+            differentDescriptor ? "Reject a different file descriptor before truncate" : "Reject changed pending metadata after open and before truncate");
+        require("rw".equals(openMode.get()) && before.equals(journal.next()) && reopened.batch().done() == 0
+            && history.moveEvidence().equals(List.of(seed.history())) && journal.completed(seed.history().getId()) == null
+            && ledger.receiptCount() == 0 && Arrays.equals(seed.bytes(), f.read(seed.uri()))
+            && Arrays.equals(attachedSentinel, f.read(attached)) && (!differentDescriptor || Arrays.equals(otherSentinel, f.read(opened))),
+            "A post-check change leaves both pending sentinels, the original, journal and selected history untouched");
+      }
+    }
+  }
+
   private static void checkPublishedRevisionDriftBeforeDelete(Context base, String secondary) throws Exception {
     try (Fixture f = new Fixture(base, secondary); CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
          ArchiveStore archive = E2Settings.openRecords(f.isolatedContext()); PhotoMoveStore journal = new PhotoMoveStore(f.isolatedContext())) {
@@ -494,16 +615,23 @@ final class LegacyArchiveMoveChecks {
           var row = f.row(target);
           require(active.pendingCompletion() != null && active.targetPin().version() != null && !row.pending()
               && f.isolatedContext().getPackageName().equals(row.owner()), "Change only the fully pinned owned published fixture");
-          long capture = (SHOT + 1) * 1000;
+          int favorite;
+          try (Cursor before = f.resolver.query(target, new String[]{IS_FAVORITE}, null, null, null)) {
+            require(before != null && before.moveToFirst(), "Published revision drift: read the original favorite value");
+            favorite = before.getInt(0);
+          }
           ContentValues change = new ContentValues();
-          change.put(DATE_TAKEN, capture + 120000);
-          require(f.resolver.update(target, change, null, null) == 1, "Change the published target's revision");
-          change.put(DATE_TAKEN, capture);
-          require(f.resolver.update(target, change, null, null) == 1 && f.awaitCaptureTime(target, capture) == capture,
-              "Restore the original capture value without restoring its MediaStore revision");
-          try (Cursor current = f.resolver.query(target, new String[]{GENERATION_ADDED, GENERATION_MODIFIED}, null, null, null)) {
+          change.put(IS_FAVORITE, favorite == 0 ? 1 : 0);
+          int updated = f.resolver.update(target, change, null, null);
+          require(updated == 1, "Published revision drift: expected one favorite update, actual=" + updated);
+          change.put(IS_FAVORITE, favorite);
+          int restored = f.resolver.update(target, change, null, null);
+          require(restored == 1, "Published revision drift: expected one favorite restoration, actual=" + restored);
+          try (Cursor current = f.resolver.query(target, new String[]{GENERATION_ADDED, GENERATION_MODIFIED, IS_FAVORITE, DATE_TAKEN}, null, null, null)) {
             require(current != null && current.moveToFirst() && active.targetPin().generationAdded() == current.getLong(0)
-                && active.targetPin().generationModified() < current.getLong(1), "Observe same target birth with a different published revision");
+                && active.targetPin().generationModified() < current.getLong(1) && favorite == current.getInt(2)
+                && current.getLong(3) == (SHOT + 1) * 1000,
+                "Published revision drift: observe same birth, favorite and capture values with a newer revision");
           }
           driftObserved.set(true);
         } catch (IOException unavailable) {
@@ -854,6 +982,9 @@ final class LegacyArchiveMoveChecks {
       require(inventory.photos().stream().anyMatch(photo -> photo.uri().equals(card) && photo.historyMatches()
               && photo.status() == PhotoStorageInventory.Status.ELIGIBLE),
           "A completed move remains recognized with the original historical timestamp");
+      String overview = PhotoStorageInventoryActivity.summary(inventory);
+      require(overview.contains("履歴と一致した写真 1枚") && overview.contains("内容の確認待ち 1枚（履歴と一致した1枚を含む）")
+          && !overview.contains("参照先の写真"), "Reverse inventory explains that the one pending photo is also the one matched photo");
       PhotoMove.Plan back = preflight(mover, mover.plan(PRIMARY), () -> false);
       require(itemSources(back).equals(Set.of(card.toString())) && prior.equals(back.items().get(0).sourceProof()),
           "The confirmed replacement's durable proof authorizes the independent reverse move");
