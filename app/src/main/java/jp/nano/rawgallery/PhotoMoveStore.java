@@ -3,10 +3,13 @@ package jp.nano.rawgallery;
 import android.content.ContentValues;
 import android.content.Context;
 import android.database.Cursor;
+import android.database.DatabaseUtils;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 import android.net.Uri;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.io.IOException;
 import java.util.UUID;
 
@@ -39,22 +42,56 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
 
   @Override public void onUpgrade(SQLiteDatabase db, int from, int to) {
     if (from != 1 || to != 2) throw new IllegalStateException("Unsupported move journal upgrade");
-    PhotoIdentityIndex.create(db);
-    // Version 1 used an exact presentation URI and version for each moved destination.
-    db.execSQL("INSERT INTO local_photos SELECT location,'',archive_key,tag_source,sort_time,"
-        + "substr(location,1,instr(location,char(10))-1) FROM identities");
-    try (Cursor rows = db.rawQuery("SELECT legacy_identity,location FROM archive_claims", null)) {
-      while (rows.moveToNext()) {
-        String source = rows.getString(1);
-        db.execSQL("INSERT OR IGNORE INTO local_photos VALUES(?,'',?,?,0,NULL)",
-            new Object[]{source, PhotoRepository.digest(rows.getString(0)), TagStore.legacySource(source)});
-      }
-    } catch (IOException unavailable) {
-      throw new IllegalStateException("Could not migrate photo identities", unavailable);
+    Set<String> itemColumns = columns(db, "items");
+    if (!itemColumns.containsAll(List.of("source", "source_alias", "version", "expected_sha", "bytes",
+        "token", "target", "sha", "stage"))) throw new IllegalStateException("Unrecognized move journal items");
+    if (!itemColumns.contains("legacy_ids")) {
+      if (DatabaseUtils.queryNumEntries(db, "items") != 0)
+        throw new IllegalStateException("Move journal items lack their original import evidence");
+      db.execSQL("ALTER TABLE items ADD COLUMN legacy_ids TEXT NOT NULL DEFAULT ''");
     }
+    if (!itemColumns.contains("archive_key")) db.execSQL("ALTER TABLE items ADD COLUMN archive_key TEXT");
+    if (!itemColumns.contains("tag_source")) db.execSQL("ALTER TABLE items ADD COLUMN tag_source TEXT");
+    if (!itemColumns.contains("sort_time")) db.execSQL("ALTER TABLE items ADD COLUMN sort_time INTEGER");
+    if (DatabaseUtils.queryNumEntries(db, "items", "stage NOT BETWEEN 0 AND 5 OR "
+        + "(stage IN (3,4) AND (archive_key IS NULL OR tag_source IS NULL OR sort_time IS NULL))", null) != 0)
+      throw new IllegalStateException("Move journal cannot recover the recorded identity for this stage");
+
+    PhotoIdentityIndex.create(db);
+    // Early v1 checkouts recorded moved destinations before sort times and archive claims existed.
+    String sortTime = columns(db, "identities").contains("sort_time") ? "sort_time" : "0";
+    db.execSQL("INSERT INTO local_photos SELECT location,'',archive_key,tag_source," + sortTime + ","
+        + "substr(location,1,instr(location,char(10))-1) FROM identities");
+    long expected = DatabaseUtils.queryNumEntries(db, "identities");
+    boolean hasClaims = !columns(db, "archive_claims").isEmpty();
+    if (hasClaims) {
+      // At a moved destination its explicit identity already takes precedence over the original claim.
+      try (Cursor rows = db.rawQuery("SELECT legacy_identity,location FROM archive_claims c WHERE NOT EXISTS "
+          + "(SELECT 1 FROM identities i WHERE i.location=c.location)", null)) {
+        while (rows.moveToNext()) {
+          String source = rows.getString(1);
+          db.execSQL("INSERT INTO local_photos VALUES(?,'',?,?,0,NULL)",
+              new Object[]{source, PhotoRepository.digest(rows.getString(0)), TagStore.legacySource(source)});
+          expected++;
+        }
+      } catch (IOException unavailable) {
+        throw new IllegalStateException("Could not migrate photo identities", unavailable);
+      }
+    }
+    if (DatabaseUtils.queryNumEntries(db, "local_photos") != expected)
+      throw new IllegalStateException("Move journal identity migration was incomplete");
     db.execSQL("DROP TABLE identities");
-    db.execSQL("DROP TABLE archive_claims");
+    if (hasClaims) db.execSQL("DROP TABLE archive_claims");
     db.execSQL("UPDATE revision SET value=value+1 WHERE id=1");
+  }
+
+  private static Set<String> columns(SQLiteDatabase db, String table) {
+    Set<String> names = new HashSet<>();
+    try (Cursor rows = db.rawQuery("PRAGMA table_info(" + table + ")", null)) {
+      int name = rows.getColumnIndexOrThrow("name");
+      while (rows.moveToNext()) names.add(rows.getString(name));
+    }
+    return names;
   }
 
   Batch batch() {
