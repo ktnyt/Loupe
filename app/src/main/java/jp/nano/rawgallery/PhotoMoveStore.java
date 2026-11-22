@@ -17,14 +17,34 @@ import java.util.UUID;
 final class PhotoMoveStore extends SQLiteOpenHelper {
   static final int QUEUED = 0, COPYING = 1, VERIFIED = 2, UPDATING_HISTORY = 3, REMAPPED = 4, DONE = 5;
   record Item(String source, String sourceAlias, String version, String expectedSha, String legacyIds, long bytes, String token,
-      String target, String sha, int stage, Identity identity) {}
+      String target, String sha, int stage, Identity identity, ArchiveProof archiveProof) {
+    Item(String source, String sourceAlias, String version, String expectedSha, String legacyIds, long bytes,
+        String token, String target, String sha, int stage, Identity identity) {
+      this(source, sourceAlias, version, expectedSha, legacyIds, bytes, token, target, sha, stage, identity, null);
+    }
+  }
+
+  record ArchiveProof(String key, String sha, long historicalGeneration, long historyId, String epoch,
+      String historyFingerprint) {
+    ArchiveProof {
+      if (key == null || !key.matches("[0-9a-f]{32}") || sha == null || !sha.matches("[0-9a-f]{64}")
+          || historicalGeneration <= 0 || historyId <= 0 || epoch == null || epoch.isEmpty()
+          || historyFingerprint == null || !historyFingerprint.matches("[0-9a-f]{64}"))
+        throw new IllegalArgumentException("Invalid archive move proof");
+    }
+  }
+
+  private static final String[] ARCHIVE_COLUMNS = {"proof_key TEXT", "proof_sha TEXT", "proof_generation INTEGER",
+      "proof_history_id INTEGER", "proof_epoch TEXT", "proof_history_fingerprint TEXT"};
+  private static final String ARCHIVE_FIELDS =
+      "proof_key,proof_sha,proof_generation,proof_history_id,proof_epoch,proof_history_fingerprint";
   record Batch(String volume, int total, int skipped, int done) {}
   record Identity(String archiveKey, String tagSource, long sortTime) {
     Identity(String archiveKey, String tagSource) { this(archiveKey, tagSource, 0); }
   }
 
   PhotoMoveStore(Context context) {
-    super(context.getApplicationContext(), "photo-moves.db", null, 2);
+    super(context.getApplicationContext(), "photo-moves.db", null, 3);
     setWriteAheadLoggingEnabled(true);
   }
 
@@ -33,7 +53,7 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
         + "total INTEGER NOT NULL, skipped INTEGER NOT NULL)");
     db.execSQL("CREATE TABLE items (source TEXT PRIMARY KEY, source_alias TEXT, version TEXT NOT NULL, expected_sha TEXT, legacy_ids TEXT NOT NULL, "
         + "bytes INTEGER NOT NULL, token TEXT, target TEXT, sha TEXT, stage INTEGER NOT NULL DEFAULT 0, "
-        + "archive_key TEXT, tag_source TEXT, sort_time INTEGER)");
+        + "archive_key TEXT, tag_source TEXT, sort_time INTEGER, " + String.join(",", ARCHIVE_COLUMNS) + ")");
     db.execSQL("CREATE INDEX items_stage ON items(stage)");
     PhotoIdentityIndex.create(db);
     db.execSQL("CREATE TABLE revision (id INTEGER PRIMARY KEY CHECK(id=1), value INTEGER NOT NULL)");
@@ -41,7 +61,12 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
   }
 
   @Override public void onUpgrade(SQLiteDatabase db, int from, int to) {
-    if (from != 1 || to != 2) throw new IllegalStateException("Unsupported move journal upgrade");
+    if ((from != 1 && from != 2) || to != 3) throw new IllegalStateException("Unsupported move journal upgrade");
+    if (from == 1) upgradeIdentities(db);
+    for (String column : ARCHIVE_COLUMNS) db.execSQL("ALTER TABLE items ADD COLUMN " + column);
+  }
+
+  private static void upgradeIdentities(SQLiteDatabase db) {
     Set<String> itemColumns = columns(db, "items");
     if (!itemColumns.containsAll(List.of("source", "source_alias", "version", "expected_sha", "bytes",
         "token", "target", "sha", "stage"))) throw new IllegalStateException("Unrecognized move journal items");
@@ -108,8 +133,13 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
       if (batch() != null) throw new IllegalStateException("A move is already waiting");
       db.execSQL("INSERT INTO batch VALUES(1,?,?,?)", new Object[]{volume, items.size(), skipped});
       for (Item item : items) {
-        db.execSQL("INSERT INTO items(source,source_alias,version,expected_sha,legacy_ids,bytes) VALUES(?,?,?,?,?,?)",
-            new Object[]{item.source(), item.sourceAlias(), item.version(), item.expectedSha(), item.legacyIds(), item.bytes()});
+        ArchiveProof proof = item.archiveProof();
+        db.execSQL("INSERT INTO items(source,source_alias,version,expected_sha,legacy_ids,bytes," + ARCHIVE_FIELDS
+                + ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            new Object[]{item.source(), item.sourceAlias(), item.version(), item.expectedSha(), item.legacyIds(), item.bytes(),
+                proof == null ? null : proof.key(), proof == null ? null : proof.sha(),
+                proof == null ? null : proof.historicalGeneration(), proof == null ? null : proof.historyId(),
+                proof == null ? null : proof.epoch(), proof == null ? null : proof.historyFingerprint()});
       }
       db.setTransactionSuccessful();
     } finally {
@@ -119,12 +149,23 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
 
   Item next() {
     try (Cursor row = getReadableDatabase().rawQuery(
-        "SELECT source,source_alias,version,expected_sha,legacy_ids,bytes,token,target,sha,stage,archive_key,tag_source,sort_time FROM items "
+        "SELECT source,source_alias,version,expected_sha,legacy_ids,bytes,token,target,sha,stage,archive_key,tag_source,sort_time,"
+            + ARCHIVE_FIELDS + " FROM items "
             + "WHERE stage<" + DONE + " ORDER BY stage DESC,rowid LIMIT 1", null)) {
       return row.moveToFirst() ? new Item(row.getString(0), row.getString(1), row.getString(2),
           row.getString(3), row.getString(4), row.getLong(5), row.getString(6), row.getString(7), row.getString(8),
-          row.getInt(9), row.isNull(10) ? null : new Identity(row.getString(10), row.getString(11), row.getLong(12))) : null;
+          row.getInt(9), row.isNull(10) ? null : new Identity(row.getString(10), row.getString(11), row.getLong(12)),
+          archiveProof(row)) : null;
     }
+  }
+
+  private static ArchiveProof archiveProof(Cursor row) {
+    int empty = 0;
+    for (int i = 13; i < 19; i++) if (row.isNull(i)) empty++;
+    if (empty == 6) return null;
+    if (empty != 0) throw new IllegalStateException("Incomplete archive move proof");
+    return new ArchiveProof(row.getString(13), row.getString(14), row.getLong(15), row.getLong(16),
+        row.getString(17), row.getString(18));
   }
 
   boolean historyUpdatePending() {

@@ -50,6 +50,7 @@ record PhotoStorageInventory(List<Photo> photos, List<History> unresolved) {
     CONFLICTING_HISTORY("複数の取り込み記録が一致しない", "元の写真と取り込み記録を確認してください。"),
     HISTORY_NAME("履歴と写真の名前が一致しない", "表示中のファイルと履歴の写真が同じものか確認してください。"),
     HISTORY_SIZE("履歴と写真のサイズが一致しない", "表示中のファイルと履歴の写真が同じものか確認してください。"),
+    ARCHIVE_CHECK_REQUIRED("移動前にバックアップとの照合が必要", "移動の操作から写真の内容を照合してください。"),
     HISTORY_CAPTURE_MISSING("写真の撮影日時を確認できない", "表示中のファイルと履歴の写真が同じものか確認してください。"),
     HISTORY_CAPTURE_DIFFERS("履歴と写真の撮影日時が一致しない", "表示中のファイルと履歴の写真が同じものか確認してください。");
 
