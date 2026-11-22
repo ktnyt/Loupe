@@ -21,6 +21,7 @@ object MassStorageImporter {
         onProgress: (MtpImporter.Progress) -> Unit,
         isCancelled: () -> Boolean,
         operationMetrics: CameraImportMetrics? = null,
+        volume: String = jp.nano.rawgallery.PhotoStorage.selected(context),
     ): MtpImporter.Result {
         val start = System.currentTimeMillis()
         val metrics = operationMetrics ?: CameraImportMetrics(context, "usb-sd")
@@ -50,7 +51,7 @@ object MassStorageImporter {
             val exfat = ExFat(ums, partitionLba)
             exfat.mount()
 
-            val photos = CameraPhotoImporter(context)
+            val photos = CameraPhotoImporter(context, CameraImportLedger.get(context), volume)
             photos.setMetrics(metrics)
             photos.recover { isCancelled() }
             val verifyAll = context.getSharedPreferences("camera_import", 0).getBoolean("sd_verify_all", false)
@@ -106,7 +107,7 @@ object MassStorageImporter {
                     } else if (isSameAsExisting(context, exfat, node, ex)) {
                         skipped++
                         // 履歴が消えていて実データだけ残っている場合はここで履歴を補う
-                        db.recordImport(camera.model, camera.serial, key, "existing")
+                        db.recordImport(camera.model, camera.serial, key, ex.uri.toString())
                     } else {
                         // 同名の別写真。撮影日時付きの別名で取り込む
                         targets.add(Target(node, MediaSaver.collisionName(node.name, node.modifiedEpochSec)))
@@ -136,7 +137,7 @@ object MassStorageImporter {
                     val key = ImportedKey(node.name, node.length, node.modifiedEpochSec)
                     val uri = if (MediaTypes.isVideo(node.name)) {
                         // Videos may be several GiB; keep the existing streaming path.
-                        MediaSaver.save(context, t.saveName, node.modifiedEpochSec, camera) { out ->
+                        MediaSaver.save(context, t.saveName, node.modifiedEpochSec, camera, volume, node.length) { out ->
                             metrics.countSource { counted -> exfat.copyTo(node, counted) }.write(out)
                         }
                     } else {

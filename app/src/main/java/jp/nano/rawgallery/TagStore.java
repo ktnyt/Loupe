@@ -204,6 +204,10 @@ final class TagStore extends SQLiteOpenHelper {
 
   /** Location and observed version, never a claim of byte identity. */
   static String source(PhotoRepository.Photo photo) {
+    return photo.movedIdentity == null ? locationSource(photo) : photo.movedIdentity.tagSource();
+  }
+
+  static String locationSource(PhotoRepository.Photo photo) {
     return photo.uri + "\n" + photo.size + ":" + photo.modified + ":" + photo.added + ":" + photo.created;
   }
 

@@ -5,6 +5,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
 import android.provider.MediaStore
+import jp.nano.rawgallery.PhotoStorage
 import java.io.OutputStream
 
 /**
@@ -19,9 +20,9 @@ object MediaSaver {
     /** 保存先ルート。CameraSync と同じ保存先を維持する */
     const val ROOT = "CameraSync"
 
-    private fun collectionOf(fileName: String): Uri =
-        if (MediaTypes.isVideo(fileName)) MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-        else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+    private fun collectionOf(fileName: String, volume: String): Uri =
+        if (MediaTypes.isVideo(fileName)) MediaStore.Video.Media.getContentUri(volume)
+        else MediaStore.Images.Media.getContentUri(volume)
 
     private fun relativePathOf(fileName: String, camera: Camera): String = when {
         MediaTypes.isVideo(fileName) -> "Movies/$ROOT/${camera.folder}"
@@ -35,8 +36,11 @@ object MediaSaver {
         fileName: String,
         shotAtSec: Long,
         camera: Camera,
+        volume: String,
+        expectedBytes: Long,
         write: (OutputStream) -> Unit,
     ): Uri {
+        PhotoStorage.requireSpace(context, volume, expectedBytes)
         val resolver = context.contentResolver
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
@@ -45,7 +49,7 @@ object MediaSaver {
             if (shotAtSec > 0) put(MediaStore.MediaColumns.DATE_TAKEN, shotAtSec * 1000)
             put(MediaStore.MediaColumns.IS_PENDING, 1)
         }
-        val target = resolver.insert(collectionOf(fileName), values)
+        val target = resolver.insert(collectionOf(fileName, volume), values)
             ?: throw IllegalStateException("MediaStore insert failed")
         try {
             resolver.openOutputStream(target)?.use { write(it) }
@@ -107,8 +111,9 @@ object MediaSaver {
                     if (c.isNull(1)) continue
                     val row = CameraImportHistoryPlan.Destination(c.getLong(1), c.getInt(2) == 0 && c.getInt(3) == 0)
                     val id = c.getLong(0)
-                    out["content://media/external/images/media/$id"] = row
-                    if (c.getString(4) == "external_primary") out["content://media/external_primary/images/media/$id"] = row
+                    val volume = c.getString(4) ?: continue
+                    out["content://media/$volume/images/media/$id"] = row
+                    if (volume == PhotoStorage.PRIMARY) out["content://media/external/images/media/$id"] = row
                 }
             }
             out
@@ -127,14 +132,18 @@ object MediaSaver {
                 MediaStore.MediaColumns._ID,
                 MediaStore.MediaColumns.DISPLAY_NAME,
                 MediaStore.MediaColumns.SIZE,
+                MediaStore.MediaColumns.VOLUME_NAME,
             ),
             "${MediaStore.MediaColumns.RELATIVE_PATH}=?",
             arrayOf(relPath),
             null,
         )?.use { c ->
             while (c.moveToNext()) {
+                val volume = c.getString(3) ?: continue
+                val actualCollection = if (collection == MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
+                    MediaStore.Video.Media.getContentUri(volume) else MediaStore.Images.Media.getContentUri(volume)
                 out[c.getString(1)] = ExistingFile(
-                    ContentUris.withAppendedId(collection, c.getLong(0)),
+                    ContentUris.withAppendedId(actualCollection, c.getLong(0)),
                     c.getLong(2),
                 )
             }

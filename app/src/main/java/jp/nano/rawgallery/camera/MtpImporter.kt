@@ -196,6 +196,7 @@ object MtpImporter {
          * format 0 に RAW を含めない機種では RAW を取りこぼすが、全滅よりはよい
          */
         fullScan: Boolean = true,
+        volume: String = jp.nano.rawgallery.PhotoStorage.selected(context),
     ): Result {
         val start = System.currentTimeMillis()
         val known = db.importedKeys(camera.model, camera.serial)
@@ -300,7 +301,7 @@ object MtpImporter {
                         targets.add(Target(handle, info, key))
                     } else if (isSameAsExisting(context, mtp, handle, info, ex)) {
                         skipped++
-                        db.recordImport(camera.model, camera.serial, key, "existing")
+                        db.recordImport(camera.model, camera.serial, key, ex.uri.toString())
                     } else {
                         // 同名の別写真。撮影日時付きの別名で取り込む
                         targets.add(
@@ -329,7 +330,7 @@ object MtpImporter {
                 break
             }
             try {
-                val uri = saveOne(context, mtp, t.handle, t.key, t.saveName, camera)
+                val uri = saveOne(context, mtp, t.handle, t.key, t.saveName, camera, volume)
                 // 保存が完了してから履歴に記録する順序 (仕様書 5.4)
                 db.recordImport(camera.model, camera.serial, t.key, uri.toString())
                 imported++
@@ -424,6 +425,7 @@ object MtpImporter {
         key: ImportedKey,
         saveName: String,
         camera: Camera,
+        volume: String,
     ): Uri {
         // MTP からいったんキャッシュへ、その後 MediaStore へ。
         // 動画では本体の空き容量をファイルサイズ分使う点に注意
@@ -442,7 +444,7 @@ object MtpImporter {
                 val patched = ExifOffsetFix.patchIfBroken(tmp)
                 if (patched > 0) ImportLog.i(TAG, "patched $patched broken offset tag(s): ${key.fileName}")
             }
-            return MediaSaver.save(context, saveName, key.shotAt, camera) { out ->
+            return MediaSaver.save(context, saveName, key.shotAt, camera, volume, tmp.length()) { out ->
                 tmp.inputStream().use { it.copyTo(out) }
             }
         } finally {

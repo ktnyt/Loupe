@@ -31,13 +31,14 @@ object CameraImportLegacy {
         val resolver=context.contentResolver
         var unreadable=false
         resolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            arrayOf(MediaStore.MediaColumns._ID,MediaStore.MediaColumns.SIZE),
+            arrayOf(MediaStore.MediaColumns._ID,MediaStore.MediaColumns.SIZE,MediaStore.MediaColumns.VOLUME_NAME),
             "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? AND ${MediaStore.MediaColumns.SIZE}=? AND ${MediaStore.MediaColumns.IS_PENDING}=0",
             arrayOf("Pictures/CameraSync/%",source.bytes.toString()),null)?.use { cursor ->
             if(cursor.count>2048)throw IOException("Too many unverified existing candidates")
             while(cursor.moveToNext()) {
                 CameraPhotoPublisher.check(cancelled)
-                val uri=ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,cursor.getLong(0))
+                val volume=cursor.getString(2) ?: continue
+                val uri=ContentUris.withAppendedId(MediaStore.Images.Media.getContentUri(volume),cursor.getLong(0))
                 val candidate=File.createTempFile("camera-existing-",".part",context.cacheDir)
                 val comparison=File.createTempFile("camera-compare-",".part",context.cacheDir)
                 try {

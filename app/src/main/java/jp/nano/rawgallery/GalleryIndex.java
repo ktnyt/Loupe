@@ -12,10 +12,10 @@ import java.util.function.BooleanSupplier;
 final class GalleryIndex extends SQLiteOpenHelper {
   static final java.util.concurrent.ExecutorService WORKER =
       new DiagnosticExecutor("GalleryIndex.worker", 1);
-  private static final String COLS = "uri,name,folder,size,modified,taken,added,created";
+  private static final String COLS = "uri,name,folder,size,modified,taken,added,created,archive_key,tag_source";
 
   GalleryIndex(Context c) {
-    super(c, "gallery-index.db", null, 1);
+    super(c, "gallery-index.db", null, 2);
     setWriteAheadLoggingEnabled(true);
   }
 
@@ -23,14 +23,17 @@ final class GalleryIndex extends SQLiteOpenHelper {
     db.execSQL(
         "CREATE TABLE photos (ordinal INTEGER PRIMARY KEY, bundle INTEGER, camera TEXT, uri"
             + " TEXT,name TEXT,folder TEXT,size INTEGER,modified INTEGER,taken INTEGER,added"
-            + " INTEGER,created INTEGER)");
+            + " INTEGER,created INTEGER,archive_key TEXT,tag_source TEXT)");
     db.execSQL("CREATE INDEX photo_folder ON photos(folder,ordinal)");
     db.execSQL("CREATE TABLE albums (folder TEXT PRIMARY KEY,count INTEGER,cover INTEGER)");
     db.execSQL("CREATE TABLE state (id INTEGER PRIMARY KEY,signature TEXT,updated INTEGER)");
   }
 
   public void onUpgrade(SQLiteDatabase db, int old, int next) {
-    throw new IllegalStateException("Unsupported index version");
+    if (old < 2) {
+      db.execSQL("ALTER TABLE photos ADD COLUMN archive_key TEXT");
+      db.execSQL("ALTER TABLE photos ADD COLUMN tag_source TEXT");
+    }
   }
 
   static final class Album {
@@ -65,7 +68,8 @@ final class GalleryIndex extends SQLiteOpenHelper {
         c.getLong(o + 4),
         c.getLong(o + 5),
         c.getLong(o + 6),
-        c.getLong(o + 7));
+        c.getLong(o + 7),
+        c.isNull(o + 8) ? null : new PhotoMoveStore.Identity(c.getString(o + 8), c.getString(o + 9)));
   }
 
   List<Album> albums() {
@@ -74,7 +78,7 @@ final class GalleryIndex extends SQLiteOpenHelper {
         getReadableDatabase()
             .rawQuery(
                 "SELECT"
-                    + " a.folder,a.count,p.uri,p.name,p.folder,p.size,p.modified,p.taken,p.added,p.created"
+                    + " a.folder,a.count,p.uri,p.name,p.folder,p.size,p.modified,p.taken,p.added,p.created,p.archive_key,p.tag_source"
                     + " FROM albums a JOIN photos p ON p.ordinal=a.cover ORDER BY a.cover",
                 null)) {
       while (c.moveToNext()) result.add(new Album(c.getString(0), c.getInt(1), photo(c, 2)));
@@ -107,7 +111,7 @@ final class GalleryIndex extends SQLiteOpenHelper {
       while (c.moveToNext()) {
         int i = result.photos.size();
         result.photos.add(photo(c, 0));
-        groups.computeIfAbsent(c.getInt(8), k -> new ArrayList<>()).add(i);
+        groups.computeIfAbsent(c.getInt(10), k -> new ArrayList<>()).add(i);
       }
     }
     result.bundles.addAll(groups.values());
@@ -139,7 +143,11 @@ final class GalleryIndex extends SQLiteOpenHelper {
     try (ArchiveStore archive = E2Settings.openRecords(c)) {
       e2Revision = archive.indexRevision();
     }
-    return media
+    long moveRevision;
+    try (PhotoMoveStore store = new PhotoMoveStore(c)) {
+      moveRevision = store.revision();
+    }
+    return media + ":move-v1:" + moveRevision
         + ":capture-order-v1:video-v1:archive-v3:"
         + archiveRevision
         + ":" + e2Revision
@@ -230,7 +238,7 @@ final class GalleryIndex extends SQLiteOpenHelper {
         db.delete("albums", null, null);
         Map<String, int[]> albums = new LinkedHashMap<>();
         try (SQLiteStatement insert =
-            db.compileStatement("INSERT INTO photos VALUES (?,?,?,?,?,?,?,?,?,?,?)")) {
+            db.compileStatement("INSERT INTO photos VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
           for (int i = 0; i < photos.size(); i++) {
             if (cancelled.getAsBoolean()) return false;
             PhotoRepository.Photo p = photos.get(i);
@@ -251,6 +259,13 @@ final class GalleryIndex extends SQLiteOpenHelper {
             insert.bindLong(9, p.taken);
             insert.bindLong(10, p.added);
             insert.bindLong(11, p.created);
+            if (p.movedIdentity == null) {
+              insert.bindNull(12);
+              insert.bindNull(13);
+            } else {
+              insert.bindString(12, p.movedIdentity.archiveKey());
+              insert.bindString(13, p.movedIdentity.tagSource());
+            }
             insert.executeInsert();
           }
         }
@@ -286,7 +301,7 @@ final class GalleryIndex extends SQLiteOpenHelper {
       ArchiveStore.RawMetadata capture = metadata.get(ArchiveStore.key(photo));
       if (capture != null && capture.taken > 0 && capture.taken != photo.taken)
         photos.set(i, new PhotoRepository.Photo(photo.uri, photo.name, photo.folder, photo.size,
-            photo.modified, capture.taken, photo.added, photo.created));
+            photo.modified, capture.taken, photo.added, photo.created, photo.movedIdentity));
     }
     photos.sort(Comparator.comparingLong(
         (PhotoRepository.Photo p) -> p.taken > 0 ? p.taken : p.modified * 1000)

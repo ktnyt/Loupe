@@ -59,13 +59,15 @@ final class NanoBananaJob {
       if(job==null) {
         if(photo==null||prompt==null)throw new IOException("写真とプロンプトを選び直してください");
         NanoBananaOutput output=snapshot==null?store.output():snapshot;
+        String volume=PhotoStorage.selected(context);
+        PhotoStorage.requireWritable(context,volume);
         // Validate both credentials before touching the network or creating remote objects.
         Services network=services();
         progress.show("送信用の写真を準備しています");
         byte[] jpeg=input(new PhotoRepository(context),photo);
         checkInterrupted();
         String object="loupe-nano-temp/"+UUID.randomUUID()+".jpg";
-        job=new JSONObject().put("object",object).put("stage","uploading").put("owner",UUID.randomUUID().toString()).put("output",output.json());store.job(job);
+        job=new JSONObject().put("object",object).put("stage","uploading").put("owner",UUID.randomUUID().toString()).put("output",output.json()).put("photo_volume",volume);store.job(job);
         progress.show("IDrive e2へ送信しています");
         String version;
         try{checkInterrupted();version=network.upload(object,jpeg,job.getString("owner"));}
@@ -161,6 +163,7 @@ final class NanoBananaJob {
     checkInterrupted();
     if(job.has("saved")||!job.has("pending"))return;
     Uri uri=Uri.parse(job.getString("pending"));
+    PhotoStorage.requireMounted(context,uri);
     int state;
     try(Cursor c=context.getContentResolver().query(uri,new String[]{MediaStore.Images.Media.IS_PENDING},null,null,null)) {
       state=pendingState(c);
@@ -181,6 +184,8 @@ final class NanoBananaJob {
   }
 
   private void saveResult(JSONObject job,byte[] bytes) throws Exception {
+    String volume=job.optString("photo_volume",PhotoStorage.PRIMARY);
+    PhotoStorage.requireSpace(context,volume,bytes.length);
     BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;
     BitmapFactory.decodeByteArray(bytes,0,bytes.length,bounds);
     if(bounds.outWidth<=0||bounds.outHeight<=0||(long)bounds.outWidth*bounds.outHeight>20000000)
@@ -199,7 +204,7 @@ final class NanoBananaJob {
       ContentValues values=new ContentValues();values.put(MediaStore.Images.Media.DISPLAY_NAME,"NanoBanana-"+UUID.randomUUID()+".jpg");
       values.put(MediaStore.Images.Media.MIME_TYPE,"image/jpeg");values.put(MediaStore.Images.Media.RELATIVE_PATH,"Pictures/LoupeNanoBanana");
       values.put(MediaStore.Images.Media.IS_PENDING,1);
-      uri=context.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,values);
+      uri=context.getContentResolver().insert(MediaStore.Images.Media.getContentUri(volume),values);
       if(uri==null)throw new IOException("画像の保存先を作れませんでした");
       job.put("pending",uri.toString());store.job(job);
       try(OutputStream out=context.getContentResolver().openOutputStream(uri)) {

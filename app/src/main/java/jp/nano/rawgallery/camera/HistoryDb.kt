@@ -194,6 +194,19 @@ class HistoryDb @JvmOverloads constructor(context: Context, databaseName: String
         writableDatabase.insertOrThrow("imported", null, v)
     }
 
+    fun importDestinations(): Set<String> =
+        readableDatabase.rawQuery("SELECT DISTINCT dest_uri FROM imported", null).use { rows ->
+            buildSet {
+                while (rows.moveToNext()) add(rows.getString(0))
+            }
+        }
+
+    fun relocate(source: String, oldPrimaryAlias: String?, destination: String) {
+        val values = ContentValues().apply { put("dest_uri", destination) }
+        writableDatabase.update("imported", values, "dest_uri=? OR dest_uri=?",
+            arrayOf(source, oldPrimaryAlias))
+    }
+
     fun importedCount(model: String, serial: String): Int =
         readableDatabase.rawQuery(
             "SELECT COUNT(*) FROM imported WHERE camera_model=? AND camera_serial=?",

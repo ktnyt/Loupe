@@ -7,6 +7,7 @@ import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
 import java.io.*;
+import jp.nano.rawgallery.PhotoStorage;
 import java.security.*;
 import java.util.*;
 import java.util.function.BooleanSupplier;
@@ -19,11 +20,15 @@ public final class CameraPhotoPublisher {
     private final ContentResolver resolver;
     private final CameraImportLedger ledger;
     private final Faults faults;
+    private final String volume;
     private java.util.function.LongConsumer readCounter=n->{};
     public void setReadCounter(java.util.function.LongConsumer counter){this.readCounter=counter;}
     public CameraPhotoPublisher(Context context,CameraImportLedger ledger) { this(context,ledger,b -> {}); }
     public CameraPhotoPublisher(Context context,CameraImportLedger ledger,Faults faults) {
-        this.context=context.getApplicationContext();this.resolver=this.context.getContentResolver();this.ledger=ledger;this.faults=faults;
+        this(context,ledger,PhotoStorage.selected(context),faults);
+    }
+    CameraPhotoPublisher(Context context,CameraImportLedger ledger,String volume,Faults faults) {
+        this.context=context.getApplicationContext();this.resolver=this.context.getContentResolver();this.ledger=ledger;this.volume=volume;this.faults=faults;
     }
     static void check(BooleanSupplier cancelled)throws IOException { if(cancelled.getAsBoolean()||Thread.currentThread().isInterrupted())throw new InterruptedIOException("Import cancelled"); }
     public static String folder(String value,boolean raw) {
@@ -34,8 +39,9 @@ public final class CameraPhotoPublisher {
     }
     public Uri publish(CameraImportFile source,File staged,String originalSha,String kind,String folder,String group,BooleanSupplier cancelled)throws IOException {
         check(cancelled);
+        PhotoStorage.requireSpace(context,volume,staged.length());
         String savedSha=CameraImportCopy.sha256(staged,cancelled);
-        CameraImportLedger.Pending p=ledger.allocate(source,originalSha,savedSha,staged.length(),source.name,folder,kind,group);
+        CameraImportLedger.Pending p=ledger.allocate(source,originalSha,savedSha,staged.length(),source.name,folder,kind,group,volume);
         faults.after(Boundary.ALLOCATED);
         try {
             ContentValues values=new ContentValues();
@@ -44,7 +50,7 @@ public final class CameraPhotoPublisher {
             values.put(MediaStore.MediaColumns.RELATIVE_PATH,p.relativeFolder);
             if(source.captureSeconds>0)values.put(MediaStore.MediaColumns.DATE_TAKEN,source.captureSeconds*1000);
             values.put(MediaStore.MediaColumns.IS_PENDING,1);
-            Uri target=resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,values);
+            Uri target=resolver.insert(MediaStore.Images.Media.getContentUri(p.volume),values);
             if(target==null)throw new IOException("Photo insert failed");
             faults.after(Boundary.URI_INSERTED);
             ledger.attach(p.token,target.toString());p=ledger.pending(p.token);
@@ -79,7 +85,8 @@ public final class CameraPhotoPublisher {
         State(boolean pending,String owner){this.pending=pending;this.owner=owner;}
     }
     private State state(Uri uri)throws IOException {
-        if(!"content".equals(uri.getScheme())||!"media".equals(uri.getAuthority())||!uri.getPath().matches("/(?:external|external_primary)/images/media/[0-9]+"))throw new IOException("Unexpected photo URI");
+        if(!CameraImportHistoryPlan.validUri(uri.toString()))throw new IOException("Unexpected photo URI");
+        PhotoStorage.requireMounted(context,uri);
         Bundle args=new Bundle();args.putInt(MediaStore.QUERY_ARG_MATCH_PENDING,MediaStore.MATCH_INCLUDE);
         try(Cursor c=resolver.query(uri,new String[]{MediaStore.MediaColumns.IS_PENDING,MediaStore.MediaColumns.OWNER_PACKAGE_NAME},args,null)) {
             if(c==null)throw new IOException("Photo status could not be read");
@@ -91,15 +98,22 @@ public final class CameraPhotoPublisher {
         if(state==null||!context.getPackageName().equals(state.owner))throw new IOException("Publication ownership could not be verified");
     }
     private Uri locate(CameraImportLedger.Pending p)throws IOException {
-        if(p.uri!=null)return Uri.parse(p.uri);
+        Uri collection=MediaStore.Images.Media.getContentUri(p.volume);
+        PhotoStorage.requireMounted(context,collection);
+        if(p.uri!=null) {
+            Uri attached=Uri.parse(p.uri);
+            if(!CameraImportHistoryPlan.validUri(p.uri)||!p.volume.equals(PhotoStorage.volumeOf(attached)))
+                throw new IOException("Pending photo volume changed");
+            return attached;
+        }
         Bundle args=new Bundle();args.putInt(MediaStore.QUERY_ARG_MATCH_PENDING,MediaStore.MATCH_INCLUDE);
         args.putString(ContentResolver.QUERY_ARG_SQL_SELECTION,MediaStore.MediaColumns.DISPLAY_NAME+"=? AND "+MediaStore.MediaColumns.RELATIVE_PATH+"=? AND "+MediaStore.MediaColumns.OWNER_PACKAGE_NAME+"=?");
         args.putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS,new String[]{p.pendingName,p.relativeFolder,context.getPackageName()});
-        try(Cursor c=resolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,new String[]{MediaStore.MediaColumns._ID},args,null)) {
+        try(Cursor c=resolver.query(collection,new String[]{MediaStore.MediaColumns._ID},args,null)) {
             if(c==null)throw new IOException("Pending photo lookup failed");
             if(c.getCount()>1)throw new IOException("Ambiguous pending photo");
             if(!c.moveToFirst())return null;
-            Uri uri=ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,c.getLong(0));
+            Uri uri=ContentUris.withAppendedId(collection,c.getLong(0));
             ledger.attach(p.token,uri.toString());return uri;
         }
     }
@@ -129,7 +143,10 @@ public final class CameraPhotoPublisher {
     /** Run under CameraImportGate before accepting another file. Never deletes a published photo. */
     public void recover(BooleanSupplier cancelled)throws IOException {
         for(CameraImportLedger.Pending initial:ledger.pending()) {
-            check(cancelled);Uri uri=locate(initial);
+            check(cancelled);
+            // A detached card is not missing media. Leave its journal for the same card.
+            if(!MediaStore.getExternalVolumeNames(context).contains(initial.volume))continue;
+            Uri uri=locate(initial);
             if(uri==null||state(uri)==null){ledger.discard(initial.token);continue;}
             CameraImportLedger.Pending p=ledger.pending(initial.token);State state=state(uri);owned(state);
             if(!p.ready&&state.pending){discardUnpublished(p);continue;}

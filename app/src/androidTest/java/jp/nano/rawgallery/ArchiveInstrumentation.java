@@ -36,13 +36,23 @@ public final class ArchiveInstrumentation extends Instrumentation {
     }
     if((confidenceUiTest||tagDetailTest||removeLookTest)&&activity instanceof TagActivity)TagFixtureIsolation.install((TagActivity)activity);
     if(removeLookTest&&activity instanceof RawEditActivity&&state==null&&activity.getIntent().getBooleanExtra("removeLookLegacyFixture",false))state=LookRemovalChecks.legacyState(activity.getIntent());
+    boolean photoStorageUi = "photo-storage-ui".equals(photoStorageMode) && activity instanceof PhotoStorageActivity;
+    if (photoStorageUi) {
+      var config = new android.content.res.Configuration(activity.getResources().getConfiguration());
+      config.fontScale = tagFont;
+      config.screenWidthDp = tagWidth;
+      activity.getResources().updateConfiguration(config, activity.getResources().getDisplayMetrics());
+    }
     super.callActivityOnCreate(activity, state);
+    if (photoStorageUi)
+      activity.getWindow().setLayout(GalleryUi.dp(activity, tagWidth), android.view.ViewGroup.LayoutParams.MATCH_PARENT);
     if(ep7WifiTest || ("camera-pilot-qr-ui".equals(cameraPilotMode) || (("camera-pilot-wifi-quick".equals(cameraPilotMode) || "camera-pilot-quick-import".equals(cameraPilotMode)) || ("camera-pilot-import-progress".equals(cameraPilotMode) || "camera-pilot-usb-launch".equals(cameraPilotMode)))))activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
     if ((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || videoTest || removeLookTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
   }
   private boolean shareHistoryTest, shareHistoryScreenTest, shareHistoryHandoffTest, shareHistoryCallbackTest;
   private boolean shareHistoryRestartSeed, shareHistoryRestartVerify;
   private boolean cameraTabsTest, ep7WifiTest, cameraLedgerTest, cameraBenchmarkTest;
+  private String photoStorageMode;
   private String cameraPilotMode;
   private boolean shareCapacityTest, shareToggleTest, galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest;
   private boolean photoEditTest;
@@ -159,6 +169,13 @@ public final class ArchiveInstrumentation extends Instrumentation {
     if (("camera-pilot-qr-ui".equals(cameraPilotMode) || (("camera-pilot-wifi-quick".equals(cameraPilotMode) || "camera-pilot-quick-import".equals(cameraPilotMode)) || ("camera-pilot-import-progress".equals(cameraPilotMode) || "camera-pilot-usb-launch".equals(cameraPilotMode))))) { tagWidth=Integer.parseInt(args.getString("width","400"));tagFont=Float.parseFloat(args.getString("font","1.0")); }
     cameraBenchmarkTest = args != null && "camera-benchmark".equals(args.getString("mode"));
     cameraLedgerTest = args != null && "camera-ledger".equals(args.getString("mode"));
+    if (args != null && java.util.List.of("photo-storage", "photo-storage-ui", "photo-storage-detach-seed",
+        "photo-storage-detach-absent", "photo-storage-detach-restored").contains(args.getString("mode", "")))
+      photoStorageMode = args.getString("mode");
+    if ("photo-storage-ui".equals(photoStorageMode)) {
+      tagWidth = Integer.parseInt(args.getString("width", "400"));
+      tagFont = Float.parseFloat(args.getString("font", "1.0"));
+    }
     ep7WifiTest = args != null && "ep7-wifi".equals(args.getString("mode"));
     if(ep7WifiTest){tagWidth=Integer.parseInt(args.getString("width","400"));tagFont=Float.parseFloat(args.getString("font","1.0"));}
     cameraTabsTest = args != null && "camera-tabs".equals(args.getString("mode"));
@@ -384,6 +401,14 @@ public final class ArchiveInstrumentation extends Instrumentation {
       }
       if (cameraBenchmarkTest) { results.putString("stream", CameraImportBenchmarkChecks.run(this)); finish(-1, results); return; }
       if (cameraLedgerTest) { results.putString("stream", CameraImportLedgerChecks.run(this)); finish(-1, results); return; }
+      if (photoStorageMode != null) {
+        String secondary = cameraPilotArguments.getString("secondaryVolume");
+        results.putString("stream", "photo-storage-ui".equals(photoStorageMode)
+            ? PhotoStorageChecks.captureUi(this, secondary, tagWidth, tagFont)
+            : PhotoStorageChecks.run(this, photoStorageMode, secondary));
+        finish(-1, results);
+        return;
+      }
       if (ep7WifiTest) { results.putString("stream", Ep7WifiChecks.run(this)); finish(-1, results); return; }
       if (cameraTabsTest) { results.putString("stream", CameraTabsChecks.run(this)); finish(-1, results); return; }
       if (tabsTest) { results.putString("stream", LibraryTabsChecks.run(this)); finish(-1, results); return; }
