@@ -2,7 +2,11 @@ package jp.nano.rawgallery.camera;
 
 import android.app.Instrumentation;
 import android.content.Context;
+import android.database.Cursor;
+import android.database.MatrixCursor;
 import android.net.Uri;
+import android.os.Bundle;
+import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 import java.io.*;
 import java.security.MessageDigest;
@@ -16,6 +20,10 @@ public final class CameraDocumentSourceChecks {
     private static final Uri MEDIA = Uri.parse("content://media/external/images/media/0");
     private static final String SOURCE = "ab12-cd34";
     private static final Uri PINNED = MediaStore.Files.getContentUri(SOURCE, 0);
+    private static final Uri SOURCE_TREE = DocumentsContract.buildTreeDocumentUri(
+            "com.android.externalstorage.documents", "AB12-CD34:DCIM");
+    private static final String SOURCE_DOCUMENT_ID = "AB12-CD34:DCIM/100TEST/TEST.JPG";
+    private static final Uri SOURCE_DOCUMENT = DocumentsContract.buildDocumentUriUsingTree(SOURCE_TREE, SOURCE_DOCUMENT_ID);
     public static String run(Instrumentation instrumentation) throws Exception {
         Fake denied = new Fake(); denied.permitted = false;
         expect(denied, CameraDocumentSource.OriginalAccessException.Reason.PERMISSION);
@@ -51,9 +59,10 @@ public final class CameraDocumentSourceChecks {
         expect(excess, CameraDocumentSource.OriginalAccessException.Reason.LENGTH);
         require(excess.readBytes == ORIGINAL.length + 1, "Excess source bounded at expected length plus one");
         strictVolumeReads();
+        registrationChecks();
         kindSelection();
         legacyReceiptRequiresRead(instrumentation.getTargetContext());
-        return "PASS sd-original permission=true mapping=true pinnedVolume=true requiredOriginal=true noFallback=true immutable=true cancel=true revoke=true bounds=true legacyReceiptRevalidated=true";
+        return "PASS sd-original permission=true mapping=true pinnedVolume=true verifiedIndexAbsence=true requiredOriginal=true noFallback=true immutable=true cancel=true revoke=true bounds=true legacyReceiptRevalidated=true";
     }
     private static void strictVolumeReads() throws IOException {
         Fake unpinned = new Fake();
@@ -82,6 +91,157 @@ public final class CameraDocumentSourceChecks {
             throw new AssertionError("Cancellation before the pinned open was ignored");
         } catch (InterruptedIOException expected) {}
         require(stopped.opens == 0 && stoppedOutput.size() == 0, "Cancelled source never opens or writes a photo");
+    }
+
+    private static void registrationChecks() throws IOException {
+        var mapping = CameraDocumentSource.OriginalAccessException.Reason.MAPPING;
+        var pending = CameraDocumentSource.OriginalAccessException.Reason.INDEX_PENDING;
+        RegistrationProbe absent = new RegistrationProbe();
+        expectRegistration(absent, SOURCE, pending);
+        require(absent.accessChecks == 2 && absent.fileChecks == 1, "Only complete zero results confirm absence");
+
+        RegistrationProbe nonMedia = new RegistrationProbe();
+        nonMedia.mapped = DOCUMENT;
+        expectRegistration(nonMedia, SOURCE, pending);
+
+        RegistrationProbe legacyRoute = new RegistrationProbe();
+        expectRegistration(legacyRoute, null, mapping);
+        require(legacyRoute.accessChecks == 0 && legacyRoute.fileChecks == 0, "Ordinary SAF does not query registration");
+
+        RegistrationProbe denied = new RegistrationProbe();
+        denied.mappingFailure = new SecurityException("synthetic denial");
+        expectRegistration(denied, SOURCE, CameraDocumentSource.OriginalAccessException.Reason.PERMISSION);
+        RegistrationProbe unavailable = new RegistrationProbe();
+        unavailable.mappingFailure = new IllegalStateException("synthetic provider failure");
+        expectRegistration(unavailable, SOURCE, mapping);
+        require(denied.accessChecks == 0 && unavailable.accessChecks == 0,
+                "Denied or unavailable mapping bypasses the probe");
+
+        RegistrationProbe rejected = new RegistrationProbe();
+        rejected.mappingFailure = new IllegalArgumentException(new FileNotFoundException("synthetic missing index row"));
+        expectRegistration(rejected, SOURCE, pending);
+        require(rejected.accessChecks == 2 && rejected.fileChecks == 1,
+                "A rejected mapping requires independent confirmation of absence");
+        RegistrationProbe rejectedWithRow = new RegistrationProbe();
+        rejectedWithRow.mappingFailure = new IllegalArgumentException("synthetic mapping rejection");
+        rejectedWithRow.fileCount = 1;
+        expectRegistration(rejectedWithRow, SOURCE, mapping);
+        RegistrationProbe rejectedLegacyRoute = new RegistrationProbe();
+        rejectedLegacyRoute.mappingFailure = rejected.mappingFailure;
+        expectRegistration(rejectedLegacyRoute, null, mapping);
+        require(rejectedLegacyRoute.accessChecks == 0, "Ordinary SAF does not probe a rejected mapping");
+
+        RegistrationProbe wrongProvider = new RegistrationProbe();
+        wrongProvider.document = DOCUMENT;
+        expectRegistration(wrongProvider, SOURCE, mapping);
+        RegistrationProbe wrongCard = new RegistrationProbe();
+        expectRegistration(wrongCard, "ef56-7890", mapping);
+        RegistrationProbe wrongPath = new RegistrationProbe();
+        wrongPath.document = DocumentsContract.buildDocumentUriUsingTree(SOURCE_TREE, "AB12-CD34:DCIM/100TEST/OTHER.JPG");
+        expectRegistration(wrongPath, SOURCE, mapping);
+        require(wrongProvider.accessChecks + wrongCard.accessChecks + wrongPath.accessChecks == 0,
+                "Untrusted source identity never opens the diagnostic query");
+
+        for (int problem = 0; problem < 5; problem++) {
+            RegistrationProbe unverifiable = new RegistrationProbe();
+            switch (problem) {
+                case 0 -> unverifiable.readable = false;
+                case 1 -> unverifiable.documentCount = 2;
+                case 2 -> unverifiable.name = "OTHER.JPG";
+                case 3 -> unverifiable.size = null;
+                case 4 -> unverifiable.size = (long) ORIGINAL.length + 1;
+            }
+            expectRegistration(unverifiable, SOURCE, mapping);
+            require(unverifiable.fileChecks == 0, "Unreadable or mismatched document cannot establish missing registration");
+        }
+        for (int problem = 0; problem < 5; problem++) {
+            RegistrationProbe notProven = new RegistrationProbe();
+            switch (problem) {
+                case 0 -> notProven.fileCount = 1;
+                case 1 -> notProven.fileCount = 2;
+                case 2 -> notProven.nullFiles = true;
+                case 3 -> notProven.loading = true;
+                case 4 -> notProven.revokeAfterQuery = true;
+            }
+            expectRegistration(notProven, SOURCE, mapping);
+        }
+        RegistrationProbe failedFiles = new RegistrationProbe();
+        failedFiles.queryError = true;
+        expectRegistration(failedFiles, SOURCE, mapping);
+        RegistrationProbe deniedFiles = new RegistrationProbe();
+        deniedFiles.queryDenied = true;
+        expectRegistration(deniedFiles, SOURCE, mapping);
+
+        RegistrationProbe cancelled = new RegistrationProbe();
+        try {
+            CameraDocumentSource.copy(cancelled, cancelled.entry(), new ByteArrayOutputStream(),
+                    () -> cancelled.fileChecks > 0, SOURCE);
+            throw new AssertionError("Cancellation during index check was ignored");
+        } catch (InterruptedIOException expected) {}
+    }
+
+    private static void expectRegistration(RegistrationProbe access,String volume,
+            CameraDocumentSource.OriginalAccessException.Reason reason) throws IOException {
+        var output = new ByteArrayOutputStream();
+        try {
+            CameraDocumentSource.copy(access,access.entry(),output,()->false,volume);
+            throw new AssertionError("An unverified original was opened");
+        } catch (CameraDocumentSource.OriginalAccessException expected) {
+            require(expected.reason == reason && output.size() == 0, "Exact registration failure with zero original bytes");
+            if (reason == CameraDocumentSource.OriginalAccessException.Reason.INDEX_PENDING)
+                require(expected.getMessage().equals(
+                        "Androidで写真の登録を確認できません。カードを接続したまま少し待って、もう一度取り込んでください"),
+                        "Retry guidance describes the confirmed state");
+        }
+    }
+
+    private static final class RegistrationProbe implements CameraDocumentSource.OriginalAccess {
+        Uri document = SOURCE_DOCUMENT;
+        Uri mapped;
+        RuntimeException mappingFailure;
+        boolean readable = true, nullFiles, loading, queryError, revokeAfterQuery, queryDenied;
+        int documentCount = 1, fileCount, accessChecks, fileChecks;
+        String name = "TEST.JPG";
+        Long size = (long) ORIGINAL.length;
+
+        CameraDocumentSource.Entry entry() {
+            return new CameraDocumentSource.Entry(document, new CameraImportFile("synthetic-registration",
+                    "DCIM/100TEST/TEST.JPG",ORIGINAL.length,"stamp",1));
+        }
+        public boolean permitted() { return true; }
+        public Uri mediaUri(Uri uri) {
+            if (mappingFailure != null) throw mappingFailure;
+            return mapped;
+        }
+        public boolean canCheckRegistration(Uri tree,String volume) {
+            require(SOURCE_TREE.equals(tree) && SOURCE.equals(volume),"Check the exact original tree and mounted volume");
+            accessChecks++;
+            return readable && (!revokeAfterQuery || fileChecks == 0);
+        }
+        public Cursor documentRegistration(Uri requested) {
+            require(document.equals(requested),"Read current metadata for the selected document");
+            MatrixCursor cursor = new MatrixCursor(new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_SIZE});
+            for (int i=0;i<documentCount;i++) cursor.addRow(new Object[]{SOURCE_DOCUMENT_ID,name,size});
+            return cursor;
+        }
+        public Cursor mediaRegistration(String volume,String folder,String name) {
+            require(SOURCE.equals(volume) && "DCIM/100TEST/".equals(folder) && "TEST.JPG".equals(name),
+                    "Query only the exact source volume, relative path and name");
+            fileChecks++;
+            if (queryDenied) throw new SecurityException("synthetic query denial");
+            if (nullFiles) return null;
+            MatrixCursor cursor = new MatrixCursor(new String[]{MediaStore.MediaColumns._ID});
+            for (int i=0;i<fileCount;i++) cursor.addRow(new Object[]{i});
+            if (loading || queryError) {
+                Bundle extras = new Bundle();
+                if (loading) extras.putBoolean(DocumentsContract.EXTRA_LOADING,true);
+                if (queryError) extras.putString(DocumentsContract.EXTRA_ERROR,"synthetic query error");
+                cursor.setExtras(extras);
+            }
+            return cursor;
+        }
+        public InputStream openOriginal(Uri original) { throw new AssertionError("Index diagnostic must not read a file"); }
     }
 
     private static void kindSelection() throws IOException {

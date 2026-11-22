@@ -1,11 +1,14 @@
 package jp.nano.rawgallery.camera;
 
 import android.Manifest;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.ContentUris;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
 import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 import java.io.*;
@@ -58,12 +61,13 @@ public final class CameraDocumentSource {
     /** SAF receipts from potentially redacted reads cannot authorize an original-byte shortcut. */
     static String originalSourceId(String previousSourceId) { return "original-byte-v1:"+previousSourceId; }
     public static final class OriginalAccessException extends IOException {
-        public enum Reason { PERMISSION, MAPPING, VOLUME, UNAVAILABLE, LENGTH }
+        public enum Reason { PERMISSION, MAPPING, INDEX_PENDING, VOLUME, UNAVAILABLE, LENGTH }
         public final Reason reason;
         private OriginalAccessException(Reason reason) {
             super(switch (reason) {
                 case PERMISSION -> "写真の原本を取り込むには、写真の位置情報へのアクセスを許可してください";
                 case VOLUME -> "取り込み元のカードで写真の原本を確認できません。カードとDCIMフォルダを確認してください";
+                case INDEX_PENDING -> "Androidで写真の登録を確認できません。カードを接続したまま少し待って、もう一度取り込んでください";
                 default -> "写真の原本を取得できません。SDカードのDCIMフォルダを選び直し、写真へのアクセスを確認してください";
             });
             this.reason=reason;
@@ -80,6 +84,9 @@ public final class CameraDocumentSource {
         boolean permitted();
         Uri mediaUri(Uri document)throws IOException;
         default Uri onVolume(Uri media, CameraImportFile file, String expectedVolume)throws IOException { return null; }
+        default boolean canCheckRegistration(Uri tree, String volume)throws IOException { return false; }
+        default Cursor documentRegistration(Uri document)throws IOException { return null; }
+        default Cursor mediaRegistration(String volume, String folder, String name)throws IOException { return null; }
         InputStream openOriginal(Uri requiredOriginal)throws IOException;
     }
     public static void copy(Context context,Entry entry,OutputStream out,BooleanSupplier cancelled)throws IOException {
@@ -101,6 +108,30 @@ public final class CameraDocumentSource {
             public Uri mediaUri(Uri document){return MediaStore.getMediaUri(context,document);}
             public Uri onVolume(Uri media,CameraImportFile file,String expected) {
                 return onMountedVolume(context,media,file,expected);
+            }
+            public boolean canCheckRegistration(Uri tree,String volume)throws IOException {
+                String read = Build.VERSION.SDK_INT >= 33
+                        ? Manifest.permission.READ_MEDIA_IMAGES : Manifest.permission.READ_EXTERNAL_STORAGE;
+                if (!permitted() || context.checkSelfPermission(read) != PackageManager.PERMISSION_GRANTED
+                        || !MediaStore.getExternalVolumeNames(context).contains(volume)) return false;
+                MountedCameraCard.requireGrant(context,tree);
+                return true;
+            }
+            public Cursor documentRegistration(Uri document) {
+                return context.getContentResolver().query(document,
+                        new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                                DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_SIZE},
+                        null,null,null);
+            }
+            public Cursor mediaRegistration(String volume,String folder,String name) {
+                Bundle query = new Bundle();
+                query.putString(ContentResolver.QUERY_ARG_SQL_SELECTION,
+                        MediaStore.MediaColumns.RELATIVE_PATH+"=? AND "+MediaStore.MediaColumns.DISPLAY_NAME+"=?");
+                query.putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS,new String[]{folder,name});
+                query.putInt(MediaStore.QUERY_ARG_MATCH_PENDING,MediaStore.MATCH_INCLUDE);
+                query.putInt(MediaStore.QUERY_ARG_MATCH_TRASHED,MediaStore.MATCH_INCLUDE);
+                return context.getContentResolver().query(MediaStore.Files.getContentUri(volume),
+                        new String[]{MediaStore.MediaColumns._ID},query,null);
             }
             public InputStream openOriginal(Uri original)throws IOException {
                 android.os.ParcelFileDescriptor descriptor=context.getContentResolver().openFileDescriptor(original,"r");
@@ -127,6 +158,53 @@ public final class CameraDocumentSource {
         return exact;
     }
 
+    /** Check whether this exact document has any visible rows on the source volume. */
+    private static boolean confirmedMissingRegistration(OriginalAccess access, Entry entry, String volume) {
+        Uri document = entry.uri;
+        if (!"content".equals(document.getScheme()) || !"com.android.externalstorage.documents".equals(document.getAuthority())
+                || MediaStore.VOLUME_EXTERNAL.equals(volume) || MediaStore.VOLUME_EXTERNAL_PRIMARY.equals(volume)) return false;
+        try {
+            List<String> segments = document.getPathSegments();
+            if (segments.size() != 4 || !"tree".equals(segments.get(0)) || !"document".equals(segments.get(2)))
+                return false;
+            String treeId = DocumentsContract.getTreeDocumentId(document);
+            String documentId = DocumentsContract.getDocumentId(document);
+            int split = treeId.indexOf(':');
+            int documentSplit = documentId.indexOf(':');
+            if (split <= 0 || documentSplit <= 0 || !volume.equalsIgnoreCase(treeId.substring(0,split))
+                    || !volume.equalsIgnoreCase(documentId.substring(0,documentSplit))) return false;
+            String root = treeId.substring(split+1);
+            String path = entry.file.relativePath;
+            if ((!root.equalsIgnoreCase("DCIM") && !root.regionMatches(true,0,"DCIM/",0,5))
+                    || !path.startsWith(root+"/") || !path.equals(documentId.substring(documentSplit+1))) return false;
+
+            Uri tree = DocumentsContract.buildTreeDocumentUri(document.getAuthority(),treeId);
+            if (!access.canCheckRegistration(tree,volume)) return false;
+            try (Cursor row = access.documentRegistration(document)) {
+                if (!complete(row) || row.getCount() != 1 || !row.moveToFirst()) return false;
+                int id = row.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID);
+                int name = row.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME);
+                int size = row.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_SIZE);
+                if (!documentId.equals(row.getString(id)) || !entry.file.name.equals(row.getString(name))
+                        || row.isNull(size) || row.getLong(size) != entry.file.bytes) return false;
+            }
+            String folder = path.substring(0,path.lastIndexOf('/')+1);
+            try (Cursor rows = access.mediaRegistration(volume,folder,entry.file.name)) {
+                return complete(rows) && rows.getColumnIndex(MediaStore.MediaColumns._ID) >= 0
+                        && rows.getCount() == 0 && access.canCheckRegistration(tree,volume);
+            }
+        } catch (IOException | RuntimeException unavailable) {
+            return false;
+        }
+    }
+
+    private static boolean complete(Cursor cursor) {
+        if (cursor == null) return false;
+        Bundle extras = cursor.getExtras();
+        return extras != null && !extras.getBoolean(DocumentsContract.EXTRA_LOADING)
+                && !extras.containsKey(DocumentsContract.EXTRA_ERROR);
+    }
+
     private static void requireOriginalPermission(OriginalAccess access)throws OriginalAccessException {
         try{if(!access.permitted())throw new OriginalAccessException(OriginalAccessException.Reason.PERMISSION);}
         catch(SecurityException denied){throw new OriginalAccessException(OriginalAccessException.Reason.PERMISSION);}
@@ -141,9 +219,22 @@ public final class CameraDocumentSource {
         Uri media;
         try{media=access.mediaUri(entry.uri);}
         catch(SecurityException denied){throw new OriginalAccessException(OriginalAccessException.Reason.PERMISSION);}
+        catch(IllegalArgumentException rejected) {
+            // MediaProvider can report an unregistered document this way. Check for visible rows separately.
+            media=null;
+        }
         catch(IOException|RuntimeException unavailable){throw new OriginalAccessException(OriginalAccessException.Reason.MAPPING);}
-        if(media==null||!"content".equals(media.getScheme())||!"media".equals(media.getAuthority()))
+        if(media==null||!"content".equals(media.getScheme())||!"media".equals(media.getAuthority())) {
+            if(expectedVolume!=null) {
+                boolean missing=confirmedMissingRegistration(access,entry,expectedVolume);
+                CameraPhotoPublisher.check(cancelled);
+                if(missing) {
+                    requireOriginalPermission(access);
+                    throw new OriginalAccessException(OriginalAccessException.Reason.INDEX_PENDING);
+                }
+            }
             throw new OriginalAccessException(OriginalAccessException.Reason.MAPPING);
+        }
         if(expectedVolume!=null) {
             try { media=access.onVolume(media,entry.file,expectedVolume); }
             catch(SecurityException denied) { throw new OriginalAccessException(OriginalAccessException.Reason.PERMISSION); }
