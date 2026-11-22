@@ -37,6 +37,7 @@ import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -147,7 +148,7 @@ final class PhotoStorageChecks {
   private static void moveImportedPhotos(Fixture f) throws Exception {
     byte[] original = jpeg(0xff445599);
     byte[] other = jpeg(0xff996644);
-    byte[] legacyBytes = jpeg(0xff449955);
+    byte[] legacyBytes = jpegWithCaptureTime(f, 0xff449955, CAPTURE, CAPTURE + 1);
     byte[] freshBytes = jpeg(0xff994455);
     CameraImportFile source = f.source("wifi:", "PAIR.JPG", original);
     CameraImportFile secondRoute = f.source("sd:", "PAIR.JPG", original);
@@ -168,7 +169,7 @@ final class PhotoStorageChecks {
       history.recordImport(MODEL, f.id, imported, legacyAlias);
       history.markDeleted(MODEL, f.id, imported);
 
-      Uri legacy = f.insert(PRIMARY, "LEGACY.JPG", legacyBytes);
+      Uri legacy = f.insertDatedLegacyPhoto("LEGACY.JPG", legacyBytes);
       ImportedKey legacyKey = new ImportedKey("LEGACY.JPG", legacyBytes.length, CAPTURE);
       history.recordImport(MODEL, f.id, legacyKey, legacy.toString());
       Uri missing = ContentUris.withAppendedId(MediaStore.Images.Media.getContentUri(PRIMARY), Long.MAX_VALUE);
@@ -200,7 +201,9 @@ final class PhotoStorageChecks {
       require(Arrays.equals(original, f.read(first.uri)), "Changing the setting leaves existing files in place");
       try (PhotoMove move = f.move(ledger, history, boundary -> {})) {
         PhotoMove.Plan plan = move.plan(f.secondary);
-        require(plan.items().size() == 2 && plan.skipped() == 1, "Select the imported and legacy items, skipping missing history");
+        require(plan.items().size() == 2 && plan.skipped() == 1,
+            "Select the imported and legacy items, skipping missing history (eligible=" + plan.items().size()
+                + ", skipped=" + plan.skipped() + ")");
         move.begin(plan);
         PhotoMoveStore.Batch result = move.run(() -> false, batch -> {});
         require(result.done() == 2 && result.total() == 2 && result.skipped() == 1 && move.batch() == null,
@@ -383,29 +386,30 @@ final class PhotoStorageChecks {
   }
 
   private static void rejectStaleHistory(Fixture f) throws Exception {
-    byte[] image = jpeg(0xff335555);
-    Uri wrongName = f.insert(PRIMARY, "OTHER.JPG", image);
-    Uri wrongSize = f.insert(PRIMARY, "WRONGSIZE.JPG", image);
-    Uri noCapture = f.insert(PRIMARY, "NO-CAPTURE.JPG", image, 0);
+    byte[] image = jpegWithCaptureTime(f, 0xff335555, CAPTURE, CAPTURE + 1);
+    byte[] noCaptureImage = jpeg(0xff335555);
+    Uri wrongName = f.insertDatedLegacyPhoto("OTHER.JPG", image);
+    Uri wrongSize = f.insertDatedLegacyPhoto("WRONGSIZE.JPG", image);
+    Uri noCapture = f.insert(PRIMARY, "NO-CAPTURE.JPG", noCaptureImage, 0);
     require(f.awaitCaptureTime(noCapture, 0) == 0, "Owned EXIF-free fixture has no MediaStore capture time");
     try (CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
          PhotoMove move = f.move(ledger, history, boundary -> {})) {
       history.recordImport(MODEL, f.id, new ImportedKey("PREVIOUS.JPG", image.length, CAPTURE), wrongName.toString());
       history.recordImport(MODEL, f.id, new ImportedKey("WRONGSIZE.JPG", image.length + 16, CAPTURE), wrongSize.toString());
-      history.recordImport(MODEL, f.id, new ImportedKey("NO-CAPTURE.JPG", image.length, CAPTURE), noCapture.toString());
+      history.recordImport(MODEL, f.id, new ImportedKey("NO-CAPTURE.JPG", noCaptureImage.length, CAPTURE), noCapture.toString());
       PhotoMove.Plan plan = move.plan(f.secondary);
       require(plan.items().isEmpty() && plan.skipped() == 3,
           "Stale filename, size, or absent MediaStore capture time cannot prove a legacy-only import");
       require(f.rows(f.secondary).isEmpty() && Arrays.equals(image, f.read(wrongName))
-          && Arrays.equals(image, f.read(wrongSize)) && Arrays.equals(image, f.read(noCapture))
+          && Arrays.equals(image, f.read(wrongSize)) && Arrays.equals(noCaptureImage, f.read(noCapture))
           && history.importDestinations().equals(Set.of(wrongName.toString(), wrongSize.toString(), noCapture.toString())),
           "All unrelated bytes and legacy history references remain untouched");
     }
   }
 
   private static void rejectResetHistory(Fixture f) throws Exception {
-    byte[] image = jpeg(0xff776655);
-    Uri source = f.insert(PRIMARY, "RESET.JPG", image);
+    byte[] image = jpegWithCaptureTime(f, 0xff776655, CAPTURE, CAPTURE + 1);
+    Uri source = f.insertDatedLegacyPhoto("RESET.JPG", image);
     try (CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
          PhotoMove move = f.move(ledger, history, boundary -> {})) {
       history.recordImport(MODEL, f.id, new ImportedKey("RESET.JPG", image.length, CAPTURE), source.toString());
@@ -468,7 +472,7 @@ final class PhotoStorageChecks {
     LocalDateTime capture = LocalDateTime.of(2024, 8, 9, 1, 2, 3);
     long captureSeconds = capture.atZone(ZoneId.systemDefault()).toEpochSecond();
     long cameraMtime = CAPTURE + 86400;
-    byte[] photo = jpegWithCaptureTime(f, capture, cameraMtime);
+    byte[] photo = jpegWithCaptureTime(f, 0xff895544, captureSeconds, cameraMtime);
     CameraImportFile source = new CameraImportFile("sd-usb:" + f.id, "DCIM/100CAM/USB-EXIF.JPG",
         photo.length, Long.toString(cameraMtime * 1000), cameraMtime);
     ImportedKey oldKey = new ImportedKey(source.name, source.bytes, cameraMtime);
@@ -512,12 +516,12 @@ final class PhotoStorageChecks {
         .known(source.name, source.bytes, source.captureSeconds, false, receipt.uri, receipt.storedBytes);
   }
 
-  private static byte[] jpegWithCaptureTime(Fixture f, LocalDateTime captured, long cameraMtime) throws IOException {
-    File jpeg = File.createTempFile("loupe-usb-fixture-" + f.id, ".jpg", f.context.getCacheDir());
+  private static byte[] jpegWithCaptureTime(Fixture f, int color, long captureSeconds, long cameraMtime) throws IOException {
+    File jpeg = File.createTempFile("loupe-dated-fixture-" + f.id, ".jpg", f.context.getCacheDir());
     try {
-      Files.write(jpeg.toPath(), jpeg(0xff895544));
-      var zoned = captured.atZone(ZoneId.systemDefault());
-      String timestamp = captured.format(DateTimeFormatter.ofPattern("uuuu:MM:dd HH:mm:ss", Locale.ROOT));
+      Files.write(jpeg.toPath(), jpeg(color));
+      var zoned = Instant.ofEpochSecond(captureSeconds).atZone(ZoneId.systemDefault());
+      String timestamp = zoned.format(DateTimeFormatter.ofPattern("uuuu:MM:dd HH:mm:ss", Locale.ROOT));
       String offset = zoned.getOffset().getTotalSeconds() == 0 ? "+00:00" : zoned.getOffset().getId();
       ExifInterface exif = new ExifInterface(jpeg);
       exif.setAttribute(ExifInterface.TAG_DATETIME, timestamp);
@@ -527,7 +531,7 @@ final class PhotoStorageChecks {
       exif.setAttribute(ExifInterface.TAG_OFFSET_TIME_ORIGINAL, offset);
       exif.setAttribute(ExifInterface.TAG_OFFSET_TIME_DIGITIZED, offset);
       exif.saveAttributes();
-      require(CameraImportLegacy.metadata(jpeg, cameraMtime).getCaptureSeconds() == zoned.toEpochSecond(),
+      require(CameraImportLegacy.metadata(jpeg, cameraMtime).getCaptureSeconds() == captureSeconds,
           "Production parser reads the camera JPEG EXIF capture time before import");
       return Files.readAllBytes(jpeg.toPath());
     } finally {
@@ -790,9 +794,9 @@ final class PhotoStorageChecks {
     if (runMove) profile += skipped == 0 ? "-run" : "-run-skipped";
     boolean observedProgress;
     try (Fixture f = new Fixture(base, secondary)) {
-      byte[] bytes = jpeg(0xff264167);
+      byte[] bytes = jpegWithCaptureTime(f, 0xff264167, CAPTURE, CAPTURE + 1);
       String name = "CONFIRM.JPG";
-      Uri original = f.insert(PRIMARY, name, bytes);
+      Uri original = f.insertDatedLegacyPhoto(name, bytes);
       ImportedKey imported = new ImportedKey(name, bytes.length, CAPTURE);
       PhotoRepository.Photo sourcePhoto = runMove ? f.photo(original) : null;
       history.recordImport(MODEL, f.id, imported, original.toString());
@@ -1448,6 +1452,15 @@ final class PhotoStorageChecks {
       ContentValues publish = new ContentValues();
       publish.put(IS_PENDING, 0);
       require(resolver.update(uri, publish, null, null) == 1, "Publish fixture");
+      return uri;
+    }
+
+    Uri insertDatedLegacyPhoto(String name, byte[] bytes) throws IOException {
+      Uri uri = insert(PRIMARY, name, bytes);
+      long taken = awaitCaptureTime(uri, CAPTURE * 1000);
+      require(taken == CAPTURE * 1000,
+          "Published legacy-only fixture " + name + " needs matching MediaStore DATE_TAKEN (actual="
+              + taken + ", expected=" + CAPTURE * 1000 + ")");
       return uri;
     }
 
