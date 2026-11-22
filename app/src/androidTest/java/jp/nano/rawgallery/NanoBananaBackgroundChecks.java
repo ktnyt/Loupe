@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.app.Dialog;
 import android.app.Instrumentation;
 import android.content.ComponentName;
+import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.ContextWrapper;
 import android.content.Intent;
@@ -11,6 +13,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.SystemClock;
+import android.provider.MediaStore;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -24,8 +27,10 @@ import java.io.InputStream;
 import java.lang.reflect.Method;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import jp.nano.rawgallery.camera.MediaSaver;
@@ -46,16 +51,36 @@ final class NanoBananaBackgroundChecks {
     final NanoBananaStore store;final byte[] jpeg;final List<String> saved;
     final CountDownLatch entered=new CountDownLatch(1),release=new CountDownLatch(1),interrupted=new CountDownLatch(1);
     volatile int submits,statuses,downloads,deletes;volatile boolean deleteFailure,ignoreInterrupt,requireVersion;
+    volatile boolean statusTimedOut,statusExited;
+    volatile long statusEnteredAt;
     volatile String prompt;volatile NanoBananaOutput output;
     Fake(NanoBananaStore store,byte[] jpeg,List<String> saved){this.store=store;this.jpeg=jpeg;this.saved=saved;}
     public String upload(String object,byte[] bytes,String owner){return "synthetic-version";}
     public String generate(String text,String object,String version,NanoBananaOutput requested){submits++;prompt=text;output=requested;return "synthetic-task";}
     public JSONObject status(String task)throws Exception{
-      statuses++;entered.countDown();
+      statuses++;statusEnteredAt=SystemClock.elapsedRealtime();entered.countDown();
+      // Finish when the fixture releases the provider. The watchdog covers all UI
+      // actions and captures, which can exceed a single assertion's timeout.
+      long deadline=statusEnteredAt+TimeUnit.SECONDS.toMillis(120);
       boolean wasInterrupted=false;
-      while(true){try{if(!release.await(15,TimeUnit.SECONDS))throw new java.io.IOException("fixture timed out");break;}catch(InterruptedException e){interrupted.countDown();if(!ignoreInterrupt)throw e;wasInterrupted=true;}}
-      if(wasInterrupted)Thread.currentThread().interrupt();
-      return new JSONObject().put("successFlag",1).put("response",new JSONObject().put("resultImageUrl","https://synthetic.invalid/result.jpg"));
+      try {
+        while(true) {
+          try {
+            long remaining=deadline-SystemClock.elapsedRealtime();
+            if(remaining>0&&release.await(remaining,TimeUnit.MILLISECONDS))break;
+            statusTimedOut=true;
+            throw new IOException("synthetic provider release watchdog expired");
+          } catch(InterruptedException e) {
+            interrupted.countDown();
+            if(!ignoreInterrupt)throw e;
+            wasInterrupted=true;
+          }
+        }
+        if(wasInterrupted)Thread.currentThread().interrupt();
+        return new JSONObject().put("successFlag",1).put("response",new JSONObject().put("resultImageUrl","https://synthetic.invalid/result.jpg"));
+      } finally {
+        statusExited=true;
+      }
     }
     public byte[] download(String url){downloads++;return jpeg;}
     public void delete(String object,String version,String owner)throws Exception{
@@ -128,9 +153,13 @@ final class NanoBananaBackgroundChecks {
       capture(test,screen,"nano-background-viewer-"+width+"-"+font);
       Dialog[] menu={null};TagDetailChecks.ui(test,()->{menu[0]=NanoBananaUi.show(screen,next,store,NanoBananaUi.ACTUAL);});
       capture(test,screen,"nano-background-busy-"+width+"-"+font);TagDetailChecks.ui(test,()->{verifyMenuTargets(menu[0].getWindow().getDecorView());menu[0].dismiss();});
-      // Home is an actual OS navigation event; the service remains independent of the Activity.
-      test.getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME);test.waitForIdleSync();
-      TagDetailChecks.require(NanoBananaService.busy(),"service continues after Home");
+      // Verify both sides of OS navigation while the provider expressly remains blocked.
+      requireGenerationBlocked(store,first,"before Home");
+      TagDetailChecks.require(test.getUiAutomation().performGlobalAction(
+          android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME),"Android accepted Home");
+      test.waitForIdleSync();
+      requireGenerationBlocked(store,first,"after Home");
+      long homeWaitMs=SystemClock.elapsedRealtime()-first.statusEnteredAt;
       first.release.countDown();idle(test);
       TagDetailChecks.require(first.downloads==1&&first.deletes==1&&store.job()==null,"background completion saves, cleans and clears durable record");
       synchronized(created){TagDetailChecks.require(created.isEmpty(),"generation and completion do not launch another Activity");}
@@ -197,10 +226,10 @@ final class NanoBananaBackgroundChecks {
       TagDetailChecks.require(!NanoBananaService.busy()&&store.job()!=null&&store.job().toString().equals(replacementText)&&factory.jobs==jobsBeforeStale&&guarded.deletes==0&&guarded.submits==0&&guarded.statuses==0&&guarded.downloads==0,"stale confirmation for A leaves request B unchanged without starting service or provider operations");
       TagDetailChecks.require(NanoBananaService.discard(screen,objectB,ownerB),"current request B identity admits cleanup");idle(test);
       TagDetailChecks.require(store.job()==null&&guarded.deletes==1&&guarded.submits==0&&guarded.statuses==0&&guarded.downloads==0&&factory.jobs==jobsBeforeStale+1,"current request cleanup removes B once without generation or polling");
-      store.job(null); // Fixture-only record: there is no remote object to delete.
+      verifyDiscardWithRenamedPublishedResult(test,screen,store,factory,saved,input,prompt,jpeg);
       Context failing=new ContextWrapper(context){public Context getApplicationContext(){return this;}public ComponentName startForegroundService(Intent i){throw new IllegalStateException("synthetic startup rejection");}};
       TagDetailChecks.require(!NanoBananaService.start(failing,photo,prompt)&&!NanoBananaService.busy()&&store.job()==null,"startup rejection rolls back reservation");
-      return "PASS nano-background: actual production Android Service with isolated fake provider; next-photo operation, busy/error menu captures, Home continuation, no generation/result Activity launch, automatic JPEG save/readback 1200x800, temporary-object cleanup, duplicate admission, immutable prompt/output snapshot, next admission, saved cleanup retry without POST/download, interrupted-worker lease, durable discard retry and cleanup-only completion text, missing-version selectable manual recovery guidance, explicit ambiguous-submission messaging, stale end-confirmation A/B identity guard and current identity cleanup, stale Intent suppression and startup rejection, remote-first discard with a detached result volume, MTP same-size corruption and read error checks. Captures are synthetic layouts; OS-service runtime assertions are separate. No real API, credentials, photos, physical touch or TalkBack speech tested.\nStatus trace (delivery hook; fixed UI text only): "+String.join(" → ",factory.messages)+"\n";
+      return "PASS nano-background: actual production Android Service with isolated fake provider; next-photo operation, busy/error menu captures, Home continuation, no generation/result Activity launch, automatic JPEG save/readback 1200x800, temporary-object cleanup, duplicate admission, immutable prompt/output snapshot, next admission, saved cleanup retry without POST/download, interrupted-worker lease, durable discard retry and cleanup-only completion text, missing-version selectable manual recovery guidance, explicit ambiguous-submission messaging, stale end-confirmation A/B identity guard and current identity cleanup, stale Intent suppression and startup rejection, remote-first discard with a detached result volume, renamed published result retained on discard, MTP same-size corruption and read error checks. Provider remained blocked through Home after "+homeWaitMs+" ms. Captures are synthetic layouts; OS-service runtime assertions are separate. No real API, credentials, photos, physical touch or TalkBack speech tested.\nStatus trace (delivery hook; fixed UI text only): "+String.join(" → ",factory.messages)+"\n";
     }finally{
       if(factory.fake!=null)factory.fake.release.countDown();
       context.stopService(new Intent(context,NanoBananaService.class));
@@ -213,6 +242,76 @@ final class NanoBananaBackgroundChecks {
       NanoBananaService.dependencies=NanoBananaService.PRODUCTION;
     }
   }
+  private static void requireGenerationBlocked(NanoBananaStore store,Fake first,String checkpoint) throws Exception {
+    JSONObject record=store.job();
+    boolean generating=record!=null&&"generating".equals(record.optString("stage"));
+    boolean leased=NanoBananaService.busy();
+    boolean providerWaiting=first.entered.getCount()==0&&first.release.getCount()==1
+        &&first.interrupted.getCount()==1&&!first.statusExited&&first.downloads==0;
+    if(!leased||!generating||!providerWaiting) {
+      // Emit only fixture booleans and durations. Instrumentation redacts arbitrary error text.
+      android.util.Log.e("LoupeNanoFixture",checkpoint+" lease="+leased+" generating="+generating
+          +" timedOut="+first.statusTimedOut+" statusExited="+first.statusExited
+          +" interrupted="+(first.interrupted.getCount()==0)
+          +" elapsedMs="+(SystemClock.elapsedRealtime()-first.statusEnteredAt));
+      throw new AssertionError("Service and fake provider must still be running "+checkpoint);
+    }
+  }
+
+  private static void verifyDiscardWithRenamedPublishedResult(Instrumentation test,MainActivity activity,
+      NanoBananaStore store,FixtureFactory factory,List<String> saved,PhotoRepository.Photo input,
+      NanoBananaStore.Prompt prompt,byte[] jpeg) throws Exception {
+    ContentResolver resolver=activity.getContentResolver();
+    Uri collection=MediaStore.Images.Media.getContentUri(PhotoStorage.PRIMARY);
+    ContentValues row=new ContentValues();
+    row.put(MediaStore.MediaColumns.DISPLAY_NAME,"NanoBanana-"+UUID.randomUUID()+".jpg");
+    row.put(MediaStore.MediaColumns.RELATIVE_PATH,"Pictures/LoupeNanoBanana/");
+    row.put(MediaStore.MediaColumns.MIME_TYPE,"image/jpeg");
+    row.put(MediaStore.MediaColumns.IS_PENDING,1);
+    Uri published=resolver.insert(collection,row);
+    TagDetailChecks.require(published!=null,"Recovered result fixture inserted");
+    try {
+      try(java.io.OutputStream output=resolver.openOutputStream(published)){
+        TagDetailChecks.require(output!=null,"Recovered result fixture opened");
+        output.write(jpeg);
+      }
+      ContentValues publish=new ContentValues();
+      publish.put(MediaStore.MediaColumns.IS_PENDING,0);
+      TagDetailChecks.require(resolver.update(published,publish,null,null)==1,"Recovered result fixture published");
+      String renamed="nano-discard-relocated-"+UUID.randomUUID()+".jpg";
+      String relocated="Pictures/LoupeSyntheticChecks/";
+      ContentValues move=new ContentValues();
+      move.put(MediaStore.MediaColumns.DISPLAY_NAME,renamed);
+      move.put(MediaStore.MediaColumns.RELATIVE_PATH,relocated);
+      TagDetailChecks.require(resolver.update(published,move,null,null)==1,"Published result renamed and moved");
+      Fake discard=new Fake(store,jpeg,saved);factory.fake=discard;
+      store.job(new JSONObject().put("stage","generating").put("task","synthetic-published-result")
+          .put("object","loupe-nano-temp/00000000-0000-0000-0000-000000000108.jpg")
+          .put("owner","synthetic-published-owner").put("version","synthetic-version")
+          .put("photo_volume",PhotoStorage.PRIMARY).put("pending",published.toString()));
+      TagDetailChecks.require(NanoBananaService.discard(activity),"Discard renamed published result admitted");
+      idle(test);
+      TagDetailChecks.require(store.job()==null&&discard.deletes==1&&discard.submits==0
+          &&discard.statuses==0&&discard.downloads==0,"Discard closes job and removes only the remote input");
+      try(android.database.Cursor current=resolver.query(published,new String[]{MediaStore.MediaColumns.IS_PENDING,
+          MediaStore.MediaColumns.DISPLAY_NAME,MediaStore.MediaColumns.RELATIVE_PATH},null,null,null)) {
+        TagDetailChecks.require(current!=null&&current.moveToFirst()&&current.getInt(0)==0
+            &&renamed.equals(current.getString(1))&&relocated.equals(current.getString(2)),
+            "The relocated result remains published with its current name and folder");
+      }
+      try(InputStream bytes=resolver.openInputStream(published)) {
+        TagDetailChecks.require(bytes!=null&&Arrays.equals(jpeg,bytes.readAllBytes()),"Discard leaves the published JPEG bytes intact");
+      }
+      Fake next=new Fake(store,jpeg,saved);next.release.countDown();factory.fake=next;
+      TagDetailChecks.require(NanoBananaService.start(activity,input,prompt),"New job admitted after discard");
+      idle(test);
+      TagDetailChecks.require(next.submits==1&&next.downloads==1&&next.deletes==1&&store.job()==null,
+          "New job completes after renamed published-result discard");
+    } finally {
+      resolver.delete(published,null,null);
+    }
+  }
+
   private static void verifyMtpDeletionProof() throws Exception {
     byte[] staged=new byte[128*1024+17];
     StringBuilder expected=new StringBuilder(64);

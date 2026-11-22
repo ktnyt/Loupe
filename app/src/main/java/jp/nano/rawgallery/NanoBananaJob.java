@@ -89,7 +89,7 @@ final class NanoBananaJob {
       }
       String stage=job.getString("stage");
       if(stage.equals("discarding")){discard();return;}
-      recoverPending(job);
+      recoverPending(job, false);
       if(job.has("saved")&&!stage.equals("complete")){job.put("stage","cleanup");store.job(job);stage="cleanup";}
       if(stage.equals("rejected"))throw new IOException("e2が送信を拒否しました。終了して設定を確認してください。");
       if(stage.equals("uploading")||stage.equals("submitting"))
@@ -111,7 +111,7 @@ final class NanoBananaJob {
         Thread.sleep(3000);
       }
       progress.show("生成画像を保存しています");
-      recoverPending(job);
+      recoverPending(job, false);
       if(!job.has("saved")) {
         checkInterrupted();
         byte[] bytes=network.download(status.getJSONObject("response").getString("resultImageUrl"));
@@ -140,7 +140,7 @@ final class NanoBananaJob {
     }
     // Local reconciliation can need a detached SD card. Keep the cancelled job and
     // pending URI so retries can finish it without repeating the remote deletion.
-    recoverPending(job);
+    recoverPending(job, true);
     store.job(null);
   }
   private void cleanup(JSONObject job) throws Exception {
@@ -169,7 +169,7 @@ final class NanoBananaJob {
       if(out.size()>5*1024*1024)throw new IOException("送信用画像が大きすぎます");return out.toByteArray();
     }finally{bitmap.recycle();}
   }
-  private void recoverPending(JSONObject job) throws Exception {
+  private void recoverPending(JSONObject job, boolean discarding) throws Exception {
     checkInterrupted();
     if(job.has("saved")||!job.has("pending"))return;
     String location=job.getString("pending");
@@ -185,7 +185,7 @@ final class NanoBananaJob {
     String filename=null;
     try(Cursor c=context.getContentResolver().query(uri,new String[]{pending,owner,path,name},null,null,null)) {
       state=pendingState(c);
-      if(state>=0) {
+      if(state==1||state==0&&!discarding) {
         filename=c.getString(3);
         if(!context.getPackageName().equals(c.getString(1))||!directory.equals(c.getString(2))
             ||filename==null||!filename.matches("NanoBanana-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\\.jpg"))
@@ -193,7 +193,12 @@ final class NanoBananaJob {
       }
     }
     PhotoStorage.requireMounted(context,uri);
-    if(state==0){job.put("saved",uri.toString());store.job(job);checkInterrupted();return;}
+    if(state==0){
+      // A published result might have been renamed or moved by the user. Discard
+      // never changes that row, and need not reattach it to the cancelled job.
+      if(!discarding){job.put("saved",uri.toString());store.job(job);checkInterrupted();}
+      return;
+    }
     checkInterrupted();
     if(state==1&&context.getContentResolver().delete(uri,pending+"=1 AND "+owner+"=? AND "+path+"=? AND "+name+"=?",
         new String[]{context.getPackageName(),directory,filename})!=1)
@@ -205,7 +210,7 @@ final class NanoBananaJob {
     if(cursor==null)throw new IOException("画像の保存先に接続できません。もう一度確認してください");
     if(!cursor.moveToFirst())return -1;
     int value=cursor.getInt(0);
-    if(value!=0&&value!=1)throw new IOException("画像の保存状態を確認できませんでした");
+    if(cursor.isNull(0)||value!=0&&value!=1)throw new IOException("画像の保存状態を確認できませんでした");
     return value;
   }
 
