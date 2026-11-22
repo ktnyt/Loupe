@@ -90,6 +90,7 @@ class ImportService : Service() {
                 }
             } catch (error: PhotoStorage.Unavailable) {
                 val message = error.message.orEmpty()
+                if (ImportProgress.photo != null) ImportProgress.photoTerminal("failed", message)
                 ImportProgress.finish(message)
                 notify(NOTIF_DONE, notification(message))
             } catch (error: Exception) {
@@ -350,6 +351,8 @@ class ImportService : Service() {
                     return null
                 }
             } catch (e: Exception) {
+                val storageFailure = e.cause as? PhotoStorage.Unavailable
+                if (storageFailure != null) throw storageFailure
                 ImportLog.w(TAG, "attempt crashed", e)
                 failures += FailureKind.CRASH
                 return null

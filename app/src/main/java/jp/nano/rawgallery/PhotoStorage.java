@@ -37,10 +37,15 @@ public final class PhotoStorage {
 
   static String label(Context context, String volume) {
     if (PRIMARY.equals(volume)) return "内部ストレージ";
-    for (StorageVolume candidate : volumes(context)) {
-      if (volume.equals(candidate.getMediaStoreVolumeName())) return candidate.getDescription(context);
+    List<StorageVolume> available = volumes(context);
+    for (StorageVolume candidate : available) {
+      if (!volume.equals(candidate.getMediaStoreVolumeName())) continue;
+      String description = candidate.getDescription(context);
+      if (description == null || description.isEmpty()) break;
+      long sameLabel = available.stream().filter(item -> description.equals(item.getDescription(context))).count();
+      return sameLabel > 1 ? description + "（" + volume.toUpperCase(java.util.Locale.ROOT) + "）" : description;
     }
-    return "SDカード";
+    return "SDカード（" + volume.toUpperCase(java.util.Locale.ROOT) + "）";
   }
 
   static File directoryIfWritable(Context context, String name) {
@@ -71,7 +76,7 @@ public final class PhotoStorage {
   /** Import deduplication must not read references between the two history updates. */
   public static void requireImportReady(Context context) throws Unavailable {
     try (PhotoMoveStore store = new PhotoMoveStore(context)) {
-      if (store.historyUpdatePending()) throw new Unavailable("写真の保存先から移動を再開してください。");
+      if (store.historyUpdatePending()) throw new Unavailable("写真・動画の保存先から移動を再開してください。");
     }
   }
 

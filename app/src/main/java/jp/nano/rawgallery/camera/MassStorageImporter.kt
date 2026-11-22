@@ -168,6 +168,9 @@ object MassStorageImporter {
                         val mb = bytesTotal / 1048576.0
                         ImportLog.i(TAG, "perf n=$imported totalMs=$totalMs MBps=%.1f".format(mb / (totalMs / 1000.0)))
                     }
+                } catch (e: jp.nano.rawgallery.PhotoStorage.Unavailable) {
+                    metrics.recordAttempt(CameraImportOutcome.resolve(false, false, true, failed + 1))
+                    throw e
                 } catch (e: Exception) {
                     ImportLog.w(TAG, "import failed (${e.javaClass.simpleName})")
                     failed++
@@ -196,6 +199,8 @@ object MassStorageImporter {
             // 走査後に読み取りが全滅したとき (全件失敗) もエラー扱いにする
             val scanError = targets.isNotEmpty() && imported == 0 && failed == targets.size && !aborted
             return complete(MtpImporter.Result(imported, skipped, failed, elapsed(start), aborted, error = scanError))
+        } catch (e: jp.nano.rawgallery.PhotoStorage.Unavailable) {
+            throw e
         } catch (e: Exception) {
             ImportLog.w(TAG, "mass storage import error (${e.javaClass.simpleName})")
             return complete(MtpImporter.Result(0, 0, 0, elapsed(start), false, error = true))

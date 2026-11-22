@@ -9,14 +9,17 @@ import android.content.Context;
 import android.content.ContextWrapper;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.UriPermission;
 import android.database.DatabaseErrorHandler;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
+import android.media.ExifInterface;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.SystemClock;
+import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 import android.view.accessibility.AccessibilityNodeInfo;
 import java.io.ByteArrayOutputStream;
@@ -26,13 +29,18 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InterruptedIOException;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
 import jp.nano.rawgallery.camera.CameraImportFile;
 import jp.nano.rawgallery.camera.CameraImportHistoryPlan;
@@ -40,6 +48,7 @@ import jp.nano.rawgallery.camera.CameraImportLedger;
 import jp.nano.rawgallery.camera.CameraPhotoImporter;
 import jp.nano.rawgallery.camera.HistoryDb;
 import jp.nano.rawgallery.camera.ImportedKey;
+import jp.nano.rawgallery.camera.MediaSaver;
 
 import static android.provider.MediaStore.MediaColumns.*;
 
@@ -48,6 +57,8 @@ final class PhotoStorageChecks {
   private static final String PRIMARY = PhotoStorage.PRIMARY;
   private static final String MISSING = "dead-beef";
   private static final String DETACH_PREFS = "photo-storage-detach-fixture";
+  private static final String SAF_PREFS = "photo-storage-saf-fixture";
+  private static final String DOCUMENTS_AUTHORITY = "com.android.externalstorage.documents";
   private static final String MODEL = "Synthetic camera";
   private static final long CAPTURE = 1784712024L;
 
@@ -60,6 +71,7 @@ final class PhotoStorageChecks {
     HistoryDb.Companion.get(base);
     String secondary = secondaryArg == null ? secondaryVolume(base) : secondaryArg.toLowerCase(Locale.ROOT);
     require(!PRIMARY.equals(secondary), "Expected a secondary volume");
+    if (mode.startsWith("photo-storage-saf-")) return saf(base, mode, secondary);
     if (!"photo-storage".equals(mode)) return detach(base, mode, secondary);
     PhotoStorage.requireWritable(base, secondary);
 
@@ -78,11 +90,40 @@ final class PhotoStorageChecks {
       rejectUnavailable(fixture);
     }
     try (Fixture fixture = new Fixture(base, secondary)) {
-      rejectChangedSource(fixture);
+      rejectChangedSource(fixture, false);
+    }
+    try (Fixture fixture = new Fixture(base, secondary)) {
+      rejectChangedSource(fixture, true);
+    }
+    try (Fixture fixture = new Fixture(base, secondary)) {
+      rejectStaleHistory(fixture);
+    }
+    try (Fixture fixture = new Fixture(base, secondary)) {
+      rejectResetHistory(fixture);
+    }
+    try (Fixture fixture = new Fixture(base, secondary)) {
+      loseVerifiedTarget(fixture, PhotoMove.Boundary.HISTORY_UPDATED, true);
+    }
+    try (Fixture fixture = new Fixture(base, secondary)) {
+      loseVerifiedTarget(fixture, PhotoMove.Boundary.BEFORE_SOURCE_DELETE, false);
+    }
+    try (Fixture fixture = new Fixture(base, secondary)) {
+      preservePreUpdateSecondaryIdentity(fixture);
+    }
+    try (Fixture fixture = new Fixture(base, secondary)) {
+      moveMassStorageReceipt(fixture);
+    }
+    try (Fixture fixture = new Fixture(base, secondary)) {
+      abandonWithOnlyReplacement(fixture);
+    }
+    try (Fixture fixture = new Fixture(base, secondary)) {
+      sequentialCardIdentity(fixture);
     }
     return "PASS photo storage " + secondary + ": selected import, bulk move and original bytes, ledger and legacy history,"
         + " tags, rank, sharing, same-name files, retries after " + Arrays.toString(PhotoMove.Boundary.values())
-        + ", verified-copy space estimate, cancellation, unavailable target, changed source";
+        + ", verified-copy space estimate, cancellation, unavailable target, stale and reset history, "
+        + "changed or missing source, lost replacement, pre-update SD tag/rank/share compatibility, "
+        + "USB mass-storage mtime/EXIF fast path, abandon with the only verified copy, sequential SD identity snapshots";
   }
 
   private static void moveImportedPhotos(Fixture f) throws Exception {
@@ -286,7 +327,7 @@ final class PhotoStorageChecks {
     }
   }
 
-  private static void rejectChangedSource(Fixture f) throws Exception {
+  private static void rejectChangedSource(Fixture f, boolean remove) throws Exception {
     byte[] original = jpeg(0xff553377);
     byte[] changed = jpeg(0xff772255);
     CameraImportFile source = f.source("wifi:", "CHANGED.JPG", original);
@@ -295,15 +336,321 @@ final class PhotoStorageChecks {
       Uri uri = f.importPhoto(new CameraPhotoImporter(f.context, ledger), source, original).uri;
       require(PhotoStorage.select(f.context, f.secondary), "Set the SD destination");
       move.begin(move.plan(f.secondary));
-      f.write(uri, changed);
-      try {
-        move.run(() -> false, batch -> {});
-        throw new AssertionError("Move accepted a source changed after confirmation");
-      } catch (IOException expected) {
-        require(Arrays.equals(changed, f.read(uri)) && uri.toString().equals(ledger.known(source).uri)
-            && f.rows(f.secondary).stream().allMatch(Row::pending),
-            "Changed source remains intact and no replacement is published");
+      Row originalRow = f.row(uri);
+      if (remove) f.removeOwned(originalRow);
+      else {
+        f.requireOwned(originalRow);
+        f.write(uri, changed);
       }
+      expectMoveFailure(move, "Move accepted a source changed after confirmation");
+      require(uri.toString().equals(ledger.known(source).uri) && f.rows(f.secondary).stream().allMatch(Row::pending)
+          && (remove ? f.rows(PRIMARY).isEmpty() : Arrays.equals(changed, f.read(uri))),
+          "A missing or changed original does not produce a bogus replacement");
+      move.abandon();
+      require(move.batch() == null && uri.toString().equals(ledger.known(source).uri) && f.rows(f.secondary).isEmpty()
+          && (remove ? f.rows(PRIMARY).isEmpty() : Arrays.equals(changed, f.read(uri))),
+          "Abandon clears the blocked batch while retaining the recorded source and any remaining bytes");
+
+      byte[] freshBytes = jpeg(0xffaa7766);
+      CameraImportFile fresh = f.source("wifi:", "LATER.JPG", freshBytes);
+      f.importPhoto(new CameraPhotoImporter(f.context, ledger), fresh, freshBytes);
+      require(PhotoStorage.select(f.context, PRIMARY), "Choose primary for an independent batch");
+      PhotoMove.Plan next = move.plan(PRIMARY);
+      require(next.items().size() == 1, "A separate eligible photo can be planned after abandoning");
+      move.begin(next);
+      require(move.run(() -> false, batch -> {}).done() == 1 && move.batch() == null
+          && Arrays.equals(freshBytes, f.read(Uri.parse(ledger.known(fresh).uri)))
+          && uri.toString().equals(ledger.known(source).uri), "The new batch succeeds without touching the old receipt");
+    }
+  }
+
+  private static void rejectStaleHistory(Fixture f) throws Exception {
+    byte[] image = jpeg(0xff335555);
+    Uri wrongName = f.insert(PRIMARY, "OTHER.JPG", image);
+    Uri wrongSize = f.insert(PRIMARY, "WRONGSIZE.JPG", image);
+    try (CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         PhotoMove move = f.move(ledger, history, boundary -> {})) {
+      history.recordImport(MODEL, f.id, new ImportedKey("PREVIOUS.JPG", image.length, CAPTURE), wrongName.toString());
+      history.recordImport(MODEL, f.id, new ImportedKey("WRONGSIZE.JPG", image.length + 16, CAPTURE), wrongSize.toString());
+      PhotoMove.Plan plan = move.plan(f.secondary);
+      require(plan.items().isEmpty() && plan.skipped() == 2, "Stale filename or size is insufficient proof of import ownership");
+      require(f.rows(f.secondary).isEmpty() && Arrays.equals(image, f.read(wrongName))
+          && Arrays.equals(image, f.read(wrongSize)) && history.importedCount(MODEL, f.id) == 2,
+          "Unrelated bytes and stale history remain untouched");
+    }
+  }
+
+  private static void rejectResetHistory(Fixture f) throws Exception {
+    byte[] image = jpeg(0xff776655);
+    Uri source = f.insert(PRIMARY, "RESET.JPG", image);
+    try (CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         PhotoMove move = f.move(ledger, history, boundary -> {})) {
+      history.recordImport(MODEL, f.id, new ImportedKey("RESET.JPG", image.length, CAPTURE), source.toString());
+      require(PhotoStorage.select(f.context, f.secondary), "Set the SD destination");
+      PhotoMove.Plan plan = move.plan(f.secondary);
+      require(plan.items().size() == 1, "Matching legacy metadata is eligible");
+      move.begin(plan);
+      history.resetHistory(MODEL, f.id);
+      expectMoveFailure(move, "Move used a legacy receipt removed after confirmation");
+      require(Arrays.equals(image, f.read(source)) && f.rows(f.secondary).isEmpty()
+          && history.importedCount(MODEL, f.id) == 0 && ledger.receiptCount() == 0,
+          "A reset history cannot authorize publishing a replacement, deleting the source, or recreating a receipt");
+      move.abandon();
+      require(move.batch() == null && Arrays.equals(image, f.read(source)), "Clear reset-history batch without touching its source");
+    }
+  }
+
+  private static void loseVerifiedTarget(Fixture f, PhotoMove.Boundary boundary, boolean trash) throws Exception {
+    byte[] bytes = jpeg(0xff225577);
+    CameraImportFile source = f.source("wifi:", "REPLACEMENT.JPG", bytes);
+    AtomicBoolean removed = new AtomicBoolean();
+    try (CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         PhotoMove move = f.move(ledger, history, reached -> {
+           if (reached != boundary) return;
+           try {
+             List<Row> rows = f.rows(f.secondary);
+             require(rows.size() == 1 && !rows.get(0).pending && !rows.get(0).trashed,
+                 "Fault sees the sole verified public replacement");
+             Row row = rows.get(0);
+             require(Arrays.equals(bytes, f.read(row.uri)), "Replacement matches bytes before external change");
+             if (trash) f.trashOwned(row);
+             else f.removeOwned(row);
+             removed.set(true);
+           } catch (IOException failure) {
+             throw new UncheckedIOException(failure);
+           }
+         })) {
+      Uri original = f.importPhoto(new CameraPhotoImporter(f.context, ledger), source, bytes).uri;
+      require(PhotoStorage.select(f.context, f.secondary), "Set the SD destination");
+      ImportedKey key = new ImportedKey(source.name, source.bytes, source.captureSeconds);
+      history.recordImport(MODEL, f.id, key, original.toString());
+      history.markDeleted(MODEL, f.id, key);
+      move.begin(move.plan(f.secondary));
+      expectMoveFailure(move, "Source was allowed to disappear after replacement loss at " + boundary);
+      require(removed.get() && move.batch() != null && Arrays.equals(bytes, f.read(original)),
+          "Source survives a lost replacement at " + boundary);
+      move.abandon();
+      require(move.batch() == null && Arrays.equals(bytes, f.read(original))
+          && ledger.contentCount() == 1 && ledger.receiptCount() == 1
+          && original.toString().equals(ledger.known(source).uri)
+          && history.photoImportRecords(MODEL, f.id).stream().anyMatch(entry -> entry.key.equals(key.asString())
+              && entry.deleted && entry.uri.equals(original.toString())),
+          "Abandon restores receipt, legacy destination and deletion history to the verified source");
+      require(f.rows(f.secondary).stream().noneMatch(row -> !row.pending && !row.trashed),
+          "Loss does not leave a visible replacement");
+    }
+  }
+
+  private static void moveMassStorageReceipt(Fixture f) throws Exception {
+    byte[] photo = jpegWithCaptureTime(f, "2024:08:09 01:02:03");
+    long cameraMtime = CAPTURE + 86400;
+    CameraImportFile source = new CameraImportFile("sd-usb:" + f.id, "DCIM/100CAM/USB-EXIF.JPG",
+        photo.length, Long.toString(cameraMtime * 1000), cameraMtime);
+    ImportedKey oldKey = new ImportedKey(source.name, source.bytes, cameraMtime);
+    try (CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         PhotoMove move = f.move(ledger, history, reached -> {})) {
+      CameraPhotoImporter importer = new CameraPhotoImporter(f.context, ledger);
+      CameraPhotoImporter.Result first = f.importPhoto(importer, source, photo);
+      require(first.imported && PRIMARY.equals(PhotoStorage.volumeOf(first.uri)), "Publish the USB mass-storage fixture");
+      history.recordImport(MODEL, f.id, oldKey, first.uri.toString());
+      PhotoRepository.Photo original = f.photo(first.uri);
+      require(original.taken > 0 && original.taken / 1000 != cameraMtime,
+          "Published EXIF capture time differs from original USB file mtime");
+      CameraImportLedger.Content before = ledger.sourceSnapshot(source.sourceId).get(source.sourceKey());
+      require(before != null && knownMassStorage(f, history, source, before), "Legacy USB fast path recognizes the original receipt");
+
+      require(PhotoStorage.select(f.context, f.secondary), "Choose SD for the USB fixture");
+      move.begin(move.plan(f.secondary));
+      require(move.run(() -> false, batch -> {}).done() == 1, "Move the verified USB photo with distinct dates");
+      CameraImportLedger.Content after = ledger.sourceSnapshot(source.sourceId).get(source.sourceKey());
+      require(after != null && ledger.contentCount() == 1 && ledger.receiptCount() == 1
+          && before.sourceSha.equals(after.sourceSha) && before.storedSha.equals(after.storedSha),
+          "USB source receipt and original/stored checksums survive the move");
+      Uri replacement = Uri.parse(after.uri);
+      require(f.secondary.equals(PhotoStorage.volumeOf(replacement)) && f.rows(PRIMARY).isEmpty()
+          && Arrays.equals(photo, f.read(replacement)) && f.photo(replacement).taken == original.taken,
+          "Relocated USB file retains full bytes and EXIF capture time");
+      require(history.importDestinations().equals(Set.of(after.uri)) && history.importedCount(MODEL, f.id) == 1
+          && knownMassStorage(f, history, source, after),
+          "Legacy USB history remaps and the MassStorageImporter classification fast path still skips this file");
+      CameraPhotoImporter.Result retry = new CameraPhotoImporter(f.context, ledger).importPhoto(source,
+          out -> { throw new CheckFailure("Known USB source opened the camera input"); }, f.id, true, false, () -> false);
+      require(!retry.imported && replacement.equals(retry.uri), "Known USB receipt resolves to the replacement without reading input");
+    }
+  }
+
+  private static boolean knownMassStorage(Fixture f, HistoryDb history, CameraImportFile source,
+      CameraImportLedger.Content receipt) {
+    Map<String, CameraImportHistoryPlan.Destination> destinations = MediaSaver.INSTANCE.photoDestinationSnapshot(f.context);
+    return new CameraImportHistoryPlan(history.photoImportRecords(MODEL, f.id), destinations)
+        .known(source.name, source.bytes, source.captureSeconds, false, receipt.uri, receipt.storedBytes);
+  }
+
+  private static byte[] jpegWithCaptureTime(Fixture f, String timestamp) throws IOException {
+    File jpeg = File.createTempFile("loupe-usb-fixture-" + f.id, ".jpg", f.context.getCacheDir());
+    try {
+      Files.write(jpeg.toPath(), jpeg(0xff895544));
+      ExifInterface exif = new ExifInterface(jpeg);
+      exif.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, timestamp);
+      exif.saveAttributes();
+      return Files.readAllBytes(jpeg.toPath());
+    } finally {
+      Files.deleteIfExists(jpeg.toPath());
+    }
+  }
+
+  private static void abandonWithOnlyReplacement(Fixture f) throws Exception {
+    byte[] bytes = jpeg(0xff618122);
+    CameraImportFile source = f.source("wifi:", "LAST-COPY.JPG", bytes);
+    ImportedKey key = new ImportedKey(source.name, source.bytes, source.captureSeconds);
+    String firstKey;
+    Uri replacement;
+    try (CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history()) {
+      Uri original = f.importPhoto(new CameraPhotoImporter(f.context, ledger), source, bytes).uri;
+      firstKey = ArchiveStore.key(f.photo(original));
+      history.recordImport(MODEL, f.id, key, original.toString());
+      require(PhotoStorage.select(f.context, f.secondary), "Choose SD before the interrupted move");
+      try (PhotoMove move = f.move(ledger, history, reached -> {
+        if (reached != PhotoMove.Boundary.HISTORY_UPDATED) return;
+        try {
+          f.removeOwned(f.row(original));
+        } catch (IOException failure) {
+          throw new UncheckedIOException(failure);
+        }
+        throw new InterruptedAtBoundary();
+      })) {
+        move.begin(move.plan(f.secondary));
+        try {
+          move.run(() -> false, batch -> {});
+          throw new CheckFailure("The post-history interruption did not run");
+        } catch (InterruptedAtBoundary expected) {
+          replacement = Uri.parse(ledger.known(source).uri);
+          require(move.batch() != null && f.rows(PRIMARY).isEmpty() && Arrays.equals(bytes, f.read(replacement)),
+              "After original loss, the verified replacement and unfinished history exist on disk");
+        }
+      }
+    }
+    try (CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         PhotoMove reopen = f.move(ledger, history, reached -> {})) {
+      reopen.abandon();
+      require(reopen.batch() == null && f.rows(f.secondary).size() == 1 && f.rows(PRIMARY).isEmpty()
+          && Arrays.equals(bytes, f.read(replacement)) && firstKey.equals(ArchiveStore.key(f.photo(replacement)))
+          && ledger.contentCount() == 1 && ledger.receiptCount() == 1 && replacement.toString().equals(ledger.known(source).uri)
+          && history.importDestinations().equals(Set.of(replacement.toString())) && history.importedCount(MODEL, f.id) == 1,
+          "Abandon retains the only verified bytes, logical identity, and both history references, and clears the journal");
+    }
+  }
+
+  private static void sequentialCardIdentity(Fixture f) throws Exception {
+    byte[] firstBytes = {1, 2, 3, 4};
+    byte[] secondBytes = {4, 3, 2, 1};
+    require(firstBytes.length == secondBytes.length && !Arrays.equals(firstBytes, secondBytes),
+        "Sequential card snapshots describe different bytes with otherwise equal metadata");
+    PhotoRepository.Photo one = new PhotoRepository.Photo(
+        ContentUris.withAppendedId(MediaStore.Files.getContentUri(f.secondary), 401),
+        "SAME.JPG", f.path, firstBytes.length, CAPTURE, CAPTURE * 1000);
+    PhotoRepository.Photo two = new PhotoRepository.Photo(
+        ContentUris.withAppendedId(MediaStore.Files.getContentUri(MISSING), 401),
+        "SAME.JPG", f.path, secondBytes.length, CAPTURE, CAPTURE * 1000);
+    String legacy = PhotoRepository.digest(f.path + one.name + ":" + one.size + ":" + one.modified);
+    RankingStore ranking = new RankingStore(f.context);
+    long time = System.currentTimeMillis();
+    try (ShareHistoryStore shares = new ShareHistoryStore(f.context)) {
+      require(ranking.saveSingleBest(legacy, false, true)
+          && shares.complete(shares.begin(List.of(legacy), time), "test.card.first", "First card", time),
+          "Seed pre-update rank and share history for the first card");
+      require(legacy.equals(snapshotArchiveKey(f, one)), "The first observed card retains the legacy key");
+      String later = snapshotArchiveKey(f, two);
+      require(!legacy.equals(later) && !ranking.singleBest(later) && shares.history(later).isEmpty(),
+          "A later card alone cannot acquire the first card's rank or share history");
+      require(shares.complete(shares.begin(List.of(later), time + 1), "test.card.second", "Second card", time + 1),
+          "Record a separate share on the later card");
+      require(legacy.equals(snapshotArchiveKey(f, one)) && later.equals(snapshotArchiveKey(f, two))
+          && ranking.singleBest(legacy) && !ranking.singleBest(later)
+          && shares.history(legacy).stream().map(entry -> entry.packageName)
+              .collect(java.util.stream.Collectors.toList()).equals(List.of("test.card.first"))
+          && shares.history(later).stream().map(entry -> entry.packageName)
+              .collect(java.util.stream.Collectors.toList()).equals(List.of("test.card.second")),
+          "Alternating separate snapshots preserve each card's keys and independent histories");
+    }
+  }
+
+  private static String snapshotArchiveKey(Fixture f, PhotoRepository.Photo photo) throws IOException {
+    Map<String, PhotoRepository.Photo> snapshot = new HashMap<>();
+    snapshot.put(photo.uri.toString(), photo);
+    new PhotoRepository(f.context).stabilizeLocalIdentities(snapshot);
+    return ArchiveStore.key(snapshot.get(photo.uri.toString()));
+  }
+
+  private static void preservePreUpdateSecondaryIdentity(Fixture f) throws Exception {
+    byte[] bytes = jpeg(0xff776688);
+    CameraImportFile source = f.source("wifi:", "OLDSECONDARY.JPG", bytes);
+    try (CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         TagStore tags = new TagStore(f.context); ShareHistoryStore shares = new ShareHistoryStore(f.context);
+         PhotoMove move = f.move(ledger, history, boundary -> {})) {
+      Uri oldUri = f.importPhoto(new CameraPhotoImporter(f.context, ledger, f.secondary), source, bytes).uri;
+      PhotoRepository.Photo old = readLegacyGalleryPhoto(f, oldUri);
+      RankingStore ranking = new RankingStore(f.context);
+      LegacyLabels labels = seedOldLabels(old, tags, ranking, shares);
+
+      assertOldLabels(f.photo(oldUri), tags, ranking, shares, labels);
+      require(PhotoStorage.select(f.context, PRIMARY), "Move old secondary photo to primary");
+      move.begin(move.plan(PRIMARY));
+      require(move.run(() -> false, batch -> {}).done() == 1, "Old secondary photo moves successfully");
+      Uri relocated = Uri.parse(ledger.known(source).uri);
+      require(PRIMARY.equals(PhotoStorage.volumeOf(relocated)) && f.rows(f.secondary).isEmpty()
+          && Arrays.equals(bytes, f.read(relocated)), "Old secondary photo retains full bytes after moving");
+      assertOldLabels(f.photo(relocated), tags, ranking, shares, labels);
+    }
+  }
+
+  private static PhotoRepository.Photo readLegacyGalleryPhoto(Fixture f, Uri concrete) throws IOException {
+    Uri aggregate = ContentUris.withAppendedId(MediaStore.Files.getContentUri("external"), ContentUris.parseId(concrete));
+    String[] fields = {DISPLAY_NAME, RELATIVE_PATH, SIZE, DATE_MODIFIED, DATE_TAKEN, DATE_ADDED};
+    try (Cursor row = f.resolver.query(aggregate, fields, null, null, null)) {
+      if (row == null || !row.moveToFirst()) throw new IOException("The pre-update aggregate URI did not resolve");
+      require(f.path.equals(row.getString(1)), "The aggregate URI resolves to the exact owned fixture folder");
+      return new PhotoRepository.Photo(aggregate, row.getString(0), row.getString(1), row.getLong(2),
+          row.getLong(3), row.getLong(4), row.getLong(5) * 1000, 0);
+    }
+  }
+
+  private record LegacyLabels(String key, String tagId, String photoId, long sharedAt) {}
+
+  private static LegacyLabels seedOldLabels(PhotoRepository.Photo photo, TagStore tags,
+      RankingStore ranking, ShareHistoryStore shares) throws IOException {
+    String key = PhotoRepository.digest(photo.folder + photo.name + ":" + photo.size + ":" + photo.modified);
+    String source = photo.uri + "\n" + photo.size + ":" + photo.modified + ":" + photo.added + ":" + photo.created;
+    String photoId = UUID.randomUUID().toString();
+    ContentValues oldTagRow = new ContentValues();
+    oldTagRow.put("id", photoId);
+    oldTagRow.put("source", source);
+    tags.getWritableDatabase().insertOrThrow("photos", null, oldTagRow);
+    TagStore.Tag tag = tags.create("Old SD assignment");
+    tags.record(UUID.randomUUID().toString(), tag.id, photoId, 0, TagJudgments.Value.ASSIGNED);
+    require(ranking.saveSingleBest(key, false, true), "Seed a pre-update SD best mark");
+    long time = System.currentTimeMillis();
+    require(shares.complete(shares.begin(List.of(key), time), "test.fixture", "Synthetic share", time),
+        "Seed a pre-update SD share handoff");
+    return new LegacyLabels(key, tag.id, photoId, time);
+  }
+
+  private static void assertOldLabels(PhotoRepository.Photo photo, TagStore tags, RankingStore ranking,
+      ShareHistoryStore shares, LegacyLabels labels) throws IOException {
+    String readKey = ArchiveStore.key(photo);
+    List<ShareHistoryStore.Entry> handoffs = shares.history(readKey);
+    require(labels.key.equals(readKey) && labels.photoId.equals(tags.photoId(photo, false))
+        && tags.load().value(labels.tagId, labels.photoId) == TagJudgments.Value.ASSIGNED
+        && ranking.singleBest(readKey) && handoffs.size() == 1 && handoffs.get(0).handedOffAt == labels.sharedAt,
+        "Legacy SD tag, rank and share records resolve for " + photo.uri);
+  }
+
+  private static void expectMoveFailure(PhotoMove move, String label) {
+    try {
+      move.run(() -> false, batch -> {});
+      throw new AssertionError(label);
+    } catch (IOException expected) {
+      // The failure's observable effects are asserted by each caller.
     }
   }
 
@@ -427,6 +774,94 @@ final class PhotoStorageChecks {
     }
   }
 
+  private static String saf(Context base, String mode, String secondary) throws Exception {
+    PhotoStorage.requireWritable(base, secondary);
+    SharedPreferences marker = base.getSharedPreferences(SAF_PREFS, 0);
+    byte[] bytes = jpeg(0xff336644);
+    if ("photo-storage-saf-seed".equals(mode)) {
+      require(!marker.contains("id"), "Verify or clean the existing SAF fixture before seeding");
+      Fixture f = new Fixture(base, secondary);
+      boolean seeded = false;
+      try (CameraImportLedger ledger = f.ledger()) {
+        CameraImportFile source = f.source("sd:", "SAF-ORIGINAL.JPG", bytes);
+        Uri uri = f.importPhoto(new CameraPhotoImporter(f.context, ledger, secondary), source, bytes).uri;
+        require(secondary.equals(PhotoStorage.volumeOf(uri)), "SAF fixture is on the intended SD");
+        require(marker.edit().putString("id", f.id).putString("volume", secondary)
+            .putString("uri", uri.toString()).commit(), "Record isolated SAF fixture");
+        seeded = true;
+        return "PASS SAF seed " + PhotoStorage.label(base, secondary) + " (" + secondary + "): " + f.path;
+      } finally {
+        if (!seeded) f.close();
+      }
+    }
+    require("photo-storage-saf-verify".equals(mode), "Unknown SAF photo storage mode");
+    require(secondary.equals(marker.getString("volume", null)), "Use the secondary volume from SAF seed");
+    Fixture f = new Fixture(base, secondary, UUID.fromString(marker.getString("id", "")).toString());
+    Uri media = Uri.parse(marker.getString("uri", ""));
+    Uri tree = persistedFixtureTree(f);
+
+    try (f; CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         TagStore tags = new TagStore(f.context); ShareHistoryStore shares = new ShareHistoryStore(f.context);
+         PhotoMove move = f.move(ledger, history, boundary -> {})) {
+      CameraImportFile source = f.source("sd:", "SAF-ORIGINAL.JPG", bytes);
+      PhotoRepository.Photo old = readLegacyDocumentPhoto(f, tree, source.name);
+      try (InputStream input = f.resolver.openInputStream(old.uri)) {
+        require(input != null && Arrays.equals(bytes, input.readAllBytes()), "The DocumentsProvider grant reads the full fixture");
+      }
+      RankingStore ranking = new RankingStore(f.context);
+      LegacyLabels labels = seedOldLabels(old, tags, ranking, shares);
+      assertOldLabels(onlyGalleryFixture(f), tags, ranking, shares, labels);
+
+      require(PhotoStorage.select(f.context, PRIMARY), "Select primary for the SAF move");
+      PhotoMove.Plan plan = move.plan(PRIMARY);
+      require(plan.items().size() == 1 && media.toString().equals(plan.items().get(0).source()),
+          "The exact app-owned MediaStore row is selected while the SAF grant remains active");
+      move.begin(plan);
+      require(move.run(() -> false, batch -> {}).done() == 1, "Complete SAF-visible photo move");
+      Uri replacement = Uri.parse(ledger.known(source).uri);
+      require(PRIMARY.equals(PhotoStorage.volumeOf(replacement)) && f.rows(secondary).isEmpty()
+          && Arrays.equals(bytes, f.read(replacement)), "SAF-visible photo moves with full bytes");
+      assertOldLabels(onlyGalleryFixture(f), tags, ranking, shares, labels);
+    } finally {
+      f.resolver.releasePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+      require(base.deleteSharedPreferences(SAF_PREFS), "Clean exact SAF marker");
+    }
+    return "PASS SAF persisted SD grant: one library item and retained pre-update document tag/rank/share records before and after moving";
+  }
+
+  private static Uri persistedFixtureTree(Fixture f) {
+    String expected = f.secondary + ":" + f.path.substring(0, f.path.length() - 1);
+    return f.resolver.getPersistedUriPermissions().stream()
+        .filter(UriPermission::isReadPermission).map(UriPermission::getUri)
+        .filter(uri -> DOCUMENTS_AUTHORITY.equals(uri.getAuthority()) && DocumentsContract.isTreeUri(uri)
+            && DocumentsContract.getTreeDocumentId(uri).equalsIgnoreCase(expected))
+        .findFirst().orElseThrow(() -> new AssertionError("Persistent read grant for exact SD fixture folder is required"));
+  }
+
+  private static PhotoRepository.Photo readLegacyDocumentPhoto(Fixture f, Uri tree, String name) throws IOException {
+    String directoryId = DocumentsContract.getTreeDocumentId(tree);
+    Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, directoryId);
+    String[] fields = {DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+        DocumentsContract.Document.COLUMN_SIZE, DocumentsContract.Document.COLUMN_LAST_MODIFIED};
+    try (Cursor row = f.resolver.query(children, fields, null, null, null)) {
+      if (row == null || row.getCount() != 1 || !row.moveToFirst()) throw new IOException("Could not read unique SAF fixture");
+      String documentId = row.getString(0);
+      require(name.equals(row.getString(1)) && documentId.equals(directoryId + "/" + name),
+          "SAF grant resolves the exact fixture file");
+      Uri document = DocumentsContract.buildDocumentUriUsingTree(tree, documentId);
+      String oldFolder = documentId.substring(0, documentId.lastIndexOf('/') + 1);
+      return new PhotoRepository.Photo(document, name, oldFolder, row.getLong(2), row.getLong(3) / 1000, 0, 0, 0);
+    }
+  }
+
+  private static PhotoRepository.Photo onlyGalleryFixture(Fixture f) throws IOException {
+    List<PhotoRepository.Photo> entries = new PhotoRepository(f.context).scan("すべて").stream()
+        .filter(photo -> f.path.equals(photo.folder) || photo.folder.endsWith(":" + f.path))
+        .collect(java.util.stream.Collectors.toList());
+    require(entries.size() == 1, "Gallery shows one fixture while MediaStore and SAF both grant access");
+    return entries.get(0);
+  }
+
   private static String detach(Context base, String mode, String secondary) throws Exception {
     SharedPreferences marker = base.getSharedPreferences(DETACH_PREFS, 0);
     if ("photo-storage-detach-seed".equals(mode)) {
@@ -503,7 +938,7 @@ final class PhotoStorageChecks {
         .findFirst().orElseThrow(() -> new AssertionError("A mounted, writable secondary MediaStore volume is required"));
   }
 
-  private record Row(Uri uri, String owner, String path, boolean pending) {}
+  private record Row(Uri uri, String owner, String path, boolean pending, boolean trashed) {}
 
   private static final class Fixture implements AutoCloseable {
     final ScopedContext context;
@@ -585,26 +1020,48 @@ final class PhotoStorageChecks {
       args.putString(ContentResolver.QUERY_ARG_SQL_SELECTION, RELATIVE_PATH + "=?");
       args.putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, new String[]{path});
       List<Row> rows = new ArrayList<>();
-      try (Cursor cursor = resolver.query(root, new String[]{_ID, OWNER_PACKAGE_NAME, RELATIVE_PATH, IS_PENDING}, args, null)) {
+      try (Cursor cursor = resolver.query(root, new String[]{_ID, OWNER_PACKAGE_NAME, RELATIVE_PATH, IS_PENDING, IS_TRASHED}, args, null)) {
         if (cursor == null) throw new IOException("Cannot enumerate the isolated MediaStore folder");
         while (cursor.moveToNext()) rows.add(new Row(ContentUris.withAppendedId(root, cursor.getLong(0)),
-            cursor.getString(1), cursor.getString(2), cursor.getInt(3) != 0));
+            cursor.getString(1), cursor.getString(2), cursor.getInt(3) != 0, cursor.getInt(4) != 0));
       }
       return rows;
     }
 
+    Row row(Uri uri) throws IOException {
+      return rows(PhotoStorage.volumeOf(uri)).stream().filter(row -> row.uri.equals(uri))
+          .findFirst().orElseThrow(() -> new AssertionError("Cannot find exact fixture row " + uri));
+    }
+
+    void trashOwned(Row row) throws IOException {
+      requireOwned(row);
+      ContentValues values = new ContentValues();
+      values.put(IS_TRASHED, 1);
+      require(resolver.update(row.uri, values, null, null) == 1 && row(row.uri).trashed,
+          "Trash exact owned replacement fixture");
+    }
+
+    void removeOwned(Row row) throws IOException {
+      requireOwned(row);
+      Bundle args = new Bundle();
+      args.putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE);
+      args.putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_INCLUDE);
+      require(resolver.delete(row.uri, args) == 1, "Remove exact owned fixture " + row.uri);
+    }
+
+    private void requireOwned(Row row) throws IOException {
+      Row current = row(row.uri);
+      require(context.getPackageName().equals(current.owner) && path.equals(current.path),
+          "Mutations are limited to exact owned fixture rows");
+    }
+
     @Override public void close() throws IOException {
-      try {
-        for (String volume : List.of(PRIMARY, secondary)) {
-          for (Row row : rows(volume)) {
-            require(context.getPackageName().equals(row.owner) && path.equals(row.path),
-                "Cleanup is limited to owned fixture rows");
-            require(resolver.delete(row.uri, null, null) == 1, "Remove exact owned fixture " + row.uri);
-          }
-        }
-      } finally {
-        context.clean();
-      }
+      Cleanup cleanup = new Cleanup();
+      for (String volume : List.of(PRIMARY, secondary)) cleanup.attempt(() -> {
+        for (Row row : rows(volume)) cleanup.attempt(() -> removeOwned(row));
+      });
+      context.clean(cleanup);
+      cleanup.finish();
     }
   }
 
@@ -637,10 +1094,53 @@ final class PhotoStorageChecks {
       return super.openOrCreateDatabase(prefix + name, mode, factory, handler);
     }
 
-    void clean() {
-      for (String name : databaseList())
-        if (name.startsWith(prefix)) require(deleteDatabase(name), "Remove isolated fixture database");
-      for (String name : preferences) deleteSharedPreferences(name);
+    void clean(Cleanup cleanup) {
+      Context base = getBaseContext();
+      // These are physical filenames, already scoped. Deleting a database also deletes its sidecars.
+      for (String name : base.databaseList()) {
+        if (name.startsWith(prefix) && databaseBasename(name).equals(name)) cleanup.attempt(() -> {
+          base.deleteDatabase(name);
+          require(!base.getDatabasePath(name).exists(), "Remove isolated fixture database " + name);
+        });
+      }
+      // A second listing avoids deleting sidecars that the first pass already removed.
+      for (String name : base.databaseList()) {
+        if (name.startsWith(prefix)) cleanup.attempt(() -> {
+          String database = databaseBasename(name);
+          require(!name.equals(database) && !base.getDatabasePath(database).exists(),
+              "Only orphaned sidecars can remain after fixture database deletion: " + name);
+          Files.deleteIfExists(base.getDatabasePath(name).toPath());
+        });
+      }
+      for (String name : preferences) cleanup.attempt(() -> {
+        boolean deleted = base.deleteSharedPreferences(name);
+        require(deleted || base.getSharedPreferences(name, 0).getAll().isEmpty(),
+            "Remove isolated fixture preferences " + name);
+      });
+    }
+
+    private static String databaseBasename(String name) {
+      for (String suffix : List.of("-journal", "-wal", "-shm"))
+        if (name.endsWith(suffix)) return name.substring(0, name.length() - suffix.length());
+      int superJournal = name.indexOf("-mj");
+      return superJournal < 0 ? name : name.substring(0, superJournal);
+    }
+  }
+
+  private static final class Cleanup {
+    private IOException failure;
+
+    void attempt(IoAction action) {
+      try {
+        action.run();
+      } catch (IOException | RuntimeException | AssertionError error) {
+        if (failure == null) failure = new IOException("Synthetic fixture cleanup failed");
+        failure.addSuppressed(error);
+      }
+    }
+
+    void finish() throws IOException {
+      if (failure != null) throw failure;
     }
   }
 
@@ -656,7 +1156,11 @@ final class PhotoStorageChecks {
     }
   }
 
+  static final class CheckFailure extends AssertionError {
+    CheckFailure(String label) { super(label); }
+  }
+
   private static void require(boolean condition, String label) {
-    if (!condition) throw new AssertionError(label);
+    if (!condition) throw new CheckFailure(label);
   }
 }

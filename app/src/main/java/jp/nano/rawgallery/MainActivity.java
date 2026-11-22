@@ -1157,7 +1157,7 @@ public final class MainActivity extends DiagnosticActivity {
   private android.app.Dialog galleryMenu() {
     DiagnosticLog.event("screen.galleryMenu", 0);
     return MoreMenuUi.show(this,"設定とその他の操作",
-            new String[] {"クラウドと同期", "共有先の設定", "連写のまとめ方", "写真へのアクセス", "再読み込み", "写真のプレビュー", "処理の状況", "Nano Banana", "カメラから取り込む", "写真の保存先"},
+            new String[] {"クラウドと同期", "共有先の設定", "連写のまとめ方", "写真へのアクセス", "再読み込み", "写真のプレビュー", "処理の状況", "Nano Banana", "カメラから取り込む", "写真・動画の保存先"},
             (d, which) -> {
               switch (which) {
                 case 9:

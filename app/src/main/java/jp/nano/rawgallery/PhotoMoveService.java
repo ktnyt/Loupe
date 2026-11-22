@@ -22,15 +22,25 @@ public final class PhotoMoveService extends Service {
   record State(boolean running, PhotoMoveStore.Batch batch, String message) {}
   private static volatile State state = new State(false, null, null);
   private static PhotoMove.Plan request;
+  private static boolean abandonRequested;
   private static final AtomicBoolean stopped = new AtomicBoolean();
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
   private boolean started;
 
   static State state() { return state; }
 
-  static synchronized boolean launch(Context context, PhotoMove.Plan plan) {
+  static boolean launch(Context context, PhotoMove.Plan plan) {
+    return launch(context, plan, false);
+  }
+
+  static boolean abandon(Context context) {
+    return launch(context, null, true);
+  }
+
+  private static synchronized boolean launch(Context context, PhotoMove.Plan plan, boolean abandon) {
     if (state.running()) return false;
     request = plan;
+    abandonRequested = abandon;
     stopped.set(false);
     state = new State(true, null, "移動の準備をしています。");
     try {
@@ -56,24 +66,33 @@ public final class PhotoMoveService extends Service {
         new NotificationChannel(CHANNEL, "写真の移動", NotificationManager.IMPORTANCE_LOW));
     startForeground(NOTIFICATION, notification(null));
     PhotoMove.Plan plan;
+    boolean abandon;
     synchronized (PhotoMoveService.class) {
       plan = request;
       request = null;
+      abandon = abandonRequested;
+      abandonRequested = false;
     }
-    worker.execute(() -> move(plan, startId));
+    worker.execute(() -> move(plan, abandon, startId));
     return START_NOT_STICKY;
   }
 
-  private void move(PhotoMove.Plan plan, int startId) {
+  private void move(PhotoMove.Plan plan, boolean abandon, int startId) {
     var gate = CameraImportGate.lock;
     PhotoMoveStore.Batch batch = null;
     String message = "取り込みが終わってからもう一度お試しください。";
     if (gate.tryLock()) {
       try (PhotoMove mover = new PhotoMove(this)) {
         try {
-          if (plan != null) mover.begin(plan);
-          batch = mover.run(stopped::get, this::progress);
-          message = "写真を" + batch.done() + "枚移動しました。" + skipped(batch);
+          if (abandon) {
+            batch = mover.abandon();
+            message = "移動を終了しました。" + batch.done() + "枚の移動が完了し、"
+                + (batch.total() - batch.done()) + "枚は未完了です。" + skipped(batch);
+          } else {
+            if (plan != null) mover.begin(plan);
+            batch = mover.run(stopped::get, this::progress);
+            message = "写真を" + batch.done() + "枚移動しました。" + skipped(batch);
+          }
         } catch (InterruptedIOException cancelled) {
           batch = mover.batch();
           message = "移動を中断しました。";

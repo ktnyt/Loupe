@@ -201,10 +201,32 @@ class HistoryDb @JvmOverloads constructor(context: Context, databaseName: String
             }
         }
 
-    fun relocate(source: String, oldPrimaryAlias: String?, destination: String) {
+    data class MoveEvidence(val id: Long, val uri: String, val name: String, val bytes: Long, val shot: Long)
+
+    fun moveEvidence(): List<MoveEvidence> =
+        readableDatabase.rawQuery("SELECT id,dest_uri,file_name,file_size,shot_at FROM imported", null).use { rows ->
+            buildList {
+                while (rows.moveToNext()) add(MoveEvidence(rows.getLong(0), rows.getString(1),
+                    rows.getString(2), rows.getLong(3), rows.getLong(4)))
+            }
+        }
+
+    fun hasMoveEvidence(source: String, oldAlias: String?, ids: String): Boolean {
+        if (ids.isEmpty()) return false
+        check(ids.matches(Regex("[0-9]+(,[0-9]+)*"))) { "Invalid history IDs" }
+        return readableDatabase.rawQuery(
+            "SELECT 1 FROM imported WHERE id IN ($ids) AND (dest_uri=? OR dest_uri=?) LIMIT 1",
+            arrayOf(source, oldAlias ?: source)).use { it.moveToFirst() }
+    }
+
+    fun relocate(source: String, oldAlias: String?, destination: String, ids: String): Boolean {
+        if (ids.isEmpty()) return false
+        check(ids.matches(Regex("[0-9]+(,[0-9]+)*"))) { "Invalid history IDs" }
+        val selected = "id IN ($ids) AND (dest_uri=? OR dest_uri=?)"
         val values = ContentValues().apply { put("dest_uri", destination) }
-        writableDatabase.update("imported", values, "dest_uri=? OR dest_uri=?",
-            arrayOf(source, oldPrimaryAlias))
+        writableDatabase.update("imported", values, selected, arrayOf(source, oldAlias ?: source))
+        return readableDatabase.rawQuery("SELECT 1 FROM imported WHERE id IN ($ids) AND dest_uri=? LIMIT 1",
+            arrayOf(destination)).use { it.moveToFirst() }
     }
 
     fun importedCount(model: String, serial: String): Int =

@@ -31,7 +31,7 @@ public final class PhotoStorageActivity extends AppCompatActivity {
   };
   private LinearLayout content;
   private TextView destination, status;
-  private MaterialButton choose, move, stop;
+  private MaterialButton choose, move, stop, abandon;
   private LinearProgressIndicator progress;
   private boolean visible, planning;
   private PhotoMoveStore.Batch unfinished;
@@ -47,8 +47,8 @@ public final class PhotoStorageActivity extends AppCompatActivity {
       view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
       return insets;
     });
-    root.addView(LibraryUi.toolbar(this, "写真の保存先",
-        LibraryUi.icon(this, R.drawable.ic_close, "写真の保存先を閉じる", this::finish)));
+    root.addView(LibraryUi.toolbar(this, "写真・動画の保存先",
+        LibraryUi.icon(this, R.drawable.ic_close, "写真・動画の保存先を閉じる", this::finish)));
     ScrollView scroll = new ScrollView(this);
     scroll.setFillViewport(true);
     root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -74,6 +74,7 @@ public final class PhotoStorageActivity extends AppCompatActivity {
       stop.setEnabled(false);
       display(status, "移動を中断しています。");
     });
+    abandon = button("移動を終了", this::confirmAbandon);
     setContentView(root);
   }
 
@@ -123,6 +124,8 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     move.setEnabled(!running && !planning && !CameraImportGate.lock.isLocked() && (unfinished != null || writable));
     choose.setEnabled(!running && !planning && !CameraImportGate.lock.isLocked());
     stop.setVisibility(running ? View.VISIBLE : View.GONE);
+    abandon.setVisibility(!running && unfinished != null ? View.VISIBLE : View.GONE);
+    abandon.setEnabled(!CameraImportGate.lock.isLocked());
     if (!running) stop.setEnabled(true);
     PhotoMoveStore.Batch batch = running ? state.batch() : unfinished;
     progress.setVisibility(running && batch != null ? View.VISIBLE : View.GONE);
@@ -132,7 +135,8 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     }
     String message = screenMessage != null ? screenMessage : state.message();
     if (batch != null) {
-      String action = running ? "" : " " + PhotoStorage.label(this, batch.volume()) + "に接続して再開できます。";
+      String action = running || PhotoStorage.directoryIfWritable(this, batch.volume()) != null
+          ? "" : " " + PhotoStorage.label(this, batch.volume()) + "を接続して再開してください。";
       message = (message == null ? "" : message + " ") + batch.done() + " / " + batch.total()
           + "枚" + PhotoMoveService.skipped(batch) + action;
     }
@@ -162,7 +166,7 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     }
     var selected = new int[]{choices.indexOf(PhotoStorage.selected(this))};
     String[] labels = choices.stream().map(volume -> PhotoStorage.label(this, volume)).toArray(String[]::new);
-    new MaterialAlertDialogBuilder(this).setTitle("写真の保存先")
+    new MaterialAlertDialogBuilder(this).setTitle("写真・動画の保存先")
         .setSingleChoiceItems(labels, selected[0], (dialog, which) -> selected[0] = which)
         .setNegativeButton("キャンセル", null)
         .setPositiveButton("設定", (dialog, which) -> {
@@ -183,6 +187,17 @@ public final class PhotoStorageActivity extends AppCompatActivity {
               lock.unlock();
             }
           }
+          render();
+        }).show();
+  }
+
+  private void confirmAbandon() {
+    new MaterialAlertDialogBuilder(this).setTitle("移動を終了しますか？")
+        .setMessage("完了した写真は移動先に残ります。未完了の写真は、それぞれ現在の場所に残ります。")
+        .setNegativeButton("キャンセル", null)
+        .setPositiveButton("移動を終了", (dialog, which) -> {
+          screenMessage = null;
+          PhotoMoveService.abandon(this);
           render();
         }).show();
   }

@@ -1,8 +1,11 @@
 package jp.nano.rawgallery;
 
 import android.content.ContentValues;
+import android.content.ContentUris;
 import android.content.Context;
 import android.database.Cursor;
+import android.net.Uri;
+import android.provider.MediaStore;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 import java.util.ArrayList;
@@ -204,11 +207,21 @@ final class TagStore extends SQLiteOpenHelper {
 
   /** Location and observed version, never a claim of byte identity. */
   static String source(PhotoRepository.Photo photo) {
-    return photo.movedIdentity == null ? locationSource(photo) : photo.movedIdentity.tagSource();
+    if (photo.movedIdentity != null) return photo.movedIdentity.tagSource();
+    if ("media".equals(photo.uri.getAuthority())) {
+      // Preserve v1 tag assignments made when every MediaStore row used the aggregate URI.
+      Uri legacy = ContentUris.withAppendedId(MediaStore.Files.getContentUri("external"), ContentUris.parseId(photo.uri));
+      return sourceVersion(photo, legacy);
+    }
+    return locationSource(photo);
   }
 
   static String locationSource(PhotoRepository.Photo photo) {
-    return photo.uri + "\n" + photo.size + ":" + photo.modified + ":" + photo.added + ":" + photo.created;
+    return sourceVersion(photo, photo.uri);
+  }
+
+  private static String sourceVersion(PhotoRepository.Photo photo, Uri uri) {
+    return uri + "\n" + photo.size + ":" + photo.modified + ":" + photo.added + ":" + photo.created;
   }
 
   String photoId(PhotoRepository.Photo photo, boolean create) {

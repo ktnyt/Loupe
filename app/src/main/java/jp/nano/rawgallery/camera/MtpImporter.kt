@@ -323,7 +323,7 @@ object MtpImporter {
         }
 
         onProgress(Progress(targets.size, 0))
-        val importedHandles = ArrayList<Target>()
+        val importedHandles = ArrayList<Pair<Target, Uri>>()
         for ((i, t) in targets.withIndex()) {
             if (isCancelled()) {
                 aborted = true
@@ -334,7 +334,10 @@ object MtpImporter {
                 // 保存が完了してから履歴に記録する順序 (仕様書 5.4)
                 db.recordImport(camera.model, camera.serial, t.key, uri.toString())
                 imported++
-                importedHandles.add(t)
+                importedHandles.add(t to uri)
+            } catch (e: jp.nano.rawgallery.PhotoStorage.Unavailable) {
+                // Do not proceed to camera-side deletion after a storage error.
+                throw e
             } catch (e: Exception) {
                 ImportLog.w(TAG, "import failed: ${t.key.fileName}", e)
                 failed++
@@ -348,8 +351,9 @@ object MtpImporter {
         // 中断した回 (ケーブル抜去・停止) は削除もしない
         if (deleteAfterImport && !aborted) {
             val deletedHandles = HashSet<Int>()
-            for (t in importedHandles) {
+            for ((t, destination) in importedHandles) {
                 if (isCancelled()) break
+                if (!MediaSaver.canReadSavedFile(context, destination, t.key.fileSize)) break
                 if (mtp.deleteObject(t.handle)) {
                     deleted++
                     deletedHandles.add(t.handle)

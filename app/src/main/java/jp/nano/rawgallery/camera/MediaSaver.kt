@@ -64,6 +64,18 @@ object MediaSaver {
         }
     }
 
+    /** Keep the camera original if its newly saved copy is unavailable at delete time. */
+    fun canReadSavedFile(context: Context, uri: Uri, bytes: Long): Boolean = try {
+        PhotoStorage.requireMounted(context, uri)
+        val resolver = context.contentResolver
+        val published = resolver.query(uri, arrayOf(MediaStore.MediaColumns.IS_PENDING), null, null, null)
+            ?.use { it.moveToFirst() && it.getInt(0) == 0 } == true
+        published && resolver.openFileDescriptor(uri, "r")?.use { it.statSize == bytes } == true
+    } catch (e: Exception) {
+        ImportLog.w("MediaSaver", "saved photo unavailable before camera deletion")
+        false
+    }
+
     /** 保存先に実在するファイル。名前照合の候補と、同一性確認 (サイズ・先頭バイト) に使う */
     data class ExistingFile(val uri: Uri, val size: Long)
 

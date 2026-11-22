@@ -170,7 +170,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
     cameraBenchmarkTest = args != null && "camera-benchmark".equals(args.getString("mode"));
     cameraLedgerTest = args != null && "camera-ledger".equals(args.getString("mode"));
     if (args != null && java.util.List.of("photo-storage", "photo-storage-ui", "photo-storage-detach-seed",
-        "photo-storage-detach-absent", "photo-storage-detach-restored").contains(args.getString("mode", "")))
+        "photo-storage-detach-absent", "photo-storage-detach-restored", "photo-storage-saf-seed",
+        "photo-storage-saf-verify").contains(args.getString("mode", "")))
       photoStorageMode = args.getString("mode");
     if ("photo-storage-ui".equals(photoStorageMode)) {
       tagWidth = Integer.parseInt(args.getString("width", "400"));
@@ -534,14 +535,21 @@ public final class ArchiveInstrumentation extends Instrumentation {
   }
   /** Source locations aid synthetic checks without printing file paths or other exception values. */
   private static String failureLocations(Throwable failure) {
-    StringBuilder result=new StringBuilder();
-    java.util.Set<Throwable> seen=java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
-    while(failure!=null&&seen.add(failure)){
-      result.append(failure.getClass().getName()).append('\n');
-      for(StackTraceElement frame:failure.getStackTrace())result.append("  at ").append(frame).append('\n');
-      failure=failure.getCause();
-    }
+    StringBuilder result = new StringBuilder();
+    java.util.Set<Throwable> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    appendFailureLocations(result, seen, failure, "");
     return result.toString();
+  }
+
+  private static void appendFailureLocations(StringBuilder result, java.util.Set<Throwable> seen,
+      Throwable failure, String prefix) {
+    if (failure == null || !seen.add(failure)) return;
+    result.append(prefix).append(failure.getClass().getName());
+    if (failure instanceof PhotoStorageChecks.CheckFailure) result.append(": ").append(failure.getMessage());
+    result.append('\n');
+    for (StackTraceElement frame : failure.getStackTrace()) result.append("  at ").append(frame).append('\n');
+    for (Throwable suppressed : failure.getSuppressed()) appendFailureLocations(result, seen, suppressed, "Suppressed: ");
+    appendFailureLocations(result, seen, failure.getCause(), "Caused by: ");
   }
 
   private String testCompact(Context context) throws Exception {

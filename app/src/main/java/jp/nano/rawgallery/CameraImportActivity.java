@@ -183,7 +183,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         importSettings.setTag("import-settings");
         root.addView(importSettings, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout preferences = card(importSettings, "取り込み設定");
-        button(preferences, "写真の保存先", () -> startActivity(new Intent(this, PhotoStorageActivity.class)));
+        button(preferences, "写真・動画の保存先", () -> startActivity(new Intent(this, PhotoStorageActivity.class)));
         usbAutoOpen = new MaterialSwitch(this);
         usbAutoOpen.setText("USB接続時にLoupeを開く");
         usbAutoOpen.setTag("usb-auto-open");

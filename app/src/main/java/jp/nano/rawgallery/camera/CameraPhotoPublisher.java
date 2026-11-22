@@ -138,6 +138,7 @@ public final class CameraPhotoPublisher {
             State state=state(uri);
             if(state!=null){owned(state);if(!state.pending)throw new IOException("Published photo needs receipt recovery");if(resolver.delete(uri,null,null)!=1)throw new IOException("Incomplete photo cleanup failed");}
         }
+        PhotoStorage.requireMounted(context,MediaStore.Images.Media.getContentUri(p.volume));
         ledger.discard(p.token);
     }
     /** Run under CameraImportGate before accepting another file. Never deletes a published photo. */
@@ -147,7 +148,10 @@ public final class CameraPhotoPublisher {
             // A detached card is not missing media. Leave its journal for the same card.
             if(!MediaStore.getExternalVolumeNames(context).contains(initial.volume))continue;
             Uri uri=locate(initial);
-            if(uri==null||state(uri)==null){ledger.discard(initial.token);continue;}
+            if(uri==null||state(uri)==null){
+                PhotoStorage.requireMounted(context,MediaStore.Images.Media.getContentUri(initial.volume));
+                ledger.discard(initial.token);continue;
+            }
             CameraImportLedger.Pending p=ledger.pending(initial.token);State state=state(uri);owned(state);
             if(!p.ready&&state.pending){discardUnpublished(p);continue;}
             verify(p,uri,cancelled);

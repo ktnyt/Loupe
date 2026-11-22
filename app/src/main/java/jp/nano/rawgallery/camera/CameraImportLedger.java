@@ -199,11 +199,49 @@ public final class CameraImportLedger extends SQLiteOpenHelper {
     }
 
     /** Move only the locations; the contents and per-transport receipts keep their keys. */
-    public synchronized void relocate(String source, String oldPrimaryAlias, String destination) {
+    public record MoveReceipt(String name, long bytes, long capture, long sourceModified) {}
+
+    /** Link legacy import records to their original camera metadata, even after EXIF correction. */
+    public synchronized Map<String, List<MoveReceipt>> moveReceipts() {
+        Map<String, List<MoveReceipt>> out = new HashMap<>();
+        try (Cursor rows = getReadableDatabase().rawQuery(
+                "SELECT c.dest_uri,r.relative_path,r.source_bytes,r.capture_seconds,r.source_id,r.source_stamp "
+                        + "FROM contents c JOIN receipts r ON c.source_sha=r.source_sha", null)) {
+            while (rows.moveToNext()) {
+                String relative = rows.getString(1);
+                long sourceModified = 0;
+                if (rows.getString(4).startsWith("sd-usb:")) {
+                    try { sourceModified = Long.parseLong(rows.getString(5)) / 1000; }
+                    catch (NumberFormatException ignored) { /* Historic or non-numeric source stamp. */ }
+                }
+                out.computeIfAbsent(rows.getString(0), ignored -> new ArrayList<>()).add(
+                        new MoveReceipt(relative.substring(relative.lastIndexOf('/') + 1),
+                                rows.getLong(2), rows.getLong(3), sourceModified));
+            }
+        }
+        return out;
+    }
+
+    public synchronized boolean hasMoveEvidence(String source, String oldAlias, String sha) {
+        if (sha == null) return false;
+        try (Cursor rows = getReadableDatabase().rawQuery(
+                "SELECT 1 FROM contents WHERE stored_sha=? AND (dest_uri=? OR dest_uri=?) LIMIT 1",
+                new String[]{sha, source, oldAlias == null ? source : oldAlias})) {
+            return rows.moveToFirst();
+        }
+    }
+
+    public synchronized boolean relocate(String source, String oldAlias, String destination, String sha) {
+        if (sha == null) return false;
         ContentValues values = new ContentValues();
         values.put("dest_uri", destination);
-        getWritableDatabase().update("contents", values, "dest_uri=? OR dest_uri=?",
-                new String[]{source, oldPrimaryAlias});
+        SQLiteDatabase db = getWritableDatabase();
+        db.update("contents", values, "stored_sha=? AND (dest_uri=? OR dest_uri=?)",
+                new String[]{sha, source, oldAlias == null ? source : oldAlias});
+        try (Cursor rows = db.rawQuery("SELECT 1 FROM contents WHERE stored_sha=? AND dest_uri=? LIMIT 1",
+                new String[]{sha, destination})) {
+            return rows.moveToFirst();
+        }
     }
 
     public synchronized long contentCount() { try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM contents",null)){c.moveToFirst();return c.getLong(0);} }
