@@ -22,10 +22,10 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
   static final int QUEUED = 0, COPYING = 1, VERIFIED = 2, UPDATING_HISTORY = 3, REMAPPED = 4, DONE = 5;
   record Item(String source, String sourceAlias, String version, String expectedSha, String legacyIds, long bytes, String token,
       String target, String sha, int stage, Identity identity, ArchiveProof archiveProof,
-      CompletedProof sourceProof, CompletedProof pendingCompletion) {
+      CompletedProof sourceProof, CompletedProof pendingCompletion, TargetPin targetPin) {
     Item {
       if (archiveProof != null && sourceProof != null
-          || pendingCompletion != null && archiveProof == null && sourceProof == null)
+          || (pendingCompletion != null || targetPin != null) && archiveProof == null && sourceProof == null)
         throw new IllegalArgumentException("Conflicting historical move proof");
     }
 
@@ -34,6 +34,13 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
     String proofSha() { return archiveProof != null ? archiveProof.sha() : sourceProof.sha(); }
     String historyFingerprint() {
       return archiveProof != null ? archiveProof.historyFingerprint() : sourceProof.historyFingerprint();
+    }
+
+    Item(String source, String sourceAlias, String version, String expectedSha, String legacyIds, long bytes,
+        String token, String target, String sha, int stage, Identity identity, ArchiveProof archiveProof,
+        CompletedProof sourceProof, CompletedProof pendingCompletion) {
+      this(source, sourceAlias, version, expectedSha, legacyIds, bytes, token, target, sha, stage, identity, archiveProof,
+          sourceProof, pendingCompletion, null);
     }
 
     Item(String source, String sourceAlias, String version, String expectedSha, String legacyIds, long bytes,
@@ -69,6 +76,21 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
     }
   }
 
+  record TargetPin(String volume, String epoch, Long generationAdded, Long generationModified, String version) {
+    TargetPin {
+      if (volume == null || volume.isEmpty() || epoch == null || epoch.isEmpty()
+          || generationAdded != null && generationAdded < 0
+          || (generationModified == null) != (version == null)
+          || generationModified != null && (generationAdded == null || generationModified < generationAdded
+              || version.isEmpty())) throw new IllegalArgumentException("Invalid target pin");
+    }
+
+    TargetPin attach(long added) { return new TargetPin(volume, epoch, added, null, null); }
+    TargetPin verified(long modified, String checkedVersion) {
+      return new TargetPin(volume, epoch, generationAdded, modified, checkedVersion);
+    }
+  }
+
   private static final String[] ARCHIVE_COLUMNS = {"proof_key TEXT", "proof_sha TEXT", "proof_generation INTEGER",
       "proof_history_id INTEGER", "proof_epoch TEXT", "proof_history_fingerprint TEXT"};
   private static final String ARCHIVE_FIELDS =
@@ -79,7 +101,7 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
   }
 
   PhotoMoveStore(Context context) {
-    super(context.getApplicationContext(), "photo-moves.db", null, 3);
+    super(context.getApplicationContext(), "photo-moves.db", null, 4);
     setWriteAheadLoggingEnabled(true);
   }
 
@@ -89,7 +111,7 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
     db.execSQL("CREATE TABLE items (source TEXT PRIMARY KEY, source_alias TEXT, version TEXT NOT NULL, expected_sha TEXT, legacy_ids TEXT NOT NULL, "
         + "bytes INTEGER NOT NULL, token TEXT, target TEXT, sha TEXT, stage INTEGER NOT NULL DEFAULT 0, "
         + "archive_key TEXT, tag_source TEXT, sort_time INTEGER, " + String.join(",", ARCHIVE_COLUMNS)
-        + ", proof_previous TEXT, proof_completion TEXT)");
+        + ", proof_previous TEXT, proof_completion TEXT, target_pin TEXT)");
     db.execSQL("CREATE INDEX items_stage ON items(stage)");
     createCompleted(db);
     PhotoIdentityIndex.create(db);
@@ -98,12 +120,15 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
   }
 
   @Override public void onUpgrade(SQLiteDatabase db, int from, int to) {
-    if ((from != 1 && from != 2) || to != 3) throw new IllegalStateException("Unsupported move journal upgrade");
+    if (from < 1 || from > 3 || to != 4) throw new IllegalStateException("Unsupported move journal upgrade");
     if (from == 1) upgradeIdentities(db);
-    for (String column : ARCHIVE_COLUMNS) db.execSQL("ALTER TABLE items ADD COLUMN " + column);
-    db.execSQL("ALTER TABLE items ADD COLUMN proof_previous TEXT");
-    db.execSQL("ALTER TABLE items ADD COLUMN proof_completion TEXT");
-    createCompleted(db);
+    if (from < 3) {
+      for (String column : ARCHIVE_COLUMNS) db.execSQL("ALTER TABLE items ADD COLUMN " + column);
+      db.execSQL("ALTER TABLE items ADD COLUMN proof_previous TEXT");
+      db.execSQL("ALTER TABLE items ADD COLUMN proof_completion TEXT");
+      createCompleted(db);
+    }
+    db.execSQL("ALTER TABLE items ADD COLUMN target_pin TEXT");
   }
 
   private static void createCompleted(SQLiteDatabase db) {
@@ -196,12 +221,12 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
   Item next() {
     try (Cursor row = getReadableDatabase().rawQuery(
         "SELECT source,source_alias,version,expected_sha,legacy_ids,bytes,token,target,sha,stage,archive_key,tag_source,sort_time,"
-            + ARCHIVE_FIELDS + ",proof_previous,proof_completion FROM items "
+            + ARCHIVE_FIELDS + ",proof_previous,proof_completion,target_pin FROM items "
             + "WHERE stage<" + DONE + " ORDER BY stage DESC,rowid LIMIT 1", null)) {
       return row.moveToFirst() ? new Item(row.getString(0), row.getString(1), row.getString(2),
           row.getString(3), row.getString(4), row.getLong(5), row.getString(6), row.getString(7), row.getString(8),
           row.getInt(9), row.isNull(10) ? null : new Identity(row.getString(10), row.getString(11), row.getLong(12)),
-          archiveProof(row), decode(row.getString(19)), decode(row.getString(20))) : null;
+          archiveProof(row), decode(row.getString(19)), decode(row.getString(20)), decodeTargetPin(row.getString(21))) : null;
     }
   }
 
@@ -325,6 +350,7 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
     for (String field : ARCHIVE_FIELDS.split(",")) values.putNull(field);
     values.putNull("proof_previous");
     values.putNull("proof_completion");
+    values.putNull("target_pin");
     if (db.update("items", values, "source=? AND stage=? AND proof_completion=?",
         new String[]{item.source(), Integer.toString(REMAPPED), encode(next)}) != 1)
       throw new IOException("The move journal changed while finalizing the destination");
@@ -385,33 +411,65 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
     }
   }
 
-  void writing(Item item, String token) {
+  void writing(Item item, String token, TargetPin pin) {
     ContentValues values = new ContentValues();
     values.put("token", token);
     values.put("stage", COPYING);
+    values.put("target_pin", encodeTargetPin(pin));
     update(item, values);
   }
 
-  void attach(Item item, String target) {
+  void attach(Item item, String target, TargetPin pin) {
     ContentValues values = new ContentValues();
     values.put("target", target);
+    values.put("target_pin", encodeTargetPin(pin));
     update(item, values);
   }
 
-  void verified(Item item, String sha) {
+  void verified(Item item, String sha, TargetPin pin) {
     ContentValues values = new ContentValues();
     values.put("sha", sha);
     values.put("stage", VERIFIED);
+    values.put("target_pin", encodeTargetPin(pin));
     update(item, values);
   }
 
   void updatingHistory(Item item, Identity identity) {
+    updatingHistory(item, identity, null);
+  }
+
+  void updatingHistory(Item item, Identity identity, TargetPin pin) {
     ContentValues values = new ContentValues();
     values.put("archive_key", identity.archiveKey());
     values.put("tag_source", identity.tagSource());
     values.put("sort_time", identity.sortTime());
     values.put("stage", UPDATING_HISTORY);
+    values.put("target_pin", encodeTargetPin(pin));
     update(item, values);
+  }
+
+  private static String encodeTargetPin(TargetPin pin) {
+    if (pin == null) return null;
+    try {
+      return new JSONObject().put("volume", pin.volume()).put("epoch", pin.epoch())
+          .put("added", pin.generationAdded()).put("modified", pin.generationModified())
+          .put("version", pin.version()).toString();
+    } catch (JSONException invalid) {
+      throw new IllegalArgumentException("Invalid target pin", invalid);
+    }
+  }
+
+  private static TargetPin decodeTargetPin(String payload) {
+    if (payload == null) return null;
+    try {
+      JSONObject pin = new JSONObject(payload);
+      return new TargetPin(pin.getString("volume"), pin.getString("epoch"),
+          pin.isNull("added") ? null : pin.getLong("added"),
+          pin.isNull("modified") ? null : pin.getLong("modified"),
+          pin.isNull("version") ? null : pin.getString("version"));
+    } catch (JSONException invalid) {
+      throw new IllegalStateException("Malformed target pin", invalid);
+    }
   }
 
   void remapped(Item item, PhotoRepository.Photo target, Identity identity) {

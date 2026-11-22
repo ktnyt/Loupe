@@ -585,7 +585,7 @@ final class PhotoStorageChecks {
 
       try (PhotoMoveStore store = new PhotoMoveStore(fixture)) {
         SQLiteDatabase updated = store.getWritableDatabase();
-        require(updated.getVersion() == 3
+        require(updated.getVersion() == 4
             && new PhotoMoveStore.Batch(secondary, 1, 2, allDone ? 1 : 0).equals(store.batch()) && store.revision() == 13,
             "v1 upgrade preserves batch counts and advances the revision");
         if (allDone) {

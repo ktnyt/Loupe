@@ -100,15 +100,16 @@ final class LegacyArchiveMoveProof {
     private static Map<String, List<ArchiveRecord>> scan(SQLiteDatabase db, BooleanSupplier stopped)
         throws IOException, JSONException {
       Map<String, List<ArchiveRecord>> byUri = new HashMap<>();
-      try (Cursor rows = db.rawQuery("SELECT key,payload FROM photos WHERE state='verified'", null)) {
+      try (Cursor rows = db.rawQuery("SELECT key,state,payload FROM photos", null)) {
         int count = 0;
         while (rows.moveToNext()) {
           check(stopped);
           if (++count > MAX_RECORDS) return Map.of();
-          JSONObject value = new JSONObject(rows.getString(1));
+          JSONObject value = new JSONObject(rows.getString(2));
           String uri = value.optString("uri");
-          // A malformed receipt with this URI still makes the set ambiguous.
-          byUri.computeIfAbsent(uri, ignored -> new ArrayList<>()).add(parse(rows.getString(0), value));
+          // Every row for the source URI participates in uniqueness; only verified evidence can pass.
+          ArchiveRecord record = "verified".equals(rows.getString(1)) ? parse(rows.getString(0), value) : null;
+          byUri.computeIfAbsent(uri, ignored -> new ArrayList<>()).add(record);
         }
       }
       return byUri;

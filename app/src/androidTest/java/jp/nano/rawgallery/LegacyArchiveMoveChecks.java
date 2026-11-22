@@ -14,6 +14,7 @@ import android.database.sqlite.SQLiteDatabase;
 import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.view.KeyEvent;
@@ -23,6 +24,7 @@ import java.io.File;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InterruptedIOException;
+import java.io.UncheckedIOException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -66,7 +68,12 @@ final class LegacyArchiveMoveChecks {
     String secondary = isolatedVolume(base, secondaryArg);
     checkMetadataMatcher();
     checkReadOnlyPreflight(base, secondary);
-    checkLateArchiveConflict(base, secondary);
+    for (String state : List.of("verified", "pending", "released")) checkLateArchiveConflict(base, secondary, state);
+    checkPublishedTargetDrift(base, secondary, false);
+    checkPublishedTargetDrift(base, secondary, true);
+    checkTargetPinDrift(base, secondary, PhotoMove.Boundary.ATTACHED);
+    checkTargetPinDrift(base, secondary, PhotoMove.Boundary.PUBLISHED);
+    checkPublishedRevisionDriftBeforeDelete(base, secondary);
     checkLostHistory(base, secondary);
     for (var boundary : List.of(PhotoMove.Boundary.HISTORY_UPDATED, PhotoMove.Boundary.REMAPPED)) {
       checkLostHistoryAfterRelocation(base, secondary, boundary);
@@ -82,8 +89,10 @@ final class LegacyArchiveMoveChecks {
     checkLockedAbandon(base, secondary);
     checkRoundTrip(base, secondary);
     checkVersionTwoResume(base, secondary);
+    checkVersionThreeOrdinaryResume(base, secondary);
+    for (var migration : VersionThreeHistorical.values()) checkVersionThreeHistorical(base, secondary, migration);
     return "PASS legacy archive move: strict metadata and bounded epoch/generation proof, read-only preflight, "
-        + "selected history, v2-to-v3 migration, proof interruption, rollback and reverse move";
+        + "selected history, v2/v3-to-v4 migration, pinned targets, proof interruption, rollback and reverse move";
   }
 
   private static String isolatedVolume(Context base, String secondaryArg) throws IOException {
@@ -338,7 +347,7 @@ final class LegacyArchiveMoveChecks {
     return plan.items().stream().map(PhotoMoveStore.Item::source).collect(java.util.stream.Collectors.toSet());
   }
 
-  private static void checkLateArchiveConflict(Context base, String secondary) throws Exception {
+  private static void checkLateArchiveConflict(Context base, String secondary, String competingState) throws Exception {
     try (Fixture f = new Fixture(base, secondary);
          CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
          ArchiveStore archive = E2Settings.openRecords(f.isolatedContext());
@@ -356,19 +365,171 @@ final class LegacyArchiveMoveChecks {
       String anotherBucket = BUCKET + "-second";
       String anotherKey = E2AutoSync.key(new E2AutoSync.Candidate(photo, PRIMARY, proof.epoch(), proof.historicalGeneration()),
           anotherBucket, Long.toString(proof.historicalGeneration()));
-      archive.put(new JSONObject(originalRecord.toString()).put("key", anotherKey).put("bucket", anotherBucket), "verified");
+      archive.put(new JSONObject(originalRecord.toString()).put("key", anotherKey).put("bucket", anotherBucket), competingState);
       long archiveRevision = archive.indexRevision();
       PhotoMove.Plan noLongerConfirmed = preflight(mover, proposed, () -> false);
-      require(noLongerConfirmed.items().isEmpty() && noLongerConfirmed.archiveRejected() == 1 && mover.plan(secondary).items().isEmpty(),
-          "A second verified archive key for the same indexed URI invalidates the proposed unique proof");
+      require(noLongerConfirmed.items().isEmpty() && noLongerConfirmed.archiveRejected() == 1 && mover.plan(secondary).items().isEmpty()
+          && mover.batch() == null && f.rows(secondary).isEmpty(),
+          "A second " + competingState + " archive key for the same indexed URI invalidates the proposed unique proof");
       expectMoveFailure(() -> {
         mover.begin(previouslyConfirmed);
         mover.run(() -> false, ignored -> {});
-      }, "A stale confirmation must also recheck same-URI archive uniqueness before authorizing any copy");
+      }, "A stale confirmation must also reject a late " + competingState + " record before authorizing any copy");
       require(f.rows(secondary).isEmpty() && Arrays.equals(seed.bytes(), f.read(seed.uri()))
           && history.moveEvidence().equals(List.of(seed.history())) && archive.indexRevision() == archiveRevision && ledger.receiptCount() == 0,
           "Late competing archive evidence does not write a replacement or modify the original or its records");
       if (mover.batch() != null) mover.abandon();
+    }
+  }
+
+  private static void checkPublishedTargetDrift(Context base, String secondary, boolean changeFolder) throws Exception {
+    try (Fixture f = new Fixture(base, secondary); Fixture relocated = new Fixture(base, secondary);
+         CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         ArchiveStore archive = E2Settings.openRecords(f.isolatedContext()); PhotoMoveStore journal = new PhotoMoveStore(f.isolatedContext())) {
+      Seed seed = seed(f, history, archive, "PUBLISHED-DRIFT.JPG", 0xff698a59, false, false);
+      String archiveBefore = archive.get(seed.archiveKey()).toString();
+      require(PhotoStorage.select(f.isolatedContext(), secondary), "Choose the synthetic move destination");
+      Uri[] changedTarget = new Uri[1];
+      try (PhotoMove mover = f.move(ledger, history, reached -> {
+        if (reached == PhotoMove.Boundary.HISTORY_UPDATED)
+          throw new PhotoStorageChecks.CheckFailure("Published target metadata drift reached relocation of the selected history");
+        if (reached != PhotoMove.Boundary.PUBLISHED) return;
+        try {
+          var targets = f.rows(secondary);
+          require(targets.size() == 1 && !targets.get(0).pending() && f.isolatedContext().getPackageName().equals(targets.get(0).owner()),
+              "Only the published owned replacement fixture can be changed");
+          Uri target = targets.get(0).uri();
+          long revised = (SHOT + 61) * 1000;
+          ContentValues values = new ContentValues();
+          if (changeFolder) values.put(RELATIVE_PATH, relocated.path);
+          else values.put(DATE_TAKEN, revised);
+          require(f.resolver.update(target, values, null, null) == 1, "Change exactly one published fixture row");
+          if (changeFolder) {
+            try (Cursor row = f.resolver.query(target, new String[]{RELATIVE_PATH}, null, null, null)) {
+              require(row != null && row.moveToFirst() && relocated.path.equals(row.getString(0)),
+                  "Observe the changed relative folder at the exact published destination URI");
+            }
+          } else {
+            require(f.awaitCaptureTime(target, revised) == revised, "Observe the changed capture timestamp at the exact published URI");
+          }
+          require(Arrays.equals(seed.bytes(), f.read(target)), "The target metadata changed without changing its bytes");
+          changedTarget[0] = target;
+        } catch (IOException unavailable) {
+          throw new UncheckedIOException(unavailable);
+        }
+      })) {
+        mover.begin(preflight(mover, mover.plan(secondary), () -> false));
+        expectMoveFailure(() -> mover.run(() -> false, ignored -> {}), "A published target with changed metadata cannot relocate history");
+        require(changedTarget[0] != null && mover.batch() != null && mover.batch().done() == 0 && journal.completed(seed.history().getId()) == null
+            && history.moveEvidence().equals(List.of(seed.history())) && archiveBefore.equals(archive.get(seed.archiveKey()).toString())
+            && ledger.receiptCount() == 0 && Arrays.equals(seed.bytes(), f.read(seed.uri()))
+            && Arrays.equals(seed.bytes(), f.read(changedTarget[0])),
+            "Capture-time or folder drift preserves both byte-exact copies and all histories without completed proof");
+      }
+    }
+  }
+
+  private static void checkTargetPinDrift(Context base, String secondary, PhotoMove.Boundary boundary) throws Exception {
+    try (Fixture f = new Fixture(base, secondary); CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         ArchiveStore archive = E2Settings.openRecords(f.isolatedContext())) {
+      Seed seed = seed(f, history, archive, "PIN-DRIFT.JPG", 0xff725c8b, false, false);
+      require(PhotoStorage.select(f.isolatedContext(), secondary), "Choose the synthetic move destination");
+      try (PhotoMove stopped = f.move(ledger, history, reached -> { if (reached == boundary) throw new InterruptedMove(); })) {
+        stopped.begin(preflight(stopped, stopped.plan(secondary), () -> false));
+        expectCrash(stopped, boundary);
+      }
+      boolean attached = boundary == PhotoMove.Boundary.ATTACHED;
+      var row = f.rows(secondary).get(0);
+      Uri target = row.uri();
+      require(attached == row.pending() && f.isolatedContext().getPackageName().equals(row.owner()), "Locate the exact owned pinned target");
+      byte[] preserved = attached ? jpeg(0xff216759) : seed.bytes();
+      if (attached) f.write(target, preserved);
+      require(Arrays.equals(preserved, f.read(target)), "Read the pending sentinel or fully published replacement before retry");
+      try (PhotoMoveStore journal = new PhotoMoveStore(f.isolatedContext())) {
+        var item = journal.next();
+        require(item.stage() == (attached ? PhotoMoveStore.COPYING : PhotoMoveStore.VERIFIED)
+            && target.toString().equals(item.target()), "Attach and publish leave the exact URI in the expected durable stage");
+        var pin = item.targetPin();
+        requireTargetBirth(f, target, pin);
+        require(attached ? pin.generationModified() == null && pin.version() == null
+            : pin.generationModified() != null && pin.version() != null, "Publication crash retains the verified pending revision pin");
+        SQLiteDatabase db = journal.getWritableDatabase();
+        JSONObject altered;
+        try (Cursor stored = db.rawQuery("SELECT target_pin FROM items WHERE source=?", new String[]{item.source()})) {
+          require(stored.moveToFirst() && stored.getCount() == 1, "Read just the owned fixture's durable target pin");
+          altered = new JSONObject(stored.getString(0));
+        }
+        if (attached) altered.put("epoch", pin.epoch() + "-simulated-detached-epoch");
+        else {
+          long differentBirth = Math.addExact(pin.generationAdded(), 1);
+          altered.put("added", differentBirth).put("modified", Math.max(pin.generationModified(), differentBirth));
+        }
+        ContentValues change = new ContentValues();
+        change.put("target_pin", altered.toString());
+        require(db.update("items", change, "source=? AND target=?", new String[]{item.source(), item.target()}) == 1,
+            "Simulate a journal binding from another epoch or another birth without changing actual MediaStore state");
+      }
+      try (PhotoMove reopened = f.move(ledger, history, ignored -> {}); PhotoMoveStore journal = new PhotoMoveStore(f.isolatedContext())) {
+        var before = journal.next();
+        expectMoveFailure(() -> reopened.run(() -> false, ignored -> {}), "An epoch or birth mismatch must stop before writing the target or moving history");
+        require(before.equals(journal.next()) && reopened.batch().done() == 0 && journal.completed(seed.history().getId()) == null
+            && history.moveEvidence().equals(List.of(seed.history())) && ledger.receiptCount() == 0
+            && Arrays.equals(seed.bytes(), f.read(seed.uri())) && Arrays.equals(preserved, f.read(target)),
+            "A wrong target pin preserves the original, journal, history and even the pending file's sentinel bytes");
+      }
+    }
+  }
+
+  private static void checkPublishedRevisionDriftBeforeDelete(Context base, String secondary) throws Exception {
+    try (Fixture f = new Fixture(base, secondary); CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         ArchiveStore archive = E2Settings.openRecords(f.isolatedContext()); PhotoMoveStore journal = new PhotoMoveStore(f.isolatedContext())) {
+      Seed seed = seed(f, history, archive, "LATE-PUBLISHED-REVISION.JPG", 0xff76596a, false, false);
+      require(PhotoStorage.select(f.isolatedContext(), secondary), "Choose the synthetic move destination");
+      var driftObserved = new AtomicBoolean();
+      try (PhotoMove moving = f.move(ledger, history, reached -> {
+        if (reached != PhotoMove.Boundary.BEFORE_SOURCE_DELETE) return;
+        try {
+          var active = journal.next();
+          Uri target = Uri.parse(active.target());
+          var row = f.row(target);
+          require(active.pendingCompletion() != null && active.targetPin().version() != null && !row.pending()
+              && f.isolatedContext().getPackageName().equals(row.owner()), "Change only the fully pinned owned published fixture");
+          long capture = (SHOT + 1) * 1000;
+          ContentValues change = new ContentValues();
+          change.put(DATE_TAKEN, capture + 120000);
+          require(f.resolver.update(target, change, null, null) == 1, "Change the published target's revision");
+          change.put(DATE_TAKEN, capture);
+          require(f.resolver.update(target, change, null, null) == 1 && f.awaitCaptureTime(target, capture) == capture,
+              "Restore the original capture value without restoring its MediaStore revision");
+          try (Cursor current = f.resolver.query(target, new String[]{GENERATION_ADDED, GENERATION_MODIFIED}, null, null, null)) {
+            require(current != null && current.moveToFirst() && active.targetPin().generationAdded() == current.getLong(0)
+                && active.targetPin().generationModified() < current.getLong(1), "Observe same target birth with a different published revision");
+          }
+          driftObserved.set(true);
+        } catch (IOException unavailable) {
+          throw new UncheckedIOException(unavailable);
+        }
+      })) {
+        moving.begin(preflight(moving, moving.plan(secondary), () -> false));
+        expectMoveFailure(() -> moving.run(() -> false, ignored -> {}), "The final revision drift must revoke original deletion authority");
+        var current = journal.next();
+        Uri target = Uri.parse(current.target());
+        require(driftObserved.get() && moving.batch() != null && moving.batch().done() == 0 && current.stage() == PhotoMoveStore.REMAPPED
+            && journal.completed(seed.history().getId()) == null && history.importDestinations().equals(Set.of(target.toString()))
+            && Arrays.equals(seed.bytes(), f.read(seed.uri())) && Arrays.equals(seed.bytes(), f.read(target)),
+            "A late revision change leaves both identical copies and the recoverable history without finalizing deletion");
+      }
+    }
+  }
+
+  private static void requireTargetBirth(Fixture f, Uri target, PhotoMoveStore.TargetPin pin) throws IOException {
+    String volume = PhotoStorage.volumeOf(target);
+    Bundle visibility = new Bundle();
+    visibility.putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE);
+    try (Cursor row = f.resolver.query(target, new String[]{GENERATION_ADDED}, visibility, null)) {
+      require(row != null && row.moveToFirst() && !row.isNull(0) && pin != null && pin.generationAdded() != null
+          && pin.generationAdded() == row.getLong(0) && volume.equals(pin.volume())
+          && MediaStore.getVersion(f.isolatedContext(), volume).equals(pin.epoch()), "Pin records the exact target birth and app-UID epoch");
     }
   }
 
@@ -438,10 +599,16 @@ final class LegacyArchiveMoveChecks {
       }
       try (PhotoMoveStore reopened = new PhotoMoveStore(f.isolatedContext())) {
         var item = reopened.next();
-        require(reopened.getReadableDatabase().getVersion() == 3 && item != null && proof.equals(item.archiveProof())
+        require(reopened.getReadableDatabase().getVersion() == 4 && item != null && proof.equals(item.archiveProof())
             && item.expectedSha() == null && item.legacyIds().equals(Long.toString(seed.history().getId()))
             && reopened.completed(seed.history().getId()) == null,
-            "The reopened v3 journal retains the initial proof without prematurely promoting completed evidence");
+            "The reopened v4 journal retains the initial proof without prematurely promoting completed evidence");
+        if (boundary == PhotoMove.Boundary.PUBLISHED) {
+          var target = f.rows(secondary).get(0);
+          require(item.stage() == PhotoMoveStore.VERIFIED && !target.pending() && item.target().equals(target.uri().toString())
+              && Arrays.equals(seed.bytes(), f.read(target.uri())), "Provider publishes the original attached row before the journal advances");
+          requireTargetBirth(f, target.uri(), item.targetPin());
+        }
         if (boundary == PhotoMove.Boundary.DELETED) {
           var pending = item.pendingCompletion();
           require(pending != null && pending.historyId() == seed.history().getId() && pending.source().equals(item.target())
@@ -449,6 +616,7 @@ final class LegacyArchiveMoveChecks {
               "Verified target proof is already durable when interrupted after source deletion");
         }
       }
+      Uri publishedUri = f.rows(secondary).get(0).uri();
       require(boundary == PhotoMove.Boundary.DELETED ? f.rows(PRIMARY).isEmpty() : Arrays.equals(seed.bytes(), f.read(seed.uri())),
           "Interrupting preserves the original until the verified deletion boundary");
       try (PhotoMove resumed = f.move(ledger, history, ignored -> {})) {
@@ -459,7 +627,8 @@ final class LegacyArchiveMoveChecks {
         require(resumed.batch() == null, "Recovery or post-delete roll-forward clears the journal");
       }
       checkReplacement(f, history, archive, seed, e2Before, secondary);
-      requireCompletedProof(f, seed, f.rows(secondary).get(0).uri());
+      require(publishedUri.equals(f.rows(secondary).get(0).uri()), "Resume preserves the same already-published target URI");
+      requireCompletedProof(f, seed, publishedUri);
       require(ledger.receiptCount() == 0 && ledger.contentCount() == 0, "Resuming archive-only proof never invents a camera receipt");
     }
   }
@@ -763,13 +932,115 @@ final class LegacyArchiveMoveChecks {
         old.setVersion(2);
       }
       try (PhotoMoveStore store = new PhotoMoveStore(context); PhotoMove mover = f.move(ledger, history, ignored -> {})) {
-        require(store.getReadableDatabase().getVersion() == 3 && store.revision() == 12 && store.next().archiveProof() == null,
-            "Existing v2 journal upgrades additively without inventing archive proof or changing the revision");
+        require(store.getReadableDatabase().getVersion() == 4 && store.revision() == 12 && store.next().archiveProof() == null,
+            "Existing v2 journal upgrades to v4 without inventing proof or changing the revision");
         require(mover.run(() -> false, ignored -> {}).done() == 1 && mover.batch() == null && f.rows(PRIMARY).isEmpty(),
-            "The ordinary queued v2 move resumes on v3 without an E2 record");
+            "The ordinary queued v2 move resumes on v4 without an E2 record");
         Uri replacement = f.rows(secondary).get(0).uri();
         require(Arrays.equals(bytes, f.read(replacement)) && history.importDestinations().equals(Set.of(replacement.toString())),
             "Migrated v2 preserves the original bytes and normal legacy update semantics");
+      }
+    }
+  }
+
+  private static void checkVersionThreeOrdinaryResume(Context base, String secondary) throws Exception {
+    try (Fixture f = new Fixture(base, secondary); CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history()) {
+      byte[] bytes = jpegWithCaptureTime(f, 0xff635a76, SHOT, SHOT + 1);
+      Uri original = f.insertDatedLegacyPhoto("V3-ORDINARY.JPG", bytes);
+      history.recordImport(MODEL, f.id, new ImportedKey("V3-ORDINARY.JPG", bytes.length, SHOT), original.toString());
+      require(PhotoStorage.select(f.isolatedContext(), secondary), "Choose the ordinary move destination");
+      try (PhotoMove interrupted = f.move(ledger, history, boundary -> {
+        if (boundary == PhotoMove.Boundary.ATTACHED) throw new InterruptedMove();
+      })) {
+        interrupted.begin(interrupted.plan(secondary));
+        expectCrash(interrupted, PhotoMove.Boundary.ATTACHED);
+      }
+      Uri target = f.rows(secondary).get(0).uri();
+      copyFixtureSchemaToVersionThree(f);
+      try (PhotoMoveStore upgraded = new PhotoMoveStore(f.isolatedContext()); PhotoMove reopened = f.move(ledger, history, ignored -> {})) {
+        var item = upgraded.next();
+        require(upgraded.getReadableDatabase().getVersion() == 4 && item.stage() == PhotoMoveStore.COPYING
+            && item.targetPin() == null && item.target().equals(target.toString()) && !item.hasHistoricalProof(),
+            "v3 ordinary journal retains its exact pending target without inventing a historical pin");
+        require(reopened.run(() -> false, ignored -> {}).done() == 1 && reopened.batch() == null
+            && f.rows(PRIMARY).isEmpty() && history.importDestinations().equals(Set.of(target.toString()))
+            && Arrays.equals(bytes, f.read(target)), "v3 ordinary move resumes against its same compatible pending row");
+      }
+    }
+  }
+
+  private enum VersionThreeHistorical { QUEUED, ATTACHED, POST_DELETE }
+
+  private static void checkVersionThreeHistorical(Context base, String secondary, VersionThreeHistorical migration) throws Exception {
+    try (Fixture f = new Fixture(base, secondary); CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         ArchiveStore archive = E2Settings.openRecords(f.isolatedContext())) {
+      Seed seed = seed(f, history, archive, "V3-HISTORICAL.JPG", 0xff656b8a, false, false);
+      String e2Before = archive.get(seed.archiveKey()).toString();
+      PhotoMoveStore.CompletedProof previous = null;
+      String destination = secondary;
+      if (migration == VersionThreeHistorical.POST_DELETE) {
+        require(PhotoStorage.select(f.isolatedContext(), secondary), "Choose the first historical destination");
+        try (PhotoMove first = f.move(ledger, history, ignored -> {})) {
+          first.begin(preflight(first, first.plan(secondary), () -> false));
+          require(first.run(() -> false, ignored -> {}).done() == 1, "Establish a completed proof for migration while reversing");
+        }
+        previous = requireCompletedProof(f, seed, f.rows(secondary).get(0).uri());
+        destination = PRIMARY;
+      }
+      require(PhotoStorage.select(f.isolatedContext(), destination), "Choose the historical migration destination");
+      var crash = migration == VersionThreeHistorical.ATTACHED ? PhotoMove.Boundary.ATTACHED : PhotoMove.Boundary.DELETED;
+      try (PhotoMove stopped = f.move(ledger, history, reached -> { if (reached == crash) throw new InterruptedMove(); })) {
+        stopped.begin(preflight(stopped, stopped.plan(destination), () -> false));
+        if (migration != VersionThreeHistorical.QUEUED) expectCrash(stopped, crash);
+      }
+      copyFixtureSchemaToVersionThree(f);
+      try (PhotoMoveStore upgraded = new PhotoMoveStore(f.isolatedContext()); PhotoMove reopened = f.move(ledger, history, ignored -> {})) {
+        var item = upgraded.next();
+        require(upgraded.getReadableDatabase().getVersion() == 4 && item.hasHistoricalProof() && item.targetPin() == null
+            && java.util.Objects.equals(previous, upgraded.completed(seed.history().getId())),
+            "v3 historical migration preserves existing proof without fabricating target binding");
+        if (migration == VersionThreeHistorical.QUEUED) {
+          require(item.target() == null && item.stage() == PhotoMoveStore.QUEUED && reopened.run(() -> false, ignored -> {}).done() == 1,
+              "Migrated v3 historical queue can allocate and pin a fresh target");
+          checkReplacement(f, history, archive, seed, e2Before, destination);
+          requireCompletedProof(f, seed, f.rows(destination).get(0).uri());
+        } else if (migration == VersionThreeHistorical.ATTACHED) {
+          Uri target = Uri.parse(item.target());
+          byte[] sentinel = jpeg(0xff982d59);
+          f.write(target, sentinel);
+          expectMoveFailure(() -> reopened.run(() -> false, ignored -> {}), "An unpinned allocated v3 target must never be overwritten");
+          require(item.equals(upgraded.next()) && Arrays.equals(sentinel, f.read(target))
+              && Arrays.equals(seed.bytes(), f.read(seed.uri())) && history.moveEvidence().equals(List.of(seed.history())),
+              "Reject unpinned pending target without changing either copy or selected history");
+          reopened.abandon();
+          require(f.row(target).pending() && Arrays.equals(sentinel, f.read(target)) && Arrays.equals(seed.bytes(), f.read(seed.uri()))
+              && history.moveEvidence().equals(List.of(seed.history())) && upgraded.completed(seed.history().getId()) == null,
+              "Ending an old unpinned batch never deletes its pending target or changes the historical source");
+        } else {
+          Uri target = Uri.parse(item.target());
+          require(previous != null && item.pendingCompletion() != null && previous.equals(item.sourceProof())
+              && f.rows(secondary).isEmpty(), "The v3 reverse move has a durable completion and only its replacement remains");
+          var ended = reopened.abandon();
+          require(ended.done() == 1 && ended.total() == 1 && item.pendingCompletion().equals(requireCompletedProof(f, seed, target)),
+              "Independent v3 pending proof verifies the surviving target and promotes it on End");
+          checkReplacement(f, history, archive, seed, e2Before, PRIMARY);
+        }
+        require(reopened.batch() == null && ledger.receiptCount() == 0, "v3 recovery closes only the synthetic journal without writing camera history");
+      }
+    }
+  }
+
+  private static void copyFixtureSchemaToVersionThree(Fixture f) {
+    // v4 only adds the nullable target_pin column. Remove it from this disposable fixture to model real on-disk v3 rows.
+    try (SQLiteDatabase legacy = f.isolatedContext().openOrCreateDatabase("photo-moves.db", 0, null)) {
+      require(legacy.getVersion() == 4, "Start the v3 compatibility fixture with a known v4 layout");
+      legacy.beginTransaction();
+      try {
+        legacy.execSQL("ALTER TABLE items DROP COLUMN target_pin");
+        legacy.setVersion(3);
+        legacy.setTransactionSuccessful();
+      } finally {
+        legacy.endTransaction();
       }
     }
   }
