@@ -41,7 +41,9 @@ final class PhotoMove implements AutoCloseable {
     Failure(String message) { super(message); }
   }
 
-  enum Boundary { ALLOCATED, INSERTED, COPIED, VERIFIED, PUBLISHED, HISTORY_UPDATED, REMAPPED, BEFORE_SOURCE_DELETE, DELETED }
+  enum Boundary {
+    ALLOCATED, INSERTED, COPIED, VERIFIED, PUBLISHED, BEFORE_HISTORY_VERIFY, HISTORY_UPDATED, REMAPPED, BEFORE_SOURCE_DELETE, DELETED
+  }
   interface Faults { void after(Boundary boundary); }
   interface Progress { void update(PhotoMoveStore.Batch batch); }
   record Plan(String volume, List<PhotoMoveStore.Item> items, int skipped) {}
@@ -270,7 +272,6 @@ final class PhotoMove implements AutoCloseable {
       item = store.next();
     }
     Uri target = Uri.parse(item.target());
-    Media published = null;
     if (item.stage() == PhotoMoveStore.VERIFIED) {
       Media source = requireSource(item);
       Media replacement = requireOwned(target);
@@ -288,16 +289,14 @@ final class PhotoMove implements AutoCloseable {
         }
       }
       faults.after(Boundary.PUBLISHED);
-      published = verifyTarget(target, item.bytes(), item.sha(), true, stopped, metrics);
       source = requireSource(item);
       store.updatingHistory(item, logicalIdentity(source.photo()));
       item = store.next();
     }
     if (item.stage() == PhotoMoveStore.UPDATING_HISTORY) {
-      // Reuse only the adjacent readback in this invocation. Resume and changed metadata need a full read.
-      // Source deletion always has its own readback after remapping.
-      if (published == null || !published.equals(requireOwned(target)))
-        published = verifyTarget(target, item.bytes(), item.sha(), true, stopped, metrics);
+      // Prepare the journal first, then read back the published bytes before either history is changed.
+      faults.after(Boundary.BEFORE_HISTORY_VERIFY);
+      Media published = verifyTarget(target, item.bytes(), item.sha(), true, stopped, metrics);
       check(stopped);
       relocateForMove(item, metrics);
       faults.after(Boundary.HISTORY_UPDATED);

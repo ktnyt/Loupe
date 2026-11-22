@@ -109,7 +109,8 @@ final class PhotoStorageChecks {
     }
     int changedTargetVersions = 0;
     List<PhotoMove.Boundary> corruptionPoints = List.of(PhotoMove.Boundary.COPIED, PhotoMove.Boundary.VERIFIED,
-        PhotoMove.Boundary.PUBLISHED, PhotoMove.Boundary.HISTORY_UPDATED, PhotoMove.Boundary.REMAPPED);
+        PhotoMove.Boundary.PUBLISHED, PhotoMove.Boundary.BEFORE_HISTORY_VERIFY, PhotoMove.Boundary.HISTORY_UPDATED,
+        PhotoMove.Boundary.REMAPPED);
     for (PhotoMove.Boundary boundary : corruptionPoints) {
       try (Fixture fixture = new Fixture(base, secondary)) {
         if (corruptTargetAndResume(fixture, boundary)) changedTargetVersions++;
@@ -118,8 +119,8 @@ final class PhotoStorageChecks {
     try (Fixture fixture = new Fixture(base, secondary)) {
       rejectCorruptTargetOnHistoryResume(fixture);
     }
-    for (PhotoMove.Boundary boundary : List.of(PhotoMove.Boundary.PUBLISHED, PhotoMove.Boundary.REMAPPED,
-        PhotoMove.Boundary.BEFORE_SOURCE_DELETE)) {
+    for (PhotoMove.Boundary boundary : List.of(PhotoMove.Boundary.PUBLISHED, PhotoMove.Boundary.BEFORE_HISTORY_VERIFY,
+        PhotoMove.Boundary.REMAPPED, PhotoMove.Boundary.BEFORE_SOURCE_DELETE)) {
       try (Fixture fixture = new Fixture(base, secondary)) {
         cancelAtPublishedBoundary(fixture, boundary);
       }
@@ -235,6 +236,8 @@ final class PhotoStorageChecks {
     String previous = settings.getString("photo_volume", null);
     Fixture fixture = new Fixture(base, secondary);
     Set<String> fixtureSources = new HashSet<>();
+    AtomicBoolean accepted = new AtomicBoolean();
+    boolean completionObserved = false;
     try {
       List<PerformancePhoto> photos = seedPerformancePhotos(fixture, ledger, history, count, bytes);
       for (PerformancePhoto photo : photos) fixtureSources.add(photo.original.toString());
@@ -257,15 +260,16 @@ final class PhotoStorageChecks {
           }
           checkPerformancePlan(plan, photos, bytes);
           long[] launched = new long[1];
-          AtomicBoolean accepted = new AtomicBoolean();
           test.runOnMainSync(() -> {
             launched[0] = SystemClock.elapsedRealtimeNanos();
             accepted.set(PhotoMoveService.launch(screen, plan));
           });
           require(accepted.get(), "Launch the foreground move service");
-          require(awaitServiceStopped(15 * 60 * 1000), "Foreground move service exceeded the benchmark deadline");
+          PhotoMoveService.State completion = awaitServiceCompletion(15 * 60 * 1000);
+          completionObserved = completion != null;
           long serviceFinished = SystemClock.elapsedRealtimeNanos();
-          checkPerformanceResult(PhotoMoveService.state().batch(), count);
+          require(completionObserved, "Foreground move service exceeded the benchmark deadline");
+          checkPerformanceResult(completion.batch(), count);
           String completed = "写真を" + count + "枚移動しました。";
           awaitNode(automation, node -> node.getText() != null && node.getText().toString().contains(completed));
           long screenFinished = SystemClock.elapsedRealtimeNanos();
@@ -275,7 +279,7 @@ final class PhotoStorageChecks {
           verifyPerformancePhotos(fixture, ledger, history, photos, bytes);
           return String.format(Locale.ROOT,
               "PASS photo storage performance photos=%d bytes_per_photo=%d total_bytes=%d%n"
-                  + "service plan_ms=%.3f launch_to_finished_state_ms=%.3f launch_to_visible_completion_ms=%.3f"
+                  + "service plan_ms=%.3f launch_to_finished_state_ms=%.3f launch_to_observed_ui_completion_ms=%.3f"
                   + " photos_per_second=%.3f%n",
               count, bytes, (long) count * bytes, milliseconds(endPlan - beginPlan),
               milliseconds(serviceFinished - launched[0]), milliseconds(screenFinished - launched[0]),
@@ -291,38 +295,72 @@ final class PhotoStorageChecks {
         if (!gallery.isFinishing()) test.runOnMainSync(gallery::finish);
       }
     } finally {
-      if (PhotoMoveService.state().running()) PhotoMoveService.stopMove();
-      require(awaitServiceStopped(30_000), "Service is still active; retain its isolated fixture for safe cleanup");
-      cleanupServicePerformance(base, fixture, fixtureSources, ledger, history, settings, previous);
+      if (accepted.get() && !completionObserved && stopFixtureService(base, fixtureSources)) {
+        require(awaitServiceCompletion(30_000) != null,
+            "Benchmark service is still active; retain the fixture for safe cleanup");
+      }
+      // PhotoMoveService.launch uses this monitor. A new invocation must not race fixture cleanup.
+      synchronized (PhotoMoveService.class) {
+        require(!PhotoMoveService.state().running(), "An active service prevents safe fixture cleanup; retain the fixture");
+        clearFixtureJournal(base, fixtureSources, accepted.get());
+        cleanupServicePerformance(base, fixture, ledger, history, settings, previous);
+      }
     }
   }
 
-  private static boolean awaitServiceStopped(long timeoutMillis) {
+  private static PhotoMoveService.State awaitServiceCompletion(long timeoutMillis) {
     long deadline = SystemClock.elapsedRealtime() + timeoutMillis;
-    while (PhotoMoveService.state().running() && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(10);
-    return !PhotoMoveService.state().running();
+    PhotoMoveService.State state = PhotoMoveService.state();
+    while (state.running() && SystemClock.elapsedRealtime() < deadline) {
+      SystemClock.sleep(10);
+      state = PhotoMoveService.state();
+    }
+    return state.running() ? null : state;
   }
 
-  private static void cleanupServicePerformance(Context base, Fixture f, Set<String> fixtureSources,
-      CameraImportLedger ledger, HistoryDb history, SharedPreferences settings, String previous) throws IOException {
-    Cleanup cleanup = new Cleanup();
-    Map<String, CameraImportLedger.Content> seeded = ledger.sourceSnapshot("wifi:" + f.id);
-    cleanup.attempt(() -> {
+  private static boolean stopFixtureService(Context base, Set<String> fixtureSources) {
+    synchronized (PhotoMoveService.class) {
+      if (!PhotoMoveService.state().running()) return false;
       try (PhotoMoveStore store = new PhotoMoveStore(base)) {
-        if (store.batch() == null) return;
-        SQLiteDatabase db = store.getWritableDatabase();
-        db.beginTransaction();
-        try (Cursor remaining = db.rawQuery("SELECT source FROM items", null)) {
-          while (remaining.moveToNext()) require(fixtureSources.contains(remaining.getString(0)),
-              "Cleanup is limited to the service fixture journal");
+        require(store.batch() != null && fixtureOwnsJournal(store.getReadableDatabase(), fixtureSources),
+            "Cannot establish active service ownership; retain the fixture for safe cleanup");
+        if (!PhotoMoveService.state().running()) return false;
+        PhotoMoveService.stopMove();
+        return true;
+      }
+    }
+  }
+
+  private static void clearFixtureJournal(Context base, Set<String> fixtureSources, boolean accepted) {
+    try (PhotoMoveStore store = new PhotoMoveStore(base)) {
+      SQLiteDatabase db = store.getWritableDatabase();
+      db.beginTransaction();
+      try {
+        if (store.batch() != null) {
+          require(accepted && fixtureOwnsJournal(db, fixtureSources),
+              "Cannot establish journal ownership; retain the fixture for safe cleanup");
           db.delete("items", null, null);
           db.delete("batch", null, null);
-          db.setTransactionSuccessful();
-        } finally {
-          db.endTransaction();
         }
+        db.setTransactionSuccessful();
+      } finally {
+        db.endTransaction();
       }
-    });
+    }
+  }
+
+  private static boolean fixtureOwnsJournal(SQLiteDatabase db, Set<String> fixtureSources) {
+    try (Cursor sources = db.rawQuery("SELECT source FROM items", null)) {
+      if (fixtureSources.isEmpty() || sources.getCount() != fixtureSources.size()) return false;
+      while (sources.moveToNext()) if (!fixtureSources.contains(sources.getString(0))) return false;
+      return true;
+    }
+  }
+
+  private static void cleanupServicePerformance(Context base, Fixture f, CameraImportLedger ledger, HistoryDb history,
+      SharedPreferences settings, String previous) throws IOException {
+    Cleanup cleanup = new Cleanup();
+    Map<String, CameraImportLedger.Content> seeded = ledger.sourceSnapshot("wifi:" + f.id);
     cleanup.attempt(f::close);
     cleanup.attempt(() -> history.resetHistory(MODEL, f.id));
     for (CameraImportLedger.Content content : seeded.values()) cleanup.attempt(() -> ledger.forgetMissing(content.sourceSha));
@@ -797,6 +835,12 @@ final class PhotoStorageChecks {
         boolean historyMoved = boundary == PhotoMove.Boundary.HISTORY_UPDATED || boundary == PhotoMove.Boundary.REMAPPED;
         requireHistoryAt(ledger, history, source, historyMoved ? target[0] : original);
       }
+      if (boundary == PhotoMove.Boundary.PUBLISHED || boundary == PhotoMove.Boundary.BEFORE_HISTORY_VERIFY) {
+        try (PhotoMoveStore journal = new PhotoMoveStore(f.context)) {
+          require(journal.next().stage() == PhotoMoveStore.UPDATING_HISTORY,
+              "Published corruption stops in the durable history stage before either history is relocated");
+        }
+      }
       try (PhotoMove resumed = f.move(ledger, history, reached -> {})) {
         if (boundary != PhotoMove.Boundary.COPIED) {
           expectMoveFailure(resumed, "Resume accepted a corrupt verified target at " + boundary);
@@ -831,11 +875,15 @@ final class PhotoStorageChecks {
       }
       Uri target = onlyTarget(f).uri;
       changeTargetBytes(f, target, bytes);
+      AtomicBoolean reachedVerification = new AtomicBoolean();
       try (PhotoMove resumed = f.move(ledger, history, reached -> {
-        throw new CheckFailure("Corrupt history-stage target crossed " + reached + " on restart");
+        require(reached == PhotoMove.Boundary.BEFORE_HISTORY_VERIFY,
+            "Corrupt history-stage target reached a later boundary on restart");
+        reachedVerification.set(true);
       })) {
         expectMoveFailure(resumed, "Resumed history accepted a corrupt target");
-        require(Arrays.equals(bytes, f.read(original)), "History-stage restart preserves the intact original");
+        require(reachedVerification.get() && Arrays.equals(bytes, f.read(original)),
+            "History-stage restart rejects the target and preserves the intact original");
       }
       f.requireOwned(onlyTarget(f));
       f.write(target, bytes);
@@ -863,7 +911,8 @@ final class PhotoStorageChecks {
           require(stopped.get() && move.batch().done() == 0 && !target.pending && !target.trashed
               && Arrays.equals(bytes, f.read(target.uri)) && Arrays.equals(bytes, f.read(original)),
               "Cancellation preserves both copies at " + boundary);
-          requireHistoryAt(ledger, history, source, boundary == PhotoMove.Boundary.PUBLISHED ? original : target.uri);
+          boolean historyMoved = boundary == PhotoMove.Boundary.REMAPPED || boundary == PhotoMove.Boundary.BEFORE_SOURCE_DELETE;
+          requireHistoryAt(ledger, history, source, historyMoved ? target.uri : original);
         }
       }
       try (PhotoMove resumed = f.move(ledger, history, reached -> {})) {
