@@ -252,9 +252,12 @@ class ImportService : Service() {
             if (result.deleteRemained > 0) {
                 msg += getString(R.string.camera_import_notif_delete_remained_suffix, result.deleteRemained)
             }
-        } else if (allowDeletion && camera.deleteAfterImport && isMtp && result.imported > 0) {
+        } else if (allowDeletion && camera.deleteAfterImport && isMtp && result.imported > 0 && result.deleteUnverified == 0) {
             // 設定は有効なのに 1 件も消せなかった。カメラ側が DeleteObject を拒む機種がある
             msg += getString(R.string.camera_import_notif_delete_failed_suffix)
+        }
+        if (result.deleteUnverified > 0) {
+            msg += getString(R.string.camera_import_notif_delete_unverified_suffix, result.deleteUnverified)
         }
         if (result.resurrected > 0) {
             // 削除したはずのファイルがカメラ側で復活している (E-P7 実測)。

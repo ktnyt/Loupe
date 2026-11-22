@@ -161,7 +161,7 @@ final class PhotoMove implements AutoCloseable {
 
   private static boolean matchesLegacy(Media media, HistoryDb.MoveEvidence evidence) {
     if (media.bytes() != evidence.getBytes()) return false;
-    if (media.taken() > 0 && evidence.getShot() > 0 && media.taken() / 1000 != evidence.getShot()) return false;
+    if (evidence.getShot() > 0 && (media.taken() <= 0 || media.taken() / 1000 != evidence.getShot())) return false;
     String original = evidence.getName();
     int dot = original.lastIndexOf('.');
     if (dot <= 0) return false;

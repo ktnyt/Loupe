@@ -4,9 +4,13 @@ import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
 import jp.nano.rawgallery.PhotoStorage
+import java.io.InputStream
 import java.io.OutputStream
+import java.security.MessageDigest
+import java.util.function.BooleanSupplier
 
 /**
  * MediaStore への保存先はファイル種別で分ける。取り込み方式に依らず共通。
@@ -52,28 +56,80 @@ object MediaSaver {
         val target = resolver.insert(collectionOf(fileName, volume), values)
             ?: throw IllegalStateException("MediaStore insert failed")
         try {
-            resolver.openOutputStream(target)?.use { write(it) }
+            val fd = resolver.openFileDescriptor(target, "w")
                 ?: throw IllegalStateException("MediaStore open failed")
+            ParcelFileDescriptor.AutoCloseOutputStream(fd).use { output ->
+                write(output)
+                output.fd.sync()
+            }
             values.clear()
             values.put(MediaStore.MediaColumns.IS_PENDING, 0)
             check(resolver.update(target, values, null, null) == 1) { "MediaStore publish failed" }
             return target
         } catch (e: Exception) {
-            resolver.delete(target, null, null)
+            try {
+                resolver.delete(target, MediaStore.MediaColumns.IS_PENDING + "=1", null)
+            } catch (cleanup: Exception) {
+                e.addSuppressed(cleanup)
+            }
             throw e
         }
     }
 
-    /** Keep the camera original if its newly saved copy is unavailable at delete time. */
-    fun canReadSavedFile(context: Context, uri: Uri, bytes: Long): Boolean = try {
+    data class SavedFingerprint(val bytes: Long, val sha256: String)
+
+    /** Read all published bytes before allowing deletion of the only camera original. */
+    fun canReadSavedFile(context: Context, uri: Uri, expected: SavedFingerprint, cancelled: BooleanSupplier): Boolean = try {
         PhotoStorage.requireMounted(context, uri)
         val resolver = context.contentResolver
-        val published = resolver.query(uri, arrayOf(MediaStore.MediaColumns.IS_PENDING), null, null, null)
-            ?.use { it.moveToFirst() && it.getInt(0) == 0 } == true
-        published && resolver.openFileDescriptor(uri, "r")?.use { it.statSize == bytes } == true
+        fun revision(): Long? = resolver.query(uri, arrayOf(
+            MediaStore.MediaColumns.IS_PENDING, MediaStore.MediaColumns.IS_TRASHED,
+            MediaStore.MediaColumns.OWNER_PACKAGE_NAME, MediaStore.MediaColumns.SIZE,
+            MediaStore.MediaColumns.GENERATION_MODIFIED,
+        ), null, null, null)?.use { row ->
+            if (row.moveToFirst() && row.getInt(0) == 0 && row.getInt(1) == 0
+                && row.getString(2) == context.packageName && row.getLong(3) == expected.bytes && !row.isNull(4)) {
+                row.getLong(4)
+            } else null
+        }
+        val before = revision()
+        val matches = before != null && resolver.openInputStream(MediaStore.setRequireOriginal(uri))
+            ?.use { matchesSavedBytes(it, expected.bytes, expected.sha256, cancelled) } == true
+        PhotoStorage.requireMounted(context, uri)
+        matches && !cancelled.getAsBoolean() && before == revision()
     } catch (e: Exception) {
-        ImportLog.w("MediaSaver", "saved photo unavailable before camera deletion")
+        ImportLog.w("MediaSaver", "saved media unavailable before camera deletion")
         false
+    }
+
+    /** Bounded reads cover exactly the independently fingerprinted staged bytes, including EOF. */
+    fun matchesSavedBytes(input: InputStream, bytes: Long, sha256: String, cancelled: BooleanSupplier): Boolean {
+        if (bytes <= 0 || !sha256.matches(Regex("[0-9a-f]{64}"))) return false
+        val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(64 * 1024)
+        var read = 0L
+        try {
+            while (!cancelled.getAsBoolean() && !Thread.currentThread().isInterrupted) {
+                val count = input.read(buffer)
+                if (count == -1) {
+                    val alphabet = "0123456789abcdef"
+                    val actual = buildString(64) {
+                        for (byte in digest.digest()) {
+                            val value = byte.toInt() and 255
+                            append(alphabet[value ushr 4])
+                            append(alphabet[value and 15])
+                        }
+                    }
+                    return !cancelled.getAsBoolean() && !Thread.currentThread().isInterrupted && read == bytes && actual == sha256
+                }
+                if (count <= 0 || count > bytes - read) return false
+                digest.update(buffer, 0, count)
+                read += count
+            }
+        } catch (unreadable: java.io.IOException) {
+            return false
+        }
+        return false
     }
 
     /** 保存先に実在するファイル。名前照合の候補と、同一性確認 (サイズ・先頭バイト) に使う */
