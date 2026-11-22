@@ -91,6 +91,7 @@ final class PhotoStorageChecks {
     if (!"photo-storage".equals(mode)) return detach(base, mode, secondary);
     PhotoStorage.requireWritable(base, secondary);
 
+    for (JournalFixture schema : JournalFixture.values()) checkJournalUpgrade(base, secondary, schema);
     try (Fixture fixture = new Fixture(base, secondary)) {
       moveImportedPhotos(fixture);
     }
@@ -142,7 +143,150 @@ final class PhotoStorageChecks {
         + " tags, rank, sharing, same-name files, retries after " + Arrays.toString(PhotoMove.Boundary.values())
         + ", verified-copy space estimate, cancellation, unavailable target, stale and reset history, "
         + "changed or missing source, lost replacement, pre-update SD tag/rank/share compatibility, "
-        + "USB mass-storage mtime/EXIF fast path, abandon with one or two verified copies, sequential SD identity snapshots";
+        + "USB mass-storage mtime/EXIF fast path, abandon with one or two verified copies, sequential SD identity snapshots, "
+        + "v1 journal migration and rollback";
+  }
+
+  private enum JournalFixture { EARLY_QUEUED, LATER_CLAIMS, MISSING_ACTIVE_IDENTITY, EARLIEST_ALL_DONE }
+
+  private static void checkJournalUpgrade(Context base, String secondary, JournalFixture schema) throws Exception {
+    boolean withClaims = schema == JournalFixture.LATER_CLAIMS;
+    boolean brokenIdentity = schema == JournalFixture.MISSING_ACTIVE_IDENTITY;
+    boolean allDone = schema == JournalFixture.EARLIEST_ALL_DONE;
+    ScopedContext fixture = new ScopedContext(base, UUID.randomUUID().toString());
+    String source = "content://media/external_primary/images/media/501";
+    String sourceAlias = "content://media/external/images/media/501";
+    String targetUri = "content://media/" + secondary + "/file/802";
+    String targetLocation = targetUri + "\n42:12:8:0";
+    String archiveKey = PhotoRepository.digest("Move before upgrade");
+    String tagSource = "content://media/external/file/802\n42:12:8:0";
+    String claimUri = "content://media/" + secondary + "/file/803";
+    String claimLocation = claimUri + "\n43:14:11:0";
+    String claimKey = "Pictures/CameraSync/Synthetic/CLAIM.JPG:43:14";
+    String version = "SYNTHETIC.JPG\nPictures/CameraSync/Synthetic/\nimage/jpeg\n42\n12\n8\n0\n1\n1";
+    String checksum = PhotoRepository.digest("Synthetic camera file");
+    int stage = switch (schema) {
+      case MISSING_ACTIVE_IDENTITY -> PhotoMoveStore.UPDATING_HISTORY;
+      case EARLIEST_ALL_DONE -> PhotoMoveStore.DONE;
+      default -> PhotoMoveStore.QUEUED;
+    };
+    String movedTarget = "content://media/" + secondary + "/images/media/802";
+
+    try (AutoCloseable clean = () -> {
+      Cleanup cleanup = new Cleanup();
+      fixture.clean(cleanup);
+      cleanup.finish();
+    }) {
+      try (SQLiteDatabase old = fixture.openOrCreateDatabase("photo-moves.db", 0, null)) {
+        old.execSQL("CREATE TABLE batch (id INTEGER PRIMARY KEY CHECK(id=1), volume TEXT NOT NULL, total INTEGER NOT NULL, skipped INTEGER NOT NULL)");
+        old.execSQL("CREATE TABLE items (source TEXT PRIMARY KEY, source_alias TEXT, version TEXT NOT NULL, expected_sha TEXT, "
+            + (allDone ? "" : "legacy_ids TEXT NOT NULL, ")
+            + "bytes INTEGER NOT NULL, token TEXT, target TEXT, sha TEXT, stage INTEGER NOT NULL DEFAULT 0"
+            + (withClaims ? ", archive_key TEXT, tag_source TEXT, sort_time INTEGER)" : ")"));
+        old.execSQL("CREATE INDEX items_stage ON items(stage)");
+        old.execSQL("CREATE TABLE identities (location TEXT PRIMARY KEY, archive_key TEXT NOT NULL, tag_source TEXT NOT NULL, sort_time INTEGER NOT NULL)");
+        old.execSQL("CREATE TABLE revision (id INTEGER PRIMARY KEY CHECK(id=1), value INTEGER NOT NULL)");
+        old.execSQL("INSERT INTO batch VALUES(1,?,1,2)", new Object[]{secondary});
+        ContentValues item = new ContentValues();
+        item.put("source", source);
+        item.put("source_alias", sourceAlias);
+        item.put("version", version);
+        item.put("expected_sha", checksum);
+        item.put("bytes", 42);
+        item.put("stage", stage);
+        if (!allDone) item.put("legacy_ids", "9,10");
+        if (stage != PhotoMoveStore.QUEUED) {
+          item.put("token", "__loupe_move_test.JPG");
+          item.put("target", movedTarget);
+          item.put("sha", checksum);
+        }
+        old.insertOrThrow("items", null, item);
+        old.execSQL("INSERT INTO identities VALUES(?,?,?,?)", new Object[]{targetLocation, archiveKey, tagSource, 12000});
+        old.execSQL("INSERT INTO revision VALUES(1,12)");
+        if (withClaims) {
+          old.execSQL("CREATE TABLE archive_claims (legacy_identity TEXT PRIMARY KEY, location TEXT NOT NULL)");
+          old.execSQL("INSERT INTO archive_claims VALUES(?,?)", new Object[]{claimKey, claimLocation});
+          old.execSQL("INSERT INTO archive_claims VALUES(?,?)", new Object[]{"overlapping claim", targetLocation});
+        }
+        old.setVersion(1);
+      }
+
+      if (brokenIdentity) {
+        try (PhotoMoveStore store = new PhotoMoveStore(fixture)) {
+          try {
+            store.getWritableDatabase();
+            throw new CheckFailure("Upgrade accepted an active v1 move with no recoverable identity");
+          } catch (IllegalStateException expected) {
+            require(expected.getMessage().contains("cannot recover the recorded identity"), "Reject the missing active identity");
+          }
+        }
+        try (SQLiteDatabase old = fixture.openOrCreateDatabase("photo-moves.db", 0, null);
+             Cursor item = old.rawQuery("SELECT * FROM items", null)) {
+          require(old.getVersion() == 1 && item.moveToFirst() && item.getCount() == 1
+              && item.getColumnIndex("archive_key") == -1 && stage == item.getInt(item.getColumnIndexOrThrow("stage"))
+              && source.equals(item.getString(item.getColumnIndexOrThrow("source")))
+              && journalTable(old, "identities") && !journalTable(old, "local_photos"),
+              "Failed upgrade rolls back schema changes and keeps old journal rows");
+        }
+        return;
+      }
+
+      try (PhotoMoveStore store = new PhotoMoveStore(fixture)) {
+        SQLiteDatabase updated = store.getWritableDatabase();
+        require(updated.getVersion() == 2
+            && new PhotoMoveStore.Batch(secondary, 1, 2, allDone ? 1 : 0).equals(store.batch()) && store.revision() == 13,
+            "v1 upgrade preserves batch counts and advances the revision");
+        if (allDone) {
+          try (Cursor completed = updated.rawQuery("SELECT source,target,stage,legacy_ids FROM items", null)) {
+            require(store.next() == null && completed.moveToFirst() && completed.getCount() == 1
+                && source.equals(completed.getString(0)) && movedTarget.equals(completed.getString(1))
+                && completed.getInt(2) == PhotoMoveStore.DONE && completed.getString(3).isEmpty(),
+                "Earliest v1 keeps a completed row without inventing legacy evidence or requeuing it");
+          }
+        } else {
+          PhotoMoveStore.Item expected = new PhotoMoveStore.Item(source, sourceAlias, version, checksum, "9,10", 42,
+              null, null, null, PhotoMoveStore.QUEUED, null);
+          require(expected.equals(store.next()), "v1 upgrade preserves the complete queued item");
+        }
+        require(!journalTable(updated, "archive_claims") && !journalTable(updated, "identities"),
+            "Successful upgrade removes superseded legacy tables");
+        try (Cursor moved = updated.rawQuery("SELECT archive_key,tag_source,sort_time,media_version,move_uri "
+            + "FROM local_photos WHERE location=?", new String[]{targetLocation})) {
+          require(moved.moveToFirst() && moved.getCount() == 1 && archiveKey.equals(moved.getString(0))
+              && tagSource.equals(moved.getString(1)) && moved.getLong(2) == 12000
+              && moved.getString(3).isEmpty() && targetUri.equals(moved.getString(4)),
+              "Moved v1 gallery URI, rank/share key, tag identity and order time survive");
+        }
+        if (withClaims) {
+          try (Cursor claim = updated.rawQuery("SELECT archive_key,tag_source,move_uri FROM local_photos WHERE location=?",
+              new String[]{claimLocation})) {
+            require(claim.moveToFirst() && PhotoRepository.digest(claimKey).equals(claim.getString(0))
+                && "content://media/external/file/803\n43:14:11:0".equals(claim.getString(1)) && claim.isNull(2),
+                "Later v1 archive claims migrate without replacing explicit moved aliases");
+          }
+        }
+        if (allDone) {
+          store.finish();
+          try (Cursor remaining = updated.rawQuery("SELECT archive_key FROM local_photos WHERE location=?",
+              new String[]{targetLocation})) {
+            require(store.batch() == null && store.next() == null && remaining.moveToFirst()
+                && archiveKey.equals(remaining.getString(0)),
+                "Finish closes the migrated all-DONE batch and retains its moved photo identity");
+          }
+        } else {
+          PhotoMoveStore.Identity identity = new PhotoMoveStore.Identity(archiveKey, tagSource, 12000);
+          store.updatingHistory(store.next(), identity);
+          require(store.historyUpdatePending() && identity.equals(store.next().identity()),
+              "An upgraded queue can persist an active photo identity in the new columns");
+        }
+      }
+    }
+  }
+
+  private static boolean journalTable(SQLiteDatabase database, String name) {
+    try (Cursor tables = database.rawQuery("SELECT name FROM sqlite_master WHERE type='table' AND name=?", new String[]{name})) {
+      return tables.moveToFirst();
+    }
   }
 
   private static void moveImportedPhotos(Fixture f) throws Exception {

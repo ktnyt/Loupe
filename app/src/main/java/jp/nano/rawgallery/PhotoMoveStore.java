@@ -46,7 +46,7 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
     if (!itemColumns.containsAll(List.of("source", "source_alias", "version", "expected_sha", "bytes",
         "token", "target", "sha", "stage"))) throw new IllegalStateException("Unrecognized move journal items");
     if (!itemColumns.contains("legacy_ids")) {
-      if (DatabaseUtils.queryNumEntries(db, "items") != 0)
+      if (DatabaseUtils.queryNumEntries(db, "items", "stage<>" + DONE, null) != 0)
         throw new IllegalStateException("Move journal items lack their original import evidence");
       db.execSQL("ALTER TABLE items ADD COLUMN legacy_ids TEXT NOT NULL DEFAULT ''");
     }
