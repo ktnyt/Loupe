@@ -175,7 +175,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
     cameraLedgerTest = args != null && "camera-ledger".equals(args.getString("mode"));
     if (args != null && java.util.List.of("photo-storage", "photo-storage-ui", "photo-storage-ui-run", "photo-storage-detach-seed",
         "photo-storage-detach-absent", "photo-storage-detach-restored", "photo-storage-saf-seed",
-        "photo-storage-saf-verify").contains(args.getString("mode", "")))
+        "photo-storage-saf-verify", "photo-storage-abandon-detach-seed", "photo-storage-abandon-detach-absent",
+        "photo-storage-abandon-detach-restored").contains(args.getString("mode", "")))
       photoStorageMode = args.getString("mode");
     if (photoStorageUiMode()) {
       tagWidth = Integer.parseInt(args.getString("width", "400"));

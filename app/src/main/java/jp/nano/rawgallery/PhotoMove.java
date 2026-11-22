@@ -304,7 +304,6 @@ final class PhotoMove implements AutoCloseable {
     if (batch == null) throw new Failure("終了できる移動がありません。");
     PhotoMoveStore.Item item = store.next();
     String identity = null;
-    PhotoRepository.Photo retainedSource = null;
     if (item != null) {
       if (item.stage() == PhotoMoveStore.COPYING) {
         discardIncomplete(item, batch.volume());
@@ -317,15 +316,14 @@ final class PhotoMove implements AutoCloseable {
           if (!relocate(item, false)) throw new Failure("取り込みの記録を確認できません。");
           store.remapped(item, replacement.photo(), item.identity());
         }
-      } else if (item.stage() == PhotoMoveStore.REMAPPED && publishedReplacement(item) && intactSource(item)) {
-        retainedSource = requireSource(item).photo();
-      } else if (item.stage() == PhotoMoveStore.REMAPPED && !publishedReplacement(item) && intactSource(item)) {
-        // If deletion already completed, the replacement remains the last known destination.
+      } else if (item.stage() == PhotoMoveStore.REMAPPED && !publishedReplacement(item)) {
+        if (!intactSource(item))
+          throw new Failure("元の写真と移動先を確認できません。保存先を接続してから再試行してください。");
         relocate(item, true);
         identity = galleryUri(Uri.parse(item.target())).toString();
       }
     }
-    store.abandon(identity, retainedSource);
+    store.abandon(identity);
     return batch;
   }
 
@@ -360,7 +358,7 @@ final class PhotoMove implements AutoCloseable {
     }
   }
 
-  private static Uri galleryUri(Uri image) {
+  static Uri galleryUri(Uri image) {
     String volume = PhotoStorage.volumeOf(image);
     return ContentUris.withAppendedId(MediaStore.Files.getContentUri(
         PhotoStorage.PRIMARY.equals(volume) ? "external" : volume), ContentUris.parseId(image));

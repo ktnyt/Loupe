@@ -5,6 +5,7 @@ import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
+import android.net.Uri;
 import java.util.List;
 import java.io.IOException;
 import java.util.UUID;
@@ -160,15 +161,26 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
     }
   }
 
-  void abandon(String identityLocation, PhotoRepository.Photo retainedSource) throws IOException {
+  void abandon(String rollbackTarget) throws IOException {
     SQLiteDatabase db = getWritableDatabase();
     db.beginTransaction();
     try {
-      if (identityLocation != null)
-        db.delete("local_photos", "move_uri=?", new String[]{identityLocation});
-      if (retainedSource != null) {
+      Item item = next();
+      if (rollbackTarget != null) {
+        db.delete("local_photos", "move_uri=?", new String[]{rollbackTarget});
+      } else if (item != null && item.stage() == REMAPPED) {
+        // The verified target owns the history even if the original card is detached during abandon.
+        String sourceUri = PhotoMove.galleryUri(Uri.parse(item.source())).toString();
         String duplicate = "retained-copy:" + UUID.randomUUID();
-        PhotoIdentityIndex.save(db, retainedSource, new Identity(PhotoRepository.digest(duplicate), duplicate), null);
+        ContentValues replacement = new ContentValues();
+        replacement.put("archive_key", PhotoRepository.digest(duplicate));
+        replacement.put("tag_source", duplicate);
+        replacement.put("sort_time", 0);
+        replacement.putNull("move_uri");
+        db.update("local_photos", replacement, "archive_key=? AND tag_source=? AND "
+            + "(substr(media_version,1,instr(media_version,char(10))-1)=? OR "
+            + "(media_version='' AND substr(location,1,instr(location,char(10))-1)=?))",
+            new String[]{item.identity().archiveKey(), item.identity().tagSource(), sourceUri, sourceUri});
       }
       clearBatch(db);
       db.execSQL("UPDATE revision SET value=value+1 WHERE id=1");

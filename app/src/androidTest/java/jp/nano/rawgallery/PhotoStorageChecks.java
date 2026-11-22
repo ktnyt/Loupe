@@ -61,6 +61,7 @@ final class PhotoStorageChecks {
   private static final String PRIMARY = PhotoStorage.PRIMARY;
   private static final String MISSING = "dead-beef";
   private static final String DETACH_PREFS = "photo-storage-detach-fixture";
+  private static final String ABANDON_DETACH_PREFS = "photo-storage-abandon-detach-fixture";
   private static final String SAF_PREFS = "photo-storage-saf-fixture";
   private static final String DOCUMENTS_AUTHORITY = "com.android.externalstorage.documents";
   private static final String MODEL = "Synthetic camera";
@@ -76,6 +77,7 @@ final class PhotoStorageChecks {
     String secondary = secondaryArg == null ? secondaryVolume(base) : secondaryArg.toLowerCase(Locale.ROOT);
     require(!PRIMARY.equals(secondary), "Expected a secondary volume");
     if (mode.startsWith("photo-storage-saf-")) return saf(base, mode, secondary);
+    if (mode.startsWith("photo-storage-abandon-detach-")) return abandonDetached(base, mode, secondary);
     if (!"photo-storage".equals(mode)) return detach(base, mode, secondary);
     PhotoStorage.requireWritable(base, secondary);
 
@@ -1058,6 +1060,130 @@ final class PhotoStorageChecks {
     return entries.get(0);
   }
 
+  private static String abandonDetached(Context base, String mode, String secondary) throws Exception {
+    SharedPreferences marker = base.getSharedPreferences(ABANDON_DETACH_PREFS, 0);
+    byte[] bytes = jpeg(0xff567b91);
+    String name = "ABANDON-DETACH.JPG";
+    if ("photo-storage-abandon-detach-seed".equals(mode)) {
+      require(!marker.contains("id"), "The previous detached abandon fixture needs restoration");
+      PhotoStorage.requireWritable(base, secondary);
+      Fixture f = new Fixture(base, secondary);
+      boolean seeded = false;
+      try (CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+           TagStore tags = new TagStore(f.context); ShareHistoryStore shares = new ShareHistoryStore(f.context);
+           PhotoMove move = f.move(ledger, history, reached -> {
+             if (reached == PhotoMove.Boundary.REMAPPED) throw new InterruptedAtBoundary();
+           })) {
+        CameraImportFile source = f.source("sd:", name, bytes);
+        Uri original = f.importPhoto(new CameraPhotoImporter(f.context, ledger, secondary), source, bytes).uri;
+        require(secondary.equals(PhotoStorage.volumeOf(original)), "The original fixture is on the exact SD");
+        history.recordImport(MODEL, f.id, new ImportedKey(name, source.bytes, source.captureSeconds), original.toString());
+        PhotoRepository.Photo photo = f.photo(original);
+        String archiveKey = ArchiveStore.key(photo);
+        TagStore.Tag tag = tags.create("Assigned before removing SD");
+        String photoId = tags.photoId(photo, true);
+        tags.record(UUID.randomUUID().toString(), tag.id, photoId, 0, TagJudgments.Value.ASSIGNED);
+        long time = System.currentTimeMillis();
+        require(new RankingStore(f.context).saveSingleBest(archiveKey, false, true)
+            && shares.complete(shares.begin(List.of(archiveKey), time), "test.fixture", "Synthetic share", time),
+            "Label the SD photo before moving");
+        require(PhotoStorage.select(f.context, PRIMARY), "Move the SD fixture to internal storage");
+        move.begin(move.plan(PRIMARY));
+        try {
+          move.run(() -> false, batch -> {});
+          throw new CheckFailure("Detached abandon seed did not reach REMAPPED");
+        } catch (InterruptedAtBoundary expected) {
+          require(move.batch() != null && f.rows(secondary).size() == 1 && f.rows(PRIMARY).size() == 1,
+              "Both verified copies exist before ejecting the SD");
+        }
+        Uri target = Uri.parse(ledger.known(source).uri);
+        require(PRIMARY.equals(PhotoStorage.volumeOf(target)) && Arrays.equals(bytes, f.read(target))
+            && history.importDestinations().equals(Set.of(target.toString())),
+            "Journal points to a verified internal copy before removal");
+        require(marker.edit().putString("id", f.id).putString("volume", secondary).putString("target", target.toString())
+            .putString("key", archiveKey).putString("tag", tag.id).putString("photo", photoId)
+            .putLong("sharedAt", time).commit(), "Persist detached abandon seed");
+        seeded = true;
+        return "PASS abandon detach seed " + secondary + ": REMAPPED and both verified copies present";
+      } finally {
+        if (!seeded) f.close();
+      }
+    }
+
+    require(secondary.equals(marker.getString("volume", null)), "Use the same secondary volume as the abandon seed");
+    Fixture f = new Fixture(base, secondary, UUID.fromString(marker.getString("id", "")).toString());
+    Uri target = Uri.parse(marker.getString("target", ""));
+    CameraImportFile source = f.source("sd:", name, bytes);
+    if ("photo-storage-abandon-detach-absent".equals(mode)) {
+      require(!MediaStore.getExternalVolumeNames(base).contains(secondary), "Unmount the SD physically before abandoning");
+      try (CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+           PhotoMove move = f.move(ledger, history, reached -> {})) {
+        PhotoMoveStore.Batch before = move.batch();
+        require(before != null && Arrays.equals(bytes, f.read(target)), "Only the verified internal copy is accessible");
+        try (AutoCloseable restoreTarget = () -> {
+          Row replacement = f.row(target);
+          if (replacement.trashed) f.setTrashed(replacement, false);
+        }) {
+          f.trashOwned(f.row(target));
+          try {
+            move.abandon();
+            throw new CheckFailure("Abandon cleared the journal with neither copy verifiable");
+          } catch (PhotoMove.Failure expected) {
+            require(before.equals(move.batch()) && target.toString().equals(ledger.known(source).uri)
+                && history.importDestinations().equals(Set.of(target.toString())),
+                "When neither copy is verifiable, the same batch and both history references survive");
+          }
+        }
+        require(!f.row(target).trashed && Arrays.equals(bytes, f.read(target)), "Restore the exact verified target from trash");
+        move.abandon();
+        require(move.batch() == null && target.toString().equals(ledger.known(source).uri)
+            && history.importDestinations().equals(Set.of(target.toString())) && Arrays.equals(bytes, f.read(target)),
+            "Abandon while SD is unavailable keeps the internal copy and references");
+        require(marker.edit().putBoolean("abandoned", true).commit(), "Persist completed detached abandon");
+      }
+      return "PASS abandon detach absent " + secondary + ": inaccessible copies preserve batch; restored internal copy permits abandon";
+    }
+
+    require("photo-storage-abandon-detach-restored".equals(mode) && marker.getBoolean("abandoned", false),
+        "Abandon while the SD is unmounted before verifying restoration");
+    PhotoStorage.requireWritable(base, secondary);
+    long deadline = SystemClock.uptimeMillis() + 6000;
+    List<Row> sdRows;
+    do {
+      sdRows = f.rows(secondary);
+      if (!sdRows.isEmpty()) break;
+      SystemClock.sleep(50);
+    } while (SystemClock.uptimeMillis() < deadline);
+    require(sdRows.size() == 1, "The unchanged SD file is visible again after mounting");
+    Uri original = sdRows.get(0).uri;
+    try (f; CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         TagStore tags = new TagStore(f.context); ShareHistoryStore shares = new ShareHistoryStore(f.context)) {
+      require(Arrays.equals(bytes, f.read(original)) && Arrays.equals(bytes, f.read(target))
+          && f.rows(PRIMARY).size() == 1 && ledger.receiptCount() == 1
+          && target.toString().equals(ledger.known(source).uri) && history.importDestinations().equals(Set.of(target.toString())),
+          "Both byte-exact copies survive, with import histories retained on internal storage");
+      RankingStore ranking = new RankingStore(f.context);
+      LegacyLabels labels = new LegacyLabels(marker.getString("key", null), marker.getString("tag", null),
+          marker.getString("photo", null), marker.getLong("sharedAt", -1));
+      PhotoRepository.Photo replacement = f.photo(target);
+      PhotoRepository.Photo retained = f.photo(original);
+      assertOldLabels(replacement, tags, ranking, shares, labels);
+      String retainedKey = ArchiveStore.key(retained);
+      require(!retainedKey.equals(labels.key) && !TagStore.source(retained).equals(TagStore.source(replacement))
+          && tags.photoId(retained, false) == null && !ranking.singleBest(retainedKey) && shares.history(retainedKey).isEmpty(),
+          "The reattached original gains a separate, neutral identity");
+      String retainedPhoto = tags.photoId(retained, true);
+      tags.record(UUID.randomUUID().toString(), labels.tagId, retainedPhoto, 0, TagJudgments.Value.EXCLUDED);
+      require(retainedPhoto.equals(tags.photoId(f.photo(original), false))
+          && tags.load().value(labels.tagId, retainedPhoto) == TagJudgments.Value.EXCLUDED,
+          "An edit to the reattached original stays bound to it across scans");
+      assertOldLabels(f.photo(target), tags, ranking, shares, labels);
+    } finally {
+      require(base.deleteSharedPreferences(ABANDON_DETACH_PREFS), "Remove exact abandon-detach fixture marker");
+    }
+    return "PASS abandon detach restored " + secondary + ": both copies retained, independent identities and tag editing";
+  }
+
   private static String detach(Context base, String mode, String secondary) throws Exception {
     SharedPreferences marker = base.getSharedPreferences(DETACH_PREFS, 0);
     if ("photo-storage-detach-seed".equals(mode)) {
@@ -1243,12 +1369,16 @@ final class PhotoStorageChecks {
           .findFirst().orElseThrow(() -> new AssertionError("Cannot find exact fixture row " + uri));
     }
 
-    void trashOwned(Row row) throws IOException {
+    void trashOwned(Row row) throws IOException { setTrashed(row, true); }
+
+    void setTrashed(Row row, boolean trashed) throws IOException {
       requireOwned(row);
       ContentValues values = new ContentValues();
-      values.put(IS_TRASHED, 1);
-      require(resolver.update(row.uri, values, null, null) == 1 && row(row.uri).trashed,
-          "Trash exact owned replacement fixture");
+      values.put(IS_TRASHED, trashed ? 1 : 0);
+      Bundle args = new Bundle();
+      args.putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_INCLUDE);
+      require(resolver.update(row.uri, values, args) == 1 && row(row.uri).trashed == trashed,
+          "Change trash state for the exact owned replacement fixture");
     }
 
     void removeOwned(Row row) throws IOException {
