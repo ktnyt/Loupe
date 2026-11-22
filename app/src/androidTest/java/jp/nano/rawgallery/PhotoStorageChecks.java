@@ -28,6 +28,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.widget.ListView;
 import android.widget.TextView;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -60,6 +61,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
 import jp.nano.rawgallery.camera.CameraImportFile;
+import jp.nano.rawgallery.camera.CameraImportGate;
 import jp.nano.rawgallery.camera.CameraImportHistoryPlan;
 import jp.nano.rawgallery.camera.CameraImportLegacy;
 import jp.nano.rawgallery.camera.CameraImportLedger;
@@ -91,6 +93,14 @@ final class PhotoStorageChecks {
     String secondary = secondaryArg == null ? secondaryVolume(base) : secondaryArg.toLowerCase(Locale.ROOT);
     require(!PRIMARY.equals(secondary), "Expected a secondary volume");
     if (mode.startsWith("photo-storage-saf-")) return saf(base, mode, secondary);
+    if ("photo-storage-inventory".equals(mode)) {
+      PhotoStorage.requireWritable(base, secondary);
+      try (Fixture fixture = new Fixture(base, secondary)) {
+        checkInventory(fixture);
+      }
+      return "PASS photo storage inventory: exact locations, exclusion evidence, unresolved record counts, "
+          + "unavailable destination, import and move guards, viewer location resolution, and read-only data";
+    }
     if (mode.startsWith("photo-storage-abandon-detach-")) return abandonDetached(base, mode, secondary);
     if (!"photo-storage".equals(mode)) return detach(base, mode, secondary);
     PhotoStorage.requireWritable(base, secondary);
@@ -680,6 +690,19 @@ final class PhotoStorageChecks {
           "Saving the selected secondary volume succeeds");
       require(Arrays.equals(original, f.read(first.uri)), "Changing the setting leaves existing files in place");
       try (PhotoMove move = f.move(ledger, history, boundary -> {})) {
+        var beforeInventory = move.inventory(f.secondary);
+        require(beforeInventory.photos().size() == 2 && beforeInventory.unresolved().stream()
+            .mapToInt(PhotoStorageInventory.History::count).sum() == 1,
+            "Read-only inventory deduplicates ledger and legacy aggregate evidence and does not include unrelated photos");
+        requireInventoryPhoto(beforeInventory, first.uri, source.name, f.path, PhotoStorageInventory.Status.ELIGIBLE);
+        requireInventoryPhoto(beforeInventory, legacy, legacyKey.getFileName(), f.path, PhotoStorageInventory.Status.ELIGIBLE);
+        require(Arrays.equals(original, f.read(first.uri)) && Arrays.equals(legacyBytes, f.read(legacy))
+            && before.uri.equals(ledger.known(source).uri) && ledger.receiptCount() == 2
+            && history.photoImportRecords(MODEL, f.id).stream().anyMatch(entry -> entry.key.equals(imported.asString())
+                && entry.uri.equals(legacyAlias) && entry.deleted)
+            && tags.load().value(tag.id, tagId) == TagJudgments.Value.ASSIGNED
+            && ranking.singleBest(photoKey) && shares.history(photoKey).size() == 1 && move.batch() == null,
+            "Listing preserves original bytes, legacy deletion evidence, ledger, tag, rank, share and move state");
         PhotoMove.Plan plan = move.plan(f.secondary);
         require(plan.items().size() == 2 && plan.skipped() == 1,
             "Select the imported and legacy items, skipping missing history (eligible=" + plan.items().size()
@@ -693,6 +716,15 @@ final class PhotoStorageChecks {
       CameraImportLedger.Content after = ledger.known(source);
       Uri moved = Uri.parse(after.uri);
       require(!first.uri.equals(moved) && f.secondary.equals(PhotoStorage.volumeOf(moved)), "Receipt points to the actual SD photo");
+      try (PhotoMove move = f.move(ledger, history, boundary -> {})) {
+        var movedInventory = move.inventory(f.secondary);
+        require(movedInventory.photos().size() == 2 && movedInventory.photos().stream()
+            .allMatch(photo -> photo.status() == PhotoStorageInventory.Status.ALREADY_THERE
+                && f.secondary.equals(photo.location().volume()))
+            && movedInventory.unresolved().stream().mapToInt(PhotoStorageInventory.History::count).sum() == 1,
+            "Completed move remains listed at the actual card while the missing history is still unresolved");
+        requireInventoryPhoto(movedInventory, moved, source.name, f.path, PhotoStorageInventory.Status.ALREADY_THERE);
+      }
       require(f.rows(PRIMARY).stream().map(Row::uri).collect(java.util.stream.Collectors.toList()).equals(List.of(unrelated)),
           "Only primary originals in import history are removed");
       require(Arrays.equals(original, f.read(moved)) && Arrays.equals(other, f.read(sameName))
@@ -1025,6 +1057,172 @@ final class PhotoStorageChecks {
           && Arrays.equals(freshBytes, f.read(Uri.parse(ledger.known(fresh).uri)))
           && uri.toString().equals(ledger.known(source).uri), "The new batch succeeds without touching the old receipt");
     }
+  }
+
+  private static void checkInventory(Fixture f) throws Exception {
+    byte[] dated = jpegWithCaptureTime(f, 0xff335555, CAPTURE, CAPTURE + 1);
+    byte[] undated = jpeg(0xff444433);
+    Uri primary = f.insertDatedLegacyPhoto("PRIMARY.JPG", dated);
+    Uri sd = f.insert(f.secondary, "ON-SD.JPG", dated);
+    require(f.awaitCaptureTime(sd, CAPTURE * 1000) == CAPTURE * 1000, "Fixture card photo has the recorded capture time");
+    Uri name = f.insertDatedLegacyPhoto("NEW-NAME.JPG", dated);
+    Uri size = f.insertDatedLegacyPhoto("SIZE.JPG", dated);
+    Uri absentDate = f.insert(PRIMARY, "NO-DATE.JPG", undated, 0);
+    require(f.awaitCaptureTime(absentDate, 0) == 0, "Fixture has no recorded MediaStore capture time");
+    Uri date = f.insertDatedLegacyPhoto("OTHER-DATE.JPG", dated);
+    Uri pending = f.insertPending(PRIMARY, "PENDING.JPG", dated, CAPTURE * 1000);
+    Uri trashed = f.insertDatedLegacyPhoto("TRASH.JPG", dated);
+    f.trashOwned(f.row(trashed));
+    Uri missingCard = ContentUris.withAppendedId(MediaStore.Images.Media.getContentUri(MISSING), Long.MAX_VALUE);
+    Uri unknownAggregate = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, Long.MAX_VALUE);
+    try (CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         PhotoMove move = f.move(ledger, history, boundary -> {})) {
+      recordFixtureHistory(history, f, "PRIMARY.JPG", dated.length, CAPTURE, primary.toString());
+      recordFixtureHistory(history, f, "ON-SD.JPG", dated.length, CAPTURE, sd.toString());
+      recordFixtureHistory(history, f, "OLD-NAME.JPG", dated.length, CAPTURE, name.toString());
+      recordFixtureHistory(history, f, "SIZE.JPG", dated.length + 16, CAPTURE, size.toString());
+      recordFixtureHistory(history, f, "NO-DATE.JPG", undated.length, CAPTURE, absentDate.toString());
+      recordFixtureHistory(history, f, "OTHER-DATE.JPG", dated.length, CAPTURE + 60, date.toString());
+      recordFixtureHistory(history, f, "PENDING.JPG", dated.length, CAPTURE, pending.toString());
+      recordFixtureHistory(history, f, "TRASH.JPG", dated.length, CAPTURE, trashed.toString());
+      recordFixtureHistory(history, f, "DETACHED.JPG", dated.length, CAPTURE, missingCard.toString());
+      recordFixtureHistory(history, f, "DETACHED.JPG", dated.length + 16, CAPTURE, missingCard.toString());
+      recordFixtureHistory(history, f, "UNKNOWN.JPG", dated.length, CAPTURE, unknownAggregate.toString());
+      recordFixtureHistory(history, f, "NO-URI.JPG", dated.length, CAPTURE, "existing");
+      List<HistoryDb.MoveEvidence> oldEvidence = history.moveEvidence();
+      List<Row> primaryRows = f.rows(PRIMARY), cardRows = f.rows(f.secondary);
+      require(PhotoStorage.select(f.context, f.secondary), "Set the synthetic inventory destination");
+      PhotoStorageInventory inventory = move.inventory(f.secondary);
+      require(inventory.photos().size() == 8 && inventory.unresolved().stream().mapToInt(PhotoStorageInventory.History::count).sum() == 4,
+          "Unresolved legacy records are not counted as located photographs");
+      requireInventoryPhoto(inventory, primary, "PRIMARY.JPG", f.path, PhotoStorageInventory.Status.ELIGIBLE);
+      requireInventoryPhoto(inventory, sd, "ON-SD.JPG", f.path, PhotoStorageInventory.Status.ALREADY_THERE);
+      require(requireInventoryPhoto(inventory, name, "NEW-NAME.JPG", f.path, PhotoStorageInventory.Status.EXCLUDED,
+              PhotoStorageInventory.Reason.HISTORY_NAME).recordedName().equals("OLD-NAME.JPG"),
+          "Show the current file name separately from the historical mismatch");
+      requireInventoryPhoto(inventory, size, "SIZE.JPG", f.path, PhotoStorageInventory.Status.EXCLUDED,
+          PhotoStorageInventory.Reason.HISTORY_SIZE);
+      requireInventoryPhoto(inventory, absentDate, "NO-DATE.JPG", f.path, PhotoStorageInventory.Status.EXCLUDED,
+          PhotoStorageInventory.Reason.HISTORY_CAPTURE_MISSING);
+      requireInventoryPhoto(inventory, date, "OTHER-DATE.JPG", f.path, PhotoStorageInventory.Status.EXCLUDED,
+          PhotoStorageInventory.Reason.HISTORY_CAPTURE_DIFFERS);
+      requireInventoryPhoto(inventory, pending, "PENDING.JPG", f.path, PhotoStorageInventory.Status.EXCLUDED,
+          PhotoStorageInventory.Reason.PENDING);
+      requireInventoryPhoto(inventory, trashed, "TRASH.JPG", f.path, PhotoStorageInventory.Status.EXCLUDED,
+          PhotoStorageInventory.Reason.TRASHED);
+      require(inventory.unresolved().stream().filter(row -> row.name().equals("DETACHED.JPG")
+              && row.reason() == PhotoStorageInventory.Reason.MISSING_REFERENCE
+              && row.location().kind() == PhotoStorageLocation.Kind.RECORDED && MISSING.equals(row.location().volume())
+              && row.location().availability() == PhotoStorageLocation.Availability.UNAVAILABLE)
+          .mapToInt(PhotoStorageInventory.History::count).sum() == 2,
+          "A detached card keeps the recorded location and counts both history records");
+      require(inventory.unresolved().stream().anyMatch(row -> row.name().equals("UNKNOWN.JPG")
+              && row.location().kind() == PhotoStorageLocation.Kind.UNKNOWN && row.location().volume() == null)
+          && inventory.unresolved().stream().anyMatch(row -> row.name().equals("NO-URI.JPG")
+              && row.reason() == PhotoStorageInventory.Reason.NO_FILE_REFERENCE),
+          "An unresolved aggregate URI never implies internal storage, and a missing URI has a distinct reason");
+      PhotoStorageInventory withDetachedTarget = move.inventory(MISSING);
+      requireInventoryPhoto(withDetachedTarget, primary, "PRIMARY.JPG", f.path, PhotoStorageInventory.Status.EXCLUDED,
+          PhotoStorageInventory.Reason.DESTINATION_UNAVAILABLE);
+      requireInventoryPhoto(withDetachedTarget, sd, "ON-SD.JPG", f.path, PhotoStorageInventory.Status.EXCLUDED,
+          PhotoStorageInventory.Reason.DESTINATION_UNAVAILABLE);
+      require(f.secondary.equals(PhotoStorage.selected(f.context)), "Read-only inventory does not update the save destination");
+      PhotoMove.Plan plan = move.plan(f.secondary);
+      require(plan.items().size() == 1 && plan.items().get(0).source().equals(primary.toString()) && plan.skipped() == 9,
+          "The actual move plan retains its prior eligible and skipped reference semantics");
+      assertInventoryGuards(move, f.secondary, plan);
+      checkLocationResolution(f, primary, sd, missingCard, unknownAggregate, dated.length);
+      require(history.moveEvidence().equals(oldEvidence) && ledger.receiptCount() == 0 && ledger.contentCount() == 0
+          && move.batch() == null && new HashSet<>(f.rows(PRIMARY)).equals(new HashSet<>(primaryRows))
+          && new HashSet<>(f.rows(f.secondary)).equals(new HashSet<>(cardRows)), "Listing does not change any file or history row");
+      for (Uri uri : List.of(primary, sd, name, size, date, pending)) {
+        require(Arrays.equals(dated, f.read(uri)), "Inventory preserves every selected synthetic original");
+      }
+      require(Arrays.equals(undated, f.read(absentDate)), "The undated original remains unchanged");
+    } finally {
+      f.setTrashed(f.row(trashed), false);
+    }
+  }
+
+  private static void recordFixtureHistory(HistoryDb history, Fixture fixture, String name, long size, long shot, String uri) {
+    history.recordImport(MODEL, fixture.id, new ImportedKey(name, size, shot), uri);
+  }
+
+  private static PhotoStorageInventory.Photo requireInventoryPhoto(PhotoStorageInventory listing, Uri uri, String name,
+      String folder, PhotoStorageInventory.Status status, PhotoStorageInventory.Reason... reasons) {
+    var photo = listing.photos().stream().filter(row -> uri.equals(row.uri())).findFirst().orElseThrow();
+    require(name.equals(photo.name()) && status == photo.status() && photo.location().kind() == PhotoStorageLocation.Kind.CURRENT
+        && PhotoStorage.volumeOf(uri).equals(photo.location().volume()) && folder.equals(photo.location().folder()),
+        "Inventory shows exact MediaStore name, status, folder and volume for the fixture");
+    require(photo.reasons().containsAll(List.of(reasons)) && (reasons.length > 0 || photo.reasons().isEmpty()),
+        "Inventory exposes the expected specific exclusion evidence");
+    return photo;
+  }
+
+  private static void assertInventoryGuards(PhotoMove move, String secondary, PhotoMove.Plan plan) throws Exception {
+    CountDownLatch locked = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    Thread importThread = new Thread(() -> {
+      CameraImportGate.lock.lock();
+      try {
+        locked.countDown();
+        release.await(10, TimeUnit.SECONDS);
+      } catch (InterruptedException stopped) {
+        Thread.currentThread().interrupt();
+      } finally {
+        CameraImportGate.lock.unlock();
+      }
+    });
+    importThread.start();
+    try {
+      require(locked.await(5, TimeUnit.SECONDS), "Hold import gate on another worker");
+      expectInventoryBlocked(move, secondary);
+    } finally {
+      release.countDown();
+      importThread.join(5000);
+    }
+    move.begin(plan);
+    expectInventoryBlocked(move, secondary);
+    move.abandon();
+  }
+
+  private static void expectInventoryBlocked(PhotoMove move, String secondary) throws IOException {
+    try {
+      move.inventory(secondary);
+      throw new CheckFailure("Inventory published a snapshot while history could be incomplete");
+    } catch (PhotoMove.Failure expected) {
+      require(expected.getMessage() != null && !expected.getMessage().isBlank(), "The blocked inventory provides guidance");
+    }
+  }
+
+  private static void checkLocationResolution(Fixture f, Uri primary, Uri sd, Uri detached, Uri missingAggregate, int size) {
+    var primaryLocation = PhotoStorageLocation.resolve(f.context,
+        new PhotoRepository.Photo(primary, "PRIMARY.JPG", f.path, size, 0, 0));
+    require(primaryLocation.kind() == PhotoStorageLocation.Kind.CURRENT && PRIMARY.equals(primaryLocation.volume())
+        && f.path.equals(primaryLocation.folder()), "Viewer location confirms a real exact primary original");
+    Uri cardAggregate = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, ContentUris.parseId(sd));
+    var cardLocation = PhotoStorageLocation.resolve(f.context,
+        new PhotoRepository.Photo(cardAggregate, "ON-SD.JPG", f.path, size, 0, 0));
+    require(cardLocation.kind() == PhotoStorageLocation.Kind.CURRENT && f.secondary.equals(cardLocation.volume()),
+        "Viewer location identifies a unique aggregate MediaStore match on SD");
+    var detachedLocation = PhotoStorageLocation.resolve(f.context,
+        new PhotoRepository.Photo(detached, "DETACHED.JPG", f.path, size, 0, 0));
+    require(detachedLocation.kind() == PhotoStorageLocation.Kind.RECORDED && MISSING.equals(detachedLocation.volume()),
+        "Viewer does not present a detached volume as currently accessible");
+    Uri document = DocumentsContract.buildDocumentUri(DOCUMENTS_AUTHORITY, MISSING + ":" + f.path + "DETACHED.JPG");
+    var documentLocation = PhotoStorageLocation.resolve(f.context,
+        new PhotoRepository.Photo(document, "DETACHED.JPG", f.path, size, 0, 0));
+    require(documentLocation.kind() == PhotoStorageLocation.Kind.RECORDED && MISSING.equals(documentLocation.volume()),
+        "Recognized but unverifiable SAF retains recorded volume only");
+    for (Uri unknown : List.of(missingAggregate, Uri.parse("content://test.synthetic/opaque/1"))) {
+      var location = PhotoStorageLocation.resolve(f.context, new PhotoRepository.Photo(unknown, "UNKNOWN.JPG", f.path, size, 0, 0));
+      require(location.kind() == PhotoStorageLocation.Kind.UNKNOWN && location.volume() == null,
+          "Opaque and unmatched aggregate references never infer the original location");
+    }
+    var cloud = PhotoStorageLocation.resolve(f.context,
+        new PhotoRepository.Photo(Uri.parse("archive://synthetic/photo"), "CLOUD.JPG", f.path, size, 0, 0));
+    require(cloud.kind() == PhotoStorageLocation.Kind.CLOUD && cloud.volume() == null && cloud.folder().isEmpty(),
+        "A cloud original is not assigned a local volume or stale folder");
   }
 
   private static void rejectStaleHistory(Fixture f) throws Exception {
@@ -1414,6 +1612,227 @@ final class PhotoStorageChecks {
     }
   }
 
+  static String captureInventoryUi(ArchiveInstrumentation test, String secondaryArg, int width, float font, int records)
+      throws Exception {
+    Context base = test.getTargetContext();
+    require(TARGET_PACKAGE.equals(base.getPackageName()), "Inventory captures require the isolated APK");
+    require(Build.HARDWARE.equals("ranchu") || Build.HARDWARE.equals("goldfish"), "Inventory captures require an Android emulator");
+    require(records > 0 && records <= 1900, "Unsupported synthetic history count");
+    String secondary = secondaryArg == null ? secondaryVolume(base) : secondaryArg.toLowerCase(Locale.ROOT);
+    PhotoStorage.requireWritable(base, secondary);
+    SharedPreferences settings = base.getSharedPreferences("settings", 0);
+    String previous = settings.getString("photo_volume", null);
+    HistoryDb history = HistoryDb.Companion.get(base);
+    CameraImportLedger ledger = CameraImportLedger.get(base);
+    require(history.importDestinations().isEmpty() && ledger.importDestinations().isEmpty(),
+        "Inventory capture requires clean isolated import histories");
+    try (PhotoMoveStore journal = new PhotoMoveStore(base)) {
+      require(journal.batch() == null && !PhotoMoveService.state().running(), "Inventory capture requires an idle journal");
+    }
+    File captures = new File(base.getCacheDir(), "photo-storage-checks");
+    require(captures.isDirectory() || captures.mkdirs(), "Create Android capture directory");
+    String profile = "inventory-" + width + "-" + font;
+    try (Fixture fixture = new Fixture(base, secondary)) {
+      byte[] image = jpegWithCaptureTime(fixture, 0xff52748e, CAPTURE, CAPTURE + 1);
+      Uri primary = fixture.insertDatedLegacyPhoto("CURRENT-FILE.JPG", image);
+      Uri card = fixture.insert(secondary, "ON-CARD.JPG", image);
+      require(fixture.awaitCaptureTime(card, CAPTURE * 1000) == CAPTURE * 1000, "Card fixture has exact capture evidence");
+      Uri recorded = ContentUris.withAppendedId(MediaStore.Images.Media.getContentUri(MISSING), Long.MAX_VALUE);
+      SQLiteDatabase db = history.getWritableDatabase();
+      try {
+        db.beginTransaction();
+        try {
+          recordFixtureHistory(history, fixture, "RECORDED-NAME.JPG", image.length, CAPTURE, primary.toString());
+          recordFixtureHistory(history, fixture, "ON-CARD.JPG", image.length, CAPTURE, card.toString());
+          for (int i = 0; i < records; i++) recordFixtureHistory(history, fixture,
+              String.format(Locale.ROOT, "UNRESOLVED-%04d.JPG", i), image.length, CAPTURE, recorded.toString());
+          db.setTransactionSuccessful();
+        } finally {
+          db.endTransaction();
+        }
+        List<HistoryDb.MoveEvidence> before = history.moveEvidence();
+        require(PhotoStorage.select(base, secondary), "Choose the card for the inventory capture");
+        captureInventoryScreens(test, base, secondary, captures, profile, records);
+        require(Arrays.equals(image, fixture.read(primary)) && Arrays.equals(image, fixture.read(card))
+            && history.moveEvidence().equals(before) && ledger.importDestinations().isEmpty(),
+            "Opening, filtering, viewing and reloading do not change photos or import histories");
+        try (PhotoMoveStore journal = new PhotoMoveStore(base)) {
+          require(journal.batch() == null, "Inventory interactions do not start a move");
+        }
+      } finally {
+        history.resetHistory(MODEL, fixture.id);
+      }
+    } finally {
+      SharedPreferences.Editor restore = settings.edit();
+      if (previous == null) restore.remove("photo_volume");
+      else restore.putString("photo_volume", previous);
+      require(restore.commit(), "Restore the previous isolated app destination");
+    }
+    return "PASS photo storage inventory UI requested " + width + "dp, effective " + test.photoStorageEffectiveWidth()
+        + "dp, font " + font + ": zero eligible, exact volumes, history details, " + records
+        + " virtualized records, retry and back. " + captures.getAbsolutePath();
+  }
+
+  private static void captureInventoryScreens(ArchiveInstrumentation test, Context base, String secondary, File captures,
+      String profile, int records) throws Exception {
+    Activity settings = test.startActivitySync(new Intent(base, PhotoStorageActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    Instrumentation.ActivityMonitor monitor = test.addMonitor(PhotoStorageInventoryActivity.class.getName(), null, false);
+    Activity inventory = null;
+    try {
+      UiAutomation automation = test.getUiAutomation();
+      String openLabel = "保存場所と移動対象外の理由を見る";
+      String moveLabel = "取り込み済みの写真を移動";
+      Predicate<AccessibilityNodeInfo> open = node -> hasText(node, openLabel);
+      Predicate<AccessibilityNodeInfo> noEligible = node -> mentions(node, "移動できる取り込み済みの写真はありません。")
+          && mentions(node, "移動対象外 2件");
+      String cardLabel = new PhotoStorageLocation.Volumes(base).location(
+          PhotoStorageLocation.Kind.CURRENT, secondary, "").label();
+      Predicate<AccessibilityNodeInfo> overview = node -> mentions(node, "確認できた写真 2枚")
+          && mentions(node, "内部ストレージ 1枚") && mentions(node, cardLabel + " 1枚")
+          && mentions(node, "確認が必要な履歴 " + records + "件");
+      awaitStorageControl(automation, overview);
+      click(awaitStorageControl(automation, node -> hasText(node, moveLabel) && node.isEnabled()));
+      awaitStorageControl(automation, noEligible);
+      captureSettled(test, automation, captures, profile + "-zero-eligible", noEligible);
+      AccessibilityNodeInfo opening = awaitStorageControl(automation, open);
+      assertWindowWidth(test, settings);
+      assertTouchTarget(test, settings, opening, openLabel);
+      click(opening);
+      inventory = test.waitForMonitorWithTimeout(monitor, 6000);
+      require(inventory instanceof PhotoStorageInventoryActivity, "Settings opens its real inventory activity");
+      final Activity listing = inventory;
+      Predicate<AccessibilityNodeInfo> summary = node -> mentions(node, "確認できた写真 2枚")
+          && mentions(node, "確認が必要な履歴 " + records + "件");
+      awaitNode(automation, summary);
+      assertWindowWidth(test, listing);
+      assertTouchTarget(test, listing, awaitNode(automation, node -> hasText(node, "絞り込み")), "絞り込み");
+      assertTouchTarget(test, listing, awaitNode(automation, node -> hasText(node, "再読み込み")), "再読み込み");
+      assertAccessibilityTarget(listing, awaitNode(automation, node -> "写真の保存場所を閉じる".contentEquals(
+          node.getContentDescription() == null ? "" : node.getContentDescription())), "Close inventory");
+      assertVirtualizedInventory(test, listing, records + 2);
+      captureSettled(test, automation, captures, profile + "-all", summary);
+
+      openInventoryFilter(automation);
+      captureSettled(test, automation, captures, profile + "-filters", node -> hasText(node, "表示する項目"));
+      click(awaitStorageControl(automation, node -> hasText(node, cardLabel)));
+      Predicate<AccessibilityNodeInfo> onCard = node -> mentions(node, "ON-CARD.JPG") && mentions(node, cardLabel);
+      AccessibilityNodeInfo cardRow = awaitNode(automation, onCard);
+      assertAccessibilityTarget(listing, cardRow, "Located photo row");
+      assertVirtualizedInventory(test, listing, 1);
+      click(cardRow);
+      Predicate<AccessibilityNodeInfo> cardDetail = node -> mentions(node, "ON-CARD.JPG") && mentions(node, cardLabel)
+          && mentions(node, "Pictures/CameraSync/");
+      awaitStorageControl(automation, cardDetail);
+      captureSettled(test, automation, captures, profile + "-card-detail", cardDetail);
+      click(awaitStorageControl(automation, node -> hasText(node, "閉じる")));
+
+      openInventoryFilter(automation);
+      click(awaitStorageControl(automation, node -> hasText(node, "内部ストレージ")));
+      click(awaitNode(automation, node -> mentions(node, "CURRENT-FILE.JPG") && mentions(node, "内部ストレージ")));
+      Predicate<AccessibilityNodeInfo> mismatch = node -> mentions(node, "RECORDED-NAME.JPG")
+          && mentions(node, PhotoStorageInventory.Reason.HISTORY_NAME.label());
+      awaitStorageControl(automation, mismatch);
+      captureSettled(test, automation, captures, profile + "-mismatch-detail", mismatch);
+      click(awaitStorageControl(automation, node -> hasText(node, "閉じる")));
+
+      openInventoryFilter(automation);
+      click(awaitStorageControl(automation, node -> hasText(node, "確認が必要")));
+      Predicate<AccessibilityNodeInfo> unresolved = node -> mentions(node, "UNRESOLVED-0000.JPG")
+          && mentions(node, "記録上は") && mentions(node, MISSING.toUpperCase(Locale.ROOT));
+      click(awaitStorageControl(automation, unresolved));
+      Predicate<AccessibilityNodeInfo> recordedDetail = node -> mentions(node, "UNRESOLVED-0000.JPG")
+          && mentions(node, PhotoStorageInventory.Reason.MISSING_REFERENCE.label());
+      awaitStorageControl(automation, recordedDetail);
+      captureSettled(test, automation, captures, profile + "-recorded-detail", recordedDetail);
+      click(awaitStorageControl(automation, node -> hasText(node, "閉じる")));
+      openInventoryFilter(automation);
+      click(awaitStorageControl(automation, node -> hasText(node, "移動対象外")));
+      awaitNode(automation, node -> mentions(node, "CURRENT-FILE.JPG") && mentions(node, PhotoStorageInventory.Reason.HISTORY_NAME.label()));
+
+      require(CameraImportGate.lock.tryLock(), "Acquire the import gate for a blocked UI refresh");
+      try {
+        click(awaitNode(automation, node -> hasText(node, "再読み込み")));
+        Predicate<AccessibilityNodeInfo> blocked = node -> mentions(node, "取り込みや移動が終わってから保存場所を確認してください。");
+        awaitNode(automation, blocked);
+        captureSettled(test, automation, captures, profile + "-blocked", blocked);
+      } finally {
+        CameraImportGate.lock.unlock();
+      }
+      click(awaitNode(automation, node -> hasText(node, "再読み込み")));
+      awaitNode(automation, node -> mentions(node, "CURRENT-FILE.JPG") && mentions(node, PhotoStorageInventory.Reason.HISTORY_NAME.label()));
+      click(awaitNode(automation, node -> "写真の保存場所を閉じる".contentEquals(
+          node.getContentDescription() == null ? "" : node.getContentDescription())));
+      awaitStorageControl(automation, open);
+    } finally {
+      test.removeMonitor(monitor);
+      Activity listing = inventory;
+      test.runOnMainSync(() -> {
+        if (listing != null) listing.finish();
+        settings.finish();
+      });
+      test.waitForIdleSync();
+    }
+  }
+
+  private static boolean mentions(AccessibilityNodeInfo node, String value) {
+    return node.getText() != null && node.getText().toString().contains(value)
+        || node.getContentDescription() != null && node.getContentDescription().toString().contains(value);
+  }
+
+  private static void openInventoryFilter(UiAutomation automation) {
+    click(awaitNode(automation, node -> hasText(node, "絞り込み")));
+    awaitNode(automation, node -> hasText(node, "表示する項目"));
+  }
+
+  private static AccessibilityNodeInfo awaitStorageControl(UiAutomation automation, Predicate<AccessibilityNodeInfo> match) {
+    long deadline = SystemClock.uptimeMillis() + 8000;
+    int scroll = AccessibilityNodeInfo.ACTION_SCROLL_FORWARD;
+    while (SystemClock.uptimeMillis() < deadline) {
+      var root = automation.getRootInActiveWindow();
+      var node = findNode(root, match);
+      if (node != null) return node;
+      var body = findNode(root, AccessibilityNodeInfo::isScrollable);
+      if (body != null && !body.performAction(scroll)) {
+        scroll = scroll == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+            ? AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD : AccessibilityNodeInfo.ACTION_SCROLL_FORWARD;
+      }
+      SystemClock.sleep(200);
+    }
+    throw new CheckFailure("Inventory accessibility control is not reachable by scrolling");
+  }
+
+  private static void assertAccessibilityTarget(Activity activity, AccessibilityNodeInfo node, String label) {
+    Rect bounds = new Rect();
+    node.getBoundsInScreen(bounds);
+    int minimum = GalleryUi.dp(activity, 48);
+    require(node.isClickable() && node.isEnabled() && bounds.width() >= minimum && bounds.height() >= minimum
+        && availableDisplay(activity).contains(bounds), label + " is accessible and has an unclipped 48dp touch target");
+  }
+
+  private static void assertVirtualizedInventory(Instrumentation test, Activity activity, int rows) {
+    int[] counts = new int[2];
+    test.runOnMainSync(() -> {
+      ListView list = findInventoryList(activity.getWindow().getDecorView());
+      if (list != null) {
+        counts[0] = list.getCount();
+        counts[1] = list.getChildCount();
+      }
+    });
+    require(counts[0] == rows && counts[1] > 0 && counts[1] <= Math.min(rows, 40),
+        "Only a viewport-sized set of native rows is attached for the expected adapter count");
+  }
+
+  private static ListView findInventoryList(View view) {
+    if (view instanceof ListView list) return list;
+    if (view instanceof ViewGroup container) {
+      for (int i = 0; i < container.getChildCount(); i++) {
+        ListView list = findInventoryList(container.getChildAt(i));
+        if (list != null) return list;
+      }
+    }
+    return null;
+  }
+
   static String captureUi(ArchiveInstrumentation test, String secondaryArg, int width, float font, boolean runMove,
       int skipped) throws Exception {
     Context base = test.getTargetContext();
@@ -1517,12 +1936,11 @@ final class PhotoStorageChecks {
       awaitNode(automation, node -> hasText(node, label) && !node.isCheckable());
       require(secondary.equals(PhotoStorage.selected(base)), "Radio selection persists the secondary volume");
 
-      click(awaitNode(automation, node -> hasText(node, "取り込み済みの写真を移動")));
+      click(awaitStorageControl(automation, node -> hasText(node, "取り込み済みの写真を移動") && node.isEnabled()));
       Predicate<AccessibilityNodeInfo> confirmation = node -> {
         String message = node.getText() == null ? "" : node.getText().toString();
-        return message.contains(label + "に1枚") && (skipped == 0 ? message.contains("移動できない写真は0枚です。")
-            : message.contains("移動できない写真が1枚あります。")
-                && message.contains("現在読み取れない写真は対象外です。"));
+        return message.contains(label + "に1枚") && (skipped == 0 ? !message.contains("移動対象外")
+            : message.contains("移動対象外 1件") && message.contains("保存場所の一覧で理由を確認できます。"));
       };
       awaitNode(automation, confirmation);
       captureSettled(test, automation, captures, profile + "-confirm", confirmation);
@@ -1545,7 +1963,9 @@ final class PhotoStorageChecks {
     boolean progress = false;
     Predicate<AccessibilityNodeInfo> completed = node -> node.getText() != null
         && node.getText().toString().contains("写真を1枚移動しました。")
-        && node.getText().toString().contains("未処理0枚、移動できない写真は" + skipped + "枚です。");
+        && node.getText().toString().contains("未処理0枚。")
+        && (skipped == 0 ? !node.getText().toString().contains("移動対象外")
+            : node.getText().toString().contains("移動対象外 " + skipped + "件。"));
     Predicate<AccessibilityNodeInfo> moving = node -> node.getContentDescription() != null
         && "写真の移動の進捗".contentEquals(node.getContentDescription());
     while (SystemClock.uptimeMillis() < deadline) {
@@ -1623,7 +2043,7 @@ final class PhotoStorageChecks {
     return new Rect(position[0], position[1], position[0] + view.getWidth(), position[1] + view.getHeight());
   }
 
-  private static void assertWindowWidth(ArchiveInstrumentation test, PhotoStorageActivity activity) {
+  private static void assertWindowWidth(ArchiveInstrumentation test, Activity activity) {
     test.runOnMainSync(() -> {
       int effectiveWidth = test.photoStorageEffectiveWidth();
       Rect display = availableDisplay(activity);
@@ -1635,7 +2055,7 @@ final class PhotoStorageChecks {
     });
   }
 
-  private static void assertTouchTarget(Instrumentation test, PhotoStorageActivity activity,
+  private static void assertTouchTarget(Instrumentation test, Activity activity,
       AccessibilityNodeInfo node, String name) {
     Rect accessBounds = new Rect();
     node.getBoundsInScreen(accessBounds);
@@ -1766,6 +2186,9 @@ final class PhotoStorageChecks {
       PhotoRepository.Photo grantedDocument = readLegacyDocumentPhoto(f, tree, mediaSource.name);
       assertDocumentReadable(f, oldDocument, legacyDocumentBytes);
       assertDocumentReadable(f, grantedDocument, existingMediaBytes);
+      var documentLocation = PhotoStorageLocation.resolve(f.context, oldDocument);
+      require(documentLocation.kind() == PhotoStorageLocation.Kind.CURRENT && secondary.equals(documentLocation.volume())
+          && f.path.equals(documentLocation.folder()), "Viewer location follows the explicitly granted SD document");
       RankingStore ranking = new RankingStore(f.context);
       LegacyLabels documentLabels = seedOldLabels(oldDocument, tags, ranking, shares);
       LegacyLabels mediaLabels = new LegacyLabels(marker.getString("mediaKey", null), marker.getString("mediaTag", null),
@@ -2082,6 +2505,14 @@ final class PhotoStorageChecks {
     }
 
     Uri insert(String volume, String name, byte[] bytes, long dateTaken) throws IOException {
+      Uri uri = insertPending(volume, name, bytes, dateTaken);
+      ContentValues publish = new ContentValues();
+      publish.put(IS_PENDING, 0);
+      require(resolver.update(uri, publish, null, null) == 1, "Publish fixture");
+      return uri;
+    }
+
+    Uri insertPending(String volume, String name, byte[] bytes, long dateTaken) throws IOException {
       ContentValues values = new ContentValues();
       values.put(DISPLAY_NAME, name);
       values.put(RELATIVE_PATH, path);
@@ -2091,9 +2522,6 @@ final class PhotoStorageChecks {
       Uri uri = resolver.insert(MediaStore.Images.Media.getContentUri(volume), values);
       require(uri != null, "Insert fixture under unique folder");
       write(uri, bytes);
-      ContentValues publish = new ContentValues();
-      publish.put(IS_PENDING, 0);
-      require(resolver.update(uri, publish, null, null) == 1, "Publish fixture");
       return uri;
     }
 
