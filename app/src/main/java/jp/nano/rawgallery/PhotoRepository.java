@@ -148,10 +148,8 @@ public final class PhotoRepository {
 
   public List<Photo> scan(String filter) throws IOException {
     LinkedHashMap<String, Photo> result = new LinkedHashMap<>();
-    Map<String, PhotoMoveStore.Identity> moved;
     PhotoMoveStore.Item moving;
     try (PhotoMoveStore store = new PhotoMoveStore(context)) {
-      moved = store.identities();
       moving = store.next();
     }
     String[] cols = {
@@ -193,8 +191,7 @@ public final class PhotoRepository {
                   c.getLong(5),
                   SyncPolicy.secondsToMillis(c.getLong(6)),
                   0);
-          PhotoMoveStore.Identity identity = moved.get(TagStore.locationSource(p));
-          result.put(pathKey(galleryVolume, folder, name), identity == null ? p : p.withIdentity(identity));
+          result.put(PhotoIdentityIndex.path(p), p);
         }
     } catch (SecurityException e) {
       /* Explicit document grants still work without media access. */
@@ -207,31 +204,29 @@ public final class PhotoRepository {
         hiddenMoveLocation = moving.stage() == PhotoMoveStore.REMAPPED ? source : target;
       }
     }
+    Map<String, Photo> media = new HashMap<>(result);
     for (UriPermission grant : context.getContentResolver().getPersistedUriPermissions())
       if (grant.isReadPermission() && DocumentsContract.isTreeUri(grant.getUri())) {
         try {
-          scanTree(grant.getUri(), DocumentsContract.getTreeDocumentId(grant.getUri()), result, moved, 0);
+          scanTree(grant.getUri(), DocumentsContract.getTreeDocumentId(grant.getUri()), result, 0);
         } catch (SecurityException e) {
           throw new IOException("フォルダの読み取り許可が失効しています", e);
         }
       }
     if (hiddenMoveLocation != null) result.remove(hiddenMoveLocation);
-    stabilizeLocalIdentities(result);
+    try (PhotoMoveStore store = new PhotoMoveStore(context)) {
+      PhotoIdentityIndex.resolve(context, store, result, media);
+    }
     Set<String> localArchiveKeys = new HashSet<>();
-    Set<String> localLegacyIdentities = new HashSet<>();
     for (Photo photo : result.values()) {
-      if (photo.movedIdentity != null) localArchiveKeys.add(photo.movedIdentity.archiveKey());
-      else localLegacyIdentities.add(ArchiveStore.legacyIdentity(photo));
+      localArchiveKeys.add(ArchiveStore.key(photo));
     }
     java.util.Map<String, String> amazonHashes = new java.util.HashMap<>();
     try (ArchiveStore store = new ArchiveStore(context)) {
       for (JSONObject record : store.all())
         if (record.has("sha")) {
           String path = archivePath(record);
-          String legacyIdentity = record.getString("folder") + record.getString("name") + ":"
-              + record.getLong("size") + ":" + record.getLong("modified");
-          if (!result.containsKey(path) && !localArchiveKeys.contains(record.getString("key"))
-              && !localLegacyIdentities.contains(legacyIdentity)) {
+          if (!result.containsKey(path) && !localArchiveKeys.contains(record.getString("key"))) {
             result.put(path, store.cloudPhoto(record));
             amazonHashes.put(path, record.getString("sha"));
           }
@@ -261,8 +256,7 @@ public final class PhotoRepository {
     return photos;
   }
 
-  private void scanTree(Uri tree, String id, Map<String, Photo> result,
-      Map<String, PhotoMoveStore.Identity> moved, int depth)
+  private void scanTree(Uri tree, String id, Map<String, Photo> result, int depth)
       throws IOException {
     if (depth > 16) throw new IOException("フォルダの階層が深すぎます");
     Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, id);
@@ -278,7 +272,7 @@ public final class PhotoRepository {
       while (c.moveToNext()) {
         String child = c.getString(0), name = c.getString(1), mime = c.getString(2);
         if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
-          scanTree(tree, child, result, moved, depth + 1);
+          scanTree(tree, child, result, depth + 1);
           continue;
         }
         if (!RawFormats.accepts(name) && !VideoFormats.accepts(name))
@@ -288,22 +282,21 @@ public final class PhotoRepository {
         String volume = external ? child.substring(0, separator).toLowerCase(Locale.ROOT) : "";
         String relative = child.substring(separator + 1);
         String folder = relative.substring(0, Math.max(0, relative.lastIndexOf('/') + 1));
-        String key = pathKey(!external || "primary".equals(volume) ? "external" : volume, folder, name);
+        Uri document = DocumentsContract.buildDocumentUriUsingTree(tree, child);
+        String key = PhotoIdentityIndex.path(document, folder, name);
         // Preexisting SAF rankings used the document ID's secondary-volume prefix as part of the folder.
         String originalFolder = external && !"primary".equals(volume) ? child.substring(0, separator + 1) + folder : folder;
         Photo previous = result.get(key);
-        if (previous != null && previous.movedIdentity != null) continue;
         Photo p =
             new Photo(
-                DocumentsContract.buildDocumentUriUsingTree(tree, child),
+                document,
                 name,
                 originalFolder,
                 c.getLong(3),
                 c.getLong(4) / 1000,
                 previous != null ? previous.taken : 0);
         if (previous == null || !android.os.Environment.isExternalStorageManager()) {
-          PhotoMoveStore.Identity identity = moved.get(TagStore.locationSource(p));
-          result.put(key, identity == null ? p : p.withIdentity(identity));
+          result.put(key, p);
         }
       }
     }
@@ -341,50 +334,23 @@ public final class PhotoRepository {
     return preferred;
   }
 
-  /** Keep legacy keys tied to the first observed photo even when its card is later detached. */
   void stabilizeLocalIdentities(Map<String, Photo> local) throws IOException {
     try (PhotoMoveStore store = new PhotoMoveStore(context)) {
-      Map<String, String> claims = store.archiveClaims(Map.of());
-      Map<String, String> missing = new HashMap<>();
-      for (Photo photo : local.values()) {
-        if (photo.movedIdentity != null) continue;
-        String legacy = ArchiveStore.legacyIdentity(photo);
-        // The old path-only gallery exposed the last reader when duplicates were present.
-        if (!claims.containsKey(legacy)) missing.put(legacy, TagStore.locationSource(photo));
-      }
-      if (!missing.isEmpty()) claims = store.archiveClaims(missing);
-      for (var entry : local.entrySet()) {
-        Photo photo = entry.getValue();
-        if (photo.movedIdentity != null) continue;
-        String location = TagStore.locationSource(photo);
-        if (!location.equals(claims.get(ArchiveStore.legacyIdentity(photo)))) {
-          entry.setValue(photo.withIdentity(new PhotoMoveStore.Identity(
-              archiveKeyForLocation(location), TagStore.source(photo))));
-        }
-      }
+      PhotoIdentityIndex.resolve(context, store, local, Map.of());
     }
   }
 
-  static String archiveKeyForLocation(PhotoMoveStore store, Photo photo) throws IOException {
-    String location = TagStore.locationSource(photo);
-    String legacy = ArchiveStore.legacyIdentity(photo);
-    if (location.equals(store.claimArchiveKey(legacy, location))) return digest(legacy);
-    return archiveKeyForLocation(location);
-  }
-
-  private static String archiveKeyForLocation(String location) throws IOException {
-    return digest("media-location\n" + location);
-  }
-
-  private static String pathKey(String volume, String folder, String name) {
-    return "external".equals(volume) ? folder + name : volume + "\n" + folder + name;
+  static PhotoMoveStore.Identity moveIdentity(Context context, PhotoMoveStore store, Photo media) throws IOException {
+    String path = PhotoIdentityIndex.path(media);
+    Map<String, Photo> visible = new HashMap<>();
+    visible.put(path, preferredDocument(context, media));
+    PhotoIdentityIndex.resolve(context, store, visible, Map.of(path, media));
+    Photo photo = visible.get(path);
+    return new PhotoMoveStore.Identity(ArchiveStore.key(photo), TagStore.source(photo), photo.sortTime());
   }
 
   private static String archivePath(JSONObject record) throws JSONException {
-    Uri uri = Uri.parse(record.optString("uri"));
-    String volume = "media".equals(uri.getAuthority()) ? PhotoStorage.volumeOf(uri) : PhotoStorage.PRIMARY;
-    return pathKey(PhotoStorage.PRIMARY.equals(volume) ? "external" : volume,
-        record.getString("folder"), record.getString("name"));
+    return PhotoIdentityIndex.path(Uri.parse(record.optString("uri")), record.getString("folder"), record.getString("name"));
   }
 
   private static String findMovedPath(Map<String, Photo> photos, String imageUri) {

@@ -5,10 +5,9 @@ import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
+import java.io.IOException;
+import java.util.UUID;
 
 /** One confirmed batch and stable aliases for photos that have been moved. */
 final class PhotoMoveStore extends SQLiteOpenHelper {
@@ -21,7 +20,7 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
   }
 
   PhotoMoveStore(Context context) {
-    super(context.getApplicationContext(), "photo-moves.db", null, 1);
+    super(context.getApplicationContext(), "photo-moves.db", null, 2);
     setWriteAheadLoggingEnabled(true);
   }
 
@@ -32,14 +31,29 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
         + "bytes INTEGER NOT NULL, token TEXT, target TEXT, sha TEXT, stage INTEGER NOT NULL DEFAULT 0, "
         + "archive_key TEXT, tag_source TEXT, sort_time INTEGER)");
     db.execSQL("CREATE INDEX items_stage ON items(stage)");
-    db.execSQL("CREATE TABLE identities (location TEXT PRIMARY KEY, archive_key TEXT NOT NULL, tag_source TEXT NOT NULL, sort_time INTEGER NOT NULL)");
-    db.execSQL("CREATE TABLE archive_claims (legacy_identity TEXT PRIMARY KEY, location TEXT NOT NULL)");
+    PhotoIdentityIndex.create(db);
     db.execSQL("CREATE TABLE revision (id INTEGER PRIMARY KEY CHECK(id=1), value INTEGER NOT NULL)");
     db.execSQL("INSERT INTO revision VALUES(1,0)");
   }
 
   @Override public void onUpgrade(SQLiteDatabase db, int from, int to) {
-    throw new IllegalStateException("Unsupported move journal upgrade");
+    if (from != 1 || to != 2) throw new IllegalStateException("Unsupported move journal upgrade");
+    PhotoIdentityIndex.create(db);
+    // Version 1 used an exact presentation URI and version for each moved destination.
+    db.execSQL("INSERT INTO local_photos SELECT location,'',archive_key,tag_source,sort_time,"
+        + "substr(location,1,instr(location,char(10))-1) FROM identities");
+    try (Cursor rows = db.rawQuery("SELECT legacy_identity,location FROM archive_claims", null)) {
+      while (rows.moveToNext()) {
+        String source = rows.getString(1);
+        db.execSQL("INSERT OR IGNORE INTO local_photos VALUES(?,'',?,?,0,NULL)",
+            new Object[]{source, PhotoRepository.digest(rows.getString(0)), TagStore.legacySource(source)});
+      }
+    } catch (IOException unavailable) {
+      throw new IllegalStateException("Could not migrate photo identities", unavailable);
+    }
+    db.execSQL("DROP TABLE identities");
+    db.execSQL("DROP TABLE archive_claims");
+    db.execSQL("UPDATE revision SET value=value+1 WHERE id=1");
   }
 
   Batch batch() {
@@ -117,12 +131,11 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
     update(item, values);
   }
 
-  void remapped(Item item, String location, Identity identity) {
+  void remapped(Item item, PhotoRepository.Photo target, Identity identity) {
     SQLiteDatabase db = getWritableDatabase();
     db.beginTransaction();
     try {
-      db.execSQL("INSERT OR REPLACE INTO identities VALUES(?,?,?,?)",
-          new Object[]{location, identity.archiveKey(), identity.tagSource(), identity.sortTime()});
+      PhotoIdentityIndex.save(db, target, identity, target.uri.toString());
       db.execSQL("UPDATE revision SET value=value+1 WHERE id=1");
       setStage(item, REMAPPED);
       db.setTransactionSuccessful();
@@ -147,12 +160,16 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
     }
   }
 
-  void abandon(String identityLocation) {
+  void abandon(String identityLocation, PhotoRepository.Photo retainedSource) throws IOException {
     SQLiteDatabase db = getWritableDatabase();
     db.beginTransaction();
     try {
       if (identityLocation != null)
-        db.delete("identities", "substr(location,1,length(?)+1)=? || char(10)", new String[]{identityLocation, identityLocation});
+        db.delete("local_photos", "move_uri=?", new String[]{identityLocation});
+      if (retainedSource != null) {
+        String duplicate = "retained-copy:" + UUID.randomUUID();
+        PhotoIdentityIndex.save(db, retainedSource, new Identity(PhotoRepository.digest(duplicate), duplicate), null);
+      }
       clearBatch(db);
       db.execSQL("UPDATE revision SET value=value+1 WHERE id=1");
       db.setTransactionSuccessful();
@@ -164,51 +181,6 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
   private static void clearBatch(SQLiteDatabase db) {
     db.delete("items", null, null);
     db.delete("batch", null, null);
-  }
-
-  Identity identity(String location) {
-    try (Cursor row = getReadableDatabase().rawQuery(
-        "SELECT archive_key,tag_source,sort_time FROM identities WHERE location=?", new String[]{location})) {
-      return row.moveToFirst() ? new Identity(row.getString(0), row.getString(1), row.getLong(2)) : null;
-    }
-  }
-
-  Map<String, Identity> identities() {
-    Map<String, Identity> out = new HashMap<>();
-    try (Cursor rows = getReadableDatabase().rawQuery(
-        "SELECT location,archive_key,tag_source,sort_time FROM identities", null)) {
-      while (rows.moveToNext()) out.put(rows.getString(0), new Identity(rows.getString(1), rows.getString(2), rows.getLong(3)));
-    }
-    return out;
-  }
-
-  Map<String, String> archiveClaims(Map<String, String> missing) {
-    SQLiteDatabase db = getWritableDatabase();
-    if (!missing.isEmpty()) {
-      db.beginTransaction();
-      try {
-        for (var entry : missing.entrySet()) {
-          db.execSQL("INSERT OR IGNORE INTO archive_claims VALUES(?,?)", new String[]{entry.getKey(), entry.getValue()});
-        }
-        db.setTransactionSuccessful();
-      } finally {
-        db.endTransaction();
-      }
-    }
-    Map<String, String> out = new HashMap<>();
-    try (Cursor rows = db.rawQuery("SELECT legacy_identity,location FROM archive_claims", null)) {
-      while (rows.moveToNext()) out.put(rows.getString(0), rows.getString(1));
-    }
-    return out;
-  }
-
-  String claimArchiveKey(String legacy, String location) {
-    SQLiteDatabase db = getWritableDatabase();
-    db.execSQL("INSERT OR IGNORE INTO archive_claims VALUES(?,?)", new String[]{legacy, location});
-    try (Cursor row = db.rawQuery("SELECT location FROM archive_claims WHERE legacy_identity=?", new String[]{legacy})) {
-      if (!row.moveToFirst()) throw new IllegalStateException("Archive key claim is missing");
-      return row.getString(0);
-    }
   }
 
   long revision() {

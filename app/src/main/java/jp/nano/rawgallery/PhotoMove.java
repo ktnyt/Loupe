@@ -255,7 +255,7 @@ final class PhotoMove implements AutoCloseable {
       Media published = verify(target, item.bytes(), item.sha(), true, stopped);
       if (!relocate(item, false)) throw new Failure("取り込みの記録を確認できません。元の写真を保持しました。");
       faults.after(Boundary.HISTORY_UPDATED);
-      store.remapped(item, TagStore.locationSource(published.photo()), item.identity());
+      store.remapped(item, published.photo(), item.identity());
       faults.after(Boundary.REMAPPED);
       item = store.next();
     }
@@ -286,17 +286,7 @@ final class PhotoMove implements AutoCloseable {
   }
 
   private PhotoMoveStore.Identity logicalIdentity(PhotoRepository.Photo photo) throws IOException {
-    PhotoMoveStore.Identity identity = store.identity(TagStore.locationSource(photo));
-    if (identity == null) {
-      photo = PhotoRepository.preferredDocument(context, photo);
-      identity = store.identity(TagStore.locationSource(photo));
-    }
-    if (identity == null) {
-      String key = PhotoRepository.archiveKeyForLocation(store, photo);
-      return new PhotoMoveStore.Identity(key, TagStore.source(photo), photo.sortTime());
-    }
-    if (identity.sortTime() > 0) return identity;
-    return new PhotoMoveStore.Identity(identity.archiveKey(), identity.tagSource(), photo.sortTime());
+    return PhotoRepository.moveIdentity(context, store, photo);
   }
 
   private boolean relocate(PhotoMoveStore.Item item, boolean reset) {
@@ -314,6 +304,7 @@ final class PhotoMove implements AutoCloseable {
     if (batch == null) throw new Failure("終了できる移動がありません。");
     PhotoMoveStore.Item item = store.next();
     String identity = null;
+    PhotoRepository.Photo retainedSource = null;
     if (item != null) {
       if (item.stage() == PhotoMoveStore.COPYING) {
         discardIncomplete(item, batch.volume());
@@ -324,15 +315,17 @@ final class PhotoMove implements AutoCloseable {
           // Complete the reference swap if the only verifiable copy is already at the destination.
           Media replacement = verify(Uri.parse(item.target()), item.bytes(), item.sha(), true, () -> false);
           if (!relocate(item, false)) throw new Failure("取り込みの記録を確認できません。");
-          store.remapped(item, TagStore.locationSource(replacement.photo()), item.identity());
+          store.remapped(item, replacement.photo(), item.identity());
         }
+      } else if (item.stage() == PhotoMoveStore.REMAPPED && publishedReplacement(item) && intactSource(item)) {
+        retainedSource = requireSource(item).photo();
       } else if (item.stage() == PhotoMoveStore.REMAPPED && !publishedReplacement(item) && intactSource(item)) {
         // If deletion already completed, the replacement remains the last known destination.
         relocate(item, true);
         identity = galleryUri(Uri.parse(item.target())).toString();
       }
     }
-    store.abandon(identity);
+    store.abandon(identity, retainedSource);
     return batch;
   }
 

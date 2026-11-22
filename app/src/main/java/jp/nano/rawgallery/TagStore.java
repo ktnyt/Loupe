@@ -208,12 +208,16 @@ final class TagStore extends SQLiteOpenHelper {
   /** Location and observed version, never a claim of byte identity. */
   static String source(PhotoRepository.Photo photo) {
     if (photo.movedIdentity != null) return photo.movedIdentity.tagSource();
-    if ("media".equals(photo.uri.getAuthority())) {
-      // Preserve v1 tag assignments made when every MediaStore row used the aggregate URI.
-      Uri legacy = ContentUris.withAppendedId(MediaStore.Files.getContentUri("external"), ContentUris.parseId(photo.uri));
-      return sourceVersion(photo, legacy);
-    }
-    return locationSource(photo);
+    return legacySource(locationSource(photo));
+  }
+
+  static String legacySource(String versionedSource) {
+    int end = versionedSource.indexOf('\n');
+    Uri uri = Uri.parse(versionedSource.substring(0, end));
+    if (!"media".equals(uri.getAuthority())) return versionedSource;
+    // Older gallery versions used the aggregate files collection for every MediaStore volume.
+    Uri aggregate = ContentUris.withAppendedId(MediaStore.Files.getContentUri("external"), ContentUris.parseId(uri));
+    return aggregate + versionedSource.substring(end);
   }
 
   static String locationSource(PhotoRepository.Photo photo) {

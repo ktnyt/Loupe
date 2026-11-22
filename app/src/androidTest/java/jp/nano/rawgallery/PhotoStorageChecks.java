@@ -31,6 +31,9 @@ import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -44,6 +47,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
 import jp.nano.rawgallery.camera.CameraImportFile;
 import jp.nano.rawgallery.camera.CameraImportHistoryPlan;
+import jp.nano.rawgallery.camera.CameraImportLegacy;
 import jp.nano.rawgallery.camera.CameraImportLedger;
 import jp.nano.rawgallery.camera.CameraPhotoImporter;
 import jp.nano.rawgallery.camera.HistoryDb;
@@ -117,13 +121,16 @@ final class PhotoStorageChecks {
       abandonWithOnlyReplacement(fixture);
     }
     try (Fixture fixture = new Fixture(base, secondary)) {
+      abandonWithBothCopies(fixture);
+    }
+    try (Fixture fixture = new Fixture(base, secondary)) {
       sequentialCardIdentity(fixture);
     }
     return "PASS photo storage " + secondary + ": selected import, bulk move and original bytes, ledger and legacy history,"
         + " tags, rank, sharing, same-name files, retries after " + Arrays.toString(PhotoMove.Boundary.values())
         + ", verified-copy space estimate, cancellation, unavailable target, stale and reset history, "
         + "changed or missing source, lost replacement, pre-update SD tag/rank/share compatibility, "
-        + "USB mass-storage mtime/EXIF fast path, abandon with the only verified copy, sequential SD identity snapshots";
+        + "USB mass-storage mtime/EXIF fast path, abandon with one or two verified copies, sequential SD identity snapshots";
   }
 
   private static void moveImportedPhotos(Fixture f) throws Exception {
@@ -442,8 +449,10 @@ final class PhotoStorageChecks {
   }
 
   private static void moveMassStorageReceipt(Fixture f) throws Exception {
-    byte[] photo = jpegWithCaptureTime(f, "2024:08:09 01:02:03");
+    LocalDateTime capture = LocalDateTime.of(2024, 8, 9, 1, 2, 3);
+    long captureSeconds = capture.atZone(ZoneId.systemDefault()).toEpochSecond();
     long cameraMtime = CAPTURE + 86400;
+    byte[] photo = jpegWithCaptureTime(f, capture, cameraMtime);
     CameraImportFile source = new CameraImportFile("sd-usb:" + f.id, "DCIM/100CAM/USB-EXIF.JPG",
         photo.length, Long.toString(cameraMtime * 1000), cameraMtime);
     ImportedKey oldKey = new ImportedKey(source.name, source.bytes, cameraMtime);
@@ -453,9 +462,10 @@ final class PhotoStorageChecks {
       CameraPhotoImporter.Result first = f.importPhoto(importer, source, photo);
       require(first.imported && PRIMARY.equals(PhotoStorage.volumeOf(first.uri)), "Publish the USB mass-storage fixture");
       history.recordImport(MODEL, f.id, oldKey, first.uri.toString());
-      PhotoRepository.Photo original = f.photo(first.uri);
-      require(original.taken > 0 && original.taken / 1000 != cameraMtime,
-          "Published EXIF capture time differs from original USB file mtime");
+      long savedCapture = f.awaitCaptureTime(first.uri, captureSeconds * 1000);
+      require(savedCapture == captureSeconds * 1000 && savedCapture / 1000 != cameraMtime,
+          "Published EXIF capture time differs from original USB file mtime (DATE_TAKEN="
+              + savedCapture + ", expected=" + captureSeconds * 1000 + ", USB mtime=" + cameraMtime + ")");
       CameraImportLedger.Content before = ledger.sourceSnapshot(source.sourceId).get(source.sourceKey());
       require(before != null && knownMassStorage(f, history, source, before), "Legacy USB fast path recognizes the original receipt");
 
@@ -468,7 +478,7 @@ final class PhotoStorageChecks {
           "USB source receipt and original/stored checksums survive the move");
       Uri replacement = Uri.parse(after.uri);
       require(f.secondary.equals(PhotoStorage.volumeOf(replacement)) && f.rows(PRIMARY).isEmpty()
-          && Arrays.equals(photo, f.read(replacement)) && f.photo(replacement).taken == original.taken,
+          && Arrays.equals(photo, f.read(replacement)) && f.awaitCaptureTime(replacement, savedCapture) == savedCapture,
           "Relocated USB file retains full bytes and EXIF capture time");
       require(history.importDestinations().equals(Set.of(after.uri)) && history.importedCount(MODEL, f.id) == 1
           && knownMassStorage(f, history, source, after),
@@ -486,13 +496,23 @@ final class PhotoStorageChecks {
         .known(source.name, source.bytes, source.captureSeconds, false, receipt.uri, receipt.storedBytes);
   }
 
-  private static byte[] jpegWithCaptureTime(Fixture f, String timestamp) throws IOException {
+  private static byte[] jpegWithCaptureTime(Fixture f, LocalDateTime captured, long cameraMtime) throws IOException {
     File jpeg = File.createTempFile("loupe-usb-fixture-" + f.id, ".jpg", f.context.getCacheDir());
     try {
       Files.write(jpeg.toPath(), jpeg(0xff895544));
+      var zoned = captured.atZone(ZoneId.systemDefault());
+      String timestamp = captured.format(DateTimeFormatter.ofPattern("uuuu:MM:dd HH:mm:ss", Locale.ROOT));
+      String offset = zoned.getOffset().getTotalSeconds() == 0 ? "+00:00" : zoned.getOffset().getId();
       ExifInterface exif = new ExifInterface(jpeg);
+      exif.setAttribute(ExifInterface.TAG_DATETIME, timestamp);
       exif.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, timestamp);
+      exif.setAttribute(ExifInterface.TAG_DATETIME_DIGITIZED, timestamp);
+      exif.setAttribute(ExifInterface.TAG_OFFSET_TIME, offset);
+      exif.setAttribute(ExifInterface.TAG_OFFSET_TIME_ORIGINAL, offset);
+      exif.setAttribute(ExifInterface.TAG_OFFSET_TIME_DIGITIZED, offset);
       exif.saveAttributes();
+      require(CameraImportLegacy.metadata(jpeg, cameraMtime).getCaptureSeconds() == zoned.toEpochSecond(),
+          "Production parser reads the camera JPEG EXIF capture time before import");
       return Files.readAllBytes(jpeg.toPath());
     } finally {
       Files.deleteIfExists(jpeg.toPath());
@@ -541,6 +561,66 @@ final class PhotoStorageChecks {
     }
   }
 
+  private static void abandonWithBothCopies(Fixture f) throws Exception {
+    byte[] bytes = jpeg(0xff528722);
+    CameraImportFile source = f.source("wifi:", "RETAIN-BOTH.JPG", bytes);
+    try (CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         TagStore tags = new TagStore(f.context); ShareHistoryStore shares = new ShareHistoryStore(f.context)) {
+      Uri original = f.importPhoto(new CameraPhotoImporter(f.context, ledger), source, bytes).uri;
+      history.recordImport(MODEL, f.id, new ImportedKey(source.name, source.bytes, source.captureSeconds),
+          original.toString());
+      PhotoRepository.Photo originalPhoto = f.photo(original);
+      RankingStore ranking = new RankingStore(f.context);
+      TagStore.Tag tag = tags.create("Intact copies");
+      String key = ArchiveStore.key(originalPhoto);
+      String tagged = tags.photoId(originalPhoto, true);
+      tags.record(UUID.randomUUID().toString(), tag.id, tagged, 0, TagJudgments.Value.ASSIGNED);
+      long time = System.currentTimeMillis();
+      require(ranking.saveSingleBest(key, false, true)
+          && shares.complete(shares.begin(List.of(key), time), "test.target", "Target", time),
+          "Record the original tag, rank and share before abandoning");
+      require(PhotoStorage.select(f.context, f.secondary), "Choose SD for the retained-copy check");
+      try (PhotoMove move = f.move(ledger, history, reached -> {
+        if (reached == PhotoMove.Boundary.REMAPPED) throw new InterruptedAtBoundary();
+      })) {
+        move.begin(move.plan(f.secondary));
+        try {
+          move.run(() -> false, batch -> {});
+          throw new CheckFailure("The move did not interrupt at REMAPPED");
+        } catch (InterruptedAtBoundary expected) {
+          require(move.batch() != null, "REMAPPED interruption kept its journal");
+        }
+      }
+
+      Uri target = Uri.parse(ledger.known(source).uri);
+      try (PhotoMove reopen = f.move(ledger, history, reached -> {})) {
+        reopen.abandon();
+        require(reopen.batch() == null, "Abandon cleared the remapped batch");
+      }
+      require(f.rows(PRIMARY).size() == 1 && f.rows(f.secondary).size() == 1
+          && Arrays.equals(bytes, f.read(original)) && Arrays.equals(bytes, f.read(target))
+          && history.importDestinations().equals(Set.of(target.toString()))
+          && ledger.contentCount() == 1 && ledger.receiptCount() == 1 && target.toString().equals(ledger.known(source).uri),
+          "Both verified files survive, while import histories refer only to the replacement");
+
+      PhotoRepository.Photo replacement = f.photo(target);
+      PhotoRepository.Photo retained = f.photo(original);
+      String retainedKey = ArchiveStore.key(retained);
+      require(key.equals(ArchiveStore.key(replacement)) && tagged.equals(tags.photoId(replacement, false))
+          && ranking.singleBest(key) && shares.history(key).size() == 1
+          && !key.equals(retainedKey) && !TagStore.source(replacement).equals(TagStore.source(retained))
+          && tags.photoId(retained, false) == null && !ranking.singleBest(retainedKey) && shares.history(retainedKey).isEmpty(),
+          "The replacement keeps the original identity and the retained source begins with an independent identity");
+      String retainedTag = tags.photoId(retained, true);
+      tags.record(UUID.randomUUID().toString(), tag.id, retainedTag, 0, TagJudgments.Value.EXCLUDED);
+      require(retainedTag.equals(tags.photoId(f.photo(original), false)) && retainedKey.equals(ArchiveStore.key(f.photo(original)))
+          && tagged.equals(tags.photoId(f.photo(target), false))
+          && tags.load().value(tag.id, retainedTag) == TagJudgments.Value.EXCLUDED
+          && tags.load().value(tag.id, tagged) == TagJudgments.Value.ASSIGNED,
+          "Repeated scans and edits keep retained source and target separate");
+    }
+  }
+
   private static void sequentialCardIdentity(Fixture f) throws Exception {
     byte[] firstBytes = {1, 2, 3, 4};
     byte[] secondBytes = {4, 3, 2, 1};
@@ -555,18 +635,36 @@ final class PhotoStorageChecks {
     String legacy = PhotoRepository.digest(f.path + one.name + ":" + one.size + ":" + one.modified);
     RankingStore ranking = new RankingStore(f.context);
     long time = System.currentTimeMillis();
-    try (ShareHistoryStore shares = new ShareHistoryStore(f.context)) {
+    try (TagStore tags = new TagStore(f.context); ShareHistoryStore shares = new ShareHistoryStore(f.context)) {
       require(ranking.saveSingleBest(legacy, false, true)
           && shares.complete(shares.begin(List.of(legacy), time), "test.card.first", "First card", time),
           "Seed pre-update rank and share history for the first card");
-      require(legacy.equals(snapshotArchiveKey(f, one)), "The first observed card retains the legacy key");
-      String later = snapshotArchiveKey(f, two);
-      require(!legacy.equals(later) && !ranking.singleBest(later) && shares.history(later).isEmpty(),
-          "A later card alone cannot acquire the first card's rank or share history");
+      PhotoRepository.Photo first = snapshotPhoto(f, one);
+      require(legacy.equals(ArchiveStore.key(first)), "The first observed card retains the legacy key");
+      TagStore.Tag tag = tags.create("Separate cards");
+      String firstTagSource = TagStore.source(first);
+      String firstTagPhoto = tags.photoId(first, true);
+      tags.record(UUID.randomUUID().toString(), tag.id, firstTagPhoto, 0, TagJudgments.Value.ASSIGNED);
+
+      PhotoRepository.Photo second = snapshotPhoto(f, two);
+      String later = ArchiveStore.key(second);
+      String secondTagSource = TagStore.source(second);
+      require(!legacy.equals(later) && !firstTagSource.equals(secondTagSource)
+          && !ranking.singleBest(later) && shares.history(later).isEmpty() && tags.photoId(second, false) == null, "A later card alone cannot acquire the first card's tag, rank or share history");
+      String secondTagPhoto = tags.photoId(second, true);
+      require(!firstTagPhoto.equals(secondTagPhoto), "The same aggregate row ID cannot identify two physical cards");
+      tags.record(UUID.randomUUID().toString(), tag.id, secondTagPhoto, 0, TagJudgments.Value.EXCLUDED);
       require(shares.complete(shares.begin(List.of(later), time + 1), "test.card.second", "Second card", time + 1),
           "Record a separate share on the later card");
-      require(legacy.equals(snapshotArchiveKey(f, one)) && later.equals(snapshotArchiveKey(f, two))
+
+      PhotoRepository.Photo firstAgain = snapshotPhoto(f, one);
+      PhotoRepository.Photo secondAgain = snapshotPhoto(f, two);
+      require(legacy.equals(ArchiveStore.key(firstAgain)) && later.equals(ArchiveStore.key(secondAgain))
           && ranking.singleBest(legacy) && !ranking.singleBest(later)
+          && firstTagSource.equals(TagStore.source(firstAgain)) && secondTagSource.equals(TagStore.source(secondAgain))
+          && firstTagPhoto.equals(tags.photoId(firstAgain, false)) && secondTagPhoto.equals(tags.photoId(secondAgain, false))
+          && tags.load().value(tag.id, firstTagPhoto) == TagJudgments.Value.ASSIGNED
+          && tags.load().value(tag.id, secondTagPhoto) == TagJudgments.Value.EXCLUDED
           && shares.history(legacy).stream().map(entry -> entry.packageName)
               .collect(java.util.stream.Collectors.toList()).equals(List.of("test.card.first"))
           && shares.history(later).stream().map(entry -> entry.packageName)
@@ -575,11 +673,11 @@ final class PhotoStorageChecks {
     }
   }
 
-  private static String snapshotArchiveKey(Fixture f, PhotoRepository.Photo photo) throws IOException {
+  private static PhotoRepository.Photo snapshotPhoto(Fixture f, PhotoRepository.Photo photo) throws IOException {
     Map<String, PhotoRepository.Photo> snapshot = new HashMap<>();
     snapshot.put(photo.uri.toString(), photo);
     new PhotoRepository(f.context).stabilizeLocalIdentities(snapshot);
-    return ArchiveStore.key(snapshot.get(photo.uri.toString()));
+    return snapshot.get(photo.uri.toString());
   }
 
   private static void preservePreUpdateSecondaryIdentity(Fixture f) throws Exception {
@@ -654,7 +752,7 @@ final class PhotoStorageChecks {
     }
   }
 
-  static String captureUi(Instrumentation test, String secondaryArg, int width, float font) throws Exception {
+  static String captureUi(Instrumentation test, String secondaryArg, int width, float font, boolean runMove) throws Exception {
     Context base = test.getTargetContext();
     require(TARGET_PACKAGE.equals(base.getPackageName()), "Photo storage checks require the isolated APK");
     String secondary = secondaryArg == null ? secondaryVolume(base) : secondaryArg.toLowerCase(Locale.ROOT);
@@ -665,17 +763,27 @@ final class PhotoStorageChecks {
     HistoryDb history = HistoryDb.Companion.get(base);
     require(history.importDestinations().isEmpty() && CameraImportLedger.get(base).importDestinations().isEmpty(),
         "UI confirmation test requires a clean isolated import history");
+    try (PhotoMoveStore store = new PhotoMoveStore(base)) {
+      require(store.batch() == null && !PhotoMoveService.state().running(), "An unrelated move must not be pending");
+    }
 
     File captures = new File(base.getCacheDir(), "photo-storage-checks");
     require(captures.isDirectory() || captures.mkdirs(), "Create capture directory");
-    String profile = width + "-" + font;
+    String profile = width + "-" + font + (runMove ? "-run" : "");
+    boolean observedProgress;
     try (Fixture f = new Fixture(base, secondary)) {
       byte[] bytes = jpeg(0xff264167);
-      Uri original = f.insert(PRIMARY, "CONFIRM.JPG", bytes);
-      history.recordImport(MODEL, f.id, new ImportedKey("CONFIRM.JPG", bytes.length, CAPTURE), original.toString());
+      String name = "CONFIRM.JPG";
+      Uri original = f.insert(PRIMARY, name, bytes);
+      ImportedKey imported = new ImportedKey(name, bytes.length, CAPTURE);
+      PhotoRepository.Photo sourcePhoto = runMove ? f.photo(original) : null;
+      history.recordImport(MODEL, f.id, imported, original.toString());
       try {
         require(PhotoStorage.select(base, PRIMARY), "Set initial UI storage");
-        captureActivity(test, base, secondary, f, original, bytes, captures, profile);
+        observedProgress = captureActivity(test, base, secondary, captures, profile, runMove);
+        if (runMove) verifyUiMove(base, f, history, imported, bytes, sourcePhoto);
+        else require(Arrays.equals(bytes, f.read(original)) && f.rows(secondary).isEmpty(),
+            "Cancelling confirmation leaves the original in place");
       } finally {
         history.resetHistory(MODEL, f.id);
       }
@@ -685,12 +793,34 @@ final class PhotoStorageChecks {
       else restore.remove("photo_volume");
       require(restore.commit(), "Restore original isolated app preference");
     }
-    return "PASS photo storage UI " + profile + ": settings, single selection, move confirmation and cancel. "
-        + captures.getAbsolutePath();
+    String result = runMove
+        ? "confirmed using Android accessibility controls, foreground service completed, source absence and SD bytes/history checked, "
+            + (observedProgress ? "progress captured" : "move finished before visible progress")
+        : "settings, single selection, move confirmation and cancel";
+    return "PASS photo storage UI " + profile + ": " + result + ". " + captures.getAbsolutePath();
   }
 
-  private static void captureActivity(Instrumentation test, Context base, String secondary, Fixture f,
-      Uri original, byte[] bytes, File captures, String profile) throws Exception {
+  private static void verifyUiMove(Context base, Fixture f, HistoryDb history, ImportedKey key, byte[] bytes,
+      PhotoRepository.Photo original) throws IOException {
+    List<Row> targets = f.rows(f.secondary);
+    require(f.rows(PRIMARY).isEmpty() && targets.size() == 1 && !targets.get(0).pending && !targets.get(0).trashed,
+        "Android UI move leaves exactly one published SD file and no source");
+    Uri target = targets.get(0).uri;
+    require(Arrays.equals(bytes, f.read(target)), "Android UI move retains all original bytes");
+    List<CameraImportHistoryPlan.Entry> entries = history.photoImportRecords(MODEL, f.id);
+    require(entries.size() == 1 && entries.get(0).key.equals(key.asString()) && entries.get(0).uri.equals(target.toString()),
+        "Foreground move updates the exact legacy receipt to the SD file");
+    try (PhotoMoveStore store = new PhotoMoveStore(base)) {
+      require(store.batch() == null, "Foreground move closes the durable batch");
+      for (PhotoRepository.Photo synthetic : List.of(original, f.photo(target))) {
+        store.getWritableDatabase().delete("local_photos", "location=? AND media_version=?",
+            new String[]{PhotoIdentityIndex.location(synthetic), TagStore.locationSource(synthetic)});
+      }
+    }
+  }
+
+  private static boolean captureActivity(Instrumentation test, Context base, String secondary,
+      File captures, String profile, boolean runMove) throws Exception {
     PhotoStorageActivity activity = (PhotoStorageActivity) test.startActivitySync(
         new Intent(base, PhotoStorageActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     try {
@@ -713,13 +843,36 @@ final class PhotoStorageChecks {
       click(awaitNode(automation, node -> hasText(node, "取り込み済みの写真を移動")));
       awaitNode(automation, node -> node.getText() != null && node.getText().toString().contains(label + "に1枚"));
       capture(automation, captures, profile + "-confirm");
-      click(awaitNode(automation, node -> hasText(node, "キャンセル")));
-      require(Arrays.equals(bytes, f.read(original)) && f.rows(secondary).isEmpty(),
-          "Cancelling confirmation leaves the original in place");
+      if (!runMove) {
+        click(awaitNode(automation, node -> hasText(node, "キャンセル")));
+        return false;
+      }
+
+      click(awaitNode(automation, node -> hasText(node, "移動")));
+      return captureMoveResult(automation, captures, profile);
     } finally {
       test.runOnMainSync(activity::finish);
       test.waitForIdleSync();
     }
+  }
+
+  private static boolean captureMoveResult(UiAutomation automation, File captures, String profile) throws IOException {
+    long deadline = SystemClock.uptimeMillis() + 12000;
+    boolean progress = false;
+    while (SystemClock.uptimeMillis() < deadline) {
+      AccessibilityNodeInfo screen = automation.getRootInActiveWindow();
+      if (findNode(screen, node -> hasText(node, "写真を1枚移動しました。")) != null) {
+        capture(automation, captures, profile + "-completed");
+        return progress;
+      }
+      if (!progress && findNode(screen, node -> "写真の移動の進捗".contentEquals(
+          node.getContentDescription() == null ? "" : node.getContentDescription())) != null) {
+        capture(automation, captures, profile + "-progress");
+        progress = true;
+      }
+      SystemClock.sleep(25);
+    }
+    throw new CheckFailure("Move completion did not become visible: " + PhotoMoveService.state().message());
   }
 
   private static boolean hasText(AccessibilityNodeInfo node, String text) {
@@ -777,17 +930,38 @@ final class PhotoStorageChecks {
   private static String saf(Context base, String mode, String secondary) throws Exception {
     PhotoStorage.requireWritable(base, secondary);
     SharedPreferences marker = base.getSharedPreferences(SAF_PREFS, 0);
-    byte[] bytes = jpeg(0xff336644);
+    byte[] legacyDocumentBytes = jpeg(0xff336644);
+    byte[] existingMediaBytes = jpeg(0xff6677aa);
     if ("photo-storage-saf-seed".equals(mode)) {
       require(!marker.contains("id"), "Verify or clean the existing SAF fixture before seeding");
       Fixture f = new Fixture(base, secondary);
       boolean seeded = false;
-      try (CameraImportLedger ledger = f.ledger()) {
-        CameraImportFile source = f.source("sd:", "SAF-ORIGINAL.JPG", bytes);
-        Uri uri = f.importPhoto(new CameraPhotoImporter(f.context, ledger, secondary), source, bytes).uri;
-        require(secondary.equals(PhotoStorage.volumeOf(uri)), "SAF fixture is on the intended SD");
+      try (CameraImportLedger ledger = f.ledger(); TagStore tags = new TagStore(f.context);
+           ShareHistoryStore shares = new ShareHistoryStore(f.context)) {
+        CameraPhotoImporter importer = new CameraPhotoImporter(f.context, ledger, secondary);
+        CameraImportFile mediaSource = f.source("sd:", "SAF-GRANTED.JPG", existingMediaBytes);
+        Uri media = f.importPhoto(importer, mediaSource, existingMediaBytes).uri;
+        PhotoRepository.Photo beforeGrant = f.photo(media);
+        require("media".equals(beforeGrant.uri.getAuthority()), "Seed the photo's state through MediaStore before a SAF grant");
+        RankingStore ranking = new RankingStore(f.context);
+        TagStore.Tag tag = tags.create("Assigned before folder permission");
+        String photoId = tags.photoId(beforeGrant, true);
+        tags.record(UUID.randomUUID().toString(), tag.id, photoId, 0, TagJudgments.Value.ASSIGNED);
+        String archiveKey = ArchiveStore.key(beforeGrant);
+        long time = System.currentTimeMillis();
+        require(ranking.saveSingleBest(archiveKey, false, true)
+            && shares.complete(shares.begin(List.of(archiveKey), time), "test.fixture", "Synthetic share", time),
+            "Rank and share history exist before the SAF grant");
+
+        // Leave the second photo unscanned until the SAF grant and its pre-update records exist.
+        CameraImportFile documentSource = f.source("sd:", "SAF-ORIGINAL.JPG", legacyDocumentBytes);
+        Uri documentMedia = f.importPhoto(importer, documentSource, legacyDocumentBytes).uri;
+        require(secondary.equals(PhotoStorage.volumeOf(media)) && secondary.equals(PhotoStorage.volumeOf(documentMedia)),
+            "SAF fixtures are on the intended SD");
         require(marker.edit().putString("id", f.id).putString("volume", secondary)
-            .putString("uri", uri.toString()).commit(), "Record isolated SAF fixture");
+            .putString("uri", documentMedia.toString()).putString("mediaUri", media.toString())
+            .putString("mediaKey", archiveKey).putString("mediaTag", tag.id).putString("mediaPhoto", photoId)
+            .putLong("mediaSharedAt", time).commit(), "Record isolated SAF fixtures and pre-grant identities");
         seeded = true;
         return "PASS SAF seed " + PhotoStorage.label(base, secondary) + " (" + secondary + "): " + f.path;
       } finally {
@@ -797,36 +971,56 @@ final class PhotoStorageChecks {
     require("photo-storage-saf-verify".equals(mode), "Unknown SAF photo storage mode");
     require(secondary.equals(marker.getString("volume", null)), "Use the secondary volume from SAF seed");
     Fixture f = new Fixture(base, secondary, UUID.fromString(marker.getString("id", "")).toString());
-    Uri media = Uri.parse(marker.getString("uri", ""));
     Uri tree = persistedFixtureTree(f);
 
     try (f; CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
          TagStore tags = new TagStore(f.context); ShareHistoryStore shares = new ShareHistoryStore(f.context);
          PhotoMove move = f.move(ledger, history, boundary -> {})) {
-      CameraImportFile source = f.source("sd:", "SAF-ORIGINAL.JPG", bytes);
-      PhotoRepository.Photo old = readLegacyDocumentPhoto(f, tree, source.name);
-      try (InputStream input = f.resolver.openInputStream(old.uri)) {
-        require(input != null && Arrays.equals(bytes, input.readAllBytes()), "The DocumentsProvider grant reads the full fixture");
-      }
+      CameraImportFile documentSource = f.source("sd:", "SAF-ORIGINAL.JPG", legacyDocumentBytes);
+      CameraImportFile mediaSource = f.source("sd:", "SAF-GRANTED.JPG", existingMediaBytes);
+      PhotoRepository.Photo oldDocument = readLegacyDocumentPhoto(f, tree, documentSource.name);
+      PhotoRepository.Photo grantedDocument = readLegacyDocumentPhoto(f, tree, mediaSource.name);
+      assertDocumentReadable(f, oldDocument, legacyDocumentBytes);
+      assertDocumentReadable(f, grantedDocument, existingMediaBytes);
       RankingStore ranking = new RankingStore(f.context);
-      LegacyLabels labels = seedOldLabels(old, tags, ranking, shares);
-      assertOldLabels(onlyGalleryFixture(f), tags, ranking, shares, labels);
+      LegacyLabels documentLabels = seedOldLabels(oldDocument, tags, ranking, shares);
+      LegacyLabels mediaLabels = new LegacyLabels(marker.getString("mediaKey", null), marker.getString("mediaTag", null),
+          marker.getString("mediaPhoto", null), marker.getLong("mediaSharedAt", -1));
+      assertOldLabels(galleryFixture(f, mediaSource.name), tags, ranking, shares, mediaLabels);
+      assertOldLabels(galleryFixture(f, documentSource.name), tags, ranking, shares, documentLabels);
+      require(!mediaLabels.key.equals(documentLabels.key) && !mediaLabels.photoId.equals(documentLabels.photoId),
+          "The two granted fixtures have independent rank, share and tag identities");
 
       require(PhotoStorage.select(f.context, PRIMARY), "Select primary for the SAF move");
       PhotoMove.Plan plan = move.plan(PRIMARY);
-      require(plan.items().size() == 1 && media.toString().equals(plan.items().get(0).source()),
-          "The exact app-owned MediaStore row is selected while the SAF grant remains active");
+      Set<String> sources = plan.items().stream().map(PhotoMoveStore.Item::source).collect(java.util.stream.Collectors.toSet());
+      require(sources.equals(Set.of(marker.getString("uri", ""), marker.getString("mediaUri", ""))),
+          "The exact app-owned MediaStore rows are selected while the SAF grant remains active");
       move.begin(plan);
-      require(move.run(() -> false, batch -> {}).done() == 1, "Complete SAF-visible photo move");
-      Uri replacement = Uri.parse(ledger.known(source).uri);
-      require(PRIMARY.equals(PhotoStorage.volumeOf(replacement)) && f.rows(secondary).isEmpty()
-          && Arrays.equals(bytes, f.read(replacement)), "SAF-visible photo moves with full bytes");
-      assertOldLabels(onlyGalleryFixture(f), tags, ranking, shares, labels);
+      require(move.run(() -> false, batch -> {}).done() == 2 && f.rows(secondary).isEmpty(),
+          "Complete both moves with the SAF grant still active");
+      assertMovedSafPhoto(f, ledger, mediaSource, existingMediaBytes);
+      assertMovedSafPhoto(f, ledger, documentSource, legacyDocumentBytes);
+      assertOldLabels(galleryFixture(f, mediaSource.name), tags, ranking, shares, mediaLabels);
+      assertOldLabels(galleryFixture(f, documentSource.name), tags, ranking, shares, documentLabels);
     } finally {
       f.resolver.releasePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION);
       require(base.deleteSharedPreferences(SAF_PREFS), "Clean exact SAF marker");
     }
-    return "PASS SAF persisted SD grant: one library item and retained pre-update document tag/rank/share records before and after moving";
+    return "PASS SAF persisted SD grant: independent pre-grant MediaStore and older document tag/rank/share survive grant and move";
+  }
+
+  private static void assertDocumentReadable(Fixture f, PhotoRepository.Photo document, byte[] bytes) throws IOException {
+    try (InputStream input = f.resolver.openInputStream(document.uri)) {
+      require(input != null && Arrays.equals(bytes, input.readAllBytes()), "The persisted DocumentsProvider grant reads " + document.name);
+    }
+  }
+
+  private static void assertMovedSafPhoto(Fixture f, CameraImportLedger ledger, CameraImportFile source, byte[] bytes)
+      throws IOException {
+    Uri replacement = Uri.parse(ledger.known(source).uri);
+    require(PRIMARY.equals(PhotoStorage.volumeOf(replacement)) && Arrays.equals(bytes, f.read(replacement)),
+        "SAF-visible photo moves with full bytes " + source.name);
   }
 
   private static Uri persistedFixtureTree(Fixture f) {
@@ -844,21 +1038,23 @@ final class PhotoStorageChecks {
     String[] fields = {DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
         DocumentsContract.Document.COLUMN_SIZE, DocumentsContract.Document.COLUMN_LAST_MODIFIED};
     try (Cursor row = f.resolver.query(children, fields, null, null, null)) {
-      if (row == null || row.getCount() != 1 || !row.moveToFirst()) throw new IOException("Could not read unique SAF fixture");
-      String documentId = row.getString(0);
-      require(name.equals(row.getString(1)) && documentId.equals(directoryId + "/" + name),
-          "SAF grant resolves the exact fixture file");
-      Uri document = DocumentsContract.buildDocumentUriUsingTree(tree, documentId);
-      String oldFolder = documentId.substring(0, documentId.lastIndexOf('/') + 1);
-      return new PhotoRepository.Photo(document, name, oldFolder, row.getLong(2), row.getLong(3) / 1000, 0, 0, 0);
+      if (row != null) while (row.moveToNext()) {
+        String documentId = row.getString(0);
+        if (!name.equals(row.getString(1))) continue;
+        require(documentId.equals(directoryId + "/" + name), "SAF grant resolves the exact fixture file");
+        Uri document = DocumentsContract.buildDocumentUriUsingTree(tree, documentId);
+        String oldFolder = documentId.substring(0, documentId.lastIndexOf('/') + 1);
+        return new PhotoRepository.Photo(document, name, oldFolder, row.getLong(2), row.getLong(3) / 1000, 0, 0, 0);
+      }
     }
+    throw new IOException("Could not read SAF fixture " + name);
   }
 
-  private static PhotoRepository.Photo onlyGalleryFixture(Fixture f) throws IOException {
+  private static PhotoRepository.Photo galleryFixture(Fixture f, String name) throws IOException {
     List<PhotoRepository.Photo> entries = new PhotoRepository(f.context).scan("すべて").stream()
-        .filter(photo -> f.path.equals(photo.folder) || photo.folder.endsWith(":" + f.path))
+        .filter(photo -> name.equals(photo.name) && (f.path.equals(photo.folder) || photo.folder.endsWith(":" + f.path)))
         .collect(java.util.stream.Collectors.toList());
-    require(entries.size() == 1, "Gallery shows one fixture while MediaStore and SAF both grant access");
+    require(entries.size() == 1, "Gallery shows one row for " + name + " while MediaStore and SAF both grant access");
     return entries.get(0);
   }
 
@@ -1001,6 +1197,20 @@ final class PhotoStorageChecks {
         if (input == null) throw new IOException("Could not read " + uri);
         return input.readAllBytes();
       }
+    }
+
+    long awaitCaptureTime(Uri uri, long expected) throws IOException {
+      long deadline = SystemClock.uptimeMillis() + 6000;
+      long captured = 0;
+      do {
+        try (Cursor row = resolver.query(uri, new String[]{DATE_TAKEN}, null, null, null)) {
+          if (row == null || !row.moveToFirst()) throw new IOException("Could not query synthetic DATE_TAKEN");
+          captured = row.getLong(0);
+          if (captured == expected) return captured;
+        }
+        SystemClock.sleep(50);
+      } while (SystemClock.uptimeMillis() < deadline);
+      return captured;
     }
 
     PhotoRepository.Photo photo(Uri uri) throws IOException {
