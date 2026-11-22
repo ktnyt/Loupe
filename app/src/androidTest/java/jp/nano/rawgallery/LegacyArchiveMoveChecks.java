@@ -27,6 +27,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
@@ -63,12 +65,17 @@ final class LegacyArchiveMoveChecks {
     String secondary = isolatedVolume(base, secondaryArg);
     checkMetadataMatcher();
     checkReadOnlyPreflight(base, secondary);
+    checkLateArchiveConflict(base, secondary);
     checkLostHistory(base, secondary);
+    for (var boundary : List.of(PhotoMove.Boundary.HISTORY_UPDATED, PhotoMove.Boundary.REMAPPED)) {
+      checkLostHistoryAfterRelocation(base, secondary, boundary);
+    }
     for (var boundary : List.of(PhotoMove.Boundary.PUBLISHED, PhotoMove.Boundary.HISTORY_UPDATED,
         PhotoMove.Boundary.REMAPPED, PhotoMove.Boundary.DELETED)) {
       checkProofRecovery(base, secondary, boundary);
     }
     checkProofRollback(base, secondary);
+    checkLockedAbandon(base, secondary);
     checkRoundTrip(base, secondary);
     checkVersionTwoResume(base, secondary);
     return "PASS legacy archive move: strict metadata and bounded epoch/generation proof, read-only preflight, "
@@ -141,8 +148,13 @@ final class LegacyArchiveMoveChecks {
     require(LegacyArchiveMoveProof.parse(receipt.key(), value) != null
         && LegacyArchiveMoveProof.parse("b".repeat(32), value) == null
         && LegacyArchiveMoveProof.parse(receipt.key(), new JSONObject(value.toString()).put("size", "42")) == null
-        && LegacyArchiveMoveProof.parse(receipt.key(), new JSONObject(value.toString()).put("provider", "other")) == null,
-        "Proof requires a typed, exact and verified E2 payload identity");
+        && LegacyArchiveMoveProof.parse(receipt.key(), new JSONObject(value.toString()).put("provider", "other")) == null
+        && LegacyArchiveMoveProof.parse(receipt.key(), new JSONObject(value.toString()).put("version", JSONObject.NULL)) == null
+        && LegacyArchiveMoveProof.parse(receipt.key(), new JSONObject(value.toString()).put("version", 17)) == null
+        && LegacyArchiveMoveProof.parse(receipt.key(), new JSONObject(value.toString()).put("version", " ")) == null
+        && LegacyArchiveMoveProof.parse(receipt.key(), new JSONObject(value.toString()).put("version", "null")) == null
+        && LegacyArchiveMoveProof.parse(receipt.key(), new JSONObject(value.toString()).put("version", "bad/version")) == null,
+        "Proof requires a valid, nonempty E2 object version and the exact typed payload identity");
     var checks = new AtomicInteger();
     expectInterrupted(() -> LegacyArchiveMoveProof.match(photo, EPOCH, GA, GA + 256, history, List.of(receipt),
         new LegacyArchiveMoveProof.Budget(257), () -> checks.incrementAndGet() > 10), "Stop midway through the full search");
@@ -322,6 +334,69 @@ final class LegacyArchiveMoveChecks {
     return plan.items().stream().map(PhotoMoveStore.Item::source).collect(java.util.stream.Collectors.toSet());
   }
 
+  private static void checkLateArchiveConflict(Context base, String secondary) throws Exception {
+    try (Fixture f = new Fixture(base, secondary);
+         CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         ArchiveStore archive = E2Settings.openRecords(f.isolatedContext());
+         PhotoMove mover = f.move(ledger, history, ignored -> {})) {
+      Seed seed = seed(f, history, archive, "LATE-ARCHIVE-CONFLICT.JPG", 0xff57688b, false, false);
+      require(PhotoStorage.select(f.isolatedContext(), secondary), "Choose the synthetic SD destination");
+      PhotoMove.Plan proposed = mover.plan(secondary);
+      PhotoMove.Plan previouslyConfirmed = preflight(mover, proposed, () -> false);
+      require(previouslyConfirmed.items().size() == 1, "The first local archive is the only verified proof at confirmation");
+      var proof = previouslyConfirmed.items().get(0).archiveProof();
+      JSONObject originalRecord = archive.get(seed.archiveKey());
+      var photo = new PhotoRepository.Photo(Uri.parse(originalRecord.getString("uri")), originalRecord.getString("name"),
+          originalRecord.getString("folder"), originalRecord.getLong("size"), originalRecord.getLong("modified"),
+          originalRecord.getLong("taken"), originalRecord.getLong("added"), 0);
+      String anotherBucket = BUCKET + "-second";
+      String anotherKey = E2AutoSync.key(new E2AutoSync.Candidate(photo, PRIMARY, proof.epoch(), proof.historicalGeneration()),
+          anotherBucket, Long.toString(proof.historicalGeneration()));
+      archive.put(new JSONObject(originalRecord.toString()).put("key", anotherKey).put("bucket", anotherBucket), "verified");
+      long archiveRevision = archive.indexRevision();
+      PhotoMove.Plan noLongerConfirmed = preflight(mover, proposed, () -> false);
+      require(noLongerConfirmed.items().isEmpty() && noLongerConfirmed.archiveRejected() == 1 && mover.plan(secondary).items().isEmpty(),
+          "A second verified archive key for the same indexed URI invalidates the proposed unique proof");
+      expectMoveFailure(() -> {
+        mover.begin(previouslyConfirmed);
+        mover.run(() -> false, ignored -> {});
+      }, "A stale confirmation must also recheck same-URI archive uniqueness before authorizing any copy");
+      require(f.rows(secondary).isEmpty() && Arrays.equals(seed.bytes(), f.read(seed.uri()))
+          && history.moveEvidence().equals(List.of(seed.history())) && archive.indexRevision() == archiveRevision && ledger.receiptCount() == 0,
+          "Late competing archive evidence does not write a replacement or modify the original or its records");
+      if (mover.batch() != null) mover.abandon();
+    }
+  }
+
+  private static void checkLostHistoryAfterRelocation(Context base, String secondary, PhotoMove.Boundary boundary) throws Exception {
+    try (Fixture f = new Fixture(base, secondary);
+         CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         ArchiveStore archive = E2Settings.openRecords(f.isolatedContext())) {
+      Seed seed = seed(f, history, archive, "RESET-AFTER-UPDATE.JPG", 0xff537468, false, false);
+      String archiveBefore = archive.get(seed.archiveKey()).toString();
+      require(PhotoStorage.select(f.isolatedContext(), secondary), "Choose the synthetic SD destination");
+      try (PhotoMove interrupted = f.move(ledger, history, reached -> { if (reached == boundary) throw new InterruptedMove(); })) {
+        interrupted.begin(preflight(interrupted, interrupted.plan(secondary), () -> false));
+        expectCrash(interrupted, boundary);
+      }
+      Uri published = f.rows(secondary).get(0).uri();
+      require(history.importDestinations().equals(Set.of(published.toString())) && Arrays.equals(seed.bytes(), f.read(published))
+          && Arrays.equals(seed.bytes(), f.read(seed.uri())), "Interrupt after relocating the selected history while both originals exist");
+      history.resetHistory(MODEL, f.id);
+      try (PhotoMove resumed = f.move(ledger, history, ignored -> {}); PhotoMoveStore journal = new PhotoMoveStore(f.isolatedContext())) {
+        expectMoveFailure(() -> resumed.run(() -> false, ignored -> {}), "Resume must refuse after the selected relocated history was reset");
+        require(resumed.batch() != null && resumed.batch().done() == 0 && journal.completed(seed.history().getId()) == null
+            && Arrays.equals(seed.bytes(), f.read(seed.uri())) && Arrays.equals(seed.bytes(), f.read(published)),
+            "Failed resume leaves intact source and verified destination copies and does not create completed proof");
+        resumed.abandon();
+        require(resumed.batch() == null && journal.completed(seed.history().getId()) == null && history.moveEvidence().isEmpty()
+            && archiveBefore.equals(archive.get(seed.archiveKey()).toString()) && ledger.receiptCount() == 0
+            && Arrays.equals(seed.bytes(), f.read(seed.uri())) && Arrays.equals(seed.bytes(), f.read(published)),
+            "Abandon clears the blocked journal without recreating the removed history or deleting either verified copy");
+      }
+    }
+  }
+
   private static void checkLostHistory(Context base, String secondary) throws Exception {
     try (Fixture f = new Fixture(base, secondary);
          CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history(); ArchiveStore archive = E2Settings.openRecords(f.isolatedContext());
@@ -420,6 +495,58 @@ final class LegacyArchiveMoveChecks {
         try (PhotoMoveStore journal = new PhotoMoveStore(f.isolatedContext())) {
           require(journal.completed(seed.history().getId()) == null, "Pre-delete rollback does not leave a new completed proof");
         }
+      }
+    }
+  }
+
+  private static void checkLockedAbandon(Context base, String secondary) throws Exception {
+    try (Fixture f = new Fixture(base, secondary); CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         ArchiveStore archive = E2Settings.openRecords(f.isolatedContext());
+         PhotoMoveStore journal = new PhotoMoveStore(f.isolatedContext())) {
+      Seed seed = seed(f, history, archive, "ABANDON-LOCK.JPG", 0xff823e39, false, false);
+      require(PhotoStorage.select(f.isolatedContext(), secondary), "Choose the synthetic SD destination");
+      try (PhotoMove stopped = f.move(ledger, history, reached -> {
+        if (reached == PhotoMove.Boundary.REMAPPED) throw new InterruptedMove();
+      })) {
+        stopped.begin(preflight(stopped, stopped.plan(secondary), () -> false));
+        expectCrash(stopped, PhotoMove.Boundary.REMAPPED);
+      }
+      Uri target = f.rows(secondary).get(0).uri();
+      var relocated = history.moveEvidence();
+      var batch = journal.batch();
+      var item = journal.next();
+      require(history.importDestinations().equals(Set.of(target.toString())) && item.stage() == PhotoMoveStore.REMAPPED,
+          "Both copies and the relocated history are available before testing abandon exclusion");
+      var busyAttempt = new FutureTask<Void>(() -> {
+        try (PhotoMove concurrent = f.move(ledger, history, ignored -> {})) {
+          try {
+            concurrent.abandon();
+            throw new PhotoStorageChecks.CheckFailure("Abandon ran without acquiring the originals lock");
+          } catch (PhotoMove.Failure busy) {
+            require(busy.getMessage().contains("端末の容量整理"), "Busy abandon explains that original cleanup must finish first");
+          }
+        }
+        return null;
+      });
+      Thread worker = new Thread(busyAttempt, "archive-abandon-test");
+      var originals = E2SyncJob.ORIGINALS;
+      require(originals.tryLock(5, TimeUnit.SECONDS), "Simulate a competing original-cleanup owner");
+      try {
+        worker.start();
+        busyAttempt.get(5, TimeUnit.SECONDS);
+        require(batch.equals(journal.batch()) && item.equals(journal.next()) && relocated.equals(history.moveEvidence())
+            && journal.completed(seed.history().getId()) == null && Arrays.equals(seed.bytes(), f.read(seed.uri()))
+            && Arrays.equals(seed.bytes(), f.read(target)), "With originals locked, abandon leaves both copies and the exact journal and history unchanged");
+      } finally {
+        originals.unlock();
+        worker.join(5000);
+        require(!worker.isAlive(), "The competing abandon attempt has stopped before fixture cleanup");
+      }
+      try (PhotoMove retried = f.move(ledger, history, ignored -> {})) {
+        retried.abandon();
+        require(retried.batch() == null && history.moveEvidence().equals(List.of(seed.history()))
+            && journal.completed(seed.history().getId()) == null && Arrays.equals(seed.bytes(), f.read(seed.uri()))
+            && Arrays.equals(seed.bytes(), f.read(target)), "Retry after releasing the lock safely restores the source reference and preserves both copies");
       }
     }
   }
@@ -588,7 +715,7 @@ final class LegacyArchiveMoveChecks {
       captureSettled(test, automation, captures, profile + "-settings", moveButton);
       String card = PhotoStorage.label(base, secondary);
       Predicate<AccessibilityNodeInfo> confirmed = node -> mentions(node, card + "に1枚")
-          && mentions(node, "バックアップとの照合を確認できませんでした");
+          && mentions(node, "内容を照合できなかった1枚は元の場所に残ります。");
       click(awaitStorageControl(automation, moveButton));
       awaitStorageControl(automation, confirmed);
       captureSettled(test, automation, captures, profile + "-confirmation", confirmed);

@@ -218,6 +218,9 @@ class HistoryDb @JvmOverloads constructor(context: Context, databaseName: String
             }
         }
 
+    fun containsMoveEvidence(id: Long): Boolean =
+        readableDatabase.rawQuery("SELECT 1 FROM imported WHERE id=?", arrayOf(id.toString())).use { it.moveToFirst() }
+
     fun hasMoveEvidence(source: String, oldAlias: String?, ids: String): Boolean {
         if (ids.isEmpty()) return false
         check(ids.matches(Regex("[0-9]+(,[0-9]+)*"))) { "Invalid history IDs" }

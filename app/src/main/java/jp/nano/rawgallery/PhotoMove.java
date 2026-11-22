@@ -264,7 +264,7 @@ final class PhotoMove implements AutoCloseable {
           || (row.taken() < 0 && row.taken() != -1)) return null;
       if (records == null) {
         epoch = LegacyArchiveMoveProof.epoch(context);
-        records = epoch == null ? Map.of() : LegacyArchiveMoveProof.read(context, stopped);
+        records = epoch == null ? Map.of() : new LegacyArchiveMoveProof.Records(context).read(stopped);
       }
       var photo = row.photo();
       var record = records.get(photo.uri.toString());
@@ -299,6 +299,7 @@ final class PhotoMove implements AutoCloseable {
     String result = "failed";
     try {
       Map<String, String> cameraEvidence = ledger.importDestinations();
+      var archive = new LegacyArchiveMoveProof.Records(context);
       List<PhotoMoveStore.Item> verified = new ArrayList<>();
       for (var item : proposal.items()) {
         check(stopped);
@@ -307,11 +308,9 @@ final class PhotoMove implements AutoCloseable {
           continue;
         }
         try {
-          Media source = requireHistoricalSource(item, cameraEvidence, stopped);
+          Media source = requireHistoricalSource(item, cameraEvidence, archive, stopped);
           verify(source.uri(), item.bytes(), item.proofSha(), true, stopped);
-          Media current = requireSource(item);
-          requireHistoricalEpoch(item);
-          if (!current.hasGenerationIdentity() || !historicalAliasMatches(current)) throw archiveMismatch();
+          requireHistoricalSource(item, cameraEvidence, archive, stopped);
           check(stopped);
           verified.add(item);
           checked++;
@@ -491,11 +490,11 @@ final class PhotoMove implements AutoCloseable {
     if (!alreadyThere && !targetWritable) reasons.add(Reason.DESTINATION_UNAVAILABLE);
     // Plan checks the SHA while moving. Display disagreements must not silently change its membership.
     boolean planned = planProof.matches() && !completedIdentity && sourceIssue == null && sourceWritable && targetWritable;
-    if (!alreadyThere && historicalProof != null && sourceWritable && targetWritable)
-      reasons.add(0, Reason.ARCHIVE_CHECK_REQUIRED);
+    boolean pendingCheck = historicalProof != null && sourceWritable && targetWritable;
+    if (!alreadyThere && pendingCheck) reasons.add(0, Reason.ARCHIVE_CHECK_REQUIRED);
     else if (completedIdentity && historicalProof == null) reasons.add(0, Reason.HISTORICAL_PROOF_CHANGED);
     var status = alreadyThere ? PhotoStorageInventory.Status.ALREADY_THERE
-        : planned ? PhotoStorageInventory.Status.ELIGIBLE : PhotoStorageInventory.Status.EXCLUDED;
+        : planned || pendingCheck ? PhotoStorageInventory.Status.ELIGIBLE : PhotoStorageInventory.Status.EXCLUDED;
     return new PhotoStorageInventory.Photo(row.uri(), displayName, location, status, reasons,
         historyMatches ? null : recordedName, historyMatches);
   }
@@ -623,6 +622,7 @@ final class PhotoMove implements AutoCloseable {
       PhotoStorage.requireSpace(context, batch.volume(), store.remainingBytes());
       progress.update(batch);
       Map<String, String> cameraEvidence = null;
+      var archive = new LegacyArchiveMoveProof.Records(context);
       for (PhotoMoveStore.Item item; (item = store.next()) != null;) {
         check(stopped);
         // Auto-cleanup can remove a verified photo. Serialize the two local deletion paths.
@@ -630,7 +630,7 @@ final class PhotoMove implements AutoCloseable {
           throw new Failure("端末の容量整理が終わってから移動を再開してください。");
         try {
           if (item.hasHistoricalProof() && cameraEvidence == null) cameraEvidence = ledger.importDestinations();
-          advance(item, batch.volume(), stopped, metrics, cameraEvidence);
+          advance(item, batch.volume(), stopped, metrics, cameraEvidence, archive);
           metrics.completed++;
         } finally {
           E2SyncJob.ORIGINALS.unlock();
@@ -650,11 +650,11 @@ final class PhotoMove implements AutoCloseable {
   }
 
   private void advance(PhotoMoveStore.Item item, String volume, BooleanSupplier stopped, RunMetrics metrics,
-      Map<String, String> cameraEvidence) throws IOException {
+      Map<String, String> cameraEvidence, LegacyArchiveMoveProof.Records archive) throws IOException {
     if (item.hasHistoricalProof()) {
       requireHistoricalHistory(item, cameraEvidence);
       requireHistoricalEpoch(item);
-      if (item.stage() <= PhotoMoveStore.VERIFIED) requireHistoricalSource(item, cameraEvidence, stopped);
+      if (item.stage() <= PhotoMoveStore.VERIFIED) requireHistoricalSource(item, cameraEvidence, archive, stopped);
       if (item.stage() >= PhotoMoveStore.VERIFIED && !item.proofSha().equals(item.sha()))
         throw archiveMismatch();
     } else if (item.stage() <= PhotoMoveStore.VERIFIED) {
@@ -711,7 +711,7 @@ final class PhotoMove implements AutoCloseable {
       item = store.next();
     }
     if (item.stage() == PhotoMoveStore.UPDATING_HISTORY) {
-      if (item.hasHistoricalProof()) requireHistoricalSource(item, cameraEvidence, stopped);
+      if (item.hasHistoricalProof()) requireHistoricalSource(item, cameraEvidence, archive, stopped);
       // Prepare the journal first, then read back the published bytes before either history is changed.
       faults.after(Boundary.BEFORE_HISTORY_VERIFY);
       Media published = verifyTarget(target, item.bytes(), item.sha(), true, stopped, metrics);
@@ -748,7 +748,7 @@ final class PhotoMove implements AutoCloseable {
         item = store.next();
       }
       faults.after(Boundary.BEFORE_SOURCE_DELETE);
-      if (item.hasHistoricalProof()) requireHistoricalSource(item, cameraEvidence, stopped);
+      if (item.hasHistoricalProof()) requireHistoricalSource(item, cameraEvidence, archive, stopped);
       Media current = requireOwned(target);
       if (current.pending() || !verified.version().equals(current.version())
           || item.hasHistoricalProof() && !matchesCompleted(item.pendingCompletion(), current))
@@ -807,7 +807,14 @@ final class PhotoMove implements AutoCloseable {
       if (item.stage() == PhotoMoveStore.COPYING) {
         discardIncomplete(item, batch.volume());
       } else if (item.hasHistoricalProof() && item.stage() >= PhotoMoveStore.UPDATING_HISTORY) {
-        identity = abandonHistorical(item);
+        if (!E2SyncJob.ORIGINALS.tryLock())
+          throw new Failure("端末の容量整理が終わってから移動を終了してください。");
+        try {
+          store.abandon(abandonHistorical(item));
+          return batch;
+        } finally {
+          E2SyncJob.ORIGINALS.unlock();
+        }
       } else if (item.stage() == PhotoMoveStore.UPDATING_HISTORY) {
         if (intactSource(item)) {
           relocate(item, true);
@@ -829,6 +836,8 @@ final class PhotoMove implements AutoCloseable {
   }
 
   private String abandonHistorical(PhotoMoveStore.Item item) throws IOException {
+    // A removed history cannot be restored from the copy or replaced by another receipt.
+    if (!history.containsMoveEvidence(item.historyId())) return galleryUri(Uri.parse(item.target())).toString();
     Map<String, String> cameraEvidence = ledger.importDestinations();
     requireHistoricalHistory(item, cameraEvidence);
     if (find(Uri.parse(item.source())) == null) {
@@ -980,7 +989,7 @@ final class PhotoMove implements AutoCloseable {
   }
 
   private Media requireHistoricalSource(PhotoMoveStore.Item item, Map<String, String> cameraEvidence,
-      BooleanSupplier stopped) throws IOException {
+      LegacyArchiveMoveProof.Records archive, BooleanSupplier stopped) throws IOException {
     Media source = requireSource(item);
     var record = requireHistoricalHistory(item, cameraEvidence);
     if (!source.hasGenerationIdentity() || !historicalAliasMatches(source)
@@ -989,7 +998,7 @@ final class PhotoMove implements AutoCloseable {
     if (item.sourceProof() != null) {
       if (!matchesCompleted(item.sourceProof(), source)) throw archiveMismatch();
     } else if (!PhotoStorage.PRIMARY.equals(source.volume())
-        || !LegacyArchiveMoveProof.revalidate(context, item.archiveProof(), source.photo(), source.generationAdded(),
+        || !LegacyArchiveMoveProof.revalidate(context, archive, item.archiveProof(), source.photo(), source.generationAdded(),
             source.generationModified(), record, stopped)) throw archiveMismatch();
     return source;
   }

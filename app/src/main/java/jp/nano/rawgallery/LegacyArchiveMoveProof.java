@@ -4,6 +4,8 @@ import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.provider.MediaStore;
+import android.system.ErrnoException;
+import android.system.Os;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.util.ArrayList;
@@ -54,33 +56,63 @@ final class LegacyArchiveMoveProof {
     }
   }
 
-  /** Missing or unreadable records cannot supply proof. Opening this database never creates or upgrades it. */
-  static Map<String, List<ArchiveRecord>> read(Context context, BooleanSupplier stopped) throws IOException {
-    return read(context, null, stopped);
-  }
+  private record ArchiveStamp(long device, long inode, long revision) {}
 
-  private static Map<String, List<ArchiveRecord>> read(Context context, String key, BooleanSupplier stopped)
-      throws IOException {
-    var file = context.getDatabasePath(E2Settings.DATABASE);
-    if (!file.isFile()) return Map.of();
-    Map<String, List<ArchiveRecord>> byUri = new HashMap<>();
-    String sql = "SELECT key,payload FROM photos WHERE state='verified'" + (key == null ? "" : " AND key=?");
-    try (SQLiteDatabase db = SQLiteDatabase.openDatabase(file.getPath(), null, SQLiteDatabase.OPEN_READONLY);
-         Cursor rows = db.rawQuery(sql, key == null ? null : new String[]{key})) {
-      int count = 0;
-      while (rows.moveToNext()) {
-        check(stopped);
-        if (++count > MAX_RECORDS) return Map.of();
-        JSONObject value = new JSONObject(rows.getString(1));
-        String uri = value.optString("uri");
-        ArchiveRecord record = parse(rows.getString(0), value);
-        // Keep a malformed receipt with this URI as a conflicting observation.
-        byUri.computeIfAbsent(uri, ignored -> new ArrayList<>()).add(record);
+  /** Reuse a bounded scan only while this same file has an unchanged photo-record revision. */
+  static final class Records {
+    private final String path;
+    private final Budget budget = new Budget(3_000_000);
+    private ArchiveStamp stamp;
+    private Map<String, List<ArchiveRecord>> snapshot = Map.of();
+
+    Records(Context context) { path = context.getDatabasePath(E2Settings.DATABASE).getPath(); }
+
+    Map<String, List<ArchiveRecord>> read(BooleanSupplier stopped) throws IOException {
+      check(stopped);
+      try {
+        var file = Os.stat(path);
+        try (SQLiteDatabase db = SQLiteDatabase.openDatabase(path, null, SQLiteDatabase.OPEN_READONLY)) {
+          ArchiveStamp current = stamp(db, file.st_dev, file.st_ino);
+          if (current.equals(stamp)) return snapshot;
+          Map<String, List<ArchiveRecord>> refreshed = scan(db, stopped);
+          if (!current.equals(stamp(db, file.st_dev, file.st_ino))) return Map.of();
+          snapshot = refreshed;
+          stamp = current;
+          return refreshed;
+        }
+      } catch (JSONException | ErrnoException | RuntimeException unavailable) {
+        return Map.of();
       }
-    } catch (JSONException | RuntimeException unavailable) {
-      return Map.of();
     }
-    return byUri;
+
+    private ArchiveStamp stamp(SQLiteDatabase db, long device, long inode) throws ErrnoException {
+      try (Cursor row = db.rawQuery("SELECT value FROM index_revision WHERE id=1", null)) {
+        if (!row.moveToFirst() || row.getType(0) != Cursor.FIELD_TYPE_INTEGER || row.getLong(0) < 0)
+          throw new IllegalStateException("The archive revision is unavailable");
+        long revision = row.getLong(0);
+        var current = Os.stat(path);
+        if (device != current.st_dev || inode != current.st_ino)
+          throw new IllegalStateException("The archive file changed");
+        return new ArchiveStamp(device, inode, revision);
+      }
+    }
+
+    private static Map<String, List<ArchiveRecord>> scan(SQLiteDatabase db, BooleanSupplier stopped)
+        throws IOException, JSONException {
+      Map<String, List<ArchiveRecord>> byUri = new HashMap<>();
+      try (Cursor rows = db.rawQuery("SELECT key,payload FROM photos WHERE state='verified'", null)) {
+        int count = 0;
+        while (rows.moveToNext()) {
+          check(stopped);
+          if (++count > MAX_RECORDS) return Map.of();
+          JSONObject value = new JSONObject(rows.getString(1));
+          String uri = value.optString("uri");
+          // A malformed receipt with this URI still makes the set ambiguous.
+          byUri.computeIfAbsent(uri, ignored -> new ArrayList<>()).add(parse(rows.getString(0), value));
+        }
+      }
+      return byUri;
+    }
   }
 
   static ArchiveRecord parse(String dbKey, JSONObject value) {
@@ -89,11 +121,12 @@ final class LegacyArchiveMoveProof {
       String sha = string(value, "sha");
       if (dbKey == null || !KEY.matcher(dbKey).matches() || !dbKey.equals(string(value, "key"))
           || !SHA.matcher(sha).matches() || !"idrive-e2".equals(string(value, "provider"))
-          || bucket.isBlank() || bucket.indexOf('\n') >= 0 || string(value, "version").isBlank()) return null;
+          || bucket.isBlank() || bucket.indexOf('\n') >= 0) return null;
+      E2Archive.checkedVersion(string(value, "version"));
       return new ArchiveRecord(dbKey, bucket, sha, string(value, "uri"), string(value, "name"),
           string(value, "folder"), number(value, "size"), number(value, "modified"),
           number(value, "added"), number(value, "verifiedAt"));
-    } catch (JSONException unavailable) {
+    } catch (IOException | JSONException unavailable) {
       return null;
     }
   }
@@ -134,18 +167,15 @@ final class LegacyArchiveMoveProof {
         history.getId(), epoch, historyFingerprint(history)) : null;
   }
 
-  static boolean revalidate(Context context, PhotoMoveStore.ArchiveProof proof, PhotoRepository.Photo photo,
-      long addedGeneration, long modifiedGeneration, HistoryDb.MoveEvidence history, BooleanSupplier stopped)
-      throws IOException {
-    if (!proof.epoch().equals(epoch(context)) || !validRange(addedGeneration, modifiedGeneration)
-        || proof.historicalGeneration() < addedGeneration || proof.historicalGeneration() > modifiedGeneration
-        || history.getId() != proof.historyId() || !historyFingerprint(history).equals(proof.historyFingerprint())
-        || !historyMatches(photo, history)) return false;
-    var records = read(context, proof.key(), stopped).get(photo.uri.toString());
-    if (records == null || records.size() != 1) return false;
-    ArchiveRecord receipt = records.get(0);
-    return receiptMatches(receipt, photo, history.getImportedAt()) && proof.sha().equals(receipt.sha())
-        && proof.key().equals(key(keyPrefix(photo, receipt.bucket(), proof.epoch()), proof.historicalGeneration()));
+  static boolean revalidate(Context context, Records archive, PhotoMoveStore.ArchiveProof proof,
+      PhotoRepository.Photo photo, long addedGeneration, long modifiedGeneration,
+      HistoryDb.MoveEvidence history, BooleanSupplier stopped) throws IOException {
+    String currentEpoch = epoch(context);
+    if (!proof.epoch().equals(currentEpoch)) return false;
+    var records = archive.read(stopped).get(photo.uri.toString());
+    var current = match(photo, currentEpoch, addedGeneration, modifiedGeneration, history, records,
+        archive.budget, stopped);
+    return proof.equals(current);
   }
 
   private static boolean validRange(long added, long modified) {
