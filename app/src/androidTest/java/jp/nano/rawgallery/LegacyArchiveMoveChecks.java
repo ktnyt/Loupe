@@ -74,6 +74,7 @@ final class LegacyArchiveMoveChecks {
     Context base = test.getTargetContext();
     String secondary = isolatedVolume(base, secondaryArg);
     checkMetadataMatcher();
+    checkInventoryCountGroups();
     checkReadOnlyPreflight(base, secondary);
     for (String state : List.of("verified", "pending", "released")) checkLateArchiveConflict(base, secondary, state);
     checkHistoricalCaptureGuard(base, secondary);
@@ -1146,6 +1147,29 @@ final class LegacyArchiveMoveChecks {
     }
   }
 
+  private static void checkInventoryCountGroups() {
+    var location = new PhotoStorageLocation(PhotoStorageLocation.Kind.CURRENT,
+        PhotoStorageLocation.Availability.MOUNTED, PRIMARY, "内部ストレージ", FOLDER);
+    var eligible = PhotoStorageInventory.Status.ELIGIBLE;
+    var pending = List.of(PhotoStorageInventory.Reason.ARCHIVE_CHECK_REQUIRED);
+    var photos = List.of(
+        new PhotoStorageInventory.Photo(Uri.parse("content://media/external_primary/images/media/1"),
+            "MATCHED.JPG", location, eligible, List.of(), null, true),
+        new PhotoStorageInventory.Photo(Uri.parse("content://media/external_primary/images/media/2"),
+            "MATCHED-PENDING.JPG", location, eligible, pending, null, true),
+        new PhotoStorageInventory.Photo(Uri.parse("content://media/external_primary/images/media/3"),
+            "UNMATCHED-PENDING.JPG", location, eligible, pending, null, false),
+        new PhotoStorageInventory.Photo(Uri.parse("content://media/external_primary/images/media/4"),
+            "OTHER-REFERENCE.JPG", location, PhotoStorageInventory.Status.EXCLUDED,
+            List.of(PhotoStorageInventory.Reason.HISTORY_NAME), "RECORDED.JPG", false));
+    var unresolved = new PhotoStorageInventory.History("MISSING.JPG", PhotoStorageLocation.unknown(),
+        List.of(PhotoStorageInventory.Reason.MISSING_REFERENCE), null, null, 7);
+    String grouped = PhotoStorageInventoryActivity.summary(new PhotoStorageInventory(photos, List.of(unresolved)));
+    require(grouped.equals("履歴と一致した写真 2枚\n　内部ストレージ 2枚\n　うち内容の確認待ち 1枚"
+        + "\n\n履歴との照合待ち 2枚\n　うち内容の確認待ち 1枚\n　うちその他の参照先 1枚"
+        + "\n\n確認が必要な履歴 7件"), "Matched and unmatched are disjoint photos, and unresolved histories count records separately");
+  }
+
   private static void checkRoundTrip(Context base, String secondary) throws Exception {
     try (Fixture f = new Fixture(base, secondary);
          CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history(); ArchiveStore archive = E2Settings.openRecords(f.isolatedContext());
@@ -1165,8 +1189,9 @@ final class LegacyArchiveMoveChecks {
               && photo.status() == PhotoStorageInventory.Status.ELIGIBLE),
           "A completed move remains recognized with the original historical timestamp");
       String overview = PhotoStorageInventoryActivity.summary(inventory);
-      require(overview.contains("履歴と一致した写真 1枚") && overview.contains("内容の確認待ち 1枚（履歴と一致した1枚を含む）")
-          && !overview.contains("参照先の写真"), "Reverse inventory explains that the one pending photo is also the one matched photo");
+      require(overview.startsWith("履歴と一致した写真 1枚\n")
+          && overview.contains("\n　うち内容の確認待ち 1枚\n\n履歴との照合待ち 0枚\n")
+          && !overview.contains("その他の参照先"), "Reverse inventory nests its one pending photo in the matched group");
       PhotoMove.Plan back = preflight(mover, mover.plan(PRIMARY), () -> false);
       require(itemSources(back).equals(Set.of(card.toString())) && prior.equals(back.items().get(0).sourceProof()),
           "The confirmed replacement's durable proof authorizes the independent reverse move");
@@ -1380,13 +1405,23 @@ final class LegacyArchiveMoveChecks {
         syntheticKeys.add(good.archiveKey());
         Seed bad = seed(f, history, archive, "EXCLUDED.JPG", 0xff416c5c, true, true);
         syntheticKeys.add(bad.archiveKey());
+        byte[] strictBytes = jpegWithCaptureTime(f, 0xff4b6085, SHOT, SHOT + 2);
+        Uri strict = f.insert(PRIMARY, "STRICT.JPG", strictBytes, SHOT * 1000);
+        require(f.awaitCaptureTime(strict, SHOT * 1000) == SHOT * 1000, "Index a strict matching capture time");
+        history.recordImport(MODEL, f.id, new ImportedKey("STRICT.JPG", strictBytes.length, SHOT), strict.toString());
+        byte[] referenceBytes = jpegWithCaptureTime(f, 0xff6a4f78, SHOT, SHOT + 2);
+        Uri reference = f.insert(PRIMARY, "OTHER-REFERENCE.JPG", referenceBytes, SHOT * 1000);
+        history.recordImport(MODEL, f.id, new ImportedKey("OTHER-REFERENCE.JPG", referenceBytes.length + 1, SHOT),
+            reference.toString());
         var before = history.moveEvidence();
         require(PhotoStorage.select(base, secondary), "Select the isolated UI destination");
         captureConfirmation(test, base, secondary, captures, profile);
         try (PhotoMoveStore journal = new PhotoMoveStore(base)) {
           require(journal.batch() == null && !PhotoMoveService.state().running() && f.rows(secondary).isEmpty()
               && history.moveEvidence().equals(before) && Arrays.equals(good.bytes(), f.read(good.uri()))
-              && Arrays.equals(bad.bytes(), f.read(bad.uri())), "Cancelling and backing out of the native confirmation does not begin a move");
+              && Arrays.equals(bad.bytes(), f.read(bad.uri())) && Arrays.equals(strictBytes, f.read(strict))
+              && Arrays.equals(referenceBytes, f.read(reference)),
+              "Cancelling and backing out of the native confirmation does not begin a move");
         }
       } finally {
         history.resetHistory(MODEL, f.id);
@@ -1398,7 +1433,8 @@ final class LegacyArchiveMoveChecks {
       else restore.putString("photo_volume", previous);
       require(restore.commit(), "Restore the isolated UI storage selection");
     }
-    return "PASS archive preflight confirmation: one verified photo, one archive exclusion, cancel and back without moving; "
+    return "PASS archive count groups and preflight: one history match, two unmatched pending and one other reference, "
+        + "two eligible after preflight, one archive exclusion and one other exclusion, cancel and back without moving; "
         + test.photoStorageEffectiveWidth() + "dp, font " + font + " " + captures.getAbsolutePath();
   }
 
@@ -1412,18 +1448,22 @@ final class LegacyArchiveMoveChecks {
       var start = awaitStorageControl(automation, moveButton);
       assertWindowWidth(test, activity);
       assertTouchTarget(test, activity, start, label);
-      Predicate<AccessibilityNodeInfo> awaitingCheck = node -> mentions(node, "履歴と一致した写真 0枚")
-          && mentions(node, "内容の確認待ち 2枚") && !mentions(node, "内容を照合できなかった");
+      Predicate<AccessibilityNodeInfo> awaitingCheck = node -> mentions(node, "履歴と一致した写真 1枚")
+          && mentions(node, "履歴との照合待ち 3枚\n　うち内容の確認待ち 2枚\n　うちその他の参照先 1枚")
+          && !mentions(node, "内容を照合できなかった");
       awaitStorageControl(automation, awaitingCheck);
       captureSettled(test, automation, captures, profile + "-settings", awaitingCheck);
+      captureCountList(test, automation, captures, profile, awaitingCheck);
       String card = PhotoStorage.label(base, secondary);
-      Predicate<AccessibilityNodeInfo> confirmed = node -> mentions(node, card + "に1枚")
+      Predicate<AccessibilityNodeInfo> confirmed = node -> mentions(node, card + "に2枚")
           && mentions(node, "内容を照合できなかった1枚は元の場所に残ります。")
+          && mentions(node, "移動対象外の項目があります。保存場所の一覧で写真と理由を確認できます。")
           && !mentions(node, "内容の確認待ち");
       click(awaitStorageControl(automation, moveButton));
       awaitStorageControl(automation, confirmed);
       captureSettled(test, automation, captures, profile + "-confirmation", confirmed);
       assertDialogAction(activity, awaitStorageControl(automation, node -> hasText(node, "移動")), "移動");
+      assertDialogAction(activity, awaitStorageControl(automation, node -> hasText(node, "理由を見る")), "理由を見る");
       var cancel = awaitStorageControl(automation, node -> hasText(node, "キャンセル"));
       assertDialogAction(activity, cancel, "キャンセル");
       click(cancel);
@@ -1437,6 +1477,28 @@ final class LegacyArchiveMoveChecks {
     } finally {
       test.runOnMainSync(activity::finish);
       test.waitForIdleSync();
+    }
+  }
+
+  private static void captureCountList(ArchiveInstrumentation test, UiAutomation automation, File captures,
+      String profile, Predicate<AccessibilityNodeInfo> grouped) throws Exception {
+    var monitor = test.addMonitor(PhotoStorageInventoryActivity.class.getName(), null, false);
+    Activity inventory = null;
+    try {
+      click(awaitStorageControl(automation, node -> hasText(node, "保存場所と移動対象外の理由を見る")));
+      inventory = test.waitForMonitorWithTimeout(monitor, 6000);
+      require(inventory instanceof PhotoStorageInventoryActivity, "Open the real inventory activity");
+      awaitStorageControl(automation, node -> hasText(node, "絞り込み") && node.isEnabled());
+      awaitStorageControl(automation, grouped);
+      assertWindowWidth(test, inventory);
+      captureSettled(test, automation, captures, profile + "-inventory", grouped);
+    } finally {
+      test.removeMonitor(monitor);
+      if (inventory != null) {
+        Activity opened = inventory;
+        test.runOnMainSync(opened::finish);
+        test.waitForIdleSync();
+      }
     }
   }
 

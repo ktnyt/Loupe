@@ -180,7 +180,7 @@ public final class PhotoStorageInventoryActivity extends AppCompatActivity {
   private List<Filter> filters() {
     List<Filter> filters = new ArrayList<>();
     filters.add(ALL);
-    volumeCounts(snapshot).forEach((volume, count) -> {
+    volumeCounts(snapshot.photos()).forEach((volume, count) -> {
       if (volume != null) filters.add(new Filter(VOLUME_PREFIX + volume, count.label()));
     });
     filters.add(UNRESOLVED);
@@ -237,41 +237,46 @@ public final class PhotoStorageInventoryActivity extends AppCompatActivity {
     list.setSelection(0);
     String selection = filter.equals(ALL) ? "" : filter.label() + "\n";
     filterButton.setStateDescription(filter.label());
-    long confirmed = photos.stream().filter(PhotoStorageInventory.Photo::historyMatches).count();
-    String counts = "履歴と一致した写真 " + confirmed + "枚" + candidateCounts(photos)
-        + "\n確認が必要な履歴 " + historyCount(history) + "件";
-    state.setText(selection + counts + (rows.isEmpty() ? "\n表示する項目はありません。" : ""));
+    state.setText(selection + countGroups(photos, history) + (rows.isEmpty() ? "\n表示する項目はありません。" : ""));
   }
 
   static String summary(PhotoStorageInventory inventory) {
-    Map<String, VolumeCount> counts = volumeCounts(inventory);
-    int confirmed = counts.values().stream().mapToInt(VolumeCount::confirmed).sum();
-    var lines = new StringBuilder("履歴と一致した写真 ").append(confirmed).append("枚");
-    counts.forEach((volume, count) -> {
-      if (count.confirmed() > 0)
-        lines.append('\n').append(count.label()).append(' ').append(count.confirmed()).append("枚");
-    });
-    return lines.append(candidateCounts(inventory.photos()))
-        .append("\n確認が必要な履歴 ").append(historyCount(inventory.unresolved())).append("件").toString();
+    return countGroups(inventory.photos(), inventory.unresolved());
   }
 
-  private static String candidateCounts(List<PhotoStorageInventory.Photo> photos) {
-    int pendingContent = 0, pendingWithHistory = 0, otherReferences = 0;
+  private static String countGroups(List<PhotoStorageInventory.Photo> photos, List<PhotoStorageInventory.History> history) {
+    int matched = 0, matchedPending = 0, unmatchedPending = 0, otherReferences = 0;
     for (var photo : photos) {
-      if (photo.reasons().contains(PhotoStorageInventory.Reason.ARCHIVE_CHECK_REQUIRED)) {
-        pendingContent++;
-        if (photo.historyMatches()) pendingWithHistory++;
-      } else if (!photo.historyMatches()) otherReferences++;
+      boolean pending = photo.reasons().contains(PhotoStorageInventory.Reason.ARCHIVE_CHECK_REQUIRED);
+      if (photo.historyMatches()) {
+        matched++;
+        if (pending) matchedPending++;
+      } else if (pending) {
+        unmatchedPending++;
+      } else {
+        otherReferences++;
+      }
     }
-    String pending = pendingContent == 0 ? "" : "\n内容の確認待ち " + pendingContent + "枚";
-    if (pendingWithHistory > 0) pending += "（履歴と一致した" + pendingWithHistory + "枚を含む）";
-    String references = otherReferences == 0 ? "" : "\n参照先の写真 " + otherReferences + "枚";
-    return pending + references;
+
+    var lines = new StringBuilder("履歴と一致した写真 ").append(matched).append("枚");
+    for (var count : volumeCounts(photos).values()) {
+      if (count.confirmed() > 0)
+        lines.append("\n　").append(count.label()).append(' ').append(count.confirmed()).append("枚");
+    }
+    appendPhotoSubset(lines, "内容の確認待ち", matchedPending);
+    lines.append("\n\n履歴との照合待ち ").append(unmatchedPending + otherReferences).append("枚");
+    appendPhotoSubset(lines, "内容の確認待ち", unmatchedPending);
+    appendPhotoSubset(lines, "その他の参照先", otherReferences);
+    return lines.append("\n\n確認が必要な履歴 ").append(historyCount(history)).append("件").toString();
   }
 
-  private static Map<String, VolumeCount> volumeCounts(PhotoStorageInventory inventory) {
+  private static void appendPhotoSubset(StringBuilder lines, String label, int count) {
+    if (count > 0) lines.append("\n　うち").append(label).append(' ').append(count).append("枚");
+  }
+
+  private static Map<String, VolumeCount> volumeCounts(List<PhotoStorageInventory.Photo> photos) {
     Map<String, VolumeCount> counts = new LinkedHashMap<>();
-    for (var photo : inventory.photos()) {
+    for (var photo : photos) {
       PhotoStorageLocation location = photo.location();
       counts.merge(location.volume(), new VolumeCount(location.label(), photo.historyMatches() ? 1 : 0),
           (left, right) -> new VolumeCount(left.label(), left.confirmed() + right.confirmed()));
