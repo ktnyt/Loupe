@@ -223,8 +223,11 @@ public final class PhotoStorageInventoryActivity extends AppCompatActivity {
     if (filter.equals(UNRESOLVED)) photos = photos.stream()
         .filter(photo -> !photo.historyMatches() || photo.location().kind() != PhotoStorageLocation.Kind.CURRENT)
         .collect(Collectors.toList());
-    else if (filter.equals(EXCLUDED)) photos = photos.stream()
-        .filter(photo -> photo.status() == PhotoStorageInventory.Status.EXCLUDED).collect(Collectors.toList());
+    else if (filter.equals(EXCLUDED)) {
+      photos = photos.stream().filter(photo -> photo.status() == PhotoStorageInventory.Status.EXCLUDED)
+          .collect(Collectors.toList());
+      history = List.of();
+    }
     else if (!filter.equals(ALL)) {
       String volume = filter.key().substring(VOLUME_PREFIX.length());
       photos = photos.stream().filter(photo -> volume.equals(photo.location().volume())).collect(Collectors.toList());
@@ -235,8 +238,8 @@ public final class PhotoStorageInventoryActivity extends AppCompatActivity {
     String selection = filter.equals(ALL) ? "" : filter.label() + "\n";
     filterButton.setStateDescription(filter.label());
     long confirmed = photos.stream().filter(PhotoStorageInventory.Photo::historyMatches).count();
-    String counts = "確認できた写真 " + confirmed + "枚" + candidateCount(photos.size() - confirmed, "・")
-        + "・確認が必要な履歴 " + historyCount(history) + "件";
+    String counts = "確認できた写真 " + confirmed + "枚" + candidateCount(photos.size() - confirmed, "\n")
+        + "\n確認が必要な履歴 " + historyCount(history) + "件";
     state.setText(selection + counts + (rows.isEmpty() ? "\n表示する項目はありません。" : ""));
   }
 

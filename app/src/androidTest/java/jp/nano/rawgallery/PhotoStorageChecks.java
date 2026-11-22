@@ -102,6 +102,7 @@ final class PhotoStorageChecks {
       try (Fixture fixture = new Fixture(base, secondary)) {
         checkLedgerInventoryEvidence(fixture);
       }
+      checkConflictingInventoryReceipts(base, secondary);
       return "PASS photo storage inventory: independent histories, stored sizes, cross-store evidence, exact locations, "
           + "exclusion evidence, unresolved record counts, "
           + "unavailable destination, import and move guards, viewer location resolution, and read-only data";
@@ -1254,6 +1255,47 @@ final class PhotoStorageChecks {
     }
   }
 
+  private static void checkConflictingInventoryReceipts(Context base, String secondary) throws Exception {
+    try (Fixture f = new Fixture(base, secondary); CameraImportLedger ledger = f.ledger();
+         HistoryDb history = f.history(); PhotoMove move = f.move(ledger, history, boundary -> {})) {
+      byte[] bytes = jpegWithCaptureTime(f, 0xff376588, CAPTURE, CAPTURE + 1);
+      byte[] other = bytes.clone();
+      other[other.length / 2] ^= 1;
+      Uri uri = f.insertDatedLegacyPhoto("CONFLICT-A.JPG", bytes);
+      adoptFixtureReceipt(f, ledger, uri, "CONFLICT-A.JPG", bytes, bytes);
+      Uri alias = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, ContentUris.parseId(uri));
+      adoptFixtureReceipt(f, ledger, uri, "CONFLICT-B.JPG", other, other);
+      byte[] old = Arrays.copyOf(bytes, bytes.length + 20);
+      adoptFixtureReceipt(f, ledger, alias, "OLD-ALIAS.JPG", old, old);
+      Uri independent = f.insertDatedLegacyPhoto("EXACT-ONLY.JPG", bytes);
+      adoptFixtureReceipt(f, ledger, independent, "EXACT-ONLY.JPG", jpeg(0xffa42838), bytes);
+      Uri independentAlias = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, ContentUris.parseId(independent));
+      adoptFixtureReceipt(f, ledger, independentAlias, "OTHER-CARD.JPG", jpeg(0xff514842), old);
+      recordFixtureHistory(history, f, "CONFLICT-A.JPG", bytes.length, CAPTURE, uri.toString());
+      var before = move.plan(secondary);
+      var listing = move.inventory(secondary);
+      require(listing.unresolved().stream().anyMatch(row -> row.name().equals("CONFLICT-A.JPG")
+              && row.reasons().contains(PhotoStorageInventory.Reason.CONFLICTING_HISTORY))
+          && listing.unresolved().stream().anyMatch(row -> row.name().equals("CONFLICT-B.JPG")
+              && row.reasons().contains(PhotoStorageInventory.Reason.CONFLICTING_HISTORY)),
+          "Equal-size conflicting exact receipts retain both historical names");
+      require(listing.unresolved().stream().filter(row -> row.name().equals("OLD-ALIAS.JPG"))
+              .mapToInt(PhotoStorageInventory.History::count).sum() == 1
+          && listing.unresolved().stream().filter(row -> row.name().equals("OTHER-CARD.JPG"))
+              .mapToInt(PhotoStorageInventory.History::count).sum() == 1
+          && requireInventoryPhoto(listing, independent, "EXACT-ONLY.JPG", f.path,
+              PhotoStorageInventory.Status.EXCLUDED, PhotoStorageInventory.Reason.CONFLICTING_HISTORY).historyMatches(),
+          "Each aggregate history is counted once without tainting independently confirmed exact evidence");
+      require(before.equals(move.plan(secondary)) && move.batch() == null && Arrays.equals(bytes, f.read(uri)),
+          "Conflict diagnosis preserves the plan, journal and original bytes");
+      Context denied = new android.content.ContextWrapper(base) {
+        @Override public int checkSelfPermission(String permission) { return android.content.pm.PackageManager.PERMISSION_DENIED; }
+      };
+      require(PhotoStorageLocation.completeAggregateVolumes(denied) == null,
+          "Partial or denied image access cannot establish aggregate uniqueness");
+    }
+  }
+
   private static CameraImportLedger.Content adoptFixtureReceipt(Fixture f, CameraImportLedger ledger, Uri uri, String name,
       byte[] sourceBytes, byte[] storedBytes) throws Exception {
     var source = f.source("wifi:", name, sourceBytes);
@@ -1271,10 +1313,10 @@ final class PhotoStorageChecks {
   }
 
   private static void requireStoredSizeMismatch(PhotoStorageInventory listing, Fixture f, Uri uri, String name) {
-    var photo = requireInventoryPhoto(listing, uri, name, f.path, PhotoStorageInventory.Status.EXCLUDED,
+    var photo = requireInventoryPhoto(listing, uri, name, f.path, PhotoStorageInventory.Status.ELIGIBLE,
         PhotoStorageInventory.Reason.HISTORY_SIZE);
     require(!photo.historyMatches() && name.equals(photo.recordedName()),
-        "A changed stored size cannot be confirmed, even if the current size matches a source receipt or legacy evidence");
+        "A changed stored size remains in the unchanged move plan but cannot be confirmed by its history");
     require(listing.unresolved().stream().filter(row -> name.equals(row.name()) && name.equals(row.candidateName())
             && row.reasons().contains(PhotoStorageInventory.Reason.HISTORY_SIZE)).mapToInt(PhotoStorageInventory.History::count).sum() == 1,
         "The historical receipt remains unresolved with the stored-size mismatch reason");

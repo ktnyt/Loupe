@@ -1,10 +1,13 @@
 package jp.nano.rawgallery;
 
+import android.Manifest;
 import android.content.ContentResolver;
 import android.content.ContentUris;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.storage.StorageManager;
@@ -14,6 +17,7 @@ import android.provider.MediaStore;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 import jp.nano.rawgallery.camera.CameraImportHistoryPlan;
 
@@ -98,6 +102,19 @@ record PhotoStorageLocation(Kind kind, Availability availability, String volume,
     return concrete(volume) ? volume : null;
   }
 
+  /** A single visible match cannot disambiguate an aggregate reference in an incomplete catalog. */
+  static Set<String> completeAggregateVolumes(Context context) {
+    try {
+      String permission = Build.VERSION.SDK_INT >= 33
+          ? Manifest.permission.READ_MEDIA_IMAGES : Manifest.permission.READ_EXTERNAL_STORAGE;
+      if (context.checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) return null;
+      Set<String> mounted = Set.copyOf(MediaStore.getExternalVolumeNames(context));
+      return mounted.containsAll(MediaStore.getRecentExternalVolumeNames(context)) ? mounted : null;
+    } catch (RuntimeException unavailable) {
+      return null;
+    }
+  }
+
   /** Recheck the displayed original on a worker thread. Historical and opaque references may be unknown. */
   static PhotoStorageLocation resolve(Context context, PhotoRepository.Photo photo) {
     if (photo.isArchived()) return cloud();
@@ -118,7 +135,8 @@ record PhotoStorageLocation(Kind kind, Availability availability, String volume,
     if (ContentUris.parseId(photo.uri) < 0) return unknown();
     String referenceVolume = MediaStore.getVolumeName(photo.uri);
     boolean exact = concrete(referenceVolume);
-    if (!exact && !MediaStore.VOLUME_EXTERNAL.equals(referenceVolume)) return unknown();
+    Set<String> aggregateVolumes = exact ? null : completeAggregateVolumes(context);
+    if (!exact && (!MediaStore.VOLUME_EXTERNAL.equals(referenceVolume) || aggregateVolumes == null)) return unknown();
     Volumes volumes = new Volumes(context);
     PhotoStorageLocation recorded = exact ? volumes.location(Kind.RECORDED, referenceVolume, "") : unknown();
     Bundle options = new Bundle();
@@ -129,6 +147,7 @@ record PhotoStorageLocation(Kind kind, Availability availability, String volume,
             MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.SIZE, MediaStore.MediaColumns.DATE_MODIFIED,
             MediaStore.MediaColumns.DATE_ADDED}, options, null)) {
       if (row == null || row.getCount() != 1 || !row.moveToFirst()) return recorded;
+      if (!exact && !aggregateVolumes.equals(completeAggregateVolumes(context))) return unknown();
       String volume = row.getString(0);
       String folder = row.getString(1);
       if ((exact && !referenceVolume.equals(volume)) || !photo.name.equals(row.getString(2))

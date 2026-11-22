@@ -81,6 +81,7 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     MaterialUi.outlined(inventory);
     move = button("取り込み済みの写真を移動", this::plan);
     MaterialUi.filled(move);
+    ((LinearLayout.LayoutParams) move.getLayoutParams()).topMargin = dp(8);
     progress = new LinearProgressIndicator(this);
     progress.setContentDescription("写真の移動の進捗");
     content.addView(progress, new LinearLayout.LayoutParams(-1, -2));
@@ -333,7 +334,8 @@ public final class PhotoStorageActivity extends AppCompatActivity {
         var confirmation = new MaterialAlertDialogBuilder(this)
             .setTitle("取り込み済みの写真を移動しますか？")
             .setMessage(targetLabel + "に" + count + "枚（"
-                + Formatter.formatFileSize(this, bytes) + "）を移動します。" + skipped)
+                + Formatter.formatFileSize(this, bytes) + "）の移動を開始します。"
+                + "\n照合できない写真は元の場所に残ります。" + skipped)
             .setNegativeButton("キャンセル", null)
             .setPositiveButton("移動", (dialog, which) -> {
               PhotoMoveService.launch(this, proposal);
