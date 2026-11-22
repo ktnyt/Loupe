@@ -99,7 +99,11 @@ final class PhotoStorageChecks {
         checkInventory(fixture);
       }
       checkIndependentInventoryEvidence(base, secondary);
-      return "PASS photo storage inventory: independent histories, exact locations, exclusion evidence, unresolved record counts, "
+      try (Fixture fixture = new Fixture(base, secondary)) {
+        checkLedgerInventoryEvidence(fixture);
+      }
+      return "PASS photo storage inventory: independent histories, stored sizes, cross-store evidence, exact locations, "
+          + "exclusion evidence, unresolved record counts, "
           + "unavailable destination, import and move guards, viewer location resolution, and read-only data";
     }
     if (mode.startsWith("photo-storage-abandon-detach-")) return abandonDetached(base, mode, secondary);
@@ -1179,6 +1183,103 @@ final class PhotoStorageChecks {
     }
   }
 
+  private static void checkLedgerInventoryEvidence(Fixture f) throws Exception {
+    byte[] beforeExif = jpeg(0xff386477);
+    byte[] normalized = jpegWithCaptureTime(f, 0xff386477, CAPTURE, CAPTURE + 1);
+    byte[] ledgerOnlyBytes = jpegWithCaptureTime(f, 0xff459469, CAPTURE, CAPTURE + 1);
+    byte[] linkedBytes = jpegWithCaptureTime(f, 0xff9b455a, CAPTURE, CAPTURE + 1);
+    byte[] ledgerOnlyStored = Arrays.copyOf(ledgerOnlyBytes, ledgerOnlyBytes.length + 16);
+    byte[] linkedStored = Arrays.copyOf(linkedBytes, linkedBytes.length + 32);
+    require(beforeExif.length != normalized.length, "Adding EXIF changes the stored byte count of the normalized fixture");
+    Uri normalizedUri = f.insertDatedLegacyPhoto("EXIF-NORMALIZED.JPG", normalized);
+    Uri ledgerOnlyUri = f.insertDatedLegacyPhoto("LEDGER-SIZE.JPG", ledgerOnlyStored);
+    Uri linkedUri = f.insertDatedLegacyPhoto("LINKED-SIZE.JPG", linkedStored);
+    Uri mixedDetached = ContentUris.withAppendedId(MediaStore.Images.Media.getContentUri(MISSING), Long.MAX_VALUE);
+    Uri matchedDetached = ContentUris.withAppendedId(MediaStore.Images.Media.getContentUri(MISSING), Long.MAX_VALUE - 1);
+    try (CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         PhotoMove move = f.move(ledger, history, boundary -> {})) {
+      var normalizedReceipt = adoptFixtureReceipt(f, ledger, normalizedUri, "EXIF-NORMALIZED.JPG", beforeExif, normalized);
+      adoptFixtureReceipt(f, ledger, ledgerOnlyUri, "LEDGER-SIZE.JPG", ledgerOnlyBytes, ledgerOnlyStored);
+      adoptFixtureReceipt(f, ledger, linkedUri, "LINKED-SIZE.JPG", linkedBytes, linkedStored);
+      recordFixtureHistory(history, f, "LINKED-SIZE.JPG", linkedBytes.length, CAPTURE, linkedUri.toString());
+      recordFixtureHistory(history, f, "DETACHED-OLD.JPG", beforeExif.length, CAPTURE, mixedDetached.toString());
+      byte[] detachedOther = jpeg(0xff47875e);
+      adoptFixtureReceipt(f, ledger, mixedDetached, "DETACHED-OTHER.JPG", detachedOther, detachedOther);
+      byte[] detachedLinked = jpeg(0xff665288);
+      adoptFixtureReceipt(f, ledger, matchedDetached, "DETACHED-LINKED.JPG", detachedLinked, detachedLinked);
+      recordFixtureHistory(history, f, "DETACHED-LINKED.JPG", detachedLinked.length, CAPTURE, matchedDetached.toString());
+
+      var initial = move.inventory(f.secondary);
+      require(normalizedReceipt.sourceBytes == beforeExif.length && normalizedReceipt.storedBytes == normalized.length
+          && requireInventoryPhoto(initial, normalizedUri, "EXIF-NORMALIZED.JPG", f.path,
+              PhotoStorageInventory.Status.ELIGIBLE).historyMatches(),
+          "A legitimate EXIF rewrite confirms the stored file using its published size instead of the source size");
+      require(requireInventoryPhoto(initial, ledgerOnlyUri, "LEDGER-SIZE.JPG", f.path,
+              PhotoStorageInventory.Status.ELIGIBLE).historyMatches()
+          && requireInventoryPhoto(initial, linkedUri, "LINKED-SIZE.JPG", f.path,
+              PhotoStorageInventory.Status.ELIGIBLE).historyMatches(), "Both published receipts initially match");
+      Map<String, Integer> missing = new HashMap<>();
+      for (var row : initial.unresolved()) {
+        require(row.location().kind() == PhotoStorageLocation.Kind.RECORDED && MISSING.equals(row.location().volume())
+            && row.location().availability() == PhotoStorageLocation.Availability.UNAVAILABLE
+            && row.reason() == PhotoStorageInventory.Reason.MISSING_REFERENCE && row.candidateLocation() == null,
+            "Detached histories preserve the recorded volume and have no current candidate");
+        missing.merge(row.name(), row.count(), Integer::sum);
+      }
+      require(missing.equals(Map.of("DETACHED-OLD.JPG", 1, "DETACHED-OTHER.JPG", 1, "DETACHED-LINKED.JPG", 1)),
+          "Same-URI unmatched names both survive while matching ledger and legacy evidence is counted once");
+
+      replaceFixtureBytes(f, ledgerOnlyUri, ledgerOnlyBytes);
+      replaceFixtureBytes(f, linkedUri, linkedBytes);
+      List<HistoryDb.MoveEvidence> legacyBefore = history.moveEvidence();
+      var ledgerBefore = ledger.importDestinations();
+      var storedSizesBefore = ledger.importStoredSizes();
+      var receiptsBefore = ledger.moveReceipts();
+      PhotoMove.Plan planBefore = move.plan(f.secondary);
+      PhotoStorageInventory after = move.inventory(f.secondary);
+      require(requireInventoryPhoto(after, normalizedUri, "EXIF-NORMALIZED.JPG", f.path,
+          PhotoStorageInventory.Status.ELIGIBLE).historyMatches(), "The unchanged EXIF-rewritten receipt remains confirmed");
+      requireStoredSizeMismatch(after, f, ledgerOnlyUri, "LEDGER-SIZE.JPG");
+      requireStoredSizeMismatch(after, f, linkedUri, "LINKED-SIZE.JPG");
+      require(planBefore.items().size() == 3 && planBefore.skipped() == 2
+          && planBefore.items().stream().anyMatch(item -> item.source().equals(linkedUri.toString())
+              && !item.legacyIds().isEmpty() && item.bytes() == linkedBytes.length)
+          && planBefore.equals(move.plan(f.secondary)) && move.batch() == null,
+          "The read-only diagnosis does not change legacy proof, queue eligibility, or the journal");
+      require(history.moveEvidence().equals(legacyBefore) && ledger.importDestinations().equals(ledgerBefore)
+          && ledger.importStoredSizes().equals(storedSizesBefore) && ledger.moveReceipts().equals(receiptsBefore)
+          && ledger.contentCount() == 5 && ledger.receiptCount() == 5
+          && Arrays.equals(normalized, f.read(normalizedUri)) && Arrays.equals(ledgerOnlyBytes, f.read(ledgerOnlyUri))
+          && Arrays.equals(linkedBytes, f.read(linkedUri)), "Inventory leaves file bytes and both histories unchanged");
+    }
+  }
+
+  private static CameraImportLedger.Content adoptFixtureReceipt(Fixture f, CameraImportLedger ledger, Uri uri, String name,
+      byte[] sourceBytes, byte[] storedBytes) throws Exception {
+    var source = f.source("wifi:", name, sourceBytes);
+    String sourceSha = E2Archive.sha256(sourceBytes);
+    return ledger.adopt(source, sourceSha, E2Archive.sha256(storedBytes), storedBytes.length, uri.toString(), "JPEG",
+        ledger.captureGroup(source, sourceSha, "JPEG"));
+  }
+
+  private static void replaceFixtureBytes(Fixture f, Uri uri, byte[] replacement) throws IOException {
+    f.requireOwned(f.row(uri));
+    f.write(uri, replacement);
+    require(f.awaitMediaLong(uri, SIZE, replacement.length) == replacement.length
+        && f.awaitCaptureTime(uri, CAPTURE * 1000) == CAPTURE * 1000 && Arrays.equals(replacement, f.read(uri)),
+        "The same URI now has the camera source size with matching name and capture time");
+  }
+
+  private static void requireStoredSizeMismatch(PhotoStorageInventory listing, Fixture f, Uri uri, String name) {
+    var photo = requireInventoryPhoto(listing, uri, name, f.path, PhotoStorageInventory.Status.EXCLUDED,
+        PhotoStorageInventory.Reason.HISTORY_SIZE);
+    require(!photo.historyMatches() && name.equals(photo.recordedName()),
+        "A changed stored size cannot be confirmed, even if the current size matches a source receipt or legacy evidence");
+    require(listing.unresolved().stream().filter(row -> name.equals(row.name()) && name.equals(row.candidateName())
+            && row.reasons().contains(PhotoStorageInventory.Reason.HISTORY_SIZE)).mapToInt(PhotoStorageInventory.History::count).sum() == 1,
+        "The historical receipt remains unresolved with the stored-size mismatch reason");
+  }
+
   private static void requireUnmatchedHistory(PhotoStorageInventory listing, String oldName, String currentName, String folder) {
     var history = listing.unresolved().stream().filter(row -> oldName.equals(row.name())).findFirst().orElseThrow();
     require(history.count() == 1 && history.reasons().contains(PhotoStorageInventory.Reason.HISTORY_NAME)
@@ -1786,7 +1887,8 @@ final class PhotoStorageChecks {
 
       openInventoryFilter(automation);
       click(awaitStorageControl(automation, node -> hasText(node, "確認が必要")));
-      click(awaitNode(automation, node -> mentions(node, "履歴の名前") && mentions(node, "RECORDED-NAME.JPG")
+      click(awaitNode(automation, node -> node.getContentDescription() != null
+          && node.getContentDescription().toString().startsWith("履歴の名前　RECORDED-NAME.JPG")
           && mentions(node, "参照先の写真") && mentions(node, "CURRENT-FILE.JPG")));
       awaitNode(automation, node -> hasText(node, "取り込み履歴の詳細"));
       captureSettled(test, automation, captures, profile + "-mismatched-history-detail", mismatch);
@@ -2642,17 +2744,21 @@ final class PhotoStorageChecks {
     }
 
     long awaitCaptureTime(Uri uri, long expected) throws IOException {
+      return awaitMediaLong(uri, DATE_TAKEN, expected);
+    }
+
+    long awaitMediaLong(Uri uri, String column, long expected) throws IOException {
       long deadline = SystemClock.uptimeMillis() + 6000;
-      long captured = 0;
+      long actual = 0;
       do {
-        try (Cursor row = resolver.query(uri, new String[]{DATE_TAKEN}, null, null, null)) {
-          if (row == null || !row.moveToFirst()) throw new IOException("Could not query synthetic DATE_TAKEN");
-          captured = row.getLong(0);
-          if (captured == expected) return captured;
+        try (Cursor row = resolver.query(uri, new String[]{column}, null, null, null)) {
+          if (row == null || !row.moveToFirst()) throw new IOException("Could not query synthetic media metadata");
+          actual = row.getLong(0);
+          if (actual == expected) return actual;
         }
         SystemClock.sleep(50);
       } while (SystemClock.uptimeMillis() < deadline);
-      return captured;
+      return actual;
     }
 
     PhotoRepository.Photo photo(Uri uri) throws IOException {

@@ -188,13 +188,14 @@ final class PhotoMove implements AutoCloseable {
       if (store.batch() != null)
         throw new Failure("移動を再開または終了してから保存場所を確認してください。");
       String selected = volume == null ? PhotoStorage.selected(context) : volume;
-      return inventory(readImportEvidence(), selected);
+      return inventory(readImportEvidence(), ledger.importStoredSizes(), selected);
     } finally {
       gate.unlock();
     }
   }
 
-  private PhotoStorageInventory inventory(ImportEvidence evidence, String targetVolume) {
+  private PhotoStorageInventory inventory(ImportEvidence evidence, Map<String, Long> storedSizes,
+      String targetVolume) {
     var volumes = new PhotoStorageLocation.Volumes(context);
     Map<Uri, PhotoStorageInventory.Photo> photos = new LinkedHashMap<>();
     Map<PhotoStorageInventory.History, Integer> unresolved = new LinkedHashMap<>();
@@ -211,7 +212,7 @@ final class PhotoMove implements AutoCloseable {
         addUnresolved(evidence, reference, ambiguous, volumes, unresolved);
       } else if (!VideoFormats.accepts(row.name()) && (row.mime() == null || !row.mime().startsWith("video/"))
           && !photos.containsKey(row.uri())) {
-        photos.put(row.uri(), inventoryPhoto(evidence, row, targetVolume, volumes, unresolved));
+        photos.put(row.uri(), inventoryPhoto(evidence, storedSizes, row, targetVolume, volumes, unresolved));
       }
     }
     List<PhotoStorageInventory.History> historyRows = new ArrayList<>();
@@ -226,19 +227,29 @@ final class PhotoMove implements AutoCloseable {
     var location = recordedLocation(volumes, reference);
     List<Reason> reasons = List.of(reason);
     List<HistoryDb.MoveEvidence> legacy = evidence.legacy().getOrDefault(reference, List.of());
-    if (!legacy.isEmpty()) {
-      for (var record : legacy) {
-        if (!VideoFormats.accepts(record.getName()))
-          addUnresolvedName(record.getName(), location, reasons, null, null, unresolved);
-      }
-    } else {
-      List<CameraImportLedger.MoveReceipt> receipts = evidence.receipts().getOrDefault(reference, List.of());
-      if (receipts.isEmpty()) addUnresolvedName(null, location, reasons, null, null, unresolved);
-      else for (var receipt : receipts) {
-        if (!VideoFormats.accepts(receipt.name()))
-          addUnresolvedName(receipt.name(), location, reasons, null, null, unresolved);
-      }
+    for (var record : legacy) {
+      if (!VideoFormats.accepts(record.getName()))
+        addUnresolvedName(record.getName(), location, reasons, null, null, unresolved);
     }
+    addUnresolvedReceipts(evidence, reference, location, reasons, null, null, unresolved);
+  }
+
+  private static String addUnresolvedReceipts(ImportEvidence evidence, String reference,
+      PhotoStorageLocation location, List<Reason> reasons, String candidateName,
+      PhotoStorageLocation candidateLocation, Map<PhotoStorageInventory.History, Integer> unresolved) {
+    List<HistoryDb.MoveEvidence> legacy = evidence.legacy().getOrDefault(reference, List.of());
+    List<CameraImportLedger.MoveReceipt> receipts = evidence.receipts().getOrDefault(reference, List.of());
+    if (legacy.isEmpty() && receipts.isEmpty())
+      addUnresolvedName(null, location, reasons, candidateName, candidateLocation, unresolved);
+    String firstName = null;
+    for (var receipt : receipts) {
+      if (VideoFormats.accepts(receipt.name())) continue;
+      if (firstName == null) firstName = receipt.name();
+      // One history can be represented in both stores. A shared URI or filename alone is not enough.
+      if (legacy.stream().anyMatch(record -> matchesReceipt(receipt, record))) continue;
+      addUnresolvedName(receipt.name(), location, reasons, candidateName, candidateLocation, unresolved);
+    }
+    return firstName;
   }
 
   private static PhotoStorageLocation recordedLocation(PhotoStorageLocation.Volumes volumes, String reference) {
@@ -253,38 +264,58 @@ final class PhotoMove implements AutoCloseable {
         candidateLocation, 1), 1, Integer::sum);
   }
 
-  private PhotoStorageInventory.Photo inventoryPhoto(ImportEvidence evidence, Media row, String targetVolume,
-      PhotoStorageLocation.Volumes volumes, Map<PhotoStorageInventory.History, Integer> unresolved) {
+  private PhotoStorageInventory.Photo inventoryPhoto(ImportEvidence evidence, Map<String, Long> storedSizes,
+      Media row, String targetVolume, PhotoStorageLocation.Volumes volumes,
+      Map<PhotoStorageInventory.History, Integer> unresolved) {
     var location = volumes.location(PhotoStorageLocation.Kind.CURRENT, row.volume(), row.path());
     String displayName = row.name() == null || row.name().isBlank() ? "写真名を確認できません" : row.name();
     MoveProof proof = moveProof(evidence, row);
-    var mismatch = unresolvedHistory(proof, row, volumes, displayName, location, unresolved);
+    List<String> contradictoryReferences = new ArrayList<>(2);
+    addSizeContradiction(contradictoryReferences, storedSizes, row.uri().toString(), row.bytes());
+    addSizeContradiction(contradictoryReferences, storedSizes, proof.alias(), row.bytes());
+    boolean sizeContradiction = !contradictoryReferences.isEmpty();
+    var mismatch = unresolvedHistory(proof, row, sizeContradiction, volumes, displayName, location, unresolved);
+    String recordedName = mismatch.name();
+    for (String reference : contradictoryReferences) {
+      String name = addUnresolvedReceipts(evidence, reference, recordedLocation(volumes, reference),
+          List.of(Reason.HISTORY_SIZE), displayName, location, unresolved);
+      if (recordedName == null) recordedName = name;
+    }
 
+    boolean historyMatches = proof.matches() && !sizeContradiction;
     List<Reason> reasons = new ArrayList<>();
     Reason sourceIssue = sourceIssue(row);
     if (sourceIssue != null) reasons.add(sourceIssue);
     boolean alreadyThere = targetVolume.equals(row.volume());
     if (!alreadyThere && !evidence.writableSources().contains(row.volume())) reasons.add(Reason.VOLUME_UNAVAILABLE);
-    if (!proof.matches()) reasons.addAll(mismatch.reasons());
+    if (!historyMatches) reasons.addAll(mismatch.reasons());
     if (!alreadyThere && reasons.isEmpty() && !evidence.writableSources().contains(targetVolume))
       reasons.add(Reason.DESTINATION_UNAVAILABLE);
     var status = alreadyThere ? PhotoStorageInventory.Status.ALREADY_THERE
         : reasons.isEmpty() ? PhotoStorageInventory.Status.ELIGIBLE : PhotoStorageInventory.Status.EXCLUDED;
     return new PhotoStorageInventory.Photo(row.uri(), displayName, location, status, reasons,
-        proof.matches() ? null : mismatch.name(), proof.matches());
+        historyMatches ? null : recordedName, historyMatches);
+  }
+
+  private static void addSizeContradiction(List<String> contradictions, Map<String, Long> storedSizes,
+      String reference, long liveSize) {
+    Long storedSize = reference == null ? null : storedSizes.get(reference);
+    if (storedSize != null && (storedSize <= 0 || storedSize != liveSize)) contradictions.add(reference);
   }
 
   private record HistoryMismatch(String name, List<Reason> reasons) {}
 
-  private static HistoryMismatch unresolvedHistory(MoveProof proof, Media row, PhotoStorageLocation.Volumes volumes,
-      String candidateName, PhotoStorageLocation candidateLocation,
+  private static HistoryMismatch unresolvedHistory(MoveProof proof, Media row, boolean sizeContradiction,
+      PhotoStorageLocation.Volumes volumes, String candidateName, PhotoStorageLocation candidateLocation,
       Map<PhotoStorageInventory.History, Integer> unresolved) {
-    HistoryMismatch closest = new HistoryMismatch(null, List.of(Reason.CONFLICTING_HISTORY));
+    Reason contradiction = sizeContradiction ? Reason.HISTORY_SIZE : Reason.CONFLICTING_HISTORY;
+    HistoryMismatch closest = new HistoryMismatch(null, List.of(contradiction));
     for (HistoryDb.MoveEvidence record : proof.candidates()) {
       if (VideoFormats.accepts(record.getName())) continue;
-      if (!"".equals(proof.expected()) && proof.matched().contains(record)) continue;
-      List<Reason> reasons = historyMismatchReasons(row, record);
-      if (reasons.isEmpty()) reasons = List.of(Reason.CONFLICTING_HISTORY);
+      boolean matched = proof.matched().contains(record);
+      if (!sizeContradiction && !"".equals(proof.expected()) && matched) continue;
+      List<Reason> reasons = matched ? List.of(contradiction) : historyMismatchReasons(row, record, sizeContradiction);
+      if (reasons.isEmpty()) reasons = List.of(contradiction);
       addUnresolvedName(record.getName(), recordedLocation(volumes, record.getUri()), reasons, candidateName,
           candidateLocation, unresolved);
       if (closest.name() == null || reasons.size() < closest.reasons().size())
@@ -293,10 +324,11 @@ final class PhotoMove implements AutoCloseable {
     return closest;
   }
 
-  private static List<Reason> historyMismatchReasons(Media row, HistoryDb.MoveEvidence record) {
+  private static List<Reason> historyMismatchReasons(Media row, HistoryDb.MoveEvidence record,
+      boolean sizeContradiction) {
     List<Reason> reasons = new ArrayList<>();
     if (!matchesLegacyName(row, record)) reasons.add(Reason.HISTORY_NAME);
-    if (row.bytes() != record.getBytes()) reasons.add(Reason.HISTORY_SIZE);
+    if (sizeContradiction || row.bytes() != record.getBytes()) reasons.add(Reason.HISTORY_SIZE);
     if (record.getShot() > 0 && row.taken() <= 0) reasons.add(Reason.HISTORY_CAPTURE_MISSING);
     else if (record.getShot() > 0 && row.taken() / 1000 != record.getShot())
       reasons.add(Reason.HISTORY_CAPTURE_DIFFERS);
