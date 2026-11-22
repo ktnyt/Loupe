@@ -22,6 +22,13 @@ public final class ArchiveInstrumentation extends Instrumentation {
   @Override public void callActivityOnCreate(android.app.Activity activity, Bundle state) {
     if("camera-pilot-wifi-quick".equals(cameraPilotMode))CameraWifiQuickChecks.activityCreated(activity);
     if(nanoBackgroundTest)NanoBananaBackgroundChecks.activityCreated(activity);
+    boolean dualSlotUi = CameraDualSlotUiChecks.MODE.equals(cameraPilotMode) && activity instanceof CameraImportActivity;
+    if (dualSlotUi) {
+      var config = new android.content.res.Configuration(activity.getResources().getConfiguration());
+      config.fontScale = tagFont;
+      config.screenWidthDp = tagWidth;
+      activity.getResources().updateConfiguration(config, activity.getResources().getDisplayMetrics());
+    }
     if((ep7WifiTest || ("camera-pilot-qr-ui".equals(cameraPilotMode) || (("camera-pilot-wifi-quick".equals(cameraPilotMode) || "camera-pilot-quick-import".equals(cameraPilotMode)) || ("camera-pilot-import-progress".equals(cameraPilotMode) || "camera-pilot-usb-launch".equals(cameraPilotMode))))) && (activity instanceof Ep7WifiActivity || activity instanceof CameraImportActivity || activity instanceof CameraBleActivity)) {
       var config = new android.content.res.Configuration(activity.getBaseContext().getResources().getConfiguration());
       config.fontScale = tagFont; config.screenWidthDp = tagWidth;
@@ -47,6 +54,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
       activity.getResources().updateConfiguration(config, activity.getResources().getDisplayMetrics());
     }
     super.callActivityOnCreate(activity, state);
+    if (dualSlotUi)
+      activity.getWindow().setLayout(GalleryUi.dp(activity, tagWidth), android.view.ViewGroup.LayoutParams.MATCH_PARENT);
     if (photoStorageUi)
       activity.getWindow().setLayout(GalleryUi.dp(activity, photoStorageEffectiveWidth),
           android.view.ViewGroup.LayoutParams.MATCH_PARENT);
@@ -178,6 +187,10 @@ public final class ArchiveInstrumentation extends Instrumentation {
     albumTagsTest = args != null && "album-tags".equals(args.getString("mode"));
     cameraPilotMode = args == null ? null : args.getString("mode");
     if(cameraPilotMode!=null&&!cameraPilotMode.startsWith("camera-pilot-"))cameraPilotMode=null;
+    if (CameraDualSlotUiChecks.MODE.equals(cameraPilotMode)) {
+      tagWidth = Integer.parseInt(args.getString("width", "400"));
+      tagFont = Float.parseFloat(args.getString("font", "1.0"));
+    }
     if (("camera-pilot-qr-ui".equals(cameraPilotMode) || (("camera-pilot-wifi-quick".equals(cameraPilotMode) || "camera-pilot-quick-import".equals(cameraPilotMode)) || ("camera-pilot-import-progress".equals(cameraPilotMode) || "camera-pilot-usb-launch".equals(cameraPilotMode))))) { tagWidth=Integer.parseInt(args.getString("width","400"));tagFont=Float.parseFloat(args.getString("font","1.0")); }
     cameraBenchmarkTest = args != null && "camera-benchmark".equals(args.getString("mode"));
     cameraLedgerTest = args != null && "camera-ledger".equals(args.getString("mode"));
@@ -388,6 +401,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
         }
         else if(cameraPilotMode.equals("camera-pilot-usb-launch-choice"))result=CameraUsbLaunchChecks.choice(this,cameraPilotArguments);
         else if(cameraPilotMode.equals("camera-pilot-usb-launch"))result=CameraUsbLaunchChecks.run(this);
+        else if(CameraDualSlotUiChecks.MODE.equals(cameraPilotMode))result=CameraDualSlotUiChecks.run(this, tagWidth, tagFont);
         else if(cameraPilotMode.equals("camera-pilot-import-progress"))result=CameraImportProgressChecks.run(this);
         else if(cameraPilotMode.equals("camera-pilot-import-history"))result=CameraImportHistoryChecks.run(this);
         else if(cameraPilotMode.equals("camera-pilot-wifi-quick"))result=CameraWifiQuickChecks.run(this);
