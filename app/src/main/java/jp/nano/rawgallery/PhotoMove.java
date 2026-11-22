@@ -883,10 +883,8 @@ final class PhotoMove implements AutoCloseable {
         if (!E2SyncJob.ORIGINALS.tryLock())
           throw new Failure("端末の容量整理が終わってから移動を終了してください。");
         try {
-          String rollbackTarget = abandonHistorical(item);
-          PhotoMoveStore.Batch completed = store.batch();
-          store.abandon(rollbackTarget);
-          return completed;
+          boolean rollback = abandonHistorical(item);
+          return store.abandonHistorical(rollback ? item : null);
         } finally {
           E2SyncJob.ORIGINALS.unlock();
         }
@@ -910,7 +908,7 @@ final class PhotoMove implements AutoCloseable {
     return batch;
   }
 
-  private String abandonHistorical(PhotoMoveStore.Item item) throws IOException {
+  private boolean abandonHistorical(PhotoMoveStore.Item item) throws IOException {
     boolean sourcePresent = find(Uri.parse(item.source())) != null;
     boolean historyPresent = history.containsMoveEvidence(item.historyId());
     if (!sourcePresent) {
@@ -922,7 +920,7 @@ final class PhotoMove implements AutoCloseable {
         requireHistoricalDestination(item, verified);
         store.finishWithoutHistory(item);
       }
-      return null;
+      return false;
     }
     if (historyPresent) requireHistoricalHistory(item, ledger.importDestinations());
     requireHistoricalEpoch(item);
@@ -931,7 +929,7 @@ final class PhotoMove implements AutoCloseable {
         || !item.proofSha().equals(item.sha()) || !intactSource(item)) throw archiveMismatch();
     requireHistoricalEpoch(item);
     if (historyPresent && !relocate(item, true)) throw archiveMismatch();
-    return galleryUri(Uri.parse(item.target())).toString();
+    return true;
   }
 
   private void discardIncomplete(PhotoMoveStore.Item item, String volume) throws IOException {

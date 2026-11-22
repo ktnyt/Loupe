@@ -27,11 +27,10 @@ import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.io.UncheckedIOException;
-import java.nio.file.Files;
-import java.time.Instant;
-import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -77,8 +76,8 @@ final class LegacyArchiveMoveChecks {
     checkMetadataMatcher();
     checkReadOnlyPreflight(base, secondary);
     for (String state : List.of("verified", "pending", "released")) checkLateArchiveConflict(base, secondary, state);
-    checkPublishedTargetDrift(base, secondary, false);
-    checkPublishedTargetDrift(base, secondary, true);
+    checkHistoricalCaptureGuard(base, secondary);
+    checkPublishedTargetDrift(base, secondary);
     checkTargetPinDrift(base, secondary, PhotoMove.Boundary.ATTACHED);
     checkTargetPinDrift(base, secondary, PhotoMove.Boundary.PUBLISHED);
     checkTargetChangesWhileOpening(base, secondary, true);
@@ -93,6 +92,8 @@ final class LegacyArchiveMoveChecks {
       checkProofRecovery(base, secondary, boundary);
     }
     checkProofRollback(base, secondary);
+    checkRollbackPreservesOlderBindings(base, secondary, PhotoMove.Boundary.HISTORY_UPDATED, false);
+    checkRollbackPreservesOlderBindings(base, secondary, PhotoMove.Boundary.REMAPPED, true);
     checkDeletedSourceWithResetHistory(base, secondary, false);
     checkDeletedSourceWithResetHistory(base, secondary, true);
     checkStaleSourceWithResetHistory(base, secondary);
@@ -102,7 +103,8 @@ final class LegacyArchiveMoveChecks {
     checkVersionThreeOrdinaryResume(base, secondary);
     for (var migration : VersionThreeHistorical.values()) checkVersionThreeHistorical(base, secondary, migration);
     return "PASS legacy archive move: strict metadata and bounded epoch/generation proof, read-only preflight, "
-        + "selected history, v2/v3-to-v4 migration, pinned targets, proof interruption, rollback and reverse move";
+        + "selected history, v2/v3-to-v4 migration, pinned targets, proof interruption, rollback and reverse move. "
+        + "Capture-time coverage is at the metadata predicate level using observed known and unknown MediaStore rows.";
   }
 
   private static String isolatedVolume(Context base, String secondaryArg) throws IOException {
@@ -215,11 +217,6 @@ final class LegacyArchiveMoveChecks {
       boolean wrongSha) throws Exception {
     byte[] bytes = missingDate ? jpeg(rgb) : jpegWithCaptureTime(f, rgb, SHOT + 1, SHOT + 2);
     long taken = missingDate ? 0 : (SHOT + 1) * 1000;
-    return seed(f, history, archive, name, bytes, taken, wrongSha);
-  }
-
-  private static Seed seed(Fixture f, HistoryDb history, ArchiveStore archive, String name, byte[] bytes, long taken, boolean wrongSha)
-      throws Exception {
     Uri uri = f.insert(PRIMARY, name, bytes, taken);
     require(f.awaitCaptureTime(uri, taken) == taken, "The published fixture has the expected capture time");
     String[] columns = {DISPLAY_NAME, RELATIVE_PATH, SIZE, DATE_MODIFIED, DATE_TAKEN, DATE_ADDED, GENERATION_ADDED, GENERATION_MODIFIED};
@@ -397,13 +394,12 @@ final class LegacyArchiveMoveChecks {
     }
   }
 
-  private static void checkPublishedTargetDrift(Context base, String secondary, boolean changeFolder) throws Exception {
+  private static void checkPublishedTargetDrift(Context base, String secondary) throws Exception {
     try (Fixture f = new Fixture(base, secondary); Fixture relocated = new Fixture(base, secondary);
          CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
          ArchiveStore archive = E2Settings.openRecords(f.isolatedContext()); PhotoMoveStore journal = new PhotoMoveStore(f.isolatedContext())) {
-      String scenario = changeFolder ? "published folder drift" : "published capture-time drift";
-      Seed seed = changeFolder ? seed(f, history, archive, "PUBLISHED-DRIFT.JPG", 0xff698a59, false, false)
-          : seed(f, history, archive, "PUBLISHED-DRIFT.JPG", captureWithoutOffset(f), 0, false);
+      String scenario = "published folder drift";
+      Seed seed = seed(f, history, archive, "PUBLISHED-DRIFT.JPG", 0xff698a59, false, false);
       String archiveBefore = archive.get(seed.archiveKey()).toString();
       require(PhotoStorage.select(f.isolatedContext(), secondary), "Choose the synthetic move destination");
       Uri[] changedTarget = new Uri[1];
@@ -416,17 +412,13 @@ final class LegacyArchiveMoveChecks {
           require(targets.size() == 1 && !targets.get(0).pending() && f.isolatedContext().getPackageName().equals(targets.get(0).owner()),
               scenario + ": only the published owned replacement fixture can be changed");
           Uri target = targets.get(0).uri();
-          if (changeFolder) {
-            ContentValues values = new ContentValues();
-            values.put(RELATIVE_PATH, relocated.path);
-            int updated = f.resolver.update(target, values, null, null);
-            require(updated == 1, scenario + ": expected exactly one relative-path update, actual=" + updated);
-            try (Cursor row = f.resolver.query(target, new String[]{RELATIVE_PATH}, null, null, null)) {
-              require(row != null && row.moveToFirst() && relocated.path.equals(row.getString(0)),
-                  scenario + ": observe the new relative folder at the exact published URI");
-            }
-          } else {
-            rescanWithCaptureHint(f, target, seed.name());
+          ContentValues values = new ContentValues();
+          values.put(RELATIVE_PATH, relocated.path);
+          int updated = f.resolver.update(target, values, null, null);
+          require(updated == 1, scenario + ": expected exactly one relative-path update, actual=" + updated);
+          try (Cursor row = f.resolver.query(target, new String[]{RELATIVE_PATH}, null, null, null)) {
+            require(row != null && row.moveToFirst() && relocated.path.equals(row.getString(0)),
+                scenario + ": observe the new relative folder at the exact published URI");
           }
           require(Arrays.equals(seed.bytes(), f.read(target)), "The target metadata changed without changing its bytes");
           changedTarget[0] = target;
@@ -440,58 +432,105 @@ final class LegacyArchiveMoveChecks {
             && history.moveEvidence().equals(List.of(seed.history())) && archiveBefore.equals(archive.get(seed.archiveKey()).toString())
             && ledger.receiptCount() == 0 && Arrays.equals(seed.bytes(), f.read(seed.uri()))
             && Arrays.equals(seed.bytes(), f.read(changedTarget[0])),
-            "Capture-time or folder drift preserves both byte-exact copies and all histories without completed proof");
+            "Folder drift preserves both byte-exact copies and all histories without completed proof");
       }
     }
   }
 
-  private static byte[] captureWithoutOffset(Fixture f) throws IOException {
-    File jpeg = File.createTempFile("loupe-archive-no-offset-", ".jpg", f.isolatedContext().getCacheDir());
-    try {
-      Files.write(jpeg.toPath(), jpeg(0xff698a59));
-      ExifInterface exif = new ExifInterface(jpeg);
-      String original = DateTimeFormatter.ofPattern("uuuu:MM:dd HH:mm:ss", Locale.ROOT).withZone(ZoneOffset.UTC)
-          .format(Instant.ofEpochSecond(SHOT + 1));
-      exif.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, original);
-      exif.saveAttributes();
-      require(!exif.hasAttribute(ExifInterface.TAG_OFFSET_TIME_ORIGINAL), "Capture-time drift fixture must omit its EXIF timezone");
-      return Files.readAllBytes(jpeg.toPath());
-    } finally {
-      Files.deleteIfExists(jpeg.toPath());
+  private static void checkHistoricalCaptureGuard(Context base, String secondary) throws Exception {
+    try (Fixture f = new Fixture(base, secondary)) {
+      String name = "CAPTURE-GUARD.JPG";
+      byte[] unknownExif = jpeg(0xff234f62);
+      byte[] datedExif = jpegWithCaptureTime(f, 0xff234f62, SHOT + 1, SHOT + 2);
+      long expected = (SHOT + 1) * 1000;
+      Uri unknown = f.insert(PRIMARY, name, unknownExif, 0);
+      Uri dated = f.insert(secondary, name, datedExif, expected);
+      var datedRow = f.row(dated);
+      require(!datedRow.pending() && f.isolatedContext().getPackageName().equals(datedRow.owner()),
+          "Capture guard: explicit EXIF fixture is published and owned by the test APK");
+      Uri callback = rescanDatedCapture(f, dated, name);
+      requireObservedCapture(f, dated, callback, expected);
+      requireObservedCapture(f, unknown, null, 0);
+
+      // Capture time on an existing published JPEG is scanner-derived. Feed the production
+      // comparator actual MediaStore rows; folder and revision drift exercise the full move above.
+      var columns = PhotoMove.class.getDeclaredField("COLUMNS");
+      columns.setAccessible(true);
+      String[] projection = (String[]) columns.get(null);
+      Method read = PhotoMove.class.getDeclaredMethod("media", Cursor.class);
+      read.setAccessible(true);
+      Object original = readMedia(f, read, projection, unknown);
+      Object published = readMedia(f, read, projection, dated);
+      Method check = PhotoMove.class.getDeclaredMethod("requireHistoricalMetadata", read.getReturnType(), read.getReturnType(), String.class);
+      check.setAccessible(true);
+      checkHistoricalMetadata(check, original, original, PRIMARY);
+      checkHistoricalMetadata(check, published, published, secondary);
+      expectCaptureMismatch(check, original, published, secondary);
+      expectCaptureMismatch(check, published, original, PRIMARY);
+      require(Arrays.equals(unknownExif, f.read(unknown)) && Arrays.equals(datedExif, f.read(dated)),
+          "Capture guard validates metadata without rewriting either owned input");
     }
   }
 
-  private static void rescanWithCaptureHint(Fixture f, Uri target, String name) throws IOException {
+  private static Uri rescanDatedCapture(Fixture f, Uri target, String name) throws Exception {
     Context context = f.isolatedContext();
     File root = PhotoStorage.requireWritable(context, f.secondary);
     File path = new File(root, f.path + name).getCanonicalFile();
-    try (Cursor row = f.resolver.query(target, new String[]{DATA, DATE_TAKEN, IS_PENDING}, null, null, null)) {
-      require(row != null && row.moveToFirst() && row.getString(0) != null && row.getLong(1) == 0 && row.getInt(2) == 0
-          && path.equals(new File(row.getString(0)).getCanonicalFile()),
-          "Published capture-time drift: verify the exact owned path initially has unknown capture time");
+    try (Cursor row = f.resolver.query(target, new String[]{DATA}, null, null, null)) {
+      require(row != null && row.moveToFirst() && row.getString(0) != null
+          && path.equals(new File(row.getString(0)).getCanonicalFile()), "Capture guard: scan only the exact owned target path");
     }
-    // DATE_TAKEN on a public row belongs to MediaScanner. A nearby file mtime gives the same JPEG's
-    // missing EXIF timezone an inference hint, without editing photo bytes or faking a provider row.
-    long hint = (SHOT + 61) * 1000;
-    require(path.setLastModified(hint) && path.lastModified() == hint,
-        "Published capture-time drift: set the mtime on the exact owned fixture path");
     var finished = new CountDownLatch(1);
     var scanned = new AtomicReference<Uri>();
     MediaScannerConnection.scanFile(context, new String[]{path.getPath()}, new String[]{"image/jpeg"}, (ignored, result) -> {
       scanned.set(result);
       finished.countDown();
     });
-    try {
-      require(finished.await(8, TimeUnit.SECONDS) && scanned.get() != null
-          && ContentUris.parseId(scanned.get()) == ContentUris.parseId(target),
-          "Published capture-time drift: scanner must return the original target ID");
-    } catch (InterruptedException stopped) {
-      Thread.currentThread().interrupt();
-      throw new InterruptedIOException("Capture-time drift fixture scan interrupted");
+    require(finished.await(8, TimeUnit.SECONDS), "Capture guard: scanner callback timeout for synthetic target ID " + ContentUris.parseId(target));
+    return scanned.get();
+  }
+
+  private static void requireObservedCapture(Fixture f, Uri uri, Uri callback, long expected) throws IOException {
+    String callbackLabel = expected == 0 ? "not requested" : String.valueOf(callback);
+    try (Cursor row = f.resolver.query(uri, new String[]{DATE_TAKEN, DATE_MODIFIED, IS_PENDING, MIME_TYPE, DISPLAY_NAME, RELATIVE_PATH}, null, null, null);
+         var original = f.resolver.openInputStream(MediaStore.setRequireOriginal(uri))) {
+      require(row != null && row.moveToFirst() && original != null, "Capture guard: read synthetic row and EXIF, scan callback=" + callbackLabel);
+      ExifInterface exif = new ExifInterface(original);
+      long taken = row.getLong(0);
+      int pending = row.getInt(2);
+      String mime = row.getString(3);
+      require((expected == 0 || callback != null && ContentUris.parseId(callback) == ContentUris.parseId(uri))
+          && taken == expected && pending == 0 && "image/jpeg".equals(mime)
+          && "CAPTURE-GUARD.JPG".equals(row.getString(4)) && f.path.equals(row.getString(5)),
+          "Capture guard: callback=" + callbackLabel + ", target=" + uri + ", expectedTaken=" + expected + ", actualTaken=" + taken
+              + ", modified=" + row.getLong(1) + ", pending=" + pending + ", mime=" + mime
+              + ", exifOriginal=" + exif.getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL)
+              + ", exifOffset=" + exif.getAttribute(ExifInterface.TAG_OFFSET_TIME_ORIGINAL));
     }
-    try (Cursor row = f.resolver.query(target, new String[]{DATE_TAKEN, DATE_MODIFIED, IS_PENDING}, null, null, null)) {
-      require(row != null && row.moveToFirst() && row.getLong(0) > 0 && row.getLong(1) == hint / 1000 && row.getInt(2) == 0,
-          "Published capture-time drift: observe known capture time on the same still-published URI after rescanning");
+  }
+
+  private static Object readMedia(Fixture f, Method read, String[] columns, Uri uri) throws Exception {
+    try (Cursor row = f.resolver.query(uri, columns, null, null, null)) {
+      require(row != null && row.getCount() == 1 && row.moveToFirst(), "Capture guard requires one exact published MediaStore row");
+      return read.invoke(null, row);
+    }
+  }
+
+  private static void checkHistoricalMetadata(Method check, Object original, Object published, String volume) throws Exception {
+    try {
+      check.invoke(null, original, published, volume);
+    } catch (InvocationTargetException failure) {
+      if (failure.getCause() instanceof PhotoMove.Failure rejected) throw rejected;
+      throw failure;
+    }
+  }
+
+  private static void expectCaptureMismatch(Method check, Object original, Object published, String volume) throws Exception {
+    try {
+      checkHistoricalMetadata(check, original, published, volume);
+      throw new PhotoStorageChecks.CheckFailure("Capture guard accepted known and unknown times for the same folder, name and MIME");
+    } catch (PhotoMove.Failure rejected) {
+      require(rejected.getMessage().contains("撮影日時が一致しません"), "Capture guard returned the destination metadata mismatch");
     }
   }
 
@@ -802,6 +841,91 @@ final class LegacyArchiveMoveChecks {
     }
   }
 
+  private static void checkRollbackPreservesOlderBindings(Context base, String secondary, PhotoMove.Boundary boundary,
+      boolean historyErased) throws Exception {
+    try (Fixture f = new Fixture(base, secondary); CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         ArchiveStore archive = E2Settings.openRecords(f.isolatedContext()); PhotoMoveStore journal = new PhotoMoveStore(f.isolatedContext());
+         TagStore tags = new TagStore(f.isolatedContext()); ShareHistoryStore shares = new ShareHistoryStore(f.isolatedContext())) {
+      Seed seed = seed(f, history, archive, "ROLLBACK-OLDER-BINDINGS.JPG", 0xff674f99, false, false);
+      String archiveBefore = archive.get(seed.archiveKey()).toString();
+      require(PhotoStorage.select(f.isolatedContext(), secondary), "Choose the archived move destination");
+      try (PhotoMove interrupted = f.move(ledger, history, reached -> { if (reached == boundary) throw new InterruptedMove(); })) {
+        interrupted.begin(preflight(interrupted, interrupted.plan(secondary), () -> false));
+        expectCrash(interrupted, boundary);
+      }
+      Uri target = f.rows(secondary).get(0).uri();
+      String moveUri = PhotoMove.galleryUri(target).toString();
+      boolean remapped = boundary == PhotoMove.Boundary.REMAPPED;
+      var current = exactGalleryMetadata(f, target);
+      var active = journal.next();
+      var currentBinding = new GalleryBinding(PhotoIdentityIndex.location(current), TagStore.locationSource(current), active.identity(), moveUri);
+      require(active.stage() == (remapped ? PhotoMoveStore.REMAPPED : PhotoMoveStore.UPDATING_HISTORY)
+          && history.importDestinations().equals(Set.of(target.toString()))
+          && galleryBindings(journal, moveUri).equals(remapped ? Set.of(currentBinding) : Set.of()),
+          "UPDATING_HISTORY has not created a target binding; REMAPPED has created exactly the current binding");
+
+      var ranking = new RankingStore(f.isolatedContext());
+      var priorLocation = priorGalleryPhoto(current, current.modified - 20, current.added - 20_000, f.id + "-prior-location");
+      var priorVersion = priorGalleryPhoto(current, current.modified, current.added - 40_000, f.id + "-prior-revision");
+      LogicalLabels locationLabels = seedLogicalLabels(priorLocation, tags, ranking, shares);
+      LogicalLabels versionLabels = seedLogicalLabels(priorVersion, tags, ranking, shares);
+      PhotoIdentityIndex.save(journal.getWritableDatabase(), priorLocation, priorLocation.movedIdentity, moveUri);
+      PhotoIdentityIndex.save(journal.getWritableDatabase(), priorVersion, priorVersion.movedIdentity, moveUri);
+      Set<GalleryBinding> earlier = Set.of(binding(priorLocation, moveUri), binding(priorVersion, moveUri));
+      require(!currentBinding.location().equals(PhotoIdentityIndex.location(priorLocation))
+          && currentBinding.location().equals(PhotoIdentityIndex.location(priorVersion))
+          && !currentBinding.mediaVersion().equals(TagStore.locationSource(priorVersion))
+          && !locationLabels.key().equals(versionLabels.key()), "Older rows share the target URI but represent two distinct logical histories");
+      Set<GalleryBinding> before = new HashSet<>(earlier);
+      if (remapped) before.add(currentBinding);
+      require(galleryBindings(journal, moveUri).equals(before), "Record the exact identities and count before historical rollback");
+      if (historyErased) history.resetHistory(MODEL, f.id);
+      try (PhotoMove reopened = f.move(ledger, history, ignored -> {})) {
+        var ended = reopened.abandon();
+        require(ended.total() == 1 && ended.done() == 0 && reopened.batch() == null
+            && galleryBindings(journal, moveUri).equals(earlier) && journal.completed(seed.history().getId()) == null
+            && history.moveEvidence().equals(historyErased ? List.of() : List.of(seed.history()))
+            && archiveBefore.equals(archive.get(seed.archiveKey()).toString()) && ledger.receiptCount() == 0
+            && Arrays.equals(seed.bytes(), f.read(seed.uri())) && Arrays.equals(seed.bytes(), f.read(target)),
+            "Abandon retains both prior bindings, drops only this move's remap when present, and preserves both files and the expected history");
+      }
+      requireLogicalLabels(priorLocation, locationLabels, tags, ranking, shares);
+      requireLogicalLabels(priorVersion, versionLabels, tags, ranking, shares);
+    }
+  }
+
+  private static PhotoRepository.Photo exactGalleryMetadata(Fixture f, Uri uri) throws IOException {
+    String[] fields = {DISPLAY_NAME, RELATIVE_PATH, SIZE, DATE_MODIFIED, DATE_TAKEN, DATE_ADDED};
+    try (Cursor row = f.resolver.query(uri, fields, null, null, null)) {
+      require(row != null && row.moveToFirst() && row.getCount() == 1, "Observe exact target metadata without creating any gallery binding");
+      return new PhotoRepository.Photo(PhotoMove.galleryUri(uri), row.getString(0), row.getString(1), row.getLong(2), row.getLong(3),
+          row.getLong(4), row.getLong(5) * 1000, 0);
+    }
+  }
+
+  private static PhotoRepository.Photo priorGalleryPhoto(PhotoRepository.Photo current, long modified, long added, String id) throws IOException {
+    var identity = new PhotoMoveStore.Identity(PhotoRepository.digest(id), "synthetic-older-photo:" + id, added);
+    return new PhotoRepository.Photo(current.uri, current.name, current.folder, current.size, modified, current.taken, added, 0)
+        .withIdentity(identity);
+  }
+
+  private record GalleryBinding(String location, String mediaVersion, PhotoMoveStore.Identity identity, String moveUri) {}
+
+  private static GalleryBinding binding(PhotoRepository.Photo photo, String moveUri) {
+    return new GalleryBinding(PhotoIdentityIndex.location(photo), TagStore.locationSource(photo), photo.movedIdentity, moveUri);
+  }
+
+  private static Set<GalleryBinding> galleryBindings(PhotoMoveStore journal, String moveUri) {
+    Set<GalleryBinding> bindings = new HashSet<>();
+    try (Cursor rows = journal.getReadableDatabase().rawQuery("SELECT location,media_version,archive_key,tag_source,sort_time,move_uri "
+        + "FROM local_photos WHERE move_uri=?", new String[]{moveUri})) {
+      while (rows.moveToNext()) bindings.add(new GalleryBinding(rows.getString(0), rows.getString(1),
+          new PhotoMoveStore.Identity(rows.getString(2), rows.getString(3), rows.getLong(4)), rows.getString(5)));
+      require(rows.getCount() == bindings.size(), "Count each logical location and revision independently");
+    }
+    return bindings;
+  }
+
   private static void checkDeletedSourceWithResetHistory(Context base, String secondary, boolean reverse) throws Exception {
     try (Fixture f = new Fixture(base, secondary); CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
          ArchiveStore archive = E2Settings.openRecords(f.isolatedContext()); TagStore tags = new TagStore(f.isolatedContext());
@@ -888,7 +1012,11 @@ final class LegacyArchiveMoveChecks {
 
   private static LogicalLabels seedLogicalLabels(Fixture f, Seed seed, TagStore tags, RankingStore ranking, ShareHistoryStore shares)
       throws IOException {
-    var original = f.photo(seed.uri());
+    return seedLogicalLabels(f.photo(seed.uri()), tags, ranking, shares);
+  }
+
+  private static LogicalLabels seedLogicalLabels(PhotoRepository.Photo original, TagStore tags, RankingStore ranking, ShareHistoryStore shares)
+      throws IOException {
     String key = ArchiveStore.key(original);
     String tagSource = TagStore.source(original);
     var tag = tags.create("Synthetic move tag");
@@ -903,7 +1031,11 @@ final class LegacyArchiveMoveChecks {
 
   private static void requireLogicalLabels(Fixture f, Uri uri, LogicalLabels labels, TagStore tags, RankingStore ranking,
       ShareHistoryStore shares) throws IOException {
-    var photo = f.photo(uri);
+    requireLogicalLabels(f.photo(uri), labels, tags, ranking, shares);
+  }
+
+  private static void requireLogicalLabels(PhotoRepository.Photo photo, LogicalLabels labels, TagStore tags, RankingStore ranking,
+      ShareHistoryStore shares) throws IOException {
     String key = ArchiveStore.key(photo);
     var handoff = shares.history(key);
     require(labels.key().equals(key) && labels.tagSource().equals(TagStore.source(photo)) && labels.tagPhotoId().equals(tags.photoId(photo, false))

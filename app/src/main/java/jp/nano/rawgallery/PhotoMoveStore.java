@@ -76,11 +76,23 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
     }
   }
 
-  record TargetPin(String volume, String epoch, Long generationAdded, Long generationModified, String version) {
+  record BindingWitness(long rowId, String location, String mediaVersion, String moveUri) {
+    BindingWitness {
+      if (rowId <= 0 || location == null || location.isEmpty() || mediaVersion == null || mediaVersion.isEmpty()
+          || moveUri == null || moveUri.isEmpty()) throw new IllegalArgumentException("Invalid move binding witness");
+    }
+  }
+
+  record TargetPin(String volume, String epoch, Long generationAdded, Long generationModified, String version,
+      BindingWitness binding) {
+    TargetPin(String volume, String epoch, Long generationAdded, Long generationModified, String version) {
+      this(volume, epoch, generationAdded, generationModified, version, null);
+    }
+
     TargetPin {
       if (volume == null || volume.isEmpty() || epoch == null || epoch.isEmpty()
           || generationAdded != null && generationAdded < 0
-          || (generationModified == null) != (version == null)
+          || (generationModified == null) != (version == null) || binding != null && version == null
           || generationModified != null && (generationAdded == null || generationModified < generationAdded
               || version.isEmpty())) throw new IllegalArgumentException("Invalid target pin");
     }
@@ -88,6 +100,10 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
     TargetPin attach(long added) { return new TargetPin(volume, epoch, added, null, null); }
     TargetPin verified(long modified, String checkedVersion) {
       return new TargetPin(volume, epoch, generationAdded, modified, checkedVersion);
+    }
+
+    TargetPin remapped(BindingWitness witness) {
+      return new TargetPin(volume, epoch, generationAdded, generationModified, version, witness);
     }
   }
 
@@ -451,9 +467,15 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
   private static String encodeTargetPin(TargetPin pin) {
     if (pin == null) return null;
     try {
-      return new JSONObject().put("volume", pin.volume()).put("epoch", pin.epoch())
+      JSONObject value = new JSONObject().put("volume", pin.volume()).put("epoch", pin.epoch())
           .put("added", pin.generationAdded()).put("modified", pin.generationModified())
-          .put("version", pin.version()).toString();
+          .put("version", pin.version());
+      var witness = pin.binding();
+      if (witness != null) {
+        value.put("binding", new JSONObject().put("rowId", witness.rowId()).put("location", witness.location())
+            .put("mediaVersion", witness.mediaVersion()).put("moveUri", witness.moveUri()));
+      }
+      return value.toString();
     } catch (JSONException invalid) {
       throw new IllegalArgumentException("Invalid target pin", invalid);
     }
@@ -463,10 +485,16 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
     if (payload == null) return null;
     try {
       JSONObject pin = new JSONObject(payload);
+      BindingWitness witness = null;
+      if (!pin.isNull("binding")) {
+        JSONObject binding = pin.getJSONObject("binding");
+        witness = new BindingWitness(binding.getLong("rowId"), binding.getString("location"),
+            binding.getString("mediaVersion"), binding.getString("moveUri"));
+      }
       return new TargetPin(pin.getString("volume"), pin.getString("epoch"),
           pin.isNull("added") ? null : pin.getLong("added"),
           pin.isNull("modified") ? null : pin.getLong("modified"),
-          pin.isNull("version") ? null : pin.getString("version"));
+          pin.isNull("version") ? null : pin.getString("version"), witness);
     } catch (JSONException invalid) {
       throw new IllegalStateException("Malformed target pin", invalid);
     }
@@ -476,12 +504,32 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
     SQLiteDatabase db = getWritableDatabase();
     db.beginTransaction();
     try {
-      PhotoIdentityIndex.save(db, target, identity, target.uri.toString());
+      String moveUri = target.uri.toString();
+      PhotoIdentityIndex.save(db, target, identity, moveUri);
       db.execSQL("UPDATE revision SET value=value+1 WHERE id=1");
-      setStage(item, REMAPPED);
+      if (item.hasHistoricalProof()) {
+        var witness = bindingWitness(db, target, moveUri);
+        ContentValues values = new ContentValues();
+        values.put("stage", REMAPPED);
+        values.put("target_pin", encodeTargetPin(item.targetPin().remapped(witness)));
+        update(item, values);
+      } else {
+        setStage(item, REMAPPED);
+      }
       db.setTransactionSuccessful();
     } finally {
       db.endTransaction();
+    }
+  }
+
+  private static BindingWitness bindingWitness(SQLiteDatabase db, PhotoRepository.Photo target, String moveUri) {
+    String location = PhotoIdentityIndex.location(target);
+    String mediaVersion = PhotoIdentityIndex.mediaVersion(target);
+    try (Cursor row = db.rawQuery(
+        "SELECT rowid FROM local_photos WHERE location=? AND media_version=? AND move_uri=?",
+        new String[]{location, mediaVersion, moveUri})) {
+      if (!row.moveToFirst()) throw new IllegalStateException("The new move binding is missing");
+      return new BindingWitness(row.getLong(0), location, mediaVersion, moveUri);
     }
   }
 
@@ -496,6 +544,32 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
       if (next() != null) throw new IllegalStateException("Move is incomplete");
       clearBatch(db);
       db.setTransactionSuccessful();
+    } finally {
+      db.endTransaction();
+    }
+  }
+
+  Batch abandonHistorical(Item rollback) throws IOException {
+    SQLiteDatabase db = getWritableDatabase();
+    db.beginTransaction();
+    try {
+      Batch batch = batch();
+      if (batch == null || rollback != null && !rollback.equals(next()))
+        throw new IOException("The move journal changed before ending the move");
+      if (rollback != null && rollback.stage() == REMAPPED && rollback.targetPin() != null) {
+        BindingWitness witness = rollback.targetPin().binding();
+        if (witness != null) {
+          Identity identity = rollback.identity();
+          db.delete("local_photos", "rowid=? AND location=? AND media_version=? AND move_uri=?"
+                  + " AND archive_key=? AND tag_source=? AND sort_time=?",
+              new String[]{Long.toString(witness.rowId()), witness.location(), witness.mediaVersion(),
+                  witness.moveUri(), identity.archiveKey(), identity.tagSource(), Long.toString(identity.sortTime())});
+        }
+      }
+      clearBatch(db);
+      db.execSQL("UPDATE revision SET value=value+1 WHERE id=1");
+      db.setTransactionSuccessful();
+      return batch;
     } finally {
       db.endTransaction();
     }
