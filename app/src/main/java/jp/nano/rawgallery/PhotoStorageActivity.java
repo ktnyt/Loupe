@@ -77,8 +77,7 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     section.setAccessibilityHeading(true);
     storageSummary = label();
     storageSummary.setTextColor(GalleryUi.MUTED);
-    inventory = button("保存場所と移動対象外の理由を見る", () ->
-        startActivity(new Intent(this, PhotoStorageInventoryActivity.class)));
+    inventory = button("保存場所と移動対象外の理由を見る", this::openInventory);
     MaterialUi.outlined(inventory);
     move = button("取り込み済みの写真を移動", this::plan);
     MaterialUi.filled(move);
@@ -118,7 +117,7 @@ public final class PhotoStorageActivity extends AppCompatActivity {
   }
 
   private void loadOverview() {
-    if (!visible || isFinishing() || isDestroyed()) return;
+    if (!visible || selecting || isFinishing() || isDestroyed()) return;
     if (overviewLoad != null) overviewLoad.cancel(false);
     int request = ++overviewRequest;
     PhotoMoveService.State moveState = PhotoMoveService.state();
@@ -172,7 +171,7 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     boolean running = state.running();
     boolean refreshOverview = lastState != state && (!running || !lastState.running());
     lastState = state;
-    if (refreshOverview) {
+    if (refreshOverview && !selecting) {
       loadOverview();
       return;
     }
@@ -183,7 +182,7 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     move.setText(unfinished == null ? "取り込み済みの写真を移動" : "移動を再開");
     move.setEnabled(ready && (unfinished != null || writable));
     choose.setEnabled(ready);
-    inventory.setEnabled(!planning);
+    inventory.setEnabled(!planning && !selecting);
     stop.setVisibility(running ? View.VISIBLE : View.GONE);
     abandon.setVisibility(!running && unfinished != null ? View.VISIBLE : View.GONE);
     abandon.setEnabled(ready);
@@ -195,6 +194,7 @@ public final class PhotoStorageActivity extends AppCompatActivity {
       progress.setProgressCompat(batch.done(), false);
     }
     String message = screenMessage != null ? screenMessage : state.message();
+    if (selecting) message = "保存先を変更しています。";
     if (batch != null) {
       String action = running || options == null || options.writable(batch.volume())
           ? "" : " 移動先を接続して再開してください。";
@@ -244,8 +244,10 @@ public final class PhotoStorageActivity extends AppCompatActivity {
 
   private void select(String volume) {
     selecting = true;
+    ++overviewRequest;
+    if (overviewLoad != null) overviewLoad.cancel(false);
     render();
-    worker.execute(() -> {
+    PhotoStorageInventoryActivity.READS.execute(() -> {
       String message = null;
       var lock = CameraImportGate.lock;
       if (!lock.tryLock()) message = "取り込みが終わってから保存先を変更してください。";
@@ -268,6 +270,11 @@ public final class PhotoStorageActivity extends AppCompatActivity {
         if (visible && !isFinishing() && !isDestroyed()) loadOverview();
       });
     });
+  }
+
+  private void openInventory() {
+    if (visible && !planning && !selecting && !isFinishing() && !isDestroyed())
+      startActivity(new Intent(this, PhotoStorageInventoryActivity.class));
   }
 
   private void confirmAbandon() {
@@ -317,13 +324,13 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     screenMessage = message;
     if (proposal != null) {
       int count = proposal.items().size();
-      String skipped = proposal.skipped() == 0 ? "" : "\n\n移動対象外 " + proposal.skipped()
-          + "件。保存場所の一覧で理由を確認できます。";
+      String skipped = proposal.skipped() == 0 ? "" :
+          "\n\n移動対象外の項目があります。保存場所の一覧で写真と理由を確認できます。";
       if (count == 0) {
         screenMessage = "移動できる取り込み済みの写真はありません。" + skipped;
       } else {
         long bytes = proposal.items().stream().mapToLong(PhotoMoveStore.Item::bytes).sum();
-        new MaterialAlertDialogBuilder(this)
+        var confirmation = new MaterialAlertDialogBuilder(this)
             .setTitle("取り込み済みの写真を移動しますか？")
             .setMessage(targetLabel + "に" + count + "枚（"
                 + Formatter.formatFileSize(this, bytes) + "）を移動します。" + skipped)
@@ -331,7 +338,9 @@ public final class PhotoStorageActivity extends AppCompatActivity {
             .setPositiveButton("移動", (dialog, which) -> {
               PhotoMoveService.launch(this, proposal);
               render();
-            }).show();
+            });
+        if (proposal.skipped() > 0) confirmation.setNeutralButton("理由を見る", (dialog, which) -> openInventory());
+        confirmation.show();
       }
     }
     render();

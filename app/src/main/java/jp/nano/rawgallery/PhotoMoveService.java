@@ -122,7 +122,7 @@ public final class PhotoMoveService extends Service {
   }
 
   static String skipped(PhotoMoveStore.Batch batch) {
-    return batch.skipped() == 0 ? "" : " 移動対象外 " + batch.skipped() + "件。";
+    return batch.skipped() == 0 ? "" : " 移動対象外の項目があります。";
   }
 
   private void progress(PhotoMoveStore.Batch batch) {
