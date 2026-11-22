@@ -2,6 +2,7 @@ package jp.nano.rawgallery.camera;
 
 import android.Manifest;
 import android.content.Context;
+import android.content.ContentUris;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
@@ -57,12 +58,14 @@ public final class CameraDocumentSource {
     /** SAF receipts from potentially redacted reads cannot authorize an original-byte shortcut. */
     static String originalSourceId(String previousSourceId) { return "original-byte-v1:"+previousSourceId; }
     public static final class OriginalAccessException extends IOException {
-        public enum Reason { PERMISSION, MAPPING, UNAVAILABLE, LENGTH }
+        public enum Reason { PERMISSION, MAPPING, VOLUME, UNAVAILABLE, LENGTH }
         public final Reason reason;
         private OriginalAccessException(Reason reason) {
-            super(reason==Reason.PERMISSION
-                    ?"写真の原本を取り込むには、写真の位置情報へのアクセスを許可してください"
-                    :"写真の原本を取得できません。SDカードのDCIMフォルダを選び直し、写真へのアクセスを確認してください");
+            super(switch (reason) {
+                case PERMISSION -> "写真の原本を取り込むには、写真の位置情報へのアクセスを許可してください";
+                case VOLUME -> "取り込み元のカードで写真の原本を確認できません。カードとDCIMフォルダを確認してください";
+                default -> "写真の原本を取得できません。SDカードのDCIMフォルダを選び直し、写真へのアクセスを確認してください";
+            });
             this.reason=reason;
         }
     }
@@ -76,23 +79,63 @@ public final class CameraDocumentSource {
     interface OriginalAccess {
         boolean permitted();
         Uri mediaUri(Uri document)throws IOException;
+        default Uri onVolume(Uri media, CameraImportFile file, String expectedVolume)throws IOException { return null; }
         InputStream openOriginal(Uri requiredOriginal)throws IOException;
     }
     public static void copy(Context context,Entry entry,OutputStream out,BooleanSupplier cancelled)throws IOException {
-        copy(new OriginalAccess(){
+        copy(context,entry,out,cancelled,null);
+    }
+    static void copy(Context context,Entry entry,OutputStream out,BooleanSupplier cancelled,String expectedVolume)
+            throws IOException {
+        copy(systemAccess(context),entry,out,cancelled,expectedVolume);
+    }
+
+    static void requireMappedOriginal(Context context, Entry entry, String expectedVolume, BooleanSupplier cancelled)
+            throws IOException {
+        requiredOriginal(systemAccess(context), entry, expectedVolume, cancelled);
+    }
+
+    private static OriginalAccess systemAccess(Context context) {
+        return new OriginalAccess(){
             public boolean permitted(){return context.checkSelfPermission(Manifest.permission.ACCESS_MEDIA_LOCATION)==PackageManager.PERMISSION_GRANTED;}
             public Uri mediaUri(Uri document){return MediaStore.getMediaUri(context,document);}
+            public Uri onVolume(Uri media,CameraImportFile file,String expected) {
+                return onMountedVolume(context,media,file,expected);
+            }
             public InputStream openOriginal(Uri original)throws IOException {
                 android.os.ParcelFileDescriptor descriptor=context.getContentResolver().openFileDescriptor(original,"r");
                 return descriptor==null?null:new android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor);
             }
-        },entry,out,cancelled);
+        };
     }
+
+    private static Uri onMountedVolume(Context context, Uri mapped, CameraImportFile file, String expected) {
+        if (!MediaStore.getExternalVolumeNames(context).contains(expected)) return null;
+        String mappedVolume = MediaStore.getVolumeName(mapped);
+        if (!MediaStore.VOLUME_EXTERNAL.equals(mappedVolume) && !expected.equals(mappedVolume)) return null;
+        long id = ContentUris.parseId(mapped);
+        if (id < 0) return null;
+        Uri exact = MediaStore.Files.getContentUri(expected, id);
+        String sourceFolder = file.relativePath.substring(0, file.relativePath.lastIndexOf('/') + 1);
+        try (Cursor row = context.getContentResolver().query(mapped,
+                new String[]{MediaStore.MediaColumns.VOLUME_NAME, MediaStore.MediaColumns.RELATIVE_PATH,
+                        MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.SIZE}, null, null, null)) {
+            if (row == null || row.getCount() != 1 || !row.moveToFirst() || !expected.equals(row.getString(0))
+                    || !sourceFolder.equals(row.getString(1)) || !file.name.equals(row.getString(2))
+                    || file.bytes != row.getLong(3)) return null;
+        }
+        return exact;
+    }
+
     private static void requireOriginalPermission(OriginalAccess access)throws OriginalAccessException {
         try{if(!access.permitted())throw new OriginalAccessException(OriginalAccessException.Reason.PERMISSION);}
         catch(SecurityException denied){throw new OriginalAccessException(OriginalAccessException.Reason.PERMISSION);}
     }
     static void copy(OriginalAccess access,Entry entry,OutputStream out,BooleanSupplier cancelled)throws IOException {
+        copy(access,entry,out,cancelled,null);
+    }
+    private static Uri requiredOriginal(OriginalAccess access,Entry entry,String expectedVolume,BooleanSupplier cancelled)
+            throws IOException {
         CameraPhotoPublisher.check(cancelled);
         requireOriginalPermission(access);
         Uri media;
@@ -101,10 +144,24 @@ public final class CameraDocumentSource {
         catch(IOException|RuntimeException unavailable){throw new OriginalAccessException(OriginalAccessException.Reason.MAPPING);}
         if(media==null||!"content".equals(media.getScheme())||!"media".equals(media.getAuthority()))
             throw new OriginalAccessException(OriginalAccessException.Reason.MAPPING);
+        if(expectedVolume!=null) {
+            try { media=access.onVolume(media,entry.file,expectedVolume); }
+            catch(SecurityException denied) { throw new OriginalAccessException(OriginalAccessException.Reason.PERMISSION); }
+            catch(IOException|RuntimeException unavailable) { throw new OriginalAccessException(OriginalAccessException.Reason.VOLUME); }
+            if(media==null||!"content".equals(media.getScheme())||!"media".equals(media.getAuthority())
+                    ||!expectedVolume.equals(MediaStore.getVolumeName(media)))
+                throw new OriginalAccessException(OriginalAccessException.Reason.VOLUME);
+        }
         CameraPhotoPublisher.check(cancelled);
         requireOriginalPermission(access);
+        return MediaStore.setRequireOriginal(media);
+    }
+
+    static void copy(OriginalAccess access,Entry entry,OutputStream out,BooleanSupplier cancelled,String expectedVolume)
+            throws IOException {
+        Uri original=requiredOriginal(access,entry,expectedVolume,cancelled);
         InputStream input;
-        try{input=access.openOriginal(MediaStore.setRequireOriginal(media));}
+        try{input=access.openOriginal(original);}
         catch(SecurityException denied){throw new OriginalAccessException(OriginalAccessException.Reason.PERMISSION);}
         catch(IOException|RuntimeException unavailable){throw new OriginalAccessException(OriginalAccessException.Reason.UNAVAILABLE);}
         if(input==null)throw new OriginalAccessException(OriginalAccessException.Reason.UNAVAILABLE);

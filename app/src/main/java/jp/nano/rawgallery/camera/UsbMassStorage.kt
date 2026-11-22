@@ -33,6 +33,7 @@ class UsbMassStorage private constructor(
         private set
     private var tag = 0
     private var lastLba = 0L
+    private var claimed = false
     // この個体で安定して通る転送サイズ。大きく始め、ストールを見たら下げて保持する。
     // 不良セクタで一時的に縮めても、正常な読みが通ればここまで戻すので底に居座らない
     private var goodBlocks = INITIAL_MAX_BLOCKS
@@ -64,8 +65,14 @@ class UsbMassStorage private constructor(
     /** claimInterface して READ CAPACITY でブロックサイズを確定する。
      *  接続直後はデバイスがしばらく一切のコマンドに応答しないことがあるので、
      *  準備完了 (TEST UNIT READY) を待ってから READ CAPACITY を試し、駄目なら reset して繰り返す */
-    fun init() {
-        if (!conn.claimInterface(itf, true)) throw IllegalStateException("claimInterface failed")
+    class KernelBusy : IllegalStateException("Kernel storage interface is in use")
+
+    fun init(forceClaim: Boolean) {
+        if (!conn.claimInterface(itf, forceClaim)) {
+            if (!forceClaim) throw KernelBusy()
+            throw IllegalStateException("claimInterface failed")
+        }
+        claimed = true
         for (attempt in 1..INIT_MAX_ATTEMPTS) {
             val cb = ByteArray(6) // TEST UNIT READY
             if (transfer(cb, null, 0, 0, dataIn = false)) {
@@ -212,7 +219,7 @@ class UsbMassStorage private constructor(
 
     override fun close() {
         runCatching { inReq?.close() }
-        runCatching { conn.releaseInterface(itf) }
+        if (claimed) runCatching { conn.releaseInterface(itf) }
         runCatching { conn.close() }
     }
 
