@@ -55,7 +55,8 @@ class ImportService : Service() {
             CameraUsb.supported(it) && getSystemService(UsbManager::class.java).hasPermission(it)
         }
         val requestId = intent?.getStringExtra(EXTRA_REQUEST_ID)
-        if (usbDevice == null) {
+        val expectedVolume = intent?.getStringExtra(EXTRA_EXPECTED_VOLUME)
+        if (usbDevice == null || expectedVolume == null) {
             ImportProgress.completeRequest(requestId, false)
             stopSelf(startId)
             return START_NOT_STICKY
@@ -81,13 +82,18 @@ class ImportService : Service() {
             try {
                 if (lock.tryLock()) {
                     try {
-                        succeeded = runImport(usbDevice, requestedKinds, allowDeletion)
+                        succeeded = runImport(usbDevice, requestedKinds, allowDeletion, expectedVolume)
                     } finally {
                         lock.unlock()
                     }
                 } else {
                     ImportProgress.finish(getString(R.string.camera_import_notif_busy))
                 }
+            } catch (error: UsbMassStorage.KernelBusy) {
+                val message = "USB機器をAndroidが使用中です。${MountedCameraCard.CHOOSE_SOURCE}"
+                if (ImportProgress.photo != null) ImportProgress.photoTerminal("failed", message)
+                ImportProgress.finish(message)
+                notify(NOTIF_DONE, notification(message))
             } catch (error: PhotoStorage.Unavailable) {
                 val message = error.message.orEmpty()
                 if (ImportProgress.photo != null) ImportProgress.photoTerminal("failed", message)
@@ -108,14 +114,33 @@ class ImportService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun runImport(usbDevice: UsbDevice, requestedKinds: Set<MediaTypes.Kind>?, allowDeletion: Boolean): Boolean {
+    private fun runImport(
+        usbDevice: UsbDevice,
+        requestedKinds: Set<MediaTypes.Kind>?,
+        allowDeletion: Boolean,
+        expectedVolume: String,
+    ): Boolean {
         // 新しい取り込みは前回の中断状態を持ち越さない。
         // サービスは同一インスタンスが再利用されることがあり、残った true が即中断を招く
         cancelled.set(false)
         // 機種名が判明する前から画面に実行中カードを出す (通知だけだと止まって見える)
         ImportProgress.connecting(getString(R.string.camera_import_notif_connecting))
-        PhotoStorage.requireImportReady(this)
         val volume = PhotoStorage.selected(this)
+        if (volume != expectedVolume) {
+            val message = "保存先が変わりました。保存先を確認して取り込み直してください。"
+            ImportProgress.finish(message)
+            notify(NOTIF_DONE, notification(message))
+            return false
+        }
+        PhotoStorage.requireImportReady(this)
+        val isMtp = !UsbMassStorage.isMassStorage(usbDevice)
+        val route = CameraCardRouting.route(!isMtp, CameraUsb.knownCamera(usbDevice), volume != PhotoStorage.PRIMARY)
+        if (route == CameraCardRouting.Route.MOUNTED_SOURCE) {
+            val message = MountedCameraCard.CHOOSE_SOURCE
+            ImportProgress.finish(message)
+            notify(NOTIF_DONE, notification(message))
+            return false
+        }
         PhotoStorage.requireWritable(this, volume)
         val db = HistoryDb.get(this)
         // 接続直後に装置が応答しないのは両経路に共通する実測で、理由だけが違う。
@@ -123,7 +148,6 @@ class ImportService : Service() {
         // 装置側の準備が済んでいないため。以前は MTP だけ待っていたが、待たずに
         // 始めたマスストレージは init が空振りして 1 回目の試行を必ず落としていた
         // (2026-08-22 実測: G99M2 で 18.5 秒の空振り。31 秒のうち 21 秒がここで消えた)
-        val isMtp = !UsbMassStorage.isMassStorage(usbDevice)
         val operationMetrics = if (isMtp) null else CameraImportMetrics(this, "usb-sd")
         fun wasCancelled() = cancelled.get() || ImportProgress.stopRequested || Thread.currentThread().isInterrupted
         fun finishOperation(outcome: String, message: String) {
@@ -356,6 +380,8 @@ class ImportService : Service() {
             } catch (e: Exception) {
                 val storageFailure = e.cause as? PhotoStorage.Unavailable
                 if (storageFailure != null) throw storageFailure
+                val claimedByKernel = e.cause as? UsbMassStorage.KernelBusy
+                if (claimedByKernel != null) throw claimedByKernel
                 ImportLog.w(TAG, "attempt crashed", e)
                 failures += FailureKind.CRASH
                 return null
@@ -606,12 +632,21 @@ class ImportService : Service() {
         /** [kinds] が null なら、そのカメラの既定の種別設定に従う */
         private const val EXTRA_REQUEST_ID = "import_request_id"
         private const val EXTRA_ALLOW_DELETION = "allow_camera_deletion"
+        private const val EXTRA_EXPECTED_VOLUME = "import_expected_volume"
 
         @JvmStatic @JvmOverloads
-        fun start(context: Context, usbDevice: UsbDevice, kinds: Set<MediaTypes.Kind>? = null, allowDeletion: Boolean = false, requestId: String? = null) {
+        fun start(
+            context: Context,
+            usbDevice: UsbDevice,
+            kinds: Set<MediaTypes.Kind>? = null,
+            allowDeletion: Boolean = false,
+            requestId: String? = null,
+            expectedVolume: String = PhotoStorage.selected(context),
+        ) {
             val intent = Intent(context, ImportService::class.java)
                 .putExtra(UsbManager.EXTRA_DEVICE, usbDevice)
                 .putExtra(EXTRA_ALLOW_DELETION, allowDeletion)
+                .putExtra(EXTRA_EXPECTED_VOLUME, expectedVolume)
             kinds?.let { intent.putExtra(EXTRA_KINDS, MediaTypes.kindsToString(it)) }
             requestId?.let { intent.putExtra(EXTRA_REQUEST_ID, it) }
             context.startForegroundService(intent)

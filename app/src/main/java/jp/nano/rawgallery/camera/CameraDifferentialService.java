@@ -26,10 +26,20 @@ public final class CameraDifferentialService extends Service {
     private final CameraRegisteredQueue registeredQueue=new CameraRegisteredQueue();
     private ConnectivityManager.NetworkCallback networkCallback;
     private BroadcastReceiver mediaReceiver;
+    private static volatile boolean watchingSdMounts;
+
+    static boolean isWatchingSdMounts() { return watchingSdMounts; }
     private final BooleanSupplier cancelled=()->destroyed||ImportProgress.INSTANCE.getStopRequested();
     public static void startWifi(Context c,boolean verifyAll){start(c,new Intent(c,CameraDifferentialService.class).setAction(WIFI).putExtra("verify",verifyAll));}
     public static void startRegistered(Context c,String profileId,boolean verifyAll){start(c,new Intent(c,CameraDifferentialService.class).setAction(PAIRED).putExtra("profile_id",profileId).putExtra("verify",verifyAll));}
-    public static void startDocumentTree(Context c,Uri uri,boolean verifyAll){start(c,new Intent(c,CameraDifferentialService.class).setAction(SD).setData(uri).putExtra("verify",verifyAll));}
+    public static void startDocumentTree(Context c,Uri uri,boolean verifyAll){startDocumentTree(c,uri,verifyAll,null,null);}
+    private static final String EXPECTED_CARD = "sd_expected_destination", SD_KINDS = "sd_kinds";
+    public static void startDocumentTree(Context c,Uri uri,boolean verifyAll,String expectedCard,String kinds){
+        Intent request=new Intent(c,CameraDifferentialService.class).setAction(SD).setData(uri).putExtra("verify",verifyAll);
+        if(expectedCard!=null)request.putExtra(EXPECTED_CARD,expectedCard);
+        if(kinds!=null)request.putExtra(SD_KINDS,kinds);
+        start(c,request);
+    }
     public static void updateAuto(Context c){start(c,new Intent(c,CameraDifferentialService.class).setAction(WATCH));}
     private static void start(Context c,Intent i){c.startForegroundService(i);}
     @Override public IBinder onBind(Intent i){return null;}
@@ -57,7 +67,8 @@ public final class CameraDifferentialService extends Service {
         if(p.getBoolean("sd_auto",false)&&mediaReceiver==null){
             mediaReceiver=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){String tree=getSharedPreferences("camera_import",0).getString("sd_tree_uri",null);if(tree!=null)enqueue(new Intent().setAction(SD).setData(Uri.parse(tree)));}};
             IntentFilter f=new IntentFilter(Intent.ACTION_MEDIA_MOUNTED);f.addDataScheme("file");if(Build.VERSION.SDK_INT>=33)registerReceiver(mediaReceiver,f,Context.RECEIVER_NOT_EXPORTED);else registerReceiver(mediaReceiver,f);
-        }else if(!p.getBoolean("sd_auto",false)&&mediaReceiver!=null){unregisterReceiver(mediaReceiver);mediaReceiver=null;}
+            watchingSdMounts=true;
+        }else if(!p.getBoolean("sd_auto",false)&&mediaReceiver!=null){unregisterReceiver(mediaReceiver);mediaReceiver=null;watchingSdMounts=false;}
     }
     private synchronized void enqueue(Intent request){enqueue(request,false);}
     private synchronized void enqueue(Intent request,boolean continuation){
@@ -68,6 +79,11 @@ public final class CameraDifferentialService extends Service {
             return;
         }
         if(continuation&&cancelled.getAsBoolean())return;
+        boolean sdRequest=SD.equals(request.getAction());
+        String queuedVolume=sdRequest?jp.nano.rawgallery.PhotoStorage.selected(this):null;
+        String requestedCard=request.getStringExtra(EXPECTED_CARD);
+        String pinnedCard=requestedCard!=null||!sdRequest?requestedCard
+                :MountedCameraCard.targetWithGenericReader(this,queuedVolume);
         running=true;
         registeredQueue.started(PAIRED.equals(request.getAction())?request.getStringExtra("profile_id"):null);
         worker.execute(()->{
@@ -82,17 +98,27 @@ public final class CameraDifferentialService extends Service {
                     try{
                         CameraPhotoPublisher.check(cancelled);
                         String permission=Build.VERSION.SDK_INT>=33?Manifest.permission.READ_MEDIA_IMAGES:Manifest.permission.READ_EXTERNAL_STORAGE;
-                        if(checkSelfPermission(permission)!=PackageManager.PERMISSION_GRANTED)throw new IOException("重複を確認するため写真全体へのアクセスを許可してください");
+                        if(checkSelfPermission(permission)!=PackageManager.PERMISSION_GRANTED)
+                            throw new MountedCameraCard.Unavailable("重複を確認するため写真全体へのアクセスを許可してください。");
                         if(SD.equals(request.getAction()))CameraDocumentSource.requireOriginalPermission(this);
                         jp.nano.rawgallery.PhotoStorage.requireImportReady(this);
                         String volume=jp.nano.rawgallery.PhotoStorage.selected(this);
+                        if(sdRequest&&!volume.equals(queuedVolume))
+                            throw new MountedCameraCard.Unavailable("保存先が変わりました。保存先を確認して取り込み直してください。");
+                        String expectedCard=pinnedCard!=null||!sdRequest?pinnedCard
+                                :MountedCameraCard.targetWithGenericReader(this,volume);
+                        Set<MediaTypes.Kind> kinds=sdKinds(request.getStringExtra(SD_KINDS));
+                        String sourceVolume=expectedCard==null?null:MountedCameraCard.requireDistinctSource(
+                                this,request.getData(),expectedCard,volume,true,cancelled);
                         jp.nano.rawgallery.PhotoStorage.requireWritable(this,volume);
                         CameraPhotoImporter importer=new CameraPhotoImporter(this,CameraImportLedger.get(this),volume);importer.setMetrics(runMetrics);importer.recover(cancelled);
                         if(PAIRED.equals(request.getAction()))paired(importer,request.getStringExtra("profile_id"),request.getBooleanExtra("verify",getSharedPreferences("camera_import",0).getBoolean("wifi_verify_all",false)));
                         else if(WIFI.equals(request.getAction()))wifi(importer,request.getBooleanExtra("verify",getSharedPreferences("camera_import",0).getBoolean("wifi_verify_all",false)));
-                        else if(SD.equals(request.getAction())&&request.getData()!=null)sd(importer,request.getData(),request.getBooleanExtra("verify",getSharedPreferences("camera_import",0).getBoolean("sd_verify_all",false)));
+                        else if(SD.equals(request.getAction())&&request.getData()!=null)sd(importer,request.getData(),
+                                request.getBooleanExtra("verify",getSharedPreferences("camera_import",0).getBoolean("sd_verify_all",false)),
+                                sourceVolume,kinds);
                         else throw new IOException("接続元がありません");
-                    }catch(Exception e){runMetrics.terminal(cancelled.getAsBoolean()?"cancelled":"failed");ImportProgress.INSTANCE.finish(cancelled.getAsBoolean()?"取り込みを中断しました":(e instanceof CameraPairedSession.MissingWifiException||e instanceof CameraDocumentSource.OriginalAccessException||e instanceof jp.nano.rawgallery.PhotoStorage.Unavailable)?e.getMessage():"取り込みを完了できませんでした。接続と写真へのアクセスを確認してください");android.util.Log.w("CameraDifferential","Import failed: "+e.getClass().getSimpleName());}
+                    }catch(Exception e){runMetrics.terminal(cancelled.getAsBoolean()?"cancelled":"failed");ImportProgress.INSTANCE.finish(cancelled.getAsBoolean()?"取り込みを中断しました":(e instanceof CameraPairedSession.MissingWifiException||e instanceof CameraDocumentSource.OriginalAccessException||e instanceof MountedCameraCard.Unavailable||e instanceof jp.nano.rawgallery.PhotoStorage.Unavailable)?e.getMessage():"取り込みを完了できませんでした。接続と写真へのアクセスを確認してください");android.util.Log.w("CameraDifferential","Import failed: "+e.getClass().getSimpleName());}
                 });
                 if(!accepted&&!destroyed)getSystemService(NotificationManager.class).notify(783,
                         new Notification.Builder(this,CHANNEL).setSmallIcon(android.R.drawable.ic_menu_camera)
@@ -172,14 +198,18 @@ public final class CameraDifferentialService extends Service {
         return retry(importer,f,copy,stable,verify,cancelled);
     }
     private CameraPhotoImporter.Result retry(CameraPhotoImporter importer,CameraImportFile f,CameraImportCopy.Copy copy,boolean stable,boolean verify,BooleanSupplier operationCancelled)throws IOException{
-        return retry(importer,f,copy,stable,verify,operationCancelled,false);
+        return retry(importer,f,copy,stable,verify,operationCancelled,false,null);
     }
-    private CameraPhotoImporter.Result retry(CameraPhotoImporter importer,CameraImportFile f,CameraImportCopy.Copy copy,boolean stable,boolean verify,BooleanSupplier operationCancelled,boolean sdOriginal)throws IOException{
+    private interface SourceCheck { void check() throws IOException; }
+
+    private CameraPhotoImporter.Result retry(CameraPhotoImporter importer,CameraImportFile f,CameraImportCopy.Copy copy,
+            boolean stable,boolean verify,BooleanSupplier operationCancelled,boolean sdOriginal,SourceCheck check)throws IOException{
         IOException first=null;
         for(int i=0;i<2;i++)try{
             if(sdOriginal)CameraDocumentSource.requireOriginalPermission(this);
+            if(check!=null)check.check();
             return importer.importPhoto(f,copy,null,stable,verify,operationCancelled);
-        }catch(InterruptedIOException e){throw e;}catch(CameraDocumentSource.OriginalAccessException e){throw e;}catch(IOException e){
+        }catch(InterruptedIOException e){throw e;}catch(CameraDocumentSource.OriginalAccessException|MountedCameraCard.Unavailable e){throw e;}catch(IOException e){
             if(first==null)first=e;CameraPhotoPublisher.check(operationCancelled);
             if(sdOriginal)CameraDocumentSource.requireOriginalPermission(this);
             importer.recover(operationCancelled);
@@ -187,21 +217,43 @@ public final class CameraDifferentialService extends Service {
         throw first;
     }
     private static long fatTime(int date,int time){try{return java.time.LocalDateTime.of(1980+(date>>9),(date>>5)&15,date&31,time>>11,(time>>5)&63,(time&31)*2).atZone(java.time.ZoneId.systemDefault()).toEpochSecond();}catch(Exception e){return 0;}}
-    private void sd(CameraPhotoImporter importer,Uri tree,boolean verify)throws IOException{
+    static Set<MediaTypes.Kind> sdKinds(String value) throws MountedCameraCard.Unavailable {
+        if(value==null)return Set.of(MediaTypes.Kind.JPEG,MediaTypes.Kind.RAW);
+        Set<MediaTypes.Kind> kinds=MediaTypes.INSTANCE.kindsFromString(value);
+        if(kinds.contains(MediaTypes.Kind.VIDEO))
+            throw new MountedCameraCard.Unavailable("この取り込み方法では動画に対応していません。JPEGまたはRAWを選んでください。");
+        return kinds;
+    }
+
+    static List<CameraDocumentSource.Entry> selectedPhotos(List<CameraDocumentSource.Entry> photos,
+            Set<MediaTypes.Kind> kinds) {
+        return photos.stream().filter(entry->kinds.contains(MediaTypes.INSTANCE.kindOf(entry.file.name)))
+                .collect(java.util.stream.Collectors.toList());
+    }
+
+    private void sd(CameraPhotoImporter importer,Uri tree,boolean verify,String sourceVolume,Set<MediaTypes.Kind> kinds)throws IOException{
         CameraDocumentSource.requireOriginalPermission(this);
         long start=System.nanoTime();ImportProgress.INSTANCE.begin("SDカード");ImportProgress.INSTANCE.photoListing(0,-1);notifyProgress();
         long listStart=android.os.SystemClock.elapsedRealtime();
         CameraDocumentSource.Listing listing=CameraDocumentSource.list(this,tree,cancelled);
         runMetrics.listingMs=android.os.SystemClock.elapsedRealtime()-listStart;
-        runMetrics.listed=listing.photos.size();runMetrics.candidates=listing.photos.size();
-        ImportProgress.INSTANCE.photoListing(listing.photos.size(),listing.photos.size());
+        List<CameraDocumentSource.Entry> selected=selectedPhotos(listing.photos,kinds);
+        runMetrics.listed=listing.photos.size();runMetrics.candidates=selected.size();
+        ImportProgress.INSTANCE.photoListing(selected.size(),selected.size());
         int added=0,done=0;long bytes=0;runMetrics.content();notifyProgress();
-        for(CameraDocumentSource.Entry entry:listing.photos){
+        for(CameraDocumentSource.Entry entry:selected){
             CameraPhotoPublisher.check(cancelled);
-            CameraPhotoImporter.Result result=retry(importer,entry.file,out->CameraDocumentSource.copy(this,entry,out,cancelled),listing.stable,verify,cancelled,true);
+            SourceCheck check=sourceVolume==null?null:()->{
+                MountedCameraCard.requireGrant(this,tree);
+                CameraDocumentSource.requireMappedOriginal(this,entry,sourceVolume,cancelled);
+            };
+            CameraPhotoImporter.Result result=retry(importer,entry.file,out->{
+                if(sourceVolume!=null)MountedCameraCard.requireGrant(this,tree);
+                CameraDocumentSource.copy(this,entry,out,cancelled,sourceVolume);
+            },listing.stable,verify,cancelled,true,check);
             if(result.imported){added++;runMetrics.saved++;}else runMetrics.matches++;
             bytes+=result.sourceBytesRead;runMetrics.processed++;runMetrics.content();
-            ImportProgress.INSTANCE.update(++done,listing.photos.size());notifyProgress();
+            ImportProgress.INSTANCE.update(++done,selected.size());notifyProgress();
         }
         CameraDocumentSource.requireOriginalPermission(this);
         CameraPhotoPublisher.check(cancelled);
@@ -215,5 +267,5 @@ public final class CameraDifferentialService extends Service {
         ImportProgress.INSTANCE.finish(added+"枚追加・"+(count-added)+"枚取り込み済み"+(card?"。カメラへカードを戻しましたか":""));
         if(card)getSystemService(NotificationManager.class).notify(782,new Notification.Builder(this,CHANNEL).setSmallIcon(android.R.drawable.ic_menu_camera).setContentTitle("カメラへカードを戻しましたか").setContentText("SDカードの取り込みが完了しました").setAutoCancel(true).build());
     }
-    @Override public void onDestroy(){destroyed=true;synchronized(this){registeredQueue.clear();}CameraPairedSession session=pairedSession;if(session!=null)session.close();if(networkCallback!=null)getSystemService(ConnectivityManager.class).unregisterNetworkCallback(networkCallback);if(mediaReceiver!=null)unregisterReceiver(mediaReceiver);worker.shutdownNow();super.onDestroy();}
+    @Override public void onDestroy(){destroyed=true;synchronized(this){registeredQueue.clear();}CameraPairedSession session=pairedSession;if(session!=null)session.close();if(networkCallback!=null)getSystemService(ConnectivityManager.class).unregisterNetworkCallback(networkCallback);if(mediaReceiver!=null)unregisterReceiver(mediaReceiver);watchingSdMounts=false;worker.shutdownNow();super.onDestroy();}
 }

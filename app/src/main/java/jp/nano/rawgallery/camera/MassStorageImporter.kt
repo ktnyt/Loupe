@@ -46,7 +46,7 @@ object MassStorageImporter {
             return complete(MtpImporter.Result(0, 0, 0, elapsed(start), false, error = true))
         }
         try {
-            ums.init()
+            ums.init(forceClaim = jp.nano.rawgallery.PhotoStorage.PRIMARY == volume)
             val partitionLba = firstPartitionLba(ums)
             val exfat = ExFat(ums, partitionLba)
             exfat.mount()
@@ -200,6 +200,8 @@ object MassStorageImporter {
             val scanError = targets.isNotEmpty() && imported == 0 && failed == targets.size && !aborted
             return complete(MtpImporter.Result(imported, skipped, failed, elapsed(start), aborted, error = scanError))
         } catch (e: jp.nano.rawgallery.PhotoStorage.Unavailable) {
+            throw e
+        } catch (e: UsbMassStorage.KernelBusy) {
             throw e
         } catch (e: Exception) {
             ImportLog.w(TAG, "mass storage import error (${e.javaClass.simpleName})")
