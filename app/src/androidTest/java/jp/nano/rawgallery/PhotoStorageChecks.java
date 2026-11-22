@@ -17,6 +17,7 @@ import android.database.sqlite.SQLiteDatabase;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.media.ExifInterface;
+import android.media.MediaScannerConnection;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -53,12 +54,14 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
 import jp.nano.rawgallery.camera.CameraImportFile;
 import jp.nano.rawgallery.camera.CameraImportGate;
@@ -585,7 +588,7 @@ final class PhotoStorageChecks {
 
       try (PhotoMoveStore store = new PhotoMoveStore(fixture)) {
         SQLiteDatabase updated = store.getWritableDatabase();
-        require(updated.getVersion() == 2
+        require(updated.getVersion() == 4
             && new PhotoMoveStore.Batch(secondary, 1, 2, allDone ? 1 : 0).equals(store.batch()) && store.revision() == 13,
             "v1 upgrade preserves batch counts and advances the revision");
         if (allDone) {
@@ -886,15 +889,14 @@ final class PhotoStorageChecks {
               "Published corruption stops in the durable history stage before either history is relocated");
         }
       }
-      try (PhotoMove resumed = f.move(ledger, history, reached -> {})) {
-        if (boundary != PhotoMove.Boundary.COPIED) {
-          expectMoveFailure(resumed, "Resume accepted a corrupt verified target at " + boundary);
+      if (boundary != PhotoMove.Boundary.COPIED) {
+        try (PhotoMove rejected = f.move(ledger, history, ignored -> {})) {
+          expectMoveFailure(rejected, "Resume accepted a corrupt verified target at " + boundary);
           require(Arrays.equals(bytes, f.read(original)), "Retry kept the only intact original at " + boundary);
-          f.requireOwned(onlyTarget(f));
-          f.write(target[0], bytes);
         }
-        verifyBoundaryRecovery(f, ledger, history, resumed, source, bytes);
+        restoreTargetBytes(f, target[0], bytes);
       }
+      verifyCorruptionRecovery(f, ledger, history, source, target[0], bytes, boundary);
       return versionChanged.get();
     }
   }
@@ -930,11 +932,8 @@ final class PhotoStorageChecks {
         require(reachedVerification.get() && Arrays.equals(bytes, f.read(original)),
             "History-stage restart rejects the target and preserves the intact original");
       }
-      f.requireOwned(onlyTarget(f));
-      f.write(target, bytes);
-      try (PhotoMove resumed = f.move(ledger, history, reached -> {})) {
-        verifyBoundaryRecovery(f, ledger, history, resumed, source, bytes);
-      }
+      restoreTargetBytes(f, target, bytes);
+      verifyCorruptionRecovery(f, ledger, history, source, target, bytes, PhotoMove.Boundary.HISTORY_UPDATED);
     }
   }
 
@@ -991,16 +990,94 @@ final class PhotoStorageChecks {
     return !before.equals(targetVersion(f, target));
   }
 
+  private static final String[] TARGET_VERSION_COLUMNS = {DISPLAY_NAME, RELATIVE_PATH, MIME_TYPE, SIZE, DATE_MODIFIED,
+      DATE_ADDED, DATE_TAKEN, GENERATION_ADDED, GENERATION_MODIFIED};
+
   private static List<String> targetVersion(Fixture f, Uri target) {
     Bundle visibility = new Bundle();
     visibility.putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE);
-    String[] columns = {DISPLAY_NAME, RELATIVE_PATH, MIME_TYPE, SIZE, DATE_MODIFIED, DATE_ADDED, DATE_TAKEN,
-        GENERATION_ADDED, GENERATION_MODIFIED};
-    try (Cursor row = f.resolver.query(target, columns, visibility, null)) {
+    try (Cursor row = f.resolver.query(target, TARGET_VERSION_COLUMNS, visibility, null)) {
       require(row != null && row.moveToFirst() && row.getCount() == 1, "Read exact target version during mutation");
-      List<String> values = new ArrayList<>(columns.length);
-      for (int index = 0; index < columns.length; index++) values.add(row.getString(index));
+      List<String> values = new ArrayList<>(TARGET_VERSION_COLUMNS.length);
+      for (int index = 0; index < TARGET_VERSION_COLUMNS.length; index++) values.add(row.getString(index));
       return values;
+    }
+  }
+
+  private static void restoreTargetBytes(Fixture f, Uri target, byte[] bytes) throws IOException {
+    Row row = onlyTarget(f);
+    require(row.uri.equals(target), "Restore only the exact corrupted fixture target");
+    f.requireOwned(row);
+    f.write(target, bytes);
+    if (!row.pending) awaitPublishedFixtureScan(f, target);
+    require(Arrays.equals(bytes, f.read(target)), "The repaired target contains exactly the original bytes before recovery");
+  }
+
+  private static void awaitPublishedFixtureScan(Fixture f, Uri target) throws IOException {
+    Row row = onlyTarget(f);
+    require(row.uri.equals(target) && !row.pending, "Wait for metadata only on the exact published fixture target");
+    f.requireOwned(row);
+    File path;
+    try (Cursor media = f.resolver.query(target, new String[]{DATA}, null, null, null)) {
+      require(media != null && media.moveToFirst() && media.getString(0) != null, "Observe the published fixture scan path");
+      path = new File(media.getString(0)).getCanonicalFile();
+    }
+    File directory = new File(PhotoStorage.requireWritable(f.context, f.secondary), f.path).getCanonicalFile();
+    require(directory.equals(path.getParentFile()), "Explicit rescan is limited to the isolated owned fixture directory");
+    var complete = new CountDownLatch(1);
+    var scanned = new AtomicReference<Uri>();
+    // A writable descriptor can schedule an asynchronous MediaProvider scan on close. Finish a
+    // scan of the repaired fixture before asking production to verify a stable published revision.
+    MediaScannerConnection.scanFile(f.context, new String[]{path.getPath()}, new String[]{"image/jpeg"}, (ignored, uri) -> {
+      scanned.set(uri);
+      complete.countDown();
+    });
+    try {
+      require(complete.await(8, TimeUnit.SECONDS) && scanned.get() != null
+          && ContentUris.parseId(scanned.get()) == ContentUris.parseId(target), "Published fixture rescan completes on its exact row");
+    } catch (InterruptedException stopped) {
+      Thread.currentThread().interrupt();
+      throw new InterruptedIOException("Published fixture rescan interrupted");
+    }
+  }
+
+  private static void verifyCorruptionRecovery(Fixture f, CameraImportLedger ledger, HistoryDb history,
+      CameraImportFile source, Uri target, byte[] bytes, PhotoMove.Boundary corruptAt) throws Exception {
+    var observed = new AtomicReference<>(targetVersion(f, target));
+    var lastBoundary = new AtomicReference<PhotoMove.Boundary>();
+    try (PhotoMove resumed = f.move(ledger, history, reached -> {
+      try {
+        if (reached == PhotoMove.Boundary.PUBLISHED) awaitPublishedFixtureScan(f, target);
+        if (reached == PhotoMove.Boundary.BEFORE_HISTORY_VERIFY || reached == PhotoMove.Boundary.BEFORE_SOURCE_DELETE) {
+          observed.set(targetVersion(f, target));
+          lastBoundary.set(reached);
+        }
+      } catch (IOException scanFailure) {
+        throw new UncheckedIOException(scanFailure);
+      }
+    })) {
+      try {
+        verifyBoundaryRecovery(f, ledger, history, resumed, source, bytes);
+      } catch (IOException failure) {
+        var label = new StringBuilder("Corruption recovery at ").append(corruptAt).append(" after ").append(lastBoundary.get());
+        try {
+          List<String> after = targetVersion(f, target);
+          List<String> changed = new ArrayList<>();
+          for (int column = 0; column < TARGET_VERSION_COLUMNS.length; column++) {
+            if (!Objects.equals(observed.get().get(column), after.get(column))) changed.add(TARGET_VERSION_COLUMNS[column]);
+          }
+          byte[] actual = f.read(target);
+          label.append(" expectedBytes=").append(bytes.length).append(" actualBytes=").append(actual.length)
+              .append(" matchingSha=").append(E2Archive.sha256(bytes).equals(E2Archive.sha256(actual)))
+              .append(" changedMetadata=").append(changed);
+        } catch (Exception | CheckFailure diagnosticUnavailable) {
+          label.append(" targetStateUnavailable");
+          failure.addSuppressed(diagnosticUnavailable);
+        }
+        var diagnostic = new CheckFailure(label.toString());
+        diagnostic.initCause(failure);
+        throw diagnostic;
+      }
     }
   }
 
@@ -1553,7 +1630,7 @@ final class PhotoStorageChecks {
         .known(source.name, source.bytes, source.captureSeconds, false, receipt.uri, receipt.storedBytes);
   }
 
-  private static byte[] jpegWithCaptureTime(Fixture f, int color, long captureSeconds, long cameraMtime) throws IOException {
+  static byte[] jpegWithCaptureTime(Fixture f, int color, long captureSeconds, long cameraMtime) throws IOException {
     File jpeg = File.createTempFile("loupe-dated-fixture-" + f.id, ".jpg", f.context.getCacheDir());
     try {
       Files.write(jpeg.toPath(), jpeg(color));
@@ -1886,7 +1963,7 @@ final class PhotoStorageChecks {
       checkInventorySelectionGuard(test, base, settings, monitor, automation, secondary, open);
       String cardLabel = new PhotoStorageLocation.Volumes(base).location(
           PhotoStorageLocation.Kind.CURRENT, secondary, "").label();
-      Predicate<AccessibilityNodeInfo> overview = node -> mentions(node, "確認できた写真 1枚")
+      Predicate<AccessibilityNodeInfo> overview = node -> mentions(node, "履歴と一致した写真 1枚")
           && mentions(node, "参照先の写真 1枚") && mentions(node, cardLabel + " 1枚")
           && mentions(node, "確認が必要な履歴 " + (records + 1) + "件");
       awaitStorageControl(automation, overview);
@@ -1900,7 +1977,7 @@ final class PhotoStorageChecks {
       inventory = test.waitForMonitorWithTimeout(monitor, 6000);
       require(inventory instanceof PhotoStorageInventoryActivity, "Settings opens its real inventory activity");
       final Activity listing = inventory;
-      Predicate<AccessibilityNodeInfo> summary = node -> mentions(node, "確認できた写真 1枚")
+      Predicate<AccessibilityNodeInfo> summary = node -> mentions(node, "履歴と一致した写真 1枚")
           && mentions(node, "参照先の写真 1枚") && mentions(node, "確認が必要な履歴 " + (records + 1) + "件");
       awaitNode(automation, summary);
       assertWindowWidth(test, listing);
@@ -2013,7 +2090,7 @@ final class PhotoStorageChecks {
     }
   }
 
-  private static boolean mentions(AccessibilityNodeInfo node, String value) {
+  static boolean mentions(AccessibilityNodeInfo node, String value) {
     return node.getText() != null && node.getText().toString().contains(value)
         || node.getContentDescription() != null && node.getContentDescription().toString().contains(value);
   }
@@ -2023,7 +2100,7 @@ final class PhotoStorageChecks {
     awaitNode(automation, node -> hasText(node, "表示する項目"));
   }
 
-  private static AccessibilityNodeInfo awaitStorageControl(UiAutomation automation, Predicate<AccessibilityNodeInfo> match) {
+  static AccessibilityNodeInfo awaitStorageControl(UiAutomation automation, Predicate<AccessibilityNodeInfo> match) {
     long deadline = SystemClock.uptimeMillis() + 8000;
     int scroll = AccessibilityNodeInfo.ACTION_SCROLL_FORWARD;
     while (SystemClock.uptimeMillis() < deadline) {
@@ -2235,7 +2312,7 @@ final class PhotoStorageChecks {
     throw new CheckFailure("Move completion did not become visible: " + PhotoMoveService.state().message());
   }
 
-  private static boolean hasText(AccessibilityNodeInfo node, String text) {
+  static boolean hasText(AccessibilityNodeInfo node, String text) {
     return text.contentEquals(node.getText() == null ? "" : node.getText());
   }
 
@@ -2259,7 +2336,7 @@ final class PhotoStorageChecks {
     return null;
   }
 
-  private static void click(AccessibilityNodeInfo node) {
+  static void click(AccessibilityNodeInfo node) {
     for (AccessibilityNodeInfo target = node; target != null; target = target.getParent()) {
       if (target.isClickable()) {
         require(target.isEnabled() && target.performAction(AccessibilityNodeInfo.ACTION_CLICK),
@@ -2285,7 +2362,7 @@ final class PhotoStorageChecks {
     return new Rect(position[0], position[1], position[0] + view.getWidth(), position[1] + view.getHeight());
   }
 
-  private static void assertWindowWidth(ArchiveInstrumentation test, Activity activity) {
+  static void assertWindowWidth(ArchiveInstrumentation test, Activity activity) {
     test.runOnMainSync(() -> {
       int effectiveWidth = test.photoStorageEffectiveWidth();
       Rect display = availableDisplay(activity);
@@ -2297,7 +2374,7 @@ final class PhotoStorageChecks {
     });
   }
 
-  private static void assertTouchTarget(Instrumentation test, Activity activity,
+  static void assertTouchTarget(Instrumentation test, Activity activity,
       AccessibilityNodeInfo node, String name) {
     Rect accessBounds = new Rect();
     node.getBoundsInScreen(accessBounds);
@@ -2334,7 +2411,7 @@ final class PhotoStorageChecks {
     require(frames.await(1, TimeUnit.SECONDS), "Android did not present two frame boundaries");
   }
 
-  private static void captureSettled(Instrumentation test, UiAutomation automation, File directory, String name,
+  static void captureSettled(Instrumentation test, UiAutomation automation, File directory, String name,
       Predicate<AccessibilityNodeInfo> expected) throws Exception {
     test.waitForIdleSync();
     try {
@@ -2701,15 +2778,15 @@ final class PhotoStorageChecks {
     }
   }
 
-  private static String secondaryVolume(Context context) {
+  static String secondaryVolume(Context context) {
     return MediaStore.getExternalVolumeNames(context).stream().filter(volume -> !PRIMARY.equals(volume))
         .filter(volume -> PhotoStorage.directoryIfWritable(context, volume) != null)
         .findFirst().orElseThrow(() -> new AssertionError("A mounted, writable secondary MediaStore volume is required"));
   }
 
-  private record Row(Uri uri, String owner, String path, boolean pending, boolean trashed) {}
+  record Row(Uri uri, String owner, String path, boolean pending, boolean trashed) {}
 
-  private static final class Fixture implements AutoCloseable {
+  static final class Fixture implements AutoCloseable {
     final ScopedContext context;
     final String id, path, secondary;
     final ContentResolver resolver;
@@ -2729,6 +2806,8 @@ final class PhotoStorageChecks {
       context = new ScopedContext(base, id);
       resolver = context.getContentResolver();
     }
+
+    Context isolatedContext() { return context; }
 
     CameraImportLedger ledger() { return new CameraImportLedger(context, "ledger.db"); }
     HistoryDb history() { return new HistoryDb(context, "history.db"); }
@@ -2957,7 +3036,7 @@ final class PhotoStorageChecks {
     }
   }
 
-  private static byte[] jpeg(int color) {
+  static byte[] jpeg(int color) {
     Bitmap bitmap = Bitmap.createBitmap(48, 32, Bitmap.Config.ARGB_8888);
     try {
       bitmap.eraseColor(color);
@@ -2973,7 +3052,7 @@ final class PhotoStorageChecks {
     CheckFailure(String label) { super(label); }
   }
 
-  private static void require(boolean condition, String label) {
+  static void require(boolean condition, String label) {
     if (!condition) throw new CheckFailure(label);
   }
 }

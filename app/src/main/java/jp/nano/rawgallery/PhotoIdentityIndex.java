@@ -56,7 +56,7 @@ final class PhotoIdentityIndex {
     return path(photo) + "\n" + photo.size + ":" + photo.modified;
   }
 
-  private static String mediaVersion(PhotoRepository.Photo photo) {
+  static String mediaVersion(PhotoRepository.Photo photo) {
     return "media".equals(photo.uri.getAuthority()) ? TagStore.locationSource(photo) : "";
   }
 

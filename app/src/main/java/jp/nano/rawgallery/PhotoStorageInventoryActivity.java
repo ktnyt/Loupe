@@ -238,7 +238,7 @@ public final class PhotoStorageInventoryActivity extends AppCompatActivity {
     String selection = filter.equals(ALL) ? "" : filter.label() + "\n";
     filterButton.setStateDescription(filter.label());
     long confirmed = photos.stream().filter(PhotoStorageInventory.Photo::historyMatches).count();
-    String counts = "確認できた写真 " + confirmed + "枚" + candidateCount(photos.size() - confirmed, "\n")
+    String counts = "履歴と一致した写真 " + confirmed + "枚" + candidateCounts(photos)
         + "\n確認が必要な履歴 " + historyCount(history) + "件";
     state.setText(selection + counts + (rows.isEmpty() ? "\n表示する項目はありません。" : ""));
   }
@@ -246,17 +246,27 @@ public final class PhotoStorageInventoryActivity extends AppCompatActivity {
   static String summary(PhotoStorageInventory inventory) {
     Map<String, VolumeCount> counts = volumeCounts(inventory);
     int confirmed = counts.values().stream().mapToInt(VolumeCount::confirmed).sum();
-    var lines = new StringBuilder("確認できた写真 ").append(confirmed).append("枚");
+    var lines = new StringBuilder("履歴と一致した写真 ").append(confirmed).append("枚");
     counts.forEach((volume, count) -> {
       if (count.confirmed() > 0)
         lines.append('\n').append(count.label()).append(' ').append(count.confirmed()).append("枚");
     });
-    return lines.append(candidateCount(inventory.photos().size() - confirmed, "\n"))
+    return lines.append(candidateCounts(inventory.photos()))
         .append("\n確認が必要な履歴 ").append(historyCount(inventory.unresolved())).append("件").toString();
   }
 
-  private static String candidateCount(long candidates, String separator) {
-    return candidates == 0 ? "" : separator + "参照先の写真 " + candidates + "枚";
+  private static String candidateCounts(List<PhotoStorageInventory.Photo> photos) {
+    int pendingContent = 0, pendingWithHistory = 0, otherReferences = 0;
+    for (var photo : photos) {
+      if (photo.reasons().contains(PhotoStorageInventory.Reason.ARCHIVE_CHECK_REQUIRED)) {
+        pendingContent++;
+        if (photo.historyMatches()) pendingWithHistory++;
+      } else if (!photo.historyMatches()) otherReferences++;
+    }
+    String pending = pendingContent == 0 ? "" : "\n内容の確認待ち " + pendingContent + "枚";
+    if (pendingWithHistory > 0) pending += "（履歴と一致した" + pendingWithHistory + "枚を含む）";
+    String references = otherReferences == 0 ? "" : "\n参照先の写真 " + otherReferences + "枚";
+    return pending + references;
   }
 
   private static Map<String, VolumeCount> volumeCounts(PhotoStorageInventory inventory) {

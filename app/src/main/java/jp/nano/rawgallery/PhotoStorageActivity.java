@@ -17,6 +17,7 @@ import com.google.android.material.button.MaterialButton;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.progressindicator.LinearProgressIndicator;
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -45,8 +46,8 @@ public final class PhotoStorageActivity extends AppCompatActivity {
   private LinearProgressIndicator progress;
   private boolean visible, planning, selecting, journalReady;
   private StorageOptions options;
-  private Future<?> overviewLoad;
-  private volatile int overviewRequest;
+  private Future<?> overviewLoad, planWork;
+  private volatile int overviewRequest, planRequest;
   private PhotoMoveStore.Batch unfinished;
   private PhotoMoveService.State lastState;
   private String screenMessage;
@@ -88,6 +89,12 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     status = label();
     status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
     stop = button("中止", () -> {
+      if (planning) {
+        cancelPlan();
+        screenMessage = "写真の確認を中止しました。";
+        render();
+        return;
+      }
       PhotoMoveService.stopMove();
       stop.setEnabled(false);
       display(status, "移動を中断しています。");
@@ -109,6 +116,10 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     getSystemService(StorageManager.class).unregisterStorageVolumeCallback(volumeChanges);
     handler.removeCallbacks(refresh);
     if (overviewLoad != null) overviewLoad.cancel(false);
+    if (planning) {
+      cancelPlan();
+      screenMessage = null;
+    }
     super.onPause();
   }
 
@@ -184,7 +195,8 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     move.setEnabled(ready && (unfinished != null || writable));
     choose.setEnabled(ready);
     inventory.setEnabled(!planning && !selecting);
-    stop.setVisibility(running ? View.VISIBLE : View.GONE);
+    stop.setText(planning ? "確認を中止" : "中止");
+    stop.setVisibility(running || planning ? View.VISIBLE : View.GONE);
     abandon.setVisibility(!running && unfinished != null ? View.VISIBLE : View.GONE);
     abandon.setEnabled(ready);
     if (!running) stop.setEnabled(true);
@@ -289,6 +301,13 @@ public final class PhotoStorageActivity extends AppCompatActivity {
         }).show();
   }
 
+  private void cancelPlan() {
+    ++planRequest;
+    planning = false;
+    if (planWork != null) planWork.cancel(true);
+    planWork = null;
+  }
+
   private void plan() {
     screenMessage = null;
     if (unfinished != null) {
@@ -297,36 +316,56 @@ public final class PhotoStorageActivity extends AppCompatActivity {
       return;
     }
     planning = true;
+    int request = ++planRequest;
     screenMessage = "取り込み済みの写真を確認しています。";
     render();
     StorageOptions target = options;
-    worker.execute(() -> {
+    planWork = worker.submit(() -> {
       var lock = CameraImportGate.lock;
       if (!lock.tryLock()) {
-        runOnUiThread(() -> showPlan(null, "取り込みが終わってからもう一度お試しください。", target.label()));
+        runOnUiThread(() -> showPlan(request, null, "取り込みが終わってからもう一度お試しください。", target.label()));
         return;
       }
+      PhotoMove.Plan verified = null;
+      String message = null;
       try (PhotoMove mover = new PhotoMove(this)) {
-        PhotoMove.Plan proposal = mover.plan(target.volume());
-        runOnUiThread(() -> showPlan(proposal, null, target.label()));
-      } catch (PhotoStorage.Unavailable unavailable) {
-        runOnUiThread(() -> showPlan(null, unavailable.getMessage(), target.label()));
+        PhotoMove.Plan proposal = mover.plan(target.volume(), () -> request != planRequest);
+        if (proposal.items().stream().anyMatch(PhotoMoveStore.Item::hasHistoricalProof)) {
+          runOnUiThread(() -> {
+            if (request == planRequest && planning && visible) {
+              screenMessage = "バックアップと写真の内容を照合しています。";
+              render();
+            }
+          });
+        }
+        verified = mover.preflight(proposal, () -> request != planRequest);
+      } catch (InterruptedIOException cancelled) {
+        message = "写真の確認を中止しました。";
+      } catch (PhotoStorage.Unavailable | PhotoMove.Failure unavailable) {
+        message = unavailable.getMessage();
       } catch (Exception unavailable) {
-        runOnUiThread(() -> showPlan(null, "取り込み済みの写真を確認できません。", target.label()));
+        message = "取り込み済みの写真を確認できません。";
       } finally {
         lock.unlock();
       }
+      PhotoMove.Plan result = verified;
+      String resultMessage = message;
+      runOnUiThread(() -> showPlan(request, result, resultMessage, target.label()));
     });
   }
 
-  private void showPlan(PhotoMove.Plan proposal, String message, String targetLabel) {
-    if (isFinishing() || isDestroyed()) return;
+  private void showPlan(int request, PhotoMove.Plan proposal, String message, String targetLabel) {
+    if (request != planRequest || !visible || isFinishing() || isDestroyed()) return;
+    planWork = null;
     planning = false;
     screenMessage = message;
     if (proposal != null) {
       int count = proposal.items().size();
-      String skipped = proposal.skipped() == 0 ? "" :
-          "\n\n移動対象外の項目があります。保存場所の一覧で写真と理由を確認できます。";
+      boolean otherExcluded = proposal.skipped() > proposal.archiveRejected();
+      String skipped = otherExcluded
+          ? "\n\n移動対象外の項目があります。保存場所の一覧で写真と理由を確認できます。" : "";
+      if (proposal.archiveRejected() > 0)
+        skipped += "\n\n内容を照合できなかった" + proposal.archiveRejected() + "枚は元の場所に残ります。";
       if (count == 0) {
         screenMessage = "移動できる取り込み済みの写真はありません。" + skipped;
       } else {
@@ -341,7 +380,7 @@ public final class PhotoStorageActivity extends AppCompatActivity {
               PhotoMoveService.launch(this, proposal);
               render();
             });
-        if (proposal.skipped() > 0) confirmation.setNeutralButton("理由を見る", (dialog, which) -> openInventory());
+        if (otherExcluded) confirmation.setNeutralButton("理由を見る", (dialog, which) -> openInventory());
         confirmation.show();
       }
     }
