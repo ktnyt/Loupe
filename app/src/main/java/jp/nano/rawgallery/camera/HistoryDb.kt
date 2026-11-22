@@ -201,18 +201,20 @@ class HistoryDb @JvmOverloads constructor(context: Context, databaseName: String
             }
         }
 
-    data class MoveEvidence(val id: Long, val uri: String, val name: String, val bytes: Long, val shot: Long, val importedAt: Long)
+    data class MoveEvidence @JvmOverloads constructor(val id: Long, val uri: String, val name: String, val bytes: Long,
+        val shot: Long, val importedAt: Long, val cameraModel: String = "", val cameraSerial: String = "")
 
     fun moveEvidence(): List<MoveEvidence> = moveEvidenceWhere("", null)
 
-    fun moveEvidenceFor(source: String, aggregate: String, destination: String?): List<MoveEvidence> =
-        moveEvidenceWhere(" WHERE dest_uri IN (?,?,?)", arrayOf(source, aggregate, destination ?: source))
+    fun moveEvidenceFor(source: String, aggregate: String, destination: String?, destinationAlias: String?): List<MoveEvidence> =
+        moveEvidenceWhere(" WHERE dest_uri IN (?,?,?,?)",
+            arrayOf(source, aggregate, destination ?: source, destinationAlias ?: source))
 
     private fun moveEvidenceWhere(where: String, args: Array<String>?): List<MoveEvidence> =
-        readableDatabase.rawQuery("SELECT id,dest_uri,file_name,file_size,shot_at,imported_at FROM imported" + where, args).use { rows ->
+        readableDatabase.rawQuery("SELECT id,dest_uri,file_name,file_size,shot_at,imported_at,camera_model,camera_serial FROM imported" + where, args).use { rows ->
             buildList {
                 while (rows.moveToNext()) add(MoveEvidence(rows.getLong(0), rows.getString(1),
-                    rows.getString(2), rows.getLong(3), rows.getLong(4), rows.getLong(5)))
+                    rows.getString(2), rows.getLong(3), rows.getLong(4), rows.getLong(5), rows.getString(6), rows.getString(7)))
             }
         }
 

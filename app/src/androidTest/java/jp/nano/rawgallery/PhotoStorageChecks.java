@@ -585,7 +585,7 @@ final class PhotoStorageChecks {
 
       try (PhotoMoveStore store = new PhotoMoveStore(fixture)) {
         SQLiteDatabase updated = store.getWritableDatabase();
-        require(updated.getVersion() == 2
+        require(updated.getVersion() == 3
             && new PhotoMoveStore.Batch(secondary, 1, 2, allDone ? 1 : 0).equals(store.batch()) && store.revision() == 13,
             "v1 upgrade preserves batch counts and advances the revision");
         if (allDone) {
@@ -1553,7 +1553,7 @@ final class PhotoStorageChecks {
         .known(source.name, source.bytes, source.captureSeconds, false, receipt.uri, receipt.storedBytes);
   }
 
-  private static byte[] jpegWithCaptureTime(Fixture f, int color, long captureSeconds, long cameraMtime) throws IOException {
+  static byte[] jpegWithCaptureTime(Fixture f, int color, long captureSeconds, long cameraMtime) throws IOException {
     File jpeg = File.createTempFile("loupe-dated-fixture-" + f.id, ".jpg", f.context.getCacheDir());
     try {
       Files.write(jpeg.toPath(), jpeg(color));
@@ -2013,7 +2013,7 @@ final class PhotoStorageChecks {
     }
   }
 
-  private static boolean mentions(AccessibilityNodeInfo node, String value) {
+  static boolean mentions(AccessibilityNodeInfo node, String value) {
     return node.getText() != null && node.getText().toString().contains(value)
         || node.getContentDescription() != null && node.getContentDescription().toString().contains(value);
   }
@@ -2023,7 +2023,7 @@ final class PhotoStorageChecks {
     awaitNode(automation, node -> hasText(node, "表示する項目"));
   }
 
-  private static AccessibilityNodeInfo awaitStorageControl(UiAutomation automation, Predicate<AccessibilityNodeInfo> match) {
+  static AccessibilityNodeInfo awaitStorageControl(UiAutomation automation, Predicate<AccessibilityNodeInfo> match) {
     long deadline = SystemClock.uptimeMillis() + 8000;
     int scroll = AccessibilityNodeInfo.ACTION_SCROLL_FORWARD;
     while (SystemClock.uptimeMillis() < deadline) {
@@ -2235,7 +2235,7 @@ final class PhotoStorageChecks {
     throw new CheckFailure("Move completion did not become visible: " + PhotoMoveService.state().message());
   }
 
-  private static boolean hasText(AccessibilityNodeInfo node, String text) {
+  static boolean hasText(AccessibilityNodeInfo node, String text) {
     return text.contentEquals(node.getText() == null ? "" : node.getText());
   }
 
@@ -2259,7 +2259,7 @@ final class PhotoStorageChecks {
     return null;
   }
 
-  private static void click(AccessibilityNodeInfo node) {
+  static void click(AccessibilityNodeInfo node) {
     for (AccessibilityNodeInfo target = node; target != null; target = target.getParent()) {
       if (target.isClickable()) {
         require(target.isEnabled() && target.performAction(AccessibilityNodeInfo.ACTION_CLICK),
@@ -2285,7 +2285,7 @@ final class PhotoStorageChecks {
     return new Rect(position[0], position[1], position[0] + view.getWidth(), position[1] + view.getHeight());
   }
 
-  private static void assertWindowWidth(ArchiveInstrumentation test, Activity activity) {
+  static void assertWindowWidth(ArchiveInstrumentation test, Activity activity) {
     test.runOnMainSync(() -> {
       int effectiveWidth = test.photoStorageEffectiveWidth();
       Rect display = availableDisplay(activity);
@@ -2297,7 +2297,7 @@ final class PhotoStorageChecks {
     });
   }
 
-  private static void assertTouchTarget(Instrumentation test, Activity activity,
+  static void assertTouchTarget(Instrumentation test, Activity activity,
       AccessibilityNodeInfo node, String name) {
     Rect accessBounds = new Rect();
     node.getBoundsInScreen(accessBounds);
@@ -2334,7 +2334,7 @@ final class PhotoStorageChecks {
     require(frames.await(1, TimeUnit.SECONDS), "Android did not present two frame boundaries");
   }
 
-  private static void captureSettled(Instrumentation test, UiAutomation automation, File directory, String name,
+  static void captureSettled(Instrumentation test, UiAutomation automation, File directory, String name,
       Predicate<AccessibilityNodeInfo> expected) throws Exception {
     test.waitForIdleSync();
     try {
@@ -2701,15 +2701,15 @@ final class PhotoStorageChecks {
     }
   }
 
-  private static String secondaryVolume(Context context) {
+  static String secondaryVolume(Context context) {
     return MediaStore.getExternalVolumeNames(context).stream().filter(volume -> !PRIMARY.equals(volume))
         .filter(volume -> PhotoStorage.directoryIfWritable(context, volume) != null)
         .findFirst().orElseThrow(() -> new AssertionError("A mounted, writable secondary MediaStore volume is required"));
   }
 
-  private record Row(Uri uri, String owner, String path, boolean pending, boolean trashed) {}
+  record Row(Uri uri, String owner, String path, boolean pending, boolean trashed) {}
 
-  private static final class Fixture implements AutoCloseable {
+  static final class Fixture implements AutoCloseable {
     final ScopedContext context;
     final String id, path, secondary;
     final ContentResolver resolver;
@@ -2729,6 +2729,8 @@ final class PhotoStorageChecks {
       context = new ScopedContext(base, id);
       resolver = context.getContentResolver();
     }
+
+    Context isolatedContext() { return context; }
 
     CameraImportLedger ledger() { return new CameraImportLedger(context, "ledger.db"); }
     HistoryDb history() { return new HistoryDb(context, "history.db"); }
@@ -2957,7 +2959,7 @@ final class PhotoStorageChecks {
     }
   }
 
-  private static byte[] jpeg(int color) {
+  static byte[] jpeg(int color) {
     Bitmap bitmap = Bitmap.createBitmap(48, 32, Bitmap.Config.ARGB_8888);
     try {
       bitmap.eraseColor(color);
@@ -2973,7 +2975,7 @@ final class PhotoStorageChecks {
     CheckFailure(String label) { super(label); }
   }
 
-  private static void require(boolean condition, String label) {
+  static void require(boolean condition, String label) {
     if (!condition) throw new CheckFailure(label);
   }
 }

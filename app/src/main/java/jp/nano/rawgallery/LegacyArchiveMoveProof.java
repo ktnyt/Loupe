@@ -41,9 +41,13 @@ final class LegacyArchiveMoveProof {
   private LegacyArchiveMoveProof() {}
 
   static String epoch(Context context) {
+    return epoch(context, PhotoStorage.PRIMARY);
+  }
+
+  static String epoch(Context context, String volume) {
     try {
       if (!E2Settings.hasPhotoAccess(context)) return null;
-      String value = MediaStore.getVersion(context.getApplicationContext(), PhotoStorage.PRIMARY);
+      String value = MediaStore.getVersion(context.getApplicationContext(), volume);
       return value == null || value.isEmpty() ? null : value;
     } catch (RuntimeException unavailable) {
       return null;
@@ -171,9 +175,11 @@ final class LegacyArchiveMoveProof {
   }
 
   static String historyFingerprint(HistoryDb.MoveEvidence history) throws IOException {
-    return PhotoRepository.digest(history.getName() + "\n" + history.getBytes() + "\n"
-        + history.getShot() + "\n" + history.getImportedAt());
+    return PhotoRepository.digest(field(history.getCameraModel()) + field(history.getCameraSerial())
+        + field(history.getName()) + history.getBytes() + "\n" + history.getShot() + "\n" + history.getImportedAt());
   }
+
+  private static String field(String value) { return value.length() + ":" + value; }
 
   private static String keyPrefix(PhotoRepository.Photo photo, String bucket, String epoch) throws IOException {
     return "e2-auto\n" + bucket + "\n" + photo.uri + "\n" + ArchiveStore.key(photo) + "\n"

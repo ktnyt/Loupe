@@ -330,7 +330,7 @@ public final class PhotoStorageActivity extends AppCompatActivity {
       String message = null;
       try (PhotoMove mover = new PhotoMove(this)) {
         PhotoMove.Plan proposal = mover.plan(target.volume(), () -> request != planRequest);
-        if (proposal.items().stream().anyMatch(item -> item.archiveProof() != null)) {
+        if (proposal.items().stream().anyMatch(PhotoMoveStore.Item::hasHistoricalProof)) {
           runOnUiThread(() -> {
             if (request == planRequest && planning && visible) {
               screenMessage = "バックアップと写真の内容を照合しています。";
@@ -361,10 +361,11 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     screenMessage = message;
     if (proposal != null) {
       int count = proposal.items().size();
-      String skipped = proposal.skipped() == 0 ? "" :
-          "\n\n対象外 " + proposal.skipped() + "件。保存場所の一覧で写真と理由を確認できます。";
+      boolean otherExcluded = proposal.skipped() > proposal.archiveRejected();
+      String skipped = otherExcluded
+          ? "\n\n移動対象外の項目があります。保存場所の一覧で写真と理由を確認できます。" : "";
       if (proposal.archiveRejected() > 0)
-        skipped += "\nうち" + proposal.archiveRejected() + "枚はバックアップとの照合を確認できませんでした。";
+        skipped += "\n\n内容を照合できなかった" + proposal.archiveRejected() + "枚は元の場所に残ります。";
       if (count == 0) {
         screenMessage = "移動できる取り込み済みの写真はありません。" + skipped;
       } else {
@@ -379,7 +380,7 @@ public final class PhotoStorageActivity extends AppCompatActivity {
               PhotoMoveService.launch(this, proposal);
               render();
             });
-        if (proposal.skipped() > 0) confirmation.setNeutralButton("理由を見る", (dialog, which) -> openInventory());
+        if (otherExcluded) confirmation.setNeutralButton("理由を見る", (dialog, which) -> openInventory());
         confirmation.show();
       }
     }

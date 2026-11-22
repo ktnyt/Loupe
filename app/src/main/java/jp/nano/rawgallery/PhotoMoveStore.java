@@ -12,12 +12,36 @@ import java.util.List;
 import java.util.Set;
 import java.io.IOException;
 import java.util.UUID;
+import java.util.ArrayList;
+import java.util.Objects;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 /** One confirmed batch and stable aliases for photos that have been moved. */
 final class PhotoMoveStore extends SQLiteOpenHelper {
   static final int QUEUED = 0, COPYING = 1, VERIFIED = 2, UPDATING_HISTORY = 3, REMAPPED = 4, DONE = 5;
   record Item(String source, String sourceAlias, String version, String expectedSha, String legacyIds, long bytes, String token,
-      String target, String sha, int stage, Identity identity, ArchiveProof archiveProof) {
+      String target, String sha, int stage, Identity identity, ArchiveProof archiveProof,
+      CompletedProof sourceProof, CompletedProof pendingCompletion) {
+    Item {
+      if (archiveProof != null && sourceProof != null
+          || pendingCompletion != null && archiveProof == null && sourceProof == null)
+        throw new IllegalArgumentException("Conflicting historical move proof");
+    }
+
+    boolean hasHistoricalProof() { return archiveProof != null || sourceProof != null; }
+    long historyId() { return archiveProof != null ? archiveProof.historyId() : sourceProof.historyId(); }
+    String proofSha() { return archiveProof != null ? archiveProof.sha() : sourceProof.sha(); }
+    String historyFingerprint() {
+      return archiveProof != null ? archiveProof.historyFingerprint() : sourceProof.historyFingerprint();
+    }
+
+    Item(String source, String sourceAlias, String version, String expectedSha, String legacyIds, long bytes,
+        String token, String target, String sha, int stage, Identity identity, ArchiveProof archiveProof) {
+      this(source, sourceAlias, version, expectedSha, legacyIds, bytes, token, target, sha, stage, identity, archiveProof,
+          null, null);
+    }
+
     Item(String source, String sourceAlias, String version, String expectedSha, String legacyIds, long bytes,
         String token, String target, String sha, int stage, Identity identity) {
       this(source, sourceAlias, version, expectedSha, legacyIds, bytes, token, target, sha, stage, identity, null);
@@ -31,6 +55,17 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
           || historicalGeneration <= 0 || historyId <= 0 || epoch == null || epoch.isEmpty()
           || historyFingerprint == null || !historyFingerprint.matches("[0-9a-f]{64}"))
         throw new IllegalArgumentException("Invalid archive move proof");
+    }
+  }
+
+  record CompletedProof(long historyId, String source, String volume, String epoch, long generationAdded,
+      long generationModified, String version, long bytes, String sha, String historyFingerprint) {
+    CompletedProof {
+      if (historyId <= 0 || source == null || volume == null || volume.isEmpty()
+          || epoch == null || epoch.isEmpty() || generationAdded < 0 || generationModified < generationAdded
+          || version == null || version.isEmpty() || bytes <= 0 || sha == null || !sha.matches("[0-9a-f]{64}")
+          || historyFingerprint == null || !historyFingerprint.matches("[0-9a-f]{64}"))
+        throw new IllegalArgumentException("Invalid completed move proof");
     }
   }
 
@@ -53,8 +88,10 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
         + "total INTEGER NOT NULL, skipped INTEGER NOT NULL)");
     db.execSQL("CREATE TABLE items (source TEXT PRIMARY KEY, source_alias TEXT, version TEXT NOT NULL, expected_sha TEXT, legacy_ids TEXT NOT NULL, "
         + "bytes INTEGER NOT NULL, token TEXT, target TEXT, sha TEXT, stage INTEGER NOT NULL DEFAULT 0, "
-        + "archive_key TEXT, tag_source TEXT, sort_time INTEGER, " + String.join(",", ARCHIVE_COLUMNS) + ")");
+        + "archive_key TEXT, tag_source TEXT, sort_time INTEGER, " + String.join(",", ARCHIVE_COLUMNS)
+        + ", proof_previous TEXT, proof_completion TEXT)");
     db.execSQL("CREATE INDEX items_stage ON items(stage)");
+    createCompleted(db);
     PhotoIdentityIndex.create(db);
     db.execSQL("CREATE TABLE revision (id INTEGER PRIMARY KEY CHECK(id=1), value INTEGER NOT NULL)");
     db.execSQL("INSERT INTO revision VALUES(1,0)");
@@ -64,6 +101,14 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
     if ((from != 1 && from != 2) || to != 3) throw new IllegalStateException("Unsupported move journal upgrade");
     if (from == 1) upgradeIdentities(db);
     for (String column : ARCHIVE_COLUMNS) db.execSQL("ALTER TABLE items ADD COLUMN " + column);
+    db.execSQL("ALTER TABLE items ADD COLUMN proof_previous TEXT");
+    db.execSQL("ALTER TABLE items ADD COLUMN proof_completion TEXT");
+    createCompleted(db);
+  }
+
+  private static void createCompleted(SQLiteDatabase db) {
+    db.execSQL("CREATE TABLE completed_legacy_moves (history_id INTEGER PRIMARY KEY, source TEXT NOT NULL UNIQUE,"
+        + " payload TEXT NOT NULL)");
   }
 
   private static void upgradeIdentities(SQLiteDatabase db) {
@@ -135,11 +180,12 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
       for (Item item : items) {
         ArchiveProof proof = item.archiveProof();
         db.execSQL("INSERT INTO items(source,source_alias,version,expected_sha,legacy_ids,bytes," + ARCHIVE_FIELDS
-                + ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                + ",proof_previous) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
             new Object[]{item.source(), item.sourceAlias(), item.version(), item.expectedSha(), item.legacyIds(), item.bytes(),
                 proof == null ? null : proof.key(), proof == null ? null : proof.sha(),
                 proof == null ? null : proof.historicalGeneration(), proof == null ? null : proof.historyId(),
-                proof == null ? null : proof.epoch(), proof == null ? null : proof.historyFingerprint()});
+                proof == null ? null : proof.epoch(), proof == null ? null : proof.historyFingerprint(),
+                encode(item.sourceProof())});
       }
       db.setTransactionSuccessful();
     } finally {
@@ -150,12 +196,12 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
   Item next() {
     try (Cursor row = getReadableDatabase().rawQuery(
         "SELECT source,source_alias,version,expected_sha,legacy_ids,bytes,token,target,sha,stage,archive_key,tag_source,sort_time,"
-            + ARCHIVE_FIELDS + " FROM items "
+            + ARCHIVE_FIELDS + ",proof_previous,proof_completion FROM items "
             + "WHERE stage<" + DONE + " ORDER BY stage DESC,rowid LIMIT 1", null)) {
       return row.moveToFirst() ? new Item(row.getString(0), row.getString(1), row.getString(2),
           row.getString(3), row.getString(4), row.getLong(5), row.getString(6), row.getString(7), row.getString(8),
           row.getInt(9), row.isNull(10) ? null : new Identity(row.getString(10), row.getString(11), row.getLong(12)),
-          archiveProof(row)) : null;
+          archiveProof(row), decode(row.getString(19)), decode(row.getString(20))) : null;
     }
   }
 
@@ -166,6 +212,140 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
     if (empty != 0) throw new IllegalStateException("Incomplete archive move proof");
     return new ArchiveProof(row.getString(13), row.getString(14), row.getLong(15), row.getLong(16),
         row.getString(17), row.getString(18));
+  }
+
+  List<CompletedProof> completed() {
+    List<CompletedProof> result = new ArrayList<>();
+    try (Cursor rows = getReadableDatabase().rawQuery(
+        "SELECT history_id,source,payload FROM completed_legacy_moves", null)) {
+      while (rows.moveToNext()) result.add(completedRow(rows));
+    }
+    return result;
+  }
+
+  CompletedProof completed(long historyId) {
+    try (Cursor rows = getReadableDatabase().rawQuery(
+        "SELECT history_id,source,payload FROM completed_legacy_moves WHERE history_id=?",
+        new String[]{Long.toString(historyId)})) {
+      return rows.moveToFirst() ? completedRow(rows) : null;
+    }
+  }
+
+  private static CompletedProof completedRow(Cursor row) {
+    CompletedProof proof = decode(row.getString(2));
+    if (proof == null || proof.historyId() != row.getLong(0) || !proof.source().equals(row.getString(1)))
+      throw new IllegalStateException("Completed move proof identity disagrees with its row");
+    return proof;
+  }
+
+  /** Keep the previous binding until the source has actually been removed. */
+  void prepareCompletion(Item item, CompletedProof next) throws IOException {
+    SQLiteDatabase db = getWritableDatabase();
+    db.beginTransaction();
+    try {
+      requirePendingCompletion(item, next);
+      if (!Objects.equals(completed(item.historyId()), item.sourceProof()))
+        throw new IOException("The previous completed move proof changed");
+      try (Cursor conflict = db.rawQuery("SELECT 1 FROM completed_legacy_moves WHERE source=? AND history_id<>?",
+          new String[]{next.source(), Long.toString(next.historyId())})) {
+        if (conflict.moveToFirst()) throw new IOException("The destination has another completed move proof");
+      }
+      if (item.pendingCompletion() == null) {
+        ContentValues values = new ContentValues();
+        values.put("proof_completion", encode(next));
+        if (db.update("items", values, "source=? AND stage=? AND proof_completion IS NULL",
+            new String[]{item.source(), Integer.toString(REMAPPED)}) != 1)
+          throw new IOException("The move journal changed before preparing the destination");
+      } else if (!next.equals(item.pendingCompletion()) || !journalMatches(db, item.source(), REMAPPED, next)) {
+        throw new IOException("The checked move destination changed");
+      }
+      db.setTransactionSuccessful();
+    } finally {
+      db.endTransaction();
+    }
+  }
+
+  /** Promote the verified destination and remove active authority in the same transaction. */
+  void completeHistorical(Item item) throws IOException {
+    CompletedProof next = item.pendingCompletion();
+    requirePendingCompletion(item, next);
+    SQLiteDatabase db = getWritableDatabase();
+    db.beginTransaction();
+    try {
+      CompletedProof current = completed(item.historyId());
+      if (next.equals(current) && journalMatches(db, item.source(), DONE, null)) {
+        db.setTransactionSuccessful();
+        return;
+      }
+      if (!journalMatches(db, item.source(), REMAPPED, next))
+        throw new IOException("The move journal changed before promoting the destination");
+      if (!next.equals(current)) {
+        if (!Objects.equals(current, item.sourceProof())) throw new IOException("The previous move proof changed");
+        ContentValues proof = new ContentValues();
+        proof.put("history_id", next.historyId());
+        proof.put("source", next.source());
+        proof.put("payload", encode(next));
+        if (current == null) {
+          db.insertOrThrow("completed_legacy_moves", null, proof);
+        } else if (db.update("completed_legacy_moves", proof, "history_id=?",
+            new String[]{Long.toString(next.historyId())}) != 1) {
+          throw new IOException("Cannot promote the move proof");
+        }
+      }
+      ContentValues values = new ContentValues();
+      values.put("stage", DONE);
+      for (String field : ARCHIVE_FIELDS.split(",")) values.putNull(field);
+      values.putNull("proof_previous");
+      values.putNull("proof_completion");
+      if (db.update("items", values, "source=? AND stage=? AND proof_completion=?",
+          new String[]{item.source(), Integer.toString(REMAPPED), encode(next)}) != 1)
+        throw new IOException("The move journal changed while promoting the destination");
+      db.setTransactionSuccessful();
+    } finally {
+      db.endTransaction();
+    }
+  }
+
+  private static boolean journalMatches(SQLiteDatabase db, String source, int stage, CompletedProof proof) {
+    try (Cursor row = db.rawQuery("SELECT proof_completion FROM items WHERE source=? AND stage=?",
+        new String[]{source, Integer.toString(stage)})) {
+      return row.moveToFirst() && Objects.equals(proof, decode(row.getString(0)));
+    }
+  }
+
+  private static void requirePendingCompletion(Item item, CompletedProof next) throws IOException {
+    if (!item.hasHistoricalProof() || item.stage() != REMAPPED || next == null
+        || !next.source().equals(item.target()) || next.historyId() != item.historyId()
+        || next.bytes() != item.bytes() || !next.sha().equals(item.proofSha())
+        || !next.historyFingerprint().equals(item.historyFingerprint()))
+      throw new IOException("The checked move destination cannot be finalized");
+  }
+
+  private static String encode(CompletedProof proof) {
+    if (proof == null) return null;
+    try {
+      return new JSONObject().put("kind", "completed-legacy-move-v1").put("id", proof.historyId())
+          .put("source", proof.source()).put("volume", proof.volume()).put("epoch", proof.epoch())
+          .put("added", proof.generationAdded()).put("modified", proof.generationModified())
+          .put("version", proof.version()).put("bytes", proof.bytes()).put("sha", proof.sha())
+          .put("history", proof.historyFingerprint()).toString();
+    } catch (JSONException invalid) {
+      throw new IllegalArgumentException("Invalid completed move proof", invalid);
+    }
+  }
+
+  private static CompletedProof decode(String payload) {
+    if (payload == null) return null;
+    try {
+      JSONObject proof = new JSONObject(payload);
+      if (!"completed-legacy-move-v1".equals(proof.getString("kind")))
+        throw new IllegalArgumentException("Unknown completed move proof kind");
+      return new CompletedProof(proof.getLong("id"), proof.getString("source"), proof.getString("volume"),
+          proof.getString("epoch"), proof.getLong("added"), proof.getLong("modified"), proof.getString("version"),
+          proof.getLong("bytes"), proof.getString("sha"), proof.getString("history"));
+    } catch (JSONException invalid) {
+      throw new IllegalStateException("Malformed completed move proof", invalid);
+    }
   }
 
   boolean historyUpdatePending() {
