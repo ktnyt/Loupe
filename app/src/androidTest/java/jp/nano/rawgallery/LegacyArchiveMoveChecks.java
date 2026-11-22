@@ -76,7 +76,9 @@ final class LegacyArchiveMoveChecks {
       checkProofRecovery(base, secondary, boundary);
     }
     checkProofRollback(base, secondary);
-    checkDeletedSourceWithResetHistory(base, secondary);
+    checkDeletedSourceWithResetHistory(base, secondary, false);
+    checkDeletedSourceWithResetHistory(base, secondary, true);
+    checkStaleSourceWithResetHistory(base, secondary);
     checkLockedAbandon(base, secondary);
     checkRoundTrip(base, secondary);
     checkVersionTwoResume(base, secondary);
@@ -503,51 +505,114 @@ final class LegacyArchiveMoveChecks {
     }
   }
 
-  private static void checkDeletedSourceWithResetHistory(Context base, String secondary) throws Exception {
+  private static void checkDeletedSourceWithResetHistory(Context base, String secondary, boolean reverse) throws Exception {
     try (Fixture f = new Fixture(base, secondary); CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
          ArchiveStore archive = E2Settings.openRecords(f.isolatedContext()); TagStore tags = new TagStore(f.isolatedContext());
          ShareHistoryStore shares = new ShareHistoryStore(f.isolatedContext()); PhotoMoveStore journal = new PhotoMoveStore(f.isolatedContext())) {
       Seed seed = seed(f, history, archive, "RESET-AFTER-DELETE.JPG", 0xff663785, false, false);
       String archiveBefore = archive.get(seed.archiveKey()).toString();
       var ranking = new RankingStore(f.isolatedContext());
-      var original = f.photo(seed.uri());
-      String archiveKey = ArchiveStore.key(original);
-      String tagSource = TagStore.source(original);
-      var tag = tags.create("Synthetic move tag");
-      String tagPhotoId = tags.photoId(original, true);
-      tags.record(UUID.randomUUID().toString(), tag.id, tagPhotoId, 0, TagJudgments.Value.ASSIGNED);
-      require(ranking.saveSingleBest(archiveKey, false, true), "Seed the original's best mark");
-      long sharedAt = System.currentTimeMillis();
-      require(shares.complete(shares.begin(List.of(archiveKey), sharedAt), "test.fixture", "Synthetic share", sharedAt),
-          "Seed the original's share handoff");
-      require(PhotoStorage.select(f.isolatedContext(), secondary), "Choose the synthetic SD destination");
+      LogicalLabels labels = seedLogicalLabels(f, seed, tags, ranking, shares);
+      PhotoMoveStore.CompletedProof predecessor = null;
+      String sourceVolume = PRIMARY;
+      String destination = secondary;
+      if (reverse) {
+        try (PhotoMove first = f.move(ledger, history, ignored -> {})) {
+          require(PhotoStorage.select(f.isolatedContext(), secondary), "Choose the initial SD destination");
+          first.begin(preflight(first, first.plan(secondary), () -> false));
+          require(first.run(() -> false, ignored -> {}).done() == 1, "Establish a completed proof before the reverse move");
+        }
+        predecessor = requireCompletedProof(f, seed, f.rows(secondary).get(0).uri());
+        sourceVolume = secondary;
+        destination = PRIMARY;
+      }
+      require(PhotoStorage.select(f.isolatedContext(), destination), "Choose the synthetic move destination");
       try (PhotoMove stopped = f.move(ledger, history, reached -> {
         if (reached == PhotoMove.Boundary.DELETED) throw new InterruptedMove();
       })) {
-        stopped.begin(preflight(stopped, stopped.plan(secondary), () -> false));
+        stopped.begin(preflight(stopped, stopped.plan(destination), () -> false));
         expectCrash(stopped, PhotoMove.Boundary.DELETED);
       }
-      Uri target = f.rows(secondary).get(0).uri();
+      Uri target = f.rows(destination).get(0).uri();
       var interrupted = journal.next();
-      require(f.rows(PRIMARY).isEmpty() && interrupted.stage() == PhotoMoveStore.REMAPPED && interrupted.pendingCompletion() != null
-          && archiveKey.equals(interrupted.identity().archiveKey()) && tagSource.equals(interrupted.identity().tagSource())
-          && history.importDestinations().equals(Set.of(target.toString())), "Interrupt with the locally mapped replacement as the sole copy");
+      require(f.rows(sourceVolume).isEmpty() && interrupted.stage() == PhotoMoveStore.REMAPPED && interrupted.pendingCompletion() != null
+          && labels.key().equals(interrupted.identity().archiveKey()) && labels.tagSource().equals(interrupted.identity().tagSource())
+          && history.importDestinations().equals(Set.of(target.toString()))
+          && java.util.Objects.equals(predecessor, journal.completed(seed.history().getId())),
+          "Interrupt with the locally mapped replacement as the sole copy before changing the prior completed proof");
       history.resetHistory(MODEL, f.id);
       try (PhotoMove reopened = f.move(ledger, history, ignored -> {})) {
         var ended = reopened.abandon();
         require(ended.total() == 1 && ended.done() == 1 && reopened.batch() == null && history.moveEvidence().isEmpty()
             && journal.completed(seed.history().getId()) == null && ledger.receiptCount() == 0
             && archiveBefore.equals(archive.get(seed.archiveKey()).toString()) && Arrays.equals(seed.bytes(), f.read(target)),
-            "End preserves the byte-exact sole copy and closes the journal without recreating the removed import evidence");
+            "End keeps the sole exact copy, removes any predecessor proof and leaves the erased import history empty");
       }
-      var retained = f.photo(target);
-      String retainedKey = ArchiveStore.key(retained);
-      var handoff = shares.history(retainedKey);
-      require(archiveKey.equals(retainedKey) && tagSource.equals(TagStore.source(retained)) && tagPhotoId.equals(tags.photoId(retained, false))
-          && tags.load().value(tag.id, tagPhotoId) == TagJudgments.Value.ASSIGNED && ranking.singleBest(retainedKey)
-          && handoff.size() == 1 && handoff.get(0).handedOffAt == sharedAt,
-          "The sole surviving target retains the original logical identity, tags, ranking and share handoff");
+      requireLogicalLabels(f, target, labels, tags, ranking, shares);
     }
+  }
+
+  private static void checkStaleSourceWithResetHistory(Context base, String secondary) throws Exception {
+    try (Fixture f = new Fixture(base, secondary); CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         ArchiveStore archive = E2Settings.openRecords(f.isolatedContext()); TagStore tags = new TagStore(f.isolatedContext());
+         ShareHistoryStore shares = new ShareHistoryStore(f.isolatedContext()); PhotoMoveStore journal = new PhotoMoveStore(f.isolatedContext())) {
+      Seed seed = seed(f, history, archive, "STALE-SOURCE.JPG", 0xff814866, false, false);
+      var ranking = new RankingStore(f.isolatedContext());
+      LogicalLabels labels = seedLogicalLabels(f, seed, tags, ranking, shares);
+      require(PhotoStorage.select(f.isolatedContext(), secondary), "Choose the synthetic move destination");
+      try (PhotoMove stopped = f.move(ledger, history, reached -> {
+        if (reached == PhotoMove.Boundary.REMAPPED) throw new InterruptedMove();
+      })) {
+        stopped.begin(preflight(stopped, stopped.plan(secondary), () -> false));
+        expectCrash(stopped, PhotoMove.Boundary.REMAPPED);
+      }
+      Uri target = f.rows(secondary).get(0).uri();
+      var item = journal.next();
+      var batch = journal.batch();
+      history.resetHistory(MODEL, f.id);
+      String renamed = "OCCUPIED-SOURCE-URI.JPG";
+      ContentValues changed = new ContentValues();
+      changed.put(DISPLAY_NAME, renamed);
+      require(f.resolver.update(seed.uri(), changed, null, null) == 1, "Change only the exact owned synthetic source's MediaStore revision");
+      try (Cursor row = f.resolver.query(seed.uri(), new String[]{DISPLAY_NAME}, null, null, null)) {
+        require(row != null && row.moveToFirst() && renamed.equals(row.getString(0)), "The same concrete URI is occupied by a different row revision");
+      }
+      try (PhotoMove reopened = f.move(ledger, history, ignored -> {})) {
+        expectMoveFailure(reopened::abandon, "An occupied original URI with a different revision cannot justify discarding the preserved target mapping");
+        require(batch.equals(reopened.batch()) && item.equals(journal.next()) && journal.completed(seed.history().getId()) == null
+            && history.moveEvidence().isEmpty() && ledger.receiptCount() == 0 && Arrays.equals(seed.bytes(), f.read(seed.uri()))
+            && Arrays.equals(seed.bytes(), f.read(target)), "Fail closed with both copies, the exact journal and the erased history unchanged");
+      }
+      requireLogicalLabels(f, target, labels, tags, ranking, shares);
+    }
+  }
+
+  private record LogicalLabels(String key, String tagSource, String tagId, String tagPhotoId, long sharedAt) {}
+
+  private static LogicalLabels seedLogicalLabels(Fixture f, Seed seed, TagStore tags, RankingStore ranking, ShareHistoryStore shares)
+      throws IOException {
+    var original = f.photo(seed.uri());
+    String key = ArchiveStore.key(original);
+    String tagSource = TagStore.source(original);
+    var tag = tags.create("Synthetic move tag");
+    String tagPhotoId = tags.photoId(original, true);
+    tags.record(UUID.randomUUID().toString(), tag.id, tagPhotoId, 0, TagJudgments.Value.ASSIGNED);
+    require(ranking.saveSingleBest(key, false, true), "Seed the original's best mark");
+    long sharedAt = System.currentTimeMillis();
+    require(shares.complete(shares.begin(List.of(key), sharedAt), "test.fixture", "Synthetic share", sharedAt),
+        "Seed the original's share handoff");
+    return new LogicalLabels(key, tagSource, tag.id, tagPhotoId, sharedAt);
+  }
+
+  private static void requireLogicalLabels(Fixture f, Uri uri, LogicalLabels labels, TagStore tags, RankingStore ranking,
+      ShareHistoryStore shares) throws IOException {
+    var photo = f.photo(uri);
+    String key = ArchiveStore.key(photo);
+    var handoff = shares.history(key);
+    require(labels.key().equals(key) && labels.tagSource().equals(TagStore.source(photo)) && labels.tagPhotoId().equals(tags.photoId(photo, false))
+        && tags.load().value(labels.tagId(), labels.tagPhotoId()) == TagJudgments.Value.ASSIGNED && ranking.singleBest(key)
+        && handoff.size() == 1 && handoff.get(0).handedOffAt == labels.sharedAt(),
+        "The target retains the original logical identity, tag, ranking and share handoff");
   }
 
   private static void checkLockedAbandon(Context base, String secondary) throws Exception {

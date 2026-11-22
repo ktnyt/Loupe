@@ -303,7 +303,20 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
   void finishWithoutHistory(Item item) throws IOException {
     CompletedProof next = item.pendingCompletion();
     requirePendingCompletion(item, next);
-    markHistoricalDone(getWritableDatabase(), item, next);
+    SQLiteDatabase db = getWritableDatabase();
+    db.beginTransaction();
+    try {
+      CompletedProof previous = item.sourceProof();
+      if (!Objects.equals(previous, completed(item.historyId())))
+        throw new IOException("The previous move proof changed");
+      if (previous != null && db.delete("completed_legacy_moves", "history_id=? AND source=? AND payload=?",
+          new String[]{Long.toString(previous.historyId()), previous.source(), encode(previous)}) != 1)
+        throw new IOException("Cannot remove the old move proof");
+      markHistoricalDone(db, item, next);
+      db.setTransactionSuccessful();
+    } finally {
+      db.endTransaction();
+    }
   }
 
   private static void markHistoricalDone(SQLiteDatabase db, Item item, CompletedProof next) throws IOException {

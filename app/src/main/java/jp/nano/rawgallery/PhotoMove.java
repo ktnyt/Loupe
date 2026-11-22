@@ -851,12 +851,13 @@ final class PhotoMove implements AutoCloseable {
       }
       return null;
     }
-    if (historyPresent) {
-      requireHistoricalHistory(item, ledger.importDestinations());
-      requireHistoricalEpoch(item);
-      if (!Objects.equals(store.completed(item.historyId()), item.sourceProof())
-          || !intactSource(item) || !relocate(item, true)) throw archiveMismatch();
-    }
+    if (historyPresent) requireHistoricalHistory(item, ledger.importDestinations());
+    requireHistoricalEpoch(item);
+    // A row at the old URI might have been allocated to another file after deletion.
+    if (!Objects.equals(store.completed(item.historyId()), item.sourceProof())
+        || !item.proofSha().equals(item.sha()) || !intactSource(item)) throw archiveMismatch();
+    requireHistoricalEpoch(item);
+    if (historyPresent && !relocate(item, true)) throw archiveMismatch();
     return galleryUri(Uri.parse(item.target())).toString();
   }
 
@@ -875,8 +876,10 @@ final class PhotoMove implements AutoCloseable {
   private boolean intactSource(PhotoMoveStore.Item item) {
     try {
       Media source = requireSource(item);
-      verify(source.uri(), item.bytes(), item.sha(), true, () -> false);
-      return true;
+      Media verified = verify(source.uri(), item.bytes(), item.sha(), true, () -> false);
+      return !item.hasHistoricalProof()
+          || source.version().equals(verified.version()) && source.hasGenerationIdentity()
+              && verified.hasGenerationIdentity() && historicalAliasMatches(verified);
     } catch (IOException | RuntimeException unavailable) {
       return false;
     }
