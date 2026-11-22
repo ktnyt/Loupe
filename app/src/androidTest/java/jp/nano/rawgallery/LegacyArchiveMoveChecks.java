@@ -828,10 +828,14 @@ final class LegacyArchiveMoveChecks {
       var start = awaitStorageControl(automation, moveButton);
       assertWindowWidth(test, activity);
       assertTouchTarget(test, activity, start, label);
-      captureSettled(test, automation, captures, profile + "-settings", moveButton);
+      Predicate<AccessibilityNodeInfo> awaitingCheck = node -> mentions(node, "履歴と一致した写真 0枚")
+          && mentions(node, "内容の確認待ち 2枚") && !mentions(node, "内容を照合できなかった");
+      awaitStorageControl(automation, awaitingCheck);
+      captureSettled(test, automation, captures, profile + "-settings", awaitingCheck);
       String card = PhotoStorage.label(base, secondary);
       Predicate<AccessibilityNodeInfo> confirmed = node -> mentions(node, card + "に1枚")
-          && mentions(node, "内容を照合できなかった1枚は元の場所に残ります。");
+          && mentions(node, "内容を照合できなかった1枚は元の場所に残ります。")
+          && !mentions(node, "内容の確認待ち");
       click(awaitStorageControl(automation, moveButton));
       awaitStorageControl(automation, confirmed);
       captureSettled(test, automation, captures, profile + "-confirmation", confirmed);

@@ -1886,7 +1886,7 @@ final class PhotoStorageChecks {
       checkInventorySelectionGuard(test, base, settings, monitor, automation, secondary, open);
       String cardLabel = new PhotoStorageLocation.Volumes(base).location(
           PhotoStorageLocation.Kind.CURRENT, secondary, "").label();
-      Predicate<AccessibilityNodeInfo> overview = node -> mentions(node, "確認できた写真 1枚")
+      Predicate<AccessibilityNodeInfo> overview = node -> mentions(node, "履歴と一致した写真 1枚")
           && mentions(node, "参照先の写真 1枚") && mentions(node, cardLabel + " 1枚")
           && mentions(node, "確認が必要な履歴 " + (records + 1) + "件");
       awaitStorageControl(automation, overview);
@@ -1900,7 +1900,7 @@ final class PhotoStorageChecks {
       inventory = test.waitForMonitorWithTimeout(monitor, 6000);
       require(inventory instanceof PhotoStorageInventoryActivity, "Settings opens its real inventory activity");
       final Activity listing = inventory;
-      Predicate<AccessibilityNodeInfo> summary = node -> mentions(node, "確認できた写真 1枚")
+      Predicate<AccessibilityNodeInfo> summary = node -> mentions(node, "履歴と一致した写真 1枚")
           && mentions(node, "参照先の写真 1枚") && mentions(node, "確認が必要な履歴 " + (records + 1) + "件");
       awaitNode(automation, summary);
       assertWindowWidth(test, listing);
