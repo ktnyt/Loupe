@@ -1760,12 +1760,34 @@ public final class MainActivity extends DiagnosticActivity {
     if(!fromRanking&&"content".equals(photo.uri.getScheme()))viewer.action("タグ","タグ","タグ",()->openTags(photo));
     viewer.action("情報","情報","写真の情報",()->{
       LinearLayout information=vertical();
-      refreshShareInfo=()->{information.removeAllViews();information.addView(ShareHistoryUi.information(this,model.getText()+"\n"+dimensions.getText()+"\n"+photo.folder,historyFor(photo),historyLoaded,historyReadFailed),new LinearLayout.LayoutParams(-1,-2));};
+      String[] storage = {"保存場所を確認しています。"};
+      refreshShareInfo=()->{
+        information.removeAllViews();
+        String metadata = model.getText() + "\n" + dimensions.getText() + "\n" + storage[0];
+        information.addView(ShareHistoryUi.information(this, metadata, historyFor(photo), historyLoaded,
+            historyReadFailed), new LinearLayout.LayoutParams(-1,-2));
+      };
       refreshShareInfo.run();
       AlertDialog dialog=new GalleryUi.Sheet(this).setTitle(photo.name).setView(information)
           .setNeutralButton("外部のアプリで編集",(d,which)->{d.dismiss();editPhoto.post(()->editPhoto.performLongClick());})
           .setPositiveButton("閉じる",null).create();
-      dialog.setOnDismissListener(d->refreshShareInfo=()->{});dialog.show();
+      Future<?> locationRead = historyReads.submit(() -> {
+        PhotoStorageLocation resolved = PhotoStorageLocation.resolve(this, photo);
+        String label = resolved.kind() == PhotoStorageLocation.Kind.UNKNOWN
+            ? resolved.display() : "保存場所　" + resolved.display();
+        if (!resolved.folder().isEmpty()) label += "\nフォルダ　" + resolved.folder();
+        String details = label;
+        main.post(() -> {
+          if (!dialog.isShowing() || isDestroyed() || isFinishing() || !detail || token != generation) return;
+          storage[0] = details;
+          refreshShareInfo.run();
+        });
+      });
+      dialog.setOnDismissListener(d -> {
+        locationRead.cancel(true);
+        refreshShareInfo = () -> {};
+      });
+      dialog.show();
       if(!historyLoaded||historyReadFailed)loadShareHistory();
     });
     if(fromRanking&&!ranking.done())viewer.choose(()->saveRanking(ranking.choose(rankingMembers.get(ranking.upper())==position)));
