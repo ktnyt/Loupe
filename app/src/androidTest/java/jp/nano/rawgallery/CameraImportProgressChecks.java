@@ -98,6 +98,16 @@ final class CameraImportProgressChecks {
       });
       capture(t, screen, dir, size + "-failed");
       TagDetailChecks.ui(t, () -> {
+        String guidance = "Androidで写真の登録を確認できません。カードを接続したまま少し待って、もう一度取り込んでください";
+        p.connecting("接続中"); p.begin("Synthetic SD"); p.photoContent(0,2,0,0,0,0);
+        p.photoTerminal("failed",""); p.finish(guidance); refresh.run();
+        var stage = (TextView)activity.getWindow().getDecorView().findViewWithTag("camera-import-stage");
+        String rendered = stage.getText().toString();
+        require(stage.isShown() && rendered.contains(guidance), "Index registration guidance is fully present in the visible stage");
+        require(!rendered.contains("選び直"), "Index registration guidance does not ask to reselect the folder");
+      });
+      capture(t, screen, dir, size + "-index-pending");
+      TagDetailChecks.ui(t, () -> {
         p.connecting("接続中"); p.begin("Synthetic SD");
         p.photoHistory(4802,4802,4800); p.photoContent(1,2,1,0,4096,4096);
         p.photoTerminal("failed","試行の合成エラー");
@@ -132,7 +142,7 @@ final class CameraImportProgressChecks {
         p.connecting("接続中"); p.begin("Synthetic SD"); p.photoTerminal("cancelled","中止");
         p.waiting("再接続待ち"); require(!p.getActive(), "explicit cancelled result cannot be revived without stop flag");
       });
-      return "PASS synthetic listing unknown total, 4800 known history, two content candidates, zero actual saves, bytes unknown, cancel/failure, failed attempt/retry/cumulative success and concurrent stop, 20 alternating content/save events keep heading/counters/progress stable, shared tab AX and selection lock; native captures " + size + ". No physical USB/TalkBack verification.";
+      return "PASS synthetic listing unknown total, 4800 known history, two content candidates, zero actual saves, bytes unknown, cancel/failure, index registration guidance, failed attempt/retry/cumulative success and concurrent stop, 20 alternating content/save events keep heading/counters/progress stable, shared tab AX and selection lock; native captures " + size + ". No physical USB/TalkBack verification.";
     } finally {
       if (screen != null) { CameraImportActivity activity = screen; t.runOnMainSync(activity::finish); t.waitForIdleSync(); }
       t.runOnMainSync(() -> { for (var entry : before.entrySet()) try { entry.getKey().set(null,entry.getValue()); } catch (Exception e) { throw new AssertionError(e); } });
@@ -140,7 +150,7 @@ final class CameraImportProgressChecks {
   }
   private static void capture(Instrumentation t, CameraImportActivity screen, File dir, String name) throws Exception {
     ConsistencyLayoutChecks.captureHardware(t,screen,screen.getWindow().getDecorView(),dir,"import-progress-"+name);
-    if (name.endsWith("-stable-content") || name.endsWith("-stable-saving")) {
+    if (name.endsWith("-stable-content") || name.endsWith("-stable-saving") || name.endsWith("-index-pending")) {
       android.graphics.Bitmap full=t.getUiAutomation().takeScreenshot();
       require(full!=null,"composed full display capture available");
       try(java.io.FileOutputStream out=new java.io.FileOutputStream(new File(dir,"import-progress-"+name+"-full.png"))) {

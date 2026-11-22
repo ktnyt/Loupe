@@ -158,7 +158,7 @@ public final class CameraDocumentSource {
         return exact;
     }
 
-    /** An unavailable mapping alone cannot establish that Android has yet to list this photo. */
+    /** Check whether this exact document has any visible rows on the source volume. */
     private static boolean confirmedMissingRegistration(OriginalAccess access, Entry entry, String volume) {
         Uri document = entry.uri;
         if (!"content".equals(document.getScheme()) || !"com.android.externalstorage.documents".equals(document.getAuthority())
@@ -219,6 +219,10 @@ public final class CameraDocumentSource {
         Uri media;
         try{media=access.mediaUri(entry.uri);}
         catch(SecurityException denied){throw new OriginalAccessException(OriginalAccessException.Reason.PERMISSION);}
+        catch(IllegalArgumentException rejected) {
+            // MediaProvider can report an unregistered document this way. Check for visible rows separately.
+            media=null;
+        }
         catch(IOException|RuntimeException unavailable){throw new OriginalAccessException(OriginalAccessException.Reason.MAPPING);}
         if(media==null||!"content".equals(media.getScheme())||!"media".equals(media.getAuthority())) {
             if(expectedVolume!=null) {

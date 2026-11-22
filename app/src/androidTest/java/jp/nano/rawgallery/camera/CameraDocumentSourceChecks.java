@@ -112,9 +112,24 @@ public final class CameraDocumentSourceChecks {
         denied.mappingFailure = new SecurityException("synthetic denial");
         expectRegistration(denied, SOURCE, CameraDocumentSource.OriginalAccessException.Reason.PERMISSION);
         RegistrationProbe unavailable = new RegistrationProbe();
-        unavailable.mappingFailure = new IllegalArgumentException("synthetic provider failure");
+        unavailable.mappingFailure = new IllegalStateException("synthetic provider failure");
         expectRegistration(unavailable, SOURCE, mapping);
-        require(denied.accessChecks == 0 && unavailable.accessChecks == 0, "Thrown mapping bypasses the probe");
+        require(denied.accessChecks == 0 && unavailable.accessChecks == 0,
+                "Denied or unavailable mapping bypasses the probe");
+
+        RegistrationProbe rejected = new RegistrationProbe();
+        rejected.mappingFailure = new IllegalArgumentException(new FileNotFoundException("synthetic missing index row"));
+        expectRegistration(rejected, SOURCE, pending);
+        require(rejected.accessChecks == 2 && rejected.fileChecks == 1,
+                "A rejected mapping requires independent confirmation of absence");
+        RegistrationProbe rejectedWithRow = new RegistrationProbe();
+        rejectedWithRow.mappingFailure = new IllegalArgumentException("synthetic mapping rejection");
+        rejectedWithRow.fileCount = 1;
+        expectRegistration(rejectedWithRow, SOURCE, mapping);
+        RegistrationProbe rejectedLegacyRoute = new RegistrationProbe();
+        rejectedLegacyRoute.mappingFailure = rejected.mappingFailure;
+        expectRegistration(rejectedLegacyRoute, null, mapping);
+        require(rejectedLegacyRoute.accessChecks == 0, "Ordinary SAF does not probe a rejected mapping");
 
         RegistrationProbe wrongProvider = new RegistrationProbe();
         wrongProvider.document = DOCUMENT;
