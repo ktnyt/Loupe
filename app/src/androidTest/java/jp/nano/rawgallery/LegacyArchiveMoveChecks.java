@@ -94,6 +94,7 @@ final class LegacyArchiveMoveChecks {
     checkProofRollback(base, secondary);
     checkRollbackPreservesOlderBindings(base, secondary, PhotoMove.Boundary.HISTORY_UPDATED, false);
     checkRollbackPreservesOlderBindings(base, secondary, PhotoMove.Boundary.REMAPPED, true);
+    checkPublishedExactBindingConflict(base, secondary);
     checkDeletedSourceWithResetHistory(base, secondary, false);
     checkDeletedSourceWithResetHistory(base, secondary, true);
     checkStaleSourceWithResetHistory(base, secondary);
@@ -891,6 +892,55 @@ final class LegacyArchiveMoveChecks {
       }
       requireLogicalLabels(priorLocation, locationLabels, tags, ranking, shares);
       requireLogicalLabels(priorVersion, versionLabels, tags, ranking, shares);
+    }
+  }
+
+  private static void checkPublishedExactBindingConflict(Context base, String secondary) throws Exception {
+    try (Fixture f = new Fixture(base, secondary); CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         ArchiveStore archive = E2Settings.openRecords(f.isolatedContext()); PhotoMoveStore journal = new PhotoMoveStore(f.isolatedContext());
+         TagStore tags = new TagStore(f.isolatedContext()); ShareHistoryStore shares = new ShareHistoryStore(f.isolatedContext())) {
+      Seed seed = seed(f, history, archive, "EXACT-GALLERY-PREDECESSOR.JPG", 0xffa0786b, false, false);
+      String archiveBefore = archive.get(seed.archiveKey()).toString();
+      require(PhotoStorage.select(f.isolatedContext(), secondary), "Choose the synthetic move destination");
+      try (PhotoMove interrupted = f.move(ledger, history, reached -> {
+        if (reached == PhotoMove.Boundary.PUBLISHED) throw new InterruptedMove();
+      })) {
+        interrupted.begin(preflight(interrupted, interrupted.plan(secondary), () -> false));
+        expectCrash(interrupted, PhotoMove.Boundary.PUBLISHED);
+      }
+      Uri target = f.rows(secondary).get(0).uri();
+      var current = exactGalleryMetadata(f, target);
+      String moveUri = current.uri.toString();
+      require(!f.row(target).pending() && journal.next().stage() == PhotoMoveStore.VERIFIED
+          && galleryBindings(journal, moveUri).isEmpty(), "Occupy the exact published key in the gap before any journal remap");
+      var predecessor = priorGalleryPhoto(current, current.modified, current.added, f.id + "-exact-predecessor");
+      var ranking = new RankingStore(f.isolatedContext());
+      LogicalLabels labels = seedLogicalLabels(predecessor, tags, ranking, shares);
+      PhotoIdentityIndex.save(journal.getWritableDatabase(), predecessor, predecessor.movedIdentity, moveUri);
+      Set<GalleryBinding> earlier = Set.of(binding(predecessor, moveUri));
+      try (PhotoMove reopened = f.move(ledger, history, reached -> {
+        if (reached == PhotoMove.Boundary.REMAPPED)
+          throw new PhotoStorageChecks.CheckFailure("The historical move overwrote an existing exact gallery association");
+      })) {
+        try {
+          reopened.run(() -> false, ignored -> {});
+          throw new PhotoStorageChecks.CheckFailure("An occupied exact gallery key must block historical remap");
+        } catch (PhotoMove.Failure rejected) {
+          require(rejected.getMessage().contains("既存の写真の関連付け"), "Reject specifically because the exact gallery key is occupied");
+        }
+        var active = journal.next();
+        require(active.stage() == PhotoMoveStore.UPDATING_HISTORY && active.targetPin().binding() == null
+            && galleryBindings(journal, moveUri).equals(earlier) && journal.completed(seed.history().getId()) == null
+            && Arrays.equals(seed.bytes(), f.read(seed.uri())) && Arrays.equals(seed.bytes(), f.read(target)),
+            "Reject before remap without rewriting the previous binding or either verified copy");
+        var ended = reopened.abandon();
+        require(ended.done() == 0 && reopened.batch() == null && galleryBindings(journal, moveUri).equals(earlier)
+            && history.moveEvidence().equals(List.of(seed.history())) && archiveBefore.equals(archive.get(seed.archiveKey()).toString())
+            && journal.completed(seed.history().getId()) == null && ledger.receiptCount() == 0
+            && Arrays.equals(seed.bytes(), f.read(seed.uri())) && Arrays.equals(seed.bytes(), f.read(target)),
+            "Ending the blocked move restores source history and retains the exact previous association and both files");
+      }
+      requireLogicalLabels(f, target, labels, tags, ranking, shares);
     }
   }
 

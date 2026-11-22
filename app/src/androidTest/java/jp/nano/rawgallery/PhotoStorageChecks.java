@@ -17,6 +17,7 @@ import android.database.sqlite.SQLiteDatabase;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.media.ExifInterface;
+import android.media.MediaScannerConnection;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -53,12 +54,14 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
 import jp.nano.rawgallery.camera.CameraImportFile;
 import jp.nano.rawgallery.camera.CameraImportGate;
@@ -886,15 +889,14 @@ final class PhotoStorageChecks {
               "Published corruption stops in the durable history stage before either history is relocated");
         }
       }
-      try (PhotoMove resumed = f.move(ledger, history, reached -> {})) {
-        if (boundary != PhotoMove.Boundary.COPIED) {
-          expectMoveFailure(resumed, "Resume accepted a corrupt verified target at " + boundary);
+      if (boundary != PhotoMove.Boundary.COPIED) {
+        try (PhotoMove rejected = f.move(ledger, history, ignored -> {})) {
+          expectMoveFailure(rejected, "Resume accepted a corrupt verified target at " + boundary);
           require(Arrays.equals(bytes, f.read(original)), "Retry kept the only intact original at " + boundary);
-          f.requireOwned(onlyTarget(f));
-          f.write(target[0], bytes);
         }
-        verifyBoundaryRecovery(f, ledger, history, resumed, source, bytes);
+        restoreTargetBytes(f, target[0], bytes);
       }
+      verifyCorruptionRecovery(f, ledger, history, source, target[0], bytes, boundary);
       return versionChanged.get();
     }
   }
@@ -930,11 +932,8 @@ final class PhotoStorageChecks {
         require(reachedVerification.get() && Arrays.equals(bytes, f.read(original)),
             "History-stage restart rejects the target and preserves the intact original");
       }
-      f.requireOwned(onlyTarget(f));
-      f.write(target, bytes);
-      try (PhotoMove resumed = f.move(ledger, history, reached -> {})) {
-        verifyBoundaryRecovery(f, ledger, history, resumed, source, bytes);
-      }
+      restoreTargetBytes(f, target, bytes);
+      verifyCorruptionRecovery(f, ledger, history, source, target, bytes, PhotoMove.Boundary.HISTORY_UPDATED);
     }
   }
 
@@ -991,16 +990,94 @@ final class PhotoStorageChecks {
     return !before.equals(targetVersion(f, target));
   }
 
+  private static final String[] TARGET_VERSION_COLUMNS = {DISPLAY_NAME, RELATIVE_PATH, MIME_TYPE, SIZE, DATE_MODIFIED,
+      DATE_ADDED, DATE_TAKEN, GENERATION_ADDED, GENERATION_MODIFIED};
+
   private static List<String> targetVersion(Fixture f, Uri target) {
     Bundle visibility = new Bundle();
     visibility.putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE);
-    String[] columns = {DISPLAY_NAME, RELATIVE_PATH, MIME_TYPE, SIZE, DATE_MODIFIED, DATE_ADDED, DATE_TAKEN,
-        GENERATION_ADDED, GENERATION_MODIFIED};
-    try (Cursor row = f.resolver.query(target, columns, visibility, null)) {
+    try (Cursor row = f.resolver.query(target, TARGET_VERSION_COLUMNS, visibility, null)) {
       require(row != null && row.moveToFirst() && row.getCount() == 1, "Read exact target version during mutation");
-      List<String> values = new ArrayList<>(columns.length);
-      for (int index = 0; index < columns.length; index++) values.add(row.getString(index));
+      List<String> values = new ArrayList<>(TARGET_VERSION_COLUMNS.length);
+      for (int index = 0; index < TARGET_VERSION_COLUMNS.length; index++) values.add(row.getString(index));
       return values;
+    }
+  }
+
+  private static void restoreTargetBytes(Fixture f, Uri target, byte[] bytes) throws IOException {
+    Row row = onlyTarget(f);
+    require(row.uri.equals(target), "Restore only the exact corrupted fixture target");
+    f.requireOwned(row);
+    f.write(target, bytes);
+    if (!row.pending) awaitPublishedFixtureScan(f, target);
+    require(Arrays.equals(bytes, f.read(target)), "The repaired target contains exactly the original bytes before recovery");
+  }
+
+  private static void awaitPublishedFixtureScan(Fixture f, Uri target) throws IOException {
+    Row row = onlyTarget(f);
+    require(row.uri.equals(target) && !row.pending, "Wait for metadata only on the exact published fixture target");
+    f.requireOwned(row);
+    File path;
+    try (Cursor media = f.resolver.query(target, new String[]{DATA}, null, null, null)) {
+      require(media != null && media.moveToFirst() && media.getString(0) != null, "Observe the published fixture scan path");
+      path = new File(media.getString(0)).getCanonicalFile();
+    }
+    File directory = new File(PhotoStorage.requireWritable(f.context, f.secondary), f.path).getCanonicalFile();
+    require(directory.equals(path.getParentFile()), "Explicit rescan is limited to the isolated owned fixture directory");
+    var complete = new CountDownLatch(1);
+    var scanned = new AtomicReference<Uri>();
+    // A writable descriptor can schedule an asynchronous MediaProvider scan on close. Finish a
+    // scan of the repaired fixture before asking production to verify a stable published revision.
+    MediaScannerConnection.scanFile(f.context, new String[]{path.getPath()}, new String[]{"image/jpeg"}, (ignored, uri) -> {
+      scanned.set(uri);
+      complete.countDown();
+    });
+    try {
+      require(complete.await(8, TimeUnit.SECONDS) && scanned.get() != null
+          && ContentUris.parseId(scanned.get()) == ContentUris.parseId(target), "Published fixture rescan completes on its exact row");
+    } catch (InterruptedException stopped) {
+      Thread.currentThread().interrupt();
+      throw new InterruptedIOException("Published fixture rescan interrupted");
+    }
+  }
+
+  private static void verifyCorruptionRecovery(Fixture f, CameraImportLedger ledger, HistoryDb history,
+      CameraImportFile source, Uri target, byte[] bytes, PhotoMove.Boundary corruptAt) throws Exception {
+    var observed = new AtomicReference<>(targetVersion(f, target));
+    var lastBoundary = new AtomicReference<PhotoMove.Boundary>();
+    try (PhotoMove resumed = f.move(ledger, history, reached -> {
+      try {
+        if (reached == PhotoMove.Boundary.PUBLISHED) awaitPublishedFixtureScan(f, target);
+        if (reached == PhotoMove.Boundary.BEFORE_HISTORY_VERIFY || reached == PhotoMove.Boundary.BEFORE_SOURCE_DELETE) {
+          observed.set(targetVersion(f, target));
+          lastBoundary.set(reached);
+        }
+      } catch (IOException scanFailure) {
+        throw new UncheckedIOException(scanFailure);
+      }
+    })) {
+      try {
+        verifyBoundaryRecovery(f, ledger, history, resumed, source, bytes);
+      } catch (IOException failure) {
+        var label = new StringBuilder("Corruption recovery at ").append(corruptAt).append(" after ").append(lastBoundary.get());
+        try {
+          List<String> after = targetVersion(f, target);
+          List<String> changed = new ArrayList<>();
+          for (int column = 0; column < TARGET_VERSION_COLUMNS.length; column++) {
+            if (!Objects.equals(observed.get().get(column), after.get(column))) changed.add(TARGET_VERSION_COLUMNS[column]);
+          }
+          byte[] actual = f.read(target);
+          label.append(" expectedBytes=").append(bytes.length).append(" actualBytes=").append(actual.length)
+              .append(" matchingSha=").append(E2Archive.sha256(bytes).equals(E2Archive.sha256(actual)))
+              .append(" changedMetadata=").append(changed);
+        } catch (Exception | CheckFailure diagnosticUnavailable) {
+          label.append(" targetStateUnavailable");
+          failure.addSuppressed(diagnosticUnavailable);
+        }
+        var diagnostic = new CheckFailure(label.toString());
+        diagnostic.initCause(failure);
+        throw diagnostic;
+      }
     }
   }
 

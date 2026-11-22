@@ -500,11 +500,12 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
     }
   }
 
-  void remapped(Item item, PhotoRepository.Photo target, Identity identity) {
+  void remapped(Item item, PhotoRepository.Photo target, Identity identity) throws PhotoMove.Failure {
     SQLiteDatabase db = getWritableDatabase();
     db.beginTransaction();
     try {
       String moveUri = target.uri.toString();
+      if (item.hasHistoricalProof()) requireUnusedBinding(db, target);
       PhotoIdentityIndex.save(db, target, identity, moveUri);
       db.execSQL("UPDATE revision SET value=value+1 WHERE id=1");
       if (item.hasHistoricalProof()) {
@@ -519,6 +520,13 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
       db.setTransactionSuccessful();
     } finally {
       db.endTransaction();
+    }
+  }
+
+  private static void requireUnusedBinding(SQLiteDatabase db, PhotoRepository.Photo target) throws PhotoMove.Failure {
+    try (Cursor row = db.rawQuery("SELECT 1 FROM local_photos WHERE location=? AND media_version=?",
+        new String[]{PhotoIdentityIndex.location(target), PhotoIdentityIndex.mediaVersion(target)})) {
+      if (row.moveToFirst()) throw new PhotoMove.Failure("移動先に既存の写真の関連付けがあります。元の写真を保持しました。");
     }
   }
 
