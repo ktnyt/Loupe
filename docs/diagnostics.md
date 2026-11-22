@@ -149,3 +149,23 @@ python3 scripts/test-raw-editor-full-profile.py
 
 電池温度を前後で記録し、RSS/HWM/PSSは入力計測終了後に取得する。取得できない値や反映のない区間はnullを残す。終了後のPSSは準備中のピークではなく、HWMもOSから取得できた場合のプロセス全体の値である。LibRaw内部のピークをタイル用メモリの上限と同一視しない。画質、原寸の保存寸法、原本hash、ズーム時の見え方は別の実機検査で確認する。
 
+
+## 取り込み済み写真の保存先移動（Issue #162）
+
+`photo_move.run` は `PhotoMove.run` の開始から、移動記録の終了または中断・失敗までの集計を1回出す。対象抽出、移動記録の開始、サービスの起動、画面への反映はこの時間に含まれない。`result` は `completed` / `cancelled` / `failed`。`completed` の数値欄はその呼び出しで完了した写真数で、以前の試行の完了分は含めない。
+
+`elapsed_ns` は全体時間。`allocate_ns`、`copy_ns`、`sync_ns`、`target_verify_ns`、`source_verify_ns`、`publish_ns`、`history_ns`、`delete_ns` は対応する処理の時間で、値はナノ秒。`copy_ns` は `sync_ns` を含む。すべてのSQLや所有・容量確認を区間欄に分配しているわけではなく、区間の合計を全体時間と見なさない。
+
+`target_verified_passes` と `target_verified_bytes` は成功した移動先の全量照合の回数とバイト数。失敗・中断した読み取りの途中までのバイト数や、元ファイルの読み取りは含まない。通常の未中断移動は1枚につき4回で、再開や失敗の場合も4回とは限らない。ファイル名、URI、パス、ハッシュ、画像の内容は記録しない。既存のdebug用ローカル診断に限り、公開ビルドを含め実際のログ有効状態を確認する。
+
+専用emulatorと隔離applicationId `jp.nano.rawgallery.sd162` では、次の合成写真検査を使える。`secondaryVolume` は確認済みの仮想SDのボリューム名に置き換える。実写真のあるアプリや実機でこの計測モードは実行しない。
+
+```sh
+adb -s SERIAL shell am instrument -w -e mode photo-storage-performance \
+  -e secondaryVolume VOLUME -e profile_count 12 -e profile_bytes 8388608 \
+  jp.nano.rawgallery.sd162.test/jp.nano.rawgallery.ArchiveInstrumentation
+```
+
+既定のbackend計測は対象抽出、記録開始、`run`完了を分ける。`-e profile_runner service` ではMainActivityと保存先画面を起動し、実サービスの開始から終了状態までを測る。画面の完了表示も観測するが、実際の確認ボタンからの応答時間ではない。どちらも計測後に全保存バイトと両履歴、元URIの不在を確認し、今回生成したfixtureだけを片付ける。
+
+枚数は最大1900、1枚は1KiB〜16MiB、合計は512MiBまで。元ファイルは直前に作成するため、OSキャッシュが温まっている可能性がある。実SDや既存実写真の初回読み込み、1900枚の大容量写真の性能の証拠にはしない。比較結果と実測条件はIssueに記録する。
