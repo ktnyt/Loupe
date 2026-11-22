@@ -8,6 +8,7 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
+import android.os.SystemClock;
 import android.os.storage.StorageVolume;
 import android.provider.MediaStore;
 import java.io.IOException;
@@ -57,6 +58,23 @@ final class PhotoMove implements AutoCloseable {
       Uri root = MediaStore.Files.getContentUri(PhotoStorage.PRIMARY.equals(volume) ? "external" : volume);
       return new PhotoRepository.Photo(ContentUris.withAppendedId(root, ContentUris.parseId(uri)), name,
           path, bytes, modified, taken, SyncPolicy.secondsToMillis(added), 0);
+    }
+  }
+
+  private static final class RunMetrics {
+    final long started = SystemClock.elapsedRealtimeNanos();
+    int completed, targetVerifiedPasses;
+    long targetVerifiedBytes, targetVerifyNs, sourceVerifyNs, copyNs, syncNs;
+    long allocateNs, publishNs, historyNs, deleteNs;
+
+    void log(String result) {
+      // The copy span includes the file sync. Bytes count only full, successful target verifications.
+      DiagnosticLog.event("photo_move.run", 0, "result", result,
+          "elapsed_ns", SystemClock.elapsedRealtimeNanos() - started, "completed", completed,
+          "target_verified_passes", targetVerifiedPasses, "target_verified_bytes", targetVerifiedBytes,
+          "target_verify_ns", targetVerifyNs, "source_verify_ns", sourceVerifyNs,
+          "copy_ns", copyNs, "sync_ns", syncNs, "allocate_ns", allocateNs,
+          "publish_ns", publishNs, "history_ns", historyNs, "delete_ns", deleteNs);
     }
   }
 
@@ -187,28 +205,40 @@ final class PhotoMove implements AutoCloseable {
   }
 
   PhotoMoveStore.Batch run(BooleanSupplier stopped, Progress progress) throws IOException {
-    PhotoMoveStore.Batch batch = store.batch();
-    if (batch == null) throw new Failure("再開できる移動がありません。");
-    PhotoStorage.requireSpace(context, batch.volume(), store.remainingBytes());
-    progress.update(batch);
-    for (PhotoMoveStore.Item item; (item = store.next()) != null;) {
-      check(stopped);
-      // Auto-cleanup can remove a verified photo. Serialize the two local deletion paths.
-      if (!E2SyncJob.ORIGINALS.tryLock())
-        throw new Failure("端末の容量整理が終わってから移動を再開してください。");
-      try {
-        advance(item, batch.volume(), stopped);
-      } finally {
-        E2SyncJob.ORIGINALS.unlock();
-      }
-      batch = store.batch();
+    RunMetrics metrics = new RunMetrics();
+    String result = "failed";
+    try {
+      PhotoMoveStore.Batch batch = store.batch();
+      if (batch == null) throw new Failure("再開できる移動がありません。");
+      PhotoStorage.requireSpace(context, batch.volume(), store.remainingBytes());
       progress.update(batch);
+      for (PhotoMoveStore.Item item; (item = store.next()) != null;) {
+        check(stopped);
+        // Auto-cleanup can remove a verified photo. Serialize the two local deletion paths.
+        if (!E2SyncJob.ORIGINALS.tryLock())
+          throw new Failure("端末の容量整理が終わってから移動を再開してください。");
+        try {
+          advance(item, batch.volume(), stopped, metrics);
+          metrics.completed++;
+        } finally {
+          E2SyncJob.ORIGINALS.unlock();
+        }
+        batch = store.batch();
+        progress.update(batch);
+      }
+      store.finish();
+      result = "completed";
+      return batch;
+    } catch (InterruptedIOException cancelled) {
+      result = "cancelled";
+      throw cancelled;
+    } finally {
+      metrics.log(result);
     }
-    store.finish();
-    return batch;
   }
 
-  private void advance(PhotoMoveStore.Item item, String volume, BooleanSupplier stopped) throws IOException {
+  private void advance(PhotoMoveStore.Item item, String volume, BooleanSupplier stopped, RunMetrics metrics)
+      throws IOException {
     if (item.stage() <= PhotoMoveStore.VERIFIED) {
       if (!ledger.hasMoveEvidence(item.source(), item.sourceAlias(), item.expectedSha())
           && !history.hasMoveEvidence(item.source(), item.sourceAlias(), item.legacyIds()))
@@ -222,51 +252,72 @@ final class PhotoMove implements AutoCloseable {
     }
     if (item.stage() == PhotoMoveStore.COPYING) {
       Media original = requireSource(item);
-      Uri target = pendingTarget(item, original, volume);
-      String sha = copy(original.uri(), target, original.bytes(), stopped);
+      long started = SystemClock.elapsedRealtimeNanos();
+      Uri target;
+      try {
+        target = pendingTarget(item, original, volume);
+      } finally {
+        metrics.allocateNs += SystemClock.elapsedRealtimeNanos() - started;
+      }
+      String sha = copy(original.uri(), target, original.bytes(), stopped, metrics);
       faults.after(Boundary.COPIED);
       if (item.expectedSha() != null && !item.expectedSha().equals(sha))
         throw new Failure("取り込み時の記録と原本が一致しません。");
-      verify(target, original.bytes(), sha, false, stopped);
+      verifyTarget(target, original.bytes(), sha, false, stopped, metrics);
       requireSource(item);
       store.verified(item, sha);
       faults.after(Boundary.VERIFIED);
       item = store.next();
     }
     Uri target = Uri.parse(item.target());
+    Media published = null;
     if (item.stage() == PhotoMoveStore.VERIFIED) {
       Media source = requireSource(item);
       Media replacement = requireOwned(target);
-      verify(target, item.bytes(), item.sha(), !replacement.pending(), stopped);
+      verifyTarget(target, item.bytes(), item.sha(), !replacement.pending(), stopped, metrics);
       if (replacement.pending()) {
         ContentValues values = new ContentValues();
         values.put(DISPLAY_NAME, source.name());
         values.put(DATE_TAKEN, source.taken());
         values.put(IS_PENDING, 0);
-        if (resolver.update(target, values, null, null) != 1) throw new Failure("移動先の写真を公開できません。");
+        long started = SystemClock.elapsedRealtimeNanos();
+        try {
+          if (resolver.update(target, values, null, null) != 1) throw new Failure("移動先の写真を公開できません。");
+        } finally {
+          metrics.publishNs += SystemClock.elapsedRealtimeNanos() - started;
+        }
       }
       faults.after(Boundary.PUBLISHED);
-      verify(target, item.bytes(), item.sha(), true, stopped);
+      published = verifyTarget(target, item.bytes(), item.sha(), true, stopped, metrics);
       source = requireSource(item);
       store.updatingHistory(item, logicalIdentity(source.photo()));
       item = store.next();
     }
     if (item.stage() == PhotoMoveStore.UPDATING_HISTORY) {
-      Media published = verify(target, item.bytes(), item.sha(), true, stopped);
-      if (!relocate(item, false)) throw new Failure("取り込みの記録を確認できません。元の写真を保持しました。");
+      // Reuse only the adjacent readback in this invocation. Resume and changed metadata need a full read.
+      // Source deletion always has its own readback after remapping.
+      if (published == null || !published.equals(requireOwned(target)))
+        published = verifyTarget(target, item.bytes(), item.sha(), true, stopped, metrics);
+      check(stopped);
+      relocateForMove(item, metrics);
       faults.after(Boundary.HISTORY_UPDATED);
       store.remapped(item, published.photo(), item.identity());
       faults.after(Boundary.REMAPPED);
       item = store.next();
     }
     // A process can die after deletion. The mounted source query must distinguish absence from failure.
-    Media verified = verify(target, item.bytes(), item.sha(), true, stopped);
+    Media verified = verifyTarget(target, item.bytes(), item.sha(), true, stopped, metrics);
     Uri sourceUri = Uri.parse(item.source());
     Media source = find(sourceUri);
     if (source != null) {
       requireSource(item);
-      verify(sourceUri, item.bytes(), item.sha(), true, stopped);
-      if (!relocate(item, false)) throw new Failure("取り込みの記録を確認できません。元の写真を保持しました。");
+      long started = SystemClock.elapsedRealtimeNanos();
+      try {
+        verify(sourceUri, item.bytes(), item.sha(), true, stopped);
+      } finally {
+        metrics.sourceVerifyNs += SystemClock.elapsedRealtimeNanos() - started;
+      }
+      relocateForMove(item, metrics);
       check(stopped);
       requireSource(item);
       PhotoStorage.requireWritable(context, source.volume());
@@ -278,8 +329,14 @@ final class PhotoMove implements AutoCloseable {
       Bundle exactVersion = queryArgs(
           GENERATION_MODIFIED + "=? AND " + OWNER_PACKAGE_NAME + "=? AND " + IS_PENDING + "=0 AND " + IS_TRASHED + "=0",
           new String[]{Long.toString(source.generationModified()), context.getPackageName()});
-      if (resolver.delete(sourceUri, exactVersion) != 1 || find(sourceUri) != null)
-        throw new Failure("移動元の写真を削除できません。");
+      check(stopped);
+      started = SystemClock.elapsedRealtimeNanos();
+      try {
+        if (resolver.delete(sourceUri, exactVersion) != 1 || find(sourceUri) != null)
+          throw new Failure("移動元の写真を削除できません。");
+      } finally {
+        metrics.deleteNs += SystemClock.elapsedRealtimeNanos() - started;
+      }
       faults.after(Boundary.DELETED);
     }
     store.done(item);
@@ -287,6 +344,15 @@ final class PhotoMove implements AutoCloseable {
 
   private PhotoMoveStore.Identity logicalIdentity(PhotoRepository.Photo photo) throws IOException {
     return PhotoRepository.moveIdentity(context, store, photo);
+  }
+
+  private void relocateForMove(PhotoMoveStore.Item item, RunMetrics metrics) throws IOException {
+    long started = SystemClock.elapsedRealtimeNanos();
+    try {
+      if (!relocate(item, false)) throw new Failure("取り込みの記録を確認できません。元の写真を保持しました。");
+    } finally {
+      metrics.historyNs += SystemClock.elapsedRealtimeNanos() - started;
+    }
   }
 
   private boolean relocate(PhotoMoveStore.Item item, boolean reset) {
@@ -466,15 +532,37 @@ final class PhotoMove implements AutoCloseable {
     return ContentUris.withAppendedId(ALL, ContentUris.parseId(uri)).toString();
   }
 
-  private String copy(Uri source, Uri target, long bytes, BooleanSupplier stopped) throws IOException {
+  private String copy(Uri source, Uri target, long bytes, BooleanSupplier stopped, RunMetrics metrics)
+      throws IOException {
+    long started = SystemClock.elapsedRealtimeNanos();
     try (InputStream in = original(source)) {
       ParcelFileDescriptor fd = resolver.openFileDescriptor(target, "rwt");
       if (fd == null) throw new Failure("移動先に書き込めません。");
       try (ParcelFileDescriptor.AutoCloseOutputStream out = new ParcelFileDescriptor.AutoCloseOutputStream(fd)) {
         String sha = hash(in, out, bytes, stopped);
-        out.getFD().sync();
+        long syncing = SystemClock.elapsedRealtimeNanos();
+        try {
+          out.getFD().sync();
+        } finally {
+          metrics.syncNs += SystemClock.elapsedRealtimeNanos() - syncing;
+        }
         return sha;
       }
+    } finally {
+      metrics.copyNs += SystemClock.elapsedRealtimeNanos() - started;
+    }
+  }
+
+  private Media verifyTarget(Uri uri, long bytes, String sha, boolean published, BooleanSupplier stopped,
+      RunMetrics metrics) throws IOException {
+    long started = SystemClock.elapsedRealtimeNanos();
+    try {
+      Media verified = verify(uri, bytes, sha, published, stopped);
+      metrics.targetVerifiedPasses++;
+      metrics.targetVerifiedBytes += bytes;
+      return verified;
+    } finally {
+      metrics.targetVerifyNs += SystemClock.elapsedRealtimeNanos() - started;
     }
   }
 

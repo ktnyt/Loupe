@@ -18,6 +18,7 @@ import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.media.ExifInterface;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.provider.DocumentsContract;
@@ -36,13 +37,16 @@ import java.io.InputStream;
 import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
+import java.security.MessageDigest;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -103,6 +107,23 @@ final class PhotoStorageChecks {
     try (Fixture fixture = new Fixture(base, secondary)) {
       cancelAndResume(fixture);
     }
+    int changedTargetVersions = 0;
+    List<PhotoMove.Boundary> corruptionPoints = List.of(PhotoMove.Boundary.COPIED, PhotoMove.Boundary.VERIFIED,
+        PhotoMove.Boundary.PUBLISHED, PhotoMove.Boundary.HISTORY_UPDATED, PhotoMove.Boundary.REMAPPED);
+    for (PhotoMove.Boundary boundary : corruptionPoints) {
+      try (Fixture fixture = new Fixture(base, secondary)) {
+        if (corruptTargetAndResume(fixture, boundary)) changedTargetVersions++;
+      }
+    }
+    try (Fixture fixture = new Fixture(base, secondary)) {
+      rejectCorruptTargetOnHistoryResume(fixture);
+    }
+    for (PhotoMove.Boundary boundary : List.of(PhotoMove.Boundary.PUBLISHED, PhotoMove.Boundary.REMAPPED,
+        PhotoMove.Boundary.BEFORE_SOURCE_DELETE)) {
+      try (Fixture fixture = new Fixture(base, secondary)) {
+        cancelAtPublishedBoundary(fixture, boundary);
+      }
+    }
     try (Fixture fixture = new Fixture(base, secondary)) {
       rejectUnavailable(fixture);
     }
@@ -144,7 +165,284 @@ final class PhotoStorageChecks {
         + ", verified-copy space estimate, cancellation, unavailable target, stale and reset history, "
         + "changed or missing source, lost replacement, pre-update SD tag/rank/share compatibility, "
         + "USB mass-storage mtime/EXIF fast path, abandon with one or two verified copies, sequential SD identity snapshots, "
-        + "v1 journal migration and rollback";
+        + "v1 journal migration and rollback; target corruption, fresh history-stage verification on resume, "
+        + "and cancellation before history or deletion; observed version changes on " + changedTargetVersions
+        + "/" + corruptionPoints.size() + " same-size target writes";
+  }
+
+  static String performance(Instrumentation test, String secondaryArg, Bundle args) throws Exception {
+    Context base = test.getTargetContext();
+    require(TARGET_PACKAGE.equals(base.getPackageName()), "Photo storage benchmark requires the isolated APK");
+    require(Build.HARDWARE.equals("ranchu") || Build.HARDWARE.equals("goldfish"),
+        "Photo storage benchmark requires an Android emulator");
+    String secondary = secondaryArg == null ? secondaryVolume(base) : secondaryArg.toLowerCase(Locale.ROOT);
+    require(!PRIMARY.equals(secondary), "Expected a secondary volume");
+    int count = Integer.parseInt(args.getString("profile_count", "12"));
+    int bytes = Integer.parseInt(args.getString("profile_bytes", "8388608"));
+    require(count > 0 && count <= 1900 && bytes >= 1024 && bytes <= 16 * 1024 * 1024
+        && (long) count * bytes <= 512L * 1024 * 1024, "Unsupported synthetic benchmark size");
+    PhotoStorage.requireWritable(base, secondary);
+    String runner = args.getString("profile_runner", "backend");
+    require(runner.equals("backend") || runner.equals("service"), "Unsupported benchmark runner");
+    if (runner.equals("service")) return servicePerformance(test, base, secondary, count, bytes);
+    try (Fixture fixture = new Fixture(base, secondary);
+         CameraImportLedger ledger = fixture.ledger(); HistoryDb history = fixture.history()) {
+      List<PerformancePhoto> photos = seedPerformancePhotos(fixture, ledger, history, count, bytes);
+      require(PhotoStorage.select(fixture.context, secondary), "Select benchmark SD destination");
+      BoundaryTimes timings = new BoundaryTimes();
+      String report;
+      try (PhotoMove move = fixture.move(ledger, history, timings::record)) {
+        long start = SystemClock.elapsedRealtimeNanos();
+        PhotoMove.Plan plan = move.plan(secondary);
+        long planned = SystemClock.elapsedRealtimeNanos();
+        checkPerformancePlan(plan, photos, bytes);
+        long beforeBegin = SystemClock.elapsedRealtimeNanos();
+        move.begin(plan);
+        long begun = SystemClock.elapsedRealtimeNanos();
+        timings.previous = begun;
+        PhotoMoveStore.Batch result = move.run(() -> false, batch -> {});
+        long finished = SystemClock.elapsedRealtimeNanos();
+        checkPerformanceResult(result, count);
+        require(move.batch() == null, "The benchmark batch was durably closed");
+        report = String.format(Locale.ROOT,
+            "backend plan_ms=%.3f begin_ms=%.3f run_through_finish_ms=%.3f photos_per_second=%.3f%n",
+            milliseconds(planned - start), milliseconds(begun - beforeBegin), milliseconds(finished - begun),
+            count * 1e9 / (finished - begun));
+        report += timings.report(count, finished);
+      }
+      verifyPerformancePhotos(fixture, ledger, history, photos, bytes);
+      return String.format(Locale.ROOT, "PASS photo storage performance photos=%d bytes_per_photo=%d total_bytes=%d%n",
+          count, bytes, (long) count * bytes) + report;
+    }
+  }
+
+  private static String servicePerformance(Instrumentation test, Context base, String secondary, int count, int bytes)
+      throws Exception {
+    CameraImportLedger ledger = CameraImportLedger.get(base);
+    HistoryDb history = HistoryDb.Companion.get(base);
+    require(history.importDestinations().isEmpty() && ledger.contentCount() == 0 && ledger.receiptCount() == 0
+        && ledger.pending().isEmpty(), "Service benchmark requires clean isolated import histories");
+    try (PhotoMoveStore store = new PhotoMoveStore(base)) {
+      require(store.batch() == null && !PhotoMoveService.state().running(), "Service benchmark requires an idle journal");
+    }
+    if (Build.VERSION.SDK_INT >= 33) {
+      require(base.checkSelfPermission(android.Manifest.permission.READ_MEDIA_IMAGES)
+          == android.content.pm.PackageManager.PERMISSION_GRANTED
+          && base.checkSelfPermission(android.Manifest.permission.READ_MEDIA_VIDEO)
+          == android.content.pm.PackageManager.PERMISSION_GRANTED, "Grant the isolated app full photo and video access");
+    }
+    SharedPreferences settings = base.getSharedPreferences("settings", 0);
+    String previous = settings.getString("photo_volume", null);
+    Fixture fixture = new Fixture(base, secondary);
+    Set<String> fixtureSources = new HashSet<>();
+    try {
+      List<PerformancePhoto> photos = seedPerformancePhotos(fixture, ledger, history, count, bytes);
+      for (PerformancePhoto photo : photos) fixtureSources.add(photo.original.toString());
+      require(PhotoStorage.select(base, secondary), "Select service benchmark SD destination");
+      Activity gallery = test.startActivitySync(new Intent(base, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+      try {
+        PhotoStorageActivity screen = (PhotoStorageActivity) test.startActivitySync(
+            new Intent(base, PhotoStorageActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        try {
+          UiAutomation automation = test.getUiAutomation();
+          awaitNode(automation, node -> hasText(node, "取り込み済みの写真を移動"));
+          GalleryIndex.WORKER.submit(() -> {}).get(120, TimeUnit.SECONDS);
+          PhotoMove.Plan plan;
+          long beginPlan;
+          long endPlan;
+          try (PhotoMove mover = new PhotoMove(base)) {
+            beginPlan = SystemClock.elapsedRealtimeNanos();
+            plan = mover.plan(secondary);
+            endPlan = SystemClock.elapsedRealtimeNanos();
+          }
+          checkPerformancePlan(plan, photos, bytes);
+          long[] launched = new long[1];
+          AtomicBoolean accepted = new AtomicBoolean();
+          test.runOnMainSync(() -> {
+            launched[0] = SystemClock.elapsedRealtimeNanos();
+            accepted.set(PhotoMoveService.launch(screen, plan));
+          });
+          require(accepted.get(), "Launch the foreground move service");
+          require(awaitServiceStopped(15 * 60 * 1000), "Foreground move service exceeded the benchmark deadline");
+          long serviceFinished = SystemClock.elapsedRealtimeNanos();
+          checkPerformanceResult(PhotoMoveService.state().batch(), count);
+          String completed = "写真を" + count + "枚移動しました。";
+          awaitNode(automation, node -> node.getText() != null && node.getText().toString().contains(completed));
+          long screenFinished = SystemClock.elapsedRealtimeNanos();
+          try (PhotoMoveStore store = new PhotoMoveStore(base)) {
+            require(store.batch() == null, "The foreground service finished its durable journal");
+          }
+          verifyPerformancePhotos(fixture, ledger, history, photos, bytes);
+          return String.format(Locale.ROOT,
+              "PASS photo storage performance photos=%d bytes_per_photo=%d total_bytes=%d%n"
+                  + "service plan_ms=%.3f launch_to_finished_state_ms=%.3f launch_to_visible_completion_ms=%.3f"
+                  + " photos_per_second=%.3f%n",
+              count, bytes, (long) count * bytes, milliseconds(endPlan - beginPlan),
+              milliseconds(serviceFinished - launched[0]), milliseconds(screenFinished - launched[0]),
+              count * 1e9 / (serviceFinished - launched[0]));
+        } finally {
+          test.runOnMainSync(() -> {
+            gallery.finish();
+            screen.finish();
+          });
+          test.waitForIdleSync();
+        }
+      } finally {
+        if (!gallery.isFinishing()) test.runOnMainSync(gallery::finish);
+      }
+    } finally {
+      if (PhotoMoveService.state().running()) PhotoMoveService.stopMove();
+      require(awaitServiceStopped(30_000), "Service is still active; retain its isolated fixture for safe cleanup");
+      cleanupServicePerformance(base, fixture, fixtureSources, ledger, history, settings, previous);
+    }
+  }
+
+  private static boolean awaitServiceStopped(long timeoutMillis) {
+    long deadline = SystemClock.elapsedRealtime() + timeoutMillis;
+    while (PhotoMoveService.state().running() && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(10);
+    return !PhotoMoveService.state().running();
+  }
+
+  private static void cleanupServicePerformance(Context base, Fixture f, Set<String> fixtureSources,
+      CameraImportLedger ledger, HistoryDb history, SharedPreferences settings, String previous) throws IOException {
+    Cleanup cleanup = new Cleanup();
+    Map<String, CameraImportLedger.Content> seeded = ledger.sourceSnapshot("wifi:" + f.id);
+    cleanup.attempt(() -> {
+      try (PhotoMoveStore store = new PhotoMoveStore(base)) {
+        if (store.batch() == null) return;
+        SQLiteDatabase db = store.getWritableDatabase();
+        db.beginTransaction();
+        try (Cursor remaining = db.rawQuery("SELECT source FROM items", null)) {
+          while (remaining.moveToNext()) require(fixtureSources.contains(remaining.getString(0)),
+              "Cleanup is limited to the service fixture journal");
+          db.delete("items", null, null);
+          db.delete("batch", null, null);
+          db.setTransactionSuccessful();
+        } finally {
+          db.endTransaction();
+        }
+      }
+    });
+    cleanup.attempt(f::close);
+    cleanup.attempt(() -> history.resetHistory(MODEL, f.id));
+    for (CameraImportLedger.Content content : seeded.values()) cleanup.attempt(() -> ledger.forgetMissing(content.sourceSha));
+    cleanup.attempt(() -> {
+      try (PhotoMoveStore store = new PhotoMoveStore(base)) {
+        for (String volume : List.of(PRIMARY, f.secondary)) {
+          String prefix = PhotoIdentityIndex.path(MediaStore.Images.Media.getContentUri(volume), f.path, "");
+          store.getWritableDatabase().delete("local_photos", "substr(location,1,?)=?",
+              new String[]{Integer.toString(prefix.length()), prefix});
+        }
+      }
+    });
+    cleanup.attempt(() -> {
+      SharedPreferences.Editor restore = settings.edit();
+      if (previous == null) restore.remove("photo_volume");
+      else restore.putString("photo_volume", previous);
+      require(restore.commit(), "Restore original isolated app storage preference");
+    });
+    cleanup.finish();
+  }
+
+  private record PerformancePhoto(CameraImportFile source, Uri original, String sha) {}
+
+  private static List<PerformancePhoto> seedPerformancePhotos(Fixture f, CameraImportLedger ledger, HistoryDb history,
+      int count, int bytes) throws Exception {
+    byte[] image = Arrays.copyOf(jpeg(0xff39546a), bytes);
+    byte[] fixtureId = f.id.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    System.arraycopy(fixtureId, 0, image, bytes - fixtureId.length - Integer.BYTES, fixtureId.length);
+    ByteBuffer sequence = ByteBuffer.wrap(image);
+    List<PerformancePhoto> photos = new ArrayList<>(count);
+    for (int index = 0; index < count; index++) {
+      sequence.putInt(bytes - Integer.BYTES, index);
+      String sha = E2Archive.sha256(image);
+      String name = String.format(Locale.ROOT, "BENCH-%05d.JPG", index);
+      CameraImportFile source = f.source("wifi:", name, image);
+      Uri original = f.insert(PRIMARY, name, image);
+      ledger.adopt(source, sha, sha, bytes, original.toString(), "JPEG", ledger.captureGroup(source, sha, "JPEG"));
+      history.recordImport(MODEL, f.id, new ImportedKey(name, bytes, CAPTURE), original.toString());
+      photos.add(new PerformancePhoto(source, original, sha));
+    }
+    return photos;
+  }
+
+  private static void checkPerformancePlan(PhotoMove.Plan plan, List<PerformancePhoto> photos, int bytes) {
+    require(plan.skipped() == 0 && plan.items().size() == photos.size(), "The plan contains every synthetic photograph");
+    Map<String, String> originals = new HashMap<>();
+    for (PerformancePhoto photo : photos) originals.put(photo.original.toString(), photo.sha);
+    for (PhotoMoveStore.Item item : plan.items()) {
+      String sha = originals.remove(item.source());
+      require(sha != null && sha.equals(item.expectedSha()) && item.bytes() == bytes && !item.legacyIds().isEmpty(),
+          "The plan is limited to exact fixture originals and their import evidence");
+    }
+  }
+
+  private static void checkPerformanceResult(PhotoMoveStore.Batch result, int count) {
+    require(result != null && result.done() == count && result.total() == count && result.skipped() == 0,
+        "All benchmark photographs completed");
+  }
+
+  private static void verifyPerformancePhotos(Fixture f, CameraImportLedger ledger, HistoryDb history,
+      List<PerformancePhoto> photos, int bytes) throws Exception {
+    List<Row> rows = f.rows(f.secondary);
+    require(f.rows(PRIMARY).isEmpty() && rows.size() == photos.size()
+        && rows.stream().noneMatch(row -> row.pending || row.trashed),
+        "The batch left only published replacements and removed the originals");
+    Set<String> destinations = new HashSet<>();
+    for (Row row : rows) destinations.add(row.uri.toString());
+    Map<String, String> legacy = new HashMap<>();
+    for (CameraImportHistoryPlan.Entry entry : history.photoImportRecords(MODEL, f.id)) legacy.put(entry.key, entry.uri);
+    require(legacy.size() == photos.size(), "Legacy import history count is preserved");
+    MessageDigest digest = MessageDigest.getInstance("SHA-256");
+    byte[] buffer = new byte[64 * 1024];
+    for (PerformancePhoto photo : photos) {
+      CameraImportLedger.Content receipt = ledger.known(photo.source);
+      String key = new ImportedKey(photo.source.name, bytes, CAPTURE).asString();
+      require(receipt != null && receipt.sourceSha.equals(photo.sha) && receipt.storedSha.equals(photo.sha)
+          && receipt.sourceBytes == bytes && receipt.storedBytes == bytes
+          && destinations.remove(receipt.uri) && receipt.uri.equals(legacy.get(key)),
+          "Both import histories identify the exact replacement");
+      try (Cursor original = f.resolver.query(photo.original, new String[]{_ID}, null, null, null)) {
+        require(original != null && !original.moveToFirst(), "The exact original URI is absent");
+      }
+      try (InputStream input = f.resolver.openInputStream(MediaStore.setRequireOriginal(Uri.parse(receipt.uri)))) {
+        require(input != null, "The replacement is readable");
+        long length = 0;
+        for (int n; (n = input.read(buffer)) != -1; ) {
+          length += n;
+          digest.update(buffer, 0, n);
+        }
+        require(length == bytes && photo.sha.equals(String.format(Locale.ROOT, "%064x", new java.math.BigInteger(1, digest.digest()))),
+            "The published replacement preserves the full source bytes");
+      }
+    }
+  }
+
+  private static double milliseconds(long nanoseconds) { return nanoseconds / 1e6; }
+
+  private static final class BoundaryTimes {
+    private long previous;
+    private final EnumMap<PhotoMove.Boundary, Long> elapsed = new EnumMap<>(PhotoMove.Boundary.class);
+    private final EnumMap<PhotoMove.Boundary, Integer> samples = new EnumMap<>(PhotoMove.Boundary.class);
+
+    void record(PhotoMove.Boundary boundary) {
+      long now = SystemClock.elapsedRealtimeNanos();
+      elapsed.merge(boundary, now - previous, Long::sum);
+      samples.merge(boundary, 1, Integer::sum);
+      previous = now;
+    }
+
+    String report(int count, long finished) {
+      StringBuilder result = new StringBuilder();
+      for (PhotoMove.Boundary boundary : PhotoMove.Boundary.values()) {
+        int events = samples.getOrDefault(boundary, 0);
+        require(events == count, "The fresh batch reaches each boundary once");
+        result.append(String.format(Locale.ROOT, "until_%s total_ms=%.3f mean_ms=%.3f samples=%d%n", boundary,
+            milliseconds(elapsed.get(boundary)), milliseconds(elapsed.get(boundary)) / events, events));
+      }
+      result.append(String.format(Locale.ROOT, "after_DELETED_through_finish_ms=%.3f%n", milliseconds(finished - previous)));
+      return result.toString();
+    }
   }
 
   private enum JournalFixture { EARLY_QUEUED, LATER_CLAIMS, MISSING_ACTIVE_IDENTITY, EARLIEST_ALL_DONE }
@@ -474,6 +772,157 @@ final class PhotoStorageChecks {
             "Retry finishes the cancelled batch exactly once for each photo");
       }
     }
+  }
+
+  private static boolean corruptTargetAndResume(Fixture f, PhotoMove.Boundary boundary) throws Exception {
+    byte[] bytes = jpeg(0xff665588);
+    CameraImportFile source = f.source("wifi:", "CORRUPT.JPG", bytes);
+    try (CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history()) {
+      Uri original = prepareBoundaryPhoto(f, ledger, history, source, bytes);
+      Uri[] target = new Uri[1];
+      AtomicBoolean versionChanged = new AtomicBoolean();
+      try (PhotoMove move = f.move(ledger, history, reached -> {
+        if (reached != boundary) return;
+        try {
+          target[0] = onlyTarget(f).uri;
+          versionChanged.set(changeTargetBytes(f, target[0], bytes));
+        } catch (IOException error) {
+          throw new UncheckedIOException(error);
+        }
+      })) {
+        move.begin(move.plan(f.secondary));
+        expectMoveFailure(move, "Move accepted target byte corruption at " + boundary);
+        require(target[0] != null && move.batch().done() == 0 && Arrays.equals(bytes, f.read(original)),
+            "A same-size target mutation keeps the original at " + boundary);
+        boolean historyMoved = boundary == PhotoMove.Boundary.HISTORY_UPDATED || boundary == PhotoMove.Boundary.REMAPPED;
+        requireHistoryAt(ledger, history, source, historyMoved ? target[0] : original);
+      }
+      try (PhotoMove resumed = f.move(ledger, history, reached -> {})) {
+        if (boundary != PhotoMove.Boundary.COPIED) {
+          expectMoveFailure(resumed, "Resume accepted a corrupt verified target at " + boundary);
+          require(Arrays.equals(bytes, f.read(original)), "Retry kept the only intact original at " + boundary);
+          f.requireOwned(onlyTarget(f));
+          f.write(target[0], bytes);
+        }
+        verifyBoundaryRecovery(f, ledger, history, resumed, source, bytes);
+      }
+      return versionChanged.get();
+    }
+  }
+
+  private static void rejectCorruptTargetOnHistoryResume(Fixture f) throws Exception {
+    byte[] bytes = jpeg(0xff224466);
+    CameraImportFile source = f.source("wifi:", "HISTORY-RESUME.JPG", bytes);
+    try (CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history()) {
+      Uri original = prepareBoundaryPhoto(f, ledger, history, source, bytes);
+      try (PhotoMove move = f.move(ledger, history, reached -> {
+        if (reached == PhotoMove.Boundary.HISTORY_UPDATED) throw new InterruptedAtBoundary();
+      })) {
+        move.begin(move.plan(f.secondary));
+        try {
+          move.run(() -> false, batch -> {});
+          throw new CheckFailure("Expected interruption while the history stage was still pending");
+        } catch (InterruptedAtBoundary expected) {
+          require(move.batch().done() == 0, "Interrupted history update is not completed");
+        }
+      }
+      try (PhotoMoveStore store = new PhotoMoveStore(f.context)) {
+        require(store.next().stage() == PhotoMoveStore.UPDATING_HISTORY, "Reopen at the durable history stage");
+      }
+      Uri target = onlyTarget(f).uri;
+      changeTargetBytes(f, target, bytes);
+      try (PhotoMove resumed = f.move(ledger, history, reached -> {
+        throw new CheckFailure("Corrupt history-stage target crossed " + reached + " on restart");
+      })) {
+        expectMoveFailure(resumed, "Resumed history accepted a corrupt target");
+        require(Arrays.equals(bytes, f.read(original)), "History-stage restart preserves the intact original");
+      }
+      f.requireOwned(onlyTarget(f));
+      f.write(target, bytes);
+      try (PhotoMove resumed = f.move(ledger, history, reached -> {})) {
+        verifyBoundaryRecovery(f, ledger, history, resumed, source, bytes);
+      }
+    }
+  }
+
+  private static void cancelAtPublishedBoundary(Fixture f, PhotoMove.Boundary boundary) throws Exception {
+    byte[] bytes = jpeg(0xff446688);
+    CameraImportFile source = f.source("wifi:", "CANCEL-BOUNDARY.JPG", bytes);
+    try (CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history()) {
+      Uri original = prepareBoundaryPhoto(f, ledger, history, source, bytes);
+      AtomicBoolean stopped = new AtomicBoolean();
+      try (PhotoMove move = f.move(ledger, history, reached -> {
+        if (reached == boundary) stopped.set(true);
+      })) {
+        move.begin(move.plan(f.secondary));
+        try {
+          move.run(stopped::get, batch -> {});
+          throw new CheckFailure("Move ignored cancellation at " + boundary);
+        } catch (InterruptedIOException expected) {
+          Row target = onlyTarget(f);
+          require(stopped.get() && move.batch().done() == 0 && !target.pending && !target.trashed
+              && Arrays.equals(bytes, f.read(target.uri)) && Arrays.equals(bytes, f.read(original)),
+              "Cancellation preserves both copies at " + boundary);
+          requireHistoryAt(ledger, history, source, boundary == PhotoMove.Boundary.PUBLISHED ? original : target.uri);
+        }
+      }
+      try (PhotoMove resumed = f.move(ledger, history, reached -> {})) {
+        verifyBoundaryRecovery(f, ledger, history, resumed, source, bytes);
+      }
+    }
+  }
+
+  private static Uri prepareBoundaryPhoto(Fixture f, CameraImportLedger ledger, HistoryDb history,
+      CameraImportFile source, byte[] bytes) throws IOException {
+    Uri original = f.importPhoto(new CameraPhotoImporter(f.context, ledger), source, bytes).uri;
+    history.recordImport(MODEL, f.id, new ImportedKey(source.name, source.bytes, source.captureSeconds), original.toString());
+    require(PhotoStorage.select(f.context, f.secondary), "Set boundary test SD destination");
+    return original;
+  }
+
+  private static Row onlyTarget(Fixture f) throws IOException {
+    List<Row> targets = f.rows(f.secondary);
+    require(targets.size() == 1, "Boundary test has one target");
+    return targets.get(0);
+  }
+
+  private static boolean changeTargetBytes(Fixture f, Uri target, byte[] original) throws IOException {
+    f.requireOwned(onlyTarget(f));
+    require(Arrays.equals(original, f.read(target)), "Target starts with all original bytes");
+    List<String> before = targetVersion(f, target);
+    byte[] changed = original.clone();
+    changed[changed.length / 2] ^= 1;
+    f.write(target, changed);
+    require(Arrays.equals(changed, f.read(target)), "Observed exact same-size byte corruption");
+    return !before.equals(targetVersion(f, target));
+  }
+
+  private static List<String> targetVersion(Fixture f, Uri target) {
+    Bundle visibility = new Bundle();
+    visibility.putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE);
+    String[] columns = {DISPLAY_NAME, RELATIVE_PATH, MIME_TYPE, SIZE, DATE_MODIFIED, DATE_ADDED, DATE_TAKEN,
+        GENERATION_ADDED, GENERATION_MODIFIED};
+    try (Cursor row = f.resolver.query(target, columns, visibility, null)) {
+      require(row != null && row.moveToFirst() && row.getCount() == 1, "Read exact target version during mutation");
+      List<String> values = new ArrayList<>(columns.length);
+      for (int index = 0; index < columns.length; index++) values.add(row.getString(index));
+      return values;
+    }
+  }
+
+  private static void requireHistoryAt(CameraImportLedger ledger, HistoryDb history, CameraImportFile source, Uri expected) {
+    require(expected.toString().equals(ledger.known(source).uri)
+        && history.importDestinations().equals(Set.of(expected.toString())), "Both histories point to the expected copy");
+  }
+
+  private static void verifyBoundaryRecovery(Fixture f, CameraImportLedger ledger, HistoryDb history,
+      PhotoMove resumed, CameraImportFile source, byte[] bytes) throws IOException {
+    require(resumed.run(() -> false, batch -> {}).done() == 1 && resumed.batch() == null,
+        "Retry completes and clears the journal");
+    Row target = onlyTarget(f);
+    require(f.rows(PRIMARY).isEmpty() && !target.pending && !target.trashed && Arrays.equals(bytes, f.read(target.uri)),
+        "Retry leaves exactly one intact published replacement");
+    requireHistoryAt(ledger, history, source, target.uri);
   }
 
   private static void rejectUnavailable(Fixture f) throws Exception {
