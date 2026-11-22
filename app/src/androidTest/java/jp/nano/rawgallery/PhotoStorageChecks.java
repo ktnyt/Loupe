@@ -1964,7 +1964,7 @@ final class PhotoStorageChecks {
       String cardLabel = new PhotoStorageLocation.Volumes(base).location(
           PhotoStorageLocation.Kind.CURRENT, secondary, "").label();
       Predicate<AccessibilityNodeInfo> overview = node -> mentions(node, "履歴と一致した写真 1枚")
-          && mentions(node, "参照先の写真 1枚") && mentions(node, cardLabel + " 1枚")
+          && mentions(node, "履歴との照合待ち 1枚\n　うちその他の参照先 1枚") && mentions(node, "　" + cardLabel + " 1枚")
           && mentions(node, "確認が必要な履歴 " + (records + 1) + "件");
       awaitStorageControl(automation, overview);
       click(awaitStorageControl(automation, node -> hasText(node, moveLabel) && node.isEnabled()));
@@ -1978,7 +1978,8 @@ final class PhotoStorageChecks {
       require(inventory instanceof PhotoStorageInventoryActivity, "Settings opens its real inventory activity");
       final Activity listing = inventory;
       Predicate<AccessibilityNodeInfo> summary = node -> mentions(node, "履歴と一致した写真 1枚")
-          && mentions(node, "参照先の写真 1枚") && mentions(node, "確認が必要な履歴 " + (records + 1) + "件");
+          && mentions(node, "履歴との照合待ち 1枚\n　うちその他の参照先 1枚")
+          && mentions(node, "確認が必要な履歴 " + (records + 1) + "件");
       awaitNode(automation, summary);
       assertWindowWidth(test, listing);
       assertTouchTarget(test, listing, awaitNode(automation, node -> hasText(node, "絞り込み")), "絞り込み");
@@ -1991,6 +1992,8 @@ final class PhotoStorageChecks {
       openInventoryFilter(automation);
       captureSettled(test, automation, captures, profile + "-filters", node -> hasText(node, "表示する項目"));
       click(awaitStorageControl(automation, node -> hasText(node, cardLabel)));
+      awaitNode(automation, node -> mentions(node, "履歴と一致した写真 1枚")
+          && mentions(node, "履歴との照合待ち 0枚") && mentions(node, "確認が必要な履歴 0件"));
       Predicate<AccessibilityNodeInfo> onCard = node -> mentions(node, "ON-CARD.JPG") && mentions(node, cardLabel);
       AccessibilityNodeInfo cardRow = awaitNode(automation, onCard);
       assertAccessibilityTarget(listing, cardRow, "Located photo row");
