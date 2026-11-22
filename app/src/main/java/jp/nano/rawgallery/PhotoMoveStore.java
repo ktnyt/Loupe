@@ -292,18 +292,29 @@ final class PhotoMoveStore extends SQLiteOpenHelper {
           throw new IOException("Cannot promote the move proof");
         }
       }
-      ContentValues values = new ContentValues();
-      values.put("stage", DONE);
-      for (String field : ARCHIVE_FIELDS.split(",")) values.putNull(field);
-      values.putNull("proof_previous");
-      values.putNull("proof_completion");
-      if (db.update("items", values, "source=? AND stage=? AND proof_completion=?",
-          new String[]{item.source(), Integer.toString(REMAPPED), encode(next)}) != 1)
-        throw new IOException("The move journal changed while promoting the destination");
+      markHistoricalDone(db, item, next);
       db.setTransactionSuccessful();
     } finally {
       db.endTransaction();
     }
+  }
+
+  /** The source is already gone and the target verified, but the erased history grants no new proof. */
+  void finishWithoutHistory(Item item) throws IOException {
+    CompletedProof next = item.pendingCompletion();
+    requirePendingCompletion(item, next);
+    markHistoricalDone(getWritableDatabase(), item, next);
+  }
+
+  private static void markHistoricalDone(SQLiteDatabase db, Item item, CompletedProof next) throws IOException {
+    ContentValues values = new ContentValues();
+    values.put("stage", DONE);
+    for (String field : ARCHIVE_FIELDS.split(",")) values.putNull(field);
+    values.putNull("proof_previous");
+    values.putNull("proof_completion");
+    if (db.update("items", values, "source=? AND stage=? AND proof_completion=?",
+        new String[]{item.source(), Integer.toString(REMAPPED), encode(next)}) != 1)
+      throw new IOException("The move journal changed while finalizing the destination");
   }
 
   private static boolean journalMatches(SQLiteDatabase db, String source, int stage, CompletedProof proof) {

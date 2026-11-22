@@ -27,6 +27,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -75,6 +76,7 @@ final class LegacyArchiveMoveChecks {
       checkProofRecovery(base, secondary, boundary);
     }
     checkProofRollback(base, secondary);
+    checkDeletedSourceWithResetHistory(base, secondary);
     checkLockedAbandon(base, secondary);
     checkRoundTrip(base, secondary);
     checkVersionTwoResume(base, secondary);
@@ -448,8 +450,10 @@ final class LegacyArchiveMoveChecks {
       require(boundary == PhotoMove.Boundary.DELETED ? f.rows(PRIMARY).isEmpty() : Arrays.equals(seed.bytes(), f.read(seed.uri())),
           "Interrupting preserves the original until the verified deletion boundary");
       try (PhotoMove resumed = f.move(ledger, history, ignored -> {})) {
-        if (boundary == PhotoMove.Boundary.DELETED) resumed.abandon();
-        else require(resumed.run(() -> false, ignored -> {}).done() == 1, "The interrupted archive-only move finishes once on restart");
+        if (boundary == PhotoMove.Boundary.DELETED) {
+          var ended = resumed.abandon();
+          require(ended.total() == 1 && ended.done() == 1, "End reports the verified post-delete move as completed rather than unfinished");
+        } else require(resumed.run(() -> false, ignored -> {}).done() == 1, "The interrupted archive-only move finishes once on restart");
         require(resumed.batch() == null, "Recovery or post-delete roll-forward clears the journal");
       }
       checkReplacement(f, history, archive, seed, e2Before, secondary);
@@ -496,6 +500,53 @@ final class LegacyArchiveMoveChecks {
           require(journal.completed(seed.history().getId()) == null, "Pre-delete rollback does not leave a new completed proof");
         }
       }
+    }
+  }
+
+  private static void checkDeletedSourceWithResetHistory(Context base, String secondary) throws Exception {
+    try (Fixture f = new Fixture(base, secondary); CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         ArchiveStore archive = E2Settings.openRecords(f.isolatedContext()); TagStore tags = new TagStore(f.isolatedContext());
+         ShareHistoryStore shares = new ShareHistoryStore(f.isolatedContext()); PhotoMoveStore journal = new PhotoMoveStore(f.isolatedContext())) {
+      Seed seed = seed(f, history, archive, "RESET-AFTER-DELETE.JPG", 0xff663785, false, false);
+      String archiveBefore = archive.get(seed.archiveKey()).toString();
+      var ranking = new RankingStore(f.isolatedContext());
+      var original = f.photo(seed.uri());
+      String archiveKey = ArchiveStore.key(original);
+      String tagSource = TagStore.source(original);
+      var tag = tags.create("Synthetic move tag");
+      String tagPhotoId = tags.photoId(original, true);
+      tags.record(UUID.randomUUID().toString(), tag.id, tagPhotoId, 0, TagJudgments.Value.ASSIGNED);
+      require(ranking.saveSingleBest(archiveKey, false, true), "Seed the original's best mark");
+      long sharedAt = System.currentTimeMillis();
+      require(shares.complete(shares.begin(List.of(archiveKey), sharedAt), "test.fixture", "Synthetic share", sharedAt),
+          "Seed the original's share handoff");
+      require(PhotoStorage.select(f.isolatedContext(), secondary), "Choose the synthetic SD destination");
+      try (PhotoMove stopped = f.move(ledger, history, reached -> {
+        if (reached == PhotoMove.Boundary.DELETED) throw new InterruptedMove();
+      })) {
+        stopped.begin(preflight(stopped, stopped.plan(secondary), () -> false));
+        expectCrash(stopped, PhotoMove.Boundary.DELETED);
+      }
+      Uri target = f.rows(secondary).get(0).uri();
+      var interrupted = journal.next();
+      require(f.rows(PRIMARY).isEmpty() && interrupted.stage() == PhotoMoveStore.REMAPPED && interrupted.pendingCompletion() != null
+          && archiveKey.equals(interrupted.identity().archiveKey()) && tagSource.equals(interrupted.identity().tagSource())
+          && history.importDestinations().equals(Set.of(target.toString())), "Interrupt with the locally mapped replacement as the sole copy");
+      history.resetHistory(MODEL, f.id);
+      try (PhotoMove reopened = f.move(ledger, history, ignored -> {})) {
+        var ended = reopened.abandon();
+        require(ended.total() == 1 && ended.done() == 1 && reopened.batch() == null && history.moveEvidence().isEmpty()
+            && journal.completed(seed.history().getId()) == null && ledger.receiptCount() == 0
+            && archiveBefore.equals(archive.get(seed.archiveKey()).toString()) && Arrays.equals(seed.bytes(), f.read(target)),
+            "End preserves the byte-exact sole copy and closes the journal without recreating the removed import evidence");
+      }
+      var retained = f.photo(target);
+      String retainedKey = ArchiveStore.key(retained);
+      var handoff = shares.history(retainedKey);
+      require(archiveKey.equals(retainedKey) && tagSource.equals(TagStore.source(retained)) && tagPhotoId.equals(tags.photoId(retained, false))
+          && tags.load().value(tag.id, tagPhotoId) == TagJudgments.Value.ASSIGNED && ranking.singleBest(retainedKey)
+          && handoff.size() == 1 && handoff.get(0).handedOffAt == sharedAt,
+          "The sole surviving target retains the original logical identity, tags, ranking and share handoff");
     }
   }
 

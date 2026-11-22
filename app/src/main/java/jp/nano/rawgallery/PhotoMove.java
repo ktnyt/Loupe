@@ -810,8 +810,10 @@ final class PhotoMove implements AutoCloseable {
         if (!E2SyncJob.ORIGINALS.tryLock())
           throw new Failure("端末の容量整理が終わってから移動を終了してください。");
         try {
-          store.abandon(abandonHistorical(item));
-          return batch;
+          String rollbackTarget = abandonHistorical(item);
+          PhotoMoveStore.Batch completed = store.batch();
+          store.abandon(rollbackTarget);
+          return completed;
         } finally {
           E2SyncJob.ORIGINALS.unlock();
         }
@@ -836,18 +838,25 @@ final class PhotoMove implements AutoCloseable {
   }
 
   private String abandonHistorical(PhotoMoveStore.Item item) throws IOException {
-    // A removed history cannot be restored from the copy or replaced by another receipt.
-    if (!history.containsMoveEvidence(item.historyId())) return galleryUri(Uri.parse(item.target())).toString();
-    Map<String, String> cameraEvidence = ledger.importDestinations();
-    requireHistoricalHistory(item, cameraEvidence);
-    if (find(Uri.parse(item.source())) == null) {
+    boolean sourcePresent = find(Uri.parse(item.source())) != null;
+    boolean historyPresent = history.containsMoveEvidence(item.historyId());
+    if (!sourcePresent) {
       Media verified = verify(Uri.parse(item.target()), item.bytes(), item.proofSha(), true, () -> false);
-      finishHistoricalMove(item, verified, cameraEvidence);
+      if (historyPresent) {
+        finishHistoricalMove(item, verified, ledger.importDestinations());
+      } else {
+        // The surviving target keeps its logical identity. An erased history grants no completed proof.
+        requireHistoricalDestination(item, verified);
+        store.finishWithoutHistory(item);
+      }
       return null;
     }
-    requireHistoricalEpoch(item);
-    if (!Objects.equals(store.completed(item.historyId()), item.sourceProof())
-        || !intactSource(item) || !relocate(item, true)) throw archiveMismatch();
+    if (historyPresent) {
+      requireHistoricalHistory(item, ledger.importDestinations());
+      requireHistoricalEpoch(item);
+      if (!Objects.equals(store.completed(item.historyId()), item.sourceProof())
+          || !intactSource(item) || !relocate(item, true)) throw archiveMismatch();
+    }
     return galleryUri(Uri.parse(item.target())).toString();
   }
 
@@ -1019,11 +1028,15 @@ final class PhotoMove implements AutoCloseable {
   private void finishHistoricalMove(PhotoMoveStore.Item item, Media verified, Map<String, String> cameraEvidence)
       throws IOException {
     requireRelocatedHistory(item, cameraEvidence);
+    requireHistoricalDestination(item, verified);
+    store.completeHistorical(item);
+  }
+
+  private void requireHistoricalDestination(PhotoMoveStore.Item item, Media verified) throws IOException {
     var destination = item.pendingCompletion();
     if (destination == null || !matchesCompleted(destination, verified)
         || !matchesCompleted(destination, requireOwned(verified.uri())) || !historicalAliasMatches(verified))
       throw archiveMismatch();
-    store.completeHistorical(item);
   }
 
   private Media requireSource(PhotoMoveStore.Item item) throws IOException {
