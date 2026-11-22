@@ -102,7 +102,7 @@ final class RawEditFullSession implements AutoCloseable {
   }
   void save(RawEditState snapshot){
     if(closed||!prepared||export!=null){main.post(()->{if(!closed)listener.saveFailed();});return;}
-    export=new Export(snapshot);enqueue();
+    export=new Export(snapshot,PhotoStorage.selected(context));enqueue();
   }
   void cancelSave(){Export current=export;if(current!=null)current.phase.compareAndSet(0,1);enqueue();}
   private void enqueue(){
@@ -155,8 +155,9 @@ final class RawEditFullSession implements AutoCloseable {
   private void renderExport(Export job)throws IOException {
     if(closed||job.cancelled())throw new IOException("中止");
     if(job.encoder==null){
+      PhotoStorage.requireWritable(context,job.volume);
       ContentValues v=new ContentValues();v.put(MediaStore.Images.Media.DISPLAY_NAME,"Loupe-"+UUID.randomUUID()+".jpg");v.put(MediaStore.Images.Media.MIME_TYPE,"image/jpeg");v.put(MediaStore.Images.Media.RELATIVE_PATH,"Pictures/LoupeDevelop");v.put(MediaStore.Images.Media.IS_PENDING,1);
-      job.pending=context.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,v);if(job.pending==null)throw new IOException("保存先");
+      job.pending=context.getContentResolver().insert(MediaStore.Images.Media.getContentUri(job.volume),v);if(job.pending==null)throw new IOException("保存先");
       job.fd=context.getContentResolver().openFileDescriptor(job.pending,"w");if(job.fd==null)throw new IOException("保存先");
       job.encoder=NativeJpeg.open(job.fd.getFd(),full.width,full.height,95);
       job.strip=ByteBuffer.allocateDirect(full.width*Math.min(128,full.height)*3);
@@ -208,8 +209,8 @@ final class RawEditFullSession implements AutoCloseable {
     DetailJob(DetailRequest r,int w,int h){request=r;plan=new RawEditTilePlan(r.region,r.width,r.height,w,h).iterator();bitmap=Bitmap.createBitmap(r.width,r.height,Bitmap.Config.ARGB_8888);canvas=new Canvas(bitmap);}
   }
   private static final class Export {
-    final RawEditState state;final long started=SystemClock.elapsedRealtime();final AtomicInteger phase=new AtomicInteger();
+    final RawEditState state;final String volume;final long started=SystemClock.elapsedRealtime();final AtomicInteger phase=new AtomicInteger();
     boolean cancelled(){return phase.get()==1;}Uri pending;ParcelFileDescriptor fd;NativeJpeg encoder;ByteBuffer strip;Iterator<RawEditTilePlan.Tile> plan;int y,rows;
-    Export(RawEditState snapshot){state=snapshot;}
+    Export(RawEditState snapshot,String volume){state=snapshot;this.volume=volume;}
   }
 }

@@ -9,6 +9,7 @@ import android.mtp.MtpDevice
 import android.mtp.MtpObjectInfo
 import android.net.Uri
 import java.io.File
+import java.util.function.BooleanSupplier
 
 /** MTP セッションを開き、写真・RAW・動画の差分取り込みを行う (仕様書 5 章の手順 3〜6) */
 object MtpImporter {
@@ -43,6 +44,8 @@ object MtpImporter {
         val deleteRemained: Int = 0,
         /** 過去に削除したはずのファイルが今回のスキャンで見つかった件数 (E-P7 実測: 復活する) */
         val resurrected: Int = 0,
+        /** 保存先を最後まで照合できず、カメラ側に残した今回の取り込み件数 */
+        val deleteUnverified: Int = 0,
     )
 
     /**
@@ -196,6 +199,7 @@ object MtpImporter {
          * format 0 に RAW を含めない機種では RAW を取りこぼすが、全滅よりはよい
          */
         fullScan: Boolean = true,
+        volume: String = jp.nano.rawgallery.PhotoStorage.selected(context),
     ): Result {
         val start = System.currentTimeMillis()
         val known = db.importedKeys(camera.model, camera.serial)
@@ -300,7 +304,7 @@ object MtpImporter {
                         targets.add(Target(handle, info, key))
                     } else if (isSameAsExisting(context, mtp, handle, info, ex)) {
                         skipped++
-                        db.recordImport(camera.model, camera.serial, key, "existing")
+                        db.recordImport(camera.model, camera.serial, key, ex.uri.toString())
                     } else {
                         // 同名の別写真。撮影日時付きの別名で取り込む
                         targets.add(
@@ -322,18 +326,27 @@ object MtpImporter {
         }
 
         onProgress(Progress(targets.size, 0))
-        val importedHandles = ArrayList<Target>()
+        val importedHandles = ArrayList<Pair<Target, SavedTransfer>>()
+        val cancelledDuringProof = BooleanSupplier {
+            onScanAlive()
+            isCancelled() || Thread.currentThread().isInterrupted
+        }
+        var deleteUnverified = 0
         for ((i, t) in targets.withIndex()) {
             if (isCancelled()) {
                 aborted = true
                 break
             }
             try {
-                val uri = saveOne(context, mtp, t.handle, t.key, t.saveName, camera)
+                val saved = saveOne(context, mtp, t.handle, t.key, t.saveName, camera, volume,
+                    deleteAfterImport, cancelledDuringProof)
                 // 保存が完了してから履歴に記録する順序 (仕様書 5.4)
-                db.recordImport(camera.model, camera.serial, t.key, uri.toString())
+                db.recordImport(camera.model, camera.serial, t.key, saved.uri.toString())
                 imported++
-                importedHandles.add(t)
+                if (deleteAfterImport) importedHandles.add(t to saved)
+            } catch (e: jp.nano.rawgallery.PhotoStorage.Unavailable) {
+                // Do not proceed to camera-side deletion after a storage error.
+                throw e
             } catch (e: Exception) {
                 ImportLog.w(TAG, "import failed: ${t.key.fileName}", e)
                 failed++
@@ -347,8 +360,15 @@ object MtpImporter {
         // 中断した回 (ケーブル抜去・停止) は削除もしない
         if (deleteAfterImport && !aborted) {
             val deletedHandles = HashSet<Int>()
-            for (t in importedHandles) {
-                if (isCancelled()) break
+            for ((index, transfer) in importedHandles.withIndex()) {
+                val (t, destination) = transfer
+                if (cancelledDuringProof.getAsBoolean()) break
+                val expected = destination.fingerprint
+                if (expected == null || !MediaSaver.canReadSavedFile(context, destination.uri, expected, cancelledDuringProof)) {
+                    if (!cancelledDuringProof.getAsBoolean()) deleteUnverified = importedHandles.size - index
+                    break
+                }
+                if (cancelledDuringProof.getAsBoolean()) break
                 if (mtp.deleteObject(t.handle)) {
                     deleted++
                     deletedHandles.add(t.handle)
@@ -377,6 +397,7 @@ object MtpImporter {
             degraded = !fullScan && MediaTypes.Kind.RAW in kinds,
             deleteRemained = deleteRemained,
             resurrected = resurrected,
+            deleteUnverified = deleteUnverified,
         )
     }
 
@@ -385,8 +406,7 @@ object MtpImporter {
 
     /**
      * カメラ上のオブジェクトと保存済みファイルが同一か。サイズ→先頭バイトの順で確かめる。
-     * JPEG の先頭には撮影日時とサムネイルが入るため、別写真で先頭まで一致することは
-     * 事実上ない。読み出しに失敗したときは従来どおりサイズ一致を信用する
+     * 読み出しに失敗した場合は取り込み済みと判定しない。削除の許可には使わない。
      */
     private fun isSameAsExisting(
         context: Context,
@@ -417,6 +437,8 @@ object MtpImporter {
 
     private fun elapsed(start: Long) = System.currentTimeMillis() - start
 
+    private data class SavedTransfer(val uri: Uri, val fingerprint: MediaSaver.SavedFingerprint?)
+
     private fun saveOne(
         context: Context,
         mtp: MtpDevice,
@@ -424,7 +446,10 @@ object MtpImporter {
         key: ImportedKey,
         saveName: String,
         camera: Camera,
-    ): Uri {
+        volume: String,
+        verifyBeforeDeletion: Boolean,
+        cancelled: BooleanSupplier,
+    ): SavedTransfer {
         // MTP からいったんキャッシュへ、その後 MediaStore へ。
         // 動画では本体の空き容量をファイルサイズ分使う点に注意
         val suffix = "." + key.fileName.substringAfterLast('.', "bin")
@@ -442,9 +467,13 @@ object MtpImporter {
                 val patched = ExifOffsetFix.patchIfBroken(tmp)
                 if (patched > 0) ImportLog.i(TAG, "patched $patched broken offset tag(s): ${key.fileName}")
             }
-            return MediaSaver.save(context, saveName, key.shotAt, camera) { out ->
+            val bytes = tmp.length()
+            val fingerprint = if (verifyBeforeDeletion)
+                MediaSaver.SavedFingerprint(bytes, CameraImportCopy.sha256(tmp, cancelled)) else null
+            val uri = MediaSaver.save(context, saveName, key.shotAt, camera, volume, bytes) { out ->
                 tmp.inputStream().use { it.copyTo(out) }
             }
+            return SavedTransfer(uri, fingerprint)
         } finally {
             tmp.delete()
         }

@@ -15,6 +15,7 @@ import java.io.InterruptedIOException;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.json.JSONObject;
+import jp.nano.rawgallery.camera.CameraImportHistoryPlan;
 
 /** One durable generation at a time. An ambiguous POST is never resubmitted. */
 final class NanoBananaJob {
@@ -59,13 +60,15 @@ final class NanoBananaJob {
       if(job==null) {
         if(photo==null||prompt==null)throw new IOException("写真とプロンプトを選び直してください");
         NanoBananaOutput output=snapshot==null?store.output():snapshot;
+        String volume=PhotoStorage.selected(context);
+        PhotoStorage.requireWritable(context,volume);
         // Validate both credentials before touching the network or creating remote objects.
         Services network=services();
         progress.show("送信用の写真を準備しています");
         byte[] jpeg=input(new PhotoRepository(context),photo);
         checkInterrupted();
         String object="loupe-nano-temp/"+UUID.randomUUID()+".jpg";
-        job=new JSONObject().put("object",object).put("stage","uploading").put("owner",UUID.randomUUID().toString()).put("output",output.json());store.job(job);
+        job=new JSONObject().put("object",object).put("stage","uploading").put("owner",UUID.randomUUID().toString()).put("output",output.json()).put("photo_volume",volume);store.job(job);
         progress.show("IDrive e2へ送信しています");
         String version;
         try{checkInterrupted();version=network.upload(object,jpeg,job.getString("owner"));}
@@ -84,9 +87,9 @@ final class NanoBananaJob {
         job.put("task",task).put("stage","generating");store.job(job);
         checkInterrupted();
       }
-      recoverPending(job);
       String stage=job.getString("stage");
       if(stage.equals("discarding")){discard();return;}
+      recoverPending(job, false);
       if(job.has("saved")&&!stage.equals("complete")){job.put("stage","cleanup");store.job(job);stage="cleanup";}
       if(stage.equals("rejected"))throw new IOException("e2が送信を拒否しました。終了して設定を確認してください。");
       if(stage.equals("uploading")||stage.equals("submitting"))
@@ -108,7 +111,7 @@ final class NanoBananaJob {
         Thread.sleep(3000);
       }
       progress.show("生成画像を保存しています");
-      recoverPending(job);
+      recoverPending(job, false);
       if(!job.has("saved")) {
         checkInterrupted();
         byte[] bytes=network.download(status.getJSONObject("response").getString("resultImageUrl"));
@@ -131,18 +134,27 @@ final class NanoBananaJob {
     checkInterrupted();
     markDiscarding(store);
     JSONObject job=store.job();if(job==null)return;
-    recoverPending(job);checkInterrupted();
     if(job.optBoolean("discardDelete",true)){
-      services().delete(job.getString("object"),job.has("version")?job.getString("version"):null,job.getString("owner"));
+      deleteInput(job);
       job.put("discardDelete",false);store.job(job);checkInterrupted();
     }
+    // Local reconciliation can need a detached SD card. Keep the cancelled job and
+    // pending URI so retries can finish it without repeating the remote deletion.
+    recoverPending(job, true);
     store.job(null);
   }
   private void cleanup(JSONObject job) throws Exception {
     checkInterrupted();
-    services().delete(job.getString("object"),job.has("version")?job.getString("version"):null,job.getString("owner"));
+    deleteInput(job);
     job.put("stage","complete");store.job(job);checkInterrupted();
   }
+  private void deleteInput(JSONObject job) throws Exception {
+    String object=job.getString("object"), version=job.has("version")?job.getString("version"):null;
+    String owner=job.getString("owner");
+    if(services!=null)services.delete(object,version,owner);
+    else store.e2().delete(object,version,owner);
+  }
+
   static byte[] input(PhotoRepository repository,PhotoRepository.Photo photo) throws Exception {
     if(photo.isVideo())throw new IOException("写真を選んでください");
     PhotoRepository.Preview preview=repository.preview(photo);Bitmap bitmap=PhotoRepository.bitmap(preview,1600);
@@ -157,17 +169,39 @@ final class NanoBananaJob {
       if(out.size()>5*1024*1024)throw new IOException("送信用画像が大きすぎます");return out.toByteArray();
     }finally{bitmap.recycle();}
   }
-  private void recoverPending(JSONObject job) throws Exception {
+  private void recoverPending(JSONObject job, boolean discarding) throws Exception {
     checkInterrupted();
     if(job.has("saved")||!job.has("pending"))return;
-    Uri uri=Uri.parse(job.getString("pending"));
+    String location=job.getString("pending");
+    if(!CameraImportHistoryPlan.validUri(location))throw new IOException("画像の保存先を確認できませんでした");
+    Uri uri=Uri.parse(location);
+    if(!PhotoStorage.volumeOf(uri).equals(job.optString("photo_volume",PhotoStorage.PRIMARY)))
+      throw new IOException("画像の保存先を確認できませんでした");
+    PhotoStorage.requireMounted(context,uri);
+    String pending=MediaStore.MediaColumns.IS_PENDING, owner=MediaStore.MediaColumns.OWNER_PACKAGE_NAME;
+    String path=MediaStore.MediaColumns.RELATIVE_PATH, name=MediaStore.MediaColumns.DISPLAY_NAME;
+    String directory="Pictures/LoupeNanoBanana/";
     int state;
-    try(Cursor c=context.getContentResolver().query(uri,new String[]{MediaStore.Images.Media.IS_PENDING},null,null,null)) {
+    String filename=null;
+    try(Cursor c=context.getContentResolver().query(uri,new String[]{pending,owner,path,name},null,null,null)) {
       state=pendingState(c);
+      if(state==1||state==0&&!discarding) {
+        filename=c.getString(3);
+        if(!context.getPackageName().equals(c.getString(1))||!directory.equals(c.getString(2))
+            ||filename==null||!filename.matches("NanoBanana-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\\.jpg"))
+          throw new IOException("画像の所有情報を確認できませんでした");
+      }
     }
-    if(state==0){job.put("saved",uri.toString());store.job(job);checkInterrupted();return;}
+    PhotoStorage.requireMounted(context,uri);
+    if(state==0){
+      // A published result might have been renamed or moved by the user. Discard
+      // never changes that row, and need not reattach it to the cancelled job.
+      if(!discarding){job.put("saved",uri.toString());store.job(job);checkInterrupted();}
+      return;
+    }
     checkInterrupted();
-    if(state==1&&context.getContentResolver().delete(uri,MediaStore.Images.Media.IS_PENDING+" = ?",new String[]{"1"})!=1)
+    if(state==1&&context.getContentResolver().delete(uri,pending+"=1 AND "+owner+"=? AND "+path+"=? AND "+name+"=?",
+        new String[]{context.getPackageName(),directory,filename})!=1)
       throw new IOException("画像の保存状態を確認できませんでした。もう一度確認してください");
     job.remove("pending");store.job(job);
   }
@@ -176,11 +210,13 @@ final class NanoBananaJob {
     if(cursor==null)throw new IOException("画像の保存先に接続できません。もう一度確認してください");
     if(!cursor.moveToFirst())return -1;
     int value=cursor.getInt(0);
-    if(value!=0&&value!=1)throw new IOException("画像の保存状態を確認できませんでした");
+    if(cursor.isNull(0)||value!=0&&value!=1)throw new IOException("画像の保存状態を確認できませんでした");
     return value;
   }
 
   private void saveResult(JSONObject job,byte[] bytes) throws Exception {
+    String volume=job.optString("photo_volume",PhotoStorage.PRIMARY);
+    PhotoStorage.requireSpace(context,volume,bytes.length);
     BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;
     BitmapFactory.decodeByteArray(bytes,0,bytes.length,bounds);
     if(bounds.outWidth<=0||bounds.outHeight<=0||(long)bounds.outWidth*bounds.outHeight>20000000)
@@ -199,7 +235,7 @@ final class NanoBananaJob {
       ContentValues values=new ContentValues();values.put(MediaStore.Images.Media.DISPLAY_NAME,"NanoBanana-"+UUID.randomUUID()+".jpg");
       values.put(MediaStore.Images.Media.MIME_TYPE,"image/jpeg");values.put(MediaStore.Images.Media.RELATIVE_PATH,"Pictures/LoupeNanoBanana");
       values.put(MediaStore.Images.Media.IS_PENDING,1);
-      uri=context.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,values);
+      uri=context.getContentResolver().insert(MediaStore.Images.Media.getContentUri(volume),values);
       if(uri==null)throw new IOException("画像の保存先を作れませんでした");
       job.put("pending",uri.toString());store.job(job);
       try(OutputStream out=context.getContentResolver().openOutputStream(uri)) {

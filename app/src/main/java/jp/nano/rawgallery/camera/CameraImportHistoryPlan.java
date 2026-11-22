@@ -23,7 +23,7 @@ public final class CameraImportHistoryPlan {
         this.destinations=destinations;
     }
     public static String key(String name,long bytes,long shot){return name+"|"+bytes+"|"+shot;}
-    public static boolean validUri(String uri){return uri!=null&&uri.matches("content://media/(external|external_primary)/images/media/[0-9]+");}
+    public static boolean validUri(String uri){return uri!=null&&uri.matches("content://media/(external|external_primary|[0-9a-f]+(?:-[0-9a-f]+)*)/images/media/[0-9]+");}
     /** A matching common receipt may account for a repaired JPEG's different stored byte count. */
     public boolean known(String name,long bytes,long shot,boolean verifyAll,String receiptUri,long storedBytes) {
         if(verifyAll||destinations==null)return false;

@@ -84,12 +84,15 @@ public final class CameraDifferentialService extends Service {
                         String permission=Build.VERSION.SDK_INT>=33?Manifest.permission.READ_MEDIA_IMAGES:Manifest.permission.READ_EXTERNAL_STORAGE;
                         if(checkSelfPermission(permission)!=PackageManager.PERMISSION_GRANTED)throw new IOException("重複を確認するため写真全体へのアクセスを許可してください");
                         if(SD.equals(request.getAction()))CameraDocumentSource.requireOriginalPermission(this);
-                        CameraPhotoImporter importer=new CameraPhotoImporter(this);importer.setMetrics(runMetrics);importer.recover(cancelled);
+                        jp.nano.rawgallery.PhotoStorage.requireImportReady(this);
+                        String volume=jp.nano.rawgallery.PhotoStorage.selected(this);
+                        jp.nano.rawgallery.PhotoStorage.requireWritable(this,volume);
+                        CameraPhotoImporter importer=new CameraPhotoImporter(this,CameraImportLedger.get(this),volume);importer.setMetrics(runMetrics);importer.recover(cancelled);
                         if(PAIRED.equals(request.getAction()))paired(importer,request.getStringExtra("profile_id"),request.getBooleanExtra("verify",getSharedPreferences("camera_import",0).getBoolean("wifi_verify_all",false)));
                         else if(WIFI.equals(request.getAction()))wifi(importer,request.getBooleanExtra("verify",getSharedPreferences("camera_import",0).getBoolean("wifi_verify_all",false)));
                         else if(SD.equals(request.getAction())&&request.getData()!=null)sd(importer,request.getData(),request.getBooleanExtra("verify",getSharedPreferences("camera_import",0).getBoolean("sd_verify_all",false)));
                         else throw new IOException("接続元がありません");
-                    }catch(Exception e){runMetrics.terminal(cancelled.getAsBoolean()?"cancelled":"failed");ImportProgress.INSTANCE.finish(cancelled.getAsBoolean()?"取り込みを中断しました":(e instanceof CameraPairedSession.MissingWifiException||e instanceof CameraDocumentSource.OriginalAccessException)?e.getMessage():"取り込みを完了できませんでした。接続と写真へのアクセスを確認してください");android.util.Log.w("CameraDifferential","Import failed: "+e.getClass().getSimpleName());}
+                    }catch(Exception e){runMetrics.terminal(cancelled.getAsBoolean()?"cancelled":"failed");ImportProgress.INSTANCE.finish(cancelled.getAsBoolean()?"取り込みを中断しました":(e instanceof CameraPairedSession.MissingWifiException||e instanceof CameraDocumentSource.OriginalAccessException||e instanceof jp.nano.rawgallery.PhotoStorage.Unavailable)?e.getMessage():"取り込みを完了できませんでした。接続と写真へのアクセスを確認してください");android.util.Log.w("CameraDifferential","Import failed: "+e.getClass().getSimpleName());}
                 });
                 if(!accepted&&!destroyed)getSystemService(NotificationManager.class).notify(783,
                         new Notification.Builder(this,CHANNEL).setSmallIcon(android.R.drawable.ic_menu_camera)

@@ -18,7 +18,7 @@ public final class CameraImportLedger extends SQLiteOpenHelper {
         return instance;
     }
     public CameraImportLedger(Context context, String name) {
-        super(context, name, null, 1);
+        super(context, name, null, 2);
         setWriteAheadLoggingEnabled(true);
     }
     @Override public void onConfigure(SQLiteDatabase db) { db.setForeignKeyConstraintsEnabled(true); }
@@ -27,10 +27,13 @@ public final class CameraImportLedger extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE receipts (source_key TEXT PRIMARY KEY,source_id TEXT NOT NULL,relative_path TEXT NOT NULL,source_bytes INTEGER NOT NULL,source_stamp TEXT NOT NULL,capture_seconds INTEGER NOT NULL,source_sha TEXT NOT NULL REFERENCES contents(source_sha),created_at INTEGER NOT NULL)");
         db.execSQL("CREATE INDEX receipts_source ON receipts(source_id)");
         db.execSQL("CREATE INDEX contents_capture ON contents(capture_group)");
-        db.execSQL("CREATE TABLE pending (token TEXT PRIMARY KEY,source_id TEXT NOT NULL,relative_path TEXT NOT NULL,source_bytes INTEGER NOT NULL,source_stamp TEXT NOT NULL,capture_seconds INTEGER NOT NULL,source_sha TEXT NOT NULL UNIQUE,stored_sha TEXT NOT NULL,stored_bytes INTEGER NOT NULL,kind TEXT NOT NULL,capture_group TEXT NOT NULL,pending_name TEXT NOT NULL,final_name TEXT NOT NULL,relative_folder TEXT NOT NULL,target_uri TEXT,ready INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL)");
+        db.execSQL("CREATE TABLE pending (token TEXT PRIMARY KEY,source_id TEXT NOT NULL,relative_path TEXT NOT NULL,source_bytes INTEGER NOT NULL,source_stamp TEXT NOT NULL,capture_seconds INTEGER NOT NULL,source_sha TEXT NOT NULL UNIQUE,stored_sha TEXT NOT NULL,stored_bytes INTEGER NOT NULL,kind TEXT NOT NULL,capture_group TEXT NOT NULL,pending_name TEXT NOT NULL,final_name TEXT NOT NULL,relative_folder TEXT NOT NULL,target_uri TEXT,ready INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,volume TEXT NOT NULL)");
     }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        throw new IllegalStateException("Unsupported camera ledger upgrade");
+        if (oldVersion < 2) {
+            // Version 1 always inserted via the primary external collection.
+            db.execSQL("ALTER TABLE pending ADD COLUMN volume TEXT NOT NULL DEFAULT 'external_primary'");
+        }
     }
     public static final class Content {
         public final String sourceSha, storedSha, uri, kind, captureGroup;
@@ -41,18 +44,18 @@ public final class CameraImportLedger extends SQLiteOpenHelper {
         }
     }
     public static final class Pending {
-        public final String token, sourceSha, storedSha, kind, captureGroup, pendingName, finalName, relativeFolder, uri;
+        public final String token, sourceSha, storedSha, kind, captureGroup, pendingName, finalName, relativeFolder, uri, volume;
         public final CameraImportFile source;
         public final long storedBytes;
         public final boolean ready;
         Pending(Cursor c) {
             token=c.getString(0);source=new CameraImportFile(c.getString(1),c.getString(2),c.getLong(3),c.getString(4),c.getLong(5));
             sourceSha=c.getString(6);storedSha=c.getString(7);storedBytes=c.getLong(8);kind=c.getString(9);captureGroup=c.getString(10);
-            pendingName=c.getString(11);finalName=c.getString(12);relativeFolder=c.getString(13);uri=c.isNull(14)?null:c.getString(14);ready=c.getInt(15)!=0;
+            pendingName=c.getString(11);finalName=c.getString(12);relativeFolder=c.getString(13);uri=c.isNull(14)?null:c.getString(14);ready=c.getInt(15)!=0;volume=c.getString(16);
         }
     }
     private static final String CONTENT_FIELDS="source_sha,source_bytes,stored_sha,stored_bytes,dest_uri,kind,capture_group";
-    private static final String PENDING_FIELDS="token,source_id,relative_path,source_bytes,source_stamp,capture_seconds,source_sha,stored_sha,stored_bytes,kind,capture_group,pending_name,final_name,relative_folder,target_uri,ready";
+    private static final String PENDING_FIELDS="token,source_id,relative_path,source_bytes,source_stamp,capture_seconds,source_sha,stored_sha,stored_bytes,kind,capture_group,pending_name,final_name,relative_folder,target_uri,ready,volume";
     private static void hash(String value) {
         if (value == null || !value.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("Invalid content fingerprint");
     }
@@ -110,7 +113,7 @@ public final class CameraImportLedger extends SQLiteOpenHelper {
         try { content(db,source,raw,stored,storedBytes,uri,kind,group);db.setTransactionSuccessful(); } finally { db.endTransaction(); }
         return find(raw,source.bytes);
     }
-    public synchronized Pending allocate(CameraImportFile source,String raw,String stored,long storedBytes,String finalName,String folder,String kind,String group) {
+    public synchronized Pending allocate(CameraImportFile source,String raw,String stored,long storedBytes,String finalName,String folder,String kind,String group,String volume) {
         hash(raw);hash(stored);
         if(storedBytes<=0 || !folder.startsWith("Pictures/CameraSync/") || folder.contains("..") || finalName.contains("/") || finalName.contains("\\"))throw new IllegalArgumentException("Invalid publication target");
         String token=UUID.randomUUID().toString();
@@ -118,7 +121,7 @@ public final class CameraImportLedger extends SQLiteOpenHelper {
         ContentValues v=new ContentValues();v.put("token",token);v.put("source_id",source.sourceId);v.put("relative_path",source.relativePath);
         v.put("source_bytes",source.bytes);v.put("source_stamp",source.sourceStamp);v.put("capture_seconds",source.captureSeconds);
         v.put("source_sha",raw);v.put("stored_sha",stored);v.put("stored_bytes",storedBytes);v.put("kind",kind);v.put("capture_group",group);
-        v.put("pending_name","__loupe_"+token+ext);v.put("final_name",finalName);v.put("relative_folder",folder);v.put("created_at",System.currentTimeMillis());
+        v.put("volume",volume);v.put("pending_name","__loupe_"+token+ext);v.put("final_name",finalName);v.put("relative_folder",folder);v.put("created_at",System.currentTimeMillis());
         getWritableDatabase().insertOrThrow("pending",null,v);
         return pending(token);
     }
@@ -184,6 +187,63 @@ public final class CameraImportLedger extends SQLiteOpenHelper {
         SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try {db.delete("receipts","source_sha=?",new String[]{raw});db.delete("contents","source_sha=?",new String[]{raw});db.setTransactionSuccessful();}finally{db.endTransaction();}
     }
+    public synchronized Map<String, String> importDestinations() {
+        Map<String, String> out = new LinkedHashMap<>();
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT dest_uri,stored_sha FROM contents", null)) {
+            while (c.moveToNext()) {
+                String previous = out.putIfAbsent(c.getString(0), c.getString(1));
+                if (previous != null && !previous.equals(c.getString(1))) out.put(c.getString(0), "");
+            }
+        }
+        return out;
+    }
+
+    /** Move only the locations; the contents and per-transport receipts keep their keys. */
+    public record MoveReceipt(String name, long bytes, long capture, long sourceModified) {}
+
+    /** Link legacy import records to their original camera metadata, even after EXIF correction. */
+    public synchronized Map<String, List<MoveReceipt>> moveReceipts() {
+        Map<String, List<MoveReceipt>> out = new HashMap<>();
+        try (Cursor rows = getReadableDatabase().rawQuery(
+                "SELECT c.dest_uri,r.relative_path,r.source_bytes,r.capture_seconds,r.source_id,r.source_stamp "
+                        + "FROM contents c JOIN receipts r ON c.source_sha=r.source_sha", null)) {
+            while (rows.moveToNext()) {
+                String relative = rows.getString(1);
+                long sourceModified = 0;
+                if (rows.getString(4).startsWith("sd-usb:")) {
+                    try { sourceModified = Long.parseLong(rows.getString(5)) / 1000; }
+                    catch (NumberFormatException ignored) { /* Historic or non-numeric source stamp. */ }
+                }
+                out.computeIfAbsent(rows.getString(0), ignored -> new ArrayList<>()).add(
+                        new MoveReceipt(relative.substring(relative.lastIndexOf('/') + 1),
+                                rows.getLong(2), rows.getLong(3), sourceModified));
+            }
+        }
+        return out;
+    }
+
+    public synchronized boolean hasMoveEvidence(String source, String oldAlias, String sha) {
+        if (sha == null) return false;
+        try (Cursor rows = getReadableDatabase().rawQuery(
+                "SELECT 1 FROM contents WHERE stored_sha=? AND (dest_uri=? OR dest_uri=?) LIMIT 1",
+                new String[]{sha, source, oldAlias == null ? source : oldAlias})) {
+            return rows.moveToFirst();
+        }
+    }
+
+    public synchronized boolean relocate(String source, String oldAlias, String destination, String sha) {
+        if (sha == null) return false;
+        ContentValues values = new ContentValues();
+        values.put("dest_uri", destination);
+        SQLiteDatabase db = getWritableDatabase();
+        db.update("contents", values, "stored_sha=? AND (dest_uri=? OR dest_uri=?)",
+                new String[]{sha, source, oldAlias == null ? source : oldAlias});
+        try (Cursor rows = db.rawQuery("SELECT 1 FROM contents WHERE stored_sha=? AND dest_uri=? LIMIT 1",
+                new String[]{sha, destination})) {
+            return rows.moveToFirst();
+        }
+    }
+
     public synchronized long contentCount() { try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM contents",null)){c.moveToFirst();return c.getLong(0);} }
     public synchronized long receiptCount() { try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM receipts",null)){c.moveToFirst();return c.getLong(0);} }
 }

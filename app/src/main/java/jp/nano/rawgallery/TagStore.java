@@ -1,8 +1,11 @@
 package jp.nano.rawgallery;
 
 import android.content.ContentValues;
+import android.content.ContentUris;
 import android.content.Context;
 import android.database.Cursor;
+import android.net.Uri;
+import android.provider.MediaStore;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 import java.util.ArrayList;
@@ -204,7 +207,25 @@ final class TagStore extends SQLiteOpenHelper {
 
   /** Location and observed version, never a claim of byte identity. */
   static String source(PhotoRepository.Photo photo) {
-    return photo.uri + "\n" + photo.size + ":" + photo.modified + ":" + photo.added + ":" + photo.created;
+    if (photo.movedIdentity != null) return photo.movedIdentity.tagSource();
+    return legacySource(locationSource(photo));
+  }
+
+  static String legacySource(String versionedSource) {
+    int end = versionedSource.indexOf('\n');
+    Uri uri = Uri.parse(versionedSource.substring(0, end));
+    if (!"media".equals(uri.getAuthority())) return versionedSource;
+    // Older gallery versions used the aggregate files collection for every MediaStore volume.
+    Uri aggregate = ContentUris.withAppendedId(MediaStore.Files.getContentUri("external"), ContentUris.parseId(uri));
+    return aggregate + versionedSource.substring(end);
+  }
+
+  static String locationSource(PhotoRepository.Photo photo) {
+    return sourceVersion(photo, photo.uri);
+  }
+
+  private static String sourceVersion(PhotoRepository.Photo photo, Uri uri) {
+    return uri + "\n" + photo.size + ":" + photo.modified + ":" + photo.added + ":" + photo.created;
   }
 
   String photoId(PhotoRepository.Photo photo, boolean create) {

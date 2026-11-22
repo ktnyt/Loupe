@@ -35,7 +35,8 @@ final class SyncEngine {
                     p.added,
                     p.isJpeg() && metadata.taken <= 0 && p.added <= 0
                         ? PhotoRepository.creationTime(c, p)
-                        : 0));
+                        : 0,
+                    p.movedIdentity));
         } catch (Exception e) {
           /* Unsupported or unreadable RAWs are never cleanup candidates. */
         }

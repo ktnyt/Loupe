@@ -3,6 +3,7 @@ package jp.nano.rawgallery.camera;
 import android.content.Context;
 import android.net.Uri;
 import java.io.*;
+import jp.nano.rawgallery.PhotoStorage;
 import java.util.function.BooleanSupplier;
 
 /** The photo import contract shared by Wi-Fi, SAF/SD and USB readers. Call under CameraImportGate. */
@@ -21,15 +22,27 @@ public final class CameraPhotoImporter {
     public void setMetrics(CameraImportMetrics metrics){this.metrics=metrics;publisher.setReadCounter(n->{if(this.metrics!=null)this.metrics.destinationBytes+=n;});}
     public CameraPhotoImporter(Context context) { this(context,CameraImportLedger.get(context)); }
     public CameraPhotoImporter(Context context,CameraImportLedger ledger) {
-        this.context=context.getApplicationContext();this.ledger=ledger;this.publisher=new CameraPhotoPublisher(this.context,ledger);
+        this(context,ledger,PhotoStorage.selected(context));
+    }
+    public CameraPhotoImporter(Context context,CameraImportLedger ledger,String volume) {
+        this.context=context.getApplicationContext();this.ledger=ledger;this.publisher=new CameraPhotoPublisher(this.context,ledger,volume,b -> {});
         this.defaultFolder=HistoryDb.Companion.get(this.context).defaultPhotoFolder();
     }
     public void recover(BooleanSupplier cancelled)throws IOException {publisher.recover(cancelled);}
     private boolean available(CameraImportLedger.Content content,BooleanSupplier cancelled)throws IOException {
         Uri uri=Uri.parse(content.uri);
+        PhotoStorage.requireMounted(context,uri);
         try(android.database.Cursor c=context.getContentResolver().query(uri,new String[]{"_id"},null,null,null)) {
             if(c==null)throw new IOException("Saved photo status unavailable");
-            if(!c.moveToFirst()){ledger.forgetMissing(content.sourceSha);return false;}
+            if(!c.moveToFirst()){
+                PhotoStorage.requireMounted(context,uri);
+                // Legacy adoption could save an aggregate URI whose actual volume was never recorded.
+                if ("external".equals(android.provider.MediaStore.getVolumeName(uri))
+                        && !android.provider.MediaStore.getExternalVolumeNames(context)
+                          .containsAll(android.provider.MediaStore.getRecentExternalVolumeNames(context)))
+                    throw new IOException("Saved photo volume unavailable");
+                ledger.forgetMissing(content.sourceSha);return false;
+            }
         }
         try(InputStream in=context.getContentResolver().openInputStream(uri)) {
             if(in==null)throw new IOException("Saved photo unavailable");

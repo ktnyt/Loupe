@@ -23,4 +23,5 @@
     <string name="camera_import_notif_delete_remained_suffix">. %d of them still remain on the camera (some cameras do not persist deletions)</string>
     <string name="camera_import_notif_resurrected_suffix">. %d previously deleted files have reappeared on the camera; they are already imported and will be skipped</string>
     <string name="camera_import_notif_degraded_suffix">. Ran in degraded mode without some RAW queries; import again if RAW files are missing</string>
+    <string name="camera_import_notif_delete_unverified_suffix">. Could not verify %1$d saved files; kept the camera originals</string>
 </resources>

@@ -36,13 +36,35 @@ public final class ArchiveInstrumentation extends Instrumentation {
     }
     if((confidenceUiTest||tagDetailTest||removeLookTest)&&activity instanceof TagActivity)TagFixtureIsolation.install((TagActivity)activity);
     if(removeLookTest&&activity instanceof RawEditActivity&&state==null&&activity.getIntent().getBooleanExtra("removeLookLegacyFixture",false))state=LookRemovalChecks.legacyState(activity.getIntent());
+    boolean photoStorageUi = photoStorageUiMode() && activity instanceof PhotoStorageActivity;
+    if (photoStorageUi) {
+      int availablePx = PhotoStorageChecks.availableDisplay(activity).width();
+      float density = activity.getResources().getDisplayMetrics().density;
+      photoStorageEffectiveWidth = Math.min(tagWidth, (int) Math.floor(availablePx / density));
+      var config = new android.content.res.Configuration(activity.getResources().getConfiguration());
+      config.fontScale = tagFont;
+      config.screenWidthDp = photoStorageEffectiveWidth;
+      activity.getResources().updateConfiguration(config, activity.getResources().getDisplayMetrics());
+    }
     super.callActivityOnCreate(activity, state);
+    if (photoStorageUi)
+      activity.getWindow().setLayout(GalleryUi.dp(activity, photoStorageEffectiveWidth),
+          android.view.ViewGroup.LayoutParams.MATCH_PARENT);
     if(ep7WifiTest || ("camera-pilot-qr-ui".equals(cameraPilotMode) || (("camera-pilot-wifi-quick".equals(cameraPilotMode) || "camera-pilot-quick-import".equals(cameraPilotMode)) || ("camera-pilot-import-progress".equals(cameraPilotMode) || "camera-pilot-usb-launch".equals(cameraPilotMode)))))activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
     if ((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || videoTest || removeLookTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
   }
   private boolean shareHistoryTest, shareHistoryScreenTest, shareHistoryHandoffTest, shareHistoryCallbackTest;
   private boolean shareHistoryRestartSeed, shareHistoryRestartVerify;
   private boolean cameraTabsTest, ep7WifiTest, cameraLedgerTest, cameraBenchmarkTest;
+  private String photoStorageMode;
+  private int photoStorageEffectiveWidth;
+
+  int photoStorageEffectiveWidth() { return photoStorageEffectiveWidth; }
+
+  private boolean photoStorageUiMode() {
+    return "photo-storage-ui".equals(photoStorageMode) || "photo-storage-ui-run".equals(photoStorageMode)
+        || "photo-storage-ui-run-skipped".equals(photoStorageMode);
+  }
   private String cameraPilotMode;
   private boolean shareCapacityTest, shareToggleTest, galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest;
   private boolean photoEditTest;
@@ -159,6 +181,15 @@ public final class ArchiveInstrumentation extends Instrumentation {
     if (("camera-pilot-qr-ui".equals(cameraPilotMode) || (("camera-pilot-wifi-quick".equals(cameraPilotMode) || "camera-pilot-quick-import".equals(cameraPilotMode)) || ("camera-pilot-import-progress".equals(cameraPilotMode) || "camera-pilot-usb-launch".equals(cameraPilotMode))))) { tagWidth=Integer.parseInt(args.getString("width","400"));tagFont=Float.parseFloat(args.getString("font","1.0")); }
     cameraBenchmarkTest = args != null && "camera-benchmark".equals(args.getString("mode"));
     cameraLedgerTest = args != null && "camera-ledger".equals(args.getString("mode"));
+    if (args != null && java.util.List.of("photo-storage", "photo-storage-ui", "photo-storage-ui-run", "photo-storage-ui-run-skipped", "photo-storage-detach-seed",
+        "photo-storage-detach-absent", "photo-storage-detach-restored", "photo-storage-saf-seed",
+        "photo-storage-saf-verify", "photo-storage-abandon-detach-seed", "photo-storage-abandon-detach-absent",
+        "photo-storage-abandon-detach-restored").contains(args.getString("mode", "")))
+      photoStorageMode = args.getString("mode");
+    if (photoStorageUiMode()) {
+      tagWidth = Integer.parseInt(args.getString("width", "400"));
+      tagFont = Float.parseFloat(args.getString("font", "1.0"));
+    }
     ep7WifiTest = args != null && "ep7-wifi".equals(args.getString("mode"));
     if(ep7WifiTest){tagWidth=Integer.parseInt(args.getString("width","400"));tagFont=Float.parseFloat(args.getString("font","1.0"));}
     cameraTabsTest = args != null && "camera-tabs".equals(args.getString("mode"));
@@ -384,6 +415,15 @@ public final class ArchiveInstrumentation extends Instrumentation {
       }
       if (cameraBenchmarkTest) { results.putString("stream", CameraImportBenchmarkChecks.run(this)); finish(-1, results); return; }
       if (cameraLedgerTest) { results.putString("stream", CameraImportLedgerChecks.run(this)); finish(-1, results); return; }
+      if (photoStorageMode != null) {
+        String secondary = cameraPilotArguments.getString("secondaryVolume");
+        results.putString("stream", photoStorageUiMode()
+            ? PhotoStorageChecks.captureUi(this, secondary, tagWidth, tagFont, !"photo-storage-ui".equals(photoStorageMode),
+                "photo-storage-ui-run".equals(photoStorageMode) ? 0 : 1)
+            : PhotoStorageChecks.run(this, photoStorageMode, secondary));
+        finish(-1, results);
+        return;
+      }
       if (ep7WifiTest) { results.putString("stream", Ep7WifiChecks.run(this)); finish(-1, results); return; }
       if (cameraTabsTest) { results.putString("stream", CameraTabsChecks.run(this)); finish(-1, results); return; }
       if (tabsTest) { results.putString("stream", LibraryTabsChecks.run(this)); finish(-1, results); return; }
@@ -509,14 +549,21 @@ public final class ArchiveInstrumentation extends Instrumentation {
   }
   /** Source locations aid synthetic checks without printing file paths or other exception values. */
   private static String failureLocations(Throwable failure) {
-    StringBuilder result=new StringBuilder();
-    java.util.Set<Throwable> seen=java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
-    while(failure!=null&&seen.add(failure)){
-      result.append(failure.getClass().getName()).append('\n');
-      for(StackTraceElement frame:failure.getStackTrace())result.append("  at ").append(frame).append('\n');
-      failure=failure.getCause();
-    }
+    StringBuilder result = new StringBuilder();
+    java.util.Set<Throwable> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    appendFailureLocations(result, seen, failure, "");
     return result.toString();
+  }
+
+  private static void appendFailureLocations(StringBuilder result, java.util.Set<Throwable> seen,
+      Throwable failure, String prefix) {
+    if (failure == null || !seen.add(failure)) return;
+    result.append(prefix).append(failure.getClass().getName());
+    if (failure instanceof PhotoStorageChecks.CheckFailure) result.append(": ").append(failure.getMessage());
+    result.append('\n');
+    for (StackTraceElement frame : failure.getStackTrace()) result.append("  at ").append(frame).append('\n');
+    for (Throwable suppressed : failure.getSuppressed()) appendFailureLocations(result, seen, suppressed, "Suppressed: ");
+    appendFailureLocations(result, seen, failure.getCause(), "Caused by: ");
   }
 
   private String testCompact(Context context) throws Exception {

@@ -4,8 +4,13 @@ import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
+import jp.nano.rawgallery.PhotoStorage
+import java.io.InputStream
 import java.io.OutputStream
+import java.security.MessageDigest
+import java.util.function.BooleanSupplier
 
 /**
  * MediaStore への保存先はファイル種別で分ける。取り込み方式に依らず共通。
@@ -19,9 +24,9 @@ object MediaSaver {
     /** 保存先ルート。CameraSync と同じ保存先を維持する */
     const val ROOT = "CameraSync"
 
-    private fun collectionOf(fileName: String): Uri =
-        if (MediaTypes.isVideo(fileName)) MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-        else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+    private fun collectionOf(fileName: String, volume: String): Uri =
+        if (MediaTypes.isVideo(fileName)) MediaStore.Video.Media.getContentUri(volume)
+        else MediaStore.Images.Media.getContentUri(volume)
 
     private fun relativePathOf(fileName: String, camera: Camera): String = when {
         MediaTypes.isVideo(fileName) -> "Movies/$ROOT/${camera.folder}"
@@ -35,8 +40,11 @@ object MediaSaver {
         fileName: String,
         shotAtSec: Long,
         camera: Camera,
+        volume: String,
+        expectedBytes: Long,
         write: (OutputStream) -> Unit,
     ): Uri {
+        PhotoStorage.requireSpace(context, volume, expectedBytes)
         val resolver = context.contentResolver
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
@@ -45,19 +53,83 @@ object MediaSaver {
             if (shotAtSec > 0) put(MediaStore.MediaColumns.DATE_TAKEN, shotAtSec * 1000)
             put(MediaStore.MediaColumns.IS_PENDING, 1)
         }
-        val target = resolver.insert(collectionOf(fileName), values)
+        val target = resolver.insert(collectionOf(fileName, volume), values)
             ?: throw IllegalStateException("MediaStore insert failed")
         try {
-            resolver.openOutputStream(target)?.use { write(it) }
+            val fd = resolver.openFileDescriptor(target, "w")
                 ?: throw IllegalStateException("MediaStore open failed")
+            ParcelFileDescriptor.AutoCloseOutputStream(fd).use { output ->
+                write(output)
+                output.fd.sync()
+            }
             values.clear()
             values.put(MediaStore.MediaColumns.IS_PENDING, 0)
             check(resolver.update(target, values, null, null) == 1) { "MediaStore publish failed" }
             return target
         } catch (e: Exception) {
-            resolver.delete(target, null, null)
+            try {
+                resolver.delete(target, MediaStore.MediaColumns.IS_PENDING + "=1", null)
+            } catch (cleanup: Exception) {
+                e.addSuppressed(cleanup)
+            }
             throw e
         }
+    }
+
+    data class SavedFingerprint(val bytes: Long, val sha256: String)
+
+    /** Read all published bytes before allowing deletion of the only camera original. */
+    fun canReadSavedFile(context: Context, uri: Uri, expected: SavedFingerprint, cancelled: BooleanSupplier): Boolean = try {
+        PhotoStorage.requireMounted(context, uri)
+        val resolver = context.contentResolver
+        fun revision(): Long? = resolver.query(uri, arrayOf(
+            MediaStore.MediaColumns.IS_PENDING, MediaStore.MediaColumns.IS_TRASHED,
+            MediaStore.MediaColumns.OWNER_PACKAGE_NAME, MediaStore.MediaColumns.SIZE,
+            MediaStore.MediaColumns.GENERATION_MODIFIED,
+        ), null, null, null)?.use { row ->
+            if (row.moveToFirst() && row.getInt(0) == 0 && row.getInt(1) == 0
+                && row.getString(2) == context.packageName && row.getLong(3) == expected.bytes && !row.isNull(4)) {
+                row.getLong(4)
+            } else null
+        }
+        val before = revision()
+        val matches = before != null && resolver.openInputStream(MediaStore.setRequireOriginal(uri))
+            ?.use { matchesSavedBytes(it, expected.bytes, expected.sha256, cancelled) } == true
+        PhotoStorage.requireMounted(context, uri)
+        matches && !cancelled.getAsBoolean() && before == revision()
+    } catch (e: Exception) {
+        ImportLog.w("MediaSaver", "saved media unavailable before camera deletion")
+        false
+    }
+
+    /** Bounded reads cover exactly the independently fingerprinted staged bytes, including EOF. */
+    fun matchesSavedBytes(input: InputStream, bytes: Long, sha256: String, cancelled: BooleanSupplier): Boolean {
+        if (bytes <= 0 || !sha256.matches(Regex("[0-9a-f]{64}"))) return false
+        val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(64 * 1024)
+        var read = 0L
+        try {
+            while (!cancelled.getAsBoolean() && !Thread.currentThread().isInterrupted) {
+                val count = input.read(buffer)
+                if (count == -1) {
+                    val alphabet = "0123456789abcdef"
+                    val actual = buildString(64) {
+                        for (byte in digest.digest()) {
+                            val value = byte.toInt() and 255
+                            append(alphabet[value ushr 4])
+                            append(alphabet[value and 15])
+                        }
+                    }
+                    return !cancelled.getAsBoolean() && !Thread.currentThread().isInterrupted && read == bytes && actual == sha256
+                }
+                if (count <= 0 || count > bytes - read) return false
+                digest.update(buffer, 0, count)
+                read += count
+            }
+        } catch (unreadable: java.io.IOException) {
+            return false
+        }
+        return false
     }
 
     /** 保存先に実在するファイル。名前照合の候補と、同一性確認 (サイズ・先頭バイト) に使う */
@@ -107,8 +179,9 @@ object MediaSaver {
                     if (c.isNull(1)) continue
                     val row = CameraImportHistoryPlan.Destination(c.getLong(1), c.getInt(2) == 0 && c.getInt(3) == 0)
                     val id = c.getLong(0)
-                    out["content://media/external/images/media/$id"] = row
-                    if (c.getString(4) == "external_primary") out["content://media/external_primary/images/media/$id"] = row
+                    val volume = c.getString(4) ?: continue
+                    out["content://media/$volume/images/media/$id"] = row
+                    if (volume == PhotoStorage.PRIMARY) out["content://media/external/images/media/$id"] = row
                 }
             }
             out
@@ -127,14 +200,18 @@ object MediaSaver {
                 MediaStore.MediaColumns._ID,
                 MediaStore.MediaColumns.DISPLAY_NAME,
                 MediaStore.MediaColumns.SIZE,
+                MediaStore.MediaColumns.VOLUME_NAME,
             ),
             "${MediaStore.MediaColumns.RELATIVE_PATH}=?",
             arrayOf(relPath),
             null,
         )?.use { c ->
             while (c.moveToNext()) {
+                val volume = c.getString(3) ?: continue
+                val actualCollection = if (collection == MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
+                    MediaStore.Video.Media.getContentUri(volume) else MediaStore.Images.Media.getContentUri(volume)
                 out[c.getString(1)] = ExistingFile(
-                    ContentUris.withAppendedId(collection, c.getLong(0)),
+                    ContentUris.withAppendedId(actualCollection, c.getLong(0)),
                     c.getLong(2),
                 )
             }

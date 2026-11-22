@@ -131,7 +131,12 @@ final class ArchiveStore extends SQLiteOpenHelper {
   }
 
   static String key(PhotoRepository.Photo p) throws IOException {
-    return PhotoRepository.digest(p.folder + p.name + ":" + p.size + ":" + p.modified);
+    if (p.movedIdentity != null) return p.movedIdentity.archiveKey();
+    return PhotoRepository.digest(legacyIdentity(p));
+  }
+
+  static String legacyIdentity(PhotoRepository.Photo p) {
+    return p.folder + p.name + ":" + p.size + ":" + p.modified;
   }
 
   static JSONObject base(PhotoRepository.Photo p) throws Exception {
@@ -243,7 +248,8 @@ final class ArchiveStore extends SQLiteOpenHelper {
         j.getLong("modified"),
         j.getLong("taken"),
         j.optLong("added", 0),
-        j.optLong("created", 0));
+        j.optLong("created", 0),
+        new PhotoMoveStore.Identity(j.getString("key"), j.optString("uri")));
   }
 
   PhotoRepository.Preview preview(String key) throws Exception {

@@ -16,6 +16,7 @@ import android.mtp.MtpDevice
 import android.os.IBinder
 import android.widget.Toast
 import jp.nano.rawgallery.R
+import jp.nano.rawgallery.PhotoStorage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -87,6 +88,11 @@ class ImportService : Service() {
                 } else {
                     ImportProgress.finish(getString(R.string.camera_import_notif_busy))
                 }
+            } catch (error: PhotoStorage.Unavailable) {
+                val message = error.message.orEmpty()
+                if (ImportProgress.photo != null) ImportProgress.photoTerminal("failed", message)
+                ImportProgress.finish(message)
+                notify(NOTIF_DONE, notification(message))
             } catch (error: Exception) {
                 ImportLog.w(TAG, "import failed", error)
                 ImportProgress.finish(getString(R.string.camera_import_notif_open_failed))
@@ -108,6 +114,9 @@ class ImportService : Service() {
         cancelled.set(false)
         // 機種名が判明する前から画面に実行中カードを出す (通知だけだと止まって見える)
         ImportProgress.connecting(getString(R.string.camera_import_notif_connecting))
+        PhotoStorage.requireImportReady(this)
+        val volume = PhotoStorage.selected(this)
+        PhotoStorage.requireWritable(this, volume)
         val db = HistoryDb.get(this)
         // 接続直後に装置が応答しないのは両経路に共通する実測で、理由だけが違う。
         // MTP はシステム (設定アプリ) がセッションを先に張るため、マスストレージは
@@ -144,6 +153,7 @@ class ImportService : Service() {
         var device = usbDevice
         while (true) {
             if (ImportProgress.stopRequested) break
+            PhotoStorage.requireWritable(this, volume)
             if (cancelled.get()) {
                 // 抜かれたら素直に終わる。挿し直しは新しい USB_DEVICE_ATTACHED として
                 // 届くので、そちらに任せればよい。
@@ -174,6 +184,7 @@ class ImportService : Service() {
                 fullScan = attempt <= FULL_SCAN_ATTEMPTS,
                 failures = failures,
                 operationMetrics = operationMetrics,
+                volume = volume,
             )
             val r = outcome?.second
             if (wasCancelled()) break
@@ -241,9 +252,12 @@ class ImportService : Service() {
             if (result.deleteRemained > 0) {
                 msg += getString(R.string.camera_import_notif_delete_remained_suffix, result.deleteRemained)
             }
-        } else if (allowDeletion && camera.deleteAfterImport && isMtp && result.imported > 0) {
+        } else if (allowDeletion && camera.deleteAfterImport && isMtp && result.imported > 0 && result.deleteUnverified == 0) {
             // 設定は有効なのに 1 件も消せなかった。カメラ側が DeleteObject を拒む機種がある
             msg += getString(R.string.camera_import_notif_delete_failed_suffix)
+        }
+        if (result.deleteUnverified > 0) {
+            msg += getString(R.string.camera_import_notif_delete_unverified_suffix, result.deleteUnverified)
         }
         if (result.resurrected > 0) {
             // 削除したはずのファイルがカメラ側で復活している (E-P7 実測)。
@@ -295,9 +309,10 @@ class ImportService : Service() {
         fullScan: Boolean,
         failures: MutableList<FailureKind>,
         operationMetrics: CameraImportMetrics?,
+        volume: String,
     ): Pair<Camera, MtpImporter.Result>? {
         val att = Attempt()
-        val task = FutureTask { attemptImport(usbDevice, db, att, requestedKinds, allowDeletion, fullScan, operationMetrics) }
+        val task = FutureTask { attemptImport(usbDevice, db, att, requestedKinds, allowDeletion, fullScan, operationMetrics, volume) }
         thread(name = "import-attempt", isDaemon = true) { task.run() }
         while (true) {
             try {
@@ -339,6 +354,8 @@ class ImportService : Service() {
                     return null
                 }
             } catch (e: Exception) {
+                val storageFailure = e.cause as? PhotoStorage.Unavailable
+                if (storageFailure != null) throw storageFailure
                 ImportLog.w(TAG, "attempt crashed", e)
                 failures += FailureKind.CRASH
                 return null
@@ -355,6 +372,7 @@ class ImportService : Service() {
         allowDeletion: Boolean,
         fullScan: Boolean,
         operationMetrics: CameraImportMetrics?,
+        volume: String,
     ): Pair<Camera, MtpImporter.Result>? {
         val isCancelled = { cancelled.get() || ImportProgress.stopRequested || att.invalidated }
         if (isCancelled()) return null
@@ -367,6 +385,7 @@ class ImportService : Service() {
                 onProgress = progressReporter(camera, att),
                 isCancelled = isCancelled,
                 operationMetrics = operationMetrics,
+                volume = volume,
             )
         }
         val mtp = MtpImporter.open(this, usbDevice) { conn ->
@@ -411,6 +430,7 @@ class ImportService : Service() {
                 isCancelled = isCancelled,
                 onScanAlive = { att.beat() },
                 fullScan = fullScan,
+                volume = volume,
             )
         } finally {
             runCatching { mtp.close() }

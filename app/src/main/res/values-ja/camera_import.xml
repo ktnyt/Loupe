@@ -23,4 +23,5 @@
     <string name="camera_import_notif_delete_remained_suffix">。うち %d 件はカメラ側に残ったままです (この機種では削除が反映されないことがあります)</string>
     <string name="camera_import_notif_resurrected_suffix">。削除したはずの %d 件がカメラ側で復活しています。取り込み済みのため再取得はしません</string>
     <string name="camera_import_notif_degraded_suffix">。RAW の照会を一部省いた縮退モードで走りました。RAW が足りなければもう一度取り込んでください</string>
+    <string name="camera_import_notif_delete_unverified_suffix">。保存内容を確認できなかった%1$d件はカメラに残しました</string>
 </resources>
