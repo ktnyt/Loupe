@@ -1608,15 +1608,16 @@ final class LegacyArchiveMoveChecks {
     try (var phase = new PacedPreflight(true, 1)) {
       mover.set(() -> phase.open(activity, required));
       click(awaitStorageControl(automation, moveButton));
-      awaitStorageControl(automation, node -> hasText(node, "照合する写真を調べています。"));
-      awaitStorageControl(automation, node -> hasText(node, "まだ移動していません。"));
-      require(awaitStorageControl(automation, progressBar).getRangeInfo() == null, "Preparation is indeterminate");
-      assertTouchTarget(test, activity, awaitStorageControl(automation, node -> hasText(node, stopName)), stopName);
+      awaitNode(automation, node -> hasText(node, "照合する写真を調べています。"));
+      awaitNode(automation, node -> hasText(node, "まだ移動していません。"));
+      require(awaitNode(automation, progressBar).getRangeInfo() == null, "Preparation is indeterminate");
+      assertCancelInViewport(test, activity, automation, stopName);
       captureFrame(test, automation, captures, profile + "-preparing");
       phase.preparation.countDown();
       rangeChecks.add(assertReading(test, activity, automation, good, bad, phase, progressBar));
+      assertCancelInViewport(test, activity, automation, stopName);
       captureFrame(test, automation, captures, profile + "-reading-1mib");
-      click(awaitStorageControl(automation, node -> hasText(node, stopName)));
+      click(awaitNode(automation, node -> hasText(node, stopName)));
       assertCancelling(automation, moveName);
       phase.continueRead.countDown();
       awaitStorageControl(automation, node -> hasText(node, "写真の確認を中止しました。"));
@@ -1625,6 +1626,7 @@ final class LegacyArchiveMoveChecks {
       mover.set(() -> phase.open(activity, required));
       click(awaitStorageControl(automation, moveButton));
       rangeChecks.add(assertReading(test, activity, automation, good, bad, phase, progressBar));
+      assertCancelInViewport(test, activity, automation, stopName);
       captureFrame(test, automation, captures, profile + "-reading-4mib");
       phase.continueRead.countDown();
       awaitStorageControl(automation, confirmed);
@@ -1660,25 +1662,38 @@ final class LegacyArchiveMoveChecks {
     }
   }
 
+  private static void assertCancelInViewport(Instrumentation test, Activity activity, UiAutomation automation,
+      String name) {
+    assertTouchTarget(test, activity, awaitNode(automation, node -> hasText(node, name)), name);
+    test.runOnMainSync(() -> {
+      var button = findButton(activity.getWindow().getDecorView(), name);
+      var visible = new Rect();
+      require(button != null && button.getLocalVisibleRect(visible)
+          && visible.width() == button.getWidth() && visible.height() == button.getHeight(),
+          "The entire preflight cancel target fits in the scroll viewport without scrolling");
+    });
+  }
+
   private static void assertCancelling(UiAutomation automation, String moveName) {
-    awaitStorageControl(automation, node -> hasText(node, "写真の確認を中止しています。"));
-    var move = awaitStorageControl(automation, node -> hasText(node, moveName));
-    require(!move.isEnabled(), "Retry stays disabled while the cancelled original read is still open");
-    require(automation.getRootInActiveWindow().findAccessibilityNodeInfosByText("バックアップと写真の内容を照合中").isEmpty(),
+    awaitNode(automation, node -> hasText(node, "写真の確認を中止しています。"));
+    var cancelling = automation.getRootInActiveWindow();
+    require(cancelling.findAccessibilityNodeInfosByText(moveName).stream().noneMatch(AccessibilityNodeInfo::isVisibleToUser),
+        "Retry stays hidden while the cancelled original read is still open");
+    require(cancelling.findAccessibilityNodeInfosByText("バックアップと写真の内容を照合中").isEmpty(),
         "The cancelled original no longer updates the visible phase");
   }
 
   private static String assertReading(Instrumentation test, Activity activity, UiAutomation automation, Seed good, Seed bad,
       PacedPreflight phase, Predicate<AccessibilityNodeInfo> progressBar) throws Exception {
     require(phase.reachedRead.await(8, TimeUnit.SECONDS), "Pause a real original stream midway through the large file");
-    awaitStorageControl(automation, node -> hasText(node, "バックアップと写真の内容を照合中"));
+    awaitNode(automation, node -> hasText(node, "バックアップと写真の内容を照合中"));
     long readBytes = (long) phase.pauseAt + bad.bytes().length;
     long totalBytes = (long) good.bytes().length + bad.bytes().length;
     String bytes = Formatter.formatFileSize(activity, readBytes);
     String total = Formatter.formatFileSize(activity, totalBytes);
-    awaitStorageControl(automation, node -> mentions(node, "1 / 2枚を確認") && mentions(node, "一致 0枚・対象外 1枚")
+    awaitNode(automation, node -> mentions(node, "1 / 2枚を確認") && mentions(node, "一致 0枚・対象外 1枚")
         && mentions(node, "読み取り " + bytes + " / " + total));
-    var node = awaitStorageControl(automation, progressBar);
+    var node = awaitNode(automation, progressBar);
     String cachedRange = readingRange(node.getRangeInfo());
     var nativeState = new AtomicReference<String>();
     test.runOnMainSync(() -> {

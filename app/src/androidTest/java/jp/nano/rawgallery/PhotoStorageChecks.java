@@ -2319,7 +2319,7 @@ final class PhotoStorageChecks {
     return text.contentEquals(node.getText() == null ? "" : node.getText());
   }
 
-  private static AccessibilityNodeInfo awaitNode(UiAutomation automation, Predicate<AccessibilityNodeInfo> match) {
+  static AccessibilityNodeInfo awaitNode(UiAutomation automation, Predicate<AccessibilityNodeInfo> match) {
     long deadline = SystemClock.uptimeMillis() + 6000;
     while (SystemClock.uptimeMillis() < deadline) {
       AccessibilityNodeInfo node = findNode(automation.getRootInActiveWindow(), match);
