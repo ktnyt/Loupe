@@ -416,7 +416,8 @@ public final class CameraDifferentialService extends Service {
         for(int i=0;i<2;i++)try{
             if(sdOriginal)CameraDocumentSource.requireOriginalPermission(this);
             if(check!=null)check.check();
-            return importer.importPhoto(f, copy, null, stable, verify, operationCancelled, beforeCommit, attempt);
+            return importer.importPhoto(f, copy, null, stable, verify, operationCancelled, beforeCommit, attempt,
+                    sdOriginal && stable);
         }catch(InterruptedIOException e){throw e;}catch(CameraDocumentSource.OriginalAccessException
                 | MountedCameraCard.Unavailable | CameraPhotoImporter.SavedPhotoConflict e){throw e;}catch(IOException e){
             if(first==null)first=e;CameraPhotoPublisher.check(operationCancelled);
@@ -515,6 +516,35 @@ public final class CameraDifferentialService extends Service {
         }
     }
 
+    @FunctionalInterface
+    interface SdReceiptMatch { boolean matches(CameraDocumentSource.Entry entry) throws IOException; }
+
+    static List<CameraDocumentSource.Entry> classifySd(List<CameraDocumentSource.Entry> selected,
+            BooleanSupplier stopped, CameraImportMetrics metrics, SdReceiptMatch known, Runnable notifyProgress)
+            throws IOException {
+        long historyStart = SystemClock.elapsedRealtime();
+        var candidates = new ArrayList<CameraDocumentSource.Entry>();
+        try {
+            ImportProgress.INSTANCE.photoHistory(0, selected.size(), 0);
+            notifyProgress.run();
+            for (CameraDocumentSource.Entry entry : selected) {
+                CameraPhotoPublisher.check(stopped);
+                if (known.matches(entry)) metrics.known++;
+                else candidates.add(entry);
+                metrics.checked++;
+                if (metrics.checked % 16 == 0 || metrics.checked == selected.size()) {
+                    ImportProgress.INSTANCE.photoHistory(metrics.checked, selected.size(), metrics.known);
+                    notifyProgress.run();
+                }
+            }
+            CameraPhotoPublisher.check(stopped);
+            metrics.candidates = candidates.size();
+            return candidates;
+        } finally {
+            metrics.historyMs = SystemClock.elapsedRealtime() - historyStart;
+        }
+    }
+
     private void sd(CameraPhotoImporter importer, Uri tree, boolean verify, String sourceVolume,
             Set<MediaTypes.Kind> kinds, String target, long generation) throws IOException {
         CameraDocumentSource.requireOriginalPermission(this);
@@ -526,6 +556,7 @@ public final class CameraDifferentialService extends Service {
             CameraPhotoPublisher.check(bindingStopped);
             requireSdBinding(tree, sourceVolume, target, generation);
             grant.requireFresh();
+            CameraDocumentSource.requireOriginalPermission(this);
         };
         long start = System.nanoTime();
         ImportProgress.INSTANCE.begin("SDカード");
@@ -539,20 +570,26 @@ public final class CameraDifferentialService extends Service {
             runMetrics.listingMs = SystemClock.elapsedRealtime() - listingStart;
             List<CameraDocumentSource.Entry> selected = selectedPhotos(listing.photos, kinds);
             runMetrics.listed = listing.photos.size();
-            runMetrics.candidates = selected.size();
             String noCandidates = noSdCandidates(listing, selected.size());
             if (noCandidates != null) {
                 CameraPhotoPublisher.check(stopped);
+                runMetrics.candidates = 0;
                 runMetrics.terminal("no_candidates");
                 ImportProgress.INSTANCE.finish(noCandidates);
                 return;
             }
             ImportProgress.INSTANCE.photoListing(selected.size(), selected.size());
-            int added = 0, done = 0;
+            boolean stable = listing.stable && sourceVolume != null;
+            var candidates = classifySd(selected, stopped, runMetrics, entry -> !verify && stable
+                    && importer.knownSdRevision(entry.file, stopped, () -> {
+                        requireFreshSource.check();
+                        CameraDocumentSource.requireMappedOriginal(this, entry, sourceVolume, stopped);
+                    }, requireFreshSource), this::notifyProgress);
+            int added = 0;
             long bytes = 0;
             runMetrics.content();
             notifyProgress();
-            for (CameraDocumentSource.Entry entry : selected) {
+            for (CameraDocumentSource.Entry entry : candidates) {
                 CameraPhotoPublisher.check(stopped);
                 CameraPhotoPublisher.CommitCheck check = () -> {
                     requireFreshSource.check();
@@ -563,13 +600,14 @@ public final class CameraDifferentialService extends Service {
                     requireFreshSource.check();
                     CameraDocumentSource.copy(this, entry, out, stopped, sourceVolume);
                     requireFreshSource.check();
-                }, listing.stable, verify, stopped, true, check, requireFreshSource);
+                }, stable && SdSavedPhotoRevision.eligibleSource(entry.file), verify, stopped, true,
+                        check, requireFreshSource);
                 if (result.imported) { added++; runMetrics.saved++; }
-                else runMetrics.matches++;
+                else if (result.contentChecked) runMetrics.matches++;
                 bytes += result.sourceBytesRead;
                 runMetrics.processed++;
                 runMetrics.content();
-                ImportProgress.INSTANCE.update(++done, selected.size());
+                ImportProgress.INSTANCE.update(runMetrics.processed, candidates.size());
                 notifyProgress();
             }
             CameraDocumentSource.requireOriginalPermission(this);
@@ -577,7 +615,7 @@ public final class CameraDifferentialService extends Service {
             // belongs to the next import, not the outcome of this completed batch.
             CameraPhotoPublisher.check(bindingStopped);
             requireSdBinding(tree, sourceVolume, target, generation);
-            finish(added, done, bytes, start, true);
+            finish(added, selected.size(), bytes, start, true);
         } catch (InterruptedIOException interrupted) {
             if (!cancelled.getAsBoolean()) {
                 requireSdBinding(tree, sourceVolume, target, generation);

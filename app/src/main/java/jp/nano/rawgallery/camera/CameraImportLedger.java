@@ -20,7 +20,7 @@ public final class CameraImportLedger extends SQLiteOpenHelper {
         return instance;
     }
     public CameraImportLedger(Context context, String name) {
-        super(context, name, null, 3);
+        super(context, name, null, 4);
         setWriteAheadLoggingEnabled(true);
     }
     @Override public void onConfigure(SQLiteDatabase db) { db.setForeignKeyConstraintsEnabled(true); }
@@ -30,6 +30,7 @@ public final class CameraImportLedger extends SQLiteOpenHelper {
         db.execSQL("CREATE INDEX receipts_source ON receipts(source_id)");
         db.execSQL("CREATE INDEX contents_capture ON contents(capture_group)");
         db.execSQL("CREATE TABLE pending (token TEXT PRIMARY KEY,source_id TEXT NOT NULL,relative_path TEXT NOT NULL,source_bytes INTEGER NOT NULL,source_stamp TEXT NOT NULL,capture_seconds INTEGER NOT NULL,source_sha TEXT NOT NULL UNIQUE,stored_sha TEXT NOT NULL,stored_bytes INTEGER NOT NULL,kind TEXT NOT NULL,capture_group TEXT NOT NULL,pending_name TEXT NOT NULL,final_name TEXT NOT NULL,relative_folder TEXT NOT NULL,target_uri TEXT,ready INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,volume TEXT NOT NULL,replacement_witness TEXT)");
+        createSdRevisions(db);
     }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
         if (oldVersion < 2) {
@@ -37,6 +38,52 @@ public final class CameraImportLedger extends SQLiteOpenHelper {
             db.execSQL("ALTER TABLE pending ADD COLUMN volume TEXT NOT NULL DEFAULT 'external_primary'");
         }
         if (oldVersion < 3) db.execSQL("ALTER TABLE pending ADD COLUMN replacement_witness TEXT");
+        if (oldVersion < 4) createSdRevisions(db);
+    }
+
+    private static void createSdRevisions(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE sd_saved_revisions (source_sha TEXT PRIMARY KEY NOT NULL REFERENCES contents(source_sha)"
+                + " ON DELETE CASCADE, dest_uri TEXT NOT NULL, stored_sha TEXT NOT NULL, stored_bytes INTEGER NOT NULL,"
+                + " epoch TEXT NOT NULL, generation_added INTEGER NOT NULL, generation_modified INTEGER NOT NULL)");
+        db.execSQL("CREATE TRIGGER invalidate_sd_saved_revision AFTER UPDATE OF dest_uri,stored_sha,stored_bytes ON contents"
+                + " WHEN OLD.dest_uri<>NEW.dest_uri OR OLD.stored_sha<>NEW.stored_sha OR OLD.stored_bytes<>NEW.stored_bytes"
+                + " BEGIN DELETE FROM sd_saved_revisions WHERE source_sha=OLD.source_sha; END");
+    }
+
+    synchronized SdSavedPhotoRevision sdRevision(String sourceSha) {
+        try (Cursor row = getReadableDatabase().rawQuery("SELECT dest_uri,stored_sha,stored_bytes,epoch,"
+                + "generation_added,generation_modified FROM sd_saved_revisions WHERE source_sha=?",
+                new String[]{sourceSha})) {
+            return row.moveToFirst() ? new SdSavedPhotoRevision(row.getString(0), row.getString(1), row.getLong(2),
+                    row.getString(3), row.getLong(4), row.getLong(5)) : null;
+        }
+    }
+
+    /** The caller has just hashed this exact published revision with the SD grant still active. */
+    synchronized void rememberSdRevision(Content expected, SdSavedPhotoRevision proof) {
+        if (!proof.matchesContent(expected)) throw new IllegalArgumentException("Saved revision differs from content");
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            if (expected.sameRow(find(expected.sourceSha, expected.sourceBytes))) {
+                ContentValues values = new ContentValues();
+                values.put("source_sha", expected.sourceSha);
+                values.put("dest_uri", proof.uri());
+                values.put("stored_sha", proof.storedSha());
+                values.put("stored_bytes", proof.storedBytes());
+                values.put("epoch", proof.epoch());
+                values.put("generation_added", proof.generationAdded());
+                values.put("generation_modified", proof.generationModified());
+                if (db.insertWithOnConflict("sd_saved_revisions", null, values, SQLiteDatabase.CONFLICT_REPLACE) < 0)
+                    throw new IllegalStateException("Saved revision could not be recorded");
+            }
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+    }
+
+    synchronized void forgetSdRevision(Content content) {
+        getWritableDatabase().delete("sd_saved_revisions", "source_sha=? AND dest_uri=? AND stored_sha=? AND stored_bytes=?",
+                new String[]{content.sourceSha, content.uri, content.storedSha, Long.toString(content.storedBytes)});
     }
     public static final class Content {
         public final String sourceSha, storedSha, uri, kind, captureGroup;

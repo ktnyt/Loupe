@@ -98,7 +98,11 @@ public final class CameraDocumentSource {
         return boundedMetadata(cancelled, timeoutMs, signal -> readListing(resolver, tree, identity, cancelled, signal));
     }
 
-    private interface MetadataQuery<T> { T query(CancellationSignal signal) throws IOException; }
+    interface MetadataQuery<T> { T query(CancellationSignal signal) throws IOException; }
+
+    static <T> T boundedMetadata(BooleanSupplier cancelled, MetadataQuery<T> query) throws IOException {
+        return boundedMetadata(cancelled, LISTING_TIMEOUT_MS, query);
+    }
 
     private static <T> T boundedMetadata(BooleanSupplier cancelled, long timeoutMs, MetadataQuery<T> query)
             throws IOException {

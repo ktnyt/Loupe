@@ -7,6 +7,9 @@ import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
 import android.provider.DocumentsContract;
+import android.system.ErrnoException;
+import android.system.Os;
+import android.system.OsConstants;
 import java.io.*;
 import jp.nano.rawgallery.PhotoStorage;
 import java.security.*;
@@ -87,9 +90,9 @@ public final class CameraPhotoPublisher {
             if(target==null)throw new IOException("Photo insert failed");
             faults.after(Boundary.URI_INSERTED);
             ledger.attach(p.token,target.toString());p=ledger.pending(p.token);
+            Revision allocated = new Revision(requirePublicationRow(p, target, true), epoch(p.volume));
             faults.after(Boundary.URI_RECORDED);
-            ParcelFileDescriptor fd=resolver.openFileDescriptor(target,"w");
-            if(fd==null)throw new IOException("Photo output could not be opened");
+            ParcelFileDescriptor fd = openPendingForWrite(p, target, allocated, cancelled);
             try(InputStream input=new FileInputStream(staged); ParcelFileDescriptor.AutoCloseOutputStream out=new ParcelFileDescriptor.AutoCloseOutputStream(fd)) {
 
                     byte[] buf=new byte[65536];int n;long total=0;
@@ -294,6 +297,40 @@ public final class CameraPhotoPublisher {
         return row;
     }
 
+    private ParcelFileDescriptor openPendingForWrite(CameraImportLedger.Pending p, Uri target, Revision expected,
+            BooleanSupplier cancelled) throws IOException {
+        requirePendingRevision(p, target, expected);
+        // Open without truncation. Match the write descriptor to the current readable inode before
+        // mutating it, since a replacement or external publication can race the URI open.
+        ParcelFileDescriptor writable = resolver.openFileDescriptor(target, "rw");
+        if (writable == null) throw new IOException("Photo output could not be opened");
+        boolean accepted = false;
+        try {
+            try (ParcelFileDescriptor readable = resolver.openFileDescriptor(target, "r")) {
+                if (readable == null) throw new IOException("Pending photo could not be checked");
+                var opened = Os.fstat(writable.getFileDescriptor());
+                var current = Os.fstat(readable.getFileDescriptor());
+                if (!OsConstants.S_ISREG(opened.st_mode) || !OsConstants.S_ISREG(current.st_mode)
+                        || opened.st_dev != current.st_dev || opened.st_ino != current.st_ino)
+                    throw new IOException("Pending photo file changed");
+                requirePendingRevision(p, target, expected);
+                check(cancelled);
+                Os.ftruncate(writable.getFileDescriptor(), 0);
+            }
+            accepted = true;
+            return writable;
+        } catch (ErrnoException invalid) {
+            throw new IOException("Pending photo output could not be checked", invalid);
+        } finally {
+            if (!accepted) writable.close();
+        }
+    }
+
+    private void requirePendingRevision(CameraImportLedger.Pending p, Uri uri, Revision expected) throws IOException {
+        if (!expected.row().equals(requirePublicationRow(p, uri, true)) || !expected.epoch().equals(epoch(p.volume)))
+            throw new IOException("Pending photo changed before writing");
+    }
+
     private Revision verify(CameraImportLedger.Pending p, Uri uri, boolean pending, BooleanSupplier cancelled)
             throws IOException {
         String version = epoch(p.volume);
@@ -351,6 +388,7 @@ public final class CameraPhotoPublisher {
         if (verifiedPending != null && (!published.epoch().equals(verifiedPending.epoch())
                 || published.row().generationAdded() != verifiedPending.row().generationAdded()))
             throw new IOException("Published photo identity changed");
+        requirePublicationContent(p);
         if (!published.row().equals(requirePublicationRow(p, uri, false))
                 || !published.epoch().equals(epoch(p.volume)))
             throw new IOException("Published photo changed before receipt");
@@ -362,7 +400,7 @@ public final class CameraPhotoPublisher {
         State state = uri == null ? null : state(uri);
         // Keep the journal as the original comparison witness if the saved row changes.
         // Discarding it would let a later attempt select a different missing destination.
-        requireReplacementWitness(p);
+        requirePublicationContent(p, uri == null ? p.uri : uri.toString());
         if (state != null) {
             owned(state);
             if (!state.pending()) throw new IOException("Published photo needs receipt recovery");
@@ -381,6 +419,10 @@ public final class CameraPhotoPublisher {
         ledger.discard(p.token);
     }
     private void requirePublicationContent(CameraImportLedger.Pending p) throws IOException {
+        requirePublicationContent(p, p.uri);
+    }
+
+    private void requirePublicationContent(CameraImportLedger.Pending p, String targetUri) throws IOException {
         if (p.replacement != null) {
             requireReplacementWitness(p);
             return;
@@ -388,9 +430,9 @@ public final class CameraPhotoPublisher {
         // A migrated journal without a witness can finish a new or idempotent publication.
         // It cannot authorize replacing a different destination selected after allocation.
         CameraImportLedger.Content current = ledger.find(p.sourceSha, p.source.bytes);
-        if (current != null && (!p.uri.equals(current.uri) || !p.storedSha.equals(current.storedSha)
+        if (current != null && (!current.uri.equals(targetUri) || !p.storedSha.equals(current.storedSha)
                 || p.storedBytes != current.storedBytes))
-            throw new IOException("Saved photo changed before publication");
+            throw new CameraPhotoImporter.SavedPhotoConflict("以前の取り込み先が変わりました。保存先を確認してください。");
     }
 
     private void requireReplacementWitness(CameraImportLedger.Pending p) throws IOException {
@@ -412,7 +454,7 @@ public final class CameraPhotoPublisher {
             State state = uri == null ? null : state(uri);
             if (state == null) {
                 PhotoStorage.requireMounted(context, MediaStore.Images.Media.getContentUri(initial.volume));
-                requireReplacementWitness(initial);
+                requirePublicationContent(initial);
                 ledger.discard(initial.token);
                 continue;
             }

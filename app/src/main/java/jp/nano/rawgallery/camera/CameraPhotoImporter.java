@@ -39,18 +39,55 @@ public final class CameraPhotoImporter {
         this.defaultFolder=HistoryDb.Companion.get(this.context).defaultPhotoFolder();
     }
     public void recover(BooleanSupplier cancelled)throws IOException {publisher.recover(cancelled);}
+
+    boolean knownSdRevision(CameraImportFile source, BooleanSupplier stopped,
+            CameraPhotoPublisher.CommitCheck requireMappedSource, CameraPhotoPublisher.CommitCheck requireFreshSource)
+            throws IOException {
+        if (!SdSavedPhotoRevision.eligibleSource(source)) return false;
+        requireLibraryPermission();
+        CameraImportLedger.Content content = ledger.known(source);
+        if (content == null) return false;
+        SdSavedPhotoRevision proof = ledger.sdRevision(content.sourceSha);
+        if (proof == null || !proof.matchesContent(content)) return false;
+        requireMappedSource.check();
+        if (!proof.equals(SdSavedPhotoRevision.capture(context, content, stopped))) return false;
+        requireFreshSource.check();
+        requireLibraryPermission();
+        return content.sameRow(ledger.known(source)) && proof.equals(ledger.sdRevision(content.sourceSha));
+    }
+
     private boolean available(CameraImportLedger.Content content,BooleanSupplier cancelled)throws IOException {
+        return available(content, cancelled, false, false, CameraPhotoPublisher.NO_COMMIT_CHECK);
+    }
+
+    private boolean available(CameraImportLedger.Content content, BooleanSupplier cancelled, boolean seedSd,
+            boolean clearSdOnMismatch, CameraPhotoPublisher.CommitCheck beforeCommit) throws IOException {
         Uri uri=Uri.parse(content.uri);
         if (!CameraPhotoPublisher.savedPhotoExists(context, uri)) return false;
+        SdSavedPhotoRevision before = seedSd ? SdSavedPhotoRevision.capture(context, content, cancelled) : null;
         try(InputStream in=context.getContentResolver().openInputStream(uri)) {
             if(in==null)throw new IOException("Saved photo unavailable");
             java.security.MessageDigest digest=java.security.MessageDigest.getInstance("SHA-256");
             byte[] buf=new byte[65536];int n;long size=0;
-            while((n=in.read(buf))!=-1){CameraPhotoPublisher.check(cancelled);size+=n;if(metrics!=null)metrics.destinationBytes+=n;if(size>content.storedBytes)throw new IOException("Saved photo changed");digest.update(buf,0,n);}
+            while((n=in.read(buf))!=-1){
+                CameraPhotoPublisher.check(cancelled);
+                size+=n;
+                if(metrics!=null)metrics.destinationBytes+=n;
+                if(size>content.storedBytes)break;
+                digest.update(buf,0,n);
+            }
             StringBuilder sha=new StringBuilder();for(byte b:digest.digest())sha.append(String.format(java.util.Locale.ROOT,"%02x",b&255));
-            if(size!=content.storedBytes||!sha.toString().equals(content.storedSha))throw new IOException("Saved photo changed");
-            return true;
+            if(size!=content.storedBytes||!sha.toString().equals(content.storedSha)) {
+                if (clearSdOnMismatch) ledger.forgetSdRevision(content);
+                throw new IOException("Saved photo changed");
+            }
         }catch(java.security.NoSuchAlgorithmException impossible){throw new AssertionError(impossible);}
+        if (before != null && before.equals(SdSavedPhotoRevision.capture(context, content, cancelled))) {
+            beforeCommit.check();
+            requireLibraryPermission();
+            ledger.rememberSdRevision(content, before);
+        }
+        return true;
     }
     public Result importPhoto(CameraImportFile source,CameraImportCopy.Copy copy,String folderHint,boolean stableSource,boolean verifyAll,BooleanSupplier cancelled)throws IOException {
         return importPhoto(source, copy, folderHint, stableSource, verifyAll, cancelled, CameraPhotoPublisher.NO_COMMIT_CHECK);
@@ -64,14 +101,26 @@ public final class CameraPhotoImporter {
     Result importPhoto(CameraImportFile source, CameraImportCopy.Copy copy, String folderHint, boolean stableSource,
             boolean verifyAll, BooleanSupplier cancelled, CameraPhotoPublisher.CommitCheck beforeCommit, Attempt attempt)
             throws IOException {
-        CameraPhotoPublisher.check(cancelled);
+        return importPhoto(source, copy, folderHint, stableSource, verifyAll, cancelled, beforeCommit, attempt, false);
+    }
+
+    private void requireLibraryPermission() throws IOException {
         String read=android.os.Build.VERSION.SDK_INT>=33?android.Manifest.permission.READ_MEDIA_IMAGES:android.Manifest.permission.READ_EXTERNAL_STORAGE;
-        if(context.checkSelfPermission(read)!=android.content.pm.PackageManager.PERMISSION_GRANTED)throw new IOException("Full photo access required for duplicate verification");
+        if(context.checkSelfPermission(read)!=android.content.pm.PackageManager.PERMISSION_GRANTED)
+            throw new IOException("Full photo access required for duplicate verification");
+    }
+
+    Result importPhoto(CameraImportFile source, CameraImportCopy.Copy copy, String folderHint, boolean stableSource,
+            boolean verifyAll, BooleanSupplier cancelled, CameraPhotoPublisher.CommitCheck beforeCommit, Attempt attempt,
+            boolean sdProofs) throws IOException {
+        CameraPhotoPublisher.check(cancelled);
+        requireLibraryPermission();
+        boolean seedSd = sdProofs && SdSavedPhotoRevision.eligibleSource(source);
         if(stableSource&&!verifyAll&&attempt.firstMissing==null) {
             CameraImportLedger.Content known=ledger.known(source);
-            if(known!=null&&available(known,cancelled)) {
+            if(known!=null&&available(known,cancelled,seedSd,sdProofs,beforeCommit)) {
                 beforeCommit.check();
-                return new Result(Uri.parse(known.uri),false,false,0);
+                return new Result(Uri.parse(known.uri),false,sdProofs,0);
             }
             attempt.firstMissing = known;
         }
@@ -86,8 +135,9 @@ public final class CameraPhotoImporter {
                     throw new SavedPhotoConflict("以前の取り込み先が変わりました。保存先を確認してください。");
                 missing = firstMissing;
                 existing = null;
-            } else if (existing != null && !available(existing, cancelled)) {
+            } else if (existing != null && !available(existing, cancelled, seedSd, sdProofs, beforeCommit)) {
                 missing = existing;
+                attempt.firstMissing = existing;
                 existing = null;
             }
             CameraImportLegacy.Evidence adopted=existing==null?CameraImportLegacy.existing(context,source,prepared.file,cancelled,n->{if(metrics!=null)metrics.legacyBytes+=n;}):null;

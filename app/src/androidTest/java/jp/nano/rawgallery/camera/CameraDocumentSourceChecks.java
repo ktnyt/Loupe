@@ -342,6 +342,8 @@ public final class CameraDocumentSourceChecks {
             unreadyReplacementConflict(context, true);
             replacementRecovery(context);
             publicationRevisionRaces(context);
+            returnedReplacementDuringReadback(context, false);
+            returnedReplacementDuringReadback(context, true);
             conditionalPendingCleanup(context);
             migrateReplacementWitness(context);
         }
@@ -990,6 +992,25 @@ public final class CameraDocumentSourceChecks {
             require(old.sameRow(ledger.known(source)) && receiptRows(ledger).equals(oldReceipts)
                             && ledger.pending().isEmpty() && ledger.contentCount() == 1,
                     "same source tuple with different bytes keeps its previous receipt and saved record");
+            var strictAttempt = new CameraPhotoImporter.Attempt();
+            try {
+                importer.importPhoto(source, out -> java.nio.file.Files.copy(original.toPath(), out),
+                        "camera-first-missing", true, true, () -> false,
+                        () -> { throw new IOException("fixture pre-READY interruption"); }, strictAttempt);
+                throw new AssertionError("explicit verification reached publication despite injected interruption");
+            } catch (IOException expected) {
+                require(expected.getMessage().contains("pre-READY interruption"), "fixture reached explicit full-read replacement");
+            }
+            require(ledger.relocate(oldUri.toString(), null, movedUri.toString(), sha),
+                    "saved destination changes after explicit full-read retry starts");
+            try {
+                importer.importPhoto(source, out -> java.nio.file.Files.copy(original.toPath(), out),
+                        "camera-first-missing", true, true, () -> false,
+                        CameraPhotoPublisher.NO_COMMIT_CHECK, strictAttempt);
+                throw new AssertionError("explicit retry reselected the newer absent row");
+            } catch (CameraPhotoImporter.SavedPhotoConflict expected) { }
+            require(ledger.known(source).uri.equals(movedUri.toString()) && receiptRows(ledger).equals(oldReceipts)
+                            && ledger.pending().isEmpty(), "full-read attempt preserves its initial witness across retries");
         } finally {
             require(context.deleteDatabase(database) && original.delete(), "isolated initial witness fixture removed");
         }
@@ -1042,9 +1063,8 @@ public final class CameraDocumentSourceChecks {
             try {
                 recovery.recover(() -> false);
                 throw new AssertionError("A legacy READY journal inferred replacement authority");
-            } catch (IOException expected) {
-                require(expected.getMessage().contains("changed before publication")
-                                && ledger.pending(pending.token).ready && countNamedMedia(context, name) == 0,
+            } catch (CameraPhotoImporter.SavedPhotoConflict expected) {
+                require(ledger.pending(pending.token).ready && countNamedMedia(context, name) == 0,
                         "legacy READY retains pending bytes without replacing existing history");
             }
             legacy.put("replacement_witness", old.encodeWitness());
@@ -1134,6 +1154,7 @@ public final class CameraDocumentSourceChecks {
     }
 
     private static void publicationRevisionRaces(Context context) throws IOException {
+        targetBytesChanged(context, CameraPhotoPublisher.Boundary.URI_RECORDED, false);
         targetBytesChanged(context, CameraPhotoPublisher.Boundary.FILE_VERIFIED, false);
         targetBytesChanged(context, CameraPhotoPublisher.Boundary.PUBLISHED, false);
         targetBytesChanged(context, CameraPhotoPublisher.Boundary.FILE_VERIFIED, true);
@@ -1157,6 +1178,13 @@ public final class CameraDocumentSourceChecks {
                 if (reached != boundary) return;
                 target[0] = Uri.parse(ledger.pending().get(0).uri);
                 if (recoverRace) throw new ProcessLoss();
+                if (boundary == CameraPhotoPublisher.Boundary.URI_RECORDED) {
+                    var visible = new ContentValues();
+                    visible.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+                    visible.put(MediaStore.MediaColumns.IS_PENDING, 0);
+                    require(resolver.update(target[0], visible, null, null) == 1,
+                            "fixture makes the recorded target visible before the first write");
+                }
                 replaceTargetBytes(resolver, target[0], changed);
                 mutation.set(true);
             });
@@ -1192,16 +1220,79 @@ public final class CameraDocumentSourceChecks {
             } catch (IOException expected) {
                 require(mutation.get(), "recovery refused the target after a real mutation");
             }
-            require(ledger.pending().size() == 1 && ledger.pending().get(0).ready
+            boolean beforeReady = boundary == CameraPhotoPublisher.Boundary.URI_RECORDED;
+            require(ledger.pending().size() == 1 && ledger.pending().get(0).ready != beforeReady
                             && ledger.contentCount() == 0 && ledger.receiptCount() == 0
-                            && countNamedMedia(context, name) == (boundary == CameraPhotoPublisher.Boundary.PUBLISHED ? 1 : 0),
-                    "target mutation retains READY and does not add a receipt or publish a changed pending revision");
+                            && countNamedMedia(context, name)
+                            == (beforeReady || boundary == CameraPhotoPublisher.Boundary.PUBLISHED ? 1 : 0),
+                    "target mutation retains journal and does not add a receipt or publish a changed pending revision");
             try (var input = resolver.openInputStream(target[0])) {
                 require(Arrays.equals(input.readAllBytes(), changed), "the changed target bytes are retained for diagnosis");
             }
         } finally {
             if (target[0] != null) resolver.delete(target[0], null, null);
             require(context.deleteDatabase(database) && staged.delete(), "isolated target race fixture removed");
+        }
+    }
+
+    private static void returnedReplacementDuringReadback(Context context, boolean recover) throws IOException {
+        String database = "camera-returned-replacement-" + UUID.randomUUID() + ".db";
+        File staged = File.createTempFile("sd-returned-replacement-", ".jpg", context.getCacheDir());
+        String volume = jp.nano.rawgallery.PhotoStorage.PRIMARY;
+        String name = "returned-replacement-" + UUID.randomUUID() + ".JPG";
+        var resolver = context.getContentResolver();
+        Uri oldUri = ContentUris.withAppendedId(MediaStore.Images.Media.getContentUri(volume), 123456789L);
+        Uri target = null;
+        try (var ledger = new CameraImportLedger(context, database)) {
+            try (var output = new FileOutputStream(staged)) { output.write(ORIGINAL); }
+            var source = new CameraImportFile("sd:returned-replacement", "DCIM/" + name, staged.length(), "mtime", 1);
+            String sha = hexDigest(ORIGINAL);
+            var former = ledger.adopt(source, sha, sha, source.bytes, oldUri.toString(), "JPEG", "fixture");
+            var receipts = receiptRows(ledger);
+            String folder = CameraPhotoPublisher.folder("camera-returned-replacement", false);
+            var published = new AtomicBoolean();
+            var returned = new AtomicBoolean();
+            CameraPhotoPublisher.MetadataQuery metadata = (uri, fields, args) -> {
+                if (!oldUri.equals(uri)) return resolver.query(uri, fields, args, null);
+                var cursor = new MatrixCursor(fields);
+                if (returned.get()) cursor.addRow(new Object[]{ContentUris.parseId(oldUri), 0, 0});
+                return cursor;
+            };
+            var publisher = new CameraPhotoPublisher(context, ledger, volume, reached -> {
+                if (reached == CameraPhotoPublisher.Boundary.FILE_VERIFIED && recover) throw new ProcessLoss();
+                if (reached == CameraPhotoPublisher.Boundary.PUBLISHED) published.set(true);
+            }, metadata);
+            publisher.setReadCounter(count -> { if (published.get()) returned.set(true); });
+            try {
+                publisher.publish(source, staged, sha, "JPEG", folder, "fixture", () -> false,
+                        CameraPhotoPublisher.NO_COMMIT_CHECK, former);
+                throw new AssertionError("returned old destination allowed a new receipt");
+            } catch (ProcessLoss interrupted) {
+                require(recover, "only the recovery fixture stops after READY");
+            } catch (CameraPhotoImporter.SavedPhotoConflict expected) {
+                require(!recover && returned.get(), "old destination reappeared during normal visible verification");
+            } finally {
+                if (!ledger.pending().isEmpty()) target = Uri.parse(ledger.pending().get(0).uri);
+            }
+            if (recover) {
+                var recovery = new CameraPhotoPublisher(context, ledger, volume, reached -> {
+                    if (reached == CameraPhotoPublisher.Boundary.PUBLISHED) published.set(true);
+                }, metadata);
+                recovery.setReadCounter(count -> { if (published.get()) returned.set(true); });
+                try {
+                    recovery.recover(() -> false);
+                    throw new AssertionError("recovery replaced the old destination that reappeared during verification");
+                } catch (CameraPhotoImporter.SavedPhotoConflict expected) {
+                    require(returned.get(), "old destination reappeared during recovery visible verification");
+                }
+            }
+            require(target != null && ledger.pending().size() == 1 && ledger.pending().get(0).ready
+                            && former.sameRow(ledger.known(source)) && receiptRows(ledger).equals(receipts)
+                            && countNamedMedia(context, name) == 1,
+                    "old row and receipts survive alongside the verified-but-uncommitted target");
+        } finally {
+            if (target != null) resolver.delete(target, null, null);
+            require(context.deleteDatabase(database) && staged.delete(), "isolated returning replacement fixture removed");
         }
     }
 
@@ -1270,12 +1361,12 @@ public final class CameraDocumentSourceChecks {
         }
     }
 
-    private static void migrateReplacementWitness(Context context) {
+    private static void migrateReplacementWitness(Context context) throws IOException {
         String templateName = "camera-witness-schema-" + UUID.randomUUID() + ".db";
         List<String> schema = new ArrayList<>();
         try (var template = new CameraImportLedger(context, templateName);
                 Cursor rows = template.getReadableDatabase().rawQuery(
-                        "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL"
+                        "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL AND type IN ('table','index')"
                                 + " AND tbl_name IN ('contents','receipts','pending') ORDER BY rowid", null)) {
             while (rows.moveToNext()) schema.add(rows.getString(0));
         } finally {
@@ -1285,13 +1376,29 @@ public final class CameraDocumentSourceChecks {
         var source = entry().file;
         String volume = jp.nano.rawgallery.PhotoStorage.PRIMARY;
         String saved = ContentUris.withAppendedId(MediaStore.Images.Media.getContentUri(volume), 11).toString();
-        String target = ContentUris.withAppendedId(MediaStore.Images.Media.getContentUri(volume), 12).toString();
-        for (int version : new int[]{1, 2}) {
+        String placeholder = ContentUris.withAppendedId(MediaStore.Images.Media.getContentUri(volume), 12).toString();
+        for (int version : new int[]{1, 2, 3}) {
             String name = "camera-witness-v" + version + "-" + UUID.randomUUID() + ".db";
+            String pendingName = "__loupe_fixture-" + UUID.randomUUID() + ".JPG";
+            String folder = "Pictures/CameraSync/legacy-witness-fixture/";
+            var resolver = context.getContentResolver();
+            Uri owned = null;
             try {
+                if (version == 2) {
+                    var values = new ContentValues();
+                    values.put(MediaStore.MediaColumns.DISPLAY_NAME, pendingName);
+                    values.put(MediaStore.MediaColumns.RELATIVE_PATH, folder);
+                    values.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg");
+                    values.put(MediaStore.MediaColumns.IS_PENDING, 1);
+                    owned = resolver.insert(MediaStore.Images.Media.getContentUri(volume), values);
+                    require(owned != null, "legacy conflict fixture has an owned pending file");
+                    replaceTargetBytes(resolver, owned, ORIGINAL);
+                }
+                String target = owned == null ? placeholder : owned.toString();
+                String pendingVolume = version == 3 ? "abcd-1234" : volume;
                 try (SQLiteDatabase old = context.openOrCreateDatabase(name, Context.MODE_PRIVATE, null)) {
                     for (String sql : schema) {
-                        String versioned = sql.replace(",replacement_witness TEXT", "");
+                        String versioned = version < 3 ? sql.replace(",replacement_witness TEXT", "") : sql;
                         if (version == 1) versioned = versioned.replace(",volume TEXT NOT NULL", "");
                         old.execSQL(versioned);
                     }
@@ -1303,30 +1410,48 @@ public final class CameraDocumentSourceChecks {
                     String columns = "token,source_id,relative_path,source_bytes,source_stamp,capture_seconds,"
                             + "source_sha,stored_sha,stored_bytes,kind,capture_group,pending_name,final_name,"
                             + "relative_folder,target_uri,ready,created_at";
-                    old.execSQL("INSERT INTO pending(" + columns + ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                            new Object[]{"legacy", source.sourceId, source.relativePath, source.bytes, source.sourceStamp,
-                                    source.captureSeconds, sha, sha, source.bytes, "JPEG", "fixture", "__loupe_fixture.JPG",
-                                    source.name, "Pictures/CameraSync/fixture/", target, 1, 19});
-                    if (version == 2) old.execSQL("UPDATE pending SET volume=?", new Object[]{"abcd-1234"});
+                    var args = new ArrayList<Object>(Arrays.asList("legacy", source.sourceId, source.relativePath, source.bytes, source.sourceStamp,
+                                    source.captureSeconds, sha, sha, source.bytes, "JPEG", "fixture", pendingName,
+                                    source.name, folder, target, version == 2 ? 0 : 1, 19));
+                    if (version >= 2) {
+                        columns += ",volume";
+                        args.add(pendingVolume);
+                    }
+                    old.execSQL("INSERT INTO pending(" + columns + ") VALUES("
+                            + String.join(",", Collections.nCopies(args.size(), "?")) + ")", args.toArray());
                     old.setVersion(version);
                 }
                 try (var migrated = new CameraImportLedger(context, name)) {
                     var content = migrated.known(source);
                     var journal = migrated.pending("legacy");
-                    require(migrated.getReadableDatabase().getVersion() == 3 && migrated.contentCount() == 1
+                    require(migrated.getReadableDatabase().getVersion() == 4 && migrated.contentCount() == 1
                                     && migrated.receiptCount() == 1 && migrated.pending().size() == 1
                                     && content.createdAt == 17 && content.uri.equals(saved)
                                     && receiptRows(migrated).get(0).get(7).equals("18")
-                                    && journal.ready && journal.uri.equals(target) && journal.replacement == null
+                                    && journal.ready == (version != 2) && journal.uri.equals(target) && journal.replacement == null
+                                    && migrated.sdRevision(sha) == null
                                     && journal.source.sourceKey().equals(source.sourceKey())
-                                    && journal.volume.equals(version == 1 ? volume : "abcd-1234"),
+                                    && journal.volume.equals(pendingVolume),
                             "legacy migration preserves content, receipt and READY state without inventing authority");
                     try (Cursor row = migrated.getReadableDatabase().rawQuery(
                             "SELECT created_at FROM pending WHERE token='legacy'", null)) {
                         require(row.moveToFirst() && row.getLong(0) == 19, "legacy pending timestamp preserved");
                     }
+                    if (version == 2) {
+                        try {
+                            new CameraPhotoImporter(context, migrated, volume).recover(() -> false);
+                            throw new AssertionError("legacy cleanup discarded an unproven replacement");
+                        } catch (CameraPhotoImporter.SavedPhotoConflict expected) { }
+                        require(migrated.pending("legacy") != null && content.sameRow(migrated.known(source))
+                                        && migrated.receiptCount() == 1,
+                                "legacy cleanup with a competing content row retains the journal and history");
+                        try (var input = resolver.openInputStream(owned)) {
+                            require(Arrays.equals(input.readAllBytes(), ORIGINAL), "legacy conflict retains the pending bytes");
+                        }
+                    }
                 }
             } finally {
+                if (owned != null) resolver.delete(owned, null, null);
                 require(context.deleteDatabase(name), "isolated legacy migration fixture removed");
             }
         }

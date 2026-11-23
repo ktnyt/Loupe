@@ -416,6 +416,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
         else if(cameraPilotMode.equals("camera-pilot-sd-source-diagnostic"))result=CameraImportPilotChecks.runSdSourceDiagnostic(this,cameraPilotArguments);
         else if(cameraPilotMode.equals("camera-pilot-sd-source-synthetic"))result=CameraImportPilotChecks.runSdSourceDiagnosticSyntheticChecks();
         else if(cameraPilotMode.equals("camera-pilot-sd-original"))result=jp.nano.rawgallery.camera.CameraDocumentSourceChecks.run(this);
+        else if(cameraPilotMode.equals("camera-pilot-sd-revision"))result=jp.nano.rawgallery.camera.SdSavedRevisionChecks.run(this);
         else if(cameraPilotMode.equals("camera-pilot-paired-guards"))result=CameraPairedPilotChecks.guardChecks(this);
         else if(cameraPilotMode.equals("camera-pilot-paired-wifi"))result=CameraPairedPilotChecks.run(this);
         else if(cameraPilotMode.equals("camera-pilot-paired-session"))result=jp.nano.rawgallery.camera.CameraPairedSessionChecks.run();
