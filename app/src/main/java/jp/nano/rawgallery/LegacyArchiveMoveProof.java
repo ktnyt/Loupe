@@ -11,6 +11,7 @@ import java.io.InterruptedIOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
 import java.util.regex.Pattern;
@@ -23,6 +24,7 @@ import org.json.JSONObject;
 final class LegacyArchiveMoveProof {
   static final int MAX_GENERATION_DELTA = 256;
   private static final int MAX_RECORDS = 100_000;
+  private static final int MAX_SCANS = 3;
   private static final Pattern KEY = Pattern.compile("[0-9a-f]{32}");
   private static final Pattern SHA = Pattern.compile("[0-9a-f]{64}");
 
@@ -56,60 +58,120 @@ final class LegacyArchiveMoveProof {
     }
   }
 
+  enum Rejection {
+    ARCHIVE_OPEN, ARCHIVE_READ, ARCHIVE_FILE_CHANGED, ARCHIVE_REVISION_INVALID,
+    ARCHIVE_REVISION_CHURN, ARCHIVE_JSON_INVALID, ARCHIVE_ROW_LIMIT,
+    RECEIPT_MISSING, RECEIPT_DUPLICATE, RECEIPT_UNVERIFIED, RECEIPT_INVALID, RECEIPT_METADATA,
+    HISTORY_METADATA, EPOCH, GENERATION_RANGE, PROOF_BUDGET, ARCHIVE_KEY, SAVED_PROOF;
+
+    String code() { return name().toLowerCase(Locale.ROOT); }
+  }
+
+  record IndexedReceipt(boolean verified, ArchiveRecord record) {}
+  record ReadResult(Map<String, List<IndexedReceipt>> records, Rejection rejection, int scanAttempts) {}
+  record Revalidation(Rejection rejection, int scanAttempts) {}
+
   private record ArchiveStamp(long device, long inode, long revision) {}
+  private record Match(PhotoMoveStore.ArchiveProof proof, Rejection rejection) {
+    static Match reject(Rejection reason) { return new Match(null, reason); }
+  }
+
+  private static final class RejectedRead extends Exception {
+    final Rejection reason;
+    RejectedRead(Rejection reason) { this.reason = reason; }
+  }
+
+  /** Called after a scan has closed its cursor and before the ending revision is checked. */
+  interface ScanObserver {
+    default void beforeScan() {}
+    void afterScan() throws IOException;
+  }
 
   /** Reuse a bounded scan only while this same file has an unchanged photo-record revision. */
   static final class Records {
     private final String path;
+    private final ScanObserver observer;
     private final Budget budget = new Budget(3_000_000);
     private ArchiveStamp stamp;
-    private Map<String, List<ArchiveRecord>> snapshot = Map.of();
+    private Map<String, List<IndexedReceipt>> snapshot = Map.of();
 
-    Records(Context context) { path = context.getDatabasePath(E2Settings.DATABASE).getPath(); }
+    Records(Context context) { this(context, () -> {}); }
 
-    Map<String, List<ArchiveRecord>> read(BooleanSupplier stopped) throws IOException {
+    Records(Context context, ScanObserver observer) {
+      path = context.getDatabasePath(E2Settings.DATABASE).getPath();
+      this.observer = observer;
+    }
+
+    ReadResult read(BooleanSupplier stopped) throws IOException {
       check(stopped);
+      android.system.StructStat file;
+      SQLiteDatabase db;
       try {
-        var file = Os.stat(path);
-        try (SQLiteDatabase db = SQLiteDatabase.openDatabase(path, null, SQLiteDatabase.OPEN_READONLY)) {
+        file = Os.stat(path);
+        db = SQLiteDatabase.openDatabase(path, null, SQLiteDatabase.OPEN_READONLY);
+      } catch (ErrnoException | RuntimeException unavailable) {
+        return rejected(Rejection.ARCHIVE_OPEN, 0);
+      }
+      int scanned = 0;
+      try (db) {
+        while (scanned < MAX_SCANS) {
+          check(stopped);
           ArchiveStamp current = stamp(db, file.st_dev, file.st_ino);
-          if (current.equals(stamp)) return snapshot;
-          Map<String, List<ArchiveRecord>> refreshed = scan(db, stopped);
-          if (!current.equals(stamp(db, file.st_dev, file.st_ino))) return Map.of();
+          if (scanned == 0 && current.equals(stamp)) return new ReadResult(snapshot, null, 0);
+          scanned++;
+          observer.beforeScan();
+          Map<String, List<IndexedReceipt>> refreshed = scan(db, stopped);
+          observer.afterScan();
+          check(stopped);
+          if (!current.equals(stamp(db, file.st_dev, file.st_ino))) continue;
           snapshot = refreshed;
           stamp = current;
-          return refreshed;
+          return new ReadResult(refreshed, null, scanned);
         }
-      } catch (JSONException | ErrnoException | RuntimeException unavailable) {
-        return Map.of();
+        return rejected(Rejection.ARCHIVE_REVISION_CHURN, scanned);
+      } catch (RejectedRead failure) {
+        return rejected(failure.reason, scanned);
+      } catch (JSONException invalid) {
+        return rejected(Rejection.ARCHIVE_JSON_INVALID, scanned);
+      } catch (RuntimeException unavailable) {
+        return rejected(Rejection.ARCHIVE_READ, scanned);
       }
     }
 
-    private ArchiveStamp stamp(SQLiteDatabase db, long device, long inode) throws ErrnoException {
+    private static ReadResult rejected(Rejection reason, int scanAttempts) {
+      return new ReadResult(Map.of(), reason, scanAttempts);
+    }
+
+    private ArchiveStamp stamp(SQLiteDatabase db, long device, long inode) throws RejectedRead {
       try (Cursor row = db.rawQuery("SELECT value FROM index_revision WHERE id=1", null)) {
         if (!row.moveToFirst() || row.getType(0) != Cursor.FIELD_TYPE_INTEGER || row.getLong(0) < 0)
-          throw new IllegalStateException("The archive revision is unavailable");
+          throw new RejectedRead(Rejection.ARCHIVE_REVISION_INVALID);
         long revision = row.getLong(0);
-        var current = Os.stat(path);
-        if (device != current.st_dev || inode != current.st_ino)
-          throw new IllegalStateException("The archive file changed");
+        try {
+          var current = Os.stat(path);
+          if (device != current.st_dev || inode != current.st_ino)
+            throw new RejectedRead(Rejection.ARCHIVE_FILE_CHANGED);
+        } catch (ErrnoException unavailable) {
+          throw new RejectedRead(Rejection.ARCHIVE_FILE_CHANGED);
+        }
         return new ArchiveStamp(device, inode, revision);
       }
     }
 
-    private static Map<String, List<ArchiveRecord>> scan(SQLiteDatabase db, BooleanSupplier stopped)
-        throws IOException, JSONException {
-      Map<String, List<ArchiveRecord>> byUri = new HashMap<>();
+    private static Map<String, List<IndexedReceipt>> scan(SQLiteDatabase db, BooleanSupplier stopped)
+        throws IOException, JSONException, RejectedRead {
+      Map<String, List<IndexedReceipt>> byUri = new HashMap<>();
       try (Cursor rows = db.rawQuery("SELECT key,state,payload FROM photos", null)) {
         int count = 0;
         while (rows.moveToNext()) {
           check(stopped);
-          if (++count > MAX_RECORDS) return Map.of();
+          if (++count > MAX_RECORDS) throw new RejectedRead(Rejection.ARCHIVE_ROW_LIMIT);
           JSONObject value = new JSONObject(rows.getString(2));
           String uri = value.optString("uri");
           // Every row for the source URI participates in uniqueness; only verified evidence can pass.
-          ArchiveRecord record = "verified".equals(rows.getString(1)) ? parse(rows.getString(0), value) : null;
-          byUri.computeIfAbsent(uri, ignored -> new ArrayList<>()).add(record);
+          boolean verified = "verified".equals(rows.getString(1));
+          var receipt = new IndexedReceipt(verified, verified ? parse(rows.getString(0), value) : null);
+          byUri.computeIfAbsent(uri, ignored -> new ArrayList<>()).add(receipt);
         }
       }
       return byUri;
@@ -144,15 +206,26 @@ final class LegacyArchiveMoveProof {
   }
 
   static PhotoMoveStore.ArchiveProof match(PhotoRepository.Photo photo, String epoch, long addedGeneration,
-      long modifiedGeneration, HistoryDb.MoveEvidence history, List<ArchiveRecord> records, Budget budget,
+      long modifiedGeneration, HistoryDb.MoveEvidence history, List<IndexedReceipt> records, Budget budget,
+      BooleanSupplier stopped) throws IOException {
+    return matchResult(photo, epoch, addedGeneration, modifiedGeneration, history, records, budget, stopped).proof();
+  }
+
+  private static Match matchResult(PhotoRepository.Photo photo, String epoch, long addedGeneration,
+      long modifiedGeneration, HistoryDb.MoveEvidence history, List<IndexedReceipt> records, Budget budget,
       BooleanSupplier stopped) throws IOException {
     check(stopped);
-    if (epoch == null || records == null || records.size() != 1
-        || !historyMatches(photo, history)
-        || !receiptMatches(records.get(0), photo, history.getImportedAt())
-        || !validRange(addedGeneration, modifiedGeneration)
-        || !budget.spend((int) (modifiedGeneration - addedGeneration + 1))) return null;
-    ArchiveRecord receipt = records.get(0);
+    if (epoch == null) return Match.reject(Rejection.EPOCH);
+    if (records == null || records.isEmpty()) return Match.reject(Rejection.RECEIPT_MISSING);
+    if (records.size() != 1) return Match.reject(Rejection.RECEIPT_DUPLICATE);
+    var indexed = records.get(0);
+    if (!indexed.verified()) return Match.reject(Rejection.RECEIPT_UNVERIFIED);
+    ArchiveRecord receipt = indexed.record();
+    if (receipt == null) return Match.reject(Rejection.RECEIPT_INVALID);
+    if (!receiptMatches(receipt, photo, history.getImportedAt())) return Match.reject(Rejection.RECEIPT_METADATA);
+    if (!historyMatches(photo, history)) return Match.reject(Rejection.HISTORY_METADATA);
+    if (!validRange(addedGeneration, modifiedGeneration)) return Match.reject(Rejection.GENERATION_RANGE);
+    if (!budget.spend((int) (modifiedGeneration - addedGeneration + 1))) return Match.reject(Rejection.PROOF_BUDGET);
     String prefix = keyPrefix(photo, receipt.bucket(), epoch);
     long match = -1;
     int matches = 0;
@@ -164,19 +237,23 @@ final class LegacyArchiveMoveProof {
         matches++;
       }
     }
-    return matches == 1 ? new PhotoMoveStore.ArchiveProof(receipt.key(), receipt.sha(), match,
-        history.getId(), epoch, historyFingerprint(history)) : null;
+    if (matches != 1) return Match.reject(Rejection.ARCHIVE_KEY);
+    return new Match(new PhotoMoveStore.ArchiveProof(receipt.key(), receipt.sha(), match,
+        history.getId(), epoch, historyFingerprint(history)), null);
   }
 
-  static boolean revalidate(Context context, Records archive, PhotoMoveStore.ArchiveProof proof,
+  static Revalidation revalidate(Context context, Records archive, PhotoMoveStore.ArchiveProof proof,
       PhotoRepository.Photo photo, long addedGeneration, long modifiedGeneration,
       HistoryDb.MoveEvidence history, BooleanSupplier stopped) throws IOException {
     String currentEpoch = epoch(context);
-    if (!proof.epoch().equals(currentEpoch)) return false;
-    var records = archive.read(stopped).get(photo.uri.toString());
-    var current = match(photo, currentEpoch, addedGeneration, modifiedGeneration, history, records,
-        archive.budget, stopped);
-    return proof.equals(current);
+    if (!proof.epoch().equals(currentEpoch)) return new Revalidation(Rejection.EPOCH, 0);
+    ReadResult read = archive.read(stopped);
+    if (read.rejection() != null) return new Revalidation(read.rejection(), read.scanAttempts());
+    var match = matchResult(photo, currentEpoch, addedGeneration, modifiedGeneration, history,
+        read.records().get(photo.uri.toString()), archive.budget, stopped);
+    Rejection reason = match.rejection();
+    if (reason == null && !proof.equals(match.proof())) reason = Rejection.SAVED_PROOF;
+    return new Revalidation(reason, read.scanAttempts());
   }
 
   private static boolean validRange(long added, long modified) {
