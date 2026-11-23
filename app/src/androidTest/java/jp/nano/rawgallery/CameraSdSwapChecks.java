@@ -110,6 +110,7 @@ final class CameraSdSwapChecks {
             capture(test, screen, options.getWindow().getDecorView(), captures, prefix + "-settings",
                     "SDカード取り込み設定", "SDカードのフォルダを選ぶ", "内容も確認する");
             test.runOnMainSync(() -> options.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick());
+            test.waitForIdleSync();
             require(!options.isShowing(), "close returns to the single SD action");
 
             test.runOnMainSync(() -> screen.renderSdSource(CameraQuickImportSources.SdState.CHECKING));

@@ -337,7 +337,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         sdVerify.setChecked(settings.getBoolean("sd_verify_all", false));
         sdVerify.setOnCheckedChangeListener((v, checked) -> settings.edit().putBoolean("sd_verify_all", checked).apply());
         options.addView(sdVerify);
-        options.addView(text("写真の内容を読み直して照合するため、時間がかかります。", 14, GalleryUi.MUTED));
+        options.addView(text("通常は取り込み済みの写真を読み直しません。写真の内容や保存先を確認し直すときはオンにします。", 14, GalleryUi.MUTED));
 
         sdAuto = new MaterialSwitch(this);
         sdAuto.setText("SDカード接続時に自動で取り込む");
@@ -525,8 +525,9 @@ public final class CameraImportActivity extends AppCompatActivity {
                 } catch (IOException | RuntimeException ignored) { }
                 var outcome = sources;
                 var sdSource = selected;
+                UsbDevice formatDevice = manualSd && expectedTarget != null ? connected() : usb;
                 String kinds = expectedTarget != null
-                        ? requestedUsbKinds(manualSd ? connected() : usb)
+                        ? requestedUsbKinds(guardedSdTarget(formatDevice, destination) != null ? formatDevice : null)
                         : manualSd ? "JPEG,RAW" : null;
                 handler.post(() -> {
                     if (generation != sourceGeneration || sourceCancellation != cancellation) return;

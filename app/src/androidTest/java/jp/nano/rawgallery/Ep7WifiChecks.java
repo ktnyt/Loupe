@@ -47,6 +47,7 @@ final class Ep7WifiChecks {
       });
       capture(t, camera, "camera-import-sd", sdDialog[0]);
       TagDetailChecks.ui(t, () -> require(sdDialog[0], "閉じる").performClick());
+      t.waitForIdleSync();
       if (camera.checkSelfPermission(android.Manifest.permission.ACCESS_MEDIA_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED
           && camera.checkSelfPermission(android.Manifest.permission.READ_MEDIA_IMAGES) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
         // Exercise the app result state; this does not simulate a native permission dialog.
