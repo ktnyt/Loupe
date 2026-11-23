@@ -1645,9 +1645,16 @@ final class LegacyArchiveMoveChecks {
       }
       assertCancelling(automation, moveName);
       phase.continueRead.countDown();
-      awaitStorageControl(automation, moveButton);
+      var retry = awaitStorageControl(automation, moveButton);
+      var resumed = automation.getRootInActiveWindow();
+      require(resumed != null && resumed.findAccessibilityNodeInfosByText("照合する写真を調べています").isEmpty()
+          && resumed.findAccessibilityNodeInfosByText("バックアップと写真の内容を照合中").isEmpty()
+          && resumed.findAccessibilityNodeInfosByText("枚を確認").isEmpty()
+          && resumed.findAccessibilityNodeInfosByText("読み取り ").isEmpty()
+          && resumed.findAccessibilityNodeInfosByText("取り込み済みの写真を移動しますか？").isEmpty(),
+          "The resumed screen has no old phase, progress counts or confirmation after the cancelled worker exits");
       mover.set(() -> new PhotoMove(activity));
-      click(awaitStorageControl(automation, moveButton));
+      click(retry);
       awaitStorageControl(automation, confirmed);
       click(awaitStorageControl(automation, node -> hasText(node, "キャンセル")));
     }
