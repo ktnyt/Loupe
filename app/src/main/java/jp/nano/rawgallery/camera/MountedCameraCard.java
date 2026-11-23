@@ -4,7 +4,6 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.database.Cursor;
 import android.hardware.usb.UsbManager;
 import android.net.Uri;
 import android.os.Build;
@@ -101,7 +100,8 @@ public final class MountedCameraCard {
             case DISTINCT -> { }
         }
         if (requireRegistered) requireGrant(context, tree);
-        if (!isReachable(context, tree)) throw new Unavailable(CHOOSE_SOURCE, true);
+        if (!CameraDocumentSource.isReachableDirectory(context.getContentResolver(), tree, cancelled))
+            throw new Unavailable(CHOOSE_SOURCE, true);
         CameraPhotoPublisher.check(cancelled);
         return source;
     }
@@ -180,20 +180,4 @@ public final class MountedCameraCard {
         throw new Unavailable("取り込み元のフォルダまたは読み取り権限が変わりました。DCIMフォルダを選び直してください。", true);
     }
 
-    private static boolean isReachable(Context context, Uri tree) {
-        try {
-            var resolver = context.getContentResolver();
-            Uri root = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
-            try (Cursor cursor = resolver.query(root, new String[]{DocumentsContract.Document.COLUMN_MIME_TYPE},
-                    null, null, null)) {
-                if (cursor == null || !cursor.moveToFirst()) return false;
-                var extras = cursor.getExtras();
-                return extras != null && !extras.getBoolean(DocumentsContract.EXTRA_LOADING)
-                        && !extras.containsKey(DocumentsContract.EXTRA_ERROR)
-                        && DocumentsContract.Document.MIME_TYPE_DIR.equals(cursor.getString(0));
-            }
-        } catch (RuntimeException unavailable) {
-            return false;
-        }
-    }
 }

@@ -3,7 +3,6 @@ package jp.nano.rawgallery;
 import android.content.Context;
 import android.net.Uri;
 import android.os.CancellationSignal;
-import android.provider.DocumentsContract;
 import jp.nano.rawgallery.camera.CameraCredentialStore;
 import jp.nano.rawgallery.camera.CameraDocumentSource;
 import jp.nano.rawgallery.camera.MountedCameraCard;
@@ -35,7 +34,7 @@ final class CameraQuickImportSources {
         SdState(String message) { this.message = message; }
     }
 
-    record SdSource(SdState state, Uri tree) {
+    record SdSource(SdState state, Uri tree, String destination) {
         Uri reachableTree() { return state == SdState.READY ? tree : null; }
     }
 
@@ -46,22 +45,48 @@ final class CameraQuickImportSources {
         return granted ? SdState.CHECKING : SdState.NO_GRANT;
     }
 
+    private static Uri registeredTree(Context context) {
+        String saved = context.getSharedPreferences("camera_import", 0).getString("sd_tree_uri", null);
+        return saved == null ? null : Uri.parse(saved);
+    }
+
+    private static SdState registeredState(Context context, Uri tree, String destination) {
+        try {
+            return registrationState(tree != null, MountedCameraCard.isUnmountedRemovableTree(context, tree),
+                    MountedCameraCard.isSameMountedCard(context, tree, destination),
+                    tree != null && context.getContentResolver().getPersistedUriPermissions().stream()
+                            .anyMatch(grant -> grant.isReadPermission() && tree.equals(grant.getUri())));
+        } catch (RuntimeException unavailable) {
+            return SdState.FOLDER_UNAVAILABLE;
+        }
+    }
+
+    static SdState readyState(SdSource inspected, Uri currentTree, String currentDestination, SdState current) {
+        if (inspected.state() != SdState.READY) return inspected.state();
+        if (currentTree == null) return SdState.UNREGISTERED;
+        if (!currentTree.equals(inspected.tree()) || !currentDestination.equals(inspected.destination()))
+            return SdState.FOLDER_UNAVAILABLE;
+        return current == SdState.CHECKING ? SdState.READY : current;
+    }
+
+    static SdSource recheckSd(Context context, SdSource inspected) {
+        if (inspected.state() != SdState.READY) return inspected;
+        Uri currentTree = registeredTree(context);
+        String destination = PhotoStorage.selected(context);
+        SdState current = registeredState(context, currentTree, destination);
+        SdState result = readyState(inspected, currentTree, destination, current);
+        return result == inspected.state() ? inspected : new SdSource(result, currentTree, destination);
+    }
+
     static SdSource inspectSd(Context context, CancellationSignal cancelled) {
         cancelled.throwIfCanceled();
-        String saved = context.getSharedPreferences("camera_import", 0).getString("sd_tree_uri", null);
-        Uri tree = saved == null ? null : Uri.parse(saved);
-        try {
-            var resolver = context.getContentResolver();
-            SdState state = registrationState(tree != null, MountedCameraCard.isUnmountedRemovableTree(context, tree),
-                    MountedCameraCard.isSameMountedCard(context, tree, PhotoStorage.selected(context)), tree != null && resolver.getPersistedUriPermissions().stream()
-                            .anyMatch(grant -> grant.isReadPermission() && tree.equals(grant.getUri())));
-            if (state != SdState.CHECKING) return new SdSource(state, tree);
-            return new SdSource(CameraDocumentSource.isImportTree(tree, true) && isReachableDirectory(resolver, tree, cancelled)
-                    ? SdState.READY : SdState.FOLDER_UNAVAILABLE, tree);
-        } catch (RuntimeException unavailable) {
-            cancelled.throwIfCanceled();
-            return new SdSource(SdState.FOLDER_UNAVAILABLE, tree);
-        }
+        Uri tree = registeredTree(context);
+        String destination = PhotoStorage.selected(context);
+        SdState state = registeredState(context, tree, destination);
+        if (state != SdState.CHECKING) return new SdSource(state, tree, destination);
+        boolean reachable = CameraDocumentSource.isImportTree(tree, true)
+                && isReachableDirectory(context.getContentResolver(), tree, cancelled);
+        return recheckSd(context, new SdSource(reachable ? SdState.READY : SdState.FOLDER_UNAVAILABLE, tree, destination));
     }
 
     static Uri reachableSdTree(Context context, CancellationSignal cancelled) {
@@ -70,17 +95,11 @@ final class CameraQuickImportSources {
 
     static boolean isReachableDirectory(android.content.ContentResolver resolver, Uri tree, CancellationSignal cancelled) {
         try {
+            return CameraDocumentSource.isReachableDirectory(resolver, tree, cancelled::isCanceled);
+        } catch (IOException | RuntimeException unavailable) {
             cancelled.throwIfCanceled();
-            Uri document = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
-            try (var cursor = resolver.query(document,
-                    new String[]{DocumentsContract.Document.COLUMN_MIME_TYPE}, null, null, null, cancelled)) {
-                if (cursor == null || !cursor.moveToFirst()) return false;
-                var extras = cursor.getExtras();
-                return extras != null && !extras.getBoolean(DocumentsContract.EXTRA_LOADING)
-                        && !extras.containsKey(DocumentsContract.EXTRA_ERROR)
-                        && DocumentsContract.Document.MIME_TYPE_DIR.equals(cursor.getString(0));
-            }
-        } catch (RuntimeException unavailable) { cancelled.throwIfCanceled(); return false; }
+            return false;
+        }
     }
     static Sources resolve(Context context, CancellationSignal cancelled) throws IOException {
         Uri sd = reachableSdTree(context, cancelled);

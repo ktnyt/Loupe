@@ -470,16 +470,22 @@ public final class CameraImportActivity extends AppCompatActivity {
                         return;
                     }
                     if (!sdOnly && connected() != null) { startFromScreen(true); return; }
+                    var validated = sdSource;
                     if (outcome != null && outcome.sd != null) {
+                        validated = CameraQuickImportSources.recheckSd(this, sdSource != null ? sdSource
+                                : new CameraQuickImportSources.SdSource(CameraQuickImportSources.SdState.READY,
+                                        outcome.sd, destination));
+                    }
+                    if (validated != null && validated.reachableTree() != null) {
                         connectionFailure = null;
                         renderSdSource(CameraQuickImportSources.SdState.READY);
                         SdStart request = new SdStart(outcome.sd, expectedTarget, destination, kinds, detach, false, previousRegistration);
                         if (expectedTarget == null) requestSdStart(request);
                         else confirmSdSource(request, false);
-                    } else if (sdOnly) {
-                        renderSdSource(sdSource == null ? CameraQuickImportSources.SdState.FOLDER_UNAVAILABLE : sdSource.state());
-                        connectionFailure = sdSource == null ? CameraQuickImportSources.SdState.FOLDER_UNAVAILABLE.message
-                                : sdSource.state().message;
+                    } else if (sdOnly || validated != null) {
+                        var state = validated == null ? CameraQuickImportSources.SdState.FOLDER_UNAVAILABLE : validated.state();
+                        renderSdSource(state);
+                        connectionFailure = state.message;
                         renderStatus();
                         pickSdTree(expectedTarget, kinds, false);
                     } else if (outcome == null) {
@@ -979,7 +985,7 @@ public final class CameraImportActivity extends AppCompatActivity {
                     handler.removeCallbacks(timeout);
                     if (sdStatusCancellation != cancellation || isFinishing() || isDestroyed()) return;
                     sdStatusCancellation = null;
-                    renderSdSource(source.state());
+                    renderSdSource(CameraQuickImportSources.recheckSd(this, source).state());
                 });
             });
         } catch (java.util.concurrent.RejectedExecutionException busy) {

@@ -11,6 +11,7 @@ import android.os.SystemClock;
 import android.provider.DocumentsContract;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.TextView;
 import android.widget.ScrollView;
 import java.io.File;
@@ -45,6 +46,7 @@ final class CameraSdSwapChecks {
         require(CameraQuickImportSources.registrationState(true, false, true, true)
                 == CameraQuickImportSources.SdState.SAME_CARD, "a registered tree on the destination never shows READY");
         CameraDocumentSourceChecks.assertSdSwapListing(context);
+        assertStaleReady();
 
         var progress = ImportProgress.INSTANCE;
         require(!progress.getActive(), "fixture requires idle import");
@@ -94,12 +96,14 @@ final class CameraSdSwapChecks {
             require(reselect != null && reselect.isClickable() && fullyVisible(reselect)
                     && reselect.getHeight() >= GalleryUi.dp(screen, 48),
                     "disconnected status and its 48dp reselect action are both in view");
-            capture(test, captures, prefix + "-disconnected");
+            capture(test, screen, captures, prefix + "-disconnected",
+                    CameraQuickImportSources.SdState.DISCONNECTED.message, "SDカードのフォルダを選ぶ");
 
             test.runOnMainSync(() -> screen.renderSdSource(CameraQuickImportSources.SdState.CHECKING));
             awaitText(test, sdStatus, CameraQuickImportSources.SdState.CHECKING.message);
             reveal(test, sdStatus);
-            capture(test, captures, prefix + "-checking");
+            capture(test, screen, captures, prefix + "-checking", CameraQuickImportSources.SdState.CHECKING.message,
+                    "SDカードのフォルダを選ぶ");
             test.runOnMainSync(start::performClick);
             long deadline = SystemClock.uptimeMillis() + 6000;
             while (pickerCount.get() == 0 && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(30);
@@ -152,7 +156,7 @@ final class CameraSdSwapChecks {
             });
             reveal(test, result);
             assertResult(result, "一覧を読み込み中");
-            capture(test, captures, prefix + "-incomplete");
+            capture(test, screen, captures, prefix + "-incomplete", "一覧を読み込み中");
 
             test.runOnMainSync(() -> {
                 progress.begin("Synthetic SD");
@@ -164,7 +168,7 @@ final class CameraSdSwapChecks {
             reveal(test, result);
             assertResult(result, "選んだフォルダに取り込める写真がありません");
             require(ImportProgressPresentation.current().secondary.isEmpty(), "empty result is not a saved/history summary");
-            capture(test, captures, prefix + "-empty");
+            capture(test, screen, captures, prefix + "-empty", "選んだフォルダに取り込める写真がありません");
             return "PASS isolated SD swap: incomplete and complete listing, stale registration and picker, synthetic confirmation/cancel and stale request, native status at "
                     + width + "dp/" + font + ". No physical card or original reads.";
         } finally {
@@ -226,8 +230,44 @@ final class CameraSdSwapChecks {
         throw new AssertionError("expected SD source status");
     }
 
-    private static void capture(Instrumentation test, File directory, String name) throws Exception {
-        test.waitForIdleSync();
+    private static void assertStaleReady() throws Exception {
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var returnResult = new java.util.concurrent.CountDownLatch(1);
+        var task = new java.util.concurrent.FutureTask<>(() -> {
+            entered.countDown();
+            require(returnResult.await(2, java.util.concurrent.TimeUnit.SECONDS), "release stalled synthetic reachability");
+            return new CameraQuickImportSources.SdSource(CameraQuickImportSources.SdState.READY, OLD, "external_primary");
+        });
+        var scenario = new Thread(task, "sd-stale-ready-fixture");
+        scenario.start();
+        try {
+            require(entered.await(2, java.util.concurrent.TimeUnit.SECONDS), "reachability in flight");
+            Uri currentRegistration = PICKED;
+            String currentDestination = "aa16-6003";
+            var currentGrant = CameraQuickImportSources.SdState.NO_GRANT;
+            returnResult.countDown();
+            var stale = task.get(2, java.util.concurrent.TimeUnit.SECONDS);
+            require(CameraQuickImportSources.readyState(stale, currentRegistration, "external_primary",
+                    CameraQuickImportSources.SdState.CHECKING) != CameraQuickImportSources.SdState.READY,
+                    "late provider success cannot describe a new registration");
+            require(CameraQuickImportSources.readyState(stale, OLD, currentDestination,
+                    CameraQuickImportSources.SdState.CHECKING) != CameraQuickImportSources.SdState.READY,
+                    "late provider success cannot describe a new destination");
+            require(CameraQuickImportSources.readyState(stale, OLD, "external_primary", currentGrant)
+                    == CameraQuickImportSources.SdState.NO_GRANT,
+                    "late provider success cannot restore a revoked read grant");
+            require(CameraQuickImportSources.readyState(stale, OLD, "external_primary",
+                    CameraQuickImportSources.SdState.CHECKING) == CameraQuickImportSources.SdState.READY,
+                    "an unchanged registration, destination and grant may show ready");
+        } finally {
+            returnResult.countDown();
+            scenario.join(2000);
+        }
+    }
+
+    private static void capture(Instrumentation test, CameraImportActivity activity, File directory, String name,
+            String... labels) throws Exception {
+        awaitRenderedFrame(test, activity, labels);
         Bitmap screen = test.getUiAutomation().takeScreenshot();
         require(screen != null, "capture composed display");
         try (var output = new FileOutputStream(new File(directory, name + ".png"))) {
@@ -235,6 +275,44 @@ final class CameraSdSwapChecks {
         } finally {
             screen.recycle();
         }
+    }
+
+    private static void awaitRenderedFrame(Instrumentation test, CameraImportActivity activity, String[] labels)
+            throws InterruptedException {
+        View decor = activity.getWindow().getDecorView();
+        long timeout = SystemClock.uptimeMillis() + 6000;
+        do {
+            var frame = new java.util.concurrent.CountDownLatch(1);
+            test.runOnMainSync(() -> {
+                decor.invalidate();
+                decor.postOnAnimation(() -> decor.postOnAnimation(frame::countDown));
+            });
+            require(frame.await(2, java.util.concurrent.TimeUnit.SECONDS), "wait for a new displayed frame");
+            test.waitForIdleSync();
+            var root = test.getUiAutomation().getRootInActiveWindow();
+            if (root != null && root.getPackageName() != null
+                    && ISOLATED_PACKAGE.contentEquals(root.getPackageName()) && decor.hasWindowFocus()) {
+                Rect safe = PhotoStorageChecks.availableDisplay(activity);
+                boolean allVisible = true;
+                for (String label : labels) allVisible &= visibleInWindow(root, safe, label);
+                if (allVisible) {
+                    SystemClock.sleep(100);
+                    return;
+                }
+            }
+            SystemClock.sleep(40);
+        } while (SystemClock.uptimeMillis() < timeout);
+        throw new AssertionError("fresh accessibility window did not expose every capture label");
+    }
+
+    private static boolean visibleInWindow(AccessibilityNodeInfo window, Rect safe, String label) {
+        for (AccessibilityNodeInfo node : window.findAccessibilityNodeInfosByText(label)) {
+            Rect bounds = new Rect();
+            node.getBoundsInScreen(bounds);
+            if (node.isVisibleToUser() && node.getText() != null && node.getText().toString().contains(label)
+                    && !bounds.isEmpty() && safe.contains(bounds)) return true;
+        }
+        return false;
     }
 
     private static Object field(Object target, String name) throws Exception {

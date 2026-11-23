@@ -76,6 +76,9 @@ public final class CameraDocumentSourceChecks {
                     cursor.addRow(new Object[]{"AB12-CD34:DCIM/TEST.MP4", "TEST.MP4", "video/mp4", 8L, 1024L});
                 if (mode == 9) for (int i = 0; i <= 20000; i++)
                     cursor.addRow(new Object[]{"AB12-CD34:DCIM/unknown", "unknown", "text/plain", 8L, 1024L});
+                if (mode == 13 || mode == 14)
+                    cursor.addRow(new Object[]{"AB12-CD34:DCIM/TEST.JPG", mode == 13 ? "" : " ", "image/jpeg", 8L, 1024L});
+                if (mode == 15) cursor.addRow(new Object[]{DocumentsContract.Document.MIME_TYPE_DIR});
                 if (mode == 10 || mode == 11) {
                     if (DocumentsContract.getTreeDocumentId(uri).equals(uri.getPathSegments().get(3))) {
                         cursor.addRow(new Object[]{"AB12-CD34:DCIM/100OLYMP", "100OLYMP",
@@ -112,7 +115,7 @@ public final class CameraDocumentSourceChecks {
                 "complete JPEG enumeration produces a candidate");
         require(CameraDifferentialService.noSdCandidates(full, 0).contains("選んだ種類"),
                 "kind filter is not a genuinely empty directory");
-        for (int mode : new int[]{2, 3, 4, 5, 6, 9, 10, 11}) {
+        for (int mode : new int[]{2, 3, 4, 5, 6, 9, 10, 11, 13, 14}) {
             provider.mode = mode;
             try {
                 CameraDocumentSource.list(resolver, tree, "fixture", () -> false);
@@ -164,6 +167,23 @@ public final class CameraDocumentSourceChecks {
         } finally {
             provider.release.countDown();
             require(provider.returned.await(2, java.util.concurrent.TimeUnit.SECONDS), "cancelled test provider was released");
+        }
+
+        provider.stallNext();
+        try {
+            CameraDocumentSource.isReachableDirectory(resolver, tree, () -> false, 500);
+            throw new AssertionError("stalled root metadata was accepted");
+        } catch (CameraDocumentSource.ListingException expected) {
+            require(expected.reason == CameraDocumentSource.ListingException.Reason.TIMEOUT
+                            && provider.returned.getCount() == 1
+                            && provider.signalled.await(2, java.util.concurrent.TimeUnit.SECONDS),
+                    "root metadata reaches its deadline and cancels the provider before it returns");
+            provider.mode = 15;
+            require(CameraDocumentSource.isReachableDirectory(resolver, tree, () -> false),
+                    "a fresh root read completes after the previous one times out");
+        } finally {
+            provider.release.countDown();
+            require(provider.returned.await(2, java.util.concurrent.TimeUnit.SECONDS), "stalled root fixture was released");
         }
 
         require(CameraDocumentSource.isImportTree(tree, false), "DCIM picker path can be registered");
@@ -386,14 +406,14 @@ public final class CameraDocumentSourceChecks {
             accessChecks++;
             return readable && (!revokeAfterQuery || fileChecks == 0);
         }
-        public Cursor documentRegistration(Uri requested) {
+        public Cursor documentRegistration(Uri requested, android.os.CancellationSignal signal) {
             require(document.equals(requested),"Read current metadata for the selected document");
             MatrixCursor cursor = new MatrixCursor(new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID,
                     DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_SIZE});
             for (int i=0;i<documentCount;i++) cursor.addRow(new Object[]{SOURCE_DOCUMENT_ID,name,size});
             return cursor;
         }
-        public Cursor mediaRegistration(String volume,String folder,String name) {
+        public Cursor mediaRegistration(String volume, String folder, String name, android.os.CancellationSignal signal) {
             require(SOURCE.equals(volume) && "DCIM/100TEST/".equals(folder) && "TEST.JPG".equals(name),
                     "Query only the exact source volume, relative path and name");
             fileChecks++;
@@ -431,6 +451,10 @@ public final class CameraDocumentSourceChecks {
     }
 
     private static void legacyReceiptRequiresRead(Context context) throws Exception {
+        String photoRead = android.os.Build.VERSION.SDK_INT >= 33 ? android.Manifest.permission.READ_MEDIA_IMAGES
+                : android.Manifest.permission.READ_EXTERNAL_STORAGE;
+        require(context.checkSelfPermission(photoRead) == android.content.pm.PackageManager.PERMISSION_GRANTED,
+                "Grant full photo access to the isolated test app before checking the real importer");
         String database = "camera-original-source-check-" + UUID.randomUUID() + ".db";
         CameraImportLedger ledger = new CameraImportLedger(context, database);
         CameraImportFile old = new CameraImportFile("sd:synthetic-volume", "DCIM/100TEST/TEST.JPG", ORIGINAL.length, "mtime", 1);
@@ -496,7 +520,7 @@ public final class CameraDocumentSourceChecks {
         Runnable onRead = () -> { };
         public boolean permitted() { return permitted; }
         public Uri mediaUri(Uri document) { require(DOCUMENT.equals(document), "Exact selected document mapping"); maps++; return mapped; }
-        public Uri onVolume(Uri media, CameraImportFile file, String expectedVolume) {
+        public Uri onVolume(Uri media, CameraImportFile file, String expectedVolume, android.os.CancellationSignal signal) {
             require(mapped.equals(media) && entry().file.relativePath.equals(file.relativePath) && SOURCE.equals(expectedVolume),
                     "Pinned check receives the exact mapping, original metadata and selected volume");
             pins++;

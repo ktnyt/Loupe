@@ -58,11 +58,12 @@ public final class CameraDocumentSource {
     }
 
     private static final long LISTING_TIMEOUT_MS = 30_000;
+    private static final long METADATA_TIMEOUT_MS = 3_000;
     // A wedged provider cannot tie up the import gate or accumulate queued listing requests.
-    private static final ThreadPoolExecutor LISTINGS = listingPool("sd-document-listing");
-    private static final ThreadPoolExecutor CANCELLATIONS = listingPool("sd-document-cancel");
+    private static final ThreadPoolExecutor METADATA = metadataPool("sd-document-metadata");
+    private static final ThreadPoolExecutor CANCELLATIONS = metadataPool("sd-document-cancel");
 
-    private static ThreadPoolExecutor listingPool(String name) {
+    private static ThreadPoolExecutor metadataPool(String name) {
         return new ThreadPoolExecutor(0, 2, 30, TimeUnit.SECONDS, new SynchronousQueue<>(),
                 work -> new Thread(work, name));
     }
@@ -84,9 +85,8 @@ public final class CameraDocumentSource {
         this.signal = signal;
     }
     public static Listing list(Context context,Uri tree,BooleanSupplier cancelled)throws IOException {
-        CameraPhotoPublisher.check(cancelled);
-        String identity = CameraSourceIdentity.sd(context, tree);
-        return list(context.getContentResolver(), tree, identity, cancelled);
+        return boundedMetadata(cancelled, LISTING_TIMEOUT_MS, signal -> readListing(context.getContentResolver(),
+                tree, CameraSourceIdentity.sd(context, tree), cancelled, signal));
     }
 
     static Listing list(ContentResolver resolver, Uri tree, String identity, BooleanSupplier cancelled) throws IOException {
@@ -95,12 +95,19 @@ public final class CameraDocumentSource {
 
     static Listing list(ContentResolver resolver, Uri tree, String identity, BooleanSupplier cancelled,
             long timeoutMs) throws IOException {
+        return boundedMetadata(cancelled, timeoutMs, signal -> readListing(resolver, tree, identity, cancelled, signal));
+    }
+
+    private interface MetadataQuery<T> { T query(CancellationSignal signal) throws IOException; }
+
+    private static <T> T boundedMetadata(BooleanSupplier cancelled, long timeoutMs, MetadataQuery<T> query)
+            throws IOException {
         CameraPhotoPublisher.check(cancelled);
         CancellationSignal signal = new CancellationSignal();
         long deadline = SystemClock.elapsedRealtime() + timeoutMs;
-        Future<Listing> pending;
+        Future<T> pending;
         try {
-            pending = LISTINGS.submit(() -> readListing(resolver, tree, identity, cancelled, signal));
+            pending = METADATA.submit(() -> query.query(signal));
         } catch (RejectedExecutionException stillBusy) {
             throw new ListingException(ListingException.Reason.LOADING);
         }
@@ -110,11 +117,11 @@ public final class CameraDocumentSource {
                 long remaining = deadline - SystemClock.elapsedRealtime();
                 if (remaining <= 0) throw new ListingException(ListingException.Reason.TIMEOUT);
                 try {
-                    Listing listing = pending.get(Math.min(remaining, 100), TimeUnit.MILLISECONDS);
+                    T result = pending.get(Math.min(remaining, 100), TimeUnit.MILLISECONDS);
                     CameraPhotoPublisher.check(cancelled);
                     if (SystemClock.elapsedRealtime() >= deadline)
                         throw new ListingException(ListingException.Reason.TIMEOUT);
-                    return listing;
+                    return result;
                 } catch (TimeoutException waitingForProvider) {
                     // Poll for cancellation without waiting for the provider to return.
                 }
@@ -124,6 +131,8 @@ public final class CameraDocumentSource {
             throw new InterruptedIOException("SD card listing cancelled");
         } catch (ExecutionException failed) {
             CameraPhotoPublisher.check(cancelled);
+            if (failed.getCause() instanceof android.os.OperationCanceledException)
+                throw new InterruptedIOException("SD card metadata cancelled");
             if (failed.getCause() instanceof IOException failure) throw failure;
             if (failed.getCause() instanceof Error error) throw error;
             throw unavailable();
@@ -135,6 +144,27 @@ public final class CameraDocumentSource {
                 }
             }
         }
+    }
+
+    public static boolean isReachableDirectory(ContentResolver resolver, Uri tree, BooleanSupplier cancelled)
+            throws IOException {
+        return isReachableDirectory(resolver, tree, cancelled, METADATA_TIMEOUT_MS);
+    }
+
+    static boolean isReachableDirectory(ContentResolver resolver, Uri tree, BooleanSupplier cancelled, long timeout)
+            throws IOException {
+        return boundedMetadata(cancelled, timeout, signal -> {
+            Uri root = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
+            try (Cursor cursor = resolver.query(root, new String[]{DocumentsContract.Document.COLUMN_MIME_TYPE},
+                    null, null, null, signal)) {
+                if (cursor == null) return false;
+                Bundle extras = cursor.getExtras();
+                if (extras == null || extras.containsKey(DocumentsContract.EXTRA_ERROR)) return false;
+                if (extras.getBoolean(DocumentsContract.EXTRA_LOADING))
+                    throw new ListingException(ListingException.Reason.LOADING);
+                return cursor.moveToFirst() && DocumentsContract.Document.MIME_TYPE_DIR.equals(cursor.getString(0));
+            }
+        });
     }
 
     public static boolean isImportTree(Uri tree, boolean allowVolumeRoot) {
@@ -196,7 +226,7 @@ public final class CameraDocumentSource {
                 CameraPhotoPublisher.check(cancelled);
                 if (++rows > 20000) throw unavailable();
                 String name = cursor.getString(1);
-                if (name == null || name.contains("/") || name.contains("\\") || name.equals(".") || name.equals(".."))
+                if (name == null || name.isBlank() || name.contains("/") || name.contains("\\") || name.equals(".") || name.equals(".."))
                     throw unavailable();
                 String child = cursor.getString(0);
                 if (child == null || child.isEmpty()) throw unavailable();
@@ -251,10 +281,12 @@ public final class CameraDocumentSource {
     interface OriginalAccess {
         boolean permitted();
         Uri mediaUri(Uri document)throws IOException;
-        default Uri onVolume(Uri media, CameraImportFile file, String expectedVolume)throws IOException { return null; }
+        default Uri onVolume(Uri media, CameraImportFile file, String expectedVolume, CancellationSignal signal)
+                throws IOException { return null; }
         default boolean canCheckRegistration(Uri tree, String volume)throws IOException { return false; }
-        default Cursor documentRegistration(Uri document)throws IOException { return null; }
-        default Cursor mediaRegistration(String volume, String folder, String name)throws IOException { return null; }
+        default Cursor documentRegistration(Uri document, CancellationSignal signal)throws IOException { return null; }
+        default Cursor mediaRegistration(String volume, String folder, String name, CancellationSignal signal)
+                throws IOException { return null; }
         InputStream openOriginal(Uri requiredOriginal)throws IOException;
     }
     public static void copy(Context context,Entry entry,OutputStream out,BooleanSupplier cancelled)throws IOException {
@@ -274,8 +306,8 @@ public final class CameraDocumentSource {
         return new OriginalAccess(){
             public boolean permitted(){return context.checkSelfPermission(Manifest.permission.ACCESS_MEDIA_LOCATION)==PackageManager.PERMISSION_GRANTED;}
             public Uri mediaUri(Uri document){return MediaStore.getMediaUri(context,document);}
-            public Uri onVolume(Uri media,CameraImportFile file,String expected) {
-                return onMountedVolume(context,media,file,expected);
+            public Uri onVolume(Uri media, CameraImportFile file, String expected, CancellationSignal signal) {
+                return onMountedVolume(context, media, file, expected, signal);
             }
             public boolean canCheckRegistration(Uri tree,String volume)throws IOException {
                 String read = Build.VERSION.SDK_INT >= 33
@@ -285,13 +317,13 @@ public final class CameraDocumentSource {
                 MountedCameraCard.requireGrant(context,tree);
                 return true;
             }
-            public Cursor documentRegistration(Uri document) {
+            public Cursor documentRegistration(Uri document, CancellationSignal signal) {
                 return context.getContentResolver().query(document,
                         new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID,
                                 DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_SIZE},
-                        null,null,null);
+                        null, null, null, signal);
             }
-            public Cursor mediaRegistration(String volume,String folder,String name) {
+            public Cursor mediaRegistration(String volume, String folder, String name, CancellationSignal signal) {
                 Bundle query = new Bundle();
                 query.putString(ContentResolver.QUERY_ARG_SQL_SELECTION,
                         MediaStore.MediaColumns.RELATIVE_PATH+"=? AND "+MediaStore.MediaColumns.DISPLAY_NAME+"=?");
@@ -299,7 +331,7 @@ public final class CameraDocumentSource {
                 query.putInt(MediaStore.QUERY_ARG_MATCH_PENDING,MediaStore.MATCH_INCLUDE);
                 query.putInt(MediaStore.QUERY_ARG_MATCH_TRASHED,MediaStore.MATCH_INCLUDE);
                 return context.getContentResolver().query(MediaStore.Files.getContentUri(volume),
-                        new String[]{MediaStore.MediaColumns._ID},query,null);
+                        new String[]{MediaStore.MediaColumns._ID}, query, signal);
             }
             public InputStream openOriginal(Uri original)throws IOException {
                 android.os.ParcelFileDescriptor descriptor=context.getContentResolver().openFileDescriptor(original,"r");
@@ -308,7 +340,8 @@ public final class CameraDocumentSource {
         };
     }
 
-    private static Uri onMountedVolume(Context context, Uri mapped, CameraImportFile file, String expected) {
+    private static Uri onMountedVolume(Context context, Uri mapped, CameraImportFile file, String expected,
+            CancellationSignal signal) {
         if (!MediaStore.getExternalVolumeNames(context).contains(expected)) return null;
         String mappedVolume = MediaStore.getVolumeName(mapped);
         if (!MediaStore.VOLUME_EXTERNAL.equals(mappedVolume) && !expected.equals(mappedVolume)) return null;
@@ -318,7 +351,7 @@ public final class CameraDocumentSource {
         String sourceFolder = file.relativePath.substring(0, file.relativePath.lastIndexOf('/') + 1);
         try (Cursor row = context.getContentResolver().query(mapped,
                 new String[]{MediaStore.MediaColumns.VOLUME_NAME, MediaStore.MediaColumns.RELATIVE_PATH,
-                        MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.SIZE}, null, null, null)) {
+                        MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.SIZE}, null, null, null, signal)) {
             if (row == null || row.getCount() != 1 || !row.moveToFirst() || !expected.equals(row.getString(0))
                     || !sourceFolder.equals(row.getString(1)) || !file.name.equals(row.getString(2))
                     || file.bytes != row.getLong(3)) return null;
@@ -327,7 +360,8 @@ public final class CameraDocumentSource {
     }
 
     /** Check whether this exact document has any visible rows on the source volume. */
-    private static boolean confirmedMissingRegistration(OriginalAccess access, Entry entry, String volume) {
+    private static boolean confirmedMissingRegistration(OriginalAccess access, Entry entry, String volume,
+            CancellationSignal signal) {
         Uri document = entry.uri;
         if (!"content".equals(document.getScheme()) || !"com.android.externalstorage.documents".equals(document.getAuthority())
                 || MediaStore.VOLUME_EXTERNAL.equals(volume) || MediaStore.VOLUME_EXTERNAL_PRIMARY.equals(volume)) return false;
@@ -348,7 +382,7 @@ public final class CameraDocumentSource {
 
             Uri tree = DocumentsContract.buildTreeDocumentUri(document.getAuthority(),treeId);
             if (!access.canCheckRegistration(tree,volume)) return false;
-            try (Cursor row = access.documentRegistration(document)) {
+            try (Cursor row = access.documentRegistration(document, signal)) {
                 if (!complete(row) || row.getCount() != 1 || !row.moveToFirst()) return false;
                 int id = row.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID);
                 int name = row.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME);
@@ -357,7 +391,7 @@ public final class CameraDocumentSource {
                         || row.isNull(size) || row.getLong(size) != entry.file.bytes) return false;
             }
             String folder = path.substring(0,path.lastIndexOf('/')+1);
-            try (Cursor rows = access.mediaRegistration(volume,folder,entry.file.name)) {
+            try (Cursor rows = access.mediaRegistration(volume, folder, entry.file.name, signal)) {
                 return complete(rows) && rows.getColumnIndex(MediaStore.MediaColumns._ID) >= 0
                         && rows.getCount() == 0 && access.canCheckRegistration(tree,volume);
             }
@@ -380,8 +414,17 @@ public final class CameraDocumentSource {
     static void copy(OriginalAccess access,Entry entry,OutputStream out,BooleanSupplier cancelled)throws IOException {
         copy(access,entry,out,cancelled,null);
     }
-    private static Uri requiredOriginal(OriginalAccess access,Entry entry,String expectedVolume,BooleanSupplier cancelled)
-            throws IOException {
+    private static Uri requiredOriginal(OriginalAccess access, Entry entry, String expectedVolume,
+            BooleanSupplier cancelled) throws IOException {
+        Uri original = boundedMetadata(cancelled, METADATA_TIMEOUT_MS,
+                signal -> resolveOriginal(access, entry, expectedVolume, cancelled, signal));
+        CameraPhotoPublisher.check(cancelled);
+        requireOriginalPermission(access);
+        return original;
+    }
+
+    private static Uri resolveOriginal(OriginalAccess access, Entry entry, String expectedVolume,
+            BooleanSupplier cancelled, CancellationSignal signal) throws IOException {
         CameraPhotoPublisher.check(cancelled);
         requireOriginalPermission(access);
         Uri media;
@@ -394,7 +437,7 @@ public final class CameraDocumentSource {
         catch(IOException|RuntimeException unavailable){throw new OriginalAccessException(OriginalAccessException.Reason.MAPPING);}
         if(media==null||!"content".equals(media.getScheme())||!"media".equals(media.getAuthority())) {
             if(expectedVolume!=null) {
-                boolean missing=confirmedMissingRegistration(access,entry,expectedVolume);
+                boolean missing=confirmedMissingRegistration(access, entry, expectedVolume, signal);
                 CameraPhotoPublisher.check(cancelled);
                 if(missing) {
                     requireOriginalPermission(access);
@@ -404,7 +447,7 @@ public final class CameraDocumentSource {
             throw new OriginalAccessException(OriginalAccessException.Reason.MAPPING);
         }
         if(expectedVolume!=null) {
-            try { media=access.onVolume(media,entry.file,expectedVolume); }
+            try { media=access.onVolume(media, entry.file, expectedVolume, signal); }
             catch(SecurityException denied) { throw new OriginalAccessException(OriginalAccessException.Reason.PERMISSION); }
             catch(IOException|RuntimeException unavailable) { throw new OriginalAccessException(OriginalAccessException.Reason.VOLUME); }
             if(media==null||!"content".equals(media.getScheme())||!"media".equals(media.getAuthority())
