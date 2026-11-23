@@ -31,6 +31,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import jp.nano.rawgallery.PhotoStorageInventory.Reason;
@@ -54,6 +55,46 @@ final class PhotoMove implements AutoCloseable {
   interface Progress { void update(PhotoMoveStore.Batch batch); }
   interface OriginalOpen { InputStream open(Uri requiredOriginal) throws IOException; }
   interface TargetOpen { ParcelFileDescriptor open(Uri target, String mode) throws IOException; }
+  /** Display-only observations of historical candidates. Neither counts nor bytes authorize a move. */
+  record PreflightProgress(int total, int successful, int rejected, long totalBytes, long readBytes, boolean finished) {
+    int completed() { return successful + rejected; }
+  }
+
+  private static final class PreflightMeter {
+    private final Consumer<PreflightProgress> observer;
+    private final int total;
+    private final long totalBytes;
+    private long readBytes, verifiedBytes;
+    private int successful, rejected;
+
+    PreflightMeter(List<PhotoMoveStore.Item> items, Consumer<PreflightProgress> observer) {
+      this.observer = observer;
+      int candidates = 0;
+      long bytes = 0;
+      for (var item : items) {
+        if (item.hasHistoricalProof()) {
+          candidates++;
+          bytes += item.bytes();
+        }
+      }
+      total = candidates;
+      totalBytes = bytes;
+    }
+
+    void read(int bytes) {
+      readBytes += bytes;
+      publish(false);
+    }
+
+    void publish(boolean finished) {
+      if (observer == null) return;
+      try {
+        observer.accept(new PreflightProgress(total, successful, rejected, totalBytes, readBytes, finished));
+      } catch (RuntimeException ignored) {
+        // A display observer must not change which originals pass verification.
+      }
+    }
+  }
   record Plan(String volume, List<PhotoMoveStore.Item> items, int skipped, int archiveRejected,
       ArchivePreflight archivePreflight) {
     Plan {
@@ -300,15 +341,19 @@ final class PhotoMove implements AutoCloseable {
 
   /** Checks only proposed historical candidates. A rejected original is excluded, never replaced. */
   Plan preflight(Plan proposal, BooleanSupplier stopped) throws IOException {
+    return preflight(proposal, stopped, null);
+  }
+
+  Plan preflight(Plan proposal, BooleanSupplier stopped, Consumer<PreflightProgress> observer) throws IOException {
     check(stopped);
-    if (proposal.items().stream().noneMatch(PhotoMoveStore.Item::hasHistoricalProof)) return proposal;
+    var meter = new PreflightMeter(proposal.items(), observer);
+    if (meter.total == 0) return proposal;
     if (!CameraImportGate.lock.isHeldByCurrentThread()) throw new IllegalStateException("Move preflight needs the import gate");
     if (!E2SyncJob.ORIGINALS.tryLock()) throw new Failure("端末の容量整理が終わってから確認してください。");
     long started = SystemClock.elapsedRealtimeNanos();
-    int checked = 0, rejected = 0;
-    long verifiedBytes = 0;
     String result = "failed";
     try {
+      meter.publish(false);
       Map<String, String> cameraEvidence = ledger.importDestinations();
       var archive = new LegacyArchiveMoveProof.Records(context);
       List<PhotoMoveStore.Item> verified = new ArrayList<>();
@@ -320,24 +365,26 @@ final class PhotoMove implements AutoCloseable {
         }
         try {
           Media source = requireHistoricalSource(item, cameraEvidence, archive, stopped);
-          verify(source.uri(), item.bytes(), item.proofSha(), true, stopped);
+          verify(source.uri(), item.bytes(), item.proofSha(), true, stopped, meter);
           requireHistoricalSource(item, cameraEvidence, archive, stopped);
           check(stopped);
           verified.add(item);
-          checked++;
-          verifiedBytes += item.bytes();
+          meter.successful++;
+          meter.verifiedBytes += item.bytes();
         } catch (InterruptedIOException cancelled) {
           throw cancelled;
         } catch (IOException | RuntimeException unavailable) {
-          rejected++;
+          meter.rejected++;
         }
+        meter.publish(false);
       }
       check(stopped);
       List<PhotoMoveStore.Item> items = List.copyOf(verified);
-      int skipped = proposal.skipped() + rejected;
+      int skipped = proposal.skipped() + meter.rejected;
+      meter.publish(true);
       result = "completed";
-      return new Plan(proposal.volume(), items, skipped, rejected,
-          new ArchivePreflight(proposal.volume(), items, skipped, rejected));
+      return new Plan(proposal.volume(), items, skipped, meter.rejected,
+          new ArchivePreflight(proposal.volume(), items, skipped, meter.rejected));
     } catch (InterruptedIOException cancelled) {
       result = "cancelled";
       throw cancelled;
@@ -345,7 +392,8 @@ final class PhotoMove implements AutoCloseable {
       E2SyncJob.ORIGINALS.unlock();
       DiagnosticLog.event("photo_move.preflight", 0, "result", result,
           "elapsed_ns", SystemClock.elapsedRealtimeNanos() - started,
-          "verified", checked, "excluded", rejected, "verified_bytes", verifiedBytes);
+          "candidates", meter.total, "candidate_bytes", meter.totalBytes, "read_bytes", meter.readBytes,
+          "verified", meter.successful, "excluded", meter.rejected, "verified_bytes", meter.verifiedBytes);
     }
   }
 
@@ -1299,10 +1347,15 @@ final class PhotoMove implements AutoCloseable {
   }
 
   private Media verify(Uri uri, long bytes, String sha, boolean published, BooleanSupplier stopped) throws IOException {
+    return verify(uri, bytes, sha, published, stopped, null);
+  }
+
+  private Media verify(Uri uri, long bytes, String sha, boolean published, BooleanSupplier stopped, PreflightMeter meter)
+      throws IOException {
     Media media = requireOwned(uri);
     if (published == media.pending()) throw new Failure("写真の公開状態を確認できません。");
     try (InputStream in = original(uri)) {
-      if (!sha.equals(hash(in, null, bytes, stopped))) throw new Failure("写真の読み戻しが原本と一致しません。");
+      if (!sha.equals(hash(in, null, bytes, stopped, meter))) throw new Failure("写真の読み戻しが原本と一致しません。");
     }
     Media current = requireOwned(uri);
     if (published == current.pending() || !media.version().equals(current.version()))
@@ -1317,11 +1370,17 @@ final class PhotoMove implements AutoCloseable {
   }
 
   private static String hash(InputStream in, OutputStream out, long bytes, BooleanSupplier stopped) throws IOException {
+    return hash(in, out, bytes, stopped, null);
+  }
+
+  private static String hash(InputStream in, OutputStream out, long bytes, BooleanSupplier stopped, PreflightMeter meter)
+      throws IOException {
     try {
       MessageDigest digest = MessageDigest.getInstance("SHA-256");
       byte[] buffer = new byte[64 * 1024];
       long count = 0;
       for (int size; (size = in.read(buffer)) != -1;) {
+        if (meter != null && size > 0) meter.read(size);
         check(stopped);
         count += size;
         if (count > bytes) throw new Failure("写真のサイズが変わりました。");

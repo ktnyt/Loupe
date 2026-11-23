@@ -2319,7 +2319,7 @@ final class PhotoStorageChecks {
     return text.contentEquals(node.getText() == null ? "" : node.getText());
   }
 
-  private static AccessibilityNodeInfo awaitNode(UiAutomation automation, Predicate<AccessibilityNodeInfo> match) {
+  static AccessibilityNodeInfo awaitNode(UiAutomation automation, Predicate<AccessibilityNodeInfo> match) {
     long deadline = SystemClock.uptimeMillis() + 6000;
     while (SystemClock.uptimeMillis() < deadline) {
       AccessibilityNodeInfo node = findNode(automation.getRootInActiveWindow(), match);
@@ -2394,7 +2394,7 @@ final class PhotoStorageChecks {
     });
   }
 
-  private static View findButton(View view, String label) {
+  static View findButton(View view, String label) {
     if (view instanceof TextView text && view.isClickable() && label.contentEquals(text.getText())) return view;
     if (view instanceof ViewGroup group) {
       for (int i = 0; i < group.getChildCount(); i++) {
@@ -2445,6 +2445,18 @@ final class PhotoStorageChecks {
       if (previous != null) previous.recycle();
     }
     throw new CheckFailure("Screen did not settle for " + name);
+  }
+
+  static void captureFrame(Instrumentation test, UiAutomation automation, File directory, String name)
+      throws Exception {
+    awaitPresentedFrames(test);
+    Bitmap frame = automation.takeScreenshot();
+    require(frame != null, "Capture visible Android UI");
+    try {
+      writeCapture(frame, directory, name);
+    } finally {
+      frame.recycle();
+    }
   }
 
   private static void writeCapture(Bitmap bitmap, File directory, String name) throws IOException {
