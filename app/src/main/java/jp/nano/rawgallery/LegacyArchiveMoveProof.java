@@ -108,7 +108,8 @@ final class LegacyArchiveMoveProof {
       SQLiteDatabase db;
       try {
         file = Os.stat(path);
-        db = SQLiteDatabase.openDatabase(path, null, SQLiteDatabase.OPEN_READONLY);
+        // Android's default corruption handler can delete the file even for a read-only open.
+        db = SQLiteDatabase.openDatabase(path, null, SQLiteDatabase.OPEN_READONLY, ignored -> {});
       } catch (ErrnoException | RuntimeException unavailable) {
         return rejected(Rejection.ARCHIVE_OPEN, 0);
       }
@@ -117,7 +118,10 @@ final class LegacyArchiveMoveProof {
         while (scanned < MAX_SCANS) {
           check(stopped);
           ArchiveStamp current = stamp(db, file.st_dev, file.st_ino);
-          if (scanned == 0 && current.equals(stamp)) return new ReadResult(snapshot, null, 0);
+          if (scanned == 0 && current.equals(stamp)) {
+            check(stopped);
+            return new ReadResult(snapshot, null, 0);
+          }
           scanned++;
           observer.beforeScan();
           Map<String, List<IndexedReceipt>> refreshed = scan(db, stopped);
@@ -161,7 +165,7 @@ final class LegacyArchiveMoveProof {
     private static Map<String, List<IndexedReceipt>> scan(SQLiteDatabase db, BooleanSupplier stopped)
         throws IOException, JSONException, RejectedRead {
       Map<String, List<IndexedReceipt>> byUri = new HashMap<>();
-      try (Cursor rows = db.rawQuery("SELECT key,state,payload FROM photos", null)) {
+      try (Cursor rows = db.rawQuery("SELECT key,state,payload FROM photos LIMIT " + (MAX_RECORDS + 1), null)) {
         int count = 0;
         while (rows.moveToNext()) {
           check(stopped);

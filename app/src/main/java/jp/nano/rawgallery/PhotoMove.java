@@ -355,15 +355,15 @@ final class PhotoMove implements AutoCloseable {
 
     private boolean visibleAlias(Media row) {
       try {
-        return historicalAliasMatches(row);
+        return historicalAliasMatches(row, FailureReason.SOURCE_ALIAS);
       } catch (IOException | RuntimeException unavailable) {
         return false;
       }
     }
   }
 
-  private boolean historicalAliasMatches(Media source) throws IOException {
-    return source.equals(queryOne(Uri.parse(aggregate(source.uri())), queryArgs(null, null)));
+  private boolean historicalAliasMatches(Media row, FailureReason reason) throws IOException {
+    return row.equals(queryOne(Uri.parse(aggregate(row.uri())), queryArgs(null, null), reason));
   }
 
   /** Checks only proposed historical candidates. A rejected original is excluded, never replaced. */
@@ -392,7 +392,7 @@ final class PhotoMove implements AutoCloseable {
         }
         try {
           Media source = requireHistoricalSource(item, cameraEvidence, archive, stopped);
-          verify(source.uri(), item.bytes(), item.proofSha(), true, stopped, meter);
+          verify(source.uri(), item.bytes(), item.proofSha(), true, stopped, meter, FailureReason.SOURCE_IDENTITY);
           requireHistoricalSource(item, cameraEvidence, archive, stopped);
           check(stopped);
           verified.add(item);
@@ -756,7 +756,7 @@ final class PhotoMove implements AutoCloseable {
       if (item.stage() > PhotoMoveStore.QUEUED && item.targetPin() == null) {
         // A completed deletion can still recover from the independently durable destination proof.
         if (item.stage() == PhotoMoveStore.REMAPPED && item.pendingCompletion() != null
-            && find(Uri.parse(item.source())) == null) {
+            && find(Uri.parse(item.source()), FailureReason.SOURCE_IDENTITY) == null) {
           Media verified = verifyTarget(Uri.parse(item.target()), item.bytes(), item.proofSha(), true, stopped, metrics);
           finishHistoricalMove(item, verified, cameraEvidence);
           return;
@@ -887,13 +887,13 @@ final class PhotoMove implements AutoCloseable {
       if (!item.targetPin().epoch().equals(targetEpoch)) throw targetChanged();
     }
     Uri sourceUri = Uri.parse(item.source());
-    Media source = find(sourceUri);
+    Media source = find(sourceUri, FailureReason.SOURCE_IDENTITY);
     if (source != null) {
       Media exactSource = requireSource(item);
       if (item.hasHistoricalProof()) requireHistoricalMetadata(exactSource, verified, volume);
       long started = SystemClock.elapsedRealtimeNanos();
       try {
-        verify(sourceUri, item.bytes(), item.sha(), true, stopped);
+        verify(sourceUri, item.bytes(), item.sha(), true, stopped, FailureReason.SOURCE_IDENTITY);
       } finally {
         metrics.sourceVerifyNs += SystemClock.elapsedRealtimeNanos() - started;
       }
@@ -916,14 +916,14 @@ final class PhotoMove implements AutoCloseable {
       }
       if (current.pending() || !verified.version().equals(current.version())
           || item.hasHistoricalProof() && !matchesCompleted(item.pendingCompletion(), current))
-        throw new Failure("移動先の写真が変更されました。元の写真を保持しました。");
+        throw new Failure("移動先の写真が変更されました。元の写真を保持しました。", FailureReason.TARGET_PIN);
       Bundle exactVersion = queryArgs(
           GENERATION_MODIFIED + "=? AND " + OWNER_PACKAGE_NAME + "=? AND " + IS_PENDING + "=0 AND " + IS_TRASHED + "=0",
           new String[]{Long.toString(source.generationModified()), context.getPackageName()});
       check(stopped);
       started = SystemClock.elapsedRealtimeNanos();
       try {
-        if (resolver.delete(sourceUri, exactVersion) != 1 || find(sourceUri) != null)
+        if (resolver.delete(sourceUri, exactVersion) != 1 || find(sourceUri, FailureReason.SOURCE_IDENTITY) != null)
           throw new Failure("移動元の写真を削除できません。");
       } finally {
         metrics.deleteNs += SystemClock.elapsedRealtimeNanos() - started;
@@ -985,7 +985,7 @@ final class PhotoMove implements AutoCloseable {
           relocate(item, true);
         } else {
           // Complete the reference swap if the only verifiable copy is already at the destination.
-          Media replacement = verify(Uri.parse(item.target()), item.bytes(), item.sha(), true, () -> false);
+          Media replacement = verify(Uri.parse(item.target()), item.bytes(), item.sha(), true, () -> false, FailureReason.TARGET_PIN);
           if (!relocate(item, false)) throw new Failure("取り込みの記録を確認できません。");
           store.remapped(item, replacement.photo(), item.identity());
         }
@@ -1001,10 +1001,10 @@ final class PhotoMove implements AutoCloseable {
   }
 
   private boolean abandonHistorical(PhotoMoveStore.Item item) throws IOException {
-    boolean sourcePresent = find(Uri.parse(item.source())) != null;
+    boolean sourcePresent = find(Uri.parse(item.source()), FailureReason.SOURCE_IDENTITY) != null;
     boolean historyPresent = history.containsMoveEvidence(item.historyId());
     if (!sourcePresent) {
-      Media verified = verify(Uri.parse(item.target()), item.bytes(), item.proofSha(), true, () -> false);
+      Media verified = verify(Uri.parse(item.target()), item.bytes(), item.proofSha(), true, () -> false, FailureReason.TARGET_PIN);
       if (historyPresent) {
         finishHistoricalMove(item, verified, ledger.importDestinations());
       } else {
@@ -1032,7 +1032,7 @@ final class PhotoMove implements AutoCloseable {
     Uri collection = MediaStore.Images.Media.getContentUri(volume);
     if (!MediaStore.getExternalVolumeNames(context).contains(volume)) return;
     Media pending = queryOne(collection, queryArgs(DISPLAY_NAME + "=? AND " + IS_PENDING + "=1 AND " + OWNER_PACKAGE_NAME + "=?",
-        new String[]{item.token(), context.getPackageName()}));
+        new String[]{item.token(), context.getPackageName()}), FailureReason.TARGET_PIN);
     if (pending == null || !owned(pending) || !pending.pending() || !volume.equals(pending.volume())) return;
     if (item.target() != null && !item.target().equals(pending.uri().toString())) return;
     String selection = DISPLAY_NAME + "=? AND " + IS_PENDING + "=1 AND " + OWNER_PACKAGE_NAME + "=?";
@@ -1053,10 +1053,10 @@ final class PhotoMove implements AutoCloseable {
   private boolean intactSource(PhotoMoveStore.Item item) {
     try {
       Media source = requireSource(item);
-      Media verified = verify(source.uri(), item.bytes(), item.sha(), true, () -> false);
+      Media verified = verify(source.uri(), item.bytes(), item.sha(), true, () -> false, FailureReason.SOURCE_IDENTITY);
       return !item.hasHistoricalProof()
           || source.version().equals(verified.version()) && source.hasGenerationIdentity()
-              && verified.hasGenerationIdentity() && historicalAliasMatches(verified);
+              && verified.hasGenerationIdentity() && historicalAliasMatches(verified, FailureReason.SOURCE_ALIAS);
     } catch (IOException | RuntimeException unavailable) {
       return false;
     }
@@ -1064,7 +1064,7 @@ final class PhotoMove implements AutoCloseable {
 
   private boolean publishedReplacement(PhotoMoveStore.Item item) {
     try {
-      verify(Uri.parse(item.target()), item.bytes(), item.sha(), true, () -> false);
+      verify(Uri.parse(item.target()), item.bytes(), item.sha(), true, () -> false, FailureReason.TARGET_PIN);
       return true;
     } catch (IOException | RuntimeException unavailable) {
       return false;
@@ -1082,7 +1082,7 @@ final class PhotoMove implements AutoCloseable {
     if (item.hasHistoricalProof()) requireTargetAllocation(item, volume);
     if (item.target() != null) {
       Uri target = Uri.parse(item.target());
-      Media previous = find(target);
+      Media previous = find(target, FailureReason.TARGET_PIN);
       if (previous != null) {
         requirePending(previous, item, source, volume);
         if (item.hasHistoricalProof()) requireTargetBirth(item, previous, volume);
@@ -1096,7 +1096,7 @@ final class PhotoMove implements AutoCloseable {
     String selection = DISPLAY_NAME + "=? AND " + RELATIVE_PATH + "=? AND " + OWNER_PACKAGE_NAME + "=?";
     if (item.hasHistoricalProof()) selection += " AND " + IS_PENDING + "=1 AND " + IS_TRASHED + "=0";
     Media previous = queryOne(collection, queryArgs(selection,
-        new String[]{item.token(), source.path(), context.getPackageName()}));
+        new String[]{item.token(), source.path(), context.getPackageName()}), FailureReason.TARGET_PIN);
     Uri target;
     if (previous == null) {
       ContentValues values = new ContentValues();
@@ -1127,7 +1127,7 @@ final class PhotoMove implements AutoCloseable {
   private void requirePending(Media target, PhotoMoveStore.Item item, Media source, String volume) throws IOException {
     if (!owned(target) || !target.pending() || target.trashed() || !volume.equals(target.volume())
         || !item.token().equals(target.name()) || !source.path().equals(target.path()))
-      throw new Failure("移動先のファイルを確認できません。");
+      throw new Failure("移動先のファイルを確認できません。", FailureReason.TARGET_PIN);
   }
 
   private boolean owned(Media media) {
@@ -1203,7 +1203,7 @@ final class PhotoMove implements AutoCloseable {
     Media source = requireSource(item);
     var record = requireHistoricalHistory(item, cameraEvidence);
     if (!source.hasGenerationIdentity()) throw archiveMismatch(FailureReason.SOURCE_IDENTITY);
-    if (!historicalAliasMatches(source)) throw archiveMismatch(FailureReason.SOURCE_ALIAS);
+    if (!historicalAliasMatches(source, FailureReason.SOURCE_ALIAS)) throw archiveMismatch(FailureReason.SOURCE_ALIAS);
     if (!Objects.equals(store.completed(item.historyId()), item.sourceProof()))
       throw archiveMismatch(FailureReason.COMPLETED_PROOF);
     if (item.sourceProof() != null) {
@@ -1269,7 +1269,8 @@ final class PhotoMove implements AutoCloseable {
   private PhotoMoveStore.CompletedProof historicalDestination(PhotoMoveStore.Item item, Media verified,
       String epoch) throws IOException {
     if (!eligible(verified) || !verified.hasGenerationIdentity() || verified.bytes() != item.bytes()
-        || !historicalAliasMatches(verified) || !epoch.equals(LegacyArchiveMoveProof.epoch(context, verified.volume())))
+        || !historicalAliasMatches(verified, FailureReason.TARGET_PIN)
+        || !epoch.equals(LegacyArchiveMoveProof.epoch(context, verified.volume())))
       throw archiveMismatch(FailureReason.TARGET_PIN);
     return new PhotoMoveStore.CompletedProof(item.historyId(), verified.uri().toString(), verified.volume(), epoch,
         verified.generationAdded(), verified.generationModified(), verified.version(), verified.bytes(),
@@ -1291,36 +1292,42 @@ final class PhotoMove implements AutoCloseable {
   private void requireHistoricalDestination(PhotoMoveStore.Item item, Media verified) throws IOException {
     var destination = item.pendingCompletion();
     if (destination == null || !matchesCompleted(destination, verified)
-        || !matchesCompleted(destination, requireOwned(verified.uri())) || !historicalAliasMatches(verified))
+        || !matchesCompleted(destination, requireOwned(verified.uri()))
+        || !historicalAliasMatches(verified, FailureReason.TARGET_PIN))
       throw archiveMismatch(FailureReason.TARGET_PIN);
   }
 
   private Media requireSource(PhotoMoveStore.Item item) throws IOException {
-    Media media = find(Uri.parse(item.source()));
+    Media media = find(Uri.parse(item.source()), FailureReason.SOURCE_IDENTITY);
     if (!eligible(media) || !item.version().equals(media.version()))
       throw new Failure("移動元の写真が変更されたか、読み取れません。", FailureReason.SOURCE_IDENTITY);
     return media;
   }
 
   private Media requireOwned(Uri uri) throws IOException {
-    Media media = find(uri);
-    if (!owned(media) || media.trashed()) throw new Failure("写真の所有者を確認できません。");
+    return requireOwned(uri, FailureReason.TARGET_PIN);
+  }
+
+  private Media requireOwned(Uri uri, FailureReason reason) throws IOException {
+    Media media = find(uri, reason);
+    if (!owned(media) || media.trashed()) throw new Failure("写真の所有者を確認できません。", reason);
     return media;
   }
 
-  private Media find(Uri uri) throws IOException {
-    if (!CameraImportHistoryPlan.validUri(uri.toString())) throw new Failure("写真の保存先を確認できません。");
+  private Media find(Uri uri, FailureReason reason) throws IOException {
+    if (!CameraImportHistoryPlan.validUri(uri.toString()))
+      throw new Failure("写真の保存先を確認できません。", reason);
     PhotoStorage.requireMounted(context, uri);
-    Media result = queryOne(uri, queryArgs(null, null));
+    Media result = queryOne(uri, queryArgs(null, null), reason);
     PhotoStorage.requireMounted(context, uri);
-    if (result != null && !uri.equals(result.uri())) throw new Failure("別のボリュームの写真です。");
+    if (result != null && !uri.equals(result.uri())) throw new Failure("別のボリュームの写真です。", reason);
     return result;
   }
 
-  private Media queryOne(Uri uri, Bundle args) throws IOException {
+  private Media queryOne(Uri uri, Bundle args, FailureReason reason) throws IOException {
     try (Cursor c = resolver.query(uri, COLUMNS, args, null)) {
-      if (c == null) throw new Failure("写真の情報を取得できません。");
-      if (c.getCount() > 1) throw new Failure("写真を一意に特定できません。");
+      if (c == null) throw new Failure("写真の情報を取得できません。", reason);
+      if (c.getCount() > 1) throw new Failure("写真を一意に特定できません。", reason);
       return c.moveToFirst() ? media(c) : null;
     }
   }
@@ -1398,7 +1405,7 @@ final class PhotoMove implements AutoCloseable {
       RunMetrics metrics) throws IOException {
     long started = SystemClock.elapsedRealtimeNanos();
     try {
-      Media verified = verify(uri, bytes, sha, published, stopped);
+      Media verified = verify(uri, bytes, sha, published, stopped, null, FailureReason.TARGET_PIN);
       metrics.targetVerifiedPasses++;
       metrics.targetVerifiedBytes += bytes;
       return verified;
@@ -1407,20 +1414,21 @@ final class PhotoMove implements AutoCloseable {
     }
   }
 
-  private Media verify(Uri uri, long bytes, String sha, boolean published, BooleanSupplier stopped) throws IOException {
-    return verify(uri, bytes, sha, published, stopped, null);
+  private Media verify(Uri uri, long bytes, String sha, boolean published, BooleanSupplier stopped,
+      FailureReason reason) throws IOException {
+    return verify(uri, bytes, sha, published, stopped, null, reason);
   }
 
-  private Media verify(Uri uri, long bytes, String sha, boolean published, BooleanSupplier stopped, PreflightMeter meter)
-      throws IOException {
-    Media media = requireOwned(uri);
-    if (published == media.pending()) throw new Failure("写真の公開状態を確認できません。");
+  private Media verify(Uri uri, long bytes, String sha, boolean published, BooleanSupplier stopped,
+      PreflightMeter meter, FailureReason reason) throws IOException {
+    Media media = requireOwned(uri, reason);
+    if (published == media.pending()) throw new Failure("写真の公開状態を確認できません。", reason);
     try (InputStream in = original(uri)) {
       if (!sha.equals(hash(in, null, bytes, stopped, meter))) throw new Failure("写真の読み戻しが原本と一致しません。", FailureReason.SHA_MISMATCH);
     }
-    Media current = requireOwned(uri);
+    Media current = requireOwned(uri, reason);
     if (published == current.pending() || !media.version().equals(current.version()))
-      throw new Failure("照合中に写真が変更されました。");
+      throw new Failure("照合中に写真が変更されました。", reason);
     return current;
   }
 

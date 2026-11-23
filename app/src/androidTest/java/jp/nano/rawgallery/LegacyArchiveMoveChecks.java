@@ -3,13 +3,18 @@ package jp.nano.rawgallery;
 import android.app.Activity;
 import android.app.Instrumentation;
 import android.app.UiAutomation;
+import android.content.ContentProvider;
+import android.content.ContentResolver;
 import android.content.ContentUris;
 import android.content.ContentValues;
 import android.content.Context;
+import android.content.ContextWrapper;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.ProviderInfo;
 import android.database.Cursor;
 import android.database.DatabaseUtils;
+import android.database.MatrixCursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.graphics.Rect;
 import android.media.ExifInterface;
@@ -17,6 +22,7 @@ import android.media.MediaScannerConnection;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.CancellationSignal;
 import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.text.format.Formatter;
@@ -33,6 +39,7 @@ import java.io.InterruptedIOException;
 import java.io.UncheckedIOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -134,9 +141,12 @@ final class LegacyArchiveMoveChecks {
       checkConcurrentReceiptChange(base, secondary, change, true);
     }
     checkArchiveReadFailures(base, secondary);
+    checkAliasRejection(base, secondary);
+    checkPendingTargetRejection(base, secondary, false);
+    checkPendingTargetRejection(base, secondary, true);
     return "PASS archive snapshots: previous revision fence rejects, 2 unrelated commits retry, "
         + "3 attempts bound churn, latest evidence is enforced before copy and on published resume, "
-        + "and the read failure classes remain distinct.";
+        + "corrupt archive stays unchanged, and the failure classes identify the failed checks.";
   }
 
   private static void checkRevisionRetry(Context base, String secondary) throws Exception {
@@ -205,7 +215,7 @@ final class LegacyArchiveMoveChecks {
   }
 
   private enum ReceiptChange {
-    DELETED(Rejection.RECEIPT_MISSING), SHA(Rejection.SAVED_PROOF), STATE(Rejection.RECEIPT_UNVERIFIED),
+    DELETED(Rejection.RECEIPT_MISSING), SHA_CHANGED(Rejection.SAVED_PROOF), STATE(Rejection.RECEIPT_UNVERIFIED),
     METADATA(Rejection.RECEIPT_METADATA), VERIFIED_DUPLICATE(Rejection.RECEIPT_DUPLICATE),
     PENDING_DUPLICATE(Rejection.RECEIPT_DUPLICATE), RELEASED_DUPLICATE(Rejection.RECEIPT_DUPLICATE);
 
@@ -216,7 +226,7 @@ final class LegacyArchiveMoveChecks {
       switch (this) {
         case DELETED -> require(writer.getWritableDatabase().delete("photos", "key=?", new String[]{key}) == 1,
             "The competing connection deleted the selected receipt");
-        case SHA -> writer.put(receipt.put("sha", SHA), "verified");
+        case SHA_CHANGED -> writer.put(receipt.put("sha", SHA), "verified");
         case STATE -> writer.put(receipt, "pending");
         case METADATA -> writer.put(receipt.put("size", receipt.getLong("size") + 1), "verified");
         case VERIFIED_DUPLICATE -> writer.put(receipt.put("key", "e".repeat(32)), "verified");
@@ -255,7 +265,9 @@ final class LegacyArchiveMoveChecks {
           throw new CheckFailure("The move accepted changed archive evidence");
         } catch (PhotoMove.Failure rejected) {
           require(rejected.reason.equals(change.reason.code()) && rejected.scanAttempts == 2 && scans.get() == 2,
-              "A fresh stable scan identifies the actual receipt failure: " + change);
+              "A fresh stable scan identifies the actual receipt failure: case=" + change
+                  + " expected=" + change.reason.code() + " actual=" + rejected.reason
+                  + " attempts=" + rejected.scanAttempts + " observed_scans=" + scans.get());
         }
       }
       require(before.equals(journal.next()) && history.moveEvidence().equals(List.of(seed.history()))
@@ -276,6 +288,7 @@ final class LegacyArchiveMoveChecks {
       var reader = new LegacyArchiveMoveProof.Records(context, scans::incrementAndGet);
       require(reader.read(() -> false).rejection() == Rejection.ARCHIVE_OPEN && scans.get() == 0
           && !context.getDatabasePath(E2Settings.DATABASE).exists(), "A read failure never creates the archive");
+      checkCorruptArchiveIsPreserved(context);
       try (ArchiveStore writer = E2Settings.openRecords(context)) {
         SQLiteDatabase db = writer.getWritableDatabase();
         var empty = reader.read(() -> false);
@@ -291,12 +304,159 @@ final class LegacyArchiveMoveChecks {
         require(malformed.rejection() == Rejection.ARCHIVE_JSON_INVALID && malformed.scanAttempts() == 1,
             "A malformed row stops a scan without retrying it or returning an earlier result");
         db.execSQL("DELETE FROM photos");
-        db.execSQL("WITH RECURSIVE rows(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM rows WHERE n<100001) "
+        db.execSQL("WITH RECURSIVE rows(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM rows WHERE n<100000) "
             + "INSERT INTO photos SELECT CAST(n AS TEXT),'pending','{}' FROM rows");
+        var maximum = reader.read(() -> false);
+        require(maximum.rejection() == null && maximum.scanAttempts() == 1
+            && maximum.records().values().stream().mapToInt(List::size).sum() == 100_000,
+            "The archive can scan all rows at the accepted bound");
+        db.execSQL("INSERT INTO photos VALUES ('overflow','pending','{}')");
         var limited = reader.read(() -> false);
         require(limited.rejection() == Rejection.ARCHIVE_ROW_LIMIT && limited.scanAttempts() == 1 && limited.records().isEmpty(),
-            "The row-count bound rejects without returning a partial result");
+            "The first extra row rejects without returning a partial result");
+        db.execSQL("DELETE FROM photos WHERE key='overflow'");
+        require(reader.read(() -> false).scanAttempts() == 1 && reader.read(() -> false).scanAttempts() == 0,
+            "The rejected snapshot is never published to the cache");
       }
+    }
+  }
+
+  private static void checkCorruptArchiveIsPreserved(Context context) throws Exception {
+    File corrupt = File.createTempFile("corrupt-photo-archive-", ".db", context.getCacheDir());
+    byte[] badBytes = new byte[4096];
+    Arrays.fill(badBytes, (byte) 0x5a);
+    try {
+      Files.write(corrupt.toPath(), badBytes);
+      Context damaged = new ContextWrapper(context) {
+        @Override public File getDatabasePath(String name) {
+          return E2Settings.DATABASE.equals(name) ? corrupt : super.getDatabasePath(name);
+        }
+      };
+      var read = new LegacyArchiveMoveProof.Records(damaged).read(() -> false);
+      require((read.rejection() == Rejection.ARCHIVE_OPEN || read.rejection() == Rejection.ARCHIVE_READ)
+          && read.scanAttempts() == 0 && Files.exists(corrupt.toPath())
+          && Arrays.equals(badBytes, Files.readAllBytes(corrupt.toPath())),
+          "A corrupt archive is refused and its file is neither deleted nor rewritten");
+    } finally {
+      Files.deleteIfExists(corrupt.toPath());
+    }
+  }
+
+  private static void checkAliasRejection(Context base, String secondary) throws Exception {
+    try (Fixture f = new Fixture(base, secondary); CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         ArchiveStore archive = E2Settings.openRecords(f.isolatedContext());
+         PhotoMoveStore journal = new PhotoMoveStore(f.isolatedContext())) {
+      Seed seed = seed(f, history, archive, "DUPLICATE-MEDIA-ALIAS.JPG", 0xff57688b, false, false);
+      Context context = f.isolatedContext();
+      require(PhotoStorage.select(context, secondary), "Choose the synthetic SD destination");
+      try (PhotoMove preparing = f.move(ledger, history, ignored -> {})) {
+        preparing.begin(preflight(preparing, preparing.plan(secondary), () -> false));
+      }
+      long id = ContentUris.parseId(seed.uri());
+      Uri alias = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
+      var aliasQueries = new AtomicInteger();
+      // Model a provider with equal numeric IDs on distinct volumes while exercising the actual move.
+      ContentProvider provider = new ContentProvider() {
+        @Override public boolean onCreate() { return true; }
+        @Override public Cursor query(Uri uri, String[] columns, Bundle args, CancellationSignal signal) {
+          if (!alias.equals(uri)) return f.resolver.query(uri, columns, args, signal);
+          aliasQueries.incrementAndGet();
+          MatrixCursor rows = new MatrixCursor(columns, 2);
+          for (String volume : List.of(PRIMARY, secondary)) {
+            var row = rows.newRow();
+            row.add(_ID, id);
+            row.add(VOLUME_NAME, volume);
+          }
+          return rows;
+        }
+        @Override public Cursor query(Uri uri, String[] columns, String where, String[] args, String sort) {
+          return f.resolver.query(uri, columns, where, args, sort);
+        }
+        @Override public Bundle call(String method, String arg, Bundle extras) {
+          return f.resolver.call(MediaStore.AUTHORITY, method, arg, extras);
+        }
+        @Override public String getType(Uri uri) { return f.resolver.getType(uri); }
+        @Override public Uri insert(Uri uri, ContentValues values) { throw new CheckFailure("Alias rejection must not insert"); }
+        @Override public int update(Uri uri, ContentValues values, String where, String[] args) {
+          throw new CheckFailure("Alias rejection must not update");
+        }
+        @Override public int delete(Uri uri, String where, String[] args) {
+          throw new CheckFailure("Alias rejection must not delete");
+        }
+      };
+      ProviderInfo info = new ProviderInfo();
+      info.authority = MediaStore.AUTHORITY;
+      provider.attachInfo(context, info);
+      ContentResolver resolver = ContentResolver.wrap(provider);
+      Context multiVolume = new ContextWrapper(context) {
+        @Override public Context getApplicationContext() { return this; }
+        @Override public ContentResolver getContentResolver() { return resolver; }
+      };
+      var before = journal.next();
+      try (PhotoMove resumed = new PhotoMove(multiVolume, ledger, history, new PhotoMoveStore(context), ignored -> {},
+          f.resolver::openInputStream)) {
+        expectMoveReason(PhotoMove.FailureReason.SOURCE_ALIAS, () -> resumed.run(() -> false, ignored -> {}),
+            "写真を一意に特定できません。");
+      }
+      require(aliasQueries.get() == 1 && before.equals(journal.next()) && f.rows(secondary).isEmpty()
+          && history.moveEvidence().equals(List.of(seed.history())) && Arrays.equals(seed.bytes(), f.read(seed.uri())),
+          "An ambiguous source alias cannot copy the original or advance its history");
+    }
+  }
+
+  private static void checkPendingTargetRejection(Context base, String secondary, boolean duringVerification) throws Exception {
+    try (Fixture f = new Fixture(base, secondary); CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         ArchiveStore archive = E2Settings.openRecords(f.isolatedContext());
+         PhotoMoveStore journal = new PhotoMoveStore(f.isolatedContext())) {
+      Seed seed = seed(f, history, archive, "TARGET-PUBLICATION-CHANGED.JPG", 0xff57688b, false, false);
+      require(PhotoStorage.select(f.isolatedContext(), secondary), "Choose the synthetic SD destination");
+      try (PhotoMove preparing = f.move(ledger, history, boundary -> {
+        if (boundary == PhotoMove.Boundary.ATTACHED) throw new InterruptedMove();
+      })) {
+        preparing.begin(preflight(preparing, preparing.plan(secondary), () -> false));
+        expectCrash(preparing, PhotoMove.Boundary.ATTACHED);
+      }
+      var before = journal.next();
+      Uri target = Uri.parse(before.target());
+      require(before.stage() == PhotoMoveStore.COPYING && f.row(target).pending(), "Use the pinned unpublished copy");
+      byte[] copiedBytes = duringVerification ? seed.bytes() : jpeg(0xff216759);
+      if (!duringVerification) {
+        f.write(target, copiedBytes);
+        publishFixtureTarget(f, target);
+      }
+      var publications = new AtomicInteger();
+      try (PhotoMove resumed = new PhotoMove(f.isolatedContext(), ledger, history, new PhotoMoveStore(f.isolatedContext()),
+          ignored -> {}, uri -> {
+            if (duringVerification && target.getPath().equals(uri.getPath())) {
+              publishFixtureTarget(f, target);
+              publications.incrementAndGet();
+            }
+            return f.resolver.openInputStream(uri);
+          })) {
+        expectMoveReason(PhotoMove.FailureReason.TARGET_PIN, () -> resumed.run(() -> false, ignored -> {}),
+            duringVerification ? "照合中に写真が変更されました。" : "移動先のファイルを確認できません。");
+      }
+      require(publications.get() == (duringVerification ? 1 : 0) && before.equals(journal.next())
+          && history.moveEvidence().equals(List.of(seed.history())) && journal.completed(seed.history().getId()) == null
+          && Arrays.equals(seed.bytes(), f.read(seed.uri())) && Arrays.equals(copiedBytes, f.read(target))
+          && !f.row(target).pending(), "Changed target publication preserves both files and the historical journal");
+    }
+  }
+
+  private static void publishFixtureTarget(Fixture f, Uri target) {
+    var published = new ContentValues();
+    published.put(IS_PENDING, 0);
+    require(f.resolver.update(target, published, null, null) == 1, "Publish the synthetic target at the intended boundary");
+  }
+
+  private static void expectMoveReason(PhotoMove.FailureReason reason, CheckedOperation operation, String message)
+      throws Exception {
+    try {
+      operation.run();
+      throw new CheckFailure("The move accepted changed identity");
+    } catch (PhotoMove.Failure rejected) {
+      require(reason.code().equals(rejected.reason) && rejected.scanAttempts == 0 && message.equals(rejected.getMessage()),
+          "The move identifies the failed check and keeps its existing message: " + rejected.reason);
     }
   }
 
