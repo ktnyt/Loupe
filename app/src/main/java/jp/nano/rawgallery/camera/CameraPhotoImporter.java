@@ -8,6 +8,16 @@ import java.util.function.BooleanSupplier;
 
 /** The photo import contract shared by Wi-Fi, SAF/SD and USB readers. Call under CameraImportGate. */
 public final class CameraPhotoImporter {
+    /** Retrying within the same import must not select a newer missing destination. */
+    static final class SavedPhotoConflict extends IOException {
+        SavedPhotoConflict(String message) { super(message); }
+    }
+
+    /** One file's initial absent destination, retained across in-operation read retries. */
+    static final class Attempt {
+        private CameraImportLedger.Content firstMissing;
+    }
+
     public static final class Result {
         public final Uri uri;
         public final boolean imported, contentChecked;
@@ -48,20 +58,35 @@ public final class CameraPhotoImporter {
 
     Result importPhoto(CameraImportFile source, CameraImportCopy.Copy copy, String folderHint, boolean stableSource,
             boolean verifyAll, BooleanSupplier cancelled, CameraPhotoPublisher.CommitCheck beforeCommit) throws IOException {
+        return importPhoto(source, copy, folderHint, stableSource, verifyAll, cancelled, beforeCommit, new Attempt());
+    }
+
+    Result importPhoto(CameraImportFile source, CameraImportCopy.Copy copy, String folderHint, boolean stableSource,
+            boolean verifyAll, BooleanSupplier cancelled, CameraPhotoPublisher.CommitCheck beforeCommit, Attempt attempt)
+            throws IOException {
         CameraPhotoPublisher.check(cancelled);
         String read=android.os.Build.VERSION.SDK_INT>=33?android.Manifest.permission.READ_MEDIA_IMAGES:android.Manifest.permission.READ_EXTERNAL_STORAGE;
         if(context.checkSelfPermission(read)!=android.content.pm.PackageManager.PERMISSION_GRANTED)throw new IOException("Full photo access required for duplicate verification");
-        if(stableSource&&!verifyAll) {
+        if(stableSource&&!verifyAll&&attempt.firstMissing==null) {
             CameraImportLedger.Content known=ledger.known(source);
             if(known!=null&&available(known,cancelled)) {
                 beforeCommit.check();
                 return new Result(Uri.parse(known.uri),false,false,0);
             }
+            attempt.firstMissing = known;
         }
         try(CameraImportCopy.Prepared prepared=CameraImportCopy.prepare(context.getCacheDir(),source,metrics==null?copy:metrics.countSource(copy),cancelled)) {
             CameraImportLedger.Content existing = ledger.find(prepared.sourceSha256, source.bytes);
             CameraImportLedger.Content missing = null;
-            if (existing != null && !available(existing, cancelled)) {
+            CameraImportLedger.Content firstMissing = attempt.firstMissing;
+            if (firstMissing != null) {
+                if (!firstMissing.sourceSha.equals(prepared.sourceSha256))
+                    throw new SavedPhotoConflict("カード上の写真の内容が以前の取り込みと異なります。取り込み元を確認してください。");
+                if (!firstMissing.sameRow(existing) || available(firstMissing, cancelled))
+                    throw new SavedPhotoConflict("以前の取り込み先が変わりました。保存先を確認してください。");
+                missing = firstMissing;
+                existing = null;
+            } else if (existing != null && !available(existing, cancelled)) {
                 missing = existing;
                 existing = null;
             }

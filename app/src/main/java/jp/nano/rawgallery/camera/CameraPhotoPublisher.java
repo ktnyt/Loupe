@@ -97,7 +97,8 @@ public final class CameraPhotoPublisher {
                     if(total!=p.storedBytes)throw new IOException("Staged photo is incomplete");
                     out.getFD().sync();
             }
-            check(cancelled);verify(p,target,cancelled);
+            check(cancelled);
+            verify(p, target, true, cancelled);
             requirePublicationContent(p);
             // READY is the durable admission to publication. A refused source check must leave
             // the row unready so recovery can only discard it, never publish it later.
@@ -105,22 +106,26 @@ public final class CameraPhotoPublisher {
             ledger.ready(p.token);p=ledger.pending(p.token);
             faults.after(Boundary.FILE_VERIFIED);
             // An admitted publication must finish or recover with its receipt, even after a stop.
-            requirePublicationContent(p);
-            makeVisible(p,target);
-            faults.after(Boundary.PUBLISHED);
-            requirePublicationContent(p);
-            ledger.commit(p.token);faults.after(Boundary.RECEIPT_SAVED);
+            completePublication(p, target, () -> false);
             return target;
         } catch(IOException|RuntimeException failure) {
             CameraImportLedger.Pending current=ledger.pending(p.token);
             if(current!=null&&!current.ready) {
-                try {discardUnpublished(current);}catch(Exception cleanup){failure.addSuppressed(cleanup);}
+                try {
+                    discardUnpublished(current);
+                } catch (CameraPhotoImporter.SavedPhotoConflict conflict) {
+                    conflict.addSuppressed(failure);
+                    throw conflict;
+                } catch (Exception cleanup) {
+                    failure.addSuppressed(cleanup);
+                }
             }
             throw failure;
         }
     }
     private record State(boolean pending, boolean trashed, String owner, String name, String folder,
             long generationAdded, long generationModified) {}
+    private record Revision(State row, String epoch) {}
 
     private static void requireComplete(Cursor cursor) throws IOException {
         if (cursor == null) throw new IOException("Photo status could not be read");
@@ -273,60 +278,128 @@ public final class CameraPhotoPublisher {
         }
     }
 
-    private void verify(CameraImportLedger.Pending p,Uri uri,BooleanSupplier cancelled)throws IOException {
-        owned(state(uri));
+    private String epoch(String volume) throws IOException {
+        String version = MediaStore.getVersion(context, volume);
+        if (version == null || version.isEmpty()) throw new IOException("Photo volume revision is unavailable");
+        return version;
+    }
+
+    private State requirePublicationRow(CameraImportLedger.Pending p, Uri uri, boolean pending) throws IOException {
+        State row = state(uri);
+        owned(row);
+        if (row.pending() != pending || !p.relativeFolder.equals(row.folder())
+                || row.generationModified() < row.generationAdded()
+                || pending && !p.pendingName.equals(row.name()))
+            throw new IOException("Publication target identity or status changed");
+        return row;
+    }
+
+    private Revision verify(CameraImportLedger.Pending p, Uri uri, boolean pending, BooleanSupplier cancelled)
+            throws IOException {
+        String version = epoch(p.volume);
+        State before = requirePublicationRow(p, uri, pending);
         try(InputStream in=resolver.openInputStream(uri)) {
             if(in==null)throw new IOException("Saved photo could not be read");
             MessageDigest sha=MessageDigest.getInstance("SHA-256");byte[] buf=new byte[65536];int n;long count=0;
             while((n=in.read(buf))!=-1){check(cancelled);count+=n;readCounter.accept(n);if(count>p.storedBytes)throw new IOException("Saved photo length mismatch");sha.update(buf,0,n);}
             if(count!=p.storedBytes||!hex(sha.digest()).equals(p.storedSha))throw new IOException("Saved photo fingerprint mismatch");
         }catch(NoSuchAlgorithmException impossible){throw new AssertionError(impossible);}
+        State after = requirePublicationRow(p, uri, pending);
+        if (!before.equals(after) || !version.equals(epoch(p.volume)))
+            throw new IOException("Publication target changed during verification");
+        return new Revision(after, version);
     }
-    private void makeVisible(CameraImportLedger.Pending p,Uri uri)throws IOException {
-        State state=state(uri);owned(state);
-        if(!state.pending())return;
-        ContentValues values=new ContentValues();values.put(MediaStore.MediaColumns.DISPLAY_NAME,p.finalName);values.put(MediaStore.MediaColumns.IS_PENDING,0);
-        if(resolver.update(uri,values,null,null)!=1)throw new IOException("Photo publish failed");
+
+    private Bundle exactPending(State row) {
+        Bundle exact = includeAllPhotos();
+        exact.putString(ContentResolver.QUERY_ARG_SQL_SELECTION,
+                MediaStore.MediaColumns.OWNER_PACKAGE_NAME + "=? AND " + MediaStore.MediaColumns.IS_PENDING
+                        + "=1 AND " + MediaStore.MediaColumns.IS_TRASHED + "=0 AND "
+                        + MediaStore.MediaColumns.DISPLAY_NAME + "=? AND " + MediaStore.MediaColumns.RELATIVE_PATH
+                        + "=? AND " + MediaStore.MediaColumns.GENERATION_ADDED + "=? AND "
+                        + MediaStore.MediaColumns.GENERATION_MODIFIED + "=?");
+        exact.putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS,
+                new String[]{row.owner(), row.name(), row.folder(), Long.toString(row.generationAdded()),
+                        Long.toString(row.generationModified())});
+        return exact;
+    }
+
+    private void completePublication(CameraImportLedger.Pending p, Uri uri, BooleanSupplier cancelled) throws IOException {
+        State current = state(uri);
+        owned(current);
+        Revision verifiedPending = null;
+        if (current.pending()) {
+            requirePublicationContent(p);
+            verifiedPending = verify(p, uri, true, cancelled);
+            if (!verifiedPending.epoch().equals(epoch(p.volume)))
+                throw new IOException("Publication target volume changed");
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.MediaColumns.DISPLAY_NAME, p.finalName);
+            values.put(MediaStore.MediaColumns.IS_PENDING, 0);
+            int updated;
+            try {
+                updated = resolver.update(uri, values, exactPending(verifiedPending.row()));
+            } catch (SecurityException refused) {
+                throw new IOException("Photo publish failed", refused);
+            }
+            if (updated != 1)
+                throw new IOException("Photo publish failed");
+            faults.after(Boundary.PUBLISHED);
+        }
+        requirePublicationContent(p);
+        Revision published = verify(p, uri, false, cancelled);
+        if (verifiedPending != null && (!published.epoch().equals(verifiedPending.epoch())
+                || published.row().generationAdded() != verifiedPending.row().generationAdded()))
+            throw new IOException("Published photo identity changed");
+        if (!published.row().equals(requirePublicationRow(p, uri, false))
+                || !published.epoch().equals(epoch(p.volume)))
+            throw new IOException("Published photo changed before receipt");
+        ledger.commit(p.token);
+        faults.after(Boundary.RECEIPT_SAVED);
     }
     private void discardUnpublished(CameraImportLedger.Pending p)throws IOException {
         Uri uri=locate(p);
-        if(uri!=null) {
-            State state=state(uri);
-            if (state != null) {
-                owned(state);
-                if (!state.pending()) throw new IOException("Published photo needs receipt recovery");
-                if (!p.pendingName.equals(state.name()) || !p.relativeFolder.equals(state.folder()))
-                    throw new IOException("Pending photo identity changed before cleanup");
-                Bundle exact = includeAllPhotos();
-                exact.putString(ContentResolver.QUERY_ARG_SQL_SELECTION,
-                        MediaStore.MediaColumns.OWNER_PACKAGE_NAME + "=? AND " + MediaStore.MediaColumns.IS_PENDING
-                                + "=1 AND " + MediaStore.MediaColumns.IS_TRASHED + "=0 AND "
-                                + MediaStore.MediaColumns.DISPLAY_NAME + "=? AND " + MediaStore.MediaColumns.RELATIVE_PATH
-                                + "=? AND " + MediaStore.MediaColumns.GENERATION_ADDED + "=? AND "
-                                + MediaStore.MediaColumns.GENERATION_MODIFIED + "=?");
-                exact.putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS,
-                        new String[]{state.owner(), p.pendingName, p.relativeFolder,
-                                Long.toString(state.generationAdded()), Long.toString(state.generationModified())});
-                if (resolver.delete(uri, exact) != 1 || state(uri) != null)
-                    throw new IOException("Incomplete photo cleanup failed");
+        State state = uri == null ? null : state(uri);
+        // Keep the journal as the original comparison witness if the saved row changes.
+        // Discarding it would let a later attempt select a different missing destination.
+        requireReplacementWitness(p);
+        if (state != null) {
+            owned(state);
+            if (!state.pending()) throw new IOException("Published photo needs receipt recovery");
+            if (!p.pendingName.equals(state.name()) || !p.relativeFolder.equals(state.folder()))
+                throw new IOException("Pending photo identity changed before cleanup");
+            int deleted;
+            try {
+                deleted = resolver.delete(uri, exactPending(state));
+            } catch (SecurityException refused) {
+                throw new IOException("Incomplete photo cleanup failed", refused);
             }
+            if (deleted != 1 || state(uri) != null)
+                throw new IOException("Incomplete photo cleanup failed");
         }
         PhotoStorage.requireMounted(context,MediaStore.Images.Media.getContentUri(p.volume));
         ledger.discard(p.token);
     }
     private void requirePublicationContent(CameraImportLedger.Pending p) throws IOException {
-        CameraImportLedger.Content current = ledger.find(p.sourceSha, p.source.bytes);
-        // A migrated journal without a witness can finish a new or idempotent publication.
-        // It cannot authorize replacing a different destination selected after allocation.
-        if (p.replacement == null) {
-            if (current != null && (!p.uri.equals(current.uri) || !p.storedSha.equals(current.storedSha)
-                    || p.storedBytes != current.storedBytes))
-                throw new IOException("Saved photo changed before publication");
+        if (p.replacement != null) {
+            requireReplacementWitness(p);
             return;
         }
-        if (!p.replacement.sameRow(current)) throw new IOException("Saved photo changed before replacement");
+        // A migrated journal without a witness can finish a new or idempotent publication.
+        // It cannot authorize replacing a different destination selected after allocation.
+        CameraImportLedger.Content current = ledger.find(p.sourceSha, p.source.bytes);
+        if (current != null && (!p.uri.equals(current.uri) || !p.storedSha.equals(current.storedSha)
+                || p.storedBytes != current.storedBytes))
+            throw new IOException("Saved photo changed before publication");
+    }
+
+    private void requireReplacementWitness(CameraImportLedger.Pending p) throws IOException {
+        if (p.replacement == null) return;
+        CameraImportLedger.Content current = ledger.find(p.sourceSha, p.source.bytes);
+        if (!p.replacement.sameRow(current))
+            throw new CameraPhotoImporter.SavedPhotoConflict("以前の取り込み先が変わりました。保存先を確認してください。");
         if (savedPhotoExists(context, Uri.parse(p.replacement.uri), metadataQuery))
-            throw new IOException("Previous saved photo still exists");
+            throw new CameraPhotoImporter.SavedPhotoConflict("以前の取り込み先に写真があります。保存先を確認してください。");
     }
 
     /** Run under CameraImportGate before accepting another file. Never deletes a published photo. */
@@ -339,6 +412,7 @@ public final class CameraPhotoPublisher {
             State state = uri == null ? null : state(uri);
             if (state == null) {
                 PhotoStorage.requireMounted(context, MediaStore.Images.Media.getContentUri(initial.volume));
+                requireReplacementWitness(initial);
                 ledger.discard(initial.token);
                 continue;
             }
@@ -349,11 +423,7 @@ public final class CameraPhotoPublisher {
                 discardUnpublished(p);
                 continue;
             }
-            verify(p, uri, cancelled);
-            requirePublicationContent(p);
-            makeVisible(p, uri);
-            requirePublicationContent(p);
-            ledger.commit(p.token);
+            completePublication(p, uri, cancelled);
         }
     }
     private static String hex(byte[] bytes) { StringBuilder out=new StringBuilder();for(byte b:bytes)out.append(String.format(Locale.ROOT,"%02x",b&255));return out.toString(); }

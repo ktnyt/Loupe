@@ -259,6 +259,7 @@ public final class CameraDifferentialService extends Service {
             String message = failure instanceof CameraPairedSession.MissingWifiException
                     || failure instanceof CameraDocumentSource.OriginalAccessException
                     || failure instanceof CameraDocumentSource.ListingException
+                    || failure instanceof CameraPhotoImporter.SavedPhotoConflict
                     || failure instanceof MountedCameraCard.Unavailable || failure instanceof PhotoStorage.Unavailable
                     ? failure.getMessage() : "取り込みを完了できませんでした。接続と写真へのアクセスを確認してください";
             if (progressStarted) {
@@ -411,11 +412,13 @@ public final class CameraDifferentialService extends Service {
             boolean stable, boolean verify, BooleanSupplier operationCancelled, boolean sdOriginal,
             CameraPhotoPublisher.CommitCheck check, CameraPhotoPublisher.CommitCheck beforeCommit) throws IOException {
         IOException first=null;
+        var attempt = new CameraPhotoImporter.Attempt();
         for(int i=0;i<2;i++)try{
             if(sdOriginal)CameraDocumentSource.requireOriginalPermission(this);
             if(check!=null)check.check();
-            return importer.importPhoto(f, copy, null, stable, verify, operationCancelled, beforeCommit);
-        }catch(InterruptedIOException e){throw e;}catch(CameraDocumentSource.OriginalAccessException|MountedCameraCard.Unavailable e){throw e;}catch(IOException e){
+            return importer.importPhoto(f, copy, null, stable, verify, operationCancelled, beforeCommit, attempt);
+        }catch(InterruptedIOException e){throw e;}catch(CameraDocumentSource.OriginalAccessException
+                | MountedCameraCard.Unavailable | CameraPhotoImporter.SavedPhotoConflict e){throw e;}catch(IOException e){
             if(first==null)first=e;CameraPhotoPublisher.check(operationCancelled);
             if(sdOriginal)CameraDocumentSource.requireOriginalPermission(this);
             importer.recover(operationCancelled);

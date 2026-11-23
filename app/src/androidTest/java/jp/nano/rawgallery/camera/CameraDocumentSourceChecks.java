@@ -337,7 +337,11 @@ public final class CameraDocumentSourceChecks {
             revokedTreeGrant(context);
             publicationGrantBoundary(context);
             uncertainPublicationRecovery(context);
+            initialMissingReplacement(context);
+            unreadyReplacementConflict(context, false);
+            unreadyReplacementConflict(context, true);
             replacementRecovery(context);
+            publicationRevisionRaces(context);
             conditionalPendingCleanup(context);
             migrateReplacementWitness(context);
         }
@@ -930,6 +934,67 @@ public final class CameraDocumentSourceChecks {
 
     private static final class ProcessLoss extends Error {}
 
+    private static void initialMissingReplacement(Context context) throws IOException {
+        String database = "camera-first-missing-" + UUID.randomUUID() + ".db";
+        String volume = jp.nano.rawgallery.PhotoStorage.PRIMARY;
+        Uri collection = MediaStore.Images.Media.getContentUri(volume);
+        Uri oldUri = ContentUris.withAppendedId(collection, 123456789L);
+        Uri movedUri = ContentUris.withAppendedId(collection, 123456790L);
+        File original = File.createTempFile("sd-first-missing-", ".jpg", context.getCacheDir());
+        try (var ledger = new CameraImportLedger(context, database)) {
+            try (var output = new FileOutputStream(original)) { output.write(ORIGINAL); }
+            var source = new CameraImportFile("sd:first-missing", "DCIM/" + UUID.randomUUID() + ".JPG",
+                    original.length(), "mtime", 1);
+            String sha = hexDigest(ORIGINAL);
+            require(!CameraPhotoPublisher.savedPhotoExists(context, oldUri)
+                            && !CameraPhotoPublisher.savedPhotoExists(context, movedUri),
+                    "both displaced destinations are absent before the source read");
+            var old = ledger.adopt(source, sha, sha, source.bytes, oldUri.toString(), "JPEG", "fixture");
+            List<List<String>> oldReceipts = receiptRows(ledger);
+            var importer = new CameraPhotoImporter(context, ledger, volume);
+            var attempt = new CameraPhotoImporter.Attempt();
+            try {
+                importer.importPhoto(source, out -> {
+                    require(ledger.relocate(oldUri.toString(), null, movedUri.toString(), sha),
+                            "fixture changes the saved destination during an interrupted source read");
+                    throw new IOException("fixture read interruption");
+                }, "camera-first-missing", true, false, () -> false, CameraPhotoPublisher.NO_COMMIT_CHECK, attempt);
+                throw new AssertionError("fixture read did not fail");
+            } catch (IOException expected) {
+                require(expected.getMessage().contains("fixture read interruption"), "first attempt returns its read error");
+            }
+            try {
+                importer.importPhoto(source, out -> java.nio.file.Files.copy(original.toPath(), out),
+                        "camera-first-missing", true, false, () -> false, CameraPhotoPublisher.NO_COMMIT_CHECK, attempt);
+                throw new AssertionError("Retried copy replaced the second absent destination");
+            } catch (CameraPhotoImporter.SavedPhotoConflict expected) { }
+            require(ledger.relocate(movedUri.toString(), null, oldUri.toString(), sha), "fixture restores its initial row");
+            try {
+                importer.importPhoto(source, out -> {
+                    require(ledger.relocate(oldUri.toString(), null, movedUri.toString(), sha),
+                            "fixture changes the saved destination during the original read");
+                    java.nio.file.Files.copy(original.toPath(), out);
+                }, "camera-first-missing", true, false, () -> false);
+                throw new AssertionError("Completed copy replaced the second absent destination");
+            } catch (CameraPhotoImporter.SavedPhotoConflict expected) { }
+            require(ledger.known(source).uri.equals(movedUri.toString()) && receiptRows(ledger).equals(oldReceipts)
+                            && ledger.contentCount() == 1 && ledger.pending().isEmpty()
+                            && Arrays.equals(java.nio.file.Files.readAllBytes(original.toPath()), ORIGINAL),
+                    "the first absent witness conflict keeps source bytes and existing history with no READY row");
+            require(ledger.relocate(movedUri.toString(), null, oldUri.toString(), sha), "fixture restores its initial row");
+            try {
+                importer.importPhoto(source, out -> out.write(new byte[ORIGINAL.length]),
+                        "camera-first-missing", true, false, () -> false);
+                throw new AssertionError("Different bytes overwrote the old receipt with the same source tuple");
+            } catch (CameraPhotoImporter.SavedPhotoConflict expected) { }
+            require(old.sameRow(ledger.known(source)) && receiptRows(ledger).equals(oldReceipts)
+                            && ledger.pending().isEmpty() && ledger.contentCount() == 1,
+                    "same source tuple with different bytes keeps its previous receipt and saved record");
+        } finally {
+            require(context.deleteDatabase(database) && original.delete(), "isolated initial witness fixture removed");
+        }
+    }
+
     private static void replacementRecovery(Context context) throws IOException {
         String database = "camera-replacement-witness-" + UUID.randomUUID() + ".db";
         var ledger = new CameraImportLedger(context, database);
@@ -966,9 +1031,7 @@ public final class CameraDocumentSourceChecks {
             try {
                 recovery.recover(() -> false);
                 throw new AssertionError("Recovery replaced a newer absent saved row");
-            } catch (IOException expected) {
-                require(expected.getMessage().contains("changed before replacement"), "recovery refused the newer content");
-            }
+            } catch (CameraPhotoImporter.SavedPhotoConflict expected) { }
             require(ledger.pending(pending.token).ready && old.sameRow(ledger.pending(pending.token).replacement)
                             && ledger.known(source).uri.equals(movedUri.toString()) && receiptRows(ledger).equals(receipts)
                             && countNamedMedia(context, name) == 0,
@@ -995,6 +1058,159 @@ public final class CameraDocumentSourceChecks {
             if (target != null) context.getContentResolver().delete(target, null, null);
             ledger.close();
             require(context.deleteDatabase(database) && staged.delete(), "isolated replacement fixture removed");
+        }
+    }
+
+    private static void unreadyReplacementConflict(Context context, boolean interrupt) throws IOException {
+        String database = "camera-unready-replacement-" + UUID.randomUUID() + ".db";
+        File staged = File.createTempFile("sd-unready-replacement-", ".jpg", context.getCacheDir());
+        String volume = jp.nano.rawgallery.PhotoStorage.PRIMARY;
+        Uri collection = MediaStore.Images.Media.getContentUri(volume);
+        Uri oldUri = ContentUris.withAppendedId(collection, 123456789L);
+        Uri movedUri = ContentUris.withAppendedId(collection, 123456790L);
+        var resolver = context.getContentResolver();
+        Uri[] target = {null};
+        try {
+            try (var output = new FileOutputStream(staged)) { output.write(ORIGINAL); }
+            String name = "unready-replacement-" + UUID.randomUUID() + ".JPG";
+            var source = new CameraImportFile("sd:unready-replacement", "DCIM/" + name, staged.length(), "mtime", 1);
+            String sha = hexDigest(ORIGINAL);
+            String token;
+            CameraImportLedger.Content expected;
+            List<List<String>> receipts;
+            try (var ledger = new CameraImportLedger(context, database)) {
+                require(!CameraPhotoPublisher.savedPhotoExists(context, oldUri)
+                                && !CameraPhotoPublisher.savedPhotoExists(context, movedUri),
+                        "both competing saved destinations are confirmed absent");
+                expected = ledger.adopt(source, sha, sha, source.bytes, oldUri.toString(), "JPEG", "fixture");
+                receipts = receiptRows(ledger);
+                var publisher = new CameraPhotoPublisher(context, ledger, volume, boundary -> {
+                    if (boundary != CameraPhotoPublisher.Boundary.URI_RECORDED) return;
+                    var pending = ledger.pending().get(0);
+                    require(!pending.ready && expected.sameRow(pending.replacement),
+                            "initial witness is already durable when URI_RECORDED fires");
+                    target[0] = Uri.parse(pending.uri);
+                    require(ledger.relocate(oldUri.toString(), null, movedUri.toString(), sha),
+                            "fixture changes the original comparison row before READY");
+                    if (interrupt) {
+                        replaceTargetBytes(resolver, target[0], ORIGINAL);
+                        throw new ProcessLoss();
+                    }
+                });
+                try {
+                    publisher.publish(source, staged, sha, "JPEG",
+                            CameraPhotoPublisher.folder("camera-unready-replacement", false), "fixture", () -> false,
+                            CameraPhotoPublisher.NO_COMMIT_CHECK, expected);
+                    throw new AssertionError("UNREADY replacement accepted a different comparison row");
+                } catch (ProcessLoss expectedLoss) {
+                    require(interrupt, "only the reopen fixture interrupts at URI_RECORDED");
+                } catch (CameraPhotoImporter.SavedPhotoConflict conflict) {
+                    require(!interrupt, "normal publication rejects the changed witness without retry");
+                }
+                var pending = ledger.pending().get(0);
+                token = pending.token;
+                require(!pending.ready && expected.sameRow(pending.replacement),
+                        "failed UNREADY publication keeps the original witness");
+            }
+            try (var reopened = new CameraImportLedger(context, database)) {
+                try {
+                    new CameraPhotoImporter(context, reopened, volume).recover(() -> false);
+                    throw new AssertionError("UNREADY recovery discarded a changed replacement witness");
+                } catch (CameraPhotoImporter.SavedPhotoConflict conflict) { }
+                var pending = reopened.pending(token);
+                require(pending != null && !pending.ready && expected.sameRow(pending.replacement)
+                                && reopened.known(source).uri.equals(movedUri.toString())
+                                && reopened.contentCount() == 1 && receiptRows(reopened).equals(receipts)
+                                && countNamedMedia(context, name) == 0,
+                        "reopen retains the UNREADY operation and the current content and receipts");
+                try (var input = resolver.openInputStream(target[0])) {
+                    require(Arrays.equals(input.readAllBytes(), ORIGINAL), "pending bytes survived normal cleanup and recovery");
+                }
+            }
+        } finally {
+            if (target[0] != null) resolver.delete(target[0], null, null);
+            require(context.deleteDatabase(database) && staged.delete(), "isolated UNREADY replacement fixture removed");
+        }
+    }
+
+    private static void publicationRevisionRaces(Context context) throws IOException {
+        targetBytesChanged(context, CameraPhotoPublisher.Boundary.FILE_VERIFIED, false);
+        targetBytesChanged(context, CameraPhotoPublisher.Boundary.PUBLISHED, false);
+        targetBytesChanged(context, CameraPhotoPublisher.Boundary.FILE_VERIFIED, true);
+    }
+
+    private static void targetBytesChanged(Context context, CameraPhotoPublisher.Boundary boundary, boolean recoverRace)
+            throws IOException {
+        String database = "camera-target-race-" + UUID.randomUUID() + ".db";
+        File staged = File.createTempFile("sd-target-race-", ".jpg", context.getCacheDir());
+        String volume = jp.nano.rawgallery.PhotoStorage.PRIMARY;
+        String name = "target-race-" + UUID.randomUUID() + ".JPG";
+        var resolver = context.getContentResolver();
+        Uri[] target = {null};
+        byte[] changed = ORIGINAL.clone();
+        changed[0] ^= 1;
+        try (var ledger = new CameraImportLedger(context, database)) {
+            try (var output = new FileOutputStream(staged)) { output.write(ORIGINAL); }
+            var source = new CameraImportFile("sd:target-race", "DCIM/" + name, staged.length(), "mtime", 1);
+            var mutation = new AtomicBoolean();
+            var publisher = new CameraPhotoPublisher(context, ledger, volume, reached -> {
+                if (reached != boundary) return;
+                target[0] = Uri.parse(ledger.pending().get(0).uri);
+                if (recoverRace) throw new ProcessLoss();
+                replaceTargetBytes(resolver, target[0], changed);
+                mutation.set(true);
+            });
+            String folder = CameraPhotoPublisher.folder("camera-target-race", false);
+            try {
+                publisher.publish(source, staged, hexDigest(ORIGINAL), "JPEG", folder, "fixture", () -> false);
+                throw new AssertionError("Changed target received an import receipt");
+            } catch (ProcessLoss expected) {
+                require(recoverRace, "only the recovery fixture interrupts READY publication");
+            } catch (IOException expected) {
+                require(!recoverRace && mutation.get(), "normal publication rejected changed bytes after the injected mutation");
+            }
+            var hashed = new AtomicBoolean();
+            var recovery = new CameraPhotoPublisher(context, ledger, volume, ignored -> {}, (uri, fields, args) -> {
+                Cursor cursor = resolver.query(uri, fields, args, null);
+                if (!recoverRace || !hashed.get() || !uri.equals(target[0]) || cursor == null) return cursor;
+                return new CursorWrapper(cursor) {
+                    @Override public void close() {
+                        super.close();
+                        if (!mutation.compareAndSet(false, true)) return;
+                        replaceTargetBytes(resolver, uri, changed);
+                        var rename = new ContentValues();
+                        rename.put(MediaStore.MediaColumns.DISPLAY_NAME, "changed-" + name);
+                        require(resolver.update(uri, rename, null, null) == 1,
+                                "fixture changes bytes and row revision after recovery verification");
+                    }
+                };
+            });
+            recovery.setReadCounter(count -> hashed.set(true));
+            try {
+                recovery.recover(() -> false);
+                throw new AssertionError("Recovery authorized a changed target");
+            } catch (IOException expected) {
+                require(mutation.get(), "recovery refused the target after a real mutation");
+            }
+            require(ledger.pending().size() == 1 && ledger.pending().get(0).ready
+                            && ledger.contentCount() == 0 && ledger.receiptCount() == 0
+                            && countNamedMedia(context, name) == (boundary == CameraPhotoPublisher.Boundary.PUBLISHED ? 1 : 0),
+                    "target mutation retains READY and does not add a receipt or publish a changed pending revision");
+            try (var input = resolver.openInputStream(target[0])) {
+                require(Arrays.equals(input.readAllBytes(), changed), "the changed target bytes are retained for diagnosis");
+            }
+        } finally {
+            if (target[0] != null) resolver.delete(target[0], null, null);
+            require(context.deleteDatabase(database) && staged.delete(), "isolated target race fixture removed");
+        }
+    }
+
+    private static void replaceTargetBytes(android.content.ContentResolver resolver, Uri target, byte[] bytes) {
+        try (var output = resolver.openOutputStream(target, "wt")) {
+            if (output == null) throw new IOException("Could not open target fixture");
+            output.write(bytes);
+        } catch (IOException failure) {
+            throw new UncheckedIOException(failure);
         }
     }
 
