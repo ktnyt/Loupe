@@ -1168,29 +1168,34 @@ public final class CameraDocumentSourceChecks {
         String name = "target-race-" + UUID.randomUUID() + ".JPG";
         var resolver = context.getContentResolver();
         Uri[] target = {null};
-        byte[] changed = ORIGINAL.clone();
-        changed[0] ^= 1;
+        String[] temporaryName = {null};
+        String folder = CameraPhotoPublisher.folder("camera-target-race", false);
+        byte[] original = revisionFixtureJpeg(0xff447788);
+        byte[] changed = revisionFixtureJpeg(0xff884411);
+        Throwable testFailure = null;
         try (var ledger = new CameraImportLedger(context, database)) {
-            try (var output = new FileOutputStream(staged)) { output.write(ORIGINAL); }
+            try (var output = new FileOutputStream(staged)) { output.write(original); }
             var source = new CameraImportFile("sd:target-race", "DCIM/" + name, staged.length(), "mtime", 1);
             var mutation = new AtomicBoolean();
             var publisher = new CameraPhotoPublisher(context, ledger, volume, reached -> {
                 if (reached != boundary) return;
-                target[0] = Uri.parse(ledger.pending().get(0).uri);
+                var pending = ledger.pending().get(0);
+                target[0] = Uri.parse(pending.uri);
+                temporaryName[0] = pending.pendingName;
                 if (recoverRace) throw new ProcessLoss();
+                replaceTargetBytes(resolver, target[0], changed);
                 if (boundary == CameraPhotoPublisher.Boundary.URI_RECORDED) {
+                    // A published empty image can be removed by the scanner before the race is tested.
                     var visible = new ContentValues();
                     visible.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
                     visible.put(MediaStore.MediaColumns.IS_PENDING, 0);
                     require(resolver.update(target[0], visible, null, null) == 1,
                             "fixture makes the recorded target visible before the first write");
                 }
-                replaceTargetBytes(resolver, target[0], changed);
                 mutation.set(true);
             });
-            String folder = CameraPhotoPublisher.folder("camera-target-race", false);
             try {
-                publisher.publish(source, staged, hexDigest(ORIGINAL), "JPEG", folder, "fixture", () -> false);
+                publisher.publish(source, staged, hexDigest(original), "JPEG", folder, "fixture", () -> false);
                 throw new AssertionError("Changed target received an import receipt");
             } catch (ProcessLoss expected) {
                 require(recoverRace, "only the recovery fixture interrupts READY publication");
@@ -1229,9 +1234,70 @@ public final class CameraDocumentSourceChecks {
             try (var input = resolver.openInputStream(target[0])) {
                 require(Arrays.equals(input.readAllBytes(), changed), "the changed target bytes are retained for diagnosis");
             }
+        } catch (IOException | RuntimeException | Error failure) {
+            testFailure = failure;
+            throw failure;
         } finally {
-            if (target[0] != null) resolver.delete(target[0], null, null);
-            require(context.deleteDatabase(database) && staged.delete(), "isolated target race fixture removed");
+            try {
+                if (target[0] != null)
+                    cleanupRevisionTarget(context, target[0], folder, Set.of(temporaryName[0], name, "changed-" + name));
+            } catch (IOException | RuntimeException | Error cleanup) {
+                if (testFailure == null) throw cleanup;
+                testFailure.addSuppressed(cleanup);
+            } finally {
+                boolean dbRemoved = context.deleteDatabase(database);
+                boolean stagedRemoved = staged.delete();
+                if (!dbRemoved || !stagedRemoved) {
+                    var cleanup = new IOException("Could not remove isolated target race journal or stage");
+                    if (testFailure == null) throw cleanup;
+                    testFailure.addSuppressed(cleanup);
+                }
+            }
+        }
+    }
+
+    private static byte[] revisionFixtureJpeg(int color) {
+        var bitmap = android.graphics.Bitmap.createBitmap(2, 2, android.graphics.Bitmap.Config.ARGB_8888);
+        try {
+            bitmap.eraseColor(color);
+            var output = new ByteArrayOutputStream();
+            require(bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, output), "valid race fixture JPEG");
+            return output.toByteArray();
+        } finally {
+            bitmap.recycle();
+        }
+    }
+
+    private static void cleanupRevisionTarget(Context context, Uri uri, String folder, Set<String> allowedNames)
+            throws IOException {
+        var resolver = context.getContentResolver();
+        Bundle args = new Bundle();
+        args.putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE);
+        args.putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_INCLUDE);
+        String[] fields = {MediaStore.MediaColumns._ID, MediaStore.MediaColumns.OWNER_PACKAGE_NAME,
+                MediaStore.MediaColumns.RELATIVE_PATH, MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.GENERATION_ADDED, MediaStore.MediaColumns.GENERATION_MODIFIED};
+        String name;
+        long added, modified;
+        try (Cursor row = resolver.query(uri, fields, args, null)) {
+            if (!CameraPhotoPublisher.moveToOnlyMediaRow(row)) return;
+            name = row.getString(3);
+            require(row.getLong(0) == ContentUris.parseId(uri) && context.getPackageName().equals(row.getString(1))
+                            && folder.equals(row.getString(2)) && allowedNames.contains(name)
+                            && !row.isNull(4) && !row.isNull(5), "only the exact owned race target can be deleted");
+            added = row.getLong(4);
+            modified = row.getLong(5);
+        }
+        Bundle exact = new Bundle(args);
+        exact.putString(android.content.ContentResolver.QUERY_ARG_SQL_SELECTION,
+                MediaStore.MediaColumns.OWNER_PACKAGE_NAME + "=? AND " + MediaStore.MediaColumns.RELATIVE_PATH + "=? AND "
+                        + MediaStore.MediaColumns.DISPLAY_NAME + "=? AND " + MediaStore.MediaColumns.GENERATION_ADDED + "=? AND "
+                        + MediaStore.MediaColumns.GENERATION_MODIFIED + "=?");
+        exact.putStringArray(android.content.ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS,
+                new String[]{context.getPackageName(), folder, name, Long.toString(added), Long.toString(modified)});
+        require(resolver.delete(uri, exact) == 1, "verified race fixture cleanup deletes one row");
+        try (Cursor row = resolver.query(uri, fields, args, null)) {
+            require(!CameraPhotoPublisher.moveToOnlyMediaRow(row), "verified race fixture row no longer exists");
         }
     }
 
