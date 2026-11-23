@@ -658,7 +658,8 @@ final class LegacyArchiveMoveChecks {
 
   private static void putUnrelatedSql(SQLiteDatabase db, int ordinal) {
     db.execSQL("INSERT INTO photos(key,state,payload) VALUES(?,'pending',?)",
-        new Object[]{"direct-" + ordinal, "{"uri":"fixture://archive/direct-" + ordinal + ""}"});
+        new Object[]{"direct-" + ordinal, new JSONObject(java.util.Collections.singletonMap(
+            "uri", "fixture://archive/direct-" + ordinal)).toString()});
   }
 
   private static void writeArchive(CheckedOperation write) throws IOException {
