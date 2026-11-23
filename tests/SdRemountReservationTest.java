@@ -8,6 +8,7 @@ public final class SdRemountReservationTest {
     public static void main(String[] args) {
         restoresAndExpiresAcrossProcessRestart();
         ignoresOtherBoots();
+        keepsBoundWhenCurrentBootCannotBeRead();
         refusesDispatchWhenReservationCannotBeSaved();
         keepsOneExactNoticeAcrossCompletionAndRestart();
         clearsNoticeOnSkippedRemountOrStaleRegistration();
@@ -40,8 +41,27 @@ public final class SdRemountReservationTest {
         require(store.open(BOOT).begin(SOURCE, 8000), "persist boot-scoped state");
         var rebooted = store.open(BOOT + 1);
         require(!rebooted.blocksImport() && !rebooted.suppressMount(SOURCE), "old boot is ignored");
+    }
+
+    private static void keepsBoundWhenCurrentBootCannotBeRead() {
+        var store = new FakeStore();
+        require(store.open(BOOT).begin(SOURCE, 8000), "persist a known-boot reservation");
+        store.now = 2000;
         var unknown = store.open(-1);
-        require(!unknown.blocksImport() && !unknown.begin(SOURCE, 8000), "unverified boot cannot authorize mutation");
+        require(unknown.blocksImport() && !unknown.begin(OTHER, 9000), "missing boot value still blocks existing work");
+        require(unknown.suppressMount(SOURCE) && !store.open(BOOT).suppressMount(SOURCE),
+                "consumed source marker stays cleared and the known boot identity is retained");
+        require(store.open(BOOT).blocksImport(), "consuming a notice cannot invalidate the known boot record");
+        store.now = 8000;
+        require(!unknown.blocksImport() && !unknown.begin(OTHER, 9000), "unknown boot cannot start fresh work");
+
+        store.now = 100_000;
+        require(store.open(BOOT).begin(SOURCE, 120_000), "persist before an ambiguous clock reset");
+        store.now = 1000;
+        var capped = store.open(-1);
+        require(capped.blocksImport(), "conservatively respect a short bound after an ambiguous reset");
+        store.now += SdRemountMountNotice.Tracker.MAX_BLOCK_MS;
+        require(!capped.blocksImport() && !store.open(-1).blocksImport(), "the cap survives another process start");
     }
 
     private static void refusesDispatchWhenReservationCannotBeSaved() {

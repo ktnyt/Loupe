@@ -65,10 +65,10 @@ final class SdRemountMountNotice {
             this.boot = boot;
             this.elapsed = elapsed;
             this.store = store;
-            if (boot >= 0 && saved != null && saved.boot() == boot) {
-                long until = saved.blockedUntil();
-                if (until < 0 || until > elapsed.getAsLong() + MAX_BLOCK_MS) until = 0;
-                state = new Reservation(boot, until, normalized(saved.source()));
+            if (saved != null && saved.boot() >= 0 && (boot < 0 || saved.boot() == boot)) {
+                long until = Math.max(0, Math.min(saved.blockedUntil(), elapsed.getAsLong() + MAX_BLOCK_MS));
+                state = new Reservation(saved.boot(), until, normalized(saved.source()));
+                if (until != saved.blockedUntil()) store.save(state);
             } else {
                 state = new Reservation(boot, 0, null);
             }
@@ -112,7 +112,7 @@ final class SdRemountMountNotice {
         }
 
         private void update(long blockedUntil, String source) {
-            Reservation next = new Reservation(boot, blockedUntil, source);
+            Reservation next = new Reservation(state.boot(), blockedUntil, source);
             if (next.equals(state)) return;
             // The live process has completion/event evidence even if the disk is temporarily unavailable.
             // A restart can retain the previous reservation only up to its original deadline.
