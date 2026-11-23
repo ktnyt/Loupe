@@ -5,6 +5,7 @@ import android.net.Uri;
 import android.os.CancellationSignal;
 import android.provider.DocumentsContract;
 import jp.nano.rawgallery.camera.CameraCredentialStore;
+import jp.nano.rawgallery.camera.CameraDocumentSource;
 import jp.nano.rawgallery.camera.MountedCameraCard;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -27,6 +28,7 @@ final class CameraQuickImportSources {
         NO_GRANT("SDカードの読み取り許可がありません。フォルダを選び直してください。"),
         DISCONNECTED("登録したSDカードが接続されていません。取り込み元のフォルダを選び直してください。"),
         FOLDER_UNAVAILABLE("登録したフォルダを確認できません。接続を確認するか、フォルダを選び直してください。"),
+        SAME_CARD("取り込み元と保存先が同じカードです。取り込み元を選び直してください。"),
         READY("取り込み元のフォルダを確認しました。");
 
         final String message;
@@ -37,9 +39,10 @@ final class CameraQuickImportSources {
         Uri reachableTree() { return state == SdState.READY ? tree : null; }
     }
 
-    static SdState registrationState(boolean registered, boolean disconnected, boolean granted) {
+    static SdState registrationState(boolean registered, boolean disconnected, boolean sameCard, boolean granted) {
         if (!registered) return SdState.UNREGISTERED;
         if (disconnected) return SdState.DISCONNECTED;
+        if (sameCard) return SdState.SAME_CARD;
         return granted ? SdState.CHECKING : SdState.NO_GRANT;
     }
 
@@ -50,10 +53,10 @@ final class CameraQuickImportSources {
         try {
             var resolver = context.getContentResolver();
             SdState state = registrationState(tree != null, MountedCameraCard.isUnmountedRemovableTree(context, tree),
-                    tree != null && resolver.getPersistedUriPermissions().stream()
+                    MountedCameraCard.isSameMountedCard(context, tree, PhotoStorage.selected(context)), tree != null && resolver.getPersistedUriPermissions().stream()
                             .anyMatch(grant -> grant.isReadPermission() && tree.equals(grant.getUri())));
             if (state != SdState.CHECKING) return new SdSource(state, tree);
-            return new SdSource(isReachableDirectory(resolver, tree, cancelled)
+            return new SdSource(CameraDocumentSource.isImportTree(tree, true) && isReachableDirectory(resolver, tree, cancelled)
                     ? SdState.READY : SdState.FOLDER_UNAVAILABLE, tree);
         } catch (RuntimeException unavailable) {
             cancelled.throwIfCanceled();

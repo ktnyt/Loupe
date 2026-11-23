@@ -110,6 +110,12 @@ public final class MountedCameraCard {
         return isRemovableTree(tree) && mountedSourceVolume(context, tree, false) == null;
     }
 
+    public static boolean isSameMountedCard(Context context, Uri tree, String target) {
+        String source = mountedSourceVolume(context, tree, false);
+        return source != null && source.equalsIgnoreCase(target);
+    }
+
+
     private static boolean isRemovableTree(Uri tree) {
         if (tree == null || !"com.android.externalstorage.documents".equals(tree.getAuthority())
                 || !DocumentsContract.isTreeUri(tree)) return false;
@@ -159,12 +165,15 @@ public final class MountedCameraCard {
         if (!expected.equals(mountedSourceVolume(context, tree))) throw new Unavailable(CHOOSE_SOURCE, true);
     }
 
+    static boolean matchesRegistration(Uri tree, String registered, boolean readGrant) {
+        return tree != null && tree.toString().equals(registered) && readGrant;
+    }
+
     static void requireGrant(Context context, Uri tree) throws Unavailable {
         try {
             String registered = context.getSharedPreferences("camera_import", 0).getString("sd_tree_uri", null);
-            if (tree.toString().equals(registered)
-                    && context.getContentResolver().getPersistedUriPermissions().stream()
-                            .anyMatch(grant -> grant.isReadPermission() && tree.equals(grant.getUri()))) return;
+            if (matchesRegistration(tree, registered, context.getContentResolver().getPersistedUriPermissions().stream()
+                    .anyMatch(grant -> grant.isReadPermission() && grant.getUri().equals(tree)))) return;
         } catch (RuntimeException unavailable) {
             // An unconfirmed grant must not authorize a receipt shortcut or an original read.
         }

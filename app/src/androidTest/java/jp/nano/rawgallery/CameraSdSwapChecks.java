@@ -4,12 +4,15 @@ import android.app.Activity;
 import android.app.Instrumentation;
 import android.content.Intent;
 import android.graphics.Bitmap;
+import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Build;
 import android.os.SystemClock;
 import android.provider.DocumentsContract;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.TextView;
+import android.widget.ScrollView;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.lang.reflect.Field;
@@ -33,12 +36,14 @@ final class CameraSdSwapChecks {
         require(ISOLATED_PACKAGE.equals(context.getPackageName()), "SD swap fixture requires the isolated .sd166 APK");
         require("ranchu".equals(Build.HARDWARE) || "goldfish".equals(Build.HARDWARE), "emulator only");
         require(width == 400 && font == 1f || width == 320 && font == 1.3f, "unsupported capture profile");
-        require(CameraQuickImportSources.registrationState(true, true, true)
+        require(CameraQuickImportSources.registrationState(true, true, false, true)
                 == CameraQuickImportSources.SdState.DISCONNECTED, "old grant does not authorize a new card");
-        require(CameraQuickImportSources.registrationState(true, false, false)
+        require(CameraQuickImportSources.registrationState(true, false, false, false)
                 == CameraQuickImportSources.SdState.NO_GRANT, "grant and card status differ");
-        require(CameraQuickImportSources.registrationState(false, false, false)
+        require(CameraQuickImportSources.registrationState(false, false, false, false)
                 == CameraQuickImportSources.SdState.UNREGISTERED, "missing registration differs from missing grant");
+        require(CameraQuickImportSources.registrationState(true, false, true, true)
+                == CameraQuickImportSources.SdState.SAME_CARD, "a registered tree on the destination never shows READY");
         CameraDocumentSourceChecks.assertSdSwapListing(context);
 
         var progress = ImportProgress.INSTANCE;
@@ -85,9 +90,15 @@ final class CameraSdSwapChecks {
             awaitText(test, sdStatus, CameraQuickImportSources.SdState.DISCONNECTED.message);
             String prefix = "sd-swap-" + width + "-" + font;
             reveal(test, sdStatus);
+            View reselect = findText((ViewGroup) sdStatus.getParent(), "SDカードのフォルダを選ぶ");
+            require(reselect != null && reselect.isClickable() && fullyVisible(reselect)
+                    && reselect.getHeight() >= GalleryUi.dp(screen, 48),
+                    "disconnected status and its 48dp reselect action are both in view");
             capture(test, captures, prefix + "-disconnected");
 
             test.runOnMainSync(() -> screen.renderSdSource(CameraQuickImportSources.SdState.CHECKING));
+            awaitText(test, sdStatus, CameraQuickImportSources.SdState.CHECKING.message);
+            reveal(test, sdStatus);
             capture(test, captures, prefix + "-checking");
             test.runOnMainSync(start::performClick);
             long deadline = SystemClock.uptimeMillis() + 6000;
@@ -113,19 +124,34 @@ final class CameraSdSwapChecks {
             require(OLD.toString().equals(preferences.getString("sd_tree_uri", null)), "a stale confirmation does not register the candidate");
             require(started.get() == 0, "a stale confirmation did not start an operation");
 
+            var invalidTree = DocumentsContract.buildTreeDocumentUri("com.android.externalstorage.documents", "AA16-6002:Pictures");
+            var invalidPick = new CameraImportActivity.SdStart(invalidTree, null, PhotoStorage.selected(screen),
+                    "JPEG", epoch, true, OLD.toString());
+            var confirmSource = CameraImportActivity.class.getDeclaredMethod("confirmSdSource",
+                    CameraImportActivity.SdStart.class, boolean.class);
+            confirmSource.setAccessible(true);
+            test.runOnMainSync(() -> {
+                try { confirmSource.invoke(screen, invalidPick, true); }
+                catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
+            });
+            require(field(screen, "sdConfirmation") == null && OLD.toString().equals(preferences.getString("sd_tree_uri", null)),
+                    "the normal picker rejects a non-DCIM tree without publishing the selection");
+
             var result = (TextView) field(screen, "result");
             Field connectionFailure = screen.getClass().getDeclaredField("connectionFailure");
             connectionFailure.setAccessible(true);
-            connectionFailure.set(screen, null);
             test.runOnMainSync(() -> {
+                if (((com.google.android.material.button.MaterialButton) settings).isChecked()) settings.performClick();
+                try { connectionFailure.set(screen, null); }
+                catch (IllegalAccessException failure) { throw new AssertionError(failure); }
                 progress.begin("Synthetic SD");
                 progress.photoListing(0, -1);
                 progress.photoTerminal("failed", "");
                 progress.finish("SDカードの一覧を読み込み中です。少し待ってから確認してください。");
                 render(screen, render);
             });
-            assertResult(result, "一覧を読み込み中");
             reveal(test, result);
+            assertResult(result, "一覧を読み込み中");
             capture(test, captures, prefix + "-incomplete");
 
             test.runOnMainSync(() -> {
@@ -135,6 +161,7 @@ final class CameraSdSwapChecks {
                 progress.finish("選んだフォルダに取り込める写真がありません。");
                 render(screen, render);
             });
+            reveal(test, result);
             assertResult(result, "選んだフォルダに取り込める写真がありません");
             require(ImportProgressPresentation.current().secondary.isEmpty(), "empty result is not a saved/history summary");
             capture(test, captures, prefix + "-empty");
@@ -153,13 +180,40 @@ final class CameraSdSwapChecks {
     }
 
     private static void assertResult(TextView view, String text) {
-        require(view.getText().toString().contains(text) && !view.getText().toString().contains("取り込み完了"),
+        require(fullyVisible(view) && view.getText().toString().contains(text)
+                        && !view.getText().toString().contains("取り込み完了"),
                 "result presents the specific non-success condition");
     }
 
     private static void reveal(Instrumentation test, View view) {
-        test.runOnMainSync(() -> view.requestRectangleOnScreen(new android.graphics.Rect(0, 0, view.getWidth(), view.getHeight()), true));
         test.waitForIdleSync();
+        test.runOnMainSync(() -> {
+            View parent = view;
+            while (!(parent instanceof ScrollView) && parent.getParent() instanceof View ancestor) parent = ancestor;
+            if (parent instanceof ScrollView scroll) {
+                int[] item = new int[2], container = new int[2];
+                view.getLocationOnScreen(item);
+                scroll.getLocationOnScreen(container);
+                scroll.scrollTo(0, scroll.getScrollY() + item[1] - container[1] - GalleryUi.dp(view.getContext(), 12));
+            }
+        });
+        test.waitForIdleSync();
+        require(fullyVisible(view), "capture status is fully visible before taking the screenshot");
+    }
+
+    private static boolean fullyVisible(View view) {
+        Rect visible = new Rect();
+        return view.isShown() && view.getHeight() > 0 && view.getGlobalVisibleRect(visible)
+                && visible.width() >= view.getWidth() && visible.height() >= view.getHeight();
+    }
+
+    private static View findText(View root, String text) {
+        if (root instanceof TextView view && text.contentEquals(view.getText())) return view;
+        if (root instanceof ViewGroup group) for (int i = 0; i < group.getChildCount(); i++) {
+            View found = findText(group.getChildAt(i), text);
+            if (found != null) return found;
+        }
+        return null;
     }
 
     private static void awaitText(Instrumentation test, TextView view, String expected) {

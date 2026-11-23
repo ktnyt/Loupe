@@ -32,6 +32,8 @@ final class CameraDualSlotUiChecks {
   private static final String CANCEL = "キャンセル";
   private static final String SOURCE_LABEL = "取り込み元　USBストレージ（" + SOURCE_ID + "）";
   private static final String TARGET_LABEL = "保存先　USBストレージ（" + TARGET_ID + "）";
+  private static final String LONG_SOURCE = "取り込み元　旅行とカメラの写真を保存した長い名前のUSBストレージ（" + SOURCE_ID + "）";
+  private static final String LONG_TARGET = "保存先　家族の写真を整理する長い名前のUSBストレージ（" + TARGET_ID + "）";
   private static final Uri TREE = DocumentsContract.buildTreeDocumentUri(
       "com.android.externalstorage.documents", SOURCE_ID + ":DCIM");
 
@@ -67,7 +69,8 @@ final class CameraDualSlotUiChecks {
       UiAutomation automation = test.getUiAutomation();
       for (var scenario : List.of(new Scenario("JPEG", "jpeg-only", true, false, false),
           new Scenario("RAW", "raw-only", false, true, false),
-          new Scenario("VIDEO", "video-only", false, false, true))) {
+          new Scenario("VIDEO", "video-only", false, false, true),
+          new Scenario("JPEG", "long-labels", true, false, false))) {
         capture(test, automation, activity, directory, width, font, scenario);
         require(!started.get() && !progress.getActive(), "Cancel never starts import progress");
       }
@@ -102,12 +105,16 @@ final class CameraDualSlotUiChecks {
 
   private static void capture(Instrumentation test, UiAutomation automation, CameraImportActivity activity,
       File directory, int width, float font, Scenario scenario) throws Exception {
+    boolean longLabels = "long-labels".equals(scenario.capture());
+    String sourceLabel = longLabels ? LONG_SOURCE : SOURCE_LABEL;
+    String targetLabel = longLabels ? LONG_TARGET : TARGET_LABEL;
+    boolean autoEnabled = activity.getSharedPreferences("camera_import", 0).getBoolean("sd_auto", false);
     TagDetailChecks.ui(test, () -> {
       String target = TARGET_ID.toLowerCase(Locale.ROOT);
       var request = new CameraImportActivity.SdStart(TREE, target, target, scenario.kind(),
           jp.nano.rawgallery.camera.MountedCameraCard.detachGeneration(), true,
           activity.getSharedPreferences("camera_import", 0).getString("sd_tree_uri", null));
-      activity.confirmSdKinds(request, SOURCE_LABEL + "\n" + TARGET_LABEL);
+      activity.confirmSdKinds(request, sourceLabel + "\n" + targetLabel);
     });
     AccessibilityNodeInfo root = awaitWindow(automation, window -> hasText(window, TITLE) != null
         && hasText(window, CANCEL) != null && hasText(window, CONFIRM) != null);
@@ -120,13 +127,15 @@ final class CameraDualSlotUiChecks {
     require(jpeg.isCheckable() && jpeg.isEnabled() && jpeg.isChecked() == scenario.jpeg(), "Default JPEG selection");
     require(raw.isCheckable() && raw.isEnabled() && raw.isChecked() == scenario.raw(), "Default RAW selection");
     require(confirm.isEnabled() == (scenario.jpeg() || scenario.raw()), "Confirm enabled only when an image format is selected");
-    var labels = find(root, node -> node.getText() != null && node.getText().toString().contains(SOURCE_LABEL)
-        && node.getText().toString().contains(TARGET_LABEL));
+    var labels = find(root, node -> node.getText() != null && node.getText().toString().contains(sourceLabel)
+        && node.getText().toString().contains(targetLabel));
     require(labels != null, "Source and destination name the correct distinct card IDs");
     Rect labelBounds = new Rect();
     labels.getBoundsInScreen(labelBounds);
     require(safe.contains(labelBounds), "Source and destination labels fit inside system insets");
     require(labels.getText().toString().contains(WARNING) == scenario.videoWarning(), "VIDEO warning appears on the requested path");
+    require(labels.getText().toString().contains("カード接続時の自動取り込みに使います") == autoEnabled,
+        "confirmation explains the auto-import effect only when it can occur");
     saveCapture(automation, directory, "camera-dual-slot-" + width + "-" + font + "-" + scenario.capture());
 
     // Exercise a safe edit of the native selection, then cancel without invoking the import button.

@@ -9,10 +9,19 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.CancellationSignal;
+import android.os.SystemClock;
 import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
 
 /** Bounded read-only enumeration for an Android-mounted SD card's selected DCIM tree. */
@@ -34,12 +43,13 @@ public final class CameraDocumentSource {
     }
 
     static final class ListingException extends IOException {
-        enum Reason { LOADING, UNAVAILABLE, NO_GRANT }
+        enum Reason { LOADING, TIMEOUT, UNAVAILABLE, NO_GRANT }
         final Reason reason;
 
         ListingException(Reason reason) {
             super(switch (reason) {
                 case LOADING -> "SDカードの一覧を読み込み中です。少し待ってから確認してください。";
+                case TIMEOUT -> "SDカードの一覧を時間内に確認できませんでした。接続を確認してからやり直してください。";
                 case UNAVAILABLE -> "SDカードの一覧を確認できません。接続とフォルダを確認してください。";
                 case NO_GRANT -> "SDカードの読み取り許可を確認できません。フォルダを選び直してください。";
             });
@@ -47,18 +57,31 @@ public final class CameraDocumentSource {
         }
     }
 
+    private static final long LISTING_TIMEOUT_MS = 30_000;
+    // A wedged provider cannot tie up the import gate or accumulate queued listing requests.
+    private static final ThreadPoolExecutor LISTINGS = listingPool("sd-document-listing");
+    private static final ThreadPoolExecutor CANCELLATIONS = listingPool("sd-document-cancel");
+
+    private static ThreadPoolExecutor listingPool(String name) {
+        return new ThreadPoolExecutor(0, 2, 30, TimeUnit.SECONDS, new SynchronousQueue<>(),
+                work -> new Thread(work, name));
+    }
+
     private final ContentResolver resolver;
     private final Uri tree;
     private final String source;
     private final BooleanSupplier cancelled;
+    private final CancellationSignal signal;
     private int visited, rows;
     private boolean hasVideo;
 
-    private CameraDocumentSource(ContentResolver resolver, Uri tree, String source, BooleanSupplier cancelled) {
+    private CameraDocumentSource(ContentResolver resolver, Uri tree, String source, BooleanSupplier cancelled,
+            CancellationSignal signal) {
         this.resolver = resolver;
         this.tree = tree;
         this.source = source;
         this.cancelled = cancelled;
+        this.signal = signal;
     }
     public static Listing list(Context context,Uri tree,BooleanSupplier cancelled)throws IOException {
         CameraPhotoPublisher.check(cancelled);
@@ -67,20 +90,82 @@ public final class CameraDocumentSource {
     }
 
     static Listing list(ContentResolver resolver, Uri tree, String identity, BooleanSupplier cancelled) throws IOException {
+        return list(resolver, tree, identity, cancelled, LISTING_TIMEOUT_MS);
+    }
+
+    static Listing list(ContentResolver resolver, Uri tree, String identity, BooleanSupplier cancelled,
+            long timeoutMs) throws IOException {
         CameraPhotoPublisher.check(cancelled);
-        if (tree == null || !DocumentsContract.isTreeUri(tree)) throw unavailable();
-        String root = DocumentsContract.getTreeDocumentId(tree);
-        String path = root.contains(":") ? root.substring(root.indexOf(':') + 1) : "";
-        if (!path.isEmpty() && !path.equalsIgnoreCase("DCIM") && !path.regionMatches(true, 0, "DCIM/", 0, 5))
-            throw unavailable();
-        if (!path.isEmpty()) {
-            try { new CameraImportFile("path-check", path + "/check.JPG", 1, "", 0); }
-            catch (IllegalArgumentException invalid) { throw unavailable(); }
+        CancellationSignal signal = new CancellationSignal();
+        long deadline = SystemClock.elapsedRealtime() + timeoutMs;
+        Future<Listing> pending;
+        try {
+            pending = LISTINGS.submit(() -> readListing(resolver, tree, identity, cancelled, signal));
+        } catch (RejectedExecutionException stillBusy) {
+            throw new ListingException(ListingException.Reason.LOADING);
         }
+        try {
+            while (true) {
+                CameraPhotoPublisher.check(cancelled);
+                long remaining = deadline - SystemClock.elapsedRealtime();
+                if (remaining <= 0) throw new ListingException(ListingException.Reason.TIMEOUT);
+                try {
+                    Listing listing = pending.get(Math.min(remaining, 100), TimeUnit.MILLISECONDS);
+                    CameraPhotoPublisher.check(cancelled);
+                    if (SystemClock.elapsedRealtime() >= deadline)
+                        throw new ListingException(ListingException.Reason.TIMEOUT);
+                    return listing;
+                } catch (TimeoutException waitingForProvider) {
+                    // Poll for cancellation without waiting for the provider to return.
+                }
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new InterruptedIOException("SD card listing cancelled");
+        } catch (ExecutionException failed) {
+            CameraPhotoPublisher.check(cancelled);
+            if (failed.getCause() instanceof IOException failure) throw failure;
+            if (failed.getCause() instanceof Error error) throw error;
+            throw unavailable();
+        } finally {
+            if (pending.cancel(true)) {
+                try { CANCELLATIONS.execute(signal::cancel); }
+                catch (RejectedExecutionException stillCancelling) {
+                    // Future cancellation already prevents publication, even when the provider is wedged.
+                }
+            }
+        }
+    }
+
+    public static boolean isImportTree(Uri tree, boolean allowVolumeRoot) {
+        try {
+            return !treePath(tree).isEmpty() || allowVolumeRoot;
+        } catch (ListingException invalid) {
+            return false;
+        }
+    }
+
+    private static String treePath(Uri tree) throws ListingException {
+        if (tree == null || !DocumentsContract.isTreeUri(tree)) throw unavailable();
+        try {
+            String root = DocumentsContract.getTreeDocumentId(tree);
+            String path = root.contains(":") ? root.substring(root.indexOf(':') + 1) : "";
+            if (!path.isEmpty()) {
+                if (!path.equalsIgnoreCase("DCIM") && !path.regionMatches(true, 0, "DCIM/", 0, 5))
+                    throw unavailable();
+                new CameraImportFile("path-check", path + "/check.JPG", 1, "", 0);
+            }
+            return path;
+        } catch (IllegalArgumentException invalid) { throw unavailable(); }
+    }
+
+    private static Listing readListing(ContentResolver resolver, Uri tree, String identity,
+            BooleanSupplier cancelled, CancellationSignal signal) throws IOException {
+        String path = treePath(tree);
         CameraDocumentSource reader = new CameraDocumentSource(resolver, tree,
-                originalSourceId(identity == null ? "saf:" + tree : identity), cancelled);
+                originalSourceId(identity == null ? "saf:" + tree : identity), cancelled, signal);
         List<Entry> files = new ArrayList<>();
-        reader.scan(root, path, files, 0);
+        reader.scan(DocumentsContract.getTreeDocumentId(tree), path, files, 0);
         CameraPhotoPublisher.check(cancelled);
         return new Listing(files, identity != null, reader.hasVideo);
     }
@@ -104,7 +189,7 @@ public final class CameraDocumentSource {
                 DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_SIZE,
                 DocumentsContract.Document.COLUMN_LAST_MODIFIED};
         try (Cursor cursor = resolver.query(DocumentsContract.buildChildDocumentsUriUsingTree(tree, id),
-                projection, null, null, null)) {
+                projection, null, null, null, signal)) {
             requireCompleteListing(cursor);
             for (String column : projection) if (cursor.getColumnIndex(column) < 0) throw unavailable();
             while (cursor.moveToNext()) {
@@ -116,7 +201,9 @@ public final class CameraDocumentSource {
                 String child = cursor.getString(0);
                 if (child == null || child.isEmpty()) throw unavailable();
                 String relative = path.isEmpty() ? name : path + "/" + name;
-                if (DocumentsContract.Document.MIME_TYPE_DIR.equals(cursor.getString(2))) {
+                String mime = cursor.getString(2);
+                if (mime == null || mime.isBlank()) throw unavailable();
+                if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
                     if (!path.isEmpty() || name.equalsIgnoreCase("DCIM")) scan(child, relative, files, depth + 1);
                 } else if (!path.isEmpty() && MediaTypes.INSTANCE.kindOf(name) != null) {
                     if (MediaTypes.INSTANCE.isVideo(name)) {
@@ -130,6 +217,8 @@ public final class CameraDocumentSource {
                 }
             }
             requireCompleteListing(cursor);
+        } catch (android.os.OperationCanceledException stopped) {
+            throw new InterruptedIOException("SD card listing cancelled");
         } catch (SecurityException denied) {
             throw new ListingException(ListingException.Reason.NO_GRANT);
         } catch (RuntimeException invalid) {

@@ -27,7 +27,43 @@ public final class CameraDocumentSourceChecks {
     /** Runs the source list against a local provider, never the device card. */
     public static void assertSdSwapListing(Context context) throws Exception {
         var provider = new android.content.ContentProvider() {
-            int mode;
+            volatile int mode;
+            java.util.concurrent.CountDownLatch started;
+            java.util.concurrent.CountDownLatch release;
+            java.util.concurrent.CountDownLatch returned;
+            java.util.concurrent.CountDownLatch signalled;
+            volatile boolean cancellable;
+
+            void stallNext() {
+                started = new java.util.concurrent.CountDownLatch(1);
+                release = new java.util.concurrent.CountDownLatch(1);
+                returned = new java.util.concurrent.CountDownLatch(1);
+                signalled = new java.util.concurrent.CountDownLatch(1);
+                cancellable = false;
+                mode = 12;
+            }
+
+            @Override public Cursor query(Uri uri, String[] columns, String selection, String[] args, String sort,
+                    android.os.CancellationSignal signal) {
+                if (mode != 12) return query(uri, columns, selection, args, sort);
+                if (signal != null) {
+                    cancellable = true;
+                    signal.setOnCancelListener(signalled::countDown);
+                }
+                var held = release;
+                var finished = returned;
+                started.countDown();
+                long until = android.os.SystemClock.elapsedRealtime() + 4000;
+                try {
+                    while (held.getCount() != 0 && android.os.SystemClock.elapsedRealtime() < until) {
+                        try { held.await(100, java.util.concurrent.TimeUnit.MILLISECONDS); }
+                        catch (InterruptedException ignored) { /* Fixture deliberately ignores interruption. */ }
+                    }
+                    return query(uri, columns, selection, args, sort);
+                } finally {
+                    finished.countDown();
+                }
+            }
 
             @Override public boolean onCreate() { return true; }
             @Override public Cursor query(Uri uri, String[] columns, String selection, String[] args, String sort) {
@@ -40,6 +76,15 @@ public final class CameraDocumentSourceChecks {
                     cursor.addRow(new Object[]{"AB12-CD34:DCIM/TEST.MP4", "TEST.MP4", "video/mp4", 8L, 1024L});
                 if (mode == 9) for (int i = 0; i <= 20000; i++)
                     cursor.addRow(new Object[]{"AB12-CD34:DCIM/unknown", "unknown", "text/plain", 8L, 1024L});
+                if (mode == 10 || mode == 11) {
+                    if (DocumentsContract.getTreeDocumentId(uri).equals(uri.getPathSegments().get(3))) {
+                        cursor.addRow(new Object[]{"AB12-CD34:DCIM/100OLYMP", "100OLYMP",
+                                mode == 10 ? null : "", 0L, 1024L});
+                    } else {
+                        cursor.addRow(new Object[]{"AB12-CD34:DCIM/100OLYMP/TEST.JPG",
+                                "TEST.JPG", "image/jpeg", 8L, 1024L});
+                    }
+                }
                 Bundle extras = new Bundle();
                 if (mode == 2 || mode == 3) extras.putBoolean(DocumentsContract.EXTRA_LOADING, true);
                 if (mode == 4) extras.putString(DocumentsContract.EXTRA_ERROR, "fixture");
@@ -67,7 +112,7 @@ public final class CameraDocumentSourceChecks {
                 "complete JPEG enumeration produces a candidate");
         require(CameraDifferentialService.noSdCandidates(full, 0).contains("選んだ種類"),
                 "kind filter is not a genuinely empty directory");
-        for (int mode : new int[]{2, 3, 4, 5, 6, 9}) {
+        for (int mode : new int[]{2, 3, 4, 5, 6, 9, 10, 11}) {
             provider.mode = mode;
             try {
                 CameraDocumentSource.list(resolver, tree, "fixture", () -> false);
@@ -91,6 +136,52 @@ public final class CameraDocumentSourceChecks {
         var video = CameraDocumentSource.list(resolver, tree, "fixture", () -> false);
         require(CameraDifferentialService.noSdCandidates(video, 0).contains("動画があります"),
                 "unsupported videos are distinct from an empty directory");
+        provider.stallNext();
+        try {
+            CameraDocumentSource.list(resolver, tree, "fixture", () -> false, 500);
+            throw new AssertionError("a stalled provider returned a completed listing");
+        } catch (CameraDocumentSource.ListingException expected) {
+            require(expected.reason == CameraDocumentSource.ListingException.Reason.TIMEOUT, "stalled listing reaches its deadline");
+            require(provider.started.getCount() == 0 && provider.returned.getCount() == 1,
+                    "deadline returns while the provider remains blocked");
+            require(provider.cancellable && provider.signalled.await(2, java.util.concurrent.TimeUnit.SECONDS),
+                    "a blocked query receives provider cancellation");
+            provider.mode = 1;
+            require(CameraDocumentSource.list(resolver, tree, "fixture", () -> false).photos.size() == 1,
+                    "a new request can list while an abandoned provider is blocked");
+        } finally {
+            provider.release.countDown();
+            require(provider.returned.await(2, java.util.concurrent.TimeUnit.SECONDS), "stalled test provider was released");
+        }
+
+        provider.stallNext();
+        try {
+            CameraDocumentSource.list(resolver, tree, "fixture", () -> provider.started.getCount() == 0, 2000);
+            throw new AssertionError("a cancelled provider produced a completed listing");
+        } catch (InterruptedIOException expected) {
+            require(provider.returned.getCount() == 1 && provider.signalled.await(2, java.util.concurrent.TimeUnit.SECONDS),
+                    "cancellation returns before a non-responsive provider and forwards the signal");
+        } finally {
+            provider.release.countDown();
+            require(provider.returned.await(2, java.util.concurrent.TimeUnit.SECONDS), "cancelled test provider was released");
+        }
+
+        require(CameraDocumentSource.isImportTree(tree, false), "DCIM picker path can be registered");
+        require(!CameraDocumentSource.isImportTree(
+                DocumentsContract.buildTreeDocumentUri(info.authority, "AB12-CD34:Pictures"), false),
+                "a readable non-DCIM picker path cannot be registered");
+        require(MountedCameraCard.matchesRegistration(tree, tree.toString(), true), "matching registered SD grant");
+        require(!MountedCameraCard.matchesRegistration(tree, tree.toString(), false), "lost grant invalidates an SD request");
+        require(!MountedCameraCard.matchesRegistration(tree, SOURCE_TREE.toString(), true),
+                "changed registration invalidates even a granted internal-destination SD request");
+        CameraDifferentialService.requireSdDestination("external_primary", "external_primary");
+        for (String stale : new String[]{null, "external_primary"}) {
+            try {
+                CameraDifferentialService.requireSdDestination(stale, "ab12-cd34");
+                throw new AssertionError("late SD service request could use a new destination");
+            } catch (MountedCameraCard.Unavailable expected) { }
+        }
+
         MountedCameraCard.requireGeneration(MountedCameraCard.detachGeneration());
         try {
             MountedCameraCard.requireGeneration(MountedCameraCard.detachGeneration() - 1);
@@ -262,10 +353,13 @@ public final class CameraDocumentSourceChecks {
             throw new AssertionError("An unverified original was opened");
         } catch (CameraDocumentSource.OriginalAccessException expected) {
             require(expected.reason == reason && output.size() == 0, "Exact registration failure with zero original bytes");
-            if (reason == CameraDocumentSource.OriginalAccessException.Reason.INDEX_PENDING)
-                require(expected.getMessage().equals(
-                        "Androidで写真の登録を確認できません。カードを接続したまま少し待って、もう一度取り込んでください"),
-                        "Retry guidance describes the confirmed state");
+            if (reason == CameraDocumentSource.OriginalAccessException.Reason.INDEX_PENDING) {
+                String guidance = expected.getMessage();
+                require(guidance.contains("SDカードに写真があります")
+                                && guidance.contains("Androidへの登録")
+                                && guidance.contains("もう一度取り込んでください"),
+                        "Index guidance reports the detected photo and explains when to retry");
+            }
         }
     }
 

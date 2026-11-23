@@ -15,6 +15,7 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.BooleanSupplier;
 import jp.nano.rawgallery.CameraImportActivity;
+import jp.nano.rawgallery.PhotoStorage;
 
 /** Read-only Wi-Fi and mounted SD imports, serialized with the existing USB importer. */
 public final class CameraDifferentialService extends Service {
@@ -32,18 +33,20 @@ public final class CameraDifferentialService extends Service {
     private final BooleanSupplier cancelled=()->destroyed||ImportProgress.INSTANCE.getStopRequested();
     public static void startWifi(Context c,boolean verifyAll){start(c,new Intent(c,CameraDifferentialService.class).setAction(WIFI).putExtra("verify",verifyAll));}
     public static void startRegistered(Context c,String profileId,boolean verifyAll){start(c,new Intent(c,CameraDifferentialService.class).setAction(PAIRED).putExtra("profile_id",profileId).putExtra("verify",verifyAll));}
-    public static void startDocumentTree(Context c,Uri uri,boolean verifyAll){startDocumentTree(c,uri,verifyAll,null,null);}
     private static final String EXPECTED_CARD = "sd_expected_destination", SD_KINDS = "sd_kinds";
-    private static final String SD_GENERATION = "sd_detach_generation";
-    public static void startDocumentTree(Context c,Uri uri,boolean verifyAll,String expectedCard,String kinds){
-        startDocumentTree(c, uri, verifyAll, expectedCard, kinds, MountedCameraCard.detachGeneration());
+    private static final String SD_GENERATION = "sd_detach_generation", SD_DESTINATION = "sd_confirmed_destination";
+
+    public static void startDocumentTree(Context context, Uri tree, boolean verifyAll, String expectedCard,
+            String kinds, long generation, String destination) {
+        Intent request = sdRequest(context, tree, destination, generation).putExtra("verify", verifyAll);
+        if (expectedCard != null) request.putExtra(EXPECTED_CARD, expectedCard);
+        if (kinds != null) request.putExtra(SD_KINDS, kinds);
+        start(context, request);
     }
-    public static void startDocumentTree(Context c,Uri uri,boolean verifyAll,String expectedCard,String kinds,long generation){
-        Intent request=new Intent(c,CameraDifferentialService.class).setAction(SD).setData(uri)
-                .putExtra("verify",verifyAll).putExtra(SD_GENERATION, generation);
-        if(expectedCard!=null)request.putExtra(EXPECTED_CARD,expectedCard);
-        if(kinds!=null)request.putExtra(SD_KINDS,kinds);
-        start(c,request);
+
+    private static Intent sdRequest(Context context, Uri tree, String destination, long generation) {
+        return new Intent(context, CameraDifferentialService.class).setAction(SD).setData(tree)
+                .putExtra(SD_DESTINATION, destination).putExtra(SD_GENERATION, generation);
     }
     public static void updateAuto(Context c){start(c,new Intent(c,CameraDifferentialService.class).setAction(WATCH));}
     private static void start(Context c,Intent i){c.startForegroundService(i);}
@@ -70,7 +73,13 @@ public final class CameraDifferentialService extends Service {
             cm.registerNetworkCallback(new NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build(),networkCallback);
         }else if(!p.getBoolean("wifi_auto",false)&&networkCallback!=null){cm.unregisterNetworkCallback(networkCallback);networkCallback=null;}
         if(p.getBoolean("sd_auto",false)&&mediaReceiver==null){
-            mediaReceiver=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){String tree=getSharedPreferences("camera_import",0).getString("sd_tree_uri",null);if(tree!=null)enqueue(new Intent().setAction(SD).setData(Uri.parse(tree)));}};
+            mediaReceiver = new BroadcastReceiver() {
+                @Override public void onReceive(Context context, Intent event) {
+                    String tree = getSharedPreferences("camera_import", 0).getString("sd_tree_uri", null);
+                    if (tree != null) enqueue(sdRequest(context, Uri.parse(tree), PhotoStorage.selected(context),
+                            MountedCameraCard.detachGeneration()));
+                }
+            };
             IntentFilter f=new IntentFilter(Intent.ACTION_MEDIA_MOUNTED);f.addDataScheme("file");if(Build.VERSION.SDK_INT>=33)registerReceiver(mediaReceiver,f,Context.RECEIVER_NOT_EXPORTED);else registerReceiver(mediaReceiver,f);
             watchingSdMounts=true;
         }else if(!p.getBoolean("sd_auto",false)&&mediaReceiver!=null){unregisterReceiver(mediaReceiver);mediaReceiver=null;watchingSdMounts=false;}
@@ -85,11 +94,11 @@ public final class CameraDifferentialService extends Service {
         }
         if(continuation&&cancelled.getAsBoolean())return;
         boolean sdRequest=SD.equals(request.getAction());
-        String queuedVolume=sdRequest?jp.nano.rawgallery.PhotoStorage.selected(this):null;
-        long sdGeneration=request.getLongExtra(SD_GENERATION, MountedCameraCard.detachGeneration());
+        String queuedVolume = request.getStringExtra(SD_DESTINATION);
+        long sdGeneration = request.getLongExtra(SD_GENERATION, -1);
         String requestedCard=request.getStringExtra(EXPECTED_CARD);
-        String pinnedCard=requestedCard!=null||!sdRequest?requestedCard
-                :MountedCameraCard.targetWithGenericReader(this,queuedVolume);
+        String pinnedCard = requestedCard != null || !sdRequest || queuedVolume == null ? requestedCard
+                : MountedCameraCard.targetWithGenericReader(this, queuedVolume);
         running=true;
         registeredQueue.started(PAIRED.equals(request.getAction())?request.getStringExtra("profile_id"):null);
         worker.execute(()->{
@@ -107,13 +116,12 @@ public final class CameraDifferentialService extends Service {
                         if(checkSelfPermission(permission)!=PackageManager.PERMISSION_GRANTED)
                             throw new MountedCameraCard.Unavailable("重複を確認するため写真全体へのアクセスを許可してください。");
                         if (sdRequest) {
-                            MountedCameraCard.requireGeneration(sdGeneration);
+                            requireSdSource(request.getData(), null, queuedVolume, sdGeneration);
                             CameraDocumentSource.requireOriginalPermission(this);
                         }
                         jp.nano.rawgallery.PhotoStorage.requireImportReady(this);
-                        String volume=jp.nano.rawgallery.PhotoStorage.selected(this);
-                        if(sdRequest&&!volume.equals(queuedVolume))
-                            throw new MountedCameraCard.Unavailable("保存先が変わりました。保存先を確認して取り込み直してください。");
+                        String volume = PhotoStorage.selected(this);
+                        if (sdRequest) requireSdDestination(queuedVolume, volume);
                         String expectedCard=pinnedCard!=null||!sdRequest?pinnedCard
                                 :MountedCameraCard.targetWithGenericReader(this,volume);
                         Set<MediaTypes.Kind> kinds=sdKinds(request.getStringExtra(SD_KINDS));
@@ -249,21 +257,33 @@ public final class CameraDifferentialService extends Service {
                 : "選んだフォルダに取り込める写真がありません。";
     }
 
+    static void requireSdDestination(String requested, String current) throws MountedCameraCard.Unavailable {
+        if (requested == null || !requested.equals(current))
+            throw new MountedCameraCard.Unavailable("保存先が変わりました。取り込み元と保存先を確認してください。");
+    }
+
     private void requireSdSource(Uri tree, String source, String target, long generation) throws IOException {
         MountedCameraCard.requireGeneration(generation);
-        if (!target.equals(jp.nano.rawgallery.PhotoStorage.selected(this)))
-            throw new MountedCameraCard.Unavailable("保存先が変わりました。取り込み元と保存先を確認してください。");
-        if (source != null) {
-            MountedCameraCard.requireGrant(this, tree);
-            MountedCameraCard.requireMountedSource(this, tree, source);
-        }
+        requireSdDestination(target, PhotoStorage.selected(this));
+        MountedCameraCard.requireGrant(this, tree);
+        if (!CameraDocumentSource.isImportTree(tree, true))
+            throw new MountedCameraCard.Unavailable(MountedCameraCard.CHOOSE_SOURCE);
+        if (MountedCameraCard.isSameMountedCard(this, tree, target))
+            throw new MountedCameraCard.Unavailable("取り込み元と保存先が同じカードです。別のカードを選んでください。");
+        if (source != null) MountedCameraCard.requireMountedSource(this, tree, source);
+        else if (MountedCameraCard.isUnmountedRemovableTree(this, tree))
+            throw new MountedCameraCard.Unavailable("登録したSDカードが接続されていません。取り込み元を確認してください。");
     }
 
     private void sd(CameraPhotoImporter importer, Uri tree, boolean verify, String sourceVolume,
             Set<MediaTypes.Kind> kinds, String target, long generation) throws IOException {
         CameraDocumentSource.requireOriginalPermission(this);
         requireSdSource(tree, sourceVolume, target, generation);
-        BooleanSupplier stopped = () -> cancelled.getAsBoolean() || MountedCameraCard.detachGeneration() != generation;
+        var settings = getSharedPreferences("camera_import", 0);
+        String requestedTree = tree.toString();
+        BooleanSupplier stopped = () -> cancelled.getAsBoolean() || MountedCameraCard.detachGeneration() != generation
+                || !target.equals(PhotoStorage.selected(this))
+                || !requestedTree.equals(settings.getString("sd_tree_uri", null));
         long start = System.nanoTime();
         ImportProgress.INSTANCE.begin("SDカード");
         ImportProgress.INSTANCE.photoListing(0, -1);
@@ -313,7 +333,7 @@ public final class CameraDifferentialService extends Service {
             requireSdSource(tree, sourceVolume, target, generation);
             finish(added, done, bytes, start, true);
         } catch (InterruptedIOException interrupted) {
-            if (!cancelled.getAsBoolean()) MountedCameraCard.requireGeneration(generation);
+            if (!cancelled.getAsBoolean()) requireSdSource(tree, sourceVolume, target, generation);
             throw interrupted;
         }
     }

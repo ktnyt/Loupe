@@ -30,6 +30,7 @@ import android.widget.Toast;
 
 import jp.nano.rawgallery.camera.Camera;
 import jp.nano.rawgallery.camera.CameraDifferentialService;
+import jp.nano.rawgallery.camera.CameraDocumentSource;
 import jp.nano.rawgallery.camera.CameraImportGate;
 import jp.nano.rawgallery.camera.CameraCardRouting;
 import jp.nano.rawgallery.camera.CameraImportLedger;
@@ -1077,6 +1078,10 @@ public final class CameraImportActivity extends AppCompatActivity {
             showSdFailure("カードの接続または保存先が変わりました。取り込み元を確認してください。");
             return;
         }
+        if (!CameraDocumentSource.isImportTree(request.tree(), !request.picked())) {
+            showSdFailure("取り込み元のSDカードのDCIMフォルダを選んでください。");
+            return;
+        }
         int generation = ++sourceGeneration;
         var cancellation = new android.os.CancellationSignal();
         sourceCancellation = cancellation;
@@ -1102,6 +1107,9 @@ public final class CameraImportActivity extends AppCompatActivity {
                         String source = MountedCameraCard.requireDistinctSource(this, request.tree(), request.target(),
                                 PhotoStorage.selected(this), !request.picked(), cancellation::isCanceled);
                         location = "取り込み元　" + exactCardLabel(source) + "\n保存先　" + exactCardLabel(request.target());
+                    } else if (MountedCameraCard.isSameMountedCard(this, request.tree(), request.destination())) {
+                        failure = CameraQuickImportSources.SdState.SAME_CARD.message;
+                        reselect = !request.picked();
                     } else if (CameraQuickImportSources.isReachableDirectory(getContentResolver(), request.tree(), cancellation)
                             && !MountedCameraCard.isUnmountedRemovableTree(this, request.tree())) {
                         location = "取り込み元　選んだSDカード\n保存先　" + exactCardLabel(request.destination());
@@ -1156,12 +1164,15 @@ public final class CameraImportActivity extends AppCompatActivity {
         dialog.show();
     }
 
+    private String sdAutoRegistrationNotice(boolean registering) {
+        return registering && settings.getBoolean("sd_auto", false)
+                ? "\n登録後は、カード接続時の自動取り込みに使います。" : "";
+    }
+
     private void confirmSdRegistration(SdStart request, String locations) {
-        String message = locations;
-        if (settings.getBoolean("sd_auto", false)) message += "\n登録後は、カード接続時の自動取り込みに使います。";
         showSdConfirmation(new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
                 .setTitle("取り込み元を登録")
-                .setMessage(message)
+                .setMessage(locations + sdAutoRegistrationNotice(true))
                 .setNegativeButton("キャンセル", (dialog, which) -> refreshSdSource())
                 .setPositiveButton("登録する", (dialog, which) -> {
                     if (registerPickedTree(request)) refreshSdSource();
@@ -1171,6 +1182,14 @@ public final class CameraImportActivity extends AppCompatActivity {
     private boolean registerPickedTree(SdStart request) {
         if (!stillSelected(request) || MountedCameraCard.isUnmountedRemovableTree(this, request.tree())) {
             showSdFailure("カードの接続または保存先が変わりました。取り込み元を確認してください。");
+            return false;
+        }
+        if (!CameraDocumentSource.isImportTree(request.tree(), false)) {
+            showSdFailure("取り込み元のSDカードのDCIMフォルダを選んでください。");
+            return false;
+        }
+        if (MountedCameraCard.isSameMountedCard(this, request.tree(), request.destination())) {
+            showSdFailure(CameraQuickImportSources.SdState.SAME_CARD.message);
             return false;
         }
         try {
@@ -1196,7 +1215,8 @@ public final class CameraImportActivity extends AppCompatActivity {
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(24), 0, dp(24), 0);
         content.addView(text(locations + (requested.contains(MediaTypes.Kind.VIDEO)
-                ? "\nこの方法では動画を取り込めません。" : ""), 14, GalleryUi.TEXT));
+                ? "\nこの方法では動画を取り込めません。" : "")
+                + sdAutoRegistrationNotice(request.picked()), 14, GalleryUi.TEXT));
         var jpeg = new com.google.android.material.checkbox.MaterialCheckBox(this);
         jpeg.setText("JPEG");
         jpeg.setMinHeight(dp(48));
@@ -1256,7 +1276,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         if (request.picked() && !registerPickedTree(request)) return;
         try {
             CameraDifferentialService.startDocumentTree(this, request.tree(), sdVerify.isChecked(),
-                    request.target(), request.kinds(), request.generation());
+                    request.target(), request.kinds(), request.generation(), request.destination());
             connectionFailure = null;
             showSdPermissionStatus("SDカードの取り込みを開始します。");
             renderStatus();
