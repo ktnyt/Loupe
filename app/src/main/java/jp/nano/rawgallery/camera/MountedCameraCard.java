@@ -1,15 +1,21 @@
 package jp.nano.rawgallery.camera;
 
+import android.content.BroadcastReceiver;
 import android.content.Context;
-import android.database.Cursor;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.hardware.usb.UsbManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Environment;
 import android.os.storage.StorageManager;
 import android.os.storage.StorageVolume;
 import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 import java.io.IOException;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import java.util.function.BooleanSupplier;
 import jp.nano.rawgallery.PhotoStorage;
 
@@ -19,7 +25,51 @@ public final class MountedCameraCard {
     private static final String TARGET_CHANGED = "保存先が変わりました。取り込み元と保存先を確認してください。";
 
     public static final class Unavailable extends IOException {
-        Unavailable(String message) { super(message); }
+        private final boolean reselect;
+        Unavailable(String message) { this(message, false); }
+        private Unavailable(String message, boolean reselect) {
+            super(message);
+            this.reselect = reselect;
+        }
+        public boolean canReselect() { return reselect; }
+    }
+
+    private static final AtomicLong detachGeneration = new AtomicLong(android.os.SystemClock.elapsedRealtimeNanos());
+    private static final CopyOnWriteArrayList<Consumer<Boolean>> mountListeners = new CopyOnWriteArrayList<>();
+    private static boolean observing;
+
+    public static long detachGeneration() { return detachGeneration.get(); }
+
+    public static synchronized Runnable observeMounts(Context context, Consumer<Boolean> listener) {
+        startObserving(context);
+        mountListeners.add(listener);
+        return () -> mountListeners.remove(listener);
+    }
+
+    static synchronized void startObserving(Context context) {
+        if (observing) return;
+        Context app = context.getApplicationContext();
+        IntentFilter filter = new IntentFilter(Intent.ACTION_MEDIA_MOUNTED);
+        filter.addAction(Intent.ACTION_MEDIA_EJECT);
+        filter.addAction(Intent.ACTION_MEDIA_UNMOUNTED);
+        filter.addAction(Intent.ACTION_MEDIA_REMOVED);
+        filter.addAction(Intent.ACTION_MEDIA_BAD_REMOVAL);
+        filter.addDataScheme("file");
+        BroadcastReceiver receiver = new BroadcastReceiver() {
+            @Override public void onReceive(Context received, Intent event) {
+                boolean detached = !Intent.ACTION_MEDIA_MOUNTED.equals(event.getAction());
+                if (detached) detachGeneration.incrementAndGet();
+                for (Consumer<Boolean> listener : mountListeners) listener.accept(detached);
+            }
+        };
+        if (Build.VERSION.SDK_INT >= 33) app.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        else app.registerReceiver(receiver, filter);
+        observing = true;
+    }
+
+    static void requireGeneration(long expected) throws Unavailable {
+        if (detachGeneration() != expected)
+            throw new Unavailable("カードの接続が変わりました。取り込み元と保存先を確認してください。");
     }
 
     private MountedCameraCard() {}
@@ -44,18 +94,54 @@ public final class MountedCameraCard {
             throw new Unavailable(TARGET_CHANGED);
         String source = mountedSourceVolume(context, tree);
         switch (CameraCardRouting.compareVolumes(expectedTarget, selectedTarget, source)) {
-            case SOURCE_UNAVAILABLE -> throw new Unavailable(CHOOSE_SOURCE);
-            case SAME_CARD -> throw new Unavailable("取り込み元と保存先が同じカードです。別のカードを選んでください。");
+            case SOURCE_UNAVAILABLE -> throw new Unavailable(CHOOSE_SOURCE, true);
+            case SAME_CARD -> throw new Unavailable("取り込み元と保存先が同じカードです。別のカードを選んでください。", true);
             case TARGET_CHANGED -> throw new Unavailable(TARGET_CHANGED);
             case DISTINCT -> { }
         }
         if (requireRegistered) requireGrant(context, tree);
-        if (!isReachable(context, tree)) throw new Unavailable(CHOOSE_SOURCE);
+        if (!CameraDocumentSource.isReachableDirectory(context.getContentResolver(), tree, cancelled))
+            throw new Unavailable(CHOOSE_SOURCE, true);
         CameraPhotoPublisher.check(cancelled);
         return source;
     }
 
-    private static String mountedSourceVolume(Context context, Uri tree) {
+    public static String requireRemovableSource(Context context, Uri tree, String target) throws Unavailable {
+        String source = mountedSourceVolume(context, tree);
+        if (source == null)
+            throw new Unavailable("接続したSDカードのDCIMフォルダを選んでください。", true);
+        if (source.equalsIgnoreCase(target))
+            throw new Unavailable("取り込み元と保存先が同じカードです。別のカードを選んでください。", true);
+        return source;
+    }
+
+    public static boolean isUnmountedRemovableTree(Context context, Uri tree) {
+        return isRemovableTree(tree) && mountedSourceVolume(context, tree, false) == null;
+    }
+
+    public static boolean isSameMountedCard(Context context, Uri tree, String target) {
+        String source = mountedSourceVolume(context, tree, false);
+        return source != null && source.equalsIgnoreCase(target);
+    }
+
+
+    private static boolean isRemovableTree(Uri tree) {
+        if (tree == null || !"com.android.externalstorage.documents".equals(tree.getAuthority())
+                || !DocumentsContract.isTreeUri(tree)) return false;
+        try {
+            String document = DocumentsContract.getTreeDocumentId(tree);
+            int colon = document.indexOf(':');
+            return colon > 0 && document.substring(0, colon).matches("(?i)[0-9a-f]{4}-?[0-9a-f]{4}");
+        } catch (RuntimeException invalid) {
+            return false;
+        }
+    }
+
+    static String mountedSourceVolume(Context context, Uri tree) {
+        return mountedSourceVolume(context, tree, true);
+    }
+
+    private static String mountedSourceVolume(Context context, Uri tree, boolean requireDcim) {
         if (tree == null || !"com.android.externalstorage.documents".equals(tree.getAuthority())
                 || !DocumentsContract.isTreeUri(tree)) return null;
         try {
@@ -64,7 +150,7 @@ public final class MountedCameraCard {
             if (colon <= 0) return null;
             String uuid = root.substring(0, colon);
             String folder = root.substring(colon + 1);
-            if (!folder.equalsIgnoreCase("DCIM") && !folder.regionMatches(true, 0, "DCIM/", 0, 5)) return null;
+            if (requireDcim && !folder.equalsIgnoreCase("DCIM") && !folder.regionMatches(true, 0, "DCIM/", 0, 5)) return null;
             String source = null;
             for (StorageVolume volume : context.getSystemService(StorageManager.class).getStorageVolumes()) {
                 if (!uuid.equalsIgnoreCase(volume.getUuid()) || !volume.isRemovable() || volume.isEmulated())
@@ -84,29 +170,23 @@ public final class MountedCameraCard {
         return Environment.MEDIA_MOUNTED.equals(state) || Environment.MEDIA_MOUNTED_READ_ONLY.equals(state);
     }
 
+    static void requireMountedSource(Context context, Uri tree, String expected) throws Unavailable {
+        if (!expected.equals(mountedSourceVolume(context, tree))) throw new Unavailable(CHOOSE_SOURCE, true);
+    }
+
+    static boolean matchesRegistration(Uri tree, String registered, boolean readGrant) {
+        return tree != null && tree.toString().equals(registered) && readGrant;
+    }
+
     static void requireGrant(Context context, Uri tree) throws Unavailable {
         try {
             String registered = context.getSharedPreferences("camera_import", 0).getString("sd_tree_uri", null);
-            if (tree.toString().equals(registered)
-                    && context.getContentResolver().getPersistedUriPermissions().stream()
-                            .anyMatch(grant -> grant.isReadPermission() && tree.equals(grant.getUri()))) return;
+            if (matchesRegistration(tree, registered, context.getContentResolver().getPersistedUriPermissions().stream()
+                    .anyMatch(grant -> grant.isReadPermission() && grant.getUri().equals(tree)))) return;
         } catch (RuntimeException unavailable) {
             // An unconfirmed grant must not authorize a receipt shortcut or an original read.
         }
-        throw new Unavailable("取り込み元のフォルダまたは読み取り権限が変わりました。DCIMフォルダを選び直してください。");
+        throw new Unavailable("取り込み元のフォルダまたは読み取り権限が変わりました。DCIMフォルダを選び直してください。", true);
     }
 
-    private static boolean isReachable(Context context, Uri tree) {
-        try {
-            var resolver = context.getContentResolver();
-            Uri root = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
-            try (Cursor cursor = resolver.query(root, new String[]{DocumentsContract.Document.COLUMN_MIME_TYPE},
-                    null, null, null)) {
-                return cursor != null && cursor.moveToFirst()
-                        && DocumentsContract.Document.MIME_TYPE_DIR.equals(cursor.getString(0));
-            }
-        } catch (RuntimeException unavailable) {
-            return false;
-        }
-    }
 }

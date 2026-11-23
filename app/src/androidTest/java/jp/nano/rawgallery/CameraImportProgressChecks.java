@@ -108,6 +108,24 @@ final class CameraImportProgressChecks {
       });
       capture(t, screen, dir, size + "-index-pending");
       TagDetailChecks.ui(t, () -> {
+        String guidance = "SDカードを接続したまま、Androidへの登録を待ってから、もう一度取り込んでください。";
+        p.begin("Synthetic SD");
+        p.photoHistory(1299, 1299, 327);
+        p.photoContent(971, 972, 971, 0, 4096, 4096, 1);
+        p.photoTerminal("index_pending", guidance);
+        p.finish(guidance);
+        refresh.run();
+        var stage = (TextView)activity.getWindow().getDecorView().findViewWithTag("camera-import-stage");
+        var counts = (TextView)activity.getWindow().getDecorView().findViewWithTag("camera-import-counts");
+        String rendered = counts.getText().toString();
+        require(stage.isShown() && "Androidへの登録待ち".contentEquals(stage.getText())
+            && counts.isShown() && rendered.contains(guidance), "partial completion explains Android registration and retry");
+        require(rendered.contains("新規保存 971件") && rendered.contains("保存済み 327件")
+            && rendered.contains("登録待ち 1件"), "three distinct partial outcomes");
+        require(!p.getActive(), "partial result can be retried");
+      });
+      capture(t, screen, dir, size + "-partial-index-pending");
+      TagDetailChecks.ui(t, () -> {
         p.connecting("接続中"); p.begin("Synthetic SD");
         p.photoHistory(4802,4802,4800); p.photoContent(1,2,1,0,4096,4096);
         p.photoTerminal("failed","試行の合成エラー");

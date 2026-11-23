@@ -32,7 +32,7 @@
 
 - 同じ実写真セット、同じ接続条件で、一覧・履歴照会・内容取得とハッシュ・公開・ライブラリ反映を分ける。秒、bytes、件数、成功/失敗/取消と温度を記録する。
 - 新規ファイル、経路を変えた初回、名前/日時衝突は内容照合する。内容検証済みの同一接続元でメタデータ一致を高速省略する場合、同じ属性のまま内容だけ変更したケースは検出できないことを明記する。
-- 全量照合も実行できるようにする。Wi-Fi/SDの内容確認設定を保存し、USB/SAFは同じSD設定を使う。通常は履歴優先、明示設定で全量照合へ切り替える。受領履歴で省く場合も、保存済みのローカルファイルの存在・保存SHAを確認する。未計測を0として扱わない。
+- 全量照合も実行できるようにする。Wi-Fi/SDの内容確認設定を保存し、USB/SAFは同じSD設定を使う。通常は履歴優先、明示設定で全量照合へ切り替える。受領履歴で省く場合も、保存済みのローカルファイルの存在・保存SHAを確認する。ただし、通常のSAF/SD再取り込みでは、以前の全量照合で記録した具体的な保存先・内容SHA・サイズ・MediaStoreのepochと世代が、完全な現在のメタデータと一致する場合だけ読み直しを省く。これは重複追加の抑止であり、バックアップ整合性や原本削除の証拠には使わない。同サイズ・同じ更新情報のままの改変は通常判定では検出できず、明示的な内容確認で検査する。未計測を0として扱わない。
 
 ## UIと検証
 
@@ -55,7 +55,7 @@ No saved Wi-Fi password is extracted or logged, and changing networks does not g
 
 The purpose is to preserve camera originals and compare the same bytes over Wi-Fi and Android-mounted SD. Before manual SD import or enabling SD auto-import, request photo-library access and `ACCESS_MEDIA_LOCATION` with an explanation that photo metadata is needed for original preservation. Denial is recoverable and does not enable SD auto-import. Bring the permission result into the visible scroll area after the native dialog returns. The SD service also checks this permission before recovery, listing or receipt-based skipping; Wi-Fi and USB permission flows remain unchanged.
 
-Read selected SD documents through their mapped MediaStore URI with `setRequireOriginal`. Missing mapping, denied permission or an unavailable original stops the operation with actionable original-access guidance; never silently import a potentially redacted representation or loosen SHA equality. Original acquisition is streaming, read-only and honors cancellation checks. Do not edit source metadata or source files.
+Read selected SD documents through their mapped MediaStore URI with `setRequireOriginal`. If a complete query confirms that a specific listed document has no MediaStore row yet, defer that photo and continue with the other entries. Show how many are waiting for Android registration so the user can retry. Ambiguous mapping, denied permission or an unavailable original stops the operation with actionable guidance. Never silently import a potentially redacted representation or loosen SHA equality. Original acquisition is streaming, read-only and honors cancellation checks. Do not edit source metadata or source files.
 
 Version the SAF source receipt namespace for original-byte reading so receipts created by the previous representation cannot authorize skipping. Preserve all old content and receipts; new original-byte reads may bind to existing content only after full SHA verification. Subsequent verified source receipts retain the measured history-first policy.
 

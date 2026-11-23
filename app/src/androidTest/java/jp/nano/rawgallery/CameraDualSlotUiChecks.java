@@ -12,8 +12,6 @@ import android.provider.DocumentsContract;
 import android.view.accessibility.AccessibilityNodeInfo;
 import java.io.File;
 import java.io.FileOutputStream;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -25,7 +23,7 @@ import jp.nano.rawgallery.camera.ImportProgress;
 /** Captures the actual confirmation for already validated synthetic cards. No source or service is opened. */
 final class CameraDualSlotUiChecks {
   static final String MODE = "camera-pilot-dual-slot-ui";
-  private static final String TARGET_PACKAGE = "jp.nano.rawgallery.sd162";
+  private static final List<String> ISOLATED_PACKAGES = List.of("jp.nano.rawgallery.sd162", "jp.nano.rawgallery.sd166");
   private static final String SOURCE_ID = "166A-0001";
   private static final String TARGET_ID = "166B-0002";
   private static final String TITLE = "別のSDカードへ取り込む";
@@ -34,6 +32,8 @@ final class CameraDualSlotUiChecks {
   private static final String CANCEL = "キャンセル";
   private static final String SOURCE_LABEL = "取り込み元　USBストレージ（" + SOURCE_ID + "）";
   private static final String TARGET_LABEL = "保存先　USBストレージ（" + TARGET_ID + "）";
+  private static final String LONG_SOURCE = "取り込み元　旅行とカメラの写真を保存した長い名前のUSBストレージ（" + SOURCE_ID + "）";
+  private static final String LONG_TARGET = "保存先　家族の写真を整理する長い名前のUSBストレージ（" + TARGET_ID + "）";
   private static final Uri TREE = DocumentsContract.buildTreeDocumentUri(
       "com.android.externalstorage.documents", SOURCE_ID + ":DCIM");
 
@@ -41,7 +41,7 @@ final class CameraDualSlotUiChecks {
 
   static String run(Instrumentation test, int width, float font) throws Exception {
     var context = test.getTargetContext();
-    require(TARGET_PACKAGE.equals(context.getPackageName()), "Dual-slot UI capture requires the isolated APK");
+    require(ISOLATED_PACKAGES.contains(context.getPackageName()), "Dual-slot UI capture requires the isolated APK");
     require("ranchu".equals(Build.HARDWARE) || "goldfish".equals(Build.HARDWARE),
         "Dual-slot UI capture requires an Android emulator");
     require((width == 400 && font == 1f) || (width == 320 && font == 1.3f),
@@ -66,14 +66,12 @@ final class CameraDualSlotUiChecks {
       activity = (CameraImportActivity) test.startActivitySync(new Intent(context, CameraImportActivity.class)
           .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       assertProfile(test, activity, width, font);
-      Method show = CameraImportActivity.class.getDeclaredMethod("confirmSdKinds",
-          Uri.class, String.class, String.class, String.class);
-      show.setAccessible(true);
       UiAutomation automation = test.getUiAutomation();
       for (var scenario : List.of(new Scenario("JPEG", "jpeg-only", true, false, false),
           new Scenario("RAW", "raw-only", false, true, false),
-          new Scenario("VIDEO", "video-only", false, false, true))) {
-        capture(test, automation, activity, show, directory, width, font, scenario);
+          new Scenario("VIDEO", "video-only", false, false, true),
+          new Scenario("JPEG", "long-labels", true, false, false))) {
+        capture(test, automation, activity, directory, width, font, scenario);
         require(!started.get() && !progress.getActive(), "Cancel never starts import progress");
       }
       require(originalImportSettings.equals(importSettings.getAll()) && originalSettings.equals(settings.getAll()),
@@ -106,8 +104,18 @@ final class CameraDualSlotUiChecks {
   }
 
   private static void capture(Instrumentation test, UiAutomation automation, CameraImportActivity activity,
-      Method show, File directory, int width, float font, Scenario scenario) throws Exception {
-    TagDetailChecks.ui(test, () -> openConfirmation(show, activity, scenario.kind()));
+      File directory, int width, float font, Scenario scenario) throws Exception {
+    boolean longLabels = "long-labels".equals(scenario.capture());
+    String sourceLabel = longLabels ? LONG_SOURCE : SOURCE_LABEL;
+    String targetLabel = longLabels ? LONG_TARGET : TARGET_LABEL;
+    boolean autoEnabled = activity.getSharedPreferences("camera_import", 0).getBoolean("sd_auto", false);
+    TagDetailChecks.ui(test, () -> {
+      String target = TARGET_ID.toLowerCase(Locale.ROOT);
+      var request = new CameraImportActivity.SdStart(TREE, target, target, scenario.kind(),
+          jp.nano.rawgallery.camera.MountedCameraCard.detachGeneration(), true,
+          activity.getSharedPreferences("camera_import", 0).getString("sd_tree_uri", null));
+      activity.confirmSdKinds(request, sourceLabel + "\n" + targetLabel);
+    });
     AccessibilityNodeInfo root = awaitWindow(automation, window -> hasText(window, TITLE) != null
         && hasText(window, CANCEL) != null && hasText(window, CONFIRM) != null);
     Rect safe = PhotoStorageChecks.availableDisplay(activity);
@@ -119,13 +127,15 @@ final class CameraDualSlotUiChecks {
     require(jpeg.isCheckable() && jpeg.isEnabled() && jpeg.isChecked() == scenario.jpeg(), "Default JPEG selection");
     require(raw.isCheckable() && raw.isEnabled() && raw.isChecked() == scenario.raw(), "Default RAW selection");
     require(confirm.isEnabled() == (scenario.jpeg() || scenario.raw()), "Confirm enabled only when an image format is selected");
-    var labels = find(root, node -> node.getText() != null && node.getText().toString().contains(SOURCE_LABEL)
-        && node.getText().toString().contains(TARGET_LABEL));
+    var labels = find(root, node -> node.getText() != null && node.getText().toString().contains(sourceLabel)
+        && node.getText().toString().contains(targetLabel));
     require(labels != null, "Source and destination name the correct distinct card IDs");
     Rect labelBounds = new Rect();
     labels.getBoundsInScreen(labelBounds);
     require(safe.contains(labelBounds), "Source and destination labels fit inside system insets");
     require(labels.getText().toString().contains(WARNING) == scenario.videoWarning(), "VIDEO warning appears on the requested path");
+    require(labels.getText().toString().contains("カード接続時の自動取り込みに使います") == autoEnabled,
+        "confirmation explains the auto-import effect only when it can occur");
     saveCapture(automation, directory, "camera-dual-slot-" + width + "-" + font + "-" + scenario.capture());
 
     // Exercise a safe edit of the native selection, then cancel without invoking the import button.
@@ -141,16 +151,6 @@ final class CameraDualSlotUiChecks {
     click(hasText(automation.getRootInActiveWindow(), CANCEL));
     awaitWindow(automation, window -> hasText(window, TITLE) == null && hasText(window, "取り込み") != null);
     test.waitForIdleSync();
-  }
-
-  private static void openConfirmation(Method show, CameraImportActivity activity, String kind) {
-    try {
-      show.invoke(activity, TREE, TARGET_ID.toLowerCase(Locale.ROOT), kind, SOURCE_LABEL + "\n" + TARGET_LABEL);
-    } catch (InvocationTargetException failure) {
-      throw new AssertionError("Show native dual-slot confirmation", failure.getCause());
-    } catch (ReflectiveOperationException failure) {
-      throw new AssertionError("Invoke native dual-slot confirmation", failure);
-    }
   }
 
   private static AccessibilityNodeInfo assertTarget(AccessibilityNodeInfo root, String label, int minimum, Rect safe) {

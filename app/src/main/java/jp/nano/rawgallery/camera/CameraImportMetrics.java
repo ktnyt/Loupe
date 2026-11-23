@@ -9,10 +9,10 @@ public final class CameraImportMetrics {
     private final String route;
     private final long start=android.os.SystemClock.elapsedRealtime();
     public long sourceBytes, destinationBytes, legacyBytes, listingMs=-1, historyMs=-1;
-    public int listed=-1, checked, known, candidates=-1, processed, saved, matches;
+    public int listed=-1, checked, known, candidates=-1, processed, saved, matches, indexPending;
     public int attempt;
     /** Classification belongs to the current attempt; committed saves and body bytes span retries. */
-    public void beginAttempt(){attempt++;listed=-1;checked=0;known=0;candidates=-1;processed=0;matches=0;listingMs=-1;historyMs=-1;}
+    public void beginAttempt(){attempt++;listed=-1;checked=0;known=0;candidates=-1;processed=0;matches=0;indexPending=0;listingMs=-1;historyMs=-1;}
     private Runnable savingListener=()->{};
     public void setSavingListener(Runnable listener){savingListener=listener;}
     public void saving(){ImportProgress.INSTANCE.photoSaving(saved);savingListener.run();}
@@ -21,15 +21,18 @@ public final class CameraImportMetrics {
         @Override public void write(int b)throws IOException{sourceBytes++;out.write(b);}
         @Override public void write(byte[] b,int off,int len)throws IOException{sourceBytes+=len;out.write(b,off,len);}
     });}
-    public void content(){ImportProgress.INSTANCE.photoContent(processed,candidates,saved,matches,sourceBytes,destinationBytes+legacyBytes);}
+    public void content(){ImportProgress.INSTANCE.photoContent(processed,candidates,saved,matches,sourceBytes,destinationBytes+legacyBytes,indexPending);}
     public void terminal(String outcome){
-        content();ImportProgress.INSTANCE.photoTerminal(outcome,"");
+        terminal(outcome, "");
+    }
+    public void terminal(String outcome, String message){
+        content();ImportProgress.INSTANCE.photoTerminal(outcome,message);
         persist(outcome,"operation");
     }
     /** An attempt may end while the service remains active and retries; do not publish terminal UI. */
     public void recordAttempt(String outcome){persist(outcome,"attempt");}
     private void persist(String outcome,String scope){
-        String line="route="+route+" outcome="+outcome+" scope="+scope+" attempt="+attempt+" classificationScope=attempt savedScope=operation bytesScope=operation"+" listed="+listed+" checked="+checked+" known="+known+" needsContent="+candidates+" processed="+processed+" saved="+saved+" contentMatches="+matches+" sourceBytes="+sourceBytes+" destinationVerifyBytes="+destinationBytes+" legacyReadBytes="+legacyBytes+" listingMs="+listingMs+" historyMs="+historyMs+" elapsedMs="+(android.os.SystemClock.elapsedRealtime()-start);
+        String line="route="+route+" outcome="+outcome+" scope="+scope+" attempt="+attempt+" classificationScope=attempt savedScope=operation bytesScope=operation"+" listed="+listed+" checked="+checked+" known="+known+" needsContent="+candidates+" processed="+processed+" saved="+saved+" contentMatches="+matches+" indexPending="+indexPending+" sourceBytes="+sourceBytes+" destinationVerifyBytes="+destinationBytes+" legacyReadBytes="+legacyBytes+" listingMs="+listingMs+" historyMs="+historyMs+" elapsedMs="+(android.os.SystemClock.elapsedRealtime()-start);
         android.util.Log.i("CameraImportMetrics",line);
         context.getSharedPreferences("camera_import_metrics",0).edit().putString("last",line).commit();
     }
