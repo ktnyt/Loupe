@@ -221,6 +221,63 @@ public final class CameraDocumentSourceChecks {
         } catch (MountedCameraCard.Unavailable expected) { }
     }
 
+    /** Both sides of one-shot admission, with the actual worker-owned camera gate and a synthetic commit. */
+    public static void assertSdAdmission() throws Exception {
+        var acknowledgement = new java.util.concurrent.CountDownLatch(1);
+        var commits = new java.util.concurrent.atomic.AtomicInteger();
+        var operations = new java.util.concurrent.atomic.AtomicInteger();
+        var result = new java.util.concurrent.atomic.AtomicReference<String>("not acknowledged");
+        var failureAcknowledged = new java.util.concurrent.CountDownLatch(1);
+        var failureResult = new java.util.concurrent.atomic.AtomicReference<String>();
+        var grantDenied = new CameraDifferentialService.SdConfirmation((request, error) -> {
+            failureResult.set(error);
+            failureAcknowledged.countDown();
+        });
+        var abandoned = new CameraDifferentialService.SdConfirmation((request, error) -> {
+            throw new AssertionError("a closed caller was acknowledged");
+        });
+        abandoned.cancel();
+        var admitted = new CameraDifferentialService.SdConfirmation((request, error) -> {
+            result.set(error);
+            acknowledgement.countDown();
+        });
+        var fixture = new java.util.concurrent.FutureTask<>(() -> {
+            boolean acquired = CameraImportOperationGate.runIfAvailable(CameraImportGate.lock, () -> {
+                try {
+                    require(!CameraDifferentialService.claimSd(abandoned, commits::incrementAndGet),
+                            "closing before admission prevents any commit");
+                    require(CameraDifferentialService.claimSd(admitted, commits::incrementAndGet),
+                            "an open request is claimed under the worker gate");
+                    admitted.cancel(); // Closing after claim cannot undo accepted work.
+                    require(!CameraDifferentialService.claimSd(admitted, commits::incrementAndGet),
+                            "the token cannot be claimed twice");
+                    operations.incrementAndGet();
+                    admitted.complete(null);
+
+                    try {
+                        if (CameraDifferentialService.claimSd(grantDenied, () -> {
+                            throw new IOException("synthetic grant failure");
+                        })) operations.incrementAndGet();
+                        throw new AssertionError("grant failure did not stop admission");
+                    } catch (IOException expected) {
+                        grantDenied.complete(expected.getMessage());
+                        grantDenied.complete(null);
+                    }
+                } catch (IOException failure) { throw new AssertionError(failure); }
+            });
+            require(acquired, "isolated admission worker acquired the gate");
+            return null;
+        });
+        new Thread(fixture, "sd-admission-fixture").start();
+        fixture.get(5, java.util.concurrent.TimeUnit.SECONDS);
+        require(acknowledgement.await(5, java.util.concurrent.TimeUnit.SECONDS) && result.get() == null
+                        && commits.get() == 1 && operations.get() == 1,
+                "accepted work commits, executes and acknowledges once after the caller closes");
+        require(failureAcknowledged.await(5, java.util.concurrent.TimeUnit.SECONDS)
+                        && "synthetic grant failure".equals(failureResult.get()) && operations.get() == 1,
+                "a failed grant has only a failure acknowledgement and never executes import");
+    }
+
     public static String run(Instrumentation instrumentation) throws Exception {
         Fake denied = new Fake(); denied.permitted = false;
         expect(denied, CameraDocumentSource.OriginalAccessException.Reason.PERMISSION);

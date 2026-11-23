@@ -46,6 +46,7 @@ final class CameraSdSwapChecks {
         require(CameraQuickImportSources.registrationState(true, false, true, true)
                 == CameraQuickImportSources.SdState.SAME_CARD, "a registered tree on the destination never shows READY");
         CameraDocumentSourceChecks.assertSdSwapListing(context);
+        CameraDocumentSourceChecks.assertSdAdmission();
         assertStaleReady();
 
         var progress = ImportProgress.INSTANCE;
@@ -72,6 +73,7 @@ final class CameraSdSwapChecks {
             }
         };
         CameraImportActivity activity = null;
+        boolean serviceFixtureStarted = false;
         test.addMonitor(monitor);
         progress.addListener(observe);
         try {
@@ -146,6 +148,8 @@ final class CameraSdSwapChecks {
             var externalPick = new CameraImportActivity.SdStart(PICKED, null, PhotoStorage.selected(screen),
                     "JPEG", epoch, true, OLD.toString());
             assertRegistrationReview(test, screen, externalPick, captures, prefix, sdStatus);
+            serviceFixtureStarted = true;
+            assertBusyAfterFinalProbe(test, screen, externalPick, sdStatus);
             require(OLD.toString().equals(preferences.getString("sd_tree_uri", null))
                             && preferences.getBoolean("sd_auto", false) && started.get() == 0,
                     "cancellation and a vanished folder both retain the old auto-import source");
@@ -185,13 +189,21 @@ final class CameraSdSwapChecks {
                     + width + "dp/" + font + ". No physical card or original reads.";
         } finally {
             progress.removeListener(observe);
-            if (activity != null) test.runOnMainSync(activity::finish);
             test.removeMonitor(monitor);
             for (var entry : progressBefore.entrySet()) entry.getKey().set(null, entry.getValue());
             var restore = preferences.edit();
             if (oldTree == null) restore.remove("sd_tree_uri"); else restore.putString("sd_tree_uri", oldTree);
             if (oldAuto == null) restore.remove("sd_auto"); else restore.putBoolean("sd_auto", oldAuto);
             restore.commit();
+            if (activity != null) {
+                CameraImportActivity exit = activity;
+                boolean restoreWatch = serviceFixtureStarted;
+                test.runOnMainSync(() -> {
+                    if (restoreWatch)
+                        jp.nano.rawgallery.camera.CameraDifferentialService.updateAuto(exit);
+                    exit.finish();
+                });
+            }
         }
     }
 
@@ -285,6 +297,51 @@ final class CameraSdSwapChecks {
         } finally {
             test.runOnMainSync(() -> screen.sdSourceProbe = real);
         }
+    }
+
+    private static void assertBusyAfterFinalProbe(Instrumentation test, CameraImportActivity screen,
+            CameraImportActivity.SdStart request, TextView status) throws Exception {
+        var workStarted = new java.util.concurrent.CountDownLatch(1);
+        var finishWork = new java.util.concurrent.CountDownLatch(1);
+        var probes = new AtomicInteger();
+        CameraImportActivity.SdSourceProbe real = screen.sdSourceProbe;
+        // Simulate the camera gate being taken by automatic import after the final probe begins.
+        var automaticWork = new Thread(() -> {
+            var lock = jp.nano.rawgallery.camera.CameraImportGate.lock;
+            lock.lock();
+            try {
+                workStarted.countDown();
+                finishWork.await(5, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            } finally { lock.unlock(); }
+        }, "sd-busy-admission-fixture");
+        test.runOnMainSync(() -> screen.sdSourceProbe = (pending, cancellation) -> {
+            if (probes.incrementAndGet() == 2) {
+                automaticWork.start();
+                try {
+                    if (!workStarted.await(2, java.util.concurrent.TimeUnit.SECONDS))
+                        throw new java.io.IOException("fixture could not hold the camera gate");
+                } catch (InterruptedException stopped) {
+                    Thread.currentThread().interrupt();
+                    throw new java.io.InterruptedIOException("fixture interrupted");
+                }
+            }
+            return new CameraImportActivity.SdLocation("aa16-6002", "取り込み元　SDカード\n保存先　内部ストレージ");
+        });
+        try {
+            test.runOnMainSync(() -> screen.confirmSdSource(request, true));
+            var dialog = awaitConfirmation(test, screen);
+            test.runOnMainSync(() -> dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick());
+            awaitText(test, status, "別の取り込みが実行中です。処理が終わってからやり直してください。");
+            require(probes.get() == 2 && field(screen, "submittedSd") == null,
+                    "the real service rejects and acknowledges the busy request after the final probe");
+        } finally {
+            finishWork.countDown();
+            automaticWork.join(1000);
+            test.runOnMainSync(() -> screen.sdSourceProbe = real);
+        }
+        require(!automaticWork.isAlive(), "the synthetic automatic operation released the camera gate");
     }
 
     private static androidx.appcompat.app.AlertDialog awaitConfirmation(Instrumentation test,

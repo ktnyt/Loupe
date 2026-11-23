@@ -100,6 +100,16 @@ public final class CameraImportActivity extends AppCompatActivity {
             boolean picked, String previousRegistration) {}
     private SdPicker sdPicker;
     private SdStart pendingSdStart;
+    private CameraDifferentialService.SdConfirmation submittedSd;
+
+    interface SdSubmission {
+        void submit(SdStart request, boolean registrationOnly, CameraDifferentialService.SdConfirmation confirmation);
+    }
+
+    SdSubmission sdSubmission = (request, registrationOnly, confirmation) ->
+            CameraDifferentialService.submitConfirmedSd(this, request.tree(), sdVerify.isChecked(), request.target(),
+                    request.kinds(), request.generation(), request.destination(), request.picked(), registrationOnly,
+                    request.previousRegistration(), confirmation);
     private int pendingUsbDeviceId = -1, pendingUsbVendorId = -1, pendingUsbProductId = -1;
     private String pendingUsbDeviceName, pendingUsbVolume;
     private static final java.util.concurrent.Executor SOURCE_IO = new java.util.concurrent.ThreadPoolExecutor(
@@ -327,8 +337,14 @@ public final class CameraImportActivity extends AppCompatActivity {
         super.onStop();
     }
 
+    @Override public void finish() {
+        abandonSdSubmission();
+        super.finish();
+    }
+
     @Override protected void onDestroy() {
         if (removeMountObserver != null) removeMountObserver.run();
+        abandonSdSubmission();
         cancelSdStatusLoad();
         if (permission != null) {
             try { permission.close(); } catch (IOException ignored) {}
@@ -394,6 +410,7 @@ public final class CameraImportActivity extends AppCompatActivity {
 
     @Override protected void onPause() {
         quickResumed = false;
+        abandonSdSubmission();
         cancelSdStatusLoad();
         if (sourceCancellation != null) {
             sourceGeneration++;
@@ -407,7 +424,7 @@ public final class CameraImportActivity extends AppCompatActivity {
 
     private boolean quickAvailable() {
         return quickResumed && !isFinishing() && !isDestroyed() && !PROGRESS.getActive()
-                && !CameraImportGate.lock.isLocked() && !migrating;
+                && !CameraImportGate.lock.isLocked() && !migrating && submittedSd == null;
     }
 
     private void discoverQuickSource(boolean manualSd) {
@@ -711,7 +728,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         setText(run, mountedRoute ? "SDカードから取り込む"
                 : device != null && !granted ? "USBの使用を許可する"
                 : settings.getBoolean("configured", false) ? "今すぐ取り込む" : "取り込みの設定をする");
-        run.setEnabled(device != null && !active && !starting && permission == null && !migrating);
+        run.setEnabled(device != null && !active && !starting && permission == null && !migrating && submittedSd == null);
         run.setVisibility(active ? View.GONE : View.VISIBLE);
         if (notifyButton != null) notifyButton.setVisibility(
                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -722,7 +739,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         renderWifiEnabled();
         auto.setEnabled(UsbLaunchSettings.isEnabled(this) && !active && !migrating && !manualOnly);
         migrate.setEnabled(!active && !starting && !migrating);
-        sdStart.setEnabled(!active && !starting && !migrating && sdConfirmation == null);
+        sdStart.setEnabled(!active && !starting && !migrating && sdConfirmation == null && submittedSd == null);
     }
 
     private void renderSettingsVisibility() {
@@ -858,7 +875,8 @@ public final class CameraImportActivity extends AppCompatActivity {
     }
 
     private void pickSdTree(String expectedTarget, String kinds, boolean registrationOnly) {
-        if (sdPicker != null || sdConfirmation != null || PROGRESS.getActive() || starting || migrating) return;
+        if (sdPicker != null || sdConfirmation != null || PROGRESS.getActive() || starting || migrating
+                || submittedSd != null) return;
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         sdPicker = new SdPicker(expectedTarget, PhotoStorage.selected(this), kinds,
@@ -996,7 +1014,9 @@ public final class CameraImportActivity extends AppCompatActivity {
 
     private void onSdMountChange(boolean detached) {
         if (detached) {
-            boolean pending = sdConfirmation != null || pendingSdStart != null || sdPicker != null || sourceCancellation != null;
+            boolean pending = sdConfirmation != null || pendingSdStart != null || sdPicker != null
+                    || sourceCancellation != null || submittedSd != null;
+            abandonSdSubmission();
             if (sdConfirmation != null) sdConfirmation.dismiss();
             if (sourceCancellation != null) {
                 ++sourceGeneration;
@@ -1061,12 +1081,6 @@ public final class CameraImportActivity extends AppCompatActivity {
         return settings.getString("initial_kinds", "JPEG,RAW,VIDEO");
     }
 
-    private void storeSdTree(Uri tree) {
-        settings.edit().putString("sd_tree_uri", tree.toString()).apply();
-        sdStatus.setText("フォルダを選択しました");
-        CameraDifferentialService.updateAuto(this);
-    }
-
     private boolean stillSelected(SdStart request) {
         return matchesSelection(request, PhotoStorage.selected(this), MountedCameraCard.detachGeneration(),
                 settings.getString("sd_tree_uri", null));
@@ -1118,7 +1132,7 @@ public final class CameraImportActivity extends AppCompatActivity {
 
     private void verifySdSourceAsync(SdStart request, boolean allowReselect,
             java.util.function.Consumer<SdLocation> onVerified) {
-        if (PROGRESS.getActive() || starting || migrating || sourceCancellation != null) return;
+        if (PROGRESS.getActive() || starting || migrating || sourceCancellation != null || submittedSd != null) return;
         if (!stillSelected(request)) {
             showSdFailure("カードの接続または保存先が変わりました。取り込み元を確認してください。");
             return;
@@ -1206,27 +1220,21 @@ public final class CameraImportActivity extends AppCompatActivity {
                 .setNegativeButton("キャンセル", (dialog, which) -> refreshSdSource())
                 .setPositiveButton("登録する", (dialog, which) -> {
                     dialog.dismiss();
-                    commitPickedTree(request, this::refreshSdSource);
+                    confirmPickedSubmission(request, true);
                 }).create());
     }
 
-    private void commitPickedTree(SdStart request, Runnable afterCommit) {
-        verifySdSourceAsync(request, false, location -> {
-            try {
-                String source = MountedCameraCard.requireRemovableSource(this, request.tree(), request.destination());
-                if (!stillSelected(request) || !source.equals(location.sourceVolume())) {
-                    showSdFailure("カードの接続または保存先が変わりました。取り込み元を確認してください。");
-                    return;
-                }
-                getContentResolver().takePersistableUriPermission(request.tree(), Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                storeSdTree(request.tree());
-                afterCommit.run();
-            } catch (MountedCameraCard.Unavailable unavailable) {
-                showSdFailure(unavailable.getMessage());
-            } catch (SecurityException | IllegalArgumentException unavailable) {
-                showSdFailure("フォルダの読み取り許可を保存できませんでした。選び直してください。");
-            }
-        });
+    private void confirmPickedSubmission(SdStart request, boolean registrationOnly) {
+        if (PROGRESS.getActive()) {
+            showSdFailure("別の取り込みが実行中です。処理が終わってからやり直してください。");
+            return;
+        }
+        verifySdSourceAsync(request, false, ignored -> submitSd(request, registrationOnly));
+    }
+
+    private void abandonSdSubmission() {
+        if (submittedSd != null) submittedSd.cancel();
+        submittedSd = null;
     }
 
     private String exactCardLabel(String volume) {
@@ -1300,19 +1308,42 @@ public final class CameraImportActivity extends AppCompatActivity {
         pendingSdPermission = true;
         if (!ensureSdPermissions()) return;
         clearPendingSdStart();
-        if (request.picked()) commitPickedTree(request, () -> startConfirmedSd(request));
-        else startConfirmedSd(request);
+        if (request.picked()) confirmPickedSubmission(request, false);
+        else submitSd(request, false);
     }
 
-    private void startConfirmedSd(SdStart request) {
+    void submitSd(SdStart request, boolean registrationOnly) {
+        if (submittedSd != null || isFinishing() || isDestroyed()) return;
+        if (!stillSelected(request)) {
+            showSdFailure("カードの接続または保存先が変わりました。取り込み元を確認してください。");
+            return;
+        }
+        var confirmation = new CameraDifferentialService.SdConfirmation((reply, failure) -> {
+            if (submittedSd != reply || isFinishing() || isDestroyed()) return;
+            submittedSd = null;
+            if (failure != null) showSdFailure(failure);
+            else if (request.generation() != MountedCameraCard.detachGeneration()
+                    || !request.destination().equals(PhotoStorage.selected(this))
+                    || !request.tree().toString().equals(settings.getString("sd_tree_uri", null))) {
+                refreshSdSource();
+                renderStatus();
+            } else if (registrationOnly) {
+                refreshSdSource();
+                renderStatus();
+            } else {
+                connectionFailure = null;
+                showSdPermissionStatus("SDカードの取り込みを開始します。");
+                renderStatus();
+            }
+        });
+        submittedSd = confirmation;
+        renderSdSource(CameraQuickImportSources.SdState.CHECKING);
+        renderStatus();
         try {
-            CameraDifferentialService.startDocumentTree(this, request.tree(), sdVerify.isChecked(),
-                    request.target(), request.kinds(), request.generation(), request.destination());
-            connectionFailure = null;
-            showSdPermissionStatus("SDカードの取り込みを開始します。");
-            renderStatus();
+            sdSubmission.submit(request, registrationOnly, confirmation);
         } catch (RuntimeException failure) {
-            showSdFailure("取り込みを開始できませんでした。フォルダと権限を確認してください。");
+            abandonSdSubmission();
+            showSdFailure("取り込み元の確認を開始できませんでした。接続を確認してください。");
         }
     }
 
