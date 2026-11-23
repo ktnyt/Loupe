@@ -90,9 +90,17 @@ final class ExpressiveUiChecks {
   static void directEditorEntries(Instrumentation t,MainActivity a,File source,List<File> ownedCopies,File dir,String prefix)throws Exception{
     byte[] before=java.nio.file.Files.readAllBytes(source.toPath());int index=(int)RankingResultChecks.get(a,"index");
     Instrumentation.ActivityMonitor monitor=t.addMonitor(RawEditActivity.class.getName(),null,false);RawEditActivity[] editor={null};
+    android.content.SharedPreferences editorPreferences = a.getSharedPreferences(PhotoEditor.PREFERENCES, Context.MODE_PRIVATE);
+    String previous = editorPreferences.getString(PhotoEditor.DEFAULT_APP, null);
+    Set<String> previousCertificates = editorPreferences.getStringSet(PhotoEditor.DEFAULT_CERTIFICATES, null);
     try{
+      editorPreferences.edit().remove(PhotoEditor.DEFAULT_APP).remove(PhotoEditor.DEFAULT_CERTIFICATES).commit();
       TagDetailChecks.ui(t,()->{PhotoViewerUi v=ViewerScreenChecks.viewer(a);Button manual=v.actionButton("編集");TagDetailChecks.require(manual!=null&&manual.getParent()==v.dock&&manual.isShown(),"manual entry is directly visible");manual.performClick();});
-      Activity launched=t.waitForMonitorWithTimeout(monitor,15000);TagDetailChecks.require(launched instanceof RawEditActivity,"one manual tap opens existing internal editor");editor[0]=(RawEditActivity)launched;
+      View firstPicker = ShareScreenChecks.modal(t, a);
+      ConsistencyLayoutChecks.frame(t, firstPicker);
+      PhotoEditChecks.capture(t, dir, prefix + "-first");
+      PhotoEditChecks.dialog(t, PhotoEditor.PICKER_TITLE, PhotoEditor.INTERNAL_LABEL);
+      Activity launched=t.waitForMonitorWithTimeout(monitor,15000);TagDetailChecks.require(launched instanceof RawEditActivity,"first manual tap and selection open the internal editor");editor[0]=(RawEditActivity)launched;
       Uri input=editor[0].getIntent().getData();TagDetailChecks.require(input!=null&&"jp.nano.rawgallery.share".equals(input.getAuthority()),"manual editor receives prepared app-owned copy");
       File copy=new File(a.getCacheDir(),"shares/"+input.getLastPathSegment());ownedCopies.add(copy);
       TagDetailChecks.require(Arrays.equals(before,java.nio.file.Files.readAllBytes(copy.toPath())),"manual preparation preserves synthetic source bytes");
@@ -100,7 +108,15 @@ final class ExpressiveUiChecks {
       ConsistencyLayoutChecks.captureHardware(t,editor[0],editor[0].getWindow().getDecorView(),dir,prefix+"-manual-entry");
       TagDetailChecks.ui(t,editor[0]::onBackPressed);awaitUi(t,10000,a::hasWindowFocus,"Back from unedited manual editor restores viewer");
       TagDetailChecks.ui(t,()->TagDetailChecks.require((boolean)RankingResultChecks.get(a,"detail")&&(int)RankingResultChecks.get(a,"index")==index,"manual Back retains photo identity"));
-    }finally{Activity observed=editor[0]!=null?editor[0]:monitor.getLastActivity();if(observed instanceof RawEditActivity&&!observed.isFinishing())TagDetailChecks.ui(t,observed::finish);t.removeMonitor(monitor);}
+      TagDetailChecks.ui(t,()->ViewerScreenChecks.viewer(a).actionButton("編集").performLongClick());
+      View longPicker = ShareScreenChecks.modal(t, a);
+      ConsistencyLayoutChecks.frame(t, longPicker);
+      PhotoEditChecks.capture(t, dir, prefix + "-long-press");
+      PhotoEditChecks.dialog(t, PhotoEditor.PICKER_TITLE, PhotoEditor.REMEMBER_LABEL);
+      PhotoEditChecks.capture(t, dir, prefix + "-remember");
+      PhotoEditChecks.dialog(t, PhotoEditor.PICKER_TITLE, "閉じる");
+      awaitUi(t, 10000, a::hasWindowFocus, "picker dismiss restores viewer");
+    }finally{Activity observed=editor[0]!=null?editor[0]:monitor.getLastActivity();if(observed instanceof RawEditActivity&&!observed.isFinishing())TagDetailChecks.ui(t,observed::finish);t.removeMonitor(monitor);editorPreferences.edit().putString(PhotoEditor.DEFAULT_APP, previous).putStringSet(PhotoEditor.DEFAULT_CERTIFICATES, previousCertificates).commit();}
     Map<String,?> stored=a.getSharedPreferences("nano-banana",Context.MODE_PRIVATE).getAll();Map<String,Object> settings=new HashMap<>(stored);settings.remove("job");
     TagDetailChecks.ui(t,()->{PhotoViewerUi v=ViewerScreenChecks.viewer(a);Button ai=v.actionButton("Nano Banana");TagDetailChecks.require(ai!=null&&ai.getParent()==v.dock&&ai.isShown(),"AI entry is directly visible");ai.performClick();});
     View nano=ShareScreenChecks.modal(t,a);ConsistencyLayoutChecks.frame(t,nano);
@@ -148,7 +164,7 @@ final class ExpressiveUiChecks {
       ViewerScreenChecks.open(t,a,0);TagDetailChecks.ui(t,()->{PhotoViewerUi v=ViewerScreenChecks.viewer(a);TagDetailChecks.require(v.dock.getChildCount()==3&&TagDetailChecks.button(v.dock,"手動")!=null&&TagDetailChecks.button(v.dock,"AI")!=null&&TagDetailChecks.button(v.dock,"共有")!=null,"three direct viewer entries");TagDetailChecks.require(description(v,"写真のその他の操作")!=null,"secondary action entry");});
       capture(t,a,dir,prefix+"-viewer");directEditorEntries(t,a,files.get(0),files,dir,prefix);TagDetailChecks.ui(t,a::onBackPressed);GalleryScreenChecks.settle(t,a);
       TagDetailChecks.ui(t,()->TagDetailChecks.require(!(boolean)RankingResultChecks.get(a,"detail")&&(int)RankingResultChecks.get(a,"rankFilter")==2,"viewer Back preserves filter"));
-      return "PASS expressive UI: generated-photo gallery/filter/selection/viewer captures; native three-item bottom navigation, draft/cancel/apply, explicit singleton rank filtering, selection navigation suppression/header actions/best-only and Back retention; one-tap actual internal editor and native AI entry/cancel without saving; "+width+"dp font"+font+". No AI request, sharing handoff or rank save. Physical device and spoken accessibility remain separate evidence.\n";
+      return "PASS expressive UI: generated-photo gallery/filter/selection/viewer captures; native three-item bottom navigation, draft/cancel/apply, explicit singleton rank filtering, selection navigation suppression/header actions/best-only and Back retention; first-use app selection and actual internal editor and native AI entry/cancel without saving; "+width+"dp font"+font+". No AI request, sharing handoff or rank save. Physical device and spoken accessibility remain separate evidence.\n";
     }finally{TagDetailChecks.ui(t,()->{a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);a.finish();});for(File f:files)f.delete();fixture.delete();}
   }
 }

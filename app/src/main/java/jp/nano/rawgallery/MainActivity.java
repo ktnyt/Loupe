@@ -1769,7 +1769,7 @@ public final class MainActivity extends DiagnosticActivity {
       };
       refreshShareInfo.run();
       AlertDialog dialog=new GalleryUi.Sheet(this).setTitle(photo.name).setView(information)
-          .setNeutralButton("外部のアプリで編集",(d,which)->{d.dismiss();editPhoto.post(()->editPhoto.performLongClick());})
+          .setNeutralButton(PhotoEditor.PICKER_ACTION,(d,which)->{d.dismiss();editPhoto.post(()->editPhoto.performLongClick());})
           .setPositiveButton("閉じる",null).create();
       Future<?> locationRead = historyReads.submit(() -> {
         PhotoStorageLocation resolved = PhotoStorageLocation.resolve(this, photo);

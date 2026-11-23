@@ -23,7 +23,8 @@ final class PhotoViewerUi extends ViewGroup {
   private Button zoom;
   private TextView actionFeedback;
   private String actionFeedbackMessage="";
-  Runnable editFocusLost;
+  java.util.function.Consumer<Boolean> editFocusChanged;
+  Runnable editWindowHidden;
   private final View cloud, placeholder;
   final ShareHistoryUi.Overlay shared;
   private StatusView status;
@@ -115,7 +116,12 @@ final class PhotoViewerUi extends ViewGroup {
 
   @Override public void onWindowFocusChanged(boolean focused) {
     super.onWindowFocusChanged(focused);
-    if(!focused && editFocusLost!=null)editFocusLost.run();
+    if (editFocusChanged != null) editFocusChanged.accept(focused);
+  }
+
+  @Override protected void onWindowVisibilityChanged(int visibility) {
+    super.onWindowVisibilityChanged(visibility);
+    if (visibility != VISIBLE && editWindowHidden != null) editWindowHidden.run();
   }
 
   RectF photoRect(){RectF loaded=image.photoBounds();if(loaded!=null)return loaded;float width=stage.getWidth(),height=width*2/3f;if(height>stage.getHeight()){height=stage.getHeight();width=height*1.5f;}return new RectF((stage.getWidth()-width)/2,(stage.getHeight()-height)/2,(stage.getWidth()+width)/2,(stage.getHeight()+height)/2);}
@@ -288,7 +294,7 @@ final class PhotoViewerUi extends ViewGroup {
   static void editState(Button button,boolean running,boolean failed,String reason) {
     DockButton cell=(DockButton)button;cell.running=running;cell.saveFailed=failed;
     button.setText(running?"中止":"手動");
-    button.setContentDescription(running?"編集の準備をしています。押すと中止":"編集。現像（実験）を開きます。長押しで外部のアプリで編集"+(failed?"。"+reason+"。もう一度押すと再試行":""));
+    button.setContentDescription(running?"編集の準備をしています。押すと中止":"手動編集。長押しで編集アプリを選ぶ"+(failed?"。"+reason+"。もう一度押すと再試行":""));
     button.setStateDescription(running?"準備中":failed?"失敗、再試行できます":null);
     icon(button,"編集");button.invalidate();
   }

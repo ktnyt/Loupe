@@ -19,7 +19,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 import java.util.function.BooleanSupplier;
 
-/** Synthetic originals only. External chooser is intercepted; internal editor runs end to end. */
+/** Synthetic originals only. Synthetic build of the external recipient plus real internal editor end to end. */
 final class PhotoEditChecks {
   static void await(BooleanSupplier condition)throws Exception{
     long until=android.os.SystemClock.uptimeMillis()+5000;
@@ -63,7 +63,7 @@ final class PhotoEditChecks {
     for(int i=0;i<root.getChildCount();i++){AccessibilityNodeInfo found=node(root.getChild(i),text,clickable);if(found!=null)return found;}
     return null;
   }
-  private static void dialog(Instrumentation t,String title,String action)throws Exception{
+  static void dialog(Instrumentation t,String title,String action)throws Exception{
     long until=android.os.SystemClock.uptimeMillis()+5000;
     while(android.os.SystemClock.uptimeMillis()<until){
       AccessibilityNodeInfo root=t.getUiAutomation().getRootInActiveWindow();
@@ -73,7 +73,7 @@ final class PhotoEditChecks {
       }
       Thread.sleep(25);
     }
-    throw new AssertionError("internal editor dialog action timed out");
+    throw new AssertionError("dialog action timed out: " + title + " / " + action);
   }
   private static boolean hasText(View root,String text){
     if(root instanceof TextView&&text.contentEquals(((TextView)root).getText()))return true;
@@ -250,40 +250,150 @@ final class PhotoEditChecks {
       if(cleanup!=null){if(primary!=null)primary.addSuppressed(cleanup);else if(cleanup instanceof Error)throw (Error)cleanup;else throw (Exception)cleanup;}
     }
   }
-  static String run(Instrumentation t)throws Exception{
+  private static AccessibilityNodeInfo activeNode(Instrumentation t, String text) {
+    return node(t.getUiAutomation().getRootInActiveWindow(), text, false);
+  }
+
+  static void capture(Instrumentation t, File directory, String name) throws Exception {
+    // Material checkbox and window entrance drawables can finish after focus arrives.
+    Thread.sleep(350);
+    Bitmap screen = t.getUiAutomation().takeScreenshot();
+    TagDetailChecks.require(screen != null, "composed picker screenshot");
+    try (FileOutputStream out = new FileOutputStream(new File(directory, name + ".png"))) {
+      TagDetailChecks.require(screen.compress(Bitmap.CompressFormat.PNG, 100, out), "write picker screenshot");
+    } finally {
+      screen.recycle();
+    }
+  }
+
+  private static void select(Instrumentation t, String app) throws Exception {
+    dialog(t, PhotoEditor.PICKER_TITLE, app);
+  }
+
+  static String run(Instrumentation t, int width, float font)throws Exception{
     MainActivity a=(MainActivity)t.startActivitySync(new Intent(t.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     ExecutorService worker=Executors.newSingleThreadExecutor();
     AtomicReference<Intent> chosen=new AtomicReference<>(),nativeChosen=new AtomicReference<>();AtomicInteger launches=new AtomicInteger(),nativeLaunches=new AtomicInteger();
-    AtomicBoolean allowNative=new AtomicBoolean();
+    AtomicBoolean allowNative=new AtomicBoolean(), allowExternal=new AtomicBoolean();
+    String testPackage = t.getContext().getPackageName();
+    String testLabel = PhotoEditor.INTERNAL_LABEL + "\n" + testPackage;
+    SharedPreferences preferences = a.getSharedPreferences(PhotoEditor.PREFERENCES, Context.MODE_PRIVATE);
+    String previous = preferences.getString(PhotoEditor.DEFAULT_APP, null);
+    Set<String> previousCertificates = preferences.getStringSet(PhotoEditor.DEFAULT_CERTIFICATES, null);
     Instrumentation.ActivityMonitor monitor=new Instrumentation.ActivityMonitor(){
       public Instrumentation.ActivityResult onStartActivity(Intent intent){
         if(intent.getComponent()!=null&&RawEditActivity.class.getName().equals(intent.getComponent().getClassName())){nativeChosen.set(intent);nativeLaunches.incrementAndGet();return allowNative.get()?null:new Instrumentation.ActivityResult(Activity.RESULT_CANCELED,null);}
-        if(!Intent.ACTION_CHOOSER.equals(intent.getAction()))return null;
-        chosen.set(intent);launches.incrementAndGet();return new Instrumentation.ActivityResult(Activity.RESULT_CANCELED,null);
+        if (intent.getComponent() == null || !testPackage.equals(intent.getComponent().getPackageName())) return null;
+        chosen.set(intent);
+        launches.incrementAndGet();
+        return allowExternal.get() ? null : new Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null);
       }
     };
     File original=new File(a.getCacheDir(),"edit-synthetic-original.jpg");
     List<File> copies=new ArrayList<>();
     try{
+      preferences.edit().remove(PhotoEditor.DEFAULT_APP).remove(PhotoEditor.DEFAULT_CERTIFICATES).commit();
+      GalleryScreenChecks.portraitFixture(t,a,width,font);
       GalleryScreenChecks.finishInitialIndex(t,a);t.addMonitor(monitor);
       Bitmap bitmap=Bitmap.createBitmap(40,30,Bitmap.Config.ARGB_8888);bitmap.eraseColor(Color.GRAY);
       try(OutputStream out=new FileOutputStream(original)){bitmap.compress(Bitmap.CompressFormat.JPEG,90,out);}bitmap.recycle();
       byte[] before=Files.readAllBytes(original.toPath());
       PhotoRepository.Photo photo=new PhotoRepository.Photo(Uri.fromFile(original),"edit-synthetic.jpg","/synthetic",original.length(),0,0);
       Fixture real=fixture(t,a,photo,worker,new SharePreparation(a,new PhotoRepository(a)));
-      click(t,real);await(()->launches.get()==1);
-      Intent edit=chosen.get().getParcelableExtra(Intent.EXTRA_INTENT);
+      TagDetailChecks.ui(t,()->real.editor.button.performClick());
+      await(() -> activeNode(t, PhotoEditor.FIRST_USE_HINT) != null);
+      TagDetailChecks.require(activeNode(t, PhotoEditor.REMEMBER_LABEL) == null, "short tap explains the gesture");
+      TagDetailChecks.require(activeNode(t, PhotoEditor.INTERNAL_LABEL) != null
+          && activeNode(t, testLabel) != null, "same app labels are distinguished by package in accessibility");
+      select(t, "閉じる");
+      await(a::hasWindowFocus);
+      TagDetailChecks.require(!preferences.contains(PhotoEditor.DEFAULT_APP), "first choice cancel leaves no default");
+      TagDetailChecks.ui(t,()->real.editor.button.performClick());
+      select(t, PhotoEditor.INTERNAL_LABEL);
+      await(()->nativeLaunches.get()==1 && PhotoEditor.INTERNAL.equals(preferences.getString(PhotoEditor.DEFAULT_APP, null)));
+      copies.add(new File(a.getCacheDir(),"shares/"+nativeChosen.get().getData().getLastPathSegment()));
+      TagDetailChecks.ui(t,()->real.editor.button.performClick());
+      await(()->nativeLaunches.get()==2);
+      Uri nativeUri=nativeChosen.get().getData();
+      TagDetailChecks.require("jp.nano.rawgallery.share".equals(nativeUri.getAuthority()),"normal tap opens remembered internal editor with prepared copy");
+      File nativeCopy=new File(a.getCacheDir(),"shares/"+nativeUri.getLastPathSegment());
+      copies.add(nativeCopy);
+      TagDetailChecks.require(Arrays.equals(before,Files.readAllBytes(nativeCopy.toPath())),"internal editor receives a byte-identical copy");
+
+      TagDetailChecks.ui(t, () -> {
+        AccessibilityNodeInfo buttonNode = real.editor.button.createAccessibilityNodeInfo();
+        TagDetailChecks.require(buttonNode.isLongClickable() && buttonNode.getActionList().stream().anyMatch(
+            action -> PhotoEditor.PICKER_ACTION.contentEquals(action.getLabel() == null ? "" : action.getLabel())),
+            "enabled edit button exposes a named long-click action");
+      });
+      click(t,real);
+      await(() -> activeNode(t, PhotoEditor.REMEMBER_LABEL) != null);
+      AccessibilityNodeInfo remember = activeNode(t, PhotoEditor.REMEMBER_LABEL);
+      TagDetailChecks.require(remember.isCheckable() && !remember.isChecked(), "long press defaults to opening once");
+      allowExternal.set(true);
+      select(t, testLabel);
+      await(() -> activeNode(t, "Loupe editor receipt OK") != null);
+      TagDetailChecks.require(PhotoEditor.INTERNAL.equals(preferences.getString(PhotoEditor.DEFAULT_APP, null)), "open once retains prior default");
+      t.getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);
+      await(a::hasWindowFocus);
+      allowExternal.set(false);
+      Intent edit=chosen.get();
       TagDetailChecks.require(Intent.ACTION_EDIT.equals(edit.getAction())&&"image/jpeg".equals(edit.getType()),"ACTION_EDIT with original MIME");
       TagDetailChecks.require(edit.getFlags()==Intent.FLAG_GRANT_READ_URI_PERMISSION,"read grant only");
       TagDetailChecks.require(edit.getData().equals(edit.getClipData().getItemAt(0).getUri())&&"jp.nano.rawgallery.share".equals(edit.getData().getAuthority()),"same copy URI in data and ClipData");
       File copy=new File(a.getCacheDir(),"shares/"+edit.getData().getLastPathSegment());copies.add(copy);
       TagDetailChecks.require(!copy.equals(original)&&Arrays.equals(before,Files.readAllBytes(copy.toPath()))&&Arrays.equals(before,Files.readAllBytes(original.toPath())),"byte-identical copy and unchanged original");
       try{a.getContentResolver().openFileDescriptor(edit.getData(),"w");throw new AssertionError("copy must reject write");}catch(FileNotFoundException expected){}
-      Intent raw=PhotoEditor.intent(Uri.parse("content://jp.nano.rawgallery.share/synthetic.dng"),RawFormats.mime("synthetic.dng"));
-      TagDetailChecks.require("image/x-adobe-dng".equals(raw.getType()),"RAW MIME stays RAW");
-      TagDetailChecks.ui(t,()->real.editor.button.performClick());await(()->nativeLaunches.get()==1);
-      Uri nativeUri=nativeChosen.get().getData();TagDetailChecks.require("jp.nano.rawgallery.share".equals(nativeUri.getAuthority()),"normal tap opens internal editor with prepared copy");
-      File nativeCopy=new File(a.getCacheDir(),"shares/"+nativeUri.getLastPathSegment());copies.add(nativeCopy);TagDetailChecks.require(Arrays.equals(before,Files.readAllBytes(nativeCopy.toPath()))&&Arrays.equals(before,Files.readAllBytes(original.toPath())),"internal editor gets identical separate copy");
+      click(t,real);
+      dialog(t, PhotoEditor.PICKER_TITLE, PhotoEditor.REMEMBER_LABEL);
+      await(() -> {
+        AccessibilityNodeInfo checked = activeNode(t, PhotoEditor.REMEMBER_LABEL);
+        return checked != null && checked.isChecked();
+      });
+      select(t, testLabel);
+      await(() -> launches.get() == 2 && testPackage.equals(preferences.getString(PhotoEditor.DEFAULT_APP, null)));
+      copies.add(new File(a.getCacheDir(),"shares/"+chosen.get().getData().getLastPathSegment()));
+      Set<String> realCertificates = preferences.getStringSet(PhotoEditor.DEFAULT_CERTIFICATES, Set.of());
+      TagDetailChecks.require(realCertificates.size() == 1
+          && Base64.getDecoder().decode(realCertificates.iterator().next()).length == 32,
+          "successful external launch saves its SHA-256 certificate fingerprint");
+      TagDetailChecks.ui(t,()->real.editor.button.performClick());
+      await(() -> launches.get() == 3);
+      copies.add(new File(a.getCacheDir(),"shares/"+chosen.get().getData().getLastPathSegment()));
+
+      PhotoRepository.Photo raw = new PhotoRepository.Photo(Uri.fromFile(original),"edit-synthetic.dng","/synthetic",original.length(),0,0);
+      Fixture viewOnly = fixture(t,a,raw,worker,new SharePreparation(a,new PhotoRepository(a)));
+      TagDetailChecks.ui(t,()->viewOnly.editor.button.performClick());
+      await(() -> launches.get() == 4);
+      Intent viewIntent = chosen.get();
+      TagDetailChecks.require(Intent.ACTION_VIEW.equals(viewIntent.getAction())
+          && "image/x-adobe-dng".equals(viewIntent.getType()), "VIEW-only handler retains RAW MIME");
+      copies.add(new File(a.getCacheDir(),"shares/"+viewIntent.getData().getLastPathSegment()));
+      PhotoRepository.Photo orf = new PhotoRepository.Photo(Uri.fromFile(original),"edit-synthetic.orf","/synthetic",original.length(),0,0);
+      Fixture incompatible = fixture(t,a,orf,worker,new SharePreparation(a,new PhotoRepository(a)));
+      TagDetailChecks.ui(t,()->incompatible.editor.button.performClick());
+      await(() -> activeNode(t, PhotoEditor.FIRST_USE_HINT) != null);
+      TagDetailChecks.require(activeNode(t, testLabel) == null, "unmatched MIME filters out the remembered app");
+      select(t, "閉じる");
+      await(a::hasWindowFocus);
+      TagDetailChecks.require(testPackage.equals(preferences.getString(PhotoEditor.DEFAULT_APP, null)), "format fallback cancel preserves default");
+      Fixture changedSignature = fixture(t,a,photo,worker,new SharePreparation(a,new PhotoRepository(a)));
+      for (Set<String> injected : List.of(Set.<String>of(),
+          Set.of(Base64.getEncoder().encodeToString(new byte[32])))) {
+        preferences.edit().putStringSet(PhotoEditor.DEFAULT_CERTIFICATES, injected).commit();
+        TagDetailChecks.ui(t,()->changedSignature.editor.button.performClick());
+        await(() -> activeNode(t, PhotoEditor.FIRST_USE_HINT) != null);
+        select(t, "閉じる");
+        await(a::hasWindowFocus);
+        TagDetailChecks.require(launches.get() == 4, "missing or mismatched certificate requires a new selection");
+      }
+      preferences.edit().putString(PhotoEditor.DEFAULT_APP, "jp.nano.rawgallery.synthetic.missing").commit();
+      Fixture missing = fixture(t,a,photo,worker,new SharePreparation(a,new PhotoRepository(a)));
+      TagDetailChecks.ui(t,()->missing.editor.button.performClick());
+      await(() -> activeNode(t, PhotoEditor.FIRST_USE_HINT) != null);
+      select(t, testLabel);
+      await(() -> launches.get() == 5 && testPackage.equals(preferences.getString(PhotoEditor.DEFAULT_APP, null)));
+      copies.add(new File(a.getCacheDir(),"shares/"+chosen.get().getData().getLastPathSegment()));
       int initial=launches.get();
       for(int scenario:new int[]{0,1,2}){
         CountDownLatch started=new CountDownLatch(1),release=new CountDownLatch(1);AtomicInteger writes=new AtomicInteger();AtomicReference<File> made=new AtomicReference<>();
@@ -292,8 +402,14 @@ final class PhotoEditChecks {
           boolean waiting=true;while(waiting)try{release.await();waiting=false;}catch(InterruptedException ignored){}
           Files.write(destination.toPath(),before);
         });
-        Fixture f=fixture(t,a,photo,worker,slow);click(t,f);click(t,f);
+        Fixture f=fixture(t,a,photo,worker,slow);TagDetailChecks.ui(t,()->{f.editor.button.performClick();f.editor.button.performClick();});
         TagDetailChecks.require(started.await(3,TimeUnit.SECONDS),"copy started");
+        TagDetailChecks.ui(t, () -> {
+          AccessibilityNodeInfo buttonNode = f.editor.button.createAccessibilityNodeInfo();
+          TagDetailChecks.require(!buttonNode.isLongClickable() && buttonNode.getActionList().stream().noneMatch(
+              action -> action.getId() == AccessibilityNodeInfo.ACTION_LONG_CLICK),
+              "active copy preparation offers no unusable long press");
+        });
         try{
           if(scenario==1)TagDetailChecks.ui(t,()->a.setContentView(new FrameLayout(a)));
           else if(scenario==2)TagDetailChecks.ui(t,()->{f.viewer.onWindowFocusChanged(false);f.viewer.onWindowFocusChanged(true);});
@@ -310,15 +426,18 @@ final class PhotoEditChecks {
       SharePreparation failing=new SharePreparation(new File(a.getCacheDir(),"shares"),(p,rawFormat,destination)->{
         if(attempts.incrementAndGet()==1)throw new IOException("synthetic");Files.write(destination.toPath(),before);
       });
-      Fixture retry=fixture(t,a,photo,worker,failing);click(t,retry);
+      Fixture retry=fixture(t,a,photo,worker,failing);TagDetailChecks.ui(t,()->retry.editor.button.performClick());
       worker.submit(()->{}).get(5,TimeUnit.SECONDS);t.waitForIdleSync();
       TagDetailChecks.ui(t,()->TagDetailChecks.require(retry.editor.button.getContentDescription().toString().contains("再試行"),"failure offers retry on the same button"));
-      click(t,retry);await(()->launches.get()==initial+1);
-      Intent retried=chosen.get().getParcelableExtra(Intent.EXTRA_INTENT);copies.add(new File(a.getCacheDir(),"shares/"+retried.getData().getLastPathSegment()));
+      TagDetailChecks.ui(t,()->retry.editor.button.performClick());await(()->launches.get()==initial+1);
+      Intent retried=chosen.get();copies.add(new File(a.getCacheDir(),"shares/"+retried.getData().getLastPathSegment()));
       TagDetailChecks.require(attempts.get()==2&&Arrays.equals(before,Files.readAllBytes(original.toPath())),"retry succeeds without original mutation");
+      preferences.edit().putString(PhotoEditor.DEFAULT_APP, PhotoEditor.INTERNAL).commit();
       allowNative.set(true);internalEditor(t,a,worker,copies);
-      return "PASS real normal-tap internal Activity load, Mono dirty-Back cancel/recreation, confirmed MediaStore JPEG dimensions/tint/original unchanged, UI-observed saving Back cancellation/no remaining owned output (pending-stage cancellation not forced), scoped cleanup; long-press external chooser; original-format copy/unchanged original, read-only data+ClipData grant, RAW MIME, intercepted chooser, duplicate prevention, inline cancel, detach/focus loss-return/late completion cleanup, prepare failure/retry. No external editor launched; external editor/save compatibility is separate.\n";
+      return "PASS real normal-tap internal Activity load, Mono dirty-Back cancel/recreation, confirmed MediaStore JPEG dimensions/tint/original unchanged, UI-observed saving Back cancellation/no remaining owned output (pending-stage cancellation not forced), scoped cleanup; first choice/remembered tap, long-press once/change, missing app/MIME/certificate mismatch, EDIT priority/VIEW fallback, duplicate names, real test APK read-only receipt, unchanged original, original-format MIME, duplicate prevention, inline cancel, detach/focus loss-return/late completion cleanup, prepare failure/retry. Third-party edit/save compatibility is separate.\n";
     }finally{
+      preferences.edit().putString(PhotoEditor.DEFAULT_APP, previous)
+          .putStringSet(PhotoEditor.DEFAULT_CERTIFICATES, previousCertificates).commit();
       t.removeMonitor(monitor);worker.shutdownNow();
       TagDetailChecks.ui(t,()->a.finish());original.delete();for(File copy:copies)copy.delete();
     }
