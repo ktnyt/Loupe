@@ -4,6 +4,7 @@ import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.provider.MediaStore;
+import android.os.SystemClock;
 import android.system.ErrnoException;
 import android.system.Os;
 import java.io.IOException;
@@ -13,6 +14,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import java.util.regex.Pattern;
 import jp.nano.rawgallery.camera.HistoryDb;
@@ -25,6 +27,8 @@ final class LegacyArchiveMoveProof {
   static final int MAX_GENERATION_DELTA = 256;
   private static final int MAX_RECORDS = 100_000;
   private static final int MAX_SCANS = 3;
+  private static final long WRITE_WAIT_NS = TimeUnit.SECONDS.toNanos(2);
+  private static final long STOP_CHECK_NS = TimeUnit.MILLISECONDS.toNanos(50);
   private static final Pattern KEY = Pattern.compile("[0-9a-f]{32}");
   private static final Pattern SHA = Pattern.compile("[0-9a-f]{64}");
 
@@ -60,7 +64,7 @@ final class LegacyArchiveMoveProof {
 
   enum Rejection {
     ARCHIVE_OPEN, ARCHIVE_READ, ARCHIVE_FILE_CHANGED, ARCHIVE_REVISION_INVALID,
-    ARCHIVE_REVISION_CHURN, ARCHIVE_JSON_INVALID, ARCHIVE_ROW_LIMIT,
+    ARCHIVE_REVISION_CHURN, ARCHIVE_JSON_INVALID, ARCHIVE_ROW_LIMIT, ARCHIVE_WRITE_BUSY,
     RECEIPT_MISSING, RECEIPT_DUPLICATE, RECEIPT_UNVERIFIED, RECEIPT_INVALID, RECEIPT_METADATA,
     HISTORY_METADATA, EPOCH, GENERATION_RANGE, PROOF_BUDGET, ARCHIVE_KEY, SAVED_PROOF;
 
@@ -116,21 +120,29 @@ final class LegacyArchiveMoveProof {
       int scanned = 0;
       try (db) {
         while (scanned < MAX_SCANS) {
-          check(stopped);
-          ArchiveStamp current = stamp(db, file.st_dev, file.st_ino);
-          if (scanned == 0 && current.equals(stamp)) {
+          boolean lastScan = scanned == MAX_SCANS - 1;
+          // The first two scans are optimistic. On the last one, defer only normal local E2 upserts.
+          if (lastScan && !acquireWriteFence(stopped)) return rejected(Rejection.ARCHIVE_WRITE_BUSY, scanned);
+          try {
             check(stopped);
-            return new ReadResult(snapshot, null, 0);
+            ArchiveStamp current = stamp(db, file.st_dev, file.st_ino);
+            if (scanned == 0 && current.equals(stamp)) {
+              check(stopped);
+              return new ReadResult(snapshot, null, 0);
+            }
+            scanned++;
+            observer.beforeScan(scanned);
+            Map<String, List<IndexedReceipt>> refreshed = scan(db, stopped);
+            observer.afterScan();
+            check(stopped);
+            // Direct SQL and other processes can still change the file or revision.
+            if (!current.equals(stamp(db, file.st_dev, file.st_ino))) continue;
+            snapshot = refreshed;
+            stamp = current;
+            return new ReadResult(refreshed, null, scanned);
+          } finally {
+            if (lastScan) ArchiveStore.E2_PHOTO_UPSERT.unlock();
           }
-          scanned++;
-          observer.beforeScan(scanned);
-          Map<String, List<IndexedReceipt>> refreshed = scan(db, stopped);
-          observer.afterScan();
-          check(stopped);
-          if (!current.equals(stamp(db, file.st_dev, file.st_ino))) continue;
-          snapshot = refreshed;
-          stamp = current;
-          return new ReadResult(refreshed, null, scanned);
         }
         return rejected(Rejection.ARCHIVE_REVISION_CHURN, scanned);
       } catch (RejectedRead failure) {
@@ -139,6 +151,22 @@ final class LegacyArchiveMoveProof {
         return rejected(Rejection.ARCHIVE_JSON_INVALID, scanned);
       } catch (RuntimeException unavailable) {
         return rejected(Rejection.ARCHIVE_READ, scanned);
+      }
+    }
+
+    private static boolean acquireWriteFence(BooleanSupplier stopped) throws InterruptedIOException {
+      long deadline = SystemClock.elapsedRealtimeNanos() + WRITE_WAIT_NS;
+      try {
+        while (true) {
+          check(stopped);
+          long remaining = deadline - SystemClock.elapsedRealtimeNanos();
+          if (remaining <= 0) return false;
+          if (ArchiveStore.E2_PHOTO_UPSERT.tryLock(Math.min(remaining, STOP_CHECK_NS), TimeUnit.NANOSECONDS))
+            return true;
+        }
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw new InterruptedIOException("写真の移動を中断しました。");
       }
     }
 

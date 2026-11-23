@@ -24,7 +24,7 @@ Androidの最小対応版はAPI 30である。ここでは読み取り専用接�
 
 | 判定箇所 | 区別する理由 |
 | --- | --- |
-| E2台帳を読む | `archive_open`、`archive_read`、`archive_file_changed`、`archive_revision_invalid`、`archive_revision_churn`、`archive_json_invalid`、`archive_row_limit` |
+| E2台帳を読む | `archive_open`、`archive_read`、`archive_file_changed`、`archive_revision_invalid`、`archive_revision_churn`、`archive_write_busy`、`archive_json_invalid`、`archive_row_limit` |
 | 対象URIの証拠を調べる | `receipt_missing`、`receipt_duplicate`、`receipt_unverified`、`receipt_invalid`、`receipt_metadata` |
 | 証拠を作り直す | `history_metadata`、`epoch`、`generation_range`、`proof_budget`、`archive_key`、`saved_proof` |
 | 移動中の他の照合 | 元の判定に対応する固定値で、履歴・台帳の競合、原本・別名の同一性、確定済み証拠、SHA-256、移動先の識別・メタデータを区別する。 |
@@ -45,4 +45,4 @@ Androidの最小対応版はAPI 30である。ここでは読み取り専用接�
 
 まず、既存のリビジョン検査で最大3回読み直す方式を測る。この方式は安定した1回の走査を必要とする。上記の頻度で通常のE2更新が続くと合成写真を移動できない場合、この方式だけでは受け入れ条件を満たさない。
 
-その場合は、最後の1回の走査だけを、同一プロセスのE2台帳への書き込みと排他にする。対象は `ArchiveStore.put` でE2の `photos` に1行を書き込む期間と、読み直す側の先頭リビジョン取得から終了リビジョン確認までに限る。別名の台帳、ネットワーク転送、写真の入出力には広げない。書き手はDBを開いて値を準備してから排他区間に入り、読み手は区間内で他のアプリ内ロックを取らない。中断・例外でも必ず解放し、ログ収集や待ち合わせを区間内で行わない。別プロセスや直接SQLからの更新に備え、最後の走査でも前後のリビジョンを確認する。この方式を採用した場合は、通常の書き手が走査後に進み、直接SQLで走査の前後に割り込んだ場合は照合を拒否することも検査する。元の写真を残すための判定を緩めて試験を通さない。
+その場合は、最後の1回の走査だけを、同一プロセスのE2台帳への書き込みと排他にする。対象は `ArchiveStore.put` でE2の `photos` に1行を書き込む期間と、読み直す側の先頭リビジョン取得から終了リビジョン確認までに限る。別名の台帳、ネットワーク転送、写真の入出力には広げない。書き手はDBを開いて値を準備してから排他区間に入り、読み手は区間内で他のアプリ内ロックを取らない。読み手の取得待ちは最大2秒とし、50msごとに中断を確認する。取得できなければ `archive_write_busy` と実行済みの走査回数を返す。中断・例外でも必ず解放し、ログ収集や待ち合わせを区間内で行わない。別プロセスや直接SQLからの更新に備え、最後の走査でも前後のリビジョンを確認する。この方式を採用した場合は、通常の書き手が走査後に進み、直接SQLで走査の前後に割り込んだ場合は照合を拒否することも検査する。元の写真を残すための判定を緩めて試験を通さない。

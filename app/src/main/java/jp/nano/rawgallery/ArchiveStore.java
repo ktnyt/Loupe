@@ -6,11 +6,15 @@ import android.database.sqlite.*;
 import android.net.Uri;
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.locks.ReentrantLock;
 import org.json.*;
 
 /** Durable verification metadata and previews, separate from expendable caches. */
 final class ArchiveStore extends SQLiteOpenHelper {
+  // Only a single E2 photos write and the last legacy proof scan use this lock.
+  static final ReentrantLock E2_PHOTO_UPSERT = new ReentrantLock(true);
   private final Context context;
+  private final boolean e2Photos;
 
   ArchiveStore(Context c) {
     this(c, "archive.db");
@@ -19,6 +23,7 @@ final class ArchiveStore extends SQLiteOpenHelper {
   ArchiveStore(Context c, String databaseName) {
     super(c, databaseName, null, 3);
     context = c.getApplicationContext();
+    e2Photos = E2Settings.DATABASE.equals(databaseName);
   }
 
   public void onCreate(SQLiteDatabase db) {
@@ -172,9 +177,15 @@ final class ArchiveStore extends SQLiteOpenHelper {
     v.put("key", value.getString("key"));
     v.put("state", state);
     v.put("payload", value.toString());
-    if (getWritableDatabase()
-            .insertWithOnConflict("photos", null, v, SQLiteDatabase.CONFLICT_REPLACE)
-        < 0) throw new IOException("同期記録を永続保存できません");
+    SQLiteDatabase db = getWritableDatabase();
+    long row;
+    if (e2Photos) E2_PHOTO_UPSERT.lock();
+    try {
+      row = db.insertWithOnConflict("photos", null, v, SQLiteDatabase.CONFLICT_REPLACE);
+    } finally {
+      if (e2Photos) E2_PHOTO_UPSERT.unlock();
+    }
+    if (row < 0) throw new IOException("同期記録を永続保存できません");
   }
 
   void pending(PhotoRepository.Photo p) throws Exception {

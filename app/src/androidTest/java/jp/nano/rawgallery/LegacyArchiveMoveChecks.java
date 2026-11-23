@@ -133,6 +133,7 @@ final class LegacyArchiveMoveChecks {
       return checkSnapshotCadence(base, secondary, cadence);
     }
     checkRevisionRetry(base, secondary);
+    for (FenceExit exit : FenceExit.values()) checkWriteFenceRelease(base, secondary, exit);
     for (ReceiptChange change : ReceiptChange.values()) {
       checkConcurrentReceiptChange(base, secondary, change, false);
       checkConcurrentReceiptChange(base, secondary, change, true);
@@ -142,8 +143,9 @@ final class LegacyArchiveMoveChecks {
     checkPendingTargetRejection(base, secondary, false);
     checkPendingTargetRejection(base, secondary, true);
     return "PASS archive snapshots: previous revision fence rejects, 2 unrelated commits retry, "
-        + "3 attempts bound churn, latest evidence is enforced before copy and on published resume, "
-        + "corrupt archive stays unchanged, and the failure classes identify the failed checks.";
+        + "the final scan defers local writes and still rejects direct SQL churn, "
+        + "cancellation and exceptions release the write fence, changed evidence blocks moves and resume, "
+        + "and the corrupt archive stays unchanged.";
   }
 
   private static void checkRevisionRetry(Context base, String secondary) throws Exception {
@@ -166,14 +168,16 @@ final class LegacyArchiveMoveChecks {
         putUnrelated(writer, 0);
         require(before != revision(reader), "The old postscan revision fence would return empty despite the valid receipt");
       }
+      SQLiteDatabase direct = writer.getWritableDatabase();
       var commits = new AtomicInteger();
       var keepWriting = new AtomicBoolean(true);
       var reader = new LegacyArchiveMoveProof.Records(context, () -> {
-        if (keepWriting.get()) writeArchive(() -> putUnrelated(writer, commits.incrementAndGet()));
+        if (keepWriting.get()) putUnrelatedSql(direct, commits.incrementAndGet());
       });
       var failed = reader.read(() -> false);
       require(failed.rejection() == Rejection.ARCHIVE_REVISION_CHURN && failed.scanAttempts() == 3
-          && failed.records().isEmpty() && commits.get() == 3, "Every discarded scan counts toward the three-attempt bound");
+          && failed.records().isEmpty() && commits.get() == 3,
+          "Direct SQL can still invalidate the guarded last scan, with no partial snapshot accepted");
       keepWriting.set(false);
       var recovered = reader.read(() -> false);
       var cached = reader.read(() -> false);
@@ -208,6 +212,82 @@ final class LegacyArchiveMoveChecks {
       }
       checkReplacement(f, history, archive, seed, receipt, secondary);
       requireCompletedProof(f, seed, f.rows(secondary).get(0).uri());
+    }
+  }
+
+  private enum FenceExit { SUCCESS, CANCELLED, EXCEPTION }
+
+  private static void checkWriteFenceRelease(Context base, String secondary, FenceExit exit) throws Exception {
+    try (Fixture f = new Fixture(base, secondary); ArchiveStore archive = E2Settings.openRecords(f.isolatedContext());
+         ArchiveStore writer = E2Settings.openRecords(f.isolatedContext())) {
+      SQLiteDatabase direct = archive.getWritableDatabase();
+      writer.getWritableDatabase();
+      long revisionBefore = archive.indexRevision();
+      var startWriter = new CountDownLatch(1);
+      var writerDone = new CountDownLatch(1);
+      var writerFailure = new AtomicReference<Exception>();
+      Thread background = new Thread(() -> {
+        try {
+          if (!startWriter.await(5, TimeUnit.SECONDS)) throw new IOException("Final scan did not start the writer");
+          putUnrelated(writer, 3);
+        } catch (Exception failure) {
+          writerFailure.set(failure);
+        } finally {
+          writerDone.countDown();
+        }
+      }, "archive-fence-fixture-writer");
+      var stop = new AtomicBoolean();
+      var injected = new IOException("Synthetic final scan failure");
+      var observer = new LegacyArchiveMoveProof.ScanObserver() {
+        private int attempt;
+
+        @Override public void beforeScan(int number) {
+          attempt = number;
+          require(ArchiveStore.E2_PHOTO_UPSERT.isHeldByCurrentThread() == (attempt == 3),
+              "Only the final scan holds the upsert fence");
+        }
+
+        @Override public void afterScan() throws IOException {
+          if (attempt < 3) {
+            putUnrelatedSql(direct, attempt);
+            return;
+          }
+          startWriter.countDown();
+          long deadline = SystemClock.elapsedRealtime() + 2_000;
+          while (!ArchiveStore.E2_PHOTO_UPSERT.hasQueuedThread(background)
+              && writerDone.getCount() != 0 && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(5);
+          require(ArchiveStore.E2_PHOTO_UPSERT.hasQueuedThread(background) && writerDone.getCount() == 1,
+              "The normal E2 writer waits without committing inside the final scan");
+          if (exit == FenceExit.CANCELLED) stop.set(true);
+          if (exit == FenceExit.EXCEPTION) throw injected;
+        }
+      };
+      var reader = new LegacyArchiveMoveProof.Records(f.isolatedContext(), observer);
+      background.start();
+      try {
+        switch (exit) {
+          case SUCCESS -> {
+            var result = reader.read(stop::get);
+            require(result.rejection() == null && result.scanAttempts() == 3
+                && !result.records().containsKey("fixture://archive/3"),
+                "The last fenced read used only the revision before the queued write");
+          }
+          case CANCELLED -> expectInterrupted(() -> reader.read(stop::get), "Cancellation releases the final scan fence");
+          case EXCEPTION -> {
+            try {
+              reader.read(stop::get);
+              throw new CheckFailure("The injected scan exception was suppressed");
+            } catch (IOException failure) {
+              require(failure == injected, "The final scan propagates the original exception");
+            }
+          }
+        }
+      } finally {
+        startWriter.countDown();
+        background.join(6_000);
+      }
+      require(!background.isAlive() && writerFailure.get() == null && archive.indexRevision() - revisionBefore == 3
+          && archive.get("unrelated-3") != null, "The deferred writer commits after every final scan exit: " + exit);
     }
   }
 
@@ -574,6 +654,11 @@ final class LegacyArchiveMoveChecks {
 
   private static void putUnrelated(ArchiveStore writer, int ordinal) throws Exception {
     writer.put(new JSONObject().put("key", "unrelated-" + ordinal).put("uri", "fixture://archive/" + ordinal), "pending");
+  }
+
+  private static void putUnrelatedSql(SQLiteDatabase db, int ordinal) {
+    db.execSQL("INSERT INTO photos(key,state,payload) VALUES(?,'pending',?)",
+        new Object[]{"direct-" + ordinal, "{"uri":"fixture://archive/direct-" + ordinal + ""}"});
   }
 
   private static void writeArchive(CheckedOperation write) throws IOException {
