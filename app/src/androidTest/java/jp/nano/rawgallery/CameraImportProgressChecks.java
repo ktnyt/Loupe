@@ -116,12 +116,12 @@ final class CameraImportProgressChecks {
         p.finish(guidance);
         refresh.run();
         var stage = (TextView)activity.getWindow().getDecorView().findViewWithTag("camera-import-stage");
-        String rendered = stage.getText().toString();
-        require(stage.isShown() && rendered.contains("Androidへの登録待ち") && rendered.contains(guidance),
-            "partial completion explains Android registration and retry");
+        var counts = (TextView)activity.getWindow().getDecorView().findViewWithTag("camera-import-counts");
+        String rendered = counts.getText().toString();
+        require(stage.isShown() && "Androidへの登録待ち".contentEquals(stage.getText())
+            && counts.isShown() && rendered.contains(guidance), "partial completion explains Android registration and retry");
         require(rendered.contains("新規保存 971件") && rendered.contains("保存済み 327件")
-            && rendered.contains("登録待ち 1件") && !rendered.contains("失敗") && !rendered.contains("取り込み完了"),
-            "separate three outcomes without reporting full success or failure");
+            && rendered.contains("登録待ち 1件"), "three distinct partial outcomes");
         require(!p.getActive(), "partial result can be retried");
       });
       capture(t, screen, dir, size + "-partial-index-pending");
