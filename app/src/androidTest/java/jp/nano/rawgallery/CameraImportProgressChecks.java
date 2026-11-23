@@ -126,6 +126,19 @@ final class CameraImportProgressChecks {
       });
       capture(t, screen, dir, size + "-partial-index-pending");
       TagDetailChecks.ui(t, () -> {
+        p.begin("Synthetic SD");
+        p.photoHistory(1299, 1299, 1297, true);
+        p.photoContent(2, 2, 1, 1, 4096, 4096, 0);
+        p.photoTerminal("complete", "1枚追加");
+        refresh.run();
+        var counts = (TextView)activity.getWindow().getDecorView().findViewWithTag("camera-import-counts");
+        String rendered = counts.getText().toString();
+        require(counts.isShown() && rendered.contains("取り込み履歴あり 1297件")
+            && rendered.contains("内容一致 1件") && rendered.contains("新規保存 1件"),
+            "historical matches, verified content matches and new writes stay separate on screen");
+      });
+      capture(t, screen, dir, size + "-sd-history-matches");
+      TagDetailChecks.ui(t, () -> {
         p.connecting("接続中"); p.begin("Synthetic SD");
         p.photoHistory(4802,4802,4800); p.photoContent(1,2,1,0,4096,4096);
         p.photoTerminal("failed","試行の合成エラー");

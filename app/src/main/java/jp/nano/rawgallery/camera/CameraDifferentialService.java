@@ -14,6 +14,7 @@ import java.net.*;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 import jp.nano.rawgallery.CameraImportActivity;
 import jp.nano.rawgallery.PhotoStorage;
 
@@ -523,34 +524,35 @@ public final class CameraDifferentialService extends Service {
         }
     }
 
-    @FunctionalInterface
-    interface SdReceiptMatch { boolean matches(CameraDocumentSource.Entry entry) throws IOException; }
-
     static List<CameraDocumentSource.Entry> classifySd(List<CameraDocumentSource.Entry> selected,
-            BooleanSupplier stopped, CameraImportMetrics metrics, SdReceiptMatch known,
+            boolean useHistory, BooleanSupplier stopped, CameraImportMetrics metrics,
+            Function<String, Map<String, CameraImportLedger.Content>> readHistory,
             CameraPhotoPublisher.CommitCheck requireFreshSource, Runnable notifyProgress)
             throws IOException {
         long historyStart = SystemClock.elapsedRealtime();
         var candidates = new ArrayList<CameraDocumentSource.Entry>();
         try {
-            ImportProgress.INSTANCE.photoHistory(0, selected.size(), 0);
+            requireFreshSource.check();
+            ImportProgress.INSTANCE.photoHistory(0, selected.size(), 0, useHistory);
             notifyProgress.run();
+            var history = useHistory && !selected.isEmpty()
+                    ? readHistory.apply(selected.get(0).file.sourceId)
+                    : Map.<String, CameraImportLedger.Content>of();
             for (CameraDocumentSource.Entry entry : selected) {
                 CameraPhotoPublisher.check(stopped);
-                try {
-                    if (known.matches(entry)) metrics.known++;
-                    else candidates.add(entry);
-                } catch (CameraDocumentSource.OriginalAccessException failure) {
-                    deferUnindexed(failure, requireFreshSource, metrics);
-                }
+                CameraImportFile file = entry.file;
+                var receipt = !history.isEmpty() && SdSavedPhotoRevision.eligibleSource(file)
+                        ? history.get(file.sourceKey()) : null;
+                // A source receipt records an import. The old destination's current state is independent.
+                if (receipt != null && receipt.sourceBytes == file.bytes) metrics.known++;
+                else candidates.add(entry);
                 metrics.checked++;
-                if (metrics.checked % 16 == 0 || metrics.checked == selected.size()) {
-                    ImportProgress.INSTANCE.photoHistory(metrics.checked, selected.size(), metrics.known);
-                    notifyProgress.run();
-                }
             }
             CameraPhotoPublisher.check(stopped);
+            requireFreshSource.check();
             metrics.candidates = candidates.size();
+            ImportProgress.INSTANCE.photoHistory(metrics.checked, selected.size(), metrics.known, useHistory);
+            notifyProgress.run();
             return candidates;
         } finally {
             metrics.historyMs = SystemClock.elapsedRealtime() - historyStart;
@@ -578,7 +580,7 @@ public final class CameraDifferentialService extends Service {
             CameraPhotoPublisher.check(stopped);
             try {
                 CameraPhotoImporter.Result result = importer.importEntry(entry);
-                if (result.imported) metrics.saved++;
+                if (result.imported) metrics.savedPhoto();
                 else if (result.contentChecked) metrics.matches++;
                 metrics.processed++;
             } catch (CameraDocumentSource.OriginalAccessException failure) {
@@ -629,14 +631,8 @@ public final class CameraDifferentialService extends Service {
             }
             ImportProgress.INSTANCE.photoListing(selected.size(), selected.size());
             boolean stable = listing.stable && sourceVolume != null;
-            var candidates = classifySd(selected, stopped, runMetrics, entry -> !verify && stable
-                    && importer.knownSdRevision(entry.file, stopped, () -> {
-                        requireFreshSource.check();
-                        CameraDocumentSource.requireMappedOriginal(this, entry, sourceVolume, stopped);
-                    }, () -> {
-                        CameraDocumentSource.requireCurrentReceiptDocument(getContentResolver(), entry, sourceVolume, stopped);
-                        requireFreshSource.check();
-                    }), requireDeferralAllowed, this::notifyProgress);
+            var candidates = classifySd(selected, !verify && stable, stopped, runMetrics, importer::sourceSnapshot,
+                    requireDeferralAllowed, this::notifyProgress);
             importSdCandidates(candidates, stopped, runMetrics, entry -> {
                 boolean stableReceipt = stable && SdSavedPhotoRevision.eligibleSource(entry.file);
                 CameraPhotoPublisher.CommitCheck check = () -> {
@@ -674,8 +670,10 @@ public final class CameraDifferentialService extends Service {
         if (pending) {
             runMetrics.terminal("index_pending", SD_INDEX_RETRY);
         } else {
-            runMetrics.terminal("complete", runMetrics.saved + "枚追加・"
-                    + (runMetrics.known + runMetrics.matches) + "枚取り込み済み。カメラへカードを戻しましたか");
+            String matches = runMetrics.matches > 0 ? "・内容一致 " + runMetrics.matches + "枚" : "";
+            String history = runMetrics.known > 0 ? "・取り込み履歴あり " + runMetrics.known + "枚" : "";
+            runMetrics.terminal("complete", runMetrics.saved + "枚追加" + history + matches
+                    + "。カメラへカードを戻しましたか");
         }
         logResult(runMetrics.saved, count, runMetrics.sourceBytes, start);
         var notification = new Notification.Builder(this, CHANNEL)

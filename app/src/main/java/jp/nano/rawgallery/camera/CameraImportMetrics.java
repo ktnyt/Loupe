@@ -9,6 +9,7 @@ public final class CameraImportMetrics {
     private final String route;
     private final long start=android.os.SystemClock.elapsedRealtime();
     public long sourceBytes, destinationBytes, legacyBytes, listingMs=-1, historyMs=-1;
+    private long firstSavedMs = -1;
     public int listed=-1, checked, known, candidates=-1, processed, saved, matches, indexPending;
     public int attempt;
     /** Classification belongs to the current attempt; committed saves and body bytes span retries. */
@@ -16,6 +17,9 @@ public final class CameraImportMetrics {
     private Runnable savingListener=()->{};
     public void setSavingListener(Runnable listener){savingListener=listener;}
     public void saving(){ImportProgress.INSTANCE.photoSaving(saved);savingListener.run();}
+    void savedPhoto() {
+        if (saved++ == 0) firstSavedMs = android.os.SystemClock.elapsedRealtime() - start;
+    }
     public CameraImportMetrics(Context context,String route){this.context=context.getApplicationContext();this.route=route;}
     public CameraImportCopy.Copy countSource(CameraImportCopy.Copy copy){return out->copy.write(new FilterOutputStream(out){
         @Override public void write(int b)throws IOException{sourceBytes++;out.write(b);}
@@ -33,6 +37,7 @@ public final class CameraImportMetrics {
     public void recordAttempt(String outcome){persist(outcome,"attempt");}
     private void persist(String outcome,String scope){
         String line="route="+route+" outcome="+outcome+" scope="+scope+" attempt="+attempt+" classificationScope=attempt savedScope=operation bytesScope=operation"+" listed="+listed+" checked="+checked+" known="+known+" needsContent="+candidates+" processed="+processed+" saved="+saved+" contentMatches="+matches+" indexPending="+indexPending+" sourceBytes="+sourceBytes+" destinationVerifyBytes="+destinationBytes+" legacyReadBytes="+legacyBytes+" listingMs="+listingMs+" historyMs="+historyMs+" elapsedMs="+(android.os.SystemClock.elapsedRealtime()-start);
+        if ("saf-sd".equals(route)) line += " firstSavedMs=" + firstSavedMs;
         android.util.Log.i("CameraImportMetrics",line);
         context.getSharedPreferences("camera_import_metrics",0).edit().putString("last",line).commit();
     }

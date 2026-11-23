@@ -34,6 +34,7 @@ public final class SdSavedRevisionChecks {
         var resolver = context.getContentResolver();
         rejectDestinationRace(context, false);
         rejectDestinationRace(context, true);
+        missingDestinationIsHistory(context);
         List<Uri> owned = new ArrayList<>();
         byte[] jpeg = fixtureJpeg(0xff884411);
         byte[] raw = fixtureJpeg(0xff117733);
@@ -53,13 +54,22 @@ public final class SdSavedRevisionChecks {
                 entries.add(new CameraDocumentSource.Entry(Uri.EMPTY, file));
             }
             var importer = new CameraPhotoImporter(context, ledger, PhotoStorage.PRIMARY);
+            var historyOnly = new CameraImportMetrics(context, "synthetic-saf-sd");
+            importer.setMetrics(historyOnly);
+            var snapshots = new java.util.concurrent.atomic.AtomicInteger();
+            var bindingChecks = new java.util.concurrent.atomic.AtomicInteger();
+            require(CameraDifferentialService.classifySd(entries, true, () -> false, historyOnly,
+                    key -> { snapshots.incrementAndGet(); return importer.sourceSnapshot(key); },
+                    () -> bindingChecks.incrementAndGet(), () -> {}).isEmpty()
+                            && snapshots.get() == 1 && bindingChecks.get() == 2 && historyOnly.known == 327
+                            && historyOnly.destinationBytes == 0 && historyOnly.sourceBytes == 0
+                            && ledger.sdRevision(jpegSha) == null && ledger.sdRevision(rawSha) == null,
+                    "Historical original receipts use one local query, preserve the v4 state and skip byte processing");
+
             var bootstrap = new CameraImportMetrics(context, "synthetic-saf-sd");
             importer.setMetrics(bootstrap);
             long start = SystemClock.elapsedRealtime();
-            List<CameraDocumentSource.Entry> candidates = classify(entries, importer, bootstrap);
-            require(candidates.size() == JPEG + RAW && bootstrap.known == 0 && ledger.sdRevision(jpegSha) == null,
-                    "older receipts alone do not prove saved revisions");
-            for (var item : candidates) {
+            for (var item : entries) {
                 var result = importer.importPhoto(item.file, out -> { throw new AssertionError("source was reread"); },
                         "fixture", true, false, () -> false, CHECK, new CameraPhotoImporter.Attempt(), true);
                 require(!result.imported && result.contentChecked, "bootstrap is a full saved-bytes match");
@@ -126,12 +136,13 @@ public final class SdSavedRevisionChecks {
             require(ledger.sdRevision(rawSha) != null, "other content retains its revision proof");
             ledger.forgetMissing(rawSha);
             require(ledger.sdRevision(rawSha) == null, "deleting parent content cascades to its proof");
-            return "PASS sd-revision receipts=327 concreteTargets=2 bootstrapMs=" + bootstrapMs
+            return "PASS sd-revision receipts=327 concreteTargets=2 oneSnapshotWithoutProof=true bootstrapMs=" + bootstrapMs
                     + " bootstrapDestinationBytes=" + bootstrap.destinationBytes + " repeatMs=" + repeatMs
                     + " repeatSourceBytes=0 repeatDestinationBytes=0 known=327 candidates=0 mixedCandidates=1"
                     + " hiddenMetadataUnchanged=" + hiddenMetadataUnchanged + " explicitMismatch=true"
                     + " unlinkDuringRead=true revisionDuringExplicitRead=true"
-                    + " mixedListing=1299 priorReceipts=327 pending=1 savedAfterPending=true indexedRetry=true";
+                    + " mixedListing=1299 priorReceipts=327 changed=true backdated=true pending=1 savedAfterPending=true indexedRetry=true"
+                    + " missingDestinationHistorical=true explicitRepair=true";
         } finally {
             for (Uri uri : owned) resolver.delete(uri, null, null);
             require(context.deleteDatabase(db), "isolated ledger removed");
@@ -145,22 +156,25 @@ public final class SdSavedRevisionChecks {
         require(pending.reason == CameraDocumentSource.OriginalAccessException.Reason.INDEX_PENDING
                         && ambiguous.reason == CameraDocumentSource.OriginalAccessException.Reason.MAPPING,
                 "Fixture distinguishes a confirmed missing row from an ambiguous mapping");
-        var metrics = new CameraImportMetrics(context, "synthetic-saf-sd");
-        var remaining = CameraDifferentialService.classifySd(old, () -> false, metrics,
-                entry -> importer.knownSdRevision(entry.file, () -> false, () -> {
-                    if (entry == old.get(0)) throw pending;
-                }, CHECK), CHECK, () -> {});
-        require(remaining.isEmpty() && metrics.checked == 327 && metrics.known == 326
-                        && metrics.indexPending == 1 && metrics.processed == 0,
-                "Classification defers a confirmed missing mapping and keeps checking later receipts");
-
         var stopped = new CameraImportMetrics(context, "synthetic-saf-sd");
+        var checks = new java.util.concurrent.atomic.AtomicInteger();
         try {
-            CameraDifferentialService.classifySd(old, () -> false, stopped, entry -> { throw pending; },
-                    () -> { throw new MountedCameraCard.Unavailable("fixture tree grant lost"); }, () -> {});
-            throw new AssertionError("Revoked grant at deferral was ignored");
+            CameraDifferentialService.classifySd(old, true, () -> false, stopped, importer::sourceSnapshot,
+                    () -> { if (checks.incrementAndGet() == 2) throw new MountedCameraCard.Unavailable("fixture tree grant lost"); },
+                    () -> {});
+            throw new AssertionError("Revoked grant before classification acceptance was ignored");
         } catch (MountedCameraCard.Unavailable expected) {
-            require(stopped.indexPending == 0 && stopped.checked == 0, "Grant loss stops classification");
+            require(stopped.indexPending == 0 && stopped.candidates == -1 && checks.get() == 2,
+                    "Grant loss prevents using the history plan");
+        }
+        var sourceChanged = new CameraImportMetrics(context, "synthetic-saf-sd");
+        var cancel = new java.util.concurrent.atomic.AtomicBoolean();
+        try {
+            CameraDifferentialService.classifySd(old, true, cancel::get, sourceChanged,
+                    key -> { cancel.set(true); return importer.sourceSnapshot(key); }, CHECK, () -> {});
+            throw new AssertionError("Cancellation after snapshot was ignored");
+        } catch (java.io.InterruptedIOException expected) {
+            require(sourceChanged.checked == 0 && sourceChanged.candidates == -1, "Cancellation stops classification");
         }
         try {
             CameraDifferentialService.importSdCandidates(old, () -> false, stopped, entry -> { throw ambiguous; },
@@ -183,10 +197,16 @@ public final class SdSavedRevisionChecks {
             CameraImportLedger ledger, List<Uri> owned, List<CameraDocumentSource.Entry> old, String source)
             throws Exception {
         byte[] before = fixtureJpeg(0xff220077), delayed = fixtureJpeg(0xff227700), after = fixtureJpeg(0xffffcc00);
-        CameraDocumentSource.Entry beforeEntry = fixtureEntry(source, before.length);
+        CameraDocumentSource.Entry beforeEntry = new CameraDocumentSource.Entry(Uri.EMPTY, new CameraImportFile(
+                source, "DCIM/backdated.JPG", before.length, "1600000000000", 1600000000));
         CameraDocumentSource.Entry pendingEntry = fixtureEntry(source, delayed.length);
         CameraDocumentSource.Entry afterEntry = fixtureEntry(source, after.length);
         var listing = new ArrayList<>(old);
+        byte[] sameOriginal = fixtureJpeg(0xff884411);
+        var previous = old.get(0).file;
+        var changedEntry = new CameraDocumentSource.Entry(Uri.EMPTY, new CameraImportFile(
+                source, previous.relativePath, previous.bytes, "1700000000002", previous.captureSeconds));
+        listing.set(0, changedEntry);
         listing.addAll(List.of(beforeEntry, pendingEntry, afterEntry));
         var filler = new java.util.HashSet<CameraDocumentSource.Entry>();
         while (listing.size() < 1299) {
@@ -203,23 +223,26 @@ public final class SdSavedRevisionChecks {
             ImportProgress.INSTANCE.connecting("fixture");
             var candidates = classify(new ArrayList<>(listing), importer, metrics);
             CameraDifferentialService.importSdCandidates(candidates, () -> false, metrics, entry -> {
+                require(!old.contains(entry), "Historical entry reached the original/destination processing hook");
                 if (entry == pendingEntry && !indexed) throw pending;
-                // Only the three entries around the missing row need real destination I/O in this fixture.
                 if (filler.contains(entry)) return new CameraPhotoImporter.Result(Uri.EMPTY, false, true, 0);
-                byte[] original = entry == beforeEntry ? before : entry == pendingEntry ? delayed : after;
+                byte[] original = entry == changedEntry ? sameOriginal
+                        : entry == beforeEntry ? before : entry == pendingEntry ? delayed : after;
                 var result = importer.importPhoto(entry.file, out -> out.write(original), "sd-revision-fixtures",
                         true, false, () -> false, CHECK, new CameraPhotoImporter.Attempt(), true);
                 if (result.imported) owned.add(result.uri);
                 return result;
             }, CHECK, () -> {});
 
-            require(metrics.checked == 1299 && metrics.known == 327 && metrics.candidates == 972
-                            && metrics.saved == (indexed ? 1 : 2) && metrics.matches == (indexed ? 971 : 969)
-                            && metrics.indexPending == (indexed ? 0 : 1) && metrics.processed == (indexed ? 972 : 971),
+            require(metrics.checked == 1299 && metrics.known == (indexed ? 329 : 326)
+                            && metrics.candidates == (indexed ? 970 : 973)
+                            && metrics.saved == (indexed ? 1 : 2) && metrics.matches == (indexed ? 969 : 970)
+                            && metrics.indexPending == (indexed ? 0 : 1) && metrics.processed == (indexed ? 970 : 972),
                     "New saves, matches and confirmed missing registrations have distinct counts");
             require(ledger.known(beforeEntry.file) != null && ledger.known(afterEntry.file) != null
+                            && ledger.known(changedEntry.file) != null
                             && (ledger.known(pendingEntry.file) != null) == indexed
-                            && ledger.receiptCount() == (indexed ? 330 : 329)
+                            && ledger.receiptCount() == (indexed ? 331 : 330)
                             && ledger.contentCount() == (indexed ? 5 : 4) && ledger.pending().isEmpty(),
                     "Later originals save immediately and the deferred original creates history only on retry");
         }
@@ -228,6 +251,57 @@ public final class SdSavedRevisionChecks {
     private static CameraDocumentSource.Entry fixtureEntry(String source, long bytes) {
         return new CameraDocumentSource.Entry(Uri.EMPTY, new CameraImportFile(source,
                 "DCIM/" + UUID.randomUUID() + ".JPG", bytes, "1700000000000", 1700000000));
+    }
+
+    private static void missingDestinationIsHistory(Context context) throws Exception {
+        String db = "camera-sd-missing-history-" + UUID.randomUUID() + ".db";
+        var owned = new ArrayList<Uri>();
+        var resolver = context.getContentResolver();
+        try (var ledger = new CameraImportLedger(context, db)) {
+            byte[] original = fixtureJpeg(0xff8b1989);
+            String digest = sha(original);
+            String source = CameraDocumentSource.originalSourceId(CameraSourceKey.sd("ab12-cd34", 1000000));
+            String otherSource = CameraDocumentSource.originalSourceId(CameraSourceKey.sd("ab12-cd35", 1000000));
+            var entry = fixtureEntry(source, original.length);
+            var noStamp = new CameraDocumentSource.Entry(Uri.EMPTY, new CameraImportFile(source,
+                    "DCIM/unknown-stamp.JPG", original.length, "0", 0));
+            var otherCard = new CameraDocumentSource.Entry(Uri.EMPTY, new CameraImportFile(otherSource,
+                    entry.file.relativePath, entry.file.bytes, entry.file.sourceStamp, entry.file.captureSeconds));
+            Uri destination = savedTarget(context, owned, original, "JPG");
+            var receipt = ledger.adopt(entry.file, digest, digest, original.length, destination.toString(), "JPEG", "fixture");
+            ledger.bind(noStamp.file, receipt);
+            require(resolver.delete(destination, null, null) == 1, "remove scoped destination fixture");
+            owned.remove(destination);
+
+            var importer = new CameraPhotoImporter(context, ledger, PhotoStorage.PRIMARY);
+            var ordinary = new CameraImportMetrics(context, "synthetic-saf-sd");
+            importer.setMetrics(ordinary);
+            require(classify(List.of(entry, noStamp, otherCard), importer, ordinary).equals(List.of(noStamp, otherCard))
+                            && ordinary.known == 1 && ordinary.sourceBytes == 0 && ordinary.destinationBytes == 0
+                            && receipt.sameRow(ledger.known(entry.file)) && ledger.sdRevision(digest) == null,
+                    "Only exact scoped receipt is historical when the prior copy is missing; unknown stamp and changed card still require content");
+
+            var verify = new CameraImportMetrics(context, "synthetic-saf-sd");
+            importer.setMetrics(verify);
+            var candidates = CameraDifferentialService.classifySd(List.of(entry), false, () -> false, verify,
+                    key -> { throw new AssertionError("Explicit verification consulted the history snapshot"); },
+                    CHECK, () -> {});
+            CameraDifferentialService.importSdCandidates(candidates, () -> false, verify, item -> {
+                var result = importer.importPhoto(item.file, out -> out.write(original), "sd-revision-fixtures",
+                        true, true, () -> false, CHECK, new CameraPhotoImporter.Attempt(), true);
+                if (result.imported) owned.add(result.uri);
+                return result;
+            }, CHECK, () -> {});
+            var repaired = ledger.known(entry.file);
+            require(verify.known == 0 && verify.saved == 1 && verify.sourceBytes == original.length
+                            && verify.destinationBytes >= original.length && repaired.sourceSha.equals(digest)
+                            && !repaired.uri.equals(receipt.uri) && repaired.uri.equals(ledger.known(noStamp.file).uri)
+                            && ledger.receiptCount() == 2 && ledger.pending().isEmpty(),
+                    "Explicit verification restores a conclusively missing copy and retains both historical receipts");
+        } finally {
+            for (Uri uri : owned) resolver.delete(uri, null, null);
+            require(context.deleteDatabase(db), "isolated missing destination ledger removed");
+        }
     }
 
     private static void rejectDestinationRace(Context context, boolean explicit) throws Exception {
@@ -278,8 +352,8 @@ public final class SdSavedRevisionChecks {
 
     private static List<CameraDocumentSource.Entry> classify(List<CameraDocumentSource.Entry> entries,
             CameraPhotoImporter importer, CameraImportMetrics metrics) throws IOException {
-        return CameraDifferentialService.classifySd(entries, () -> false, metrics,
-                entry -> importer.knownSdRevision(entry.file, () -> false, CHECK, CHECK), CHECK, () -> {});
+        return CameraDifferentialService.classifySd(entries, true, () -> false, metrics,
+                importer::sourceSnapshot, CHECK, () -> {});
     }
 
     private static Uri savedTarget(Context context, List<Uri> owned, byte[] bytes, String suffix) throws IOException {
