@@ -80,6 +80,9 @@ public final class SdSavedRevisionChecks {
                             && ledger.receiptCount() == JPEG + RAW && ledger.contentCount() == 2,
                     "ordinary repeat skips both source and destination bodies and keeps history");
             long repeatMs = SystemClock.elapsedRealtime() - start;
+            indexPendingGuards(context, importer, entries);
+            mixedIndexPending(context, importer, ledger, owned, entries, sid);
+
 
             CameraImportFile previous = entries.get(0).file;
             var changed = new CameraImportFile(sid, previous.relativePath, previous.bytes,
@@ -127,11 +130,104 @@ public final class SdSavedRevisionChecks {
                     + " bootstrapDestinationBytes=" + bootstrap.destinationBytes + " repeatMs=" + repeatMs
                     + " repeatSourceBytes=0 repeatDestinationBytes=0 known=327 candidates=0 mixedCandidates=1"
                     + " hiddenMetadataUnchanged=" + hiddenMetadataUnchanged + " explicitMismatch=true"
-                    + " unlinkDuringRead=true revisionDuringExplicitRead=true";
+                    + " unlinkDuringRead=true revisionDuringExplicitRead=true"
+                    + " mixedListing=1299 priorReceipts=327 pending=1 savedAfterPending=true indexedRetry=true";
         } finally {
             for (Uri uri : owned) resolver.delete(uri, null, null);
             require(context.deleteDatabase(db), "isolated ledger removed");
         }
+    }
+
+    private static void indexPendingGuards(Context context, CameraPhotoImporter importer,
+            List<CameraDocumentSource.Entry> old) throws IOException {
+        var pending = CameraDocumentSourceChecks.registrationFailure(false);
+        var ambiguous = CameraDocumentSourceChecks.registrationFailure(true);
+        require(pending.reason == CameraDocumentSource.OriginalAccessException.Reason.INDEX_PENDING
+                        && ambiguous.reason == CameraDocumentSource.OriginalAccessException.Reason.MAPPING,
+                "Fixture distinguishes a confirmed missing row from an ambiguous mapping");
+        var metrics = new CameraImportMetrics(context, "synthetic-saf-sd");
+        var remaining = CameraDifferentialService.classifySd(old, () -> false, metrics,
+                entry -> importer.knownSdRevision(entry.file, () -> false, () -> {
+                    if (entry == old.get(0)) throw pending;
+                }, CHECK), CHECK, () -> {});
+        require(remaining.isEmpty() && metrics.checked == 327 && metrics.known == 326
+                        && metrics.indexPending == 1 && metrics.processed == 0,
+                "Classification defers a confirmed missing mapping and keeps checking later receipts");
+
+        var stopped = new CameraImportMetrics(context, "synthetic-saf-sd");
+        try {
+            CameraDifferentialService.classifySd(old, () -> false, stopped, entry -> { throw pending; },
+                    () -> { throw new MountedCameraCard.Unavailable("fixture tree grant lost"); }, () -> {});
+            throw new AssertionError("Revoked grant at deferral was ignored");
+        } catch (MountedCameraCard.Unavailable expected) {
+            require(stopped.indexPending == 0 && stopped.checked == 0, "Grant loss stops classification");
+        }
+        try {
+            CameraDifferentialService.importSdCandidates(old, () -> false, stopped, entry -> { throw ambiguous; },
+                    CHECK, () -> {});
+            throw new AssertionError("Ambiguous mapping was deferred");
+        } catch (CameraDocumentSource.OriginalAccessException expected) {
+            require(expected == ambiguous && stopped.processed == 0 && stopped.indexPending == 0,
+                    "Ambiguous mapping stops the byte loop");
+        }
+        try {
+            CameraDifferentialService.importSdCandidates(old, () -> false, stopped, entry -> { throw pending; },
+                    () -> { throw new java.io.InterruptedIOException("fixture cancelled"); }, () -> {});
+            throw new AssertionError("Cancellation at deferral was ignored");
+        } catch (java.io.InterruptedIOException expected) {
+            require(stopped.processed == 0 && stopped.indexPending == 0, "Cancellation stops the byte loop");
+        }
+    }
+
+    private static void mixedIndexPending(Context context, CameraPhotoImporter importer,
+            CameraImportLedger ledger, List<Uri> owned, List<CameraDocumentSource.Entry> old, String source)
+            throws Exception {
+        byte[] before = fixtureJpeg(0xff220077), delayed = fixtureJpeg(0xff227700), after = fixtureJpeg(0xffffcc00);
+        CameraDocumentSource.Entry beforeEntry = fixtureEntry(source, before.length);
+        CameraDocumentSource.Entry pendingEntry = fixtureEntry(source, delayed.length);
+        CameraDocumentSource.Entry afterEntry = fixtureEntry(source, after.length);
+        var listing = new ArrayList<>(old);
+        listing.addAll(List.of(beforeEntry, pendingEntry, afterEntry));
+        var filler = new java.util.HashSet<CameraDocumentSource.Entry>();
+        while (listing.size() < 1299) {
+            var entry = fixtureEntry(source, after.length);
+            filler.add(entry);
+            listing.add(entry);
+        }
+
+        var pending = CameraDocumentSourceChecks.registrationFailure(false);
+        for (boolean indexed : new boolean[] {false, true}) {
+            // Each pass consumes a fresh list of the same source, with Android registration changing between passes.
+            var metrics = new CameraImportMetrics(context, "synthetic-saf-sd");
+            importer.setMetrics(metrics);
+            ImportProgress.INSTANCE.connecting("fixture");
+            var candidates = classify(new ArrayList<>(listing), importer, metrics);
+            CameraDifferentialService.importSdCandidates(candidates, () -> false, metrics, entry -> {
+                if (entry == pendingEntry && !indexed) throw pending;
+                // Only the three entries around the missing row need real destination I/O in this fixture.
+                if (filler.contains(entry)) return new CameraPhotoImporter.Result(Uri.EMPTY, false, true, 0);
+                byte[] original = entry == beforeEntry ? before : entry == pendingEntry ? delayed : after;
+                var result = importer.importPhoto(entry.file, out -> out.write(original), "sd-revision-fixtures",
+                        true, false, () -> false, CHECK, new CameraPhotoImporter.Attempt(), true);
+                if (result.imported) owned.add(result.uri);
+                return result;
+            }, CHECK, () -> {});
+
+            require(metrics.checked == 1299 && metrics.known == 327 && metrics.candidates == 972
+                            && metrics.saved == (indexed ? 1 : 2) && metrics.matches == (indexed ? 971 : 969)
+                            && metrics.indexPending == (indexed ? 0 : 1) && metrics.processed == (indexed ? 972 : 971),
+                    "New saves, matches and confirmed missing registrations have distinct counts");
+            require(ledger.known(beforeEntry.file) != null && ledger.known(afterEntry.file) != null
+                            && (ledger.known(pendingEntry.file) != null) == indexed
+                            && ledger.receiptCount() == (indexed ? 330 : 329)
+                            && ledger.contentCount() == (indexed ? 5 : 4) && ledger.pending().isEmpty(),
+                    "Later originals save immediately and the deferred original creates history only on retry");
+        }
+    }
+
+    private static CameraDocumentSource.Entry fixtureEntry(String source, long bytes) {
+        return new CameraDocumentSource.Entry(Uri.EMPTY, new CameraImportFile(source,
+                "DCIM/" + UUID.randomUUID() + ".JPG", bytes, "1700000000000", 1700000000));
     }
 
     private static void rejectDestinationRace(Context context, boolean explicit) throws Exception {
@@ -183,7 +279,7 @@ public final class SdSavedRevisionChecks {
     private static List<CameraDocumentSource.Entry> classify(List<CameraDocumentSource.Entry> entries,
             CameraPhotoImporter importer, CameraImportMetrics metrics) throws IOException {
         return CameraDifferentialService.classifySd(entries, () -> false, metrics,
-                entry -> importer.knownSdRevision(entry.file, () -> false, CHECK, CHECK), () -> {});
+                entry -> importer.knownSdRevision(entry.file, () -> false, CHECK, CHECK), CHECK, () -> {});
     }
 
     private static Uri savedTarget(Context context, List<Uri> owned, byte[] bytes, String suffix) throws IOException {

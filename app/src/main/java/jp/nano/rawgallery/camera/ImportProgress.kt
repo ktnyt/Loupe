@@ -3,12 +3,12 @@ package jp.nano.rawgallery.camera
 
 /** 取り込みの進捗をサービスから UI へ共有するためのシングルトン */
 object ImportProgress {
-    enum class PhotoStage { LISTING, HISTORY, CONTENT, SAVING, COMPLETE, CANCELLED, FAILED, NO_CANDIDATES, ENDED }
+    enum class PhotoStage { LISTING, HISTORY, CONTENT, SAVING, COMPLETE, INDEX_PENDING, CANCELLED, FAILED, NO_CANDIDATES, ENDED }
     /** Unknown counts/bytes are -1; total is the current stage's work, never planned saves. */
     data class PhotoState(
         val stage: PhotoStage, val processed: Int = 0, val total: Int = -1,
         val known: Int = -1, val saved: Int = -1, val contentMatches: Int = -1,
-        val sourceBytes: Long = -1, val destinationBytes: Long = -1
+        val sourceBytes: Long = -1, val destinationBytes: Long = -1, val indexPending: Int = 0
     )
     @Volatile var photo: PhotoState? = null
         private set
@@ -21,10 +21,11 @@ object ImportProgress {
         photo = (photo ?: PhotoState(PhotoStage.HISTORY)).copy(stage = PhotoStage.HISTORY, processed = checked, total = total, known = known)
         changed()
     }
-    @Synchronized fun photoContent(processed: Int, candidates: Int, saved: Int, contentMatches: Int, sourceBytes: Long, destinationBytes: Long) {
+    @JvmOverloads
+    @Synchronized fun photoContent(processed: Int, candidates: Int, saved: Int, contentMatches: Int, sourceBytes: Long, destinationBytes: Long, indexPending: Int = 0) {
         photo = (photo ?: PhotoState(PhotoStage.CONTENT)).copy(stage = PhotoStage.CONTENT,
             processed = processed, total = candidates, saved = saved, contentMatches = contentMatches,
-            sourceBytes = sourceBytes, destinationBytes = destinationBytes)
+            sourceBytes = sourceBytes, destinationBytes = destinationBytes, indexPending = indexPending)
         changed()
     }
     @Synchronized fun photoSaving(saved: Int) {
@@ -34,6 +35,7 @@ object ImportProgress {
     @Synchronized fun photoTerminal(outcome: String, message: String) {
         val stage = when (outcome) {
             "complete" -> PhotoStage.COMPLETE
+            "index_pending" -> PhotoStage.INDEX_PENDING
             "cancelled" -> PhotoStage.CANCELLED
             "failed" -> PhotoStage.FAILED
             "no_candidates" -> PhotoStage.NO_CANDIDATES
@@ -147,7 +149,7 @@ object ImportProgress {
 
     @Synchronized fun finish(message: String) {
         photo?.let {
-            if (it.stage !in setOf(PhotoStage.COMPLETE, PhotoStage.CANCELLED, PhotoStage.FAILED, PhotoStage.NO_CANDIDATES, PhotoStage.ENDED))
+            if (it.stage !in setOf(PhotoStage.COMPLETE, PhotoStage.INDEX_PENDING, PhotoStage.CANCELLED, PhotoStage.FAILED, PhotoStage.NO_CANDIDATES, PhotoStage.ENDED))
                 photo = it.copy(stage = if (stopRequested) PhotoStage.CANCELLED else PhotoStage.ENDED)
         }
         active = false

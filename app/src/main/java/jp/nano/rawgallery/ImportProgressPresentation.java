@@ -52,9 +52,14 @@ public final class ImportProgressPresentation {
       case SAVING:
         primary = "写真を確認・取り込み中";
         secondary = "要確認 " + count(p.getProcessed(), p.getTotal());
+        if (p.getIndexPending() > 0) secondary += " · 登録待ち " + p.getIndexPending() + "件";
         if (p.getKnown() >= 0) secondary += " · 保存済み " + p.getKnown() + "件";
         if (p.getSaved() >= 0) secondary += " · 新規保存 " + p.getSaved() + "件";
         if (p.getSourceBytes() >= 0) secondary += " · 読取 " + bytes(p.getSourceBytes());
+        break;
+      case INDEX_PENDING:
+        primary = "Androidへの登録待ち";
+        secondary = summary(p) + "\n" + state.getLastMessage();
         break;
       case NO_CANDIDATES:
         primary = value(state.getLastMessage(), "取り込める写真がありません。");
@@ -80,6 +85,7 @@ public final class ImportProgressPresentation {
     String text = p.getSaved() >= 0 ? "新規保存 " + p.getSaved() + "件" : "";
     int existing = p.getKnown() < 0 ? p.getContentMatches() : p.getKnown() + Math.max(0, p.getContentMatches());
     if (existing >= 0) text += (text.isEmpty() ? "" : " · ") + "保存済み " + existing + "件";
+    if (p.getIndexPending() > 0) text += " · 登録待ち " + p.getIndexPending() + "件";
     if (p.getSourceBytes() >= 0) text += (text.isEmpty() ? "" : " · ") + "読取 " + bytes(p.getSourceBytes());
     return text;
   }

@@ -542,6 +542,17 @@ public final class CameraDocumentSourceChecks {
         } catch (InterruptedIOException expected) {}
     }
 
+    static CameraDocumentSource.OriginalAccessException registrationFailure(boolean rowExists) throws IOException {
+        RegistrationProbe probe = new RegistrationProbe();
+        if (rowExists) probe.fileCount = 1;
+        try {
+            CameraDocumentSource.copy(probe, probe.entry(), new ByteArrayOutputStream(), () -> false, SOURCE);
+        } catch (CameraDocumentSource.OriginalAccessException failure) {
+            return failure;
+        }
+        throw new AssertionError("Unmapped fixture must fail before opening the original");
+    }
+
     private static void expectRegistration(RegistrationProbe access,String volume,
             CameraDocumentSource.OriginalAccessException.Reason reason) throws IOException {
         var output = new ByteArrayOutputStream();
