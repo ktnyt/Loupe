@@ -23,26 +23,30 @@ final class Ep7WifiChecks {
       TagDetailChecks.ui(t, () -> {
         View root = camera.getWindow().getDecorView();
         check(root.findViewWithTag("wifi-import-settings") != null, "Wi-Fi pencil settings entry available");
-        require(root, "SDカードのフォルダを選ぶ");
-        require(root, "SDカードの写真を取り込む");
-        require(root, "SDカード接続時に自動で取り込む");
-        TextView sdVerify = require(root, "内容も確認する");
-        check(((android.widget.CompoundButton) sdVerify).isChecked() == camera.getSharedPreferences("camera_import", 0).getBoolean("sd_verify_all", false), "SD verify reflects saved preference");
+        check(root.findViewWithTag("sd-import-settings") != null, "SD pencil settings entry available");
+        require(root, "SDカードから取り込む");
+        check(find(root, "SDカードのフォルダを選ぶ") == null, "SD details are outside the main screen");
         require(root, "共通履歴");
       });
       capture(t, camera, "camera-import");
+      TagDetailChecks.ui(t, () ->
+          camera.getWindow().getDecorView().findViewWithTag("sd-import-settings").performClick());
+      t.waitForIdleSync();
+      View[] sdDialog = {null};
       TagDetailChecks.ui(t, () -> {
-        View root = camera.getWindow().getDecorView();
-        TextView heading = require(root, "SDカードから取り込む");
-        require(root, "原本をそのまま保存して重複を確認するため、写真すべてと写真の位置情報へのアクセスが必要です。");
-        findScroll(root).scrollTo(0, ((View) heading.getParent()).getTop());
+        for (View candidate : android.view.inspector.WindowInspector.getGlobalWindowViews()) {
+          if (candidate.hasWindowFocus() && find(candidate, "SDカードのフォルダを選ぶ") != null)
+            sdDialog[0] = candidate;
+        }
+        check(sdDialog[0] != null, "SD pencil opened the settings dialog");
+        require(sdDialog[0], "SDカード接続時に自動で取り込む");
+        require(sdDialog[0], "写真のアクセス権限を確認");
+        TextView sdVerify = require(sdDialog[0], "内容も確認する");
+        check(((android.widget.CompoundButton) sdVerify).isChecked() == camera.getSharedPreferences("camera_import", 0)
+            .getBoolean("sd_verify_all", false), "SD verify reflects saved preference");
       });
-      capture(t, camera, "camera-import-sd");
-      TagDetailChecks.ui(t, () -> {
-        TextView permission = require(camera.getWindow().getDecorView(), "写真のアクセス権限を確認");
-        permission.requestRectangleOnScreen(new Rect(0, 0, permission.getWidth(), permission.getHeight()), true);
-      });
-      capture(t, camera, "camera-import-sd-permissions");
+      capture(t, camera, "camera-import-sd", sdDialog[0]);
+      TagDetailChecks.ui(t, () -> require(sdDialog[0], "閉じる").performClick());
       if (camera.checkSelfPermission(android.Manifest.permission.ACCESS_MEDIA_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED
           && camera.checkSelfPermission(android.Manifest.permission.READ_MEDIA_IMAGES) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
         // Exercise the app result state; this does not simulate a native permission dialog.

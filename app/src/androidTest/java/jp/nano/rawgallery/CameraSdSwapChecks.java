@@ -94,18 +94,29 @@ final class CameraSdSwapChecks {
             awaitText(test, sdStatus, CameraQuickImportSources.SdState.DISCONNECTED.message);
             String prefix = "sd-swap-" + width + "-" + font;
             reveal(test, sdStatus);
-            View reselect = findText((ViewGroup) sdStatus.getParent(), "SDカードのフォルダを選ぶ");
-            require(reselect != null && reselect.isClickable() && fullyVisible(reselect)
-                    && reselect.getHeight() >= GalleryUi.dp(screen, 48),
-                    "disconnected status and its 48dp reselect action are both in view");
+            var sdSettings = (View) field(screen, "sdSettingsButton");
+            require(sdSettings.isClickable() && "SDカード取り込み設定".contentEquals(sdSettings.getContentDescription())
+                            && sdSettings.getHeight() >= GalleryUi.dp(screen, 48),
+                    "SD settings have a labeled 48dp action");
+            require(findText((ViewGroup) sdStatus.getParent(), "SDカードのフォルダを選ぶ") == null,
+                    "folder settings are not duplicated in the main card");
             capture(test, screen, captures, prefix + "-disconnected",
-                    CameraQuickImportSources.SdState.DISCONNECTED.message, "SDカードのフォルダを選ぶ");
+                    CameraQuickImportSources.SdState.DISCONNECTED.message, "SDカードから取り込む");
+
+            test.runOnMainSync(sdSettings::performClick);
+            var options = (androidx.appcompat.app.AlertDialog) field(screen, "sdSettingsDialog");
+            require(options.isShowing() && pickerCount.get() == 0 && started.get() == 0,
+                    "opening SD settings does not register or import");
+            capture(test, screen, options.getWindow().getDecorView(), captures, prefix + "-settings",
+                    "SDカード取り込み設定", "SDカードのフォルダを選ぶ", "内容も確認する");
+            test.runOnMainSync(() -> options.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick());
+            require(!options.isShowing(), "close returns to the single SD action");
 
             test.runOnMainSync(() -> screen.renderSdSource(CameraQuickImportSources.SdState.CHECKING));
             awaitText(test, sdStatus, CameraQuickImportSources.SdState.CHECKING.message);
             reveal(test, sdStatus);
             capture(test, screen, captures, prefix + "-checking", CameraQuickImportSources.SdState.CHECKING.message,
-                    "SDカードのフォルダを選ぶ");
+                    "SDカードから取り込む");
             test.runOnMainSync(start::performClick);
             long deadline = SystemClock.uptimeMillis() + 6000;
             while (pickerCount.get() == 0 && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(30);
@@ -295,7 +306,7 @@ final class CameraSdSwapChecks {
         awaitText(test, sdStatus, CameraQuickImportSources.SdState.DISCONNECTED.message);
         reveal(test, sdStatus);
         capture(test, screen, captures, name, CameraQuickImportSources.SdState.DISCONNECTED.message,
-                "SDカードのフォルダを選ぶ");
+                "SDカードから取り込む");
         test.runOnMainSync(() -> { if (button.isChecked()) button.performClick(); });
     }
 
