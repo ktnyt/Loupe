@@ -124,11 +124,24 @@ public final class CameraDifferentialService extends Service {
                         if (sdRequest) requireSdDestination(queuedVolume, volume);
                         String expectedCard=pinnedCard!=null||!sdRequest?pinnedCard
                                 :MountedCameraCard.targetWithGenericReader(this,volume);
-                        Set<MediaTypes.Kind> kinds=sdKinds(request.getStringExtra(SD_KINDS));
-                        String sourceVolume=expectedCard==null?null:MountedCameraCard.requireDistinctSource(
-                                this,request.getData(),expectedCard,volume,true,cancelled);
-                        jp.nano.rawgallery.PhotoStorage.requireWritable(this,volume);
-                        CameraPhotoImporter importer=new CameraPhotoImporter(this,CameraImportLedger.get(this),volume);importer.setMetrics(runMetrics);importer.recover(cancelled);
+                        Set<MediaTypes.Kind> kinds = sdKinds(request.getStringExtra(SD_KINDS));
+                        Uri tree = request.getData();
+                        BooleanSupplier stopped = sdRequest ? sdStopped(tree, volume, sdGeneration) : cancelled;
+                        String sourceVolume = null;
+                        if (sdRequest) {
+                            try {
+                                if (expectedCard != null) sourceVolume = MountedCameraCard.requireDistinctSource(
+                                        this, tree, expectedCard, volume, true, stopped);
+                                requireSdSource(tree, sourceVolume, volume, sdGeneration);
+                            } catch (InterruptedIOException interrupted) {
+                                if (!cancelled.getAsBoolean()) requireSdSource(tree, sourceVolume, volume, sdGeneration);
+                                throw interrupted;
+                            }
+                        }
+                        PhotoStorage.requireWritable(this, volume);
+                        CameraPhotoImporter importer = new CameraPhotoImporter(this, CameraImportLedger.get(this), volume);
+                        importer.setMetrics(runMetrics);
+                        importer.recover(stopped);
                         if(PAIRED.equals(request.getAction()))paired(importer,request.getStringExtra("profile_id"),request.getBooleanExtra("verify",getSharedPreferences("camera_import",0).getBoolean("wifi_verify_all",false)));
                         else if(WIFI.equals(request.getAction()))wifi(importer,request.getBooleanExtra("verify",getSharedPreferences("camera_import",0).getBoolean("wifi_verify_all",false)));
                         else if(SD.equals(request.getAction())&&request.getData()!=null)sd(importer,request.getData(),
@@ -275,15 +288,19 @@ public final class CameraDifferentialService extends Service {
             throw new MountedCameraCard.Unavailable("登録したSDカードが接続されていません。取り込み元を確認してください。");
     }
 
+    private BooleanSupplier sdStopped(Uri tree, String target, long generation) {
+        var settings = getSharedPreferences("camera_import", 0);
+        String requestedTree = tree.toString();
+        return () -> cancelled.getAsBoolean() || MountedCameraCard.detachGeneration() != generation
+                || !target.equals(PhotoStorage.selected(this))
+                || !requestedTree.equals(settings.getString("sd_tree_uri", null));
+    }
+
     private void sd(CameraPhotoImporter importer, Uri tree, boolean verify, String sourceVolume,
             Set<MediaTypes.Kind> kinds, String target, long generation) throws IOException {
         CameraDocumentSource.requireOriginalPermission(this);
         requireSdSource(tree, sourceVolume, target, generation);
-        var settings = getSharedPreferences("camera_import", 0);
-        String requestedTree = tree.toString();
-        BooleanSupplier stopped = () -> cancelled.getAsBoolean() || MountedCameraCard.detachGeneration() != generation
-                || !target.equals(PhotoStorage.selected(this))
-                || !requestedTree.equals(settings.getString("sd_tree_uri", null));
+        BooleanSupplier stopped = sdStopped(tree, target, generation);
         long start = System.nanoTime();
         ImportProgress.INSTANCE.begin("SDカード");
         ImportProgress.INSTANCE.photoListing(0, -1);
