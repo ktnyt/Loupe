@@ -418,7 +418,7 @@ public final class CameraDifferentialService extends Service {
             if(check!=null)check.check();
             return importer.importPhoto(f, copy, null, stable, verify, operationCancelled, beforeCommit, attempt,
                     sdOriginal && stable);
-        }catch(InterruptedIOException e){throw e;}catch(CameraDocumentSource.OriginalAccessException
+        }catch(InterruptedIOException e){throw e;}catch(CameraDocumentSource.OriginalAccessException | CameraDocumentSource.ListingException
                 | MountedCameraCard.Unavailable | CameraPhotoImporter.SavedPhotoConflict e){throw e;}catch(IOException e){
             if(first==null)first=e;CameraPhotoPublisher.check(operationCancelled);
             if(sdOriginal)CameraDocumentSource.requireOriginalPermission(this);
@@ -584,13 +584,17 @@ public final class CameraDifferentialService extends Service {
                     && importer.knownSdRevision(entry.file, stopped, () -> {
                         requireFreshSource.check();
                         CameraDocumentSource.requireMappedOriginal(this, entry, sourceVolume, stopped);
-                    }, requireFreshSource), this::notifyProgress);
+                    }, () -> {
+                        CameraDocumentSource.requireCurrentReceiptDocument(getContentResolver(), entry, sourceVolume, stopped);
+                        requireFreshSource.check();
+                    }), this::notifyProgress);
             int added = 0;
             long bytes = 0;
             runMetrics.content();
             notifyProgress();
             for (CameraDocumentSource.Entry entry : candidates) {
                 CameraPhotoPublisher.check(stopped);
+                boolean stableReceipt = stable && SdSavedPhotoRevision.eligibleSource(entry.file);
                 CameraPhotoPublisher.CommitCheck check = () -> {
                     requireFreshSource.check();
                     if (sourceVolume != null)
@@ -600,8 +604,11 @@ public final class CameraDifferentialService extends Service {
                     requireFreshSource.check();
                     CameraDocumentSource.copy(this, entry, out, stopped, sourceVolume);
                     requireFreshSource.check();
-                }, stable && SdSavedPhotoRevision.eligibleSource(entry.file), verify, stopped, true,
-                        check, requireFreshSource);
+                }, stableReceipt, verify, stopped, true, check, () -> {
+                    if (stableReceipt)
+                        CameraDocumentSource.requireCurrentReceiptDocument(getContentResolver(), entry, sourceVolume, stopped);
+                    requireFreshSource.check();
+                });
                 if (result.imported) { added++; runMetrics.saved++; }
                 else if (result.contentChecked) runMetrics.matches++;
                 bytes += result.sourceBytesRead;

@@ -328,6 +328,7 @@ public final class CameraDocumentSourceChecks {
         expect(excess, CameraDocumentSource.OriginalAccessException.Reason.LENGTH);
         require(excess.readBytes == ORIGINAL.length + 1, "Excess source bounded at expected length plus one");
         strictVolumeReads();
+        receiptTupleAfterListing();
         registrationChecks();
         kindSelection();
         Context context = instrumentation.getTargetContext();
@@ -348,6 +349,36 @@ public final class CameraDocumentSourceChecks {
             migrateReplacementWitness(context);
         }
         return "PASS sd-original permission=true mapping=true pinnedVolume=true verifiedIndexAbsence=true requiredOriginal=true noFallback=true immutable=true cancel=true revoke=true bounds=true legacyReceiptRevalidated=true";
+    }
+
+    private static void receiptTupleAfterListing() throws IOException {
+        String identity = CameraDocumentSource.originalSourceId(CameraSourceKey.sd(SOURCE, 1_000_000));
+        long stamp = 1700000000000L;
+        var entry = new CameraDocumentSource.Entry(SOURCE_DOCUMENT, new CameraImportFile(identity,
+                "DCIM/100TEST/TEST.JPG", ORIGINAL.length, Long.toString(stamp), stamp / 1000));
+        var modified = new java.util.concurrent.atomic.AtomicLong(stamp);
+        var provider = new android.content.ContentProvider() {
+            @Override public Cursor query(Uri uri, String[] columns, String select, String[] args, String order) {
+                var cursor = new MatrixCursor(columns);
+                cursor.addRow(new Object[]{SOURCE_DOCUMENT_ID, "TEST.JPG", (long) ORIGINAL.length, modified.get()});
+                return cursor;
+            }
+            @Override public boolean onCreate() { return true; }
+            @Override public String getType(Uri uri) { return "image/jpeg"; }
+            @Override public Uri insert(Uri uri, ContentValues values) { throw new UnsupportedOperationException(); }
+            @Override public int delete(Uri uri, String select, String[] args) { throw new UnsupportedOperationException(); }
+            @Override public int update(Uri uri, ContentValues values, String select, String[] args) { throw new UnsupportedOperationException(); }
+        };
+        var resolver = android.content.ContentResolver.wrap(provider);
+        CameraDocumentSource.requireCurrentReceiptDocument(resolver, entry, SOURCE, () -> false);
+        modified.incrementAndGet();  // Same document, photo name and bytes; only the live SAF timestamp changed.
+        try {
+            CameraDocumentSource.requireCurrentReceiptDocument(resolver, entry, SOURCE, () -> false);
+            throw new AssertionError("listed source metadata was treated as current after a same-size rewrite");
+        } catch (CameraDocumentSource.ListingException expected) {
+            require(expected.reason == CameraDocumentSource.ListingException.Reason.CHANGED,
+                    "same-size source rewrite requires a fresh SD listing");
+        }
     }
     private static void strictVolumeReads() throws IOException {
         Fake unpinned = new Fake();

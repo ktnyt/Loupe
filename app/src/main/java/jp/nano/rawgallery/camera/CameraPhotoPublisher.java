@@ -206,6 +206,55 @@ public final class CameraPhotoPublisher {
         }
     }
 
+    record SavedRevision(String volume, String epoch, String owner, String name, String folder, long size,
+            long generationAdded, long generationModified) {
+        SdSavedPhotoRevision sdProof(CameraImportLedger.Content content, String expectedOwner) {
+            Uri uri = Uri.parse(content.uri);
+            if (!volume.equals(MediaStore.getVolumeName(uri)) || !expectedOwner.equals(owner)
+                    || size != content.storedBytes || !CameraImportHistoryPlan.validUri(content.uri)) return null;
+            return new SdSavedPhotoRevision(content.uri, content.storedSha, size, epoch, generationAdded, generationModified);
+        }
+    }
+
+    static SavedRevision savedRevision(Context context, Uri uri, BooleanSupplier cancelled) throws IOException {
+        if (!"content".equals(uri.getScheme()) || !"media".equals(uri.getAuthority()))
+            throw new IOException("Unexpected saved photo URI");
+        return CameraDocumentSource.boundedMetadata(cancelled, signal -> {
+            PhotoStorage.requireMounted(context, uri);
+            String collection = MediaStore.getVolumeName(uri);
+            String[] fields = {MediaStore.MediaColumns._ID, MediaStore.MediaColumns.IS_PENDING,
+                    MediaStore.MediaColumns.IS_TRASHED, MediaStore.MediaColumns.VOLUME_NAME,
+                    MediaStore.MediaColumns.OWNER_PACKAGE_NAME, MediaStore.MediaColumns.DISPLAY_NAME,
+                    MediaStore.MediaColumns.RELATIVE_PATH, MediaStore.MediaColumns.SIZE,
+                    MediaStore.MediaColumns.GENERATION_ADDED, MediaStore.MediaColumns.GENERATION_MODIFIED};
+            try (Cursor row = context.getContentResolver().query(uri, fields, includeAllPhotos(), signal)) {
+                requireColumns(row, fields);
+                if (!moveToOnlyMediaRow(row)) {
+                    PhotoStorage.requireMounted(context, uri);
+                    if (MediaStore.VOLUME_EXTERNAL.equals(collection) && !MediaStore.getExternalVolumeNames(context)
+                            .containsAll(MediaStore.getRecentExternalVolumeNames(context)))
+                        throw new IOException("Saved photo volume unavailable");
+                    requireComplete(row);
+                    return null;
+                }
+                String volume = row.getString(3);
+                if (id(row) != ContentUris.parseId(uri) || flag(row, fields[1]) || flag(row, fields[2])
+                        || volume == null || !MediaStore.getExternalVolumeNames(context).contains(volume)
+                        || !MediaStore.VOLUME_EXTERNAL.equals(collection) && !collection.equals(volume))
+                    throw new IOException("Saved photo identity or status changed");
+                String epoch = MediaStore.getVersion(context, volume);
+                long added = nonnegative(row, fields[8]);
+                long modified = nonnegative(row, fields[9]);
+                if (epoch == null || epoch.isEmpty() || modified < added)
+                    throw new IOException("Saved photo revision is unavailable");
+                SavedRevision revision = new SavedRevision(volume, epoch, row.getString(4), row.getString(5),
+                        row.getString(6), nonnegative(row, fields[7]), added, modified);
+                requireComplete(row);
+                return revision;
+            }
+        });
+    }
+
     private static Bundle includeAllPhotos() {
         Bundle args = new Bundle();
         args.putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE);

@@ -43,7 +43,7 @@ public final class CameraDocumentSource {
     }
 
     static final class ListingException extends IOException {
-        enum Reason { LOADING, TIMEOUT, UNAVAILABLE, NO_GRANT }
+        enum Reason { LOADING, TIMEOUT, UNAVAILABLE, NO_GRANT, CHANGED }
         final Reason reason;
 
         ListingException(Reason reason) {
@@ -52,6 +52,7 @@ public final class CameraDocumentSource {
                 case TIMEOUT -> "SDカードの一覧を時間内に確認できませんでした。接続を確認してからやり直してください。";
                 case UNAVAILABLE -> "SDカードの一覧を確認できません。接続とフォルダを確認してください。";
                 case NO_GRANT -> "SDカードの読み取り許可を確認できません。フォルダを選び直してください。";
+                case CHANGED -> "SDカード上の写真が変わりました。もう一度取り込みを開始してください。";
             });
             this.reason = reason;
         }
@@ -313,6 +314,38 @@ public final class CameraDocumentSource {
     static void requireMappedOriginal(Context context, Entry entry, String expectedVolume, BooleanSupplier cancelled)
             throws IOException {
         requiredOriginal(systemAccess(context), entry, expectedVolume, cancelled);
+    }
+
+    static void requireCurrentReceiptDocument(ContentResolver resolver, Entry entry, String sourceVolume,
+            BooleanSupplier cancelled) throws IOException {
+        String documentId = DocumentsContract.getDocumentId(entry.uri);
+        int split = documentId.indexOf(':');
+        if (!"com.android.externalstorage.documents".equals(entry.uri.getAuthority()) || split <= 0
+                || !sourceVolume.equalsIgnoreCase(documentId.substring(0, split))
+                || !entry.file.relativePath.equals(documentId.substring(split + 1)))
+            throw new ListingException(ListingException.Reason.CHANGED);
+        boundedMetadata(cancelled, METADATA_TIMEOUT_MS, signal -> {
+            String[] fields = {DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_SIZE,
+                    DocumentsContract.Document.COLUMN_LAST_MODIFIED};
+            try (Cursor row = resolver.query(entry.uri, fields, null, null, null, signal)) {
+                requireCompleteListing(row);
+                if (!singleCompleteRow(row)) throw new ListingException(ListingException.Reason.CHANGED);
+                int id = row.getColumnIndexOrThrow(fields[0]);
+                int name = row.getColumnIndexOrThrow(fields[1]);
+                int size = row.getColumnIndexOrThrow(fields[2]);
+                int time = row.getColumnIndexOrThrow(fields[3]);
+                if (!documentId.equals(row.getString(id)) || !entry.file.name.equals(row.getString(name))
+                        || row.getType(size) != Cursor.FIELD_TYPE_INTEGER || row.getLong(size) != entry.file.bytes
+                        || row.getType(time) != Cursor.FIELD_TYPE_INTEGER
+                        || !entry.file.sourceStamp.equals(Long.toString(row.getLong(time))))
+                    throw new ListingException(ListingException.Reason.CHANGED);
+                requireCompleteListing(row);
+            } catch (SecurityException denied) {
+                throw new ListingException(ListingException.Reason.NO_GRANT);
+            }
+            return null;
+        });
     }
 
     private static OriginalAccess systemAccess(Context context) {

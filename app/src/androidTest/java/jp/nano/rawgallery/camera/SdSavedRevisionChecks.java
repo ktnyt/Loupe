@@ -32,6 +32,8 @@ public final class SdSavedRevisionChecks {
                 && ("ranchu".equals(Build.HARDWARE) || "goldfish".equals(Build.HARDWARE)), "isolated SD emulator");
         String db = "camera-sd-revision-" + UUID.randomUUID() + ".db";
         var resolver = context.getContentResolver();
+        rejectDestinationRace(context, false);
+        rejectDestinationRace(context, true);
         List<Uri> owned = new ArrayList<>();
         byte[] jpeg = fixtureJpeg(0xff884411);
         byte[] raw = fixtureJpeg(0xff117733);
@@ -124,10 +126,57 @@ public final class SdSavedRevisionChecks {
             return "PASS sd-revision receipts=327 concreteTargets=2 bootstrapMs=" + bootstrapMs
                     + " bootstrapDestinationBytes=" + bootstrap.destinationBytes + " repeatMs=" + repeatMs
                     + " repeatSourceBytes=0 repeatDestinationBytes=0 known=327 candidates=0 mixedCandidates=1"
-                    + " hiddenMetadataUnchanged=" + hiddenMetadataUnchanged + " explicitMismatch=true";
+                    + " hiddenMetadataUnchanged=" + hiddenMetadataUnchanged + " explicitMismatch=true"
+                    + " unlinkDuringRead=true revisionDuringExplicitRead=true";
         } finally {
             for (Uri uri : owned) resolver.delete(uri, null, null);
             require(context.deleteDatabase(db), "isolated ledger removed");
+        }
+    }
+
+    private static void rejectDestinationRace(Context context, boolean explicit) throws Exception {
+        String db = "camera-sd-read-race-" + UUID.randomUUID() + ".db";
+        var owned = new ArrayList<Uri>();
+        var resolver = context.getContentResolver();
+        var raced = new java.util.concurrent.atomic.AtomicBoolean();
+        try (var ledger = new CameraImportLedger(context, db)) {
+            byte[] bytes = fixtureJpeg(0xff554488);
+            Uri target = savedTarget(context, owned, bytes, "JPG");
+            String sha = sha(bytes);
+            String id = CameraDocumentSource.originalSourceId(CameraSourceKey.sd("ab12-cd34", 1000000));
+            var source = new CameraImportFile(id, "DCIM/receipt.JPG", bytes.length, "1700000000000", 1700000000);
+            var current = ledger.adopt(source, sha, sha, bytes.length, target.toString(), "JPEG", "fixture");
+            var requested = explicit ? new CameraImportFile(id, "DCIM/another.JPG", bytes.length,
+                    source.sourceStamp, source.captureSeconds) : source;
+            var importer = new CameraPhotoImporter(context, ledger, PhotoStorage.PRIMARY, count -> {
+                if (raced.get()) return;
+                if (explicit) {
+                    var changed = new ContentValues();
+                    changed.put(MediaStore.MediaColumns.DISPLAY_NAME, "changed-" + UUID.randomUUID() + ".JPG");
+                    require(resolver.update(target, changed, null, null) == 1,
+                            "fixture revises a saved MediaStore row while it is being hashed");
+                } else {
+                    require(resolver.delete(target, null, null) == 1,
+                            "fixture deletes its own saved row while it is being hashed");
+                    owned.remove(target);
+                }
+                raced.set(true);
+            });
+            try {
+                importer.importPhoto(requested, out -> {
+                    if (!explicit) throw new AssertionError("unseeded receipt should verify stored bytes first");
+                    out.write(bytes);
+                }, "fixture", true, explicit, () -> false, CHECK, new CameraPhotoImporter.Attempt(), true);
+                throw new AssertionError("changed live destination accepted as already saved");
+            } catch (IOException expected) {
+                require(raced.get() && ledger.receiptCount() == 1 && current.sameRow(ledger.known(source))
+                                && (explicit ? ledger.known(requested) == null : ledger.known(requested) != null)
+                                && ledger.pending().isEmpty() && ledger.sdRevision(sha) == null,
+                        "a live destination race cannot seed evidence, bind a receipt or start replacement");
+            }
+        } finally {
+            for (Uri uri : owned) resolver.delete(uri, null, null);
+            require(context.deleteDatabase(db), "isolated read race ledger removed");
         }
     }
 

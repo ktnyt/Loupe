@@ -2,6 +2,11 @@ package jp.nano.rawgallery.camera;
 
 import android.content.Context;
 import android.net.Uri;
+import android.os.ParcelFileDescriptor;
+import android.system.ErrnoException;
+import android.system.Os;
+import android.system.OsConstants;
+import android.system.StructStat;
 import java.io.*;
 import jp.nano.rawgallery.PhotoStorage;
 import java.util.function.BooleanSupplier;
@@ -28,6 +33,7 @@ public final class CameraPhotoImporter {
     private final CameraImportLedger ledger;
     private final CameraPhotoPublisher publisher;
     private final String defaultFolder;
+    private final java.util.function.LongConsumer savedReadObserver;
     private CameraImportMetrics metrics;
     public void setMetrics(CameraImportMetrics metrics){this.metrics=metrics;publisher.setReadCounter(n->{if(this.metrics!=null)this.metrics.destinationBytes+=n;});}
     public CameraPhotoImporter(Context context) { this(context,CameraImportLedger.get(context)); }
@@ -35,8 +41,13 @@ public final class CameraPhotoImporter {
         this(context,ledger,PhotoStorage.selected(context));
     }
     public CameraPhotoImporter(Context context,CameraImportLedger ledger,String volume) {
+        this(context, ledger, volume, count -> {});
+    }
+    CameraPhotoImporter(Context context, CameraImportLedger ledger, String volume,
+            java.util.function.LongConsumer savedReadObserver) {
         this.context=context.getApplicationContext();this.ledger=ledger;this.publisher=new CameraPhotoPublisher(this.context,ledger,volume,b -> {});
         this.defaultFolder=HistoryDb.Companion.get(this.context).defaultPhotoFolder();
+        this.savedReadObserver = savedReadObserver;
     }
     public void recover(BooleanSupplier cancelled)throws IOException {publisher.recover(cancelled);}
 
@@ -63,31 +74,58 @@ public final class CameraPhotoImporter {
     private boolean available(CameraImportLedger.Content content, BooleanSupplier cancelled, boolean seedSd,
             boolean clearSdOnMismatch, CameraPhotoPublisher.CommitCheck beforeCommit) throws IOException {
         Uri uri=Uri.parse(content.uri);
-        if (!CameraPhotoPublisher.savedPhotoExists(context, uri)) return false;
-        SdSavedPhotoRevision before = seedSd ? SdSavedPhotoRevision.capture(context, content, cancelled) : null;
-        try(InputStream in=context.getContentResolver().openInputStream(uri)) {
-            if(in==null)throw new IOException("Saved photo unavailable");
+        CameraPhotoPublisher.SavedRevision before = CameraPhotoPublisher.savedRevision(context, uri, cancelled);
+        if (before == null) return false;
+        var resolver = context.getContentResolver();
+        try (ParcelFileDescriptor file = resolver.openFileDescriptor(uri, "r")) {
+            if (file == null) throw new IOException("Saved photo unavailable");
+            StructStat opened = Os.fstat(file.getFileDescriptor());
+            if (!OsConstants.S_ISREG(opened.st_mode) || opened.st_size != content.storedBytes)
+                throw savedPhotoChanged(content, clearSdOnMismatch);
             java.security.MessageDigest digest=java.security.MessageDigest.getInstance("SHA-256");
             byte[] buf=new byte[65536];int n;long size=0;
-            while((n=in.read(buf))!=-1){
-                CameraPhotoPublisher.check(cancelled);
-                size+=n;
-                if(metrics!=null)metrics.destinationBytes+=n;
-                if(size>content.storedBytes)break;
-                digest.update(buf,0,n);
+            try (InputStream in = new ParcelFileDescriptor.AutoCloseInputStream(ParcelFileDescriptor.dup(file.getFileDescriptor()))) {
+                while((n=in.read(buf))!=-1){
+                    CameraPhotoPublisher.check(cancelled);
+                    size+=n;
+                    if(metrics!=null)metrics.destinationBytes+=n;
+                    savedReadObserver.accept(n);
+                    if(size>content.storedBytes)break;
+                    digest.update(buf,0,n);
+                }
             }
             StringBuilder sha=new StringBuilder();for(byte b:digest.digest())sha.append(String.format(java.util.Locale.ROOT,"%02x",b&255));
-            if(size!=content.storedBytes||!sha.toString().equals(content.storedSha)) {
-                if (clearSdOnMismatch) ledger.forgetSdRevision(content);
-                throw new IOException("Saved photo changed");
+            if (size != content.storedBytes || !sha.toString().equals(content.storedSha))
+                throw savedPhotoChanged(content, clearSdOnMismatch);
+            try (ParcelFileDescriptor current = resolver.openFileDescriptor(uri, "r")) {
+                if (current == null || !sameFile(opened, Os.fstat(current.getFileDescriptor()))
+                        || !sameFile(opened, Os.fstat(file.getFileDescriptor())))
+                    throw savedPhotoChanged(content, clearSdOnMismatch);
             }
-        }catch(java.security.NoSuchAlgorithmException impossible){throw new AssertionError(impossible);}
-        if (before != null && before.equals(SdSavedPhotoRevision.capture(context, content, cancelled))) {
+            if (!before.equals(CameraPhotoPublisher.savedRevision(context, uri, cancelled)))
+                throw savedPhotoChanged(content, clearSdOnMismatch);
+        } catch (ErrnoException statFailure) {
+            throw new IOException("Saved photo identity could not be verified", statFailure);
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new AssertionError(impossible);
+        }
+        SdSavedPhotoRevision proof = seedSd ? before.sdProof(content, context.getPackageName()) : null;
+        if (proof != null) {
             beforeCommit.check();
             requireLibraryPermission();
-            ledger.rememberSdRevision(content, before);
+            ledger.rememberSdRevision(content, proof);
         }
         return true;
+    }
+
+    private IOException savedPhotoChanged(CameraImportLedger.Content content, boolean clearSdOnMismatch) {
+        if (clearSdOnMismatch) ledger.forgetSdRevision(content);
+        return new IOException("Saved photo changed");
+    }
+
+    private static boolean sameFile(StructStat before, StructStat after) {
+        return OsConstants.S_ISREG(after.st_mode) && before.st_dev == after.st_dev && before.st_ino == after.st_ino
+                && before.st_size == after.st_size && before.st_mtime == after.st_mtime && before.st_ctime == after.st_ctime;
     }
     public Result importPhoto(CameraImportFile source,CameraImportCopy.Copy copy,String folderHint,boolean stableSource,boolean verifyAll,BooleanSupplier cancelled)throws IOException {
         return importPhoto(source, copy, folderHint, stableSource, verifyAll, cancelled, CameraPhotoPublisher.NO_COMMIT_CHECK);
