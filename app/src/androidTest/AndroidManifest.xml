@@ -1,5 +1,18 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-  <application>
+  <application android:label="Loupeの内蔵編集">
+    <activity android:name="jp.nano.rawgallery.PhotoEditTargetActivity" android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.EDIT" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="image/jpeg" />
+      </intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="image/jpeg" />
+        <data android:mimeType="image/x-adobe-dng" />
+      </intent-filter>
+    </activity>
     <activity android:name="jp.nano.rawgallery.ShareHistoryTargetActivity" android:exported="true" android:label="Loupe 検証用共有先">
       <intent-filter>
         <action android:name="android.intent.action.SEND" />

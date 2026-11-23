@@ -38,7 +38,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       activity.getResources().updateConfiguration(config, activity.getResources().getDisplayMetrics());
     }
 
-    if ((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || videoTest || removeLookTest) && (activity instanceof TagActivity || activity instanceof MainActivity || activity instanceof VideoActivity || removeLookTest && activity instanceof RawEditActivity) && tagWidth > 0) {
+    if ((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || photoEditTest || sortTest || videoTest || removeLookTest) && (activity instanceof TagActivity || activity instanceof MainActivity || activity instanceof VideoActivity || removeLookTest && activity instanceof RawEditActivity) && tagWidth > 0) {
       android.content.res.Configuration config = new android.content.res.Configuration(activity.getBaseContext().getResources().getConfiguration());
       config.fontScale = tagFont; config.screenWidthDp = tagWidth;
       // Test process resources only; never writes system settings.
@@ -64,7 +64,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       activity.getWindow().setLayout(GalleryUi.dp(activity, photoStorageEffectiveWidth),
           android.view.ViewGroup.LayoutParams.MATCH_PARENT);
     if(ep7WifiTest || ("camera-pilot-qr-ui".equals(cameraPilotMode) || (("camera-pilot-wifi-quick".equals(cameraPilotMode) || "camera-pilot-quick-import".equals(cameraPilotMode)) || ("camera-pilot-import-progress".equals(cameraPilotMode) || "camera-pilot-usb-launch".equals(cameraPilotMode)))))activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
-    if ((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || videoTest || removeLookTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+    if ((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || photoEditTest || sortTest || videoTest || removeLookTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
   }
   private boolean shareHistoryTest, shareHistoryScreenTest, shareHistoryHandoffTest, shareHistoryCallbackTest;
   private boolean shareHistoryRestartSeed, shareHistoryRestartVerify;
@@ -174,7 +174,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     resultTalkBack=args!=null&&"ranking-result-talkback".equals(args.getString("mode"));
     resultTest=resultTalkBack||(args!=null&&"ranking-result".equals(args.getString("mode")));
     tagDetailTest=args!=null&&"tag-detail".equals(args.getString("mode"));
-    if((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || sortTest || videoTest || nanoBananaTest || nanoBackgroundTest || generationIndicatorTest || removeLookTest) && args.containsKey("width")){tagWidth=Integer.parseInt(args.getString("width"));tagFont=Float.parseFloat(args.getString("font","1.0"));}
+    if((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || photoEditTest || sortTest || videoTest || nanoBananaTest || nanoBackgroundTest || generationIndicatorTest || removeLookTest) && args.containsKey("width")){tagWidth=Integer.parseInt(args.getString("width"));tagFont=Float.parseFloat(args.getString("font","1.0"));}
     sortDimensionsSpecified=sortTest && args.containsKey("width");
     syncControlsTest=args!=null&&"sync-controls".equals(args.getString("mode"));
     consistencyTest=args!=null&&"consistency-layout".equals(args.getString("mode"));
@@ -371,7 +371,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if(sortDimensionsSpecified)validateSortDimensions(context);
       if(shareScreenTest){results.putString("stream",ShareScreenChecks.run(this,tagWidth));finish(-1,results);return;}
       if(shareCapacityTest){results.putString("stream",ShareCapacityUiChecks.run(this,tagWidth,tagFont));finish(-1,results);return;}
-      if(photoEditTest){results.putString("stream",PhotoEditChecks.run(this));finish(-1,results);return;}
+      if(photoEditTest){results.putString("stream",PhotoEditChecks.run(this, tagWidth, tagFont));finish(-1,results);return;}
       if(viewerScreenTest){results.putString("stream",ViewerScreenChecks.run(this,tagWidth));finish(-1,results);return;}
       if(galleryScreenTest){results.putString("stream",GalleryScreenChecks.run(this,tagWidth,galleryTalkBack,shareToggleTest,materialGalleryTest));finish(-1,results);return;}
       if(resultTest){results.putString("stream",RankingResultChecks.run(this,tagWidth,resultTalkBack));finish(-1,results);return;}
