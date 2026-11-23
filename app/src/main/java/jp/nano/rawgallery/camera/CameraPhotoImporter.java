@@ -55,12 +55,20 @@ public final class CameraPhotoImporter {
         }catch(java.security.NoSuchAlgorithmException impossible){throw new AssertionError(impossible);}
     }
     public Result importPhoto(CameraImportFile source,CameraImportCopy.Copy copy,String folderHint,boolean stableSource,boolean verifyAll,BooleanSupplier cancelled)throws IOException {
+        return importPhoto(source, copy, folderHint, stableSource, verifyAll, cancelled, CameraPhotoPublisher.NO_COMMIT_CHECK);
+    }
+
+    Result importPhoto(CameraImportFile source, CameraImportCopy.Copy copy, String folderHint, boolean stableSource,
+            boolean verifyAll, BooleanSupplier cancelled, CameraPhotoPublisher.CommitCheck beforeCommit) throws IOException {
         CameraPhotoPublisher.check(cancelled);
         String read=android.os.Build.VERSION.SDK_INT>=33?android.Manifest.permission.READ_MEDIA_IMAGES:android.Manifest.permission.READ_EXTERNAL_STORAGE;
         if(context.checkSelfPermission(read)!=android.content.pm.PackageManager.PERMISSION_GRANTED)throw new IOException("Full photo access required for duplicate verification");
         if(stableSource&&!verifyAll) {
             CameraImportLedger.Content known=ledger.known(source);
-            if(known!=null&&available(known,cancelled))return new Result(Uri.parse(known.uri),false,false,0);
+            if(known!=null&&available(known,cancelled)) {
+                beforeCommit.check();
+                return new Result(Uri.parse(known.uri),false,false,0);
+            }
         }
         try(CameraImportCopy.Prepared prepared=CameraImportCopy.prepare(context.getCacheDir(),source,metrics==null?copy:metrics.countSource(copy),cancelled)) {
             CameraImportLedger.Content existing=ledger.find(prepared.sourceSha256,source.bytes);
@@ -72,17 +80,19 @@ public final class CameraPhotoImporter {
             CameraImportFile eventSource=new CameraImportFile(source.sourceId,source.relativePath,source.bytes,source.sourceStamp,metadata.getCaptureSeconds());
             String kind=MediaTypes.INSTANCE.isRaw(source.name)?"RAW":"JPEG";
             if(existing!=null) {
+                beforeCommit.check();
                 ledger.bind(eventSource,existing);
                 return new Result(Uri.parse(existing.uri),false,true,source.bytes);
             }
             String group=ledger.captureGroup(eventSource,prepared.sourceSha256,kind);
             if(adopted!=null) {
+                beforeCommit.check();
                 CameraImportLedger.Content content=ledger.adopt(eventSource,prepared.sourceSha256,adopted.getSha256(),adopted.getBytes(),adopted.getUri(),kind,group);
                 return new Result(Uri.parse(content.uri),false,true,source.bytes);
             }
             String folder=folderHint==null||folderHint.isEmpty()?(defaultFolder==null?metadata.getModel():defaultFolder):folderHint;
             if(metrics!=null)metrics.saving();
-            Uri uri=publisher.publish(eventSource,prepared.file,prepared.sourceSha256,kind,CameraPhotoPublisher.folder(folder,kind.equals("RAW")),group,cancelled);
+            Uri uri=publisher.publish(eventSource,prepared.file,prepared.sourceSha256,kind,CameraPhotoPublisher.folder(folder,kind.equals("RAW")),group,cancelled,beforeCommit);
             return new Result(uri,true,true,source.bytes);
         }
     }

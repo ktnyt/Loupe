@@ -705,7 +705,12 @@ public final class CameraImportActivity extends AppCompatActivity {
         boolean mountedRoute = guardedSdTarget(device) != null;
         boolean granted = device != null && getSystemService(UsbManager.class).hasPermission(device);
         boolean active = PROGRESS.getActive();
-        if (wasActive && !active) { loadCameras(); loadLedgerCounts(); }
+        if (wasActive && !active) {
+            loadCameras();
+            loadLedgerCounts();
+            if (quickResumed && !starting && sdPicker == null && sdConfirmation == null && submittedSd == null)
+                refreshSdSource();
+        }
         wasActive = active;
         if (active) starting = false;
         setText(connection, device == null ? "USBケーブルでカメラをつないでください"
@@ -1322,17 +1327,10 @@ public final class CameraImportActivity extends AppCompatActivity {
             if (submittedSd != reply || isFinishing() || isDestroyed()) return;
             submittedSd = null;
             if (failure != null) showSdFailure(failure);
-            else if (request.generation() != MountedCameraCard.detachGeneration()
-                    || !request.destination().equals(PhotoStorage.selected(this))
-                    || !request.tree().toString().equals(settings.getString("sd_tree_uri", null))) {
-                refreshSdSource();
-                renderStatus();
-            } else if (registrationOnly) {
-                refreshSdSource();
-                renderStatus();
-            } else {
+            else {
                 connectionFailure = null;
-                showSdPermissionStatus("SDカードの取り込みを開始します。");
+                // Acceptance updates the registered source. The progress panel owns operation status.
+                refreshSdSource();
                 renderStatus();
             }
         });

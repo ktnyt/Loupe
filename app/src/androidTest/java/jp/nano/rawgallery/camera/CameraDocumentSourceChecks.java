@@ -278,6 +278,17 @@ public final class CameraDocumentSourceChecks {
                 "a failed grant has only a failure acknowledgement and never executes import");
     }
 
+    public static void acknowledgeSdUiFixture(CameraDifferentialService.SdConfirmation confirmation) {
+        boolean entered = CameraImportOperationGate.runIfAvailable(CameraImportGate.lock, () -> {
+            try {
+                require(CameraDifferentialService.claimSd(confirmation, () -> {}),
+                        "fixture uses a single admitted acknowledgement");
+                confirmation.complete(null);
+            } catch (IOException failure) { throw new AssertionError(failure); }
+        });
+        require(entered, "the isolated acknowledgement fixture owns the camera gate");
+    }
+
     public static String run(Instrumentation instrumentation) throws Exception {
         Fake denied = new Fake(); denied.permitted = false;
         expect(denied, CameraDocumentSource.OriginalAccessException.Reason.PERMISSION);
@@ -315,7 +326,13 @@ public final class CameraDocumentSourceChecks {
         strictVolumeReads();
         registrationChecks();
         kindSelection();
-        legacyReceiptRequiresRead(instrumentation.getTargetContext());
+        Context context = instrumentation.getTargetContext();
+        legacyReceiptRequiresRead(context);
+        if ("jp.nano.rawgallery.sd166".equals(context.getPackageName())
+                && ("ranchu".equals(android.os.Build.HARDWARE) || "goldfish".equals(android.os.Build.HARDWARE))) {
+            revokedTreeGrant(context);
+            publicationGrantBoundary(context);
+        }
         return "PASS sd-original permission=true mapping=true pinnedVolume=true verifiedIndexAbsence=true requiredOriginal=true noFallback=true immutable=true cancel=true revoke=true bounds=true legacyReceiptRevalidated=true";
     }
     private static void strictVolumeReads() throws IOException {
@@ -622,6 +639,159 @@ public final class CameraDocumentSourceChecks {
                     && ledger.known(original) != null, "Verified original receipt retains old content and receipt");
         } finally { ledger.close(); require(context.deleteDatabase(database), "Isolated receipt database removed"); }
     }
+    private static void revokedTreeGrant(Context context) throws Exception {
+        String database = "camera-grant-revoke-" + UUID.randomUUID() + ".db";
+        String name = "grant-revoke-" + UUID.randomUUID() + ".JPG";
+        var source = new CameraImportFile("sd:grant-fixture", "DCIM/" + name, 128 * 1024, "mtime", 1);
+        var entry = new CameraDocumentSource.Entry(DOCUMENT, source);
+        var ledger = new CameraImportLedger(context, database);
+        var treeGranted = new AtomicBoolean(true);
+        var elapsed = new java.util.concurrent.atomic.AtomicLong(0);
+        var grant = grantFixture(treeGranted, elapsed);
+        var access = new Fake();
+        access.expectedPath = source.relativePath;
+        access.pinned = PINNED;
+        access.bytes = new byte[(int) source.bytes];
+        new Random(165L).nextBytes(access.bytes);
+        byte[] original = access.bytes.clone();
+        access.onRead = () -> {
+            // Revoke only the remembered SAF grant; MediaStore original permission stays granted.
+            treeGranted.set(false);
+            elapsed.addAndGet(101);
+        };
+        Set<String> staged = stagedCopies(context);
+        try {
+            try {
+                new CameraPhotoImporter(context, ledger, jp.nano.rawgallery.PhotoStorage.PRIMARY)
+                        .importPhoto(source, output -> {
+                            grant.requireFresh();
+                            CameraDocumentSource.copy(access, entry, output, grant::stopped, SOURCE);
+                            grant.requireFresh();
+                        }, "grant-check", true, false, grant::stopped, grant::requireFresh);
+                throw new AssertionError("Revoking the tree grant did not stop a slow source read");
+            } catch (InterruptedIOException expected) {
+                try {
+                    // This is the same stop-to-permission classification used by the SD service.
+                    grant.requireFresh();
+                    throw new AssertionError("The source grant loss was treated as a generic stop");
+                } catch (MountedCameraCard.Unavailable unavailable) {
+                    require(unavailable.getMessage().contains("読み取り権限"), "grant loss remains distinguishable");
+                }
+            }
+            require(access.permitted && access.opens == 1 && access.closes == 1
+                            && access.readBytes == 65536 && Arrays.equals(original, access.bytes),
+                    "only the first chunk was read and the original fixture stayed unchanged");
+            require(ledger.pending().isEmpty() && ledger.contentCount() == 0 && ledger.receiptCount() == 0
+                            && staged.equals(stagedCopies(context)) && countNamedMedia(context, name) == 0,
+                    "grant loss leaves no stage, pending/publication row or import history");
+        } finally {
+            ledger.close();
+            require(context.deleteDatabase(database), "isolated grant fixture database removed");
+        }
+    }
+
+    private static CameraDifferentialService.SdGrantCheck grantFixture(AtomicBoolean treeGranted,
+            java.util.concurrent.atomic.AtomicLong elapsed) {
+        return new CameraDifferentialService.SdGrantCheck(() -> {
+            if (!treeGranted.get())
+                throw new MountedCameraCard.Unavailable("取り込み元の読み取り権限が変わりました。");
+        }, elapsed::get);
+    }
+
+    private static Set<String> stagedCopies(Context context) {
+        String[] files = context.getCacheDir().list((directory, name) -> name.startsWith("camera-import-"));
+        require(files != null, "can check isolated staged copies");
+        return new HashSet<>(Arrays.asList(files));
+    }
+
+    private static int countNamedMedia(Context context, String name) {
+        var args = new Bundle();
+        args.putString(android.content.ContentResolver.QUERY_ARG_SQL_SELECTION,
+                MediaStore.MediaColumns.DISPLAY_NAME + "=? AND " + MediaStore.MediaColumns.OWNER_PACKAGE_NAME + "=?");
+        args.putStringArray(android.content.ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS,
+                new String[]{name, context.getPackageName()});
+        args.putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE);
+        try (Cursor cursor = context.getContentResolver().query(
+                MediaStore.Images.Media.getContentUri(jp.nano.rawgallery.PhotoStorage.PRIMARY),
+                new String[]{MediaStore.MediaColumns._ID}, args, null)) {
+            require(cursor != null, "can check isolated fixture photo publication");
+            return cursor.getCount();
+        }
+    }
+
+    private static void publicationGrantBoundary(Context context) throws Exception {
+        String database = "camera-grant-publication-" + UUID.randomUUID() + ".db";
+        String name = "grant-publish-" + UUID.randomUUID() + ".JPG";
+        File staged = File.createTempFile("sd-grant-fixture-", ".jpg", context.getCacheDir());
+        var bitmap = android.graphics.Bitmap.createBitmap(2, 2, android.graphics.Bitmap.Config.ARGB_8888);
+        try (var stream = new FileOutputStream(staged)) {
+            require(bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, stream), "make fixture JPEG");
+        } finally { bitmap.recycle(); }
+        var source = new CameraImportFile("sd:grant-publication", "DCIM/" + name, staged.length(), "mtime", 1);
+        String sha = CameraImportCopy.sha256(staged, () -> false);
+        var ledger = new CameraImportLedger(context, database);
+        Uri destination = null;
+        try {
+            String volume = jp.nano.rawgallery.PhotoStorage.PRIMARY;
+            String folder = CameraPhotoPublisher.folder("sd-grant-fixture", false);
+            var treeGranted = new AtomicBoolean(true);
+            var elapsed = new java.util.concurrent.atomic.AtomicLong(0);
+            var rejectedGrant = grantFixture(treeGranted, elapsed);
+            var enteredReady = new AtomicBoolean();
+            var refused = new CameraPhotoPublisher(context, ledger, volume, boundary -> {
+                if (boundary == CameraPhotoPublisher.Boundary.FILE_VERIFIED) enteredReady.set(true);
+            });
+            try {
+                refused.publish(source, staged, sha, "JPEG", folder, "grant-fixture", () -> false, () -> {
+                    require(ledger.pending().size() == 1 && !ledger.pending().get(0).ready,
+                            "source authorization runs before durable READY");
+                    treeGranted.set(false);
+                    rejectedGrant.requireFresh();
+                });
+                throw new AssertionError("The revoked grant admitted publication");
+            } catch (MountedCameraCard.Unavailable expected) { }
+            refused.recover(() -> false);
+            require(!enteredReady.get() && ledger.pending().isEmpty() && ledger.receiptCount() == 0
+                            && ledger.contentCount() == 0 && countNamedMedia(context, name) == 0,
+                    "refused authorization has no READY row, photo or receipt even after recovery");
+
+            treeGranted.set(true);
+            var admittedGrant = grantFixture(treeGranted, elapsed);
+            var admitted = new CameraPhotoPublisher(context, ledger, volume, boundary -> {
+                if (boundary == CameraPhotoPublisher.Boundary.PUBLISHED) treeGranted.set(false);
+            });
+            destination = admitted.publish(source, staged, sha, "JPEG", folder, "grant-fixture",
+                    admittedGrant::stopped, admittedGrant::requireFresh);
+            require(!treeGranted.get() && countNamedMedia(context, name) == 1 && ledger.contentCount() == 1
+                            && ledger.receiptCount() == 1 && ledger.pending().isEmpty(),
+                    "publication admitted while granted keeps its visible photo and receipt after a later revocation");
+            try {
+                admittedGrant.requireFresh();
+                throw new AssertionError("A later item could reuse the revoked grant");
+            } catch (MountedCameraCard.Unavailable expected) { }
+
+            var importer = new CameraPhotoImporter(context, ledger, volume);
+            try {
+                importer.importPhoto(source, out -> { throw new AssertionError("fixture has a known receipt"); },
+                        "sd-grant-fixture", true, false, () -> false, admittedGrant::requireFresh);
+                throw new AssertionError("A revoked source grant counted an existing receipt as a match");
+            } catch (MountedCameraCard.Unavailable expected) { }
+
+            var newSource = new CameraImportFile("sd:grant-new-binding", "DCIM/" + name, staged.length(), "mtime", 1);
+            try {
+                importer.importPhoto(newSource, out -> java.nio.file.Files.copy(staged.toPath(), out),
+                        "sd-grant-fixture", true, false, () -> false, admittedGrant::requireFresh);
+                throw new AssertionError("A revoked source grant bound an existing hash as a new receipt");
+            } catch (MountedCameraCard.Unavailable expected) { }
+            require(ledger.known(newSource) == null && ledger.receiptCount() == 1 && ledger.pending().isEmpty(),
+                    "receipt reuse and binding both recheck the source grant without erasing the admitted receipt");
+        } finally {
+            if (destination != null) context.getContentResolver().delete(destination, null, null);
+            ledger.close();
+            require(context.deleteDatabase(database) && staged.delete(), "isolated publication fixture cleaned up");
+        }
+    }
+
     private static CameraDocumentSource.Entry entry() {
         return new CameraDocumentSource.Entry(DOCUMENT, new CameraImportFile("original-byte-v1:saf:synthetic", "DCIM/TEST.JPG", ORIGINAL.length, "stamp", 1));
     }
@@ -644,6 +814,7 @@ public final class CameraDocumentSourceChecks {
         boolean permitted = true, required, failOpen, nullOpen;
         int maps, pins, opens, closes, readBytes;
         Uri mapped = MEDIA, pinned;
+        String expectedPath = "DCIM/TEST.JPG";
         byte[] bytes = ORIGINAL.clone();
         Runnable onRead = () -> { };
         public boolean permitted() { return permitted; }
@@ -652,7 +823,7 @@ public final class CameraDocumentSourceChecks {
         Cursor mountedRow;
 
         public Uri onVolume(Uri media, CameraImportFile file, String expectedVolume, android.os.CancellationSignal signal) {
-            require(mapped.equals(media) && entry().file.relativePath.equals(file.relativePath) && SOURCE.equals(expectedVolume),
+            require(mapped.equals(media) && expectedPath.equals(file.relativePath) && SOURCE.equals(expectedVolume),
                     "Pinned check receives the exact mapping, original metadata and selected volume");
             pins++;
             if (checkMountedRow) {

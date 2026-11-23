@@ -37,7 +37,16 @@ public final class CameraPhotoPublisher {
         if(clean.length()>80)clean=clean.substring(0,80);
         return "Pictures/CameraSync/"+clean+(raw?"-RAW":"")+"/";
     }
+    @FunctionalInterface
+    interface CommitCheck { void check() throws IOException; }
+    static final CommitCheck NO_COMMIT_CHECK = () -> {};
+
     public Uri publish(CameraImportFile source,File staged,String originalSha,String kind,String folder,String group,BooleanSupplier cancelled)throws IOException {
+        return publish(source, staged, originalSha, kind, folder, group, cancelled, NO_COMMIT_CHECK);
+    }
+
+    Uri publish(CameraImportFile source, File staged, String originalSha, String kind, String folder, String group,
+            BooleanSupplier cancelled, CommitCheck beforeCommit) throws IOException {
         check(cancelled);
         PhotoStorage.requireSpace(context,volume,staged.length());
         String savedSha=CameraImportCopy.sha256(staged,cancelled);
@@ -65,9 +74,12 @@ public final class CameraPhotoPublisher {
                     out.getFD().sync();
             }
             check(cancelled);verify(p,target,cancelled);
+            // READY is the durable admission to publication. A refused source check must leave
+            // the row unready so recovery can only discard it, never publish it later.
+            beforeCommit.check();
             ledger.ready(p.token);p=ledger.pending(p.token);
             faults.after(Boundary.FILE_VERIFIED);
-            // Once publication begins, finish/recover its receipt even if cancellation arrives.
+            // An admitted publication must finish or recover with its receipt, even after a stop.
             makeVisible(p,target);
             faults.after(Boundary.PUBLISHED);
             ledger.commit(p.token);faults.after(Boundary.RECEIPT_SAVED);

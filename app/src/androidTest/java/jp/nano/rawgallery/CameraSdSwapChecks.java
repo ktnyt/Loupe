@@ -158,6 +158,9 @@ final class CameraSdSwapChecks {
                     "failed final reachability did not persist a read grant");
 
             var result = (TextView) field(screen, "result");
+            var acknowledged = new CameraImportActivity.SdStart(OLD, null, PhotoStorage.selected(screen),
+                    "JPEG", epoch, false, OLD.toString());
+            startAdmittedFixture(test, screen, acknowledged, sdStatus);
             Field connectionFailure = screen.getClass().getDeclaredField("connectionFailure");
             connectionFailure.setAccessible(true);
             test.runOnMainSync(() -> {
@@ -173,7 +176,9 @@ final class CameraSdSwapChecks {
             reveal(test, result);
             assertResult(result, "一覧を読み込み中");
             capture(test, screen, captures, prefix + "-incomplete", "一覧を読み込み中");
+            captureTerminalSdPanel(test, screen, settings, sdStatus, captures, prefix + "-incomplete-source");
 
+            startAdmittedFixture(test, screen, acknowledged, sdStatus);
             test.runOnMainSync(() -> {
                 progress.begin("Synthetic SD");
                 progress.photoListing(0, 0);
@@ -185,6 +190,17 @@ final class CameraSdSwapChecks {
             assertResult(result, "選んだフォルダに取り込める写真がありません");
             require(ImportProgressPresentation.current().secondary.isEmpty(), "empty result is not a saved/history summary");
             capture(test, screen, captures, prefix + "-empty", "選んだフォルダに取り込める写真がありません");
+            captureTerminalSdPanel(test, screen, settings, sdStatus, captures, prefix + "-empty-source");
+
+            startAdmittedFixture(test, screen, acknowledged, sdStatus);
+            test.runOnMainSync(() -> {
+                progress.photoContent(1, 1, 1, 0, 1024, 1024);
+                progress.photoTerminal("complete", "");
+                progress.finish("1枚追加・0枚取り込み済み");
+                render(screen, render);
+            });
+            captureTerminalSdPanel(test, screen, settings, sdStatus, captures, prefix + "-complete-source");
+            require(result.getText().toString().equals("取り込み完了"), "completion belongs to the operation panel");
             return "PASS isolated SD swap: incomplete and complete listing, stale registration and picker, synthetic confirmation/cancel and stale request, native status at "
                     + width + "dp/" + font + ". No physical card or original reads.";
         } finally {
@@ -252,6 +268,35 @@ final class CameraSdSwapChecks {
             SystemClock.sleep(30);
         }
         throw new AssertionError("expected SD source status");
+    }
+
+    private static void startAdmittedFixture(Instrumentation test, CameraImportActivity screen,
+            CameraImportActivity.SdStart request, TextView sdStatus) throws Exception {
+        test.runOnMainSync(() -> {
+            CameraImportActivity.SdSubmission real = screen.sdSubmission;
+            try {
+                screen.sdSubmission = (submitted, registrationOnly, confirmation) -> {
+                    require(!registrationOnly, "fixture acknowledges the import route");
+                    ImportProgress.INSTANCE.connecting("写真を確認しています");
+                    CameraDocumentSourceChecks.acknowledgeSdUiFixture(confirmation);
+                };
+                screen.submitSd(request, false);
+            } finally { screen.sdSubmission = real; }
+        });
+        awaitText(test, sdStatus, CameraQuickImportSources.SdState.DISCONNECTED.message);
+        require(field(screen, "submittedSd") == null && ImportProgress.INSTANCE.getActive(),
+                "accepted acknowledgement keeps source status separate from active operation progress");
+    }
+
+    private static void captureTerminalSdPanel(Instrumentation test, CameraImportActivity screen, View settings,
+            TextView sdStatus, File captures, String name) throws Exception {
+        var button = (com.google.android.material.button.MaterialButton) settings;
+        test.runOnMainSync(() -> { if (!button.isChecked()) button.performClick(); });
+        awaitText(test, sdStatus, CameraQuickImportSources.SdState.DISCONNECTED.message);
+        reveal(test, sdStatus);
+        capture(test, screen, captures, name, CameraQuickImportSources.SdState.DISCONNECTED.message,
+                "SDカードのフォルダを選ぶ");
+        test.runOnMainSync(() -> { if (button.isChecked()) button.performClick(); });
     }
 
     private static void assertRegistrationReview(Instrumentation test, CameraImportActivity screen,

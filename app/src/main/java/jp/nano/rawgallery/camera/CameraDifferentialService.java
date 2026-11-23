@@ -404,17 +404,17 @@ public final class CameraDifferentialService extends Service {
         return retry(importer,f,copy,stable,verify,cancelled);
     }
     private CameraPhotoImporter.Result retry(CameraPhotoImporter importer,CameraImportFile f,CameraImportCopy.Copy copy,boolean stable,boolean verify,BooleanSupplier operationCancelled)throws IOException{
-        return retry(importer,f,copy,stable,verify,operationCancelled,false,null);
+        return retry(importer, f, copy, stable, verify, operationCancelled, false, null,
+                CameraPhotoPublisher.NO_COMMIT_CHECK);
     }
-    private interface SourceCheck { void check() throws IOException; }
-
-    private CameraPhotoImporter.Result retry(CameraPhotoImporter importer,CameraImportFile f,CameraImportCopy.Copy copy,
-            boolean stable,boolean verify,BooleanSupplier operationCancelled,boolean sdOriginal,SourceCheck check)throws IOException{
+    private CameraPhotoImporter.Result retry(CameraPhotoImporter importer, CameraImportFile f, CameraImportCopy.Copy copy,
+            boolean stable, boolean verify, BooleanSupplier operationCancelled, boolean sdOriginal,
+            CameraPhotoPublisher.CommitCheck check, CameraPhotoPublisher.CommitCheck beforeCommit) throws IOException {
         IOException first=null;
         for(int i=0;i<2;i++)try{
             if(sdOriginal)CameraDocumentSource.requireOriginalPermission(this);
             if(check!=null)check.check();
-            return importer.importPhoto(f,copy,null,stable,verify,operationCancelled);
+            return importer.importPhoto(f, copy, null, stable, verify, operationCancelled, beforeCommit);
         }catch(InterruptedIOException e){throw e;}catch(CameraDocumentSource.OriginalAccessException|MountedCameraCard.Unavailable e){throw e;}catch(IOException e){
             if(first==null)first=e;CameraPhotoPublisher.check(operationCancelled);
             if(sdOriginal)CameraDocumentSource.requireOriginalPermission(this);
@@ -452,9 +452,15 @@ public final class CameraDifferentialService extends Service {
     }
 
     private void requireSdSource(Uri tree, String source, String target, long generation) throws IOException {
+        requireSdBinding(tree, source, target, generation);
+        MountedCameraCard.requireGrant(this, tree);
+    }
+
+    private void requireSdBinding(Uri tree, String source, String target, long generation) throws IOException {
         MountedCameraCard.requireGeneration(generation);
         requireSdDestination(target, PhotoStorage.selected(this));
-        MountedCameraCard.requireGrant(this, tree);
+        if (!tree.toString().equals(getSharedPreferences("camera_import", 0).getString("sd_tree_uri", null)))
+            throw new MountedCameraCard.Unavailable("取り込み元のフォルダが変わりました。DCIMフォルダを選び直してください。");
         if (!CameraDocumentSource.isImportTree(tree, true))
             throw new MountedCameraCard.Unavailable(MountedCameraCard.CHOOSE_SOURCE);
         if (MountedCameraCard.isSameMountedCard(this, tree, target))
@@ -472,11 +478,52 @@ public final class CameraDifferentialService extends Service {
                 || !requestedTree.equals(settings.getString("sd_tree_uri", null));
     }
 
+    /** Poll grants during streaming, but never substitute a cached check at a commit boundary. */
+    static final class SdGrantCheck {
+        private static final long POLL_INTERVAL_MS = 100;
+        @FunctionalInterface interface Reader { void require() throws MountedCameraCard.Unavailable; }
+
+        private final Reader reader;
+        private final java.util.function.LongSupplier clock;
+        private long nextPoll;
+        private MountedCameraCard.Unavailable lost;
+
+        SdGrantCheck(Reader reader, java.util.function.LongSupplier clock) {
+            this.reader = reader;
+            this.clock = clock;
+        }
+
+        synchronized void requireFresh() throws MountedCameraCard.Unavailable {
+            if (lost != null) throw lost;
+            try {
+                reader.require();
+                nextPoll = clock.getAsLong() + POLL_INTERVAL_MS;
+            } catch (MountedCameraCard.Unavailable unavailable) {
+                lost = unavailable;
+                throw unavailable;
+            }
+        }
+
+        synchronized boolean stopped() {
+            if (lost != null) return true;
+            if (clock.getAsLong() < nextPoll) return false;
+            try { requireFresh(); return false; }
+            catch (MountedCameraCard.Unavailable unavailable) { return true; }
+        }
+    }
+
     private void sd(CameraPhotoImporter importer, Uri tree, boolean verify, String sourceVolume,
             Set<MediaTypes.Kind> kinds, String target, long generation) throws IOException {
         CameraDocumentSource.requireOriginalPermission(this);
         requireSdSource(tree, sourceVolume, target, generation);
-        BooleanSupplier stopped = sdStopped(tree, target, generation, cancelled);
+        BooleanSupplier bindingStopped = sdStopped(tree, target, generation, cancelled);
+        SdGrantCheck grant = new SdGrantCheck(() -> MountedCameraCard.requireGrant(this, tree), SystemClock::elapsedRealtime);
+        BooleanSupplier stopped = () -> bindingStopped.getAsBoolean() || grant.stopped();
+        CameraPhotoPublisher.CommitCheck requireFreshSource = () -> {
+            CameraPhotoPublisher.check(bindingStopped);
+            requireSdBinding(tree, sourceVolume, target, generation);
+            grant.requireFresh();
+        };
         long start = System.nanoTime();
         ImportProgress.INSTANCE.begin("SDカード");
         ImportProgress.INSTANCE.photoListing(0, -1);
@@ -484,7 +531,7 @@ public final class CameraDifferentialService extends Service {
         try {
             long listingStart = SystemClock.elapsedRealtime();
             CameraDocumentSource.Listing listing = CameraDocumentSource.list(this, tree, stopped);
-            requireSdSource(tree, sourceVolume, target, generation);
+            requireFreshSource.check();
             CameraDocumentSource.requireOriginalPermission(this);
             runMetrics.listingMs = SystemClock.elapsedRealtime() - listingStart;
             List<CameraDocumentSource.Entry> selected = selectedPhotos(listing.photos, kinds);
@@ -504,15 +551,16 @@ public final class CameraDifferentialService extends Service {
             notifyProgress();
             for (CameraDocumentSource.Entry entry : selected) {
                 CameraPhotoPublisher.check(stopped);
-                SourceCheck check = () -> {
-                    requireSdSource(tree, sourceVolume, target, generation);
+                CameraPhotoPublisher.CommitCheck check = () -> {
+                    requireFreshSource.check();
                     if (sourceVolume != null)
                         CameraDocumentSource.requireMappedOriginal(this, entry, sourceVolume, stopped);
                 };
                 CameraPhotoImporter.Result result = retry(importer, entry.file, out -> {
-                    requireSdSource(tree, sourceVolume, target, generation);
+                    requireFreshSource.check();
                     CameraDocumentSource.copy(this, entry, out, stopped, sourceVolume);
-                }, listing.stable, verify, stopped, true, check);
+                    requireFreshSource.check();
+                }, listing.stable, verify, stopped, true, check, requireFreshSource);
                 if (result.imported) { added++; runMetrics.saved++; }
                 else runMetrics.matches++;
                 bytes += result.sourceBytesRead;
@@ -522,11 +570,16 @@ public final class CameraDifferentialService extends Service {
                 notifyProgress();
             }
             CameraDocumentSource.requireOriginalPermission(this);
-            CameraPhotoPublisher.check(stopped);
-            requireSdSource(tree, sourceVolume, target, generation);
+            // Every item has already passed its last source check. A later grant change
+            // belongs to the next import, not the outcome of this completed batch.
+            CameraPhotoPublisher.check(bindingStopped);
+            requireSdBinding(tree, sourceVolume, target, generation);
             finish(added, done, bytes, start, true);
         } catch (InterruptedIOException interrupted) {
-            if (!cancelled.getAsBoolean()) requireSdSource(tree, sourceVolume, target, generation);
+            if (!cancelled.getAsBoolean()) {
+                requireSdBinding(tree, sourceVolume, target, generation);
+                grant.requireFresh();
+            }
             throw interrupted;
         }
     }
