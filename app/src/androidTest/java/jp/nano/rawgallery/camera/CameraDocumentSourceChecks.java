@@ -223,6 +223,170 @@ public final class CameraDocumentSourceChecks {
             MountedCameraCard.requireGeneration(MountedCameraCard.detachGeneration() - 1);
             throw new AssertionError("request from before detach was accepted");
         } catch (MountedCameraCard.Unavailable expected) { }
+        assertMountedListingRetry(context);
+    }
+
+    private static void assertMountedListingRetry(Context context) throws Exception {
+        var provider = new android.content.ContentProvider() {
+            final Deque<Integer> listings = new ArrayDeque<>();
+            final List<String> pointIds = new ArrayList<>();
+            boolean pointExists;
+
+            @Override public boolean onCreate() { return true; }
+            @Override public Cursor query(Uri uri, String[] columns, String selection, String[] args, String sort) {
+                var cursor = new MatrixCursor(columns);
+                var extras = new Bundle();
+                if ("children".equals(uri.getLastPathSegment())) {
+                    int count = listings.removeFirst();
+                    if (count == -1) extras.putBoolean(DocumentsContract.EXTRA_LOADING, true);
+                    if (count == -2) extras.putString(DocumentsContract.EXTRA_ERROR, "fixture");
+                    for (int i = 0; i < count; i++) {
+                        String name = "TEST" + i + ".JPG";
+                        cursor.addRow(new Object[]{"AB12-CD34:DCIM/" + name, name, "image/jpeg", 8L, 1024L});
+                    }
+                } else {
+                    String id = DocumentsContract.getDocumentId(uri);
+                    pointIds.add(id);
+                    if (pointExists && SOURCE_DOCUMENT_ID.equals(id))
+                        cursor.addRow(new Object[]{id, "TEST.JPG", "image/jpeg", 8L});
+                }
+                cursor.setExtras(extras);
+                return cursor;
+            }
+            @Override public String getType(Uri uri) { return null; }
+            @Override public Uri insert(Uri uri, ContentValues values) { throw new AssertionError("no writes"); }
+            @Override public int delete(Uri uri, String where, String[] args) { throw new AssertionError("no writes"); }
+            @Override public int update(Uri uri, ContentValues values, String where, String[] args) {
+                throw new AssertionError("no writes");
+            }
+        };
+        var info = new android.content.pm.ProviderInfo();
+        info.authority = SOURCE_TREE.getAuthority();
+        provider.attachInfo(context, info);
+        var resolver = android.content.ContentResolver.wrap(provider);
+        CameraDocumentSource.MountedPhotoRows unexpectedHints = (volume, folder, signal) -> {
+            throw new AssertionError("usable listing cannot query MediaStore hints");
+        };
+
+        provider.listings.add(1407);
+        var healthy = CameraDocumentSource.listMounted(resolver, SOURCE_TREE, () -> SOURCE, SOURCE,
+                () -> false, () -> { }, unexpectedHints, 0);
+        require(healthy.photos.size() == 1407 && provider.listings.isEmpty(), "healthy SD lists once");
+        for (int first : new int[]{0, -1}) {
+            provider.listings.addAll(List.of(first, 1));
+            var recovered = CameraDocumentSource.listMounted(resolver, SOURCE_TREE, () -> SOURCE, SOURCE,
+                    () -> false, () -> { }, unexpectedHints, 0);
+            require(recovered.photos.size() == 1 && provider.listings.isEmpty(), "mount listing recovers once");
+        }
+
+        CameraDocumentSource.MountedPhotoRows mixedHints = (volume, folder, signal) -> {
+            require(SOURCE.equals(volume) && "DCIM/".equals(folder), "hint query stays on the source tree");
+            var cursor = new MatrixCursor(new String[]{MediaStore.MediaColumns.VOLUME_NAME,
+                    MediaStore.MediaColumns.RELATIVE_PATH, MediaStore.MediaColumns.DISPLAY_NAME});
+            cursor.addRow(new Object[]{"other-volume", "DCIM/100TEST/", "WRONG.JPG"});
+            cursor.addRow(new Object[]{SOURCE, "DCIM2/", "OUTSIDE.JPG"});
+            cursor.addRow(new Object[]{SOURCE, "DCIM/../Pictures/", "TRAVERSAL.JPG"});
+            cursor.addRow(new Object[]{SOURCE, "DCIM/100TEST/", "STALE.JPG"});
+            cursor.addRow(new Object[]{SOURCE, "DCIM/100TEST/", "TEST.JPG"});
+            cursor.addRow(new Object[]{SOURCE, "DCIM/100TEST/", "TEST.JPG"});
+            cursor.addRow(new Object[]{SOURCE, "DCIM/100TEST/", "OVER_LIMIT.JPG"});
+            return cursor;
+        };
+        var permittedPoints = List.of("AB12-CD34:DCIM/100TEST/STALE.JPG", SOURCE_DOCUMENT_ID);
+        provider.listings.addAll(List.of(0, 0));
+        var empty = CameraDocumentSource.listMounted(resolver, SOURCE_TREE, () -> SOURCE, SOURCE,
+                () -> false, () -> { }, mixedHints, 0);
+        require(empty.photos.isEmpty() && provider.pointIds.equals(permittedPoints),
+                "stale rows do not contradict empty and point checks are confined and bounded");
+
+        provider.pointExists = true;
+        provider.pointIds.clear();
+        provider.listings.addAll(List.of(0, 0));
+        try {
+            CameraDocumentSource.listMounted(resolver, SOURCE_TREE, () -> SOURCE, SOURCE,
+                    () -> false, () -> { }, mixedHints, 0);
+            throw new AssertionError("empty listing ignored a live document");
+        } catch (CameraDocumentSource.ListingException expected) {
+            require(expected.reason == CameraDocumentSource.ListingException.Reason.INCONSISTENT
+                    && provider.pointIds.equals(permittedPoints), "live in-tree photo disproves empty listing");
+        }
+
+        Uri volumeRoot = DocumentsContract.buildTreeDocumentUri(info.authority, "AB12-CD34:");
+        String listingVolume = MountedCameraCard.mountedListingVolume(volumeRoot, () -> SOURCE);
+        require(SOURCE.equals(listingVolume) && !CameraDocumentSource.isImportTree(volumeRoot, false),
+                "an existing root grant resolves for listing and remains invalid for a new source selection");
+        Uri outsideTree = DocumentsContract.buildTreeDocumentUri(info.authority, "AB12-CD34:Pictures");
+        require(MountedCameraCard.mountedListingVolume(outsideTree, () -> {
+            throw new AssertionError("outside tree cannot resolve a listing volume");
+        }) == null, "stock provider path outside DCIM and root is ineligible");
+        provider.pointIds.clear();
+        provider.listings.addAll(List.of(0, 0));
+        try {
+            CameraDocumentSource.listMounted(resolver, volumeRoot, () -> SOURCE, listingVolume,
+                    () -> false, () -> { }, mixedHints, 0);
+            throw new AssertionError("volume-root listing ignored a live DCIM document");
+        } catch (CameraDocumentSource.ListingException expected) {
+            require(expected.reason == CameraDocumentSource.ListingException.Reason.INCONSISTENT
+                    && provider.pointIds.equals(permittedPoints), "root witnesses remain confined to DCIM");
+        }
+
+        CameraDocumentSource.MountedPhotoRows volumeNotIndexed = (volume, folder, signal) ->
+                CameraDocumentSource.queryPhotoHints(resolver, Set.of("other-volume"), volume, folder, signal);
+        provider.listings.addAll(List.of(0, 0));
+        try {
+            CameraDocumentSource.listMounted(resolver, SOURCE_TREE, () -> SOURCE, SOURCE,
+                    () -> false, () -> { }, volumeNotIndexed, 0);
+            throw new AssertionError("volume missing from MediaStore treated as empty");
+        } catch (CameraDocumentSource.ListingException expected) {
+            require(expected.reason == CameraDocumentSource.ListingException.Reason.LOADING,
+                    "unexposed MediaStore volume remains unconfirmed");
+        }
+
+        provider.listings.addAll(List.of(0, 0));
+        try {
+            CameraDocumentSource.listMounted(resolver, SOURCE_TREE, () -> SOURCE, SOURCE,
+                    () -> false, () -> { }, (volume, folder, signal) -> null, 0);
+            throw new AssertionError("null MediaStore hint cursor treated as empty");
+        } catch (CameraDocumentSource.ListingException expected) {
+            require(expected.reason == CameraDocumentSource.ListingException.Reason.UNAVAILABLE,
+                    "a null hint cursor is unavailable");
+        }
+
+        provider.listings.addAll(List.of(0, 0));
+        var noHints = CameraDocumentSource.listMounted(resolver, SOURCE_TREE, () -> SOURCE, SOURCE,
+                () -> false, () -> { }, (volume, folder, signal) -> new MatrixCursor(new String[]{
+                        MediaStore.MediaColumns.VOLUME_NAME, MediaStore.MediaColumns.RELATIVE_PATH,
+                        MediaStore.MediaColumns.DISPLAY_NAME}), 0);
+        require(noHints.photos.isEmpty() && !noHints.hasVideo, "complete zero-row hints preserve true empty");
+
+        provider.listings.add(-2);
+        try {
+            CameraDocumentSource.listMounted(resolver, SOURCE_TREE, () -> SOURCE, SOURCE,
+                    () -> false, () -> { }, unexpectedHints, 0);
+            throw new AssertionError("provider error accepted");
+        } catch (CameraDocumentSource.ListingException expected) {
+            require(expected.reason == CameraDocumentSource.ListingException.Reason.UNAVAILABLE,
+                    "non-loading listing errors cannot retry or become empty");
+        }
+
+        provider.listings.add(0);
+        var cancelled = new AtomicBoolean();
+        try {
+            CameraDocumentSource.listMounted(resolver, SOURCE_TREE, () -> SOURCE, SOURCE,
+                    cancelled::get, () -> cancelled.set(true), unexpectedHints, 50);
+            throw new AssertionError("cancelled listing was reported as empty");
+        } catch (InterruptedIOException expected) { }
+
+        provider.listings.add(0);
+        var checks = new java.util.concurrent.atomic.AtomicInteger();
+        var changed = new MountedCameraCard.Unavailable("binding changed before retry");
+        try {
+            CameraDocumentSource.listMounted(resolver, SOURCE_TREE, () -> SOURCE, SOURCE,
+                    () -> false, () -> { if (checks.incrementAndGet() == 2) throw changed; }, unexpectedHints, 0);
+            throw new AssertionError("stale binding used for retry");
+        } catch (MountedCameraCard.Unavailable expected) {
+            require(expected == changed, "binding rechecked before retry");
+        }
     }
 
     /** Both sides of one-shot admission, with the actual worker-owned camera gate and a synthetic commit. */

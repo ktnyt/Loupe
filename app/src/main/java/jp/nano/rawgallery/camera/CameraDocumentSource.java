@@ -23,6 +23,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 /** Bounded read-only enumeration for an Android-mounted SD card's selected DCIM tree. */
 public final class CameraDocumentSource {
@@ -43,7 +44,7 @@ public final class CameraDocumentSource {
     }
 
     static final class ListingException extends IOException {
-        enum Reason { LOADING, TIMEOUT, UNAVAILABLE, NO_GRANT, CHANGED }
+        enum Reason { LOADING, TIMEOUT, UNAVAILABLE, NO_GRANT, CHANGED, INCONSISTENT }
         final Reason reason;
 
         ListingException(Reason reason) {
@@ -53,6 +54,7 @@ public final class CameraDocumentSource {
                 case UNAVAILABLE -> "SDカードの一覧を確認できません。接続とフォルダを確認してください。";
                 case NO_GRANT -> "SDカードの読み取り許可を確認できません。フォルダを選び直してください。";
                 case CHANGED -> "SDカード上の写真が変わりました。もう一度取り込みを開始してください。";
+                case INCONSISTENT -> "SDカードに写真がありますが、一覧を確認できません。取り込み元のカードを接続し直してください。";
             });
             this.reason = reason;
         }
@@ -60,6 +62,9 @@ public final class CameraDocumentSource {
 
     private static final long LISTING_TIMEOUT_MS = 30_000;
     private static final long METADATA_TIMEOUT_MS = 3_000;
+    private static final long MOUNTED_LISTING_RETRY_MS = 1000;
+    private static final int MOUNTED_LISTING_HINT_LIMIT = 6;
+    private static final String EXTERNAL_STORAGE_DOCUMENTS = "com.android.externalstorage.documents";
     // A wedged provider cannot tie up the import gate or accumulate queued listing requests.
     private static final ThreadPoolExecutor METADATA = metadataPool("sd-document-metadata");
     private static final ThreadPoolExecutor CANCELLATIONS = metadataPool("sd-document-cancel");
@@ -88,6 +93,134 @@ public final class CameraDocumentSource {
     public static Listing list(Context context,Uri tree,BooleanSupplier cancelled)throws IOException {
         return boundedMetadata(cancelled, LISTING_TIMEOUT_MS, signal -> readListing(context.getContentResolver(),
                 tree, CameraSourceIdentity.sd(context, tree), cancelled, signal));
+    }
+
+    static Listing listMounted(Context context, Uri tree, String volume, BooleanSupplier cancelled,
+            CameraPhotoPublisher.CommitCheck requireFreshSource) throws IOException {
+        return listMounted(context.getContentResolver(), tree, () -> CameraSourceIdentity.sd(context, tree),
+                volume, cancelled, requireFreshSource, (source, folder, signal) -> queryPhotoHints(
+                        context.getContentResolver(), MediaStore.getExternalVolumeNames(context), source, folder, signal),
+                MOUNTED_LISTING_RETRY_MS);
+    }
+
+    @FunctionalInterface
+    interface MountedPhotoRows {
+        Cursor query(String volume, String folder, CancellationSignal signal) throws IOException;
+    }
+
+    static Listing listMounted(ContentResolver resolver, Uri tree, Supplier<String> identity,
+            String volume, BooleanSupplier cancelled, CameraPhotoPublisher.CommitCheck requireFreshSource,
+            MountedPhotoRows photoRows, long retryDelayMs) throws IOException {
+        return boundedMetadata(cancelled, LISTING_TIMEOUT_MS, signal -> {
+            String sourceId = identity.get();
+            boolean mountedExternal = volume != null && tree != null && DocumentsContract.isTreeUri(tree)
+                    && EXTERNAL_STORAGE_DOCUMENTS.equals(tree.getAuthority())
+                    && DocumentsContract.getTreeDocumentId(tree).regionMatches(true, 0, volume + ":", 0,
+                            volume.length() + 1);
+            try {
+                Listing first = readListing(resolver, tree, sourceId, cancelled, signal);
+                if (!first.photos.isEmpty() || first.hasVideo || !mountedExternal) return first;
+            } catch (ListingException failure) {
+                if (!mountedExternal || failure.reason != ListingException.Reason.LOADING) throw failure;
+            }
+            requireFreshSource.check();
+            long retryAt = SystemClock.elapsedRealtime() + retryDelayMs;
+            while (SystemClock.elapsedRealtime() < retryAt) {
+                CameraPhotoPublisher.check(cancelled);
+                try {
+                    Thread.sleep(Math.max(1, Math.min(100, retryAt - SystemClock.elapsedRealtime())));
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new InterruptedIOException("SD card listing cancelled");
+                }
+            }
+            requireFreshSource.check();
+            Listing retry = readListing(resolver, tree, sourceId, cancelled, signal);
+            if (retry.photos.isEmpty() && !retry.hasVideo) {
+                requireFreshSource.check();
+                boolean contradicted = hasUnlistedMountedPhoto(resolver, tree, volume, photoRows, cancelled, signal);
+                requireFreshSource.check();
+                if (contradicted) throw new ListingException(ListingException.Reason.INCONSISTENT);
+            }
+            return retry;
+        });
+    }
+
+    static Cursor queryPhotoHints(ContentResolver resolver, Set<String> indexedVolumes, String volume, String folder,
+            CancellationSignal signal) throws IOException {
+        if (!indexedVolumes.contains(volume)) throw new ListingException(ListingException.Reason.LOADING);
+        Bundle args = new Bundle();
+        args.putString(ContentResolver.QUERY_ARG_SQL_SELECTION, MediaStore.MediaColumns.RELATIVE_PATH + " LIKE ? ESCAPE '!'");
+        String prefix = folder.replace("!", "!!").replace("%", "!%").replace("_", "!_");
+        args.putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, new String[]{prefix + "%"});
+        args.putInt(ContentResolver.QUERY_ARG_LIMIT, MOUNTED_LISTING_HINT_LIMIT);
+        return resolver.query(MediaStore.Images.Media.getContentUri(volume),
+                new String[]{MediaStore.MediaColumns.VOLUME_NAME, MediaStore.MediaColumns.RELATIVE_PATH,
+                        MediaStore.MediaColumns.DISPLAY_NAME}, args, signal);
+    }
+
+    private static boolean hasUnlistedMountedPhoto(ContentResolver resolver, Uri tree, String volume,
+            MountedPhotoRows photoRows, BooleanSupplier cancelled, CancellationSignal signal) throws IOException {
+        String treeId = DocumentsContract.getTreeDocumentId(tree);
+        int separator = treeId.indexOf(':');
+        String selectedPath = treePath(tree);
+        String prefix = selectedPath.isEmpty() ? "DCIM/" : selectedPath + "/";
+
+        Set<String> paths = new LinkedHashSet<>();
+        try (Cursor rows = photoRows.query(volume, prefix, signal)) {
+            requireCompleteListing(rows);
+            int source = rows.getColumnIndexOrThrow(MediaStore.MediaColumns.VOLUME_NAME);
+            int folder = rows.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH);
+            int name = rows.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME);
+            for (int i = 0; i < MOUNTED_LISTING_HINT_LIMIT && rows.moveToNext(); i++) {
+                CameraPhotoPublisher.check(cancelled);
+                if (!volume.equals(rows.getString(source))) continue;
+                String directory = rows.getString(folder);
+                String filename = rows.getString(name);
+                if (directory == null || !directory.endsWith("/") || filename == null || filename.isBlank()
+                        || filename.contains("/") || filename.contains("\\")) continue;
+                boolean inTree = selectedPath.isEmpty() ? directory.regionMatches(true, 0, prefix, 0, prefix.length())
+                        : directory.startsWith(prefix);
+                if (!inTree || MediaTypes.INSTANCE.kindOf(filename) == null || MediaTypes.INSTANCE.isVideo(filename))
+                    continue;
+                String path = directory + filename;
+                try {
+                    new CameraImportFile("path-check", path, 1, "", 0);
+                } catch (IllegalArgumentException invalid) {
+                    continue;
+                }
+                paths.add(path);
+            }
+            requireCompleteListing(rows);
+        }
+
+        for (String path : paths) {
+            CameraPhotoPublisher.check(cancelled);
+            String id = treeId.substring(0, separator + 1) + path;
+            Uri document = DocumentsContract.buildDocumentUriUsingTree(tree, id);
+            if (isCurrentPhoto(resolver, document, id, path.substring(path.lastIndexOf('/') + 1), signal)) return true;
+        }
+        return false;
+    }
+
+    private static boolean isCurrentPhoto(ContentResolver resolver, Uri document, String id, String name,
+            CancellationSignal signal) throws IOException {
+        String[] fields = {DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_SIZE};
+        try (Cursor row = resolver.query(document, fields, null, null, null, signal)) {
+            if (row == null) return false;
+            requireCompleteListing(row);
+            if (!singleCompleteRow(row)) return false;
+            int size = row.getColumnIndexOrThrow(fields[3]);
+            String mime = row.getString(row.getColumnIndexOrThrow(fields[2]));
+            return id.equals(row.getString(row.getColumnIndexOrThrow(fields[0])))
+                    && name.equals(row.getString(row.getColumnIndexOrThrow(fields[1])))
+                    && mime != null && !mime.isBlank() && !DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)
+                    && row.getType(size) == Cursor.FIELD_TYPE_INTEGER && row.getLong(size) > 0
+                    && row.getLong(size) <= Ep7WifiClient.MAX_FILE_BYTES && complete(row);
+        } catch (SecurityException denied) {
+            throw new ListingException(ListingException.Reason.NO_GRANT);
+        }
     }
 
     static Listing list(ContentResolver resolver, Uri tree, String identity, BooleanSupplier cancelled) throws IOException {

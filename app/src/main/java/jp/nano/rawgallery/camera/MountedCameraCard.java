@@ -17,6 +17,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 import jp.nano.rawgallery.PhotoStorage;
 
 /** The guarded SD-to-SD route accepts only the mounted volume of the selected, granted tree. */
@@ -139,6 +140,16 @@ public final class MountedCameraCard {
 
     static String mountedSourceVolume(Context context, Uri tree) {
         return mountedSourceVolume(context, tree, true);
+    }
+
+    // Honor an existing volume-root grant for listing without making it a strict source binding.
+    static String mountedListingVolume(Context context, Uri tree) {
+        return mountedListingVolume(tree, () -> mountedSourceVolume(context, tree, false));
+    }
+
+    static String mountedListingVolume(Uri tree, Supplier<String> lookupMountedVolume) {
+        return isRemovableTree(tree) && CameraDocumentSource.isImportTree(tree, true)
+                ? lookupMountedVolume.get() : null;
     }
 
     private static String mountedSourceVolume(Context context, Uri tree, boolean requireDcim) {

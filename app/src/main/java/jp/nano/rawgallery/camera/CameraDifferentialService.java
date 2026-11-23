@@ -615,10 +615,28 @@ public final class CameraDifferentialService extends Service {
         notifyProgress();
         try {
             long listingStart = SystemClock.elapsedRealtime();
-            CameraDocumentSource.Listing listing = CameraDocumentSource.list(this, tree, stopped);
-            requireFreshSource.check();
-            CameraDocumentSource.requireOriginalPermission(this);
-            runMetrics.listingMs = SystemClock.elapsedRealtime() - listingStart;
+            CameraDocumentSource.Listing listing;
+            try {
+                String listingVolume = sourceVolume == null ? MountedCameraCard.mountedListingVolume(this, tree)
+                        : sourceVolume;
+                if (listingVolume == null) {
+                    listing = CameraDocumentSource.list(this, tree, stopped);
+                    requireFreshSource.check();
+                } else {
+                    CameraPhotoPublisher.CommitCheck requireFreshListingSource = () -> {
+                        requireDeferralAllowed.check();
+                        if (sourceVolume == null
+                                && !listingVolume.equals(MountedCameraCard.mountedListingVolume(this, tree)))
+                            throw new MountedCameraCard.Unavailable(SOURCE_CHANGED);
+                    };
+                    requireFreshListingSource.check();
+                    listing = CameraDocumentSource.listMounted(this, tree, listingVolume, stopped,
+                            requireFreshListingSource);
+                    requireFreshListingSource.check();
+                }
+            } finally {
+                runMetrics.listingMs = SystemClock.elapsedRealtime() - listingStart;
+            }
             List<CameraDocumentSource.Entry> selected = selectedPhotos(listing.photos, kinds);
             runMetrics.listed = listing.photos.size();
             String noCandidates = noSdCandidates(listing, selected.size());
