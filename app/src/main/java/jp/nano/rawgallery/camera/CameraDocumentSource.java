@@ -98,10 +98,9 @@ public final class CameraDocumentSource {
     static Listing listMounted(Context context, Uri tree, String volume, BooleanSupplier cancelled,
             CameraPhotoPublisher.CommitCheck requireFreshSource) throws IOException {
         return listMounted(context.getContentResolver(), tree, () -> CameraSourceIdentity.sd(context, tree),
-                volume, cancelled, requireFreshSource, (source, folder, signal) -> {
-                    if (!MediaStore.getExternalVolumeNames(context).contains(source)) return null;
-                    return queryPhotoHints(context.getContentResolver(), source, folder, signal);
-                }, MOUNTED_LISTING_RETRY_MS);
+                volume, cancelled, requireFreshSource, (source, folder, signal) -> queryPhotoHints(
+                        context.getContentResolver(), MediaStore.getExternalVolumeNames(context), source, folder, signal),
+                MOUNTED_LISTING_RETRY_MS);
     }
 
     @FunctionalInterface
@@ -147,8 +146,9 @@ public final class CameraDocumentSource {
         });
     }
 
-    private static Cursor queryPhotoHints(ContentResolver resolver, String volume, String folder,
-            CancellationSignal signal) {
+    static Cursor queryPhotoHints(ContentResolver resolver, Set<String> indexedVolumes, String volume, String folder,
+            CancellationSignal signal) throws IOException {
+        if (!indexedVolumes.contains(volume)) throw new ListingException(ListingException.Reason.LOADING);
         Bundle args = new Bundle();
         args.putString(ContentResolver.QUERY_ARG_SQL_SELECTION, MediaStore.MediaColumns.RELATIVE_PATH + " LIKE ? ESCAPE '!'");
         String prefix = folder.replace("!", "!!").replace("%", "!%").replace("_", "!_");
@@ -168,7 +168,6 @@ public final class CameraDocumentSource {
 
         Set<String> paths = new LinkedHashSet<>();
         try (Cursor rows = photoRows.query(volume, prefix, signal)) {
-            if (rows == null) return false;
             requireCompleteListing(rows);
             int source = rows.getColumnIndexOrThrow(MediaStore.MediaColumns.VOLUME_NAME);
             int folder = rows.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH);

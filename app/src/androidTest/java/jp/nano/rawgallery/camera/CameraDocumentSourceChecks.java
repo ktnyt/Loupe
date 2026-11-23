@@ -311,6 +311,54 @@ public final class CameraDocumentSourceChecks {
                     && provider.pointIds.equals(permittedPoints), "live in-tree photo disproves empty listing");
         }
 
+        Uri volumeRoot = DocumentsContract.buildTreeDocumentUri(info.authority, "AB12-CD34:");
+        String listingVolume = MountedCameraCard.mountedListingVolume(volumeRoot, () -> SOURCE);
+        require(SOURCE.equals(listingVolume) && !CameraDocumentSource.isImportTree(volumeRoot, false),
+                "an existing root grant resolves for listing and remains invalid for a new source selection");
+        Uri outsideTree = DocumentsContract.buildTreeDocumentUri(info.authority, "AB12-CD34:Pictures");
+        require(MountedCameraCard.mountedListingVolume(outsideTree, () -> {
+            throw new AssertionError("outside tree cannot resolve a listing volume");
+        }) == null, "stock provider path outside DCIM and root is ineligible");
+        provider.pointIds.clear();
+        provider.listings.addAll(List.of(0, 0));
+        try {
+            CameraDocumentSource.listMounted(resolver, volumeRoot, () -> SOURCE, listingVolume,
+                    () -> false, () -> { }, mixedHints, 0);
+            throw new AssertionError("volume-root listing ignored a live DCIM document");
+        } catch (CameraDocumentSource.ListingException expected) {
+            require(expected.reason == CameraDocumentSource.ListingException.Reason.INCONSISTENT
+                    && provider.pointIds.equals(permittedPoints), "root witnesses remain confined to DCIM");
+        }
+
+        CameraDocumentSource.MountedPhotoRows volumeNotIndexed = (volume, folder, signal) ->
+                CameraDocumentSource.queryPhotoHints(resolver, Set.of("other-volume"), volume, folder, signal);
+        provider.listings.addAll(List.of(0, 0));
+        try {
+            CameraDocumentSource.listMounted(resolver, SOURCE_TREE, () -> SOURCE, SOURCE,
+                    () -> false, () -> { }, volumeNotIndexed, 0);
+            throw new AssertionError("volume missing from MediaStore treated as empty");
+        } catch (CameraDocumentSource.ListingException expected) {
+            require(expected.reason == CameraDocumentSource.ListingException.Reason.LOADING,
+                    "unexposed MediaStore volume remains unconfirmed");
+        }
+
+        provider.listings.addAll(List.of(0, 0));
+        try {
+            CameraDocumentSource.listMounted(resolver, SOURCE_TREE, () -> SOURCE, SOURCE,
+                    () -> false, () -> { }, (volume, folder, signal) -> null, 0);
+            throw new AssertionError("null MediaStore hint cursor treated as empty");
+        } catch (CameraDocumentSource.ListingException expected) {
+            require(expected.reason == CameraDocumentSource.ListingException.Reason.UNAVAILABLE,
+                    "a null hint cursor is unavailable");
+        }
+
+        provider.listings.addAll(List.of(0, 0));
+        var noHints = CameraDocumentSource.listMounted(resolver, SOURCE_TREE, () -> SOURCE, SOURCE,
+                () -> false, () -> { }, (volume, folder, signal) -> new MatrixCursor(new String[]{
+                        MediaStore.MediaColumns.VOLUME_NAME, MediaStore.MediaColumns.RELATIVE_PATH,
+                        MediaStore.MediaColumns.DISPLAY_NAME}), 0);
+        require(noHints.photos.isEmpty() && !noHints.hasVideo, "complete zero-row hints preserve true empty");
+
         provider.listings.add(-2);
         try {
             CameraDocumentSource.listMounted(resolver, SOURCE_TREE, () -> SOURCE, SOURCE,
