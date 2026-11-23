@@ -21,7 +21,9 @@ import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.text.format.Formatter;
 import android.view.KeyEvent;
+import android.view.View;
 import android.view.accessibility.AccessibilityNodeInfo;
+import com.google.android.material.progressindicator.LinearProgressIndicator;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FilterInputStream;
@@ -333,7 +335,6 @@ final class LegacyArchiveMoveChecks {
         return new FilterInputStream(new ByteArrayInputStream(data)) {
           @Override public int read(byte[] bytes, int offset, int length) throws IOException {
             if (beganRead.get() && scenario.equals("revoked")) throw new IOException("Synthetic original access revoked");
-            if (!beganRead.get() && scenario.equals("full")) SystemClock.sleep(275);
             int count = super.read(bytes, offset, Math.min(length, Math.max(1, data.length / 2)));
             beganRead.set(true);
             if (count == -1 && scenario.equals("full")) fullEof.set(true);
@@ -1432,6 +1433,7 @@ final class LegacyArchiveMoveChecks {
     File captures = new File(base.getCacheDir(), "photo-storage-checks");
     require(captures.isDirectory() || captures.mkdirs(), "Create the archive preflight capture directory");
     String profile = "archive-" + width + "-" + font;
+    var rangeChecks = new ArrayList<String>();
     try (Fixture f = new Fixture(base, secondary); ArchiveStore archive = E2Settings.openRecords(base)) {
       var syntheticKeys = new java.util.ArrayList<String>();
       try {
@@ -1461,7 +1463,7 @@ final class LegacyArchiveMoveChecks {
         Seed good = bad == undated ? dated : undated;
         archive.put(archive.get(bad.archiveKey()).put("sha", SHA), "verified");
         long archiveRevision = archive.indexRevision();
-        captureConfirmation(test, base, secondary, captures, profile, good, bad);
+        captureConfirmation(test, base, secondary, captures, profile, good, bad, rangeChecks);
         try (PhotoMoveStore journal = new PhotoMoveStore(base)) {
           require(journal.batch() == null && !PhotoMoveService.state().running() && f.rows(secondary).isEmpty()
               && archive.indexRevision() == archiveRevision
@@ -1483,11 +1485,12 @@ final class LegacyArchiveMoveChecks {
     return "PASS archive count groups and preflight progress: one history match, two unmatched pending and one other reference, "
         + "two eligible after preflight, one archive exclusion and one other exclusion, cancel and back without moving; "
         + "indeterminate preparation, 1 MiB and 4 MiB inside one original, cancel/retry and pause without stale results; "
+        + "accessibility ranges " + rangeChecks + "; "
         + test.photoStorageEffectiveWidth() + "dp, font " + font + " " + captures.getAbsolutePath();
   }
 
   private static void captureConfirmation(ArchiveInstrumentation test, Context base, String secondary, File captures,
-      String profile, Seed good, Seed bad) throws Exception {
+      String profile, Seed good, Seed bad, List<String> rangeChecks) throws Exception {
     PhotoStorageActivity activity = (PhotoStorageActivity) test.startActivitySync(
         new Intent(base, PhotoStorageActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     try {
@@ -1523,7 +1526,7 @@ final class LegacyArchiveMoveChecks {
           && automation.injectInputEvent(new KeyEvent(when, when, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK, 0), true),
           "Native back dismisses the archive confirmation");
       awaitStorageControl(automation, moveButton);
-      captureProgress(test, activity, automation, captures, profile, moveButton, confirmed, good, bad);
+      captureProgress(test, activity, automation, captures, profile, moveButton, confirmed, good, bad, rangeChecks);
     } finally {
       test.runOnMainSync(activity::finish);
       test.waitForIdleSync();
@@ -1542,7 +1545,7 @@ final class LegacyArchiveMoveChecks {
 
     PhotoMove open(PhotoStorageActivity activity, Uri pacedOriginal) {
       try {
-        awaitGate(preparation);
+        awaitGate(preparation, false);
       } catch (IOException error) {
         throw new UncheckedIOException(error);
       }
@@ -1556,24 +1559,32 @@ final class LegacyArchiveMoveChecks {
           @Override public int read(byte[] bytes, int offset, int length) throws IOException {
             if (bytesRead == pauseAt && continueRead.getCount() != 0) {
               reachedRead.countDown();
-              awaitGate(continueRead);
+              awaitGate(continueRead, true);
             }
             int count = super.read(bytes, offset, bytesRead < pauseAt ? Math.min(length, pauseAt - bytesRead) : length);
-            if (count > 0) {
-              bytesRead += count;
-              if (bytesRead == pauseAt) SystemClock.sleep(275);
-            }
+            if (count > 0) bytesRead += count;
             return count;
           }
         };
       });
     }
 
-    private static void awaitGate(CountDownLatch gate) throws IOException {
+    private static void awaitGate(CountDownLatch gate, boolean keepReading) throws IOException {
+      long deadline = SystemClock.elapsedRealtimeNanos() + TimeUnit.SECONDS.toNanos(15);
+      boolean interrupted = false;
       try {
-        if (!gate.await(15, TimeUnit.SECONDS)) throw new IOException("Timed out awaiting synthetic preflight capture");
-      } catch (InterruptedException error) {
-        throw new InterruptedIOException("Cancelled synthetic preflight capture");
+        while (true) {
+          try {
+            if (!gate.await(deadline - SystemClock.elapsedRealtimeNanos(), TimeUnit.NANOSECONDS))
+              throw new IOException("Timed out awaiting synthetic preflight capture");
+            return;
+          } catch (InterruptedException error) {
+            if (!keepReading) throw new InterruptedIOException("Cancelled synthetic preflight capture");
+            interrupted = true;
+          }
+        }
+      } finally {
+        if (interrupted) Thread.currentThread().interrupt();
       }
     }
 
@@ -1585,7 +1596,7 @@ final class LegacyArchiveMoveChecks {
 
   private static void captureProgress(ArchiveInstrumentation test, PhotoStorageActivity activity, UiAutomation automation,
       File captures, String profile, Predicate<AccessibilityNodeInfo> moveButton, Predicate<AccessibilityNodeInfo> confirmed,
-      Seed good, Seed bad) throws Exception {
+      Seed good, Seed bad, List<String> rangeChecks) throws Exception {
     String moveName = "取り込み済みの写真を移動";
     String stopName = "確認を中止";
     var mover = new AtomicReference<Supplier<PhotoMove>>(() -> new PhotoMove(activity));
@@ -1603,15 +1614,17 @@ final class LegacyArchiveMoveChecks {
       assertTouchTarget(test, activity, awaitStorageControl(automation, node -> hasText(node, stopName)), stopName);
       captureFrame(test, automation, captures, profile + "-preparing");
       phase.preparation.countDown();
-      assertReading(activity, automation, good, bad, phase, progressBar);
+      rangeChecks.add(assertReading(test, activity, automation, good, bad, phase, progressBar));
       captureFrame(test, automation, captures, profile + "-reading-1mib");
       click(awaitStorageControl(automation, node -> hasText(node, stopName)));
+      assertCancelling(automation, moveName);
+      phase.continueRead.countDown();
       awaitStorageControl(automation, node -> hasText(node, "写真の確認を中止しました。"));
     }
     try (var phase = new PacedPreflight(false, 4)) {
       mover.set(() -> phase.open(activity, required));
       click(awaitStorageControl(automation, moveButton));
-      assertReading(activity, automation, good, bad, phase, progressBar);
+      rangeChecks.add(assertReading(test, activity, automation, good, bad, phase, progressBar));
       captureFrame(test, automation, captures, profile + "-reading-4mib");
       phase.continueRead.countDown();
       awaitStorageControl(automation, confirmed);
@@ -1620,7 +1633,7 @@ final class LegacyArchiveMoveChecks {
     try (var phase = new PacedPreflight(false, 1)) {
       mover.set(() -> phase.open(activity, required));
       click(awaitStorageControl(automation, moveButton));
-      assertReading(activity, automation, good, bad, phase, progressBar);
+      rangeChecks.add(assertReading(test, activity, automation, good, bad, phase, progressBar));
       var monitor = test.addMonitor(PhotoStorageInventoryActivity.class.getName(), null, false);
       try {
         test.runOnMainSync(() -> activity.startActivity(new Intent(activity, PhotoStorageInventoryActivity.class)));
@@ -1630,6 +1643,8 @@ final class LegacyArchiveMoveChecks {
       } finally {
         test.removeMonitor(monitor);
       }
+      assertCancelling(automation, moveName);
+      phase.continueRead.countDown();
       awaitStorageControl(automation, moveButton);
       mover.set(() -> new PhotoMove(activity));
       click(awaitStorageControl(automation, moveButton));
@@ -1638,17 +1653,49 @@ final class LegacyArchiveMoveChecks {
     }
   }
 
-  private static void assertReading(Activity activity, UiAutomation automation, Seed good, Seed bad, PacedPreflight phase,
-      Predicate<AccessibilityNodeInfo> progressBar) throws Exception {
+  private static void assertCancelling(UiAutomation automation, String moveName) {
+    awaitStorageControl(automation, node -> hasText(node, "写真の確認を中止しています。"));
+    var move = awaitStorageControl(automation, node -> hasText(node, moveName));
+    require(!move.isEnabled(), "Retry stays disabled while the cancelled original read is still open");
+    require(automation.getRootInActiveWindow().findAccessibilityNodeInfosByText("バックアップと写真の内容を照合中").isEmpty(),
+        "The cancelled original no longer updates the visible phase");
+  }
+
+  private static String assertReading(Instrumentation test, Activity activity, UiAutomation automation, Seed good, Seed bad,
+      PacedPreflight phase, Predicate<AccessibilityNodeInfo> progressBar) throws Exception {
     require(phase.reachedRead.await(8, TimeUnit.SECONDS), "Pause a real original stream midway through the large file");
     awaitStorageControl(automation, node -> hasText(node, "バックアップと写真の内容を照合中"));
-    String bytes = Formatter.formatFileSize(activity, (long) phase.pauseAt + bad.bytes().length);
-    String total = Formatter.formatFileSize(activity, (long) good.bytes().length + bad.bytes().length);
+    long readBytes = (long) phase.pauseAt + bad.bytes().length;
+    long totalBytes = (long) good.bytes().length + bad.bytes().length;
+    String bytes = Formatter.formatFileSize(activity, readBytes);
+    String total = Formatter.formatFileSize(activity, totalBytes);
     awaitStorageControl(automation, node -> mentions(node, "1 / 2枚を確認") && mentions(node, "一致 0枚・対象外 1枚")
         && mentions(node, "読み取り " + bytes + " / " + total));
-    var range = awaitStorageControl(automation, progressBar).getRangeInfo();
-    require(range != null && range.getCurrent() > range.getMin() && range.getCurrent() < range.getMax(),
-        "The byte indicator is determinate and remains below completion while reading the second candidate");
+    var node = awaitStorageControl(automation, progressBar);
+    String cachedRange = readingRange(node.getRangeInfo());
+    var nativeState = new AtomicReference<String>();
+    test.runOnMainSync(() -> {
+      var views = new ArrayList<View>();
+      activity.getWindow().getDecorView().findViewsWithText(views, "写真の読み取りの進捗",
+          View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);
+      for (var view : views) {
+        if (view instanceof LinearProgressIndicator bar && bar.isShown()) {
+          nativeState.set(bar.isIndeterminate() ? "indeterminate" : bar.getProgress() + "/" + bar.getMax());
+        }
+      }
+    });
+    int expectedProgress = (int) (1000d * readBytes / totalBytes);
+    boolean refreshed = node.refresh();
+    var range = node.getRangeInfo();
+    String rangeEvidence = "cached=" + cachedRange + ", fresh=" + readingRange(range) + ", native=" + nativeState.get();
+    require((expectedProgress + "/1000").equals(nativeState.get()) && refreshed && range != null
+        && range.getMin() == 0 && range.getMax() == 1000 && range.getCurrent() == expectedProgress,
+        "Expected byte progress " + expectedProgress + "/1000; " + rangeEvidence);
+    return rangeEvidence;
+  }
+
+  private static String readingRange(AccessibilityNodeInfo.RangeInfo range) {
+    return range == null ? "indeterminate" : range.getMin() + "–" + range.getCurrent() + "–" + range.getMax();
   }
 
   private static void captureCountList(ArchiveInstrumentation test, UiAutomation automation, File captures,

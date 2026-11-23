@@ -61,11 +61,10 @@ final class PhotoMove implements AutoCloseable {
   }
 
   private static final class PreflightMeter {
-    private static final long UPDATE_INTERVAL_MS = 250;
     private final Consumer<PreflightProgress> observer;
     private final int total;
     private final long totalBytes;
-    private long lastUpdate, readBytes, verifiedBytes;
+    private long readBytes, verifiedBytes;
     private int successful, rejected;
 
     PreflightMeter(List<PhotoMoveStore.Item> items, Consumer<PreflightProgress> observer) {
@@ -84,14 +83,11 @@ final class PhotoMove implements AutoCloseable {
 
     void read(int bytes) {
       readBytes += bytes;
-      publish(false, false);
+      publish(false);
     }
 
-    void publish(boolean immediate, boolean finished) {
+    void publish(boolean finished) {
       if (observer == null) return;
-      long now = SystemClock.elapsedRealtime();
-      if (!immediate && now - lastUpdate < UPDATE_INTERVAL_MS) return;
-      lastUpdate = now;
       try {
         observer.accept(new PreflightProgress(total, successful, rejected, totalBytes, readBytes, finished));
       } catch (RuntimeException ignored) {
@@ -357,7 +353,7 @@ final class PhotoMove implements AutoCloseable {
     long started = SystemClock.elapsedRealtimeNanos();
     String result = "failed";
     try {
-      meter.publish(true, false);
+      meter.publish(false);
       Map<String, String> cameraEvidence = ledger.importDestinations();
       var archive = new LegacyArchiveMoveProof.Records(context);
       List<PhotoMoveStore.Item> verified = new ArrayList<>();
@@ -380,12 +376,12 @@ final class PhotoMove implements AutoCloseable {
         } catch (IOException | RuntimeException unavailable) {
           meter.rejected++;
         }
-        meter.publish(false, false);
+        meter.publish(false);
       }
       check(stopped);
       List<PhotoMoveStore.Item> items = List.copyOf(verified);
       int skipped = proposal.skipped() + meter.rejected;
-      meter.publish(true, true);
+      meter.publish(true);
       result = "completed";
       return new Plan(proposal.volume(), items, skipped, meter.rejected,
           new ArchivePreflight(proposal.volume(), items, skipped, meter.rejected));
@@ -1384,7 +1380,7 @@ final class PhotoMove implements AutoCloseable {
       byte[] buffer = new byte[64 * 1024];
       long count = 0;
       for (int size; (size = in.read(buffer)) != -1;) {
-        if (meter != null) meter.read(size);
+        if (meter != null && size > 0) meter.read(size);
         check(stopped);
         count += size;
         if (count > bytes) throw new Failure("写真のサイズが変わりました。");
