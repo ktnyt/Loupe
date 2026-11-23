@@ -12,6 +12,7 @@ final class SdRemountUsbDisks {
     private static final Pattern SECTION = Pattern.compile("(?m)^(Disks|Volumes|Records):[ \\t]*(?:\\R|$)");
     private static final Pattern DISK = Pattern.compile("(?m)^[ \\t]+DiskInfo\\{(disk:[0-9]+,[0-9]+)}:[ \\t]*\\R");
     private static final Pattern VOLUME = Pattern.compile("(?m)^[ \\t]+VolumeInfo\\{([^{}\\s]+)}:[ \\t]*\\R");
+    private static final Pattern PUBLIC_TYPE = Pattern.compile("\\A[ \\t]+type=PUBLIC(?:\\s|$)");
     private static final Pattern VOLUME_DISK = Pattern.compile("\\A[ \\t]+type=PUBLIC[ \\t]+diskId=(disk:[0-9]+,[0-9]+)(?:\\s|$)");
     private static final Pattern STATE = Pattern.compile("(?m)[ \t]state=([A-Z_]+)[ \t]*$");
     private static final Pattern FS_UUID = Pattern.compile("(?m)^[ \t]+fsType=\\S+[ \t]+fsUuid=(\\S+)(?:\\s|$)");
@@ -34,6 +35,10 @@ final class SdRemountUsbDisks {
         int volumesStart = sections.end();
         if (!sections.find() || !"Records".equals(sections.group(1))) return Map.of();
         Map<String, String> volumeRecords = records(VOLUME, dump.substring(volumesStart, sections.start()));
+        long publicCount = volumeRecords.entrySet().stream()
+                .filter(record -> record.getKey().startsWith("public:") || PUBLIC_TYPE.matcher(record.getValue()).find())
+                .count();
+        if (publicCount != 2) return Map.of();
         Volume first = volume(firstVolume, volumeRecords, diskRecords);
         Volume second = volume(secondVolume, volumeRecords, diskRecords);
         if (first == null || second == null) return Map.of();

@@ -62,6 +62,7 @@ public final class SdCardRemountPlanTest {
                 mountDump(list(SOURCE_MOUNTED)).replace("diskId=" + SOURCE_DISK, "diskId=" + DESTINATION_DISK),
                 mountDump(list(SOURCE_MOUNTED)).replace("sysPath=" + SOURCE_PATH, "sysPath=null"),
                 mountDump(list(SOURCE_MOUNTED)).replace("Volumes:", "Missing volume section:"),
+                mountDump(list(SOURCE_MOUNTED) + "public:8,33 mounted 1111-2222\n"),
                 mountDump(list(SOURCE_MOUNTED)).replace("diskId=" + SOURCE_DISK, "diskId=disk:8,48"))) {
             var storage = new FakeStorage(list(SOURCE_MOUNTED));
             storage.dumps.add(dump);
