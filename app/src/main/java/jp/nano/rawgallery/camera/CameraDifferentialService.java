@@ -8,6 +8,7 @@ import android.database.Cursor;
 import android.net.*;
 import android.net.wifi.*;
 import android.os.*;
+import android.os.storage.StorageVolume;
 import android.provider.DocumentsContract;
 import java.io.*;
 import java.net.*;
@@ -123,16 +124,38 @@ public final class CameraDifferentialService extends Service {
         if(p.getBoolean("sd_auto",false)&&mediaReceiver==null){
             mediaReceiver = new BroadcastReceiver() {
                 @Override public void onReceive(Context context, Intent event) {
+                    String uuid = notifiedVolumeUuid(event);
+                    if (!Intent.ACTION_MEDIA_MOUNTED.equals(event.getAction())) {
+                        SdRemountMountNotice.physicalDeparture(uuid);
+                        return;
+                    }
                     // The remount owns the storage gate and the import screen refreshes its source when it ends.
-                    if (SdCardRemount.isRunning()) return;
-                    String tree = getSharedPreferences("camera_import", 0).getString("sd_tree_uri", null);
-                    if (tree != null) enqueue(sdRequest(context, Uri.parse(tree), PhotoStorage.selected(context),
-                            MountedCameraCard.detachGeneration()));
+                    if (SdRemountMountNotice.suppressMount(uuid) || SdCardRemount.isRunning()) return;
+                    var settings = getSharedPreferences("camera_import", 0);
+                    String selectedTree = settings.getString("sd_tree_uri", null);
+                    if (selectedTree == null) return;
+                    Uri tree = Uri.parse(selectedTree);
+                    if (settings.getBoolean(SdCardRemount.ENABLED_PREFERENCE, false)
+                            && !MountedCameraCard.matchesMountNotice(tree, uuid)) return;
+                    enqueue(sdRequest(context, tree, PhotoStorage.selected(context), MountedCameraCard.detachGeneration()));
                 }
             };
-            IntentFilter f=new IntentFilter(Intent.ACTION_MEDIA_MOUNTED);f.addDataScheme("file");if(Build.VERSION.SDK_INT>=33)registerReceiver(mediaReceiver,f,Context.RECEIVER_NOT_EXPORTED);else registerReceiver(mediaReceiver,f);
+            IntentFilter f=new IntentFilter(Intent.ACTION_MEDIA_MOUNTED);
+            f.addAction(Intent.ACTION_MEDIA_REMOVED);
+            f.addAction(Intent.ACTION_MEDIA_BAD_REMOVAL);
+            f.addDataScheme("file");if(Build.VERSION.SDK_INT>=33)registerReceiver(mediaReceiver,f,Context.RECEIVER_NOT_EXPORTED);else registerReceiver(mediaReceiver,f);
             watchingSdMounts=true;
         }else if(!p.getBoolean("sd_auto",false)&&mediaReceiver!=null){unregisterReceiver(mediaReceiver);mediaReceiver=null;watchingSdMounts=false;}
+    }
+
+    private static String notifiedVolumeUuid(Intent event) {
+        StorageVolume volume = Build.VERSION.SDK_INT >= 33
+                ? event.getParcelableExtra(StorageVolume.EXTRA_STORAGE_VOLUME, StorageVolume.class)
+                : event.getParcelableExtra(StorageVolume.EXTRA_STORAGE_VOLUME);
+        if (volume != null && SdCardRemountPlan.isFilesystemUuid(volume.getUuid())) return volume.getUuid();
+        Uri path = event.getData();
+        String candidate = path == null ? null : path.getLastPathSegment();
+        return SdCardRemountPlan.isFilesystemUuid(candidate) ? candidate : null;
     }
     private synchronized void enqueue(Intent request){enqueue(request,false);}
     private synchronized void enqueue(Intent request, boolean continuation) {

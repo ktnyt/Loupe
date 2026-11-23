@@ -13,6 +13,7 @@ import android.os.SystemClock;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import jp.nano.rawgallery.CameraImportActivity;
@@ -33,6 +34,7 @@ public final class SdCardRemountBindingChecks {
         Activity screen = test.startActivitySync(CameraImportActivity.showProgressIntent(context)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         try {
+            verifyMountNoticeOrdering();
             awaitShizuku();
             if (SdCardRemount.status() == SdCardRemount.Status.NEEDS_PERMISSION) {
                 CountDownLatch decided = new CountDownLatch(1);
@@ -42,10 +44,29 @@ public final class SdCardRemountBindingChecks {
                 }
             }
             confirmServiceRefusesUnmatchedVolumes(test, context);
-            return "PASS real Shizuku shell Binder, app identity and refusal for nonexistent SD volumes";
+            return "PASS delayed mount suppression, real Shizuku shell Binder, app identity and refusal for nonexistent SD volumes";
         } finally {
             test.runOnMainSync(screen::finish);
         }
+    }
+
+    private static void verifyMountNoticeOrdering() {
+        AtomicLong clock = new AtomicLong(1);
+        var notices = new SdRemountMountNotice.Tracker(clock::get);
+        notices.begin("ABCD-0123");
+        notices.end();
+        if (notices.suppressMount("DEAD-1234") || !notices.suppressMount("abcd0123")
+                || notices.suppressMount("ABCD-0123")) {
+            throw new AssertionError("Only the delayed source broadcast is suppressed");
+        }
+        notices.begin("ABCD-0123");
+        notices.end();
+        notices.physicalDeparture("ABCD-0123");
+        if (notices.suppressMount("ABCD-0123")) throw new AssertionError("Reconnection after physical departure");
+        notices.begin("ABCD-0123");
+        notices.end();
+        clock.addAndGet(5_001);
+        if (notices.suppressMount("ABCD-0123")) throw new AssertionError("Expired remount notice");
     }
 
     private static void awaitShizuku() {

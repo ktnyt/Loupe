@@ -108,8 +108,9 @@ public final class SdCardRemount {
     public static boolean isRunning() { return RUNNING.get(); }
 
     public static boolean start(Context context, Consumer<Result> callback) {
-        if (status() != Status.READY || !RUNNING.compareAndSet(false, true)) return false;
         Context app = context.getApplicationContext();
+        if (RUNNING.get() || selection(app) == null || status() != Status.READY
+                || !RUNNING.compareAndSet(false, true)) return false;
         MAIN.post(() -> new Operation(app, callback).bind());
         return true;
     }
@@ -165,6 +166,7 @@ public final class SdCardRemount {
 
         private Result runUnderGate(ISdCardRemountService service) {
             if (!CameraImportGate.lock.tryLock()) return Result.SKIPPED;
+            boolean noticeStarted = false;
             try {
                 if (status() != Status.READY) return Result.UNAVAILABLE;
                 Selection selection = selection(app);
@@ -181,6 +183,8 @@ public final class SdCardRemount {
                     }
                 };
                 long deadline = SystemClock.elapsedRealtime() + SdCardRemountPlan.OPERATION_MS;
+                SdRemountMountNotice.begin(selection.source());
+                noticeStarted = true;
                 service.remount(selection.source(), selection.destination(), deadline, callback);
                 long remaining = Math.max(0, deadline + RESULT_GRACE_MS - SystemClock.elapsedRealtime());
                 return remoteResult.get(remaining, TimeUnit.MILLISECONDS);
@@ -190,6 +194,7 @@ public final class SdCardRemount {
             } catch (RemoteException | ExecutionException | TimeoutException | RuntimeException e) {
                 return Result.FAILED;
             } finally {
+                if (noticeStarted) SdRemountMountNotice.end();
                 CameraImportGate.lock.unlock();
             }
         }

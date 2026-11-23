@@ -138,6 +138,12 @@ public final class MountedCameraCard {
         }
     }
 
+    static boolean matchesMountNotice(Uri tree, String uuid) {
+        if (!isRemovableTree(tree) || uuid == null) return false;
+        String id = DocumentsContract.getTreeDocumentId(tree);
+        return id.substring(0, id.indexOf(':')).replace("-", "").equalsIgnoreCase(uuid.replace("-", ""));
+    }
+
     static String mountedSourceVolume(Context context, Uri tree) {
         return mountedSourceVolume(context, tree, true);
     }

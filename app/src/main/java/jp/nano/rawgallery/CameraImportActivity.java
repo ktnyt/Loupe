@@ -2,6 +2,9 @@ package jp.nano.rawgallery;
 
 import android.Manifest;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.lifecycle.MutableLiveData;
+import androidx.lifecycle.ViewModel;
+import androidx.lifecycle.ViewModelProvider;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.progressindicator.LinearProgressIndicator;
 import com.google.android.material.materialswitch.MaterialSwitch;
@@ -83,7 +86,8 @@ public final class CameraImportActivity extends AppCompatActivity {
     private MaterialSwitch sdRemount;
     private TextView sdRemountInfo, sdRemountResult;
     private Button sdRemountPermission;
-    private boolean freshManualEntry, sdRemounting, sdRefreshAfterRemount, discoverAfterRemount;
+    private SdRemountState sdRemountState;
+    private boolean freshManualEntry, sdRefreshAfterRemount, discoverAfterRemount;
     private boolean sdRemountPermissionPending, sdRemountPermissionDenied;
     private android.os.CancellationSignal sdStatusCancellation;
     private Runnable removeMountObserver;
@@ -140,6 +144,16 @@ public final class CameraImportActivity extends AppCompatActivity {
         boolean isRunning();
     }
 
+    public static final class SdRemountState extends ViewModel {
+        private boolean running;
+        private final MutableLiveData<SdCardRemount.Result> completion = new MutableLiveData<>();
+
+        private void finish(SdCardRemount.Result outcome) {
+            running = false;
+            completion.setValue(outcome);
+        }
+    }
+
     SdRemountAccess sdRemountAccess = new SdRemountAccess() {
         @Override public SdCardRemount.Status status() { return SdCardRemount.status(); }
         @Override public void requestPermission(Consumer<Boolean> callback) {
@@ -169,6 +183,7 @@ public final class CameraImportActivity extends AppCompatActivity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        sdRemountState = new ViewModelProvider(this).get(SdRemountState.class);
         settings = getSharedPreferences("camera_import", MODE_PRIVATE);
         freshManualEntry = state == null && getIntent().getAction() == null
                 && !getIntent().hasExtra(ATTACHED_SD_TARGET);
@@ -324,6 +339,8 @@ public final class CameraImportActivity extends AppCompatActivity {
         var migrationButtonLayout = (LinearLayout.LayoutParams) migrate.getLayoutParams();
         migrationButtonLayout.topMargin = dp(8);
         migrate.setLayoutParams(migrationButtonLayout);
+        if (sdRemountState.running) showSdRemountResult("SDカードを再マウントしています…");
+        sdRemountState.completion.observe(this, this::showSdRemountCompletion);
         renderSettingsVisibility();
         renderStatus();
     }
@@ -457,25 +474,21 @@ public final class CameraImportActivity extends AppCompatActivity {
     }
 
     private boolean remountBusy() {
-        return sdRemounting || sdRemountAccess.isRunning();
+        return sdRemountState.running || sdRemountAccess.isRunning();
     }
 
     private void startSdRemountOnEntry() {
         if (!settings.getBoolean(SD_REMOUNT_ON_ENTRY, false) || !canStartSourceAction()
                 || sdPicker != null || pendingSdStart != null || sdConfirmation != null || sdSettingsDialog.isShowing()
                 || sdRemountAccess.status() != SdCardRemount.Status.READY) return;
-        sdRemounting = true;
-        if (!sdRemountAccess.start(this::finishSdRemount)) {
-            sdRemounting = false;
-            return;
-        }
+        if (!sdRemountAccess.start(sdRemountState::finish)) return;
+        sdRemountState.running = true;
         cancelSdStatusLoad();
         showSdRemountResult("SDカードを再マウントしています…");
         renderStatus();
     }
 
-    private void finishSdRemount(SdCardRemount.Result outcome) {
-        sdRemounting = false;
+    private void showSdRemountCompletion(SdCardRemount.Result outcome) {
         if (isFinishing() || isDestroyed()) return;
         showSdRemountResult(switch (outcome) {
             case MOUNTED -> "SDカードを再マウントしました。";

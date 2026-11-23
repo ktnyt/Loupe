@@ -75,8 +75,10 @@ final class CameraSdRemountUiChecks {
                 require(option.getMinHeight() >= GalleryUi.dp(option.getContext(), 48), "touch target at least 48dp");
                 reveal(option);
                 fake.status = SdCardRemount.Status.UNAVAILABLE;
-                require(option.performClick(), "enable option");
-                require(option.isChecked() && text(settingsView("sd-remount-info")).contains("ADBモード"),
+                option.performClick();
+                require(option.isChecked() && prefs.getBoolean(CameraImportActivity.SD_REMOUNT_ON_ENTRY, false),
+                        "checking the switch saves the opt-in");
+                require(text(settingsView("sd-remount-info")).contains("インストール"),
                         "enable with unavailable Shizuku shows setup instructions");
                 require(settingsView("sd-remount-permission").getVisibility() == View.GONE,
                         "no permission action while Shizuku is unavailable");
@@ -93,15 +95,18 @@ final class CameraSdRemountUiChecks {
                 require(option().isChecked(), "saved choice remains on");
                 View action = settingsView("sd-remount-permission");
                 reveal(action);
-                require(action.isShown() && action.performClick(), "request permission from SD settings");
-                require(!action.isEnabled(), "pending permission action is disabled");
+                require(action.isShown() && action.isEnabled(), "permission action is available");
+                action.performClick();
+                require(fake.requests == 1 && !action.isEnabled(), "request is sent and action is disabled while pending");
                 fake.permission(false);
                 require(text(settingsView("sd-remount-info")).contains("許可されませんでした"), "denial provides recovery instructions");
             });
             capture(test, "permission-denied");
             test.runOnMainSync(() -> {
                 View action = settingsView("sd-remount-permission");
-                require(action.isEnabled() && action.performClick(), "retry after denial");
+                require(action.isEnabled(), "action is available after denial");
+                action.performClick();
+                require(fake.requests == 2, "retry requests permission again");
                 fake.permission(true);
                 require(action.getVisibility() == View.GONE, "permission action disappears when granted");
             });
@@ -117,14 +122,16 @@ final class CameraSdRemountUiChecks {
 
             screen = open(test, entry(test));
             await(test, () -> fake.starts == 1, "fresh manual entry starts once");
+            screen = recreate(test, screen);
+            require(fake.starts == 1, "recreating a pending remount does not start another");
             CameraImportActivity manual = screen;
             test.runOnMainSync(() -> {
                 require(!screenView(manual, "sd-import-start").isEnabled(), "SD import is disabled during remount");
                 require(text(screenView(manual, "sd-remount-result")).contains("再マウントしています"),
-                        "SD card shows remount in progress");
+                        "recreated SD card shows remount in progress");
                 fake.complete(SdCardRemount.Result.FAILED);
                 require(text(screenView(manual, "sd-remount-result")).contains("接続を確認"),
-                        "SD card shows recoverable failure");
+                        "recreated SD card receives recoverable failure");
                 require(text(screenView(manual, "sd-import-status")).equals(CameraQuickImportSources.SdState.CHECKING.message),
                         "SD source status is queried again after completion");
                 require(screenView(manual, "sd-import-start").isEnabled(), "manual import is usable again");
@@ -135,7 +142,9 @@ final class CameraSdRemountUiChecks {
             test.runOnMainSync(() -> {
                 for (View window : WindowInspector.getGlobalWindowViews()) {
                     if (window.findViewWithTag("sd-remount-switch") == null) continue;
-                    require(findText(window, "SDカードのフォルダを選ぶ").performClick(), "existing picker stays accessible");
+                    View picker = findText(window, "SDカードのフォルダを選ぶ");
+                    require(picker != null && picker.isEnabled(), "existing picker stays accessible");
+                    picker.performClick();
                     return;
                 }
                 throw new AssertionError("missing SD settings dialog");
@@ -143,20 +152,13 @@ final class CameraSdRemountUiChecks {
             await(test, () -> pickers.get() == 1, "SD picker launched");
             require(fake.starts == 1, "return from picker does not remount");
 
-            var recreated = test.addMonitor(CameraImportActivity.class.getName(), null, false);
-            try {
-                test.runOnMainSync(manual::recreate);
-                screen = (CameraImportActivity) recreated.waitForActivityWithTimeout(5000);
-                require(screen != null, "screen recreated");
-            } finally {
-                test.removeMonitor(recreated);
-            }
-            test.waitForIdleSync();
+            screen = recreate(test, screen);
             require(fake.starts == 1, "recreation does not remount");
             finish(test, screen);
 
             screen = open(test, entry(test).putExtra(CameraImportActivity.START_IMPORT_KEEP_ORIGINALS, true));
             await(test, () -> fake.starts == 2, "long press starts one remount");
+            screen = recreate(test, screen);
             test.runOnMainSync(() -> {
                 require(!hasDialog("取り込み元を登録"), "long press waits for remount before discovering sources");
                 fake.complete(SdCardRemount.Result.MOUNTED);
@@ -166,8 +168,8 @@ final class CameraSdRemountUiChecks {
                     && !progress.getActive() && priorCompletion == progress.getCompletion(),
                     "remount leaves actual import progress and the picker untouched");
             return "PASS default off, opt-in with Shizuku unavailable, explicit permission and denial retry, "
-                    + "manual entry once, picker return/recreation, progress/USB attach exclusion, failure and SD recheck, "
-                    + "and deferred long-press discovery with no import or storage command.";
+                    + "manual entry once, picker return, progress/USB attach exclusion, failure and SD recheck after recreation, "
+                    + "and deferred long-press discovery across recreation with no import or storage command.";
         } finally {
             if (screen != null) finish(test, screen);
             test.removeMonitor(pickerMonitor);
@@ -230,8 +232,25 @@ final class CameraSdRemountUiChecks {
         test.waitForIdleSync();
     }
 
+    private static CameraImportActivity recreate(Instrumentation test, CameraImportActivity before) {
+        var monitor = test.addMonitor(CameraImportActivity.class.getName(), null, false);
+        try {
+            test.runOnMainSync(before::recreate);
+            var after = (CameraImportActivity) monitor.waitForActivityWithTimeout(5000);
+            require(after != null && after != before, "screen recreated");
+            test.waitForIdleSync();
+            return after;
+        } finally {
+            test.removeMonitor(monitor);
+        }
+    }
+
     private static void openSettings(Instrumentation test, CameraImportActivity screen) {
-        test.runOnMainSync(() -> require(screenView(screen, "sd-import-settings").performClick(), "open SD pencil"));
+        test.runOnMainSync(() -> {
+            View pencil = screenView(screen, "sd-import-settings");
+            require(pencil.isEnabled(), "SD pencil is available");
+            pencil.performClick();
+        });
         await(test, () -> settingsView("sd-remount-switch") != null, "SD settings dialog visible");
     }
 

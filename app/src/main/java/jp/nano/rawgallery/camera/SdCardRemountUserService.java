@@ -60,27 +60,33 @@ public final class SdCardRemountUserService extends ISdCardRemountService.Stub {
 
     private static final class Sm implements SdCardRemountPlan.Storage {
         private static final String SM = "/system/bin/sm";
+        private static final String DUMPSYS = "/system/bin/dumpsys";
         private static final long COMMAND_MS = 4_000;
-        private static final int MAX_OUTPUT = 8_192;
+        private static final int MAX_SM_OUTPUT = 8_192;
+        private static final int MAX_MOUNT_DUMP = 1_048_576;
 
         @Override public String listPublicVolumes(long deadline) throws IOException, InterruptedException {
-            return run(deadline, SM, "list-volumes", "public");
+            return run(deadline, MAX_SM_OUTPUT, SM, "list-volumes", "public");
+        }
+
+        @Override public String mountDump(long deadline) throws IOException, InterruptedException {
+            return run(deadline, MAX_MOUNT_DUMP, DUMPSYS, "-t", "4", "mount");
         }
 
         @Override public void change(SdCardRemountPlan.Action action, String id, long deadline)
                 throws IOException, InterruptedException {
             if (!SdCardRemountPlan.isPublicId(id)) throw new IOException("Invalid public volume ID");
-            run(deadline, SM, action == SdCardRemountPlan.Action.MOUNT ? "mount" : "unmount", id);
+            run(deadline, MAX_SM_OUTPUT, SM, action == SdCardRemountPlan.Action.MOUNT ? "mount" : "unmount", id);
         }
 
         @Override public long now() { return SystemClock.elapsedRealtime(); }
         @Override public void waitMs(long duration) throws InterruptedException { Thread.sleep(duration); }
 
-        private String run(long deadline, String... argv) throws IOException, InterruptedException {
+        private String run(long deadline, int outputLimit, String... argv) throws IOException, InterruptedException {
             long stop = Math.min(deadline, now() + COMMAND_MS);
             if (now() >= stop) throw new IOException("Storage command deadline elapsed");
             java.lang.Process process = new ProcessBuilder(argv).redirectErrorStream(true).start();
-            FutureTask<String> output = new FutureTask<>(() -> readOutput(process.getInputStream()));
+            FutureTask<String> output = new FutureTask<>(() -> readOutput(process.getInputStream(), outputLimit));
             Thread reader = new Thread(output, "remount-command-output");
             reader.setDaemon(true);
             try {
@@ -99,11 +105,11 @@ public final class SdCardRemountUserService extends ISdCardRemountService.Stub {
 
         private long remaining(long deadline) { return Math.max(0, deadline - now()); }
 
-        private static String readOutput(InputStream stream) throws IOException {
+        private static String readOutput(InputStream stream, int limit) throws IOException {
             try (stream; ByteArrayOutputStream output = new ByteArrayOutputStream()) {
                 byte[] buffer = new byte[1024];
                 for (int count; (count = stream.read(buffer)) != -1;) {
-                    if (output.size() + count > MAX_OUTPUT) throw new IOException("Unexpected storage command output");
+                    if (output.size() + count > limit) throw new IOException("Unexpected storage command output");
                     output.write(buffer, 0, count);
                 }
                 return new String(output.toByteArray(), StandardCharsets.UTF_8);
