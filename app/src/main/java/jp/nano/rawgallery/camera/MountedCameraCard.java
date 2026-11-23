@@ -106,6 +106,15 @@ public final class MountedCameraCard {
         return source;
     }
 
+    public static String requireRemovableSource(Context context, Uri tree, String target) throws Unavailable {
+        String source = mountedSourceVolume(context, tree);
+        if (source == null)
+            throw new Unavailable("接続したSDカードのDCIMフォルダを選んでください。", true);
+        if (source.equalsIgnoreCase(target))
+            throw new Unavailable("取り込み元と保存先が同じカードです。別のカードを選んでください。", true);
+        return source;
+    }
+
     public static boolean isUnmountedRemovableTree(Context context, Uri tree) {
         return isRemovableTree(tree) && mountedSourceVolume(context, tree, false) == null;
     }

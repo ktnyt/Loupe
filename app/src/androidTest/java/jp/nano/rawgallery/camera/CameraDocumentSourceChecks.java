@@ -69,8 +69,12 @@ public final class CameraDocumentSourceChecks {
             @Override public Cursor query(Uri uri, String[] columns, String selection, String[] args, String sort) {
                 if (mode == 5) return null;
                 if (mode == 6) throw new SecurityException("fixture");
-                var cursor = new MatrixCursor(columns);
-                if (mode == 1 || mode == 3 || mode == 4 || mode == 7)
+                var cursor = new MatrixCursor(columns) {
+                    @Override public boolean onMove(int oldPosition, int newPosition) {
+                        return mode != 17 && mode != 18;
+                    }
+                };
+                if (mode == 1 || mode == 3 || mode == 4 || mode == 7 || mode == 18)
                     cursor.addRow(new Object[]{"AB12-CD34:DCIM/TEST.JPG", "TEST.JPG", "image/jpeg", 8L, 1024L});
                 if (mode == 8)
                     cursor.addRow(new Object[]{"AB12-CD34:DCIM/TEST.MP4", "TEST.MP4", "video/mp4", 8L, 1024L});
@@ -78,7 +82,9 @@ public final class CameraDocumentSourceChecks {
                     cursor.addRow(new Object[]{"AB12-CD34:DCIM/unknown", "unknown", "text/plain", 8L, 1024L});
                 if (mode == 13 || mode == 14)
                     cursor.addRow(new Object[]{"AB12-CD34:DCIM/TEST.JPG", mode == 13 ? "" : " ", "image/jpeg", 8L, 1024L});
-                if (mode == 15) cursor.addRow(new Object[]{DocumentsContract.Document.MIME_TYPE_DIR});
+                if (mode == 15 || mode == 16 || mode == 17)
+                    cursor.addRow(new Object[]{DocumentsContract.Document.MIME_TYPE_DIR});
+                if (mode == 16) cursor.addRow(new Object[]{DocumentsContract.Document.MIME_TYPE_DIR});
                 if (mode == 10 || mode == 11) {
                     if (DocumentsContract.getTreeDocumentId(uri).equals(uri.getPathSegments().get(3))) {
                         cursor.addRow(new Object[]{"AB12-CD34:DCIM/100OLYMP", "100OLYMP",
@@ -115,7 +121,7 @@ public final class CameraDocumentSourceChecks {
                 "complete JPEG enumeration produces a candidate");
         require(CameraDifferentialService.noSdCandidates(full, 0).contains("選んだ種類"),
                 "kind filter is not a genuinely empty directory");
-        for (int mode : new int[]{2, 3, 4, 5, 6, 9, 10, 11, 13, 14}) {
+        for (int mode : new int[]{2, 3, 4, 5, 6, 9, 10, 11, 13, 14, 18}) {
             provider.mode = mode;
             try {
                 CameraDocumentSource.list(resolver, tree, "fixture", () -> false);
@@ -184,6 +190,12 @@ public final class CameraDocumentSourceChecks {
         } finally {
             provider.release.countDown();
             require(provider.returned.await(2, java.util.concurrent.TimeUnit.SECONDS), "stalled root fixture was released");
+        }
+
+        for (int mode : new int[]{16, 17}) {
+            provider.mode = mode;
+            require(!CameraDocumentSource.isReachableDirectory(resolver, tree, () -> false),
+                    "root reachability requires precisely one complete row that actually moves");
         }
 
         require(CameraDocumentSource.isImportTree(tree, false), "DCIM picker path can be registered");
@@ -268,6 +280,26 @@ public final class CameraDocumentSourceChecks {
         CameraDocumentSource.copy(source, entry(), output, () -> false, SOURCE);
         require(source.opens == 1 && source.pins == 1 && source.required && Arrays.equals(output.toByteArray(), ORIGINAL),
                 "Resolved source volume opens exactly one original and retains bytes");
+        for (Uri mapped : List.of(MEDIA, PINNED)) {
+            for (int problem = 0; problem < 7; problem++) {
+                Fake blocked = new Fake();
+                blocked.mapped = mapped;
+                blocked.checkMountedRow = true;
+                blocked.mountedRow = mountedRow(problem);
+                expect(blocked, CameraDocumentSource.OriginalAccessException.Reason.VOLUME, SOURCE);
+                require(blocked.opens == 0 && blocked.readBytes == 0,
+                        "incomplete or inconsistent MediaStore metadata never opens the source");
+            }
+            Fake complete = new Fake();
+            complete.mapped = mapped;
+            complete.checkMountedRow = true;
+            complete.pinned = PINNED;
+            complete.mountedRow = mountedRow(-1);
+            var exactOutput = new ByteArrayOutputStream();
+            CameraDocumentSource.copy(complete, entry(), exactOutput, () -> false, SOURCE);
+            require(complete.opens == 1 && Arrays.equals(exactOutput.toByteArray(), ORIGINAL),
+                    "complete single-row metadata allows exact and aggregate mapping to pin to the source");
+        }
         Fake stopped = new Fake();
         stopped.pinned = PINNED;
         ByteArrayOutputStream stoppedOutput = new ByteArrayOutputStream();
@@ -276,6 +308,32 @@ public final class CameraDocumentSourceChecks {
             throw new AssertionError("Cancellation before the pinned open was ignored");
         } catch (InterruptedIOException expected) {}
         require(stopped.opens == 0 && stoppedOutput.size() == 0, "Cancelled source never opens or writes a photo");
+    }
+
+    private static Cursor mountedRow(int problem) {
+        if (problem == 0) return null;
+        String[] columns = {MediaStore.MediaColumns._ID, MediaStore.MediaColumns.VOLUME_NAME,
+                MediaStore.MediaColumns.RELATIVE_PATH, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.SIZE};
+        MatrixCursor result = new MatrixCursor(columns) {
+            @Override public boolean onMove(int oldPosition, int newPosition) {
+                if (problem == 4) return false;
+                if (problem == 5) {
+                    Bundle incomplete = new Bundle();
+                    incomplete.putBoolean(DocumentsContract.EXTRA_LOADING, true);
+                    setExtras(incomplete);
+                }
+                return true;
+            }
+        };
+        result.addRow(new Object[]{problem == 6 ? 1L : 0L, SOURCE, "DCIM/", "TEST.JPG", (long) ORIGINAL.length});
+        if (problem == 3) result.addRow(new Object[]{0L, SOURCE, "DCIM/", "TEST.JPG", (long) ORIGINAL.length});
+        if (problem == 1 || problem == 2) {
+            Bundle incomplete = new Bundle();
+            if (problem == 1) incomplete.putBoolean(DocumentsContract.EXTRA_LOADING, true);
+            else incomplete.putString(DocumentsContract.EXTRA_ERROR, "fixture");
+            result.setExtras(incomplete);
+        }
+        return result;
     }
 
     private static void registrationChecks() throws IOException {
@@ -475,6 +533,19 @@ public final class CameraDocumentSourceChecks {
             }
             require(wrongSource.opens == 0 && ledger.pending().isEmpty() && ledger.known(original) == null,
                     "A wrong source volume cannot allocate a destination or bind a receipt");
+            Fake incomplete = new Fake();
+            incomplete.checkMountedRow = true;
+            incomplete.mountedRow = mountedRow(1);
+            try {
+                importer.importPhoto(original, output -> CameraDocumentSource.copy(
+                        incomplete, entry(), output, () -> false, SOURCE), null, true, false, () -> false);
+                throw new AssertionError("Incomplete source metadata reached the importer");
+            } catch (CameraDocumentSource.OriginalAccessException expected) {
+                require(expected.reason == CameraDocumentSource.OriginalAccessException.Reason.VOLUME, "Incomplete source is not pinned");
+            }
+            require(incomplete.opens == 0 && incomplete.readBytes == 0 && ledger.pending().isEmpty()
+                            && ledger.known(original) == null,
+                    "Incomplete source metadata cannot read original bytes, allocate a destination or record a receipt");
 
             Fake access = new Fake();
             try {
@@ -520,10 +591,19 @@ public final class CameraDocumentSourceChecks {
         Runnable onRead = () -> { };
         public boolean permitted() { return permitted; }
         public Uri mediaUri(Uri document) { require(DOCUMENT.equals(document), "Exact selected document mapping"); maps++; return mapped; }
+        boolean checkMountedRow;
+        Cursor mountedRow;
+
         public Uri onVolume(Uri media, CameraImportFile file, String expectedVolume, android.os.CancellationSignal signal) {
             require(mapped.equals(media) && entry().file.relativePath.equals(file.relativePath) && SOURCE.equals(expectedVolume),
                     "Pinned check receives the exact mapping, original metadata and selected volume");
             pins++;
+            if (checkMountedRow) {
+                try (Cursor row = mountedRow) {
+                    return CameraDocumentSource.matchesMountedOriginal(row,
+                            expectedVolume, android.content.ContentUris.parseId(media), file) ? PINNED : null;
+                }
+            }
             return pinned;
         }
         public InputStream openOriginal(Uri original) throws IOException {

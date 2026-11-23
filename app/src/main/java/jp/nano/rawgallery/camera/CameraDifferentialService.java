@@ -132,6 +132,7 @@ public final class CameraDifferentialService extends Service {
                             try {
                                 if (expectedCard != null) sourceVolume = MountedCameraCard.requireDistinctSource(
                                         this, tree, expectedCard, volume, true, stopped);
+                                else sourceVolume = MountedCameraCard.mountedSourceVolume(this, tree);
                                 requireSdSource(tree, sourceVolume, volume, sdGeneration);
                             } catch (InterruptedIOException interrupted) {
                                 if (!cancelled.getAsBoolean()) requireSdSource(tree, sourceVolume, volume, sdGeneration);

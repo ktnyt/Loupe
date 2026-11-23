@@ -159,10 +159,13 @@ public final class CameraDocumentSource {
                     null, null, null, signal)) {
                 if (cursor == null) return false;
                 Bundle extras = cursor.getExtras();
-                if (extras == null || extras.containsKey(DocumentsContract.EXTRA_ERROR)) return false;
-                if (extras.getBoolean(DocumentsContract.EXTRA_LOADING))
+                if (extras != null && !extras.containsKey(DocumentsContract.EXTRA_ERROR)
+                        && extras.getBoolean(DocumentsContract.EXTRA_LOADING))
                     throw new ListingException(ListingException.Reason.LOADING);
-                return cursor.moveToFirst() && DocumentsContract.Document.MIME_TYPE_DIR.equals(cursor.getString(0));
+                if (!singleCompleteRow(cursor)) return false;
+                int mime = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE);
+                return mime >= 0 && DocumentsContract.Document.MIME_TYPE_DIR.equals(cursor.getString(mime))
+                        && complete(cursor);
             }
         });
     }
@@ -221,17 +224,22 @@ public final class CameraDocumentSource {
         try (Cursor cursor = resolver.query(DocumentsContract.buildChildDocumentsUriUsingTree(tree, id),
                 projection, null, null, null, signal)) {
             requireCompleteListing(cursor);
-            for (String column : projection) if (cursor.getColumnIndex(column) < 0) throw unavailable();
+            int documentId = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID);
+            int displayName = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME);
+            int mimeType = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE);
+            int fileSize = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_SIZE);
+            int lastModified = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_LAST_MODIFIED);
+            int count = cursor.getCount(), visitedRows = 0;
             while (cursor.moveToNext()) {
                 CameraPhotoPublisher.check(cancelled);
-                if (++rows > 20000) throw unavailable();
-                String name = cursor.getString(1);
+                if (++rows > 20000 || ++visitedRows > count) throw unavailable();
+                String name = cursor.getString(displayName);
                 if (name == null || name.isBlank() || name.contains("/") || name.contains("\\") || name.equals(".") || name.equals(".."))
                     throw unavailable();
-                String child = cursor.getString(0);
+                String child = cursor.getString(documentId);
                 if (child == null || child.isEmpty()) throw unavailable();
                 String relative = path.isEmpty() ? name : path + "/" + name;
-                String mime = cursor.getString(2);
+                String mime = cursor.getString(mimeType);
                 if (mime == null || mime.isBlank()) throw unavailable();
                 if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
                     if (!path.isEmpty() || name.equalsIgnoreCase("DCIM")) scan(child, relative, files, depth + 1);
@@ -240,12 +248,13 @@ public final class CameraDocumentSource {
                         hasVideo = true;
                         continue;
                     }
-                    long size = cursor.getLong(3), modified = cursor.getLong(4);
+                    long size = cursor.getLong(fileSize), modified = cursor.getLong(lastModified);
                     if (files.size() >= 20000 || size <= 0 || size > Ep7WifiClient.MAX_FILE_BYTES) throw unavailable();
                     files.add(new Entry(DocumentsContract.buildDocumentUriUsingTree(tree, child),
                             new CameraImportFile(source, relative, size, Long.toString(modified), modified / 1000)));
                 }
             }
+            if (visitedRows != count || cursor.getCount() != count) throw unavailable();
             requireCompleteListing(cursor);
         } catch (android.os.OperationCanceledException stopped) {
             throw new InterruptedIOException("SD card listing cancelled");
@@ -348,15 +357,28 @@ public final class CameraDocumentSource {
         long id = ContentUris.parseId(mapped);
         if (id < 0) return null;
         Uri exact = MediaStore.Files.getContentUri(expected, id);
-        String sourceFolder = file.relativePath.substring(0, file.relativePath.lastIndexOf('/') + 1);
         try (Cursor row = context.getContentResolver().query(mapped,
-                new String[]{MediaStore.MediaColumns.VOLUME_NAME, MediaStore.MediaColumns.RELATIVE_PATH,
-                        MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.SIZE}, null, null, null, signal)) {
-            if (row == null || row.getCount() != 1 || !row.moveToFirst() || !expected.equals(row.getString(0))
-                    || !sourceFolder.equals(row.getString(1)) || !file.name.equals(row.getString(2))
-                    || file.bytes != row.getLong(3)) return null;
+                new String[]{MediaStore.MediaColumns._ID, MediaStore.MediaColumns.VOLUME_NAME,
+                        MediaStore.MediaColumns.RELATIVE_PATH, MediaStore.MediaColumns.DISPLAY_NAME,
+                        MediaStore.MediaColumns.SIZE}, null, null, null, signal)) {
+            return matchesMountedOriginal(row, expected, id, file) ? exact : null;
         }
-        return exact;
+    }
+
+    static boolean matchesMountedOriginal(Cursor row, String volume, long id, CameraImportFile file) {
+        if (!singleCompleteRow(row)) return false;
+        int mediaId = row.getColumnIndex(MediaStore.MediaColumns._ID);
+        int mediaVolume = row.getColumnIndex(MediaStore.MediaColumns.VOLUME_NAME);
+        int path = row.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH);
+        int name = row.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME);
+        int size = row.getColumnIndex(MediaStore.MediaColumns.SIZE);
+        if (mediaId < 0 || mediaVolume < 0 || path < 0 || name < 0 || size < 0) return false;
+        String folder = file.relativePath.substring(0, file.relativePath.lastIndexOf('/') + 1);
+        return row.getType(mediaId) == Cursor.FIELD_TYPE_INTEGER && row.getLong(mediaId) == id
+                && volume.equals(row.getString(mediaVolume)) && folder.equals(row.getString(path))
+                && file.name.equals(row.getString(name))
+                && row.getType(size) == Cursor.FIELD_TYPE_INTEGER && file.bytes == row.getLong(size)
+                && complete(row);
     }
 
     /** Check whether this exact document has any visible rows on the source volume. */
@@ -383,21 +405,28 @@ public final class CameraDocumentSource {
             Uri tree = DocumentsContract.buildTreeDocumentUri(document.getAuthority(),treeId);
             if (!access.canCheckRegistration(tree,volume)) return false;
             try (Cursor row = access.documentRegistration(document, signal)) {
-                if (!complete(row) || row.getCount() != 1 || !row.moveToFirst()) return false;
+                if (!singleCompleteRow(row)) return false;
                 int id = row.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID);
                 int name = row.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME);
                 int size = row.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_SIZE);
                 if (!documentId.equals(row.getString(id)) || !entry.file.name.equals(row.getString(name))
-                        || row.isNull(size) || row.getLong(size) != entry.file.bytes) return false;
+                        || row.getType(size) != Cursor.FIELD_TYPE_INTEGER || row.getLong(size) != entry.file.bytes
+                        || !complete(row)) return false;
             }
             String folder = path.substring(0,path.lastIndexOf('/')+1);
             try (Cursor rows = access.mediaRegistration(volume, folder, entry.file.name, signal)) {
                 return complete(rows) && rows.getColumnIndex(MediaStore.MediaColumns._ID) >= 0
-                        && rows.getCount() == 0 && access.canCheckRegistration(tree,volume);
+                        && rows.getCount() == 0 && !rows.moveToFirst() && rows.getCount() == 0
+                        && complete(rows) && access.canCheckRegistration(tree, volume);
             }
         } catch (IOException | RuntimeException unavailable) {
             return false;
         }
+    }
+
+    private static boolean singleCompleteRow(Cursor cursor) {
+        return complete(cursor) && cursor.getCount() == 1 && cursor.moveToFirst()
+                && cursor.getCount() == 1 && complete(cursor);
     }
 
     private static boolean complete(Cursor cursor) {

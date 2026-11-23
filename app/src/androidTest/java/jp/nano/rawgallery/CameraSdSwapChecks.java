@@ -131,15 +131,27 @@ final class CameraSdSwapChecks {
             var invalidTree = DocumentsContract.buildTreeDocumentUri("com.android.externalstorage.documents", "AA16-6002:Pictures");
             var invalidPick = new CameraImportActivity.SdStart(invalidTree, null, PhotoStorage.selected(screen),
                     "JPEG", epoch, true, OLD.toString());
-            var confirmSource = CameraImportActivity.class.getDeclaredMethod("confirmSdSource",
-                    CameraImportActivity.SdStart.class, boolean.class);
-            confirmSource.setAccessible(true);
-            test.runOnMainSync(() -> {
-                try { confirmSource.invoke(screen, invalidPick, true); }
-                catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
-            });
+            test.runOnMainSync(() -> screen.confirmSdSource(invalidPick, true));
             require(field(screen, "sdConfirmation") == null && OLD.toString().equals(preferences.getString("sd_tree_uri", null)),
                     "the normal picker rejects a non-DCIM tree without publishing the selection");
+
+            Uri primary = DocumentsContract.buildTreeDocumentUri("com.android.externalstorage.documents", "primary:DCIM");
+            var internalPick = new CameraImportActivity.SdStart(primary, null, PhotoStorage.selected(screen),
+                    "JPEG", epoch, true, OLD.toString());
+            test.runOnMainSync(() -> screen.confirmSdSource(internalPick, true));
+            awaitText(test, sdStatus, "接続したSDカードのDCIMフォルダを選んでください。");
+            require(field(screen, "sdConfirmation") == null && OLD.toString().equals(preferences.getString("sd_tree_uri", null)),
+                    "a primary DCIM tree cannot be newly registered as a removable camera source");
+
+            var externalPick = new CameraImportActivity.SdStart(PICKED, null, PhotoStorage.selected(screen),
+                    "JPEG", epoch, true, OLD.toString());
+            assertRegistrationReview(test, screen, externalPick, captures, prefix, sdStatus);
+            require(OLD.toString().equals(preferences.getString("sd_tree_uri", null))
+                            && preferences.getBoolean("sd_auto", false) && started.get() == 0,
+                    "cancellation and a vanished folder both retain the old auto-import source");
+            require(context.getContentResolver().getPersistedUriPermissions().stream()
+                            .noneMatch(permission -> permission.getUri().equals(PICKED)),
+                    "failed final reachability did not persist a read grant");
 
             var result = (TextView) field(screen, "result");
             Field connectionFailure = screen.getClass().getDeclaredField("connectionFailure");
@@ -230,6 +242,85 @@ final class CameraSdSwapChecks {
         throw new AssertionError("expected SD source status");
     }
 
+    private static void assertRegistrationReview(Instrumentation test, CameraImportActivity screen,
+            CameraImportActivity.SdStart request, File captures, String prefix, TextView sdStatus) throws Exception {
+        String source = "取り込み元　カメラのSDカード（AA16-6002）";
+        String destination = "保存先　内部ストレージ";
+        String auto = "カード接続時の自動取り込みに使います";
+        var probes = new AtomicInteger();
+        var available = new java.util.concurrent.atomic.AtomicBoolean(true);
+        CameraImportActivity.SdSourceProbe real = screen.sdSourceProbe;
+        test.runOnMainSync(() -> screen.sdSourceProbe = (pending, cancellation) -> {
+            probes.incrementAndGet();
+            return available.get() ? new CameraImportActivity.SdLocation("aa16-6002", source + "\n" + destination) : null;
+        });
+        try {
+            test.runOnMainSync(() -> screen.confirmSdSource(request, true));
+            var first = awaitConfirmation(test, screen);
+            capture(test, screen, first.getWindow().getDecorView(), captures, prefix + "-registration",
+                    "取り込み元を登録", source, destination, auto, "キャンセル", "登録する");
+
+            var root = test.getUiAutomation().getRootInActiveWindow();
+            Rect safe = PhotoStorageChecks.availableDisplay(screen);
+            int minimum = GalleryUi.dp(screen, 48);
+            requireVisibleAction(root, safe, minimum, "キャンセル");
+            requireVisibleAction(root, safe, minimum, "登録する");
+            var labels = new java.util.ArrayList<String>();
+            addVisibleLabels(root, labels);
+            int explanation = indexContaining(labels, source);
+            require(explanation >= 0 && explanation < indexContaining(labels, "キャンセル")
+                            && explanation < indexContaining(labels, "登録する"),
+                    "native accessibility tree exposes source/destination before registration actions");
+            test.runOnMainSync(() -> first.getButton(android.content.DialogInterface.BUTTON_NEGATIVE).performClick());
+            test.waitForIdleSync();
+            require(probes.get() == 1, "cancelling registration does not run a commit probe");
+
+            test.runOnMainSync(() -> screen.confirmSdSource(request, true));
+            var second = awaitConfirmation(test, screen);
+            require(probes.get() == 2, "second picker review checked the tree");
+            available.set(false);
+            test.runOnMainSync(() -> second.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick());
+            awaitText(test, sdStatus, CameraImportActivity.PICKED_FOLDER_UNAVAILABLE);
+            require(probes.get() == 3, "register tap repeats reachability before taking a grant");
+        } finally {
+            test.runOnMainSync(() -> screen.sdSourceProbe = real);
+        }
+    }
+
+    private static androidx.appcompat.app.AlertDialog awaitConfirmation(Instrumentation test,
+            CameraImportActivity screen) throws Exception {
+        long deadline = SystemClock.uptimeMillis() + 6000;
+        while (SystemClock.uptimeMillis() < deadline) {
+            test.waitForIdleSync();
+            var dialog = (androidx.appcompat.app.AlertDialog) field(screen, "sdConfirmation");
+            if (dialog != null && dialog.isShowing()) return dialog;
+            SystemClock.sleep(30);
+        }
+        throw new AssertionError("registration confirmation did not open");
+    }
+
+    private static void requireVisibleAction(AccessibilityNodeInfo root, Rect safe, int min, String label) {
+        for (AccessibilityNodeInfo node : root.findAccessibilityNodeInfosByText(label)) {
+            Rect bounds = new Rect();
+            node.getBoundsInScreen(bounds);
+            if (node.getText() != null && label.contentEquals(node.getText()) && node.isVisibleToUser() && node.isClickable()
+                    && node.isFocusable() && safe.contains(bounds) && bounds.width() >= min && bounds.height() >= min)
+                return;
+        }
+        throw new AssertionError("registration action lacks a visible focusable 48dp target");
+    }
+
+    private static void addVisibleLabels(AccessibilityNodeInfo node, java.util.List<String> labels) {
+        if (node == null) return;
+        if (node.isVisibleToUser() && node.getText() != null) labels.add(node.getText().toString());
+        for (int i = 0; i < node.getChildCount(); i++) addVisibleLabels(node.getChild(i), labels);
+    }
+
+    private static int indexContaining(java.util.List<String> labels, String text) {
+        for (int i = 0; i < labels.size(); i++) if (labels.get(i).contains(text)) return i;
+        return -1;
+    }
+
     private static void assertStaleReady() throws Exception {
         var entered = new java.util.concurrent.CountDownLatch(1);
         var returnResult = new java.util.concurrent.CountDownLatch(1);
@@ -267,7 +358,12 @@ final class CameraSdSwapChecks {
 
     private static void capture(Instrumentation test, CameraImportActivity activity, File directory, String name,
             String... labels) throws Exception {
-        awaitRenderedFrame(test, activity, labels);
+        capture(test, activity, activity.getWindow().getDecorView(), directory, name, labels);
+    }
+
+    private static void capture(Instrumentation test, CameraImportActivity activity, View decor, File directory,
+            String name, String... labels) throws Exception {
+        awaitRenderedFrame(test, activity, decor, labels);
         Bitmap screen = test.getUiAutomation().takeScreenshot();
         require(screen != null, "capture composed display");
         try (var output = new FileOutputStream(new File(directory, name + ".png"))) {
@@ -277,9 +373,8 @@ final class CameraSdSwapChecks {
         }
     }
 
-    private static void awaitRenderedFrame(Instrumentation test, CameraImportActivity activity, String[] labels)
-            throws InterruptedException {
-        View decor = activity.getWindow().getDecorView();
+    private static void awaitRenderedFrame(Instrumentation test, CameraImportActivity activity, View decor,
+            String[] labels) throws InterruptedException {
         long timeout = SystemClock.uptimeMillis() + 6000;
         do {
             var frame = new java.util.concurrent.CountDownLatch(1);
