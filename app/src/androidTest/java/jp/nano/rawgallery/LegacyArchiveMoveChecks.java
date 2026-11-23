@@ -19,16 +19,19 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.provider.MediaStore;
+import android.text.format.Formatter;
 import android.view.KeyEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FilterInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InterruptedIOException;
 import java.io.UncheckedIOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
@@ -42,7 +45,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 import jp.nano.rawgallery.PhotoStorageChecks.Fixture;
 import jp.nano.rawgallery.camera.CameraImportGate;
 import jp.nano.rawgallery.camera.CameraImportLedger;
@@ -218,6 +223,11 @@ final class LegacyArchiveMoveChecks {
   private static Seed seed(Fixture f, HistoryDb history, ArchiveStore archive, String name, int rgb, boolean missingDate,
       boolean wrongSha) throws Exception {
     byte[] bytes = missingDate ? jpeg(rgb) : jpegWithCaptureTime(f, rgb, SHOT + 1, SHOT + 2);
+    return seed(f, history, archive, name, bytes, missingDate, wrongSha);
+  }
+
+  private static Seed seed(Fixture f, HistoryDb history, ArchiveStore archive, String name, byte[] bytes, boolean missingDate,
+      boolean wrongSha) throws Exception {
     long taken = missingDate ? 0 : (SHOT + 1) * 1000;
     Uri uri = f.insert(PRIMARY, name, bytes, taken);
     require(f.awaitCaptureTime(uri, taken) == taken, "The published fixture has the expected capture time");
@@ -312,6 +322,7 @@ final class LegacyArchiveMoveChecks {
     var fullEof = new AtomicBoolean();
     for (var scenario : List.of("full", "short", "extra", "revoked", "cancelled", "metadata")) {
       var beganRead = new AtomicBoolean();
+      var snapshots = new ArrayList<PhotoMove.PreflightProgress>();
       try (PhotoMove injected = new PhotoMove(context, ledger, history, new PhotoMoveStore(context), ignored -> {}, uri -> {
         require(required.equals(uri), "Preflight uses an original-pinned read of the exact concrete URI");
         byte[] data = switch (scenario) {
@@ -322,6 +333,7 @@ final class LegacyArchiveMoveChecks {
         return new FilterInputStream(new ByteArrayInputStream(data)) {
           @Override public int read(byte[] bytes, int offset, int length) throws IOException {
             if (beganRead.get() && scenario.equals("revoked")) throw new IOException("Synthetic original access revoked");
+            if (!beganRead.get() && scenario.equals("full")) SystemClock.sleep(275);
             int count = super.read(bytes, offset, Math.min(length, Math.max(1, data.length / 2)));
             beganRead.set(true);
             if (count == -1 && scenario.equals("full")) fullEof.set(true);
@@ -335,12 +347,29 @@ final class LegacyArchiveMoveChecks {
         };
       })) {
         if (scenario.equals("cancelled")) {
-          expectInterrupted(() -> preflight(injected, plan, beganRead::get), "Cancelling during the read aborts the entire preflight");
+          expectInterrupted(() -> preflight(injected, plan, beganRead::get, snapshots::add),
+              "Cancelling during the read aborts the entire preflight");
+          require(snapshots.stream().noneMatch(PhotoMove.PreflightProgress::finished), "Cancelled preflight never finishes");
         } else {
-          PhotoMove.Plan checked = preflight(injected, plan, () -> false);
+          PhotoMove.Plan checked = preflight(injected, plan, () -> false, snapshots::add);
           require(scenario.equals("full") ? checked.items().size() == 1 && fullEof.get()
               : checked.items().isEmpty() && checked.archiveRejected() == 1, "Verify EOF and reject short, extra, revoked and metadata-changed originals");
+          PhotoMove.PreflightProgress done = snapshots.get(snapshots.size() - 1);
+          long expectedRead = switch (scenario) {
+            case "short" -> dated.bytes().length - 1;
+            case "extra" -> dated.bytes().length + 1;
+            case "revoked" -> Math.max(1, dated.bytes().length / 2);
+            default -> dated.bytes().length;
+          };
+          require(done.finished() && done.completed() == 1 && done.total() == 1
+              && done.rejected() == checked.archiveRejected() && done.totalBytes() == dated.bytes().length
+              && done.readBytes() == expectedRead, "Final " + scenario + " snapshot reports actual bytes and the completed outcome");
+          if (scenario.equals("full")) require(snapshots.stream().anyMatch(progress -> progress.completed() == 0
+              && progress.readBytes() > 0 && progress.readBytes() < progress.totalBytes()), "Report bytes before a single original is verified");
         }
+        PhotoMove.PreflightProgress initial = snapshots.get(0);
+        require(initial.total() == 1 && initial.completed() == 0 && initial.readBytes() == 0 && !initial.finished(),
+            "Preflight starts with the known candidate count and no reads");
         require(beganRead.get() && injected.batch() == null && f.rows(f.secondary).isEmpty()
             && Arrays.equals(dated.bytes(), f.read(dated.uri())), "A preflight read outcome has no durable move or photo side effects");
       }
@@ -348,10 +377,15 @@ final class LegacyArchiveMoveChecks {
   }
 
   private static PhotoMove.Plan preflight(PhotoMove move, PhotoMove.Plan plan, BooleanSupplier stopped) throws IOException {
+    return preflight(move, plan, stopped, null);
+  }
+
+  private static PhotoMove.Plan preflight(PhotoMove move, PhotoMove.Plan plan, BooleanSupplier stopped,
+      Consumer<PhotoMove.PreflightProgress> observer) throws IOException {
     var gate = CameraImportGate.lock;
     gate.lock();
     try {
-      return move.preflight(plan, stopped);
+      return move.preflight(plan, stopped, observer);
     } finally {
       gate.unlock();
     }
@@ -1401,10 +1435,12 @@ final class LegacyArchiveMoveChecks {
     try (Fixture f = new Fixture(base, secondary); ArchiveStore archive = E2Settings.openRecords(base)) {
       var syntheticKeys = new java.util.ArrayList<String>();
       try {
-        Seed good = seed(f, history, archive, "CONFIRMED.JPG", 0xff845a51, false, false);
-        syntheticKeys.add(good.archiveKey());
-        Seed bad = seed(f, history, archive, "EXCLUDED.JPG", 0xff416c5c, true, true);
-        syntheticKeys.add(bad.archiveKey());
+        int largeSize = 8 * 1024 * 1024;
+        Seed undated = seed(f, history, archive, "UNDATED.JPG", Arrays.copyOf(jpeg(0xff416c5c), largeSize), true, false);
+        syntheticKeys.add(undated.archiveKey());
+        byte[] largeJpeg = Arrays.copyOf(jpegWithCaptureTime(f, 0xff845a51, SHOT + 1, SHOT + 2), largeSize);
+        Seed dated = seed(f, history, archive, "DATED.JPG", largeJpeg, false, false);
+        syntheticKeys.add(dated.archiveKey());
         byte[] strictBytes = jpegWithCaptureTime(f, 0xff4b6085, SHOT, SHOT + 2);
         Uri strict = f.insert(PRIMARY, "STRICT.JPG", strictBytes, SHOT * 1000);
         require(f.awaitCaptureTime(strict, SHOT * 1000) == SHOT * 1000, "Index a strict matching capture time");
@@ -1415,9 +1451,20 @@ final class LegacyArchiveMoveChecks {
             reference.toString());
         var before = history.moveEvidence();
         require(PhotoStorage.select(base, secondary), "Select the isolated UI destination");
-        captureConfirmation(test, base, secondary, captures, profile);
+        Seed bad;
+        try (var move = new PhotoMove(base)) {
+          // Make the first historical candidate fail so its exclusion is visible during the second read.
+          String first = move.plan(secondary).items().stream().filter(PhotoMoveStore.Item::hasHistoricalProof)
+              .findFirst().orElseThrow().source();
+          bad = first.equals(undated.uri().toString()) ? undated : dated;
+        }
+        Seed good = bad == undated ? dated : undated;
+        archive.put(archive.get(bad.archiveKey()).put("sha", SHA), "verified");
+        long archiveRevision = archive.indexRevision();
+        captureConfirmation(test, base, secondary, captures, profile, good, bad);
         try (PhotoMoveStore journal = new PhotoMoveStore(base)) {
           require(journal.batch() == null && !PhotoMoveService.state().running() && f.rows(secondary).isEmpty()
+              && archive.indexRevision() == archiveRevision
               && history.moveEvidence().equals(before) && Arrays.equals(good.bytes(), f.read(good.uri()))
               && Arrays.equals(bad.bytes(), f.read(bad.uri())) && Arrays.equals(strictBytes, f.read(strict))
               && Arrays.equals(referenceBytes, f.read(reference)),
@@ -1433,14 +1480,16 @@ final class LegacyArchiveMoveChecks {
       else restore.putString("photo_volume", previous);
       require(restore.commit(), "Restore the isolated UI storage selection");
     }
-    return "PASS archive count groups and preflight: one history match, two unmatched pending and one other reference, "
+    return "PASS archive count groups and preflight progress: one history match, two unmatched pending and one other reference, "
         + "two eligible after preflight, one archive exclusion and one other exclusion, cancel and back without moving; "
+        + "indeterminate preparation, 1 MiB and 4 MiB inside one original, cancel/retry and pause without stale results; "
         + test.photoStorageEffectiveWidth() + "dp, font " + font + " " + captures.getAbsolutePath();
   }
 
-  private static void captureConfirmation(ArchiveInstrumentation test, Context base, String secondary, File captures, String profile)
-      throws Exception {
-    Activity activity = test.startActivitySync(new Intent(base, PhotoStorageActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+  private static void captureConfirmation(ArchiveInstrumentation test, Context base, String secondary, File captures,
+      String profile, Seed good, Seed bad) throws Exception {
+    PhotoStorageActivity activity = (PhotoStorageActivity) test.startActivitySync(
+        new Intent(base, PhotoStorageActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     try {
       UiAutomation automation = test.getUiAutomation();
       String label = "取り込み済みの写真を移動";
@@ -1474,10 +1523,132 @@ final class LegacyArchiveMoveChecks {
           && automation.injectInputEvent(new KeyEvent(when, when, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK, 0), true),
           "Native back dismisses the archive confirmation");
       awaitStorageControl(automation, moveButton);
+      captureProgress(test, activity, automation, captures, profile, moveButton, confirmed, good, bad);
     } finally {
       test.runOnMainSync(activity::finish);
       test.waitForIdleSync();
     }
+  }
+
+  /** Each test pause happens in the input stream, outside the production progress implementation. */
+  private static final class PacedPreflight implements AutoCloseable {
+    final CountDownLatch preparation, reachedRead = new CountDownLatch(1), continueRead = new CountDownLatch(1);
+    final int pauseAt;
+
+    PacedPreflight(boolean holdPreparation, int mib) {
+      preparation = new CountDownLatch(holdPreparation ? 1 : 0);
+      pauseAt = mib * 1024 * 1024;
+    }
+
+    PhotoMove open(PhotoStorageActivity activity, Uri pacedOriginal) {
+      try {
+        awaitGate(preparation);
+      } catch (IOException error) {
+        throw new UncheckedIOException(error);
+      }
+      return new PhotoMove(activity, CameraImportLedger.get(activity), HistoryDb.Companion.get(activity),
+          new PhotoMoveStore(activity), ignored -> {}, uri -> {
+        InputStream stream = activity.getContentResolver().openInputStream(uri);
+        if (stream == null || !pacedOriginal.equals(uri)) return stream;
+        return new FilterInputStream(stream) {
+          private int bytesRead;
+
+          @Override public int read(byte[] bytes, int offset, int length) throws IOException {
+            if (bytesRead == pauseAt && continueRead.getCount() != 0) {
+              reachedRead.countDown();
+              awaitGate(continueRead);
+            }
+            int count = super.read(bytes, offset, bytesRead < pauseAt ? Math.min(length, pauseAt - bytesRead) : length);
+            if (count > 0) {
+              bytesRead += count;
+              if (bytesRead == pauseAt) SystemClock.sleep(275);
+            }
+            return count;
+          }
+        };
+      });
+    }
+
+    private static void awaitGate(CountDownLatch gate) throws IOException {
+      try {
+        if (!gate.await(15, TimeUnit.SECONDS)) throw new IOException("Timed out awaiting synthetic preflight capture");
+      } catch (InterruptedException error) {
+        throw new InterruptedIOException("Cancelled synthetic preflight capture");
+      }
+    }
+
+    @Override public void close() {
+      preparation.countDown();
+      continueRead.countDown();
+    }
+  }
+
+  private static void captureProgress(ArchiveInstrumentation test, PhotoStorageActivity activity, UiAutomation automation,
+      File captures, String profile, Predicate<AccessibilityNodeInfo> moveButton, Predicate<AccessibilityNodeInfo> confirmed,
+      Seed good, Seed bad) throws Exception {
+    String moveName = "取り込み済みの写真を移動";
+    String stopName = "確認を中止";
+    var mover = new AtomicReference<Supplier<PhotoMove>>(() -> new PhotoMove(activity));
+    test.runOnMainSync(() -> findButton(activity.getWindow().getDecorView(), moveName)
+        .setOnClickListener(view -> activity.plan(mover.get())));
+    Uri required = MediaStore.setRequireOriginal(good.uri());
+    Predicate<AccessibilityNodeInfo> progressBar = node -> "写真の読み取りの進捗".contentEquals(
+        node.getContentDescription() == null ? "" : node.getContentDescription());
+    try (var phase = new PacedPreflight(true, 1)) {
+      mover.set(() -> phase.open(activity, required));
+      click(awaitStorageControl(automation, moveButton));
+      awaitStorageControl(automation, node -> hasText(node, "照合する写真を調べています。"));
+      awaitStorageControl(automation, node -> hasText(node, "まだ移動していません。"));
+      require(awaitStorageControl(automation, progressBar).getRangeInfo() == null, "Preparation is indeterminate");
+      assertTouchTarget(test, activity, awaitStorageControl(automation, node -> hasText(node, stopName)), stopName);
+      captureFrame(test, automation, captures, profile + "-preparing");
+      phase.preparation.countDown();
+      assertReading(activity, automation, good, bad, phase, progressBar);
+      captureFrame(test, automation, captures, profile + "-reading-1mib");
+      click(awaitStorageControl(automation, node -> hasText(node, stopName)));
+      awaitStorageControl(automation, node -> hasText(node, "写真の確認を中止しました。"));
+    }
+    try (var phase = new PacedPreflight(false, 4)) {
+      mover.set(() -> phase.open(activity, required));
+      click(awaitStorageControl(automation, moveButton));
+      assertReading(activity, automation, good, bad, phase, progressBar);
+      captureFrame(test, automation, captures, profile + "-reading-4mib");
+      phase.continueRead.countDown();
+      awaitStorageControl(automation, confirmed);
+      click(awaitStorageControl(automation, node -> hasText(node, "キャンセル")));
+    }
+    try (var phase = new PacedPreflight(false, 1)) {
+      mover.set(() -> phase.open(activity, required));
+      click(awaitStorageControl(automation, moveButton));
+      assertReading(activity, automation, good, bad, phase, progressBar);
+      var monitor = test.addMonitor(PhotoStorageInventoryActivity.class.getName(), null, false);
+      try {
+        test.runOnMainSync(() -> activity.startActivity(new Intent(activity, PhotoStorageInventoryActivity.class)));
+        Activity inventory = test.waitForMonitorWithTimeout(monitor, 6000);
+        require(inventory != null, "Opening inventory pauses the settings Activity");
+        test.runOnMainSync(inventory::finish);
+      } finally {
+        test.removeMonitor(monitor);
+      }
+      awaitStorageControl(automation, moveButton);
+      mover.set(() -> new PhotoMove(activity));
+      click(awaitStorageControl(automation, moveButton));
+      awaitStorageControl(automation, confirmed);
+      click(awaitStorageControl(automation, node -> hasText(node, "キャンセル")));
+    }
+  }
+
+  private static void assertReading(Activity activity, UiAutomation automation, Seed good, Seed bad, PacedPreflight phase,
+      Predicate<AccessibilityNodeInfo> progressBar) throws Exception {
+    require(phase.reachedRead.await(8, TimeUnit.SECONDS), "Pause a real original stream midway through the large file");
+    awaitStorageControl(automation, node -> hasText(node, "バックアップと写真の内容を照合中"));
+    String bytes = Formatter.formatFileSize(activity, (long) phase.pauseAt + bad.bytes().length);
+    String total = Formatter.formatFileSize(activity, (long) good.bytes().length + bad.bytes().length);
+    awaitStorageControl(automation, node -> mentions(node, "1 / 2枚を確認") && mentions(node, "一致 0枚・対象外 1枚")
+        && mentions(node, "読み取り " + bytes + " / " + total));
+    var range = awaitStorageControl(automation, progressBar).getRangeInfo();
+    require(range != null && range.getCurrent() > range.getMin() && range.getCurrent() < range.getMax(),
+        "The byte indicator is determinate and remains below completion while reading the second candidate");
   }
 
   private static void captureCountList(ArchiveInstrumentation test, UiAutomation automation, File captures,
