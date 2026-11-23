@@ -74,6 +74,9 @@ public final class CameraImportActivity extends AppCompatActivity {
     private MaterialSwitch sdVerify, sdAuto;
     private LinearProgressIndicator sdChecking;
     private Button sdStart;
+    private MaterialButton sdSettingsButton;
+    private TextView sdSettingsStatus;
+    private androidx.appcompat.app.AlertDialog sdSettingsDialog;
     private android.os.CancellationSignal sdStatusCancellation;
     private Runnable removeMountObserver;
     private androidx.appcompat.app.AlertDialog sdConfirmation;
@@ -270,35 +273,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         wifiActions = new LinearLayout(this);
         wifiActions.setOrientation(LinearLayout.VERTICAL);
         wifiTrial.addView(wifiActions, new LinearLayout.LayoutParams(-1, -2));
-        LinearLayout sd = card(root, "SDカードから取り込む");
-        sd.addView(text("写真のあるフォルダを選びます。SDカードの写真は削除しません。", 14, GalleryUi.MUTED));
-        sdStatus = status(sd);
-        sdChecking = new LinearProgressIndicator(this);
-        sdChecking.setIndeterminate(true);
-        sdChecking.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        sdChecking.setVisibility(View.GONE);
-        sd.addView(sdChecking);
-        button(sd, "SDカードのフォルダを選ぶ", this::pickSdTree);
-        sdVerify = new MaterialSwitch(this); sdVerify.setChecked(settings.getBoolean("sd_verify_all", false)); sdVerify.setOnCheckedChangeListener((v, checked) -> settings.edit().putBoolean("sd_verify_all", checked).apply()); sdVerify.setText("内容も確認する"); sdVerify.setMinHeight(dp(48)); sd.addView(sdVerify);
-        sd.addView(text("通常は履歴を優先します。同じ名前・サイズ・日時のまま内容だけ変わった写真は見逃す場合があります。内容も確認すると読み直すため時間がかかります。", 14, GalleryUi.MUTED));
-        sdStart = button(sd, "SDカードの写真を取り込む", this::startSd);
-        sdAuto = new MaterialSwitch(this); sdAuto.setText("SDカード接続時に自動で取り込む"); sdAuto.setMinHeight(dp(48));
-        sdAuto.setChecked(settings.getBoolean("sd_auto", false));
-        sdAuto.setOnCheckedChangeListener((v, checked) -> {
-            if (checked && !ensureSdPermissions()) { sdAuto.setChecked(false); return; }
-            if (checked && registeredSdTree() == null) {
-                sdAuto.setChecked(false);
-                showSdPermissionStatus("先に読み取り可能なフォルダを選んでください。");
-                return;
-            }
-            settings.edit().putBoolean("sd_auto", checked).apply(); CameraDifferentialService.updateAuto(this);
-            if (checked && Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
-                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 403);
-        });
-        sd.addView(sdAuto);
-        sd.addView(text("原本をそのまま保存して重複を確認するため、写真すべてと写真の位置情報へのアクセスが必要です。", 14, GalleryUi.MUTED));
-        button(sd, "写真のアクセス権限を確認", this::ensureSdPermissions);
-        button(sd, "アプリの権限設定を開く", () -> startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", getPackageName(), null))));
+        addSdImportCard(root);
         renderSdSource(CameraQuickImportSources.SdState.CHECKING);
         removeMountObserver = MountedCameraCard.observeMounts(this, this::onSdMountChange);
         LinearLayout ledger = card(root, "共通履歴");
@@ -321,6 +296,83 @@ public final class CameraImportActivity extends AppCompatActivity {
         migrate.setLayoutParams(migrationButtonLayout);
         renderSettingsVisibility();
         renderStatus();
+    }
+
+    private void addSdImportCard(LinearLayout root) {
+        LinearLayout sd = card(root, "SDカード取り込み");
+        sd.setTag("sd-import-card");
+        TextView heading = (TextView) sd.getChildAt(0);
+        sd.removeView(heading);
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        header.addView(heading, new LinearLayout.LayoutParams(0, -2, 1));
+        sdSettingsButton = LibraryUi.icon(this, R.drawable.ic_viewer_edit,
+                "SDカード取り込み設定", this::openSdSettings);
+        sdSettingsButton.setTag("sd-import-settings");
+        header.addView(sdSettingsButton);
+        sd.addView(header);
+        sdStatus = status(sd);
+        sdChecking = new LinearProgressIndicator(this);
+        sdChecking.setIndeterminate(true);
+        sdChecking.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        sdChecking.setVisibility(View.GONE);
+        sd.addView(sdChecking);
+        sdStart = button(sd, "SDカードから取り込む", this::startSd);
+        sdStart.setTag("sd-import-start");
+        MaterialUi.filled(sdStart);
+
+        var scroll = new ScrollView(this);
+        LinearLayout options = new LinearLayout(this);
+        options.setOrientation(LinearLayout.VERTICAL);
+        options.setPadding(dp(24), dp(8), dp(24), dp(12));
+        scroll.addView(options);
+        sdSettingsStatus = status(options);
+        button(options, "SDカードのフォルダを選ぶ", () -> {
+            sdSettingsDialog.dismiss();
+            pickSdTree();
+        });
+        sdVerify = new MaterialSwitch(this);
+        sdVerify.setText("内容も確認する");
+        sdVerify.setMinHeight(dp(48));
+        sdVerify.setChecked(settings.getBoolean("sd_verify_all", false));
+        sdVerify.setOnCheckedChangeListener((v, checked) -> settings.edit().putBoolean("sd_verify_all", checked).apply());
+        options.addView(sdVerify);
+        options.addView(text("通常は取り込み済みの写真を読み直しません。写真の内容や保存先を確認し直すときはオンにします。", 14, GalleryUi.MUTED));
+
+        sdAuto = new MaterialSwitch(this);
+        sdAuto.setText("SDカード接続時に自動で取り込む");
+        sdAuto.setMinHeight(dp(48));
+        sdAuto.setChecked(settings.getBoolean("sd_auto", false));
+        sdAuto.setOnCheckedChangeListener((v, checked) -> {
+            if (checked && !ensureSdPermissions()) { sdAuto.setChecked(false); return; }
+            if (checked && registeredSdTree() == null) {
+                sdAuto.setChecked(false);
+                showSdPermissionStatus("先に読み取り可能なフォルダを選んでください。");
+                return;
+            }
+            settings.edit().putBoolean("sd_auto", checked).apply();
+            CameraDifferentialService.updateAuto(this);
+            if (checked && Build.VERSION.SDK_INT >= 33
+                    && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 403);
+        });
+        options.addView(sdAuto);
+        options.addView(text("原本をそのまま保存して重複を確認するため、写真すべてと写真の位置情報へのアクセスが必要です。",
+                14, GalleryUi.MUTED));
+        button(options, "写真のアクセス権限を確認", this::ensureSdPermissions);
+        button(options, "アプリの権限設定を開く", () ->
+                startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.fromParts("package", getPackageName(), null))));
+        sdSettingsDialog = new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                .setTitle("SDカード取り込み設定")
+                .setView(scroll)
+                .setPositiveButton("閉じる", null)
+                .create();
+    }
+
+    private void openSdSettings() {
+        if (quickAvailable() && sdSettingsButton.isEnabled() && !sdSettingsDialog.isShowing())
+            sdSettingsDialog.show();
     }
 
     @Override protected void onStart() {
@@ -346,6 +398,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         if (removeMountObserver != null) removeMountObserver.run();
         abandonSdSubmission();
         cancelSdStatusLoad();
+        sdSettingsDialog.dismiss();
         if (permission != null) {
             try { permission.close(); } catch (IOException ignored) {}
         }
@@ -472,7 +525,10 @@ public final class CameraImportActivity extends AppCompatActivity {
                 } catch (IOException | RuntimeException ignored) { }
                 var outcome = sources;
                 var sdSource = selected;
-                String kinds = manualSd ? "JPEG,RAW" : expectedTarget != null ? requestedUsbKinds(usb) : null;
+                UsbDevice formatDevice = manualSd && expectedTarget != null ? connected() : usb;
+                String kinds = expectedTarget != null
+                        ? requestedUsbKinds(guardedSdTarget(formatDevice, destination) != null ? formatDevice : null)
+                        : manualSd ? "JPEG,RAW" : null;
                 handler.post(() -> {
                     if (generation != sourceGeneration || sourceCancellation != cancellation) return;
                     handler.removeCallbacks(timeout);
@@ -730,11 +786,10 @@ public final class CameraImportActivity extends AppCompatActivity {
                 progress.setProgress(presentation.done);
             }
         }
-        setText(run, mountedRoute ? "SDカードから取り込む"
-                : device != null && !granted ? "USBの使用を許可する"
+        setText(run, device != null && !granted ? "USBの使用を許可する"
                 : settings.getBoolean("configured", false) ? "今すぐ取り込む" : "取り込みの設定をする");
         run.setEnabled(device != null && !active && !starting && permission == null && !migrating && submittedSd == null);
-        run.setVisibility(active ? View.GONE : View.VISIBLE);
+        run.setVisibility(active || mountedRoute ? View.GONE : View.VISIBLE);
         if (notifyButton != null) notifyButton.setVisibility(
                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
                 ? View.VISIBLE : View.GONE);
@@ -744,7 +799,11 @@ public final class CameraImportActivity extends AppCompatActivity {
         renderWifiEnabled();
         auto.setEnabled(UsbLaunchSettings.isEnabled(this) && !active && !migrating && !manualOnly);
         migrate.setEnabled(!active && !starting && !migrating);
-        sdStart.setEnabled(!active && !starting && !migrating && sdConfirmation == null && submittedSd == null);
+        boolean sdAvailable = !active && !starting && !migrating && permission == null
+                && sdConfirmation == null && sdPicker == null && submittedSd == null;
+        sdStart.setEnabled(sdAvailable);
+        sdSettingsButton.setEnabled(sdAvailable);
+        if (active && sdSettingsDialog.isShowing()) sdSettingsDialog.dismiss();
     }
 
     private void renderSettingsVisibility() {
@@ -980,6 +1039,7 @@ public final class CameraImportActivity extends AppCompatActivity {
 
     void renderSdSource(CameraQuickImportSources.SdState state) {
         setText(sdStatus, state.message);
+        setText(sdSettingsStatus, state.message);
         sdChecking.setVisibility(state == CameraQuickImportSources.SdState.CHECKING ? View.VISIBLE : View.GONE);
     }
 
@@ -1039,6 +1099,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         cancelSdStatusLoad();
         sdChecking.setVisibility(View.GONE);
         setText(sdStatus, message);
+        setText(sdSettingsStatus, message);
         sdStatus.post(() -> {
             if (!isFinishing() && !isDestroyed())
                 sdStatus.requestRectangleOnScreen(new android.graphics.Rect(0, 0, sdStatus.getWidth(), sdStatus.getHeight()), true);

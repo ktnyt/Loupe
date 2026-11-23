@@ -8,7 +8,8 @@ object ImportProgress {
     data class PhotoState(
         val stage: PhotoStage, val processed: Int = 0, val total: Int = -1,
         val known: Int = -1, val saved: Int = -1, val contentMatches: Int = -1,
-        val sourceBytes: Long = -1, val destinationBytes: Long = -1, val indexPending: Int = 0
+        val sourceBytes: Long = -1, val destinationBytes: Long = -1, val indexPending: Int = 0,
+        val historyReceipts: Boolean = false
     )
     @Volatile var photo: PhotoState? = null
         private set
@@ -17,8 +18,10 @@ object ImportProgress {
         photo = (photo ?: PhotoState(PhotoStage.LISTING)).copy(stage = PhotoStage.LISTING, processed = scanned, total = total)
         changed()
     }
-    @Synchronized fun photoHistory(checked: Int, total: Int, known: Int) {
-        photo = (photo ?: PhotoState(PhotoStage.HISTORY)).copy(stage = PhotoStage.HISTORY, processed = checked, total = total, known = known)
+    @JvmOverloads
+    @Synchronized fun photoHistory(checked: Int, total: Int, known: Int, historyReceipts: Boolean = false) {
+        photo = (photo ?: PhotoState(PhotoStage.HISTORY)).copy(stage = PhotoStage.HISTORY, processed = checked,
+            total = total, known = known, historyReceipts = historyReceipts)
         changed()
     }
     @JvmOverloads

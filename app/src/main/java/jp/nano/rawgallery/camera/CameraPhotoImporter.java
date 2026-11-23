@@ -8,6 +8,7 @@ import android.system.Os;
 import android.system.OsConstants;
 import android.system.StructStat;
 import java.io.*;
+import java.util.Map;
 import jp.nano.rawgallery.PhotoStorage;
 import java.util.function.BooleanSupplier;
 
@@ -50,6 +51,10 @@ public final class CameraPhotoImporter {
         this.savedReadObserver = savedReadObserver;
     }
     public void recover(BooleanSupplier cancelled)throws IOException {publisher.recover(cancelled);}
+
+    Map<String, CameraImportLedger.Content> sourceSnapshot(String sourceId) {
+        return ledger.sourceSnapshot(sourceId);
+    }
 
     boolean knownSdRevision(CameraImportFile source, BooleanSupplier stopped,
             CameraPhotoPublisher.CommitCheck requireMappedSource, CameraPhotoPublisher.CommitCheck requireFreshSource)

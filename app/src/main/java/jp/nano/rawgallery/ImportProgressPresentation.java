@@ -46,14 +46,14 @@ public final class ImportProgressPresentation {
       case HISTORY:
         primary = "取り込み履歴を確認中";
         secondary = count(p.getProcessed(), p.getTotal());
-        if (p.getKnown() >= 0) secondary += " · 保存済み " + p.getKnown() + "件";
+        if (p.getKnown() >= 0) secondary += " · " + known(p);
         break;
       case CONTENT:
       case SAVING:
         primary = "写真を確認・取り込み中";
         secondary = "要確認 " + count(p.getProcessed(), p.getTotal());
         if (p.getIndexPending() > 0) secondary += " · 登録待ち " + p.getIndexPending() + "件";
-        if (p.getKnown() >= 0) secondary += " · 保存済み " + p.getKnown() + "件";
+        if (p.getKnown() >= 0) secondary += " · " + known(p);
         if (p.getSaved() >= 0) secondary += " · 新規保存 " + p.getSaved() + "件";
         if (p.getSourceBytes() >= 0) secondary += " · 読取 " + bytes(p.getSourceBytes());
         break;
@@ -83,11 +83,20 @@ public final class ImportProgressPresentation {
 
   private static String summary(ImportProgress.PhotoState p) {
     String text = p.getSaved() >= 0 ? "新規保存 " + p.getSaved() + "件" : "";
-    int existing = p.getKnown() < 0 ? p.getContentMatches() : p.getKnown() + Math.max(0, p.getContentMatches());
-    if (existing >= 0) text += (text.isEmpty() ? "" : " · ") + "保存済み " + existing + "件";
+    if (p.getHistoryReceipts()) {
+      if (p.getKnown() > 0) text += (text.isEmpty() ? "" : " · ") + known(p);
+      if (p.getContentMatches() > 0) text += (text.isEmpty() ? "" : " · ") + "内容一致 " + p.getContentMatches() + "件";
+    } else {
+      int existing = p.getKnown() < 0 ? p.getContentMatches() : p.getKnown() + Math.max(0, p.getContentMatches());
+      if (existing >= 0) text += (text.isEmpty() ? "" : " · ") + "保存済み " + existing + "件";
+    }
     if (p.getIndexPending() > 0) text += " · 登録待ち " + p.getIndexPending() + "件";
     if (p.getSourceBytes() >= 0) text += (text.isEmpty() ? "" : " · ") + "読取 " + bytes(p.getSourceBytes());
     return text;
+  }
+
+  private static String known(ImportProgress.PhotoState p) {
+    return (p.getHistoryReceipts() ? "取り込み履歴あり " : "保存済み ") + p.getKnown() + "件";
   }
 
   private static String value(String text, String fallback) { return text == null ? fallback : text; }
