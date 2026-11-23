@@ -5,6 +5,7 @@ import android.net.Uri;
 import android.os.CancellationSignal;
 import android.provider.DocumentsContract;
 import jp.nano.rawgallery.camera.CameraCredentialStore;
+import jp.nano.rawgallery.camera.MountedCameraCard;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -20,26 +21,60 @@ final class CameraQuickImportSources {
         final List<Profile> profiles;
         Sources(Uri sd, List<Profile> profiles) { this.sd = sd; this.profiles = List.copyOf(profiles); }
     }
-    static Uri reachableSdTree(Context context, CancellationSignal cancelled) {
-        String saved = context.getSharedPreferences("camera_import", 0).getString("sd_tree_uri", null);
-        if (saved == null) return null;
-        try {
-            Uri tree = Uri.parse(saved);
-            boolean granted = false;
-            for (var grant : context.getContentResolver().getPersistedUriPermissions())
-                if (grant.isReadPermission() && grant.getUri().equals(tree)) granted = true;
-            if (!granted) return null;
-            return isReachableDirectory(context.getContentResolver(), tree, cancelled) ? tree : null;
-        } catch (RuntimeException unavailable) { cancelled.throwIfCanceled(); }
-        return null;
+    enum SdState {
+        CHECKING("SDカードを確認しています…"),
+        UNREGISTERED("取り込み元のDCIMフォルダを選んでください。"),
+        NO_GRANT("SDカードの読み取り許可がありません。フォルダを選び直してください。"),
+        DISCONNECTED("登録したSDカードが接続されていません。取り込み元のフォルダを選び直してください。"),
+        FOLDER_UNAVAILABLE("登録したフォルダを確認できません。接続を確認するか、フォルダを選び直してください。"),
+        READY("取り込み元のフォルダを確認しました。");
+
+        final String message;
+        SdState(String message) { this.message = message; }
     }
+
+    record SdSource(SdState state, Uri tree) {
+        Uri reachableTree() { return state == SdState.READY ? tree : null; }
+    }
+
+    static SdState registrationState(boolean registered, boolean disconnected, boolean granted) {
+        if (!registered) return SdState.UNREGISTERED;
+        if (disconnected) return SdState.DISCONNECTED;
+        return granted ? SdState.CHECKING : SdState.NO_GRANT;
+    }
+
+    static SdSource inspectSd(Context context, CancellationSignal cancelled) {
+        cancelled.throwIfCanceled();
+        String saved = context.getSharedPreferences("camera_import", 0).getString("sd_tree_uri", null);
+        Uri tree = saved == null ? null : Uri.parse(saved);
+        try {
+            var resolver = context.getContentResolver();
+            SdState state = registrationState(tree != null, MountedCameraCard.isUnmountedRemovableTree(context, tree),
+                    tree != null && resolver.getPersistedUriPermissions().stream()
+                            .anyMatch(grant -> grant.isReadPermission() && tree.equals(grant.getUri())));
+            if (state != SdState.CHECKING) return new SdSource(state, tree);
+            return new SdSource(isReachableDirectory(resolver, tree, cancelled)
+                    ? SdState.READY : SdState.FOLDER_UNAVAILABLE, tree);
+        } catch (RuntimeException unavailable) {
+            cancelled.throwIfCanceled();
+            return new SdSource(SdState.FOLDER_UNAVAILABLE, tree);
+        }
+    }
+
+    static Uri reachableSdTree(Context context, CancellationSignal cancelled) {
+        return inspectSd(context, cancelled).reachableTree();
+    }
+
     static boolean isReachableDirectory(android.content.ContentResolver resolver, Uri tree, CancellationSignal cancelled) {
         try {
             cancelled.throwIfCanceled();
             Uri document = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
             try (var cursor = resolver.query(document,
                     new String[]{DocumentsContract.Document.COLUMN_MIME_TYPE}, null, null, null, cancelled)) {
-                return cursor != null && cursor.moveToFirst()
+                if (cursor == null || !cursor.moveToFirst()) return false;
+                var extras = cursor.getExtras();
+                return extras != null && !extras.getBoolean(DocumentsContract.EXTRA_LOADING)
+                        && !extras.containsKey(DocumentsContract.EXTRA_ERROR)
                         && DocumentsContract.Document.MIME_TYPE_DIR.equals(cursor.getString(0));
             }
         } catch (RuntimeException unavailable) { cancelled.throwIfCanceled(); return false; }

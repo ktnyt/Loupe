@@ -56,6 +56,10 @@ public final class ImportProgressPresentation {
         if (p.getSaved() >= 0) secondary += " · 新規保存 " + p.getSaved() + "件";
         if (p.getSourceBytes() >= 0) secondary += " · 読取 " + bytes(p.getSourceBytes());
         break;
+      case NO_CANDIDATES:
+        primary = value(state.getLastMessage(), "取り込める写真がありません。");
+        secondary = "";
+        break;
       default:
         primary = switch (p.getStage()) {
           case COMPLETE -> "取り込み完了";

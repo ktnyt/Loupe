@@ -34,8 +34,13 @@ public final class CameraDifferentialService extends Service {
     public static void startRegistered(Context c,String profileId,boolean verifyAll){start(c,new Intent(c,CameraDifferentialService.class).setAction(PAIRED).putExtra("profile_id",profileId).putExtra("verify",verifyAll));}
     public static void startDocumentTree(Context c,Uri uri,boolean verifyAll){startDocumentTree(c,uri,verifyAll,null,null);}
     private static final String EXPECTED_CARD = "sd_expected_destination", SD_KINDS = "sd_kinds";
+    private static final String SD_GENERATION = "sd_detach_generation";
     public static void startDocumentTree(Context c,Uri uri,boolean verifyAll,String expectedCard,String kinds){
-        Intent request=new Intent(c,CameraDifferentialService.class).setAction(SD).setData(uri).putExtra("verify",verifyAll);
+        startDocumentTree(c, uri, verifyAll, expectedCard, kinds, MountedCameraCard.detachGeneration());
+    }
+    public static void startDocumentTree(Context c,Uri uri,boolean verifyAll,String expectedCard,String kinds,long generation){
+        Intent request=new Intent(c,CameraDifferentialService.class).setAction(SD).setData(uri)
+                .putExtra("verify",verifyAll).putExtra(SD_GENERATION, generation);
         if(expectedCard!=null)request.putExtra(EXPECTED_CARD,expectedCard);
         if(kinds!=null)request.putExtra(SD_KINDS,kinds);
         start(c,request);
@@ -43,7 +48,7 @@ public final class CameraDifferentialService extends Service {
     public static void updateAuto(Context c){start(c,new Intent(c,CameraDifferentialService.class).setAction(WATCH));}
     private static void start(Context c,Intent i){c.startForegroundService(i);}
     @Override public IBinder onBind(Intent i){return null;}
-    @Override public void onCreate(){super.onCreate();getSystemService(NotificationManager.class).createNotificationChannel(new NotificationChannel(CHANNEL,"写真の取り込み",NotificationManager.IMPORTANCE_LOW));}
+    @Override public void onCreate(){super.onCreate();MountedCameraCard.startObserving(this);getSystemService(NotificationManager.class).createNotificationChannel(new NotificationChannel(CHANNEL,"写真の取り込み",NotificationManager.IMPORTANCE_LOW));}
     private PendingIntent progressPendingIntent() {
         Intent intent = CameraImportActivity.showProgressIntent(this).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         return PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
@@ -81,6 +86,7 @@ public final class CameraDifferentialService extends Service {
         if(continuation&&cancelled.getAsBoolean())return;
         boolean sdRequest=SD.equals(request.getAction());
         String queuedVolume=sdRequest?jp.nano.rawgallery.PhotoStorage.selected(this):null;
+        long sdGeneration=request.getLongExtra(SD_GENERATION, MountedCameraCard.detachGeneration());
         String requestedCard=request.getStringExtra(EXPECTED_CARD);
         String pinnedCard=requestedCard!=null||!sdRequest?requestedCard
                 :MountedCameraCard.targetWithGenericReader(this,queuedVolume);
@@ -100,7 +106,10 @@ public final class CameraDifferentialService extends Service {
                         String permission=Build.VERSION.SDK_INT>=33?Manifest.permission.READ_MEDIA_IMAGES:Manifest.permission.READ_EXTERNAL_STORAGE;
                         if(checkSelfPermission(permission)!=PackageManager.PERMISSION_GRANTED)
                             throw new MountedCameraCard.Unavailable("重複を確認するため写真全体へのアクセスを許可してください。");
-                        if(SD.equals(request.getAction()))CameraDocumentSource.requireOriginalPermission(this);
+                        if (sdRequest) {
+                            MountedCameraCard.requireGeneration(sdGeneration);
+                            CameraDocumentSource.requireOriginalPermission(this);
+                        }
                         jp.nano.rawgallery.PhotoStorage.requireImportReady(this);
                         String volume=jp.nano.rawgallery.PhotoStorage.selected(this);
                         if(sdRequest&&!volume.equals(queuedVolume))
@@ -116,9 +125,9 @@ public final class CameraDifferentialService extends Service {
                         else if(WIFI.equals(request.getAction()))wifi(importer,request.getBooleanExtra("verify",getSharedPreferences("camera_import",0).getBoolean("wifi_verify_all",false)));
                         else if(SD.equals(request.getAction())&&request.getData()!=null)sd(importer,request.getData(),
                                 request.getBooleanExtra("verify",getSharedPreferences("camera_import",0).getBoolean("sd_verify_all",false)),
-                                sourceVolume,kinds);
+                                sourceVolume,kinds,volume,sdGeneration);
                         else throw new IOException("接続元がありません");
-                    }catch(Exception e){runMetrics.terminal(cancelled.getAsBoolean()?"cancelled":"failed");ImportProgress.INSTANCE.finish(cancelled.getAsBoolean()?"取り込みを中断しました":(e instanceof CameraPairedSession.MissingWifiException||e instanceof CameraDocumentSource.OriginalAccessException||e instanceof MountedCameraCard.Unavailable||e instanceof jp.nano.rawgallery.PhotoStorage.Unavailable)?e.getMessage():"取り込みを完了できませんでした。接続と写真へのアクセスを確認してください");android.util.Log.w("CameraDifferential","Import failed: "+e.getClass().getSimpleName());}
+                    }catch(Exception e){runMetrics.terminal(cancelled.getAsBoolean()?"cancelled":"failed");ImportProgress.INSTANCE.finish(cancelled.getAsBoolean()?"取り込みを中断しました":(e instanceof CameraPairedSession.MissingWifiException||e instanceof CameraDocumentSource.OriginalAccessException||e instanceof CameraDocumentSource.ListingException||e instanceof MountedCameraCard.Unavailable||e instanceof jp.nano.rawgallery.PhotoStorage.Unavailable)?e.getMessage():"取り込みを完了できませんでした。接続と写真へのアクセスを確認してください");android.util.Log.w("CameraDifferential","Import failed: "+e.getClass().getSimpleName());}
                 });
                 if(!accepted&&!destroyed)getSystemService(NotificationManager.class).notify(783,
                         new Notification.Builder(this,CHANNEL).setSmallIcon(android.R.drawable.ic_menu_camera)
@@ -231,33 +240,82 @@ public final class CameraDifferentialService extends Service {
                 .collect(java.util.stream.Collectors.toList());
     }
 
-    private void sd(CameraPhotoImporter importer,Uri tree,boolean verify,String sourceVolume,Set<MediaTypes.Kind> kinds)throws IOException{
-        CameraDocumentSource.requireOriginalPermission(this);
-        long start=System.nanoTime();ImportProgress.INSTANCE.begin("SDカード");ImportProgress.INSTANCE.photoListing(0,-1);notifyProgress();
-        long listStart=android.os.SystemClock.elapsedRealtime();
-        CameraDocumentSource.Listing listing=CameraDocumentSource.list(this,tree,cancelled);
-        runMetrics.listingMs=android.os.SystemClock.elapsedRealtime()-listStart;
-        List<CameraDocumentSource.Entry> selected=selectedPhotos(listing.photos,kinds);
-        runMetrics.listed=listing.photos.size();runMetrics.candidates=selected.size();
-        ImportProgress.INSTANCE.photoListing(selected.size(),selected.size());
-        int added=0,done=0;long bytes=0;runMetrics.content();notifyProgress();
-        for(CameraDocumentSource.Entry entry:selected){
-            CameraPhotoPublisher.check(cancelled);
-            SourceCheck check=sourceVolume==null?null:()->{
-                MountedCameraCard.requireGrant(this,tree);
-                CameraDocumentSource.requireMappedOriginal(this,entry,sourceVolume,cancelled);
-            };
-            CameraPhotoImporter.Result result=retry(importer,entry.file,out->{
-                if(sourceVolume!=null)MountedCameraCard.requireGrant(this,tree);
-                CameraDocumentSource.copy(this,entry,out,cancelled,sourceVolume);
-            },listing.stable,verify,cancelled,true,check);
-            if(result.imported){added++;runMetrics.saved++;}else runMetrics.matches++;
-            bytes+=result.sourceBytesRead;runMetrics.processed++;runMetrics.content();
-            ImportProgress.INSTANCE.update(++done,selected.size());notifyProgress();
+    static String noSdCandidates(CameraDocumentSource.Listing listing, int selectedCount) {
+        if (selectedCount > 0) return null;
+        if (!listing.photos.isEmpty())
+            return "選んだ種類の写真がありません。JPEGまたはRAWの選択を確認してください。";
+        return listing.hasVideo
+                ? "このフォルダには動画があります。この方法で取り込めるのはJPEGとRAWです。"
+                : "選んだフォルダに取り込める写真がありません。";
+    }
+
+    private void requireSdSource(Uri tree, String source, String target, long generation) throws IOException {
+        MountedCameraCard.requireGeneration(generation);
+        if (!target.equals(jp.nano.rawgallery.PhotoStorage.selected(this)))
+            throw new MountedCameraCard.Unavailable("保存先が変わりました。取り込み元と保存先を確認してください。");
+        if (source != null) {
+            MountedCameraCard.requireGrant(this, tree);
+            MountedCameraCard.requireMountedSource(this, tree, source);
         }
+    }
+
+    private void sd(CameraPhotoImporter importer, Uri tree, boolean verify, String sourceVolume,
+            Set<MediaTypes.Kind> kinds, String target, long generation) throws IOException {
         CameraDocumentSource.requireOriginalPermission(this);
-        CameraPhotoPublisher.check(cancelled);
-        finish(added,done,bytes,start,true);
+        requireSdSource(tree, sourceVolume, target, generation);
+        BooleanSupplier stopped = () -> cancelled.getAsBoolean() || MountedCameraCard.detachGeneration() != generation;
+        long start = System.nanoTime();
+        ImportProgress.INSTANCE.begin("SDカード");
+        ImportProgress.INSTANCE.photoListing(0, -1);
+        notifyProgress();
+        try {
+            long listingStart = SystemClock.elapsedRealtime();
+            CameraDocumentSource.Listing listing = CameraDocumentSource.list(this, tree, stopped);
+            requireSdSource(tree, sourceVolume, target, generation);
+            CameraDocumentSource.requireOriginalPermission(this);
+            runMetrics.listingMs = SystemClock.elapsedRealtime() - listingStart;
+            List<CameraDocumentSource.Entry> selected = selectedPhotos(listing.photos, kinds);
+            runMetrics.listed = listing.photos.size();
+            runMetrics.candidates = selected.size();
+            String noCandidates = noSdCandidates(listing, selected.size());
+            if (noCandidates != null) {
+                CameraPhotoPublisher.check(stopped);
+                runMetrics.terminal("no_candidates");
+                ImportProgress.INSTANCE.finish(noCandidates);
+                return;
+            }
+            ImportProgress.INSTANCE.photoListing(selected.size(), selected.size());
+            int added = 0, done = 0;
+            long bytes = 0;
+            runMetrics.content();
+            notifyProgress();
+            for (CameraDocumentSource.Entry entry : selected) {
+                CameraPhotoPublisher.check(stopped);
+                SourceCheck check = () -> {
+                    requireSdSource(tree, sourceVolume, target, generation);
+                    if (sourceVolume != null)
+                        CameraDocumentSource.requireMappedOriginal(this, entry, sourceVolume, stopped);
+                };
+                CameraPhotoImporter.Result result = retry(importer, entry.file, out -> {
+                    requireSdSource(tree, sourceVolume, target, generation);
+                    CameraDocumentSource.copy(this, entry, out, stopped, sourceVolume);
+                }, listing.stable, verify, stopped, true, check);
+                if (result.imported) { added++; runMetrics.saved++; }
+                else runMetrics.matches++;
+                bytes += result.sourceBytesRead;
+                runMetrics.processed++;
+                runMetrics.content();
+                ImportProgress.INSTANCE.update(++done, selected.size());
+                notifyProgress();
+            }
+            CameraDocumentSource.requireOriginalPermission(this);
+            CameraPhotoPublisher.check(stopped);
+            requireSdSource(tree, sourceVolume, target, generation);
+            finish(added, done, bytes, start, true);
+        } catch (InterruptedIOException interrupted) {
+            if (!cancelled.getAsBoolean()) MountedCameraCard.requireGeneration(generation);
+            throw interrupted;
+        }
     }
     private void notifyProgress(){getSystemService(NotificationManager.class).notify(781,notification(jp.nano.rawgallery.ImportProgressPresentation.current().accessibility()));}
     private void finish(int added,int count,long bytes,long start,boolean card){

@@ -22,42 +22,121 @@ public final class CameraDocumentSource {
         Entry(Uri uri,CameraImportFile file){this.uri=uri;this.file=file;}
     }
     public static final class Listing {
-        public final List<Entry> photos;public final boolean stable;
-        Listing(List<Entry> photos,boolean stable){this.photos=Collections.unmodifiableList(photos);this.stable=stable;}
-    }
-    private final Context context;private final Uri tree;private final String source;private final BooleanSupplier cancelled;
-    private int visited,rows;
-    private CameraDocumentSource(Context context,Uri tree,String source,BooleanSupplier cancelled){this.context=context;this.tree=tree;this.source=source;this.cancelled=cancelled;}
-    public static Listing list(Context context,Uri tree,BooleanSupplier cancelled)throws IOException {
-        CameraPhotoPublisher.check(cancelled);
-        if(tree==null||!DocumentsContract.isTreeUri(tree))throw new IOException("Choose the SD card DCIM folder");
-        String root=DocumentsContract.getTreeDocumentId(tree);
-        String path=root.contains(":")?root.substring(root.indexOf(':')+1):"";
-        if(!path.isEmpty()&&!path.equalsIgnoreCase("DCIM")&&!path.regionMatches(true,0,"DCIM/",0,5))throw new IOException("Choose the SD card DCIM folder");
-        if(!path.isEmpty())try{new CameraImportFile("path-check",path+"/check.JPG",1,"",0);}catch(IllegalArgumentException invalid){throw new IOException("Invalid DCIM tree path",invalid);}
-        String identity=CameraSourceIdentity.sd(context,tree);
-        CameraDocumentSource reader=new CameraDocumentSource(context,tree,originalSourceId(identity==null?"saf:"+tree:identity),cancelled);
-        List<Entry> files=new ArrayList<>();reader.scan(root,path,files,0);return new Listing(files,identity!=null);
-    }
-    private void scan(String id,String path,List<Entry> files,int depth)throws IOException {
-        CameraPhotoPublisher.check(cancelled);if(depth>5||++visited>1000)throw new IOException("SD directory limit");
-        String[] projection={DocumentsContract.Document.COLUMN_DOCUMENT_ID,DocumentsContract.Document.COLUMN_DISPLAY_NAME,DocumentsContract.Document.COLUMN_MIME_TYPE,DocumentsContract.Document.COLUMN_SIZE,DocumentsContract.Document.COLUMN_LAST_MODIFIED};
-        try(Cursor c=context.getContentResolver().query(DocumentsContract.buildChildDocumentsUriUsingTree(tree,id),projection,null,null,null)) {
-            if(c==null)throw new IOException("SD listing failed");
-            while(c.moveToNext()) {
-                if(++rows>20000)throw new IOException("SD entry limit");
-                CameraPhotoPublisher.check(cancelled);String name=c.getString(1);
-                if(name==null||name.contains("/")||name.contains("\\")||name.equals(".")||name.equals(".."))throw new IOException("Invalid SD name");
-                String child=c.getString(0),mime=c.getString(2),relative=path.isEmpty()?name:path+"/"+name;
-                if(DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)){if(!path.isEmpty()||name.equalsIgnoreCase("DCIM"))scan(child,relative,files,depth+1);}
-                else if(!path.isEmpty()&&MediaTypes.INSTANCE.kindOf(name)!=null&&!MediaTypes.INSTANCE.isVideo(name)) {
-                    if(files.size()>=20000)throw new IOException("SD file limit");
-                    long size=c.getLong(3),modified=c.getLong(4);if(size<=0||size>Ep7WifiClient.MAX_FILE_BYTES)throw new IOException("Unsupported photo size");
-                    files.add(new Entry(DocumentsContract.buildDocumentUriUsingTree(tree,child),new CameraImportFile(source,relative,size,Long.toString(modified),modified/1000)));
-                }
-            }
+        public final List<Entry> photos;
+        public final boolean stable;
+        final boolean hasVideo;
+
+        Listing(List<Entry> photos, boolean stable, boolean hasVideo) {
+            this.photos = Collections.unmodifiableList(photos);
+            this.stable = stable;
+            this.hasVideo = hasVideo;
         }
     }
+
+    static final class ListingException extends IOException {
+        enum Reason { LOADING, UNAVAILABLE, NO_GRANT }
+        final Reason reason;
+
+        ListingException(Reason reason) {
+            super(switch (reason) {
+                case LOADING -> "SDカードの一覧を読み込み中です。少し待ってから確認してください。";
+                case UNAVAILABLE -> "SDカードの一覧を確認できません。接続とフォルダを確認してください。";
+                case NO_GRANT -> "SDカードの読み取り許可を確認できません。フォルダを選び直してください。";
+            });
+            this.reason = reason;
+        }
+    }
+
+    private final ContentResolver resolver;
+    private final Uri tree;
+    private final String source;
+    private final BooleanSupplier cancelled;
+    private int visited, rows;
+    private boolean hasVideo;
+
+    private CameraDocumentSource(ContentResolver resolver, Uri tree, String source, BooleanSupplier cancelled) {
+        this.resolver = resolver;
+        this.tree = tree;
+        this.source = source;
+        this.cancelled = cancelled;
+    }
+    public static Listing list(Context context,Uri tree,BooleanSupplier cancelled)throws IOException {
+        CameraPhotoPublisher.check(cancelled);
+        String identity = CameraSourceIdentity.sd(context, tree);
+        return list(context.getContentResolver(), tree, identity, cancelled);
+    }
+
+    static Listing list(ContentResolver resolver, Uri tree, String identity, BooleanSupplier cancelled) throws IOException {
+        CameraPhotoPublisher.check(cancelled);
+        if (tree == null || !DocumentsContract.isTreeUri(tree)) throw unavailable();
+        String root = DocumentsContract.getTreeDocumentId(tree);
+        String path = root.contains(":") ? root.substring(root.indexOf(':') + 1) : "";
+        if (!path.isEmpty() && !path.equalsIgnoreCase("DCIM") && !path.regionMatches(true, 0, "DCIM/", 0, 5))
+            throw unavailable();
+        if (!path.isEmpty()) {
+            try { new CameraImportFile("path-check", path + "/check.JPG", 1, "", 0); }
+            catch (IllegalArgumentException invalid) { throw unavailable(); }
+        }
+        CameraDocumentSource reader = new CameraDocumentSource(resolver, tree,
+                originalSourceId(identity == null ? "saf:" + tree : identity), cancelled);
+        List<Entry> files = new ArrayList<>();
+        reader.scan(root, path, files, 0);
+        CameraPhotoPublisher.check(cancelled);
+        return new Listing(files, identity != null, reader.hasVideo);
+    }
+
+    private static ListingException unavailable() {
+        return new ListingException(ListingException.Reason.UNAVAILABLE);
+    }
+
+    private static void requireCompleteListing(Cursor cursor) throws ListingException {
+        if (cursor == null) throw unavailable();
+        Bundle extras = cursor.getExtras();
+        if (extras == null || extras.containsKey(DocumentsContract.EXTRA_ERROR)) throw unavailable();
+        if (extras.getBoolean(DocumentsContract.EXTRA_LOADING))
+            throw new ListingException(ListingException.Reason.LOADING);
+    }
+
+    private void scan(String id, String path, List<Entry> files, int depth) throws IOException {
+        CameraPhotoPublisher.check(cancelled);
+        if (depth > 5 || ++visited > 1000) throw unavailable();
+        String[] projection = {DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_SIZE,
+                DocumentsContract.Document.COLUMN_LAST_MODIFIED};
+        try (Cursor cursor = resolver.query(DocumentsContract.buildChildDocumentsUriUsingTree(tree, id),
+                projection, null, null, null)) {
+            requireCompleteListing(cursor);
+            for (String column : projection) if (cursor.getColumnIndex(column) < 0) throw unavailable();
+            while (cursor.moveToNext()) {
+                CameraPhotoPublisher.check(cancelled);
+                if (++rows > 20000) throw unavailable();
+                String name = cursor.getString(1);
+                if (name == null || name.contains("/") || name.contains("\\") || name.equals(".") || name.equals(".."))
+                    throw unavailable();
+                String child = cursor.getString(0);
+                if (child == null || child.isEmpty()) throw unavailable();
+                String relative = path.isEmpty() ? name : path + "/" + name;
+                if (DocumentsContract.Document.MIME_TYPE_DIR.equals(cursor.getString(2))) {
+                    if (!path.isEmpty() || name.equalsIgnoreCase("DCIM")) scan(child, relative, files, depth + 1);
+                } else if (!path.isEmpty() && MediaTypes.INSTANCE.kindOf(name) != null) {
+                    if (MediaTypes.INSTANCE.isVideo(name)) {
+                        hasVideo = true;
+                        continue;
+                    }
+                    long size = cursor.getLong(3), modified = cursor.getLong(4);
+                    if (files.size() >= 20000 || size <= 0 || size > Ep7WifiClient.MAX_FILE_BYTES) throw unavailable();
+                    files.add(new Entry(DocumentsContract.buildDocumentUriUsingTree(tree, child),
+                            new CameraImportFile(source, relative, size, Long.toString(modified), modified / 1000)));
+                }
+            }
+            requireCompleteListing(cursor);
+        } catch (SecurityException denied) {
+            throw new ListingException(ListingException.Reason.NO_GRANT);
+        } catch (RuntimeException invalid) {
+            throw unavailable();
+        }
+    }
+
     /** SAF receipts from potentially redacted reads cannot authorize an original-byte shortcut. */
     static String originalSourceId(String previousSourceId) { return "original-byte-v1:"+previousSourceId; }
     public static final class OriginalAccessException extends IOException {
@@ -67,7 +146,7 @@ public final class CameraDocumentSource {
             super(switch (reason) {
                 case PERMISSION -> "写真の原本を取り込むには、写真の位置情報へのアクセスを許可してください";
                 case VOLUME -> "取り込み元のカードで写真の原本を確認できません。カードとDCIMフォルダを確認してください";
-                case INDEX_PENDING -> "Androidで写真の登録を確認できません。カードを接続したまま少し待って、もう一度取り込んでください";
+                case INDEX_PENDING -> "SDカードに写真があります。Androidへの登録を待ってから、もう一度取り込んでください。";
                 default -> "写真の原本を取得できません。SDカードのDCIMフォルダを選び直し、写真へのアクセスを確認してください";
             });
             this.reason=reason;

@@ -24,6 +24,80 @@ public final class CameraDocumentSourceChecks {
             "com.android.externalstorage.documents", "AB12-CD34:DCIM");
     private static final String SOURCE_DOCUMENT_ID = "AB12-CD34:DCIM/100TEST/TEST.JPG";
     private static final Uri SOURCE_DOCUMENT = DocumentsContract.buildDocumentUriUsingTree(SOURCE_TREE, SOURCE_DOCUMENT_ID);
+    /** Runs the source list against a local provider, never the device card. */
+    public static void assertSdSwapListing(Context context) throws Exception {
+        var provider = new android.content.ContentProvider() {
+            int mode;
+
+            @Override public boolean onCreate() { return true; }
+            @Override public Cursor query(Uri uri, String[] columns, String selection, String[] args, String sort) {
+                if (mode == 5) return null;
+                if (mode == 6) throw new SecurityException("fixture");
+                var cursor = new MatrixCursor(columns);
+                if (mode == 1 || mode == 3 || mode == 4 || mode == 7)
+                    cursor.addRow(new Object[]{"AB12-CD34:DCIM/TEST.JPG", "TEST.JPG", "image/jpeg", 8L, 1024L});
+                if (mode == 8)
+                    cursor.addRow(new Object[]{"AB12-CD34:DCIM/TEST.MP4", "TEST.MP4", "video/mp4", 8L, 1024L});
+                if (mode == 9) for (int i = 0; i <= 20000; i++)
+                    cursor.addRow(new Object[]{"AB12-CD34:DCIM/unknown", "unknown", "text/plain", 8L, 1024L});
+                Bundle extras = new Bundle();
+                if (mode == 2 || mode == 3) extras.putBoolean(DocumentsContract.EXTRA_LOADING, true);
+                if (mode == 4) extras.putString(DocumentsContract.EXTRA_ERROR, "fixture");
+                cursor.setExtras(extras);
+                return cursor;
+            }
+            @Override public String getType(Uri uri) { return null; }
+            @Override public Uri insert(Uri uri, android.content.ContentValues values) { throw new AssertionError("no writes"); }
+            @Override public int delete(Uri uri, String where, String[] args) { throw new AssertionError("no writes"); }
+            @Override public int update(Uri uri, android.content.ContentValues values, String where, String[] args) {
+                throw new AssertionError("no writes");
+            }
+        };
+        var info = new android.content.pm.ProviderInfo();
+        info.authority = "sd-swap.fixture";
+        provider.attachInfo(context, info);
+        var resolver = android.content.ContentResolver.wrap(provider);
+        Uri tree = DocumentsContract.buildTreeDocumentUri(info.authority, "AB12-CD34:DCIM");
+        var empty = CameraDocumentSource.list(resolver, tree, "fixture", () -> false);
+        require(CameraDifferentialService.noSdCandidates(empty, 0).contains("取り込める写真がありません"),
+                "complete empty enumeration has an explicit empty result");
+        provider.mode = 1;
+        var full = CameraDocumentSource.list(resolver, tree, "fixture", () -> false);
+        require(full.photos.size() == 1 && CameraDifferentialService.noSdCandidates(full, 1) == null,
+                "complete JPEG enumeration produces a candidate");
+        require(CameraDifferentialService.noSdCandidates(full, 0).contains("選んだ種類"),
+                "kind filter is not a genuinely empty directory");
+        for (int mode : new int[]{2, 3, 4, 5, 6, 9}) {
+            provider.mode = mode;
+            try {
+                CameraDocumentSource.list(resolver, tree, "fixture", () -> false);
+                throw new AssertionError("incomplete camera listing was accepted");
+            } catch (CameraDocumentSource.ListingException expected) {
+                var reason = switch (mode) {
+                    case 2, 3 -> CameraDocumentSource.ListingException.Reason.LOADING;
+                    case 6 -> CameraDocumentSource.ListingException.Reason.NO_GRANT;
+                    default -> CameraDocumentSource.ListingException.Reason.UNAVAILABLE;
+                };
+                require(expected.reason == reason, "distinct incomplete listing outcome");
+            }
+        }
+        provider.mode = 7;
+        try {
+            java.util.concurrent.atomic.AtomicInteger checks = new java.util.concurrent.atomic.AtomicInteger();
+            CameraDocumentSource.list(resolver, tree, "fixture", () -> checks.incrementAndGet() > 2);
+            throw new AssertionError("cancelled camera listing was accepted");
+        } catch (java.io.InterruptedIOException expected) { }
+        provider.mode = 8;
+        var video = CameraDocumentSource.list(resolver, tree, "fixture", () -> false);
+        require(CameraDifferentialService.noSdCandidates(video, 0).contains("動画があります"),
+                "unsupported videos are distinct from an empty directory");
+        MountedCameraCard.requireGeneration(MountedCameraCard.detachGeneration());
+        try {
+            MountedCameraCard.requireGeneration(MountedCameraCard.detachGeneration() - 1);
+            throw new AssertionError("request from before detach was accepted");
+        } catch (MountedCameraCard.Unavailable expected) { }
+    }
+
     public static String run(Instrumentation instrumentation) throws Exception {
         Fake denied = new Fake(); denied.permitted = false;
         expect(denied, CameraDocumentSource.OriginalAccessException.Reason.PERMISSION);

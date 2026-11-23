@@ -3,7 +3,7 @@ package jp.nano.rawgallery.camera
 
 /** 取り込みの進捗をサービスから UI へ共有するためのシングルトン */
 object ImportProgress {
-    enum class PhotoStage { LISTING, HISTORY, CONTENT, SAVING, COMPLETE, CANCELLED, FAILED, ENDED }
+    enum class PhotoStage { LISTING, HISTORY, CONTENT, SAVING, COMPLETE, CANCELLED, FAILED, NO_CANDIDATES, ENDED }
     /** Unknown counts/bytes are -1; total is the current stage's work, never planned saves. */
     data class PhotoState(
         val stage: PhotoStage, val processed: Int = 0, val total: Int = -1,
@@ -36,6 +36,7 @@ object ImportProgress {
             "complete" -> PhotoStage.COMPLETE
             "cancelled" -> PhotoStage.CANCELLED
             "failed" -> PhotoStage.FAILED
+            "no_candidates" -> PhotoStage.NO_CANDIDATES
             else -> PhotoStage.ENDED
         }
         photo = (photo ?: PhotoState(stage)).copy(stage = stage)
@@ -146,7 +147,7 @@ object ImportProgress {
 
     @Synchronized fun finish(message: String) {
         photo?.let {
-            if (it.stage !in setOf(PhotoStage.COMPLETE, PhotoStage.CANCELLED, PhotoStage.FAILED, PhotoStage.ENDED))
+            if (it.stage !in setOf(PhotoStage.COMPLETE, PhotoStage.CANCELLED, PhotoStage.FAILED, PhotoStage.NO_CANDIDATES, PhotoStage.ENDED))
                 photo = it.copy(stage = if (stopRequested) PhotoStage.CANCELLED else PhotoStage.ENDED)
         }
         active = false
