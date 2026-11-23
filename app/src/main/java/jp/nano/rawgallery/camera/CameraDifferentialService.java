@@ -123,6 +123,8 @@ public final class CameraDifferentialService extends Service {
         if(p.getBoolean("sd_auto",false)&&mediaReceiver==null){
             mediaReceiver = new BroadcastReceiver() {
                 @Override public void onReceive(Context context, Intent event) {
+                    // The remount owns the storage gate and the import screen refreshes its source when it ends.
+                    if (SdCardRemount.isRunning()) return;
                     String tree = getSharedPreferences("camera_import", 0).getString("sd_tree_uri", null);
                     if (tree != null) enqueue(sdRequest(context, Uri.parse(tree), PhotoStorage.selected(context),
                             MountedCameraCard.detachGeneration()));

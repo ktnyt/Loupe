@@ -12,6 +12,10 @@ import java.io.Closeable
 
 /** Transparent receiver for the Android USB handler; never trusts parcelled device details. */
 class CameraAttachActivity : Activity() {
+    companion object {
+        const val ACTION_OPEN_FROM_USB_ATTACH = "jp.nano.rawgallery.OPEN_IMPORT_FROM_USB"
+    }
+
     private var permission: Closeable? = null
     private var expectedVolume: String? = null
 
@@ -35,7 +39,7 @@ class CameraAttachActivity : Activity() {
             finish()
             return
         }
-        startActivity(Intent(this, CameraImportActivity::class.java))
+        startActivity(Intent(this, CameraImportActivity::class.java).setAction(ACTION_OPEN_FROM_USB_ATTACH))
         if (attach == CameraCardRouting.Attach.OPEN_SCREEN) {
             finish()
             return

@@ -42,6 +42,7 @@ jobs:
           sh tests/camera-connection.sh
           sh tests/camera-source.sh
           sh tests/camera-dual-slot.sh
+          sh tests/camera-sd-remount.sh
           sh tests/ep7-wifi.sh
       - name: Android build and lint
         run: python3 scripts/ci_gradle.py :app:assembleDebug :app:lintDebug
