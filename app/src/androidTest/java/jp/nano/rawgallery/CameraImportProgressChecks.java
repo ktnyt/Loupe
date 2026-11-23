@@ -108,6 +108,20 @@ final class CameraImportProgressChecks {
       });
       capture(t, screen, dir, size + "-index-pending");
       TagDetailChecks.ui(t, () -> {
+        String guidance = "SDカードに写真がありますが、一覧を確認できません。取り込み元のカードを接続し直してください。";
+        p.connecting("接続中");
+        p.begin("Synthetic SD");
+        p.photoListing(0, -1);
+        p.photoTerminal("failed", "");
+        p.finish(guidance);
+        refresh.run();
+        var stage = (TextView)activity.getWindow().getDecorView().findViewWithTag("camera-import-stage");
+        String rendered = stage.getText().toString();
+        require(stage.isShown() && rendered.contains(guidance) && !rendered.contains("取り込める写真がありません"),
+            "contradicted listing gives source reconnect guidance without confirming zero");
+      });
+      capture(t, screen, dir, size + "-inconsistent-sd-list");
+      TagDetailChecks.ui(t, () -> {
         String guidance = "SDカードを接続したまま、Androidへの登録を待ってから、もう一度取り込んでください。";
         p.begin("Synthetic SD");
         p.photoHistory(1299, 1299, 327);
