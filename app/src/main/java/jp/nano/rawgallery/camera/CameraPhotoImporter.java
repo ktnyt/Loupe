@@ -87,7 +87,8 @@ public final class CameraPhotoImporter {
             }
             String folder=folderHint==null||folderHint.isEmpty()?(defaultFolder==null?metadata.getModel():defaultFolder):folderHint;
             if(metrics!=null)metrics.saving();
-            Uri uri=publisher.publish(eventSource,prepared.file,prepared.sourceSha256,kind,CameraPhotoPublisher.folder(folder,kind.equals("RAW")),group,cancelled,beforeCommit);
+            Uri uri = publisher.publish(eventSource, prepared.file, prepared.sourceSha256, kind,
+                    CameraPhotoPublisher.folder(folder, kind.equals("RAW")), group, cancelled, beforeCommit, missing);
             return new Result(uri,true,true,source.bytes);
         }
     }
