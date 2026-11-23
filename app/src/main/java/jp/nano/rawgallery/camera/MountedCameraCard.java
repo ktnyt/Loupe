@@ -58,8 +58,12 @@ public final class MountedCameraCard {
         filter.addDataScheme("file");
         BroadcastReceiver receiver = new BroadcastReceiver() {
             @Override public void onReceive(Context received, Intent event) {
-                boolean detached = !Intent.ACTION_MEDIA_MOUNTED.equals(event.getAction());
+                String action = event.getAction();
+                boolean detached = !Intent.ACTION_MEDIA_MOUNTED.equals(action);
                 if (detached) detachGeneration.incrementAndGet();
+                if (Intent.ACTION_MEDIA_REMOVED.equals(action) || Intent.ACTION_MEDIA_BAD_REMOVAL.equals(action)) {
+                    SdRemountMountNotice.physicalDeparture(notifiedVolumeUuid(event));
+                }
                 for (Consumer<Boolean> listener : mountListeners) listener.accept(detached);
             }
         };
@@ -142,6 +146,16 @@ public final class MountedCameraCard {
         if (!isRemovableTree(tree) || uuid == null) return false;
         String id = DocumentsContract.getTreeDocumentId(tree);
         return id.substring(0, id.indexOf(':')).replace("-", "").equalsIgnoreCase(uuid.replace("-", ""));
+    }
+
+    static String notifiedVolumeUuid(Intent event) {
+        StorageVolume volume = Build.VERSION.SDK_INT >= 33
+                ? event.getParcelableExtra(StorageVolume.EXTRA_STORAGE_VOLUME, StorageVolume.class)
+                : event.getParcelableExtra(StorageVolume.EXTRA_STORAGE_VOLUME);
+        if (volume != null && SdCardRemountPlan.isFilesystemUuid(volume.getUuid())) return volume.getUuid();
+        Uri path = event.getData();
+        String candidate = path == null ? null : path.getLastPathSegment();
+        return SdCardRemountPlan.isFilesystemUuid(candidate) ? candidate : null;
     }
 
     static String mountedSourceVolume(Context context, Uri tree) {
