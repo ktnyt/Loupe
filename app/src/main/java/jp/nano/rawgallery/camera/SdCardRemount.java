@@ -16,6 +16,7 @@ import android.os.RemoteException;
 import android.os.SystemClock;
 import android.os.storage.StorageManager;
 import android.os.storage.StorageVolume;
+import android.provider.Settings;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -33,7 +34,6 @@ public final class SdCardRemount {
 
     public static final String ENABLED_PREFERENCE = "sd_remount_on_entry";
     private static final int CONNECT_MS = 8_000;
-    private static final int RESULT_GRACE_MS = 1_000;
     private static final int PERMISSION_MS = 90_000;
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final AtomicBoolean RUNNING = new AtomicBoolean();
@@ -41,6 +41,36 @@ public final class SdCardRemount {
     private static int permissionCode;
 
     private SdCardRemount() {}
+
+    /** Called once at process startup, before import or move can enter the gate. */
+    public static void restoreReservation(Context app) {
+        var preferences = app.getSharedPreferences("sd_remount_reservation", Context.MODE_PRIVATE);
+        var saved = new SdRemountMountNotice.Reservation(preferences.getInt("boot", -1),
+                preferences.getLong("blocked_until", 0), preferences.getString("source", null));
+        int boot;
+        try {
+            boot = Settings.Global.getInt(app.getContentResolver(), Settings.Global.BOOT_COUNT, -1);
+        } catch (RuntimeException unavailable) {
+            boot = -1;
+        }
+        var registration = app.getSharedPreferences("camera_import", Context.MODE_PRIVATE)
+                .getString("sd_tree_uri", null);
+        Uri tree = registration == null ? null : Uri.parse(registration);
+        SdRemountMountNotice.restore(boot, SystemClock::elapsedRealtime, saved, next -> {
+            try {
+                var edit = preferences.edit();
+                if (next.blockedUntil() == 0 && next.source() == null) {
+                    edit.clear();
+                } else {
+                    edit.putInt("boot", next.boot()).putLong("blocked_until", next.blockedUntil())
+                            .putString("source", next.source());
+                }
+                return edit.commit();
+            } catch (RuntimeException unavailable) {
+                return false;
+            }
+        }, uuid -> MountedCameraCard.matchesMountNotice(tree, uuid));
+    }
 
     public static Status status() {
         try {
@@ -109,7 +139,7 @@ public final class SdCardRemount {
 
     public static boolean start(Context context, Consumer<Result> callback) {
         Context app = context.getApplicationContext();
-        if (RUNNING.get() || selection(app) == null || status() != Status.READY
+        if (RUNNING.get() || CameraImportGate.lock.isLocked() || selection(app) == null || status() != Status.READY
                 || !RUNNING.compareAndSet(false, true)) return false;
         MAIN.post(() -> new Operation(app, callback).bind());
         return true;
@@ -166,7 +196,7 @@ public final class SdCardRemount {
 
         private Result runUnderGate(ISdCardRemountService service) {
             if (!CameraImportGate.lock.tryLock()) return Result.SKIPPED;
-            boolean noticeStarted = false;
+            boolean reserved = false;
             Result outcome = Result.FAILED;
             try {
                 if (status() != Status.READY) return Result.UNAVAILABLE;
@@ -184,10 +214,11 @@ public final class SdCardRemount {
                     }
                 };
                 long deadline = SystemClock.elapsedRealtime() + SdCardRemountPlan.OPERATION_MS;
-                SdRemountMountNotice.begin(selection.source());
-                noticeStarted = true;
+                long blockedUntil = deadline + SdRemountMountNotice.RESULT_GRACE_MS;
+                reserved = SdRemountMountNotice.begin(selection.source(), blockedUntil);
+                if (!reserved) return Result.FAILED;
                 service.remount(selection.source(), selection.destination(), deadline, callback);
-                long remaining = Math.max(0, deadline + RESULT_GRACE_MS - SystemClock.elapsedRealtime());
+                long remaining = Math.max(0, blockedUntil - SystemClock.elapsedRealtime());
                 outcome = remoteResult.get(remaining, TimeUnit.MILLISECONDS);
                 return outcome;
             } catch (InterruptedException e) {
@@ -196,7 +227,9 @@ public final class SdCardRemount {
             } catch (RemoteException | ExecutionException | TimeoutException | RuntimeException e) {
                 return Result.FAILED;
             } finally {
-                if (noticeStarted) SdRemountMountNotice.end(outcome != Result.SKIPPED);
+                if (reserved && (outcome == Result.MOUNTED || outcome == Result.SKIPPED)) {
+                    SdRemountMountNotice.end(outcome == Result.MOUNTED);
+                }
                 CameraImportGate.lock.unlock();
             }
         }

@@ -411,7 +411,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         options.addView(text("原本をそのまま保存して重複を確認するため、写真すべてと写真の位置情報へのアクセスが必要です。",
                 14, GalleryUi.MUTED));
         sdRemount = new MaterialSwitch(this);
-        sdRemount.setText("取り込み画面を開いたらSDを再マウント");
+        sdRemount.setText("取り込み画面を開くと取り込み元のSDを再マウント");
         sdRemount.setTag("sd-remount-switch");
         sdRemount.setSingleLine(false);
         sdRemount.setMinHeight(dp(48));

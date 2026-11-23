@@ -130,7 +130,8 @@ public final class CameraDifferentialService extends Service {
                         return;
                     }
                     // The remount owns the storage gate and the import screen refreshes its source when it ends.
-                    if (SdRemountMountNotice.suppressMount(uuid) || SdCardRemount.isRunning()) return;
+                    if (SdRemountMountNotice.suppressMount(uuid)
+                            || SdCardRemount.isRunning() || SdRemountMountNotice.blocksImport()) return;
                     var settings = getSharedPreferences("camera_import", 0);
                     String selectedTree = settings.getString("sd_tree_uri", null);
                     if (selectedTree == null) return;
