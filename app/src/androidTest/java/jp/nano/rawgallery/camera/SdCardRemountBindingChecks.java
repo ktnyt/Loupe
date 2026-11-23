@@ -13,7 +13,6 @@ import android.os.SystemClock;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import jp.nano.rawgallery.CameraImportActivity;
@@ -51,22 +50,24 @@ public final class SdCardRemountBindingChecks {
     }
 
     private static void verifyMountNoticeOrdering() {
-        AtomicLong clock = new AtomicLong(1);
-        var notices = new SdRemountMountNotice.Tracker(clock::get);
+        var notices = new SdRemountMountNotice.Tracker();
         notices.begin("ABCD-0123");
-        notices.end();
+        notices.end(true);
         if (notices.suppressMount("DEAD-1234") || !notices.suppressMount("abcd0123")
                 || notices.suppressMount("ABCD-0123")) {
             throw new AssertionError("Only the delayed source broadcast is suppressed");
         }
         notices.begin("ABCD-0123");
-        notices.end();
+        notices.end(true);
         notices.physicalDeparture("ABCD-0123");
         if (notices.suppressMount("ABCD-0123")) throw new AssertionError("Reconnection after physical departure");
         notices.begin("ABCD-0123");
-        notices.end();
-        clock.addAndGet(5_001);
-        if (notices.suppressMount("ABCD-0123")) throw new AssertionError("Expired remount notice");
+        notices.end(false);
+        if (notices.suppressMount("ABCD-0123")) throw new AssertionError("Skipped remount leaves no notice");
+        notices.begin("ABCD-0123");
+        notices.end(true);
+        notices.registrationChanged("DEAD-1234");
+        if (notices.suppressMount("ABCD-0123")) throw new AssertionError("Changing cards clears the old notice");
     }
 
     private static void awaitShizuku() {

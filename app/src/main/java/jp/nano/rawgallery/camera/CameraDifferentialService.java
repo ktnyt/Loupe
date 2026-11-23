@@ -350,6 +350,7 @@ public final class CameraDifferentialService extends Service {
                 prefs.edit().putString("sd_tree_uri", request.getStringExtra(SD_PRIOR_TREE)).apply();
                 throw new MountedCameraCard.Unavailable("取り込み元のフォルダを保存できませんでした。");
             }
+            SdRemountMountNotice.registrationChanged(source);
         } finally {
             if (!saved && !hadGrant) {
                 try { resolver.releasePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION); }

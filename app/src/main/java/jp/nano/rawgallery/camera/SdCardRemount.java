@@ -167,6 +167,7 @@ public final class SdCardRemount {
         private Result runUnderGate(ISdCardRemountService service) {
             if (!CameraImportGate.lock.tryLock()) return Result.SKIPPED;
             boolean noticeStarted = false;
+            Result outcome = Result.FAILED;
             try {
                 if (status() != Status.READY) return Result.UNAVAILABLE;
                 Selection selection = selection(app);
@@ -187,14 +188,15 @@ public final class SdCardRemount {
                 noticeStarted = true;
                 service.remount(selection.source(), selection.destination(), deadline, callback);
                 long remaining = Math.max(0, deadline + RESULT_GRACE_MS - SystemClock.elapsedRealtime());
-                return remoteResult.get(remaining, TimeUnit.MILLISECONDS);
+                outcome = remoteResult.get(remaining, TimeUnit.MILLISECONDS);
+                return outcome;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return Result.FAILED;
             } catch (RemoteException | ExecutionException | TimeoutException | RuntimeException e) {
                 return Result.FAILED;
             } finally {
-                if (noticeStarted) SdRemountMountNotice.end();
+                if (noticeStarted) SdRemountMountNotice.end(outcome != Result.SKIPPED);
                 CameraImportGate.lock.unlock();
             }
         }
