@@ -52,6 +52,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
@@ -134,6 +135,8 @@ final class LegacyArchiveMoveChecks {
     }
     checkRevisionRetry(base, secondary);
     for (FenceExit exit : FenceExit.values()) checkWriteFenceRelease(base, secondary, exit);
+    checkWriteFenceWait(base, secondary, false);
+    checkWriteFenceWait(base, secondary, true);
     for (ReceiptChange change : ReceiptChange.values()) {
       checkConcurrentReceiptChange(base, secondary, change, false);
       checkConcurrentReceiptChange(base, secondary, change, true);
@@ -144,7 +147,8 @@ final class LegacyArchiveMoveChecks {
     checkPendingTargetRejection(base, secondary, true);
     return "PASS archive snapshots: previous revision fence rejects, 2 unrelated commits retry, "
         + "the final scan defers local writes and still rejects direct SQL churn, "
-        + "cancellation and exceptions release the write fence, changed evidence blocks moves and resume, "
+        + "the write fence times out and honors cancellation while waiting, "
+        + "cancellation and exceptions release it, changed evidence blocks moves and resume, "
         + "and the corrupt archive stays unchanged.";
   }
 
@@ -288,6 +292,78 @@ final class LegacyArchiveMoveChecks {
       }
       require(!background.isAlive() && writerFailure.get() == null && archive.indexRevision() - revisionBefore == 3
           && archive.get("unrelated-3") != null, "The deferred writer commits after every final scan exit: " + exit);
+    }
+  }
+
+  private static void checkWriteFenceWait(Context base, String secondary, boolean cancel) throws Exception {
+    try (Fixture f = new Fixture(base, secondary); ArchiveStore archive = E2Settings.openRecords(f.isolatedContext());
+         ArchiveStore writer = E2Settings.openRecords(f.isolatedContext())) {
+      SQLiteDatabase direct = archive.getWritableDatabase();
+      writer.getWritableDatabase();
+      var startBlocker = new CountDownLatch(1);
+      var lockHeld = new CountDownLatch(1);
+      var releaseBlocker = new CountDownLatch(1);
+      var stopped = new AtomicBoolean();
+      var waits = new AtomicLong();
+      var blockerFailure = new AtomicReference<Exception>();
+      var lock = ArchiveStore.E2_PHOTO_UPSERT;
+      Thread reading = Thread.currentThread();
+      Thread blocker = new Thread(() -> {
+        try {
+          if (!startBlocker.await(5, TimeUnit.SECONDS)) throw new IOException("The second scan did not start the blocker");
+          if (!lock.tryLock(5, TimeUnit.SECONDS)) throw new IOException("The fixture could not hold the write fence");
+          try {
+            lockHeld.countDown();
+            long deadline = SystemClock.elapsedRealtime() + 1_500;
+            boolean queued = lock.hasQueuedThread(reading);
+            while (!queued && SystemClock.elapsedRealtime() < deadline) {
+              LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(5));
+              queued = lock.hasQueuedThread(reading);
+            }
+            if (!queued) throw new IOException("The reader did not queue on the held fence");
+            waits.set(SystemClock.elapsedRealtime());
+            if (cancel) stopped.set(true);
+            if (!releaseBlocker.await(5, TimeUnit.SECONDS)) throw new IOException("The reader did not finish within its wait bound");
+          } finally {
+            lock.unlock();
+          }
+          putUnrelated(writer, 3);
+        } catch (Exception failure) {
+          blockerFailure.set(failure);
+        }
+      }, "archive-fence-fixture-blocker");
+      var scans = new AtomicInteger();
+      var reader = new LegacyArchiveMoveProof.Records(f.isolatedContext(), () -> {
+        int count = scans.incrementAndGet();
+        if (count > 2) return;
+        putUnrelatedSql(direct, count);
+        if (count != 2) return;
+        startBlocker.countDown();
+        writeArchive(() -> require(lockHeld.await(2, TimeUnit.SECONDS), "Acquire the test fence before the final scan"));
+      });
+      blocker.start();
+      try {
+        if (cancel) {
+          expectInterrupted(() -> reader.read(stopped::get), "A reader already queued on the write fence honors cancellation");
+          require(stopped.get() && scans.get() == 2 && waits.get() > 0
+              && SystemClock.elapsedRealtime() - waits.get() < 1_000, "Cancel promptly without beginning a third scan");
+        } else {
+          var outcome = reader.read(stopped::get);
+          require(waits.get() > 0 && outcome.rejection() == Rejection.ARCHIVE_WRITE_BUSY
+              && outcome.scanAttempts() == 2 && scans.get() == 2 && outcome.records().isEmpty(),
+              "The held fence times out without counting an unstarted scan or publishing a snapshot");
+        }
+      } finally {
+        startBlocker.countDown();
+        releaseBlocker.countDown();
+        blocker.join(6_000);
+      }
+      require(!blocker.isAlive() && blockerFailure.get() == null && archive.get("unrelated-3") != null,
+          "A normal writer runs after the timed-out or cancelled reader leaves");
+      var subsequent = reader.read(() -> false);
+      require(subsequent.rejection() == null && subsequent.scanAttempts() == 1
+          && subsequent.records().size() == 3 && reader.read(() -> false).scanAttempts() == 0,
+          "Only the later stable read publishes a complete cached snapshot");
     }
   }
 
