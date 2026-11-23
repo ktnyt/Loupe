@@ -6,10 +6,12 @@ import android.app.UiAutomation;
 import android.content.ContentUris;
 import android.content.ContentValues;
 import android.content.Context;
+import android.content.ContextWrapper;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.database.DatabaseUtils;
+import android.database.MatrixCursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.graphics.Rect;
 import android.media.ExifInterface;
@@ -33,23 +35,30 @@ import java.io.InterruptedIOException;
 import java.io.UncheckedIOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
+import jp.nano.rawgallery.LegacyArchiveMoveProof.Rejection;
 import jp.nano.rawgallery.PhotoStorageChecks.Fixture;
 import jp.nano.rawgallery.camera.CameraImportGate;
 import jp.nano.rawgallery.camera.CameraImportLedger;
@@ -116,6 +125,627 @@ final class LegacyArchiveMoveChecks {
         + "Capture-time coverage is at the metadata predicate level using observed known and unknown MediaStore rows.";
   }
 
+  static String checkSnapshots(Instrumentation test, String secondaryArg, String cadenceArg) throws Exception {
+    Context base = test.getTargetContext();
+    String secondary = isolatedVolume(base, secondaryArg);
+    if (cadenceArg != null) {
+      int cadence = Integer.parseInt(cadenceArg);
+      require(List.of(500, 1000, 2000).contains(cadence), "Use one of the contract cadences");
+      return checkSnapshotCadence(base, secondary, cadence);
+    }
+    checkRevisionRetry(base, secondary);
+    for (FenceExit exit : FenceExit.values()) checkWriteFenceRelease(base, secondary, exit);
+    checkWriteFenceWait(base, secondary, false);
+    checkWriteFenceWait(base, secondary, true);
+    for (ReceiptChange change : ReceiptChange.values()) {
+      checkConcurrentReceiptChange(base, secondary, change, false);
+      checkConcurrentReceiptChange(base, secondary, change, true);
+    }
+    checkArchiveReadFailures(base, secondary);
+    checkAliasRejection(base, secondary);
+    checkPendingTargetRejection(base, secondary, false);
+    checkPendingTargetRejection(base, secondary, true);
+    return "PASS archive snapshots: previous revision fence rejects, 2 unrelated commits retry, "
+        + "the final scan defers local writes and still rejects direct SQL churn, "
+        + "the write fence times out and honors cancellation while waiting, "
+        + "cancellation and exceptions release it, changed evidence blocks moves and resume, "
+        + "and the corrupt archive stays unchanged.";
+  }
+
+  private static void checkRevisionRetry(Context base, String secondary) throws Exception {
+    try (Fixture f = new Fixture(base, secondary); CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         ArchiveStore archive = E2Settings.openRecords(f.isolatedContext());
+         ArchiveStore writer = E2Settings.openRecords(f.isolatedContext())) {
+      Seed seed = seed(f, history, archive, "SNAPSHOT-RETRY.JPG", 0xff598093, false, false);
+      String receipt = archive.get(seed.archiveKey()).toString();
+      Context context = f.isolatedContext();
+      String uri = PhotoMove.galleryUri(seed.uri()).toString();
+      var initial = new LegacyArchiveMoveProof.Records(context).read(() -> false);
+      require(initial.rejection() == null && initial.scanAttempts() == 1 && initial.records().containsKey(uri),
+          "The unmodified archive has stable authority before any competing write");
+      // The old single-attempt check discarded the entire scan on this same real revision transition.
+      try (SQLiteDatabase reader = openReadOnlyArchive(context)) {
+        long before = revision(reader);
+        try (Cursor rows = reader.rawQuery("SELECT key,state,payload FROM photos", null)) {
+          require(rows.moveToFirst() && seed.archiveKey().equals(rows.getString(0)), "The old scan saw the selected receipt");
+        }
+        putUnrelated(writer, 0);
+        require(before != revision(reader), "The old postscan revision fence would return empty despite the valid receipt");
+      }
+      SQLiteDatabase direct = writer.getWritableDatabase();
+      var commits = new AtomicInteger();
+      var keepWriting = new AtomicBoolean(true);
+      var reader = new LegacyArchiveMoveProof.Records(context, () -> {
+        if (keepWriting.get()) putUnrelatedSql(direct, commits.incrementAndGet());
+      });
+      var failed = reader.read(() -> false);
+      require(failed.rejection() == Rejection.ARCHIVE_REVISION_CHURN && failed.scanAttempts() == 3
+          && failed.records().isEmpty() && commits.get() == 3,
+          "Direct SQL can still invalidate the guarded last scan, with no partial snapshot accepted");
+      keepWriting.set(false);
+      var recovered = reader.read(() -> false);
+      var cached = reader.read(() -> false);
+      require(recovered.rejection() == null && recovered.scanAttempts() == 1
+          && cached.rejection() == null && cached.scanAttempts() == 0
+          && cached.records().equals(recovered.records())
+          && cached.records().get(uri).equals(initial.records().get(uri)),
+          "A later stable scan recovers the same receipt and caches its full revision");
+      writer.put(archive.get(seed.archiveKey()), "pending");
+      var invalidated = reader.read(() -> false);
+      require(invalidated.rejection() == null && invalidated.scanAttempts() == 1
+          && !invalidated.records().get(uri).get(0).verified(), "A cached verified receipt is invalidated by a committed state change");
+      writer.put(new JSONObject(receipt), "verified");
+
+      require(PhotoStorage.select(context, secondary), "Choose the synthetic SD destination");
+      var stop = new AtomicBoolean();
+      var cancelReader = new LegacyArchiveMoveProof.Records(context, () -> stop.set(true));
+      expectInterrupted(() -> cancelReader.read(stop::get), "Cancellation after closing the cursor does not cache a scan");
+      require(cancelReader.read(() -> false).scanAttempts() == 1, "A cancelled scan cannot seed the cache");
+      expectInterrupted(() -> reader.read(() -> true), "Cancellation wins even when the cache would match");
+
+      var scans = new AtomicInteger();
+      try (PhotoMove mover = observeScans(f, ledger, history, () -> {
+        int attempt = scans.incrementAndGet();
+        if (attempt <= 2) writeArchive(() -> putUnrelated(writer, 10 + attempt));
+      })) {
+        PhotoMove.Plan plan = preflight(mover, mover.plan(secondary), () -> false);
+        require(plan.items().size() == 1, "The fixture source has one confirmed valid proof");
+        mover.begin(plan);
+        require(mover.run(() -> false, ignored -> {}).done() == 1 && scans.get() == 3,
+            "The move retries two independent commits, accepts the third scan, and reuses that stable cache");
+      }
+      checkReplacement(f, history, archive, seed, receipt, secondary);
+      requireCompletedProof(f, seed, f.rows(secondary).get(0).uri());
+    }
+  }
+
+  private enum FenceExit { SUCCESS, CANCELLED, EXCEPTION }
+
+  private static void checkWriteFenceRelease(Context base, String secondary, FenceExit exit) throws Exception {
+    try (Fixture f = new Fixture(base, secondary); ArchiveStore archive = E2Settings.openRecords(f.isolatedContext());
+         ArchiveStore writer = E2Settings.openRecords(f.isolatedContext())) {
+      SQLiteDatabase direct = archive.getWritableDatabase();
+      writer.getWritableDatabase();
+      long revisionBefore = archive.indexRevision();
+      var startWriter = new CountDownLatch(1);
+      var writerDone = new CountDownLatch(1);
+      var writerFailure = new AtomicReference<Exception>();
+      Thread background = new Thread(() -> {
+        try {
+          if (!startWriter.await(5, TimeUnit.SECONDS)) throw new IOException("Final scan did not start the writer");
+          putUnrelated(writer, 3);
+        } catch (Exception failure) {
+          writerFailure.set(failure);
+        } finally {
+          writerDone.countDown();
+        }
+      }, "archive-fence-fixture-writer");
+      var stop = new AtomicBoolean();
+      var injected = new IOException("Synthetic final scan failure");
+      var observer = new LegacyArchiveMoveProof.ScanObserver() {
+        private int attempt;
+
+        @Override public void beforeScan(int number) {
+          attempt = number;
+          require(ArchiveStore.E2_PHOTO_UPSERT.isHeldByCurrentThread() == (attempt == 3),
+              "Only the final scan holds the upsert fence");
+        }
+
+        @Override public void afterScan() throws IOException {
+          if (attempt < 3) {
+            putUnrelatedSql(direct, attempt);
+            return;
+          }
+          startWriter.countDown();
+          long deadline = SystemClock.elapsedRealtime() + 2_000;
+          while (!ArchiveStore.E2_PHOTO_UPSERT.hasQueuedThread(background)
+              && writerDone.getCount() != 0 && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(5);
+          require(ArchiveStore.E2_PHOTO_UPSERT.hasQueuedThread(background) && writerDone.getCount() == 1,
+              "The normal E2 writer waits without committing inside the final scan");
+          if (exit == FenceExit.CANCELLED) stop.set(true);
+          if (exit == FenceExit.EXCEPTION) throw injected;
+        }
+      };
+      var reader = new LegacyArchiveMoveProof.Records(f.isolatedContext(), observer);
+      background.start();
+      try {
+        switch (exit) {
+          case SUCCESS -> {
+            var result = reader.read(stop::get);
+            require(result.rejection() == null && result.scanAttempts() == 3
+                && !result.records().containsKey("fixture://archive/3"),
+                "The last fenced read used only the revision before the queued write");
+          }
+          case CANCELLED -> expectInterrupted(() -> reader.read(stop::get), "Cancellation releases the final scan fence");
+          case EXCEPTION -> {
+            try {
+              reader.read(stop::get);
+              throw new CheckFailure("The injected scan exception was suppressed");
+            } catch (IOException failure) {
+              require(failure == injected, "The final scan propagates the original exception");
+            }
+          }
+        }
+      } finally {
+        startWriter.countDown();
+        background.join(6_000);
+      }
+      require(!background.isAlive() && writerFailure.get() == null && archive.indexRevision() - revisionBefore == 3
+          && archive.get("unrelated-3") != null, "The deferred writer commits after every final scan exit: " + exit);
+    }
+  }
+
+  private static void checkWriteFenceWait(Context base, String secondary, boolean cancel) throws Exception {
+    try (Fixture f = new Fixture(base, secondary); ArchiveStore archive = E2Settings.openRecords(f.isolatedContext());
+         ArchiveStore writer = E2Settings.openRecords(f.isolatedContext())) {
+      SQLiteDatabase direct = archive.getWritableDatabase();
+      writer.getWritableDatabase();
+      var startBlocker = new CountDownLatch(1);
+      var lockHeld = new CountDownLatch(1);
+      var releaseBlocker = new CountDownLatch(1);
+      var stopped = new AtomicBoolean();
+      var waits = new AtomicLong();
+      var blockerFailure = new AtomicReference<Exception>();
+      var lock = ArchiveStore.E2_PHOTO_UPSERT;
+      Thread reading = Thread.currentThread();
+      Thread blocker = new Thread(() -> {
+        try {
+          if (!startBlocker.await(5, TimeUnit.SECONDS)) throw new IOException("The second scan did not start the blocker");
+          if (!lock.tryLock(5, TimeUnit.SECONDS)) throw new IOException("The fixture could not hold the write fence");
+          try {
+            lockHeld.countDown();
+            long deadline = SystemClock.elapsedRealtime() + 1_500;
+            boolean queued = lock.hasQueuedThread(reading);
+            while (!queued && SystemClock.elapsedRealtime() < deadline) {
+              LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(5));
+              queued = lock.hasQueuedThread(reading);
+            }
+            if (!queued) throw new IOException("The reader did not queue on the held fence");
+            waits.set(SystemClock.elapsedRealtime());
+            if (cancel) stopped.set(true);
+            if (!releaseBlocker.await(5, TimeUnit.SECONDS)) throw new IOException("The reader did not finish within its wait bound");
+          } finally {
+            lock.unlock();
+          }
+          putUnrelated(writer, 3);
+        } catch (Exception failure) {
+          blockerFailure.set(failure);
+        }
+      }, "archive-fence-fixture-blocker");
+      var scans = new AtomicInteger();
+      var reader = new LegacyArchiveMoveProof.Records(f.isolatedContext(), () -> {
+        int count = scans.incrementAndGet();
+        if (count > 2) return;
+        putUnrelatedSql(direct, count);
+        if (count != 2) return;
+        startBlocker.countDown();
+        writeArchive(() -> require(lockHeld.await(2, TimeUnit.SECONDS), "Acquire the test fence before the final scan"));
+      });
+      blocker.start();
+      try {
+        if (cancel) {
+          expectInterrupted(() -> reader.read(stopped::get), "A reader already queued on the write fence honors cancellation");
+          require(stopped.get() && scans.get() == 2 && waits.get() > 0
+              && SystemClock.elapsedRealtime() - waits.get() < 1_000, "Cancel promptly without beginning a third scan");
+        } else {
+          var outcome = reader.read(stopped::get);
+          require(waits.get() > 0 && outcome.rejection() == Rejection.ARCHIVE_WRITE_BUSY
+              && outcome.scanAttempts() == 2 && scans.get() == 2 && outcome.records().isEmpty(),
+              "The held fence times out without counting an unstarted scan or publishing a snapshot");
+        }
+      } finally {
+        startBlocker.countDown();
+        releaseBlocker.countDown();
+        blocker.join(6_000);
+      }
+      require(!blocker.isAlive() && blockerFailure.get() == null && archive.get("unrelated-3") != null,
+          "A normal writer runs after the timed-out or cancelled reader leaves");
+      var subsequent = reader.read(() -> false);
+      require(subsequent.rejection() == null && subsequent.scanAttempts() == 1
+          && subsequent.records().size() == 3 && reader.read(() -> false).scanAttempts() == 0,
+          "Only the later stable read publishes a complete cached snapshot");
+    }
+  }
+
+  private enum ReceiptChange {
+    DELETED(Rejection.RECEIPT_MISSING), SHA_CHANGED(Rejection.SAVED_PROOF), STATE(Rejection.RECEIPT_UNVERIFIED),
+    METADATA(Rejection.RECEIPT_METADATA), VERIFIED_DUPLICATE(Rejection.RECEIPT_DUPLICATE),
+    PENDING_DUPLICATE(Rejection.RECEIPT_DUPLICATE), RELEASED_DUPLICATE(Rejection.RECEIPT_DUPLICATE);
+
+    final Rejection reason;
+    ReceiptChange(Rejection reason) { this.reason = reason; }
+
+    void write(ArchiveStore writer, String key, JSONObject receipt) throws Exception {
+      switch (this) {
+        case DELETED -> require(writer.getWritableDatabase().delete("photos", "key=?", new String[]{key}) == 1,
+            "The competing connection deleted the selected receipt");
+        case SHA_CHANGED -> writer.put(receipt.put("sha", SHA), "verified");
+        case STATE -> writer.put(receipt, "pending");
+        case METADATA -> writer.put(receipt.put("size", receipt.getLong("size") + 1), "verified");
+        case VERIFIED_DUPLICATE -> writer.put(receipt.put("key", "e".repeat(32)), "verified");
+        case PENDING_DUPLICATE -> writer.put(receipt.put("key", "e".repeat(32)), "pending");
+        case RELEASED_DUPLICATE -> writer.put(receipt.put("key", "e".repeat(32)), "released");
+      }
+    }
+  }
+
+  private static void checkConcurrentReceiptChange(Context base, String secondary, ReceiptChange change, boolean published)
+      throws Exception {
+    try (Fixture f = new Fixture(base, secondary); CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         ArchiveStore archive = E2Settings.openRecords(f.isolatedContext()); ArchiveStore writer = E2Settings.openRecords(f.isolatedContext());
+         PhotoMoveStore journal = new PhotoMoveStore(f.isolatedContext())) {
+      Seed seed = seed(f, history, archive, "SNAPSHOT-CHANGED.JPG", 0xff57688b, false, false);
+      JSONObject receipt = archive.get(seed.archiveKey());
+      require(PhotoStorage.select(f.isolatedContext(), secondary), "Choose the synthetic SD destination");
+      var stop = new AtomicBoolean();
+      try (PhotoMove preparing = f.move(ledger, history, boundary -> {
+        if (boundary == PhotoMove.Boundary.BEFORE_HISTORY_VERIFY) stop.set(true);
+      })) {
+        PhotoMove.Plan plan = preflight(preparing, preparing.plan(secondary), () -> false);
+        require(plan.items().size() == 1, "Confirm the original receipt before changing it");
+        preparing.begin(plan);
+        if (published) expectInterrupted(() -> preparing.run(stop::get, ignored -> {}), "Stop at the published resume boundary");
+      }
+      var before = journal.next();
+      require(before.stage() == (published ? PhotoMoveStore.UPDATING_HISTORY : PhotoMoveStore.QUEUED),
+          "Use the normal durable queued or published stage");
+      var scans = new AtomicInteger();
+      try (PhotoMove resumed = observeScans(f, ledger, history, () -> {
+        if (scans.incrementAndGet() == 1) writeArchive(() -> change.write(writer, seed.archiveKey(), receipt));
+      })) {
+        try {
+          resumed.run(() -> false, ignored -> {});
+          throw new CheckFailure("The move accepted changed archive evidence");
+        } catch (PhotoMove.Failure rejected) {
+          require(rejected.reason.equals(change.reason.code()) && rejected.scanAttempts == 2 && scans.get() == 2,
+              "A fresh stable scan identifies the actual receipt failure: case=" + change
+                  + " expected=" + change.reason.code() + " actual=" + rejected.reason
+                  + " attempts=" + rejected.scanAttempts + " observed_scans=" + scans.get());
+        }
+      }
+      require(before.equals(journal.next()) && history.moveEvidence().equals(List.of(seed.history()))
+          && ledger.receiptCount() == 0 && journal.completed(seed.history().getId()) == null
+          && Arrays.equals(seed.bytes(), f.read(seed.uri())), "A receipt change cannot advance history or remove the original");
+      if (published) {
+        var targets = f.rows(secondary);
+        require(targets.size() == 1 && !targets.get(0).pending() && before.target().equals(targets.get(0).uri().toString())
+            && Arrays.equals(seed.bytes(), f.read(targets.get(0).uri())), "Preserve the same already-published copy");
+      } else require(f.rows(secondary).isEmpty(), "Do not allocate a target after rejecting the queued proof");
+    }
+  }
+
+  private static void checkArchiveReadFailures(Context base, String secondary) throws Exception {
+    try (Fixture f = new Fixture(base, secondary)) {
+      Context context = f.isolatedContext();
+      var scans = new AtomicInteger();
+      var reader = new LegacyArchiveMoveProof.Records(context, scans::incrementAndGet);
+      require(reader.read(() -> false).rejection() == Rejection.ARCHIVE_OPEN && scans.get() == 0
+          && !context.getDatabasePath(E2Settings.DATABASE).exists(), "A read failure never creates the archive");
+      checkCorruptArchiveIsPreserved(context);
+      try (ArchiveStore writer = E2Settings.openRecords(context)) {
+        SQLiteDatabase db = writer.getWritableDatabase();
+        var empty = reader.read(() -> false);
+        require(empty.rejection() == null && empty.records().isEmpty() && empty.scanAttempts() == 1,
+            "Distinguish a stable valid empty archive from a failed read");
+        db.execSQL("UPDATE index_revision SET value='invalid' WHERE id=1");
+        var invalid = reader.read(() -> false);
+        require(invalid.rejection() == Rejection.ARCHIVE_REVISION_INVALID && invalid.scanAttempts() == 0,
+            "A malformed revision is a terminal error without any scan");
+        db.execSQL("UPDATE index_revision SET value=1 WHERE id=1");
+        db.execSQL("INSERT INTO photos VALUES ('bad','verified','[')");
+        var malformed = reader.read(() -> false);
+        require(malformed.rejection() == Rejection.ARCHIVE_JSON_INVALID && malformed.scanAttempts() == 1,
+            "A malformed row stops a scan without retrying it or returning an earlier result");
+        db.execSQL("DELETE FROM photos");
+        db.execSQL("WITH RECURSIVE rows(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM rows WHERE n<100000) "
+            + "INSERT INTO photos SELECT CAST(n AS TEXT),'pending','{}' FROM rows");
+        var maximum = reader.read(() -> false);
+        require(maximum.rejection() == null && maximum.scanAttempts() == 1
+            && maximum.records().values().stream().mapToInt(List::size).sum() == 100_000,
+            "The archive can scan all rows at the accepted bound");
+        db.execSQL("INSERT INTO photos VALUES ('overflow','pending','{}')");
+        var limited = reader.read(() -> false);
+        require(limited.rejection() == Rejection.ARCHIVE_ROW_LIMIT && limited.scanAttempts() == 1 && limited.records().isEmpty(),
+            "The first extra row rejects without returning a partial result");
+        db.execSQL("DELETE FROM photos WHERE key='overflow'");
+        require(reader.read(() -> false).scanAttempts() == 1 && reader.read(() -> false).scanAttempts() == 0,
+            "The rejected snapshot is never published to the cache");
+      }
+    }
+  }
+
+  private static void checkCorruptArchiveIsPreserved(Context context) throws Exception {
+    File corrupt = File.createTempFile("corrupt-photo-archive-", ".db", context.getCacheDir());
+    byte[] badBytes = new byte[4096];
+    Arrays.fill(badBytes, (byte) 0x5a);
+    try {
+      Files.write(corrupt.toPath(), badBytes);
+      Context damaged = new ContextWrapper(context) {
+        @Override public File getDatabasePath(String name) {
+          return E2Settings.DATABASE.equals(name) ? corrupt : super.getDatabasePath(name);
+        }
+      };
+      var read = new LegacyArchiveMoveProof.Records(damaged).read(() -> false);
+      require((read.rejection() == Rejection.ARCHIVE_OPEN || read.rejection() == Rejection.ARCHIVE_READ)
+          && read.scanAttempts() == 0 && Files.exists(corrupt.toPath())
+          && Arrays.equals(badBytes, Files.readAllBytes(corrupt.toPath())),
+          "A corrupt archive is refused and its file is neither deleted nor rewritten");
+    } finally {
+      Files.deleteIfExists(corrupt.toPath());
+    }
+  }
+
+  private static void checkAliasRejection(Context base, String secondary) throws Exception {
+    try (Fixture f = new Fixture(base, secondary); CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         ArchiveStore archive = E2Settings.openRecords(f.isolatedContext());
+         PhotoMoveStore journal = new PhotoMoveStore(f.isolatedContext())) {
+      Seed seed = seed(f, history, archive, "DUPLICATE-MEDIA-ALIAS.JPG", 0xff57688b, false, false);
+      Context context = f.isolatedContext();
+      require(PhotoStorage.select(context, secondary), "Choose the synthetic SD destination");
+      try (PhotoMove preparing = f.move(ledger, history, ignored -> {})) {
+        preparing.begin(preflight(preparing, preparing.plan(secondary), () -> false));
+      }
+      long id = ContentUris.parseId(seed.uri());
+      Uri alias = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
+      var aliasQueries = new AtomicInteger();
+      var before = journal.next();
+      require(before.archiveProof().epoch().equals(LegacyArchiveMoveProof.epoch(context)),
+          "The fixture uses the same live app-UID epoch as the confirmed proof");
+      // Supply two volumes for this aggregate query only; the real resolver handles every other operation.
+      try (PhotoMove resumed = new PhotoMove(context, ledger, history, new PhotoMoveStore(context), ignored -> {},
+          f.resolver::openInputStream, f.resolver::openFileDescriptor, () -> {}, (uri, columns, args) -> {
+            if (!alias.equals(uri)) return f.resolver.query(uri, columns, args, null);
+            aliasQueries.incrementAndGet();
+            MatrixCursor rows = new MatrixCursor(columns, 2);
+            for (String volume : List.of(PRIMARY, secondary)) {
+              var row = rows.newRow();
+              row.add(_ID, id);
+              row.add(VOLUME_NAME, volume);
+            }
+            return rows;
+          })) {
+        expectMoveReason(PhotoMove.FailureReason.SOURCE_ALIAS, () -> resumed.run(() -> false, ignored -> {}),
+            "写真を一意に特定できません。");
+      }
+      require(aliasQueries.get() == 1 && before.equals(journal.next()) && f.rows(secondary).isEmpty()
+          && history.moveEvidence().equals(List.of(seed.history())) && Arrays.equals(seed.bytes(), f.read(seed.uri())),
+          "An ambiguous source alias cannot copy the original or advance its history");
+    }
+  }
+
+  private static void checkPendingTargetRejection(Context base, String secondary, boolean duringVerification) throws Exception {
+    try (Fixture f = new Fixture(base, secondary); CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         ArchiveStore archive = E2Settings.openRecords(f.isolatedContext());
+         PhotoMoveStore journal = new PhotoMoveStore(f.isolatedContext())) {
+      Seed seed = seed(f, history, archive, "TARGET-PUBLICATION-CHANGED.JPG", 0xff57688b, false, false);
+      require(PhotoStorage.select(f.isolatedContext(), secondary), "Choose the synthetic SD destination");
+      try (PhotoMove preparing = f.move(ledger, history, boundary -> {
+        if (boundary == PhotoMove.Boundary.ATTACHED) throw new InterruptedMove();
+      })) {
+        preparing.begin(preflight(preparing, preparing.plan(secondary), () -> false));
+        expectCrash(preparing, PhotoMove.Boundary.ATTACHED);
+      }
+      var before = journal.next();
+      Uri target = Uri.parse(before.target());
+      require(before.stage() == PhotoMoveStore.COPYING && f.row(target).pending(), "Use the pinned unpublished copy");
+      byte[] copiedBytes = duringVerification ? seed.bytes() : jpeg(0xff216759);
+      if (!duringVerification) {
+        f.write(target, copiedBytes);
+        publishFixtureTarget(f, target);
+      }
+      var publications = new AtomicInteger();
+      try (PhotoMove resumed = new PhotoMove(f.isolatedContext(), ledger, history, new PhotoMoveStore(f.isolatedContext()),
+          ignored -> {}, uri -> {
+            if (duringVerification && target.getPath().equals(uri.getPath())) {
+              publishFixtureTarget(f, target);
+              publications.incrementAndGet();
+            }
+            return f.resolver.openInputStream(uri);
+          })) {
+        expectMoveReason(PhotoMove.FailureReason.TARGET_PIN, () -> resumed.run(() -> false, ignored -> {}),
+            duringVerification ? "照合中に写真が変更されました。" : "移動先のファイルを確認できません。");
+      }
+      require(publications.get() == (duringVerification ? 1 : 0) && before.equals(journal.next())
+          && history.moveEvidence().equals(List.of(seed.history())) && journal.completed(seed.history().getId()) == null
+          && Arrays.equals(seed.bytes(), f.read(seed.uri())) && Arrays.equals(copiedBytes, f.read(target))
+          && !f.row(target).pending(), "Changed target publication preserves both files and the historical journal");
+    }
+  }
+
+  private static void publishFixtureTarget(Fixture f, Uri target) {
+    var published = new ContentValues();
+    published.put(IS_PENDING, 0);
+    require(f.resolver.update(target, published, null, null) == 1, "Publish the synthetic target at the intended boundary");
+  }
+
+  private static void expectMoveReason(PhotoMove.FailureReason reason, CheckedOperation operation, String message)
+      throws Exception {
+    try {
+      operation.run();
+      throw new CheckFailure("The move accepted changed identity");
+    } catch (PhotoMove.Failure rejected) {
+      require(reason.code().equals(rejected.reason) && rejected.scanAttempts == 0 && message.equals(rejected.getMessage()),
+          "The move identifies the failed check and keeps its existing message: " + rejected.reason);
+    }
+  }
+
+  private record ScanWindow(long start, long end) {
+    boolean contains(long time) { return time >= start && time <= end; }
+  }
+
+  private static String checkSnapshotCadence(Context base, String secondary, int cadence) throws Exception {
+    int recordCount = 12_478;
+    int photoCount = 12;
+    try (Fixture f = new Fixture(base, secondary); CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
+         ArchiveStore archive = E2Settings.openRecords(f.isolatedContext()); ArchiveStore writer = E2Settings.openRecords(f.isolatedContext())) {
+      String sampleKey = null;
+      var namesByHistoryId = new HashMap<Long, String>();
+      for (int i = 0; i < photoCount; i++) {
+        byte[] jpeg = jpegWithCaptureTime(f, 0xff57688b + i, SHOT + 1, SHOT + 2);
+        byte[] bytes = Arrays.copyOf(jpeg, 8 * 1024 * 1024);
+        var candidate = seed(f, history, archive, "CADENCE-" + i + ".JPG", bytes, false, false);
+        if (i == 0) sampleKey = candidate.archiveKey();
+        namesByHistoryId.put(candidate.history().getId(), candidate.name());
+      }
+      require(namesByHistoryId.size() == photoCount, "Seed one history ID for each candidate");
+      JSONObject sample = archive.get(sampleKey).put("key", "SYNTHETIC_KEY").put("uri", "SYNTHETIC_URI");
+      archive.getWritableDatabase().execSQL(
+          "WITH RECURSIVE rows(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM rows WHERE n<?) "
+              + "INSERT INTO photos SELECT printf('%032x',n),'verified',"
+              + "replace(replace(?, 'SYNTHETIC_KEY', printf('%032x',n)), 'SYNTHETIC_URI', 'fixture://archive/'||n) FROM rows",
+          new Object[]{recordCount - photoCount, sample.toString()});
+      require(DatabaseUtils.longForQuery(archive.getReadableDatabase(), "SELECT count(*) FROM photos", null) == recordCount,
+          "Use exactly 12478 valid synthetic archive records");
+
+      var scanStarted = new CountDownLatch(1);
+      var stopWriter = new CountDownLatch(1);
+      var writerReady = new CountDownLatch(1);
+      var writes = new ConcurrentLinkedQueue<Long>();
+      var writerFailure = new AtomicReference<Exception>();
+      var scanStart = new AtomicLong();
+      var scanAttempts = new AtomicInteger();
+      var retries = new AtomicInteger();
+      List<ScanWindow> windows = new ArrayList<>();
+      Thread background = new Thread(() -> {
+        try {
+          writer.getWritableDatabase();
+          writerReady.countDown();
+          if (!scanStarted.await(20, TimeUnit.SECONDS)) throw new IOException("No move scan started");
+          int sequence = 0;
+          do {
+            if (stopWriter.getCount() == 0) break;
+            writer.put(new JSONObject(sample.toString()).put("key", "0".repeat(31) + "1")
+                .put("uri", "fixture://archive/1").put("sequence", ++sequence), "verified");
+            writes.add(SystemClock.elapsedRealtimeNanos());
+          } while (!stopWriter.await(cadence, TimeUnit.MILLISECONDS));
+        } catch (Exception failure) {
+          writerFailure.set(failure);
+        } finally {
+          writerReady.countDown();
+        }
+      }, "archive-fixture-writer");
+
+      require(PhotoStorage.select(f.isolatedContext(), secondary), "Choose the synthetic SD destination");
+      var observer = new LegacyArchiveMoveProof.ScanObserver() {
+        @Override public void beforeScan(int attempt) {
+          scanAttempts.incrementAndGet();
+          if (attempt > 1) retries.incrementAndGet();
+          scanStart.set(SystemClock.elapsedRealtimeNanos());
+          scanStarted.countDown();
+        }
+        @Override public void afterScan() {
+          windows.add(new ScanWindow(scanStart.get(), SystemClock.elapsedRealtimeNanos()));
+        }
+      };
+      long elapsed;
+      long revisionBefore = archive.indexRevision();
+      int done = 0;
+      String status = "completed";
+      try (PhotoMove mover = observeScans(f, ledger, history, observer)) {
+        PhotoMove.Plan plan = preflight(mover, mover.plan(secondary), () -> false);
+        require(plan.items().size() == photoCount, "All expected synthetic candidates pass the full preflight");
+        mover.begin(plan);
+        background.start();
+        try {
+          require(writerReady.await(10, TimeUnit.SECONDS), "The background writer must start before measurement");
+          long started = SystemClock.elapsedRealtime();
+          try {
+            done = mover.run(() -> false, ignored -> {}).done();
+          } catch (PhotoMove.Failure failure) {
+            done = mover.batch().done();
+            status = failure.reason;
+          }
+          elapsed = SystemClock.elapsedRealtime() - started;
+        } finally {
+          stopWriter.countDown();
+          scanStarted.countDown();
+          background.join(10_000);
+        }
+      }
+      require(!background.isAlive() && writerFailure.get() == null, "The writer stopped without failing");
+      long revisionDelta = archive.indexRevision() - revisionBefore;
+      long overlap = writes.stream().filter(time -> windows.stream().anyMatch(window -> window.contains(time))).count();
+      String metrics = "cadence_ms=" + cadence + " records=" + recordCount + " done=" + done + "/" + photoCount
+          + " commits=" + writes.size() + " revision_delta=" + revisionDelta + " scan_attempts=" + scanAttempts.get()
+          + " retries=" + retries.get() + " overlapped_commits=" + overlap + " move_ms=" + elapsed + " result=" + status;
+      android.util.Log.i("LoupeArchiveSnapshotCheck", metrics);
+      require(writes.size() >= 2 && revisionDelta == writes.size() && overlap > 0,
+          "Measure actual committed writes overlapping a real scan: " + metrics);
+      var targets = f.rows(secondary);
+      require(done == photoCount && targets.size() == photoCount && f.rows(PRIMARY).isEmpty(),
+          "The photo move must finish during real concurrent archive writes: " + metrics);
+      Set<Uri> unmatchedTargets = targets.stream().map(PhotoStorageChecks.Row::uri).collect(Collectors.toSet());
+      var movedHistory = history.moveEvidence();
+      require(movedHistory.size() == photoCount && movedHistory.stream().map(HistoryDb.MoveEvidence::getId)
+          .collect(Collectors.toSet()).equals(namesByHistoryId.keySet()) && ledger.receiptCount() == 0,
+          "Every original history ID remains and no new receipt is created");
+      for (var row : movedHistory) {
+        String expectedName = namesByHistoryId.get(row.getId());
+        Uri target = Uri.parse(row.getUri());
+        require(unmatchedTargets.remove(target) && expectedName.equals(row.getName()),
+            "Every history ID references a different exact destination with its original name");
+        try (Cursor media = f.resolver.query(target, new String[]{DISPLAY_NAME}, null, null, null)) {
+          require(media != null && media.getCount() == 1 && media.moveToFirst() && expectedName.equals(media.getString(0)),
+              "The history URI resolves to the corresponding moved photo");
+        }
+      }
+      require(unmatchedTargets.isEmpty(), "Every moved photo has its original history");
+      return "PASS archive snapshot load: " + metrics;
+    }
+  }
+
+  private static PhotoMove observeScans(Fixture f, CameraImportLedger ledger, HistoryDb history,
+      LegacyArchiveMoveProof.ScanObserver observer) {
+    return new PhotoMove(f.isolatedContext(), ledger, history, new PhotoMoveStore(f.isolatedContext()), ignored -> {},
+        f.resolver::openInputStream, f.resolver::openFileDescriptor, observer);
+  }
+
+  private static SQLiteDatabase openReadOnlyArchive(Context context) {
+    return SQLiteDatabase.openDatabase(context.getDatabasePath(E2Settings.DATABASE).getPath(), null, SQLiteDatabase.OPEN_READONLY);
+  }
+
+  private static long revision(SQLiteDatabase db) {
+    return DatabaseUtils.longForQuery(db, "SELECT value FROM index_revision WHERE id=1", null);
+  }
+
+  private static void putUnrelated(ArchiveStore writer, int ordinal) throws Exception {
+    writer.put(new JSONObject().put("key", "unrelated-" + ordinal).put("uri", "fixture://archive/" + ordinal), "pending");
+  }
+
+  private static void putUnrelatedSql(SQLiteDatabase db, int ordinal) {
+    db.execSQL("INSERT INTO photos(key,state,payload) VALUES(?,'pending',?)",
+        new Object[]{"direct-" + ordinal, new JSONObject(java.util.Collections.singletonMap(
+            "uri", "fixture://archive/direct-" + ordinal)).toString()});
+  }
+
+  private static void writeArchive(CheckedOperation write) throws IOException {
+    try {
+      write.run();
+    } catch (Exception failure) {
+      throw new IOException("Synthetic competing archive write failed", failure);
+    }
+  }
+
   private static String isolatedVolume(Context base, String secondaryArg) throws IOException {
     require("jp.nano.rawgallery.sd162".equals(base.getPackageName()), "Archive checks require the isolated APK");
     require("ranchu".equals(Build.HARDWARE) || "goldfish".equals(Build.HARDWARE), "Archive checks require an emulator");
@@ -137,8 +767,8 @@ final class LegacyArchiveMoveChecks {
         && match(photo, EPOCH, GA, GA + 257, history, List.of(receipt), 300) == null,
         "A matching first generation cannot bypass the full range or its budget");
     var budget = new LegacyArchiveMoveProof.Budget(257);
-    require(LegacyArchiveMoveProof.match(photo, EPOCH, GA, GA + 256, history, List.of(receipt), budget, () -> false) != null
-        && LegacyArchiveMoveProof.match(photo, EPOCH, GA, GA, history, List.of(receipt), budget, () -> false) == null,
+    require(LegacyArchiveMoveProof.match(photo, EPOCH, GA, GA + 256, history, indexed(List.of(receipt)), budget, () -> false) != null
+        && LegacyArchiveMoveProof.match(photo, EPOCH, GA, GA, history, indexed(List.of(receipt)), budget, () -> false) == null,
         "The finite match budget is shared by candidates");
     require(match(photo, "wrong app-UID epoch", GA, GA + 10, history, List.of(receipt), 100) == null
         && match(photo, null, GA, GA + 10, history, List.of(receipt), 100) == null
@@ -190,7 +820,7 @@ final class LegacyArchiveMoveChecks {
         && LegacyArchiveMoveProof.parse(receipt.key(), new JSONObject(value.toString()).put("version", "bad/version")) == null,
         "Proof requires a valid, nonempty E2 object version and the exact typed payload identity");
     var checks = new AtomicInteger();
-    expectInterrupted(() -> LegacyArchiveMoveProof.match(photo, EPOCH, GA, GA + 256, history, List.of(receipt),
+    expectInterrupted(() -> LegacyArchiveMoveProof.match(photo, EPOCH, GA, GA + 256, history, indexed(List.of(receipt)),
         new LegacyArchiveMoveProof.Budget(257), () -> checks.incrementAndGet() > 10), "Stop midway through the full search");
   }
 
@@ -211,7 +841,13 @@ final class LegacyArchiveMoveChecks {
 
   private static PhotoMoveStore.ArchiveProof match(PhotoRepository.Photo photo, String epoch, long added, long modified,
       HistoryDb.MoveEvidence history, List<LegacyArchiveMoveProof.ArchiveRecord> records, int budget) throws Exception {
-    return LegacyArchiveMoveProof.match(photo, epoch, added, modified, history, records, new LegacyArchiveMoveProof.Budget(budget), () -> false);
+    return LegacyArchiveMoveProof.match(photo, epoch, added, modified, history, indexed(records),
+        new LegacyArchiveMoveProof.Budget(budget), () -> false);
+  }
+
+  private static List<LegacyArchiveMoveProof.IndexedReceipt> indexed(List<LegacyArchiveMoveProof.ArchiveRecord> records) {
+    return records.stream().map(record -> new LegacyArchiveMoveProof.IndexedReceipt(true, record))
+        .collect(Collectors.toList());
   }
 
   private static JSONObject archivePayload(PhotoRepository.Photo photo, String key, String sha) throws Exception {
