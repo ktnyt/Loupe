@@ -101,7 +101,7 @@ final class CameraImportLedgerChecks {
                 out.write(missingFixture);
             }, missingFolderName, true, false, () -> false);
             require(sourceReads[0] == 1 && restored.imported && !restored.uri.equals(initial.uri),
-                    "missing fast-path destination is forgotten and republished from source bytes");
+                    "missing fast-path destination is replaced from source bytes without dropping its receipt");
             require(ledger.pending().isEmpty() && ledger.contentCount() == 1 && ledger.receiptCount() == 1,
                     "missing-destination retry leaves one content, one receipt, and no pending row");
             require(countOwnedVisible(context, missingFolder) == 1,

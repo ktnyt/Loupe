@@ -38,9 +38,10 @@ public final class CameraImportLedger extends SQLiteOpenHelper {
     public static final class Content {
         public final String sourceSha, storedSha, uri, kind, captureGroup;
         public final long sourceBytes, storedBytes;
+        final long createdAt;
         Content(Cursor c) {
             sourceSha=c.getString(0);sourceBytes=c.getLong(1);storedSha=c.getString(2);storedBytes=c.getLong(3);
-            uri=c.getString(4);kind=c.getString(5);captureGroup=c.getString(6);
+            uri=c.getString(4);kind=c.getString(5);captureGroup=c.getString(6);createdAt=c.getLong(7);
         }
     }
     public static final class Pending {
@@ -54,7 +55,7 @@ public final class CameraImportLedger extends SQLiteOpenHelper {
             pendingName=c.getString(11);finalName=c.getString(12);relativeFolder=c.getString(13);uri=c.isNull(14)?null:c.getString(14);ready=c.getInt(15)!=0;volume=c.getString(16);
         }
     }
-    private static final String CONTENT_FIELDS="source_sha,source_bytes,stored_sha,stored_bytes,dest_uri,kind,capture_group";
+    private static final String CONTENT_FIELDS="source_sha,source_bytes,stored_sha,stored_bytes,dest_uri,kind,capture_group,created_at";
     private static final String PENDING_FIELDS="token,source_id,relative_path,source_bytes,source_stamp,capture_seconds,source_sha,stored_sha,stored_bytes,kind,capture_group,pending_name,final_name,relative_folder,target_uri,ready,volume";
     private static void hash(String value) {
         if (value == null || !value.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("Invalid content fingerprint");
@@ -70,8 +71,8 @@ public final class CameraImportLedger extends SQLiteOpenHelper {
     /** One read-only snapshot for an SD run; no legacy evidence is adopted here. */
     public synchronized Map<String,Content> sourceSnapshot(String sourceId) {
         Map<String,Content> out=new HashMap<>();
-        try(Cursor c=getReadableDatabase().rawQuery("SELECT c.source_sha,c.source_bytes,c.stored_sha,c.stored_bytes,c.dest_uri,c.kind,c.capture_group,r.source_key FROM receipts r JOIN contents c ON r.source_sha=c.source_sha WHERE r.source_id=?",new String[]{sourceId})) {
-            while(c.moveToNext())out.put(c.getString(7),new Content(c));
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT c.source_sha,c.source_bytes,c.stored_sha,c.stored_bytes,c.dest_uri,c.kind,c.capture_group,c.created_at,r.source_key FROM receipts r JOIN contents c ON r.source_sha=c.source_sha WHERE r.source_id=?",new String[]{sourceId})) {
+            while(c.moveToNext())out.put(c.getString(8),new Content(c));
         }
         return out;
     }
@@ -107,12 +108,59 @@ public final class CameraImportLedger extends SQLiteOpenHelper {
         }
         receipt(db,source,raw);
     }
-    /** Import legacy MediaStore evidence only after full-byte (or narrowly normalized EXIF) verification. */
-    public synchronized Content adopt(CameraImportFile source,String raw,String stored,long storedBytes,String uri,String kind,String group) {
-        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
-        try { content(db,source,raw,stored,storedBytes,uri,kind,group);db.setTransactionSuccessful(); } finally { db.endTransaction(); }
-        return find(raw,source.bytes);
+    private void saveVerified(SQLiteDatabase db, CameraImportFile source, String raw, String stored, long storedBytes,
+            String uri, String kind, String group, Content missing) {
+        if (missing == null) {
+            Content current = find(raw, source.bytes);
+            if (current != null && (!current.uri.equals(uri) || !current.storedSha.equals(stored)
+                    || current.storedBytes != storedBytes))
+                throw new IllegalStateException("Saved photo changed before commit");
+            if (current == null) {
+                content(db, source, raw, stored, storedBytes, uri, kind, group);
+                return;
+            }
+        } else {
+            hash(raw);
+            hash(stored);
+            if (!raw.equals(missing.sourceSha) || source.bytes != missing.sourceBytes || storedBytes <= 0
+                    || uri == null || !uri.startsWith("content://media/"))
+                throw new IllegalArgumentException("Invalid verified replacement");
+            // Update only the saved location/bytes. The original row, capture group, timestamps,
+            // and all transport receipts keep their identities and foreign key.
+            ContentValues values = new ContentValues();
+            values.put("dest_uri", uri);
+            values.put("stored_sha", stored);
+            values.put("stored_bytes", storedBytes);
+            if (db.update("contents", values, "source_sha=? AND source_bytes=? AND dest_uri=? AND stored_sha=?"
+                    + " AND stored_bytes=? AND kind=? AND capture_group=? AND created_at=?",
+                    new String[]{missing.sourceSha, Long.toString(missing.sourceBytes), missing.uri, missing.storedSha,
+                            Long.toString(missing.storedBytes), missing.kind, missing.captureGroup,
+                            Long.toString(missing.createdAt)}) != 1)
+                throw new IllegalStateException("Saved photo changed before replacement");
+        }
+        try (Cursor row = db.rawQuery("SELECT source_sha FROM receipts WHERE source_key=?", new String[]{source.sourceKey()})) {
+            if (row.moveToFirst() && raw.equals(row.getString(0))) return;
+        }
+        receipt(db, source, raw);
     }
+
+    /** Import legacy MediaStore evidence only after full-byte (or narrowly normalized EXIF) verification. */
+    public synchronized Content adopt(CameraImportFile source, String raw, String stored, long storedBytes,
+            String uri, String kind, String group) {
+        return adopt(source, raw, stored, storedBytes, uri, kind, group, null);
+    }
+
+    synchronized Content adopt(CameraImportFile source, String raw, String stored, long storedBytes,
+            String uri, String kind, String group, Content missing) {
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            saveVerified(db, source, raw, stored, storedBytes, uri, kind, group, missing);
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+        return find(raw, source.bytes);
+    }
+
     public synchronized Pending allocate(CameraImportFile source,String raw,String stored,long storedBytes,String finalName,String folder,String kind,String group,String volume) {
         hash(raw);hash(stored);
         if(storedBytes<=0 || !folder.startsWith("Pictures/CameraSync/") || folder.contains("..") || finalName.contains("/") || finalName.contains("\\"))throw new IllegalArgumentException("Invalid publication target");
@@ -148,12 +196,14 @@ public final class CameraImportLedger extends SQLiteOpenHelper {
         return out;
     }
     /** The caller first verifies that this owned URI is published with exactly the journaled bytes. */
-    public synchronized void commit(String token) {
+    public synchronized void commit(String token) { commit(token, null); }
+
+    synchronized void commit(String token, Content missing) {
         SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try {
             Pending p=pending(token);
             if(p==null || !p.ready || p.uri==null)throw new IllegalStateException("Publication is not verified");
-            content(db,p.source,p.sourceSha,p.storedSha,p.storedBytes,p.uri,p.kind,p.captureGroup);
+            saveVerified(db, p.source, p.sourceSha, p.storedSha, p.storedBytes, p.uri, p.kind, p.captureGroup, missing);
             db.delete("pending","token=?",new String[]{token});db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
     }
@@ -182,7 +232,7 @@ public final class CameraImportLedger extends SQLiteOpenHelper {
             StringBuilder out=new StringBuilder("capture:");for(byte b:bytes)out.append(String.format(Locale.ROOT,"%02x",b&255));return out.toString();
         }catch(java.security.NoSuchAlgorithmException impossible){throw new AssertionError(impossible);}
     }
-    /** A confirmed missing destination can be restored from its original on the next transfer. */
+    /** Explicit fixture cleanup. Import replacement must retain the old content and its receipts. */
     public synchronized void forgetMissing(String raw) {
         SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try {db.delete("receipts","source_sha=?",new String[]{raw});db.delete("contents","source_sha=?",new String[]{raw});db.setTransactionSuccessful();}finally{db.endTransaction();}

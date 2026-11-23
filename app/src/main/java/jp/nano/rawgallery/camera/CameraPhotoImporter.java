@@ -31,19 +31,7 @@ public final class CameraPhotoImporter {
     public void recover(BooleanSupplier cancelled)throws IOException {publisher.recover(cancelled);}
     private boolean available(CameraImportLedger.Content content,BooleanSupplier cancelled)throws IOException {
         Uri uri=Uri.parse(content.uri);
-        PhotoStorage.requireMounted(context,uri);
-        try(android.database.Cursor c=context.getContentResolver().query(uri,new String[]{"_id"},null,null,null)) {
-            if(c==null)throw new IOException("Saved photo status unavailable");
-            if(!c.moveToFirst()){
-                PhotoStorage.requireMounted(context,uri);
-                // Legacy adoption could save an aggregate URI whose actual volume was never recorded.
-                if ("external".equals(android.provider.MediaStore.getVolumeName(uri))
-                        && !android.provider.MediaStore.getExternalVolumeNames(context)
-                          .containsAll(android.provider.MediaStore.getRecentExternalVolumeNames(context)))
-                    throw new IOException("Saved photo volume unavailable");
-                ledger.forgetMissing(content.sourceSha);return false;
-            }
-        }
+        if (!CameraPhotoPublisher.savedPhotoExists(context, uri)) return false;
         try(InputStream in=context.getContentResolver().openInputStream(uri)) {
             if(in==null)throw new IOException("Saved photo unavailable");
             java.security.MessageDigest digest=java.security.MessageDigest.getInstance("SHA-256");
@@ -71,8 +59,12 @@ public final class CameraPhotoImporter {
             }
         }
         try(CameraImportCopy.Prepared prepared=CameraImportCopy.prepare(context.getCacheDir(),source,metrics==null?copy:metrics.countSource(copy),cancelled)) {
-            CameraImportLedger.Content existing=ledger.find(prepared.sourceSha256,source.bytes);
-            if(existing!=null&&!available(existing,cancelled))existing=null;
+            CameraImportLedger.Content existing = ledger.find(prepared.sourceSha256, source.bytes);
+            CameraImportLedger.Content missing = null;
+            if (existing != null && !available(existing, cancelled)) {
+                missing = existing;
+                existing = null;
+            }
             CameraImportLegacy.Evidence adopted=existing==null?CameraImportLegacy.existing(context,source,prepared.file,cancelled,n->{if(metrics!=null)metrics.legacyBytes+=n;}):null;
             // Preserve the original digest; only this owned temporary copy may be repaired.
             ExifOffsetFix.INSTANCE.patchIfBroken(prepared.file);
@@ -86,8 +78,11 @@ public final class CameraPhotoImporter {
             }
             String group=ledger.captureGroup(eventSource,prepared.sourceSha256,kind);
             if(adopted!=null) {
+                if (missing != null && CameraPhotoPublisher.savedPhotoExists(context, Uri.parse(missing.uri)))
+                    throw new IOException("Previous saved photo still exists");
                 beforeCommit.check();
-                CameraImportLedger.Content content=ledger.adopt(eventSource,prepared.sourceSha256,adopted.getSha256(),adopted.getBytes(),adopted.getUri(),kind,group);
+                CameraImportLedger.Content content = ledger.adopt(eventSource, prepared.sourceSha256, adopted.getSha256(),
+                        adopted.getBytes(), adopted.getUri(), kind, group, missing);
                 return new Result(Uri.parse(content.uri),false,true,source.bytes);
             }
             String folder=folderHint==null||folderHint.isEmpty()?(defaultFolder==null?metadata.getModel():defaultFolder):folderHint;

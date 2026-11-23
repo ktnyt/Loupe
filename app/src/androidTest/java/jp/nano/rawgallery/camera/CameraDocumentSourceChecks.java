@@ -2,6 +2,7 @@ package jp.nano.rawgallery.camera;
 
 import android.app.Instrumentation;
 import android.content.Context;
+import android.content.ContentUris;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.net.Uri;
@@ -13,7 +14,7 @@ import java.security.MessageDigest;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Synthetic original reads and isolated receipts only; no source or MediaStore writes. */
+/** Synthetic originals and isolated journals; publication fixtures write only their own emulator files. */
 public final class CameraDocumentSourceChecks {
     private static final byte[] ORIGINAL = {12, 34, 56, 78};
     private static final Uri DOCUMENT = Uri.parse("content://synthetic.documents/document/test");
@@ -332,6 +333,8 @@ public final class CameraDocumentSourceChecks {
                 && ("ranchu".equals(android.os.Build.HARDWARE) || "goldfish".equals(android.os.Build.HARDWARE))) {
             revokedTreeGrant(context);
             publicationGrantBoundary(context);
+            uncertainPublicationRecovery(context);
+            refusesConcurrentReplacement(context);
         }
         return "PASS sd-original permission=true mapping=true pinnedVolume=true verifiedIndexAbsence=true requiredOriginal=true noFallback=true immutable=true cancel=true revoke=true bounds=true legacyReceiptRevalidated=true";
     }
@@ -785,11 +788,175 @@ public final class CameraDocumentSourceChecks {
             } catch (MountedCameraCard.Unavailable expected) { }
             require(ledger.known(newSource) == null && ledger.receiptCount() == 1 && ledger.pending().isEmpty(),
                     "receipt reuse and binding both recheck the source grant without erasing the admitted receipt");
+
+            refuseUnreadyVisible(context, source, staged, sha, destination, volume, folder);
+            destination = replaceAfterRefusedGrant(context, ledger, source, staged, destination, name, volume);
         } finally {
             if (destination != null) context.getContentResolver().delete(destination, null, null);
             ledger.close();
             require(context.deleteDatabase(database) && staged.delete(), "isolated publication fixture cleaned up");
         }
+    }
+
+    private static Uri replaceAfterRefusedGrant(Context context, CameraImportLedger ledger, CameraImportFile source,
+            File staged, Uri destination, String name, String volume) throws Exception {
+        CameraImportLedger.Content old = ledger.known(source);
+        var secondSource = new CameraImportFile("sd:second-transport", source.relativePath, source.bytes,
+                "second", source.captureSeconds);
+        ledger.bind(secondSource, old);
+        List<List<String>> oldReceipts = receiptRows(ledger);
+        require(context.getContentResolver().delete(destination, null, null) == 1,
+                "remove only the destination created by this isolated fixture");
+        require(countNamedMedia(context, name) == 0, "missing destination was confirmed");
+
+        var importer = new CameraPhotoImporter(context, ledger, volume);
+        var grant = new AtomicBoolean(true);
+        var boundary = grantFixture(grant, new java.util.concurrent.atomic.AtomicLong(0));
+        try {
+            importer.importPhoto(source, out -> java.nio.file.Files.copy(staged.toPath(), out),
+                    "sd-grant-fixture", true, false, () -> false, () -> {
+                        require(ledger.pending().size() == 1 && !ledger.pending().get(0).ready,
+                                "replacement grant is checked before durable READY");
+                        grant.set(false);
+                        boundary.requireFresh();
+                    });
+            throw new AssertionError("Revoked replacement grant permitted publication");
+        } catch (MountedCameraCard.Unavailable expected) { }
+        require(ledger.known(source).uri.equals(old.uri) && ledger.known(secondSource).uri.equals(old.uri)
+                        && receiptRows(ledger).equals(oldReceipts) && ledger.contentCount() == 1
+                        && ledger.pending().isEmpty() && countNamedMedia(context, name) == 0,
+                "refused replacement leaves both historical receipts and the old content intact");
+        var replacement = importer.importPhoto(source, out -> java.nio.file.Files.copy(staged.toPath(), out),
+                "sd-grant-fixture", true, false, () -> false);
+        CameraImportLedger.Content updated = ledger.known(source);
+        require(replacement.imported && updated.uri.equals(replacement.uri.toString()) && !updated.uri.equals(old.uri)
+                        && updated.sourceSha.equals(old.sourceSha) && updated.createdAt == old.createdAt
+                        && updated.kind.equals(old.kind) && updated.captureGroup.equals(old.captureGroup)
+                        && ledger.known(secondSource).uri.equals(updated.uri) && receiptRows(ledger).equals(oldReceipts)
+                        && ledger.pending().isEmpty() && countNamedMedia(context, name) == 1,
+                "successful verified replacement repoints both receipts without rewriting timestamps or metadata");
+        return replacement.uri;
+    }
+
+    private static List<List<String>> receiptRows(CameraImportLedger ledger) {
+        List<List<String>> rows = new ArrayList<>();
+        try (Cursor cursor = ledger.getReadableDatabase().rawQuery("SELECT * FROM receipts ORDER BY source_key", null)) {
+            while (cursor.moveToNext()) {
+                List<String> row = new ArrayList<>();
+                for (int i = 0; i < cursor.getColumnCount(); ++i) row.add(cursor.getString(i));
+                rows.add(row);
+            }
+        }
+        return rows;
+    }
+
+    private static void refuseUnreadyVisible(Context context, CameraImportFile source, File staged, String sha,
+            Uri visible, String volume, String folder) throws IOException {
+        String database = "camera-unready-visible-" + UUID.randomUUID() + ".db";
+        var ledger = new CameraImportLedger(context, database);
+        try {
+            var pending = ledger.allocate(source, sha, sha, staged.length(), source.name, folder, "JPEG", "fixture", volume);
+            ledger.attach(pending.token, visible.toString());
+            try {
+                new CameraPhotoPublisher(context, ledger, volume, ignored -> {}).recover(() -> false);
+                throw new AssertionError("Visible UNREADY file was promoted to an authorized receipt");
+            } catch (IOException expected) {
+                require(expected.getMessage().contains("no READY authorization"), "visible UNREADY is an explicit inconsistency");
+            }
+            require(!ledger.pending(pending.token).ready && ledger.contentCount() == 0 && ledger.receiptCount() == 0
+                            && countNamedMedia(context, source.name) == 1,
+                    "visible UNREADY file and journal both survive without an invented receipt");
+        } finally {
+            ledger.close();
+            require(context.deleteDatabase(database), "isolated UNREADY fixture removed");
+        }
+    }
+
+    private static void uncertainPublicationRecovery(Context context) throws IOException {
+        String database = "camera-uncertain-journal-" + UUID.randomUUID() + ".db";
+        var ledger = new CameraImportLedger(context, database);
+        try {
+            String sha = hexDigest(ORIGINAL);
+            String volume = jp.nano.rawgallery.PhotoStorage.PRIMARY;
+            var pending = ledger.allocate(entry().file, sha, sha, ORIGINAL.length, "TEST.JPG",
+                    CameraPhotoPublisher.folder("camera-uncertain-fixture", false), "JPEG", "fixture", volume);
+
+            for (int problem : new int[]{0, 1, 2, 3, 4}) {
+                expectUncertainRecovery(context, ledger, pending.token, volume, problem);
+            }
+            // Simulate an attached READY journal after the visibility call: unknown results
+            // must not discard it before the eventual receipt recovery.
+            Uri attached = ContentUris.withAppendedId(MediaStore.Images.Media.getContentUri(volume), 123456789L);
+            ledger.attach(pending.token, attached.toString());
+            ledger.ready(pending.token);
+            for (int problem : new int[]{0, 1, 2, 3, 4}) {
+                expectUncertainRecovery(context, ledger, pending.token, volume, problem);
+                require(ledger.pending(pending.token).ready, "unknown state retains READY authority");
+            }
+        } finally {
+            ledger.close();
+            require(context.deleteDatabase(database), "isolated uncertain fixture removed");
+        }
+    }
+
+    private static void expectUncertainRecovery(Context context, CameraImportLedger ledger, String token,
+            String volume, int problem) throws IOException {
+        var publisher = new CameraPhotoPublisher(context, ledger, volume, ignored -> {}, (uri, fields, args) -> {
+            if (problem == 0) return null;
+            var cursor = new MatrixCursor(fields) {
+                @Override public boolean onMove(int oldPosition, int newPosition) { return problem != 3; }
+            };
+            if (problem >= 3) cursor.addRow(new Object[fields.length]);
+            if (problem == 4) cursor.addRow(new Object[fields.length]);
+            Bundle extras = new Bundle();
+            if (problem == 1) extras.putBoolean(DocumentsContract.EXTRA_LOADING, true);
+            if (problem == 2) extras.putString(DocumentsContract.EXTRA_ERROR, "fixture");
+            cursor.setExtras(extras);
+            return cursor;
+        });
+        try {
+            publisher.recover(() -> false);
+            throw new AssertionError("Unknown photo result was interpreted as confirmed absence");
+        } catch (IOException expected) {
+            require(ledger.pending(token) != null && ledger.contentCount() == 0 && ledger.receiptCount() == 0,
+                    "unknown lookup or exact state retains its journal and does not invent history");
+        }
+    }
+
+    private static void refusesConcurrentReplacement(Context context) {
+        String database = "camera-replacement-witness-" + UUID.randomUUID() + ".db";
+        var ledger = new CameraImportLedger(context, database);
+        try {
+            var source = entry().file;
+            String sha = hexDigest(ORIGINAL);
+            String volume = jp.nano.rawgallery.PhotoStorage.PRIMARY;
+            Uri oldUri = ContentUris.withAppendedId(MediaStore.Images.Media.getContentUri(volume), 123456789L);
+            Uri movedUri = ContentUris.withAppendedId(MediaStore.Images.Media.getContentUri(volume), 123456790L);
+            Uri newUri = ContentUris.withAppendedId(MediaStore.Images.Media.getContentUri(volume), 123456791L);
+            var old = ledger.adopt(source, sha, sha, source.bytes, oldUri.toString(), "JPEG", "fixture");
+            var receipts = receiptRows(ledger);
+            var pending = ledger.allocate(source, sha, sha, source.bytes, source.name,
+                    CameraPhotoPublisher.folder("camera-cas-fixture", false), "JPEG", "fixture", volume);
+            ledger.attach(pending.token, newUri.toString());
+            ledger.ready(pending.token);
+            require(ledger.relocate(oldUri.toString(), null, movedUri.toString(), sha), "fixture concurrently changes the old row");
+            try {
+                ledger.commit(pending.token, old);
+                throw new AssertionError("stale replacement witness overwrote the current destination");
+            } catch (IllegalStateException expected) {
+                require(ledger.pending(pending.token).ready && ledger.known(source).uri.equals(movedUri.toString())
+                                && receiptRows(ledger).equals(receipts),
+                        "stale commit preserves READY for retry and does not overwrite current content or history");
+            }
+        } finally {
+            ledger.close();
+            require(context.deleteDatabase(database), "isolated CAS fixture removed");
+        }
+    }
+
+    private static String hexDigest(byte[] bytes) {
+        try { return hex(MessageDigest.getInstance("SHA-256").digest(bytes)); }
+        catch (java.security.NoSuchAlgorithmException unavailable) { throw new AssertionError(unavailable); }
     }
 
     private static CameraDocumentSource.Entry entry() {
