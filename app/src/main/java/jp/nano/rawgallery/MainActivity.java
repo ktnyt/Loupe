@@ -420,7 +420,7 @@ public final class MainActivity extends DiagnosticActivity {
       cameraImportBand.setMinHeight(dp(48));
       cameraImportBand.setGravity(Gravity.CENTER_VERTICAL);
       cameraImportBand.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
-      cameraImportBand.setOnClickListener(v -> startActivity(new Intent(this, CameraImportActivity.class)));
+      cameraImportBand.setOnClickListener(v -> startActivity(CameraImportActivity.showProgressIntent(this)));
       root.addView(cameraImportBand);
       refreshCameraImportBand.run();
     }

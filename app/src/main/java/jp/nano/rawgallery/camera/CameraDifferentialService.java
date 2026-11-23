@@ -123,15 +123,24 @@ public final class CameraDifferentialService extends Service {
         if(p.getBoolean("sd_auto",false)&&mediaReceiver==null){
             mediaReceiver = new BroadcastReceiver() {
                 @Override public void onReceive(Context context, Intent event) {
-                    String tree = getSharedPreferences("camera_import", 0).getString("sd_tree_uri", null);
-                    if (tree != null) enqueue(sdRequest(context, Uri.parse(tree), PhotoStorage.selected(context),
-                            MountedCameraCard.detachGeneration()));
+                    String uuid = MountedCameraCard.notifiedVolumeUuid(event);
+                    // The remount owns the storage gate and the import screen refreshes its source when it ends.
+                    if (SdRemountMountNotice.suppressMount(uuid) || SdCardRemount.isRunning()) return;
+                    var settings = getSharedPreferences("camera_import", 0);
+                    String selectedTree = settings.getString("sd_tree_uri", null);
+                    if (selectedTree == null) return;
+                    Uri tree = Uri.parse(selectedTree);
+                    if (settings.getBoolean(SdCardRemount.ENABLED_PREFERENCE, false)
+                            && !MountedCameraCard.matchesMountNotice(tree, uuid)) return;
+                    enqueue(sdRequest(context, tree, PhotoStorage.selected(context), MountedCameraCard.detachGeneration()));
                 }
             };
-            IntentFilter f=new IntentFilter(Intent.ACTION_MEDIA_MOUNTED);f.addDataScheme("file");if(Build.VERSION.SDK_INT>=33)registerReceiver(mediaReceiver,f,Context.RECEIVER_NOT_EXPORTED);else registerReceiver(mediaReceiver,f);
+            IntentFilter f=new IntentFilter(Intent.ACTION_MEDIA_MOUNTED);
+            f.addDataScheme("file");if(Build.VERSION.SDK_INT>=33)registerReceiver(mediaReceiver,f,Context.RECEIVER_NOT_EXPORTED);else registerReceiver(mediaReceiver,f);
             watchingSdMounts=true;
         }else if(!p.getBoolean("sd_auto",false)&&mediaReceiver!=null){unregisterReceiver(mediaReceiver);mediaReceiver=null;watchingSdMounts=false;}
     }
+
     private synchronized void enqueue(Intent request){enqueue(request,false);}
     private synchronized void enqueue(Intent request, boolean continuation) {
         boolean confirmedRequest = CONFIRMED_SD.equals(request.getAction());
@@ -325,6 +334,7 @@ public final class CameraDifferentialService extends Service {
                 prefs.edit().putString("sd_tree_uri", request.getStringExtra(SD_PRIOR_TREE)).apply();
                 throw new MountedCameraCard.Unavailable("取り込み元のフォルダを保存できませんでした。");
             }
+            SdRemountMountNotice.registrationChanged(source);
         } finally {
             if (!saved && !hadGrant) {
                 try { resolver.releasePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION); }

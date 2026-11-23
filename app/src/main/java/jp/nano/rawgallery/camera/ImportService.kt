@@ -579,7 +579,7 @@ class ImportService : Service() {
             .setContentTitle(getString(R.string.camera_import_title))
             .setContentText(text)
             .setContentIntent(PendingIntent.getActivity(this, 0,
-                Intent(this, CameraImportActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
+                CameraImportActivity.showProgressIntent(this), PendingIntent.FLAG_IMMUTABLE))
             .setOngoing(ongoing)
             .apply { progress?.let { setProgress(it.total, it.done, it.total == 0) } }
             .build()
