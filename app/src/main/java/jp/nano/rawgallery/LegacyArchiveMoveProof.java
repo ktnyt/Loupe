@@ -83,7 +83,7 @@ final class LegacyArchiveMoveProof {
 
   /** Called after a scan has closed its cursor and before the ending revision is checked. */
   interface ScanObserver {
-    default void beforeScan() {}
+    default void beforeScan(int attempt) {}
     void afterScan() throws IOException;
   }
 
@@ -123,7 +123,7 @@ final class LegacyArchiveMoveProof {
             return new ReadResult(snapshot, null, 0);
           }
           scanned++;
-          observer.beforeScan();
+          observer.beforeScan(scanned);
           Map<String, List<IndexedReceipt>> refreshed = scan(db, stopped);
           observer.afterScan();
           check(stopped);

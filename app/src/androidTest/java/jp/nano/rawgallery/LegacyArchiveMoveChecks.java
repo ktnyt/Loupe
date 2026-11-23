@@ -3,15 +3,12 @@ package jp.nano.rawgallery;
 import android.app.Activity;
 import android.app.Instrumentation;
 import android.app.UiAutomation;
-import android.content.ContentProvider;
-import android.content.ContentResolver;
 import android.content.ContentUris;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.ContextWrapper;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.content.pm.ProviderInfo;
 import android.database.Cursor;
 import android.database.DatabaseUtils;
 import android.database.MatrixCursor;
@@ -22,7 +19,6 @@ import android.media.MediaScannerConnection;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.CancellationSignal;
 import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.text.format.Formatter;
@@ -42,6 +38,7 @@ import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -355,46 +352,22 @@ final class LegacyArchiveMoveChecks {
       long id = ContentUris.parseId(seed.uri());
       Uri alias = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
       var aliasQueries = new AtomicInteger();
-      // Model a provider with equal numeric IDs on distinct volumes while exercising the actual move.
-      ContentProvider provider = new ContentProvider() {
-        @Override public boolean onCreate() { return true; }
-        @Override public Cursor query(Uri uri, String[] columns, Bundle args, CancellationSignal signal) {
-          if (!alias.equals(uri)) return f.resolver.query(uri, columns, args, signal);
-          aliasQueries.incrementAndGet();
-          MatrixCursor rows = new MatrixCursor(columns, 2);
-          for (String volume : List.of(PRIMARY, secondary)) {
-            var row = rows.newRow();
-            row.add(_ID, id);
-            row.add(VOLUME_NAME, volume);
-          }
-          return rows;
-        }
-        @Override public Cursor query(Uri uri, String[] columns, String where, String[] args, String sort) {
-          return f.resolver.query(uri, columns, where, args, sort);
-        }
-        @Override public Bundle call(String method, String arg, Bundle extras) {
-          return f.resolver.call(MediaStore.AUTHORITY, method, arg, extras);
-        }
-        @Override public String getType(Uri uri) { return f.resolver.getType(uri); }
-        @Override public Uri insert(Uri uri, ContentValues values) { throw new CheckFailure("Alias rejection must not insert"); }
-        @Override public int update(Uri uri, ContentValues values, String where, String[] args) {
-          throw new CheckFailure("Alias rejection must not update");
-        }
-        @Override public int delete(Uri uri, String where, String[] args) {
-          throw new CheckFailure("Alias rejection must not delete");
-        }
-      };
-      ProviderInfo info = new ProviderInfo();
-      info.authority = MediaStore.AUTHORITY;
-      provider.attachInfo(context, info);
-      ContentResolver resolver = ContentResolver.wrap(provider);
-      Context multiVolume = new ContextWrapper(context) {
-        @Override public Context getApplicationContext() { return this; }
-        @Override public ContentResolver getContentResolver() { return resolver; }
-      };
       var before = journal.next();
-      try (PhotoMove resumed = new PhotoMove(multiVolume, ledger, history, new PhotoMoveStore(context), ignored -> {},
-          f.resolver::openInputStream)) {
+      require(before.archiveProof().epoch().equals(LegacyArchiveMoveProof.epoch(context)),
+          "The fixture uses the same live app-UID epoch as the confirmed proof");
+      // Supply two volumes for this aggregate query only; the real resolver handles every other operation.
+      try (PhotoMove resumed = new PhotoMove(context, ledger, history, new PhotoMoveStore(context), ignored -> {},
+          f.resolver::openInputStream, f.resolver::openFileDescriptor, () -> {}, (uri, columns, args) -> {
+            if (!alias.equals(uri)) return f.resolver.query(uri, columns, args, null);
+            aliasQueries.incrementAndGet();
+            MatrixCursor rows = new MatrixCursor(columns, 2);
+            for (String volume : List.of(PRIMARY, secondary)) {
+              var row = rows.newRow();
+              row.add(_ID, id);
+              row.add(VOLUME_NAME, volume);
+            }
+            return rows;
+          })) {
         expectMoveReason(PhotoMove.FailureReason.SOURCE_ALIAS, () -> resumed.run(() -> false, ignored -> {}),
             "写真を一意に特定できません。");
       }
@@ -470,12 +443,15 @@ final class LegacyArchiveMoveChecks {
     try (Fixture f = new Fixture(base, secondary); CameraImportLedger ledger = f.ledger(); HistoryDb history = f.history();
          ArchiveStore archive = E2Settings.openRecords(f.isolatedContext()); ArchiveStore writer = E2Settings.openRecords(f.isolatedContext())) {
       String sampleKey = null;
+      var namesByHistoryId = new HashMap<Long, String>();
       for (int i = 0; i < photoCount; i++) {
         byte[] jpeg = jpegWithCaptureTime(f, 0xff57688b + i, SHOT + 1, SHOT + 2);
         byte[] bytes = Arrays.copyOf(jpeg, 8 * 1024 * 1024);
         var candidate = seed(f, history, archive, "CADENCE-" + i + ".JPG", bytes, false, false);
         if (i == 0) sampleKey = candidate.archiveKey();
+        namesByHistoryId.put(candidate.history().getId(), candidate.name());
       }
+      require(namesByHistoryId.size() == photoCount, "Seed one history ID for each candidate");
       JSONObject sample = archive.get(sampleKey).put("key", "SYNTHETIC_KEY").put("uri", "SYNTHETIC_URI");
       archive.getWritableDatabase().execSQL(
           "WITH RECURSIVE rows(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM rows WHERE n<?) "
@@ -491,6 +467,8 @@ final class LegacyArchiveMoveChecks {
       var writes = new ConcurrentLinkedQueue<Long>();
       var writerFailure = new AtomicReference<Exception>();
       var scanStart = new AtomicLong();
+      var scanAttempts = new AtomicInteger();
+      var retries = new AtomicInteger();
       List<ScanWindow> windows = new ArrayList<>();
       Thread background = new Thread(() -> {
         try {
@@ -513,7 +491,9 @@ final class LegacyArchiveMoveChecks {
 
       require(PhotoStorage.select(f.isolatedContext(), secondary), "Choose the synthetic SD destination");
       var observer = new LegacyArchiveMoveProof.ScanObserver() {
-        @Override public void beforeScan() {
+        @Override public void beforeScan(int attempt) {
+          scanAttempts.incrementAndGet();
+          if (attempt > 1) retries.incrementAndGet();
           scanStart.set(SystemClock.elapsedRealtimeNanos());
           scanStarted.countDown();
         }
@@ -550,15 +530,30 @@ final class LegacyArchiveMoveChecks {
       long revisionDelta = archive.indexRevision() - revisionBefore;
       long overlap = writes.stream().filter(time -> windows.stream().anyMatch(window -> window.contains(time))).count();
       String metrics = "cadence_ms=" + cadence + " records=" + recordCount + " done=" + done + "/" + photoCount
-          + " commits=" + writes.size() + " revision_delta=" + revisionDelta + " scan_attempts=" + windows.size()
-          + " overlapped_commits=" + overlap + " move_ms=" + elapsed + " result=" + status;
+          + " commits=" + writes.size() + " revision_delta=" + revisionDelta + " scan_attempts=" + scanAttempts.get()
+          + " retries=" + retries.get() + " overlapped_commits=" + overlap + " move_ms=" + elapsed + " result=" + status;
       android.util.Log.i("LoupeArchiveSnapshotCheck", metrics);
       require(writes.size() >= 2 && revisionDelta == writes.size() && overlap > 0,
           "Measure actual committed writes overlapping a real scan: " + metrics);
-      require(done == photoCount && f.rows(secondary).size() == photoCount && f.rows(PRIMARY).isEmpty(),
+      var targets = f.rows(secondary);
+      require(done == photoCount && targets.size() == photoCount && f.rows(PRIMARY).isEmpty(),
           "The photo move must finish during real concurrent archive writes: " + metrics);
-      require(history.moveEvidence().stream().allMatch(row -> secondary.equals(PhotoStorage.volumeOf(Uri.parse(row.getUri()))))
-          && ledger.receiptCount() == 0, "All history rows reflect verified moves without new receipts");
+      Set<Uri> unmatchedTargets = targets.stream().map(PhotoStorageChecks.Row::uri).collect(Collectors.toSet());
+      var movedHistory = history.moveEvidence();
+      require(movedHistory.size() == photoCount && movedHistory.stream().map(HistoryDb.MoveEvidence::getId)
+          .collect(Collectors.toSet()).equals(namesByHistoryId.keySet()) && ledger.receiptCount() == 0,
+          "Every original history ID remains and no new receipt is created");
+      for (var row : movedHistory) {
+        String expectedName = namesByHistoryId.get(row.getId());
+        Uri target = Uri.parse(row.getUri());
+        require(unmatchedTargets.remove(target) && expectedName.equals(row.getName()),
+            "Every history ID references a different exact destination with its original name");
+        try (Cursor media = f.resolver.query(target, new String[]{DISPLAY_NAME}, null, null, null)) {
+          require(media != null && media.getCount() == 1 && media.moveToFirst() && expectedName.equals(media.getString(0)),
+              "The history URI resolves to the corresponding moved photo");
+        }
+      }
+      require(unmatchedTargets.isEmpty(), "Every moved photo has its original history");
       return "PASS archive snapshot load: " + metrics;
     }
   }

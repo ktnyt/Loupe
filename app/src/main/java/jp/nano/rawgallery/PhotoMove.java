@@ -75,6 +75,7 @@ final class PhotoMove implements AutoCloseable {
   interface Progress { void update(PhotoMoveStore.Batch batch); }
   interface OriginalOpen { InputStream open(Uri requiredOriginal) throws IOException; }
   interface TargetOpen { ParcelFileDescriptor open(Uri target, String mode) throws IOException; }
+  interface AliasQuery { Cursor query(Uri uri, String[] columns, Bundle args); }
   /** Display-only observations of historical candidates. Neither counts nor bytes authorize a move. */
   record PreflightProgress(int total, int successful, int rejected, long totalBytes, long readBytes, boolean finished) {
     int completed() { return successful + rejected; }
@@ -182,6 +183,7 @@ final class PhotoMove implements AutoCloseable {
   private final OriginalOpen originalOpen;
   private final TargetOpen targetOpen;
   private final LegacyArchiveMoveProof.ScanObserver archiveScanObserver;
+  private final AliasQuery aliasQuery;
 
   PhotoMove(Context context) {
     this(context, CameraImportLedger.get(context), HistoryDb.Companion.get(context), new PhotoMoveStore(context), b -> {});
@@ -203,6 +205,13 @@ final class PhotoMove implements AutoCloseable {
 
   PhotoMove(Context context, CameraImportLedger ledger, HistoryDb history, PhotoMoveStore store, Faults faults,
       OriginalOpen originalOpen, TargetOpen targetOpen, LegacyArchiveMoveProof.ScanObserver archiveScanObserver) {
+    this(context, ledger, history, store, faults, originalOpen, targetOpen, archiveScanObserver,
+        (uri, columns, args) -> context.getApplicationContext().getContentResolver().query(uri, columns, args, null));
+  }
+
+  PhotoMove(Context context, CameraImportLedger ledger, HistoryDb history, PhotoMoveStore store, Faults faults,
+      OriginalOpen originalOpen, TargetOpen targetOpen, LegacyArchiveMoveProof.ScanObserver archiveScanObserver,
+      AliasQuery aliasQuery) {
     this.context = context.getApplicationContext();
     resolver = context.getContentResolver();
     this.ledger = ledger;
@@ -212,6 +221,7 @@ final class PhotoMove implements AutoCloseable {
     this.originalOpen = originalOpen;
     this.targetOpen = targetOpen;
     this.archiveScanObserver = archiveScanObserver;
+    this.aliasQuery = aliasQuery;
   }
 
   private record ImportEvidence(Map<String, String> checksums,
@@ -363,7 +373,9 @@ final class PhotoMove implements AutoCloseable {
   }
 
   private boolean historicalAliasMatches(Media row, FailureReason reason) throws IOException {
-    return row.equals(queryOne(Uri.parse(aggregate(row.uri())), queryArgs(null, null), reason));
+    try (Cursor rows = aliasQuery.query(Uri.parse(aggregate(row.uri())), COLUMNS, queryArgs(null, null))) {
+      return row.equals(singleMediaRow(rows, reason));
+    }
   }
 
   /** Checks only proposed historical candidates. A rejected original is excluded, never replaced. */
@@ -1325,11 +1337,15 @@ final class PhotoMove implements AutoCloseable {
   }
 
   private Media queryOne(Uri uri, Bundle args, FailureReason reason) throws IOException {
-    try (Cursor c = resolver.query(uri, COLUMNS, args, null)) {
-      if (c == null) throw new Failure("写真の情報を取得できません。", reason);
-      if (c.getCount() > 1) throw new Failure("写真を一意に特定できません。", reason);
-      return c.moveToFirst() ? media(c) : null;
+    try (Cursor rows = resolver.query(uri, COLUMNS, args, null)) {
+      return singleMediaRow(rows, reason);
     }
+  }
+
+  private static Media singleMediaRow(Cursor rows, FailureReason reason) throws Failure {
+    if (rows == null) throw new Failure("写真の情報を取得できません。", reason);
+    if (rows.getCount() > 1) throw new Failure("写真を一意に特定できません。", reason);
+    return rows.moveToFirst() ? media(rows) : null;
   }
 
   private static Media media(Cursor c) {
