@@ -135,7 +135,7 @@ public final class SdCardRemount {
         }
     }
 
-    public static boolean isRunning() { return RUNNING.get(); }
+    public static boolean isRunning() { return RUNNING.get() || SdRemountMountNotice.blocksImport(); }
 
     public static boolean start(Context context, Consumer<Result> callback) {
         Context app = context.getApplicationContext();

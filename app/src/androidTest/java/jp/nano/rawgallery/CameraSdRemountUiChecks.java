@@ -164,12 +164,23 @@ final class CameraSdRemountUiChecks {
                 fake.complete(SdCardRemount.Result.MOUNTED);
             });
             await(test, () -> hasDialog("取り込み元を登録"), "long press continues existing source discovery");
+            finish(test, screen);
+
+            fake.restoredReservation = true;
+            screen = open(test, entry(test).putExtra(CameraImportActivity.START_IMPORT_KEEP_ORIGINALS, true));
+            CameraImportActivity restarted = screen;
+            test.runOnMainSync(() -> {
+                require(!hasDialog("取り込み元を登録") && !screenView(restarted, "sd-import-start").isEnabled(),
+                        "restored reservation blocks new import actions");
+                fake.restoredReservation = false;
+            });
+            await(test, () -> hasDialog("取り込み元を登録"), "long press continues after restored reservation expires");
             require(fake.starts == 2 && fake.requests == 2 && pickers.get() == 1
                     && !progress.getActive() && priorCompletion == progress.getCompletion(),
                     "remount leaves actual import progress and the picker untouched");
             return "PASS default off, opt-in with Shizuku unavailable, explicit permission and denial retry, "
                     + "manual entry once, picker return, progress/USB attach exclusion, failure and SD recheck after recreation, "
-                    + "and deferred long-press discovery across recreation with no import or storage command.";
+                    + "and deferred long-press discovery across recreation and reservation restoration with no storage command.";
         } finally {
             if (screen != null) finish(test, screen);
             test.removeMonitor(pickerMonitor);
@@ -184,11 +195,12 @@ final class CameraSdRemountUiChecks {
     private static final class RemountFixture implements CameraImportActivity.SdRemountAccess {
         volatile SdCardRemount.Status status = SdCardRemount.Status.UNAVAILABLE;
         volatile int requests, starts;
+        boolean restoredReservation;
         Consumer<Boolean> permission;
         Consumer<SdCardRemount.Result> completion;
 
         @Override public SdCardRemount.Status status() { return status; }
-        @Override public boolean isRunning() { return completion != null; }
+        @Override public boolean isRunning() { return completion != null || restoredReservation; }
 
         @Override public void requestPermission(Consumer<Boolean> callback) {
             require(permission == null, "one permission request at a time");
