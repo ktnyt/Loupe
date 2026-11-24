@@ -119,7 +119,7 @@ final class GalleryIndex extends SQLiteOpenHelper {
     return result;
   }
 
-  private static String signature(Context c) {
+  private static String signature(Context c, int burstGapMillis) {
     String media;
     try {
       StringBuilder versions = new StringBuilder();
@@ -152,8 +152,7 @@ final class GalleryIndex extends SQLiteOpenHelper {
         + ":capture-order-v1:video-v1:archive-v3:"
         + archiveRevision
         + ":" + e2Revision
-        + ":"
-        + c.getSharedPreferences("settings", 0).getInt("burstGapSeconds", 1)
+        + ":burst-gap-ms:" + burstGapMillis
         + ":"
         + c.checkSelfPermission(android.Manifest.permission.READ_MEDIA_VIDEO)
         + ":"
@@ -173,7 +172,8 @@ final class GalleryIndex extends SQLiteOpenHelper {
     long request = DiagnosticLog.id();
     DiagnosticLog.event("index.start", request, "force", force);
     try (GalleryIndex index = new GalleryIndex(c)) {
-      String before = signature(c);
+      int burstGapMillis = BurstGapSettings.readMillis(c.getSharedPreferences("settings", 0));
+      String before = signature(c, burstGapMillis);
       try (Cursor state =
           index
               .getReadableDatabase()
@@ -186,7 +186,6 @@ final class GalleryIndex extends SQLiteOpenHelper {
       DiagnosticLog.event("index.scan_start", request);
       List<PhotoRepository.Photo> photos = new PhotoRepository(c).scan("すべて");
       DiagnosticLog.event("index.scan_end", request, "count", photos.size());
-      int gap = c.getSharedPreferences("settings", 0).getInt("burstGapSeconds", 1);
       DiagnosticLog.event("index.metadata_start", request);
       Map<String, ArchiveStore.RawMetadata> metadata;
       try (ArchiveStore store = new ArchiveStore(c)) {
@@ -228,7 +227,7 @@ final class GalleryIndex extends SQLiteOpenHelper {
       }
       DiagnosticLog.event("index.metadata_end", request, "count", entries.size());
       if (cancelled.getAsBoolean()) return false;
-      List<List<Integer>> groups = BurstGroups.group(entries, gap * 1000L);
+      List<List<Integer>> groups = BurstGroups.group(entries, burstGapMillis);
       int[] membership = new int[photos.size()];
       for (int i = 0; i < groups.size(); i++) for (int item : groups.get(i)) membership[item] = i;
       DiagnosticLog.event("index.publish_start", request, "groups", groups.size());

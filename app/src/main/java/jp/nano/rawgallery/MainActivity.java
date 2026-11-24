@@ -1187,22 +1187,13 @@ public final class MainActivity extends DiagnosticActivity {
                   editTargets();
                   break;
                 case 2:
-                  new GalleryUi.Sheet(this)
-                      .setTitle("同じ機種・保存先の撮影間隔")
-                      .setSingleChoiceItems(
-                          new String[] {"まとめない", "１秒以内（標準）", "２秒以内", "３秒以内"},
-                          getSharedPreferences("settings", 0).getInt("burstGapSeconds", 1),
-                          (dialog, choice) -> {
-                            dialog.dismiss();
-                            getSharedPreferences("settings", 0)
-                                .edit()
-                                .putInt("burstGapSeconds", choice)
-                                .apply();
-                            burstMembers = null;
-                            refreshIndex(true);
-                          })
-                      .setNegativeButton("閉じる", null)
-                      .show();
+                  var settings = getSharedPreferences("settings", MODE_PRIVATE);
+                  BurstGapDialog.show(this, BurstGapSettings.readMillis(settings), millis -> {
+                    if (!BurstGapSettings.saveMillis(settings, millis)) return false;
+                    burstMembers = null;
+                    refreshIndex(true);
+                    return true;
+                  });
                   break;
                 case 3:
                   new GalleryUi.Sheet(this)

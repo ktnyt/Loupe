@@ -24,9 +24,10 @@ final class IndexSignatureChecks {
     };
   }
   private static String signature(Context context) throws Exception {
-    Method method = GalleryIndex.class.getDeclaredMethod("signature", Context.class);
+    Method method = GalleryIndex.class.getDeclaredMethod("signature", Context.class, int.class);
     method.setAccessible(true);
-    return (String) method.invoke(null, context);
+    return (String) method.invoke(null, context,
+        BurstGapSettings.readMillis(context.getSharedPreferences("settings", 0)));
   }
   private static void check(boolean valid, String label) { if (!valid) throw new AssertionError(label); }
   private static void runVersion(Context context, int oldVersion) throws Exception {

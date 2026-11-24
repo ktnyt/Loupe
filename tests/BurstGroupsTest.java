@@ -21,7 +21,14 @@ public final class BurstGroupsTest {
         1000,
         List.of(List.of(0, 1, 2)));
     check(List.of(), 1000, List.of());
-    System.out.println("Burst grouping: 8 cases passed");
+    check(List.of(e(0, 4000, "A"), e(1, 3650, "A"), e(2, 3299, "A")),
+        350, List.of(List.of(0, 1), List.of(2)));
+    check(List.of(e(0, 4000, "A"), e(1, 3999, "A"), e(2, 3997, "A")),
+        1, List.of(List.of(0, 1), List.of(2)));
+    check(List.of(e(0, 2L * Integer.MAX_VALUE + 2, "A"),
+            e(1, Integer.MAX_VALUE + 2L, "A"), e(2, 1, "A")),
+        Integer.MAX_VALUE, List.of(List.of(0, 1), List.of(2)));
+    System.out.println("Burst grouping: 11 cases passed");
   }
 
   static BurstGroups.Entry e(int i, long t, String s) {

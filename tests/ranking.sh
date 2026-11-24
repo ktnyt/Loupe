@@ -9,3 +9,5 @@ javac -d "$test_dir" "$project_dir/app/src/main/java/jp/nano/rawgallery/Comparis
 java -cp "$test_dir" jp.nano.rawgallery.ComparisonLayoutTest
 javac -d "$test_dir" "$project_dir/app/src/main/java/jp/nano/rawgallery/BestShotSelection.java" "$project_dir/tests/BestShotSelectionTest.java"
 java -cp "$test_dir" jp.nano.rawgallery.BestShotSelectionTest
+javac -d "$test_dir" "$project_dir/app/src/main/java/jp/nano/rawgallery/BurstGroups.java" "$project_dir/tests/BurstGroupsTest.java"
+java -cp "$test_dir" jp.nano.rawgallery.BurstGroupsTest
