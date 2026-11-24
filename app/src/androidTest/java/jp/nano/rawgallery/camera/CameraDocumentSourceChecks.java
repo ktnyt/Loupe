@@ -496,6 +496,7 @@ public final class CameraDocumentSourceChecks {
         registrationChecks();
         kindSelection();
         Context context = instrumentation.getTargetContext();
+        sdIndexRecovery(context);
         legacyReceiptRequiresRead(context);
         if ("jp.nano.rawgallery.sd166".equals(context.getPackageName())
                 && ("ranchu".equals(android.os.Build.HARDWARE) || "goldfish".equals(android.os.Build.HARDWARE))) {
@@ -512,7 +513,7 @@ public final class CameraDocumentSourceChecks {
             conditionalPendingCleanup(context);
             migrateReplacementWitness(context);
         }
-        return "PASS sd-original permission=true mapping=true pinnedVolume=true verifiedIndexAbsence=true requiredOriginal=true noFallback=true immutable=true cancel=true revoke=true bounds=true legacyReceiptRevalidated=true";
+        return "PASS sd-original permission=true mapping=true pinnedVolume=true verifiedIndexAbsence=true boundedIndexRecovery=true requiredOriginal=true noFallback=true immutable=true cancel=true revoke=true bounds=true legacyReceiptRevalidated=true";
     }
 
     private static void receiptTupleAfterListing() throws IOException {
@@ -521,10 +522,14 @@ public final class CameraDocumentSourceChecks {
         var entry = new CameraDocumentSource.Entry(SOURCE_DOCUMENT, new CameraImportFile(identity,
                 "DCIM/100TEST/TEST.JPG", ORIGINAL.length, Long.toString(stamp), stamp / 1000));
         var modified = new java.util.concurrent.atomic.AtomicLong(stamp);
+        var mime = new java.util.concurrent.atomic.AtomicReference<>("image/jpeg");
         var provider = new android.content.ContentProvider() {
             @Override public Cursor query(Uri uri, String[] columns, String select, String[] args, String order) {
                 var cursor = new MatrixCursor(columns);
-                cursor.addRow(new Object[]{SOURCE_DOCUMENT_ID, "TEST.JPG", (long) ORIGINAL.length, modified.get()});
+                var values = new ArrayList<Object>(
+                        List.of(SOURCE_DOCUMENT_ID, "TEST.JPG", (long) ORIGINAL.length, modified.get()));
+                if (columns.length == 5) values.add(mime.get());
+                cursor.addRow(values);
                 return cursor;
             }
             @Override public boolean onCreate() { return true; }
@@ -535,6 +540,15 @@ public final class CameraDocumentSourceChecks {
         };
         var resolver = android.content.ContentResolver.wrap(provider);
         CameraDocumentSource.requireCurrentReceiptDocument(resolver, entry, SOURCE, () -> false);
+        CameraDocumentSource.requireCurrentScanDocument(resolver, entry, SOURCE, () -> false);
+        mime.set(DocumentsContract.Document.MIME_TYPE_DIR);
+        try {
+            CameraDocumentSource.requireCurrentScanDocument(resolver, entry, SOURCE, () -> false);
+            throw new AssertionError("Scan target may be a directory");
+        } catch (CameraDocumentSource.ListingException expected) {
+            require(expected.reason == CameraDocumentSource.ListingException.Reason.CHANGED,
+                    "Scan target type must still match a file");
+        }
         modified.incrementAndGet();  // Same document, photo name and bytes; only the live SAF timestamp changed.
         try {
             CameraDocumentSource.requireCurrentReceiptDocument(resolver, entry, SOURCE, () -> false);
@@ -544,6 +558,104 @@ public final class CameraDocumentSourceChecks {
                     "same-size source rewrite requires a fresh SD listing");
         }
     }
+    private static void sdIndexRecovery(Context context) throws Exception {
+        var source = new CameraDocumentSource.Entry(SOURCE_DOCUMENT,
+                new CameraImportFile("fixture", "DCIM/100TEST/TEST.JPG", ORIGINAL.length, "123", 0));
+        require(source.file.relativePath.equals(SdIndexRecovery.exactRelativePath(SOURCE_TREE, source)),
+                "Scanner accepts only the exact SAF document and its validated relative path");
+        require(SdIndexRecovery.exactRelativePath(SOURCE_TREE,
+                        new CameraDocumentSource.Entry(DOCUMENT, source.file)) == null,
+                "Scanner rejects arbitrary provider documents");
+        Uri parent = DocumentsContract.buildTreeDocumentUri(SOURCE_TREE.getAuthority(), "AB12-CD34:");
+        require(SdIndexRecovery.exactRelativePath(parent, source) == null, "Scanner rejects a volume-root grant");
+
+        File root = context.getCacheDir().getCanonicalFile();
+        File target = SdIndexRecovery.exactFile(root, source.file.relativePath);
+        require(new File(root, source.file.relativePath).equals(target), "Scanner keeps the exact path");
+        require(SdIndexRecovery.exactFile(root, "../outside.JPG") == null, "Scanner rejects path aliases");
+        require(SdIndexRecovery.exactFile(root.getParentFile(), root.getName()) == null,
+                "Scanner rejects a directory at the resolved path");
+
+        var requests = new ArrayList<String>();
+        var checks = new ArrayList<String>();
+        var recovery = new SdIndexRecovery((entry, stopped) -> target, (path, listener) -> {
+            requests.add(path);
+            listener.onScanCompleted(path, PINNED);
+        }, 3_000);
+        require(recovery.recover(source, () -> false, () -> checks.add("fresh")),
+                "Matching callback permits a return to normal import");
+        require(!recovery.recover(source, () -> false, () -> checks.add("fresh"))
+                        && requests.equals(List.of(target.getPath())) && checks.size() == 4,
+                "A document is scanned just once with fresh-source checks around dispatch and callback");
+
+        var mismatch = new SdIndexRecovery((entry, stopped) -> target,
+                (path, listener) -> listener.onScanCompleted(path + ".different", PINNED), 3_000);
+        require(!mismatch.recover(source, () -> false, () -> {}), "Unrelated callback cannot trigger retry");
+
+        var replaceFile = new AtomicBoolean();
+        var changed = new SdIndexRecovery((entry, stopped) -> {
+            if (replaceFile.get())
+                throw new CameraDocumentSource.ListingException(CameraDocumentSource.ListingException.Reason.CHANGED);
+            return target;
+        }, (path, listener) -> {
+            replaceFile.set(true);
+            listener.onScanCompleted(path, PINNED);
+        }, 3_000);
+        require(!changed.recover(source, () -> false, () -> {}), "Source document must still be current after callback");
+
+        var another = new CameraDocumentSource.Entry(DOCUMENT, source.file);
+        for (var reason : List.of(CameraDocumentSource.ListingException.Reason.CHANGED,
+                CameraDocumentSource.ListingException.Reason.LOADING,
+                CameraDocumentSource.ListingException.Reason.TIMEOUT)) {
+            var deferred = new SdIndexRecovery((entry, stopped) -> {
+                if (entry == source) throw new CameraDocumentSource.ListingException(reason);
+                return target;
+            }, (path, listener) -> listener.onScanCompleted(path, PINNED), 3_000);
+            require(!deferred.recover(source, () -> false, () -> {})
+                            && deferred.recover(another, () -> false, () -> {}),
+                    "An inconclusive scan target only defers that candidate: " + reason);
+        }
+
+        var revoke = new AtomicBoolean();
+        var denied = new SdIndexRecovery((entry, stopped) -> {
+            revoke.set(true);
+            throw new CameraDocumentSource.ListingException(CameraDocumentSource.ListingException.Reason.TIMEOUT);
+        }, (path, listener) -> { throw new AssertionError("Revoked source must not dispatch"); }, 3_000);
+        try {
+            denied.recover(source, () -> false, () -> {
+                if (revoke.get())
+                    throw new CameraDocumentSource.ListingException(CameraDocumentSource.ListingException.Reason.NO_GRANT);
+            });
+            throw new AssertionError("Optional target failure masked revoked SAF permission");
+        } catch (CameraDocumentSource.ListingException expected) {
+            require(expected.reason == CameraDocumentSource.ListingException.Reason.NO_GRANT,
+                    "Permission loss must stop recovery");
+        }
+
+        var stopDuringPath = new AtomicBoolean();
+        var pathCancelled = new SdIndexRecovery((entry, stopped) ->
+                CameraDocumentSource.boundedFileMetadata(stopped, signal -> {
+                    stopDuringPath.set(true);
+                    return target;
+                }), (path, listener) -> { throw new AssertionError("Cancelled target must not dispatch"); }, 3_000);
+        try {
+            pathCancelled.recover(source, stopDuringPath::get, () -> {});
+            throw new AssertionError("Recovery ignored cancellation during target path resolution");
+        } catch (InterruptedIOException expected) { }
+
+        var timedOut = new SdIndexRecovery((entry, stopped) -> target, (path, listener) -> requests.add(path), 25);
+        require(!timedOut.recover(source, () -> false, () -> {}), "Missing callback times out");
+        require(!timedOut.recover(another, () -> false, () -> {}) && requests.size() == 2,
+                "A timeout exhausts the shared scan budget");
+
+        var stopped = new AtomicBoolean();
+        var cancelled = new SdIndexRecovery((entry, stop) -> target, (path, listener) -> stopped.set(true), 3_000);
+        try {
+            cancelled.recover(source, stopped::get, () -> {});
+            throw new AssertionError("Recovery ignored cancellation while awaiting the callback");
+        } catch (InterruptedIOException expected) { }
+    }
+
     private static void strictVolumeReads() throws IOException {
         Fake unpinned = new Fake();
         expect(unpinned, CameraDocumentSource.OriginalAccessException.Reason.VOLUME, SOURCE);
