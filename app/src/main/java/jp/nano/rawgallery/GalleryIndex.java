@@ -254,15 +254,14 @@ final class GalleryIndex extends SQLiteOpenHelper {
         PhotoRepository.Photo p = photos.get(i);
         ArchiveStore.RawMetadata meta = metadata.get(ArchiveStore.key(p));
         String model = burstCamera(meta);
-        RawPreview.BurstFrame frame = meta == null || meta.burstFrame == null
-            ? RawPreview.BurstFrame.NONE : meta.burstFrame;
+        RawPreview.BurstFrame frame = burstFrame(p, meta);
         entries.add(
             new BurstGroups.Entry(
                 i,
                 meta == null ? 0 : meta.taken,
                 p.isVideo() || model.isEmpty()
                     ? ""
-                    : model + "|" + p.folder + "|" + (p.isJpeg() ? "jpeg" : "raw"),
+                    : burstStream(p, model),
                 p.name, frame.mode(), frame.number()));
       }
       DiagnosticLog.event("index.metadata_end", request, "count", entries.size());
@@ -332,6 +331,25 @@ final class GalleryIndex extends SQLiteOpenHelper {
     } finally {
       DiagnosticLog.event("index.end", request);
     }
+  }
+
+  static RawPreview.BurstFrame burstFrame(PhotoRepository.Photo photo, ArchiveStore.RawMetadata metadata) {
+    // An E2 object ID does not prove which moved local identity owns the cached frame.
+    if (E2Cleanup.archived(photo.uri) || metadata == null || metadata.burstFrame == null)
+      return RawPreview.BurstFrame.NONE;
+    return metadata.burstFrame;
+  }
+
+  static String burstStream(PhotoRepository.Photo photo, String model) {
+    Uri location = Uri.parse(PhotoIdentityIndex.path(photo));
+    String folder = photo.folder;
+    if ("storage".equals(location.getScheme())) {
+      // Match MediaStore and the system document provider for the same physical folder.
+      String path = location.getEncodedPath();
+      folder = path.substring(0, path.lastIndexOf('/') + 1);
+    }
+    return model.length() + ":" + model + location.getScheme() + "://"
+        + Objects.toString(location.getAuthority(), "") + ":" + folder + "|" + photo.isJpeg();
   }
 
   private static String burstCamera(ArchiveStore.RawMetadata metadata) {

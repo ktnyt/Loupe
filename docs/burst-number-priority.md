@@ -8,15 +8,15 @@
 
 ## 抽出の契約
 
-- Olympus / OM SYSTEM MakerNoteのCameraSettings（0x2020）内DriveMode（0x0600、SHORT配列）を対象に、対応済みの連写モードと正のShot番号を取り出す。
-- 旧形式のContinuous Shootingと、定義済みのSequential / ProCapの各サブモードを対象にする。単写、ブラケット、パノラマ、未知の形式・モード、番号0、不正な型/長さは番号なしとして扱う。未知の独自領域を推測しない。
+- little-endianのOLYMPUS\0 / OM SYSTEMヘッダーと、LONG/IFD pointer形式のCameraSettings（0x2020）内DriveMode（0x0600、SHORT配列）を対象に、対応済みの連写モードと正のShot番号を取り出す。古いOLYMPヘッダーや非pointerの入れ子形式など、未対応レイアウトは番号なしへfallbackする。
+- 対応ヘッダー内の旧DriveMode配列のContinuous Shootingと、定義済みのSequential / ProCapの各サブモードを対象にする。単写、ブラケット、パノラマ、未知の形式・モード、番号0、不正な型/長さは番号なしとして扱う。未知の独自領域を推測しない。
 - ORFは既存のOlympus相対IFD解析を使う。番号だけの既存cache補完はヘッダー/IFDの読取りで行い、RAW全体のJPEG探索や現像を追加しない。JPEGはAndroid ExifInterfaceのMakerNote bytesと同じ解析を使う。JPEGは合成データでAndroid経路を確認し、実写未検査なら区別して報告する。
 - 元写真の内容・撮影日時・ファイル名を変更しない。撮影時刻のミリ秒を連写番号やfpsから生成しない。
 
 ## グループ分けの契約
 
 - 「まとめない」（0ms）は番号の有無にかかわらず全写真を単独にする。
-- 機種・保存先・RAW/JPEG区分が同じstream内で、撮影時刻の昇順、同一時刻は既存のファイル名順で判定する。元の一覧順とグループ内の表示順は維持する。
+- 機種・storage volume/providerを含めた保存先・RAW/JPEG区分が同じstream内で、撮影時刻の昇順、同一時刻は既存のファイル名順で判定する。元の一覧順とグループ内の表示順は維持する。
 - 隣り合う2枚の両方に有効な番号があり、連写モードが同じで番号がちょうど1増える場合は、設定した時間差を超えても同じ候補にする。
 - 番号の戻り・重複・飛び・モード変更は別候補にする。同じ秒の1→2→1→2は2組に分かれる。欠番は別候補とする保守的な判断を採用する。
 - 番号なし同士だけ既存のms閾値（隣接時刻差が閾値以下）を使う。番号あり/なしの境界は分け、番号なしの写真を介して別の連写を連結しない。
@@ -27,8 +27,9 @@
 
 - archive.dbのmetadataへ番号用のnullable列を追加する。NULLは未検査、検査して番号なしは0、対応済みの番号は正のmode/frameとして区別する。
 - 既存のmodel/taken/key、原本の受領・verified/checkpoint・index_revision・取込履歴、写真identity、タグ、共有履歴を保存し、削除や全metadataの作り直しで移行しない。
+- JPEGのGallery用probeは読取り/skipの量を上限で制約し、ExifInterface内部で抑制された元InputStreamのI/Oエラーと上限超過を再試行可能な未検査として扱う。
 - Galleryの番号用読取りだけが未検査cacheを補完する。読み取り可能なローカル原本だけを使い、取得失敗ではNULLを残して次回再試行可能にする。番号のためのクラウド原本downloadや外部送信はしない。
-- アーカイブのみの写真は保存済み番号を使えなければ時間差へ戻る。既存model/takenのcache読取りを行うsync/receipt等の呼出しへ追加の原本I/Oを導入しない。
+- アーカイブのみの写真は、同じ写真に対応すると確認できるcache keyの番号だけを使い、それがなければ時間差へ戻る。現行のe2-only行ではcache identityの対応を証明する処理を行わず、番号を使わず時間差へ戻る。e2 object IDを論理写真キーと推測して転用せず、受領記録や写真identityを変更して合わせない。この引き継ぎは[#191](https://github.com/ktnyt/Loupe/issues/191)で追跡する。既存model/takenのcache読取りを行うsync/receipt等の呼出しへ追加の原本I/Oを導入しない。
 - cacheの競合更新で既存番号やmodel/takenを失わない。補完は番号列だけの更新にする。
 - indexの判定版を更新して古いグループを再構築する。Snapshotのグループmarkerも判定版を検査し、再構築前の古い写真/連写の操作を既存guardで抑止する。gap prefix自体の互換性と単位は保つ。
 - 順位journalは既存の写真集合に紐づく。集合が変わったグループへ以前の順位を転用しない。同じ集合なら既存結果を再利用し、履歴そのものを消さない。

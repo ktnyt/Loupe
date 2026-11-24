@@ -13,6 +13,7 @@ import org.json.*;
 final class ArchiveStore extends SQLiteOpenHelper {
   // Only a single E2 photos write and the last legacy proof scan use this lock.
   static final ReentrantLock E2_PHOTO_UPSERT = new ReentrantLock(true);
+  static final int JPEG_BURST_SCAN_LIMIT = 1024 * 1024;
   private static final String[] METADATA_COLUMNS = {"key", "model", "taken", "burst_mode", "burst_frame"};
   private final Context context;
   private final boolean e2Photos;
@@ -134,8 +135,7 @@ final class ArchiveStore extends SQLiteOpenHelper {
     if (p.isJpeg()) {
       try (InputStream in = context.getContentResolver().openInputStream(p.uri)) {
         if (in == null) throw new IOException("JPEGを開けません");
-        android.media.ExifInterface exif = new android.media.ExifInterface(in);
-        frame = RawPreview.readBurstFrame(exif.getAttributeBytes(android.media.ExifInterface.TAG_MAKER_NOTE));
+        frame = readJpegBurstFrame(in);
       }
     } else {
       try (PhotoRepository.DescriptorSource source =
@@ -151,6 +151,81 @@ final class ArchiveStore extends SQLiteOpenHelper {
       return new RawMetadata(metadata.model, metadata.taken, frame);
     RawMetadata cached = readMetadata(key);
     return cached == null ? metadata : cached;
+  }
+
+  static RawPreview.BurstFrame readJpegBurstFrame(InputStream input) throws IOException {
+    BoundedJpegInput bounded = new BoundedJpegInput(input);
+    android.media.ExifInterface exif = new android.media.ExifInterface(bounded);
+    // The platform parser can catch a stream IOException and return empty metadata.
+    if (bounded.failure != null) throw bounded.failure;
+    return RawPreview.readBurstFrame(exif.getAttributeBytes(android.media.ExifInterface.TAG_MAKER_NOTE));
+  }
+
+  private static final class BoundedJpegInput extends InputStream {
+    private final InputStream input;
+    private int remaining = JPEG_BURST_SCAN_LIMIT;
+    private IOException failure;
+
+    BoundedJpegInput(InputStream input) { this.input = input; }
+
+    private IOException budgetExceeded() { return new IOException("JPEGメタデータの読み取り上限に達しました"); }
+
+    private void requireBudget() throws IOException {
+      if (remaining <= 0) throw budgetExceeded();
+    }
+
+    private IOException remember(IOException error) {
+      if (failure == null) failure = error;
+      return error;
+    }
+
+    @Override public int read() throws IOException {
+      try {
+        requireBudget();
+        int value = input.read();
+        if (value >= 0) remaining--;
+        return value;
+      } catch (IOException error) {
+        throw remember(error);
+      }
+    }
+
+    @Override public int read(byte[] bytes, int offset, int count) throws IOException {
+      if (offset < 0 || count < 0 || offset > bytes.length - count) throw new IndexOutOfBoundsException();
+      if (count == 0) return 0;
+      try {
+        requireBudget();
+        int read = input.read(bytes, offset, Math.min(count, remaining));
+        if (read > 0) {
+          remaining -= read;
+          if (remaining == 0 && read < count) throw budgetExceeded();
+        }
+        return read;
+      } catch (IOException error) {
+        throw remember(error);
+      }
+    }
+
+    @Override public long skip(long count) throws IOException {
+      if (count <= 0) return 0;
+      try {
+        requireBudget();
+        long skipped = input.skip(Math.min(count, remaining));
+        remaining -= (int) skipped;
+        if (remaining == 0 && skipped < count) throw budgetExceeded();
+        return skipped;
+      } catch (IOException error) {
+        throw remember(error);
+      }
+    }
+
+    @Override public int available() throws IOException {
+      try {
+        return input.available();
+      } catch (IOException error) {
+        throw remember(error);
+      }
+    }
   }
 
   Map<String, RawMetadata> metadataSnapshot() {

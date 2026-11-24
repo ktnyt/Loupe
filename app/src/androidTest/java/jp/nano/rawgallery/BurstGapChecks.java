@@ -21,6 +21,10 @@ import android.widget.ListView;
 import com.google.android.material.textfield.TextInputLayout;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.security.DigestInputStream;
+import java.security.MessageDigest;
+import java.util.Arrays;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
@@ -36,7 +40,7 @@ import static jp.nano.rawgallery.TagDetailChecks.ui;
 
 /** Emulator checks for the real settings route, using an empty photo UI for evidence. */
 final class BurstGapChecks {
-  static String run(Instrumentation test) throws Exception {
+  static String run(Instrumentation test, boolean checkNumbers, String rawSamples) throws Exception {
     Context context = test.getTargetContext();
     SharedPreferences prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE);
     var millis = BurstGapSettings.MILLIS;
@@ -133,9 +137,16 @@ final class BurstGapChecks {
 
       checkStaleBurst(test, activity, prefs, fixtures);
       checkRetry(test, activity);
+      if (checkNumbers) {
+        checkNumberedGrid(test, activity, prefs, fixtures, captures, prefix);
+        if (rawSamples != null) checkRawIndex(test, activity, prefs, fixtures, rawSamples);
+      }
       return "PASS " + prefix + " numeric keyboard, visible validation, cancel/Back/outside, exact save, "
           + "reopen, preset, stale burst/selection guard, individual photos after rebuild, index signature, "
-          + "and failed-save retry; restored test preferences and removed fixture photos.\n";
+          + "and failed-save retry. "
+          + (checkNumbers ? "Numbered JPEG cache/index/grid, old index marker and saved scope invalidation passed. " : "")
+          + (rawSamples != null ? "Three real ORFs passed hash readback, frame cache/index and grouping off. " : "")
+          + "Restored test preferences and removed fixture photos.\n";
     } catch (Exception | AssertionError error) {
       failure = error;
       throw error;
@@ -240,6 +251,142 @@ final class BurstGapChecks {
         "new index splits the same fixture images into individual photos"));
   }
 
+  private static void checkNumberedGrid(Instrumentation test, MainActivity activity, SharedPreferences prefs,
+      List<Uri> fixtures, File captures, String prefix) throws Exception {
+    String folder = "Pictures/LoupeBurstNumbers-" + UUID.randomUUID() + "/";
+    byte[] pixels = IndexSignatureChecks.jpegPixels();
+    for (int i = 0; i < 6; i++) {
+      int shot = i < 4 ? i % 2 + 1 : 0;
+      byte[] note = BurstMakerNoteFixture.makerNote(true, 3, shot == 0 ? 0 : 1, shot, 0, 0, 4, 0x49);
+      byte[] fixture = BurstMakerNoteFixture.jpeg(pixels, BurstMakerNoteFixture.tiff(note, false,
+          i == 0 ? "2026:11:24 12:34:55" : "2026:11:24 12:34:56"));
+      try (var input = new java.io.ByteArrayInputStream(fixture)) {
+        publishFixture(activity, folder, "fixture-" + i + ".jpg", "image/jpeg", fixtures, input);
+      }
+    }
+    require(prefs.edit().putInt(BurstGapSettings.MILLIS, 1).commit(), "set 1 ms fixture gap");
+    rebuild(activity);
+    var expected = List.of(List.of(0, 5), List.of(1, 2), List.of(3, 4));
+    GalleryIndex.Snapshot snapshot = snapshot(activity, folder);
+    require(snapshot.burstGapMillis == 1 && snapshot.bundles.equals(expected),
+        "numbered cross-second pair, reset pair and unnumbered fallback all indexed");
+    try (ArchiveStore archive = new ArchiveStore(activity)) {
+      for (var photo : snapshot.photos) {
+        int i = photo.name.charAt(8) - '0';
+        var frame = archive.metadata(photo).burstFrame;
+        require(frame != null && frame.number() == (i < 4 ? i % 2 + 1 : 0), "JPEG numbered cache readback");
+      }
+    }
+    // Model an old index at the same 1 ms setting plus a saved scope spanning two new bundles.
+    try (GalleryIndex index = new GalleryIndex(activity)) {
+      index.getWritableDatabase().execSQL("UPDATE state SET signature=replace(signature,'burst-number-v1:','') WHERE id=1");
+    }
+    require(snapshot(activity, folder).burstGapMillis == -1, "old same-gap rule marker is stale");
+    Bundle savedScope = new Bundle();
+    savedScope.putStringArrayList("burst", new ArrayList<>(List.of(
+        snapshot.photos.get(0).uri.toString(), snapshot.photos.get(1).uri.toString(),
+        snapshot.photos.get(2).uri.toString(), snapshot.photos.get(5).uri.toString())));
+    ui(test, () -> {
+      RankingResultChecks.set(activity, "pendingRestore", savedScope);
+      RankingResultChecks.set(activity, "albumFolder", folder);
+      RankingResultChecks.call(activity, "gallery");
+      RankingResultChecks.call(activity, "loadIndexedPhotos");
+    });
+    GalleryScreenChecks.settle(test, activity);
+    ui(test, () -> {
+      require(RankingResultChecks.get(activity, "pendingRestore") == savedScope, "old scope waits for current marker");
+      require(RankingResultChecks.get(activity, "burstMembers") == null, "old marker cannot open saved scope");
+    });
+    rebuild(activity);
+    ui(test, () -> RankingResultChecks.call(activity, "loadIndexedPhotos"));
+    GalleryScreenChecks.settle(test, activity);
+    ui(test, () -> {
+      require(RankingResultChecks.get(activity, "pendingRestore") == null, "saved scope processed at current marker");
+      require(RankingResultChecks.get(activity, "burstMembers") == null, "superseded scope is not restored");
+      require(expected.equals(RankingResultChecks.get(activity, "bundles")), "real gallery uses new bundle sets");
+    });
+    View grid = activity.getWindow().getDecorView();
+    capture(test, grid, captures, prefix + "-numbered-grid");
+    tap(test, GalleryScreenChecks.firstPhoto(grid));
+    ui(test, () -> require(List.of(0, 5).equals(RankingResultChecks.get(activity, "burstMembers")),
+        "open actual cross-second numbered group by tapping first photo"));
+    test.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
+    GalleryScreenChecks.settle(test, activity);
+  }
+
+  private static void checkRawIndex(Instrumentation test, MainActivity activity, SharedPreferences prefs,
+      List<Uri> fixtures, String rawSamples) throws Exception {
+    // Load the real files into the index without binding them to a screen or taking captures.
+    clearPhotoUi(test, activity);
+    String folder = "Pictures/LoupeBurstRaw-" + UUID.randomUUID() + "/";
+    for (int i = 1; i <= 3; i++) {
+      String name = "sample-" + i + ".orf";
+      File original = new File(rawSamples, name);
+      Uri target;
+      try (var input = Files.newInputStream(original.toPath())) {
+        target = publishFixture(activity, folder, name, "image/x-olympus-orf", fixtures, input);
+      }
+      try (var expected = Files.newInputStream(original.toPath());
+          var actual = activity.getContentResolver().openInputStream(target)) {
+        require(actual != null && Arrays.equals(hash(expected), hash(actual)), "original copy hash matches");
+      }
+    }
+    require(prefs.edit().putInt(BurstGapSettings.MILLIS, 1).commit(), "set real ORF gap");
+    rebuild(activity);
+    GalleryIndex.Snapshot indexed = snapshot(activity, folder);
+    require(indexed.burstGapMillis == 1 && indexed.bundles.equals(List.of(List.of(0, 1, 2))),
+        "three real ORFs form one indexed burst");
+    try (ArchiveStore archive = new ArchiveStore(activity)) {
+      int number = 1;
+      for (var photo : indexed.photos) {
+        var frame = archive.metadata(photo).burstFrame;
+        require(frame != null && frame.number() == number++, "real ORF cache readback");
+      }
+    }
+    require(prefs.edit().putInt(BurstGapSettings.MILLIS, 0).commit(), "disable real ORF grouping");
+    rebuild(activity);
+    var off = snapshot(activity, folder);
+    require(off.burstGapMillis == 0 && off.bundles.equals(List.of(List.of(0), List.of(1), List.of(2))),
+        "disabled setting overrides real ORF frames");
+  }
+
+  private static GalleryIndex.Snapshot snapshot(Context context, String folder) {
+    try (GalleryIndex index = new GalleryIndex(context)) {
+      return index.load(folder, "すべて");
+    }
+  }
+
+  private static void rebuild(Context context) throws Exception {
+    GalleryIndex.WORKER.submit(() -> GalleryIndex.rebuild(context, true, () -> false))
+        .get(60, TimeUnit.SECONDS);
+  }
+
+  private static byte[] hash(InputStream input) throws Exception {
+    var digest = MessageDigest.getInstance("SHA-256");
+    new DigestInputStream(input, digest).transferTo(java.io.OutputStream.nullOutputStream());
+    return digest.digest();
+  }
+
+  private static Uri publishFixture(Context context, String folder, String name, String mime,
+      List<Uri> fixtures, InputStream input) throws Exception {
+    var resolver = context.getContentResolver();
+    var values = new ContentValues();
+    values.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+    values.put(MediaStore.MediaColumns.MIME_TYPE, mime);
+    values.put(MediaStore.MediaColumns.RELATIVE_PATH, folder);
+    values.put(MediaStore.MediaColumns.IS_PENDING, 1);
+    Uri fixture = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+    require(fixture != null, "insert fixture");
+    fixtures.add(fixture);
+    try (var out = resolver.openOutputStream(fixture)) {
+      input.transferTo(out);
+    }
+    values.clear();
+    values.put(MediaStore.MediaColumns.IS_PENDING, 0);
+    require(resolver.update(fixture, values, null, null) == 1, "publish fixture");
+    return fixture;
+  }
+
   private static void seedBurst(Context context, String folder, List<Uri> fixtures) throws Exception {
     File jpeg = File.createTempFile("burst-gap-", ".jpg", context.getCacheDir());
     try {
@@ -255,22 +402,10 @@ final class BurstGapChecks {
       exif.setAttribute(android.media.ExifInterface.TAG_DATETIME_ORIGINAL, "2026:11:24 12:34:56");
       exif.setAttribute(android.media.ExifInterface.TAG_OFFSET_TIME_ORIGINAL, "+00:00");
       exif.saveAttributes();
-      var resolver = context.getContentResolver();
       for (int i = 0; i < 2; i++) {
-        var values = new ContentValues();
-        values.put(MediaStore.MediaColumns.DISPLAY_NAME, "fixture-" + i + ".jpg");
-        values.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg");
-        values.put(MediaStore.MediaColumns.RELATIVE_PATH, folder);
-        values.put(MediaStore.MediaColumns.IS_PENDING, 1);
-        Uri fixture = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
-        require(fixture != null, "insert fixture");
-        fixtures.add(fixture);
-        try (var out = resolver.openOutputStream(fixture)) {
-          Files.copy(jpeg.toPath(), out);
+        try (var input = Files.newInputStream(jpeg.toPath())) {
+          publishFixture(context, folder, "fixture-" + i + ".jpg", "image/jpeg", fixtures, input);
         }
-        values.clear();
-        values.put(MediaStore.MediaColumns.IS_PENDING, 0);
-        require(resolver.update(fixture, values, null, null) == 1, "publish fixture");
       }
     } finally {
       Files.deleteIfExists(jpeg.toPath());

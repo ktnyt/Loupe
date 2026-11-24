@@ -469,7 +469,12 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if (ep7WifiTest) { results.putString("stream", Ep7WifiChecks.run(this)); finish(-1, results); return; }
       if (cameraTabsTest) { results.putString("stream", CameraTabsChecks.run(this)); finish(-1, results); return; }
       if (tabsTest) { results.putString("stream", LibraryTabsChecks.run(this)); finish(-1, results); return; }
-      if (burstGapTest) { results.putString("stream", BurstGapChecks.run(this)); finish(-1, results); return; }
+      if (burstGapTest) {
+        results.putString("stream", BurstGapChecks.run(this, Boolean.parseBoolean(cameraPilotArguments.getString("numbered")),
+            cameraPilotArguments.getString("raw_samples")));
+        finish(-1, results);
+        return;
+      }
       if (bulkWinnerTest) { results.putString("stream", BurstBulkWinnerChecks.run(this,tagWidth,tagFont)); finish(-1, results); return; }
       if (coWinnerTest) { results.putString("stream", BurstCoWinnerChecks.run(this,tagWidth,tagFont)); finish(-1, results); return; }
       if (sortTest) { results.putString("stream", SortNamingChecks.run(this,tagWidth,tagFont)); finish(-1, results); return; }
