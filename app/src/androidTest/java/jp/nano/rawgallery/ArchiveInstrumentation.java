@@ -92,7 +92,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean affordancesTest;
   private boolean rankingModesTest;
   private boolean systemBackTest;
-  private boolean burstTest, realBurstTest;
+  private boolean burstTest, realBurstTest, burstGapTest;
   private boolean diagnosticTest, sheetTest;
   private boolean tagTest, lifecycleTest;
   private boolean relatedTest;
@@ -159,6 +159,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     importLatencyTest = importInterruptionTest || importDeferredTest || (args != null && "import-latency".equals(args.getString("mode")));
     coWinnerTest = args != null && "burst-co-winners".equals(args.getString("mode"));
     bulkWinnerTest = args != null && "burst-bulk-winners".equals(args.getString("mode"));
+    burstGapTest = args != null && "burst-gap-millis".equals(args.getString("mode"));
     sortTest = bulkWinnerTest || coWinnerTest || (args != null && "sort-naming".equals(args.getString("mode")));
     shareScreenTest=args!=null&&"share-screen".equals(args.getString("mode"));
     shareCapacityTest=args!=null&&"share-capacity".equals(args.getString("mode"));
@@ -468,6 +469,12 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if (ep7WifiTest) { results.putString("stream", Ep7WifiChecks.run(this)); finish(-1, results); return; }
       if (cameraTabsTest) { results.putString("stream", CameraTabsChecks.run(this)); finish(-1, results); return; }
       if (tabsTest) { results.putString("stream", LibraryTabsChecks.run(this)); finish(-1, results); return; }
+      if (burstGapTest) {
+        results.putString("stream", BurstGapChecks.run(this, Boolean.parseBoolean(cameraPilotArguments.getString("numbered")),
+            cameraPilotArguments.getString("raw_samples")));
+        finish(-1, results);
+        return;
+      }
       if (bulkWinnerTest) { results.putString("stream", BurstBulkWinnerChecks.run(this,tagWidth,tagFont)); finish(-1, results); return; }
       if (coWinnerTest) { results.putString("stream", BurstCoWinnerChecks.run(this,tagWidth,tagFont)); finish(-1, results); return; }
       if (sortTest) { results.putString("stream", SortNamingChecks.run(this,tagWidth,tagFont)); finish(-1, results); return; }

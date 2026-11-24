@@ -30,7 +30,7 @@ public final class GalleryCaptureDatesTest {
 
     List<BurstGroups.Entry> entries = new ArrayList<>();
     for (int i = 0; i < photos.size(); i++)
-      entries.add(new BurstGroups.Entry(i, photos.get(i).taken, "synthetic-stream"));
+      entries.add(new BurstGroups.Entry(i, photos.get(i).taken, "synthetic-stream", photos.get(i).name, 0, 0));
     check(BurstGroups.group(entries, 1000).get(0).equals(List.of(0, 1, 2, 3)),
         "burst member indices preserve corrected gallery chronology");
 

@@ -2,17 +2,30 @@ package jp.nano.rawgallery;
 
 import java.util.*;
 
-/** Time-based candidates, not a claim that the camera recorded a burst flag. */
+/** Groups adjacent burst frames or, when both are unnumbered, photos within the configured gap. */
 final class BurstGroups {
   static final class Entry {
     final int index;
     final long time;
-    final String stream;
+    final String stream, name;
+    final int mode, frame;
 
-    Entry(int index, long time, String stream) {
+    Entry(int index, long time, String stream, String name, int mode, int frame) {
       this.index = index;
       this.time = time;
       this.stream = stream;
+      this.name = name;
+      this.mode = mode;
+      this.frame = frame;
+    }
+
+    private boolean numbered() { return mode > 0 && frame > 0; }
+
+    private boolean follows(Entry previous, long gap) {
+      if (numbered() || previous.numbered())
+        return numbered() && previous.numbered() && mode == previous.mode
+            && (long) frame - previous.frame == 1;
+      return time - previous.time <= gap;
     }
   }
 
@@ -25,16 +38,16 @@ final class BurstGroups {
     }
     for (List<Entry> stream : streams.values()) {
       stream.sort(
-          Comparator.comparingLong((Entry e) -> e.time).reversed().thenComparingInt(e -> e.index));
+          Comparator.comparingLong((Entry e) -> e.time).thenComparing(e -> e.name));
       List<Entry> current = null;
-      long previous = 0;
+      Entry previous = null;
       for (Entry e : stream) {
-        if (current == null || previous - e.time > gap) {
+        if (previous == null || !e.follows(previous, gap)) {
           current = new ArrayList<>();
           groups.add(current);
         }
         current.add(e);
-        previous = e.time;
+        previous = e;
       }
     }
     // Preserve the gallery's ordering by placing each bundle at its first member.

@@ -87,6 +87,7 @@ public final class MainActivity extends DiagnosticActivity {
   private ShareCapacityChecks shareCapacity;
   private ShareUi.Menu capacityMenu;
   private List<List<Integer>> bundles = new ArrayList<>();
+  private int indexedBurstGapMillis;
   private List<Integer> burstMembers;
   private List<List<Integer>> displayed = new ArrayList<>();
   private List<PhotoRepository.Photo> photos = new ArrayList<>();
@@ -197,6 +198,7 @@ public final class MainActivity extends DiagnosticActivity {
 
   public void onCreate(Bundle state) {
     super.onCreate(state);
+    indexedBurstGapMillis = savedBurstGapMillis();
     repository = new PhotoRepository(this);
     rankingStore = new RankingStore(this);
     sharePreparation = new SharePreparation(this, repository);
@@ -443,6 +445,7 @@ public final class MainActivity extends DiagnosticActivity {
     restoreGallery();
     grid.onCellClick(
         (p, v, pos, id) -> {
+          if (!requireCurrentBurstGrouping()) return;
           if (selecting) {
             root.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK);
             toggleSelection(pos);
@@ -467,6 +470,7 @@ public final class MainActivity extends DiagnosticActivity {
             feedback(StatusView.Symbol.PAUSED,"動画はタップして再生できます",null,"");
             return true;
           }
+          if (!requireCurrentBurstGrouping()) return true;
           root.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
           if (!selecting) {
             selecting = true;
@@ -847,7 +851,18 @@ public final class MainActivity extends DiagnosticActivity {
         burstMembers!=null,rankFilter,rankingStore,this::rankingFor);
   }
 
-  private void beginSelection(){if(photos.isEmpty())return;selecting=true;bestOnly=true;selectedPhotos.clear();gallery();}
+  private void beginSelection(){if(photos.isEmpty() || !requireCurrentBurstGrouping())return;selecting=true;bestOnly=true;selectedPhotos.clear();gallery();}
+
+  private int savedBurstGapMillis() {
+    return BurstGapSettings.readMillis(getSharedPreferences("settings", MODE_PRIVATE));
+  }
+
+  private boolean requireCurrentBurstGrouping() {
+    if (indexedBurstGapMillis == savedBurstGapMillis()) return true;
+    listStatus.begin("連写のまとめ方を更新しています");
+    refreshIndex(false);
+    return false;
+  }
   private void tagSelectedPhotos(){
     LinkedHashMap<String,PhotoRepository.Photo> chosen=new LinkedHashMap<>();
     for(PhotoRepository.Photo photo:photos)if(selectedPhotos.contains(photo.uri.toString())&&!photo.isVideo())chosen.put(photo.uri.toString(),photo);
@@ -1187,22 +1202,18 @@ public final class MainActivity extends DiagnosticActivity {
                   editTargets();
                   break;
                 case 2:
-                  new GalleryUi.Sheet(this)
-                      .setTitle("同じ機種・保存先の撮影間隔")
-                      .setSingleChoiceItems(
-                          new String[] {"まとめない", "１秒以内（標準）", "２秒以内", "３秒以内"},
-                          getSharedPreferences("settings", 0).getInt("burstGapSeconds", 1),
-                          (dialog, choice) -> {
-                            dialog.dismiss();
-                            getSharedPreferences("settings", 0)
-                                .edit()
-                                .putInt("burstGapSeconds", choice)
-                                .apply();
-                            burstMembers = null;
-                            refreshIndex(true);
-                          })
-                      .setNegativeButton("閉じる", null)
-                      .show();
+                  var settings = getSharedPreferences("settings", MODE_PRIVATE);
+                  BurstGapDialog.show(this, BurstGapSettings.readMillis(settings), millis -> {
+                    boolean changed = millis != BurstGapSettings.readMillis(settings);
+                    if (!BurstGapSettings.saveMillis(settings, millis)) return false;
+                    if (changed && pendingRestore != null) pendingRestore.remove("burst");
+                    if (burstMembers != null) {
+                      burstMembers = null;
+                      gallery();
+                    }
+                    refreshIndex(true);
+                    return true;
+                  });
                   break;
                 case 3:
                   new GalleryUi.Sheet(this)
@@ -1395,10 +1406,11 @@ public final class MainActivity extends DiagnosticActivity {
                   rankCache.clear();
                   photos = snapshot.photos;
                   bundles = snapshot.bundles;
+                  indexedBurstGapMillis = snapshot.burstGapMillis;
                   if (updateVersion == indexUpdateVersion) pendingIndexUpdate = false;
                   DiagnosticLog.event("screen.index_applied", 0, "count", photos.size());
                   burstMembers = null;
-                  if (pendingRestore != null) {
+                  if (pendingRestore != null && (photos.isEmpty() || indexedBurstGapMillis == savedBurstGapMillis())) {
                     Bundle restored = pendingRestore;
                     pendingRestore = null;
                     selecting = restored.getBoolean("selecting");
@@ -1406,15 +1418,9 @@ public final class MainActivity extends DiagnosticActivity {
                     ArrayList<String> chosen = restored.getStringArrayList("selection");
                     if (chosen != null) selectedPhotos.addAll(chosen);
                     Set<String> available = new HashSet<>();
-                    ArrayList<String> scope = restored.getStringArrayList("burst");
-                    if (scope != null) burstMembers = new ArrayList<>();
-                    for (int i = 0; i < photos.size(); i++) {
-                      String uri = photos.get(i).uri.toString();
-                      available.add(uri);
-                      if (scope != null && scope.contains(uri)) burstMembers.add(i);
-                    }
+                    for (PhotoRepository.Photo photo : photos) available.add(photo.uri.toString());
                     selectedPhotos.retainAll(available);
-                    if (burstMembers != null && burstMembers.isEmpty()) burstMembers = null;
+                    burstMembers = restoredBurst(restored.getStringArrayList("burst"));
                     gallery();
                     return;
                   }
@@ -1433,6 +1439,19 @@ public final class MainActivity extends DiagnosticActivity {
                 });
           }
         });
+  }
+
+  /** A restored burst must still contain precisely the same photos after reindexing. */
+  private List<Integer> restoredBurst(List<String> scope) {
+    if (scope == null || scope.size() < 2) return null;
+    Set<String> expected = new HashSet<>(scope);
+    for (List<Integer> members : bundles) {
+      if (members.size() != scope.size()) continue;
+      Set<String> current = new HashSet<>();
+      for (int member : members) current.add(photos.get(member).uri.toString());
+      if (current.equals(expected)) return new ArrayList<>(members);
+    }
+    return null;
   }
 
   private void refresh() {

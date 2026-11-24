@@ -36,6 +36,7 @@ jobs:
           set -euo pipefail
           for check in scripts/test-*.py; do python3 "$check"; done
           sh tests/ranking.sh
+          sh tests/raw-structure.sh
           sh tests/preparation-storage.sh
           sh tests/camera-import-copy.sh
           sh tests/camera-ble.sh
