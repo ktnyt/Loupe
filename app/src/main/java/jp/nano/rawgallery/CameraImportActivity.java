@@ -132,6 +132,8 @@ public final class CameraImportActivity extends AppCompatActivity {
     private String pendingUsbDeviceName, pendingUsbVolume;
     private static final java.util.concurrent.Executor SOURCE_IO = new java.util.concurrent.ThreadPoolExecutor(
             0, 2, 30, java.util.concurrent.TimeUnit.SECONDS, new java.util.concurrent.SynchronousQueue<>());
+    private static final java.util.concurrent.Executor SOURCE_STATUS_IO = new java.util.concurrent.ThreadPoolExecutor(
+            0, 2, 30, java.util.concurrent.TimeUnit.SECONDS, new java.util.concurrent.SynchronousQueue<>());
 
     // Instance-scoped loader lets instrumentation supply metadata without touching registrations.
     interface WifiProfileLoader {
@@ -867,7 +869,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         };
         handler.postDelayed(wifiTimeout, 3000);
         try {
-            SOURCE_IO.execute(() -> {
+            SOURCE_STATUS_IO.execute(() -> {
                 List<CameraQuickImportSources.Profile> profiles = null;
                 try { profiles = wifiProfileLoader.load(getApplicationContext(), cancellation); }
                 catch (IOException | RuntimeException unavailable) { }
@@ -1289,7 +1291,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         };
         handler.postDelayed(timeout, 3000);
         try {
-            SOURCE_IO.execute(() -> {
+            SOURCE_STATUS_IO.execute(() -> {
                 CameraQuickImportSources.SdSource source;
                 try { source = CameraQuickImportSources.inspectSd(getApplicationContext(), cancellation); }
                 catch (android.os.OperationCanceledException stopped) { return; }
