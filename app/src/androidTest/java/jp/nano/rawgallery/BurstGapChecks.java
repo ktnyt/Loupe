@@ -1,23 +1,35 @@
 package jp.nano.rawgallery;
 
+import android.accessibilityservice.AccessibilityServiceInfo;
 import android.app.Instrumentation;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
+import android.net.Uri;
+import android.os.Bundle;
 import android.os.SystemClock;
+import android.provider.MediaStore;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.accessibility.AccessibilityWindowInfo;
 import android.widget.ListView;
 import com.google.android.material.textfield.TextInputLayout;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 import static jp.nano.rawgallery.TagDetailChecks.require;
 import static jp.nano.rawgallery.TagDetailChecks.ui;
@@ -32,6 +44,8 @@ final class BurstGapChecks {
     Integer previousMillis = prefs.contains(millis) ? prefs.getInt(millis, 0) : null;
     Integer previousSeconds = prefs.contains(seconds) ? prefs.getInt(seconds, 0) : null;
     MainActivity activity = null;
+    List<Uri> fixtures = new ArrayList<>();
+    Throwable failure = null;
     try {
       require(prefs.edit().remove(millis).putInt(seconds, 1).commit(), "seed legacy value");
       activity = (MainActivity) test.startActivitySync(new Intent(context, MainActivity.class)
@@ -47,12 +61,27 @@ final class BurstGapChecks {
 
       View editor = openCustom(test, activity, 1, "1000");
       TextInputLayout field = field(editor);
-      int[] closedBottom = new int[1];
-      ui(test, () -> closedBottom[0] = visibleFrame(editor).bottom);
+      var automation = test.getUiAutomation();
+      var service = automation.getServiceInfo();
+      android.util.Log.i("LoupeBurstGapCheck", "interactive window flag before request: "
+          + ((service.flags & AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS) != 0));
+      service.flags |= AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
+      automation.setServiceInfo(service);
       tap(test, field.getEditText());
-      ExpressiveUiChecks.awaitUi(test, 5000,
-          () -> closedBottom[0] - visibleFrame(editor).bottom > GalleryUi.dp(activityContext(editor), 48),
-          "numeric keyboard shown and dialog resized");
+      Rect keyboard;
+      try {
+        keyboard = awaitKeyboard(test);
+      } catch (AssertionError absent) {
+        capture(test, editor, captures, prefix + "-keyboard-probe");
+        throw absent;
+      }
+      ui(test, () -> {
+        require(field.getEditText().getInputType() == android.text.InputType.TYPE_CLASS_NUMBER,
+            "number input requested");
+        require(bottom(TagDetailChecks.button(editor, "保存")) <= keyboard.top
+            && bottom(TagDetailChecks.button(editor, "キャンセル")) <= keyboard.top,
+            "dialog actions stay above the keyboard");
+      });
       ui(test, () -> field.getEditText().setText("350"));
       capture(test, editor, captures, prefix + "-custom-keyboard");
       ui(test, () -> field.getEditText().setText("2147483648"));
@@ -64,6 +93,8 @@ final class BurstGapChecks {
       });
       capture(test, editor, captures, prefix + "-invalid");
       tap(test, TagDetailChecks.button(editor, "キャンセル"));
+      awaitClosed(test, editor);
+      awaitKeyboardClosed(test);
       requireUnchanged(prefs, context, before);
 
       View backEditor = openCustom(test, activity, 1, "1000");
@@ -100,26 +131,149 @@ final class BurstGapChecks {
       tap(test, TagDetailChecks.button(savedEditor, "キャンセル"));
       awaitClosed(test, savedEditor);
 
-      View preset = openPicker(test, activity);
-      tap(test, list(preset).getChildAt(0));
-      awaitClosed(test, preset);
-      require(prefs.getInt(millis, -1) == 0, "off preset saves immediately using canonical key");
-      GalleryScreenChecks.finishInitialIndex(test, activity);
-      require(signature(context).contains(":burst-gap-ms:0:"), "off preset index rebuilt");
-
+      checkStaleBurst(test, activity, prefs, fixtures);
       checkRetry(test, activity);
       return "PASS " + prefix + " numeric keyboard, visible validation, cancel/Back/outside, exact save, "
-          + "reopen, preset, index signature and failed-save retry; restored test preferences.\n";
+          + "reopen, preset, stale burst/selection guard, individual photos after rebuild, index signature, "
+          + "and failed-save retry; restored test preferences and removed fixture photos.\n";
+    } catch (Exception | AssertionError error) {
+      failure = error;
+      throw error;
     } finally {
-      if (activity != null) ui(test, activity::finish);
-      var restore = prefs.edit();
-      if (previousMillis == null) restore.remove(millis);
-      else restore.putInt(millis, previousMillis);
-      if (previousSeconds == null) restore.remove(seconds);
-      else restore.putInt(seconds, previousSeconds);
-      require(restore.commit(), "restore burst preferences");
-      GalleryIndex.WORKER.submit(() -> GalleryIndex.rebuild(context, false, () -> false))
-          .get(30, TimeUnit.SECONDS);
+      var cleanup = new ArrayList<Throwable>();
+      MainActivity launched = activity;
+      if (launched != null) cleanup(cleanup, () -> ui(test, launched::finish));
+      cleanup(cleanup, () -> {
+        var restore = prefs.edit();
+        if (previousMillis == null) restore.remove(millis);
+        else restore.putInt(millis, previousMillis);
+        if (previousSeconds == null) restore.remove(seconds);
+        else restore.putInt(seconds, previousSeconds);
+        require(restore.commit(), "restore burst preferences");
+      });
+      for (Uri fixture : fixtures) {
+        cleanup(cleanup, () -> require(context.getContentResolver().delete(fixture, null, null) == 1,
+            "remove owned fixture"));
+      }
+      cleanup(cleanup, () -> GalleryIndex.WORKER.submit(() -> GalleryIndex.rebuild(context, false, () -> false))
+          .get(30, TimeUnit.SECONDS));
+      if (!cleanup.isEmpty()) {
+        Throwable reported = failure == null ? new AssertionError("burst test cleanup failed") : failure;
+        cleanup.forEach(reported::addSuppressed);
+        if (failure == null) throw (AssertionError) reported;
+      }
+    }
+  }
+
+  @FunctionalInterface
+  private interface CleanupAction { void run() throws Exception; }
+
+  private static void cleanup(List<Throwable> failures, CleanupAction action) {
+    try {
+      action.run();
+    } catch (Exception | AssertionError error) {
+      failures.add(error);
+    }
+  }
+
+  private static void checkStaleBurst(Instrumentation test, MainActivity activity,
+      SharedPreferences prefs, List<Uri> fixtures) throws Exception {
+    String folder = "Pictures/LoupeBurstGap-" + UUID.randomUUID() + "/";
+    seedBurst(activity, folder, fixtures);
+    GalleryIndex.WORKER.submit(() -> GalleryIndex.rebuild(activity, true, () -> false))
+        .get(30, TimeUnit.SECONDS);
+    ui(test, () -> {
+      RankingResultChecks.set(activity, "albumFolder", folder);
+      RankingResultChecks.call(activity, "gallery");
+      RankingResultChecks.call(activity, "loadIndexedPhotos");
+    });
+    GalleryScreenChecks.settle(test, activity);
+    ui(test, () -> require(RankingResultChecks.get(activity, "bundles").equals(List.of(List.of(0, 1))),
+        "fixture JPEGs start in one indexed burst"));
+    tap(test, GalleryScreenChecks.firstPhoto(activity.getWindow().getDecorView()));
+    Bundle pendingRestore = new Bundle();
+    ui(test, () -> {
+      require(RankingResultChecks.get(activity, "burstMembers") != null, "open fixture burst");
+      pendingRestore.putStringArrayList("burst", fixtures.stream()
+          .map(Uri::toString).collect(Collectors.toCollection(ArrayList::new)));
+      RankingResultChecks.set(activity, "pendingRestore", pendingRestore);
+      TagDetailChecks.button(activity.getWindow().getDecorView(), "その他").performClick();
+    });
+    View preset = openPickerFromMenu(test, activity);
+    var workerEntered = new CountDownLatch(1);
+    var releaseWorker = new CountDownLatch(1);
+    GalleryIndex.WORKER.submit(() -> {
+      workerEntered.countDown();
+      require(releaseWorker.await(20, TimeUnit.SECONDS), "release paused index worker");
+      return null;
+    });
+    try {
+      require(workerEntered.await(10, TimeUnit.SECONDS), "pause index worker before save");
+      ListView choices = list(preset);
+      ui(test, () -> choices.setSelectionFromTop(0, 0));
+      ConsistencyLayoutChecks.frame(test, preset);
+      View off = choices.getChildAt(0);
+      ui(test, () -> {
+        Rect visible = new Rect();
+        require(choices.getFirstVisiblePosition() == 0 && off.getGlobalVisibleRect(visible)
+            && visible.height() == off.getHeight(), "off preset is fully visible after scrolling");
+      });
+      tap(test, off);
+      awaitClosed(test, preset);
+      require(prefs.getInt(BurstGapSettings.MILLIS, -1) == 0, "off preset saves immediately");
+      GalleryScreenChecks.settle(test, activity);
+      tap(test, GalleryScreenChecks.firstPhoto(activity.getWindow().getDecorView()));
+      ui(test, () -> {
+        require(RankingResultChecks.get(activity, "burstMembers") == null
+            && RankingResultChecks.get(activity, "grid") != null, "old group does not reopen");
+        require(!pendingRestore.containsKey("burst"), "saved scope cannot restore the old burst");
+        TagDetailChecks.button(activity.getWindow().getDecorView(), "選択").performClick();
+        require(!(boolean) RankingResultChecks.get(activity, "selecting"), "old selection route is blocked");
+      });
+      require(signature(activity).contains(":burst-gap-ms:350:"), "worker still paused at old index");
+    } finally {
+      releaseWorker.countDown();
+    }
+    GalleryScreenChecks.finishInitialIndex(test, activity);
+    require(signature(activity).contains(":burst-gap-ms:0:"), "off preset index rebuilt");
+    ui(test, () -> require(RankingResultChecks.get(activity, "bundles").equals(List.of(List.of(0), List.of(1))),
+        "new index splits the same fixture images into individual photos"));
+  }
+
+  private static void seedBurst(Context context, String folder, List<Uri> fixtures) throws Exception {
+    File jpeg = File.createTempFile("burst-gap-", ".jpg", context.getCacheDir());
+    try {
+      Bitmap bitmap = Bitmap.createBitmap(24, 24, Bitmap.Config.ARGB_8888);
+      bitmap.eraseColor(0xff486381);
+      try (var out = new FileOutputStream(jpeg)) {
+        require(bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out), "encode fixture JPEG");
+      } finally {
+        bitmap.recycle();
+      }
+      var exif = new android.media.ExifInterface(jpeg.getPath());
+      exif.setAttribute(android.media.ExifInterface.TAG_MODEL, "Loupe Fixture");
+      exif.setAttribute(android.media.ExifInterface.TAG_DATETIME_ORIGINAL, "2026:11:24 12:34:56");
+      exif.setAttribute(android.media.ExifInterface.TAG_OFFSET_TIME_ORIGINAL, "+00:00");
+      exif.saveAttributes();
+      var resolver = context.getContentResolver();
+      for (int i = 0; i < 2; i++) {
+        var values = new ContentValues();
+        values.put(MediaStore.MediaColumns.DISPLAY_NAME, "fixture-" + i + ".jpg");
+        values.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg");
+        values.put(MediaStore.MediaColumns.RELATIVE_PATH, folder);
+        values.put(MediaStore.MediaColumns.IS_PENDING, 1);
+        Uri fixture = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+        require(fixture != null, "insert fixture");
+        fixtures.add(fixture);
+        try (var out = resolver.openOutputStream(fixture)) {
+          Files.copy(jpeg.toPath(), out);
+        }
+        values.clear();
+        values.put(MediaStore.MediaColumns.IS_PENDING, 0);
+        require(resolver.update(fixture, values, null, null) == 1, "publish fixture");
+      }
+    } finally {
+      Files.deleteIfExists(jpeg.toPath());
     }
   }
 
@@ -129,7 +283,7 @@ final class BurstGapChecks {
       require(value == 350, "retry receives retained draft");
       return attempts.incrementAndGet() == 2;
     }));
-    View editor = ShareScreenChecks.modal(test, activity);
+    View editor = modal(test, activity, view -> field(view) != null);
     tap(test, TagDetailChecks.button(editor, "保存"));
     ui(test, () -> {
       require(editor.hasWindowFocus() && field(editor).getError() != null, "failed save keeps dialog and reports error");
@@ -164,11 +318,15 @@ final class BurstGapChecks {
 
   private static View openPicker(Instrumentation test, MainActivity activity) throws Exception {
     ui(test, () -> ExpressiveUiChecks.description(activity.getWindow().getDecorView(), "設定とその他").performClick());
-    View menu = ShareScreenChecks.modal(test, activity);
+    return openPickerFromMenu(test, activity);
+  }
+
+  private static View openPickerFromMenu(Instrumentation test, MainActivity activity) throws Exception {
+    View menu = modal(test, activity, view -> TagDetailChecks.button(view, "設定とその他") != null);
     ui(test, () -> TagDetailChecks.button(menu, "設定とその他").performClick());
-    View settings = ShareScreenChecks.modal(test, activity);
+    View settings = modal(test, activity, view -> TagDetailChecks.button(view, "連写のまとめ方") != null);
     ui(test, () -> TagDetailChecks.button(settings, "連写のまとめ方").performClick());
-    return ShareScreenChecks.modal(test, activity);
+    return modal(test, activity, view -> list(view) != null);
   }
 
   private static View openCustom(Instrumentation test, MainActivity activity, int checked, String shown)
@@ -180,7 +338,8 @@ final class BurstGapChecks {
       int checked, String shown) throws Exception {
     ui(test, () -> require(list(picker).getCheckedItemPosition() == checked, "correct choice checked"));
     tap(test, list(picker).getChildAt(4));
-    View editor = ShareScreenChecks.modal(test, activity);
+    awaitClosed(test, picker);
+    View editor = modal(test, activity, view -> field(view) != null);
     ui(test, () -> {
       require(field(editor).getEditText().getText().toString().equals(shown), "custom input prefilled");
       var node = field(editor).getEditText().createAccessibilityNodeInfo();
@@ -192,12 +351,62 @@ final class BurstGapChecks {
 
   private static ListView list(View picker) { return ExpressiveUiChecks.find(picker, ListView.class); }
   private static TextInputLayout field(View editor) { return ExpressiveUiChecks.find(editor, TextInputLayout.class); }
-  private static Context activityContext(View view) { return view.getContext(); }
+
+  private static View modal(Instrumentation test, MainActivity activity, Predicate<View> matches)
+      throws Exception {
+    View[] target = new View[1];
+    ExpressiveUiChecks.awaitUi(test, 5000, () -> {
+      for (View window : android.view.inspector.WindowInspector.getGlobalWindowViews()) {
+        if (window != activity.getWindow().getDecorView() && window.hasWindowFocus() && matches.test(window)) {
+          target[0] = window;
+          return true;
+        }
+      }
+      return false;
+    }, "expected modal gains focus");
+    ConsistencyLayoutChecks.frame(test, target[0]);
+    return target[0];
+  }
 
   private static Rect visibleFrame(View root) {
     Rect result = new Rect();
     root.getWindowVisibleDisplayFrame(result);
     return result;
+  }
+
+  private static Rect awaitKeyboard(Instrumentation test) throws Exception {
+    long deadline = SystemClock.uptimeMillis() + 5000;
+    do {
+      Rect bounds = keyboardBounds(test);
+      if (bounds != null) return bounds;
+      Thread.sleep(50);
+    } while (SystemClock.uptimeMillis() < deadline);
+    throw new AssertionError("numeric keyboard is not visible");
+  }
+
+  private static void awaitKeyboardClosed(Instrumentation test) throws Exception {
+    long deadline = SystemClock.uptimeMillis() + 5000;
+    do {
+      if (keyboardBounds(test) == null) return;
+      Thread.sleep(50);
+    } while (SystemClock.uptimeMillis() < deadline);
+    throw new AssertionError("numeric keyboard did not dismiss");
+  }
+
+  private static Rect keyboardBounds(Instrumentation test) {
+    for (var window : test.getUiAutomation().getWindows()) {
+      if (window.getType() != AccessibilityWindowInfo.TYPE_INPUT_METHOD) continue;
+      Rect bounds = new Rect();
+      window.getBoundsInScreen(bounds);
+      if (!bounds.isEmpty()) return bounds;
+    }
+    return null;
+  }
+
+  private static int bottom(View view) {
+    int[] point = new int[2];
+    view.getLocationOnScreen(point);
+    return point[1] + view.getHeight();
   }
 
   private static void awaitClosed(Instrumentation test, View dialog) throws Exception {

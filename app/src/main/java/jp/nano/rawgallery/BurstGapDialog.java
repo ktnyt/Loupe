@@ -72,7 +72,7 @@ final class BurstGapDialog {
     dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
       int value = BurstGapSettings.parseCustomMillis(input.getText().toString());
       if (value == 0) {
-        field.setError("1〜2147483647の半角整数を入力してください");
+        field.setError("1〜2147483647の半角整数を入力");
       } else if (!save.test(value)) {
         field.setError(SAVE_ERROR);
       } else {
