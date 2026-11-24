@@ -1,8 +1,10 @@
 package jp.nano.rawgallery;
 
+import android.Manifest;
 import android.app.Instrumentation;
 import android.app.UiAutomation;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.net.Uri;
@@ -15,10 +17,16 @@ import java.io.FileOutputStream;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
+import jp.nano.rawgallery.camera.CameraDocumentSourceChecks;
 import jp.nano.rawgallery.camera.ImportProgress;
+import jp.nano.rawgallery.camera.MountedCameraCard;
+import jp.nano.rawgallery.camera.SdManualFormats;
+import jp.nano.rawgallery.camera.SdSourceRegistrations;
 
 /** Captures the actual confirmation for already validated synthetic cards. No source or service is opened. */
 final class CameraDualSlotUiChecks {
@@ -26,7 +34,7 @@ final class CameraDualSlotUiChecks {
   private static final List<String> ISOLATED_PACKAGES = List.of("jp.nano.rawgallery.sd162", "jp.nano.rawgallery.sd166");
   private static final String SOURCE_ID = "166A-0001";
   private static final String TARGET_ID = "166B-0002";
-  private static final String TITLE = "別のSDカードへ取り込む";
+  private static final String TITLE = "SDカード間の取り込み";
   private static final String WARNING = "この方法では動画を取り込めません。";
   private static final String CONFIRM = "取り込む";
   private static final String CANCEL = "キャンセル";
@@ -76,6 +84,7 @@ final class CameraDualSlotUiChecks {
       }
       require(originalImportSettings.equals(importSettings.getAll()) && originalSettings.equals(settings.getAll()),
           "Showing, changing format selection and cancelling leave preferences unchanged");
+      assertRememberedFormats(test, automation, activity, directory, width, font);
     } finally {
       if (activity != null) {
         CameraImportActivity close = activity;
@@ -87,7 +96,146 @@ final class CameraDualSlotUiChecks {
     require(!started.get() && !progress.getActive(), "Closing the capture screen leaves import idle");
     return "PASS dual-slot import UI at " + width + "dp/" + font + ": same-name cards with distinct IDs,"
         + " JPEG-only and RAW-only choices, VIDEO-only warning and disabled confirm, 48dp targets,"
-        + " and cancel keeps import idle; synthetic dialog only. " + directory.getAbsolutePath();
+        + " cancellation and remembered selections for synthetic cards. " + directory.getAbsolutePath();
+  }
+
+  private static void assertRememberedFormats(Instrumentation test, UiAutomation automation,
+      CameraImportActivity screen, File directory, int width, float font) throws Exception {
+    String photoPermission = Build.VERSION.SDK_INT >= 33
+        ? Manifest.permission.READ_MEDIA_IMAGES : Manifest.permission.READ_EXTERNAL_STORAGE;
+    for (String permission : List.of(photoPermission, Manifest.permission.ACCESS_MEDIA_LOCATION)) {
+      if (screen.checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED)
+        automation.grantRuntimePermission(screen.getPackageName(), permission);
+    }
+    var preferences = screen.getSharedPreferences("camera_import", 0);
+    var before = new HashMap<>(preferences.getAll());
+    var storage = screen.getSharedPreferences("settings", 0);
+    String originalDestination = storage.getString("photo_volume", null);
+    String destination = TARGET_ID.toLowerCase(Locale.ROOT);
+    String changedDestination = "166b-0003";
+    var otherCard = DocumentsContract.buildTreeDocumentUri(TREE.getAuthority(), "166A-0002:DCIM");
+    var otherFolder = DocumentsContract.buildTreeDocumentUri(TREE.getAuthority(), SOURCE_ID + ":DCIM/Subfolder");
+    var submitted = new AtomicReference<CameraImportActivity.SdStart>();
+    CameraImportActivity.SdSourceProbe realProbe = screen.sdSourceProbe;
+    CameraImportActivity.SdSubmission realSubmission = screen.sdSubmission;
+    try {
+      require(PhotoStorage.select(screen, destination), "Select the fixture destination");
+      require(SdManualFormats.saved(screen, TREE, destination) == null, "Fixture pair starts without saved formats");
+      TagDetailChecks.ui(test, () -> {
+        screen.sdSourceProbe = (request, stop) ->
+            new CameraImportActivity.SdLocation(SdSourceRegistrations.volumeUuid(request.tree()),
+                SOURCE_LABEL + "\n" + TARGET_LABEL);
+        screen.sdSubmission = (request, registrationOnly, confirmation) -> {
+          require(!registrationOnly && submitted.compareAndSet(null, request), "One manual import submission");
+          CameraDocumentSourceChecks.acknowledgeSdUiFixture(confirmation);
+        };
+      });
+      var initial = pickedRequest(screen, TREE, destination);
+      showReview(test, automation, screen, initial, CameraImportActivity.SdStartMode.MANUAL);
+      dismissReview(test, automation);
+      require(submitted.get() == null && SdManualFormats.saved(screen, TREE, destination) == null,
+          "Cancelling the first format review neither submits nor saves");
+
+      var review = showReview(test, automation, screen, initial, CameraImportActivity.SdStartMode.MANUAL);
+      require(hasText(review, "JPEG").isChecked() && hasText(review, "RAW").isChecked(), "Initial photo formats");
+      click(hasText(review, "JPEG"));
+      review = awaitWindow(automation, window -> hasText(window, "JPEG") != null && !hasText(window, "JPEG").isChecked());
+      click(hasText(review, CONFIRM));
+      var first = awaitSubmission(test, submitted);
+      require(first.rememberFormats() && "RAW".equals(first.kinds()), "First confirmation submits the chosen RAW format");
+      require(SdManualFormats.saved(screen, TREE, destination) == null, "UI submission alone does not persist formats");
+      SdManualFormats.remember(screen, first.tree(), first.destination(), first.kinds());
+
+      var repeat = pickedRequest(screen, TREE, destination);
+      review = showReview(test, automation, screen, repeat, CameraImportActivity.SdStartMode.MANUAL);
+      require(!hasText(review, "JPEG").isChecked() && hasText(review, "RAW").isChecked(),
+          "A picker can change source registration and asks even with a saved format");
+      dismissReview(test, automation);
+      require(submitted.get() == null, "A remembered format does not approve a new registration");
+
+      showReview(test, automation, screen, repeat, CameraImportActivity.SdStartMode.ATTACH);
+      dismissReview(test, automation);
+      require(submitted.get() == null, "Selecting a folder after USB attach still requires a positive import action");
+
+      review = showReview(test, automation, screen, repeat, CameraImportActivity.SdStartMode.REVIEW_FORMATS);
+      require(!hasText(review, "JPEG").isChecked() && hasText(review, "RAW").isChecked(),
+          "Explicit format review starts with saved RAW");
+      saveCapture(automation, directory, "camera-dual-slot-" + width + "-" + font + "-saved-format-review");
+      dismissReview(test, automation);
+      require(submitted.get() == null && "RAW".equals(SdManualFormats.saved(screen, TREE, destination)),
+          "Cancelling explicit review keeps the saved selection");
+      review = showReview(test, automation, screen, repeat, CameraImportActivity.SdStartMode.REVIEW_FORMATS);
+      click(hasText(review, "JPEG"));
+      review = awaitWindow(automation, window -> hasText(window, "JPEG") != null && hasText(window, "JPEG").isChecked());
+      click(hasText(review, "RAW"));
+      review = awaitWindow(automation, window -> hasText(window, "RAW") != null && !hasText(window, "RAW").isChecked());
+      click(hasText(review, CONFIRM));
+      var revised = awaitSubmission(test, submitted);
+      require(revised.rememberFormats() && "JPEG".equals(revised.kinds())
+          && "RAW".equals(SdManualFormats.saved(screen, TREE, destination)),
+          "Explicit format change submits JPEG and defers replacing the saved selection to the service");
+
+      for (Uri tree : List.of(otherCard, otherFolder)) {
+        showReview(test, automation, screen, pickedRequest(screen, tree, destination),
+            CameraImportActivity.SdStartMode.MANUAL);
+        dismissReview(test, automation);
+      }
+      require(PhotoStorage.select(screen, changedDestination), "Switch the fixture destination");
+      showReview(test, automation, screen, pickedRequest(screen, TREE, changedDestination),
+          CameraImportActivity.SdStartMode.MANUAL);
+      dismissReview(test, automation);
+      require(submitted.get() == null, "Other cards, folders and destinations require a separate confirmation");
+    } finally {
+      TagDetailChecks.ui(test, () -> {
+        screen.sdSourceProbe = realProbe;
+        screen.sdSubmission = realSubmission;
+      });
+      var restore = preferences.edit();
+      for (var entry : preferences.getAll().entrySet()) {
+        var original = before.get(entry.getKey());
+        if (!before.containsKey(entry.getKey())) restore.remove(entry.getKey());
+        else if (!Objects.equals(original, entry.getValue()) && original instanceof String value)
+          restore.putString(entry.getKey(), value);
+      }
+      boolean formatsRestored = restore.commit();
+      boolean destinationRestored = storage.edit().putString("photo_volume", originalDestination).commit();
+      require(formatsRestored && before.equals(preferences.getAll()), "Restore format preferences after the fixture");
+      require(destinationRestored, "Restore the original destination");
+    }
+  }
+
+  private static CameraImportActivity.SdStart pickedRequest(CameraImportActivity screen, Uri tree, String destination) {
+    return new CameraImportActivity.SdStart(tree, destination, destination, "JPEG,RAW",
+        MountedCameraCard.detachGeneration(), true,
+        screen.getSharedPreferences("camera_import", 0).getString("sd_tree_uri", null));
+  }
+
+  private static AccessibilityNodeInfo showReview(Instrumentation test, UiAutomation automation,
+      CameraImportActivity screen, CameraImportActivity.SdStart request, CameraImportActivity.SdStartMode mode) {
+    TagDetailChecks.ui(test, () -> screen.confirmSdSource(request, false, mode));
+    return awaitWindow(automation, window -> hasText(window, TITLE) != null
+        && hasText(window, "JPEG") != null && hasText(window, "RAW") != null && hasText(window, CANCEL) != null);
+  }
+
+  private static void dismissReview(Instrumentation test, UiAutomation automation) {
+    click(hasText(automation.getRootInActiveWindow(), CANCEL));
+    awaitWindow(automation, window -> hasText(window, TITLE) == null && hasText(window, "取り込み") != null);
+    test.waitForIdleSync();
+  }
+
+  private static CameraImportActivity.SdStart awaitSubmission(Instrumentation test,
+      AtomicReference<CameraImportActivity.SdStart> submitted) {
+    long deadline = SystemClock.uptimeMillis() + 6000;
+    do {
+      test.waitForIdleSync();
+      var request = submitted.getAndSet(null);
+      if (request != null) {
+        test.waitForIdleSync();
+        return request;
+      }
+      SystemClock.sleep(50);
+    } while (SystemClock.uptimeMillis() < deadline);
+    throw new AssertionError("Verified SD request did not reach the submission seam");
   }
 
   private static void assertProfile(Instrumentation test, CameraImportActivity activity, int width, float font)

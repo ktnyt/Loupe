@@ -43,6 +43,7 @@ public final class CameraDifferentialService extends Service {
     private static final String SD_CONFIRMATION = "sd_local_confirmation";
     private static final String SD_PICKED = "sd_picked_tree", SD_REGISTER_ONLY = "sd_register_only";
     private static final String SD_PRIOR_TREE = "sd_prior_tree";
+    private static final String SD_REMEMBER_FORMATS = "sd_remember_formats";
 
     /** A one-shot authorization carried only to the non-exported service in this process. */
     public static final class SdConfirmation extends Binder {
@@ -69,10 +70,11 @@ public final class CameraDifferentialService extends Service {
 
     public static void submitConfirmedSd(Context context, Uri tree, boolean verifyAll, String expectedCard,
             String kinds, long generation, String destination, boolean picked, boolean registerOnly,
-            String priorTree, SdConfirmation confirmation) {
+            String priorTree, boolean rememberFormats, SdConfirmation confirmation) {
         Intent request = sdRequest(context, tree, destination, generation).setAction(CONFIRMED_SD)
                 .putExtra("verify", verifyAll).putExtra(SD_PICKED, picked)
-                .putExtra(SD_REGISTER_ONLY, registerOnly).putExtra(SD_PRIOR_TREE, priorTree);
+                .putExtra(SD_REGISTER_ONLY, registerOnly).putExtra(SD_PRIOR_TREE, priorTree)
+                .putExtra(SD_REMEMBER_FORMATS, rememberFormats);
         if (expectedCard != null) request.putExtra(EXPECTED_CARD, expectedCard);
         if (kinds != null) request.putExtra(SD_KINDS, kinds);
         Bundle extras = new Bundle();
@@ -247,6 +249,9 @@ public final class CameraDifferentialService extends Service {
                     confirmation.complete(null);
                     return;
                 }
+                if (request.getBooleanExtra(SD_REMEMBER_FORMATS, false)
+                        && SdSourceRegistrations.mountedVolume(this, tree) != null)
+                    SdManualFormats.remember(this, tree, volume, request.getStringExtra(SD_KINDS));
                 beginImport(false, true);
                 progressStarted = true;
                 confirmation.complete(null);
