@@ -18,12 +18,14 @@ import jp.nano.rawgallery.camera.CameraAttachActivity;
 import jp.nano.rawgallery.camera.CameraCredentialStore;
 import jp.nano.rawgallery.camera.CameraImportGate;
 import jp.nano.rawgallery.camera.ImportProgress;
+import jp.nano.rawgallery.camera.MountedCameraCard;
 import jp.nano.rawgallery.camera.SdCardRemount;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
@@ -49,16 +51,22 @@ final class CameraSdRemountUiChecks {
                 && CameraImportActivity.connected(context) == null, "empty SD and camera setup");
         boolean priorSettingExists = prefs.contains(CameraImportActivity.SD_REMOUNT_ON_ENTRY);
         boolean priorSetting = prefs.getBoolean(CameraImportActivity.SD_REMOUNT_ON_ENTRY, false);
+        boolean priorReconnectExists = prefs.contains(CameraImportActivity.SD_RECONNECT_ON_ENTRY);
+        boolean priorReconnect = prefs.getBoolean(CameraImportActivity.SD_RECONNECT_ON_ENTRY, false);
         var priorCompletion = progress.getCompletion();
         var fake = new RemountFixture();
         fixture = fake;
-        prefs.edit().remove(CameraImportActivity.SD_REMOUNT_ON_ENTRY).commit();
+        prefs.edit().remove(CameraImportActivity.SD_REMOUNT_ON_ENTRY)
+                .remove(CameraImportActivity.SD_RECONNECT_ON_ENTRY).commit();
         CameraImportActivity screen = null;
         AtomicInteger pickers = new AtomicInteger();
+        AtomicReference<Intent> pickedFolder = new AtomicReference<>();
         var pickerMonitor = new Instrumentation.ActivityMonitor() {
             @Override public Instrumentation.ActivityResult onStartActivity(Intent intent) {
                 if (!Intent.ACTION_OPEN_DOCUMENT_TREE.equals(intent.getAction())) return null;
                 pickers.incrementAndGet();
+                Intent choice = pickedFolder.getAndSet(null);
+                if (choice != null) return new Instrumentation.ActivityResult(Activity.RESULT_OK, choice);
                 return new Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null);
             }
         };
@@ -254,10 +262,188 @@ final class CameraSdRemountUiChecks {
                 reveal(outcome);
             });
             capture(test, "reader-reconnect-restored");
+
+            openSettings(test, screen);
+            test.runOnMainSync(() -> {
+                var automatic = (MaterialSwitch) settingsView("sd-reconnect-on-entry");
+                require(!automatic.isChecked() && !automatic.isSingleLine()
+                        && automatic.getMinHeight() >= GalleryUi.dp(automatic.getContext(), 48),
+                        "automatic reader reconnect is off by default and its label can wrap");
+                reveal(automatic);
+                automatic.performClick();
+                require(automatic.isChecked()
+                        && prefs.getBoolean(CameraImportActivity.SD_RECONNECT_ON_ENTRY, false)
+                        && !option().isChecked(), "reader reconnect has its own persisted opt-in");
+                require(fake.reconnects == 2, "enabling automatic reconnect does not reconnect the current entry");
+            });
+            capture(test, "auto-reader-settings");
+            finish(test, screen);
+
+            prefs.edit().putBoolean(CameraImportActivity.SD_REMOUNT_ON_ENTRY, true).commit();
+            int previousPickers = pickers.get();
+            screen = open(test, entry(test));
+            require(fake.reconnects == 3 && fake.starts == 2,
+                    "a supported reader reconnect takes precedence over legacy remount on manual entry");
+            screen = recreate(test, screen);
+            CameraImportActivity afterRotation = screen;
+            test.runOnMainSync(() -> {
+                require(fake.reconnects == 3 && !screenView(afterRotation, "sd-import-start").isEnabled(),
+                        "manual entry rotation retains exactly one reconnect");
+                View outcome = screenView(afterRotation, "sd-remount-result");
+                require(text(outcome).equals("リーダーを再接続しています…"), "automatic reconnect shows progress");
+                require(fullyVisible(outcome), "automatic reconnect progress is visible without scrolling");
+                require(screenView(afterRotation, "sd-import-checking").getVisibility() == View.GONE,
+                        "rotation does not display a second progress indicator while source discovery is deferred");
+            });
+            capture(test, "auto-reader-progress");
+            test.runOnMainSync(() -> {
+                fake.complete(SdCardRemount.Result.RECONNECTED);
+                require(screenView(afterRotation, "sd-import-start").isEnabled(),
+                        "manual entry refreshes SD controls after reconnect");
+                requireNoQuickDiscovery(afterRotation, pickers, previousPickers);
+            });
+            finish(test, screen);
+
+            screen = open(test, quickEntry(test));
+            require(fake.reconnects == 4 && fake.starts == 2, "long press starts just one reader reconnect");
+            screen = recreate(test, screen);
+            CameraImportActivity quick = screen;
+            test.runOnMainSync(() -> requireNoQuickDiscovery(quick, pickers, previousPickers));
+            var storageMonitor = test.addMonitor(PhotoStorageActivity.class.getName(), null, false);
+            Activity covering;
+            try {
+                test.runOnMainSync(() -> quick.startActivity(new Intent(quick, PhotoStorageActivity.class)));
+                covering = storageMonitor.waitForActivityWithTimeout(5000);
+                require(covering != null, "storage screen covers the import screen");
+                test.waitForIdleSync();
+            } finally {
+                test.removeMonitor(storageMonitor);
+            }
+            test.runOnMainSync(() -> {
+                fake.detachGeneration++;
+                fake.complete(SdCardRemount.Result.RECONNECTED);
+                requireNoQuickDiscovery(quick, pickers, previousPickers);
+            });
+            finish(test, covering);
+            await(test, () -> pickers.get() == previousPickers + 1, "resumed long press seeks only the SD source after success");
+            require(fake.reconnects == 4 && !progress.getActive(), "rotation, return and picker do not duplicate reconnect or import");
+            finish(test, screen);
+
+            int afterSuccess = pickers.get();
+            for (var outcome : List.of(SdCardRemount.Result.SOURCE_MISSING, SdCardRemount.Result.FAILED,
+                    SdCardRemount.Result.SKIPPED, SdCardRemount.Result.UNAVAILABLE)) {
+                int before = fake.reconnects;
+                screen = open(test, quickEntry(test));
+                require(fake.reconnects == before + 1, "entry attempts one reconnect before " + outcome);
+                CameraImportActivity unsuccessful = screen;
+                test.runOnMainSync(() -> {
+                    fake.complete(outcome);
+                    requireNoQuickDiscovery(unsuccessful, pickers, afterSuccess);
+                });
+                await(test, () -> fullyVisible(screenView(unsuccessful, "sd-remount-result")),
+                        "failed reconnect gives feedback without scrolling for " + outcome);
+                if (outcome == SdCardRemount.Result.FAILED) capture(test, "auto-reader-failed");
+                finish(test, screen);
+            }
+
+            screen = open(test, quickEntry(test));
+            CameraImportActivity notificationReturn = screen;
+            test.runOnMainSync(() -> {
+                notificationReturn.onNewIntent(CameraImportActivity.showProgressIntent(context));
+                fake.complete(SdCardRemount.Result.RECONNECTED);
+                requireNoQuickDiscovery(notificationReturn, pickers, afterSuccess);
+            });
+            SystemClock.sleep(500);
+            test.runOnMainSync(() -> requireNoQuickDiscovery(notificationReturn, pickers, afterSuccess));
+            finish(test, screen);
+
+            screen = open(test, quickEntry(test));
+            CameraImportActivity changed = screen;
+            test.runOnMainSync(() -> {
+                fake.readerDestination = "3066-9999";
+                fake.complete(SdCardRemount.Result.RECONNECTED);
+                requireNoQuickDiscovery(changed, pickers, afterSuccess);
+                require(text(screenView(changed, "sd-remount-result")).contains("保存先の接続が変わりました"),
+                        "a different reader destination cannot continue long-press SD discovery");
+            });
+            finish(test, screen);
+
+            fake.rejectReconnect = true;
+            screen = open(test, quickEntry(test));
+            screen = recreate(test, screen);
+            CameraImportActivity rejected = screen;
+            test.runOnMainSync(() -> {
+                requireNoQuickDiscovery(rejected, pickers, afterSuccess);
+                require(text(screenView(rejected, "sd-remount-result")).contains("再接続できませんでした"),
+                        "dispatch refusal leaves the entry visible without continuing");
+            });
+            finish(test, screen);
+            fake.rejectReconnect = false;
+
+            int reconnects = fake.reconnects;
+            int permissionRequests = fake.requests;
+            fake.status = SdCardRemount.Status.NEEDS_PERMISSION;
+            screen = open(test, quickEntry(test));
+            CameraImportActivity needsPermission = screen;
+            test.runOnMainSync(() -> {
+                requireNoQuickDiscovery(needsPermission, pickers, afterSuccess);
+                require(text(screenView(needsPermission, "sd-remount-result")).contains("Shizukuの使用を許可"),
+                        "permission is explained on entry instead of requested automatically");
+            });
+            finish(test, screen);
+            require(fake.reconnects == reconnects && fake.requests == permissionRequests && fake.starts == 2,
+                    "permission failure does not retry, prompt, or start legacy remount");
+            fake.status = SdCardRemount.Status.READY;
+
+            screen = open(test, CameraImportActivity.showProgressIntent(context));
+            require(fake.reconnects == reconnects, "progress only entry skips automatic reconnect even when enabled");
+            finish(test, screen);
+            screen = open(test, entry(test).setAction(CameraAttachActivity.ACTION_OPEN_FROM_USB_ATTACH));
+            require(fake.reconnects == reconnects, "USB launch skips automatic reconnect even when enabled");
+            finish(test, screen);
+            screen = open(test, CameraImportActivity.mountedReaderAttachIntent(context, PhotoStorage.selected(context)));
+            await(test, () -> pickers.get() == afterSuccess + 1, "mounted USB launch keeps its existing SD discovery");
+            require(fake.reconnects == reconnects, "mounted USB launch does not repeat an automatic reconnect");
+            finish(test, screen);
+
+            int beforeWrongFolder = pickers.get();
+            screen = open(test, quickEntry(test));
+            CameraImportActivity wrongFolder = screen;
+            pickedFolder.set(new Intent().setData(android.net.Uri.parse(
+                    "content://com.android.externalstorage.documents/tree/9999-ABCD%3ADCIM"))
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
+            test.runOnMainSync(() -> fake.complete(SdCardRemount.Result.RECONNECTED));
+            await(test, () -> pickers.get() == beforeWrongFolder + 1 && findText(wrongFolder.getWindow().getDecorView(),
+                    "再接続したSDカードのDCIMフォルダを選んでください。") != null,
+                    "folder picker rejects the previous card after reconnect");
+            require(!progress.getActive(), "wrong source never enters import");
+            finish(test, screen);
+
+            fake.reader = false;
+            prefs.edit().putBoolean(CameraImportActivity.SD_REMOUNT_ON_ENTRY, false).commit();
+            fake.restoredReservation = true;
+            screen = open(test, quickEntry(test));
+            CameraImportActivity busy = screen;
+            test.runOnMainSync(() -> {
+                requireNoQuickDiscovery(busy, pickers, beforeWrongFolder + 1);
+                fake.restoredReservation = false;
+            });
+            SystemClock.sleep(500);
+            test.runOnMainSync(() -> requireNoQuickDiscovery(busy, pickers, beforeWrongFolder + 1));
+            require(text(screenView(busy, "sd-remount-result")).contains("リーダーの処理中"),
+                    "temporarily missing reader does not replay the long press after another operation");
+            finish(test, screen);
+
+            reconnects = fake.reconnects;
+            screen = open(test, quickEntry(test));
+            await(test, () -> hasDialog("取り込み元を登録"), "unsupported reader keeps ordinary long-press discovery");
+            require(fake.reconnects == reconnects && fake.starts == 2 && !progress.getActive(),
+                    "automatic reconnect leaves unsupported readers and ordinary import alone");
             return "PASS default off, opt-in with Shizuku unavailable, explicit permission and denial retry, "
                     + "manual entry once, picker return, progress/USB attach exclusion, failure and SD recheck after recreation, "
                     + "deferred long-press discovery, and manual reader reconnect permission, confirmation, cancel, changed target, "
-                    + "progress across recreation and missing-source outcome with no storage command.";
+                    + "plus isolated automatic opt-in, plain and quick entries, pause and rotation, refusal and failed outcomes, "
+                    + "destination changes, and unsupported readers with no storage command.";
         } finally {
             if (screen != null) finish(test, screen);
             test.removeMonitor(pickerMonitor);
@@ -265,6 +451,8 @@ final class CameraSdRemountUiChecks {
             var edit = prefs.edit();
             if (priorSettingExists) edit.putBoolean(CameraImportActivity.SD_REMOUNT_ON_ENTRY, priorSetting);
             else edit.remove(CameraImportActivity.SD_REMOUNT_ON_ENTRY);
+            if (priorReconnectExists) edit.putBoolean(CameraImportActivity.SD_RECONNECT_ON_ENTRY, priorReconnect);
+            else edit.remove(CameraImportActivity.SD_RECONNECT_ON_ENTRY);
             edit.commit();
         }
     }
@@ -272,14 +460,15 @@ final class CameraSdRemountUiChecks {
     private static final class RemountFixture implements CameraImportActivity.SdRemountAccess {
         volatile SdCardRemount.Status status = SdCardRemount.Status.UNAVAILABLE;
         volatile int requests, starts, reconnects;
-        boolean restoredReservation, reader;
+        boolean restoredReservation, reader, rejectReconnect;
         long detachGeneration;
+        String readerDestination = "3066-3064";
         Consumer<Boolean> permission;
         Consumer<SdCardRemount.Result> completion;
 
         @Override public SdCardRemount.Status status() { return status; }
         @Override public SdCardRemount.ReconnectTarget reconnectTarget() {
-            return reader ? new SdCardRemount.ReconnectTarget("/dev/bus/usb/002/002", "3066-3064", detachGeneration) : null;
+            return reader ? new SdCardRemount.ReconnectTarget("/dev/bus/usb/002/002", readerDestination, detachGeneration) : null;
         }
         @Override public boolean isRunning() { return completion != null || restoredReservation; }
 
@@ -296,10 +485,12 @@ final class CameraSdRemountUiChecks {
             return true;
         }
 
-        @Override public boolean reconnect(SdCardRemount.ReconnectTarget target, Consumer<SdCardRemount.Result> callback) {
+        @Override public boolean reconnect(SdCardRemount.ReconnectTarget target, Consumer<SdCardRemount.ReconnectResult> callback) {
             require(completion == null && target.equals(reconnectTarget()) && status == SdCardRemount.Status.READY,
                     "reconnect starts only for the confirmed reader with permission");
-            completion = callback;
+            if (rejectReconnect) return false;
+            completion = result -> callback.accept(new SdCardRemount.ReconnectResult(result,
+                    result == SdCardRemount.Result.RECONNECTED ? "abcd-1234" : null, MountedCameraCard.detachGeneration()));
             reconnects++;
             return true;
         }
@@ -320,6 +511,16 @@ final class CameraSdRemountUiChecks {
 
     private static Intent entry(Instrumentation test) {
         return new Intent(test.getTargetContext(), CameraImportActivity.class);
+    }
+
+    private static Intent quickEntry(Instrumentation test) {
+        return entry(test).putExtra(CameraImportActivity.START_IMPORT_KEEP_ORIGINALS, true);
+    }
+
+    private static void requireNoQuickDiscovery(CameraImportActivity screen, AtomicInteger pickers, int before) {
+        require(pickers.get() == before && !hasDialog("取り込み元を登録")
+                        && !text(screenView(screen, "camera-import-stage")).contains("取り込み元を確認しています"),
+                "reader reconnect must finish successfully before quick discovery");
     }
 
     private static CameraImportActivity open(Instrumentation test, Intent intent) {
@@ -358,6 +559,11 @@ final class CameraSdRemountUiChecks {
     private static MaterialSwitch option() { return (MaterialSwitch) settingsView("sd-remount-switch"); }
     private static String text(View view) { return ((TextView) view).getText().toString(); }
     private static View screenView(Activity screen, String tag) { return screen.getWindow().getDecorView().findViewWithTag(tag); }
+
+    private static boolean fullyVisible(View view) {
+        Rect bounds = new Rect();
+        return view.isShown() && view.getGlobalVisibleRect(bounds) && bounds.height() == view.getHeight();
+    }
 
     private static View settingsView(String tag) {
         for (View window : WindowInspector.getGlobalWindowViews()) {
