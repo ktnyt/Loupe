@@ -10,7 +10,7 @@
 
 - little-endianのOLYMPUS\0 / OM SYSTEMヘッダーと、LONG/IFD pointer形式のCameraSettings（0x2020）内DriveMode（0x0600、SHORT配列）を対象に、対応済みの連写モードと正のShot番号を取り出す。古いOLYMPヘッダーや非pointerの入れ子形式など、未対応レイアウトは番号なしへfallbackする。
 - 対応ヘッダー内の旧DriveMode配列のContinuous Shootingと、定義済みのSequential / ProCapの各サブモードを対象にする。単写、ブラケット、パノラマ、未知の形式・モード、番号0、不正な型/長さは番号なしとして扱う。未知の独自領域を推測しない。
-- ORFは既存のOlympus相対IFD解析を使う。番号だけの既存cache補完はヘッダー/IFDの読取りで行い、RAW全体のJPEG探索や現像を追加しない。JPEGはAndroid ExifInterfaceのMakerNote bytesと同じ解析を使う。JPEGは合成データでAndroid経路を確認し、実写未検査なら区別して報告する。
+- ORFは既存のOlympus相対IFD解析を使う。番号だけの既存cache補完はヘッダー/IFDの読取りで行い、RAW全体のJPEG探索や現像を追加しない。JPEGの番号補完は上限付きのmarker走査でEXIF APP1だけを読み、同じTIFF/MakerNote解析を使う。画像本体やthumbnailの展開、汎用ExifInterfaceによる番号補完は行わない。JPEGは合成データでAndroid経路を確認し、実写未検査なら区別して報告する。
 - 元写真の内容・撮影日時・ファイル名を変更しない。撮影時刻のミリ秒を連写番号やfpsから生成しない。
 
 ## グループ分けの契約
@@ -27,7 +27,7 @@
 
 - archive.dbのmetadataへ番号用のnullable列を追加する。NULLは未検査、検査して番号なしは0、対応済みの番号は正のmode/frameとして区別する。
 - 既存のmodel/taken/key、原本の受領・verified/checkpoint・index_revision・取込履歴、写真identity、タグ、共有履歴を保存し、削除や全metadataの作り直しで移行しない。
-- JPEGのGallery用probeは読取り/skipの量を上限で制約し、ExifInterface内部で抑制された元InputStreamのI/Oエラーと上限超過を再試行可能な未検査として扱う。
+- JPEGのGallery用probeは実JPEGのmarker構造を確認し、累積読取り/skipを1MiB以内に制約する。APP1の最大65533byteのpayloadからExifヘッダー後のTIFFだけを既存の範囲制約付きreaderへ渡す。SOS/EOIで終了し、available()に依存しない。segment途中のEOF、元InputStreamのI/Oエラーと上限超過は再試行可能な未検査として扱う。
 - Galleryの番号用読取りだけが未検査cacheを補完する。読み取り可能なローカル原本だけを使い、取得失敗ではNULLを残して次回再試行可能にする。番号のためのクラウド原本downloadや外部送信はしない。
 - アーカイブのみの写真は、同じ写真に対応すると確認できるcache keyの番号だけを使い、それがなければ時間差へ戻る。現行のe2-only行ではcache identityの対応を証明する処理を行わず、番号を使わず時間差へ戻る。e2 object IDを論理写真キーと推測して転用せず、受領記録や写真identityを変更して合わせない。この引き継ぎは[#191](https://github.com/ktnyt/Loupe/issues/191)で追跡する。既存model/takenのcache読取りを行うsync/receipt等の呼出しへ追加の原本I/Oを導入しない。
 - cacheの競合更新で既存番号やmodel/takenを失わない。補完は番号列だけの更新にする。

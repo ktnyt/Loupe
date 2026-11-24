@@ -154,76 +154,99 @@ final class ArchiveStore extends SQLiteOpenHelper {
   }
 
   static RawPreview.BurstFrame readJpegBurstFrame(InputStream input) throws IOException {
-    BoundedJpegInput bounded = new BoundedJpegInput(input);
-    android.media.ExifInterface exif = new android.media.ExifInterface(bounded);
-    // The platform parser can catch a stream IOException and return empty metadata.
-    if (bounded.failure != null) throw bounded.failure;
-    return RawPreview.readBurstFrame(exif.getAttributeBytes(android.media.ExifInterface.TAG_MAKER_NOTE));
+    return new JpegBurstProbe(input).read();
   }
 
-  private static final class BoundedJpegInput extends InputStream {
+  /** Reads only bounded JPEG header segments, with no thumbnail or pixel decoding. */
+  private static final class JpegBurstProbe {
+    private static final byte[] EXIF = {'E', 'x', 'i', 'f', 0, 0};
     private final InputStream input;
     private int remaining = JPEG_BURST_SCAN_LIMIT;
-    private IOException failure;
 
-    BoundedJpegInput(InputStream input) { this.input = input; }
+    JpegBurstProbe(InputStream input) { this.input = input; }
 
-    private IOException budgetExceeded() { return new IOException("JPEGメタデータの読み取り上限に達しました"); }
-
-    private void requireBudget() throws IOException {
-      if (remaining <= 0) throw budgetExceeded();
-    }
-
-    private IOException remember(IOException error) {
-      if (failure == null) failure = error;
-      return error;
-    }
-
-    @Override public int read() throws IOException {
-      try {
-        requireBudget();
-        int value = input.read();
-        if (value >= 0) remaining--;
-        return value;
-      } catch (IOException error) {
-        throw remember(error);
-      }
-    }
-
-    @Override public int read(byte[] bytes, int offset, int count) throws IOException {
-      if (offset < 0 || count < 0 || offset > bytes.length - count) throw new IndexOutOfBoundsException();
-      if (count == 0) return 0;
-      try {
-        requireBudget();
-        int read = input.read(bytes, offset, Math.min(count, remaining));
-        if (read > 0) {
-          remaining -= read;
-          if (remaining == 0 && read < count) throw budgetExceeded();
+    RawPreview.BurstFrame read() throws IOException {
+      if (requiredByte() != 0xff || requiredByte() != 0xd8 || requiredByte() != 0xff)
+        return RawPreview.BurstFrame.NONE;
+      byte[] header = new byte[EXIF.length];
+      do {
+        int marker = requiredByte();
+        while (marker == 0xff) marker = requiredByte();
+        if (marker == 0xda || marker == 0xd9) break; // SOS or EOI; do not read image data.
+        if (marker == 0x01) continue; // TEM is a standalone marker.
+        if (marker < 0xc0 || (marker >= 0xd0 && marker <= 0xd8)) break;
+        int length = (requiredByte() << 8) | requiredByte();
+        if (length < 2) break;
+        int payload = length - 2;
+        if (marker == 0xe1 && payload >= header.length) {
+          readFully(header);
+          payload -= header.length;
+          if (Arrays.equals(header, EXIF)) {
+            requireBudget(payload);
+            byte[] tiff = new byte[payload];
+            readFully(tiff);
+            RawPreview.BurstFrame frame = RawPreview.readBurstFrame(new RawPreview.Source() {
+              public long length() { return tiff.length; }
+              public void read(long offset, byte[] data) {
+                System.arraycopy(tiff, (int) offset, data, 0, data.length);
+              }
+            });
+            if (frame.number() > 0) return frame;
+            continue;
+          }
         }
-        return read;
-      } catch (IOException error) {
-        throw remember(error);
+        skipFully(payload);
+      } while (requiredByte() == 0xff);
+      return RawPreview.BurstFrame.NONE;
+    }
+
+    private void requireBudget(int count) throws IOException {
+      if (count > remaining) throw new IOException("JPEGメタデータの読み取り上限に達しました");
+    }
+
+    private int requiredByte() throws IOException {
+      requireBudget(1);
+      int value = input.read();
+      if (value < 0) throw truncated();
+      remaining--;
+      return value;
+    }
+
+    private EOFException truncated() {
+      return new EOFException("JPEGメタデータの途中で読み取りが終わりました");
+    }
+
+    private void readFully(byte[] bytes) throws IOException {
+      requireBudget(bytes.length);
+      int offset = 0;
+      while (offset < bytes.length) {
+        int count = input.read(bytes, offset, bytes.length - offset);
+        if (count < 0) throw truncated();
+        if (count == 0) bytes[offset++] = (byte) requiredByte();
+        else {
+          offset += count;
+          remaining -= count;
+        }
       }
     }
 
-    @Override public long skip(long count) throws IOException {
-      if (count <= 0) return 0;
-      try {
-        requireBudget();
-        long skipped = input.skip(Math.min(count, remaining));
-        remaining -= (int) skipped;
-        if (remaining == 0 && skipped < count) throw budgetExceeded();
-        return skipped;
-      } catch (IOException error) {
-        throw remember(error);
-      }
-    }
-
-    @Override public int available() throws IOException {
-      try {
-        return input.available();
-      } catch (IOException error) {
-        throw remember(error);
+    private void skipFully(int count) throws IOException {
+      requireBudget(count);
+      byte[] discard = null;
+      while (count > 0) {
+        int skipped = (int) input.skip(count);
+        if (skipped == 0) {
+          if (discard == null) discard = new byte[Math.min(count, 4096)];
+          skipped = input.read(discard, 0, Math.min(count, discard.length));
+          if (skipped < 0) throw truncated();
+          if (skipped == 0) {
+            requiredByte();
+            count--;
+            continue;
+          }
+        }
+        count -= skipped;
+        remaining -= skipped;
       }
     }
   }

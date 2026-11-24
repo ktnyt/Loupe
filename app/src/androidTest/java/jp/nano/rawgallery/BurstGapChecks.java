@@ -2,6 +2,7 @@ package jp.nano.rawgallery;
 
 import android.accessibilityservice.AccessibilityServiceInfo;
 import android.app.Instrumentation;
+import android.content.ContentUris;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
@@ -25,6 +26,8 @@ import java.io.InputStream;
 import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
@@ -48,7 +51,9 @@ final class BurstGapChecks {
     Integer previousMillis = prefs.contains(millis) ? prefs.getInt(millis, 0) : null;
     Integer previousSeconds = prefs.contains(seconds) ? prefs.getInt(seconds, 0) : null;
     MainActivity activity = null;
-    List<Uri> fixtures = new ArrayList<>();
+    List<Uri> fixtures = new ArrayList<>(), rawFixtures = new ArrayList<>();
+    String rawFolder = "Pictures/LoupeBurstRaw-" + UUID.randomUUID() + "/";
+    Set<String> rawFixtureKeys = new HashSet<>();
     Throwable failure = null;
     try {
       require(prefs.edit().remove(millis).putInt(seconds, 1).commit(), "seed legacy value");
@@ -139,13 +144,20 @@ final class BurstGapChecks {
       checkRetry(test, activity);
       if (checkNumbers) {
         checkNumberedGrid(test, activity, prefs, fixtures, captures, prefix);
-        if (rawSamples != null) checkRawIndex(test, activity, prefs, fixtures, rawSamples);
+        if (rawSamples != null) {
+          MainActivity gallery = activity;
+          ui(test, gallery::finish);
+          ExpressiveUiChecks.awaitUi(test, 5000, gallery::isDestroyed, "gallery destroyed before RAW publication");
+          GalleryIndex.WORKER.submit(() -> {}).get(30, TimeUnit.SECONDS);
+          activity = null;
+          checkRawIndex(context.getApplicationContext(), prefs, rawFolder, rawFixtures, rawFixtureKeys, rawSamples);
+        }
       }
       return "PASS " + prefix + " numeric keyboard, visible validation, cancel/Back/outside, exact save, "
           + "reopen, preset, stale burst/selection guard, individual photos after rebuild, index signature, "
-          + "and failed-save retry. "
+          + "and failed-save retry. Camera import and Nano Banana menu entries are enabled. "
           + (checkNumbers ? "Numbered JPEG cache/index/grid, old index marker and saved scope invalidation passed. " : "")
-          + (rawSamples != null ? "Three real ORFs passed hash readback, frame cache/index and grouping off. " : "")
+          + (checkNumbers && rawSamples != null ? "Three real ORFs passed hash readback, frame cache/index and grouping off, and owned metadata cleanup. " : "")
           + "Restored test preferences and removed fixture photos.\n";
     } catch (Exception | AssertionError error) {
       failure = error;
@@ -162,12 +174,15 @@ final class BurstGapChecks {
         else restore.putInt(seconds, previousSeconds);
         require(restore.commit(), "restore burst preferences");
       });
+      cleanup(cleanup, () -> collectRawFixtureKeys(context, rawFolder, rawFixtures, rawFixtureKeys));
+      fixtures.addAll(rawFixtures);
       for (Uri fixture : fixtures) {
         cleanup(cleanup, () -> require(context.getContentResolver().delete(fixture, null, null) == 1,
             "remove owned fixture"));
       }
       cleanup(cleanup, () -> GalleryIndex.WORKER.submit(() -> GalleryIndex.rebuild(context, false, () -> false))
           .get(30, TimeUnit.SECONDS));
+      cleanup(cleanup, () -> removeRawFixtureMetadata(context, rawFixtureKeys));
       if (!cleanup.isEmpty()) {
         Throwable reported = failure == null ? new AssertionError("burst test cleanup failed") : failure;
         cleanup.forEach(reported::addSuppressed);
@@ -314,29 +329,29 @@ final class BurstGapChecks {
     GalleryScreenChecks.settle(test, activity);
   }
 
-  private static void checkRawIndex(Instrumentation test, MainActivity activity, SharedPreferences prefs,
-      List<Uri> fixtures, String rawSamples) throws Exception {
-    // Load the real files into the index without binding them to a screen or taking captures.
-    clearPhotoUi(test, activity);
-    String folder = "Pictures/LoupeBurstRaw-" + UUID.randomUUID() + "/";
+  private static void checkRawIndex(Context context, SharedPreferences prefs, String folder,
+      List<Uri> fixtures, Set<String> rawFixtureKeys, String rawSamples) throws Exception {
+    // The gallery Activity is destroyed and its observer removed before any file is published.
     for (int i = 1; i <= 3; i++) {
       String name = "sample-" + i + ".orf";
       File original = new File(rawSamples, name);
       Uri target;
       try (var input = Files.newInputStream(original.toPath())) {
-        target = publishFixture(activity, folder, name, "image/x-olympus-orf", fixtures, input);
+        target = publishFixture(context, folder, name, "image/x-olympus-orf", fixtures, input);
       }
       try (var expected = Files.newInputStream(original.toPath());
-          var actual = activity.getContentResolver().openInputStream(target)) {
+          var actual = context.getContentResolver().openInputStream(target)) {
         require(actual != null && Arrays.equals(hash(expected), hash(actual)), "original copy hash matches");
       }
     }
+    collectRawFixtureKeys(context, folder, fixtures, rawFixtureKeys);
+    require(rawFixtureKeys.size() == 3, "exact owned ORF cache keys found");
     require(prefs.edit().putInt(BurstGapSettings.MILLIS, 1).commit(), "set real ORF gap");
-    rebuild(activity);
-    GalleryIndex.Snapshot indexed = snapshot(activity, folder);
+    rebuild(context);
+    GalleryIndex.Snapshot indexed = snapshot(context, folder);
     require(indexed.burstGapMillis == 1 && indexed.bundles.equals(List.of(List.of(0, 1, 2))),
         "three real ORFs form one indexed burst");
-    try (ArchiveStore archive = new ArchiveStore(activity)) {
+    try (ArchiveStore archive = new ArchiveStore(context)) {
       int number = 1;
       for (var photo : indexed.photos) {
         var frame = archive.metadata(photo).burstFrame;
@@ -344,10 +359,38 @@ final class BurstGapChecks {
       }
     }
     require(prefs.edit().putInt(BurstGapSettings.MILLIS, 0).commit(), "disable real ORF grouping");
-    rebuild(activity);
-    var off = snapshot(activity, folder);
+    rebuild(context);
+    var off = snapshot(context, folder);
     require(off.burstGapMillis == 0 && off.bundles.equals(List.of(List.of(0), List.of(1), List.of(2))),
         "disabled setting overrides real ORF frames");
+  }
+
+  private static void collectRawFixtureKeys(Context context, String folder, List<Uri> fixtures, Set<String> keys)
+      throws Exception {
+    if (fixtures.isEmpty()) return;
+    Set<Uri> ownedPhotos = new HashSet<>();
+    for (Uri fixture : fixtures) {
+      ownedPhotos.add(ContentUris.withAppendedId(MediaStore.Files.getContentUri("external"),
+          ContentUris.parseId(fixture)));
+    }
+    for (var photo : new PhotoRepository(context).scan("すべて")) {
+      if (folder.equals(photo.folder) && ownedPhotos.contains(photo.uri))
+        keys.add(ArchiveStore.key(photo));
+    }
+  }
+
+  private static void removeRawFixtureMetadata(Context context, Set<String> keys) {
+    if (keys.isEmpty()) return;
+    try (ArchiveStore archive = new ArchiveStore(context)) {
+      var db = archive.getWritableDatabase();
+      for (String key : keys) {
+        String[] args = {key};
+        db.delete("metadata", "key=?", args);
+        try (Cursor row = db.query("metadata", new String[] {"key"}, "key=?", args, null, null, null)) {
+          require(!row.moveToFirst(), "remove exact ORF fixture metadata");
+        }
+      }
+    }
   }
 
   private static GalleryIndex.Snapshot snapshot(Context context, String folder) {
@@ -460,7 +503,14 @@ final class BurstGapChecks {
     View menu = modal(test, activity, view -> TagDetailChecks.button(view, "設定とその他") != null);
     ui(test, () -> TagDetailChecks.button(menu, "設定とその他").performClick());
     View settings = modal(test, activity, view -> TagDetailChecks.button(view, "連写のまとめ方") != null);
-    ui(test, () -> TagDetailChecks.button(settings, "連写のまとめ方").performClick());
+    ui(test, () -> {
+      for (String label : List.of("Nano Banana", "カメラから取り込む")) {
+        var row = TagDetailChecks.button(settings, label);
+        require(row != null && row.isShown() && row.isEnabled() && row.isClickable(),
+            "required setting menu entry is reachable: " + label);
+      }
+      TagDetailChecks.button(settings, "連写のまとめ方").performClick();
+    });
     return modal(test, activity, view -> list(view) != null);
   }
 

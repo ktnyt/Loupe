@@ -147,6 +147,12 @@ final class IndexSignatureChecks {
     var noFrame = store.probeBurstFrame(plain, ArchiveStore.key(plain), store.metadata(plain));
     check(noFrame.burstFrame.equals(RawPreview.BurstFrame.NONE), "no frame caches explicit zero");
     check(store.metadata(plain).burstFrame.equals(RawPreview.BurstFrame.NONE), "no frame persisted");
+    File mislabeled = new File(root, "mislabeled.jpg");
+    Files.write(mislabeled.toPath(), BurstMakerNoteFixture.tiff(
+        BurstMakerNoteFixture.makerNote(true, 3, 1, 8, 0, 0, 4, 0x49), false));
+    var wrongFormat = new PhotoRepository.Photo(Uri.fromFile(mislabeled), mislabeled.getName(), "fixture/", 0, 1, 0);
+    check(store.probeBurstFrame(wrongFormat, ArchiveStore.key(wrongFormat), store.metadata(wrongFormat))
+        .burstFrame.equals(RawPreview.BurstFrame.NONE), "non-JPEG in a .jpg cannot supply a frame");
     var archived = new PhotoRepository.Photo(Uri.parse("archive://seed"), "archived.orf", "fixture/", 1, 1, 1);
     check(!ArchiveStore.canProbeBurstFrame(archived), "archived-only cannot open original for probing");
     var e2 = new PhotoRepository.Photo(Uri.parse("e2archive://object-id"), photo.name, photo.folder,
@@ -162,6 +168,61 @@ final class IndexSignatureChecks {
 
   private static void checkJpegProbeFailures(byte[] pixels) throws Exception {
     byte[] valid = numberedJpeg(pixels, 3);
+    for (int length = 0; length <= 3; length++) {
+      try {
+        ArchiveStore.readJpegBurstFrame(new ByteArrayInputStream(java.util.Arrays.copyOf(valid, length)));
+        throw new AssertionError("short matching JPEG prefix must be retryable");
+      } catch (java.io.EOFException expected) { /* A matching prefix ended before the first marker. */ }
+    }
+    byte[] invalidMarker = valid.clone();
+    invalidMarker[2] = 0;
+    check(ArchiveStore.readJpegBurstFrame(new ByteArrayInputStream(invalidMarker))
+        .equals(RawPreview.BurstFrame.NONE), "two SOI bytes alone do not identify a JPEG");
+    byte[] earlySos = {(byte) 0xff, (byte) 0xd8, (byte) 0xff, (byte) 0xda};
+    InputStream noPixelReads = new InputStream() {
+      private int offset;
+      public int read() {
+        if (offset == earlySos.length) throw new AssertionError("must stop before pixel data");
+        return Byte.toUnsignedInt(earlySos[offset++]);
+      }
+      public int available() { throw new AssertionError("probe must not inspect remaining file length"); }
+    };
+    check(ArchiveStore.readJpegBurstFrame(noPixelReads).equals(RawPreview.BurstFrame.NONE),
+        "stop at SOS without reading or sizing pixels");
+    byte[] largeWithoutMakerNote = java.util.Arrays.copyOf(pixels, 2 * ArchiveStore.JPEG_BURST_SCAN_LIMIT);
+    check(ArchiveStore.readJpegBurstFrame(new ByteArrayInputStream(largeWithoutMakerNote))
+        .equals(RawPreview.BurstFrame.NONE), "large JPEG without a MakerNote caches absence when scan ends normally");
+    byte[] late = insertJpegSegments(valid, 2);
+    var shortReads = new ByteArrayInputStream(late) {
+      @Override public synchronized int read(byte[] bytes, int offset, int length) {
+        return super.read(bytes, offset, Math.min(1, length));
+      }
+      @Override public synchronized long skip(long size) { return 0; }
+      @Override public synchronized int available() { return 0; }
+    };
+    check(ArchiveStore.readJpegBurstFrame(shortReads).number() == 3,
+        "find late EXIF after skipped non-EXIF data with short reads, zero skip and zero available");
+    var skipLess = new ByteArrayInputStream(late) {
+      private int singles;
+      @Override public synchronized int read() {
+        if (++singles > 100) throw new AssertionError("zero skip must fall back to bulk reads");
+        return super.read();
+      }
+      @Override public synchronized long skip(long size) { return 0; }
+    };
+    check(ArchiveStore.readJpegBurstFrame(skipLess).number() == 3, "zero skip falls back to small bulk reads");
+    byte[] invalidLength = {(byte) 0xff, (byte) 0xd8, (byte) 0xff, (byte) 0xe1, 0, 1};
+    check(ArchiveStore.readJpegBurstFrame(new ByteArrayInputStream(invalidLength))
+        .equals(RawPreview.BurstFrame.NONE), "invalid segment length is ignored");
+    byte[] incomplete = {(byte) 0xff, (byte) 0xd8, (byte) 0xff, (byte) 0xe1, 0, 12, 'E', 'x'};
+    try {
+      ArchiveStore.readJpegBurstFrame(new ByteArrayInputStream(incomplete));
+      throw new AssertionError("EOF inside an advertised JPEG segment must be retryable");
+    } catch (java.io.EOFException expected) { /* The original may become readable on retry. */ }
+    byte[] badOffset = BurstMakerNoteFixture.tiff(BurstMakerNoteFixture.makerNote(true, 3, 1, 3, 0, 0, 4, 0x49), false);
+    java.nio.ByteBuffer.wrap(badOffset).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(4, Integer.MAX_VALUE);
+    check(ArchiveStore.readJpegBurstFrame(new ByteArrayInputStream(BurstMakerNoteFixture.jpeg(pixels, badOffset)))
+        .equals(RawPreview.BurstFrame.NONE), "EXIF TIFF offsets cannot escape the APP1 payload");
     InputStream flaky = new InputStream() {
       private int offset;
       public int read() throws IOException {
@@ -177,20 +238,24 @@ final class IndexSignatureChecks {
     } catch (IOException expected) {
       check(expected.getMessage().equals("fixture read interruption"), "underlying JPEG failure propagated");
     }
-    var oversized = new ByteArrayOutputStream();
-    oversized.write(valid, 0, 2);
-    byte[] app2 = new byte[65537];
-    app2[0] = (byte) 0xff;
-    app2[1] = (byte) 0xe2;
-    app2[2] = app2[3] = (byte) 0xff;
-    for (int i = 0; i < 17; i++) oversized.write(app2);
-    oversized.write(valid, 2, valid.length - 2);
     try {
-      ArchiveStore.readJpegBurstFrame(new ByteArrayInputStream(oversized.toByteArray()));
+      ArchiveStore.readJpegBurstFrame(new ByteArrayInputStream(insertJpegSegments(valid, 17)));
       throw new AssertionError("JPEG scan exhaustion must be retryable");
     } catch (IOException expected) {
       check(expected.getMessage().contains("読み取り上限"), "before-SOS marker scans are bounded");
     }
+  }
+
+  private static byte[] insertJpegSegments(byte[] jpeg, int segments) throws IOException {
+    var output = new ByteArrayOutputStream();
+    output.write(jpeg, 0, 2);
+    byte[] app2 = new byte[65537];
+    app2[0] = (byte) 0xff;
+    app2[1] = (byte) 0xe2;
+    app2[2] = app2[3] = (byte) 0xff;
+    for (int i = 0; i < segments; i++) output.write(app2);
+    output.write(jpeg, 2, jpeg.length - 2);
+    return output.toByteArray();
   }
 
   private static void checkBurstVolumes() {
@@ -229,7 +294,7 @@ final class IndexSignatureChecks {
     checkBurstVolumes();
     for (int version : new int[] {0, 1, 2, 3}) runVersion(context, version);
     return "PASS archive schema 1/2/3 migration and fresh create preserve records; JPEG burst cache NULL/retry/zero, "
-        + "original key/model/taken and competing winner preserved; JPEG read and scan-bound failures propagated; "
+        + "original key/model/taken and competing winner preserved; JPEG signature, segment bounds, short reads, zero skip and stop-before-pixels checked; I/O and scan-limit failures propagated; "
         + "storage volumes stay separate and E2 legacy aliases fall back; metadata/checkpoint signatures stable; "
         + "photo insert/replace/update/delete invalidate; rollback atomic; isolated DBs removed.\n";
   }
