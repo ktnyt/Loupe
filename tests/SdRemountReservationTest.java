@@ -13,6 +13,9 @@ public final class SdRemountReservationTest {
         keepsOneExactNoticeAcrossCompletionAndRestart();
         clearsNoticeOnSkippedRemountOrStaleRegistration();
         keepsBoundAfterFailedCompletionSave();
+        reconnectMutesLateNoticesWithoutHoldingTheGate();
+        reconnectSourceWaitsForRealDeparture();
+        missingReconnectSourceMutesAnAmbiguousLateMount();
         System.out.println("SdRemountReservationTest passed");
     }
 
@@ -120,6 +123,64 @@ public final class SdRemountReservationTest {
         require(store.open(BOOT).blocksImport(), "the previous durable reservation is conservative after restart");
         store.now = 8000;
         require(!store.open(BOOT).blocksImport(), "the conservative reservation can never outlive its deadline");
+    }
+
+    private static void reconnectMutesLateNoticesWithoutHoldingTheGate() {
+        var store = new FakeStore();
+        var tracker = store.open(BOOT);
+        require(tracker.beginReconnect(null, 12_000), "reserve a reconnect without a registered source");
+        require(store.open(BOOT).blocksImport(), "a restart preserves the active storage reservation");
+        require(store.open(BOOT).suppressMount(SOURCE) && store.open(BOOT).suppressMount(OTHER),
+                "mount broadcasts from both slots stay muted");
+        tracker.endReconnect(true, false);
+        require(!store.open(BOOT).blocksImport(), "manual operation can resume after reconnect");
+        require(store.open(BOOT).suppressesReconnectNotices(),
+                "delayed USB events remain muted across restart");
+        store.now += 3_001;
+        require(!store.open(BOOT).suppressesReconnectNotices() && !store.open(BOOT).suppressMount(OTHER),
+                "later external events are handled normally");
+        require(tracker.beginReconnect(null, 12_000), "start another reconnect");
+        tracker.endReconnect(false, false);
+        require(!store.open(BOOT).suppressesReconnectNotices(), "a known skipped reconnect does not mute later events");
+    }
+
+    private static void reconnectSourceWaitsForRealDeparture() {
+        var store = new FakeStore();
+        var tracker = store.open(BOOT);
+        require(tracker.beginReconnect(SOURCE, 12_000), "reserve the registered source");
+        tracker.physicalDeparture(SOURCE);
+        tracker.reconnectPhysicalDeparture(SOURCE);
+        tracker.endReconnect(true, false);
+        store.now += 10_000;
+        tracker = store.open(BOOT);
+        require(!tracker.blocksImport() && tracker.suppressMount(SOURCE) && tracker.suppressMount(SOURCE),
+                "the same source stays muted beyond the grace period, across restart and duplicated mount broadcasts");
+        require(!tracker.suppressMount(OTHER), "an unrelated mount is no longer muted");
+        require(tracker.beginReconnect(SOURCE, 20_000), "start another reconnect");
+        tracker.endReconnect(false, false);
+        require(store.open(BOOT).suppressMount(SOURCE), "a skipped reconnect preserves prior source suppression");
+        tracker.reconnectPhysicalDeparture(OTHER);
+        require(store.open(BOOT).suppressMount(SOURCE), "another card cannot unlock the suppression");
+        tracker.reconnectPhysicalDeparture(SOURCE);
+        require(!store.open(BOOT).suppressMount(SOURCE), "verified physical departure clears the matching source");
+    }
+
+    private static void missingReconnectSourceMutesAnAmbiguousLateMount() {
+        var store = new FakeStore();
+        var tracker = store.open(BOOT);
+        require(tracker.beginReconnect(SOURCE, 12_000), "reserve the registered source");
+        tracker.endReconnect(true, true);
+        require(store.open(BOOT).suppressesReconnectNotices(), "a delayed USB attach remains suppressed");
+        store.now += 500;
+        tracker.reconnectPhysicalDeparture(SOURCE);
+        store.now += 10_000;
+        require(!store.open(BOOT).blocksImport() && store.open(BOOT).suppressMount(SOURCE),
+                "late removal and mount when the source had not returned do not start an import");
+        tracker = store.open(BOOT);
+        tracker.reconnectMountObserved(SOURCE);
+        require(store.open(BOOT).suppressMount(SOURCE), "the first verified mount is also muted");
+        tracker.reconnectPhysicalDeparture(SOURCE);
+        require(!store.open(BOOT).suppressMount(SOURCE), "a subsequently verified physical departure returns to auto import");
     }
 
     private static void require(boolean condition, String description) {

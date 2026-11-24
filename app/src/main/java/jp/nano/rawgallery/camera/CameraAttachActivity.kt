@@ -26,6 +26,11 @@ class CameraAttachActivity : Activity() {
             finish()
             return
         }
+        if (device.vendorId == SdRemountUsbPort.VENDOR && device.productId == SdRemountUsbPort.PRODUCT
+            && SdRemountMountNotice.suppressesReconnectNotices()) {
+            finish()
+            return
+        }
         val volume = savedInstanceState?.getString("expected_volume") ?: PhotoStorage.selected(this)
         expectedVolume = volume
         val settings = getSharedPreferences("camera_import", MODE_PRIVATE)

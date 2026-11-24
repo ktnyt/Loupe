@@ -2,6 +2,8 @@ package jp.nano.rawgallery.camera;
 
 import android.content.Context;
 import android.os.Binder;
+import android.os.Build;
+import android.os.IBinder;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.SystemClock;
@@ -21,6 +23,10 @@ public final class SdCardRemountUserService extends ISdCardRemountService.Stub {
     private static final int FIRST_APP_UID = 10_000;
     private final int ownerUid;
 
+    static boolean supportsUsbReconnect() {
+        return Build.VERSION.SDK_INT >= 36 && "dada".equals(Build.DEVICE);
+    }
+
     public SdCardRemountUserService(Context context) {
         var app = context.getApplicationInfo();
         if (!BuildConfig.APPLICATION_ID.equals(context.getPackageName())
@@ -38,12 +44,38 @@ public final class SdCardRemountUserService extends ISdCardRemountService.Stub {
         int result = ISdCardRemountCallback.SKIPPED;
         if (deadlineMs > now && deadlineMs <= now + SdCardRemountPlan.OPERATION_MS) {
             // AIDL serializes one-way requests on this Binder, including Shizuku's destroy transaction.
-            result = switch (SdCardRemountPlan.execute(new Sm(), sourceUuid, destinationUuid, deadlineMs)) {
+            result = switch (SdCardRemountPlan.execute(new Sm(null), sourceUuid, destinationUuid, deadlineMs)) {
                 case MOUNTED -> ISdCardRemountCallback.MOUNTED;
                 case SKIPPED -> ISdCardRemountCallback.SKIPPED;
                 case FAILED -> ISdCardRemountCallback.FAILED;
             };
         }
+        send(callback, result);
+    }
+
+    @Override public void reconnect(String address, String destinationUuid, long deadlineMs,
+            ISdCardRemountCallback callback) {
+        if (Binder.getCallingUid() != ownerUid || Process.myUid() != SHELL_UID || callback == null) return;
+        if (!supportsUsbReconnect()) {
+            send(callback, ISdCardRemountCallback.SKIPPED);
+            return;
+        }
+        long now = SystemClock.elapsedRealtime();
+        int result = ISdCardRemountCallback.SKIPPED;
+        if (deadlineMs > now && deadlineMs <= now + UsbReaderReconnectPlan.OPERATION_MS) {
+            // Keep the one-way request alive until the data port and cards have been checked for recovery.
+            result = switch (UsbReaderReconnectPlan.execute(new Sm(callback.asBinder()),
+                    address, destinationUuid, deadlineMs)) {
+                case RECONNECTED -> ISdCardRemountCallback.RECONNECTED;
+                case SOURCE_MISSING -> ISdCardRemountCallback.SOURCE_MISSING;
+                case SKIPPED -> ISdCardRemountCallback.SKIPPED;
+                case FAILED -> ISdCardRemountCallback.FAILED;
+            };
+        }
+        send(callback, result);
+    }
+
+    private static void send(ISdCardRemountCallback callback, int result) {
         try {
             callback.onResult(result);
         } catch (RemoteException ignored) {
@@ -58,24 +90,52 @@ public final class SdCardRemountUserService extends ISdCardRemountService.Stub {
         }
     }
 
-    private static final class Sm implements SdCardRemountPlan.Storage {
+    private final class Sm implements UsbReaderReconnectPlan.Transport {
         private static final String SM = "/system/bin/sm";
         private static final String DUMPSYS = "/system/bin/dumpsys";
         private static final long COMMAND_MS = 4_000;
         private static final int MAX_SM_OUTPUT = 8_192;
-        private static final int MAX_MOUNT_DUMP = 1_048_576;
+        private static final int MAX_DUMP = 1_048_576;
+        private final IBinder caller;
+
+        Sm(IBinder caller) { this.caller = caller; }
+
+        @Override public boolean authorized() {
+            return Process.myUid() == SHELL_UID && Binder.getCallingUid() == ownerUid
+                    && caller != null && caller.isBinderAlive();
+        }
+
+        @Override public UsbReaderReconnectPlan.DataCycle armCycle(long deadline)
+                throws IOException, InterruptedException {
+            if (!authorized()) throw new IOException("Invalid USB cycle identity");
+            return SdRemountUsbRestore.arm(Math.min(COMMAND_MS, remaining(deadline)));
+        }
+
+        @Override public String usbDump(long deadline) throws IOException, InterruptedException {
+            return run(deadline, MAX_DUMP, DUMPSYS, "-t", "4", "usb");
+        }
+
+        @Override public void restoreUsbData(long deadline) throws IOException, InterruptedException {
+            if (Process.myUid() != SHELL_UID || Binder.getCallingUid() != ownerUid) {
+                throw new IOException("Invalid USB data command identity");
+            }
+            run(deadline, MAX_SM_OUTPUT, DUMPSYS, "-t", "4", "usb", "enable-usb-data", "port0", "true");
+        }
 
         @Override public String listPublicVolumes(long deadline) throws IOException, InterruptedException {
             return run(deadline, MAX_SM_OUTPUT, SM, "list-volumes", "public");
         }
 
         @Override public String mountDump(long deadline) throws IOException, InterruptedException {
-            return run(deadline, MAX_MOUNT_DUMP, DUMPSYS, "-t", "4", "mount");
+            return run(deadline, MAX_DUMP, DUMPSYS, "-t", "4", "mount");
         }
 
         @Override public void change(SdCardRemountPlan.Action action, String id, long deadline)
                 throws IOException, InterruptedException {
-            if (!SdCardRemountPlan.isPublicId(id)) throw new IOException("Invalid public volume ID");
+            if (!SdCardRemountPlan.isPublicId(id) || Process.myUid() != SHELL_UID || Binder.getCallingUid() != ownerUid
+                    || (caller != null && action == SdCardRemountPlan.Action.UNMOUNT && !authorized())) {
+                throw new IOException("Invalid public volume ID or command identity");
+            }
             run(deadline, MAX_SM_OUTPUT, SM, action == SdCardRemountPlan.Action.MOUNT ? "mount" : "unmount", id);
         }
 

@@ -43,7 +43,7 @@ public final class SdCardRemountBindingChecks {
                 }
             }
             confirmServiceRefusesUnmatchedVolumes(test, context);
-            return "PASS delayed mount suppression, real Shizuku shell Binder, app identity and refusal for nonexistent SD volumes";
+            return "PASS delayed mount suppression, real Shizuku shell Binder, app identity, and refusal for nonexistent SD volumes and USB reader";
         } finally {
             test.runOnMainSync(screen::finish);
         }
@@ -111,6 +111,27 @@ public final class SdCardRemountBindingChecks {
                     SystemClock.elapsedRealtime() + SdCardRemountPlan.OPERATION_MS, callback);
             if (!finished.await(8, TimeUnit.SECONDS) || outcome.get() != SdCardRemount.Result.SKIPPED.ordinal()) {
                 throw new AssertionError("Expected a refusal for unmatched cards, received " + outcome.get());
+            }
+            if (SdCardRemount.reconnectTarget(context) != null) throw new AssertionError("No supported USB reader on emulator");
+            if (SdRemountUsbPort.parse("  host_manager={\n  }\n  port_manager={\n  }\n") != null) {
+                throw new AssertionError("Android parser accepts only a verified USB port");
+            }
+            if (SdRemountUsbDisks.reader("Disks:\nVolumes:\nRecords:\n") != null) {
+                throw new AssertionError("Android parser accepts only a verified reader topology");
+            }
+            CountDownLatch reconnectFinished = new CountDownLatch(1);
+            AtomicInteger reconnectOutcome = new AtomicInteger(-1);
+            ISdCardRemountService.Stub.asInterface(remote.get()).reconnect("/dev/bus/usb/255/255", "EEEE-EEEE",
+                    SystemClock.elapsedRealtime() + UsbReaderReconnectPlan.OPERATION_MS,
+                    new ISdCardRemountCallback.Stub() {
+                        @Override public void onResult(int result) {
+                            reconnectOutcome.set(result);
+                            reconnectFinished.countDown();
+                        }
+                    });
+            if (!reconnectFinished.await(8, TimeUnit.SECONDS)
+                    || reconnectOutcome.get() != ISdCardRemountCallback.SKIPPED) {
+                throw new AssertionError("Expected a refusal for unmatched USB reader, received " + reconnectOutcome.get());
             }
         } finally {
             test.runOnMainSync(() -> Shizuku.unbindUserService(args, connection, true));

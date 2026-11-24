@@ -16,7 +16,9 @@ import android.os.RemoteException;
 import android.os.SystemClock;
 import android.os.storage.StorageManager;
 import android.os.storage.StorageVolume;
+import android.provider.DocumentsContract;
 import android.provider.Settings;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -30,7 +32,7 @@ import rikka.shizuku.Shizuku;
 /** Runs the optional SD remount independently of the Activity that requested it. */
 public final class SdCardRemount {
     public enum Status { UNAVAILABLE, NEEDS_PERMISSION, READY }
-    public enum Result { MOUNTED, SKIPPED, UNAVAILABLE, FAILED }
+    public enum Result { MOUNTED, SKIPPED, UNAVAILABLE, FAILED, RECONNECTED, SOURCE_MISSING }
 
     public static final String ENABLED_PREFERENCE = "sd_remount_on_entry";
     private static final int CONNECT_MS = 8_000;
@@ -46,7 +48,9 @@ public final class SdCardRemount {
     public static void restoreReservation(Context app) {
         var preferences = app.getSharedPreferences("sd_remount_reservation", Context.MODE_PRIVATE);
         var saved = new SdRemountMountNotice.Reservation(preferences.getInt("boot", -1),
-                preferences.getLong("blocked_until", 0), preferences.getString("source", null));
+                preferences.getLong("blocked_until", 0), preferences.getString("source", null),
+                preferences.getLong("muted_until", 0), preferences.getString("reconnect_source", null),
+                preferences.getBoolean("reconnect_awaiting_mount", false));
         int boot;
         try {
             boot = Settings.Global.getInt(app.getContentResolver(), Settings.Global.BOOT_COUNT, -1);
@@ -59,11 +63,13 @@ public final class SdCardRemount {
         SdRemountMountNotice.restore(boot, SystemClock::elapsedRealtime, saved, next -> {
             try {
                 var edit = preferences.edit();
-                if (next.blockedUntil() == 0 && next.source() == null) {
+                if (next.blockedUntil() == 0 && next.source() == null && next.mutedUntil() == 0 && next.reconnectSource() == null) {
                     edit.clear();
                 } else {
                     edit.putInt("boot", next.boot()).putLong("blocked_until", next.blockedUntil())
-                            .putString("source", next.source());
+                            .putString("source", next.source()).putLong("muted_until", next.mutedUntil())
+                            .putString("reconnect_source", next.reconnectSource())
+                            .putBoolean("reconnect_awaiting_mount", next.awaitingReconnectMount());
                 }
                 return edit.commit();
             } catch (RuntimeException unavailable) {
@@ -141,7 +147,20 @@ public final class SdCardRemount {
         Context app = context.getApplicationContext();
         if (RUNNING.get() || CameraImportGate.lock.isLocked() || selection(app) == null || status() != Status.READY
                 || !RUNNING.compareAndSet(false, true)) return false;
-        MAIN.post(() -> new Operation(app, callback).bind());
+        MAIN.post(() -> new Operation(app, null, callback).bind());
+        return true;
+    }
+
+    public static boolean canReconnect(Context context) {
+        return reconnectTarget(context) != null;
+    }
+
+    public static boolean reconnect(Context context, ReconnectTarget confirmed, Consumer<Result> callback) {
+        Context app = context.getApplicationContext();
+        if (RUNNING.get() || CameraImportGate.lock.isLocked() || status() != Status.READY
+                || confirmed == null || !confirmed.equals(reconnectTarget(app))
+                || !RUNNING.compareAndSet(false, true)) return false;
+        MAIN.post(() -> new Operation(app, confirmed, callback).bind());
         return true;
     }
 
@@ -153,14 +172,16 @@ public final class SdCardRemount {
     private static final class Operation implements ServiceConnection {
         final Context app;
         final Shizuku.UserServiceArgs args;
+        final ReconnectTarget reconnect;
         final Runnable connectionTimeout = () -> finish(Result.UNAVAILABLE);
         final CompletableFuture<Result> remoteResult = new CompletableFuture<>();
         Consumer<Result> completion;
         boolean bindingAttempted;
         boolean dispatched;
 
-        Operation(Context app, Consumer<Result> completion) {
+        Operation(Context app, ReconnectTarget reconnect, Consumer<Result> completion) {
             this.app = app;
+            this.reconnect = reconnect;
             this.completion = completion;
             args = serviceArgs(app);
         }
@@ -200,8 +221,10 @@ public final class SdCardRemount {
             Result outcome = Result.FAILED;
             try {
                 if (status() != Status.READY) return Result.UNAVAILABLE;
-                Selection selection = selection(app);
-                if (selection == null) return Result.SKIPPED;
+                Selection selection = reconnect == null ? selection(app) : null;
+                if (reconnect == null ? selection == null : !Objects.equals(reconnect, reconnectTarget(app))) {
+                    return Result.SKIPPED;
+                }
 
                 ISdCardRemountCallback callback = new ISdCardRemountCallback.Stub() {
                     @Override public void onResult(int value) {
@@ -209,15 +232,24 @@ public final class SdCardRemount {
                         remoteResult.complete(switch (value) {
                             case ISdCardRemountCallback.MOUNTED -> Result.MOUNTED;
                             case ISdCardRemountCallback.SKIPPED -> Result.SKIPPED;
+                            case ISdCardRemountCallback.RECONNECTED -> Result.RECONNECTED;
+                            case ISdCardRemountCallback.SOURCE_MISSING -> Result.SOURCE_MISSING;
                             default -> Result.FAILED;
                         });
                     }
                 };
-                long deadline = SystemClock.elapsedRealtime() + SdCardRemountPlan.OPERATION_MS;
+                long window = reconnect == null ? SdCardRemountPlan.OPERATION_MS : UsbReaderReconnectPlan.OPERATION_MS;
+                long deadline = SystemClock.elapsedRealtime() + window;
                 long blockedUntil = deadline + SdRemountMountNotice.RESULT_GRACE_MS;
-                reserved = SdRemountMountNotice.begin(selection.source(), blockedUntil);
-                if (!reserved) return Result.FAILED;
-                service.remount(selection.source(), selection.destination(), deadline, callback);
+                if (reconnect == null) {
+                    reserved = SdRemountMountNotice.begin(selection.source(), blockedUntil);
+                    if (!reserved) return Result.FAILED;
+                    service.remount(selection.source(), selection.destination(), deadline, callback);
+                } else {
+                    reserved = SdRemountMountNotice.beginReconnect(registeredSourceUuid(app), blockedUntil);
+                    if (!reserved) return Result.FAILED;
+                    service.reconnect(reconnect.address(), reconnect.destination(), deadline, callback);
+                }
                 long remaining = Math.max(0, blockedUntil - SystemClock.elapsedRealtime());
                 outcome = remoteResult.get(remaining, TimeUnit.MILLISECONDS);
                 return outcome;
@@ -227,8 +259,11 @@ public final class SdCardRemount {
             } catch (RemoteException | ExecutionException | TimeoutException | RuntimeException e) {
                 return Result.FAILED;
             } finally {
-                if (reserved && (outcome == Result.MOUNTED || outcome == Result.SKIPPED)) {
+                if (reserved && reconnect == null && (outcome == Result.MOUNTED || outcome == Result.SKIPPED)) {
                     SdRemountMountNotice.end(outcome == Result.MOUNTED);
+                } else if (reserved && reconnect != null
+                        && (outcome == Result.RECONNECTED || outcome == Result.SOURCE_MISSING || outcome == Result.SKIPPED)) {
+                    SdRemountMountNotice.endReconnect(outcome != Result.SKIPPED, outcome == Result.SOURCE_MISSING);
                 }
                 CameraImportGate.lock.unlock();
             }
@@ -257,6 +292,49 @@ public final class SdCardRemount {
     }
 
     private record Selection(String source, String destination) {}
+    public record ReconnectTarget(String address, String destination, long detachGeneration) {}
+
+    public static ReconnectTarget reconnectTarget(Context context) {
+        if (!SdCardRemountUserService.supportsUsbReconnect()) return null;
+        try {
+            Context app = context.getApplicationContext();
+            String registered = app.getSharedPreferences("camera_import", Context.MODE_PRIVATE).getString("sd_tree_uri", null);
+            if (registered != null && !MountedCameraCard.isRemovableTree(Uri.parse(registered))) return null;
+            long generation = MountedCameraCard.detachGeneration();
+            UsbManager manager = app.getSystemService(UsbManager.class);
+            if (manager == null) return null;
+            var devices = manager.getDeviceList();
+            if (devices.size() != 1) return null;
+            UsbDevice device = devices.values().iterator().next();
+            if (device.getVendorId() != SdRemountUsbPort.VENDOR || device.getProductId() != SdRemountUsbPort.PRODUCT
+                    || !UsbMassStorage.Companion.isMassStorage(device)
+                    || !SdRemountUsbPort.validAddress(device.getDeviceName())) return null;
+            String selected = PhotoStorage.selected(app);
+            if (selected == null || PhotoStorage.PRIMARY.equals(selected)) return null;
+            String destination = removableUuid(app, selected, true);
+            return destination == null || !selected.equals(PhotoStorage.selected(app))
+                    || generation != MountedCameraCard.detachGeneration() ? null
+                    : new ReconnectTarget(device.getDeviceName(), destination, generation);
+        } catch (RuntimeException unavailable) {
+            return null;
+        }
+    }
+
+    private static String registeredSourceUuid(Context app) {
+        try {
+            String registered = app.getSharedPreferences("camera_import", Context.MODE_PRIVATE)
+                    .getString("sd_tree_uri", null);
+            if (registered == null) return null;
+            Uri tree = Uri.parse(registered);
+            String id = DocumentsContract.getTreeDocumentId(tree);
+            int separator = id.indexOf(':');
+            if (separator < 0) return null;
+            String uuid = id.substring(0, separator);
+            return MountedCameraCard.matchesMountNotice(tree, uuid) ? uuid : null;
+        } catch (RuntimeException invalid) {
+            return null;
+        }
+    }
 
     private static Selection selection(Context app) {
         try {
@@ -269,8 +347,8 @@ public final class SdCardRemount {
             Uri tree = Uri.parse(registered);
             String source = MountedCameraCard.requireRemovableSource(app, tree, destination);
             MountedCameraCard.requireGrant(app, tree);
-            String sourceUuid = mountedUuid(app, source);
-            String destinationUuid = mountedUuid(app, destination);
+            String sourceUuid = removableUuid(app, source, false);
+            String destinationUuid = removableUuid(app, destination, false);
             if (sourceUuid == null || destinationUuid == null || sourceUuid.equalsIgnoreCase(destinationUuid)
                     || !destination.equals(PhotoStorage.selected(app))) return null;
             return new Selection(sourceUuid, destinationUuid);
@@ -291,14 +369,19 @@ public final class SdCardRemount {
         return found;
     }
 
-    private static String mountedUuid(Context app, String volumeName) {
+    private static String removableUuid(Context app, String volumeName, boolean allowUnmounted) {
         String uuid = null;
         for (StorageVolume volume : app.getSystemService(StorageManager.class).getStorageVolumes()) {
-            if (!volumeName.equals(volume.getMediaStoreVolumeName())) continue;
+            String candidate = volume.getUuid();
+            String state = volume.getState();
+            boolean knownUnmounted = allowUnmounted && Environment.MEDIA_UNMOUNTED.equals(state)
+                    && SdCardRemountPlan.isFilesystemUuid(candidate);
+            if (!volumeName.equals(volume.getMediaStoreVolumeName())
+                    && !(knownUnmounted && volumeName.equalsIgnoreCase(candidate))) continue;
             if (uuid != null || !volume.isRemovable() || volume.isEmulated() || volume.isPrimary()
-                    || !Environment.MEDIA_MOUNTED.equals(volume.getState())
-                    || !SdCardRemountPlan.isFilesystemUuid(volume.getUuid())) return null;
-            uuid = volume.getUuid();
+                    || !(Environment.MEDIA_MOUNTED.equals(state) || knownUnmounted)
+                    || !SdCardRemountPlan.isFilesystemUuid(candidate)) return null;
+            uuid = candidate;
         }
         return uuid;
     }

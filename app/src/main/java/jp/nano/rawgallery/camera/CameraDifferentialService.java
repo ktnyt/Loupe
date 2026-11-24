@@ -130,7 +130,8 @@ public final class CameraDifferentialService extends Service {
                     String selectedTree = settings.getString("sd_tree_uri", null);
                     if (selectedTree == null) return;
                     Uri tree = Uri.parse(selectedTree);
-                    if (settings.getBoolean(SdCardRemount.ENABLED_PREFERENCE, false)
+                    if ((settings.getBoolean(SdCardRemount.ENABLED_PREFERENCE, false)
+                            || SdRemountMountNotice.requiresReconnectMountMatch())
                             && !MountedCameraCard.matchesMountNotice(tree, uuid)) return;
                     enqueue(sdRequest(context, tree, PhotoStorage.selected(context), MountedCameraCard.detachGeneration()));
                 }
