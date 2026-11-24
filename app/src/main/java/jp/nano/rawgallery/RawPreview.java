@@ -68,8 +68,14 @@ public final class RawPreview {
     }
   }
 
+  record BurstFrame(int mode, int number) {
+    static final BurstFrame NONE = new BurstFrame(0, 0);
+  }
+
   private final Source source;
   private final long size;
+  private final boolean burstOnly;
+  private BurstFrame burstFrame = BurstFrame.NONE;
   private boolean little;
   private int orientation = 1;
   private boolean orientationKnown, repairPreviewHeader;
@@ -79,7 +85,12 @@ public final class RawPreview {
   private static final int MAX_JPEG = 32 * 1024 * 1024;
 
   private RawPreview(Source s) throws IOException {
+    this(s, false);
+  }
+
+  private RawPreview(Source s, boolean burstOnly) throws IOException {
     source = s;
+    this.burstOnly = burstOnly;
     size = s.length();
     if (size < 0) throw new IOException("RAWのサイズを取得できません");
   }
@@ -88,14 +99,7 @@ public final class RawPreview {
     RawPreview p = new RawPreview(source);
     // Metadata is optional: proprietary or damaged directories must not hide a valid JPEG.
     try {
-      byte[] h = p.bytes(0, 8);
-      p.repairPreviewHeader = h[0] == 0 && h[1] == 'M' && h[2] == 'R' && h[3] == 'M';
-      if ((h[0] == 'I' && h[1] == 'I') || (h[0] == 'M' && h[1] == 'M')) {
-        p.little = h[0] == 'I';
-        int magic = p.u16(h, 2);
-        if (magic == 42 || magic == 0x4f52 || magic == 0x5352 || magic == 85)
-          p.directory(p.u32(h, 4), 0, 0, 0);
-      }
+      p.readDirectories();
     } catch (IOException ignored) {
       // The stream scan below still propagates source I/O failures and cancellation.
     }
@@ -115,6 +119,50 @@ public final class RawPreview {
         captureTime(p.capturedText, p.capturedOffset), best.repairedHeader);
   }
 
+  static BurstFrame readBurstFrame(Source source) throws IOException {
+    RawPreview parser = new RawPreview(source, true);
+    try {
+      parser.readDirectories();
+      return parser.burstFrame;
+    } catch (InvalidDirectory ignored) {
+      return BurstFrame.NONE;
+    }
+  }
+
+  static BurstFrame readBurstFrame(byte[] makerNote) throws IOException {
+    if (makerNote == null) return BurstFrame.NONE;
+    return new RawPreview(new Source() {
+      public long length() { return makerNote.length; }
+      public void read(long offset, byte[] data) {
+        System.arraycopy(makerNote, (int) offset, data, 0, data.length);
+      }
+    }, true).readMakerBurstFrame();
+  }
+
+  private BurstFrame readMakerBurstFrame() throws IOException {
+    try {
+      readMakerDirectory(0, size, 0);
+      return burstFrame;
+    } catch (InvalidDirectory ignored) {
+      return BurstFrame.NONE;
+    }
+  }
+
+  private void readDirectories() throws IOException {
+    byte[] h = bytes(0, 8);
+    repairPreviewHeader = h[0] == 0 && h[1] == 'M' && h[2] == 'R' && h[3] == 'M';
+    if ((h[0] == 'I' && h[1] == 'I') || (h[0] == 'M' && h[1] == 'M')) {
+      little = h[0] == 'I';
+      int magic = u16(h, 2);
+      if (magic == 42 || magic == 0x4f52 || magic == 0x5352 || magic == 85)
+        directory(u32(h, 4), 0, 0, 0);
+    }
+  }
+
+  private static final class InvalidDirectory extends IOException {
+    InvalidDirectory(String message) { super(message); }
+  }
+
   static long captureTime(String text, String offset) {
     try {
       java.time.LocalDateTime time =
@@ -132,7 +180,7 @@ public final class RawPreview {
 
   private byte[] bytes(long offset, int n) throws IOException {
     if (offset < 0 || n < 0 || offset > size || n > size - offset)
-      throw new IOException("RAW内の参照範囲が不正です");
+      throw new InvalidDirectory("RAW内の参照範囲が不正です");
     byte[] b = new byte[n];
     source.read(offset, b);
     return b;
@@ -177,17 +225,21 @@ public final class RawPreview {
 
     long location() throws IOException {
       int unit = unit();
-      if (unit == 0 || count > Integer.MAX_VALUE / unit) throw new IOException("不正なTIFF値です");
+      if (unit == 0 || count > Integer.MAX_VALUE / unit) throw new InvalidDirectory("不正なTIFF値です");
       return count * unit <= 4 ? slot : base + value;
     }
 
     long[] numbers() throws IOException {
       if (count > 1024 || (type != 3 && type != 4 && type != 13))
-        throw new IOException("不正なTIFF配列です");
+        throw new InvalidDirectory("不正なTIFF配列です");
       byte[] b = bytes(location(), (int) count * unit());
       long[] v = new long[(int) count];
       for (int i = 0; i < v.length; i++) v[i] = type == 3 ? u16(b, i * 2) : u32(b, i * 4);
       return v;
+    }
+
+    boolean isDirectoryPointer() {
+      return (type == 4 || type == 13) && count == 1;
     }
 
     long number() throws IOException {
@@ -212,14 +264,43 @@ public final class RawPreview {
   private void directory(long offset, long base, int kind, int depth) throws IOException {
     if (offset == 0) return;
     if (depth > 12 || visited.size() > 64 || !visited.add(base + ":" + offset + ":" + kind))
-      throw new IOException("RAWの循環参照または過剰な階層です");
+      throw new InvalidDirectory("RAWの循環参照または過剰な階層です");
     int count = u16(bytes(offset, 2), 0);
-    if (count > 512) throw new IOException("RAWの項目数が過大です");
+    if (count > 512) throw new InvalidDirectory("RAWの項目数が過大です");
     byte[] block = bytes(offset + 2, count * 12 + 4);
     Map<Integer, Entry> entries = new HashMap<>();
     for (int i = 0; i < count; i++) {
       byte[] e = Arrays.copyOfRange(block, i * 12, i * 12 + 12);
       entries.put(u16(e, 0), new Entry(e, offset + 2 + i * 12, base));
+    }
+    if (burstOnly && kind == 0) {
+      Entry maker = entries.get(37500);
+      if (maker != null && maker.type == 7 && maker.count >= 12) {
+        long start = maker.location();
+        if (start >= 0 && start <= size && maker.count <= size - start) {
+          // Olympus offsets are relative to the MakerNote. Confine new reads to that span.
+          burstFrame = new RawPreview(new Source() {
+            public long length() { return maker.count; }
+            public void read(long offset, byte[] data) throws IOException {
+              source.read(start + offset, data);
+            }
+          }, true).readMakerBurstFrame();
+        }
+        return;
+      }
+      Entry exif = entries.get(34665);
+      if (exif != null && exif.isDirectoryPointer())
+        directory(base + exif.number(), base, 0, depth + 1);
+      if (burstFrame.number() != 0) return;
+      if (entries.containsKey(330)) {
+        for (long sub : entries.get(330).numbers()) {
+          directory(base + sub, base, 0, depth + 1);
+          if (burstFrame.number() != 0) return;
+        }
+      }
+      long next = u32(block, count * 12);
+      if (next != 0) directory(base + next, base, 0, depth + 1);
+      return;
     }
     if (kind == 0) {
       if (entries.containsKey(271)) {
@@ -249,35 +330,59 @@ public final class RawPreview {
         for (long sub : entries.get(330).numbers()) directory(base + sub, base, 0, depth + 1);
       if (entries.containsKey(34665)) directory(base + num(entries, 34665), base, 0, depth + 1);
       Entry maker = entries.get(37500);
-      if (maker != null && maker.count >= 12) {
-        long start = maker.location();
-        byte[] header = bytes(start, (int) Math.min(maker.count, 16));
-        int headerLength =
-            new String(header, 0, 8, StandardCharsets.US_ASCII).equals("OLYMPUS\0")
-                    && header[8] == 'I'
-                    && header[9] == 'I'
-                ? 12
-                : header.length >= 16
-                        && new String(header, 0, 9, StandardCharsets.US_ASCII).equals("OM SYSTEM")
-                        && header[12] == 'I'
-                        && header[13] == 'I'
-                    ? 16
-                    : 0;
-        if (headerLength > 0) {
-          boolean old = little;
-          little = true;
-          try {
-            directory(start + headerLength, start, 1, depth + 1);
-          } finally {
-            little = old;
-          }
-        }
-      }
+      if (maker != null && maker.count >= 12)
+        readMakerDirectory(maker.location(), maker.count, depth);
       long next = u32(block, count * 12);
       if (next != 0) directory(base + next, base, 0, depth + 1);
     } else if (kind == 1) {
-      if (entries.containsKey(0x2020)) directory(base + num(entries, 0x2020), base, 2, depth + 1);
+      Entry settings = entries.get(0x2020);
+      if (settings != null && (!burstOnly || settings.isDirectoryPointer()))
+        directory(base + settings.number(), base, 2, depth + 1);
+    } else if (burstOnly) {
+      burstFrame = readDriveMode(entries.get(0x0600));
     } else if (num(entries, 0x100) == 1) candidate(base + num(entries, 0x101), num(entries, 0x102));
+  }
+
+  private void readMakerDirectory(long start, long length, int depth) throws IOException {
+    if (length < 12) return;
+    byte[] header = bytes(start, (int) Math.min(length, 16));
+    int headerLength =
+        new String(header, 0, 8, StandardCharsets.US_ASCII).equals("OLYMPUS\0")
+                && header[8] == 'I' && header[9] == 'I'
+            ? 12
+            : header.length >= 16
+                    && new String(header, 0, 9, StandardCharsets.US_ASCII).equals("OM SYSTEM")
+                    && header[12] == 'I' && header[13] == 'I'
+                ? 16
+                : 0;
+    if (headerLength == 0) return;
+    boolean old = little;
+    little = true;
+    try {
+      directory(start + headerLength, start, 1, depth + 1);
+    } finally {
+      little = old;
+    }
+  }
+
+  private BurstFrame readDriveMode(Entry entry) throws IOException {
+    if (entry == null || entry.type != 3
+        || (entry.count != 2 && entry.count != 3 && entry.count != 5 && entry.count != 6))
+      return BurstFrame.NONE;
+    long[] values = entry.numbers();
+    if (values[0] != 1 || values[1] == 0) return BurstFrame.NONE;
+    // Olympus DriveMode distinguishes legacy continuous shooting from modern sequential submodes.
+    int mode = 1;
+    if (values.length == 6) {
+      mode = switch ((int) values[5]) {
+        case 0x02, 0x03, 0x07, 0x12, 0x13, 0x17, 0x22, 0x23, 0x27, 0x28, 0x29,
+            0x41, 0x42, 0x43, 0x48, 0x49 -> (int) values[5];
+        default -> 0;
+      };
+      if (mode == 0) return BurstFrame.NONE;
+    }
+    int shutter = values.length >= 5 ? (int) values[4] + 1 : 0;
+    return new BurstFrame((mode << 17) | shutter, (int) values[1]);
   }
 
   private void candidate(long offset, long length) throws IOException {

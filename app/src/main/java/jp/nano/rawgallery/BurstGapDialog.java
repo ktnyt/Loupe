@@ -22,7 +22,7 @@ final class BurstGapDialog {
     int checked = millis <= 3000 && millis % 1000 == 0 ? millis / 1000 : CUSTOM;
     String custom = checked == CUSTOM ? CUSTOM_LABEL + "\n" + millis + " ミリ秒" : CUSTOM_LABEL;
     new GalleryUi.Sheet(context)
-        .setTitle("同じ機種・保存先の撮影間隔")
+        .setTitle("連写番号を優先\n番号がない写真の間隔")
         .setSingleChoiceItems(
             new String[] {"まとめない", "１秒以内（標準）", "２秒以内", "３秒以内", custom},
             checked,
@@ -57,7 +57,7 @@ final class BurstGapDialog {
     scroll.setPadding(inset, 0, inset, 0);
     scroll.addView(field, new ScrollView.LayoutParams(-1, -2));
 
-    AlertDialog dialog = builder.setTitle(CUSTOM_LABEL)
+    AlertDialog dialog = builder.setTitle("連写番号がない写真の間隔")
         .setView(scroll)
         .setNegativeButton("キャンセル", null)
         .setPositiveButton("保存", null)

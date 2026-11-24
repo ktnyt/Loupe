@@ -13,6 +13,7 @@ import org.json.*;
 final class ArchiveStore extends SQLiteOpenHelper {
   // Only a single E2 photos write and the last legacy proof scan use this lock.
   static final ReentrantLock E2_PHOTO_UPSERT = new ReentrantLock(true);
+  private static final String[] METADATA_COLUMNS = {"key", "model", "taken", "burst_mode", "burst_frame"};
   private final Context context;
   private final boolean e2Photos;
 
@@ -21,7 +22,7 @@ final class ArchiveStore extends SQLiteOpenHelper {
   }
 
   ArchiveStore(Context c, String databaseName) {
-    super(c, databaseName, null, 3);
+    super(c, databaseName, null, 4);
     context = c.getApplicationContext();
     e2Photos = E2Settings.DATABASE.equals(databaseName);
   }
@@ -29,7 +30,7 @@ final class ArchiveStore extends SQLiteOpenHelper {
   public void onCreate(SQLiteDatabase db) {
     db.execSQL(
         "CREATE TABLE metadata (key TEXT PRIMARY KEY, model TEXT NOT NULL, taken INTEGER NOT"
-            + " NULL)");
+            + " NULL, burst_mode INTEGER, burst_frame INTEGER)");
     db.execSQL(
         "CREATE TABLE photos (key TEXT PRIMARY KEY, state TEXT NOT NULL, payload TEXT NOT NULL)");
     createIndexRevision(db);
@@ -41,6 +42,10 @@ final class ArchiveStore extends SQLiteOpenHelper {
           "CREATE TABLE metadata (key TEXT PRIMARY KEY, model TEXT NOT NULL, taken INTEGER NOT"
               + " NULL)");
     if (oldVersion < 3) createIndexRevision(db);
+    if (oldVersion < 4) {
+      db.execSQL("ALTER TABLE metadata ADD COLUMN burst_mode INTEGER");
+      db.execSQL("ALTER TABLE metadata ADD COLUMN burst_frame INTEGER");
+    }
   }
 
   /** Only source photo records invalidate browsing; derived metadata and WAL checkpoints do not. */
@@ -70,68 +75,112 @@ final class ArchiveStore extends SQLiteOpenHelper {
   RawMetadata metadata(PhotoRepository.Photo p) throws Exception {
     if (p.isVideo()) return new RawMetadata("動画", p.taken);
     String key = key(p);
-    try (Cursor c =
-        getReadableDatabase()
-            .query(
-                "metadata",
-                new String[] {"model", "taken"},
-                "key=?",
-                new String[] {key},
-                null,
-                null,
-                null)) {
-      if (c.moveToFirst()) return new RawMetadata(c.getString(0), c.getLong(1));
-    }
+    RawMetadata cached = readMetadata(key);
+    if (cached != null) return cached;
+
+    RawMetadata inspected;
     if (p.isJpeg()) {
       try (InputStream in = context.getContentResolver().openInputStream(p.uri)) {
         if (in == null) throw new IOException("JPEGを開けません");
         android.media.ExifInterface exif = new android.media.ExifInterface(in);
         String model = exif.getAttribute(android.media.ExifInterface.TAG_MODEL);
-        long taken =
-            RawPreview.captureTime(
-                exif.getAttribute(android.media.ExifInterface.TAG_DATETIME_ORIGINAL),
-                exif.getAttribute(android.media.ExifInterface.TAG_OFFSET_TIME_ORIGINAL));
-        ContentValues values = new ContentValues();
-        values.put("key", key);
-        values.put("model", model == null ? "JPEG" : model);
-        values.put("taken", taken);
-        getWritableDatabase()
-            .insertWithOnConflict("metadata", null, values, SQLiteDatabase.CONFLICT_REPLACE);
-        return new RawMetadata(model == null ? "JPEG" : model, taken);
+        long taken = RawPreview.captureTime(
+            exif.getAttribute(android.media.ExifInterface.TAG_DATETIME_ORIGINAL),
+            exif.getAttribute(android.media.ExifInterface.TAG_OFFSET_TIME_ORIGINAL));
+        inspected = new RawMetadata(model == null ? "JPEG" : model, taken);
+      }
+    } else {
+      try (PhotoRepository.DescriptorSource source =
+          new PhotoRepository.DescriptorSource(context.getContentResolver(), p.uri, p.size)) {
+        RawPreview.Result result = RawPreview.inspect(source);
+        inspected = new RawMetadata(result.model, result.taken);
       }
     }
-    try (PhotoRepository.DescriptorSource source =
-        new PhotoRepository.DescriptorSource(context.getContentResolver(), p.uri, p.size)) {
-      RawPreview.Result result = RawPreview.inspect(source);
-      ContentValues values = new ContentValues();
-      values.put("key", key);
-      values.put("model", result.model);
-      values.put("taken", result.taken);
-      getWritableDatabase()
-          .insertWithOnConflict("metadata", null, values, SQLiteDatabase.CONFLICT_REPLACE);
-      return new RawMetadata(result.model, result.taken);
+    ContentValues values = new ContentValues();
+    values.put("key", key);
+    values.put("model", inspected.model);
+    values.put("taken", inspected.taken);
+    if (getWritableDatabase().insertWithOnConflict("metadata", null, values, SQLiteDatabase.CONFLICT_IGNORE) >= 0)
+      return inspected;
+    // Another caller may have completed a burst probe since this caller read the source.
+    cached = readMetadata(key);
+    if (cached == null) throw new IOException("写真のメタデータを保存できません");
+    return cached;
+  }
+
+  private RawMetadata readMetadata(String key) {
+    try (Cursor c = getReadableDatabase().query("metadata", METADATA_COLUMNS,
+        "key=?", new String[] {key}, null, null, null)) {
+      return c.moveToFirst() ? rawMetadata(c) : null;
     }
+  }
+
+  static boolean canProbeBurstFrame(PhotoRepository.Photo p) {
+    if (p.isArchived() || (!p.isJpeg() && !p.name.toLowerCase(Locale.ROOT).endsWith(".orf")))
+      return false;
+    // SAF cloud providers may download on open; only read sources known to be local.
+    if (ContentResolver.SCHEME_FILE.equals(p.uri.getScheme())) return true;
+    if (!ContentResolver.SCHEME_CONTENT.equals(p.uri.getScheme())) return false;
+    String authority = p.uri.getAuthority();
+    return "media".equals(authority) || "com.android.externalstorage.documents".equals(authority)
+        || "com.android.providers.media.documents".equals(authority)
+        || "com.android.providers.downloads.documents".equals(authority);
+  }
+
+  /** Gallery-only: I/O failures leave the existing metadata and its NULL probe status intact. */
+  RawMetadata probeBurstFrame(PhotoRepository.Photo p, String key, RawMetadata metadata) throws IOException {
+    if (metadata.burstFrame != null || !canProbeBurstFrame(p)) return metadata;
+    RawPreview.BurstFrame frame;
+    if (p.isJpeg()) {
+      try (InputStream in = context.getContentResolver().openInputStream(p.uri)) {
+        if (in == null) throw new IOException("JPEGを開けません");
+        android.media.ExifInterface exif = new android.media.ExifInterface(in);
+        frame = RawPreview.readBurstFrame(exif.getAttributeBytes(android.media.ExifInterface.TAG_MAKER_NOTE));
+      }
+    } else {
+      try (PhotoRepository.DescriptorSource source =
+          new PhotoRepository.DescriptorSource(context.getContentResolver(), p.uri, p.size)) {
+        frame = RawPreview.readBurstFrame(source);
+      }
+    }
+    ContentValues values = new ContentValues();
+    values.put("burst_mode", frame.mode());
+    values.put("burst_frame", frame.number());
+    if (getWritableDatabase().update("metadata", values,
+        "key=? AND burst_mode IS NULL AND burst_frame IS NULL", new String[] {key}) == 1)
+      return new RawMetadata(metadata.model, metadata.taken, frame);
+    RawMetadata cached = readMetadata(key);
+    return cached == null ? metadata : cached;
   }
 
   Map<String, RawMetadata> metadataSnapshot() {
     Map<String, RawMetadata> result = new HashMap<>();
-    try (Cursor c =
-        getReadableDatabase()
-            .query(
-                "metadata", new String[] {"key", "model", "taken"}, null, null, null, null, null)) {
-      while (c.moveToNext())
-        result.put(c.getString(0), new RawMetadata(c.getString(1), c.getLong(2)));
+    try (Cursor c = getReadableDatabase().query("metadata", METADATA_COLUMNS,
+        null, null, null, null, null)) {
+      while (c.moveToNext()) result.put(c.getString(0), rawMetadata(c));
     }
     return result;
+  }
+
+  private static RawMetadata rawMetadata(Cursor c) {
+    RawPreview.BurstFrame frame = c.isNull(3) || c.isNull(4) ? null
+        : new RawPreview.BurstFrame(c.getInt(3), c.getInt(4));
+    return new RawMetadata(c.getString(1), c.getLong(2), frame);
   }
 
   static final class RawMetadata {
     final String model;
     final long taken;
+    final RawPreview.BurstFrame burstFrame;
 
     RawMetadata(String model, long taken) {
+      this(model, taken, null);
+    }
+
+    RawMetadata(String model, long taken, RawPreview.BurstFrame burstFrame) {
       this.model = model;
       this.taken = taken;
+      this.burstFrame = burstFrame;
     }
   }
 

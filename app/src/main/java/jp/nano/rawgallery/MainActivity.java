@@ -1418,15 +1418,9 @@ public final class MainActivity extends DiagnosticActivity {
                     ArrayList<String> chosen = restored.getStringArrayList("selection");
                     if (chosen != null) selectedPhotos.addAll(chosen);
                     Set<String> available = new HashSet<>();
-                    ArrayList<String> scope = restored.getStringArrayList("burst");
-                    if (scope != null) burstMembers = new ArrayList<>();
-                    for (int i = 0; i < photos.size(); i++) {
-                      String uri = photos.get(i).uri.toString();
-                      available.add(uri);
-                      if (scope != null && scope.contains(uri)) burstMembers.add(i);
-                    }
+                    for (PhotoRepository.Photo photo : photos) available.add(photo.uri.toString());
                     selectedPhotos.retainAll(available);
-                    if (burstMembers != null && burstMembers.isEmpty()) burstMembers = null;
+                    burstMembers = restoredBurst(restored.getStringArrayList("burst"));
                     gallery();
                     return;
                   }
@@ -1445,6 +1439,19 @@ public final class MainActivity extends DiagnosticActivity {
                 });
           }
         });
+  }
+
+  /** A restored burst must still contain precisely the same photos after reindexing. */
+  private List<Integer> restoredBurst(List<String> scope) {
+    if (scope == null || scope.size() < 2) return null;
+    Set<String> expected = new HashSet<>(scope);
+    for (List<Integer> members : bundles) {
+      if (members.size() != scope.size()) continue;
+      Set<String> current = new HashSet<>();
+      for (int member : members) current.add(photos.get(member).uri.toString());
+      if (current.equals(expected)) return new ArrayList<>(members);
+    }
+    return null;
   }
 
   private void refresh() {
