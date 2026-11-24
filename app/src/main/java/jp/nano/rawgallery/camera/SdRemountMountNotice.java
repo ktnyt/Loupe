@@ -56,6 +56,11 @@ final class SdRemountMountNotice {
         return current != null && current.suppressesReconnectNotices();
     }
 
+    static boolean requiresReconnectMountMatch() {
+        Tracker current = tracker;
+        return current != null && current.requiresReconnectMountMatch();
+    }
+
     static boolean suppressMount(String uuid) {
         Tracker current = tracker;
         return current != null && current.suppressMount(uuid);
@@ -150,6 +155,10 @@ final class SdRemountMountNotice {
         }
 
         boolean suppressesReconnectNotices() { return state.mutedUntil() > elapsed.getAsLong(); }
+
+        boolean requiresReconnectMountMatch() {
+            return state.reconnectSource() != null || suppressesReconnectNotices();
+        }
 
         synchronized boolean suppressMount(String uuid) {
             String observed = normalized(uuid);

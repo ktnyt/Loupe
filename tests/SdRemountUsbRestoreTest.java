@@ -42,6 +42,7 @@ public final class SdRemountUsbRestoreTest {
             Files.writeString(fake, FAKE_DUMPSYS);
             unstartedCycleExitsWithoutWriting(journal, fake);
             startedCycleReportsBothCompleted(journal, release, fake);
+            distinguishesChildDeathAfterDisable(journal, release, fake);
             cycleSurvivesKilledOwner(journal, release, fake);
             System.out.println("SdRemountUsbRestoreTest passed");
         } finally {
@@ -66,10 +67,30 @@ public final class SdRemountUsbRestoreTest {
         try (var commands = cycle.getOutputStream(); var output = output(cycle)) {
             arm(commands, output);
             signal(commands, "cycle");
-            if (!"done 0 0".equals(output.readLine())) throw new AssertionError("cycle did not confirm both writes");
+            var result = SdRemountUsbRestore.readResult(output);
+            if (result.state() != UsbReaderReconnectPlan.CycleState.COMPLETED || !result.offSucceeded()
+                    || !result.onSucceeded()) throw new AssertionError("cycle did not confirm both writes");
         }
         if (!cycle.waitFor(5, TimeUnit.SECONDS) || cycle.exitValue() != 0) throw new AssertionError("cycle did not exit");
         if (!EXPECTED.equals(Files.readString(journal))) throw new AssertionError("unexpected order of normal cycle");
+        Files.delete(release);
+        Files.writeString(journal, "");
+    }
+
+    private static void distinguishesChildDeathAfterDisable(Path journal, Path release, Path fake) throws Exception {
+        Files.createFile(release);
+        String childDies = SdRemountUsbRestore.SCRIPT.replace(
+                "/system/bin/sleep 2 </dev/null >/dev/null 2>&1", "kill -KILL \"$$\"");
+        Process cycle = launchCycle(journal, fake, childDies);
+        try (var commands = cycle.getOutputStream(); var output = output(cycle)) {
+            arm(commands, output);
+            signal(commands, "cycle");
+            if (SdRemountUsbRestore.readResult(output).state() != UsbReaderReconnectPlan.CycleState.TERMINATED) {
+                throw new AssertionError("the controller did not distinguish child death from unknown completion");
+            }
+        }
+        if (!cycle.waitFor(5, TimeUnit.SECONDS) || cycle.exitValue() == 0) throw new AssertionError("cycle was not killed");
+        if (!"off-start\noff-end\n".equals(Files.readString(journal))) throw new AssertionError("wrong kill timing");
         Files.delete(release);
         Files.writeString(journal, "");
     }
@@ -100,8 +121,12 @@ public final class SdRemountUsbRestoreTest {
     }
 
     private static Process launchCycle(Path journal, Path fake) throws Exception {
+        return launchCycle(journal, fake, SdRemountUsbRestore.SCRIPT);
+    }
+
+    private static Process launchCycle(Path journal, Path fake, String program) throws Exception {
         String prefix = "/system/bin/dumpsys -t 7 usb enable-usb-data port0 ";
-        String script = SdRemountUsbRestore.SCRIPT.replace(prefix + "false", "/bin/sh \"$2\" off \"$1\"")
+        String script = program.replace(prefix + "false", "/bin/sh \"$2\" off \"$1\"")
                 .replace(prefix + "true", "/bin/sh \"$2\" on \"$1\"")
                 .replace("/system/bin/sleep", "/bin/sleep");
         return new ProcessBuilder("/bin/sh", "-c", script, "usb-cycle", journal.toString(), fake.toString()).start();

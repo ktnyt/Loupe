@@ -24,6 +24,11 @@ public final class UsbReaderReconnectPlanTest {
         restoresDataWhenCallerDisappearsDuringDisconnect();
         refusesDataSwitchWithoutArmedCycle();
         unknownCycleCompletionDoesNotStartASecondUsbRestore();
+        restoresDataAndCardsAfterObservedDisableAndChildDeath();
+        restoresDataAfterATransitionalDumpHidDetach();
+        retriesTransientValidationBeforeRestoringUsbData();
+        restoresCardsIfTheChildNeverStarted();
+        neverRestoresFromAnUnobservedDisable();
         retriesAKnownUnmountedDestination();
         retriesMountOnlyAfterRecheckingTheSameVolume();
         ambiguousReturnDoesNotRemountOtherCards();
@@ -124,6 +129,49 @@ public final class UsbReaderReconnectPlanTest {
         writes(usb, "UNMOUNT " + SD_ID, "UNMOUNT " + MICRO_ID, "data false");
     }
 
+    private static void restoresDataAndCardsAfterObservedDisableAndChildDeath() {
+        var usb = new Fake();
+        usb.cycleTerminated = true;
+        usb.automaticMount = false;
+        assertOutcome(usb, UsbReaderReconnectPlan.Outcome.FAILED);
+        writes(usb, "UNMOUNT " + SD_ID, "UNMOUNT " + MICRO_ID, "data false", "data true",
+                "MOUNT " + MICRO_ID, "MOUNT " + SD_ID);
+        if (usb.disabled) throw new AssertionError("observed USB disable should be reversed after child death");
+    }
+
+    private static void restoresCardsIfTheChildNeverStarted() {
+        var usb = new Fake();
+        usb.cycleNotStarted = true;
+        assertOutcome(usb, UsbReaderReconnectPlan.Outcome.FAILED);
+        writes(usb, "UNMOUNT " + SD_ID, "UNMOUNT " + MICRO_ID, "MOUNT " + MICRO_ID, "MOUNT " + SD_ID);
+    }
+
+    private static void restoresDataAfterATransitionalDumpHidDetach() {
+        var usb = new Fake();
+        usb.cycleTerminated = true;
+        usb.hideDepartureUntilChildEnds = true;
+        assertOutcome(usb, UsbReaderReconnectPlan.Outcome.FAILED);
+        writes(usb, "UNMOUNT " + SD_ID, "UNMOUNT " + MICRO_ID, "data false", "data true");
+        if (usb.disabled) throw new AssertionError("detected USB disable should be reversed after child death");
+    }
+
+    private static void retriesTransientValidationBeforeRestoringUsbData() {
+        var usb = new Fake();
+        usb.cycleTerminated = true;
+        usb.hideUsbDumpOnDisabledRead = 3;
+        assertOutcome(usb, UsbReaderReconnectPlan.Outcome.FAILED);
+        writes(usb, "UNMOUNT " + SD_ID, "UNMOUNT " + MICRO_ID, "data false", "data true");
+        if (usb.disabled) throw new AssertionError("temporary validation failure must not strand USB data disabled");
+    }
+
+    private static void neverRestoresFromAnUnobservedDisable() {
+        var usb = new Fake();
+        usb.cycleTerminated = true;
+        usb.offEffectUnobserved = true;
+        assertOutcome(usb, UsbReaderReconnectPlan.Outcome.FAILED);
+        writes(usb, "UNMOUNT " + SD_ID, "UNMOUNT " + MICRO_ID, "data false");
+    }
+
     private static void retriesAKnownUnmountedDestination() {
         var usb = new Fake();
         usb.micro = "unmounted";
@@ -179,6 +227,13 @@ public final class UsbReaderReconnectPlanTest {
         boolean disabled;
         boolean cycleArmFails;
         boolean cycleIncomplete;
+        boolean cycleTerminated;
+        boolean cycleNotStarted;
+        boolean hideDepartureUntilChildEnds;
+        int hideUsbDumpOnDisabledRead;
+        int disabledUsbReads;
+        boolean offEffectUnobserved;
+        boolean automaticMount = true;
         boolean recoveryMountFailsOnce;
         boolean replaceTargetOnFailedMount;
         long events = 103;
@@ -205,15 +260,25 @@ public final class UsbReaderReconnectPlanTest {
         @Override public UsbReaderReconnectPlan.DataCycle armCycle(long deadline) throws IOException {
             if (cycleArmFails) throw new IOException("cycle failed before arming");
             return new UsbReaderReconnectPlan.DataCycle() {
-                @Override public void start() {
+                @Override public void start() throws IOException {
+                    if (cycleNotStarted) throw new IOException("child closed its control pipe before starting");
                     writes.add("data false");
-                    disabled = true;
-                    events++;
+                    if (!offEffectUnobserved) {
+                        disabled = true;
+                        events++;
+                    }
                     if (callerDiesAfterDisable) alive = false;
                 }
 
                 @Override public UsbReaderReconnectPlan.CycleResult await(long timeout) {
-                    if (cycleIncomplete) return null;
+                    if (cycleIncomplete) return new UsbReaderReconnectPlan.CycleResult(
+                            UsbReaderReconnectPlan.CycleState.UNKNOWN, false, false);
+                    if (cycleNotStarted) return new UsbReaderReconnectPlan.CycleResult(
+                            UsbReaderReconnectPlan.CycleState.NOT_STARTED, false, false);
+                    if (cycleTerminated) {
+                        hideDepartureUntilChildEnds = false;
+                        return new UsbReaderReconnectPlan.CycleResult(UsbReaderReconnectPlan.CycleState.TERMINATED, false, false);
+                    }
                     boolean on;
                     try {
                         restoreUsbData(timeout);
@@ -221,7 +286,7 @@ public final class UsbReaderReconnectPlanTest {
                     } catch (IOException unavailable) {
                         on = false;
                     }
-                    return new UsbReaderReconnectPlan.CycleResult(!disableThrows, on);
+                    return new UsbReaderReconnectPlan.CycleResult(UsbReaderReconnectPlan.CycleState.COMPLETED, !disableThrows, on);
                 }
 
                 @Override public void close() {}
@@ -229,6 +294,8 @@ public final class UsbReaderReconnectPlanTest {
         }
 
         @Override public String usbDump(long deadline) {
+            if (disabled && ++disabledUsbReads == hideUsbDumpOnDisabledRead) return "USB status temporarily unavailable";
+            if (disabled && hideDepartureUntilChildEnds) return "USB status unavailable during detach";
             String device = "    devices={\n      name=" + READER + "\n      vendor_id=8644\n"
                     + "      product_id=45152\n    }\n";
             if (conflict.equals("wrong device")) device = device.replace("8644", "1234");
@@ -307,9 +374,11 @@ public final class UsbReaderReconnectPlanTest {
             }
             disabled = false;
             events++;
-            if (sd != null || sourceAppears) sd = "mounted";
-            if (sourceDisappearsOnEnable) sd = null;
-            micro = "mounted";
+            if (automaticMount) {
+                if (sd != null || sourceAppears) sd = "mounted";
+                if (sourceDisappearsOnEnable) sd = null;
+                micro = "mounted";
+            }
             if (replaceTargetOnEnable) destination = "0000-DEAD";
         }
     }

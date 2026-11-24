@@ -113,6 +113,9 @@ public final class SdCardRemountBindingChecks {
                 throw new AssertionError("Expected a refusal for unmatched cards, received " + outcome.get());
             }
             if (SdCardRemount.reconnectTarget(context) != null) throw new AssertionError("No supported USB reader on emulator");
+            if (SdRemountUsbPort.parse("  host_manager={\n  }\n  port_manager={\n  }\n") != null) {
+                throw new AssertionError("Android parser accepts only a verified USB port");
+            }
             if (SdRemountUsbDisks.reader("Disks:\nVolumes:\nRecords:\n") != null) {
                 throw new AssertionError("Android parser accepts only a verified reader topology");
             }

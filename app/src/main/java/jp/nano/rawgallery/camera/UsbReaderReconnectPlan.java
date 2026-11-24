@@ -17,12 +17,14 @@ final class UsbReaderReconnectPlan {
     private static final long ENABLE_MS = 7_000;
     private static final long ENABLE_CHECK_MS = 600;
     private static final long RECOVERY_MS = 7_000;
+    private static final long MIN_RESTORE_MS = 3_000;
     private static final long SOURCE_SETTLE_MS = 6_000;
     private static final long POLL_MS = 250;
     private static final int MAX_MOUNT_ATTEMPTS = 2;
 
     enum Outcome { RECONNECTED, SOURCE_MISSING, SKIPPED, FAILED }
-    record CycleResult(boolean offSucceeded, boolean onSucceeded) {}
+    enum CycleState { UNKNOWN, NOT_STARTED, TERMINATED, COMPLETED }
+    record CycleResult(CycleState state, boolean offSucceeded, boolean onSucceeded) {}
     interface DataCycle extends AutoCloseable {
         void start() throws IOException;
         CycleResult await(long timeoutMs) throws IOException, InterruptedException;
@@ -83,8 +85,9 @@ final class UsbReaderReconnectPlan {
 
         Set<String> attempted = new LinkedHashSet<>();
         Set<String> ejected = new HashSet<>();
-        boolean cycleStarted = false;
-        boolean cycleCompleted = false;
+        boolean cycleRequested = false;
+        CycleState cycleState = CycleState.UNKNOWN;
+        boolean removed = false;
         try {
             for (Slot slot : new Slot[]{initial.source, initial.target}) {
                 if (slot == null || slot.unmounted()) continue;
@@ -100,19 +103,26 @@ final class UsbReaderReconnectPlan {
 
             long armBy = Math.min(storage.now() + ARM_MS, deadline - DETACH_MS - ENABLE_MS - RECOVERY_MS);
             long finishBy = deadline - RECOVERY_MS;
-            boolean removed;
             CycleResult completion;
             try (DataCycle cycle = storage.armCycle(armBy)) {
                 if (!matches(snapshot(storage, armBy), initial, ejected, null) || !storage.authorized()) {
                     throw new IOException("Not all reader volumes are safely ejected");
                 }
-                cycleStarted = true;
-                cycle.start();
+                cycleRequested = true;
+                try {
+                    cycle.start();
+                } catch (IOException unknownStart) {
+                    // The control pipe may fail after the request was accepted. Read the child state.
+                }
                 removed = awaitDeparture(storage, initial.usb, Math.min(storage.now() + DETACH_MS, finishBy));
                 completion = cycle.await(Math.max(0, finishBy - storage.now()));
-                cycleCompleted = completion != null;
+                cycleState = completion.state();
             }
-            if (removed && completion != null && completion.offSucceeded() && completion.onSucceeded()) {
+            if (cycleState == CycleState.TERMINATED && !removed) {
+                // A transitional USB dump may hide the detach until after the child has stopped.
+                removed = awaitDeparture(storage, initial.usb, deadline - MIN_RESTORE_MS);
+            }
+            if (removed && cycleState == CycleState.COMPLETED && completion.offSucceeded() && completion.onSucceeded()) {
                 Outcome result = awaitReturn(storage, initial, finishBy);
                 if (result != Outcome.FAILED) return result;
             }
@@ -121,8 +131,12 @@ final class UsbReaderReconnectPlan {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-        // Compensation must never race an independent OFF command that has not yet completed.
-        if (!cycleStarted || cycleCompleted) recover(storage, initial, attempted, ejected, cycleCompleted, deadline);
+        boolean offFinished = cycleState == CycleState.COMPLETED || (cycleState == CycleState.TERMINATED && removed);
+        // When the child died, the observed OFF effect proves its only disable request reached the port.
+        // A live or unobserved OFF request may still be pending and must never be overtaken by recovery.
+        if (!cycleRequested || cycleState == CycleState.NOT_STARTED || offFinished) {
+            recover(storage, initial, attempted, ejected, offFinished, deadline);
+        }
         return Outcome.FAILED;
     }
 
@@ -159,11 +173,13 @@ final class UsbReaderReconnectPlan {
         while (storage.now() < deadline) {
             try {
                 SdRemountUsbPort.State usb = SdRemountUsbPort.parse(storage.usbDump(deadline));
-                if (usb == null || !usb.connectedHost() || usb.connectedAt() != initial.connectedAt()) return false;
-                long events = usb.enumerations() - initial.enumerations();
-                if (events == 1 && usb.removed()) return true;
-                if (events < 0 || events > 1 || usb.address() != null && !initial.address().equals(usb.address())) {
-                    return false;
+                if (usb != null) {
+                    if (!usb.connectedHost() || usb.connectedAt() != initial.connectedAt()) return false;
+                    long events = usb.enumerations() - initial.enumerations();
+                    if (events == 1 && usb.removed()) return true;
+                    if (events < 0 || events > 1 || usb.address() != null && !initial.address().equals(usb.address())) {
+                        return false;
+                    }
                 }
             } catch (IOException unavailable) {
                 // Do not interrupt the independent cycle if a read fails.
@@ -173,11 +189,17 @@ final class UsbReaderReconnectPlan {
         return false;
     }
 
-    private static void restoreData(Transport storage, long deadline) throws IOException, InterruptedException {
+    private static void restoreData(Transport storage, Snapshot initial, long deadline) throws IOException, InterruptedException {
         boolean interrupted = Thread.interrupted();
         try {
-            while (true) {
+            while (storage.now() < deadline) {
                 try {
+                    var before = SdRemountUsbPort.parse(storage.usbDump(deadline));
+                    if (before == null) {
+                        pause(storage, deadline);
+                        continue;
+                    }
+                    if (!dataStillDisabled(before, initial)) return;
                     storage.restoreUsbData(deadline);
                     // The CLI can return before the HAL updates the port's data state.
                     long checkBy = Math.min(deadline, storage.now() + ENABLE_CHECK_MS);
@@ -235,9 +257,9 @@ final class UsbReaderReconnectPlan {
             while ((cycleAttempted || !attempted.isEmpty()) && storage.now() < deadline) {
                 Snapshot current = retrySnapshot(storage, deadline);
                 if (current == null) {
-                    if (cycleAttempted && !dataRestoreRetried && dataStillDisabled(storage, initial, deadline)) {
+                    if (cycleAttempted && !dataRestoreRetried) {
                         dataRestoreRetried = true;
-                        restoreData(storage, Math.min(deadline, storage.now() + ENABLE_MS));
+                        restoreData(storage, initial, Math.min(deadline, storage.now() + ENABLE_MS));
                     }
                     pause(storage, deadline);
                     continue;
@@ -272,14 +294,9 @@ final class UsbReaderReconnectPlan {
         }
     }
 
-    private static boolean dataStillDisabled(Transport storage, Snapshot initial, long deadline)
-            throws InterruptedException {
-        try {
-            SdRemountUsbPort.State usb = SdRemountUsbPort.parse(storage.usbDump(deadline));
-            return usb != null && usb.connectedAt() == initial.usb.connectedAt() && "disabled-force".equals(usb.data());
-        } catch (IOException unavailable) {
-            return false;
-        }
+    private static boolean dataStillDisabled(SdRemountUsbPort.State usb, Snapshot initial) {
+        return usb.connectedHost() && usb.connectedAt() == initial.usb.connectedAt()
+                && usb.enumerations() - initial.usb.enumerations() == 1 && usb.removed();
     }
 
     private static boolean restore(Transport storage, Slot current, Slot original, Set<String> attempted,

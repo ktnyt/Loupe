@@ -2,6 +2,7 @@ package jp.nano.rawgallery.camera;
 
 import android.content.Context;
 import android.os.Binder;
+import android.os.Build;
 import android.os.IBinder;
 import android.os.Process;
 import android.os.RemoteException;
@@ -21,6 +22,10 @@ public final class SdCardRemountUserService extends ISdCardRemountService.Stub {
     static final int SHELL_UID = 2000;
     private static final int FIRST_APP_UID = 10_000;
     private final int ownerUid;
+
+    static boolean supportsUsbReconnect() {
+        return Build.VERSION.SDK_INT >= 36 && "dada".equals(Build.DEVICE);
+    }
 
     public SdCardRemountUserService(Context context) {
         var app = context.getApplicationInfo();
@@ -51,6 +56,10 @@ public final class SdCardRemountUserService extends ISdCardRemountService.Stub {
     @Override public void reconnect(String address, String destinationUuid, long deadlineMs,
             ISdCardRemountCallback callback) {
         if (Binder.getCallingUid() != ownerUid || Process.myUid() != SHELL_UID || callback == null) return;
+        if (!supportsUsbReconnect()) {
+            send(callback, ISdCardRemountCallback.SKIPPED);
+            return;
+        }
         long now = SystemClock.elapsedRealtime();
         int result = ISdCardRemountCallback.SKIPPED;
         if (deadlineMs > now && deadlineMs <= now + UsbReaderReconnectPlan.OPERATION_MS) {

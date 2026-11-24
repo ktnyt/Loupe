@@ -295,8 +295,11 @@ public final class SdCardRemount {
     public record ReconnectTarget(String address, String destination, long detachGeneration) {}
 
     public static ReconnectTarget reconnectTarget(Context context) {
+        if (!SdCardRemountUserService.supportsUsbReconnect()) return null;
         try {
             Context app = context.getApplicationContext();
+            String registered = app.getSharedPreferences("camera_import", Context.MODE_PRIVATE).getString("sd_tree_uri", null);
+            if (registered != null && !MountedCameraCard.isRemovableTree(Uri.parse(registered))) return null;
             long generation = MountedCameraCard.detachGeneration();
             UsbManager manager = app.getSystemService(UsbManager.class);
             if (manager == null) return null;

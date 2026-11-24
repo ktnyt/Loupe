@@ -137,7 +137,7 @@ public final class MountedCameraCard {
     }
 
 
-    private static boolean isRemovableTree(Uri tree) {
+    static boolean isRemovableTree(Uri tree) {
         if (tree == null || !"com.android.externalstorage.documents".equals(tree.getAuthority())
                 || !DocumentsContract.isTreeUri(tree)) return false;
         try {
