@@ -8,6 +8,7 @@ import android.widget.ScrollView;
 import androidx.appcompat.app.AlertDialog;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
+import java.util.Locale;
 import java.util.function.IntPredicate;
 
 final class BurstGapDialog {
@@ -48,7 +49,7 @@ final class BurstGapDialog {
     input.setSingleLine(true);
     // Request a number keyboard while allowing validation of invalid pasted text.
     input.setRawInputType(InputType.TYPE_CLASS_NUMBER);
-    input.setText(Integer.toString(millis));
+    input.setText(String.format(Locale.ROOT, "%d", millis));
     input.setSelectAllOnFocus(true);
     field.addView(input, new LinearLayout.LayoutParams(-1, -2));
     ScrollView scroll = new ScrollView(dialogContext);
@@ -71,7 +72,7 @@ final class BurstGapDialog {
     dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
       int value = BurstGapSettings.parseCustomMillis(input.getText().toString());
       if (value == 0) {
-        field.setError("1〜2147483647の整数を入力してください");
+        field.setError("1〜2147483647の半角整数を入力してください");
       } else if (!save.test(value)) {
         field.setError(SAVE_ERROR);
       } else {

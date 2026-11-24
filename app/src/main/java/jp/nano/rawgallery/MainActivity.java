@@ -87,6 +87,7 @@ public final class MainActivity extends DiagnosticActivity {
   private ShareCapacityChecks shareCapacity;
   private ShareUi.Menu capacityMenu;
   private List<List<Integer>> bundles = new ArrayList<>();
+  private int indexedBurstGapMillis;
   private List<Integer> burstMembers;
   private List<List<Integer>> displayed = new ArrayList<>();
   private List<PhotoRepository.Photo> photos = new ArrayList<>();
@@ -197,6 +198,7 @@ public final class MainActivity extends DiagnosticActivity {
 
   public void onCreate(Bundle state) {
     super.onCreate(state);
+    indexedBurstGapMillis = savedBurstGapMillis();
     repository = new PhotoRepository(this);
     rankingStore = new RankingStore(this);
     sharePreparation = new SharePreparation(this, repository);
@@ -443,6 +445,7 @@ public final class MainActivity extends DiagnosticActivity {
     restoreGallery();
     grid.onCellClick(
         (p, v, pos, id) -> {
+          if (!requireCurrentBurstGrouping()) return;
           if (selecting) {
             root.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK);
             toggleSelection(pos);
@@ -467,6 +470,7 @@ public final class MainActivity extends DiagnosticActivity {
             feedback(StatusView.Symbol.PAUSED,"動画はタップして再生できます",null,"");
             return true;
           }
+          if (!requireCurrentBurstGrouping()) return true;
           root.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
           if (!selecting) {
             selecting = true;
@@ -847,7 +851,18 @@ public final class MainActivity extends DiagnosticActivity {
         burstMembers!=null,rankFilter,rankingStore,this::rankingFor);
   }
 
-  private void beginSelection(){if(photos.isEmpty())return;selecting=true;bestOnly=true;selectedPhotos.clear();gallery();}
+  private void beginSelection(){if(photos.isEmpty() || !requireCurrentBurstGrouping())return;selecting=true;bestOnly=true;selectedPhotos.clear();gallery();}
+
+  private int savedBurstGapMillis() {
+    return BurstGapSettings.readMillis(getSharedPreferences("settings", MODE_PRIVATE));
+  }
+
+  private boolean requireCurrentBurstGrouping() {
+    if (indexedBurstGapMillis == savedBurstGapMillis()) return true;
+    listStatus.begin("連写のまとめ方を更新しています");
+    refreshIndex(false);
+    return false;
+  }
   private void tagSelectedPhotos(){
     LinkedHashMap<String,PhotoRepository.Photo> chosen=new LinkedHashMap<>();
     for(PhotoRepository.Photo photo:photos)if(selectedPhotos.contains(photo.uri.toString())&&!photo.isVideo())chosen.put(photo.uri.toString(),photo);
@@ -1189,8 +1204,13 @@ public final class MainActivity extends DiagnosticActivity {
                 case 2:
                   var settings = getSharedPreferences("settings", MODE_PRIVATE);
                   BurstGapDialog.show(this, BurstGapSettings.readMillis(settings), millis -> {
+                    boolean changed = millis != BurstGapSettings.readMillis(settings);
                     if (!BurstGapSettings.saveMillis(settings, millis)) return false;
-                    burstMembers = null;
+                    if (changed && pendingRestore != null) pendingRestore.remove("burst");
+                    if (burstMembers != null) {
+                      burstMembers = null;
+                      gallery();
+                    }
                     refreshIndex(true);
                     return true;
                   });
@@ -1386,10 +1406,11 @@ public final class MainActivity extends DiagnosticActivity {
                   rankCache.clear();
                   photos = snapshot.photos;
                   bundles = snapshot.bundles;
+                  indexedBurstGapMillis = snapshot.burstGapMillis;
                   if (updateVersion == indexUpdateVersion) pendingIndexUpdate = false;
                   DiagnosticLog.event("screen.index_applied", 0, "count", photos.size());
                   burstMembers = null;
-                  if (pendingRestore != null) {
+                  if (pendingRestore != null && (photos.isEmpty() || indexedBurstGapMillis == savedBurstGapMillis())) {
                     Bundle restored = pendingRestore;
                     pendingRestore = null;
                     selecting = restored.getBoolean("selecting");

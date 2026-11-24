@@ -13,6 +13,8 @@ final class GalleryIndex extends SQLiteOpenHelper {
   static final java.util.concurrent.ExecutorService WORKER =
       new DiagnosticExecutor("GalleryIndex.worker", 1);
   private static final String COLS = "uri,name,folder,size,modified,taken,added,created,archive_key,tag_source,sort_time";
+  private static final String BURST_GAP_PREFIX = ":burst-gap-ms:";
+  private static final int BURST_GAP_SIGNATURE_LENGTH = BURST_GAP_PREFIX.length() + 10 + 1;
 
   GalleryIndex(Context c) {
     super(c, "gallery-index.db", null, 2);
@@ -58,6 +60,7 @@ final class GalleryIndex extends SQLiteOpenHelper {
   static final class Snapshot {
     final List<PhotoRepository.Photo> photos = new ArrayList<>();
     final List<List<Integer>> bundles = new ArrayList<>();
+    int burstGapMillis = -1;
   }
 
   private static PhotoRepository.Photo photo(Cursor c, int o) {
@@ -99,24 +102,40 @@ final class GalleryIndex extends SQLiteOpenHelper {
       args.add(camera);
     }
     Map<Integer, List<Integer>> groups = new LinkedHashMap<>();
-    try (Cursor c =
-        getReadableDatabase()
-            .query(
-                "photos",
-                (COLS + ",bundle").split(","),
-                where.isEmpty() ? null : String.join(" AND ", where),
-                args.toArray(new String[0]),
-                null,
-                null,
-                "ordinal")) {
+    // Read the grouping marker from the same statement as the photo memberships.
+    String query = "SELECT " + COLS + ",bundle,(SELECT substr(signature,1," + BURST_GAP_SIGNATURE_LENGTH
+        + ") FROM state WHERE id=1) FROM photos"
+        + (where.isEmpty() ? "" : " WHERE " + String.join(" AND ", where)) + " ORDER BY ordinal";
+    try (Cursor c = getReadableDatabase().rawQuery(query, args.toArray(new String[0]))) {
+      String firstSignature = null;
       while (c.moveToNext()) {
         int i = result.photos.size();
+        String marker = c.getString(12);
+        if (i == 0) {
+          firstSignature = marker;
+          result.burstGapMillis = burstGapFromSignature(marker);
+        } else if (result.burstGapMillis >= 0 && !Objects.equals(firstSignature, marker)
+            && result.burstGapMillis != burstGapFromSignature(marker)) {
+          // A cursor window refilled after publication may span two grouping settings.
+          result.burstGapMillis = -1;
+        }
         result.photos.add(photo(c, 0));
         groups.computeIfAbsent(c.getInt(11), k -> new ArrayList<>()).add(i);
       }
     }
     result.bundles.addAll(groups.values());
     return result;
+  }
+
+  private static int burstGapFromSignature(String signature) {
+    if (signature == null || !signature.startsWith(BURST_GAP_PREFIX)) return -1;
+    int end = signature.indexOf(':', BURST_GAP_PREFIX.length());
+    if (end < 0) return -1;
+    try {
+      return Integer.parseInt(signature.substring(BURST_GAP_PREFIX.length(), end));
+    } catch (NumberFormatException error) {
+      return -1;
+    }
   }
 
   private static String signature(Context c, int burstGapMillis) {
@@ -148,11 +167,10 @@ final class GalleryIndex extends SQLiteOpenHelper {
     try (PhotoMoveStore store = new PhotoMoveStore(c)) {
       moveRevision = store.revision();
     }
-    return media + ":move-v1:" + moveRevision
+    return BURST_GAP_PREFIX + burstGapMillis + ":" + media + ":move-v1:" + moveRevision
         + ":capture-order-v1:video-v1:archive-v3:"
         + archiveRevision
         + ":" + e2Revision
-        + ":burst-gap-ms:" + burstGapMillis
         + ":"
         + c.checkSelfPermission(android.Manifest.permission.READ_MEDIA_VIDEO)
         + ":"
