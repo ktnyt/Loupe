@@ -571,11 +571,15 @@ public final class CameraDifferentialService extends Service {
 
     private static void deferUnindexed(CameraDocumentSource.OriginalAccessException failure,
             CameraPhotoPublisher.CommitCheck requireFreshSource, CameraImportMetrics metrics) throws IOException {
-        // A failed cleanup may be attached to the source exception by the staged copy.
-        if (failure.reason != CameraDocumentSource.OriginalAccessException.Reason.INDEX_PENDING
-                || failure.getSuppressed().length != 0) throw failure;
+        if (!isUnindexed(failure)) throw failure;
         requireFreshSource.check();
         metrics.indexPending++;
+    }
+
+    private static boolean isUnindexed(CameraDocumentSource.OriginalAccessException failure) {
+        // A failed cleanup may be attached to the source exception by the staged copy.
+        return failure.reason == CameraDocumentSource.OriginalAccessException.Reason.INDEX_PENDING
+                && failure.getSuppressed().length == 0;
     }
 
     @FunctionalInterface
@@ -661,7 +665,8 @@ public final class CameraDifferentialService extends Service {
             boolean stable = listing.stable && sourceVolume != null;
             var candidates = classifySd(selected, !verify && stable, stopped, runMetrics, importer::sourceSnapshot,
                     requireDeferralAllowed, this::notifyProgress);
-            importSdCandidates(candidates, stopped, runMetrics, entry -> {
+            var indexRecovery = new SdIndexRecovery(this, tree, sourceVolume);
+            SdImport importOriginal = entry -> {
                 boolean stableReceipt = stable && SdSavedPhotoRevision.eligibleSource(entry.file);
                 CameraPhotoPublisher.CommitCheck check = () -> {
                     requireFreshSource.check();
@@ -677,6 +682,15 @@ public final class CameraDifferentialService extends Service {
                         CameraDocumentSource.requireCurrentReceiptDocument(getContentResolver(), entry, sourceVolume, stopped);
                     requireFreshSource.check();
                 });
+            };
+            importSdCandidates(candidates, stopped, runMetrics, entry -> {
+                try {
+                    return importOriginal.importEntry(entry);
+                } catch (CameraDocumentSource.OriginalAccessException failure) {
+                    if (!isUnindexed(failure) || !indexRecovery.recover(entry, stopped, requireDeferralAllowed))
+                        throw failure;
+                    return importOriginal.importEntry(entry);
+                }
             }, requireDeferralAllowed, this::notifyProgress);
             CameraDocumentSource.requireOriginalPermission(this);
             // Every item has already passed its last source check. A later grant change

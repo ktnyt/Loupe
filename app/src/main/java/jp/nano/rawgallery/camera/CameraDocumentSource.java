@@ -238,6 +238,10 @@ public final class CameraDocumentSource {
         return boundedMetadata(cancelled, LISTING_TIMEOUT_MS, query);
     }
 
+    static <T> T boundedFileMetadata(BooleanSupplier cancelled, MetadataQuery<T> query) throws IOException {
+        return boundedMetadata(cancelled, METADATA_TIMEOUT_MS, query);
+    }
+
     private static <T> T boundedMetadata(BooleanSupplier cancelled, long timeoutMs, MetadataQuery<T> query)
             throws IOException {
         CameraPhotoPublisher.check(cancelled);
@@ -451,16 +455,30 @@ public final class CameraDocumentSource {
 
     static void requireCurrentReceiptDocument(ContentResolver resolver, Entry entry, String sourceVolume,
             BooleanSupplier cancelled) throws IOException {
+        requireCurrentDocument(resolver, entry, sourceVolume, cancelled, false);
+    }
+
+    static void requireCurrentScanDocument(ContentResolver resolver, Entry entry, String sourceVolume,
+            BooleanSupplier cancelled) throws IOException {
+        requireCurrentDocument(resolver, entry, sourceVolume, cancelled, true);
+    }
+
+    private static void requireCurrentDocument(ContentResolver resolver, Entry entry, String sourceVolume,
+            BooleanSupplier cancelled, boolean requireFileType) throws IOException {
         String documentId = DocumentsContract.getDocumentId(entry.uri);
         int split = documentId.indexOf(':');
         if (!"com.android.externalstorage.documents".equals(entry.uri.getAuthority()) || split <= 0
                 || !sourceVolume.equalsIgnoreCase(documentId.substring(0, split))
                 || !entry.file.relativePath.equals(documentId.substring(split + 1)))
             throw new ListingException(ListingException.Reason.CHANGED);
-        boundedMetadata(cancelled, METADATA_TIMEOUT_MS, signal -> {
+        boundedFileMetadata(cancelled, signal -> {
             String[] fields = {DocumentsContract.Document.COLUMN_DOCUMENT_ID,
                     DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_SIZE,
                     DocumentsContract.Document.COLUMN_LAST_MODIFIED};
+            if (requireFileType) {
+                fields = Arrays.copyOf(fields, fields.length + 1);
+                fields[4] = DocumentsContract.Document.COLUMN_MIME_TYPE;
+            }
             try (Cursor row = resolver.query(entry.uri, fields, null, null, null, signal)) {
                 requireCompleteListing(row);
                 if (!singleCompleteRow(row)) throw new ListingException(ListingException.Reason.CHANGED);
@@ -473,6 +491,11 @@ public final class CameraDocumentSource {
                         || row.getType(time) != Cursor.FIELD_TYPE_INTEGER
                         || !entry.file.sourceStamp.equals(Long.toString(row.getLong(time))))
                     throw new ListingException(ListingException.Reason.CHANGED);
+                if (requireFileType) {
+                    String mime = row.getString(row.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE));
+                    if (mime == null || mime.isEmpty() || DocumentsContract.Document.MIME_TYPE_DIR.equals(mime))
+                        throw new ListingException(ListingException.Reason.CHANGED);
+                }
                 requireCompleteListing(row);
             } catch (SecurityException denied) {
                 throw new ListingException(ListingException.Reason.NO_GRANT);
