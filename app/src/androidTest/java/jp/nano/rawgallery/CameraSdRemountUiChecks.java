@@ -291,7 +291,9 @@ final class CameraSdRemountUiChecks {
                         "manual entry rotation retains exactly one reconnect");
                 View outcome = screenView(afterRotation, "sd-remount-result");
                 require(text(outcome).equals("リーダーを再接続しています…"), "automatic reconnect shows progress");
-                reveal(outcome);
+                require(fullyVisible(outcome), "automatic reconnect progress is visible without scrolling");
+                require(screenView(afterRotation, "sd-import-checking").getVisibility() == View.GONE,
+                        "rotation does not display a second progress indicator while source discovery is deferred");
             });
             capture(test, "auto-reader-progress");
             test.runOnMainSync(() -> {
@@ -337,11 +339,23 @@ final class CameraSdRemountUiChecks {
                 test.runOnMainSync(() -> {
                     fake.complete(outcome);
                     requireNoQuickDiscovery(unsuccessful, pickers, afterSuccess);
-                    require(screenView(unsuccessful, "sd-remount-result").getVisibility() == View.VISIBLE,
-                            "failed reconnect gives feedback for " + outcome);
                 });
+                await(test, () -> fullyVisible(screenView(unsuccessful, "sd-remount-result")),
+                        "failed reconnect gives feedback without scrolling for " + outcome);
+                if (outcome == SdCardRemount.Result.FAILED) capture(test, "auto-reader-failed");
                 finish(test, screen);
             }
+
+            screen = open(test, quickEntry(test));
+            CameraImportActivity notificationReturn = screen;
+            test.runOnMainSync(() -> {
+                notificationReturn.onNewIntent(CameraImportActivity.showProgressIntent(context));
+                fake.complete(SdCardRemount.Result.RECONNECTED);
+                requireNoQuickDiscovery(notificationReturn, pickers, afterSuccess);
+            });
+            SystemClock.sleep(500);
+            test.runOnMainSync(() -> requireNoQuickDiscovery(notificationReturn, pickers, afterSuccess));
+            finish(test, screen);
 
             screen = open(test, quickEntry(test));
             CameraImportActivity changed = screen;
@@ -545,6 +559,11 @@ final class CameraSdRemountUiChecks {
     private static MaterialSwitch option() { return (MaterialSwitch) settingsView("sd-remount-switch"); }
     private static String text(View view) { return ((TextView) view).getText().toString(); }
     private static View screenView(Activity screen, String tag) { return screen.getWindow().getDecorView().findViewWithTag(tag); }
+
+    private static boolean fullyVisible(View view) {
+        Rect bounds = new Rect();
+        return view.isShown() && view.getGlobalVisibleRect(bounds) && bounds.height() == view.getHeight();
+    }
 
     private static View settingsView(String tag) {
         for (View window : WindowInspector.getGlobalWindowViews()) {

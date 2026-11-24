@@ -291,6 +291,12 @@ public final class CameraImportActivity extends AppCompatActivity {
         result.setTag("camera-import-stage");
         result.setTextColor(GalleryUi.TEXT);
         result.setTextSize(16);
+        sdRemountResult = status(importing);
+        sdRemountResult.setTag("sd-remount-result");
+        sdRemountResult.setTextColor(GalleryUi.TEXT);
+        sdRemountResult.setTextSize(16);
+        sdRemountResult.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        sdRemountResult.setVisibility(View.GONE);
         progressDetail = text("", 14, GalleryUi.MUTED);
         progressDetail.setTag("camera-import-counts");
         importing.addView(progressDetail);
@@ -400,11 +406,8 @@ public final class CameraImportActivity extends AppCompatActivity {
         sd.addView(header);
         sdStatus = status(sd);
         sdStatus.setTag("sd-import-status");
-        sdRemountResult = status(sd);
-        sdRemountResult.setTag("sd-remount-result");
-        sdRemountResult.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
-        sdRemountResult.setVisibility(View.GONE);
         sdChecking = new LinearProgressIndicator(this);
+        sdChecking.setTag("sd-import-checking");
         sdChecking.setIndeterminate(true);
         sdChecking.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         sdChecking.setVisibility(View.GONE);
@@ -626,6 +629,7 @@ public final class CameraImportActivity extends AppCompatActivity {
     }
 
     private void showSdRemountProgress() {
+        sdChecking.setVisibility(View.GONE);
         showSdRemountResult(sdRemountState.reconnecting ? "リーダーを再接続しています…" : "SDカードを再マウントしています…");
     }
 
@@ -787,9 +791,10 @@ public final class CameraImportActivity extends AppCompatActivity {
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        if (intent.getAction() != null) {
+        if (intent.getAction() != null || intent.hasExtra(ATTACHED_SD_TARGET)) {
             freshManualEntry = false;
             discoverAfterRemount = false;
+            sdRemountState.quickReconnect = null;
         }
     }
 
@@ -1114,23 +1119,29 @@ public final class CameraImportActivity extends AppCompatActivity {
                       granted ? (manualOnly ? " · 手動取り込み" : " · 接続済み") : " · USBの使用許可が必要です"));
         ImportProgressPresentation presentation = ImportProgressPresentation.current();
         setText(result, !active && connectionFailure != null ? connectionFailure : presentation.primary);
+        boolean showRemountProgress = !active && sdRemountState.running;
+        result.setVisibility(showRemountProgress ? View.GONE : View.VISIBLE);
         setText(progressDetail, presentation.secondary);
-        progressDetail.setVisibility(presentation.secondary.isEmpty() ? View.GONE : View.VISIBLE);
-        progress.setVisibility(active ? View.VISIBLE : View.GONE);
+        progressDetail.setVisibility(showRemountProgress || presentation.secondary.isEmpty() ? View.GONE : View.VISIBLE);
+        progress.setVisibility(active || showRemountProgress ? View.VISIBLE : View.GONE);
         if (active) {
+            progress.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_AUTO);
             progress.setContentDescription(presentation.accessibility());
             progress.setIndeterminate(presentation.total <= 0);
             if (presentation.total > 0) {
                 progress.setMax(presentation.total);
                 progress.setProgress(presentation.done);
             }
+        } else if (showRemountProgress) {
+            progress.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            progress.setIndeterminate(true);
         }
         setText(run, device != null && !granted ? "USBの使用を許可する"
                 : settings.getBoolean("configured", false) ? "今すぐ取り込む" : "取り込みの設定をする");
         boolean remountBusy = remountBusy();
         run.setEnabled(device != null && !active && !starting && permission == null && !migrating
                 && submittedSd == null && !remountBusy);
-        run.setVisibility(active || mountedRoute ? View.GONE : View.VISIBLE);
+        run.setVisibility(active || mountedRoute || showRemountProgress ? View.GONE : View.VISIBLE);
         if (notifyButton != null) notifyButton.setVisibility(
                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
                 ? View.VISIBLE : View.GONE);
