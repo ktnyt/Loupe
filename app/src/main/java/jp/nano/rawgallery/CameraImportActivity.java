@@ -1597,7 +1597,7 @@ public final class CameraImportActivity extends AppCompatActivity {
             }
             String saved = SdManualFormats.saved(this, request.tree(), request.destination());
             SdStart selected = saved == null ? request : request.withKinds(saved, false);
-            if (saved != null && mode == SdStartMode.MANUAL) requestSdStart(selected);
+            if (saved != null && mode == SdStartMode.MANUAL && !request.picked()) requestSdStart(selected);
             else if (saved == null || mode != SdStartMode.ATTACH || request.picked())
                 confirmSdKinds(selected, location.summary());
             // A remembered USB attachment opens the screen. The user starts from its SD button.
@@ -1738,7 +1738,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         raw.setChecked(checked[1]);
         content.addView(raw);
         var dialog = new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
-                .setTitle(request.target() == null ? "SDカードから取り込む" : "別のSDカードへ取り込む").setView(content)
+                .setTitle(request.target() == null ? "SDカードから取り込む" : "SDカード間の取り込み").setView(content)
                 .setNegativeButton("キャンセル", (ignored, which) -> refreshSdSource())
                 .setPositiveButton("取り込む", null).create();
         dialog.setOnShowListener(unused -> {

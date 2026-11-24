@@ -34,7 +34,7 @@ final class CameraDualSlotUiChecks {
   private static final List<String> ISOLATED_PACKAGES = List.of("jp.nano.rawgallery.sd162", "jp.nano.rawgallery.sd166");
   private static final String SOURCE_ID = "166A-0001";
   private static final String TARGET_ID = "166B-0002";
-  private static final String TITLE = "別のSDカードへ取り込む";
+  private static final String TITLE = "SDカード間の取り込み";
   private static final String WARNING = "この方法では動画を取り込めません。";
   private static final String CONFIRM = "取り込む";
   private static final String CANCEL = "キャンセル";
@@ -147,10 +147,11 @@ final class CameraDualSlotUiChecks {
       SdManualFormats.remember(screen, first.tree(), first.destination(), first.kinds());
 
       var repeat = pickedRequest(screen, TREE, destination);
-      TagDetailChecks.ui(test, () -> screen.confirmSdSource(repeat, false));
-      var second = awaitSubmission(test, submitted);
-      require(!second.rememberFormats() && "RAW".equals(second.kinds()), "Repeat uses saved RAW without another review");
-      awaitWindow(automation, window -> hasText(window, TITLE) == null && hasText(window, "取り込み") != null);
+      review = showReview(test, automation, screen, repeat, CameraImportActivity.SdStartMode.MANUAL);
+      require(!hasText(review, "JPEG").isChecked() && hasText(review, "RAW").isChecked(),
+          "A picker can change source registration and asks even with a saved format");
+      dismissReview(test, automation);
+      require(submitted.get() == null, "A remembered format does not approve a new registration");
 
       showReview(test, automation, screen, repeat, CameraImportActivity.SdStartMode.ATTACH);
       dismissReview(test, automation);
