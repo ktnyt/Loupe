@@ -62,7 +62,14 @@ public final class MountedCameraCard {
                 boolean detached = !Intent.ACTION_MEDIA_MOUNTED.equals(action);
                 if (detached) detachGeneration.incrementAndGet();
                 if (Intent.ACTION_MEDIA_REMOVED.equals(action) || Intent.ACTION_MEDIA_BAD_REMOVAL.equals(action)) {
-                    SdRemountMountNotice.physicalDeparture(notifiedVolumeUuid(event));
+                    String uuid = notifiedVolumeUuid(event);
+                    SdRemountMountNotice.physicalDeparture(uuid);
+                    if (uuid != null && confirmsMountState(app, uuid, false)) {
+                        SdRemountMountNotice.reconnectPhysicalDeparture(uuid);
+                    }
+                } else if (!detached) {
+                    String uuid = notifiedVolumeUuid(event);
+                    if (uuid != null && confirmsMountState(app, uuid, true)) SdRemountMountNotice.reconnectMountObserved(uuid);
                 }
                 for (Consumer<Boolean> listener : mountListeners) listener.accept(detached);
             }
@@ -199,6 +206,20 @@ public final class MountedCameraCard {
 
     private static boolean readable(String state) {
         return Environment.MEDIA_MOUNTED.equals(state) || Environment.MEDIA_MOUNTED_READ_ONLY.equals(state);
+    }
+
+    private static boolean confirmsMountState(Context context, String uuid, boolean mounted) {
+        try {
+            String normalized = uuid.replace("-", "");
+            for (StorageVolume volume : context.getSystemService(StorageManager.class).getStorageVolumes()) {
+                String current = volume.getUuid();
+                if (current != null && normalized.equalsIgnoreCase(current.replace("-", ""))
+                        && readable(volume.getState())) return mounted;
+            }
+            return !mounted;
+        } catch (RuntimeException unavailable) {
+            return false;
+        }
     }
 
     static void requireMountedSource(Context context, Uri tree, String expected) throws Unavailable {

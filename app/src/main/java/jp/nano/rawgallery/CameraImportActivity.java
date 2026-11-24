@@ -85,7 +85,8 @@ public final class CameraImportActivity extends AppCompatActivity {
     private androidx.appcompat.app.AlertDialog sdSettingsDialog;
     private MaterialSwitch sdRemount;
     private TextView sdRemountInfo, sdRemountResult;
-    private Button sdRemountPermission;
+    private Button sdRemountPermission, sdReconnect;
+    private androidx.appcompat.app.AlertDialog sdReconnectConfirmation;
     private SdRemountState sdRemountState;
     private boolean freshManualEntry, sdRefreshAfterRemount, discoverAfterRemount;
     private boolean sdRemountPermissionPending, sdRemountPermissionDenied;
@@ -141,11 +142,14 @@ public final class CameraImportActivity extends AppCompatActivity {
         SdCardRemount.Status status();
         void requestPermission(Consumer<Boolean> callback);
         boolean start(Consumer<SdCardRemount.Result> callback);
+        SdCardRemount.ReconnectTarget reconnectTarget();
+        boolean reconnect(SdCardRemount.ReconnectTarget target, Consumer<SdCardRemount.Result> callback);
         boolean isRunning();
     }
 
     public static final class SdRemountState extends ViewModel {
         private boolean running;
+        private boolean reconnecting;
         private final MutableLiveData<SdCardRemount.Result> completion = new MutableLiveData<>();
 
         private void finish(SdCardRemount.Result outcome) {
@@ -161,6 +165,12 @@ public final class CameraImportActivity extends AppCompatActivity {
         }
         @Override public boolean start(Consumer<SdCardRemount.Result> callback) {
             return SdCardRemount.start(getApplicationContext(), callback);
+        }
+        @Override public SdCardRemount.ReconnectTarget reconnectTarget() {
+            return SdCardRemount.reconnectTarget(CameraImportActivity.this);
+        }
+        @Override public boolean reconnect(SdCardRemount.ReconnectTarget target, Consumer<SdCardRemount.Result> callback) {
+            return SdCardRemount.reconnect(getApplicationContext(), target, callback);
         }
         @Override public boolean isRunning() { return SdCardRemount.isRunning(); }
     };
@@ -339,7 +349,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         var migrationButtonLayout = (LinearLayout.LayoutParams) migrate.getLayoutParams();
         migrationButtonLayout.topMargin = dp(8);
         migrate.setLayoutParams(migrationButtonLayout);
-        if (sdRemountState.running) showSdRemountResult("SDカードを再マウントしています…");
+        if (sdRemountState.running) showSdRemountProgress();
         sdRemountState.completion.observe(this, this::showSdRemountCompletion);
         renderSettingsVisibility();
         renderStatus();
@@ -362,6 +372,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         sdStatus.setTag("sd-import-status");
         sdRemountResult = status(sd);
         sdRemountResult.setTag("sd-remount-result");
+        sdRemountResult.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         sdRemountResult.setVisibility(View.GONE);
         sdChecking = new LinearProgressIndicator(this);
         sdChecking.setIndeterminate(true);
@@ -382,6 +393,28 @@ public final class CameraImportActivity extends AppCompatActivity {
             sdSettingsDialog.dismiss();
             pickSdTree();
         });
+        sdReconnect = button(options, "リーダーを再接続", this::confirmSdReconnect);
+        sdReconnect.setTag("sd-reader-reconnect");
+        sdReconnect.setSingleLine(false);
+        sdReconnect.setMinHeight(dp(48));
+        MaterialUi.outlined(sdReconnect);
+        sdRemount = new MaterialSwitch(this);
+        sdRemount.setText("取り込み画面を開くと取り込み元のSDを再マウント");
+        sdRemount.setTag("sd-remount-switch");
+        sdRemount.setSingleLine(false);
+        sdRemount.setMinHeight(dp(48));
+        sdRemount.setChecked(settings.getBoolean(SD_REMOUNT_ON_ENTRY, false));
+        sdRemount.setOnCheckedChangeListener((v, checked) -> {
+            settings.edit().putBoolean(SD_REMOUNT_ON_ENTRY, checked).apply();
+            sdRemountPermissionDenied = false;
+            if (checked) requestSdRemountPermission();
+            else renderSdRemountSettings();
+        });
+        options.addView(sdRemount);
+        sdRemountInfo = status(options);
+        sdRemountInfo.setTag("sd-remount-info");
+        sdRemountPermission = button(options, "Shizukuの使用を許可する", this::requestSdRemountPermission);
+        sdRemountPermission.setTag("sd-remount-permission");
         sdVerify = new MaterialSwitch(this);
         sdVerify.setText("内容も確認する");
         sdVerify.setMinHeight(dp(48));
@@ -410,23 +443,6 @@ public final class CameraImportActivity extends AppCompatActivity {
         options.addView(sdAuto);
         options.addView(text("原本をそのまま保存して重複を確認するため、写真すべてと写真の位置情報へのアクセスが必要です。",
                 14, GalleryUi.MUTED));
-        sdRemount = new MaterialSwitch(this);
-        sdRemount.setText("取り込み画面を開くと取り込み元のSDを再マウント");
-        sdRemount.setTag("sd-remount-switch");
-        sdRemount.setSingleLine(false);
-        sdRemount.setMinHeight(dp(48));
-        sdRemount.setChecked(settings.getBoolean(SD_REMOUNT_ON_ENTRY, false));
-        sdRemount.setOnCheckedChangeListener((v, checked) -> {
-            settings.edit().putBoolean(SD_REMOUNT_ON_ENTRY, checked).apply();
-            sdRemountPermissionDenied = false;
-            if (checked) requestSdRemountPermission();
-            else renderSdRemountSettings();
-        });
-        options.addView(sdRemount);
-        sdRemountInfo = status(options);
-        sdRemountInfo.setTag("sd-remount-info");
-        sdRemountPermission = button(options, "Shizukuの使用を許可する", this::requestSdRemountPermission);
-        sdRemountPermission.setTag("sd-remount-permission");
         button(options, "写真のアクセス権限を確認", this::ensureSdPermissions);
         button(options, "アプリの権限設定を開く", () ->
                 startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
@@ -446,20 +462,24 @@ public final class CameraImportActivity extends AppCompatActivity {
     }
 
     private void renderSdRemountSettings() {
-        SdCardRemount.Status status = sdRemount.isChecked() ? sdRemountAccess.status() : null;
-        String info = "ShizukuをADBモードで起動すると使えます。";
+        boolean reader = sdRemountAccess.reconnectTarget() != null;
+        SdCardRemount.Status status = sdRemount.isChecked() || reader ? sdRemountAccess.status() : null;
+        String info = "";
         if (status == SdCardRemount.Status.UNAVAILABLE)
             info = "Shizukuをインストールし、ADBモードで起動してください。";
         else if (status == SdCardRemount.Status.NEEDS_PERMISSION)
             info = sdRemountPermissionDenied ? "使用が許可されませんでした。ShizukuでLoupeの使用を許可してください。"
                     : "Shizukuの使用を許可してください。";
         setText(sdRemountInfo, info);
+        sdRemountInfo.setVisibility(info.isEmpty() ? View.GONE : View.VISIBLE);
         sdRemountPermission.setVisibility(status == SdCardRemount.Status.NEEDS_PERMISSION ? View.VISIBLE : View.GONE);
         sdRemountPermission.setEnabled(!sdRemountPermissionPending);
+        sdReconnect.setVisibility(reader ? View.VISIBLE : View.GONE);
+        sdReconnect.setEnabled(status == SdCardRemount.Status.READY && canStartSourceAction());
     }
 
     private void requestSdRemountPermission() {
-        if (!sdRemountPermissionPending && sdRemount.isChecked()
+        if (!sdRemountPermissionPending && (sdRemount.isChecked() || sdRemountAccess.reconnectTarget() != null)
                 && sdRemountAccess.status() == SdCardRemount.Status.NEEDS_PERMISSION) {
             sdRemountPermissionPending = true;
             sdRemountPermissionDenied = false;
@@ -473,6 +493,37 @@ public final class CameraImportActivity extends AppCompatActivity {
         renderSdRemountSettings();
     }
 
+    private void confirmSdReconnect() {
+        SdCardRemount.ReconnectTarget target = sdRemountAccess.reconnectTarget();
+        if (!canStartSourceAction() || sdReconnectConfirmation != null || target == null
+                || sdRemountAccess.status() != SdCardRemount.Status.READY) {
+            renderSdRemountSettings();
+            return;
+        }
+        sdReconnectConfirmation = new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                .setTitle("リーダーを再接続しますか？")
+                .setMessage("SDカードとmicroSDが一時的に切断されます。ほかのアプリも含め、カードの読み書きが終わってから再接続してください。")
+                .setNegativeButton("キャンセル", null)
+                .setPositiveButton("再接続", (dialog, which) -> startSdReconnect(target))
+                .create();
+        sdReconnectConfirmation.setOnDismissListener(dialog -> sdReconnectConfirmation = null);
+        sdReconnectConfirmation.show();
+    }
+
+    private void startSdReconnect(SdCardRemount.ReconnectTarget target) {
+        if (!canStartSourceAction()) return;
+        sdSettingsDialog.dismiss();
+        if (!target.equals(sdRemountAccess.reconnectTarget())) {
+            showSdRemountResult("リーダーかカードの接続が変わりました。接続を確認してからやり直してください。");
+            return;
+        }
+        if (!sdRemountAccess.reconnect(target, sdRemountState::finish)) {
+            showSdRemountResult("再接続を開始できませんでした。Shizukuとリーダーの接続を確認してください。");
+            return;
+        }
+        beginSdRemount(true);
+    }
+
     private boolean remountBusy() {
         return sdRemountState.running || sdRemountAccess.isRunning();
     }
@@ -482,19 +533,33 @@ public final class CameraImportActivity extends AppCompatActivity {
                 || sdPicker != null || pendingSdStart != null || sdConfirmation != null || sdSettingsDialog.isShowing()
                 || sdRemountAccess.status() != SdCardRemount.Status.READY) return;
         if (!sdRemountAccess.start(sdRemountState::finish)) return;
+        beginSdRemount(false);
+    }
+
+    private void beginSdRemount(boolean reconnecting) {
+        sdRemountState.reconnecting = reconnecting;
         sdRemountState.running = true;
         cancelSdStatusLoad();
-        showSdRemountResult("SDカードを再マウントしています…");
+        showSdRemountProgress();
         renderStatus();
     }
 
+    private void showSdRemountProgress() {
+        showSdRemountResult(sdRemountState.reconnecting ? "リーダーを再接続しています…" : "SDカードを再マウントしています…");
+    }
+
     private void showSdRemountCompletion(SdCardRemount.Result outcome) {
-        if (isFinishing() || isDestroyed()) return;
+        if (isFinishing() || isDestroyed() || sdRemountState.running) return;
+        boolean reconnecting = sdRemountState.reconnecting;
         showSdRemountResult(switch (outcome) {
             case MOUNTED -> "SDカードを再マウントしました。";
-            case SKIPPED -> "";
-            case UNAVAILABLE -> "Shizukuを起動してから、取り込み画面を開き直してください。";
-            case FAILED -> "SDカードを再マウントできませんでした。接続を確認してください。";
+            case RECONNECTED -> "リーダーを再接続しました。";
+            case SOURCE_MISSING -> "保存先は再接続しました。取り込み元のSDカードを認識できませんでした。認識されたら手動で取り込んでください。";
+            case SKIPPED -> reconnecting ? "リーダーや保存先の接続を確認してください。" : "";
+            case UNAVAILABLE -> reconnecting ? "Shizukuを起動してから、再接続を試してください。"
+                    : "Shizukuを起動してから、取り込み画面を開き直してください。";
+            case FAILED -> reconnecting ? "リーダーを再接続できませんでした。SDカードと保存先の接続を確認してください。"
+                    : "SDカードを再マウントできませんでした。接続を確認してください。";
         });
         sdRefreshAfterRemount = true;
         renderStatus();
@@ -539,6 +604,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         if (removeMountObserver != null) removeMountObserver.run();
         abandonSdSubmission();
         cancelSdStatusLoad();
+        if (sdReconnectConfirmation != null) sdReconnectConfirmation.dismiss();
         sdSettingsDialog.dismiss();
         if (permission != null) {
             try { permission.close(); } catch (IOException ignored) {}

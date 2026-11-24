@@ -82,6 +82,8 @@ final class CameraSdRemountUiChecks {
                         "enable with unavailable Shizuku shows setup instructions");
                 require(settingsView("sd-remount-permission").getVisibility() == View.GONE,
                         "no permission action while Shizuku is unavailable");
+                require(settingsView("sd-reader-reconnect").getVisibility() == View.GONE,
+                        "no reader reconnect action for an unsupported configuration");
             });
             capture(test, "unavailable");
             require(fake.requests == 0 && fake.starts == 0, "turning on with unavailable Shizuku is quiet");
@@ -178,9 +180,84 @@ final class CameraSdRemountUiChecks {
             require(fake.starts == 2 && fake.requests == 2 && pickers.get() == 1
                     && !progress.getActive() && priorCompletion == progress.getCompletion(),
                     "remount leaves actual import progress and the picker untouched");
+            finish(test, screen);
+            prefs.edit().putBoolean(CameraImportActivity.SD_REMOUNT_ON_ENTRY, false).commit();
+            fake.reader = true;
+            fake.status = SdCardRemount.Status.NEEDS_PERMISSION;
+            screen = open(test, entry(test));
+            openSettings(test, screen);
+            test.runOnMainSync(() -> {
+                View reconnect = settingsView("sd-reader-reconnect");
+                require(reconnect.isShown() && !reconnect.isEnabled(), "reader reconnect needs Shizuku permission");
+                require(!option().isChecked(), "manual reconnect does not need the automatic remount preference");
+                reveal(settingsView("sd-remount-permission"));
+                settingsView("sd-remount-permission").performClick();
+                fake.permission(true);
+                require(reconnect.isEnabled(), "grant enables manual reconnect");
+                reveal(reconnect);
+            });
+            capture(test, "reader-reconnect-settings");
+            test.runOnMainSync(() -> settingsView("sd-reader-reconnect").performClick());
+            await(test, () -> hasDialog("リーダーを再接続しますか？"), "reconnect confirmation appears");
+            capture(test, "reader-reconnect-confirmation");
+            test.runOnMainSync(() -> {
+                require(fake.reconnects == 0, "opening confirmation does not reconnect");
+                clickDialogButton("キャンセル");
+            });
+            await(test, () -> !hasDialog("リーダーを再接続しますか？"), "cancel closes only confirmation");
+            test.runOnMainSync(() -> settingsView("sd-reader-reconnect").performClick());
+            await(test, () -> hasDialog("リーダーを再接続しますか？"), "confirmation can be reopened");
+            CameraImportActivity beforeReconnect = screen;
+            test.runOnMainSync(() -> {
+                fake.detachGeneration++;
+                clickDialogButton("再接続");
+            });
+            await(test, () -> text(screenView(beforeReconnect, "sd-remount-result")).contains("接続が変わりました"),
+                    "confirmation from a previous connection is rejected");
+            require(fake.reconnects == 0, "stale confirmation never dispatches");
+            openSettings(test, screen);
+            test.runOnMainSync(() -> settingsView("sd-reader-reconnect").performClick());
+            await(test, () -> hasDialog("リーダーを再接続しますか？"), "changed reader can be explicitly confirmed");
+            test.runOnMainSync(() -> clickDialogButton("再接続"));
+            await(test, () -> fake.reconnects == 1, "confirmed operation starts exactly once");
+            screen = recreate(test, screen);
+            CameraImportActivity reconnecting = screen;
+            test.runOnMainSync(() -> {
+                require(fake.reconnects == 1 && !screenView(reconnecting, "sd-import-start").isEnabled(),
+                        "recreation preserves the pending reconnect and blocks import");
+                View outcome = screenView(reconnecting, "sd-remount-result");
+                require(text(outcome).equals("リーダーを再接続しています…"), "reconnect has distinct progress");
+                require(outcome.getAccessibilityLiveRegion() == View.ACCESSIBILITY_LIVE_REGION_POLITE,
+                        "status changes are announced");
+                reveal(outcome);
+            });
+            capture(test, "reader-reconnect-progress");
+            test.runOnMainSync(() -> {
+                fake.complete(SdCardRemount.Result.SOURCE_MISSING);
+                require(text(screenView(reconnecting, "sd-remount-result")).contains("取り込み元のSDカードを認識できませんでした"),
+                        "reconnect with missing source explains remaining problem");
+                require(screenView(reconnecting, "sd-import-start").isEnabled() && !progress.getActive(),
+                        "reconnect unblocks import without starting a transfer");
+            });
+            capture(test, "reader-reconnect-source-missing");
+            openSettings(test, screen);
+            test.runOnMainSync(() -> settingsView("sd-reader-reconnect").performClick());
+            await(test, () -> hasDialog("リーダーを再接続しますか？"), "reconnect can be retried after a missing source");
+            test.runOnMainSync(() -> clickDialogButton("再接続"));
+            await(test, () -> fake.reconnects == 2, "retry begins after a new confirmation");
+            test.runOnMainSync(() -> {
+                fake.complete(SdCardRemount.Result.RECONNECTED);
+                View outcome = screenView(reconnecting, "sd-remount-result");
+                require(text(outcome).equals("リーダーを再接続しました。"), "successful reconnect is reported");
+                require(screenView(reconnecting, "sd-import-start").isEnabled() && !progress.getActive(),
+                        "successful reconnect does not start importing");
+                reveal(outcome);
+            });
+            capture(test, "reader-reconnect-restored");
             return "PASS default off, opt-in with Shizuku unavailable, explicit permission and denial retry, "
                     + "manual entry once, picker return, progress/USB attach exclusion, failure and SD recheck after recreation, "
-                    + "and deferred long-press discovery across recreation and reservation restoration with no storage command.";
+                    + "deferred long-press discovery, and manual reader reconnect permission, confirmation, cancel, changed target, "
+                    + "progress across recreation and missing-source outcome with no storage command.";
         } finally {
             if (screen != null) finish(test, screen);
             test.removeMonitor(pickerMonitor);
@@ -194,12 +271,16 @@ final class CameraSdRemountUiChecks {
 
     private static final class RemountFixture implements CameraImportActivity.SdRemountAccess {
         volatile SdCardRemount.Status status = SdCardRemount.Status.UNAVAILABLE;
-        volatile int requests, starts;
-        boolean restoredReservation;
+        volatile int requests, starts, reconnects;
+        boolean restoredReservation, reader;
+        long detachGeneration;
         Consumer<Boolean> permission;
         Consumer<SdCardRemount.Result> completion;
 
         @Override public SdCardRemount.Status status() { return status; }
+        @Override public SdCardRemount.ReconnectTarget reconnectTarget() {
+            return reader ? new SdCardRemount.ReconnectTarget("/dev/bus/usb/002/002", "3066-3064", detachGeneration) : null;
+        }
         @Override public boolean isRunning() { return completion != null || restoredReservation; }
 
         @Override public void requestPermission(Consumer<Boolean> callback) {
@@ -212,6 +293,14 @@ final class CameraSdRemountUiChecks {
             require(completion == null && status == SdCardRemount.Status.READY, "remount starts only when ready");
             completion = callback;
             starts++;
+            return true;
+        }
+
+        @Override public boolean reconnect(SdCardRemount.ReconnectTarget target, Consumer<SdCardRemount.Result> callback) {
+            require(completion == null && target.equals(reconnectTarget()) && status == SdCardRemount.Status.READY,
+                    "reconnect starts only for the confirmed reader with permission");
+            completion = callback;
+            reconnects++;
             return true;
         }
 
@@ -295,6 +384,16 @@ final class CameraSdRemountUiChecks {
         return false;
     }
 
+    private static void clickDialogButton(String label) {
+        for (View window : WindowInspector.getGlobalWindowViews()) {
+            if (!window.isShown() || findText(window, "リーダーを再接続しますか？") == null) continue;
+            View button = findText(window, label);
+            require(button != null && button.performClick(), "dialog action " + label);
+            return;
+        }
+        throw new AssertionError("missing reconnect confirmation");
+    }
+
     private static void reveal(View view) {
         view.requestRectangleOnScreen(new Rect(0, 0, view.getWidth(), view.getHeight()), true);
     }
@@ -312,7 +411,9 @@ final class CameraSdRemountUiChecks {
 
     private static void capture(Instrumentation test, String name) throws Exception {
         test.waitForIdleSync();
-        Bitmap bitmap = test.getUiAutomation().takeScreenshot();
+        var automation = test.getUiAutomation();
+        automation.waitForIdle(300, 2_500);
+        Bitmap bitmap = automation.takeScreenshot();
         require(bitmap != null, "display screenshot");
         File directory = new File(test.getTargetContext().getCacheDir(), "sd-remount-ui-checks");
         directory.mkdirs();
