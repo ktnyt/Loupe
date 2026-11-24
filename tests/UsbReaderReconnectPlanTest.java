@@ -16,6 +16,7 @@ public final class UsbReaderReconnectPlanTest {
         bothCardsReturnOnTheSameReader();
         onlyExistingVolumesAreEjected();
         aMissingSourceCanBecomeVisible();
+        theReenumeratedSlotCanReportADifferentSource();
         sourceCanBeMissingAfterReenumeration();
         refusesConflictingUsbOrStorageTopology();
         refusesDifferentOrChangedDestination();
@@ -65,6 +66,17 @@ public final class UsbReaderReconnectPlanTest {
         var usb = new Fake();
         usb.sourceDisappearsOnEnable = true;
         assertOutcome(usb, UsbReaderReconnectPlan.Outcome.SOURCE_MISSING);
+        writes(usb, "UNMOUNT " + SD_ID, "UNMOUNT " + MICRO_ID, "data false", "data true");
+    }
+
+    private static void theReenumeratedSlotCanReportADifferentSource() {
+        var usb = new Fake();
+        usb.replaceSourceOnEnable = true;
+        var mounted = new ArrayList<String>();
+        var outcome = UsbReaderReconnectPlan.execute(usb, READER, MICRO_UUID, UsbReaderReconnectPlan.OPERATION_MS, mounted::add);
+        if (outcome != UsbReaderReconnectPlan.Outcome.RECONNECTED || !mounted.equals(List.of("0000dead"))) {
+            throw new AssertionError("expected the replacement source in the verified slot, got " + outcome + ": " + mounted);
+        }
         writes(usb, "UNMOUNT " + SD_ID, "UNMOUNT " + MICRO_ID, "data false", "data true");
     }
 
@@ -244,6 +256,7 @@ public final class UsbReaderReconnectPlanTest {
         boolean alive = true;
         boolean sourceAppears;
         boolean sourceDisappearsOnEnable;
+        boolean replaceSourceOnEnable;
         boolean replaceSourceBeforeDisable;
         boolean disableThrows;
         boolean restoreThrowsOnce;
@@ -383,6 +396,7 @@ public final class UsbReaderReconnectPlanTest {
                 if (sourceDisappearsOnEnable) sd = null;
                 micro = "mounted";
             }
+            if (replaceSourceOnEnable) sourceUuid = "0000-DEAD";
             if (replaceTargetOnEnable) destination = "0000-DEAD";
         }
     }

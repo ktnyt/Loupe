@@ -152,7 +152,7 @@ public final class SdCardRemount {
         Context app = context.getApplicationContext();
         if (RUNNING.get() || CameraImportGate.lock.isLocked() || selection(app) == null || status() != Status.READY
                 || !RUNNING.compareAndSet(false, true)) return false;
-        MAIN.post(() -> new Operation(app, null, callback).bind());
+        MAIN.post(() -> new Operation(app, null, result -> callback.accept(result.outcome())).bind());
         return true;
     }
 
@@ -160,7 +160,7 @@ public final class SdCardRemount {
         return reconnectTarget(context) != null;
     }
 
-    public static boolean reconnect(Context context, ReconnectTarget confirmed, Consumer<Result> callback) {
+    public static boolean reconnect(Context context, ReconnectTarget confirmed, Consumer<ReconnectResult> callback) {
         Context app = context.getApplicationContext();
         if (RUNNING.get() || CameraImportGate.lock.isLocked() || status() != Status.READY
                 || confirmed == null || !confirmed.equals(reconnectTarget(app))
@@ -179,12 +179,12 @@ public final class SdCardRemount {
         final Shizuku.UserServiceArgs args;
         final ReconnectTarget reconnect;
         final Runnable connectionTimeout = () -> finish(Result.UNAVAILABLE);
-        final CompletableFuture<RemoteResult> remoteResult = new CompletableFuture<>();
-        Consumer<Result> completion;
+        final CompletableFuture<ReconnectResult> remoteResult = new CompletableFuture<>();
+        Consumer<ReconnectResult> completion;
         boolean bindingAttempted;
         boolean dispatched;
 
-        Operation(Context app, ReconnectTarget reconnect, Consumer<Result> completion) {
+        Operation(Context app, ReconnectTarget reconnect, Consumer<ReconnectResult> completion) {
             this.app = app;
             this.reconnect = reconnect;
             this.completion = completion;
@@ -210,7 +210,7 @@ public final class SdCardRemount {
             MAIN.removeCallbacks(connectionTimeout);
             dispatched = true;
             new Thread(() -> {
-                Result result = runUnderGate(ISdCardRemountService.Stub.asInterface(service));
+                ReconnectResult result = runUnderGate(ISdCardRemountService.Stub.asInterface(service));
                 MAIN.post(() -> finish(result));
             }, "sd-remount").start();
         }
@@ -220,17 +220,17 @@ public final class SdCardRemount {
             if (!dispatched) MAIN.post(() -> finish(Result.UNAVAILABLE));
         }
 
-        private Result runUnderGate(ISdCardRemountService service) {
-            if (!CameraImportGate.lock.tryLock()) return Result.SKIPPED;
+        private ReconnectResult runUnderGate(ISdCardRemountService service) {
+            if (!CameraImportGate.lock.tryLock()) return withoutSource(Result.SKIPPED);
             boolean reserved = false;
             boolean reconnectNotice = false;
             Result outcome = Result.FAILED;
             String mountedSourceUuid = null;
             try {
-                if (status() != Status.READY) return Result.UNAVAILABLE;
+                if (status() != Status.READY) return withoutSource(Result.UNAVAILABLE);
                 Selection selection = reconnect == null ? selection(app) : null;
                 if (reconnect == null ? selection == null : !Objects.equals(reconnect, reconnectTarget(app))) {
-                    return Result.SKIPPED;
+                    return withoutSource(Result.SKIPPED);
                 }
 
                 ISdCardRemountCallback callback = new ISdCardRemountCallback.Stub() {
@@ -243,7 +243,8 @@ public final class SdCardRemount {
                             case ISdCardRemountCallback.SOURCE_MISSING -> Result.SOURCE_MISSING;
                             default -> Result.FAILED;
                         };
-                        remoteResult.complete(new RemoteResult(result, SdSourceRegistrations.normalizeVolumeUuid(mountedSourceUuid)));
+                        remoteResult.complete(new ReconnectResult(result,
+                                SdSourceRegistrations.normalizeVolumeUuid(mountedSourceUuid), MountedCameraCard.detachGeneration()));
                     }
                 };
                 long window = reconnect == null ? SdCardRemountPlan.OPERATION_MS : UsbReaderReconnectPlan.OPERATION_MS;
@@ -254,22 +255,22 @@ public final class SdCardRemount {
                 reconnectNotice = reconnect != null || SdRemountMountNotice.ANY_SOURCE.equals(noticeSource);
                 reserved = reconnectNotice ? SdRemountMountNotice.beginReconnect(noticeSource, blockedUntil)
                         : SdRemountMountNotice.begin(selection.source(), blockedUntil);
-                if (!reserved) return Result.FAILED;
+                if (!reserved) return withoutSource(Result.FAILED);
                 if (reconnect == null) {
                     service.remount(selection.source(), selection.destination(), deadline, callback);
                 } else {
                     service.reconnect(reconnect.address(), reconnect.destination(), deadline, callback);
                 }
                 long remaining = Math.max(0, blockedUntil - SystemClock.elapsedRealtime());
-                RemoteResult completion = remoteResult.get(remaining, TimeUnit.MILLISECONDS);
-                outcome = completion.result();
+                ReconnectResult completion = remoteResult.get(remaining, TimeUnit.MILLISECONDS);
+                outcome = completion.outcome();
                 mountedSourceUuid = completion.mountedSourceUuid();
-                return outcome;
+                return completion;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                return Result.FAILED;
+                return withoutSource(Result.FAILED);
             } catch (RemoteException | ExecutionException | TimeoutException | RuntimeException e) {
-                return Result.FAILED;
+                return withoutSource(Result.FAILED);
             } finally {
                 if (reserved && reconnectNotice && (outcome == Result.MOUNTED || outcome == Result.RECONNECTED
                         || outcome == Result.SOURCE_MISSING || outcome == Result.SKIPPED)) {
@@ -283,7 +284,11 @@ public final class SdCardRemount {
         }
 
         private void finish(Result result) {
-            Consumer<Result> callback = completion;
+            finish(withoutSource(result));
+        }
+
+        private void finish(ReconnectResult result) {
+            Consumer<ReconnectResult> callback = completion;
             if (callback == null) return;
             completion = null;
             MAIN.removeCallbacks(connectionTimeout);
@@ -305,7 +310,8 @@ public final class SdCardRemount {
     }
 
     private record Selection(String source, String destination) {}
-    private record RemoteResult(Result result, String mountedSourceUuid) {}
+    private static ReconnectResult withoutSource(Result outcome) { return new ReconnectResult(outcome, null, 0); }
+    public record ReconnectResult(Result outcome, String mountedSourceUuid, long detachGeneration) {}
     public record ReconnectTarget(String address, String destination, long detachGeneration) {}
 
     public static ReconnectTarget reconnectTarget(Context context) {

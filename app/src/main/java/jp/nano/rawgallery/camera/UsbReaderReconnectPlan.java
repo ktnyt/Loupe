@@ -238,7 +238,8 @@ final class UsbReaderReconnectPlan {
             Snapshot current = retrySnapshot(storage, deadline);
             if (current != null && current.reenumerated(initial) && initial.target.uuid().equals(current.target.uuid())
                     && current.target.writable()) {
-                if (current.source != null && current.source.mounted() && expectedSource(current, initial)) {
+                // The verified SD slot can report the new card after USB reenumeration clears an old mount.
+                if (current.source != null && current.source.mounted()) {
                     mountedSource.accept(current.source.uuid());
                     return Outcome.RECONNECTED;
                 }
