@@ -113,6 +113,17 @@ final class CameraSdSwapChecks {
             test.waitForIdleSync();
             require(!options.isShowing(), "close returns to the single SD action");
 
+            test.runOnMainSync(() -> screen.renderSdSource(CameraQuickImportSources.SdState.AMBIGUOUS));
+            awaitText(test, sdStatus, CameraQuickImportSources.SdState.AMBIGUOUS.message);
+            reveal(test, sdStatus);
+            capture(test, screen, captures, prefix + "-multiple",
+                    CameraQuickImportSources.SdState.AMBIGUOUS.message, "取り込み元を選ぶ");
+            test.runOnMainSync(start::performClick);
+            long chooseDeadline = SystemClock.uptimeMillis() + 6000;
+            while (pickerCount.get() == 0 && SystemClock.uptimeMillis() < chooseDeadline) SystemClock.sleep(30);
+            require(pickerCount.get() == 1 && started.get() == 0, "ambiguity asks for a specific folder without importing");
+            test.waitForIdleSync();
+
             test.runOnMainSync(() -> screen.renderSdSource(CameraQuickImportSources.SdState.CHECKING));
             awaitText(test, sdStatus, CameraQuickImportSources.SdState.CHECKING.message);
             reveal(test, sdStatus);
@@ -120,8 +131,8 @@ final class CameraSdSwapChecks {
                     "SDカードから取り込む");
             test.runOnMainSync(start::performClick);
             long deadline = SystemClock.uptimeMillis() + 6000;
-            while (pickerCount.get() == 0 && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(30);
-            require(pickerCount.get() == 1, "manual stale registration opens reselectable picker");
+            while (pickerCount.get() < 2 && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(30);
+            require(pickerCount.get() == 2, "manual stale registration opens reselectable picker");
             test.waitForIdleSync();
             require(OLD.toString().equals(preferences.getString("sd_tree_uri", null)), "cancelling reselect preserves the old registration");
             require(started.get() == 0, "reselect did not begin an operation");
@@ -136,6 +147,10 @@ final class CameraSdSwapChecks {
                     "a changed destination invalidates the selected source request");
             require(!CameraImportActivity.matchesSelection(current, "aa16-6003", epoch, PICKED.toString()),
                     "a changed registration invalidates the selected source request");
+            var registered = new CameraImportActivity.SdStart(OLD, null, PhotoStorage.selected(screen),
+                    "JPEG", epoch, false, null);
+            require(CameraImportActivity.matchesSelection(registered, PhotoStorage.selected(screen), epoch, PICKED.toString()),
+                    "an already registered tree does not depend on the most recent picker registration");
             test.runOnMainSync(() -> screen.confirmSdKinds(stale, "取り込み元　選んだSDカード\n保存先　内部ストレージ"));
             var dialog = (androidx.appcompat.app.AlertDialog) field(screen, "sdConfirmation");
             test.runOnMainSync(() -> dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick());
@@ -170,9 +185,10 @@ final class CameraSdSwapChecks {
                     "failed final reachability did not persist a read grant");
 
             var result = (TextView) field(screen, "result");
-            var acknowledged = new CameraImportActivity.SdStart(OLD, null, PhotoStorage.selected(screen),
-                    "JPEG", epoch, false, OLD.toString());
-            startAdmittedFixture(test, screen, acknowledged, sdStatus);
+            test.runOnMainSync(() -> screen.submitSd(registered, false));
+            require(field(screen, "submittedSd") == null && !progress.getActive(),
+                    "a disconnected registered tree cannot reach admission");
+            startAdmittedFixture(test, screen, externalPick, sdStatus);
             Field connectionFailure = screen.getClass().getDeclaredField("connectionFailure");
             connectionFailure.setAccessible(true);
             test.runOnMainSync(() -> {
@@ -190,7 +206,7 @@ final class CameraSdSwapChecks {
             capture(test, screen, captures, prefix + "-incomplete", "一覧を読み込み中");
             captureTerminalSdPanel(test, screen, settings, sdStatus, captures, prefix + "-incomplete-source");
 
-            startAdmittedFixture(test, screen, acknowledged, sdStatus);
+            startAdmittedFixture(test, screen, externalPick, sdStatus);
             test.runOnMainSync(() -> {
                 progress.begin("Synthetic SD");
                 progress.photoListing(0, 0);
@@ -204,7 +220,7 @@ final class CameraSdSwapChecks {
             capture(test, screen, captures, prefix + "-empty", "選んだフォルダに取り込める写真がありません");
             captureTerminalSdPanel(test, screen, settings, sdStatus, captures, prefix + "-empty-source");
 
-            startAdmittedFixture(test, screen, acknowledged, sdStatus);
+            startAdmittedFixture(test, screen, externalPick, sdStatus);
             test.runOnMainSync(() -> {
                 progress.photoContent(1, 1, 1, 0, 1024, 1024);
                 progress.photoTerminal("complete", "");

@@ -7,6 +7,7 @@ import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /** Disconnects a verified reader only after Android has unmounted all its known volumes. */
 final class UsbReaderReconnectPlan {
@@ -65,6 +66,11 @@ final class UsbReaderReconnectPlan {
     private UsbReaderReconnectPlan() {}
 
     static Outcome execute(Transport storage, String address, String destinationUuid, long deadline) {
+        return execute(storage, address, destinationUuid, deadline, ignored -> {});
+    }
+
+    static Outcome execute(Transport storage, String address, String destinationUuid, long deadline,
+            Consumer<String> mountedSource) {
         String destination = uuid(destinationUuid);
         long ejectBy = Math.min(storage.now() + EJECT_MS, deadline - ARM_MS - DETACH_MS - ENABLE_MS - RECOVERY_MS);
         if (!SdRemountUsbPort.validAddress(address) || destination == null || ejectBy <= storage.now()
@@ -123,7 +129,7 @@ final class UsbReaderReconnectPlan {
                 removed = awaitDeparture(storage, initial.usb, deadline - MIN_RESTORE_MS);
             }
             if (removed && cycleState == CycleState.COMPLETED && completion.offSucceeded() && completion.onSucceeded()) {
-                Outcome result = awaitReturn(storage, initial, finishBy);
+                Outcome result = awaitReturn(storage, initial, finishBy, mountedSource);
                 if (result != Outcome.FAILED) return result;
             }
         } catch (IOException ignored) {
@@ -225,7 +231,7 @@ final class UsbReaderReconnectPlan {
         }
     }
 
-    private static Outcome awaitReturn(Transport storage, Snapshot initial, long deadline)
+    private static Outcome awaitReturn(Transport storage, Snapshot initial, long deadline, Consumer<String> mountedSource)
             throws InterruptedException {
         long missingSince = -1;
         while (storage.now() < deadline) {
@@ -233,6 +239,7 @@ final class UsbReaderReconnectPlan {
             if (current != null && current.reenumerated(initial) && initial.target.uuid().equals(current.target.uuid())
                     && current.target.writable()) {
                 if (current.source != null && current.source.mounted() && expectedSource(current, initial)) {
+                    mountedSource.accept(current.source.uuid());
                     return Outcome.RECONNECTED;
                 }
                 if (current.source == null) {

@@ -89,7 +89,10 @@ public final class SdCardRemountPlanTest {
     private static void remountsOnlyPinnedSourceWithChangedUuid() {
         var storage = new FakeStorage(list(SOURCE_MOUNTED), list(SOURCE_ID + " ejecting " + SOURCE_UUID),
                 list(SOURCE_UNMOUNTED), list(SOURCE_ID + " checking null"), list(SOURCE_REMOUNTED));
-        expect(storage.execute(), SdCardRemountPlan.Outcome.MOUNTED);
+        var mounted = new ArrayList<String>();
+        expect(SdCardRemountPlan.execute(storage, SOURCE_UUID, DESTINATION_UUID, deadline(), mounted::add),
+                SdCardRemountPlan.Outcome.MOUNTED);
+        expect(mounted, List.of("76543210"));
         expect(storage.commands, List.of(UNMOUNT_SOURCE, MOUNT_SOURCE));
     }
 

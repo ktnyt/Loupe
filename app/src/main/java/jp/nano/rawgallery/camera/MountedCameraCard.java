@@ -4,14 +4,13 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
 import android.os.storage.StorageManager;
 import android.os.storage.StorageVolume;
-import android.provider.DocumentsContract;
-import android.provider.MediaStore;
 import java.io.IOException;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
@@ -59,24 +58,58 @@ public final class MountedCameraCard {
         BroadcastReceiver receiver = new BroadcastReceiver() {
             @Override public void onReceive(Context received, Intent event) {
                 String action = event.getAction();
+                if (UsbManager.ACTION_USB_DEVICE_DETACHED.equals(action)) {
+                    reconnectReaderDeparture(app, event);
+                    return;
+                }
                 boolean detached = !Intent.ACTION_MEDIA_MOUNTED.equals(action);
                 if (detached) detachGeneration.incrementAndGet();
                 if (Intent.ACTION_MEDIA_REMOVED.equals(action) || Intent.ACTION_MEDIA_BAD_REMOVAL.equals(action)) {
                     String uuid = notifiedVolumeUuid(event);
                     SdRemountMountNotice.physicalDeparture(uuid);
-                    if (uuid != null && confirmsMountState(app, uuid, false)) {
+                    if (uuid != null && isVolumeUnmounted(app, uuid)) {
                         SdRemountMountNotice.reconnectPhysicalDeparture(uuid);
                     }
-                } else if (!detached) {
+                } else if (!detached && SdRemountMountNotice.requiresReconnectMountMatch()) {
                     String uuid = notifiedVolumeUuid(event);
-                    if (uuid != null && confirmsMountState(app, uuid, true)) SdRemountMountNotice.reconnectMountObserved(uuid);
+                    Uri source = SdSourceRegistrations.forVolume(app, uuid);
+                    if (source != null && SdSourceRegistrations.mountedVolume(app, source) != null) {
+                        SdRemountMountNotice.reconnectMountObserved(uuid);
+                    }
                 }
                 for (Consumer<Boolean> listener : mountListeners) listener.accept(detached);
             }
         };
-        if (Build.VERSION.SDK_INT >= 33) app.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
-        else app.registerReceiver(receiver, filter);
+        var usbDetach = new IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED);
+        if (Build.VERSION.SDK_INT >= 33) {
+            app.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            app.registerReceiver(receiver, usbDetach, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            app.registerReceiver(receiver, filter);
+            app.registerReceiver(receiver, usbDetach);
+        }
         observing = true;
+    }
+
+    private static void reconnectReaderDeparture(Context app, Intent event) {
+        if (!SdRemountMountNotice.requiresReconnectMountMatch()) return;
+        UsbDevice device = Build.VERSION.SDK_INT >= 33
+                ? event.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice.class)
+                : event.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+        if (!reconnectReader(device)) return;
+        try {
+            UsbManager manager = app.getSystemService(UsbManager.class);
+            if (manager != null && manager.getDeviceList().values().stream().noneMatch(MountedCameraCard::reconnectReader)) {
+                SdRemountMountNotice.reconnectReaderDeparted();
+            }
+        } catch (RuntimeException unavailable) {
+            // A stale detach broadcast cannot authorize imports from an unknown USB topology.
+        }
+    }
+
+    private static boolean reconnectReader(UsbDevice device) {
+        return device != null && device.getVendorId() == SdRemountUsbPort.VENDOR
+                && device.getProductId() == SdRemountUsbPort.PRODUCT;
     }
 
     static void requireGeneration(long expected) throws Unavailable {
@@ -138,31 +171,24 @@ public final class MountedCameraCard {
 
 
     static boolean isRemovableTree(Uri tree) {
-        if (tree == null || !"com.android.externalstorage.documents".equals(tree.getAuthority())
-                || !DocumentsContract.isTreeUri(tree)) return false;
-        try {
-            String document = DocumentsContract.getTreeDocumentId(tree);
-            int colon = document.indexOf(':');
-            return colon > 0 && document.substring(0, colon).matches("(?i)[0-9a-f]{4}-?[0-9a-f]{4}");
-        } catch (RuntimeException invalid) {
-            return false;
-        }
-    }
-
-    static boolean matchesMountNotice(Uri tree, String uuid) {
-        if (!isRemovableTree(tree) || uuid == null) return false;
-        String id = DocumentsContract.getTreeDocumentId(tree);
-        return id.substring(0, id.indexOf(':')).replace("-", "").equalsIgnoreCase(uuid.replace("-", ""));
+        return SdSourceRegistrations.volumeUuid(tree) != null;
     }
 
     static String notifiedVolumeUuid(Intent event) {
         StorageVolume volume = Build.VERSION.SDK_INT >= 33
                 ? event.getParcelableExtra(StorageVolume.EXTRA_STORAGE_VOLUME, StorageVolume.class)
                 : event.getParcelableExtra(StorageVolume.EXTRA_STORAGE_VOLUME);
-        if (volume != null && SdCardRemountPlan.isFilesystemUuid(volume.getUuid())) return volume.getUuid();
+        if (volume != null) return SdSourceRegistrations.normalizeVolumeUuid(volume.getUuid());
         Uri path = event.getData();
-        String candidate = path == null ? null : path.getLastPathSegment();
-        return SdCardRemountPlan.isFilesystemUuid(candidate) ? candidate : null;
+        return SdSourceRegistrations.normalizeVolumeUuid(path == null ? null : path.getLastPathSegment());
+    }
+
+    static Uri registeredMountSource(Context context, String uuid, String destination) {
+        if (uuid == null || destination == null || uuid.equals(SdSourceRegistrations.normalizeVolumeUuid(destination)))
+            return null;
+        Uri tree = SdSourceRegistrations.forVolume(context, uuid);
+        String source = mountedListingVolume(context, tree);
+        return source != null && !source.equalsIgnoreCase(destination) ? tree : null;
     }
 
     static String mountedSourceVolume(Context context, Uri tree) {
@@ -180,43 +206,21 @@ public final class MountedCameraCard {
     }
 
     private static String mountedSourceVolume(Context context, Uri tree, boolean requireDcim) {
-        if (tree == null || !"com.android.externalstorage.documents".equals(tree.getAuthority())
-                || !DocumentsContract.isTreeUri(tree)) return null;
-        try {
-            String root = DocumentsContract.getTreeDocumentId(tree);
-            int colon = root.indexOf(':');
-            if (colon <= 0) return null;
-            String uuid = root.substring(0, colon);
-            String folder = root.substring(colon + 1);
-            if (requireDcim && !folder.equalsIgnoreCase("DCIM") && !folder.regionMatches(true, 0, "DCIM/", 0, 5)) return null;
-            String source = null;
-            for (StorageVolume volume : context.getSystemService(StorageManager.class).getStorageVolumes()) {
-                if (!uuid.equalsIgnoreCase(volume.getUuid()) || !volume.isRemovable() || volume.isEmulated())
-                    continue;
-                if (source != null || !readable(volume.getState())) return null;
-                source = volume.getMediaStoreVolumeName();
-                if (source == null || MediaStore.VOLUME_EXTERNAL.equals(source) || PhotoStorage.PRIMARY.equals(source))
-                    return null;
-            }
-            return source;
-        } catch (RuntimeException unavailable) {
-            return null;
-        }
+        return CameraDocumentSource.isImportTree(tree, !requireDcim)
+                ? SdSourceRegistrations.mountedVolume(context, tree) : null;
     }
 
     private static boolean readable(String state) {
         return Environment.MEDIA_MOUNTED.equals(state) || Environment.MEDIA_MOUNTED_READ_ONLY.equals(state);
     }
 
-    private static boolean confirmsMountState(Context context, String uuid, boolean mounted) {
+    private static boolean isVolumeUnmounted(Context context, String uuid) {
         try {
-            String normalized = uuid.replace("-", "");
             for (StorageVolume volume : context.getSystemService(StorageManager.class).getStorageVolumes()) {
-                String current = volume.getUuid();
-                if (current != null && normalized.equalsIgnoreCase(current.replace("-", ""))
-                        && readable(volume.getState())) return mounted;
+                String current = SdSourceRegistrations.normalizeVolumeUuid(volume.getUuid());
+                if (uuid.equals(current) && readable(volume.getState())) return false;
             }
-            return !mounted;
+            return true;
         } catch (RuntimeException unavailable) {
             return false;
         }
@@ -232,9 +236,7 @@ public final class MountedCameraCard {
 
     static void requireGrant(Context context, Uri tree) throws Unavailable {
         try {
-            String registered = context.getSharedPreferences("camera_import", 0).getString("sd_tree_uri", null);
-            if (matchesRegistration(tree, registered, context.getContentResolver().getPersistedUriPermissions().stream()
-                    .anyMatch(grant -> grant.isReadPermission() && grant.getUri().equals(tree)))) return;
+            if (SdSourceRegistrations.contains(context, tree) && SdSourceRegistrations.hasReadGrant(context, tree)) return;
         } catch (RuntimeException unavailable) {
             // An unconfirmed grant must not authorize a receipt shortcut or an original read.
         }

@@ -7,6 +7,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 /** Pins both public volume IDs before issuing any command and verifies both through the remount. */
@@ -46,6 +47,11 @@ final class SdCardRemountPlan {
     }
 
     static Outcome execute(Storage storage, String sourceUuid, String destinationUuid, long deadline) {
+        return execute(storage, sourceUuid, destinationUuid, deadline, ignored -> {});
+    }
+
+    static Outcome execute(Storage storage, String sourceUuid, String destinationUuid, long deadline,
+            Consumer<String> mountedSource) {
         String source = normalize(sourceUuid);
         String destination = normalize(destinationUuid);
         long operationDeadline = deadline - RECOVERY_MS;
@@ -69,10 +75,10 @@ final class SdCardRemountPlan {
         boolean unmounted = false;
         try {
             storage.change(Action.UNMOUNT, original.id(), operationDeadline);
-            unmounted = await(storage, original, target, false, operationDeadline);
+            unmounted = await(storage, original, target, false, operationDeadline, mountedSource);
             if (unmounted) {
                 storage.change(Action.MOUNT, original.id(), operationDeadline);
-                if (await(storage, original, target, true, operationDeadline)) return Outcome.MOUNTED;
+                if (await(storage, original, target, true, operationDeadline, mountedSource)) return Outcome.MOUNTED;
             }
         } catch (IOException e) {
             // The storage service can finish an accepted command after the CLI reports failure.
@@ -83,7 +89,8 @@ final class SdCardRemountPlan {
         return Outcome.FAILED;
     }
 
-    private static boolean await(Storage storage, Volume original, Volume target, boolean mounting, long deadline)
+    private static boolean await(Storage storage, Volume original, Volume target, boolean mounting, long deadline,
+            Consumer<String> mountedSource)
             throws IOException, InterruptedException {
         while (storage.now() < deadline) {
             Volume source;
@@ -94,7 +101,10 @@ final class SdCardRemountPlan {
                 continue;
             }
             if (source == null) return false;
-            if (mounting && source.mounted()) return source.uuid() != null;
+            if (mounting && source.mounted() && source.uuid() != null) {
+                mountedSource.accept(source.uuid());
+                return true;
+            }
             if (!mounting && source.unmounted()) return originalOrUnknown(source, original);
             if (!mounting && !originalOrUnknown(source, original)) return false;
             pause(storage, deadline);

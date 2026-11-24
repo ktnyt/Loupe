@@ -15,6 +15,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 import jp.nano.rawgallery.BuildConfig;
 
 /** Shizuku v13 supplies the package context for the user whose app requested this service. */
@@ -42,42 +43,44 @@ public final class SdCardRemountUserService extends ISdCardRemountService.Stub {
         if (Binder.getCallingUid() != ownerUid || Process.myUid() != SHELL_UID || callback == null) return;
         long now = SystemClock.elapsedRealtime();
         int result = ISdCardRemountCallback.SKIPPED;
+        var mountedSource = new AtomicReference<String>();
         if (deadlineMs > now && deadlineMs <= now + SdCardRemountPlan.OPERATION_MS) {
             // AIDL serializes one-way requests on this Binder, including Shizuku's destroy transaction.
-            result = switch (SdCardRemountPlan.execute(new Sm(null), sourceUuid, destinationUuid, deadlineMs)) {
+            result = switch (SdCardRemountPlan.execute(new Sm(null), sourceUuid, destinationUuid, deadlineMs, mountedSource::set)) {
                 case MOUNTED -> ISdCardRemountCallback.MOUNTED;
                 case SKIPPED -> ISdCardRemountCallback.SKIPPED;
                 case FAILED -> ISdCardRemountCallback.FAILED;
             };
         }
-        send(callback, result);
+        send(callback, result, mountedSource.get());
     }
 
     @Override public void reconnect(String address, String destinationUuid, long deadlineMs,
             ISdCardRemountCallback callback) {
         if (Binder.getCallingUid() != ownerUid || Process.myUid() != SHELL_UID || callback == null) return;
         if (!supportsUsbReconnect()) {
-            send(callback, ISdCardRemountCallback.SKIPPED);
+            send(callback, ISdCardRemountCallback.SKIPPED, null);
             return;
         }
         long now = SystemClock.elapsedRealtime();
         int result = ISdCardRemountCallback.SKIPPED;
+        var mountedSource = new AtomicReference<String>();
         if (deadlineMs > now && deadlineMs <= now + UsbReaderReconnectPlan.OPERATION_MS) {
             // Keep the one-way request alive until the data port and cards have been checked for recovery.
             result = switch (UsbReaderReconnectPlan.execute(new Sm(callback.asBinder()),
-                    address, destinationUuid, deadlineMs)) {
+                    address, destinationUuid, deadlineMs, mountedSource::set)) {
                 case RECONNECTED -> ISdCardRemountCallback.RECONNECTED;
                 case SOURCE_MISSING -> ISdCardRemountCallback.SOURCE_MISSING;
                 case SKIPPED -> ISdCardRemountCallback.SKIPPED;
                 case FAILED -> ISdCardRemountCallback.FAILED;
             };
         }
-        send(callback, result);
+        send(callback, result, mountedSource.get());
     }
 
-    private static void send(ISdCardRemountCallback callback, int result) {
+    private static void send(ISdCardRemountCallback callback, int result, String mountedSourceUuid) {
         try {
-            callback.onResult(result);
+            callback.onResult(result, mountedSourceUuid);
         } catch (RemoteException ignored) {
             // Storage work is finished even if the app process went away.
         }
