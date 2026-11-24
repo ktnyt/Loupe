@@ -102,7 +102,7 @@ public final class SdCardRemountBindingChecks {
             AtomicInteger outcome = new AtomicInteger(-1);
             CountDownLatch finished = new CountDownLatch(1);
             var callback = new ISdCardRemountCallback.Stub() {
-                @Override public void onResult(int result) {
+                @Override public void onResult(int result, String mountedSourceUuid) {
                     outcome.set(result);
                     finished.countDown();
                 }
@@ -124,7 +124,7 @@ public final class SdCardRemountBindingChecks {
             ISdCardRemountService.Stub.asInterface(remote.get()).reconnect("/dev/bus/usb/255/255", "EEEE-EEEE",
                     SystemClock.elapsedRealtime() + UsbReaderReconnectPlan.OPERATION_MS,
                     new ISdCardRemountCallback.Stub() {
-                        @Override public void onResult(int result) {
+                        @Override public void onResult(int result, String mountedSourceUuid) {
                             reconnectOutcome.set(result);
                             reconnectFinished.countDown();
                         }

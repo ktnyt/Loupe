@@ -53,7 +53,11 @@ public final class UsbReaderReconnectPlanTest {
         var usb = new Fake();
         usb.sd = null;
         usb.sourceAppears = true;
-        assertOutcome(usb, UsbReaderReconnectPlan.Outcome.RECONNECTED);
+        var mounted = new ArrayList<String>();
+        var outcome = UsbReaderReconnectPlan.execute(usb, READER, MICRO_UUID, UsbReaderReconnectPlan.OPERATION_MS, mounted::add);
+        if (outcome != UsbReaderReconnectPlan.Outcome.RECONNECTED || !mounted.equals(List.of("1234abcd"))) {
+            throw new AssertionError("expected the reenumerated source UUID, got " + outcome + ": " + mounted);
+        }
         writes(usb, "UNMOUNT " + MICRO_ID, "data false", "data true");
     }
 

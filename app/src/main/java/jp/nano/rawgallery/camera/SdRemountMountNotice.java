@@ -8,8 +8,10 @@ import java.util.regex.Pattern;
 /** Keeps an accepted remount separate from ordinary storage work and mount broadcasts. */
 final class SdRemountMountNotice {
     static final long RESULT_GRACE_MS = 1_000;
+    static final String ANY_SOURCE = "*";
     private static final long RECONNECT_NOTICE_MS = 3_000;
-    private static final Pattern UUID = Pattern.compile("(?i)[0-9a-f]{4}-?[0-9a-f]{4}");
+    private static final Pattern FAT_UUID = Pattern.compile("(?i)[0-9a-f]{4}-?[0-9a-f]{4}");
+    private static final Pattern UUID = Pattern.compile("(?i)[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}");
     private static volatile Tracker tracker;
 
     record Reservation(int boot, long blockedUntil, String source, long mutedUntil, String reconnectSource,
@@ -36,9 +38,9 @@ final class SdRemountMountNotice {
         return current != null && current.beginReconnect(source, blockedUntil);
     }
 
-    static void endReconnect(boolean usbReenumerated, boolean awaitingMount) {
+    static void endReconnect(boolean usbReenumerated, boolean awaitingMount, String verifiedSource) {
         Tracker current = tracker;
-        if (current != null) current.endReconnect(usbReenumerated, awaitingMount);
+        if (current != null) current.endReconnect(usbReenumerated, awaitingMount, verifiedSource);
     }
 
     static void end(boolean mountMayArrive) {
@@ -81,9 +83,14 @@ final class SdRemountMountNotice {
         if (current != null) current.reconnectMountObserved(uuid);
     }
 
-    static void registrationChanged(String uuid) {
+    static void reconnectReaderDeparted() {
         Tracker current = tracker;
-        if (current != null) current.registrationChanged(uuid);
+        if (current != null) current.reconnectReaderDeparted();
+    }
+
+    static void registrationsChanged(Predicate<String> registered) {
+        Tracker current = tracker;
+        if (current != null) current.retainRegistered(registered);
     }
 
     static final class Tracker {
@@ -106,7 +113,7 @@ final class SdRemountMountNotice {
                 long until = Math.max(0, Math.min(saved.blockedUntil(), latest));
                 long mutedUntil = Math.max(0, Math.min(saved.mutedUntil(), latest + RECONNECT_NOTICE_MS));
                 state = new Reservation(saved.boot(), until, normalized(saved.source()), mutedUntil,
-                        normalized(saved.reconnectSource()), saved.awaitingReconnectMount());
+                        reconnectSource(saved.reconnectSource()), saved.awaitingReconnectMount());
                 if (!state.equals(saved)) store.save(state);
             } else {
                 state = new Reservation(boot, 0, null);
@@ -126,7 +133,7 @@ final class SdRemountMountNotice {
         synchronized boolean beginReconnect(String source, long blockedUntil) {
             Reservation previous = state;
             if (!begin(new Reservation(boot, blockedUntil, state.source(), blockedUntil + RECONNECT_NOTICE_MS,
-                    normalized(source), source != null), elapsed.getAsLong())) return false;
+                    reconnectSource(source), source != null), elapsed.getAsLong())) return false;
             previousReconnect = previous;
             return true;
         }
@@ -139,13 +146,21 @@ final class SdRemountMountNotice {
         }
 
         synchronized void endReconnect(boolean usbReenumerated, boolean awaitingMount) {
-            long mutedUntil = usbReenumerated ? elapsed.getAsLong() + RECONNECT_NOTICE_MS
-                    : previousReconnect == null ? 0 : previousReconnect.mutedUntil();
+            endReconnect(usbReenumerated, awaitingMount, null);
+        }
+
+        synchronized void endReconnect(boolean usbReenumerated, boolean awaitingMount, String verifiedSource) {
+            if (!usbReenumerated) {
+                if (previousReconnect != null) update(previousReconnect);
+                previousReconnect = null;
+                return;
+            }
+            long mutedUntil = elapsed.getAsLong() + RECONNECT_NOTICE_MS;
             // A late mount cannot be distinguished from an insertion until a subsequent departure is verified.
-            String reconnectSource = usbReenumerated ? state.reconnectSource()
-                    : previousReconnect == null ? null : previousReconnect.reconnectSource();
-            boolean awaiting = reconnectSource != null && (usbReenumerated ? awaitingMount
-                    : previousReconnect.awaitingReconnectMount());
+            String reconnectSource = state.reconnectSource();
+            String verified = normalized(verifiedSource);
+            if (reconnectSource != null && verified != null) reconnectSource = verified;
+            boolean awaiting = reconnectSource != null && awaitingMount;
             update(new Reservation(state.boot(), 0, state.source(), mutedUntil, reconnectSource, awaiting));
             previousReconnect = null;
         }
@@ -167,6 +182,7 @@ final class SdRemountMountNotice {
                 return true;
             }
             return blocksImport() && suppressesReconnectNotices()
+                    || ANY_SOURCE.equals(state.reconnectSource())
                     || state.reconnectSource() != null && state.reconnectSource().equals(observed);
         }
 
@@ -184,10 +200,18 @@ final class SdRemountMountNotice {
         }
 
         synchronized void reconnectMountObserved(String uuid) {
-            if (state.awaitingReconnectMount() && !blocksImport() && state.reconnectSource() != null
-                    && state.reconnectSource().equals(normalized(uuid))) {
+            String observed = normalized(uuid);
+            if (observed != null && !blocksImport() && state.awaitingReconnectMount()
+                    && observed.equals(state.reconnectSource())) {
                 update(new Reservation(state.boot(), state.blockedUntil(), state.source(), state.mutedUntil(),
-                        state.reconnectSource(), false));
+                        observed, false));
+            }
+        }
+
+        synchronized void reconnectReaderDeparted() {
+            // Only a completed whole-reader reconnect can have returned SOURCE_MISSING.
+            if (state.blockedUntil() == 0 && state.awaitingReconnectMount() && ANY_SOURCE.equals(state.reconnectSource())) {
+                update(new Reservation(state.boot(), 0, state.source(), 0, null, false));
             }
         }
 
@@ -219,6 +243,12 @@ final class SdRemountMountNotice {
     }
 
     private static String normalized(String uuid) {
-        return uuid != null && UUID.matcher(uuid).matches() ? uuid.replace("-", "").toLowerCase(Locale.ROOT) : null;
+        if (uuid == null) return null;
+        if (FAT_UUID.matcher(uuid).matches()) return uuid.replace("-", "").toLowerCase(Locale.ROOT);
+        return UUID.matcher(uuid).matches() ? uuid.toLowerCase(Locale.ROOT) : null;
+    }
+
+    private static String reconnectSource(String value) {
+        return ANY_SOURCE.equals(value) ? ANY_SOURCE : normalized(value);
     }
 }

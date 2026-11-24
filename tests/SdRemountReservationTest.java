@@ -16,6 +16,9 @@ public final class SdRemountReservationTest {
         reconnectMutesLateNoticesWithoutHoldingTheGate();
         reconnectSourceWaitsForRealDeparture();
         missingReconnectSourceMutesAnAmbiguousLateMount();
+        aDifferentRegisteredCardCanBeTheOneThatReturns();
+        aSkippedRetryPreservesTheUnresolvedReservation();
+        aVerifiedSourceTakesPrecedenceOverLateReports();
         System.out.println("SdRemountReservationTest passed");
     }
 
@@ -181,6 +184,55 @@ public final class SdRemountReservationTest {
         require(store.open(BOOT).suppressMount(SOURCE), "the first verified mount is also muted");
         tracker.reconnectPhysicalDeparture(SOURCE);
         require(!store.open(BOOT).suppressMount(SOURCE), "a subsequently verified physical departure returns to auto import");
+    }
+
+    private static void aDifferentRegisteredCardCanBeTheOneThatReturns() {
+        var store = new FakeStore();
+        var tracker = store.open(BOOT);
+        require(tracker.beginReconnect(SdRemountMountNotice.ANY_SOURCE, 12_000),
+                "preserve the gate without guessing which registered card will return");
+        tracker.reconnectReaderDeparted();
+        require(tracker.suppressMount(OTHER), "a synthetic detach during reconnect cannot clear the notice");
+        tracker.endReconnect(true, true);
+        store.now += 10_000;
+        tracker = store.open(BOOT);
+        require(!tracker.blocksImport() && tracker.suppressMount(SOURCE) && tracker.suppressMount(OTHER),
+                "a late notice for either known card is muted without blocking a manual selection");
+        tracker.reconnectPhysicalDeparture(OTHER);
+        require(tracker.suppressMount(OTHER), "a delayed removal of an assumed card does not clear the notice");
+        tracker.reconnectMountObserved(OTHER);
+        tracker = store.open(BOOT);
+        require(tracker.suppressMount(SOURCE) && tracker.suppressMount(OTHER),
+                "an unrelated mount cannot identify the missing source slot");
+        tracker.retainRegistered(uuid -> SdRemountMountNotice.ANY_SOURCE.equals(uuid)
+                || SOURCE.equals(uuid) || OTHER.equals(uuid));
+        require(store.open(BOOT).suppressMount(OTHER), "retaining existing registrations keeps the unresolved notice");
+        tracker.reconnectReaderDeparted();
+        require(!store.open(BOOT).suppressMount(SOURCE), "a verified reader removal clears the ambiguous notice");
+    }
+
+    private static void aVerifiedSourceTakesPrecedenceOverLateReports() {
+        var store = new FakeStore();
+        var tracker = store.open(BOOT);
+        require(tracker.beginReconnect(SdRemountMountNotice.ANY_SOURCE, 12_000), "accept a multi-card remount");
+        tracker.endReconnect(true, false, OTHER);
+        tracker.reconnectMountObserved(SOURCE);
+        require(!tracker.suppressMount(SOURCE) && tracker.suppressMount(OTHER),
+                "a stale app-side observation cannot override the verified UUID");
+        tracker.reconnectPhysicalDeparture(OTHER);
+        require(!store.open(BOOT).suppressMount(SOURCE), "a later genuine insertion is not lost");
+    }
+
+    private static void aSkippedRetryPreservesTheUnresolvedReservation() {
+        var store = new FakeStore();
+        require(store.open(BOOT).beginReconnect(SdRemountMountNotice.ANY_SOURCE, 12_000), "start unresolved remount");
+        store.now = 12_001;
+        var tracker = store.open(BOOT);
+        require(tracker.beginReconnect(SdRemountMountNotice.ANY_SOURCE, 24_000), "retry after the previous deadline");
+        tracker.endReconnect(false, false);
+        tracker.reconnectReaderDeparted();
+        require(!tracker.blocksImport() && store.open(BOOT).suppressMount(SOURCE),
+                "skipping the retry does not turn the unresolved reservation into a completed reconnect");
     }
 
     private static void require(boolean condition, String description) {

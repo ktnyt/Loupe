@@ -8,7 +8,6 @@ import android.database.Cursor;
 import android.net.*;
 import android.net.wifi.*;
 import android.os.*;
-import android.provider.DocumentsContract;
 import java.io.*;
 import java.net.*;
 import java.util.*;
@@ -126,14 +125,10 @@ public final class CameraDifferentialService extends Service {
                     String uuid = MountedCameraCard.notifiedVolumeUuid(event);
                     // The remount owns the storage gate and the import screen refreshes its source when it ends.
                     if (SdRemountMountNotice.suppressMount(uuid) || SdCardRemount.isRunning()) return;
-                    var settings = getSharedPreferences("camera_import", 0);
-                    String selectedTree = settings.getString("sd_tree_uri", null);
-                    if (selectedTree == null) return;
-                    Uri tree = Uri.parse(selectedTree);
-                    if ((settings.getBoolean(SdCardRemount.ENABLED_PREFERENCE, false)
-                            || SdRemountMountNotice.requiresReconnectMountMatch())
-                            && !MountedCameraCard.matchesMountNotice(tree, uuid)) return;
-                    enqueue(sdRequest(context, tree, PhotoStorage.selected(context), MountedCameraCard.detachGeneration()));
+                    String destination = PhotoStorage.selected(context);
+                    Uri tree = MountedCameraCard.registeredMountSource(context, uuid, destination);
+                    if (tree == null || !SdSourceRegistrations.hasReadGrant(context, tree)) return;
+                    enqueue(sdRequest(context, tree, destination, MountedCameraCard.detachGeneration()));
                 }
             };
             IntentFilter f=new IntentFilter(Intent.ACTION_MEDIA_MOUNTED);
@@ -223,6 +218,7 @@ public final class CameraDifferentialService extends Service {
                     source = preparePickedSource(request, volume, generation, preparing);
                 } else {
                     requireSdSource(tree, null, volume, generation);
+                    if (confirmation != null) requireUnambiguousSdSource(tree, volume);
                     String expectedCard = pinnedCard != null ? pinnedCard
                             : MountedCameraCard.targetWithGenericReader(this, volume);
                     BooleanSupplier preflight = sdStopped(tree, volume, generation, preparing);
@@ -242,7 +238,10 @@ public final class CameraDifferentialService extends Service {
                 String mountedSource = source;
                 if (!claimSd(confirmation, () -> {
                     if (picked) commitPickedSource(request, volume, generation, mountedSource);
-                    else requireSdSource(tree, mountedSource, volume, generation);
+                    else {
+                        requireSdSource(tree, mountedSource, volume, generation);
+                        requireUnambiguousSdSource(tree, volume);
+                    }
                 })) return;
                 if (registerOnly) {
                     confirmation.complete(null);
@@ -306,7 +305,7 @@ public final class CameraDifferentialService extends Service {
         MountedCameraCard.requireGeneration(generation);
         requireSdDestination(target, PhotoStorage.selected(this));
         String previous = request.getStringExtra(SD_PRIOR_TREE);
-        String current = getSharedPreferences("camera_import", 0).getString("sd_tree_uri", null);
+        String current = SdSourceRegistrations.latest(this);
         if (destroyed || !Objects.equals(previous, current) || !CameraDocumentSource.isImportTree(request.getData(), false))
             throw new MountedCameraCard.Unavailable(SOURCE_CHANGED);
     }
@@ -329,13 +328,10 @@ public final class CameraDifferentialService extends Service {
             requirePickedSelection(request, target, generation);
             if (!source.equals(MountedCameraCard.requireRemovableSource(this, tree, target)))
                 throw new MountedCameraCard.Unavailable(SOURCE_CHANGED);
-            var prefs = getSharedPreferences("camera_import", 0);
-            saved = prefs.edit().putString("sd_tree_uri", tree.toString()).commit();
-            if (!saved) {
-                prefs.edit().putString("sd_tree_uri", request.getStringExtra(SD_PRIOR_TREE)).apply();
+            saved = SdSourceRegistrations.save(this, tree);
+            if (!saved)
                 throw new MountedCameraCard.Unavailable("取り込み元のフォルダを保存できませんでした。");
-            }
-            SdRemountMountNotice.registrationChanged(source);
+            SdCardRemount.sourcesChanged(this);
         } finally {
             if (!saved && !hadGrant) {
                 try { resolver.releasePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION); }
@@ -479,10 +475,15 @@ public final class CameraDifferentialService extends Service {
         MountedCameraCard.requireGrant(this, tree);
     }
 
+    private void requireUnambiguousSdSource(Uri tree, String destination) throws MountedCameraCard.Unavailable {
+        if (!SdSourceRegistrations.isUnambiguousSource(this, tree, destination))
+            throw new MountedCameraCard.Unavailable("取り込むSDカードを選び直してください。");
+    }
+
     private void requireSdBinding(Uri tree, String source, String target, long generation) throws IOException {
         MountedCameraCard.requireGeneration(generation);
         requireSdDestination(target, PhotoStorage.selected(this));
-        if (!tree.toString().equals(getSharedPreferences("camera_import", 0).getString("sd_tree_uri", null)))
+        if (!SdSourceRegistrations.contains(this, tree))
             throw new MountedCameraCard.Unavailable("取り込み元のフォルダが変わりました。DCIMフォルダを選び直してください。");
         if (!CameraDocumentSource.isImportTree(tree, true))
             throw new MountedCameraCard.Unavailable(MountedCameraCard.CHOOSE_SOURCE);
@@ -494,11 +495,9 @@ public final class CameraDifferentialService extends Service {
     }
 
     private BooleanSupplier sdStopped(Uri tree, String target, long generation, BooleanSupplier stopping) {
-        var settings = getSharedPreferences("camera_import", 0);
-        String requestedTree = tree.toString();
         return () -> stopping.getAsBoolean() || MountedCameraCard.detachGeneration() != generation
                 || !target.equals(PhotoStorage.selected(this))
-                || !requestedTree.equals(settings.getString("sd_tree_uri", null));
+                || !SdSourceRegistrations.contains(this, tree);
     }
 
     /** Poll grants during streaming, but never substitute a cached check at a commit boundary. */

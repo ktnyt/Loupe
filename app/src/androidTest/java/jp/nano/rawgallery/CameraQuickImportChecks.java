@@ -17,6 +17,7 @@ import android.provider.DocumentsContract;
 import android.view.accessibility.AccessibilityNodeInfo;
 import jp.nano.rawgallery.camera.CameraCredentialStore;
 import jp.nano.rawgallery.camera.CameraQrCredentials;
+import jp.nano.rawgallery.camera.SdSourceRegistrationChecks;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -48,6 +49,7 @@ final class CameraQuickImportChecks {
         };
         CameraImportActivity screen=null; boolean first=false,second=false;
         try {
+            SdSourceRegistrationChecks.run(context);
             directoryBoundary(context);
             require(CameraQuickImportSources.resolve(context,new CancellationSignal()).profiles.isEmpty(),"empty source list");
             t.addMonitor(monitor);
@@ -73,7 +75,7 @@ final class CameraQuickImportChecks {
             require(launches.get()==1,"multiple sources require explicit choice");
             clickText(t,"BLE-TESS");awaitCount(launches,2);
             require(CameraCredentialStore.profileId("BLE-TESS").equals(captured.get().getStringExtra(CameraBleActivity.EXTRA_QUICK_PROFILE_ID)),"explicit camera selected");
-            return "PASS quick-import local directory presence/missing/file/error/cancel, empty setup direct SD picker/unique/multiple QR routing, opaque-only Intent, recreation no replay; radio Activity blocked (dedicated emulator).";
+            return "PASS SD registration migration/rollback and mounted-source filtering, quick-import local directory presence/missing/file/error/cancel, empty setup direct SD picker/unique/multiple QR routing, opaque-only Intent, recreation no replay; radio Activity blocked (dedicated emulator).";
         } finally {
             if(screen!=null)finish(t,screen);t.removeMonitor(monitor);
             if(second)store.remove("BLE-TESS");if(first)store.remove("BLE-TEST");
