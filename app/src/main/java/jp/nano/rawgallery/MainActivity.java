@@ -1697,7 +1697,7 @@ public final class MainActivity extends DiagnosticActivity {
         this,
         "設定とその他の操作",
         new String[] {
-          "クラウドと同期",
+          "IDrive e2",
           "共有先の設定",
           "連写のまとめ方",
           "写真へのアクセス",
@@ -1736,7 +1736,7 @@ public final class MainActivity extends DiagnosticActivity {
                   .show();
               break;
             case 0:
-              startActivity(new Intent(this, CloudActivity.class));
+              startActivity(new Intent(this, E2SyncActivity.class));
               break;
             case 1:
               editTargets();
@@ -2548,11 +2548,16 @@ public final class MainActivity extends DiagnosticActivity {
                       }
 
                       @Override
-                      public void originalUnavailable() {
+                      public void originalUnavailable(boolean legacy) {
                         String failure =
                             activePreview == null
                                 ? "写真を読み込めませんでした"
                                 : "プレビューを表示しています。元のファイルを読み込めませんでした";
+                        String action = legacy ? "復元方法" : "再試行";
+                        Runnable recover =
+                            legacy
+                                ? () -> showLegacyRestoreGuidance("")
+                                : () -> showPhoto(position, fromRanking);
                         if (activePreview == null) {
                           viewer.failed();
                           photoFrame.removeView(loadStatus);
@@ -2564,17 +2569,19 @@ public final class MainActivity extends DiagnosticActivity {
                           loadStatus.show(StatusView.Symbol.FAILED, failure);
                           recovery.addView(
                               loadStatus, new LinearLayout.LayoutParams(dp(32), dp(32)));
-                          Button retry = button("再試行", () -> showPhoto(position, fromRanking));
-                          retry.setContentDescription(failure + "。再試行");
+                          Button retry = button(action, recover);
+                          retry.setContentDescription(failure + "。" + action);
                           retry.setTextSize(14);
                           retry.setPadding(dp(18), 0, dp(18), 0);
                           MaterialUi.outlined(retry);
-                          ActionIcon retryIcon =
-                              new ActionIcon(
-                                  "再試行", getResources().getDisplayMetrics().density * 20 / 26);
-                          retryIcon.setBounds(0, 0, dp(20), dp(20));
-                          retry.setCompoundDrawables(retryIcon, null, null, null);
-                          retry.setCompoundDrawablePadding(dp(6));
+                          if (!legacy) {
+                            ActionIcon retryIcon =
+                                new ActionIcon(
+                                    "再試行", getResources().getDisplayMetrics().density * 20 / 26);
+                            retryIcon.setBounds(0, 0, dp(20), dp(20));
+                            retry.setCompoundDrawables(retryIcon, null, null, null);
+                            retry.setCompoundDrawablePadding(dp(6));
+                          }
                           recovery.addView(retry, new LinearLayout.LayoutParams(-2, dp(48)));
                           MaterialUi.outlined(retry);
                           LinearLayout.LayoutParams retryPosition =
@@ -2584,12 +2591,7 @@ public final class MainActivity extends DiagnosticActivity {
                           photoFrame.addView(
                               recovery, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
                         } else
-                          loadStatus.show(
-                              StatusView.Symbol.FAILED,
-                              "",
-                              failure,
-                              () -> showPhoto(position, fromRanking),
-                              "再試行");
+                          loadStatus.show(StatusView.Symbol.FAILED, "", failure, recover, action);
                         viewer.refreshStatus();
                         image.setStateDescription(failure);
                         if (activePreview == null) model.setText("");
@@ -3176,6 +3178,10 @@ public final class MainActivity extends DiagnosticActivity {
                         shareDialog.show();
                         return;
                       }
+                      if (e instanceof OriginalCache.LegacyOriginalUnavailable) {
+                        showLegacyRestoreGuidance(selection.size() + "枚の選択は保持されています。\n");
+                        return;
+                      }
                       shareDialog =
                           new ShareUi.Failure(
                               this,
@@ -3188,6 +3194,17 @@ public final class MainActivity extends DiagnosticActivity {
                     });
               }
             });
+  }
+
+  private void showLegacyRestoreGuidance(String prefix) {
+    new GalleryUi.Sheet(this)
+        .setTitle("元のファイルの復元")
+        .setMessage(prefix + OriginalCache.LegacyOriginalUnavailable.GUIDANCE)
+        .setPositiveButton(
+            "IDrive e2を開く",
+            (dialog, which) -> startActivity(new Intent(this, E2SyncActivity.class)))
+        .setNegativeButton("閉じる", null)
+        .show();
   }
 
   private void editTargets() {

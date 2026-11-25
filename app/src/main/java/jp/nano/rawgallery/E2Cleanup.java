@@ -60,8 +60,7 @@ final class E2Cleanup {
               || !E2Settings.hasPhotoAccess(c)
               || !E2SyncJob.enabled(c)
               || !bucket.equals(E2Settings.configuredBucket(c))
-              || !bucket.equals(options(c).getString("destination", ""))
-              || SettingsRepository.cleanupEnabled(SettingsRepository.open(c))))
+              || !bucket.equals(options(c).getString("destination", ""))))
         throw new IOException("自動バックアップと写真の整理権限を確認してください");
       if (!options(c)
           .edit()
@@ -169,8 +168,7 @@ final class E2Cleanup {
         && E2Settings.hasPhotoAccess(c)
         && Environment.isExternalStorageManager()
         && bucket.equals(E2Settings.configuredBucket(c))
-        && bucket.equals(options(c).getString("destination", ""))
-        && !SettingsRepository.cleanupEnabled(SettingsRepository.open(c));
+        && bucket.equals(options(c).getString("destination", ""));
   }
 
   private static boolean release(

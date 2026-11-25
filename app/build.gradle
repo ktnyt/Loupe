@@ -20,7 +20,7 @@ def hostJavaChecks = [
     'CameraBleRecoveryTest.java', 'CameraCardRoutingTest.java', 'CameraConnectionWaitTest.java',
     'CameraExFatCheck.java', 'CameraImportCopyTest.java', 'CameraImportOperationGateTest.java',
     'CameraQrCredentialsTest.java', 'CameraRegisteredQueueTest.java', 'CameraSourceKeyTest.java',
-    'CloudPolicyTest.java', 'ComparisonLayoutTest.java', 'DiagnosticWriterTest.java',
+    'ComparisonLayoutTest.java', 'DiagnosticWriterTest.java',
     'DigestCompatibilityTest.java', 'Ep7WifiClientTest.java', 'GalleryCaptureDatesTest.java',
     'IndexRefreshRequestsTest.java', 'NanoBananaE2Test.java', 'PhotoRankingTest.java',
     'RankingStoreTest.java', 'RawEditStateTest.java', 'RawEditToneTest.java',

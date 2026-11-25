@@ -47,6 +47,8 @@
 
 ## Amazon Photosから保管済みのオリジナルを復元一覧へ載せる
 
+LoupeからAmazon Photosへのログイン・同期・原本取得は終了した。以前の保管記録とプレビューは端末に保持する。Amazon Photosに保管したオリジナルはAmazon Photosで確認し、IDrive e2に移行済みのオリジナルはLoupeの「IDrive e2」の復元一覧から書き出せる。
+
 `loupe/migration/amazon-photos/v1/` の写真用台帳と `loupe/migration/amazon-photos/videos/v1/` の動画用台帳は、Windows側でオリジナルの版指定取得とSHA-256照合が完了した項目を示す。`scripts/e2-migration-catalog.py` は同じバケットにある両方の台帳を読み、Loupeが対応する形式のオリジナルは保存版とサイズを照合して通常版の復元索引へ変換する。撮影日が未設定の記録は0を保つ。復元索引の読み取りで取得した行は、端末の容量整理に必要な保管記録を作らない。
 
 東京のIDrive e2の環境変数を読み込んだPython環境（Boto3 1.40以上）で、先に読み取りを行う。

@@ -146,29 +146,17 @@ flowchart TD
 
 ## P5: オリジナルの保管と復元を確認する
 
-- 機能: Amazon Photosに同じオリジナルがあるか検索し、必要なら保存し、内容を検証して復元する。
-- 要件: HTTP成功だけで保管完了としない。結果不明時の重複送信を避ける。認証情報を意図しない転送先・成果物へ出さない。
-- 根拠・状態: `design.md`の追加検証・自動同期・オリジナル取得の既存契約。初回試作の「接続診断のみ」は現在の機能範囲を表さない。
-- 不変条件: 検証済みは再取得したオリジナルのサイズ・SHA-256一致を意味する。MD5は候補検索に用い、内容保証を置き換えない。クラウドオリジナルを削除しない。
-- 事前条件: 利用者のログインとオリジナルの読み取りが必要。自動同期は対象確認後に有効化し、初期値は無効。現行の保存・取得上限は1枚512 MiB。
-- 事後条件: 送信前に`pending`を永続記録する。結果不明は検索と復元照合だけを再試行する。復元と永続プレビュー保存後に`verified`を記録する。オリジナル取得時は内容確認済みの一時ファイルを完成ファイルへ置換する。
-- 失敗・再試行: 認証失敗は自動同期を停止。個別保留には再試行待ちを置く。定期バッチは最大20枚・時間制限付き。これは全写真の保管完了時刻を保証しない。
-- 参照: P1・P4へ取得済みオリジナルを供給し、P6へ照合済み記録を供給する。DB記録、プレビューファイル、クラウド保存は単一トランザクションではない。
-- 実装: [CloudVerifier.java](../app/src/main/java/jp/nano/rawgallery/CloudVerifier.java) `verify/uploadAndVerify/download`（126付近・208・314行）、[ArchiveStore.java](../app/src/main/java/jp/nano/rawgallery/ArchiveStore.java) `pending/verified`（144・148行）、[OriginalCache.java](../app/src/main/java/jp/nano/rawgallery/OriginalCache.java) `obtain`（16行）、`SyncEngine.runBatch`、`CloudActivity`、`SyncJob`。
-- 検証: 送信前記録・復元照合・キャッシュのハッシュ再検査を読解。今回ネットワーク接続、認証切れ、プロセス終了からの回復は未検査。READMEのアップロード等の成功は過去の特定ファイルの実測に限る。
+- 機能: 写真と動画のオリジナルをIDrive e2へ保管し、復元一覧から別ファイルへ復元する。ライブラリの設定から「IDrive e2」を開く。
+- 契約: 復元一覧には検証済みの保存版を載せる。復元時は対象の版を取得し、サイズとSHA-256を照合してから書き出す。転送と同意の詳細は[e2運用契約](e2-production-contract.md)に定める。
+- 旧Amazon Photosの履歴: 端末に残る保管記録、写真の識別子、永続プレビューをライブラリで引き続き読む。旧履歴の原本は一時保存済みでサイズとSHA-256が一致すれば表示・共有できる。一時保存がなければ、Amazon Photosで元のファイルを確認する方法と、移行済みの場合にIDrive e2の復元一覧を使う方法を案内する。
+- 実装: `E2SyncActivity`、`E2SyncJob`、`E2RecoveryCatalog`、`OriginalCache`、`GalleryArchiveEntries`、`ArchiveStore`。
 
 ## P6: 安全条件を満たす端末オリジナルだけ整理する
 
-- 機能: 保管済み写真の端末オリジナルを解放し、プレビューとクラウドオリジナルで引き続き利用できるようにする。
-- 要件: 未同期・照合失敗・プレビュー未保存・権限不足のオリジナルは削除しない。同期の有効化と整理の有効化を分ける。
-- 根拠・状態: `design.md`の自動同期・JPEG追加仕様。初回試作の「削除なし」「保持期間未決定」は後続仕様で置き換わっている。現行初期値は7日。
-- 不変条件: 対象は対応機種のRAWとアクセス可能なJPEGのうち、管理対象MediaStoreオリジナル。オリジナルを読み取れないものは残す。クラウド削除はしない。
-- 事前条件: 同期・整理がともに有効、Androidの整理権限がある、期間条件を満たす、直前の復元照合・永続プレビュー保存に成功し、端末オリジナルのメタデータとSHA-256が一致すること。
-- 期間仕様: RAWは撮影日不明なら残す。JPEGは撮影日→追加日→取得可能な作成日。すべて不明なら照合・保存後に対象となる。未来の上位日付を下位日付へ置き換えない。変更日時を作成日の代わりにしない。
-- 事後条件: `releasing`を保存してから端末の1オリジナルを削除し、削除件数1を確認後に`released`を保存する。削除後も一覧・閲覧・共有に必要な永続プレビューと記録を残す。
-- 失敗境界: DBとMediaStore削除は同時確定しない。削除後に記録更新が失敗すると`releasing`が残り得る。現行走査はSHAを持つ保存記録をクラウド写真として復元するが、この途中失敗の端末試験は未実施。ファイルの並行変更を完全に排除する原子的な削除契約も確認できていない。
-- 実装: [SyncPolicy.java](../app/src/main/java/jp/nano/rawgallery/SyncPolicy.java) `retentionDate/eligible`（22・28行）、[SyncEngine.java](../app/src/main/java/jp/nano/rawgallery/SyncEngine.java) `runBatch/unchanged`（89・205付近）、`ArchiveStore.verified/preview`、`PhotoRepository.scan`（164行付近）、`SyncActivity`。
-- 検証: 保持期間・機種・撮影日44検査成功。削除経路は読解のみ。オリジナル削除、長時間バックグラウンド動作、途中停止からの復帰は今回実行していない。
+- 機能: 保管済み写真の端末オリジナルを解放し、プレビューとクラウドオリジナルで引き続き使えるようにする。
+- 契約: 利用者が対象バケットと期間を確認して、バックアップとは別に容量整理を有効にする。対象は主ストレージのMediaStoreのJPEG。照合済み保存版、検証済みカタログ、永続サムネイル、整理権限がそろい、端末のオリジナルが変わっていない場合だけ整理する。詳細は[e2運用契約](e2-production-contract.md)に定める。
+- 旧履歴および復元一覧を読んだ結果は、端末オリジナルを削除する根拠に使わない。公開済みの取り込み履歴と版付きE2保管記録の照合は既存の写真移動契約に従う。
+- 実装: `E2Cleanup`、`E2SyncJob`、`SyncPolicy`、`PhotoMove`。
 
 ## 状態と保存の責務
 
@@ -189,7 +177,7 @@ flowchart TD
 
 | 履歴にある記述 | 現行での扱い | 根拠 |
 | --- | --- | --- |
-| 初回は接続診断のみ、削除しない | 初回試作限定。現在は保存・復元・任意の自動整理を持つ | design.md追加仕様、`SyncEngine` |
+| 初回は接続診断のみ、削除しない | 初回試作限定。現在は保存・復元・任意の自動整理を持つ | [e2運用契約](e2-production-contract.md) |
 | 保持期間は未決定 | 現行初期値7日、設定範囲1〜365日 | README、`SyncPolicy` |
 | 同順位は扱わない | v0.14で同順位を扱う | README v0.14、`PhotoRanking.tie` |
 | オリジナル整理後のJPEG共有 | 小サイズWebPを共有せずオリジナルから用意する | design.mdオリジナル取得の追加仕様、`export` |
@@ -270,11 +258,7 @@ SDKを使う検証では`ANDROID_HOME=/opt/homebrew/share/android-commandlinetoo
 
 結果一覧は説明文に代えてカードと拡大印を使う。順位・ファイル名・順番を保持し、長い名前は折り返す。各行は単一の操作対象で、読み上げ名は順位と名前、クリック操作名は「拡大」。写真の読込失敗でも行の操作を失わず、拡大から標準Backで結果へ戻る。
 
-Cloud初期画面は説明や空statusを表示しない。ログイン・同期の設定・接続と確認から明示的に操作する。実処理の状態メッセージはすべて可視にしpoliteで通知する。通信・オリジナル・認証・削除条件を変更しない。同期の対象条件、共有の形式と失敗復帰、タグの空状態と入力エラー、安全確認、読み上げ用説明は残す。#1の推論と#17の状態表現は対象外。
-
 ### 背景処理の観測状態（Issue #36）
-
-SyncEngineは既存の文章/時刻と同じSharedPreferences editでsyncStateCode/syncStateAtを保存する。1バッチ終了はWAITING、保留があるとPARTIALとし、全写真COMPLETEを推測しない。全体総数は未計測。
 
 PreviewPreparationJobは既存のready/total/failed/stateと同じeditでpreparationStateCode/preparationStateAt/preparationCountsKnownを保存する。総数の走査完了後だけ件数を既知とする。readyは準備済みpreview数、failedは今回の処理失敗数で、ThumbHashの失敗はreadyと重なり得るため合計で残数を算出しない。ThumbHash単独件数は未計測。
 

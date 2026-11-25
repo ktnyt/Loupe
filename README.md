@@ -22,7 +22,7 @@ LoupeはAndroid 11以降向けの写真・動画ライブラリです。カメ�
 
 ## 初期実装と検証の記録
 
-以下の機能、Amazon Photosの手順、実機測定値は当時の版に基づく記録です。初期の試作版はAndroid 16のLeitzphoneに入れて表示を確認しました。IDrive e2の現行手順は[運用契約](docs/e2-production-contract.md)を参照してください。
+以下の機能、Amazon Photosの手順、実機測定値は当時の版に基づく記録です。初期の試作版はAndroid 16のLeitzphoneに入れて表示を確認しました。現在のLoupeからAmazon Photosへの接続・同期・原本取得は終了しました。以前の保管記録とプレビューは端末に残ります。IDrive e2の現行手順は[運用契約](docs/e2-production-contract.md)を参照してください。
 
 - RAW 51拡張子とJPEGの一覧表示（埋め込みJPEGがあるファイルを表示）。撮影日時が取得できる場合は撮影日時、ない場合は更新日時で並べます。
 - RAW内のJPEG構造を探索・検証し、最大画素数の画像を抽出して表示します。RAW現像はしません。

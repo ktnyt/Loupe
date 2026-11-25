@@ -14,16 +14,6 @@ public final class SyncPolicyTest {
     check(false, now - 8 * SyncPolicy.DAY, now, 0, true, true, true);
     check(false, now - 8 * SyncPolicy.DAY, now, 366, true, true, true);
     check(false, now - 8 * SyncPolicy.DAY, now, 30, true, true, true);
-    for (String camera :
-        new String[] {
-          "RICOH GR IV",
-          "RICOH GR IV Monochrome",
-          "OM-1MarkII",
-          "E-P7",
-          "Leitzphone powered by Xiaomi"
-        }) if (!SyncPolicy.supported(camera)) throw new AssertionError(camera);
-    for (String camera : new String[] {"RICOH GR III", "OM-1", "E-P5", "Unknown"})
-      if (SyncPolicy.supported(camera)) throw new AssertionError(camera);
     if (RawPreview.captureTime("2026:02:30 10:00:00", "") != 0
         || RawPreview.captureTime("", "") != 0)
       throw new AssertionError("Invalid capture date accepted");

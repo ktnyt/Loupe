@@ -1,44 +1,128 @@
 package jp.nano.rawgallery;
 
+import android.app.Dialog;
 import android.app.Instrumentation;
+import android.content.ComponentName;
 import android.content.Intent;
-import android.content.SharedPreferences;
-import com.google.android.material.materialswitch.MaterialSwitch;
-import java.util.concurrent.ExecutorService;
+import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.view.KeyEvent;
+import android.view.View;
+import android.widget.TextView;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.util.concurrent.atomic.AtomicReference;
 
-/** Never enables synchronization or deletion; exercises the pre-confirmation boundary. */
+/** Verifies the real library settings entry and the installed component boundary. */
 final class SyncControlChecks {
   static String run(Instrumentation test) throws Exception {
-    for(Integer days:new Integer[]{null,7,30,90}){
-      SharedPreferences isolated=(SharedPreferences)java.lang.reflect.Proxy.newProxyInstance(SyncControlChecks.class.getClassLoader(),new Class<?>[]{SharedPreferences.class},(proxy,method,args)->{
-        if(method.getName().equals("getInt")&&"retentionDays".equals(args[0]))return days==null?args[1]:days;
-        throw new AssertionError("unexpected isolated preference access");
-      });
-      if(!("撮影日から"+(days==null?7:days)+"日").equals(SyncActivity.retentionLabel(isolated)))throw new AssertionError("isolated retention default/explicit period differs from processing policy");
+    checkInstalledComponents(test.getTargetContext());
+    var main =
+        (MainActivity)
+            test.startActivitySync(
+                new Intent(test.getTargetContext(), MainActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    var monitor = test.addMonitor(E2SyncActivity.class.getName(), null, false);
+    var sheet = new AtomicReference<Dialog>();
+    E2SyncActivity sync = null;
+    try {
+      var menu = MainActivity.class.getDeclaredMethod("galleryMenu");
+      menu.setAccessible(true);
+      AlbumTagEntryChecks.main(
+          test,
+          () -> {
+            sheet.set((Dialog) menu.invoke(main));
+            return true;
+          });
+      AlbumTagEntryChecks.waitFor(
+          test,
+          "IDrive e2 settings entry",
+          () -> find(sheet.get().getWindow().getDecorView(), "IDrive e2") != null);
+      capture(test, "amazon-retirement-settings");
+      AlbumTagEntryChecks.main(
+          test,
+          () -> {
+            View entry = find(sheet.get().getWindow().getDecorView(), "IDrive e2");
+            for (View row = entry; ; row = (View) row.getParent()) {
+              if (row.isClickable()) {
+                if (!row.performClick()) throw new AssertionError("IDrive e2 entry did not open");
+                break;
+              }
+              if (!(row.getParent() instanceof View))
+                throw new AssertionError("No action for e2 entry");
+            }
+            return true;
+          });
+      sync = (E2SyncActivity) test.waitForMonitorWithTimeout(monitor, 6000);
+      if (sync == null) throw new AssertionError("Settings did not open IDrive e2");
+      E2SyncActivity screen = sync;
+      AlbumTagEntryChecks.waitFor(
+          test,
+          "IDrive e2 window focus",
+          () ->
+              screen.hasWindowFocus()
+                  && find(screen.getWindow().getDecorView(), E2Panel.DASHBOARD_TITLE) != null);
+      capture(test, "amazon-retirement-e2");
+      test.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
+      AlbumTagEntryChecks.waitFor(test, "Back to library", main::hasWindowFocus);
+      return "PASS existing IDrive e2 entry and Back; retired Amazon components absent. Settings and e2 captures saved.\\n";
+    } finally {
+      test.removeMonitor(monitor);
+      E2SyncActivity screen = sync;
+      test.runOnMainSync(
+          () -> {
+            if (sheet.get() != null) sheet.get().dismiss();
+            if (screen != null) screen.finish();
+            main.finish();
+          });
     }
-    SharedPreferences prefs=test.getTargetContext().getSharedPreferences("settings",0);
-    boolean sync=prefs.getBoolean("syncEnabled",false),cleanup=prefs.getBoolean("cleanupEnabled",false);
-    int checked=0;
-    for(String field:new String[]{"syncState","cleanupState"}){
-      boolean saved=field.equals("syncState")?sync:cleanup;
-      if(saved)continue; // Do not change a user's active setting just to test it.
-      SyncActivity activity=(SyncActivity)test.startActivitySync(new Intent(test.getTargetContext(),SyncActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-      try{
-        ((ExecutorService)AlbumTagEntryChecks.field(activity,"worker")).submit(()->{}).get();test.waitForIdleSync();
-        android.widget.TextView retention=(android.widget.TextView)AlbumTagEntryChecks.field(activity,"retention");
-        test.runOnMainSync(()->{if(!("撮影日から"+prefs.getInt("retentionDays",7)+"日").contentEquals(retention.getText()))throw new AssertionError("retention display differs from processing policy");});
-        MaterialSwitch toggle=(MaterialSwitch)AlbumTagEntryChecks.field(activity,field);
-        test.runOnMainSync(()->{
-          // Native drag ends by calling setChecked, bypassing OnClickListener.
-          toggle.setChecked(true);
-          if(toggle.isChecked())throw new AssertionError("unconfirmed switch remained on");
-          if(prefs.getBoolean(field.equals("syncState")?"syncEnabled":"cleanupEnabled",false))throw new AssertionError("setting enabled before confirmation");
-        });
-        ((ExecutorService)AlbumTagEntryChecks.field(activity,"worker")).submit(()->{}).get();test.waitForIdleSync();
-        checked++;
-      }finally{test.runOnMainSync(activity::finish);test.waitForIdleSync();}
+  }
+
+  static void checkInstalledComponents(android.content.Context context) throws Exception {
+    PackageManager manager = context.getPackageManager();
+    for (String name : new String[] {"CloudActivity", "SyncActivity"}) {
+      try {
+        manager.getActivityInfo(component(context, name), PackageManager.MATCH_DISABLED_COMPONENTS);
+        throw new AssertionError(name + " is still installed");
+      } catch (PackageManager.NameNotFoundException expected) {
+        // Removed component.
+      }
     }
-    if(prefs.getBoolean("syncEnabled",false)!=sync||prefs.getBoolean("cleanupEnabled",false)!=cleanup)throw new AssertionError("settings changed");
-    return "PASS four isolated retention periods (unset=7, explicit7/30/90); pre-confirmation state-change path: "+checked+" switches and actual retention displays checked; active settings skipped (zero means actual displays not checked). No confirmation accepted, no upload/deletion enabled. Physical drag gesture not exercised.\n";
+    try {
+      manager.getServiceInfo(
+          component(context, "SyncJob"), PackageManager.MATCH_DISABLED_COMPONENTS);
+      throw new AssertionError("SyncJob is still installed");
+    } catch (PackageManager.NameNotFoundException expected) {
+      // Removed component.
+    }
+    manager.getActivityInfo(component(context, "E2SyncActivity"), 0);
+    manager.getServiceInfo(component(context, "E2SyncJob"), 0);
+  }
+
+  private static ComponentName component(android.content.Context context, String name) {
+    return new ComponentName(context, "jp.nano.rawgallery." + name);
+  }
+
+  static View find(View view, String text) {
+    if (view instanceof TextView label && text.contentEquals(label.getText())) return view;
+    if (view instanceof android.view.ViewGroup group)
+      for (int i = 0; i < group.getChildCount(); i++) {
+        View match = find(group.getChildAt(i), text);
+        if (match != null) return match;
+      }
+    return null;
+  }
+
+  static void capture(Instrumentation test, String name) throws Exception {
+    Bitmap shot = test.getUiAutomation().takeScreenshot();
+    if (shot == null) throw new AssertionError("Screenshot unavailable");
+    try (var out =
+        new FileOutputStream(new File(test.getTargetContext().getCacheDir(), name + ".png"))) {
+      if (!shot.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+        throw new AssertionError("Screenshot write failed");
+      }
+    } finally {
+      shot.recycle();
+    }
   }
 }

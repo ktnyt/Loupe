@@ -11,7 +11,6 @@ import jp.nano.rawgallery.BurstFrameTest;
 import jp.nano.rawgallery.BurstGapSettingsTest;
 import jp.nano.rawgallery.BurstGroupsTest;
 import jp.nano.rawgallery.CameraExFatCheck;
-import jp.nano.rawgallery.CloudPolicyTest;
 import jp.nano.rawgallery.ComparisonLayoutTest;
 import jp.nano.rawgallery.DiagnosticWriterTest;
 import jp.nano.rawgallery.DigestCompatibilityTest;
@@ -116,11 +115,6 @@ public class HostRegressionTest {
   @Test
   void cameraSourceKey() throws Exception {
     CameraSourceKeyTest.main(NO_ARGS);
-  }
-
-  @Test
-  void cloudPolicy() throws Exception {
-    CloudPolicyTest.main(NO_ARGS);
   }
 
   @Test
@@ -235,8 +229,9 @@ public class HostRegressionTest {
     if (Files.notExists(script)) script = Path.of("../tests/raw-full-source.sh");
     ProcessBuilder command = new ProcessBuilder("sh", script.toString()).inheritIO();
     String javaBin = Path.of(System.getProperty("java.home"), "bin").toString();
-    command.environment().put("PATH", javaBin + File.pathSeparator
-        + command.environment().getOrDefault("PATH", ""));
+    command
+        .environment()
+        .put("PATH", javaBin + File.pathSeparator + command.environment().getOrDefault("PATH", ""));
     Process check = command.start();
     try {
       assertTrue(check.waitFor(120, TimeUnit.SECONDS), "RAW full-source check timed out");

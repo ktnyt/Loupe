@@ -2,7 +2,6 @@ package jp.nano.rawgallery;
 
 import android.content.Context;
 import android.net.Uri;
-import android.webkit.CookieManager;
 import java.io.*;
 import java.nio.file.*;
 import java.security.MessageDigest;
@@ -11,6 +10,15 @@ import org.json.JSONObject;
 
 /** Bounded, recoverable originals. Durable proxies are stored elsewhere. */
 final class OriginalCache {
+  static final class LegacyOriginalUnavailable extends IOException {
+    static final String GUIDANCE =
+        "Amazon Photosに保管した元のファイルは、Amazon Photosで確認してください。IDrive e2に移行済みの写真は、IDrive e2の復元一覧から戻せます。";
+
+    LegacyOriginalUnavailable() {
+      super(GUIDANCE);
+    }
+  }
+
   static final long LIMIT = 512L * 1024 * 1024;
 
   static boolean supportsSize(long bytes) {
@@ -26,7 +34,9 @@ final class OriginalCache {
     JSONObject record = null;
     if (E2Cleanup.archived(p.uri)) {
       record = E2Cleanup.localRecord(c, p.uri);
-    } else if ("archive".equals(p.uri.getScheme())) {
+    }
+    boolean legacy = "archive".equals(p.uri.getScheme());
+    if (legacy) {
       try (ArchiveStore store = new ArchiveStore(c)) {
         record = store.get(p.uri.getHost());
       }
@@ -39,6 +49,7 @@ final class OriginalCache {
       trim(dir, target, 0);
       return local(p, target);
     }
+    if (legacy) throw new LegacyOriginalUnavailable();
     target.delete();
     if (!supportsSize(p.size)) throw new IOException("オリジナルの一時保存上限は512 MiBです");
     trim(dir, null, p.size);
@@ -56,13 +67,6 @@ final class OriginalCache {
         try (ArchiveStore archive = settings.records) {
           settings.archive(transfer.bucket).restoreRecord(record, partial, transfer);
         }
-      } else if (record != null) {
-        String cookies =
-            CookieManager.getInstance().getCookie(CloudVerifier.ORIGIN + "/drive/v1/nodes");
-        if (cookies == null || cookies.isBlank()) throw new IOException("Amazonへの再ログインが必要です");
-        new CloudVerifier(
-                cookies, SettingsRepository.cloudUserAgent(SettingsRepository.open(c), ""))
-            .download(record, partial);
       } else {
         try (InputStream in = PhotoRepository.original(c, p);
             FileOutputStream out = new FileOutputStream(partial)) {

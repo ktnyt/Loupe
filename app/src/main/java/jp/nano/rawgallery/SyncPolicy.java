@@ -3,15 +3,6 @@ package jp.nano.rawgallery;
 final class SyncPolicy {
   static final long DAY = 86400000L;
 
-  static boolean supported(String model) {
-    return model.equals("RICOH GR IV")
-        || model.equals("RICOH GR IV Monochrome")
-        || model.equals("OM-1MarkII")
-        || model.equals("OM-1 Mark II")
-        || model.equals("E-P7")
-        || model.startsWith("Leitzphone powered by Xiaomi");
-  }
-
   static long secondsToMillis(long seconds) {
     return seconds > 0 && seconds <= Long.MAX_VALUE / 1000 ? seconds * 1000 : 0;
   }

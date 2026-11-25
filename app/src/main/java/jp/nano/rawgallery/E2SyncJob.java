@@ -67,9 +67,7 @@ public final class E2SyncJob extends JobService {
   }
 
   private static void setEnabledLocked(Context context, boolean enabled, String bucket) {
-    if (enabled
-        && (RUNNING.get() || SettingsRepository.cleanupEnabled(SettingsRepository.open(context))))
-      throw new IllegalStateException("既存のオリジナル整理を停止してから開始してください");
+    if (enabled && RUNNING.get()) throw new IllegalStateException("既存のオリジナル整理を停止してから開始してください");
     if (enabled && (bucket == null || !bucket.equals(E2Settings.configuredBucket(context))))
       throw new IllegalStateException("保存先が変わりました。設定を開き直してください");
     JobScheduler scheduler = context.getSystemService(JobScheduler.class);
@@ -220,6 +218,12 @@ public final class E2SyncJob extends JobService {
   public static final class AfterUpdate extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
+      if (Intent.ACTION_MY_PACKAGE_REPLACED.equals(intent.getAction())) {
+        JobScheduler scheduler = context.getSystemService(JobScheduler.class);
+        // Retire only the old Amazon periodic and manual jobs.
+        scheduler.cancel(71);
+        scheduler.cancel(72);
+      }
       if (Intent.ACTION_MY_PACKAGE_REPLACED.equals(intent.getAction())
           || Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) {
         recoverSchedules(context, true);
