@@ -78,6 +78,9 @@ run_instrumentation() {
   printf '\nRunning Android instrumentation: %s\n' "$label"
   result=$("$adb" -s "$serial" shell am instrument -w -r "$@" < /dev/null)
   printf '%s\n' "$result"
+  if [[ "$label" == visual-status ]]; then
+    "$adb" -s "$serial" logcat -d -s LoupeVisualSwipe:I '*:S' || true
+  fi
   if ! grep -q '^INSTRUMENTATION_RESULT: stream=PASS ' <<< "$result" ||
      ! grep -qx 'INSTRUMENTATION_CODE: -1' <<< "$result"; then
     if [[ "$label" == photo-edit ]]; then
@@ -85,8 +88,6 @@ run_instrumentation() {
         awk '/full[.]prepare|fixture[.]cancel|jpeg[.]load[.]complete/ {print}' || true
     elif [[ "$label" == nano-background ]]; then
       "$adb" -s "$serial" logcat -d -s LoupeNanoFixture:E '*:S' || true
-    elif [[ "$label" == visual-status ]]; then
-      "$adb" -s "$serial" logcat -d -s LoupeVisualSwipe:I '*:S' || true
     elif [[ "$label" == look-removal ]]; then
       "$adb" -s "$serial" logcat -d -s LoupeLookFixture:I '*:S' || true
     fi
