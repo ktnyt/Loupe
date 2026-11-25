@@ -19,6 +19,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
@@ -50,14 +51,16 @@ final class DiagnosticFailureChecks {
           DiagnosticLog.startRecording(context), "start diagnostic recording in the test process");
       DiagnosticLog.event("fixture.diagnostics_begin", 0, "fixture", fixture);
       crashAndPrivacy(context, fixture);
+      crashBounds(context);
       simultaneousCrashes(context);
       credentialConcurrency(context);
       sourceConcurrency(test);
       recording.drain();
       checkPrivacy(context, fixture);
     }
-    return "PASS crash summary, simultaneous delegation and storage error, log privacy, generated image without a path, "
-        + "Nano Banana preferences and credential messages, SD registration and SD/Wi-Fi source rejection and retry";
+    return "PASS bounded crash summary, simultaneous delegation and storage error, log privacy,"
+        + " generated image without a path, Nano Banana preferences and credential messages,"
+        + " SD registration and SD/Wi-Fi source rejection and retry";
   }
 
   private static final class FixtureRecording implements AutoCloseable {
@@ -111,11 +114,16 @@ final class DiagnosticFailureChecks {
     require(unavailable.createNewFile(), "storage error fixture");
     Throwable cause = new IOException("private cause " + SENTINEL);
     Throwable failure = new IllegalStateException("private failure " + SENTINEL, cause);
-    failure.setStackTrace(
-        new StackTraceElement[] {
-          new StackTraceElement("Fixture", "check", SENTINEL, 42),
-          new StackTraceElement("Other", "discarded", "Other.java", 15)
-        });
+    cause.initCause(failure);
+    StackTraceElement[] stack = new StackTraceElement[20];
+    Arrays.fill(
+        stack, new StackTraceElement("java.lang.String", "length", "private-photo.jpg", 15));
+    stack[0] = new StackTraceElement("android.app.Activity", "onCreate", SENTINEL, 42);
+    stack[12] = new StackTraceElement(DiagnosticCrashHandler.class.getName(), "save", SENTINEL, 17);
+    stack[16] =
+        new StackTraceElement(
+            DiagnosticCrashHandler.class.getName(), "uncaughtException", SENTINEL, 23);
+    failure.setStackTrace(stack);
     Thread thread = Thread.currentThread();
     AtomicInteger delegates = new AtomicInteger();
     Thread.UncaughtExceptionHandler previous =
@@ -130,21 +138,36 @@ final class DiagnosticFailureChecks {
       String content = read(file);
       JSONObject note = new JSONObject(content);
       JSONObject frame = note.getJSONObject("frame");
+      var frames = note.getJSONArray("frames");
+      JSONObject appFrame = note.getJSONObject("app_frame");
+      var causes = note.getJSONArray("causes");
       require(
-          note.length() == 3
+          note.length() == 6
               && note.getInt("version_code") == 777
               && note.getString("exception").equals(IllegalStateException.class.getName()),
           "summary metadata");
       require(
           frame.length() == 3
-              && frame.getString("class").equals("Fixture")
-              && frame.getString("method").equals("check")
-              && frame.getInt("line") == 42,
-          "top frame only");
+              && frame.getString("class").equals("android.app.Activity")
+              && frame.getString("method").equals("onCreate")
+              && frame.getInt("line") == 42
+              && frames.length() == 8
+              && frames.getJSONObject(0).toString().equals(frame.toString())
+              && frames.getJSONObject(7).getString("class").equals("java.lang.String"),
+          "legacy frame and eight top frames in order");
       require(
-          content.length() < 1024
-              && !content.contains(SENTINEL)
-              && !content.contains("discarded")
+          appFrame.length() == 3
+              && appFrame.getString("class").equals(DiagnosticCrashHandler.class.getName())
+              && appFrame.getString("method").equals("save")
+              && appFrame.getInt("line") == 17,
+          "first app frame beyond the top eight frames");
+      require(
+          causes.length() == 1 && causes.getString(0).equals(IOException.class.getName()),
+          "cause traversal stops at identity cycle");
+      require(
+          !content.contains(SENTINEL)
+              && !content.contains("private-photo.jpg")
+              && !content.contains("private cause")
               && !content.contains("private failure"),
           "no private crash detail");
     } finally {
@@ -156,6 +179,39 @@ final class DiagnosticFailureChecks {
     DiagnosticLog.exception("fixture.diagnostics", "failed", failure);
     ImportLog.INSTANCE.init(context);
     ImportLog.INSTANCE.w("ImportLogFixture", "fixture.import " + fixture, failure);
+  }
+
+  private static void crashBounds(Context context) throws Exception {
+    File directory =
+        Files.createTempDirectory(context.getCacheDir().toPath(), "bounded-crash").toFile();
+    File file = new File(directory, "last-crash.json");
+    Throwable cause = new Error("past cause limit");
+    for (int index = 0; index < 16; index++) {
+      cause = new IllegalArgumentException("private cause", cause);
+    }
+    Throwable failure = new IllegalStateException("private failure", cause);
+    StackTraceElement[] stack =
+        new StackTraceElement[DiagnosticCrashHandler.MAX_SCANNED_FRAMES + 1];
+    Arrays.fill(stack, new StackTraceElement("android.app.Activity", "onCreate", null, 42));
+    stack[stack.length - 1] =
+        new StackTraceElement(DiagnosticCrashHandler.class.getName(), "save", null, 60);
+    failure.setStackTrace(stack);
+    try {
+      new DiagnosticCrashHandler(directory, 777, null)
+          .uncaughtException(Thread.currentThread(), failure);
+      JSONObject note = new JSONObject(read(file));
+      var causes = note.getJSONArray("causes");
+      require(
+          note.getJSONArray("frames").length() == 8 && !note.has("app_frame"),
+          "stack traversal stops before the frame past the scan limit");
+      require(
+          causes.length() == 8
+              && causes.getString(7).equals(IllegalArgumentException.class.getName()),
+          "cause traversal stops after eight entries");
+    } finally {
+      Files.deleteIfExists(file.toPath());
+      Files.deleteIfExists(directory.toPath());
+    }
   }
 
   private static void simultaneousCrashes(Context context) throws Exception {
