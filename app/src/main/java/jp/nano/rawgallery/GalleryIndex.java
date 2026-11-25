@@ -12,6 +12,7 @@ import java.util.function.BooleanSupplier;
 final class GalleryIndex extends SQLiteOpenHelper {
   static final java.util.concurrent.ExecutorService WORKER =
       new DiagnosticExecutor("GalleryIndex.worker", 1);
+  private static final int METADATA_BATCH_SIZE = 64;
   private static final String COLS = "uri,name,folder,size,modified,taken,added,created,archive_key,tag_source,sort_time";
   private static final String BURST_GAP_PREFIX = ":burst-gap-ms:";
   private static final String BURST_RULE_MARKER = ":burst-number-v1:";
@@ -211,38 +212,63 @@ final class GalleryIndex extends SQLiteOpenHelper {
       long probeMillis = 0;
       try (ArchiveStore store = new ArchiveStore(c)) {
         metadata = store.metadataSnapshot();
-        for (int i = 0; i < photos.size(); i++) {
-          if (cancelled.getAsBoolean()) return false;
-          PhotoRepository.Photo p = photos.get(i);
-          String key = ArchiveStore.key(p);
-          ArchiveStore.RawMetadata meta = metadata.get(key);
-          // Capture dates also determine gallery order when burst grouping is disabled.
-          if (meta == null)
-            try {
-              if (p.isArchived()) {
-                org.json.JSONObject record = E2Cleanup.archived(p.uri)
-                    ? E2Cleanup.localRecord(c, p.uri) : store.get(p.uri.getHost());
-                meta =
-                    new ArchiveStore.RawMetadata(
-                        record.optString("model", ""), record.optLong("taken", 0));
-              } else meta = store.metadata(p);
-            } catch (Exception ignored) {
+        List<ArchiveStore.IndexMetadata> batch = new ArrayList<>(METADATA_BATCH_SIZE);
+        for (int first = 0; first < photos.size(); first += METADATA_BATCH_SIZE) {
+          int end = Math.min(first + METADATA_BATCH_SIZE, photos.size());
+          for (PhotoRepository.Photo p : photos.subList(first, end)) {
+            if (cancelled.getAsBoolean()) return false;
+            String key = ArchiveStore.key(p);
+            ArchiveStore.RawMetadata meta = metadata.get(key);
+            boolean insert = false;
+            if (meta == null) {
+              try {
+                if (p.isArchived()) {
+                  org.json.JSONObject record = E2Cleanup.archived(p.uri)
+                      ? E2Cleanup.localRecord(c, p.uri) : store.get(p.uri.getHost());
+                  meta = new ArchiveStore.RawMetadata(record.optString("model", ""), record.optLong("taken", 0));
+                } else if (p.isVideo()) {
+                  meta = store.inspectMetadata(p);
+                } else {
+                  meta = store.readMetadata(key);
+                  if (meta == null) {
+                    meta = store.inspectMetadata(p);
+                    insert = true;
+                  }
+                }
+              } catch (Exception unavailable) {
+                // A vanished or unreadable original has no new metadata to cache.
+              }
             }
-          if (meta != null && meta.burstFrame == null && burstGapMillis > 0
-              && meta.taken > 0 && !burstCamera(meta).isEmpty() && ArchiveStore.canProbeBurstFrame(p)) {
-            probes++;
-            long started = android.os.SystemClock.elapsedRealtime();
-            try {
-              meta = store.probeBurstFrame(p, key, meta);
-              if (meta.burstFrame == null) failures++;
-              else if (meta.burstFrame.number() > 0) numbered++;
-            } catch (java.io.IOException | SecurityException ignored) {
-              failures++;
-            } finally {
-              probeMillis += android.os.SystemClock.elapsedRealtime() - started;
+            if (meta == null) continue;
+            RawPreview.BurstFrame frame = null;
+            if (meta.burstFrame == null && burstGapMillis > 0 && meta.taken > 0
+                && !burstCamera(meta).isEmpty() && ArchiveStore.canProbeBurstFrame(p)) {
+              probes++;
+              long started = android.os.SystemClock.elapsedRealtime();
+              try {
+                frame = store.inspectBurstFrame(p);
+              } catch (java.io.IOException | SecurityException unavailable) {
+                failures++;
+              } finally {
+                probeMillis += android.os.SystemClock.elapsedRealtime() - started;
+              }
+            }
+            if (insert || frame != null) {
+              batch.add(new ArchiveStore.IndexMetadata(key, meta, insert, frame));
+            } else {
+              metadata.put(key, meta);
             }
           }
-          if (meta != null) metadata.put(key, meta);
+          Map<String, ArchiveStore.RawMetadata> committed = store.writeIndexMetadata(batch, cancelled);
+          if (committed == null) return false;
+          for (ArchiveStore.IndexMetadata change : batch) {
+            if (change.frame() == null) continue;
+            RawPreview.BurstFrame frame = committed.get(change.key()).burstFrame;
+            if (frame == null) failures++;
+            else if (frame.number() > 0) numbered++;
+          }
+          metadata.putAll(committed);
+          batch.clear();
         }
       }
       DiagnosticLog.event("index.burst_probe", request, "count", probes, "numbered", numbered,
