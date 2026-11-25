@@ -676,6 +676,11 @@ public final class ArchiveInstrumentation extends Instrumentation {
         return;
       }
       if (sortDimensionsSpecified) validateSortDimensions(context);
+      if ("viewer-load".equals(cameraPilotArguments.getString("mode"))) {
+        results.putString("stream", ViewerPhotoLoadChecks.run(this));
+        finish(-1, results);
+        return;
+      }
       if (shareScreenTest) {
         results.putString("stream", ShareScreenChecks.run(this, tagWidth));
         finish(-1, results);
