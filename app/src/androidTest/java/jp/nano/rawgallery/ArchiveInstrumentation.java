@@ -484,6 +484,11 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if (positionTest) { results.putString("stream", GalleryPositionChecks.run(this)); finish(-1, results); return; }
       if (burstTest || realBurstTest) { results.putString("stream", BurstPreviewChecks.run(this, realBurstTest)); finish(-1, results); return; }
       if (sheetTest) { results.putString("stream", SheetChecks.run(this)); finish(-1, results); return; }
+      if ("diagnostic-local-export".equals(cameraPilotArguments.getString("mode"))) {
+        results.putString("stream", DiagnosticExportChecks.run(context));
+        finish(-1, results);
+        return;
+      }
       if (diagnosticTest) {
         results.putString("stream", DiagnosticChecks.run(this)); finish(-1, results); return;
       }
