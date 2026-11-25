@@ -62,7 +62,15 @@ run_instrumentation() {
   local label=$1 result
   shift
   printf '\nRunning Android instrumentation: %s\n' "$label"
-  result=$("$adb" -s "$serial" shell am instrument -w -r "$@" < /dev/null)
+  if [[ "$label" == visual-status ]]; then
+    if ! result=$(timeout --kill-after=10s 150s "$adb" -s "$serial" shell am instrument -w -r "$@" < /dev/null); then
+      "$adb" -s "$serial" logcat -d -s LoupeStatusFixture:I '*:S' || true
+      echo "$label did not finish successfully." >&2
+      return 1
+    fi
+  else
+    result=$("$adb" -s "$serial" shell am instrument -w -r "$@" < /dev/null)
+  fi
   printf '%s\n' "$result"
   if ! grep -q '^INSTRUMENTATION_RESULT: stream=PASS ' <<< "$result" ||
      ! grep -qx 'INSTRUMENTATION_CODE: -1' <<< "$result"; then
@@ -73,6 +81,8 @@ run_instrumentation() {
       "$adb" -s "$serial" logcat -d -s LoupeNanoFixture:E '*:S' || true
     elif [[ "$label" == look-removal ]]; then
       "$adb" -s "$serial" logcat -d -s LoupeLookFixture:I '*:S' || true
+    elif [[ "$label" == visual-status ]]; then
+      "$adb" -s "$serial" logcat -d -s LoupeStatusFixture:I '*:S' || true
     fi
     echo "$label did not report PASS." >&2
     exit 1
@@ -80,6 +90,11 @@ run_instrumentation() {
 }
 
 # Modes are ordered because seed/verify pairs must share the same disposable device.
+case "${LOUPE_DIAGNOSTIC_GROUP:?Select status or tail}" in
+  status) awk '$1=="visual-status" {print}' tests/ci-android-modes.txt > "$work/modes.txt" ;;
+  tail) awk '$1=="job-state" {later=1} later && NF && $1 !~ /^#/ {print}' tests/ci-android-modes.txt > "$work/modes.txt" ;;
+  *) exit 2 ;;
+esac
 ran=false
 while read -r mode key value; do
   case "$mode" in ''|\#*) continue ;; esac
@@ -90,13 +105,15 @@ while read -r mode key value; do
   fi
   run_instrumentation "$mode${key:+ ($key=$value)}" -e mode "$mode" \
     "${args[@]}" jp.nano.rawgallery.test/jp.nano.rawgallery.ArchiveInstrumentation
-done < tests/ci-android-modes.txt
+done < "$work/modes.txt"
 if ! "$ran"; then
   echo 'No Android instrumentation modes were configured.' >&2
   exit 1
 fi
 
-"$adb" -s "$serial" install -g raw-experiment/build/outputs/apk/debug/raw-experiment-debug.apk
-"$adb" -s "$serial" install -g raw-experiment/build/outputs/apk/androidTest/debug/raw-experiment-debug-androidTest.apk
-run_instrumentation 'raw-edit-full' -e full true \
-  jp.nano.rawgallery.rawexperiment.test/jp.nano.rawgallery.RawEditInstrumentation
+if [[ "$LOUPE_DIAGNOSTIC_GROUP" == tail ]]; then
+  "$adb" -s "$serial" install -g raw-experiment/build/outputs/apk/debug/raw-experiment-debug.apk
+  "$adb" -s "$serial" install -g raw-experiment/build/outputs/apk/androidTest/debug/raw-experiment-debug-androidTest.apk
+  run_instrumentation 'raw-edit-full' -e full true \
+    jp.nano.rawgallery.rawexperiment.test/jp.nano.rawgallery.RawEditInstrumentation
+fi

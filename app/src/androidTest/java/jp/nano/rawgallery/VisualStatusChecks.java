@@ -12,9 +12,33 @@ import android.widget.*;
 /** Real view timing and accessibility actions; generated state only, no network or originals. */
 final class VisualStatusChecks {
   static String run(Instrumentation t)throws Exception {
+    Thread checks = Thread.currentThread();
+    Thread watchdog = new Thread(() -> {
+      try { Thread.sleep(75_000); }
+      catch (InterruptedException finished) { return; }
+      trace("instrumentation", checks);
+      trace("main", android.os.Looper.getMainLooper().getThread());
+    }, "synthetic-status-watchdog");
+    watchdog.setDaemon(true);
+    watchdog.start();
+    try { return runStatus(t); }
+    finally { watchdog.interrupt(); }
+  }
+
+  private static void trace(String thread, Thread target) {
+    android.util.Log.e("LoupeStatusFixture", thread + " wait state=" + target.getState());
+    StackTraceElement[] stack = target.getStackTrace();
+    for (int i=0; i<Math.min(stack.length,20); i++) {
+      android.util.Log.e("LoupeStatusFixture", thread+" "+stack[i].getClassName()+"."+stack[i].getMethodName()+":"+stack[i].getLineNumber());
+    }
+  }
+
+  private static String runStatus(Instrumentation t)throws Exception {
+    android.util.Log.i("LoupeStatusFixture", "launch synthetic Activity");
     MainActivity a=(MainActivity)t.startActivitySync(new Intent(t.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     Thread.sleep(700);StatusView[] v={null};
     try {
+      android.util.Log.i("LoupeStatusFixture", "short load and minimum visibility");
       main(t,()->{LinearLayout root=new LinearLayout(a);root.setOrientation(1);root.setPadding(0,192,0,0);root.setBackgroundColor(GalleryUi.BG);v[0]=new StatusView(a);root.addView(v[0]);a.setContentView(root);v[0].begin("短い読み込み");return true;});
       Thread.sleep(180);
       main(t,()->{if(v[0].getVisibility()==View.VISIBLE)throw new AssertionError("short load flickered");v[0].finish();return true;});
@@ -33,6 +57,7 @@ final class VisualStatusChecks {
       main(t,()->{if(v[0].getVisibility()!=View.VISIBLE)throw new AssertionError("failure disappeared");AccessibilityNodeInfo node=v[0].createAccessibilityNodeInfo();if(!node.isClickable()||!node.getContentDescription().toString().contains("再試行"))throw new AssertionError("recovery AX");if(!v[0].performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK,null)||clicks[0]!=1)throw new AssertionError("recovery action");v[0].result(StatusView.Symbol.COMPLETE,"保存しました");return true;});
       Thread.sleep(1200);
       main(t,()->{if(v[0].getVisibility()==View.VISIBLE)throw new AssertionError("success remains");return true;});
+      android.util.Log.i("LoupeStatusFixture", "eight-second loading marker");
       main(t,()->{v[0].begin("8秒を超える処理");if((boolean)field(v[0],"transientResult")||(boolean)field(v[0],"marker")||!"".equals(field(v[0],"recoveryName")))throw new AssertionError("previous state leaked into loading");return true;});
       Thread.sleep(500);final int[] initialBounds={v[0].getWidth(),v[0].getHeight()};
       Thread.sleep(7700);
@@ -43,6 +68,7 @@ final class VisualStatusChecks {
       main(t,()->{v[0].counts("3/12");v[0].describe("12枚中3枚");return true;});
       capture(t,a,v[0],v[0].getHeight(),"status-known-count");
       main(t,()->{v[0].clear();return true;});
+      android.util.Log.i("LoupeStatusFixture", "synthetic layouts");
       int cases=0;
       for(int page=0;page<2;page++)for(int width:new int[]{320,400})for(float scale:new float[]{1,1.3f}) {
         final int statePage=page;
@@ -57,8 +83,12 @@ final class VisualStatusChecks {
         });
         capture(t,a,board[0],board[0].getHeight(),"status-"+width+"-"+scale+(statePage==0?"":"-causes"));cases++;
       }
+      android.util.Log.i("LoupeStatusFixture", "share, viewer and tag flows");
       String flows=VisualStatusFlowChecks.run(t,a);
       return flows+"PASS status delay (<400ms hidden), minimum 600ms, completion fade, stale clear, persistent failure, actual AX retry, transient result, real 8s marker with stable bounds, simulated 61s elapsed origin and known count capture; "+cases+" real-device synthetic captures. No external transfer; TalkBack audio untested.\n";
-    }finally{main(t,()->{a.finish();return true;});}
+    }finally{
+      android.util.Log.i("LoupeStatusFixture", "finish synthetic Activity");
+      main(t,()->{a.finish();return true;});
+    }
   }
 }
