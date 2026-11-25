@@ -69,6 +69,8 @@ run_instrumentation() {
     if [[ "$label" == photo-edit ]]; then
       "$adb" -s "$serial" logcat -d -s LoupeRawEdit:I '*:S' |
         awk '/full[.]prepare|fixture[.]cancel|jpeg[.]load[.]complete/ {print}' || true
+    elif [[ "$label" == nano-background ]]; then
+      "$adb" -s "$serial" logcat -d -s LoupeNanoFixture:E '*:S' || true
     fi
     echo "$label did not report PASS." >&2
     exit 1
