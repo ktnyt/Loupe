@@ -19,6 +19,7 @@ final class DiagnosticLog {
   private static final Object CONFIG = new Object();
   static final Object FILES = new Object();
   private static volatile Recorder recorder;
+  private static Object latestRecorderToken;
   private static boolean initialized;
 
   static void init(Context context) {
@@ -33,24 +34,30 @@ final class DiagnosticLog {
     }
   }
 
-  static boolean recording() { return recorder != null; }
+  static Recorder currentRecorder() { return recorder; }
 
-  static boolean setRecording(Context context, boolean record) {
+  static boolean startRecording(Context context) {
     synchronized (CONFIG) {
       SharedPreferences prefs = settings(context);
-      if (record) {
-        if (recorder != null || start(context, prefs, true)) return true;
-        if (prefs.getBoolean("record", false)) remember(prefs, false);
-        return false;
-      }
-      if (!remember(prefs, false)) return false;
-      Recorder stopped;
+      if (recorder != null || start(context, prefs, true)) return true;
+      if (prefs.getBoolean("record", false)) remember(prefs, false);
+      return false;
+    }
+  }
+
+  static boolean stopRecording(Context context, Recorder requested) {
+    synchronized (CONFIG) {
+      // A dialog can outlive its recorder, but it cannot stop a newer one.
+      if (latestRecorderToken != requested.token) return false;
+      if (!remember(settings(context), false)) return false;
       synchronized (DiagnosticLog.class) {
-        stopped = recorder;
-        recorder = null;
-        if (stopped != null) stopped.queue.add(Recorder.STOP);
+        if (recorder == requested) {
+          recorder = null;
+          requested.queue.add(Recorder.STOP);
+        }
       }
-      return stopped == null || stopped.awaitStop();
+      // A failed recorder detaches itself. Its final result still belongs to this request.
+      return requested.awaitStop();
     }
   }
 
@@ -89,6 +96,7 @@ final class DiagnosticLog {
 
     Recorder started = new Recorder(sink);
     started.thread.start();
+    latestRecorderToken = started.token;
     recorder = started;
     long version = 0;
     try { version = context.getPackageManager().getPackageInfo(context.getPackageName(), 0).getLongVersionCode(); }
@@ -101,11 +109,12 @@ final class DiagnosticLog {
     Log.e("LoupeDiagnostic", "writer_failed:" + error.getClass().getSimpleName());
   }
 
-  private static final class Recorder {
+  static final class Recorder {
     private static final String STOP = new String();
     // The last slot is reserved for STOP, even when the event queue is full.
     private final ArrayBlockingQueue<String> queue = new ArrayBlockingQueue<>(2049);
     private final Thread thread;
+    private final Object token = new Object();
     private boolean failed;
 
     Recorder(DiagnosticWriter sink) {
@@ -127,6 +136,7 @@ final class DiagnosticLog {
         failed = true;
         synchronized (DiagnosticLog.class) {
           if (recorder == this) recorder = null;
+          queue.clear();
         }
         logFailure(error);
       }

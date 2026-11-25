@@ -1,16 +1,20 @@
 package jp.nano.rawgallery;
 
 import android.content.Context;
+import android.content.ContextWrapper;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.os.Build;
+import android.os.SystemClock;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,7 +31,7 @@ final class DiagnosticExportChecks {
   static String run(Context context) throws Exception {
     require("ranchu".equals(Build.HARDWARE));
     require((context.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) == 0);
-    require(!DiagnosticLog.recording());
+    require(DiagnosticLog.currentRecorder() == null);
 
     var intent = DiagnosticDestination.folderPicker();
     require(Intent.ACTION_OPEN_DOCUMENT_TREE.equals(intent.getAction())
@@ -42,7 +46,7 @@ final class DiagnosticExportChecks {
     if (hadFile) Files.move(blocked.toPath(), original.toPath());
     try {
       require(blocked.mkdir());
-      require(!DiagnosticLog.setRecording(context, true) && !DiagnosticLog.recording());
+      require(!DiagnosticLog.startRecording(context) && DiagnosticLog.currentRecorder() == null);
       require(!context.getSharedPreferences("diagnostics", Context.MODE_PRIVATE).getBoolean("record", false));
     } finally {
       Files.deleteIfExists(blocked.toPath());
@@ -94,17 +98,71 @@ final class DiagnosticExportChecks {
 
     DiagnosticLog.event("video.prepared", 0, "elapsed_ms", 863241234);
     require(!unzip(DiagnosticExport.capture(context)).get("events.jsonl").contains("863241234"));
-    require(DiagnosticLog.setRecording(context, true) && DiagnosticLog.recording());
+    require(DiagnosticLog.startRecording(context));
+    DiagnosticLog.Recorder recording = DiagnosticLog.currentRecorder();
+    require(recording != null);
     DiagnosticLog.event("video.prepared", 0, "elapsed_ms", 556677889, "path", PATH);
-    require(DiagnosticLog.setRecording(context, false) && !DiagnosticLog.recording());
+    require(DiagnosticLog.stopRecording(context, recording) && DiagnosticLog.currentRecorder() == null);
     DiagnosticLog.event("video.prepared", 0, "elapsed_ms", 999999991);
     String events = unzip(DiagnosticExport.capture(context)).get("events.jsonl");
     require(events.contains("556677889") && !events.contains("999999991") && !events.contains(PATH));
+    checkFailedRecording(context);
     checkOutput("write", false);
     checkOutput("close", false);
     checkOutput("close", true);
     checkOutput("", false);
-    return "PASS non-debuggable diagnostics, failed open, stop tail, E2 phases, redaction, and ZIP output failures";
+    return "PASS non-debuggable diagnostics, failed open, stop tail, E2 phases, redaction, ZIP output failures, and failed recorder identity";
+  }
+
+  private static void checkFailedRecording(Context context) throws Exception {
+    File root = Files.createTempDirectory(context.getCacheDir().toPath(), "diagnostic-writer-fixture").toFile();
+    File folder = new File(root, "diagnostics");
+    File current = new File(folder, "events.jsonl");
+    File previous = new File(folder, "previous.jsonl");
+    File child = new File(previous, "fixture");
+    try {
+      require(folder.mkdir() && previous.mkdir() && child.createNewFile());
+      try (RandomAccessFile file = new RandomAccessFile(current, "rw")) {
+        file.setLength(DiagnosticExport.EVENT_FILE_LIMIT - 16 * 1024);
+      }
+      Context isolated = new ContextWrapper(context) {
+        @Override public File getFilesDir() { return root; }
+      };
+      require(DiagnosticLog.startRecording(isolated));
+      DiagnosticLog.Recorder displayed = DiagnosticLog.currentRecorder();
+      require(displayed != null);
+
+      // Trigger a real rotation while the writer is active. The non-empty previous directory
+      // cannot be deleted, so the writer detaches before the stale dialog requests a stop.
+      char[] padding = new char[24 * 1024];
+      Arrays.fill(padding, 'x');
+      DiagnosticLog.event("video.prepared", 0, "fixture", new String(padding));
+      long deadline = SystemClock.elapsedRealtime() + 5000;
+      while (DiagnosticLog.currentRecorder() == displayed) {
+        require(SystemClock.elapsedRealtime() < deadline);
+        SystemClock.sleep(10);
+      }
+      require(DiagnosticLog.currentRecorder() == null);
+      require(!DiagnosticLog.stopRecording(context, displayed));
+      var prefs = context.getSharedPreferences("diagnostics", Context.MODE_PRIVATE);
+      require(!prefs.getBoolean("record", true));
+
+      require(DiagnosticLog.startRecording(context));
+      DiagnosticLog.Recorder restarted = DiagnosticLog.currentRecorder();
+      require(restarted != null && restarted != displayed);
+      require(!DiagnosticLog.stopRecording(context, displayed));
+      require(DiagnosticLog.currentRecorder() == restarted && prefs.getBoolean("record", false));
+      require(DiagnosticLog.stopRecording(context, restarted));
+      require(DiagnosticLog.stopRecording(context, restarted));
+      require(!DiagnosticLog.stopRecording(context, displayed));
+      require(DiagnosticLog.currentRecorder() == null && !prefs.getBoolean("record", true));
+    } finally {
+      DiagnosticLog.Recorder remaining = DiagnosticLog.currentRecorder();
+      if (remaining != null) DiagnosticLog.stopRecording(context, remaining);
+      for (File fixture : List.of(child, previous, current, folder, root)) {
+        Files.deleteIfExists(fixture.toPath());
+      }
+    }
   }
 
   private static void checkOutput(String failedStep, boolean cleanupFails) throws Exception {

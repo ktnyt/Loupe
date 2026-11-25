@@ -55,7 +55,8 @@ final class DiagnosticControls {
   }
 
   void show() {
-    boolean recording = DiagnosticLog.recording();
+    DiagnosticLog.Recorder displayedRecorder = DiagnosticLog.currentRecorder();
+    boolean recording = displayedRecorder != null;
     String message = (recording ? "処理の記録中です。" : "処理の記録は停止中です。")
         + "\n処理時間とクラッシュの概要をZIPに保存できます。";
     if (lastFailure != null) message += "\n\n" + lastFailure;
@@ -98,7 +99,7 @@ final class DiagnosticControls {
     AlertDialog dialog = builder.setView(panel).create();
     addAction(actions, recording ? "記録を止める" : "記録を始める", () -> {
       dialog.dismiss();
-      setRecording(!recording);
+      changeRecording(displayedRecorder);
     });
     addAction(actions, "閉じる", dialog::dismiss);
     addAction(actions, "ZIPを保存", () -> {
@@ -119,10 +120,12 @@ final class DiagnosticControls {
     return Math.round(context.getResources().getDisplayMetrics().density * value);
   }
 
-  private void setRecording(boolean enabled) {
+  private void changeRecording(DiagnosticLog.Recorder displayedRecorder) {
     Context app = activity.getApplicationContext();
     WORKER.execute(() -> {
-      boolean saved = DiagnosticLog.setRecording(app, enabled);
+      boolean enabled = displayedRecorder == null;
+      boolean saved = enabled ? DiagnosticLog.startRecording(app)
+          : DiagnosticLog.stopRecording(app, displayedRecorder);
       feedback(saved ? (enabled ? "診断の記録を開始しました" : "診断の記録を停止しました")
           : (enabled ? "診断の記録を開始できませんでした" : "診断の停止処理を完了できませんでした"));
     });
