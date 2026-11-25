@@ -31,6 +31,8 @@ def official_main(args, source):
 
 
 def expected_bundle(bundle, source, version):
+    if bundle.get('debuggable') is not False:
+        raise ValueError('Release bundle must declare debuggable=false')
     expected = dict(source_commit=source, mode='main', certificates=[deploy.CERTIFICATE],
                     version_code=version['version_code'], version_name=version['version_name'],
                     apk='loupe.apk')
