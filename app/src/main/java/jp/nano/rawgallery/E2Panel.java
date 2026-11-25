@@ -47,7 +47,7 @@ final class E2Panel {
   private String activeBucket, pickerBucket;
   private Uri pendingPick;
   private Export export;
-  private E2Photos.PreparedRestore verified;
+  private final E2RestorePicker restorePicker;
   private volatile Thread operation;
   private volatile boolean cancelled;
   private boolean busy, connecting, catalogPending;
@@ -61,6 +61,7 @@ final class E2Panel {
     this.activity = activity;
     this.scroll = scroll;
     photos = new E2Photos(activity);
+    restorePicker = new E2RestorePicker(activity.getCacheDir(), state);
     LinearLayout dashboard = column();
     dashboard.setPadding(dp(16), dp(16), dp(16), dp(16));
     background(dashboard, 0xff19191b, 16);
@@ -149,21 +150,7 @@ final class E2Panel {
     list = column();
     add(card, list);
     setBusy(false);
-    if (state != null) {
-      pickerBucket = state.getString("e2-picker-bucket");
-      String directory = state.getString("e2-verified-directory", "");
-      if (directory.matches("e2-export-[0-9]+")) {
-        File file = new File(new File(activity.getCacheDir(), directory), "original");
-        try {
-          E2Photos.PreparedRestore prepared = new E2Photos.PreparedRestore(file,
-              state.getLong("e2-verified-size"), state.getString("e2-verified-sha"));
-          E2Photos.holdForPicker(file);
-          verified = prepared;
-        } catch (java.io.IOException | IllegalArgumentException ignored) {
-          // A discarded cache file can be fetched again from the cloud catalog.
-        }
-      }
-    }
+    if (state != null) pickerBucket = state.getString("e2-picker-bucket");
     Object retained = activity.getLastCustomNonConfigurationInstance();
     if (retained instanceof Export) {
       export = (Export) retained;
@@ -171,7 +158,7 @@ final class E2Panel {
       setBusy(true);
       message("オリジナルを書き出しています", GalleryUi.TEXT);
       if (export.outcome != null) exportFinished(export, export.outcome);
-    } else if (verified != null) {
+    } else if (restorePicker.isWaiting()) {
       setBusy(true);
       message("復元先を選んでください", GalleryUi.TEXT);
     } else if (photos.settings.configured()) run("保存先を読み込んでいます", this::refresh);
@@ -185,11 +172,7 @@ final class E2Panel {
   void saveState(Bundle state) {
     state.putString("e2-picker-bucket", pickerBucket);
     state.putBoolean("e2-exporting", export != null);
-    if (verified != null) {
-      state.putString("e2-verified-directory", verified.file().getParentFile().getName());
-      state.putLong("e2-verified-size", verified.size());
-      state.putString("e2-verified-sha", verified.sha());
-    }
+    restorePicker.saveState(state);
   }
 
   void refreshAuto() {
@@ -473,17 +456,18 @@ final class E2Panel {
         consumePick();
       } else pickerBucket = null;
     } else if (request == CREATE) {
-      E2Photos.PreparedRestore file = verified;
-      verified = null;
-      if (file == null) {
-        if (result == Activity.RESULT_OK)
-          message("復元を再開できませんでした。オリジナルをもう一度選んでください", 0xffffb4a8);
+      if (!restorePicker.isWaiting()) {
+        if (result == Activity.RESULT_OK) showRestorePickerUnavailable();
       } else if (result != Activity.RESULT_OK || uri == null) {
-        E2Photos.discard(file.file());
+        restorePicker.cancel();
         message("復元先の選択を中止しました", GalleryUi.TEXT);
         reloadAfterExport();
-      } else runExport(file, uri);
+      } else runExport(restorePicker.take(), uri);
     }
+  }
+
+  private void showRestorePickerUnavailable() {
+    message("復元を再開できませんでした。オリジナルをもう一度選んでください", 0xffffb4a8);
   }
 
   private void consumePick() {
@@ -615,12 +599,11 @@ final class E2Panel {
           E2Photos.discard(file);
           return;
         }
-        verified = prepared;
-        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT)
-            .addCategory(Intent.CATEGORY_OPENABLE).setType(record.optString("mime"))
-            .putExtra(Intent.EXTRA_LOCAL_ONLY, true)
-            .putExtra(Intent.EXTRA_TITLE, record.optString("name"));
-        activity.startActivityForResult(intent, CREATE);
+        if (!restorePicker.open(prepared, record.optString("mime"), record.optString("name"),
+            intent -> activity.startActivityForResult(intent, CREATE))) {
+          showRestorePickerUnavailable();
+          return;
+        }
         timing("restore_fetch", started, " bytes=" + file.length());
       });
     });
@@ -844,7 +827,7 @@ final class E2Panel {
           if (activity.isDestroyed()) return;
           connecting = false;
           if (cancelled) message("中止しました", GalleryUi.TEXT);
-          if (verified == null) {
+          if (!restorePicker.isWaiting()) {
             setBusy(false);
             consumePick();
           }
@@ -869,7 +852,7 @@ final class E2Panel {
     save.setEnabled(!value && activeBucket != null);
     catalogLoad.setEnabled(!value && activeBucket != null);
     catalogSave.setEnabled(!value && activeBucket != null);
-    cancel.setVisibility(value && !connecting && export == null && verified == null ? View.VISIBLE : View.GONE);
+    cancel.setVisibility(value && !connecting && export == null && !restorePicker.isWaiting() ? View.VISIBLE : View.GONE);
     for (int i = 0; i < list.getChildCount(); i++) {
       if (list.getChildAt(i) instanceof LinearLayout) {
         LinearLayout row = (LinearLayout) list.getChildAt(i);
@@ -891,10 +874,7 @@ final class E2Panel {
     cancelled = true;
     searchGeneration++;
     if (pendingSearch != null) main.removeCallbacks(pendingSearch);
-    if (verified != null) {
-      if (activity.isFinishing()) E2Photos.discard(verified.file());
-      else if (!activity.isChangingConfigurations()) E2Photos.releasePickerOwnership(verified.file());
-    }
+    restorePicker.close(activity.isFinishing(), activity.isChangingConfigurations());
     worker.execute(photos::close);
     Thread thread = operation;
     if (export != null) export.panel = null;

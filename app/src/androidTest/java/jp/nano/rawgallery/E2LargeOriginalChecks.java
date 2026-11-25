@@ -114,21 +114,96 @@ final class E2LargeOriginalChecks {
       if (waitingExpiry.exists() || !protectedCopy.isFile())
         throw new AssertionError("Same-process cleanup did not reclaim the expired lease");
       verifyProtectedBytes(protectedCopy);
+      verifyRestorePicker(test, cache);
       verifyDiskReserve(cache);
       android.content.SharedPreferences settings = E2AutoSync.state(context);
+      boolean hadConsent = settings.contains("fullMediaConsent");
       int before = settings.getInt("fullMediaConsent", 0);
       try {
         settings.edit().putInt("fullMediaConsent", 1).commit();
         if (E2SyncJob.fullMediaConsent(context)) throw new AssertionError("Old size consent still accepted");
-      } finally { settings.edit().putInt("fullMediaConsent", before).commit(); }
+      } finally {
+        var restore = settings.edit();
+        if (hadConsent) restore.putInt("fullMediaConsent", before);
+        else restore.remove("fullMediaConsent");
+        restore.commit();
+      }
       return "PASS large original staging: orphan and expired lease removed, active picker protected, "
-          + "short and altered originals rejected, storage reserve protected, old consent rejected";
+          + "short and altered originals rejected, storage reserve protected, old consent rejected, restore picker lifecycle checked";
     } finally {
       Files.deleteIfExists(interrupted.toPath());
       E2Photos.discard(orphan);
       E2Photos.discard(waitingExpiry);
       E2Photos.discard(protectedCopy);
     }
+  }
+
+  private static void verifyRestorePicker(Instrumentation test, File cache) throws Exception {
+    byte[] bytes = {5, 6};
+    File unavailable = restoreFixture(cache, bytes);
+    File denied = restoreFixture(cache, bytes);
+    File cancelled = restoreFixture(cache, bytes);
+    File rotated = restoreFixture(cache, bytes);
+    File other = restoreFixture(cache, bytes);
+    String sha = E2Archive.sha256(bytes);
+    try {
+      test.runOnMainSync(() -> {
+        var picker = new E2RestorePicker(cache, null);
+        var noHandler = new E2Photos.PreparedRestore(unavailable, bytes.length, sha);
+        requirePicker(!picker.open(noHandler, "image/jpeg", "Synthetic.jpg", intent -> {
+          throw new android.content.ActivityNotFoundException();
+        }), "launch without an Activity fails");
+        requirePicker(!picker.isWaiting() && !unavailable.exists()
+            && !new File(unavailable.getParentFile(), "picker").exists(),
+            "unavailable picker releases only its prepared file");
+        var forbidden = new E2Photos.PreparedRestore(denied, bytes.length, sha);
+        requirePicker(!picker.open(forbidden, "image/jpeg", "Synthetic.jpg", intent -> {
+          throw new SecurityException();
+        }), "picker launch denied");
+        requirePicker(!picker.isWaiting() && !denied.exists(), "denied launch also releases its file");
+        var abandoned = new E2Photos.PreparedRestore(cancelled, bytes.length, sha);
+        requirePicker(picker.open(abandoned, "image/jpeg", "Synthetic.jpg", intent -> {
+          requirePicker(android.content.Intent.ACTION_CREATE_DOCUMENT.equals(intent.getAction())
+                  && intent.hasCategory(android.content.Intent.CATEGORY_OPENABLE)
+                  && intent.getBooleanExtra(android.content.Intent.EXTRA_LOCAL_ONLY, false)
+                  && "image/jpeg".equals(intent.getType())
+                  && "Synthetic.jpg".equals(intent.getStringExtra(android.content.Intent.EXTRA_TITLE)),
+              "normal request retains its type, title and local-only openable boundary");
+        }), "a later attempt can open the picker");
+        picker.cancel();
+        requirePicker(!picker.isWaiting() && !cancelled.exists(), "ordinary picker cancel releases the staged file");
+        var ready = new E2Photos.PreparedRestore(rotated, bytes.length, sha);
+        requirePicker(picker.open(ready, "image/jpeg", "Synthetic.jpg", intent -> {}), "second attempt starts");
+        var state = new android.os.Bundle();
+        picker.saveState(state);
+        picker.close(false, true);
+        requirePicker(rotated.isFile() && new File(rotated.getParentFile(), "picker").isFile(),
+            "configuration changes keep the pending file and lease");
+        var recreated = new E2RestorePicker(cache, state);
+        requirePicker(ready.equals(recreated.take()) && recreated.take() == null,
+            "recreated picker transfers exactly one matching prepared file");
+        requirePicker(rotated.isFile() && other.isFile() && new File(other.getParentFile(), "picker").isFile(),
+            "handoff retains its file for the exporter and never touches another request");
+        E2Photos.discard(rotated);
+        requirePicker(!new E2RestorePicker(cache, state).isWaiting(),
+            "a missing cache entry cannot be transferred twice");
+      });
+      if (!java.util.Arrays.equals(bytes, Files.readAllBytes(other.toPath())))
+        throw new AssertionError("A different restore file was modified");
+    } finally {
+      for (File file : List.of(unavailable, denied, cancelled, rotated, other)) E2Photos.discard(file);
+    }
+  }
+
+  private static File restoreFixture(File cache, byte[] bytes) throws Exception {
+    File file = new File(Files.createTempDirectory(cache.toPath(), "e2-export-").toFile(), "original");
+    Files.write(file.toPath(), bytes);
+    E2Photos.holdForPicker(file);
+    return file;
+  }
+
+  private static void requirePicker(boolean condition, String message) {
+    if (!condition) throw new AssertionError(message);
   }
 
   private static void verifyProtectedBytes(File file) throws Exception {
