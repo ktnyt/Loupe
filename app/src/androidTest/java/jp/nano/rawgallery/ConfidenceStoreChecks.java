@@ -1,7 +1,6 @@
 package jp.nano.rawgallery;
 
 import android.content.Context;
-import android.database.sqlite.SQLiteDatabase;
 import java.util.*;
 
 /** Disposable SQLite databases; does not modify the user's tag or feature stores. */
@@ -138,22 +137,12 @@ final class ConfidenceStoreChecks {
     String tag = "legacy-tag", photo = "legacy-photo";
     try {
       try (var db = context.openOrCreateDatabase(database, Context.MODE_PRIVATE, null)) {
-        createLegacySchema(db, version);
-        db.execSQL("INSERT INTO tags(id,name) VALUES(?,'migration')", new Object[] {tag});
-        db.execSQL(
-            "INSERT INTO photos(id,source) VALUES(?,?)",
-            new Object[] {photo, TagStore.source(AutomaticTagChecks.photo(1))});
-        db.execSQL(
-            "INSERT INTO history(operation,tag,photo,revision,value) VALUES('human',?,?,1,'ASSIGNED')",
-            new Object[] {tag, photo});
-        db.execSQL(
-            "INSERT INTO judgments(tag,photo,revision,value) VALUES(?,?,1,'ASSIGNED')",
-            new Object[] {tag, photo});
-        db.execSQL("INSERT INTO reevaluation(tag,revision) VALUES(?,1)", new Object[] {tag});
+        LegacyTagDatabase.create(db, version);
+        LegacyTagDatabase.insertAssignment(
+            db, tag, "migration", photo, AutomaticTagChecks.photo(1), "human");
         if (version == 2) {
           db.execSQL("INSERT INTO automation(tag,enabled,epoch) VALUES(?,1,3)", new Object[] {tag});
         }
-        db.setVersion(version);
       }
       try (TagStore store = new TagStore(context, database)) {
         check(
@@ -192,20 +181,4 @@ final class ConfidenceStoreChecks {
     }
   }
 
-  // v2 (1256ce4) adds the two automation tables to the v1 judgment schema.
-  private static void createLegacySchema(SQLiteDatabase db, int version) {
-    db.execSQL("CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE)");
-    db.execSQL("CREATE TABLE photos (id TEXT PRIMARY KEY, source TEXT NOT NULL UNIQUE)");
-    db.execSQL(
-        "CREATE TABLE history (seq INTEGER PRIMARY KEY AUTOINCREMENT, operation TEXT NOT NULL UNIQUE, tag TEXT NOT NULL, photo TEXT NOT NULL, revision INTEGER NOT NULL, value TEXT NOT NULL, undone TEXT)");
-    db.execSQL(
-        "CREATE TABLE judgments (tag TEXT NOT NULL, photo TEXT NOT NULL, revision INTEGER NOT NULL, value TEXT NOT NULL, PRIMARY KEY(tag,photo))");
-    db.execSQL("CREATE TABLE reevaluation (tag TEXT PRIMARY KEY, revision INTEGER NOT NULL)");
-    if (version == 2) {
-      db.execSQL(
-          "CREATE TABLE automation (tag TEXT PRIMARY KEY, enabled INTEGER NOT NULL, epoch INTEGER NOT NULL)");
-      db.execSQL(
-          "CREATE TABLE automatic_tags (tag TEXT NOT NULL, photo TEXT NOT NULL, judgment_revision INTEGER NOT NULL, pipeline TEXT NOT NULL, epoch INTEGER NOT NULL, positive REAL NOT NULL, negative REAL NOT NULL, threshold REAL NOT NULL, PRIMARY KEY(tag,photo))");
-    }
-  }
 }

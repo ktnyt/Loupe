@@ -10,19 +10,11 @@ final class AutomaticTagChecks {
     String database = "auto-tag-test-" + UUID.randomUUID() + ".db";
     PhotoRepository.Photo seed = photo(1), other = photo(2), third = photo(3);
     List<PhotoRepository.Photo> scope = List.of(seed, other, third);
-    String tagId, seedId;
+    String tagId = "legacy-tag", seedId = "legacy-seed";
     try {
-      try (TagStore store = new TagStore(context, database)) {
-        tagId = store.create("test").id;
-        seedId = store.photoId(seed, true);
-        store.record("seed", tagId, seedId, 0, TagJudgments.Value.ASSIGNED);
-        // Recreate a genuine v1 schema before opening the current helper again.
-        store.getWritableDatabase().execSQL("DROP TABLE automatic_tags");
-        store.getWritableDatabase().execSQL("DROP TABLE automation");
-        store.getWritableDatabase().execSQL("DROP TABLE confidence_preferences");
-        store.getWritableDatabase().execSQL("DROP TABLE confidence_models");
-        store.getWritableDatabase().execSQL("DROP TABLE confidence_scores");
-        store.getWritableDatabase().setVersion(1);
+      try (var db = context.openOrCreateDatabase(database, Context.MODE_PRIVATE, null)) {
+        LegacyTagDatabase.create(db, 1);
+        LegacyTagDatabase.insertAssignment(db, tagId, "test", seedId, seed, "seed");
       }
       try (TagStore store = new TagStore(context, database)) {
         check(store.load().value(tagId, seedId) == TagJudgments.Value.ASSIGNED, "Migration lost human data");
