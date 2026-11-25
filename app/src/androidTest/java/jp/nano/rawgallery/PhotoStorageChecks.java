@@ -697,6 +697,9 @@ final class PhotoStorageChecks {
       String photoKey = ArchiveStore.key(oldPhoto);
       String otherKey = ArchiveStore.key(otherPhoto);
       require(!photoKey.equals(otherKey), "Same-name photos have different logical keys");
+      require(GalleryIndex.rebuild(f.context, true, () -> false), "index before moving imported photos");
+      require(indexedPhotos(f).stream().anyMatch(photo -> photo.uri.equals(oldPhoto.uri)),
+          "index starts with the original location");
       TagStore.Tag tag = tags.create("Synthetic assignment");
       String tagId = tags.photoId(oldPhoto, true);
       String otherTagId = tags.photoId(otherPhoto, true);
@@ -796,6 +799,23 @@ final class PhotoStorageChecks {
       CameraPhotoImporter.Result saved = f.importPhoto(new CameraPhotoImporter(f.context, ledger), fresh, freshBytes);
       require(saved.imported && f.secondary.equals(PhotoStorage.volumeOf(saved.uri))
           && Arrays.equals(freshBytes, f.read(saved.uri)), "New import writes full bytes to the selected SD volume");
+      PhotoRepository.Photo newPhoto = f.photo(saved.uri);
+      require(!GalleryIndex.rebuild(f.context, true, () -> true), "cancel the first post-move rebuild");
+      require(indexedPhotos(f).stream().anyMatch(photo -> photo.uri.equals(oldPhoto.uri)),
+          "cancelled rebuild retains the last published index");
+      require(GalleryIndex.rebuild(f.context, true, () -> false), "retry the post-move rebuild");
+      List<PhotoRepository.Photo> indexed = indexedPhotos(f);
+      require(indexed.stream().noneMatch(photo -> photo.uri.equals(oldPhoto.uri))
+          && indexed.stream().anyMatch(photo -> photo.uri.equals(movedPhoto.uri) && photo.movedIdentity != null
+              && photoKey.equals(photo.movedIdentity.archiveKey()))
+          && indexed.stream().anyMatch(photo -> photo.uri.equals(newPhoto.uri)),
+          "new index has the relocated identity and newly imported photo, without a missing original");
+    }
+  }
+
+  private static List<PhotoRepository.Photo> indexedPhotos(Fixture fixture) throws IOException {
+    try (GalleryIndex index = new GalleryIndex(fixture.context)) {
+      return index.load(fixture.path, "すべて").photos;
     }
   }
 
