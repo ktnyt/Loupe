@@ -31,26 +31,40 @@ final class TagStoreIncrementalChecks {
       }
       try (TagStore store = new TagStore(context, name)) {
         same(expected, store.load());
-        check(store.getReadableDatabase().getVersion() == 4, "version 3 upgraded with same history");
-        assertPlan(store, "EXPLAIN QUERY PLAN SELECT revision FROM history WHERE operation=?",
-            new String[] {"first"}, "sqlite_autoindex_history_1");
-        assertPlan(store, "EXPLAIN QUERY PLAN SELECT value FROM history WHERE tag=? AND photo=? AND revision=?",
-            new String[] {tag, first, "1"}, "history_judgment_revision");
-        assertPlan(store, "EXPLAIN QUERY PLAN SELECT revision FROM judgments WHERE tag=? AND photo=?",
-            new String[] {tag, first}, "sqlite_autoindex_judgments_1");
+        check(
+            store.getReadableDatabase().getVersion() == 4, "version 3 upgraded with same history");
+        assertPlan(
+            store,
+            "EXPLAIN QUERY PLAN SELECT revision FROM history WHERE operation=?",
+            new String[] {"first"},
+            "sqlite_autoindex_history_1");
+        assertPlan(
+            store,
+            "EXPLAIN QUERY PLAN SELECT value FROM history WHERE tag=? AND photo=? AND revision=?",
+            new String[] {tag, first, "1"},
+            "history_judgment_revision");
+        assertPlan(
+            store,
+            "EXPLAIN QUERY PLAN SELECT revision FROM judgments WHERE tag=? AND photo=?",
+            new String[] {tag, first},
+            "sqlite_autoindex_judgments_1");
         expect(IllegalArgumentException.class, () -> store.record("first", tag, first, 0, NO));
         expect(IllegalArgumentException.class, () -> store.record("first", tag, second, 0, YES));
 
         var batch = new LinkedHashMap<String, Long>();
         batch.put(second, 0L);
         batch.put(first, 0L);
-        expect(TagJudgments.StaleRevisionException.class, () -> store.recordBatch("batch", tag, batch, NO));
+        expect(
+            TagJudgments.StaleRevisionException.class,
+            () -> store.recordBatch("batch", tag, batch, NO));
         same(expected, store.load());
         eq(1L, store.judgmentRevision(tag), "no partial reevaluation");
 
         batch.put(first, 1L);
-        expected = expected.record("batch:" + second, tag, second, 0, NO)
-            .record("batch:" + first, tag, first, 1, NO);
+        expected =
+            expected
+                .record("batch:" + second, tag, second, 0, NO)
+                .record("batch:" + first, tag, first, 1, NO);
         same(expected, store.recordBatch("batch", tag, batch, NO));
         same(expected, store.recordBatch("batch", tag, batch, NO));
         expect(IllegalArgumentException.class, () -> store.recordBatch("batch", tag, batch, YES));
@@ -83,7 +97,8 @@ final class TagStoreIncrementalChecks {
     CountDownLatch ready = new CountDownLatch(2), start = new CountDownLatch(1);
     try {
       var left = pool.submit(() -> competingWrite(context, name, tag, third, "left", ready, start));
-      var right = pool.submit(() -> competingWrite(context, name, tag, third, "right", ready, start));
+      var right =
+          pool.submit(() -> competingWrite(context, name, tag, third, "right", ready, start));
       check(ready.await(10, TimeUnit.SECONDS), "both database connections opened");
       start.countDown();
       String leftResult = left.get(10, TimeUnit.SECONDS);
@@ -97,7 +112,8 @@ final class TagStoreIncrementalChecks {
       start.countDown();
       pool.shutdownNow();
       try {
-        check(pool.awaitTermination(10, TimeUnit.SECONDS), "workers stopped before database cleanup");
+        check(
+            pool.awaitTermination(10, TimeUnit.SECONDS), "workers stopped before database cleanup");
       } catch (InterruptedException interrupted) {
         Thread.currentThread().interrupt();
         throw new AssertionError(interrupted);
@@ -105,8 +121,15 @@ final class TagStoreIncrementalChecks {
     }
   }
 
-  private static String competingWrite(Context context, String name, String tag, String photo,
-      String operation, CountDownLatch ready, CountDownLatch start) throws Exception {
+  private static String competingWrite(
+      Context context,
+      String name,
+      String tag,
+      String photo,
+      String operation,
+      CountDownLatch ready,
+      CountDownLatch start)
+      throws Exception {
     try (TagStore store = new TagStore(context, name)) {
       store.getWritableDatabase();
       ready.countDown();
@@ -133,8 +156,15 @@ final class TagStoreIncrementalChecks {
   }
 
   private static String photoId(TagStore store, int index) {
-    return store.photoId(new PhotoRepository.Photo(Uri.parse("content://test/tag-photo/" + index),
-        "fixture-" + index + ".jpg", "test/", 10, 2, 0), true);
+    return store.photoId(
+        new PhotoRepository.Photo(
+            Uri.parse("content://test/tag-photo/" + index),
+            "fixture-" + index + ".jpg",
+            "test/",
+            10,
+            2,
+            0),
+        true);
   }
 
   private static void assertPlan(TagStore store, String sql, String[] args, String index) {
@@ -168,7 +198,9 @@ final class TagStoreIncrementalChecks {
   }
 
   private static void eq(Object expected, Object actual, String message) {
-    check(java.util.Objects.equals(expected, actual), message + " expected=" + expected + " actual=" + actual);
+    check(
+        java.util.Objects.equals(expected, actual),
+        message + " expected=" + expected + " actual=" + actual);
   }
 
   private static void check(boolean value, String message) {

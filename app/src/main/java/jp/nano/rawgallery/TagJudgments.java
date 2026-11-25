@@ -5,14 +5,22 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
-/** Human-only immutable history. Contract: docs/tag-judgment-contract.md.
- * Persistence must commit the returned state before publishing it to the UI. */
+/**
+ * Human-only immutable history. Contract: docs/tag-judgment-contract.md. Persistence must commit
+ * the returned state before publishing it to the UI.
+ */
 final class TagJudgments {
-  enum Value { ASSIGNED, EXCLUDED, UNDECIDED }
+  enum Value {
+    ASSIGNED,
+    EXCLUDED,
+    UNDECIDED
+  }
 
   /** A concurrent judgment advanced beyond the revision observed by the caller. */
   static final class StaleRevisionException extends IllegalStateException {
-    StaleRevisionException() { super("Stale judgment"); }
+    StaleRevisionException() {
+      super("Stale judgment");
+    }
   }
 
   static final class Entry {
@@ -20,8 +28,13 @@ final class TagJudgments {
     final long revision;
     final Value value;
 
-    Entry(String operationId, String tagId, String photoId, long revision,
-        Value value, String undoneOperationId) {
+    Entry(
+        String operationId,
+        String tagId,
+        String photoId,
+        long revision,
+        Value value,
+        String undoneOperationId) {
       this.operationId = operationId;
       this.tagId = tagId;
       this.photoId = photoId;
@@ -33,7 +46,9 @@ final class TagJudgments {
 
   final List<Entry> history;
 
-  TagJudgments() { this(Collections.emptyList()); }
+  TagJudgments() {
+    this(Collections.emptyList());
+  }
 
   private TagJudgments(List<Entry> history) {
     this.history = Collections.unmodifiableList(new ArrayList<>(history));
@@ -63,8 +78,8 @@ final class TagJudgments {
     return entry == null ? Value.UNDECIDED : entry.value;
   }
 
-  TagJudgments record(String operationId, String tagId, String photoId,
-      long expectedRevision, Value value) {
+  TagJudgments record(
+      String operationId, String tagId, String photoId, long expectedRevision, Value value) {
     return append(operationId, tagId, photoId, expectedRevision, value, null);
   }
 
@@ -84,13 +99,19 @@ final class TagJudgments {
         previous = entry.value;
       }
     }
-    return append(operationId, target.tagId, target.photoId, target.revision,
-        previous, targetOperationId);
+    return append(
+        operationId, target.tagId, target.photoId, target.revision, previous, targetOperationId);
   }
 
-  private TagJudgments append(String operationId, String tagId, String photoId,
-      long expectedRevision, Value value, String undoneOperationId) {
-    Entry nextEntry = proposed(operationId, tagId, photoId, expectedRevision, value, undoneOperationId);
+  private TagJudgments append(
+      String operationId,
+      String tagId,
+      String photoId,
+      long expectedRevision,
+      Value value,
+      String undoneOperationId) {
+    Entry nextEntry =
+        proposed(operationId, tagId, photoId, expectedRevision, value, undoneOperationId);
     for (Entry entry : history) {
       if (entry.operationId.equals(operationId)) {
         requireSameOperation(entry, nextEntry);
@@ -104,8 +125,13 @@ final class TagJudgments {
     return new TagJudgments(next);
   }
 
-  static Entry proposed(String operationId, String tagId, String photoId, long expectedRevision,
-      Value value, String undoneOperationId) {
+  static Entry proposed(
+      String operationId,
+      String tagId,
+      String photoId,
+      long expectedRevision,
+      Value value,
+      String undoneOperationId) {
     id(operationId);
     id(tagId);
     id(photoId);
@@ -116,8 +142,10 @@ final class TagJudgments {
   }
 
   static void requireSameOperation(Entry saved, Entry proposed) {
-    if (!saved.tagId.equals(proposed.tagId) || !saved.photoId.equals(proposed.photoId)
-        || saved.revision != proposed.revision || saved.value != proposed.value
+    if (!saved.tagId.equals(proposed.tagId)
+        || !saved.photoId.equals(proposed.photoId)
+        || saved.revision != proposed.revision
+        || saved.value != proposed.value
         || !Objects.equals(saved.undoneOperationId, proposed.undoneOperationId)) {
       throw new IllegalArgumentException("Operation ID reused with different contents");
     }
