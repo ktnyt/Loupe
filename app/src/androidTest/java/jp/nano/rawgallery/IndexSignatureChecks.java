@@ -114,8 +114,11 @@ final class IndexSignatureChecks {
         check(oldVersion < 2 || store.metadataSnapshot().get("existing").burstFrame == null,
             "existing entries start unprobed");
         SourceSignature before = signature(isolated, store);
-        if (oldVersion == 3) checkBurstCache(isolated, root, store);
-        checkStableSignature(before, signature(isolated, store), "burst metadata");
+        if (oldVersion == 3) {
+          checkBurstCache(isolated, root, store);
+          checkMetadataBatch(isolated, root, store);
+        }
+        checkStableSignature(before, signature(isolated, store), "burst and batch metadata");
         ContentValues metadata = new ContentValues();
         metadata.put("key", "new-derived"); metadata.put("model", "synthetic"); metadata.put("taken", 123);
         check(db.insertOrThrow("metadata", null, metadata) >= 0, "metadata saved");
@@ -186,7 +189,7 @@ final class IndexSignatureChecks {
     var stale = store.metadata(photo);
     check(stale.burstFrame == null, "a normal cache read opens no original");
     try {
-      store.probeBurstFrame(photo, key, stale);
+      probe(store, photo, key, stale);
       throw new AssertionError("missing local file must be retryable");
     } catch (IOException expected) {
       check(store.metadata(photo).burstFrame == null, "I/O failure retains NULL");
@@ -194,7 +197,7 @@ final class IndexSignatureChecks {
     byte[] jpegPixels = jpegPixels();
     checkJpegProbeFailures(jpegPixels);
     Files.write(jpeg.toPath(), numberedJpeg(jpegPixels, 3));
-    ArchiveStore.RawMetadata filled = store.probeBurstFrame(photo, key, stale);
+    ArchiveStore.RawMetadata filled = probe(store, photo, key, stale);
     check(filled.burstFrame != null && filled.burstFrame.number() == 3, "JPEG EXIF MakerNote retry succeeds");
     check(filled.model.equals("Preserved model") && filled.taken == 987 && store.metadataSnapshot().containsKey(key),
         "burst update preserves existing key/model/taken");
@@ -203,20 +206,20 @@ final class IndexSignatureChecks {
     Files.write(alternate.toPath(), numberedJpeg(jpegPixels, 8));
     var secondRead = new PhotoRepository.Photo(Uri.fromFile(alternate), alternate.getName(), "fixture/", 0, 1, 0);
     try (ArchiveStore concurrent = new ArchiveStore(context)) {
-      check(concurrent.probeBurstFrame(secondRead, key, stale).burstFrame.equals(filled.burstFrame),
+      check(probe(concurrent, secondRead, key, stale).burstFrame.equals(filled.burstFrame),
           "stale competing probe cannot replace the winner");
     }
     File single = new File(root, "single.jpg");
     Files.write(single.toPath(), jpegPixels);
     var plain = new PhotoRepository.Photo(Uri.fromFile(single), single.getName(), "fixture/", 0, 1, 0);
-    var noFrame = store.probeBurstFrame(plain, ArchiveStore.key(plain), store.metadata(plain));
+    var noFrame = probe(store, plain, ArchiveStore.key(plain), store.metadata(plain));
     check(noFrame.burstFrame.equals(RawPreview.BurstFrame.NONE), "no frame caches explicit zero");
     check(store.metadata(plain).burstFrame.equals(RawPreview.BurstFrame.NONE), "no frame persisted");
     File mislabeled = new File(root, "mislabeled.jpg");
     Files.write(mislabeled.toPath(), BurstMakerNoteFixture.tiff(
         BurstMakerNoteFixture.makerNote(true, 3, 1, 8, 0, 0, 4, 0x49), false));
     var wrongFormat = new PhotoRepository.Photo(Uri.fromFile(mislabeled), mislabeled.getName(), "fixture/", 0, 1, 0);
-    check(store.probeBurstFrame(wrongFormat, ArchiveStore.key(wrongFormat), store.metadata(wrongFormat))
+    check(probe(store, wrongFormat, ArchiveStore.key(wrongFormat), store.metadata(wrongFormat))
         .burstFrame.equals(RawPreview.BurstFrame.NONE), "non-JPEG in a .jpg cannot supply a frame");
     var archived = new PhotoRepository.Photo(Uri.parse("archive://seed"), "archived.orf", "fixture/", 1, 1, 1);
     check(!ArchiveStore.canProbeBurstFrame(archived), "archived-only cannot open original for probing");
@@ -229,6 +232,86 @@ final class IndexSignatureChecks {
     var cloudSaf = new PhotoRepository.Photo(Uri.parse("content://external.cloud.provider/document/raw"),
         "cloud.orf", "fixture/", 1, 1, 1);
     check(!ArchiveStore.canProbeBurstFrame(cloudSaf), "unknown SAF provider cannot open original for probing");
+  }
+
+  private static ArchiveStore.RawMetadata probe(ArchiveStore store, PhotoRepository.Photo photo, String key,
+      ArchiveStore.RawMetadata cached) throws IOException {
+    var frame = store.inspectBurstFrame(photo);
+    return store.writeIndexMetadata(java.util.List.of(new ArchiveStore.IndexMetadata(key, cached, false, frame)),
+        () -> false).get(key);
+  }
+
+  private static void checkMetadataBatch(Context context, File root, ArchiveStore store) throws Exception {
+    long revision = store.indexRevision();
+    File jpeg = new File(root, "batch-original.jpg");
+    byte[] pixels = jpegPixels();
+    Files.write(jpeg.toPath(), pixels);
+    var local = new PhotoRepository.Photo(Uri.fromFile(jpeg), jpeg.getName(), "Batch/", pixels.length, 12, 0);
+    String originalKey = ArchiveStore.key(local);
+    var inspected = store.inspectMetadata(local);
+    var unnumbered = store.inspectBurstFrame(local);
+    check(store.readMetadata(originalKey) == null, "source inspection does not write");
+    var result = store.writeIndexMetadata(java.util.List.of(
+        new ArchiveStore.IndexMetadata(originalKey, inspected, true, unnumbered)), () -> false);
+    check(result.get(originalKey).burstFrame.equals(RawPreview.BurstFrame.NONE), "batch retains explicit zero");
+
+    var fresh = new ArchiveStore.RawMetadata("Fixture camera", 320L);
+    var batch = java.util.List.of(new ArchiveStore.IndexMetadata("first-batch", fresh, true, null),
+        new ArchiveStore.IndexMetadata("second-batch", fresh, true, null));
+    var callbacks = new java.util.concurrent.atomic.AtomicInteger();
+    check(store.writeIndexMetadata(batch, () -> callbacks.incrementAndGet() == 3) == null,
+        "cancellation after the first row rolls back the batch");
+    check(store.readMetadata("first-batch") == null && store.readMetadata("second-batch") == null,
+        "cancelled entries were not published");
+    check(store.readMetadata(originalKey) != null, "a prior committed batch remains usable");
+
+    SQLiteDatabase db = store.getWritableDatabase();
+    db.execSQL("CREATE TRIGGER test_metadata_failure BEFORE INSERT ON metadata "
+        + "WHEN NEW.key='second-batch' BEGIN SELECT RAISE(ABORT,'fixture'); END");
+    try {
+      try {
+        store.writeIndexMetadata(batch, () -> false);
+        throw new AssertionError("write error was ignored");
+      } catch (IOException | android.database.sqlite.SQLiteException expected) {
+        check(store.readMetadata("first-batch") == null && store.readMetadata("second-batch") == null,
+            "write error rolls back the batch");
+      }
+    } finally {
+      db.execSQL("DROP TRIGGER test_metadata_failure");
+    }
+    check(store.writeIndexMetadata(batch, () -> false).size() == 2, "retry after rollback");
+
+    var observed = new ArchiveStore.RawMetadata("Snapshot model", 345L);
+    var staleFrame = new RawPreview.BurstFrame(1, 7);
+    var winnerFrame = new RawPreview.BurstFrame(1, 8);
+    try (ArchiveStore concurrent = new ArchiveStore(context)) {
+      var winner = new ArchiveStore.RawMetadata("Concurrent model", 400L);
+      concurrent.writeIndexMetadata(java.util.List.of(
+          new ArchiveStore.IndexMetadata("competing-insert", winner, true, null),
+          new ArchiveStore.IndexMetadata("competing-probe", observed, true, winnerFrame)), () -> false);
+      var resolved = store.writeIndexMetadata(java.util.List.of(
+          new ArchiveStore.IndexMetadata("competing-insert", observed, true, staleFrame),
+          new ArchiveStore.IndexMetadata("competing-probe", observed, false, staleFrame)), () -> false);
+      var current = resolved.get("competing-insert");
+      check(current.model.equals(winner.model) && current.taken == winner.taken && current.burstFrame == null,
+          "stale metadata does not alter another insert or its probe state");
+      check(resolved.get("competing-probe").burstFrame.equals(winnerFrame), "stale probe keeps committed winner");
+      concurrent.getWritableDatabase().delete("metadata", "key=?", new String[]{"competing-probe"});
+      var missing = store.writeIndexMetadata(java.util.List.of(
+          new ArchiveStore.IndexMetadata("competing-probe", observed, false, staleFrame)), () -> false);
+      check(missing.get("competing-probe").burstFrame == null && store.readMetadata("competing-probe") == null,
+          "an update drafted from a removed row does not recreate it");
+    }
+
+    check(java.util.Arrays.equals(pixels, Files.readAllBytes(jpeg.toPath())), "source file unchanged");
+    Files.delete(jpeg.toPath());
+    try {
+      store.inspectMetadata(local);
+      throw new AssertionError("removed original supplied metadata");
+    } catch (IOException expected) {
+      check(store.readMetadata(originalKey) != null, "missing source does not rewrite prior cache");
+    }
+    check(revision == store.indexRevision(), "derived writes do not change source revision");
   }
 
   private static void checkJpegProbeFailures(byte[] pixels) throws Exception {
@@ -361,6 +444,7 @@ final class IndexSignatureChecks {
     for (int version : new int[] {0, 1, 2, 3}) observations.append(runVersion(context, version));
     return "PASS archive schema 1/2/3 migration and fresh create preserve records; JPEG burst cache NULL/retry/zero, "
         + "original key/model/taken and competing winner preserved; JPEG signature, segment bounds, short reads, zero skip and stop-before-pixels checked; I/O and scan-limit failures propagated; "
+        + "bounded metadata transaction rollback, retry, competing winner and deleted row preserved; "
         + "storage volumes stay separate and E2 legacy aliases fall back; archive revision stable across WAL switch, metadata and checkpoint; "
         + "photo insert/replace/update/delete invalidate; rollback atomic; isolated DBs removed.\n" + observations;
   }
