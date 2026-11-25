@@ -297,6 +297,7 @@ final class NanoBananaBackgroundChecks {
                   && viewerWindow.hasWindowFocus());
       Instrumentation.ActivityMonitor tags =
           test.addMonitor(TagActivity.class.getName(), null, false);
+      View[] tagActionSheet = {null};
       TagDetailChecks.ui(
           test,
           () -> {
@@ -304,6 +305,7 @@ final class NanoBananaBackgroundChecks {
             TagDetailChecks.require(
                 more != null && more.performClick(), "open current viewer tag sheet");
             View tag = findWindowLabel("タグ");
+            if (tag != null) tagActionSheet[0] = tag.getRootView();
             TagDetailChecks.require(
                 tag != null && tag.performClick(),
                 "normal viewer tag control responds during generation");
@@ -315,15 +317,24 @@ final class NanoBananaBackgroundChecks {
       TagDetailChecks.ui(test, tagScreen::finish);
       GenerationIndicatorChecks.await(
           test,
-          "viewer regains focus after closing tags",
-          () -> tagScreen.isDestroyed() && viewerWindow.hasWindowFocus());
+          "viewer action sheet regains focus after closing tags",
+          () -> tagScreen.isDestroyed() && tagActionSheet[0].hasWindowFocus());
       synchronized (created) {
         TagDetailChecks.require(
             created.equals(List.of(TagActivity.class.getName())),
             "only requested tag navigation occurred while generating");
         created.clear();
       }
-      captureWindow(test, viewerWindow, "nano-background-viewer-" + width + "-" + font);
+      captureWindow(test, tagActionSheet[0], "nano-background-viewer-" + width + "-" + font);
+      TagDetailChecks.ui(
+          test,
+          () -> {
+            View close = findLabel(tagActionSheet[0], "閉じる");
+            TagDetailChecks.require(
+                close != null && close.performClick(), "close restored action sheet");
+          });
+      GenerationIndicatorChecks.await(
+          test, "viewer regains focus after closing actions", viewerWindow::hasWindowFocus);
       Dialog[] menu = {null};
       TagDetailChecks.ui(
           test,
