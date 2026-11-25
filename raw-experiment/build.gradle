@@ -30,7 +30,8 @@ def syncRawEditorSources = tasks.register('syncRawEditorSources', Sync) {
                 'jp/nano/rawgallery/NativeRaw.java',
                 'jp/nano/rawgallery/NativeJpeg.java',
                 'jp/nano/rawgallery/MaterialUi.java',
-                'jp/nano/rawgallery/PhotoStorage.java'
+                'jp/nano/rawgallery/PhotoStorage.java',
+                'jp/nano/rawgallery/SettingsRepository.java'
     }
     into layout.buildDirectory.dir('generated/raw-editor/java')
 }
