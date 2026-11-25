@@ -12,6 +12,26 @@ jobs:
   verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: tags-share-edit-e2
+            first: 17
+            last: 39
+            skip_raw: '1'
+          - group: camera
+            first: 40
+            last: 62
+            skip_raw: '1'
+          - group: gallery
+            first: 63
+            last: 70
+            skip_raw: '1'
+          - group: settings-archive-raw
+            first: 71
+            last: 90
+            skip_raw: '0'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -68,18 +88,21 @@ jobs:
           python3 scripts/deploy-apk.py --sdk "$ANDROID_HOME" inspect \
             --apk app/build/outputs/apk/debug/app-debug.apk --certificate "$fingerprint" --require-no-shizuku
 
-      - name: Android instrumentation before camera on a disposable emulator
+      - name: Android instrumentation diagnostic group
         timeout-minutes: 30
+        env:
+          FIRST_MODE: ${{ matrix.first }}
+          LAST_MODE: ${{ matrix.last }}
+          LOUPE_DIAGNOSTIC_SKIP_RAW: ${{ matrix.skip_raw }}
         run: |
           sudo chmod a+rw /dev/kvm
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'emulator' 'system-images;android-35;google_apis;x86_64'
-          bash tests/ci-android-instrumentation.sh before-camera
-
-      - name: Android instrumentation from camera through RAW on a disposable emulator
-        timeout-minutes: 30
-        env:
-          LOUPE_INSTRUMENTATION_PORT: '5582'
-        run: bash tests/ci-android-instrumentation.sh camera-onward
+          awk -v first="$FIRST_MODE" -v last="$LAST_MODE" '
+            NF && $1 !~ /^#/ { count++; if (count >= first && count <= last) print }
+            END { if (count < last) exit 1 }
+          ' tests/ci-android-modes.txt > "$RUNNER_TEMP/loupe-diagnostic-modes.txt"
+          mv "$RUNNER_TEMP/loupe-diagnostic-modes.txt" tests/ci-android-modes.txt
+          bash tests/ci-android-instrumentation.sh
 
   release:
     needs: verify

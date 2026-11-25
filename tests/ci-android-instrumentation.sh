@@ -112,7 +112,7 @@ if ! "$ran"; then
   exit 1
 fi
 
-if [[ "$segment" != before-camera ]]; then
+if [[ "$segment" != before-camera && "${LOUPE_DIAGNOSTIC_SKIP_RAW:-0}" != 1 ]]; then
   "$adb" -s "$serial" install -g raw-experiment/build/outputs/apk/debug/raw-experiment-debug.apk
   "$adb" -s "$serial" install -g raw-experiment/build/outputs/apk/androidTest/debug/raw-experiment-debug-androidTest.apk
   run_instrumentation 'raw-edit-full' -e full true \
