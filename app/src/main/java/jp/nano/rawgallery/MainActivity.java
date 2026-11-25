@@ -164,10 +164,14 @@ public final class MainActivity extends DiagnosticActivity {
   private long indexUpdateVersion;
   private final long startedAt = SystemClock.elapsedRealtime();
   private boolean reportedAlbums, reportedCover;
-  private final Runnable mediaChanged = () -> refresh();
+  private boolean mediaRefreshClosed;
+  private final Runnable mediaChanged = () -> {
+    if (!mediaRefreshClosed) refresh();
+  };
   private final android.database.ContentObserver mediaObserver =
       new android.database.ContentObserver(main) {
         public void onChange(boolean selfChange) {
+          if (mediaRefreshClosed) return;
           DiagnosticLog.event("media.changed", 0);
           // Bound the wait from the first notification even during a long import.
           if (!main.hasCallbacks(mediaChanged)) main.postDelayed(mediaChanged, 300);
@@ -2342,6 +2346,7 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   protected void onDestroy() {
+    mediaRefreshClosed = true;
     if(selectionTags!=null)selectionTags.dismiss();
     generation++;
     shareAttempt++;
