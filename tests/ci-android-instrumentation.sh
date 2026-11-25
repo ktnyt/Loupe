@@ -71,6 +71,9 @@ run_instrumentation() {
         awk '/full[.]prepare|fixture[.]cancel|jpeg[.]load[.]complete/ {print}' || true
     elif [[ "$label" == nano-background ]]; then
       "$adb" -s "$serial" logcat -d -s LoupeNanoFixture:E '*:S' || true
+    elif [[ "$label" == look-removal ]]; then
+      "$adb" -s "$serial" logcat -d -s LoupeLookFixture:I LoupeRawEdit:I '*:S' |
+        awk '/LoupeLookFixture|full[.]prepare|jpeg[.]load|save[.]/ {print}' || true
     fi
     echo "$label did not report PASS." >&2
     exit 1
@@ -78,6 +81,8 @@ run_instrumentation() {
 }
 
 # Modes are ordered because seed/verify pairs must share the same disposable device.
+group=${LOUPE_DIAGNOSTIC_GROUP:?Select a diagnostic group}
+awk -v group="$group" -f tests/ci-android-tail-diagnostic.awk tests/ci-android-modes.txt > "$work/modes.txt"
 ran=false
 while read -r mode key value; do
   case "$mode" in ''|\#*) continue ;; esac
@@ -88,13 +93,15 @@ while read -r mode key value; do
   fi
   run_instrumentation "$mode${key:+ ($key=$value)}" -e mode "$mode" \
     "${args[@]}" jp.nano.rawgallery.test/jp.nano.rawgallery.ArchiveInstrumentation
-done < tests/ci-android-modes.txt
+done < "$work/modes.txt"
 if ! "$ran"; then
   echo 'No Android instrumentation modes were configured.' >&2
   exit 1
 fi
 
-"$adb" -s "$serial" install -g raw-experiment/build/outputs/apk/debug/raw-experiment-debug.apk
-"$adb" -s "$serial" install -g raw-experiment/build/outputs/apk/androidTest/debug/raw-experiment-debug-androidTest.apk
-run_instrumentation 'raw-edit-full' -e full true \
-  jp.nano.rawgallery.rawexperiment.test/jp.nano.rawgallery.RawEditInstrumentation
+if [[ "$group" == settings ]]; then
+  "$adb" -s "$serial" install -g raw-experiment/build/outputs/apk/debug/raw-experiment-debug.apk
+  "$adb" -s "$serial" install -g raw-experiment/build/outputs/apk/androidTest/debug/raw-experiment-debug-androidTest.apk
+  run_instrumentation 'raw-edit-full' -e full true \
+    jp.nano.rawgallery.rawexperiment.test/jp.nano.rawgallery.RawEditInstrumentation
+fi

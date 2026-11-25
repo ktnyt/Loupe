@@ -9,6 +9,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.view.View;
 import android.view.ViewGroup;
@@ -66,6 +67,8 @@ final class LookRemovalChecks {
     String tagDb="tag-detail-remove-look-"+UUID.randomUUID()+".db",featureDb="tag-detail-remove-feature-"+UUID.randomUUID()+".db";
     boolean hadLibrary=new File(c.getFilesDir(),"look-library").exists(),hadSessions=new File(c.getFilesDir(),"look-sessions").exists();
     byte[] jpeg=GenerationIndicatorChecks.jpeg();
+    boolean previousLogging=RawEditLog.enabled;
+    RawEditLog.enabled=true;
     try{
       seed(t,c.getFilesDir(),"look-library",created);seed(t,c.getFilesDir(),"look-sessions",created);
       ContentValues v=new ContentValues();v.put(MediaStore.Images.Media.DISPLAY_NAME,"look-removal-synthetic.jpg");v.put(MediaStore.Images.Media.MIME_TYPE,"image/jpeg");v.put(MediaStore.Images.Media.RELATIVE_PATH,"Pictures/LoupeSyntheticChecks");
@@ -99,8 +102,26 @@ final class LookRemovalChecks {
       ui(t,()->{noLook((View)get(raw,"root"));TagDetailChecks.require(Math.abs(((RawEditState)get(raw,"state")).get(RawEditState.EXPOSURE)-.25f)<.0001,"legacy development values restored");Bundle saved=new Bundle();raw.onSaveInstanceState(saved);TagDetailChecks.require(!saved.containsKey("lookToken")&&!saved.containsKey("lookPreset"),"legacy look flags never written back");((Button)get(raw,"compare")).performClick();TagDetailChecks.require((boolean)get(raw,"before"),"editor original compare retained");((Button)get(raw,"compare")).performClick();return true;});
       GenerationIndicatorChecks.capture(t,"look-removed-editor-"+width);TagDetailChecks.require(snapshot(c).equals(expected),"editor restore preserves legacy bytes and timestamps");
       GenerationIndicatorChecks.await(t,"full editor prepared",()->((RawEditFullSession)get(raw,"fullSession")).isPrepared());
-      ui(t,()->{call(raw,"saveImage",new Class<?>[0]);return true;});
-      GenerationIndicatorChecks.await(t,"editor JPEG saved",()->!(boolean)get(raw,"saving")&&outputs(c).size()==previous.size()+1);
+      long requestedAt=SystemClock.elapsedRealtime();
+      ui(t,()->{
+        call(raw,"saveImage",new Class<?>[0]);
+        android.util.Log.i("LoupeLookFixture","save requested: saving="+get(raw,"saving")+" visible="+get(raw,"visible"));
+        return true;
+      });
+      try {
+        GenerationIndicatorChecks.await(t,"editor JPEG saved",()->!(boolean)get(raw,"saving")&&outputs(c).size()==previous.size()+1);
+      } catch (AssertionError failure) {
+        try {
+          ui(t,()->{
+            android.util.Log.e("LoupeLookFixture","save deadline: ready="+get(raw,"ready")+" visible="+get(raw,"visible")
+                +" saving="+get(raw,"saving")+" newRows="+(outputs(c).size()-previous.size())
+                +" elapsedMs="+(SystemClock.elapsedRealtime()-requestedAt));
+            return true;
+          });
+        } catch (AssertionError diagnostic) { failure.addSuppressed(diagnostic); }
+        throw failure;
+      }
+      android.util.Log.i("LoupeLookFixture","save observed: elapsedMs="+(SystemClock.elapsedRealtime()-requestedAt));
       Set<Uri> newOutputs=outputs(c);newOutputs.removeAll(previous);owned.addAll(newOutputs);TagDetailChecks.require(newOutputs.size()==1,"one new explicit JPEG output");
       BitmapFactory.Options size=new BitmapFactory.Options();size.inJustDecodeBounds=true;try(InputStream input=c.getContentResolver().openInputStream(newOutputs.iterator().next())){BitmapFactory.decodeStream(input,null,size);}TagDetailChecks.require(size.outWidth==1200&&size.outHeight==800&&"image/jpeg".equals(size.outMimeType),"ordinary full JPEG dimensions read back");
       ui(t,()->{raw.finish();return true;});GenerationIndicatorChecks.await(t,"editor destroyed",raw::isDestroyed);
@@ -108,6 +129,7 @@ final class LookRemovalChecks {
       try(InputStream input=c.getContentResolver().openInputStream(uri)){TagDetailChecks.require(Arrays.equals(input.readAllBytes(),jpeg),"original synthetic photo unchanged");}
       return "PASS look-removal: normal/tag viewers have no Look controls, saved legacy photo selection does not change source pixels; actual baseline preset/photo/session bytes and timestamps preserved across viewing/editor legacy Bundle restore/finish; ordinary compare and full JPEG save/readback; width="+width+" font="+font+". Synthetic data only, no physical camera/API.\n";
     }finally{
+      RawEditLog.enabled=previousLogging;
       for(Activity a:new Activity[]{editor,tags,main})if(a!=null)TagDetailChecks.ui(t,a::finish);
       if(tags!=null){TagFixtureIsolation.cleanup(tags);c.deleteDatabase(tagDb);c.deleteDatabase(featureDb);}
       for(Uri uri:new LinkedHashSet<>(owned))c.getContentResolver().delete(uri,null,null);
