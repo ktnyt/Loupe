@@ -1,125 +1,286 @@
 package jp.nano.rawgallery;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
 import android.app.Instrumentation;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.SystemClock;
+import android.view.View;
 import android.widget.*;
 import java.io.*;
 import java.lang.reflect.*;
 import java.util.*;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /** Deterministic ordering/error tests; optional read-only real RAW6 reproduction. */
 final class BurstPreviewChecks {
   static String run(Instrumentation test, boolean real) throws Exception {
-    MainActivity a=(MainActivity)test.startActivitySync(new Intent(test.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    MainActivity a =
+        (MainActivity)
+            test.startActivitySync(
+                new Intent(test.getTargetContext(), MainActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     Thread.sleep(700);
-    if(real) return real(test,a);
-    List<PhotoRepository.Photo> photos=new ArrayList<>();
-    for(int i=0;i<6;i++) photos.add(new PhotoRepository.Photo(Uri.parse("file:///synthetic-"+i+".jpg"),"synthetic.jpg","",1,i,0));
-    List<Integer> edges=new ArrayList<>(); List<Consumer<Boolean>> replies=new ArrayList<>();
-    BurstPreviews[] controller=new BurstPreviews[1]; Button[] retry=new Button[1];
-    boolean[] active={true};
-    Bitmap bitmap=Bitmap.createBitmap(8,8,Bitmap.Config.ARGB_8888); bitmap.eraseColor(Color.BLUE);
-    test.runOnMainSync(() -> {
-      LinearLayout root=new LinearLayout(a); root.setOrientation(1); FrameLayout stage=new FrameLayout(a);
-      ImageView hero=new DiagnosticImageView(a); stage.addView(hero,new FrameLayout.LayoutParams(-1,-1));
-      root.addView(stage,new LinearLayout.LayoutParams(-1,400));
-      LinearLayout strip=new LinearLayout(a); root.addView(strip);
-      StatusView progress=new StatusView(a);root.addView(progress);retry[0]=new Button(a);root.addView(retry[0]);
-      a.setContentView(root);
-      controller[0]=new BurstPreviews(a,hero,stage,strip,progress,retry[0],photos,(v,p,e,done)-> {
-        edges.add(e); replies.add(success -> { if(success)v.setImageBitmap(bitmap);done.accept(success); });
-      },()->active[0],i->controller[0].select(i));
-      controller[0].select(0);
-      if(!edges.equals(Arrays.asList(1600)))throw new AssertionError("strip before hero");
-      replies.get(0).accept(true);
-      if(edges.size()!=1)throw new AssertionError("strip before draw");
-    });
-    DiagnosticChecks.waitFor(test,()->edges.size()==2);
-    test.runOnMainSync(()->{
-      if(edges.get(1)!=200)throw new AssertionError("strip edge");
-      controller[0].select(3);
-      if(edges.get(2)!=1600)throw new AssertionError("new selection not prioritized");
-      replies.get(1).accept(false);
-    });
+    if (real) return real(test, a);
+    List<PhotoRepository.Photo> photos = new ArrayList<>();
+    for (int i = 0; i < 6; i++)
+      photos.add(
+          new PhotoRepository.Photo(
+              Uri.parse("file:///synthetic-" + i + ".jpg"), "synthetic.jpg", "", 1, i, 0));
+    List<Integer> edges = new ArrayList<>();
+    List<Consumer<Boolean>> replies = new ArrayList<>();
+    BurstPreviews[] controller = new BurstPreviews[1];
+    Button[] retry = new Button[1];
+    boolean[] active = {true};
+    Bitmap bitmap = Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888);
+    bitmap.eraseColor(Color.BLUE);
+    test.runOnMainSync(
+        () -> {
+          LinearLayout root = new LinearLayout(a);
+          root.setOrientation(1);
+          FrameLayout stage = new FrameLayout(a);
+          ImageView hero = new DiagnosticImageView(a);
+          stage.addView(hero, new FrameLayout.LayoutParams(-1, -1));
+          root.addView(stage, new LinearLayout.LayoutParams(-1, 400));
+          LinearLayout strip = new LinearLayout(a);
+          root.addView(strip);
+          StatusView progress = new StatusView(a);
+          root.addView(progress);
+          retry[0] = new Button(a);
+          root.addView(retry[0]);
+          a.setContentView(root);
+          controller[0] =
+              new BurstPreviews(
+                  a,
+                  hero,
+                  stage,
+                  strip,
+                  progress,
+                  retry[0],
+                  photos,
+                  (v, p, e, done) -> {
+                    edges.add(e);
+                    replies.add(
+                        success -> {
+                          if (success) v.setImageBitmap(bitmap);
+                          done.accept(success);
+                        });
+                  },
+                  () -> active[0],
+                  i -> controller[0].select(i));
+          controller[0].select(0);
+          if (!edges.equals(Arrays.asList(1600))) throw new AssertionError("strip before hero");
+          replies.get(0).accept(true);
+          if (edges.size() != 1) throw new AssertionError("strip before draw");
+        });
+    DiagnosticChecks.waitFor(test, () -> edges.size() == 2);
+    test.runOnMainSync(
+        () -> {
+          if (edges.get(1) != 200) throw new AssertionError("strip edge");
+          controller[0].select(3);
+          if (edges.get(2) != 1600) throw new AssertionError("new selection not prioritized");
+          replies.get(1).accept(false);
+        });
     Thread.sleep(100);
-    test.runOnMainSync(()->{
-      if(edges.size()!=3)throw new AssertionError("strip continued while hero waiting");
-      replies.get(2).accept(false);
-      if(retry[0].getVisibility()!=android.view.View.VISIBLE)throw new AssertionError("missing retry");
-      try{Field f=BurstPreviews.class.getDeclaredField("progress");f.setAccessible(true);StatusView status=(StatusView)f.get(controller[0]);if(status.isClickable())throw new AssertionError("compact failure status must not be a small retry target");}catch(ReflectiveOperationException e){throw new RuntimeException(e);}
-      int beforeRetry=edges.size();
-      retry[0].performClick();
-      if(edges.size()!=beforeRetry+1 || edges.get(edges.size()-1)!=1600)
-        throw new AssertionError("failed hero not retried");
-      active[0]=false;
-      int before=edges.size(); replies.get(replies.size()-1).accept(true);
-      if(edges.size()!=before)throw new AssertionError("left screen still loads");
-    });
-    Field statesField=BurstPreviews.class.getDeclaredField("states");statesField.setAccessible(true);
-    Field spinnerField=BurstPreviews.class.getDeclaredField("spinners");spinnerField.setAccessible(true);
-    Method render=BurstPreviews.class.getDeclaredMethod("render");render.setAccessible(true);
-    int[] timingStates=(int[])statesField.get(controller[0]);StatusView timing=(StatusView)((List<?>)spinnerField.get(controller[0])).get(0);
-    AlbumTagEntryChecks.main(test,()->{timingStates[0]=1;render.invoke(controller[0]);return true;});
-    Thread.sleep(470);
-    AlbumTagEntryChecks.main(test,()->{if(timing.getVisibility()!=android.view.View.VISIBLE)throw new AssertionError("strip loading hidden");timingStates[0]=2;render.invoke(controller[0]);return true;});
-    Thread.sleep(150);
-    AlbumTagEntryChecks.main(test,()->{if(timing.getVisibility()!=android.view.View.VISIBLE)throw new AssertionError("strip success flicker");return true;});
-    Thread.sleep(650);
-    AlbumTagEntryChecks.main(test,()->{if(timing.getVisibility()==android.view.View.VISIBLE)throw new AssertionError("strip success persists");return true;});
-    PhotoRepository repository=new PhotoRepository(a);
-    if(repository.prepare(photos.get(0),()->true))throw new AssertionError("cancelled background generated");
-    if(PreviewPreparationJob.local(new PhotoRepository.Photo(Uri.parse("archive://id"),"x","",1,1,0)))throw new AssertionError("archive included");
+    test.runOnMainSync(
+        () -> {
+          if (edges.size() != 3) throw new AssertionError("strip continued while hero waiting");
+          replies.get(2).accept(false);
+          if (retry[0].getVisibility() != android.view.View.VISIBLE)
+            throw new AssertionError("missing retry");
+          try {
+            Field f = BurstPreviews.class.getDeclaredField("progress");
+            f.setAccessible(true);
+            StatusView status = (StatusView) f.get(controller[0]);
+            if (status.isClickable())
+              throw new AssertionError("compact failure status must not be a small retry target");
+          } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+          }
+          int beforeRetry = edges.size();
+          retry[0].performClick();
+          if (edges.size() != beforeRetry + 1 || edges.get(edges.size() - 1) != 1600)
+            throw new AssertionError("failed hero not retried");
+          active[0] = false;
+          int before = edges.size();
+          replies.get(replies.size() - 1).accept(true);
+          if (edges.size() != before) throw new AssertionError("left screen still loads");
+        });
+    long stripFadeMs = checkStripVisibility(test, controller[0]);
+    PhotoRepository repository = new PhotoRepository(a);
+    if (repository.prepare(photos.get(0), () -> true))
+      throw new AssertionError("cancelled background generated");
+    if (PreviewPreparationJob.local(
+        new PhotoRepository.Photo(Uri.parse("archive://id"), "x", "", 1, 1, 0)))
+      throw new AssertionError("archive included");
     String backgroundResult = BackgroundPreviewChecks.run(a);
     String listResult = GalleryLoadingChecks.run(test, a);
     test.runOnMainSync(a::finish);
-    return listResult + backgroundResult + "PASS strip running-to-ready minimum visibility, hero-before-strip/draw, selection priority, failure/retry visibility, stale screen, cancelled preparation, local-only\n";
+    return listResult
+        + backgroundResult
+        + "PASS strip running-to-ready minimum visibility (fade after "
+        + stripFadeMs
+        + " ms), hero-before-strip/draw, selection priority, failure/retry visibility, stale screen, cancelled preparation, local-only\n";
   }
-  private static void set(Object o,String name,Object value)throws Exception {Field f=o.getClass().getDeclaredField(name);f.setAccessible(true);f.set(o,value);}
-  private static String real(Instrumentation test,MainActivity a)throws Exception {
-    GalleryIndex.Snapshot snapshot;
-    try(GalleryIndex index=new GalleryIndex(a)){snapshot=index.load(null,"すべて");}
-    List<PhotoRepository.Photo> chosen=null;
-    File old=new File(a.getCacheDir(),"previews");
-    PhotoRepository repository=new PhotoRepository(a);
-    for(List<Integer> group:snapshot.bundles){
-      if(group.size()!=6)continue;
-      List<PhotoRepository.Photo> candidate=new ArrayList<>(); boolean suitable=true;
-      for(int j=0;j<6;j++){
-        PhotoRepository.Photo p=snapshot.photos.get(group.get(j)); candidate.add(p);
-        if(p.isJpeg()||!PreviewPreparationJob.local(p)){suitable=false;break;}
-        if(j>0&&(repository.prepared(p)||new File(old,PhotoRepository.previewKey(p)+".webp").isFile())){suitable=false;break;}
-      }
-      if(suitable){chosen=candidate;break;}
+
+  private static long checkStripVisibility(Instrumentation test, BurstPreviews controller)
+      throws Exception {
+    Field states = BurstPreviews.class.getDeclaredField("states");
+    states.setAccessible(true);
+    Field spinners = BurstPreviews.class.getDeclaredField("spinners");
+    spinners.setAccessible(true);
+    Method render = BurstPreviews.class.getDeclaredMethod("render");
+    render.setAccessible(true);
+    int[] timingStates = (int[]) states.get(controller);
+    StatusView timing = (StatusView) ((List<?>) spinners.get(controller)).get(0);
+    Field visibleAt = StatusView.class.getDeclaredField("visibleAt");
+    visibleAt.setAccessible(true);
+    CountDownLatch sampled = new CountDownLatch(1);
+    boolean[] stillOpaque = {false};
+    long[] visibleSince = {0}, fadeStarted = {0};
+    try {
+      AlbumTagEntryChecks.main(
+          test,
+          () -> {
+            timingStates[0] = 1;
+            render.invoke(controller);
+            return true;
+          });
+      GenerationIndicatorChecks.await(
+          test, "strip loading becomes visible", () -> timing.getVisibility() == View.VISIBLE);
+      AlbumTagEntryChecks.main(
+          test,
+          () -> {
+            visibleSince[0] = visibleAt.getLong(timing);
+            timing
+                .animate()
+                .setListener(
+                    new AnimatorListenerAdapter() {
+                      @Override
+                      public void onAnimationStart(Animator animation) {
+                        fadeStarted[0] = SystemClock.uptimeMillis();
+                      }
+                    });
+            // Place the sample before the fade in the same Looper queue even if instrumentation
+            // stalls.
+            TagDetailChecks.require(
+                timing
+                    .getHandler()
+                    .postAtTime(
+                        () -> {
+                          stillOpaque[0] =
+                              timing.getVisibility() == View.VISIBLE && timing.getAlpha() == 1f;
+                          sampled.countDown();
+                        },
+                        visibleSince[0] + 599),
+                "minimum visibility sample scheduled");
+            timingStates[0] = 2;
+            render.invoke(controller);
+            return true;
+          });
+      TagDetailChecks.require(
+          sampled.await(10, TimeUnit.SECONDS), "minimum visibility sample observed");
+      GenerationIndicatorChecks.await(
+          test, "strip success eventually hides", () -> timing.getVisibility() != View.VISIBLE);
+      long elapsed = fadeStarted[0] - visibleSince[0];
+      android.util.Log.i(
+          "LoupeBurstFixture", "opaqueBeforeFade=" + stillOpaque[0] + " fadeAfterMs=" + elapsed);
+      TagDetailChecks.require(
+          stillOpaque[0] && elapsed >= 600, "strip remains fully visible for at least 600ms");
+      return elapsed;
+    } finally {
+      TagDetailChecks.ui(test, () -> timing.animate().setListener(null));
     }
-    if(chosen==null)throw new AssertionError("No RAW6 with five uncached remaining photos; no cache deleted");
-    repository.preview(chosen.get(0)); // Same investigated condition: hero hit, five remaining misses.
-    List<PhotoRepository.Photo> members=chosen;
-    long openedAt=android.os.SystemClock.elapsedRealtimeNanos();
-    long[] burstId={0};
-    Method gallery=MainActivity.class.getDeclaredMethod("gallery");gallery.setAccessible(true);
-    test.runOnMainSync(()->{try{
-      set(a,"photos",members);set(a,"burstMembers",Arrays.asList(0,1,2,3,4,5));set(a,"burstPosition",0);
-      long id=DiagnosticLog.id();burstId[0]=id;set(a,"burstRequest",id);DiagnosticLog.event("test.raw6.open",id);DiagnosticLog.event("burst.open",id,"count",6);
-      gallery.invoke(a);
-    }catch(Exception e){throw new RuntimeException(e);}});
-    long deadline=android.os.SystemClock.elapsedRealtime()+6000;
-    while(android.os.SystemClock.elapsedRealtime()<deadline) {
-      long hero=0;
-      File log=new File(a.getFilesDir(),"diagnostics/events.jsonl");
-      if(log.isFile()) for(String line:java.nio.file.Files.readAllLines(log.toPath())) {
-        org.json.JSONObject event;
-        try { event=new org.json.JSONObject(line); } catch(org.json.JSONException partial) { continue; }
-        if(event.optLong("ns")<openedAt)continue;
-        if("image.request".equals(event.optString("event")) && event.optInt("size")==1600
-            && event.optLong("burst")==burstId[0]) hero=event.optLong("request");
-        if(hero!=0 && event.optLong("request")==hero
-            && "image.frame_commit".equals(event.optString("event")))
-          return "PASS RAW6 real-image frame committed: hero cached, remaining five compact misses; originals untouched. Instrumentation finish closes the test process; use recording for visual confirmation.\n";
+  }
+
+  private static void set(Object o, String name, Object value) throws Exception {
+    Field f = o.getClass().getDeclaredField(name);
+    f.setAccessible(true);
+    f.set(o, value);
+  }
+
+  private static String real(Instrumentation test, MainActivity a) throws Exception {
+    GalleryIndex.Snapshot snapshot;
+    try (GalleryIndex index = new GalleryIndex(a)) {
+      snapshot = index.load(null, "すべて");
+    }
+    List<PhotoRepository.Photo> chosen = null;
+    File old = new File(a.getCacheDir(), "previews");
+    PhotoRepository repository = new PhotoRepository(a);
+    for (List<Integer> group : snapshot.bundles) {
+      if (group.size() != 6) continue;
+      List<PhotoRepository.Photo> candidate = new ArrayList<>();
+      boolean suitable = true;
+      for (int j = 0; j < 6; j++) {
+        PhotoRepository.Photo p = snapshot.photos.get(group.get(j));
+        candidate.add(p);
+        if (p.isJpeg() || !PreviewPreparationJob.local(p)) {
+          suitable = false;
+          break;
+        }
+        if (j > 0
+            && (repository.prepared(p)
+                || new File(old, PhotoRepository.previewKey(p) + ".webp").isFile())) {
+          suitable = false;
+          break;
+        }
       }
+      if (suitable) {
+        chosen = candidate;
+        break;
+      }
+    }
+    if (chosen == null)
+      throw new AssertionError("No RAW6 with five uncached remaining photos; no cache deleted");
+    repository.preview(
+        chosen.get(0)); // Same investigated condition: hero hit, five remaining misses.
+    List<PhotoRepository.Photo> members = chosen;
+    long openedAt = android.os.SystemClock.elapsedRealtimeNanos();
+    long[] burstId = {0};
+    Method gallery = MainActivity.class.getDeclaredMethod("gallery");
+    gallery.setAccessible(true);
+    test.runOnMainSync(
+        () -> {
+          try {
+            set(a, "photos", members);
+            set(a, "burstMembers", Arrays.asList(0, 1, 2, 3, 4, 5));
+            set(a, "burstPosition", 0);
+            long id = DiagnosticLog.id();
+            burstId[0] = id;
+            set(a, "burstRequest", id);
+            DiagnosticLog.event("test.raw6.open", id);
+            DiagnosticLog.event("burst.open", id, "count", 6);
+            gallery.invoke(a);
+          } catch (Exception e) {
+            throw new RuntimeException(e);
+          }
+        });
+    long deadline = android.os.SystemClock.elapsedRealtime() + 6000;
+    while (android.os.SystemClock.elapsedRealtime() < deadline) {
+      long hero = 0;
+      File log = new File(a.getFilesDir(), "diagnostics/events.jsonl");
+      if (log.isFile())
+        for (String line : java.nio.file.Files.readAllLines(log.toPath())) {
+          org.json.JSONObject event;
+          try {
+            event = new org.json.JSONObject(line);
+          } catch (org.json.JSONException partial) {
+            continue;
+          }
+          if (event.optLong("ns") < openedAt) continue;
+          if ("image.request".equals(event.optString("event"))
+              && event.optInt("size") == 1600
+              && event.optLong("burst") == burstId[0]) hero = event.optLong("request");
+          if (hero != 0
+              && event.optLong("request") == hero
+              && "image.frame_commit".equals(event.optString("event")))
+            return "PASS RAW6 real-image frame committed: hero cached, remaining five compact misses; originals untouched. Instrumentation finish closes the test process; use recording for visual confirmation.\n";
+        }
       Thread.sleep(100);
     }
     throw new AssertionError("RAW6 first real-image frame did not commit within 6s");
