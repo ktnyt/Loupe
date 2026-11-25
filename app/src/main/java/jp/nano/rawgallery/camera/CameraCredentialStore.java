@@ -1,18 +1,14 @@
 package jp.nano.rawgallery.camera;
 
 import android.content.Context;
-import android.security.keystore.KeyGenParameterSpec;
-import android.security.keystore.KeyProperties;
 import android.util.AtomicFile;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
-import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.util.*;
 import javax.crypto.Cipher;
-import javax.crypto.KeyGenerator;
-import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
+import jp.nano.rawgallery.security.EncryptedSecretStore;
 
 /** At most eight locally registered cameras. Only authenticated ciphertext lives in no-backup storage.
  * All methods perform IO; call off main. Names must match exactly before a passcode is returned. */
@@ -95,8 +91,7 @@ public final class CameraCredentialStore {
                 System.arraycopy(ssid, 0, plain, at, ssid.length); at += ssid.length;
                 plain[at++] = (byte) wifi.length;
                 for (char c : wifi) plain[at++] = (byte) c;
-                Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-                cipher.init(Cipher.ENCRYPT_MODE, key(filename, true));
+                Cipher cipher = EncryptedSecretStore.encryptionCipher(alias(filename), 256);
                 cipher.updateAAD(new byte[]{2});
                 cipher.updateAAD(filename.getBytes(StandardCharsets.US_ASCII));
                 encrypted = cipher.doFinal(plain);
@@ -129,7 +124,7 @@ public final class CameraCredentialStore {
             // Remove the candidate first: a failed deletion must not reveal an uncommitted replacement.
             erase(new File(directory, filename));
             erase(new File(directory, filename + ".rollback"));
-            try { KeyStore store = keys(); store.deleteEntry(alias(filename)); }
+            try { EncryptedSecretStore.deleteKey(alias(filename)); }
             catch (Exception error) { throw failure(); }
         }
     }
@@ -184,8 +179,8 @@ public final class CameraCredentialStore {
         try {
             if (record.length < 31 || record.length > 256 || (record[0] != 1 && record[0] != 2)) throw failure();
             int version = record[0];
-            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-            cipher.init(Cipher.DECRYPT_MODE, key(filename, false), new GCMParameterSpec(128, record, 1, 12));
+            Cipher cipher = EncryptedSecretStore.decryptionCipher(alias(filename),
+                    () -> new GCMParameterSpec(128, record, 1, 12), null);
             if (version == 2) cipher.updateAAD(new byte[]{2});
             cipher.updateAAD(filename.getBytes(StandardCharsets.US_ASCII));
             plain = cipher.doFinal(record, 13, record.length - 13);
@@ -233,19 +228,6 @@ public final class CameraCredentialStore {
         for (int i = 0; i < length; i++) result[i] = (char) (plain[at + i] & 255);
         if (!valid(result, min, max)) { Arrays.fill(result, '\0'); throw failure(); }
         return result;
-    }
-    private SecretKey key(String filename, boolean create) throws Exception {
-        KeyStore store = keys(); String alias = alias(filename);
-        if (store.containsAlias(alias)) return (SecretKey) store.getKey(alias, null);
-        if (!create) throw failure();
-        KeyGenerator generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
-        generator.init(new KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
-                .setKeySize(256).setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build());
-        return generator.generateKey();
-    }
-    private static KeyStore keys() throws Exception {
-        KeyStore store = KeyStore.getInstance("AndroidKeyStore"); store.load(null); return store;
     }
     private String alias(String filename) { return "loupe." + namespace + "." + filename; }
     private static String filename(String name) throws IOException {

@@ -2,19 +2,15 @@ package jp.nano.rawgallery;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.security.keystore.KeyGenParameterSpec;
-import android.security.keystore.KeyProperties;
 import android.util.Base64;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.security.KeyStore;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import javax.crypto.Cipher;
-import javax.crypto.KeyGenerator;
-import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
+import jp.nano.rawgallery.security.EncryptedSecretStore;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -85,15 +81,6 @@ final class NanoBananaStore {
   boolean hasKey() {
     synchronized (LOCK) { return prefs.contains("credential"); }
   }
-  private static SecretKey key(boolean create) throws Exception {
-    KeyStore keys=KeyStore.getInstance("AndroidKeyStore"); keys.load(null);
-    if(keys.containsAlias(ALIAS)) return (SecretKey)keys.getKey(ALIAS,null);
-    if (!create) throw new IOException("暗号鍵を読み込めませんでした");
-    KeyGenerator generator=KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES,"AndroidKeyStore");
-    generator.init(new KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT|KeyProperties.PURPOSE_DECRYPT)
-        .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build());
-    return generator.generateKey();
-  }
   void setKey(String value) throws IOException {
     synchronized(LOCK) {
     if(NanoBananaJob.BUSY.get())throw new IOException("実行が終わってから変更してください");
@@ -107,7 +94,7 @@ final class NanoBananaStore {
       }
   }
   private void saveSecret(String field,String value) throws Exception {
-      Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding"); cipher.init(Cipher.ENCRYPT_MODE,key(true));
+      Cipher cipher = EncryptedSecretStore.encryptionCipher(ALIAS);
       String encrypted=Base64.encodeToString(cipher.getIV(),Base64.NO_WRAP)+":"+
           Base64.encodeToString(cipher.doFinal(value.getBytes(StandardCharsets.UTF_8)),Base64.NO_WRAP);
       saveSetting(field, encrypted);
@@ -125,9 +112,9 @@ final class NanoBananaStore {
   private String secret(String field) throws Exception {
     String[] parts = prefs.getString(field, "").split(":", -1);
     if (parts.length != 2) throw new IOException();
-    Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-    cipher.init(Cipher.DECRYPT_MODE, key(false),
-        new GCMParameterSpec(128, Base64.decode(parts[0], Base64.NO_WRAP)));
+    Cipher cipher = EncryptedSecretStore.decryptionCipher(ALIAS,
+        () -> new GCMParameterSpec(128, Base64.decode(parts[0], Base64.NO_WRAP)),
+        "暗号鍵を読み込めませんでした");
     return new String(cipher.doFinal(Base64.decode(parts[1], Base64.NO_WRAP)), StandardCharsets.UTF_8);
   }
   void deleteKey() throws IOException {
