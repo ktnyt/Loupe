@@ -287,10 +287,14 @@ final class NanoBananaBackgroundChecks {
                 nextControl != null && nextControl.isEnabled() && nextControl.performClick(),
                 "normal next-photo control responds during generation");
           });
-      await(
-          "next photo usable while service waits",
-          () -> ((Integer) RankingResultChecks.get(screen, "index")) == 1);
-      test.waitForIdleSync();
+      View viewerWindow = screen.getWindow().getDecorView();
+      GenerationIndicatorChecks.await(
+          test,
+          "next photo ready while service waits",
+          () ->
+              ((Integer) RankingResultChecks.get(screen, "index")) == 1
+                  && RankingResultChecks.get(screen, "activePreview") != null
+                  && viewerWindow.hasWindowFocus());
       Instrumentation.ActivityMonitor tags =
           test.addMonitor(TagActivity.class.getName(), null, false);
       TagDetailChecks.ui(
@@ -309,21 +313,25 @@ final class NanoBananaBackgroundChecks {
       TagDetailChecks.require(
           tagScreen instanceof TagActivity, "normal tag screen opens during generation");
       TagDetailChecks.ui(test, tagScreen::finish);
-      test.waitForIdleSync();
+      GenerationIndicatorChecks.await(
+          test,
+          "viewer regains focus after closing tags",
+          () -> tagScreen.isDestroyed() && viewerWindow.hasWindowFocus());
       synchronized (created) {
         TagDetailChecks.require(
             created.equals(List.of(TagActivity.class.getName())),
             "only requested tag navigation occurred while generating");
         created.clear();
       }
-      capture(test, screen, "nano-background-viewer-" + width + "-" + font);
+      captureWindow(test, viewerWindow, "nano-background-viewer-" + width + "-" + font);
       Dialog[] menu = {null};
       TagDetailChecks.ui(
           test,
           () -> {
             menu[0] = NanoBananaUi.show(screen, next, store, NanoBananaUi.ACTUAL);
           });
-      capture(test, screen, "nano-background-busy-" + width + "-" + font);
+      captureWindow(
+          test, menu[0].getWindow().getDecorView(), "nano-background-busy-" + width + "-" + font);
       TagDetailChecks.ui(
           test,
           () -> {
@@ -337,7 +345,10 @@ final class NanoBananaBackgroundChecks {
               .performGlobalAction(
                   android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME),
           "Android accepted Home");
-      test.waitForIdleSync();
+      GenerationIndicatorChecks.await(
+          test,
+          "Home backgrounds the Loupe viewer",
+          () -> !GenerationIndicator.foreground() && !viewerWindow.hasWindowFocus());
       requireGenerationBlocked(store, first, "after Home");
       long homeWaitMs = SystemClock.elapsedRealtime() - first.statusEnteredAt;
       first.release.countDown();
@@ -965,6 +976,18 @@ final class NanoBananaBackgroundChecks {
   private static void capture(Instrumentation test, Activity activity, String name)
       throws Exception {
     test.waitForIdleSync();
+    captureImage(test, name);
+  }
+
+  private static void captureWindow(Instrumentation test, View window, String name)
+      throws Exception {
+    // The indeterminate generation indicator can keep the main queue busy.
+    GenerationIndicatorChecks.await(test, "capture window has focus", window::hasWindowFocus);
+    ConsistencyLayoutChecks.frame(test, window);
+    captureImage(test, name);
+  }
+
+  private static void captureImage(Instrumentation test, String name) throws Exception {
     // Service Toasts cancel their predecessor; wait for the latest short Toast to leave the screen.
     FixtureFactory factory = (FixtureFactory) NanoBananaService.dependencies;
     while (factory.lastMessageAt > 0 && SystemClock.uptimeMillis() - factory.lastMessageAt < 2500)
