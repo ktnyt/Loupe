@@ -33,8 +33,7 @@ import org.xmlpull.v1.XmlPullParser;
 
 /** Stores and restores checked originals in the Tokyo archive. The caller owns the archive DB. */
 final class E2Archive implements E2RecoveryCatalog.Storage {
-  private static final String HOST = "s3.ap-northeast-1.idrivee2.com";
-  private static final String SCOPE_SUFFIX = "/ap-northeast-1/s3/aws4_request";
+  private static final String SCOPE_SUFFIX = "/" + E2Endpoint.REGION + "/s3/aws4_request";
   private static final String EMPTY_SHA =
       "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
   static final long LIMIT = 512L * 1024 * 1024;
@@ -423,17 +422,17 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
     String headers = "host;" + (checksumHeader.isEmpty() ? "" : checksumHeader + ";")
         + "x-amz-content-sha256;x-amz-date";
     String checksumLine = checksumHeader.isEmpty() ? "" : checksumHeader + ":" + checksumValue + "\n";
-    String canonical = method + "\n" + path + "\n" + query + "\nhost:" + HOST
+    String canonical = method + "\n" + path + "\n" + query + "\nhost:" + E2Endpoint.HOST
         + "\n" + checksumLine + "x-amz-content-sha256:" + sha + "\nx-amz-date:" + stamp + "\n\n"
         + headers + "\n" + sha;
     String toSign = "AWS4-HMAC-SHA256\n" + stamp + "\n" + scope + "\n"
         + hex(MessageDigest.getInstance("SHA-256").digest(bytes(canonical)));
     byte[] dateKey = hmac(bytes("AWS4" + secret), day);
-    byte[] regionKey = hmac(dateKey, "ap-northeast-1");
+    byte[] regionKey = hmac(dateKey, E2Endpoint.REGION);
     byte[] serviceKey = hmac(regionKey, "s3");
     String signature = hex(hmac(hmac(serviceKey, "aws4_request"), toSign));
     if (Thread.currentThread().isInterrupted()) throw new IOException("通信を中断しました");
-    URL url = new URL("https://" + HOST + path + (query.isEmpty() ? "" : "?" + query));
+    URL url = new URL("https://" + E2Endpoint.HOST + path + (query.isEmpty() ? "" : "?" + query));
     HttpsURLConnection conn;
     if (context == null) {
       conn = (HttpsURLConnection) url.openConnection();
