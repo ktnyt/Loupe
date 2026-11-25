@@ -267,7 +267,13 @@ public final class ArchiveInstrumentation extends Instrumentation {
       String report=failureReport(new AssertionError(new java.io.IOException("PRIVATE_VALUE")));
       if(report.contains("PRIVATE_VALUE")||!report.contains("java.io.IOException")||!report.contains("ArchiveInstrumentation.java:"))throw new AssertionError();
       Context context = getTargetContext();
-      if ("camera-history-migration".equals(cameraPilotArguments.getString("mode"))) {
+      String mode = cameraPilotArguments.getString("mode", "");
+      if ("release-upgrade-seed".equals(mode) || "release-upgrade-verify".equals(mode)) {
+        results.putString("stream", ReleaseUpgradeChecks.run(context, "release-upgrade-seed".equals(mode)));
+        finish(-1, results);
+        return;
+      }
+      if ("camera-history-migration".equals(mode)) {
         results.putString("stream", CameraSyncHistoryMigrationCheck.run(context));
         finish(-1, results);
         return;
