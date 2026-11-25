@@ -119,6 +119,20 @@ TalkBackの有効化を許可されたこと自体は、検証の必須要件を
 
 写真一覧・選択のTalkBack検査は同じ復元付きCLIで `--mode gallery-screen-talkback` を指定する。実TalkBackのタッチガイド有効状態、写真のフォーカスとAX操作、共有設定スイッチの読み上げ属性と切替を確認する。通常の `gallery-screen` は画面上の座標へタップを送る。音声の聞き取りやTalkBackのジェスチャー操作まで検査済みとは扱わない。
 
+## CIで実行する回帰テスト
+
+同じホスト検査を手元で実行するには、JDK 17とAndroid SDKを設定した上で、仮想環境に `scripts/requirements-cnt-calibration.txt` のPythonライブラリをインストールし、`sh tests/host-regression.sh` を実行する。Gitで追跡中のテストを選ぶため、作業フォルダの未追跡コピーは実行されない。GitHub Actionsの `verify` で、APKのビルドとLint、exFAT検査、合成データによるAndroid計測も実行する。
+
+| 検査 | 入口と実行条件 |
+| --- | --- |
+| 既存ホスト回帰 | `ranking.sh`、`raw-structure.sh`、`preparation-storage.sh`、`camera-{import-copy,ble,connection,source,dual-slot}.sh`、`ep7-wifi.sh`。SDKが必要なテストにはAndroid API 35を使う。 |
+| 追加したホスト回帰 | `automatic-tags.sh`、`cloud-policy.sh`、`index-refresh.sh`、`nano-banana-e2.sh`、`raw-edit-state.sh`、`raw-full-source.sh`、`related-photos.sh`、`share-history.sh`、`tag-confidence.sh`、`tag-judgments.sh`、`video-formats.sh`、`sync-policy.sh`、`diagnostic-writer.sh`。撮影日の並べ替えと永続キーの互換性は `preparation-storage.sh` で実行する。 |
+| Python・exFAT | `scripts/test-*.py`、`tests/test-*.py`、`tests/test_*.py` はホストで自動実行。合成画像の校正テストは仮想環境の追加依存を使う。 `tests/camera-exfat.py` はアプリのKotlinコンパイル結果を使うため、ビルド後に別途実行する。 |
+| Android計測 | 本体と実験用RAWエディタの計測APKをビルドし、`bash tests/ci-android-instrumentation.sh` が使い捨てAndroid 15エミュレータで両方の合成モードを実行する。対象モードと専用fixtureの条件は[Android計測テストの実行条件](android-test-coverage.md)を参照。 |
+| RAWコーパス・索引DB | `tests/raw-corpus.sh <RAWディレクトリ>` は `sample.*` とExifTool、 `tests/run.sh <RAWディレクトリ> <参照JPEGディレクトリ>` は承認済みの写真セット、 `python3 tests/check-index.py <DBコピー>` はチェックポイント済みの索引DBが必要。手元の指定入力で実行する。 |
+
+GitHub Actionsの結果で確認できる範囲は、実際に実行されたホストテストと計測モードに限る。外部入力が必要な検査の実行結果は、使用したfixture・端末とともにissueへ記録する。
+
 ## OTA配布
 
 [OTA更新手順](ota-updates.md)に従い、mainへのpush後にGitHub Actionsで検査・署名・stable Release公開を行う。版はfirst-parent履歴から自動算出するため、app/build.gradleの固定番号を手動で増やさない。公開jobの成功とReleaseのsource/hashを確認する。手動配布でもmain prepareのbundleだけをpublishする。Obtainiumで通常更新した後は `scripts/deploy-apk.py confirm --bundle <bundle.json> --serial <SERIAL>` をissue進捗の `--then` から実行し、USB installをやり直さず実端末のAPKを照合する。実機導入を行う作業では、配布したAPKと同一であることを確認するまでdeliveryを完了にしない。自動配布機能そのものの検証はmainへのpushから公開assetの署名・版・来歴照合までを対象とし、端末への導入を伴わない場合は理由付きで省略を記録する。
