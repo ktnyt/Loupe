@@ -40,6 +40,14 @@ final class BackgroundPreviewChecks {
         if (preparing.isDone()) throw new AssertionError("background was not held open");
       } finally { release.countDown(); }
       if (!preparing.get(5, TimeUnit.SECONDS)) throw new AssertionError("background did not finish");
+      checkPreparedHitDuringForegroundWork(foreground, first, concurrent, workers);
+      PhotoRepository.Preview cached = foreground.preview(first);
+      File metadata = new File(cached.file.getPath() + ".json");
+      Files.writeString(metadata.toPath(), "broken metadata");
+      Bitmap repaired = PhotoRepository.bitmap(foreground.preview(first), 200);
+      repaired.recycle();
+      checkLargeJpegPrefix(context, foreground, original);
+
       CountDownLatch together = new CountDownLatch(1);
       Future<?> a = workers.submit(() -> { together.await(); return foreground.preview(concurrent); });
       Future<?> b = workers.submit(() -> { together.await(); return background.prepare(concurrent, () -> false); });
@@ -64,7 +72,7 @@ final class BackgroundPreviewChecks {
         if (!badOriginal.isFile() || badOriginal.length()!=3) throw new AssertionError("original invalidated");
       } finally { badOriginal.delete(); }
       if (!Arrays.equals(original, Files.readAllBytes(source.toPath()))) throw new AssertionError("source changed");
-      return "PASS background held open while foreground miss completes, concurrent publication, stage cancellation, corrupt derived recovery, original unchanged\n";
+      return "PASS background held open while foreground miss completes, prepared hit while foreground is busy, large JPEG prefix, concurrent publication, stage cancellation, corrupt derived recovery, original unchanged\n";
     } finally {
       release.countDown(); workers.shutdownNow(); workers.awaitTermination(5, TimeUnit.SECONDS);
       source.delete();
@@ -75,6 +83,58 @@ final class BackgroundPreviewChecks {
       }
     }
   }
+  private static void checkPreparedHitDuringForegroundWork(PhotoRepository repository,
+      PhotoRepository.Photo prepared, PhotoRepository.Photo waitingPhoto, ExecutorService workers)
+      throws Exception {
+    var entered = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    var waiting = workers.submit(() -> repository.prepare(waitingPhoto, () -> {
+      entered.countDown();
+      try {
+        if (!release.await(5, TimeUnit.SECONDS)) throw new AssertionError("foreground gate timeout");
+      } catch (InterruptedException error) {
+        Thread.currentThread().interrupt();
+        throw new AssertionError(error);
+      }
+      return true;
+    }));
+    try {
+      if (!entered.await(5, TimeUnit.SECONDS)) throw new AssertionError("foreground gate not entered");
+      var hit = workers.submit(() -> repository.preview(prepared));
+      if (!hit.get(3, TimeUnit.SECONDS).file.isFile() || waiting.isDone())
+        throw new AssertionError("prepared hit depended on foreground generation");
+    } finally {
+      release.countDown();
+    }
+    if (waiting.get(5, TimeUnit.SECONDS)) throw new AssertionError("cancelled probe published");
+  }
+
+  private static void checkLargeJpegPrefix(Context context, PhotoRepository repository, byte[] jpeg)
+      throws Exception {
+    File padded = File.createTempFile("jpeg-large-prefix-", ".jpg", context.getCacheDir());
+    PhotoRepository.Photo photo = null;
+    try {
+      try (var out = new DataOutputStream(new FileOutputStream(padded))) {
+        out.write(jpeg, 0, 2);
+        for (int segment = 0; segment < 2; segment++) {
+          out.writeShort(0xffef);
+          out.writeShort(40002);
+          out.write(new byte[40000]);
+        }
+        out.write(jpeg, 2, jpeg.length - 2);
+      }
+      photo = photo(padded, 1);
+      byte[] before = Files.readAllBytes(padded.toPath());
+      Bitmap decoded = PhotoRepository.bitmap(repository.preview(photo), 200);
+      decoded.recycle();
+      if (!Arrays.equals(before, Files.readAllBytes(padded.toPath())))
+        throw new AssertionError("JPEG reopening modified its source");
+    } finally {
+      if (photo != null) repository.removePreparedPreview(photo);
+      padded.delete();
+    }
+  }
+
   private static PhotoRepository.Photo photo(File f, long version) {
     return new PhotoRepository.Photo(Uri.fromFile(f), "synthetic.jpg", "", f.length(), version, 0);
   }
