@@ -8,6 +8,7 @@ index-signature
 index-apply-race
 burst
 burst-gap-millis
+burst-gap-millis numbered true
 burst-co-winners
 burst-bulk-winners
 sort-naming
@@ -62,6 +63,7 @@ camera-pilot-sd-original
 camera-pilot-sd-guards
 camera-pilot-paired-guards
 camera-pilot-paired-session
+camera-pilot-ble-diagnostics
 camera-pilot-qr-credentials
 camera-pilot-qr-seed
 camera-pilot-qr-verify
