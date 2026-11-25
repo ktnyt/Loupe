@@ -249,6 +249,100 @@ final class IndexSignatureChecks {
     check(revision == store.indexRevision(), "derived writes do not change source revision");
   }
 
+  private static void checkE2IndexMetadata(Context context) throws Exception {
+    File root = new File(context.getCacheDir(), "e2-index-metadata-" + UUID.randomUUID());
+    check(root.mkdir(), "isolated E2 index directory");
+    Context fixture = isolated(context, root);
+    String folder = "DCIM/e2-index-fixture/";
+    String recent = e2Key(11), alias = e2Key(12), otherState = e2Key(13);
+    String missing = e2Key(14), malformed = e2Key(15), unrequested = e2Key(16), replacement = e2Key(17);
+    JSONObject a = e2Receipt(recent, folder, "Recent", 7000);
+    JSONObject b = e2Receipt(alias, folder, "Alias", 5000);
+    var photos = java.util.List.of(E2Cleanup.galleryPhoto(a), E2Cleanup.galleryPhoto(b),
+        E2Cleanup.galleryPhoto(a), E2Cleanup.galleryPhoto(e2Receipt(otherState, folder, "Other state", 1)),
+        E2Cleanup.galleryPhoto(e2Receipt(missing, folder, "Missing", 1)),
+        E2Cleanup.galleryPhoto(e2Receipt(malformed, folder, "Malformed", 1)),
+        E2Cleanup.galleryPhoto(e2Receipt("invalid-e2-key", folder, "Invalid", 1)));
+    check(ArchiveStore.key(photos.get(0)).equals(ArchiveStore.key(photos.get(1))),
+        "two E2 URIs can share the derived logical metadata key");
+    try (ArchiveStore e2 = E2Settings.openRecords(fixture)) {
+      e2.put(a, E2Cleanup.RELEASED);
+      e2.put(b, E2Cleanup.RELEASING);
+      e2.put(e2Receipt(otherState, folder, "Other state", 1), "verified");
+      e2.put(e2Receipt(unrequested, "DCIM/another-folder/", "Unrequested", 2), E2Cleanup.RELEASED);
+      var values = new ContentValues();
+      values.put("key", malformed); values.put("state", E2Cleanup.RELEASED); values.put("payload", "{");
+      e2.getWritableDatabase().insertOrThrow("photos", null, values);
+      long before = e2.indexRevision();
+
+      var bulk = E2Cleanup.localIndexMetadata(fixture, photos, java.util.Map.of(), () -> false);
+      check(bulk.keySet().equals(java.util.Set.of(recent, alias)),
+          "bulk only returns requested and eligible E2 IDs with usable records");
+      check(bulk.get(recent).taken == 7000 && bulk.get(recent).model.equals("Recent")
+          && bulk.get(alias).taken == 5000 && bulk.get(alias).model.equals("Alias"),
+          "logical alias and duplicate URI never mix receipt values");
+      check(ArchiveStore.RawMetadata.fromReceipt(E2Cleanup.localRecord(fixture, photos.get(1).uri)).taken
+          == bulk.get(alias).taken, "bulk and single receipt agree");
+      check(e2.indexRevision() == before, "read does not change archive state");
+      var derivedCache = java.util.Map.of(ArchiveStore.key(photos.get(0)),
+          new ArchiveStore.RawMetadata("Local derived metadata", 2000));
+      check(E2Cleanup.localIndexMetadata(fixture, photos, derivedCache, () -> false).isEmpty(),
+          "the pre-existing derived cache takes precedence for both logical aliases");
+      var calls = new java.util.concurrent.atomic.AtomicInteger();
+      check(E2Cleanup.localIndexMetadata(fixture, photos, java.util.Map.of(),
+          () -> calls.incrementAndGet() >= photos.size() + 4)
+          == null, "cancellation after reading begins discards the partial result");
+      var multiQuery = new java.util.TreeSet<String>();
+      multiQuery.add(recent);
+      for (int id = 1000; id < 1512; id++) multiQuery.add(e2Key(id));
+      String last = e2Key(1511);
+      e2.put(e2Receipt(last, "DCIM/another-folder/", "Last batch", 144), E2Cleanup.RELEASED);
+      check(e2.releasedIndexMetadata(multiQuery, () -> false).keySet().equals(java.util.Set.of(recent, last)),
+          "a request exceeding one SQL batch resolves the first and last IDs");
+
+      e2.getWritableDatabase().delete("photos", "key=?", new String[]{malformed});
+      check(GalleryIndex.rebuild(fixture, true, () -> false), "publish the initial E2 index");
+      try (GalleryIndex index = new GalleryIndex(fixture)) {
+        var published = index.load(folder, "すべて").photos;
+        check(published.size() == 2 && published.stream().allMatch(photo -> photo.taken == 7000),
+            "existing logical metadata precedence for E2 aliases is preserved");
+      }
+
+      try (ArchiveStore concurrent = E2Settings.openRecords(fixture)) {
+        concurrent.getWritableDatabase().delete("photos", "key=?", new String[]{recent});
+        concurrent.put(e2Receipt(alias, folder, "Alias now verified", 9000), "verified");
+        concurrent.put(e2Receipt(replacement, folder, "Replacement", 12000), E2Cleanup.RELEASED);
+      }
+      check(bulk.get(recent).taken == 7000, "the prior read is not mutated by a competing writer");
+      check(E2Cleanup.localIndexMetadata(fixture, photos, java.util.Map.of(), () -> false).isEmpty(),
+          "next read hides records deleted or no longer released");
+      check(!GalleryIndex.rebuild(fixture, false, () -> true), "cancel the changed E2 snapshot");
+      try (GalleryIndex index = new GalleryIndex(fixture)) {
+        check(index.load(folder, "すべて").photos.size() == 2, "cancel keeps the old published E2 index");
+      }
+      check(GalleryIndex.rebuild(fixture, false, () -> false), "archive revision retry without forcing");
+      try (GalleryIndex index = new GalleryIndex(fixture)) {
+        var published = index.load(folder, "すべて").photos;
+        check(published.size() == 1 && published.get(0).uri.getHost().equals(replacement)
+            && published.get(0).taken == 12000, "replacement restores expected order without stale rows");
+      }
+    } finally {
+      File[] files = root.listFiles();
+      if (files != null) for (File child : files) check(child.delete(), "isolated E2 DB cleanup");
+      check(root.delete(), "isolated E2 directory cleanup");
+    }
+  }
+
+  private static String e2Key(int value) {
+    return String.format(java.util.Locale.ROOT, "%032x", value);
+  }
+
+  private static JSONObject e2Receipt(String key, String folder, String model, long taken) throws Exception {
+    return new JSONObject().put("key", key).put("name", "ARCHIVED.JPG").put("folder", folder)
+        .put("uri", "content://media/external/file/1120320").put("size", 20).put("modified", 100)
+        .put("sha", key).put("model", model).put("taken", taken);
+  }
+
   private static void checkJpegProbeFailures(byte[] pixels) throws Exception {
     byte[] valid = numberedJpeg(pixels, 3);
     for (int length = 0; length <= 3; length++) {
@@ -375,10 +469,12 @@ final class IndexSignatureChecks {
 
   static String run(Context context) throws Exception {
     checkBurstVolumes();
+    checkE2IndexMetadata(context);
     for (int version : new int[] {0, 1, 2, 3}) runVersion(context, version);
     return "PASS archive schema 1/2/3 migration and fresh create preserve records; JPEG burst cache NULL/retry/zero, "
         + "original key/model/taken and competing winner preserved; JPEG signature, segment bounds, short reads, zero skip and stop-before-pixels checked; I/O and scan-limit failures propagated; "
         + "bounded metadata transaction rollback, retry, competing winner and deleted row preserved; "
+        + "E2 batch ID, states, missing rows, logical aliases, cancellation and revision retry; "
         + "storage volumes stay separate and E2 legacy aliases fall back; metadata/checkpoint signatures stable; "
         + "photo insert/replace/update/delete invalidate; rollback atomic; isolated DBs removed.\n";
   }

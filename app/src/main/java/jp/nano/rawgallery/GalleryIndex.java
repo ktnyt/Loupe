@@ -212,6 +212,8 @@ final class GalleryIndex extends SQLiteOpenHelper {
       long probeMillis = 0;
       try (ArchiveStore store = new ArchiveStore(c)) {
         metadata = store.metadataSnapshot();
+        Map<String, ArchiveStore.RawMetadata> e2Metadata = E2Cleanup.localIndexMetadata(c, photos, metadata, cancelled);
+        if (e2Metadata == null) return false;
         List<ArchiveStore.IndexMetadata> batch = new ArrayList<>(METADATA_BATCH_SIZE);
         for (int first = 0; first < photos.size(); first += METADATA_BATCH_SIZE) {
           int end = Math.min(first + METADATA_BATCH_SIZE, photos.size());
@@ -223,9 +225,8 @@ final class GalleryIndex extends SQLiteOpenHelper {
             if (meta == null) {
               try {
                 if (p.isArchived()) {
-                  org.json.JSONObject record = E2Cleanup.archived(p.uri)
-                      ? E2Cleanup.localRecord(c, p.uri) : store.get(p.uri.getHost());
-                  meta = new ArchiveStore.RawMetadata(record.optString("model", ""), record.optLong("taken", 0));
+                  meta = E2Cleanup.archived(p.uri) ? e2Metadata.get(p.uri.getHost())
+                      : ArchiveStore.RawMetadata.fromReceipt(store.get(p.uri.getHost()));
                 } else if (p.isVideo()) {
                   meta = store.inspectMetadata(p);
                 } else {
