@@ -62,7 +62,7 @@ run_instrumentation() {
   local label=$1 result
   shift
   printf '\nRunning Android instrumentation: %s\n' "$label"
-  result=$("$adb" -s "$serial" shell am instrument -w -r "$@" < /dev/null)
+  result=$("$adb" -s "$serial" shell am instrument -w -r "$@" < /dev/null) || return 1
   printf '%s\n' "$result"
   if ! grep -q '^INSTRUMENTATION_RESULT: stream=PASS ' <<< "$result" ||
      ! grep -qx 'INSTRUMENTATION_CODE: -1' <<< "$result"; then
@@ -71,24 +71,16 @@ run_instrumentation() {
   fi
 }
 
-# Modes are ordered because seed/verify pairs must share the same disposable device.
-ran=false
-while read -r mode key value; do
-  case "$mode" in ''|\#*) continue ;; esac
-  ran=true
-  args=(-e width 400 -e font 1.0)
-  if [[ -n "$key" ]]; then
-    args+=(-e "$key" "$value")
-  fi
-  run_instrumentation "$mode${key:+ ($key=$value)}" -e mode "$mode" \
-    "${args[@]}" jp.nano.rawgallery.test/jp.nano.rawgallery.ArchiveInstrumentation
-done < tests/ci-android-modes.txt
-if ! "$ran"; then
-  echo 'No Android instrumentation modes were configured.' >&2
-  exit 1
-fi
+# Dedicated reproduction for save-preparation timing and a separate RAW result.
+photo_status=0
+(run_instrumentation photo-edit -e mode photo-edit -e width 400 -e font 1.0 \
+  jp.nano.rawgallery.test/jp.nano.rawgallery.ArchiveInstrumentation) || photo_status=$?
+"$adb" -s "$serial" logcat -d -s LoupeRawEdit:I '*:S' | awk '/full[.]prepare|fixture[.]cancel|jpeg[.]load[.]complete/ {print}'
 
 "$adb" -s "$serial" install -g raw-experiment/build/outputs/apk/debug/raw-experiment-debug.apk
 "$adb" -s "$serial" install -g raw-experiment/build/outputs/apk/androidTest/debug/raw-experiment-debug-androidTest.apk
-run_instrumentation 'raw-edit-full' -e full true \
-  jp.nano.rawgallery.rawexperiment.test/jp.nano.rawgallery.RawEditInstrumentation
+raw_status=0
+(run_instrumentation 'raw-edit-full' -e full true \
+  jp.nano.rawgallery.rawexperiment.test/jp.nano.rawgallery.RawEditInstrumentation) || raw_status=$?
+printf 'photo-edit exit=%s; raw-edit-full exit=%s\n' "$photo_status" "$raw_status"
+(( photo_status == 0 && raw_status == 0 ))
