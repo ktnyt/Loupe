@@ -73,6 +73,7 @@ final class NanoBananaBackgroundChecks {
     volatile int submits, statuses, downloads, deletes;
     volatile boolean deleteFailure, ignoreInterrupt, requireVersion;
     volatile boolean statusTimedOut, statusExited;
+    volatile IOException statusFailure;
     volatile long statusEnteredAt;
     volatile String prompt;
     volatile NanoBananaOutput output;
@@ -96,6 +97,7 @@ final class NanoBananaBackgroundChecks {
 
     public JSONObject status(String task) throws Exception {
       statuses++;
+      if (statusFailure != null) throw statusFailure;
       statusEnteredAt = SystemClock.elapsedRealtime();
       entered.countDown();
       // Finish when the fixture releases the provider. The watchdog covers all UI
@@ -640,6 +642,22 @@ final class NanoBananaBackgroundChecks {
           "current request cleanup removes B once without generation or polling");
       verifyDiscardWithRenamedPublishedResult(
           test, screen, store, factory, saved, input, prompt, jpeg);
+      verifyFailureMessage(
+          test,
+          screen,
+          factory,
+          jpeg,
+          saved,
+          NanoBananaApiChecks.verifyStatusFailure(429, NanoBananaApiChecks.RATE_LIMIT),
+          NanoBananaApiChecks.RATE_LIMIT);
+      verifyFailureMessage(
+          test,
+          screen,
+          factory,
+          jpeg,
+          saved,
+          new IOException("synthetic-key https://synthetic.invalid/result?token=private"),
+          "処理を続けられませんでした。AI編集メニューから確認してください");
       Context failing =
           new ContextWrapper(context) {
             public Context getApplicationContext() {
@@ -655,7 +673,7 @@ final class NanoBananaBackgroundChecks {
               && !NanoBananaService.busy()
               && store.job() == null,
           "startup rejection rolls back reservation");
-      return "PASS nano-background: actual production Android Service with isolated fake provider; next-photo operation, busy/error menu captures, Home continuation, no generation/result Activity launch, automatic JPEG save/readback 1200x800, temporary-object cleanup, duplicate admission, immutable prompt/output snapshot, next admission, saved cleanup retry without POST/download, interrupted-worker lease, durable discard retry and cleanup-only completion text, missing-version selectable manual recovery guidance, explicit ambiguous-submission messaging, stale end-confirmation A/B identity guard and current identity cleanup, stale Intent suppression and startup rejection, remote-first discard with a detached result volume, renamed published result retained on discard, MTP same-size corruption and read error checks. Provider remained blocked through Home after "
+      return "PASS nano-background: actual production Android Service with isolated fake provider; next-photo operation, busy/error menu captures, Home continuation, no generation/result Activity launch, automatic JPEG save/readback 1200x800, temporary-object cleanup, duplicate admission, immutable prompt/output snapshot, next admission, saved cleanup retry without POST/download, interrupted-worker lease, durable discard retry and cleanup-only completion text, missing-version selectable manual recovery guidance, explicit ambiguous-submission messaging, stale end-confirmation A/B identity guard and current identity cleanup, stale Intent suppression and startup rejection, remote-first discard with a detached result volume, renamed published result retained on discard, MTP same-size corruption and read error checks, fixed API error delivery and suppression of arbitrary exception text. Provider remained blocked through Home after "
           + homeWaitMs
           + " ms. Captures are synthetic layouts; OS-service runtime assertions are separate. No real API, credentials, photos, physical touch or TalkBack speech tested.\nStatus trace (delivery hook; fixed UI text only): "
           + String.join(" → ", factory.messages)
@@ -710,6 +728,41 @@ final class NanoBananaBackgroundChecks {
               + " elapsedMs="
               + (SystemClock.elapsedRealtime() - first.statusEnteredAt));
       throw new AssertionError("Service and fake provider must still be running " + checkpoint);
+    }
+  }
+
+  private static void verifyFailureMessage(
+      Instrumentation test,
+      MainActivity screen,
+      FixtureFactory factory,
+      byte[] jpeg,
+      List<String> saved,
+      IOException failure,
+      String message)
+      throws Exception {
+    Fake network = new Fake(factory.store, jpeg, saved);
+    network.statusFailure = failure;
+    factory.fake = network;
+    factory.store.job(
+        new JSONObject()
+            .put("stage", "generating")
+            .put("task", "synthetic-status-failure")
+            .put("object", "loupe-nano-temp/00000000-0000-0000-0000-000000000109.jpg")
+            .put("owner", "synthetic-status-owner")
+            .put("version", "synthetic-version"));
+    try {
+      TagDetailChecks.require(NanoBananaService.resume(screen), "resume a failing status request");
+      idle(test);
+      TagDetailChecks.require(
+          message.equals(factory.lastResult),
+          "service delivers only the expected safe status failure");
+      TagDetailChecks.require(
+          network.statuses == 1
+              && network.submits == 0
+              && factory.store.job().optString("stage").equals("generating"),
+          "status failure preserves the job and never generates again");
+    } finally {
+      factory.store.job(null);
     }
   }
 

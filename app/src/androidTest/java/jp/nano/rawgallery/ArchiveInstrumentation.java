@@ -529,9 +529,11 @@ public final class ArchiveInstrumentation extends Instrumentation {
         return;
       }
       if (nanoBananaTest) {
+        NanoBananaApiChecks.run();
         results.putString(
             "stream",
-            NanoBananaChecks.run(this, tagWidth > 0 ? tagWidth : 400, tagFont > 0 ? tagFont : 1f));
+            NanoBananaChecks.run(this, tagWidth > 0 ? tagWidth : 400, tagFont > 0 ? tagFont : 1f)
+                + "Synthetic HTTPS API outcomes, cause retention, no POST retry and disconnect covered.\n");
         finish(-1, results);
         return;
       }
