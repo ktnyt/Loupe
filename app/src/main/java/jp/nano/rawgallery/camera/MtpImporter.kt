@@ -82,7 +82,7 @@ object MtpImporter {
     ): MtpDevice? {
         val manager = context.getSystemService(Context.USB_SERVICE) as UsbManager
         if (!manager.hasPermission(usbDevice)) {
-            ImportLog.w(TAG, "no USB permission for ${usbDevice.deviceName}")
+            ImportLog.w(TAG, "no USB permission")
             return null
         }
         logInterfaces(usbDevice)
@@ -163,9 +163,8 @@ object MtpImporter {
         // 競合で失敗することがあり (2026-08-22 実測)、そのときここから同じカメラだと
         // 判断できるかを確かめるための観測
         val sb = StringBuilder(
-            "device 0x%04x:0x%04x class=%d manufacturer=%s product=%s ifaces=".format(
+            "device 0x%04x:0x%04x class=%d ifaces=".format(
                 d.vendorId, d.productId, d.deviceClass,
-                d.manufacturerName ?: "(none)", d.productName ?: "(none)",
             )
         )
         for (i in 0 until d.interfaceCount) {
@@ -260,7 +259,7 @@ object MtpImporter {
                 found.forEach { handles.add(it) }
             }
             // カメラが何を見せているかの記録。取りこぼし調査はここを見る
-            val extCount = HashMap<String, Int>()
+            val kindCount = HashMap<MediaTypes.Kind, Int>()
             // スキャンの内訳。応答しなくなった件数と最も遅かった 1 件を残す
             var infoNull = 0
             var slowestInfoMs = 0L
@@ -278,9 +277,9 @@ object MtpImporter {
                 }
                 if (info.format == MtpConstants.FORMAT_ASSOCIATION) continue // フォルダ
                 val name = info.name ?: continue
-                extCount.merge(name.substringAfterLast('.', "(なし)").uppercase(), 1, Int::plus)
                 // 指定外の種別は履歴照合より前に外す。スキップ件数にも数えない
                 val kind = MediaTypes.kindOf(name) ?: continue
+                kindCount.merge(kind, 1, Int::plus)
                 if (kind !in kinds) continue
                 val key = ImportedKey(
                     fileName = name,
@@ -317,7 +316,7 @@ object MtpImporter {
                 return Result(0, skipped, failed, elapsed(start), false, error = true)
             }
             failed += infoNull
-            ImportLog.i(TAG, "storage=$storageId extensions=$extCount")
+            ImportLog.i(TAG, "storage=$storageId media_types=$kindCount")
             ImportLog.i(
                 TAG,
                 "storage=$storageId scan: handles=${handles.size} infoNull=$infoNull " +
@@ -348,7 +347,7 @@ object MtpImporter {
                 // Do not proceed to camera-side deletion after a storage error.
                 throw e
             } catch (e: Exception) {
-                ImportLog.w(TAG, "import failed: ${t.key.fileName}", e)
+                ImportLog.w(TAG, "import failed", e)
                 failed++
             }
             onProgress(Progress(targets.size, i + 1))
@@ -375,7 +374,7 @@ object MtpImporter {
                     // 復活検出の基準として記録する (E-P7 実測: 成功応答後に復活する)
                     db.markDeleted(camera.model, camera.serial, t.key)
                 } else {
-                    ImportLog.w(TAG, "deleteObject refused: ${t.key.fileName}")
+                    ImportLog.w(TAG, "deleteObject refused")
                 }
             }
             // 成功応答を信用せず、列挙し直して本当に消えたか確かめる
@@ -424,14 +423,14 @@ object MtpImporter {
         val got = try {
             mtp.getPartialObject(handle, 0, want.toLong(), buf)
         } catch (e: Exception) {
-            ImportLog.w(TAG, "getPartialObject failed: ${info.name}", e)
+            ImportLog.w(TAG, "getPartialObject failed", e)
             -1L
         }
         if (got != want.toLong()) return false
         val cameraHead = buf
         val phoneHead = MediaSaver.readHead(context, ex.uri, want) ?: return false
         val same = cameraHead.contentEquals(phoneHead)
-        if (!same) ImportLog.i(TAG, "name collision, different content: ${info.name}")
+        if (!same) ImportLog.i(TAG, "name collision, different content")
         return same
     }
 
@@ -465,7 +464,7 @@ object MtpImporter {
             // スキャナが撮影日時の解析に失敗し、datetaken が -1 (1970 扱い) になる
             if (!MediaTypes.isVideo(key.fileName)) {
                 val patched = ExifOffsetFix.patchIfBroken(tmp)
-                if (patched > 0) ImportLog.i(TAG, "patched $patched broken offset tag(s): ${key.fileName}")
+                if (patched > 0) ImportLog.i(TAG, "patched $patched broken offset tag(s)")
             }
             val bytes = tmp.length()
             val fingerprint = if (verifyBeforeDeletion)

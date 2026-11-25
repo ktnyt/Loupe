@@ -79,14 +79,25 @@ public final class PreviewPreparationJob extends JobService {
               try { PreviewPlaceholders.get(this).store(p, small); } finally { small.recycle(); }
             }
           }
-          catch (Exception e) { failed++; DiagnosticLog.event("preparation.item_fail", 0, "error", e.getClass().getSimpleName()); }
+          catch (Exception e) {
+            boolean paused = cancel.get() || browsing();
+            DiagnosticLog.exception("preparation.item", paused ? "cancelled" : "failed", e);
+            if (paused) { retry = true; break; }
+            failed++;
+          }
           save(countsKnown, ready, total, failed, JobState.Kind.RUNNING, "準備中");
         }
         if (browsing()) save(countsKnown, ready, total, failed, JobState.Kind.PAUSED, "閲覧中のため一時停止");
         else if (!retry && !cancel.get()) save(countsKnown, ready, total, failed, failed == 0 ? JobState.Kind.COMPLETE : JobState.Kind.PARTIAL,
             failed == 0 ? "準備できました" : "一部の写真を準備できませんでした");
       } catch (Exception e) {
-        save(countsKnown, ready, total, failed, JobState.Kind.FAILED, "準備を再開できませんでした"); retry = true;
+        boolean stopped = cancel.get();
+        boolean paused = browsing();
+        DiagnosticLog.exception("preparation.run", stopped ? "cancelled" : paused ? "paused" : "failed", e);
+        if (!stopped) save(countsKnown, ready, total, failed,
+            paused ? JobState.Kind.PAUSED : JobState.Kind.FAILED,
+            paused ? "閲覧中のため一時停止" : "準備を再開できませんでした");
+        retry = true;
       } finally { active.decrementAndGet(); }
       if (!cancel.get()) jobFinished(params, retry);
     });

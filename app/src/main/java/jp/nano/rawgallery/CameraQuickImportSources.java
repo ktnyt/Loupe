@@ -35,6 +35,7 @@ final class CameraQuickImportSources {
     }
     enum SdState {
         CHECKING("SDカードを確認しています…"),
+        BUSY("確認処理が混み合っています。少し待ってからやり直してください。"),
         UNREGISTERED("取り込み元のDCIMフォルダを選んでください。"),
         NO_GRANT("SDカードの読み取り許可がありません。フォルダを選び直してください。"),
         DISCONNECTED("取り込み元のSDカードを接続してください。表示されないときは、カードかリーダーを挿し直してください。"),

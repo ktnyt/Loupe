@@ -18,7 +18,10 @@ import java.util.Locale
  * 置き場所は内部ストレージ (filesDir)。Android 11 以降は
  * /sdcard/Android/data/<pkg>/ が run-as からも触れず、adb で吸い出せないため。
  *
- *   adb exec-out run-as com.kotone.camimport cat files/import-log.txt
+ *   adb exec-out run-as jp.nano.rawgallery cat files/import-log-v2.txt
+ *
+ * 新しい世代では写真名・機器名・例外本文を記録しない。旧 import-log.txt とその
+ * ローテーション世代は読み出し・共有の対象にしない。
  *
  * 出先でその場で見たいときは、画面から読ませる手を別に用意すること。
  * [init] を呼ぶ前や書き込みに失敗したときは logcat へ出すだけで、握って捨てる
@@ -26,7 +29,8 @@ import java.util.Locale
 object ImportLog {
 
     private const val TAG = "ImportLog"
-    private const val FILE_NAME = "import-log.txt"
+    private const val FILE_STEM = "import-log-v2"
+    private const val FILE_NAME = "$FILE_STEM.txt"
     /** 1 ファイルの上限。1 回の取り込みが数 KB なので、この大きさで数百回ぶん残る */
     private const val MAX_BYTES = 256 * 1024L
     /** 世代数。現行 + 過去 [GENERATIONS] 個まで持つ */
@@ -52,10 +56,7 @@ object ImportLog {
     }
 
     fun w(tag: String, msg: String, e: Throwable) {
-        Log.w(tag, msg, e)
-        // 例外は 1 行目 (型とメッセージ) だけ残す。スタックまで入れるとファイルが
-        // 埋まり、追いたい時系列が流れてしまう
-        append("W", tag, "$msg | $e")
+        w(tag, "$msg | ${e.javaClass.name}")
     }
 
     /** 記録の実体。書けなくても取り込みは続ける */
@@ -67,19 +68,19 @@ object ImportLog {
             if (f.length() >= MAX_BYTES) rotate(base)
             f.appendText("${stamp.format(Date())} $level/$tag: $msg\n")
         } catch (e: Exception) {
-            Log.w(TAG, "failed to write log file", e)
+            Log.w(TAG, "failed to write log file: ${e.javaClass.name}")
         }
     }
 
-    /** import-log.2.txt → .3.txt のように押し出して、現行を .1 に退避する */
+    /** import-log-v2.2.txt → .3.txt のように押し出して、現行を .1 に退避する */
     private fun rotate(base: File) {
         runCatching {
-            File(base, "import-log.$GENERATIONS.txt").delete()
+            File(base, "$FILE_STEM.$GENERATIONS.txt").delete()
             for (i in GENERATIONS - 1 downTo 1) {
-                val from = File(base, "import-log.$i.txt")
-                if (from.exists()) from.renameTo(File(base, "import-log.${i + 1}.txt"))
+                val from = File(base, "$FILE_STEM.$i.txt")
+                if (from.exists()) from.renameTo(File(base, "$FILE_STEM.${i + 1}.txt"))
             }
-            File(base, FILE_NAME).renameTo(File(base, "import-log.1.txt"))
+            File(base, FILE_NAME).renameTo(File(base, "$FILE_STEM.1.txt"))
         }
     }
 
