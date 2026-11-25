@@ -159,7 +159,7 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
         if (observation != null) observation.startBytes(size);
         try (InputStream in = new FileInputStream(source); OutputStream out = put.getOutputStream()) {
           if (!sha.equals(readHash(in, out, size, progress, observation)))
-            throw new IOException("送信中に原本が変わりました");
+            throw new IOException("送信中にオリジナルが変わりました");
         }
         requireOk(put.getResponseCode());
         version = version(put);
@@ -344,7 +344,7 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
 
   private String path(String id, String sha) {
     if (!id.matches("[0-9a-f]{32}") || !sha.matches("[0-9a-f]{64}"))
-      throw new IllegalArgumentException("原本の識別子が不正です");
+      throw new IllegalArgumentException("オリジナルの識別子が不正です");
     return "/" + bucket + "/" + prefix + "/" + id + "/" + sha;
   }
 
@@ -502,14 +502,14 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
       count += n;
       if (count > size || Thread.currentThread().isInterrupted()
           || (size <= LIMIT && SystemClock.elapsedRealtime() > deadline))
-        throw new IOException("原本の転送を中止しました");
+        throw new IOException("オリジナルの転送を中止しました");
       digest.update(buffer, 0, n);
       if (out != null) out.write(buffer, 0, n);
       if (watch != null) watch.progress();
       if (observation != null) observation.bytesRead(count);
     }
-    if (Thread.currentThread().isInterrupted()) throw new IOException("原本の転送を中止しました");
-    if (count != size) throw new IOException("原本のサイズが一致しません");
+    if (Thread.currentThread().isInterrupted()) throw new IOException("オリジナルの転送を中止しました");
+    if (count != size) throw new IOException("オリジナルのサイズが一致しません");
     return hex(digest.digest());
   }
 
@@ -551,7 +551,7 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
 
   private void checkSize(long size) throws IOException {
     if (size <= 0 || size > (PHOTO_PREFIX.equals(prefix) ? ORIGINAL_LIMIT : LIMIT))
-      throw new IOException("原本のサイズが対応範囲外です");
+      throw new IOException("オリジナルのサイズが対応範囲外です");
   }
 
   static void requireTemporarySpace(File directory, long bytes) throws IOException {
@@ -560,7 +560,7 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
 
   private static void requireTemporarySpace(long usable, long bytes) throws IOException {
     if (!hasTemporarySpace(usable, bytes))
-      throw new IOException("原本を照合するための端末の空き容量が不足しています");
+      throw new IOException("オリジナルを照合するための端末の空き容量が不足しています");
   }
 
   static boolean hasTemporarySpace(long usable, long bytes) {

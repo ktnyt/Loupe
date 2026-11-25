@@ -812,7 +812,7 @@ final class PhotoMove implements AutoCloseable {
       String sha = copy(original, target, item, volume, stopped, metrics);
       faults.after(Boundary.COPIED);
       if (item.expectedSha() != null && !item.expectedSha().equals(sha))
-        throw new Failure("取り込み時の記録と原本が一致しません。", FailureReason.SHA_MISMATCH);
+        throw new Failure("取り込み時の記録とオリジナルが一致しません。", FailureReason.SHA_MISMATCH);
       if (item.hasHistoricalProof()) {
         if (!item.proofSha().equals(sha)) throw archiveMismatch(FailureReason.SHA_MISMATCH);
         requireHistoricalPending(item, requireOwned(target), original, volume);
@@ -1440,7 +1440,7 @@ final class PhotoMove implements AutoCloseable {
     Media media = requireOwned(uri, reason);
     if (published == media.pending()) throw new Failure("写真の公開状態を確認できません。", reason);
     try (InputStream in = original(uri)) {
-      if (!sha.equals(hash(in, null, bytes, stopped, meter))) throw new Failure("写真の読み戻しが原本と一致しません。", FailureReason.SHA_MISMATCH);
+      if (!sha.equals(hash(in, null, bytes, stopped, meter))) throw new Failure("写真の読み戻しがオリジナルと一致しません。", FailureReason.SHA_MISMATCH);
     }
     Media current = requireOwned(uri, reason);
     if (published == current.pending() || !media.version().equals(current.version()))
@@ -1450,7 +1450,7 @@ final class PhotoMove implements AutoCloseable {
 
   private InputStream original(Uri uri) throws IOException {
     InputStream in = originalOpen.open(MediaStore.setRequireOriginal(uri));
-    if (in == null) throw new Failure("写真の原本を開けません。");
+    if (in == null) throw new Failure("写真のオリジナルを開けません。");
     return in;
   }
 

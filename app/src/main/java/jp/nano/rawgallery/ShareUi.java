@@ -102,8 +102,8 @@ final class ShareUi {
   static String capacityLabel(ShareCapacity.Result value){
     switch(value.state){
       case OVER:return value.amount()+" MiB · 上限超過";
-      case SOURCE_LIMIT:return "原本が512 MiBを超過";
-      case SOURCE_SIZE:return "原本サイズが不明";
+      case SOURCE_LIMIT:return "オリジナルが512 MiBを超過";
+      case SOURCE_SIZE:return "オリジナルサイズが不明";
       case CHECKING:return "容量を確認中";
       case FAILED:return "容量の確認に失敗";
       case UNKNOWN:return "準備時に容量を確認";

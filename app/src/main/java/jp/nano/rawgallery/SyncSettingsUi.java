@@ -63,8 +63,8 @@ final class SyncSettingsUi {
     save.addView(text(c,"次の同期を予約します。すぐに始まるとは限りません",13,0xffa9a9a4,20f/13));
     row(c,save,"写真情報の読み取り",collection,false);row(c,save,"写真の集計",info,false);
     action(c,save,settings,"同期を予約する");action(c,save,other,"状態を更新");line(c,save);
-    description(c,save,"原本の保存","フォルダ選択は不要です。すべてのJPEGと、RAW内の機種情報からGR IV（Monochrome含む）、OM-1 Mark II、E-P7、LeitzphoneのRAWを自動で見つけます。",true);description(c,save,"モバイル通信","モバイル通信でも同期します。実行時刻はAndroidの省電力制御などにより遅れる場合があります。",false);
-    description(c,save,"原本の位置情報","撮影時の位置情報も含め、元のファイルを変更せず保存するための許可です。端末の現在位置は取得しません。",false);action(c,save,location,"位置情報の読み取りを許可");
+    description(c,save,"オリジナルの保存","フォルダ選択は不要です。すべてのJPEGと、RAW内の機種情報からGR IV（Monochrome含む）、OM-1 Mark II、E-P7、LeitzphoneのRAWを自動で見つけます。",true);description(c,save,"モバイル通信","モバイル通信でも同期します。実行時刻はAndroidの省電力制御などにより遅れる場合があります。",false);
+    description(c,save,"オリジナルの位置情報","撮影時の位置情報も含め、元のファイルを変更せず保存するための許可です。端末の現在位置は取得しません。",false);action(c,save,location,"位置情報の読み取りを許可");
     LinearLayout verification=card(c,cards,"保存した写真の確認");verification.setTag("verification-card");
     verification.addView(text(c,"クラウドに保存した写真を、元どおりダウンロードできるか確認します",13,0xffa9a9a4,20f/13));
     LinearLayout delete=card(c,cards,"端末の写真を自動で削除");headingControl(c,delete,cleanup,"クラウドに保存済みの写真を端末から自動で削除");

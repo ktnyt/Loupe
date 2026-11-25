@@ -17,9 +17,9 @@ Leica Contemporaryに近づけるため、写真を比較しながら曲線・LU
 
 ## 機能・要件・契約
 
-### 調整と原本保全
+### 調整とオリジナル保全
 
-- 不変条件: 通常起動では追加look無効。既存の現像既定値を変更しない。既存の原本・保存済みJPEGを書き換えない。
+- 不変条件: 通常起動では追加look無効。既存の現像既定値を変更しない。既存のオリジナル・保存済みJPEGを書き換えない。
 - Neutralは `RawEditState.neutral()`（既存rolloff=0を含む全現像中立+look無効）。任意現像設定のまま追加lookだけ無効にする操作とは区別する。Neutralの画素は同解像度のBeforeと最終量子化/丸め程度の誤差に収める。JPEG再圧縮のバイト一致は要求しない。
 - CNT-likeは追加lookだけを置換する。Customは手動設定。パラメータはimmutable、render request/export開始時の状態を共有し、調整中に保存中の状態を変えない。
 - 履歴とequalsはlookを含む。従来のfloat snapshotは従来現像だけを保持するため、Activity再生成時はlookの別保存も必要。LUTをBundleへ直接格納しない。

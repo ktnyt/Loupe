@@ -1,6 +1,6 @@
 # ポイントカーブの検証
 
-対象はIssue #63、Android検証端末A、実験アプリ0.5.0/code8と通常版0.22.0/code144。旧実験パラメータの破棄は利用者の指定であり、旧数値で旧仕上がりを再現する互換モードは設けない。原本と既存JPEGを変更しない。契約は[tone-curve-contract.md](tone-curve-contract.md)。
+対象はIssue #63、Android検証端末A、実験アプリ0.5.0/code8と通常版0.22.0/code144。旧実験パラメータの破棄は利用者の指定であり、旧数値で旧仕上がりを再現する互換モードは設けない。オリジナルと既存JPEGを変更しない。契約は[tone-curve-contract.md](tone-curve-contract.md)。
 
 ## 数値・画質
 
@@ -25,7 +25,7 @@
 
 独立UI評価後に[選択端点のリング](design/loupe63-endpoint.png)を追加し、再評価で対応必須の不一致・切れなし。Cold Reviewの範囲内指摘を修正して再評価を受けた。security-reviewに沿う独立静的確認で対応必須指摘なし。数値境界、固定LUTとGL解放、不変snapshot、別JPEG/失敗cleanup、debug gate、診断の匿名性を確認した。ネイティブライブラリの脆弱性監査ではない。
 
-通常版0.22.0/code144のphoto-edit検査もPASS。内部現像Activity、Mono/変更後の戻る操作・再生成、別JPEGの寸法・色・原本不変、保存中の戻る操作によるcancelと自己生成物cleanup、失敗/retryを確認した。外部editorは起動しておらず、その保存互換性は別の検証範囲。
+通常版0.22.0/code144のphoto-edit検査もPASS。内部現像Activity、Mono/変更後の戻る操作・再生成、別JPEGの寸法・色・オリジナル不変、保存中の戻る操作によるcancelと自己生成物cleanup、失敗/retryを確認した。外部editorは起動しておらず、その保存互換性は別の検証範囲。
 
 ## 性能
 

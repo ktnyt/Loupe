@@ -277,7 +277,7 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
 
   static Snapshot publish(Storage archive, String bucket, Rows local) throws Exception {
     requireBucket(bucket, local);
-    if (local.isEmpty()) throw new IOException("カタログに保存できる原本がありません");
+    if (local.isEmpty()) throw new IOException("カタログに保存できるオリジナルがありません");
     synchronized (PUBLISH_LOCK) {
       Snapshot current = generation(archive, bucket, INDEX, false);
       Snapshot legacy = generation(archive, bucket, LEGACY, false);
@@ -376,7 +376,7 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
     Row previous = result.rows.get(clean.key());
     if (previous != null) {
       if (!previous.sameContent(clean))
-        throw new IOException("保管記録と復元一覧で原本の内容が一致しません");
+        throw new IOException("保管記録と復元一覧でオリジナルの内容が一致しません");
       if (!previous.version().equals(clean.version())) {
         if (archive != null) archive.verifyVersion(previous.json(result.bucket));
         return;

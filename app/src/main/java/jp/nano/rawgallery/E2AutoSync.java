@@ -468,7 +468,7 @@ final class E2AutoSync {
 
   /** Keeps MediaStore identities separate from unrelated document-tree and Amazon rows. */
   static List<Candidate> candidates(Context context) throws Exception {
-    if (!E2Settings.hasPhotoAccess(context)) throw new SecurityException("原本へのアクセスが必要です");
+    if (!E2Settings.hasPhotoAccess(context)) throw new SecurityException("オリジナルへのアクセスが必要です");
     Uri files = MediaStore.Files.getContentUri("external");
     String[] columns = {"_id", "_display_name", "relative_path", "_size", "date_modified",
         "datetaken", "date_added", MediaStore.MediaColumns.GENERATION_MODIFIED,
@@ -522,7 +522,7 @@ final class E2AutoSync {
       BooleanSupplier stopped) throws Exception {
     requireRunning(stopped);
     long size = candidate.photo().size;
-    if (size <= 0 || size > E2Archive.ORIGINAL_LIMIT) throw new IOException("原本のサイズが対応範囲外です");
+    if (size <= 0 || size > E2Archive.ORIGINAL_LIMIT) throw new IOException("オリジナルのサイズが対応範囲外です");
     try (InputStream input = originals.open(candidate)) {
       String hash = E2Archive.readHash(input, null, size);
       requireRunning(stopped);
@@ -552,7 +552,7 @@ final class E2AutoSync {
       RecentTransfers recent) throws Exception {
     PhotoRepository.Photo photo = candidate.photo();
     if (photo.size > E2Archive.ORIGINAL_LIMIT)
-      throw new IOException("原本のサイズが対応範囲外です");
+      throw new IOException("オリジナルのサイズが対応範囲外です");
     String revision = fallbackHash == null ? Long.toString(candidate.generation()) : fallbackHash;
     String key = key(candidate, bucket, revision);
     File directory = new File(context.getFilesDir(), "e2-previews");
@@ -603,7 +603,7 @@ final class E2AutoSync {
           + " elapsedMs=" + (SystemClock.elapsedRealtime() - start)
           + (http.matches() ? " http=" + http.group(1) : ""));
       state(context).edit().putString("failureReason",
-          "復元一覧をクラウドに保存できませんでした。端末原本は整理せず、次回の同期で再試行します").apply();
+          "復元一覧をクラウドに保存できませんでした。端末オリジナルは整理せず、次回の同期で再試行します").apply();
       return null;
     } finally {
       state(context).edit().putBoolean("publishingCatalog", false).apply();
@@ -638,7 +638,7 @@ final class E2AutoSync {
           || photo.modified != row.getLong(3) || candidate.generation() != row.getLong(4)
           || !candidate.volume().equals(row.getString(5))
           || !candidate.version().equals(MediaStore.getVersion(context, candidate.volume())))
-        throw new IOException("原本が変わりました。次回の同期で確認します");
+        throw new IOException("オリジナルが変わりました。次回の同期で確認します");
     }
   }
 

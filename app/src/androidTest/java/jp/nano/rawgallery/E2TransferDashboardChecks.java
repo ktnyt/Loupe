@@ -42,7 +42,7 @@ final class E2TransferDashboardChecks {
           .putInt("fullMediaConsent", consent.getInt(null)).commit();
       requireText(test, activity, "自動バックアップ · 待機中", false);
       requireText(test, activity, "復元一覧 · 未実行", false);
-      requireText(test, activity, "原本 · 未実行", false);
+      requireText(test, activity, "オリジナル · 未実行", false);
 
       worker.set(true);
       record(upload, JobState.Kind.RUNNING, true);
@@ -54,23 +54,23 @@ final class E2TransferDashboardChecks {
         requireText(test, activity, "自動バックアップ · アップロード中", false);
         requireText(test, activity, "確認済み 1,124 / 7,021件\n残り 5,895件 · 失敗 2件", false);
         requireText(test, activity, "復元一覧 · 取得中", false);
-        requireText(test, activity, "原本 · 取得中 · ", false);
+        requireText(test, activity, "オリジナル · 取得中 · ", false);
         capture(context, test);
 
         original.bytesRead(2_000_000);
-        requireText(test, activity, "原本 · 照合中 · ", false);
+        requireText(test, activity, "オリジナル · 照合中 · ", false);
         original.complete(-1);
         catalog.complete(50_001);
       }
       upload.edit().putBoolean("publishingCatalog", true).commit();
       requireText(test, activity, "自動バックアップ · 復元一覧に反映中", false);
       requireText(test, activity, "復元一覧 · 取得済み · 50,001件", false);
-      requireText(test, activity, "原本 · 取得済み", false);
+      requireText(test, activity, "オリジナル · 取得済み", false);
       try (E2TransferStatus original = E2TransferStatus.begin(
           E2TransferStatus.Kind.ORIGINAL_DOWNLOAD, bucket, 2_000_000)) {
         original.cancel();
       }
-      requireText(test, activity, "原本 · 中止", false);
+      requireText(test, activity, "オリジナル · 中止", false);
       E2TransferStatus.begin(E2TransferStatus.Kind.CATALOG_DOWNLOAD, bucket, -1).close();
       requireText(test, activity, "復元一覧 · 失敗", false);
       upload.edit().putBoolean("publishingCatalog", false).putString("lastCountBucket", bucket)
@@ -87,15 +87,15 @@ final class E2TransferDashboardChecks {
       try (E2TransferStatus manual = E2TransferStatus.begin(
           E2TransferStatus.Kind.MANUAL_UPLOAD, bucket, -1)) {
         manual.publishing(true);
-        requireText(test, activity, "手動保存 · 原本保存済み · 復元一覧に反映中", false);
+        requireText(test, activity, "手動保存 · オリジナル保存済み · 復元一覧に反映中", false);
         manual.fail();
       }
-      requireText(test, activity, "手動保存 · 原本保存済み · 復元一覧の反映に失敗", false);
+      requireText(test, activity, "手動保存 · オリジナル保存済み · 復元一覧の反映に失敗", false);
 
       connection.edit().putString("bucket", "another-test-bucket").commit();
       requireText(test, activity, "IDrive e2 · another-test-bucket", false);
       requireText(test, activity, "復元一覧 · 未実行", false);
-      requireText(test, activity, "原本 · 未実行", false);
+      requireText(test, activity, "オリジナル · 未実行", false);
       if (hasText(test, activity, "確認済み", false))
         throw new AssertionError("A different bucket must not display the earlier upload counts");
       test.runOnMainSync(activity::finish);

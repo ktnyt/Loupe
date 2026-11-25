@@ -19,12 +19,12 @@ final class ShareCapacity {
           : state == State.SOURCE_LIMIT ? "—"
           : state == State.CHECKING ? "…" : format(bytes);
     }
-    String label() { return state == State.SOURCE_LIMIT ? "原本 > 512 MiB" : amount() + " / 512 MiB"; }
+    String label() { return state == State.SOURCE_LIMIT ? "オリジナル > 512 MiB" : amount() + " / 512 MiB"; }
     String description() {
       if (state == State.CHECKING) return "共有できる量を確認しています";
       if (state == State.FAILED) return "共有する写真のサイズを確認できませんでした";
-      if (state == State.SOURCE_LIMIT) return "512 MiBを超えるRAW原本は共有できません。写真を減らしてください";
-      if (state == State.SOURCE_SIZE) return "原本のサイズが不明な写真があります。一覧を読み込み直してください";
+      if (state == State.SOURCE_LIMIT) return "512 MiBを超えるRAWオリジナルは共有できません。写真を減らしてください";
+      if (state == State.SOURCE_SIZE) return "オリジナルのサイズが不明な写真があります。一覧を読み込み直してください";
       if (state == State.UNKNOWN) return "容量は共有の準備時に確認します。上限512 MiB";
       return "共有の量 " + format(bytes) + " MiB、上限512 MiB"
           + (state == State.OVER ? "。上限を超えています。写真を減らしてください" : "");

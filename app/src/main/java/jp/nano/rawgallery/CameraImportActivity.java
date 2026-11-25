@@ -382,7 +382,7 @@ public final class CameraImportActivity extends AppCompatActivity {
                 requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 403);
         });
         options.addView(sdAuto);
-        options.addView(text("原本をそのまま保存して重複を確認するため、写真すべてと写真の位置情報へのアクセスが必要です。",
+        options.addView(text("オリジナルをそのまま保存して重複を確認するため、写真すべてと写真の位置情報へのアクセスが必要です。",
                 14, GalleryUi.MUTED));
         button(options, "写真のアクセス権限を確認", this::ensureSdPermissions);
         button(options, "アプリの権限設定を開く", () ->
@@ -1050,7 +1050,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         boolean originals = checkSelfPermission(Manifest.permission.ACCESS_MEDIA_LOCATION) == PackageManager.PERMISSION_GRANTED;
         if (photos && originals) return true;
         showSdPermissionStatus(photos
-                ? "原本をそのまま保存するため、写真の位置情報へのアクセスを許可してください。許可後にもう一度操作してください。"
+                ? "オリジナルをそのまま保存するため、写真の位置情報へのアクセスを許可してください。許可後にもう一度操作してください。"
                 : "写真すべてと写真の位置情報へのアクセスを許可してください。選択した写真のみでは取り込めません。許可後にもう一度操作してください。");
         java.util.ArrayList<String> permissions = new java.util.ArrayList<>();
         if (!photos) {
@@ -1069,9 +1069,9 @@ public final class CameraImportActivity extends AppCompatActivity {
             showSdPermissionStatus("写真すべてへのアクセスが必要です。再度許可するか、アプリの権限設定を確認してください。");
         } else if (checkSelfPermission(Manifest.permission.ACCESS_MEDIA_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             clearPendingSdStart();
-            showSdPermissionStatus("原本の保存には写真の位置情報へのアクセスが必要です。再度操作するか、アプリの権限設定を確認してください。");
+            showSdPermissionStatus("オリジナルの保存には写真の位置情報へのアクセスが必要です。再度操作するか、アプリの権限設定を確認してください。");
         } else {
-            showSdPermissionStatus("写真の原本へのアクセスを許可しました。");
+            showSdPermissionStatus("写真のオリジナルへのアクセスを許可しました。");
             if (pendingSdPermission) { resumeSd = true; if (quickResumed) resumeSdStart(); }
         }
         pendingSdPermission = false;
@@ -1475,7 +1475,7 @@ public final class CameraImportActivity extends AppCompatActivity {
             String counts;
             try {
                 CameraImportLedger ledger = CameraImportLedger.get(this);
-                counts = "原本 " + ledger.contentCount() + "件 · 受領記録 " + ledger.receiptCount() + "件";
+                counts = "オリジナル " + ledger.contentCount() + "件 · 受領記録 " + ledger.receiptCount() + "件";
             } catch (RuntimeException failure) { counts = "共通履歴の件数を確認できませんでした"; }
             String result = counts;
             runOnUiThread(() -> { if (!isFinishing() && !isDestroyed()) ledgerStatus.setText(result); });

@@ -76,7 +76,7 @@ ANDROID_HOME=/opt/homebrew/share/android-commandlinetools gradlew -p . assembleD
 /opt/homebrew/share/android-commandlinetools/platform-tools/adb shell am instrument -w -e mode diagnostics jp.nano.rawgallery.test/jp.nano.rawgallery.ArchiveInstrumentation
 ```
 
-合成JPEGだけを使うテストでcache miss/hit、bind/draw/frame_commit、失敗、旧要求破棄、名前漏洩を確認する。写真原本や順位・タグの書換えはしない。
+合成JPEGだけを使うテストでcache miss/hit、bind/draw/frame_commit、失敗、旧要求破棄、名前漏洩を確認する。写真オリジナルや順位・タグの書換えはしない。
 
 ## 開発手順の見直し
 
@@ -147,7 +147,7 @@ python3 scripts/test-raw-editor-full-profile.py
 
 出力先は毎回新規ディレクトリ。URI指定を省略すると合成画像を使う。開始前に実験アプリだけを終了し、動画・PiPを止め、ロックと前景を確認する。ログは対象タグだけを収集し、端末全体のログを消去しない。各1.8秒のドラッグ6回について入力数・反映数・最終入力の反映時間を出し、準備中と完了後の中央値/p95を別々に示す。起動やタブ切替の入力はドラッグ計測から分ける。準備との重複が足りなければ失敗とし、準備後の結果で代用しない。
 
-電池温度を前後で記録し、RSS/HWM/PSSは入力計測終了後に取得する。取得できない値や反映のない区間はnullを残す。終了後のPSSは準備中のピークではなく、HWMもOSから取得できた場合のプロセス全体の値である。LibRaw内部のピークをタイル用メモリの上限と同一視しない。画質、原寸の保存寸法、原本hash、ズーム時の見え方は別の実機検査で確認する。
+電池温度を前後で記録し、RSS/HWM/PSSは入力計測終了後に取得する。取得できない値や反映のない区間はnullを残す。終了後のPSSは準備中のピークではなく、HWMもOSから取得できた場合のプロセス全体の値である。LibRaw内部のピークをタイル用メモリの上限と同一視しない。画質、原寸の保存寸法、オリジナルhash、ズーム時の見え方は別の実機検査で確認する。
 
 
 ## 取り込み済み写真の保存先移動（Issue #162）

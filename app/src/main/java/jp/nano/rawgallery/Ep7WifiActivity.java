@@ -61,10 +61,10 @@ public final class Ep7WifiActivity extends AppCompatActivity {
         button(body, "カメラの登録を編集", () -> startActivity(new Intent(this, CameraBleActivity.class)));
         var prefs = getSharedPreferences("camera_import", MODE_PRIVATE);
         verify = new MaterialSwitch(this);
-        verify.setChecked(prefs.getBoolean("wifi_verify_all", false)); verify.setText("カメラの原本も確認する"); verify.setMinHeight(dp(48));
+        verify.setChecked(prefs.getBoolean("wifi_verify_all", false)); verify.setText("カメラのオリジナルも確認する"); verify.setMinHeight(dp(48));
         verify.setOnCheckedChangeListener((v, checked) -> prefs.edit().putBoolean("wifi_verify_all", checked).apply());
         body.addView(verify);
-        text(body, "通常は履歴を使い、スマホに保存した写真の内容を照合します。オンにすると、カメラの原本も読み直します。同じ名前・サイズ・日時のまま原本だけを差し替えた変更は、オフでは見逃す場合があります。", 14);
+        text(body, "通常は履歴を使い、スマホに保存した写真の内容を照合します。オンにすると、カメラのオリジナルも読み直します。同じ名前・サイズ・日時のままオリジナルだけを差し替えた変更は、オフでは見逃す場合があります。", 14);
         start = button(body, "写真を取り込む", () -> { if (ensurePhotoPermission()) startWifi(); });
         MaterialUi.filled(connect);
         MaterialUi.outlined(start);

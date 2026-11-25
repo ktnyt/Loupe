@@ -5,7 +5,7 @@
 | 記録 | 条件と観測 |
 | --- | --- |
 | `physical-native-*` | 実機Android 16、1200×2670px、520dpi、縦画面。指定400dpを実表示幅369dpに制限、font1.0。USB SDへの保存先選択と確認。 |
-| `physical-compact-*` | 同じ実機、320dp/font1.3。設定・単一選択・移動不可1枚を含む確認、キャンセル後の原本保持。 |
+| `physical-compact-*` | 同じ実機、320dp/font1.3。設定・単一選択・移動不可1枚を含む確認、キャンセル後のオリジナル保持。 |
 | `emulator-completed*` | Android 15、400dp/font1.0。画面から移動を確定しforeground serviceが完了。完了1・未処理0・移動不可0または1、移動先の全バイト・履歴・元ファイル不在を照合。最終結果文はエミュレータで確認。 |
 | `emulator-progress` | 同じエミュレータの移動中。進捗、中止、競合する操作の無効状態。 |
 | `emulator-confirm-skipped` | 対象1枚と移動できない1枚、その説明を表示。対象外の履歴は処理後も保持。 |

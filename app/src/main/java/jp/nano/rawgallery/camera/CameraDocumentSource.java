@@ -414,10 +414,10 @@ public final class CameraDocumentSource {
         public final Reason reason;
         private OriginalAccessException(Reason reason) {
             super(switch (reason) {
-                case PERMISSION -> "写真の原本を取り込むには、写真の位置情報へのアクセスを許可してください";
-                case VOLUME -> "取り込み元のカードで写真の原本を確認できません。カードとDCIMフォルダを確認してください";
+                case PERMISSION -> "写真のオリジナルを取り込むには、写真の位置情報へのアクセスを許可してください";
+                case VOLUME -> "取り込み元のカードで写真のオリジナルを確認できません。カードとDCIMフォルダを確認してください";
                 case INDEX_PENDING -> "SDカードに写真があります。Androidへの登録を待ってから、もう一度取り込んでください。";
-                default -> "写真の原本を取得できません。SDカードのDCIMフォルダを選び直し、写真へのアクセスを確認してください";
+                default -> "写真のオリジナルを取得できません。SDカードのDCIMフォルダを選び直し、写真へのアクセスを確認してください";
             });
             this.reason=reason;
         }

@@ -29,7 +29,7 @@ final class E2DeviceChecks {
     for (int i = 0; i < formats.length; i++) {
       sources[i] = new File(directory, "sample." + formats[i]);
       if (!sources[i].isFile() || sources[i].length() <= 0 || sources[i].length() > 128L * 1048576)
-        throw new IOException("試行原本が不足しているか、サイズ上限を超えています");
+        throw new IOException("試行オリジナルが不足しているか、サイズ上限を超えています");
     }
     String database = "e2-pilot-" + runId + ".db";
     StringBuilder result = new StringBuilder("PASS e2-archive");

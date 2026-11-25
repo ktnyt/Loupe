@@ -4,7 +4,7 @@
 
 - 比較元: `7082ff7`。production sourceは無変更、同じ合成写真を表示するcapture用instrumentationだけを追加して取得したbaseline画像。
 - 変更後: `40d0d29`。`single-best-{width}-{font}-{off,on,filter}.png`。
-- 対象: 専用 `emulator-5580`、縦画面。400dp/font 1.0、320dp/font 1.3。生成したJPEGと検査専用SharedPreferencesを使用し、写真原本や利用者の順位を書き換えない。
+- 対象: 専用 `emulator-5580`、縦画面。400dp/font 1.0、320dp/font 1.3。生成したJPEGと検査専用SharedPreferencesを使用し、写真オリジナルや利用者の順位を書き換えない。
 - 操作: 初期未指定→指定→保存後状態→Back→1位/未決定/決定済みフィルター→再表示→解除→1位から消えることを確認。別単写と既存連写journalの不変、連写メンバーに単写ボタンがないことも確認。
 - プログラム検査: checkable/checked、保存中の無効化、48dp以上の幅・64dp以上の高さ、切替前後の位置とサイズ、文字幅に応じた段組みを確認。
 - 追加のAndroid検査: actionsをlatchで待たせ、保存中のBack・再表示・1位フィルターへの移動後に現在画面が更新されること、古い期待値の保存拒否後の再試行を確認した。commit falseと読み込み例外を注入し、旧状態の保持と再試行、読み込み再試行だけでは指定を書かないことを検査した。最終400dp/font 1.0では初期readと最初のretryを2回だけ失敗させた回復と、読み込み中/保存中のAX状態もPASS。

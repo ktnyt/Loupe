@@ -8,7 +8,7 @@ Issue #61、作業ID `20261030-editor-footer`。目的は写真を広く観察�
 - 拡大ボタンは削除する。ピンチ、空白のダブルタップによる原寸100%→150%→全体表示は維持する。
 - 補助操作はWBの彩度MAX、質感のかすみ、明暗のコントラスト、カラーのMonoだけ。トーン、明るさ、白黒には空の帯・背景・予約高さを残さない。
 - 写真viewportと2DUIの位置・大きさは7タブ共通。補助操作を必要時だけ写真下端へ重ね、出入りで写真が跳ねない。補助操作の操作域は2DUIやタブと重ならない。
-- 現像値・3カーソル・相対操作・空白パン・2指移行・初期化・保存中の抑止を維持する。画像処理、RAWデコード、原本コピー、原寸キャッシュ、JPEG保存の計算は変更しない。
+- 現像値・3カーソル・相対操作・空白パン・2指移行・初期化・保存中の抑止を維持する。画像処理、RAWデコード、オリジナルコピー、原寸キャッシュ、JPEG保存の計算は変更しない。
 
 Claudeの完成報告では、下部タブ80dp、アイコン24dp+間4dp+文字12sp・行高16dp×文字倍率を中央配置（文字1.0で上下18dp）。補助操作は下から8dp・高さ48dp・左右中央、スライダー幅min(画面幅−16dp,320dp)、背景黒62%・角丸24dp。写真領域は上56dpと下80dpを除く残りすべて。面は写真領域の中央で、幅400dp・content高さ640dp以上なら328dp。OS領域を除く実contentが短い場合も補助操作との4dp間隔を保つよう、面の一辺をmin(写真幅−72dp,写真高さ−176dp)とする（既存最小48dp）。この計算を補助操作の有無によらず共通にする。参照HTML実ファイルを取得しSHA-256 `3bab8fca6aefd0d51845884e4eed3b8dc56c232117e7fdc5c985b7a1ecea1841` で一致を確認した。これを実装基準とする。基準は `loupe-raw-editor-cursor-navigation.html`、更新版は `loupe-raw-editor-footer-v2.html` として保存する。
 
@@ -25,7 +25,7 @@ Claudeの完成報告では、下部タブ80dp、アイコン24dp+間4dp+文字1
 
 本体0.21.1/143と隔離版0.4.1/7のAPK・テストAPK、両lintDebugを確認した。実機では通常文字1.0と短Window640dp/文字1.3のcursor/ui/guidesが通過。7タブの固定viewport/pad、80dpセルの余白・中央配置、補助4タブ/非表示3タブ、下8dp・2DUIとの4dp間隔、倍率AX、相対操作・空白pan・初期化・2指の両方向移行を検査した。PhotoSurfaceの指分割を止めた後、同じrollback失敗操作の通過を確認した。
 
-fullui/fullstatesの原寸6000×4000 Mono保存・待ち中止・失敗再試行・状態復元、本体photo-editの通常入口・Mono/recreate・別JPEG/原本非変更・保存中止も通過した。処理計算の変更や新たな速度改善はない。
+fullui/fullstatesの原寸6000×4000 Mono保存・待ち中止・失敗再試行・状態復元、本体photo-editの通常入口・Mono/recreate・別JPEG/オリジナル非変更・保存中止も通過した。処理計算の変更や新たな速度改善はない。
 
 通常contentは1200×2416px/font1.0、短いWindowのcontentは1200×1920px/font1.3（OS inset0）と撮影JSONで確認した。短い実機比較には [short640](design/loupe61-v2-reference-short640.png) を使う。先の576dpは設計上の参考条件で、実機の短Window寸法とは区別する。short640の取得ファイルSHA-256は `e4b7b15d7d91d4cfc52e0daa84064f06eb6b8eb691c3df169782962653d43acd`、RGB画素SHA-256は `a21c4449fec97a39ae2ee472fbb9f415015b23ba15862907d5645c48803d8411`。Claude側のPNG再保存でファイルhashが変わる場合があるため、画素hashも照合した。既存通常PNGと参考576dp PNGもClaude報告のRGBhashと一致した。
 

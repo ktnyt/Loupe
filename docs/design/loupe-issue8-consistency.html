@@ -200,7 +200,7 @@ body.solo #soloExit{display:inline-flex;position:fixed;right:16px;top:16px;z-ind
 <tr><td>行（スイッチ・状態）</td><td>最低48dp、行の間に1dpの線</td><td>項目名16sp</td><td>線 #26262A</td></tr>
 <tr><td>表示のみのスイッチ</td><td>36×20dp（つまみ14dp）＋左に鍵の印16dp。押せない（フォーカスしない）。<b>保存済みの値</b>をそのまま出し、権限の有無・失敗・更新中で変えない</td><td>下に「変更は［同期・端末からの削除］から」13sp</td><td>オン：#EDEDEA の地・#111 のつまみ。オフ：枠1.5dp #6B6B70・つまみ左。形でも区別</td></tr>
 <tr><td>状態の列（4行）</td><td>上から「写真情報の読み取り」（collection）「写真の集計」（info：数値または「—」）「自動管理の権限」（permissionState）「バックグラウンド同期」（progress・右に時刻）。印は24dpの枠・20dpの描画、失敗は28dpの札。<b>それぞれ別の観測値で、ほかの行から推測して変えない</b></td><td>集計の値15sp・時刻13sp</td><td>#17のとおり</td></tr>
-<tr><td>説明（原本の保存・モバイル通信・削除の条件・日付の条件・アプリの削除・原本の位置情報）</td><td>項目名の下に説明。<b>省略しない</b></td><td>項目名14sp・500、説明14sp・行1.6</td><td>項目名 #EDEDEA、説明 #C9C9C4</td></tr>
+<tr><td>説明（オリジナルの保存・モバイル通信・削除の条件・日付の条件・アプリの削除・オリジナルの位置情報）</td><td>項目名の下に説明。<b>省略しない</b></td><td>項目名14sp・500、説明14sp・行1.6</td><td>項目名 #EDEDEA、説明 #C9C9C4</td></tr>
 <tr><td>保持期間の行</td><td>最低48dp。値は 7／30／90日 のいずれか</td><td>項目名16sp・値15sp</td><td>#EDEDEA</td></tr>
 <tr><td>保持期間の選択（既存の操作）</td><td>［保持期間を変更］で 7／30／90日 の選択を開く（下部のシート・各項目56dp・ラジオ20dp）。<b>どれかを選ぶと、同じ日数でも既存のコードどおり <code>cleanupEnabled=false</code> を保存する</b>（端末から自動で削除のスイッチはオフで表示）。Backで閉じる</td><td>16sp</td><td>シート #19191B・角丸20dp</td></tr>
 <tr><td>カードの中のボタン（既存）</td><td>［写真の自動削除に必要なアクセスを許可］は削除のカードの「削除の条件」の下に置き、<code>Environment.isExternalStorageManager()</code> が true のときだけ隠す。［位置情報の読み取りを許可］は許可済みなら隠す。［保持期間を変更］はいつも出す。各 最低48dp・角丸24dp・余白 上下10 左右16dp・印20dp。長い名前は折り返す</td><td>14sp・500</td><td>#26262A・枠1dp #3A3A3F</td></tr>
@@ -326,7 +326,7 @@ body.solo #soloExit{display:inline-flex;position:fixed;right:16px;top:16px;z-ind
       '<section class="card" aria-label="設定"><h3 aria-hidden="true">設定</h3>' + tog('自動同期', O.a) + tog('端末から自動で削除', O.d) + '<p class="hint">変更は［同期・端末からの削除］から</p></section>' +
       '<section class="card" aria-label="状態"><h3 aria-hidden="true">状態</h3>' + srow('写真情報の読み取り', col) + srow('写真の集計', info) + srow('自動管理の権限', perm) + srow('バックグラウンド同期', prog, time) + '</section>' +
       '<section class="card" aria-label="保存と通信"><h3 aria-hidden="true">保存と通信</h3>' +
-        '<p class="dt">原本の保存</p><p class="desc">フォルダ選択は不要です。すべてのJPEGと、RAW内の機種情報からGR IV（Monochrome含む）、OM-1 Mark II、E-P7、LeitzphoneのRAWを自動で見つけます。</p>' +
+        '<p class="dt">オリジナルの保存</p><p class="desc">フォルダ選択は不要です。すべてのJPEGと、RAW内の機種情報からGR IV（Monochrome含む）、OM-1 Mark II、E-P7、LeitzphoneのRAWを自動で見つけます。</p>' +
         '<p class="dt">モバイル通信</p><p class="desc">モバイル通信でも同期します。実行時刻はAndroidの省電力制御などにより遅れる場合があります。</p></section>' +
       '<section class="card" aria-label="端末からの削除"><h3 aria-hidden="true">端末からの削除</h3>' +
         '<p class="dt">削除の条件</p><p class="desc">端末の写真の自動削除には「すべてのファイルへのアクセス」が必要です。端末から削除するのは対象機種のRAWとすべてのJPEGで、クラウドから同じ内容で戻せることを確認し、プレビューを保存した元のファイルに限ります。</p>' +
@@ -335,7 +335,7 @@ body.solo #soloExit{display:inline-flex;position:fixed;right:16px;top:16px;z-ind
         '<p class="dt">アプリを削除したとき</p><p class="desc">アプリを削除すると端末のプレビューと管理記録も消えます。クラウドの元のファイルはAmazon Photosに残ります。</p>' +
         '<div class="srow" style="margin-top:12px;border-top:1px solid var(--line)"><span class="lab">保持期間</span><span class="r" style="color:var(--text);font-size:calc(15px*var(--k))">' + O.keep + '日</span></div>' +
         '<button class="btn" data-act="keep"' + dAttr + ' aria-label="保持期間を変更' + busyAX + '">' + G.cal + '<span aria-hidden="true">保持期間を変更</span></button></section>' +
-      '<section class="card" aria-label="原本の位置情報"><h3 aria-hidden="true">原本の位置情報</h3>' +
+      '<section class="card" aria-label="オリジナルの位置情報"><h3 aria-hidden="true">オリジナルの位置情報</h3>' +
         '<p class="desc">撮影時の位置情報も含め、元のファイルを変更せず保存するための許可です。端末の現在位置は取得しません。</p>' +
         (O.loc ? '' : '<button class="btn" data-act="loc" aria-label="位置情報の読み取りを許可">' + G.pin + '<span aria-hidden="true">位置情報の読み取りを許可</span></button>') + '</section>' +
       '</div></div>' +

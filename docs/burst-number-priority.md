@@ -26,10 +26,10 @@
 ## 保存と互換性の契約
 
 - archive.dbのmetadataへ番号用のnullable列を追加する。NULLは未検査、検査して番号なしは0、対応済みの番号は正のmode/frameとして区別する。
-- 既存のmodel/taken/key、原本の受領・verified/checkpoint・index_revision・取込履歴、写真identity、タグ、共有履歴を保存し、削除や全metadataの作り直しで移行しない。
+- 既存のmodel/taken/key、オリジナルの受領・verified/checkpoint・index_revision・取込履歴、写真identity、タグ、共有履歴を保存し、削除や全metadataの作り直しで移行しない。
 - JPEGのGallery用probeは実JPEGのmarker構造を確認し、累積読取り/skipを1MiB以内に制約する。APP1の最大65533byteのpayloadからExifヘッダー後のTIFFだけを既存の範囲制約付きreaderへ渡す。SOS/EOIで終了し、available()に依存しない。segment途中のEOF、元InputStreamのI/Oエラーと上限超過は再試行可能な未検査として扱う。
-- Galleryの番号用読取りだけが未検査cacheを補完する。読み取り可能なローカル原本だけを使い、取得失敗ではNULLを残して次回再試行可能にする。番号のためのクラウド原本downloadや外部送信はしない。
-- アーカイブのみの写真は、同じ写真に対応すると確認できるcache keyの番号だけを使い、それがなければ時間差へ戻る。現行のe2-only行ではcache identityの対応を証明する処理を行わず、番号を使わず時間差へ戻る。e2 object IDを論理写真キーと推測して転用せず、受領記録や写真identityを変更して合わせない。この引き継ぎは[#191](https://github.com/ktnyt/Loupe/issues/191)で追跡する。既存model/takenのcache読取りを行うsync/receipt等の呼出しへ追加の原本I/Oを導入しない。
+- Galleryの番号用読取りだけが未検査cacheを補完する。読み取り可能なローカルオリジナルだけを使い、取得失敗ではNULLを残して次回再試行可能にする。番号のためのクラウドオリジナルdownloadや外部送信はしない。
+- アーカイブのみの写真は、同じ写真に対応すると確認できるcache keyの番号だけを使い、それがなければ時間差へ戻る。現行のe2-only行ではcache identityの対応を証明する処理を行わず、番号を使わず時間差へ戻る。e2 object IDを論理写真キーと推測して転用せず、受領記録や写真identityを変更して合わせない。この引き継ぎは[#191](https://github.com/ktnyt/Loupe/issues/191)で追跡する。既存model/takenのcache読取りを行うsync/receipt等の呼出しへ追加のオリジナルI/Oを導入しない。
 - cacheの競合更新で既存番号やmodel/takenを失わない。補完は番号列だけの更新にする。
 - indexの判定版を更新して古いグループを再構築する。Snapshotのグループmarkerも判定版を検査し、再構築前の古い写真/連写の操作を既存guardで抑止する。gap prefix自体の互換性と単位は保つ。
 - 順位journalは既存の写真集合に紐づく。集合が変わったグループへ以前の順位を転用しない。同じ集合なら既存結果を再利用し、履歴そのものを消さない。
@@ -38,7 +38,7 @@
 
 「連写のまとめ方」の既存選択肢と操作は維持し、番号を優先し、時間差は番号のない写真へ適用することを短い見出し/説明で示す。新しい切替設定は追加しない。Material 3のネイティブ部品を維持し、通常幅/font1.0と320dp/font1.3の設定・カスタム・番号優先の一覧、無効化とfallbackをcapture/操作記録/独立UIレビューで確認する。
 
-抽出は実ORFと構造に忠実な合成ORF/JPEG、不正なIFD・型・範囲を確認する。番号連続/リセット/欠番/重複/同秒複数組/時刻差超過/番号欠落境界/設定無効を単体検証する。DB移行で既存状態の保持、NULL/なし/番号あり、補完再試行と競合を確認する。実ORFを用いた番号抽出→metadata→index→画面までの経路をAndroidで検証する。原本と設定を復元し、検査用コピーだけ除去する。
+抽出は実ORFと構造に忠実な合成ORF/JPEG、不正なIFD・型・範囲を確認する。番号連続/リセット/欠番/重複/同秒複数組/時刻差超過/番号欠落境界/設定無効を単体検証する。DB移行で既存状態の保持、NULL/なし/番号あり、補完再試行と競合を確認する。実ORFを用いた番号抽出→metadata→index→画面までの経路をAndroidで検証する。オリジナルと設定を復元し、検査用コピーだけ除去する。
 
 抽出・補完の対象件数と経過時間を診断ログで測定する。実ライブラリの性能を合成データの結果で代用しない。物理端末への未マージ版導入が必要ならrecovery gateを使い、同commitをmainに含めてmain APKを同じ端末へ導入・読み戻すまでdeliveryを閉じない。
 
