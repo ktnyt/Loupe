@@ -25,7 +25,12 @@ def changedSourcesSince = { revision ->
 // The fixed base keeps committed changes in scope after main advances. The incoming
 // base also detects a change that restores an already formatted file to its old bytes.
 def formatBase = '56b3c9a5c241036dc4d5c01730bc67df72bc528e'
-def incomingBase = providers.gradleProperty('formatChangeBase').orElse('HEAD')
+def incomingBase = providers.gradleProperty('formatChangeBase').orElse('HEAD').flatMap { revision ->
+    providers.exec {
+        workingDir rootDir
+        commandLine 'git', 'rev-parse', '--verify', '--end-of-options', "${revision}^{commit}"
+    }.standardOutput.asText.map { it.trim() }
+}
 def changedSources = changedSourcesSince(formatBase).zip(incomingBase.flatMap(changedSourcesSince)) {
     baselinePaths, incomingPaths -> (baselinePaths + incomingPaths).unique()
 }
