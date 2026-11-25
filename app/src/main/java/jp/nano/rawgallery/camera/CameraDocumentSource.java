@@ -16,7 +16,7 @@ import android.provider.MediaStore;
 import java.io.*;
 import java.util.*;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -62,6 +62,7 @@ public final class CameraDocumentSource {
 
     private static final long LISTING_TIMEOUT_MS = 30_000;
     private static final long METADATA_TIMEOUT_MS = 3_000;
+    private static final long METADATA_HANDOFF_MS = 100;
     private static final long MOUNTED_LISTING_RETRY_MS = 1000;
     private static final int MOUNTED_LISTING_HINT_LIMIT = 6;
     private static final String EXTERNAL_STORAGE_DOCUMENTS = "com.android.externalstorage.documents";
@@ -244,16 +245,35 @@ public final class CameraDocumentSource {
 
     private static <T> T boundedMetadata(BooleanSupplier cancelled, long timeoutMs, MetadataQuery<T> query)
             throws IOException {
+        return boundedMetadata(METADATA, cancelled, timeoutMs, query);
+    }
+
+    static <T> T boundedMetadata(ThreadPoolExecutor metadata, BooleanSupplier cancelled, long timeoutMs,
+            MetadataQuery<T> query) throws IOException {
         CameraPhotoPublisher.check(cancelled);
         CancellationSignal signal = new CancellationSignal();
         long deadline = SystemClock.elapsedRealtime() + timeoutMs;
-        Future<T> pending;
+        FutureTask<T> pending = new FutureTask<>(() -> {
+            CameraPhotoPublisher.check(cancelled);
+            if (SystemClock.elapsedRealtime() >= deadline) throw new ListingException(ListingException.Reason.TIMEOUT);
+            return query.query(signal);
+        });
+        boolean submitted = false;
         try {
-            pending = METADATA.submit(() -> query.query(signal));
-        } catch (RejectedExecutionException stillBusy) {
-            throw new ListingException(ListingException.Reason.LOADING);
-        }
-        try {
+            try {
+                metadata.execute(pending);
+            } catch (RejectedExecutionException notWaitingYet) {
+                CameraPhotoPublisher.check(cancelled);
+                long remaining = deadline - SystemClock.elapsedRealtime();
+                if (remaining <= 0) throw new ListingException(ListingException.Reason.TIMEOUT);
+                // A completed worker may not be waiting for work yet. This synchronous queue keeps no work.
+                if (!metadata.getQueue().offer(pending, Math.min(remaining, METADATA_HANDOFF_MS), TimeUnit.MILLISECONDS)) {
+                    CameraPhotoPublisher.check(cancelled);
+                    throw new ListingException(SystemClock.elapsedRealtime() >= deadline
+                            ? ListingException.Reason.TIMEOUT : ListingException.Reason.LOADING);
+                }
+            }
+            submitted = true;
             while (true) {
                 CameraPhotoPublisher.check(cancelled);
                 long remaining = deadline - SystemClock.elapsedRealtime();
@@ -279,7 +299,7 @@ public final class CameraDocumentSource {
             if (failed.getCause() instanceof Error error) throw error;
             throw unavailable();
         } finally {
-            if (pending.cancel(true)) {
+            if (pending.cancel(true) && submitted) {
                 try { CANCELLATIONS.execute(signal::cancel); }
                 catch (RejectedExecutionException stillCancelling) {
                     // Future cancellation already prevents publication, even when the provider is wedged.

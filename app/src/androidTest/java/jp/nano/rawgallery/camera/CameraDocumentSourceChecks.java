@@ -458,6 +458,7 @@ public final class CameraDocumentSourceChecks {
     }
 
     public static String run(Instrumentation instrumentation) throws Exception {
+        SdMetadataHandoffChecks.run();
         Fake denied = new Fake(); denied.permitted = false;
         expect(denied, CameraDocumentSource.OriginalAccessException.Reason.PERMISSION);
         require(denied.maps == 0 && denied.opens == 0, "Denied permission cannot map or read");
@@ -513,7 +514,7 @@ public final class CameraDocumentSourceChecks {
             conditionalPendingCleanup(context);
             migrateReplacementWitness(context);
         }
-        return "PASS sd-original permission=true mapping=true pinnedVolume=true verifiedIndexAbsence=true boundedIndexRecovery=true requiredOriginal=true noFallback=true immutable=true cancel=true revoke=true bounds=true legacyReceiptRevalidated=true";
+        return "PASS sd-original permission=true mapping=true pinnedVolume=true verifiedIndexAbsence=true boundedIndexRecovery=true boundedMetadataHandoff=true requiredOriginal=true noFallback=true immutable=true cancel=true revoke=true bounds=true legacyReceiptRevalidated=true";
     }
 
     private static void receiptTupleAfterListing() throws IOException {
