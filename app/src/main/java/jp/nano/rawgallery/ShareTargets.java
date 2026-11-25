@@ -19,7 +19,7 @@ public final class ShareTargets {
   public static List<Target> load(Context c) {
     List<Target> out = new ArrayList<>();
     try {
-      JSONArray a = new JSONArray(c.getSharedPreferences("settings", 0).getString("targets", "[]"));
+      JSONArray a = new JSONArray(SettingsRepository.open(c).getString("targets", "[]"));
       for (int i = 0; i < a.length(); i++) {
         JSONObject j = a.getJSONObject(i);
         out.add(new Target(j.getString("component"), j.getString("label"), j.optBoolean("raw")));
@@ -42,6 +42,6 @@ public final class ShareTargets {
     } catch (JSONException e) {
       throw new IllegalStateException(e);
     }
-    c.getSharedPreferences("settings", 0).edit().putString("targets", a.toString()).apply();
+    SettingsRepository.open(c).edit().putString("targets", a.toString()).apply();
   }
 }

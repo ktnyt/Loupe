@@ -51,7 +51,7 @@ final class SyncEngine {
     int eligible = 0;
     List<PhotoRepository.Photo> list = candidates(c);
     long now = System.currentTimeMillis();
-    int days = c.getSharedPreferences("settings", 0).getInt("retentionDays", 7);
+    int days = SettingsRepository.retentionDays(SettingsRepository.open(c));
     for (PhotoRepository.Photo p : list) {
       bytes += p.size;
       if (SyncPolicy.eligible(
@@ -76,13 +76,15 @@ final class SyncEngine {
   }
 
   static void status(Context c, JobState.Kind kind, String message) {
-    long at=System.currentTimeMillis();
-    JobState.write(c.getSharedPreferences("settings", 0).edit(),"sync",kind,at)
-        .putString("syncStatus", message).putLong("syncStatusAt", at).apply();
+    long at = System.currentTimeMillis();
+    JobState.write(SettingsRepository.open(c).edit(), "sync", kind, at)
+        .putString(SettingsRepository.SYNC_STATUS, message)
+        .putLong(SettingsRepository.SYNC_STATUS_AT, at)
+        .apply();
   }
 
   static JobState snapshot(Context c) {
-    return JobState.read(c.getSharedPreferences("settings",0),"sync",RUNNING.get(),false);
+    return JobState.read(SettingsRepository.open(c), "sync", RUNNING.get(), false);
   }
 
   static void run(Context c, String cookies, String agent) {
@@ -106,14 +108,17 @@ final class SyncEngine {
       CloudVerifier cloud = new CloudVerifier(cookies, agent);
       long deadline = System.nanoTime() + 240_000_000_000L;
       int processed = 0, deferred = 0;
-      boolean reachedEnd=true;
+      boolean reachedEnd = true;
       for (PhotoRepository.Photo p : batch) {
         if (p.isVideo()) continue;
-        SharedPreferences settings = c.getSharedPreferences("settings", 0);
-        if (!settings.getBoolean("syncEnabled", false)
+        SharedPreferences settings = SettingsRepository.open(c);
+        if (!SettingsRepository.syncEnabled(settings)
             || Thread.currentThread().isInterrupted()
             || System.nanoTime() > deadline
-            || processed >= 20) {reachedEnd=false;break;}
+            || processed >= 20) {
+          reachedEnd = false;
+          break;
+        }
         JSONObject old = store.get(ArchiveStore.key(p));
         if (old != null && old.optLong("retryAfter", 0) > System.currentTimeMillis()) {
           deferred++;
@@ -128,15 +133,16 @@ final class SyncEngine {
                   p.created,
                   p.isJpeg(),
                   System.currentTimeMillis(),
-                  settings.getInt("retentionDays", 7),
+                  SettingsRepository.retentionDays(settings),
                   verified,
                   managed(c, p, true),
                   verified);
-          if (verified && !(settings.getBoolean("cleanupEnabled", false) && expired)) continue;
+          if (verified && !(SettingsRepository.cleanupEnabled(settings) && expired)) continue;
           status(c, JobState.Kind.RUNNING, p.name + "\n同期と復元を確認しています…");
           if (old != null && "pending".equals(old.optString("state")))
             cloud.verify(c, p, text -> status(c, JobState.Kind.RUNNING, text));
-          else if (!verified && allowUploads) cloud.uploadAndVerify(c, p, text -> status(c, JobState.Kind.RUNNING, text));
+          else if (!verified && allowUploads)
+            cloud.uploadAndVerify(c, p, text -> status(c, JobState.Kind.RUNNING, text));
           else cloud.verify(c, p, text -> status(c, JobState.Kind.RUNNING, text));
           processed++;
           if (cloud.lastVerified == null) {
@@ -150,15 +156,15 @@ final class SyncEngine {
           }
           store.verified(p, cloud.lastVerified);
           JSONObject record = store.get(ArchiveStore.key(p));
-          if (settings.getBoolean("syncEnabled", false)
-              && settings.getBoolean("cleanupEnabled", false)
+          if (SettingsRepository.syncEnabled(settings)
+              && SettingsRepository.cleanupEnabled(settings)
               && SyncPolicy.eligible(
                   p.taken,
                   p.added,
                   p.created,
                   p.isJpeg(),
                   System.currentTimeMillis(),
-                  settings.getInt("retentionDays", 7),
+                  SettingsRepository.retentionDays(settings),
                   true,
                   managed(c, p, true),
                   true)) {
@@ -170,17 +176,21 @@ final class SyncEngine {
               continue;
             }
             if (Thread.currentThread().isInterrupted()
-                || !settings.getBoolean("cleanupEnabled", false)
-                || !settings.getBoolean("syncEnabled", false)) {reachedEnd=false;break;}
+                || !SettingsRepository.cleanupEnabled(settings)
+                || !SettingsRepository.syncEnabled(settings)) {
+              reachedEnd = false;
+              break;
+            }
             if (!E2SyncJob.ORIGINALS.tryLock()) {
               reachedEnd = false;
               break;
             }
             try {
               if (Thread.currentThread().isInterrupted()
-                  || !settings.getBoolean("cleanupEnabled", false)
-                  || !settings.getBoolean("syncEnabled", false)
-                  || E2SyncJob.enabled(c) || E2SyncJob.running()) {
+                  || !SettingsRepository.cleanupEnabled(settings)
+                  || !SettingsRepository.syncEnabled(settings)
+                  || E2SyncJob.enabled(c)
+                  || E2SyncJob.running()) {
                 reachedEnd = false;
                 break;
               }
@@ -197,7 +207,10 @@ final class SyncEngine {
         } catch (Exception e) {
           boolean interrupted = Thread.currentThread().isInterrupted();
           DiagnosticLog.exception("amazon.sync_item", interrupted ? "cancelled" : "failed", e);
-          if (interrupted) {reachedEnd=false;break;}
+          if (interrupted) {
+            reachedEnd = false;
+            break;
+          }
           JSONObject failed = store.get(ArchiveStore.key(p));
           if (failed == null) failed = ArchiveStore.base(p);
           String state = failed.optString("state", "error");
@@ -207,17 +220,27 @@ final class SyncEngine {
           processed++;
         }
       }
-      if(reachedEnd && deferred==0 && !Thread.currentThread().isInterrupted())
-        c.getSharedPreferences("settings",0).edit().putLong("syncFinishedAt",System.currentTimeMillis()).apply();
+      if (reachedEnd && deferred == 0 && !Thread.currentThread().isInterrupted())
+        SettingsRepository.open(c)
+            .edit()
+            .putLong(SettingsRepository.SYNC_FINISHED_AT, System.currentTimeMillis())
+            .apply();
       status(
-          c, deferred > 0 ? JobState.Kind.PARTIAL : JobState.Kind.WAITING, "今回の同期処理を終了しました（確認したオリジナル：" + processed + "枚、保留：" + deferred + "枚）。未完了のオリジナルは次の定期処理で確認します。");
+          c,
+          deferred > 0 ? JobState.Kind.PARTIAL : JobState.Kind.WAITING,
+          "今回の同期処理を終了しました（確認したオリジナル："
+              + processed
+              + "枚、保留："
+              + deferred
+              + "枚）。未完了のオリジナルは次の定期処理で確認します。");
     } catch (CloudVerifier.AuthException e) {
       DiagnosticLog.exception("amazon.sync", "auth_required", e);
-      c.getSharedPreferences("settings", 0).edit().putBoolean("syncEnabled", false).apply();
+      SettingsRepository.open(c).edit().putBoolean(SettingsRepository.SYNC_ENABLED, false).apply();
       SyncJob.schedule(c);
       status(c, JobState.Kind.AUTH_REQUIRED, "Amazonへの再ログインが必要なため、自動同期と整理を停止しました。");
     } catch (Exception e) {
-      DiagnosticLog.exception("amazon.sync", Thread.currentThread().isInterrupted() ? "cancelled" : "failed", e);
+      DiagnosticLog.exception(
+          "amazon.sync", Thread.currentThread().isInterrupted() ? "cancelled" : "failed", e);
       status(c, JobState.Kind.FAILED, "同期を中断しました。未確認のオリジナルは整理しません。通信・アクセス許可・空き容量を確認してください。");
     } finally {
       RUNNING.set(false);
