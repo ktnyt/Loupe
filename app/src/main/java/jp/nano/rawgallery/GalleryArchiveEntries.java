@@ -49,6 +49,7 @@ final class GalleryArchiveEntries {
   }
 
   private static String archivePath(JSONObject record) throws JSONException {
-    return PhotoIdentityIndex.path(Uri.parse(record.optString("uri")), record.getString("folder"), record.getString("name"));
+    return PhotoIdentityIndex.path(
+        Uri.parse(record.optString("uri")), record.getString("folder"), record.getString("name"));
   }
 }

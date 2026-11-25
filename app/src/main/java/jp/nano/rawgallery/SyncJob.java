@@ -11,7 +11,7 @@ public final class SyncJob extends JobService {
 
   static void schedule(Context c) {
     JobScheduler scheduler = c.getSystemService(JobScheduler.class);
-    if (!c.getSharedPreferences("settings", 0).getBoolean("syncEnabled", false)) {
+    if (!SettingsRepository.syncEnabled(SettingsRepository.open(c))) {
       scheduler.cancel(71);
       scheduler.cancel(72);
       return;
@@ -28,7 +28,7 @@ public final class SyncJob extends JobService {
   }
 
   static void now(Context c) {
-    if (!c.getSharedPreferences("settings", 0).getBoolean("syncEnabled", false)) return;
+    if (!SettingsRepository.syncEnabled(SettingsRepository.open(c))) return;
     c.getSystemService(JobScheduler.class)
         .schedule(
             new JobInfo.Builder(72, new ComponentName(c, SyncJob.class))
@@ -38,11 +38,11 @@ public final class SyncJob extends JobService {
   }
 
   public boolean onStartJob(JobParameters params) {
-    if (!getSharedPreferences("settings", 0).getBoolean("syncEnabled", false)) return false;
+    if (!SettingsRepository.syncEnabled(SettingsRepository.open(this))) return false;
     String cookie = CookieManager.getInstance().getCookie(CloudVerifier.ORIGIN + "/drive/v1/nodes");
     String agent =
-        getSharedPreferences("settings", 0)
-            .getString("cloudUserAgent", WebSettings.getDefaultUserAgent(this));
+        SettingsRepository.cloudUserAgent(
+            SettingsRepository.open(this), WebSettings.getDefaultUserAgent(this));
     running =
         worker.submit(
             () -> {

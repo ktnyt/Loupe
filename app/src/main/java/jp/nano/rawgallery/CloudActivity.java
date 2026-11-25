@@ -41,7 +41,8 @@ public final class CloudActivity extends DiagnosticActivity {
     title.setTextSize(24);
     title.setTextColor(Color.WHITE);
     root.addView(title);
-    status=new StatusView(this);status.setVisibility(View.GONE);
+    status = new StatusView(this);
+    status.setVisibility(View.GONE);
     root.addView(status);
     LinearLayout row = new LinearLayout(this);
 
@@ -68,7 +69,8 @@ public final class CloudActivity extends DiagnosticActivity {
                     (d, which) -> {
                       Button target = new Button[] {check, verify, upload, logoutButton}[which];
                       if (!target.isEnabled()) {
-                        StatusFeedback.show(this,StatusView.Symbol.WAITING,"実行中の処理が終わるまでお待ちください",null,"");
+                        StatusFeedback.show(
+                            this, StatusView.Symbol.WAITING, "実行中の処理が終わるまでお待ちください", null, "");
                         return;
                       }
                       if (which == 3)
@@ -103,9 +105,9 @@ public final class CloudActivity extends DiagnosticActivity {
     web.setBackgroundColor(Color.WHITE);
     WebView.setWebContentsDebuggingEnabled(false);
     WebSettings s = web.getSettings();
-    getSharedPreferences("settings", 0)
+    SettingsRepository.open(this)
         .edit()
-        .putString("cloudUserAgent", s.getUserAgentString())
+        .putString(SettingsRepository.CLOUD_USER_AGENT, s.getUserAgentString())
         .apply();
     s.setJavaScriptEnabled(true);
     s.setDomStorageEnabled(true);
@@ -124,13 +126,18 @@ public final class CloudActivity extends DiagnosticActivity {
                 "https".equals(u.getScheme())
                     && host != null
                     && (host.equals("amazon.co.jp") || host.endsWith(".amazon.co.jp"));
-            if (!allowed) setStatus(StatusView.Symbol.HOST,"日本向けAmazon以外への移動を停止しました。接続方式の確認が必要です。",()->loginButton.performClick());
+            if (!allowed)
+              setStatus(
+                  StatusView.Symbol.HOST,
+                  "日本向けAmazon以外への移動を停止しました。接続方式の確認が必要です。",
+                  () -> loginButton.performClick());
             return !allowed;
           }
 
           public void onReceivedSslError(WebView v, SslErrorHandler handler, SslError error) {
             handler.cancel();
-            setStatus(StatusView.Symbol.TLS,"通信の安全性を確認できないため停止しました。",()->loginButton.performClick());
+            setStatus(
+                StatusView.Symbol.TLS, "通信の安全性を確認できないため停止しました。", () -> loginButton.performClick());
           }
 
           public void onPageFinished(WebView v, String url) {
@@ -145,10 +152,10 @@ public final class CloudActivity extends DiagnosticActivity {
     logout.setText("このアプリのログイン情報を消す");
     logout.setOnClickListener(
         v -> {
-          getSharedPreferences("settings", 0)
+          SettingsRepository.open(this)
               .edit()
-              .putBoolean("syncEnabled", false)
-              .putBoolean("cleanupEnabled", false)
+              .putBoolean(SettingsRepository.SYNC_ENABLED, false)
+              .putBoolean(SettingsRepository.CLEANUP_ENABLED, false)
               .apply();
           SyncJob.schedule(this);
           web.stopLoading();
@@ -159,40 +166,54 @@ public final class CloudActivity extends DiagnosticActivity {
                     CookieManager.getInstance().flush();
                     WebStorage.getInstance().deleteAllData();
                     web.clearCache(true);
-                    getSharedPreferences("settings", 0)
+                    SettingsRepository.open(this)
                         .edit()
-                        .remove("cloudCheckedAt")
-                        .remove("cloudCount")
+                        .remove(SettingsRepository.CLOUD_CHECKED_AT)
+                        .remove(SettingsRepository.CLOUD_COUNT)
                         .apply();
-                    setStatus(StatusView.Symbol.COMPLETE,"このアプリのログイン情報を消しました。",null);
+                    setStatus(StatusView.Symbol.COMPLETE, "このアプリのログイン情報を消しました。", null);
                   });
         });
-    View actions = actions(this, () -> login.performClick(), () -> sync.performClick(), () -> more.performClick());
-    loginButton = (Button)((LinearLayout)actions).getChildAt(0);
+    View actions =
+        actions(
+            this, () -> login.performClick(), () -> sync.performClick(), () -> more.performClick());
+    loginButton = (Button) ((LinearLayout) actions).getChildAt(0);
     root.addView(actions);
     getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     setContentView(root);
-    if(state==null && getIntent().getBooleanExtra("verify-on-open",false)) chooseVerification(false);
+    if (state == null && getIntent().getBooleanExtra("verify-on-open", false))
+      chooseVerification(false);
   }
 
-  private void setStatus(StatusView.Symbol kind,String message,Runnable retry) {
-    if(kind==StatusView.Symbol.RUNNING){if(!showingRunning)status.begin(message);else status.describe(message);showingRunning=true;}
-    else {showingRunning=false;status.show(kind,"",message,retry,kind==StatusView.Symbol.AUTH?"ログイン":"再試行");}
+  private void setStatus(StatusView.Symbol kind, String message, Runnable retry) {
+    if (kind == StatusView.Symbol.RUNNING) {
+      if (!showingRunning) status.begin(message);
+      else status.describe(message);
+      showingRunning = true;
+    } else {
+      showingRunning = false;
+      status.show(kind, "", message, retry, kind == StatusView.Symbol.AUTH ? "ログイン" : "再試行");
+    }
   }
 
   static View actions(android.content.Context c, Runnable login, Runnable sync, Runnable more) {
-    Button[] buttons = { GalleryUi.button(c, "ログイン", login),
-        GalleryUi.button(c, "同期の設定", sync), GalleryUi.button(c, "接続と確認", more) };
+    Button[] buttons = {
+      GalleryUi.button(c, "ログイン", login),
+      GalleryUi.button(c, "同期の設定", sync),
+      GalleryUi.button(c, "接続と確認", more)
+    };
     View dock = GalleryUi.dock(c, buttons);
     for (int i = 0; i < buttons.length; i++) {
       AffordanceIcon icon = new AffordanceIcon(i + 2, GalleryUi.TEXT);
-      int size = GalleryUi.dp(c, 24); icon.setBounds(0, 0, size, size);
+      int size = GalleryUi.dp(c, 24);
+      icon.setBounds(0, 0, size, size);
       buttons[i].setCompoundDrawables(null, icon, null, null);
       buttons[i].setCompoundDrawablePadding(GalleryUi.dp(c, 4));
       buttons[i].setGravity(android.view.Gravity.CENTER);
-      buttons[i].setPadding(GalleryUi.dp(c,6), GalleryUi.dp(c,6), GalleryUi.dp(c,6), GalleryUi.dp(c,6));
-      buttons[i].setMinHeight(GalleryUi.dp(c,64));
-      buttons[i].setMinimumHeight(GalleryUi.dp(c,64));
+      buttons[i].setPadding(
+          GalleryUi.dp(c, 6), GalleryUi.dp(c, 6), GalleryUi.dp(c, 6), GalleryUi.dp(c, 6));
+      buttons[i].setMinHeight(GalleryUi.dp(c, 64));
+      buttons[i].setMinimumHeight(GalleryUi.dp(c, 64));
     }
     dock.setContentDescription("クラウドの操作");
     return dock;
@@ -205,16 +226,17 @@ public final class CloudActivity extends DiagnosticActivity {
     final String cookies = CookieManager.getInstance().getCookie(url),
         agent = web.getSettings().getUserAgentString();
     if (cookies == null || cookies.isBlank()) {
-      setStatus(StatusView.Symbol.AUTH,"まずAmazonの画面でログインしてください。",()->loginButton.performClick());
+      setStatus(
+          StatusView.Symbol.AUTH, "まずAmazonの画面でログインしてください。", () -> loginButton.performClick());
       return;
     }
     check.setEnabled(false);
-    setStatus(StatusView.Symbol.RUNNING,"写真一覧への読み取り接続を確認しています",null);
+    setStatus(StatusView.Symbol.RUNNING, "写真一覧への読み取り接続を確認しています", null);
     worker.execute(
         () -> {
           String message;
           int count = -1;
-          StatusView.Symbol outcome=StatusView.Symbol.FAILED;
+          StatusView.Symbol outcome = StatusView.Symbol.FAILED;
           HttpsURLConnection connection = null;
           try {
             connection = (HttpsURLConnection) new URL(url).openConnection();
@@ -230,7 +252,8 @@ public final class CloudActivity extends DiagnosticActivity {
                 connection.setRequestProperty("x-amzn-sessionid", kv[1]);
             }
             int code = connection.getResponseCode();
-            if(code==401||code==403||code>=300&&code<400)outcome=StatusView.Symbol.AUTH;
+            if (code == 401 || code == 403 || code >= 300 && code < 400)
+              outcome = StatusView.Symbol.AUTH;
             if (code == 401 || code == 403) message = "認証が必要です（" + code + "）。ログインを完了してから再確認してください。";
             else if (code >= 300 && code < 400) message = "ログイン画面などへの転送が返りました。ログイン後に再確認してください。";
             else if (code != 200) message = "接続を確認できませんでした（" + code + "）。写真は変更していません。";
@@ -249,7 +272,7 @@ public final class CloudActivity extends DiagnosticActivity {
                 throw new IOException("Unexpected response");
               count = data.getInt("count");
               if (count < 0) throw new IOException("Invalid count");
-              outcome=StatusView.Symbol.COMPLETE;
+              outcome = StatusView.Symbol.COMPLETE;
               message = "写真一覧への接続を確認できました。\nクラウドの写真：" + count + "件\nこの接続確認だけでは元のファイルの保存と復元を保証しません。";
             }
           } catch (Exception e) {
@@ -260,24 +283,29 @@ public final class CloudActivity extends DiagnosticActivity {
           final String result =
               message + (count >= 0 ? "\n" + new CloudVerifier(cookies, agent).endpoint() : "");
           final int found = count;
-          final StatusView.Symbol resultKind=outcome;
+          final StatusView.Symbol resultKind = outcome;
           runOnUiThread(
               () -> {
                 if (isDestroyed()) return;
                 check.setEnabled(true);
-                setStatus(resultKind,result,resultKind==StatusView.Symbol.AUTH?()->loginButton.performClick():found>=0?null:this::diagnose);
-                if(found>=0)status.counts(found+"件");
+                setStatus(
+                    resultKind,
+                    result,
+                    resultKind == StatusView.Symbol.AUTH
+                        ? () -> loginButton.performClick()
+                        : found >= 0 ? null : this::diagnose);
+                if (found >= 0) status.counts(found + "件");
                 if (found >= 0)
-                  getSharedPreferences("settings", 0)
+                  SettingsRepository.open(this)
                       .edit()
-                      .putLong("cloudCheckedAt", System.currentTimeMillis())
-                      .putInt("cloudCount", found)
+                      .putLong(SettingsRepository.CLOUD_CHECKED_AT, System.currentTimeMillis())
+                      .putInt(SettingsRepository.CLOUD_COUNT, found)
                       .apply();
                 else
-                  getSharedPreferences("settings", 0)
+                  SettingsRepository.open(this)
                       .edit()
-                      .remove("cloudCheckedAt")
-                      .remove("cloudCount")
+                      .remove(SettingsRepository.CLOUD_CHECKED_AT)
+                      .remove(SettingsRepository.CLOUD_COUNT)
                       .apply();
               });
         });
@@ -287,7 +315,7 @@ public final class CloudActivity extends DiagnosticActivity {
     final String cookies = CookieManager.getInstance().getCookie(ORIGIN + "/drive/v1/nodes");
     final String agent = web.getSettings().getUserAgentString();
     if (cookies == null || cookies.isBlank()) {
-      setStatus(StatusView.Symbol.AUTH,"先にAmazonへログインしてください。",()->loginButton.performClick());
+      setStatus(StatusView.Symbol.AUTH, "先にAmazonへログインしてください。", () -> loginButton.performClick());
       return;
     }
     verify.setEnabled(false);
@@ -297,7 +325,9 @@ public final class CloudActivity extends DiagnosticActivity {
             java.util.LinkedHashMap<String, PhotoRepository.Photo> candidates =
                 new java.util.LinkedHashMap<>();
             for (PhotoRepository.Photo p : new PhotoRepository(this).scan("すべて"))
-              if (!p.isVideo() && !p.cameraGroup().equals("その他") && "content".equals(p.uri.getScheme()))
+              if (!p.isVideo()
+                  && !p.cameraGroup().equals("その他")
+                  && "content".equals(p.uri.getScheme()))
                 candidates.putIfAbsent(p.cameraGroup(), p);
             java.util.ArrayList<PhotoRepository.Photo> photos =
                 new java.util.ArrayList<>(candidates.values());
@@ -309,7 +339,7 @@ public final class CloudActivity extends DiagnosticActivity {
                   if (isDestroyed()) return;
                   verify.setEnabled(true);
                   if (photos.isEmpty()) {
-                    setStatus(StatusView.Symbol.EMPTY,"検証するRAWがありません。",null);
+                    setStatus(StatusView.Symbol.EMPTY, "検証するRAWがありません。", null);
                     return;
                   }
                   new GalleryUi.Sheet(this)
@@ -326,7 +356,10 @@ public final class CloudActivity extends DiagnosticActivity {
                 () -> {
                   if (!isDestroyed()) {
                     verify.setEnabled(true);
-                    setStatus(StatusView.Symbol.FAILED,"端末のRAWを読み取れませんでした。",()->chooseVerification(uploading));
+                    setStatus(
+                        StatusView.Symbol.FAILED,
+                        "端末のRAWを読み取れませんでした。",
+                        () -> chooseVerification(uploading));
                   }
                 });
           }
@@ -354,7 +387,10 @@ public final class CloudActivity extends DiagnosticActivity {
   private void verifyPhoto(
       PhotoRepository.Photo photo, String cookies, String agent, boolean uploading) {
     if (!SyncEngine.RUNNING.compareAndSet(false, true)) {
-      setStatus(StatusView.Symbol.WAITING,"自動同期が実行中です。完了後に検証してください。",()->chooseVerification(uploading));
+      setStatus(
+          StatusView.Symbol.WAITING,
+          "自動同期が実行中です。完了後に検証してください。",
+          () -> chooseVerification(uploading));
       return;
     }
     verify.setEnabled(false);
@@ -366,14 +402,14 @@ public final class CloudActivity extends DiagnosticActivity {
     worker.execute(
         () -> {
           String result;
-          StatusView.Symbol outcome=StatusView.Symbol.FAILED;
+          StatusView.Symbol outcome = StatusView.Symbol.FAILED;
           try {
             CloudVerifier client = new CloudVerifier(cookies, agent);
             CloudVerifier.Progress progress =
                 text ->
                     runOnUiThread(
                         () -> {
-                          if (!isDestroyed()) setStatus(StatusView.Symbol.RUNNING,text,null);
+                          if (!isDestroyed()) setStatus(StatusView.Symbol.RUNNING, text, null);
                         });
             result =
                 uploading
@@ -382,13 +418,13 @@ public final class CloudActivity extends DiagnosticActivity {
             if (client.lastVerified != null)
               try (ArchiveStore store = new ArchiveStore(this)) {
                 store.verified(photo, client.lastVerified);
-                outcome=StatusView.Symbol.COMPLETE;
+                outcome = StatusView.Symbol.COMPLETE;
               }
           } catch (CloudVerifier.VerificationException e) {
-            outcome=StatusView.Symbol.FAILED;
+            outcome = StatusView.Symbol.FAILED;
             result = "元のファイルの検証を完了できませんでした。\n" + e.getMessage();
           } catch (Exception e) {
-            outcome=uploading?StatusView.Symbol.UNKNOWN:StatusView.Symbol.FAILED;
+            outcome = uploading ? StatusView.Symbol.UNKNOWN : StatusView.Symbol.FAILED;
             result =
                 uploading
                     ? "通信または保存結果を確認できませんでした。自動再送はせず、復元検証で保存状態を確認してください。端末の元のファイルは残しています。"
@@ -396,8 +432,12 @@ public final class CloudActivity extends DiagnosticActivity {
           }
           SyncEngine.RUNNING.set(false);
           final String message = result;
-          final StatusView.Symbol resultKind=outcome;
-          if(!uploading)getSharedPreferences("settings",0).edit().putString("cloudVerificationResult",outcome.name()).apply();
+          final StatusView.Symbol resultKind = outcome;
+          if (!uploading)
+            SettingsRepository.open(this)
+                .edit()
+                .putString(SettingsRepository.CLOUD_VERIFICATION_RESULT, outcome.name())
+                .apply();
           runOnUiThread(
               () -> {
                 if (isDestroyed()) return;
@@ -406,7 +446,12 @@ public final class CloudActivity extends DiagnosticActivity {
                 loginButton.setEnabled(true);
                 logoutButton.setEnabled(true);
                 check.setEnabled(true);
-                setStatus(resultKind,message,resultKind==StatusView.Symbol.COMPLETE?null:()->chooseVerification(false));
+                setStatus(
+                    resultKind,
+                    message,
+                    resultKind == StatusView.Symbol.COMPLETE
+                        ? null
+                        : () -> chooseVerification(false));
               });
         });
   }
