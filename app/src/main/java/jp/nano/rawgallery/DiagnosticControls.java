@@ -5,11 +5,16 @@ import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.view.View;
+import android.view.ViewParent;
+import android.view.ViewTreeObserver;
 import android.widget.Toast;
 import androidx.activity.result.ActivityResult;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.widget.NestedScrollView;
 import androidx.lifecycle.ViewModel;
 import androidx.lifecycle.ViewModelProvider;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
@@ -49,13 +54,39 @@ final class DiagnosticControls {
         + "\n処理時間とクラッシュの概要をZIPに保存できます。";
     if (lastFailure != null) message += "\n\n" + lastFailure;
     if (lastDestination != null) message += "\n\n直近の保存先\n" + lastDestination;
-    new MaterialAlertDialogBuilder(activity).setTitle("診断記録")
+    AlertDialog dialog = new MaterialAlertDialogBuilder(activity).setTitle("診断記録")
         .setMessage(message)
         .setNeutralButton(recording ? "記録を止める" : "記録を始める",
-            (dialog, which) -> setRecording(!recording))
-        .setPositiveButton("ZIPを保存", (dialog, which) -> chooseLocation())
+            (dismissed, which) -> setRecording(!recording))
+        .setPositiveButton("ZIPを保存", (dismissed, which) -> chooseLocation())
         .setNegativeButton("閉じる", null)
         .show();
+    keepActionsVisible(dialog);
+  }
+
+  private static void keepActionsVisible(AlertDialog dialog) {
+    View message = dialog.findViewById(android.R.id.message);
+    if (message == null || !(dialog.getButton(AlertDialog.BUTTON_POSITIVE).getParent() instanceof View actions)) return;
+    ViewParent parent = message.getParent();
+    while (parent instanceof View && !(parent instanceof NestedScrollView)) parent = parent.getParent();
+    if (!(parent instanceof NestedScrollView scroll)) return;
+
+    // AppCompat gives the body priority over stacked buttons. Keep their full measured height
+    // and let its existing message view scroll when the dialog is too short for both.
+    scroll.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
+      @Override public boolean onPreDraw() {
+        scroll.getViewTreeObserver().removeOnPreDrawListener(this);
+        int available = actions.getHeight();
+        actions.measure(View.MeasureSpec.makeMeasureSpec(actions.getWidth(), View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        int missing = actions.getMeasuredHeight() - available;
+        if (missing <= 0) return true;
+        var layout = scroll.getLayoutParams();
+        layout.height = Math.max(0, scroll.getHeight() - missing);
+        scroll.setLayoutParams(layout);
+        return false;
+      }
+    });
   }
 
   private void setRecording(boolean enabled) {
