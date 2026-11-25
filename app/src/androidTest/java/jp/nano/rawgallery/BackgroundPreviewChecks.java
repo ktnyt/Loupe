@@ -59,7 +59,9 @@ final class BackgroundPreviewChecks {
       checkPreparedHitDuringForegroundWork(foreground, first, concurrent, workers);
       PhotoRepository.Preview cached = foreground.preview(first);
       File metadata = new File(cached.file.getPath() + ".json");
-      Files.writeString(metadata.toPath(), "broken metadata");
+      Files.write(
+          metadata.toPath(),
+          "broken metadata".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
       Bitmap repaired = PhotoRepository.bitmap(foreground.preview(first), 200);
       repaired.recycle();
       checkLargeJpegPrefix(context, foreground, original);
