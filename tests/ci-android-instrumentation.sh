@@ -31,7 +31,7 @@ if [[ "$devices" == *"$serial"$'\t'* ]]; then
 fi
 "$sdk/cmdline-tools/latest/bin/avdmanager" create avd --name "$avd" --package "$image" --device pixel_6 < /dev/null
 "$sdk/emulator/emulator" -avd "$avd" -port "$port" \
-  -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect >"$work/emulator.log" 2>&1 &
+  -no-window -no-audio -no-boot-anim -no-snapshot -gpu swangle >"$work/emulator.log" 2>&1 &
 emulator_pid=$!
 deadline=$((SECONDS + 240))
 until [[ $("$adb" -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true) == 1 ]] &&
