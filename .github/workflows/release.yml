@@ -77,6 +77,8 @@ jobs:
 
       - name: Android instrumentation from camera through RAW on a disposable emulator
         timeout-minutes: 30
+        env:
+          LOUPE_INSTRUMENTATION_PORT: '5582'
         run: bash tests/ci-android-instrumentation.sh camera-onward
 
   release:
