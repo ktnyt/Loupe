@@ -1,8 +1,8 @@
 # Android計測テストの実行条件
 
-GitHub Actionsの `verify` は本体と `raw-experiment` のAPK、各モジュールの計測APKをビルドし、新しく作ったAndroid 15エミュレータで合成データを検査する。本体の `ArchiveInstrumentation` は [CIの合成モード一覧](../tests/ci-android-modes.txt) の順で実行する。続いて別のapplicationIdを持つ実験用APKと計測APKを導入し、`RawEditInstrumentation` に `-e full true` を渡す。写真オリジナル、カメラ、サービスの認証情報は使わない。
+GitHub Actionsの `verify` は本体と `raw-experiment` のAPK、各モジュールの計測APKをビルドし、Android 15エミュレータで合成データを検査する。本体の `ArchiveInstrumentation` は [CIの合成モード一覧](../tests/ci-android-modes.txt) の順で実行する。`camera-pilot-usb-launch` からは新しく作ったAVDを使う。後半の最後に別のapplicationIdを持つ実験用APKと計測APKを導入し、`RawEditInstrumentation` に `-e full true` を渡す。写真オリジナル、カメラ、サービスの認証情報は使わない。
 
-CIではAndroid SDKの `system-images;android-35;google_apis;x86_64` とANGLEのソフトウェア描画（`-gpu swangle`）を使う。手元では `:app` と `:raw-experiment` それぞれの `assembleDebug` と `assembleDebugAndroidTest` を実行してから `bash tests/ci-android-instrumentation.sh` を実行する。Apple siliconでは `LOUPE_INSTRUMENTATION_IMAGE='system-images;android-35;google_apis;arm64-v8a'` を指定する。既定ポート5580を使用中なら `LOUPE_INSTRUMENTATION_PORT` に空いている偶数ポートを指定する。
+CIではAndroid SDKの `system-images;android-35;google_apis;x86_64` とANGLEのソフトウェア描画（`-gpu swangle`）を使う。手元では `:app` と `:raw-experiment` それぞれの `assembleDebug` と `assembleDebugAndroidTest` を実行してから `bash tests/ci-android-instrumentation.sh` を実行する。CIと同じ分割で実行する場合は `before-camera` と `camera-onward` を順に指定する。Apple siliconでは `LOUPE_INSTRUMENTATION_IMAGE='system-images;android-35;google_apis;arm64-v8a'` を指定する。既定ポート5580を使用中なら `LOUPE_INSTRUMENTATION_PORT` に空いている偶数ポートを指定する。
 
 合成モードの一覧は実行順。共有履歴とカメラ資格情報の再起動確認ではseedからverifyへ進み、USBの選択状態は最後に既定へ戻す。UIを計測するモードへ幅400dp・文字倍率1.0を渡す。`burst-gap-millis` は連写番号あり・なしを合成JPEGで検証する。`camera-pilot-ble-diagnostics` では、検査用APKへの権限付与後にBLEの事前検査で保存する診断項目を合成入力で検証する。各モードのPASSとAndroidの結果コードを照合し、失敗したモードや起動できなかった計測もCIの失敗とする。
 

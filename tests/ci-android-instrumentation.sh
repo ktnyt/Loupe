@@ -2,6 +2,11 @@
 # Run only against a fresh AVD, with an explicit serial for all adb operations.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+segment=${1:-all}
+case "$segment" in
+  all|before-camera|camera-onward) ;;
+  *) echo 'Choose all, before-camera or camera-onward.' >&2; exit 2 ;;
+esac
 sdk=${ANDROID_HOME:?Set ANDROID_HOME to the Android SDK directory}
 image=${LOUPE_INSTRUMENTATION_IMAGE:-system-images;android-35;google_apis;x86_64}
 port=${LOUPE_INSTRUMENTATION_PORT:-5580}
@@ -23,6 +28,15 @@ cleanup() {
   rm -rf "$work"
 }
 trap cleanup EXIT
+mode_list=tests/ci-android-modes.txt
+if [[ "$segment" != all ]]; then
+  awk -v segment="$segment" '
+    $1 == "camera-pilot-usb-launch" { camera_started = 1 }
+    (segment == "before-camera" && !camera_started) || (segment == "camera-onward" && camera_started) { print }
+    END { if (!camera_started) exit 1 }
+  ' "$mode_list" > "$work/modes.txt"
+  mode_list="$work/modes.txt"
+fi
 # Refuse to attach to a pre-existing emulator, even if it happens to use our port.
 devices=$("$adb" devices)
 if [[ "$devices" == *"$serial"$'\t'* ]]; then
@@ -90,13 +104,15 @@ while read -r mode key value; do
   fi
   run_instrumentation "$mode${key:+ ($key=$value)}" -e mode "$mode" \
     "${args[@]}" jp.nano.rawgallery.test/jp.nano.rawgallery.ArchiveInstrumentation
-done < tests/ci-android-modes.txt
+done < "$mode_list"
 if ! "$ran"; then
   echo 'No Android instrumentation modes were configured.' >&2
   exit 1
 fi
 
-"$adb" -s "$serial" install -g raw-experiment/build/outputs/apk/debug/raw-experiment-debug.apk
-"$adb" -s "$serial" install -g raw-experiment/build/outputs/apk/androidTest/debug/raw-experiment-debug-androidTest.apk
-run_instrumentation 'raw-edit-full' -e full true \
-  jp.nano.rawgallery.rawexperiment.test/jp.nano.rawgallery.RawEditInstrumentation
+if [[ "$segment" != before-camera ]]; then
+  "$adb" -s "$serial" install -g raw-experiment/build/outputs/apk/debug/raw-experiment-debug.apk
+  "$adb" -s "$serial" install -g raw-experiment/build/outputs/apk/androidTest/debug/raw-experiment-debug-androidTest.apk
+  run_instrumentation 'raw-edit-full' -e full true \
+    jp.nano.rawgallery.rawexperiment.test/jp.nano.rawgallery.RawEditInstrumentation
+fi
