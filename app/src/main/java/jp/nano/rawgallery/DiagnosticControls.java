@@ -5,9 +5,10 @@ import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.view.Gravity;
 import android.view.View;
-import android.view.ViewParent;
-import android.view.ViewTreeObserver;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 import android.widget.Toast;
 import androidx.activity.result.ActivityResult;
 import androidx.activity.result.ActivityResultLauncher;
@@ -17,10 +18,15 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.widget.NestedScrollView;
 import androidx.lifecycle.ViewModel;
 import androidx.lifecycle.ViewModelProvider;
+import com.google.android.material.R;
+import com.google.android.material.color.MaterialColors;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import java.io.IOException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+
+import static android.view.ViewGroup.LayoutParams.MATCH_PARENT;
+import static android.view.ViewGroup.LayoutParams.WRAP_CONTENT;
 
 final class DiagnosticControls {
   // The user's operations finish in order even if DashboardActivity is recreated.
@@ -54,39 +60,63 @@ final class DiagnosticControls {
         + "\n処理時間とクラッシュの概要をZIPに保存できます。";
     if (lastFailure != null) message += "\n\n" + lastFailure;
     if (lastDestination != null) message += "\n\n直近の保存先\n" + lastDestination;
-    AlertDialog dialog = new MaterialAlertDialogBuilder(activity).setTitle("診断記録")
-        .setMessage(message)
-        .setNeutralButton(recording ? "記録を止める" : "記録を始める",
-            (dismissed, which) -> setRecording(!recording))
-        .setPositiveButton("ZIPを保存", (dismissed, which) -> chooseLocation())
-        .setNegativeButton("閉じる", null)
-        .show();
-    keepActionsVisible(dialog);
+    MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(activity).setTitle("診断記録");
+    Context context = builder.getContext();
+    LinearLayout panel = new LinearLayout(context);
+    panel.setOrientation(LinearLayout.VERTICAL);
+
+    TextView body = new TextView(context);
+    body.setTextAppearance(R.style.TextAppearance_Material3_BodyLarge);
+    body.setTextColor(MaterialColors.getColor(body, R.attr.colorOnSurfaceVariant));
+    body.setText(message);
+    int gutter = dp(context, 24);
+    body.setPadding(gutter, dp(context, 16), gutter, dp(context, 12));
+
+    NestedScrollView scroll = new NestedScrollView(context);
+    scroll.addView(body, new NestedScrollView.LayoutParams(MATCH_PARENT, WRAP_CONTENT));
+    // The body can shrink and scroll, leaving the full height for the actions.
+    panel.addView(scroll, new LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, 1));
+
+    LinearLayout actions = new LinearLayout(context) {
+      @Override protected void onMeasure(int widthSpec, int heightSpec) {
+        int inlineWidth = getPaddingLeft() + getPaddingRight();
+        int natural = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
+        for (int i = 0; i < getChildCount(); i++) {
+          View child = getChildAt(i);
+          child.measure(natural, natural);
+          inlineWidth += child.getMeasuredWidth();
+        }
+        setOrientation(inlineWidth > MeasureSpec.getSize(widthSpec) ? VERTICAL : HORIZONTAL);
+        super.onMeasure(widthSpec, heightSpec);
+      }
+    };
+    int inset = dp(context, 16);
+    actions.setPadding(inset, 0, inset, dp(context, 12));
+    actions.setGravity(Gravity.END);
+    panel.addView(actions, new LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT));
+
+    AlertDialog dialog = builder.setView(panel).create();
+    addAction(actions, recording ? "記録を止める" : "記録を始める", () -> {
+      dialog.dismiss();
+      setRecording(!recording);
+    });
+    addAction(actions, "閉じる", dialog::dismiss);
+    addAction(actions, "ZIPを保存", () -> {
+      dialog.dismiss();
+      chooseLocation();
+    });
+    dialog.show();
   }
 
-  private static void keepActionsVisible(AlertDialog dialog) {
-    View message = dialog.findViewById(android.R.id.message);
-    if (message == null || !(dialog.getButton(AlertDialog.BUTTON_POSITIVE).getParent() instanceof View actions)) return;
-    ViewParent parent = message.getParent();
-    while (parent instanceof View && !(parent instanceof NestedScrollView)) parent = parent.getParent();
-    if (!(parent instanceof NestedScrollView scroll)) return;
+  private static void addAction(LinearLayout actions, String label, Runnable action) {
+    var button = MaterialUi.button(actions.getContext());
+    button.setText(label);
+    button.setOnClickListener(view -> action.run());
+    actions.addView(button, new LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT));
+  }
 
-    // AppCompat gives the body priority over stacked buttons. Keep their full measured height
-    // and let its existing message view scroll when the dialog is too short for both.
-    scroll.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
-      @Override public boolean onPreDraw() {
-        scroll.getViewTreeObserver().removeOnPreDrawListener(this);
-        int available = actions.getHeight();
-        actions.measure(View.MeasureSpec.makeMeasureSpec(actions.getWidth(), View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
-        int missing = actions.getMeasuredHeight() - available;
-        if (missing <= 0) return true;
-        var layout = scroll.getLayoutParams();
-        layout.height = Math.max(0, scroll.getHeight() - missing);
-        scroll.setLayoutParams(layout);
-        return false;
-      }
-    });
+  private static int dp(Context context, int value) {
+    return Math.round(context.getResources().getDisplayMetrics().density * value);
   }
 
   private void setRecording(boolean enabled) {
