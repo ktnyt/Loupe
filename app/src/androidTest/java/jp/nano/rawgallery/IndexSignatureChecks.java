@@ -34,25 +34,32 @@ final class IndexSignatureChecks {
   private record SourceSignature(String whole, String media, long moveRevision,
       long archiveRevision, long e2Revision, String permissions, String uriGrants) {}
 
-  private static SourceSignature signature(Context context) throws Exception {
+  private static SourceSignature signature(Context context, ArchiveStore store) throws Exception {
     Method method = GalleryIndex.class.getDeclaredMethod("signature", Context.class, int.class);
     method.setAccessible(true);
-    String whole = (String) method.invoke(null, context, 1000);
-    String moveMarker = ":move-v1:", archiveMarker = ":archive-v3:";
-    int mediaEnd = whole.indexOf(moveMarker);
+    int burstGapMillis = 1000;
+    String whole = (String) method.invoke(null, context, burstGapMillis);
+    String burstPrefix = ":burst-gap-ms:" + burstGapMillis + ":burst-number-v1:";
+    String moveMarker = ":move-v1:";
+    String archiveMarker = ":capture-order-v1:video-v1:archive-v3:";
+    check(whole.startsWith(burstPrefix), "signature burst gap and rule preserved");
+    int mediaStart = burstPrefix.length();
+    int mediaEnd = whole.indexOf(moveMarker, mediaStart);
+    check(mediaEnd >= mediaStart, "signature move marker present");
     int moveStart = mediaEnd + moveMarker.length();
     int moveEnd = whole.indexOf(':', moveStart);
-    int archiveMarkerAt = whole.indexOf(archiveMarker, moveEnd);
-    check(mediaEnd >= 0 && moveEnd > moveStart && archiveMarkerAt > moveEnd, "signature layout");
-    int archiveStart = archiveMarkerAt + archiveMarker.length();
+    check(moveEnd > moveStart && whole.startsWith(archiveMarker, moveEnd),
+        "signature capture order, video and archive rules preserved");
+    int archiveStart = moveEnd + archiveMarker.length();
     int archiveEnd = whole.indexOf(':', archiveStart);
     int e2End = whole.indexOf(':', archiveEnd + 1);
     check(archiveEnd > archiveStart && e2End > archiveEnd + 1, "archive and e2 revisions present");
     String[] grants = whole.substring(e2End + 1).split(":", 5);
     check(grants.length == 5, "signature grants present");
-    return new SourceSignature(whole, whole.substring(0, mediaEnd),
-        Long.parseLong(whole.substring(moveStart, moveEnd)),
-        Long.parseLong(whole.substring(archiveStart, archiveEnd)),
+    long archiveRevision = Long.parseLong(whole.substring(archiveStart, archiveEnd));
+    check(archiveRevision == store.indexRevision(), "signature reflects archive store revision");
+    return new SourceSignature(whole, whole.substring(mediaStart, mediaEnd),
+        Long.parseLong(whole.substring(moveStart, moveEnd)), archiveRevision,
         Long.parseLong(whole.substring(archiveEnd + 1, e2End)),
         String.join(":", Arrays.copyOf(grants, 4)), grants[4]);
   }
@@ -106,18 +113,18 @@ final class IndexSignatureChecks {
         check(oldVersion < 3 || revision == 91, "version 3 revision preserved");
         check(oldVersion < 2 || store.metadataSnapshot().get("existing").burstFrame == null,
             "existing entries start unprobed");
-        SourceSignature before = signature(isolated);
+        SourceSignature before = signature(isolated, store);
         if (oldVersion == 3) checkBurstCache(isolated, root, store);
-        checkStableSignature(before, signature(isolated), "burst metadata");
+        checkStableSignature(before, signature(isolated, store), "burst metadata");
         ContentValues metadata = new ContentValues();
         metadata.put("key", "new-derived"); metadata.put("model", "synthetic"); metadata.put("taken", 123);
         check(db.insertOrThrow("metadata", null, metadata) >= 0, "metadata saved");
         check(store.indexRevision() == revision, "metadata does not invalidate source");
-        checkStableSignature(before, signature(isolated), "metadata insert");
+        checkStableSignature(before, signature(isolated, store), "metadata insert");
         JSONObject photo = new JSONObject().put("key", "new-photo").put("name", "synthetic");
         store.put(photo, "pending");
         check(store.indexRevision() > revision, "insert invalidates");
-        SourceSignature afterInsert = signature(isolated);
+        SourceSignature afterInsert = signature(isolated, store);
         check(before.archiveRevision() != afterInsert.archiveRevision()
             && !before.whole().equals(afterInsert.whole()), "photo signature changes");
         revision = store.indexRevision();
@@ -127,34 +134,39 @@ final class IndexSignatureChecks {
         db.execSQL("UPDATE photos SET state='updated' WHERE key='new-photo'");
         check(store.indexRevision() > revision, "update invalidates");
         revision = store.indexRevision();
-        before = signature(isolated);
+        before = signature(isolated, store);
         db.beginTransaction();
         try { store.put(new JSONObject().put("key", "rolled-back"), "pending"); }
         finally { db.endTransaction(); }
         check(store.get("rolled-back") == null, "photo rolled back");
         check(store.indexRevision() == revision, "revision rolled back");
-        checkStableSignature(before, signature(isolated), "rollback");
+        checkStableSignature(before, signature(isolated, store), "rollback");
         db.delete("photos", "key=?", new String[] {"new-photo"});
         check(store.indexRevision() > revision, "delete invalidates");
-        before = signature(isolated);
+        before = signature(isolated, store);
         store.setWriteAheadLoggingEnabled(true);
         check(db.isWriteAheadLoggingEnabled(), "WAL enabled for checkpoint fixture");
-        SourceSignature afterWal = signature(isolated);
+        SourceSignature afterWal = signature(isolated, store);
         String walChange = checkStableSignature(before, afterWal, "WAL switch");
 
         metadata.put("key", "wal-derived");
         db.insertOrThrow("metadata", null, metadata);
-        SourceSignature afterMetadata = signature(isolated);
+        SourceSignature afterMetadata = signature(isolated, store);
         String metadataChange = checkStableSignature(afterWal, afterMetadata, "WAL metadata");
 
+        int walFrames;
+        int checkpointedFrames;
         try (Cursor checkpoint = db.rawQuery("PRAGMA wal_checkpoint(FULL)", null)) {
-          check(checkpoint.moveToFirst() && checkpoint.getInt(0) == 0 && checkpoint.getInt(1) >= 0,
-              "WAL checkpoint completed");
+          check(checkpoint.moveToFirst(), "WAL checkpoint returned frame counts");
+          walFrames = checkpoint.getInt(1);
+          checkpointedFrames = checkpoint.getInt(2);
+          check(checkpoint.getInt(0) == 0 && walFrames > 0 && checkpointedFrames == walFrames,
+              "WAL checkpoint copied all frames (" + checkpointedFrames + "/" + walFrames + ")");
         }
-        SourceSignature afterCheckpoint = signature(isolated);
+        SourceSignature afterCheckpoint = signature(isolated, store);
         String checkpointChange = checkStableSignature(afterMetadata, afterCheckpoint, "checkpoint");
         return "Archive v" + oldVersion + ": " + walChange + "; " + metadataChange
-            + "; " + checkpointChange + "\n";
+            + "; " + checkpointChange + " (" + checkpointedFrames + "/" + walFrames + " frames)\n";
       }
     } finally {
       File[] files = root.listFiles();
