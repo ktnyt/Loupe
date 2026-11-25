@@ -18,7 +18,10 @@ import java.util.Locale
  * 置き場所は内部ストレージ (filesDir)。Android 11 以降は
  * /sdcard/Android/data/<pkg>/ が run-as からも触れず、adb で吸い出せないため。
  *
- *   adb exec-out run-as com.kotone.camimport cat files/import-log-v2.txt
+ *   adb exec-out run-as jp.nano.rawgallery cat files/import-log-v2.txt
+ *
+ * 新しい世代では写真名・機器名・例外本文を記録しない。旧 import-log.txt とその
+ * ローテーション世代は読み出し・共有の対象にしない。
  *
  * 出先でその場で見たいときは、画面から読ませる手を別に用意すること。
  * [init] を呼ぶ前や書き込みに失敗したときは logcat へ出すだけで、握って捨てる
