@@ -72,7 +72,8 @@ final class TagStoreChecks {
         check(store.load().history.size() == before + 2, "Summary mutated judgments");
         check(store.photoId(changed, false) == null, "Summary created photo identity");
       }
-      return "Tag storage passed: identity separation, idempotency, transaction rollback, reopen, undo, reevaluation\n";
+      TagStoreIncrementalChecks.run(context);
+      return "Tag storage passed: identity separation, idempotency, transaction rollback, reopen, undo, reevaluation, indexed lookup, atomic batch and concurrent writer\n";
     } finally { context.deleteDatabase(database); }
   }
 

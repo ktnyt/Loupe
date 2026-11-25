@@ -21,13 +21,16 @@ final class TagStore extends SQLiteOpenHelper {
     Tag(String id, String name) { this.id = id; this.name = name; }
   }
 
+  private static final String HISTORY_COLUMNS = "operation,tag,photo,revision,value,undone";
+
   TagStore(Context context) { this(context, "tags.db"); }
-  TagStore(Context context, String databaseName) { super(context, databaseName, null, 3); }
+  TagStore(Context context, String databaseName) { super(context, databaseName, null, 4); }
 
   public void onCreate(SQLiteDatabase db) {
     db.execSQL("CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE)");
     db.execSQL("CREATE TABLE photos (id TEXT PRIMARY KEY, source TEXT NOT NULL UNIQUE)");
     db.execSQL("CREATE TABLE history (seq INTEGER PRIMARY KEY AUTOINCREMENT, operation TEXT NOT NULL UNIQUE, tag TEXT NOT NULL, photo TEXT NOT NULL, revision INTEGER NOT NULL, value TEXT NOT NULL, undone TEXT)");
+    createJudgmentHistoryIndex(db);
     db.execSQL("CREATE TABLE judgments (tag TEXT NOT NULL, photo TEXT NOT NULL, revision INTEGER NOT NULL, value TEXT NOT NULL, PRIMARY KEY(tag,photo))");
     db.execSQL("CREATE TABLE reevaluation (tag TEXT PRIMARY KEY, revision INTEGER NOT NULL)");
     createAutomaticTables(db);
@@ -35,9 +38,14 @@ final class TagStore extends SQLiteOpenHelper {
   }
 
   public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-    if (oldVersion < 1 || newVersion > 3) throw new IllegalStateException("Unsupported tag database version");
+    if (oldVersion < 1 || newVersion > 4) throw new IllegalStateException("Unsupported tag database version");
     if (oldVersion < 2) createAutomaticTables(db);
     if (oldVersion < 3) TagScores.createTables(db);
+    if (oldVersion < 4) createJudgmentHistoryIndex(db);
+  }
+
+  private static void createJudgmentHistoryIndex(SQLiteDatabase db) {
+    db.execSQL("CREATE INDEX history_judgment_revision ON history(tag,photo,revision)");
   }
 
   private static void createAutomaticTables(SQLiteDatabase db) {
@@ -244,14 +252,21 @@ final class TagStore extends SQLiteOpenHelper {
   }
 
   TagJudgments load() {
-    TagJudgments result = new TagJudgments();
-    try (Cursor c = getReadableDatabase().rawQuery("SELECT operation,tag,photo,revision,value,undone FROM history ORDER BY seq", null)) {
-      while (c.moveToNext()) {
-        if (c.isNull(5)) result = result.record(c.getString(0), c.getString(1), c.getString(2), c.getLong(3) - 1, TagJudgments.Value.valueOf(c.getString(4)));
-        else result = result.undo(c.getString(0), c.getString(5));
-      }
+    return snapshot(getReadableDatabase());
+  }
+
+  /** The UI receives every committed entry in sequence, with no replay of operations. */
+  private static TagJudgments snapshot(SQLiteDatabase db) {
+    List<TagJudgments.Entry> entries = new ArrayList<>();
+    try (Cursor c = db.rawQuery("SELECT " + HISTORY_COLUMNS + " FROM history ORDER BY seq", null)) {
+      while (c.moveToNext()) entries.add(readEntry(c));
     }
-    return result;
+    return TagJudgments.snapshot(entries);
+  }
+
+  private static TagJudgments.Entry readEntry(Cursor row) {
+    return new TagJudgments.Entry(row.getString(0), row.getString(1), row.getString(2),
+        row.getLong(3), TagJudgments.Value.valueOf(row.getString(4)), row.getString(5));
   }
 
   /** Bulk lookup for gallery-scale browsing; never creates photo identities. */
@@ -276,12 +291,11 @@ final class TagStore extends SQLiteOpenHelper {
     SQLiteDatabase db = getWritableDatabase();
     db.beginTransaction();
     try {
-      TagJudgments before = load();
-      TagJudgments next = undo == null ? before.record(operation, tag, photo, expected, value) : before.undo(operation, undo);
-      if (next != before) {
-        TagJudgments.Entry entry = next.history.get(next.history.size() - 1);
-        persistEntry(db, entry);
-      }
+      TagJudgments.Entry entry = undo == null
+          ? TagJudgments.proposed(operation, tag, photo, expected, value, null)
+          : undoEntry(db, operation, undo);
+      applyEntry(db, entry);
+      TagJudgments next = snapshot(db);
       db.setTransactionSuccessful();
       return next;
     } finally { db.endTransaction(); }
@@ -292,14 +306,52 @@ final class TagStore extends SQLiteOpenHelper {
     SQLiteDatabase db = getWritableDatabase();
     db.beginTransaction();
     try {
-      TagJudgments state = load();
       for (Map.Entry<String, Long> item : expected.entrySet()) {
-        TagJudgments next = state.record(operation + ":" + item.getKey(), tag, item.getKey(), item.getValue(), value);
-        if (next != state) persistEntry(db, next.history.get(next.history.size() - 1));
-        state = next;
+        String photo = item.getKey();
+        applyEntry(db, TagJudgments.proposed(
+            operation + ":" + photo, tag, photo, item.getValue(), value, null));
       }
-      db.setTransactionSuccessful(); return state;
+      TagJudgments state = snapshot(db);
+      db.setTransactionSuccessful();
+      return state;
     } finally { db.endTransaction(); }
+  }
+
+  private static TagJudgments.Entry operation(SQLiteDatabase db, String id) {
+    try (Cursor c = db.rawQuery("SELECT " + HISTORY_COLUMNS + " FROM history WHERE operation=?",
+        new String[] {id})) {
+      return c.moveToFirst() ? readEntry(c) : null;
+    }
+  }
+
+  private static TagJudgments.Entry undoEntry(SQLiteDatabase db, String operation, String undo) {
+    TagJudgments.id(operation);
+    TagJudgments.id(undo);
+    TagJudgments.Entry target = operation(db, undo);
+    if (target == null) throw new IllegalArgumentException("Unknown undo target");
+    TagJudgments.Value previous = TagJudgments.Value.UNDECIDED;
+    if (target.revision > 1) {
+      try (Cursor c = db.rawQuery("SELECT value FROM history WHERE tag=? AND photo=? AND revision=?",
+          new String[] {target.tagId, target.photoId, Long.toString(target.revision - 1)})) {
+        if (!c.moveToFirst()) throw new IllegalStateException("Missing earlier judgment");
+        previous = TagJudgments.Value.valueOf(c.getString(0));
+      }
+    }
+    return TagJudgments.proposed(operation, target.tagId, target.photoId, target.revision,
+        previous, undo);
+  }
+
+  private static void applyEntry(SQLiteDatabase db, TagJudgments.Entry entry) {
+    TagJudgments.Entry saved = operation(db, entry.operationId);
+    if (saved != null) {
+      TagJudgments.requireSameOperation(saved, entry);
+      return;
+    }
+    try (Cursor c = db.rawQuery("SELECT revision FROM judgments WHERE tag=? AND photo=?",
+        new String[] {entry.tagId, entry.photoId})) {
+      TagJudgments.requireRevision(c.moveToFirst() ? c.getLong(0) : 0, entry.revision - 1);
+    }
+    persistEntry(db, entry);
   }
 
   private static void persistEntry(SQLiteDatabase db, TagJudgments.Entry entry) {

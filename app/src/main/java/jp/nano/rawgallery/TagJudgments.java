@@ -20,7 +20,7 @@ final class TagJudgments {
     final long revision;
     final Value value;
 
-    private Entry(String operationId, String tagId, String photoId, long revision,
+    Entry(String operationId, String tagId, String photoId, long revision,
         Value value, String undoneOperationId) {
       this.operationId = operationId;
       this.tagId = tagId;
@@ -39,7 +39,11 @@ final class TagJudgments {
     this.history = Collections.unmodifiableList(new ArrayList<>(history));
   }
 
-  private static String id(String value) {
+  static TagJudgments snapshot(List<Entry> history) {
+    return new TagJudgments(history);
+  }
+
+  static String id(String value) {
     if (value == null || value.trim().isEmpty()) throw new IllegalArgumentException("Empty ID");
     return value;
   }
@@ -86,25 +90,40 @@ final class TagJudgments {
 
   private TagJudgments append(String operationId, String tagId, String photoId,
       long expectedRevision, Value value, String undoneOperationId) {
+    Entry nextEntry = proposed(operationId, tagId, photoId, expectedRevision, value, undoneOperationId);
+    for (Entry entry : history) {
+      if (entry.operationId.equals(operationId)) {
+        requireSameOperation(entry, nextEntry);
+        return this;
+      }
+    }
+    Entry current = latest(tagId, photoId);
+    requireRevision(current == null ? 0 : current.revision, expectedRevision);
+    List<Entry> next = new ArrayList<>(history);
+    next.add(nextEntry);
+    return new TagJudgments(next);
+  }
+
+  static Entry proposed(String operationId, String tagId, String photoId, long expectedRevision,
+      Value value, String undoneOperationId) {
     id(operationId);
     id(tagId);
     id(photoId);
     Objects.requireNonNull(value, "value");
-    if (expectedRevision < 0 || expectedRevision == Long.MAX_VALUE) {
+    if (expectedRevision < 0 || expectedRevision == Long.MAX_VALUE)
       throw new IllegalArgumentException("Invalid revision");
-    }
-    for (Entry entry : history) {
-      if (!entry.operationId.equals(operationId)) continue;
-      if (entry.tagId.equals(tagId) && entry.photoId.equals(photoId)
-          && entry.revision == expectedRevision + 1 && entry.value == value
-          && Objects.equals(entry.undoneOperationId, undoneOperationId)) return this;
+    return new Entry(operationId, tagId, photoId, expectedRevision + 1, value, undoneOperationId);
+  }
+
+  static void requireSameOperation(Entry saved, Entry proposed) {
+    if (!saved.tagId.equals(proposed.tagId) || !saved.photoId.equals(proposed.photoId)
+        || saved.revision != proposed.revision || saved.value != proposed.value
+        || !Objects.equals(saved.undoneOperationId, proposed.undoneOperationId)) {
       throw new IllegalArgumentException("Operation ID reused with different contents");
     }
-    Entry current = latest(tagId, photoId);
-    long revision = current == null ? 0 : current.revision;
-    if (revision != expectedRevision) throw new StaleRevisionException();
-    List<Entry> next = new ArrayList<>(history);
-    next.add(new Entry(operationId, tagId, photoId, revision + 1, value, undoneOperationId));
-    return new TagJudgments(next);
+  }
+
+  static void requireRevision(long current, long expected) {
+    if (current != expected) throw new StaleRevisionException();
   }
 }
