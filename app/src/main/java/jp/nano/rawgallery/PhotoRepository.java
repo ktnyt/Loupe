@@ -546,8 +546,9 @@ public final class PhotoRepository {
           String key = previewKey(p);
           synchronized (PUBLISH_LOCK) {
             checkPreparation(cancelled);
-            Preview hit = readPreparedPreview(
-                new File(prepared, key + ".webp"), new File(prepared, key + ".webp.json"));
+            Preview hit =
+                readPreparedPreview(
+                    new File(prepared, key + ".webp"), new File(prepared, key + ".webp.json"));
             if (hit != null) {
               DiagnosticLog.event("cache.compact", span.id, "hit", true);
               return hit;
