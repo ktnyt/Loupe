@@ -30,8 +30,6 @@ import javax.net.ssl.HttpsURLConnection;
  * The caller persists the object key before upload and retains it until delete succeeds.
  */
 final class NanoBananaE2 {
-  private static final String HOST = "s3.ap-northeast-1.idrivee2.com";
-  private static final String REGION = "ap-northeast-1";
   private static final String HEADERS = "host;x-amz-content-sha256;x-amz-date";
   private static final String EMPTY_SHA =
       "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -91,7 +89,7 @@ final class NanoBananaE2 {
     if (version == null || "null".equals(version))
       throw versioningRequired();
     checkedVersion(version);
-    try { return presignGet(HOST, REGION, path, keyId, secret, Instant.now(), 1800, version); }
+    try { return presignGet(E2Endpoint.HOST, E2Endpoint.REGION, path, keyId, secret, Instant.now(), 1800, version); }
     catch (Exception unavailable) { throw new IOException("一時画像の読み取りURLを作成できません"); }
   }
 
@@ -271,7 +269,7 @@ final class NanoBananaE2 {
   private HttpsURLConnection open(String method, String path, String query, String sha, String owner)
       throws Exception {
     String stamp = TIME.format(Instant.now());
-    HttpsURLConnection connection = (HttpsURLConnection) new URL("https://" + HOST + path
+    HttpsURLConnection connection = (HttpsURLConnection) new URL("https://" + E2Endpoint.HOST + path
         + (query.isEmpty() ? "" : "?" + query)).openConnection();
     connection.setInstanceFollowRedirects(false);
     connection.setUseCaches(false);
@@ -283,7 +281,7 @@ final class NanoBananaE2 {
     connection.setRequestProperty("x-amz-date", stamp);
     if (owner != null) connection.setRequestProperty("x-amz-meta-loupe-nano-owner", owner);
     connection.setRequestProperty("Authorization", authorization(
-        method, HOST, REGION, path, query, sha, stamp, keyId, secret, owner));
+        method, E2Endpoint.HOST, E2Endpoint.REGION, path, query, sha, stamp, keyId, secret, owner));
     return connection;
   }
 
