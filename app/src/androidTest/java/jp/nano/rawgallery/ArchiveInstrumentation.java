@@ -495,6 +495,9 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if (diagnosticFailureTest) {
         results.putString("stream", DiagnosticFailureChecks.run(this)); finish(-1, results); return;
       }
+      if ("media-observer-lifecycle".equals(cameraPilotArguments.getString("mode"))) {
+        results.putString("stream", MediaObserverLifecycleChecks.run(this)); finish(-1, results); return;
+      }
       if (lifecycleTest) {
         results.putString("stream", TagLifecycleChecks.run(this)); finish(-1, results); return;
       }
