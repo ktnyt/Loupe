@@ -85,6 +85,8 @@ run_instrumentation() {
         awk '/full[.]prepare|fixture[.]cancel|jpeg[.]load[.]complete/ {print}' || true
     elif [[ "$label" == nano-background ]]; then
       "$adb" -s "$serial" logcat -d -s LoupeNanoFixture:E '*:S' || true
+    elif [[ "$label" == visual-status ]]; then
+      "$adb" -s "$serial" logcat -d -s LoupeVisualSwipe:I '*:S' || true
     elif [[ "$label" == look-removal ]]; then
       "$adb" -s "$serial" logcat -d -s LoupeLookFixture:I '*:S' || true
     fi

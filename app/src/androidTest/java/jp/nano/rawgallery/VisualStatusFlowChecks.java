@@ -109,13 +109,16 @@ final class VisualStatusFlowChecks {
         assertNoStatus(((android.view.ViewGroup) view).getChildAt(i));
   }
 
-  static void swipe(Instrumentation t, MainActivity a, boolean left) throws Exception {
+  static void swipe(Instrumentation t, MainActivity a, boolean left, boolean fling)
+      throws Exception {
     int[] bounds = new int[4];
+    android.view.View[] target = {null};
     main(
         t,
         () -> {
           android.view.View view = photoView(a.getWindow().getDecorView());
-          if (view == null) throw new AssertionError("photo missing");
+          TagDetailChecks.require(view != null && view.hasWindowFocus(), "photo receives input");
+          target[0] = view;
           int[] xy = new int[2];
           view.getLocationOnScreen(xy);
           bounds[0] = xy[0];
@@ -127,20 +130,70 @@ final class VisualStatusFlowChecks {
     float from = bounds[0] + bounds[2] * (left ? .8f : .2f),
         to = bounds[0] + bounds[2] * (left ? .2f : .8f),
         y = bounds[1] + bounds[3] * .5f;
-    long start = android.os.SystemClock.uptimeMillis();
-    for (int i = 0; i <= 12; i++) {
-      long now = android.os.SystemClock.uptimeMillis();
-      android.view.MotionEvent event =
-          android.view.MotionEvent.obtain(
-              start, now, i == 0 ? 0 : i == 12 ? 1 : 2, from + (to - from) * i / 12f, y, 0);
-      try {
-        t.sendPointerSync(event);
-      } finally {
-        event.recycle();
+    float endOfFastMotion = to - Math.copySign(12f, to - from);
+    CountDownLatch released = new CountDownLatch(1);
+    android.view.VelocityTracker velocity = android.view.VelocityTracker.obtain();
+    float[] downX = {0}, distance = {0}, speed = {0};
+    TagDetailChecks.ui(
+        t,
+        () ->
+            target[0].setOnTouchListener(
+                (view, event) -> {
+                  velocity.addMovement(event);
+                  if (event.getActionMasked() == android.view.MotionEvent.ACTION_DOWN) {
+                    downX[0] = event.getX();
+                  } else if (event.getActionMasked() == android.view.MotionEvent.ACTION_UP) {
+                    distance[0] = event.getX() - downX[0];
+                    velocity.computeCurrentVelocity(1000);
+                    speed[0] = Math.abs(velocity.getXVelocity());
+                    released.countDown();
+                  }
+                  return false;
+                }));
+    try {
+      int steps = 12;
+      long sampleMillis = 12;
+      UiAutomation input = t.getUiAutomation();
+      // Give Android a realistic, monotonic event history ending at the current uptime.
+      // The slow release covers the same distance but decelerates for the last nine samples.
+      long start = android.os.SystemClock.uptimeMillis() - steps * sampleMillis;
+      for (int i = 0; i <= steps; i++) {
+        float x;
+        if (fling) x = from + (to - from) * i / steps;
+        else if (i <= 3) x = from + (endOfFastMotion - from) * i / 3;
+        else x = endOfFastMotion + (to - endOfFastMotion) * (i - 3) / (steps - 3);
+        int action =
+            i == 0
+                ? android.view.MotionEvent.ACTION_DOWN
+                : i == steps
+                    ? android.view.MotionEvent.ACTION_UP
+                    : android.view.MotionEvent.ACTION_MOVE;
+        android.view.MotionEvent event =
+            android.view.MotionEvent.obtain(start, start + i * sampleMillis, action, x, y, 0);
+        try {
+          event.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+          TagDetailChecks.require(
+              input.injectInputEvent(event, i == 0 || i == steps), "Android accepted swipe event");
+        } finally {
+          event.recycle();
+        }
       }
-      Thread.sleep(12);
+      TagDetailChecks.require(released.await(5, TimeUnit.SECONDS), "photo received swipe release");
+      android.util.Log.i(
+          "LoupeVisualSwipe",
+          "fling=" + fling + " distance=" + distance[0] + " releasePxPerSecond=" + speed[0]);
+      TagDetailChecks.require(
+          Math.abs(distance[0] - (to - from)) <= 2, "full swipe distance received");
+      TagDetailChecks.require(
+          (speed[0] >= 200) == fling, "delivered release speed matches fixture");
+    } finally {
+      TagDetailChecks.ui(
+          t,
+          () -> {
+            target[0].setOnTouchListener(null);
+            velocity.recycle();
+          });
     }
-    t.waitForIdleSync();
   }
 
   static String run(Instrumentation t, MainActivity a) throws Exception {
@@ -311,7 +364,7 @@ final class VisualStatusFlowChecks {
             set(a, "photos", new ArrayList<>(List.of(photo, second)));
             return true;
           });
-      swipe(t, a, true);
+      swipe(t, a, true, true);
       waitFor(
           t,
           "left swipe second photo",
@@ -327,7 +380,17 @@ final class VisualStatusFlowChecks {
             assertNoStatus(a.getWindow().getDecorView());
             return true;
           });
-      swipe(t, a, false);
+      swipe(t, a, false, false);
+      main(
+          t,
+          () -> {
+            TagDetailChecks.require(
+                ((Integer) field(a, "index")) == 1 && failed(a.getWindow().getDecorView()) == null,
+                "slow swipe does not leave the second photo");
+            assertPhotoColor(a, 0xffc46c32);
+            return true;
+          });
+      swipe(t, a, false, true);
       waitFor(
           t,
           "right swipe first photo failure",
@@ -395,7 +458,7 @@ final class VisualStatusFlowChecks {
               return true;
             });
       }
-      return "PASS injected touch left/right swipes: missing original -> orange JPEG pixel verified, old failure detached and no visible status -> missing original -> retry -> blue JPEG pixel verified.\nPASS tag empty input error -> valid edit clears error -> cancel without persistence.\nPASS detail missing original -> persistent error -> actual AX retry after synthetic JPEG restore -> image recovered.\nPASS actual share cancel interrupts the writer and retains selection; cancel, failure and retry remove partial files without starting a chooser or recipient. No external transfer.\n";
+      return "PASS injected touch left/right swipes and slow-release control: missing original -> orange JPEG pixel verified, old failure detached and no visible status -> missing original -> retry -> blue JPEG pixel verified.\nPASS tag empty input error -> valid edit clears error -> cancel without persistence.\nPASS detail missing original -> persistent error -> actual AX retry after synthetic JPEG restore -> image recovered.\nPASS actual share cancel interrupts the writer and retains selection; cancel, failure and retry remove partial files without starting a chooser or recipient. No external transfer.\n";
     } finally {
       release.countDown();
       t.removeMonitor(chooser);
