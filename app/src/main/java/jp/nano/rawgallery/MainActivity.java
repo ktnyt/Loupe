@@ -2502,66 +2502,53 @@ public final class MainActivity extends DiagnosticActivity {
           () -> saveRanking(ranking.choose(rankingMembers.get(ranking.upper()) == position)));
     viewing =
         actions.submit(
-            () -> {
-              try {
-                PhotoRepository.Preview preview = repository.preview(photo);
-                Bitmap bitmap = PhotoRepository.bitmap(preview, 1600);
-                main.post(
-                    () -> {
-                      if (isDestroyed() || !detail || token != generation) {
-                        bitmap.recycle();
-                        return;
+            () ->
+                ViewerPhotoLoad.read(
+                    this,
+                    repository,
+                    photo,
+                    main,
+                    () -> !isDestroyed() && detail && token == generation,
+                    new ViewerPhotoLoad.Display() {
+                      @Override
+                      public void preview(PhotoRepository.Preview preview, Bitmap bitmap) {
+                        activePreview = preview;
+                        image.setBitmap(bitmap);
+                        model.setText(preview.model);
+                        dimensions.setText(photo.name);
+                        loadStatus.companion(StatusView.Symbol.PREVIEW);
+                        viewer.refreshStatus();
+                        image.setStateDescription("プレビューを表示しています。元のファイルを読み込んでいます");
                       }
-                      activePreview = preview;
-                      image.setBitmap(bitmap);
-                      model.setText(preview.model);
-                      dimensions.setText(photo.name);
-                      loadStatus.companion(StatusView.Symbol.PREVIEW);
-                      viewer.refreshStatus();
-                      image.setStateDescription("プレビューを表示しています。元のファイルを読み込んでいます");
-                    });
-              } catch (Exception missingPreview) {
-                main.post(
-                    () -> {
-                      if (!isDestroyed() && detail && token == generation) model.setText("");
-                    });
-              }
-              try {
-                if (Thread.currentThread().isInterrupted()
-                    || isDestroyed()
-                    || !detail
-                    || token != generation) return;
-                PhotoRepository.Photo original = OriginalCache.obtain(this, photo);
-                PhotoRepository.Preview full = repository.fullPreview(original);
-                Bitmap high = PhotoRepository.bitmap(full, 4000);
-                main.post(
-                    () -> {
-                      if (isDestroyed() || !detail || token != generation) {
-                        high.recycle();
-                        return;
+
+                      @Override
+                      public void previewUnavailable() {
+                        model.setText("");
                       }
-                      loadStatus.companion(null);
-                      loadStatus.finish();
-                      viewer.refreshStatus();
-                      image.setStateDescription("元のファイルを表示しています");
-                      activePreview = full;
-                      image.setBitmap(high);
-                      model.setText(
-                          full.model
-                              .replace("RICOH IMAGING COMPANY, LTD.", "RICOH")
-                              .replace("/25128PNA1G", ""));
-                      dimensions.setText(
-                          full.width
-                              + " × "
-                              + full.height
-                              + (photo.isJpeg() ? "  ·  元のファイル" : "  ·  RAWファイル内のJPEG")
-                              + "\n"
-                              + photo.name);
-                    });
-              } catch (Exception unavailable) {
-                main.post(
-                    () -> {
-                      if (!isDestroyed() && detail && token == generation) {
+
+                      @Override
+                      public void original(PhotoRepository.Preview full, Bitmap high) {
+                        loadStatus.companion(null);
+                        loadStatus.finish();
+                        viewer.refreshStatus();
+                        image.setStateDescription("元のファイルを表示しています");
+                        activePreview = full;
+                        image.setBitmap(high);
+                        model.setText(
+                            full.model
+                                .replace("RICOH IMAGING COMPANY, LTD.", "RICOH")
+                                .replace("/25128PNA1G", ""));
+                        dimensions.setText(
+                            full.width
+                                + " × "
+                                + full.height
+                                + (photo.isJpeg() ? "  ·  元のファイル" : "  ·  RAWファイル内のJPEG")
+                                + "\n"
+                                + photo.name);
+                      }
+
+                      @Override
+                      public void originalUnavailable() {
                         String failure =
                             activePreview == null
                                 ? "写真を読み込めませんでした"
@@ -2569,7 +2556,7 @@ public final class MainActivity extends DiagnosticActivity {
                         if (activePreview == null) {
                           viewer.failed();
                           photoFrame.removeView(loadStatus);
-                          LinearLayout recovery = new LinearLayout(this);
+                          LinearLayout recovery = new LinearLayout(MainActivity.this);
                           recovery.setTag("viewer-original-recovery");
                           recovery.setOrientation(LinearLayout.VERTICAL);
                           recovery.setGravity(Gravity.CENTER);
@@ -2608,9 +2595,7 @@ public final class MainActivity extends DiagnosticActivity {
                         if (activePreview == null) model.setText("");
                         dimensions.setText(photo.name);
                       }
-                    });
-              }
-            });
+                    }));
   }
 
   private LibraryScreen libraryScreen() {
