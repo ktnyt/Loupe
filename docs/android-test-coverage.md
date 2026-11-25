@@ -19,6 +19,7 @@ CIではAndroid SDKの `system-images;android-35;google_apis;x86_64` とANGLEの
 | モード | 必要な準備と確認先 |
 | --- | --- |
 | `release-upgrade-seed`、`release-upgrade-verify` | 専用AVDで、デバッグ版に合成データを作り、同じ署名かつ上位versionCodeの非デバッグ版をデータ保持で上書きする。上書き後に写真・履歴・順位・タグ・暗号化された合成設定を照合する。[非デバッグ版への移行 #199](https://github.com/ktnyt/Loupe/issues/199) |
+| `diagnostic-local-export` | 専用AVDに非デバッグ版と対応する計測APKを導入する。合成ファイルで記録開始・停止、個人情報の除外、ZIP出力の失敗、システムのフォルダ選択先を検査する。[診断ZIPのローカル出力 #221](https://github.com/ktnyt/Loupe/pull/221) |
 | `jpeg` | 読み取り許可のあるJPEG 3枚をMediaStoreに用意する。元データと表示用プレビューの照合を行う。 |
 | `tag-lifecycle`、`related` | タグの付いた検査用写真を索引に登録する。`tag-lifecycle` は `DCIM/OMDS/`、`related` は同じフォルダにタグ付与済みの例と未判定の候補が必要。素材がない場合、`related` の合成画像によるモデル推論までは動くが、類似写真の選出やキャッシュ再読込は未検査。 |
 | `camera-pilot-dual-slot-ui`、`camera-pilot-sd-swap`、`camera-pilot-sd-revision` | 合成カードでもテストコードが隔離APKのapplicationIdとエミュレータを要求する。通常の本体APKは起動時に拒否される。UIは400dp/1.0と320dp/1.3の既存手順で確認する。[二つのSDスロットの検証 #184](https://github.com/ktnyt/Loupe/issues/184)、[再挿入と保存済み判定 #166](https://github.com/ktnyt/Loupe/issues/166) |
