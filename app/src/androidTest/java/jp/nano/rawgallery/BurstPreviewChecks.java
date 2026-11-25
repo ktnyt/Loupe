@@ -138,21 +138,33 @@ final class BurstPreviewChecks {
     render.setAccessible(true);
     int[] timingStates = (int[]) states.get(controller);
     StatusView timing = (StatusView) ((List<?>) spinners.get(controller)).get(0);
+    AlbumTagEntryChecks.main(
+        test,
+        () -> {
+          timingStates[0] = 1;
+          render.invoke(controller);
+          return true;
+        });
+    GenerationIndicatorChecks.await(
+        test, "strip loading becomes visible", () -> timing.getVisibility() == View.VISIBLE);
+    return checkMinimumStatusVisibility(
+        test,
+        timing,
+        () -> {
+          timingStates[0] = 2;
+          render.invoke(controller);
+          return true;
+        });
+  }
+
+  static long checkMinimumStatusVisibility(
+      Instrumentation test, StatusView timing, AlbumTagEntryChecks.Check finish) throws Exception {
     Field visibleAt = StatusView.class.getDeclaredField("visibleAt");
     visibleAt.setAccessible(true);
     CountDownLatch sampled = new CountDownLatch(1);
     boolean[] stillOpaque = {false};
     long[] visibleSince = {0}, fadeStarted = {0};
     try {
-      AlbumTagEntryChecks.main(
-          test,
-          () -> {
-            timingStates[0] = 1;
-            render.invoke(controller);
-            return true;
-          });
-      GenerationIndicatorChecks.await(
-          test, "strip loading becomes visible", () -> timing.getVisibility() == View.VISIBLE);
       AlbumTagEntryChecks.main(
           test,
           () -> {
@@ -179,8 +191,7 @@ final class BurstPreviewChecks {
                         },
                         visibleSince[0] + 599),
                 "minimum visibility sample scheduled");
-            timingStates[0] = 2;
-            render.invoke(controller);
+            finish.run();
             return true;
           });
       TagDetailChecks.require(

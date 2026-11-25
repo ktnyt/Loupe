@@ -22,13 +22,23 @@ final class VisualStatusFlowChecks {
         for (AccessibilityNodeInfo n : root.findAccessibilityNodeInfosByText(label))
           if (label.equals(n.getText() == null ? "" : n.getText().toString().strip())
               && n.isClickable()
-              && n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-            t.waitForIdleSync();
-            return;
-          }
+              && n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return;
       Thread.sleep(80);
     }
     throw new AssertionError("Missing action " + label);
+  }
+
+  private static void shareOnMain(Instrumentation t, Check action) {
+    // The deliberately blocked writer keeps the progress view drawing until cancellation.
+    TagDetailChecks.ui(
+        t,
+        () -> {
+          try {
+            action.run();
+          } catch (Exception failure) {
+            throw new AssertionError("share fixture UI", failure);
+          }
+        });
   }
 
   static android.view.View failed(android.view.View view) {
@@ -135,6 +145,7 @@ final class VisualStatusFlowChecks {
 
   static String run(Instrumentation t, MainActivity a) throws Exception {
     CountDownLatch release = new CountDownLatch(1);
+    CountDownLatch writerInterrupted = new CountDownLatch(1);
     AtomicInteger attempts = new AtomicInteger();
     File dir = new File(a.getCacheDir(), "status-share-" + UUID.randomUUID());
     android.graphics.Bitmap bitmap =
@@ -153,10 +164,13 @@ final class VisualStatusFlowChecks {
             0,
             0);
     List<PhotoRepository.Photo> selection = List.of(photo);
+    Instrumentation.ActivityMonitor chooser =
+        t.addMonitor(new IntentFilter(Intent.ACTION_CHOOSER), null, true);
     try {
       ((ExecutorService) field(a, "scans")).submit(() -> {}).get(10, TimeUnit.SECONDS);
       t.waitForIdleSync();
-      main(
+      int[] firstAttempt = {0};
+      shareOnMain(
           t,
           () -> {
             ((Set<String>) field(a, "selectedPhotos")).add(photo.uri.toString());
@@ -166,8 +180,18 @@ final class VisualStatusFlowChecks {
                 new SharePreparation(
                     dir,
                     (p, raw, out) -> {
+                      try (FileOutputStream partial = new FileOutputStream(out)) {
+                        partial.write(jpeg, 0, Math.min(32, jpeg.length));
+                      }
                       attempts.incrementAndGet();
-                      release.await();
+                      try {
+                        if (!release.await(15, TimeUnit.SECONDS))
+                          throw new IOException("fixture writer was not released");
+                      } catch (InterruptedException cancelled) {
+                        writerInterrupted.countDown();
+                        release.await(10, TimeUnit.SECONDS);
+                        throw cancelled;
+                      }
                       throw new IOException("synthetic failure");
                     }));
             Method export =
@@ -175,14 +199,32 @@ final class VisualStatusFlowChecks {
                     "export", List.class, boolean.class, ShareTargets.Target.class);
             export.setAccessible(true);
             export.invoke(a, selection, false, null);
+            firstAttempt[0] = (int) field(a, "shareAttempt");
             return true;
           });
-      waitFor(t, "writer started", () -> attempts.get() == 1);
-      Thread.sleep(500);
+      GenerationIndicatorChecks.await(t, "share writer started", () -> attempts.get() == 1);
+      String[] partial = dir.list();
+      TagDetailChecks.require(
+          partial != null && partial.length == 1, "blocked writer left a partial fixture copy");
       click(t, "中止");
+      GenerationIndicatorChecks.await(
+          t,
+          "share cancel received",
+          () -> {
+            Dialog preparing = (Dialog) field(a, "shareProgress");
+            return (int) field(a, "shareAttempt") == firstAttempt[0] + 1
+                && preparing != null
+                && !preparing.isShowing();
+          });
+      TagDetailChecks.require(
+          writerInterrupted.await(5, TimeUnit.SECONDS), "share cancel interrupts writer");
       release.countDown();
-      Thread.sleep(500);
-      main(
+      ((ExecutorService) field(a, "actions")).submit(() -> {}).get(10, TimeUnit.SECONDS);
+      String[] afterCancel = dir.list();
+      TagDetailChecks.require(
+          afterCancel != null && afterCancel.length == 0 && chooser.getHits() == 0,
+          "cancel removes the partial share copy without opening a chooser");
+      shareOnMain(
           t,
           () -> {
             if (!((Set<?>) field(a, "selectedPhotos")).contains(photo.uri.toString()))
@@ -195,8 +237,13 @@ final class VisualStatusFlowChecks {
             return true;
           });
       click(t, "再試行");
-      waitFor(t, "retry writer", () -> attempts.get() == 3);
+      GenerationIndicatorChecks.await(t, "retry writer", () -> attempts.get() == 3);
       click(t, "選択に戻る");
+      ((ExecutorService) field(a, "actions")).submit(() -> {}).get(10, TimeUnit.SECONDS);
+      String[] afterFailure = dir.list();
+      TagDetailChecks.require(
+          afterFailure != null && afterFailure.length == 0 && chooser.getHits() == 0,
+          "failed copies are removed without opening a chooser");
       main(
           t,
           () -> {
@@ -313,6 +360,7 @@ final class VisualStatusFlowChecks {
               return true;
             });
         click(t, "作成");
+        t.waitForIdleSync();
         AccessibilityNodeInfo edit = input(t);
         if (edit == null || !android.text.TextUtils.equals("1〜80文字で入力してください", edit.getError()))
           throw new AssertionError("tag input error missing");
@@ -326,6 +374,7 @@ final class VisualStatusFlowChecks {
         if (edit == null || edit.getError() != null)
           throw new AssertionError("corrected input error remains");
         click(t, "キャンセル");
+        t.waitForIdleSync();
       } finally {
         main(
             t,
@@ -334,9 +383,10 @@ final class VisualStatusFlowChecks {
               return true;
             });
       }
-      return "PASS injected touch left/right swipes: missing original -> orange JPEG pixel verified, old failure detached and no visible status -> missing original -> retry -> blue JPEG pixel verified.\nPASS tag empty input error -> valid edit clears error -> cancel without persistence.\nPASS detail missing original -> persistent error -> actual AX retry after synthetic JPEG restore -> image recovered.\nPASS actual share preparation cancel -> selection retained; injected failure -> retry calls writer again -> return retains selection. No recipient or external transfer.\n";
+      return "PASS injected touch left/right swipes: missing original -> orange JPEG pixel verified, old failure detached and no visible status -> missing original -> retry -> blue JPEG pixel verified.\nPASS tag empty input error -> valid edit clears error -> cancel without persistence.\nPASS detail missing original -> persistent error -> actual AX retry after synthetic JPEG restore -> image recovered.\nPASS actual share cancel interrupts the writer and retains selection; failure and retry remove partial files without starting a chooser. No recipient or external transfer.\n";
     } finally {
       release.countDown();
+      t.removeMonitor(chooser);
       File[] files = dir.listFiles();
       if (files != null) for (File f : files) f.delete();
       dir.delete();
