@@ -198,7 +198,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     if (("camera-pilot-qr-ui".equals(cameraPilotMode) || (("camera-pilot-wifi-quick".equals(cameraPilotMode) || "camera-pilot-quick-import".equals(cameraPilotMode)) || ("camera-pilot-import-progress".equals(cameraPilotMode) || "camera-pilot-usb-launch".equals(cameraPilotMode))))) { tagWidth=Integer.parseInt(args.getString("width","400"));tagFont=Float.parseFloat(args.getString("font","1.0")); }
     cameraBenchmarkTest = args != null && "camera-benchmark".equals(args.getString("mode"));
     cameraLedgerTest = args != null && "camera-ledger".equals(args.getString("mode"));
-    if (args != null && java.util.List.of("photo-storage", "photo-storage-archive", "photo-storage-archive-snapshot", "photo-storage-archive-ui", "photo-storage-inventory", "photo-storage-inventory-ui", "photo-storage-performance", "photo-storage-ui", "photo-storage-ui-run", "photo-storage-ui-run-skipped", "photo-storage-detach-seed",
+    if (args != null && java.util.List.of("photo-storage", "photo-storage-import-guard", "photo-storage-archive", "photo-storage-archive-snapshot", "photo-storage-archive-ui", "photo-storage-inventory", "photo-storage-inventory-ui", "photo-storage-performance", "photo-storage-ui", "photo-storage-ui-run", "photo-storage-ui-run-skipped", "photo-storage-detach-seed",
         "photo-storage-detach-absent", "photo-storage-detach-restored", "photo-storage-saf-seed",
         "photo-storage-saf-verify", "photo-storage-abandon-detach-seed", "photo-storage-abandon-detach-absent",
         "photo-storage-abandon-detach-restored").contains(args.getString("mode", "")))
@@ -443,7 +443,9 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if (photoStorageMode != null) {
         String secondary = cameraPilotArguments.getString("secondaryVolume");
         String photoStorageReport;
-        if ("photo-storage-archive".equals(photoStorageMode)) {
+        if ("photo-storage-import-guard".equals(photoStorageMode)) {
+          photoStorageReport = PhotoStorageChecks.checkImportHistoryGuard(this);
+        } else if ("photo-storage-archive".equals(photoStorageMode)) {
           photoStorageReport = LegacyArchiveMoveChecks.run(this, secondary);
         } else if ("photo-storage-archive-snapshot".equals(photoStorageMode)) {
           String cadence = cameraPilotArguments.getString("archive_cadence_ms");
