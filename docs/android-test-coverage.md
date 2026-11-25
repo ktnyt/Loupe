@@ -1,10 +1,12 @@
 # Android計測テストの実行条件
 
-対象は `app/src/androidTest/` の `ArchiveInstrumentation`。GitHub Actionsの `verify` は計測APKをビルドし、新しく作ったAndroid 15エミュレータで [CIの合成モード](../tests/ci-android-modes.txt) を実行する。エミュレータには検査用に署名したAPKと、その計測APKだけを導入する。写真オリジナル、カメラ、サービスの認証情報は使わない。
+GitHub Actionsの `verify` は本体と `raw-experiment` のAPK、各モジュールの計測APKをビルドし、新しく作ったAndroid 15エミュレータで合成データを検査する。本体の `ArchiveInstrumentation` は [CIの合成モード一覧](../tests/ci-android-modes.txt) の順で実行する。続いて別のapplicationIdを持つ実験用APKと計測APKを導入し、`RawEditInstrumentation` に `-e full true` を渡す。写真オリジナル、カメラ、サービスの認証情報は使わない。
 
-CIではAndroid SDKの `system-images;android-35;google_apis;x86_64` を使う。手元で実行する場合も、デバッグAPKと計測APKをビルドしてから `bash tests/ci-android-instrumentation.sh` を実行する。Apple siliconでは `LOUPE_INSTRUMENTATION_IMAGE='system-images;android-35;google_apis;arm64-v8a'` を指定する。既定ポート5580を使用中なら `LOUPE_INSTRUMENTATION_PORT` に空いている偶数ポートを指定する。
+CIではAndroid SDKの `system-images;android-35;google_apis;x86_64` を使う。手元では `:app` と `:raw-experiment` それぞれの `assembleDebug` と `assembleDebugAndroidTest` を実行してから `bash tests/ci-android-instrumentation.sh` を実行する。Apple siliconでは `LOUPE_INSTRUMENTATION_IMAGE='system-images;android-35;google_apis;arm64-v8a'` を指定する。既定ポート5580を使用中なら `LOUPE_INSTRUMENTATION_PORT` に空いている偶数ポートを指定する。
 
 合成モードの一覧は実行順。共有履歴とカメラ資格情報の再起動確認ではseedからverifyへ進み、USBの選択状態は最後に既定へ戻す。UIを計測するモードへ幅400dp・文字倍率1.0を渡す。`burst-gap-millis` は連写番号あり・なしを合成JPEGで検証する。`camera-pilot-ble-diagnostics` では、検査用APKへの権限付与後にBLEの事前検査で保存する診断項目を合成入力で検証する。各モードのPASSとAndroidの結果コードを照合し、失敗したモードや起動できなかった計測もCIの失敗とする。
+
+`RawEditInstrumentation` の `full` はEGLの色・向き・比較表示に加え、合成DNGのデコード、原寸タイル、JPEG保存と中止を検査する。本体の `photo-storage-import-guard` は、移動が取り込み履歴を更新する間だけ、新しい取り込みを止めることを確かめる。
 
 `import-latency`、`import-deferred`、`import-interruption`、`import-pause-interruption` は、合成RAWを使って新規入力の表示と中断を確認する。処理速度を比較する場合は、端末、画面、画像、診断の条件をそろえて測定する。[取り込みから一覧反映まで](diagnostics.md#新規取り込みから一覧反映まで)
 
@@ -26,6 +28,6 @@ CIではAndroid SDKの `system-images;android-35;google_apis;x86_64` を使う�
 | `e2-archive`、`e2-background`、`e2-large-original`、`e2-mixed-{backup,consent,restore}`、`e2-catalog-{publish,republish,restore,previous}` | 認証情報と隔離されたバージョニング有効の検査用バケットが必要。復元専用モードは発行したカタログまたは元の検査IDにも依存する。[e2接続試行](e2-android-pilot.md)、[実運用契約](e2-production-contract.md) |
 | `e2-large-cache`、`e2-cleanup-boundary`、`e2-cleanup-product-{seed,sync,offline,restore,stop}`、`e2-cleanup-shared-{seed,denied,allowed,live,preview}` | `e2verify` や `e2fixture` の別APK、空のライブラリ、権限とユーザーの切り替え、各試行固有のIDが必要。サービスとの照合を含むモードには隔離バケットも用意する。[e2の実運用移行 #117](https://github.com/ktnyt/Loupe/issues/117) |
 | `photo-storage`、`photo-storage-{archive,archive-snapshot,archive-ui,inventory,inventory-ui,performance,ui,ui-run,ui-run-skipped}`、`photo-storage-{detach,abandon-detach}-{seed,absent,restored}`、`photo-storage-saf-{seed,verify}` | 書き込み可能な副ストレージを持つ専用エミュレータまたは検査用カードを使う。付け外し・SAF権限・別アプリ所有・移動性能はトリガーと順序をそろえる。[保存先と移動の検証](photo-storage-contract.md#検証)、[移動時間の計測](diagnostics.md#取り込み済み写真の保存先移動issue-162) |
-| `RawEditInstrumentation` | `:raw-experiment:assembleDebugAndroidTest` と同モジュールの検査APKを使う。現行の実験APKは `:raw-experiment:compileDebugJavaWithJavac` が生成された `RawEditFullSession` の `PhotoStorage` 参照を解決できず、作成できない。引数なしの合成EGL検査は、実験APKが復旧した後にCIへ接続する。[実験モジュールの整理 #207](https://github.com/ktnyt/Loupe/issues/207)で追跡する。`real` または `viewportUri` の検査には承認済みのRAWが必要。[RAW実験アプリの検証](cnt-look-poc.md#開発と確認) |
+| `RawEditInstrumentation` の `real`、`viewportUri`、個別の編集UIと開発用キャプチャ | 実素材を使う `real` または `viewportUri` には承認済みのRAWが必要。画面・入力状態まで確認する専用検査は、対象の実験APKと計測APKを用い、目的に応じた引数と画面条件を指定する。[RAW実験アプリの検証](cnt-look-poc.md#開発と確認)、[原寸表示と保存状態](raw-full-resolution-contract.md) |
 
-上記の専用モードは、対象の入力を準備したあと、該当手順で `adb -s SERIAL shell am instrument -w -e mode MODE jp.nano.rawgallery.test/jp.nano.rawgallery.ArchiveInstrumentation` に必要な引数を渡す。端末の選定、実施記録、利用者データの取り扱いは[開発手順](development-workflow.md)に従う。
+本体の専用モードは、対象の入力を準備したあと、該当手順で `adb -s SERIAL shell am instrument -w -e mode MODE jp.nano.rawgallery.test/jp.nano.rawgallery.ArchiveInstrumentation` に必要な引数を渡す。端末の選定、実施記録、利用者データの取り扱いは[開発手順](development-workflow.md)に従う。

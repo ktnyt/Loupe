@@ -5,6 +5,7 @@ camera-history-migration
 confidence-store
 camera-ledger
 index-signature
+photo-storage-import-guard
 index-apply-race
 burst
 burst-gap-millis

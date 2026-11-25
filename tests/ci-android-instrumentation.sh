@@ -57,6 +57,20 @@ esac
 "$adb" -s "$serial" shell wm dismiss-keyguard
 "$adb" -s "$serial" install -g app/build/outputs/apk/debug/app-debug.apk
 "$adb" -s "$serial" install -g app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+
+run_instrumentation() {
+  local label=$1 result
+  shift
+  printf '\nRunning Android instrumentation: %s\n' "$label"
+  result=$("$adb" -s "$serial" shell am instrument -w -r "$@" < /dev/null)
+  printf '%s\n' "$result"
+  if ! grep -q '^INSTRUMENTATION_RESULT: stream=PASS ' <<< "$result" ||
+     ! grep -qx 'INSTRUMENTATION_CODE: -1' <<< "$result"; then
+    echo "$label did not report PASS." >&2
+    exit 1
+  fi
+}
+
 # Modes are ordered because seed/verify pairs must share the same disposable device.
 ran=false
 while read -r mode key value; do
@@ -66,17 +80,15 @@ while read -r mode key value; do
   if [[ -n "$key" ]]; then
     args+=(-e "$key" "$value")
   fi
-  printf '\nRunning Android instrumentation: %s%s\n' "$mode" "${key:+ ($key=$value)}"
-  result=$("$adb" -s "$serial" shell am instrument -w -r -e mode "$mode" \
-    "${args[@]}" jp.nano.rawgallery.test/jp.nano.rawgallery.ArchiveInstrumentation < /dev/null)
-  printf '%s\n' "$result"
-  if ! grep -q '^INSTRUMENTATION_RESULT: stream=PASS ' <<< "$result" ||
-     ! grep -qx 'INSTRUMENTATION_CODE: -1' <<< "$result"; then
-    echo "$mode did not report PASS." >&2
-    exit 1
-  fi
+  run_instrumentation "$mode${key:+ ($key=$value)}" -e mode "$mode" \
+    "${args[@]}" jp.nano.rawgallery.test/jp.nano.rawgallery.ArchiveInstrumentation
 done < tests/ci-android-modes.txt
 if ! "$ran"; then
   echo 'No Android instrumentation modes were configured.' >&2
   exit 1
 fi
+
+"$adb" -s "$serial" install -g raw-experiment/build/outputs/apk/debug/raw-experiment-debug.apk
+"$adb" -s "$serial" install -g raw-experiment/build/outputs/apk/androidTest/debug/raw-experiment-debug-androidTest.apk
+run_instrumentation 'raw-edit-full' -e full true \
+  jp.nano.rawgallery.rawexperiment.test/jp.nano.rawgallery.RawEditInstrumentation

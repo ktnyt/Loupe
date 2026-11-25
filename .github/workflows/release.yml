@@ -41,7 +41,7 @@ jobs:
         run: |
           python3 scripts/ci_gradle.py \
             :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug \
-            :raw-experiment:assembleDebug :raw-experiment:lintDebug
+            :raw-experiment:assembleDebug :raw-experiment:assembleDebugAndroidTest :raw-experiment:lintDebug
       - name: Inspect native assets in both APKs
         run: |
           python3 scripts/check-native-apk-assets.py \
