@@ -36,6 +36,14 @@ cacheのhitはファイル対の存在を表す。破損して再生成された
 各行をflushし、アイドル時も250ms以内に処理を継続する。強制終了直前のキューは失われ得る。
 保存失敗はlogcatのLoupeDiagnosticにwriter_failedを出し、保存を停止する。
 
+処理中に捕捉した例外は `operation.exception` イベントに固定の工程名、結果、例外クラスを記録する。例外本文、原因の連鎖、スタック、資格情報、URIは記録しない。RawEditLogは従来どおりdebugの描画計測用logcatを使う。
+
+未捕捉例外は `files/diagnostics/last-crash.json` にアプリ版（`version_code`）、例外クラス、最初のフレームのクラス・メソッド・行番号を1件だけ保存する。各ラベルは最大240文字で、ファイルは1 KiB未満。通常の診断キューやdebug設定とは独立した端末内保存で、同じプロセスの複数スレッドで未捕捉例外が発生した場合も最初の書込み試行が終わってから、各スレッドの元の例外を前のハンドラへ渡す。書込みエラーやプロセスの強制終了時には残らない場合がある。
+
+USB取り込みの時系列は `files/import-log-v2.txt` とその3世代に保存する。logcatと同じ内容で、写真名・機器名・例外本文は含めない。debug版では `adb exec-out run-as jp.nano.rawgallery cat files/import-log-v2.txt` で最新世代だけを確認できる。旧 `import-log.txt` と `import-log.[1-3].txt` には平文が残り得るため、回収・共有の対象から除外する。
+
+#199で診断の有効化・回収を変更する際は、ファイル名を許可リストで指定する。既存の `events.jsonl`、`previous.jsonl` と、クラッシュ要約を扱う場合は `last-crash.json` が対象。診断ディレクトリ外を一括回収せず、ImportLogの既存ファイルは含めない。
+
 ```sh
 # 操作直後、プロセスを止める前に回収。画像やDBは取得しない。
 python3 scripts/collect-diagnostics.py --output /tmp/loupe-diagnostics

@@ -95,6 +95,7 @@ action-labels
 comparison-labels
 ranking-result
 diagnostics
+diagnostic-failures
 
 # Synthetic imports and interruption
 import-latency

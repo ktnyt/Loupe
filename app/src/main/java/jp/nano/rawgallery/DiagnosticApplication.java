@@ -7,6 +7,9 @@ import android.os.Bundle;
 public final class DiagnosticApplication extends Application {
   @Override public void onCreate() {
     super.onCreate();
+    Thread.setDefaultUncaughtExceptionHandler(new DiagnosticCrashHandler(
+        new java.io.File(getFilesDir(), "diagnostics"), BuildConfig.VERSION_CODE,
+        Thread.getDefaultUncaughtExceptionHandler()));
     DiagnosticLog.init(this);
     GenerationIndicator.install(this);
     registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {

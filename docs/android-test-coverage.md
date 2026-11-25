@@ -6,7 +6,7 @@ CIではAndroid SDKの `system-images;android-35;google_apis;x86_64` を使う�
 
 合成モードの一覧は実行順。共有履歴とカメラ資格情報の再起動確認ではseedからverifyへ進み、USBの選択状態は最後に既定へ戻す。UIを計測するモードへ幅400dp・文字倍率1.0を渡す。`burst-gap-millis` は連写番号あり・なしを合成JPEGで検証する。`camera-pilot-ble-diagnostics` では、検査用APKへの権限付与後にBLEの事前検査で保存する診断項目を合成入力で検証する。各モードのPASSとAndroidの結果コードを照合し、失敗したモードや起動できなかった計測もCIの失敗とする。
 
-`RawEditInstrumentation` の `full` はEGLの色・向き・比較表示に加え、合成DNGのデコード、原寸タイル、JPEG保存と中止を検査する。本体の `photo-storage-import-guard` は、移動が取り込み履歴を更新する間だけ、新しい取り込みを止めることを確かめる。
+`RawEditInstrumentation` の `full` はEGLの色・向き・比較表示に加え、合成DNGのデコード、原寸タイル、JPEG保存と中止を検査する。本体の `photo-storage-import-guard` は、移動が取り込み履歴を更新する間だけ、新しい取り込みを止めることを確かめる。`diagnostic-failures` は合成エラーを使い、クラッシュや保存失敗の記録と、個人データを出力しないことを検査する。
 
 `import-latency`、`import-deferred`、`import-interruption`、`import-pause-interruption` は、合成RAWを使って新規入力の表示と中断を確認する。処理速度を比較する場合は、端末、画面、画像、診断の条件をそろえて測定する。[取り込みから一覧反映まで](diagnostics.md#新規取り込みから一覧反映まで)
 

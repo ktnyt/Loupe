@@ -119,6 +119,7 @@ public class NanoBananaService extends Service {
       MAIN.post(()->{if(GenerationIndicator.foreground())dependencies.result(startMessage);else toast(app,startMessage);});
       return true;
     }catch(Exception failure){
+      DiagnosticLog.exception("nano.admission", "failed", failure);
       synchronized(NanoBananaStore.LOCK){
         if(request!=null&&reserved==request&&!request.consumed){reserved=null;NanoBananaJob.BUSY.set(false);}
       }
@@ -154,10 +155,11 @@ public class NanoBananaService extends Service {
     try {
       startForeground(NOTIFICATION,notification());
     }catch(RuntimeException failure){
+      DiagnosticLog.exception("nano.foreground", "failed", failure);
       // Quota/permission/restart restrictions must not take down the browsing process.
       stopping=true;
       if(worker!=null)worker.interrupt();
-      try{stopForeground(STOP_FOREGROUND_REMOVE);}catch(RuntimeException ignored){}
+      try{stopForeground(STOP_FOREGROUND_REMOVE);}catch(RuntimeException error){ DiagnosticLog.exception("nano.foreground_stop", "failed", error); }
       stopSelf();
       synchronized(NanoBananaStore.LOCK){
         String nonce=intent==null?null:intent.getStringExtra(EXTRA_NONCE);
@@ -189,7 +191,7 @@ public class NanoBananaService extends Service {
           }
           request=new Request(store,null,null,null,stage.equals("discarding"));
           reserved=request;NanoBananaJob.BUSY.set(true);
-        }catch(IOException error){stopForeground(STOP_FOREGROUND_REMOVE);stopSelfResult(startId);return START_NOT_STICKY;}
+        }catch(IOException error){DiagnosticLog.exception("nano.resume", "failed", error);stopForeground(STOP_FOREGROUND_REMOVE);stopSelfResult(startId);return START_NOT_STICKY;}
       }
       request.consumed=true;running=request;
     }
@@ -198,6 +200,7 @@ public class NanoBananaService extends Service {
     try {
       worker=new Thread(()->execute(owned),"nano-banana");worker.start();
     }catch(RuntimeException|OutOfMemoryError failure){
+      DiagnosticLog.exception("nano.worker_start", "failed", failure);
       finish(owned,"処理を開始できませんでした。もう一度お試しください");
       return START_NOT_STICKY;
     }
@@ -229,7 +232,9 @@ public class NanoBananaService extends Service {
             request.store.job(null);message="生成画像を保存しました";attention=false;
           }else if(record!=null&&record.has("saved"))message="画像は保存済みです。後処理を再試行してください";
         }
-      }catch(IOException ignored){}
+      }catch(IOException recovery){DiagnosticLog.exception("nano.result_recovery", "failed", recovery);}
+      DiagnosticLog.exception(request.discard ? "nano.discard" : "nano.execute",
+          attention ? (stopping ? "cancelled" : "failed") : "recovered", error);
     }
     final String result=message;
     final android.net.Uri resultUri=saved;final boolean needsAttention=attention;

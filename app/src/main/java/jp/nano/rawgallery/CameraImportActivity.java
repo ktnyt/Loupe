@@ -129,6 +129,10 @@ public final class CameraImportActivity extends AppCompatActivity {
                     request.previousRegistration(), request.rememberFormats(), confirmation);
     private int pendingUsbDeviceId = -1, pendingUsbVendorId = -1, pendingUsbProductId = -1;
     private String pendingUsbDeviceName, pendingUsbVolume;
+    private static final String IMPORT_NOT_STARTED =
+            "確認処理が混み合っています。取り込みは始まっていません。少し待ってからやり直してください。";
+    private static final String SD_REGISTRATION_NOT_SAVED =
+            "混雑のため登録できませんでした。少し待って、SDカード取り込み設定からフォルダを選び直してください。";
     private static final java.util.concurrent.Executor SOURCE_IO = new java.util.concurrent.ThreadPoolExecutor(
             0, 2, 30, java.util.concurrent.TimeUnit.SECONDS, new java.util.concurrent.SynchronousQueue<>());
     private static final java.util.concurrent.Executor SOURCE_STATUS_IO = new java.util.concurrent.ThreadPoolExecutor(
@@ -556,7 +560,10 @@ public final class CameraImportActivity extends AppCompatActivity {
                         var selected = CameraQuickImportSources.inspectSd(getApplicationContext(), cancellation);
                         sources = CameraQuickImportSources.Sources.fromSd(selected, List.of());
                     } else sources = CameraQuickImportSources.resolve(getApplicationContext(), cancellation);
-                } catch (IOException | RuntimeException ignored) { }
+                } catch (IOException | RuntimeException unavailable) {
+                    DiagnosticLog.exception("camera.source_lookup", cancellation.isCanceled() ? "cancelled" : "failed",
+                            unavailable);
+                }
                 var outcome = sources;
                 String kinds;
                 if (expectedTarget != null) {
@@ -617,7 +624,19 @@ public final class CameraImportActivity extends AppCompatActivity {
                     }
                 });
             });
-        } catch (java.util.concurrent.RejectedExecutionException busy) { timeout.run(); }
+        } catch (java.util.concurrent.RejectedExecutionException busy) {
+            DiagnosticLog.exception("camera.source_lookup", "busy", busy);
+            rejectSourceRequest(timeout, cancellation, IMPORT_NOT_STARTED);
+        }
+    }
+
+    private void rejectSourceRequest(Runnable timeout, android.os.CancellationSignal cancellation, String message) {
+        handler.removeCallbacks(timeout);
+        ++sourceGeneration;
+        sourceCancellation = null;
+        starting = false;
+        cancellation.cancel();
+        showSdFailure(message);
     }
 
     private boolean canStartSourceAction() {
@@ -684,7 +703,10 @@ public final class CameraImportActivity extends AppCompatActivity {
             SOURCE_STATUS_IO.execute(() -> {
                 List<CameraQuickImportSources.Profile> profiles = null;
                 try { profiles = wifiProfileLoader.load(getApplicationContext(), cancellation); }
-                catch (IOException | RuntimeException unavailable) { }
+                catch (IOException | RuntimeException unavailable) {
+                    DiagnosticLog.exception("camera.wifi_profiles", cancellation.isCanceled() ? "cancelled" : "failed",
+                            unavailable);
+                }
                 var outcome = profiles;
                 handler.post(() -> {
                     if (wifiCancellation != cancellation || generation != wifiGeneration
@@ -695,13 +717,21 @@ public final class CameraImportActivity extends AppCompatActivity {
                     showWifiProfiles(outcome);
                 });
             });
-        } catch (java.util.concurrent.RejectedExecutionException busy) { wifiTimeout.run(); }
+        } catch (java.util.concurrent.RejectedExecutionException busy) {
+            DiagnosticLog.exception("camera.wifi_profiles", "busy", busy);
+            cancelWifiLoad();
+            showWifiProfiles(null, CameraQuickImportSources.SdState.BUSY.message);
+        }
     }
 
     private void showWifiProfiles(List<CameraQuickImportSources.Profile> profiles) {
+        showWifiProfiles(profiles, "登録カメラを確認できませんでした。");
+    }
+
+    private void showWifiProfiles(List<CameraQuickImportSources.Profile> profiles, String failure) {
         wifiActions.removeAllViews();
         if (profiles == null) {
-            wifiStatus.setText("登録カメラを確認できませんでした。");
+            wifiStatus.setText(failure);
             button(wifiActions, "もう一度確認する", this::loadWifiProfiles).setTag("wifi-import-retry");
         } else if (profiles.isEmpty()) {
             wifiStatus.setText("QRでカメラを登録すると、ここから取り込めます。");
@@ -1106,7 +1136,14 @@ public final class CameraImportActivity extends AppCompatActivity {
             SOURCE_STATUS_IO.execute(() -> {
                 CameraQuickImportSources.SdSource source;
                 try { source = CameraQuickImportSources.inspectSd(getApplicationContext(), cancellation); }
-                catch (android.os.OperationCanceledException stopped) { return; }
+                catch (android.os.OperationCanceledException stopped) {
+                    DiagnosticLog.exception("camera.sd_status", "cancelled", stopped);
+                    return;
+                } catch (RuntimeException failure) {
+                    DiagnosticLog.exception("camera.sd_status", "failed", failure);
+                    handler.post(timeout);
+                    return;
+                }
                 handler.post(() -> {
                     handler.removeCallbacks(timeout);
                     if (sdStatusCancellation != cancellation || isFinishing() || isDestroyed()) return;
@@ -1115,8 +1152,10 @@ public final class CameraImportActivity extends AppCompatActivity {
                 });
             });
         } catch (java.util.concurrent.RejectedExecutionException busy) {
+            DiagnosticLog.exception("camera.sd_status", "busy", busy);
             handler.removeCallbacks(timeout);
-            timeout.run();
+            renderSdSource(CameraQuickImportSources.SdState.BUSY);
+            cancelSdStatusLoad();
         }
     }
 
@@ -1243,7 +1282,7 @@ public final class CameraImportActivity extends AppCompatActivity {
 
     void confirmSdSource(SdStart request, boolean registrationOnly, SdStartMode mode) {
         if (sdConfirmation != null) return;
-        verifySdSourceAsync(request, mode, location -> {
+        verifySdSourceAsync(request, mode, registrationOnly, location -> {
             connectionFailure = null;
             renderSdSource(CameraQuickImportSources.SdState.READY);
             renderStatus();
@@ -1260,7 +1299,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         });
     }
 
-    private void verifySdSourceAsync(SdStart request, SdStartMode reselectMode,
+    private void verifySdSourceAsync(SdStart request, SdStartMode reselectMode, boolean registrationOnly,
             java.util.function.Consumer<SdLocation> onVerified) {
         if (PROGRESS.getActive() || starting || migrating || sourceCancellation != null || submittedSd != null) return;
         if (!stillSelected(request)) {
@@ -1296,10 +1335,12 @@ public final class CameraImportActivity extends AppCompatActivity {
                 try {
                     location = sdSourceProbe.verify(request, cancellation);
                 } catch (MountedCameraCard.Unavailable unavailable) {
+                    DiagnosticLog.exception("camera.sd_verify", "unavailable", unavailable);
                     failure = unavailable.getMessage();
                     reselect = reselectMode != null && unavailable.canReselect() && !request.picked();
                 } catch (IOException | RuntimeException unavailable) {
-                    // A failed metadata query cannot approve a source for registration or import.
+                    DiagnosticLog.exception("camera.sd_verify", cancellation.isCanceled() ? "cancelled" : "failed",
+                            unavailable);
                 }
                 SdLocation confirmed = location;
                 String message = failure;
@@ -1321,8 +1362,9 @@ public final class CameraImportActivity extends AppCompatActivity {
                 });
             });
         } catch (java.util.concurrent.RejectedExecutionException busy) {
-            handler.removeCallbacks(timeout);
-            timeout.run();
+            DiagnosticLog.exception("camera.sd_verify", "busy", busy);
+            rejectSourceRequest(timeout, cancellation,
+                    registrationOnly ? SD_REGISTRATION_NOT_SAVED : IMPORT_NOT_STARTED);
         }
     }
 
@@ -1359,7 +1401,7 @@ public final class CameraImportActivity extends AppCompatActivity {
             showSdFailure("別の取り込みが実行中です。処理が終わってからやり直してください。");
             return;
         }
-        verifySdSourceAsync(request, null, ignored -> submitSd(request, registrationOnly));
+        verifySdSourceAsync(request, null, registrationOnly, ignored -> submitSd(request, registrationOnly));
     }
 
     private void abandonSdSubmission() {

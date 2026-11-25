@@ -241,8 +241,9 @@ public final class MainActivity extends DiagnosticActivity {
   private void openGeneratedImage(String value) {
     if(value==null)return;
     Uri uri=Uri.parse(value);
-    if(!"content".equals(uri.getScheme())||!"media".equals(uri.getAuthority())
-        ||!uri.getPath().matches("/(external|external_primary)/images/media/[0-9]+"))return;
+    String path = uri.getPath();
+    if (!"content".equals(uri.getScheme()) || !"media".equals(uri.getAuthority())
+        || path == null || !path.matches("/(external|external_primary)/images/media/[0-9]+")) return;
     try(android.database.Cursor cursor=getContentResolver().query(uri,
         new String[]{android.provider.MediaStore.Images.Media.DISPLAY_NAME,android.provider.MediaStore.Images.Media.SIZE,
           android.provider.MediaStore.Images.Media.DATE_MODIFIED,android.provider.MediaStore.Images.Media.DATE_TAKEN,
