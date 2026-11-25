@@ -25,10 +25,15 @@ final class E2LargeOriginalChecks {
     } finally {
       Files.deleteIfExists(credential.toPath());
     }
-    if (token == null || !token.matches("[0-9a-f]{12}") || config.size() != 3
-        || !"loupe-test".equals(config.get(0)) || !"1".equals(shell(test, "getprop ro.kernel.qemu"))
-        || Integer.parseInt(shell(test, "am get-current-user")) != android.os.Process.myUid() / 100000
-        || android.os.Process.myUid() / 100000 == 0 || !E2Settings.configuredBucket(context).isEmpty())
+    if (token == null
+        || !token.matches("[0-9a-f]{12}")
+        || config.size() != 3
+        || !"loupe-test".equals(config.get(0))
+        || !"1".equals(shell(test, "getprop ro.kernel.qemu"))
+        || Integer.parseInt(shell(test, "am get-current-user"))
+            != android.os.Process.myUid() / 100000
+        || android.os.Process.myUid() / 100000 == 0
+        || !E2Settings.configuredBucket(context).isEmpty())
       throw new AssertionError("Requires loupe-test and a separate emulator user");
     long size = E2Archive.LIMIT + 1024 * 1024;
     File source = File.createTempFile("loupe-large-video-", ".mp4", context.getCacheDir());
@@ -36,7 +41,8 @@ final class E2LargeOriginalChecks {
     String name = "loupe-large-test-" + token + ".mp4";
     long started = android.os.SystemClock.elapsedRealtime();
     try (E2Photos photos = new E2Photos(context)) {
-      if (!photos.settings.records.all().isEmpty()) throw new AssertionError("Test app data is not empty");
+      if (!photos.settings.records.all().isEmpty())
+        throw new AssertionError("Test app data is not empty");
       long sourceBytes;
       try (InputStream input = test.getContext().getAssets().open("video-synthetic.mp4");
           RandomAccessFile file = new RandomAccessFile(source, "rw")) {
@@ -59,17 +65,24 @@ final class E2LargeOriginalChecks {
       List<JSONObject> records = photos.settings.records.all();
       if (records.size() != 1) throw new AssertionError("Expected only one protected fixture");
       JSONObject row = records.get(0);
-      if (!"verified".equals(row.getString("state")) || size != row.getLong("size")
-          || !sha.equals(row.getString("sha")) || !"video/mp4".equals(row.getString("mime")))
+      if (!"verified".equals(row.getString("state"))
+          || size != row.getLong("size")
+          || !sha.equals(row.getString("sha"))
+          || !"video/mp4".equals(row.getString("mime")))
         throw new AssertionError("Large upload receipt was not confirmed");
       File downloaded = photos.downloadRecord(row);
       try (InputStream input = Files.newInputStream(downloaded.toPath())) {
-        if (!sha.equals(E2Archive.readHash(input, null, size))) throw new AssertionError("Restored bytes differ");
+        if (!sha.equals(E2Archive.readHash(input, null, size)))
+          throw new AssertionError("Restored bytes differ");
       } finally {
         E2Photos.discard(downloaded);
       }
-      return "PASS large MP4: bytes=" + size + ", SHA-256 " + sha
-          + ", elapsed_ms=" + (android.os.SystemClock.elapsedRealtime() - started);
+      return "PASS large MP4: bytes="
+          + size
+          + ", SHA-256 "
+          + sha
+          + ", elapsed_ms="
+          + (android.os.SystemClock.elapsedRealtime() - started);
     } finally {
       Files.deleteIfExists(source.toPath());
       context.getSharedPreferences("e2_connection", Context.MODE_PRIVATE).edit().clear().commit();
@@ -83,11 +96,14 @@ final class E2LargeOriginalChecks {
       throw new AssertionError("Requires a dedicated emulator");
     File cache = context.getCacheDir();
     File interrupted = File.createTempFile("e2-save-", ".part", cache);
-    File orphan = new File(Files.createTempDirectory(cache.toPath(), "e2-export-").toFile(), "original");
-    File protectedCopy = new File(Files.createTempDirectory(cache.toPath(), "e2-export-").toFile(), "original");
+    File orphan =
+        new File(Files.createTempDirectory(cache.toPath(), "e2-export-").toFile(), "original");
+    File protectedCopy =
+        new File(Files.createTempDirectory(cache.toPath(), "e2-export-").toFile(), "original");
     Files.write(orphan.toPath(), new byte[] {1});
     Files.write(protectedCopy.toPath(), new byte[] {2});
-    File waitingExpiry = new File(Files.createTempDirectory(cache.toPath(), "e2-export-").toFile(), "original");
+    File waitingExpiry =
+        new File(Files.createTempDirectory(cache.toPath(), "e2-export-").toFile(), "original");
     Files.write(waitingExpiry.toPath(), new byte[] {3});
     Files.createFile(new File(waitingExpiry.getParentFile(), "picker").toPath());
     File marker = new File(protectedCopy.getParentFile(), "picker");
@@ -97,11 +113,16 @@ final class E2LargeOriginalChecks {
     Files.setLastModifiedTime(marker.toPath(), java.nio.file.attribute.FileTime.fromMillis(1));
     try (E2Photos photos = new E2Photos(context)) {
       try {
-        photos.save(Uri.fromFile(new File(cache, "absent-e2-fixture")), "cache-check.mp4", "loupe-test");
+        photos.save(
+            Uri.fromFile(new File(cache, "absent-e2-fixture")), "cache-check.mp4", "loupe-test");
         throw new AssertionError("Expected source to be missing");
       } catch (java.io.IOException expected) {
-        if (interrupted.exists() || orphan.exists() || !protectedCopy.isFile() || !waitingExpiry.isFile())
-          throw new AssertionError("Initial staging cleanup ignored a current picker or valid lease");
+        if (interrupted.exists()
+            || orphan.exists()
+            || !protectedCopy.isFile()
+            || !waitingExpiry.isFile())
+          throw new AssertionError(
+              "Initial staging cleanup ignored a current picker or valid lease");
       }
       try {
         photos.stage(() -> new java.io.ByteArrayInputStream(new byte[] {1}), 2);
@@ -109,8 +130,8 @@ final class E2LargeOriginalChecks {
       } catch (java.io.IOException expected) {
         if (!"オリジナルのサイズが変わりました".equals(expected.getMessage())) throw expected;
       }
-      E2Photos.discardInterruptedStaging(cache,
-          System.currentTimeMillis() + java.util.concurrent.TimeUnit.DAYS.toMillis(1));
+      E2Photos.discardInterruptedStaging(
+          cache, System.currentTimeMillis() + java.util.concurrent.TimeUnit.DAYS.toMillis(1));
       if (waitingExpiry.exists() || !protectedCopy.isFile())
         throw new AssertionError("Same-process cleanup did not reclaim the expired lease");
       verifyProtectedBytes(protectedCopy);
@@ -121,7 +142,8 @@ final class E2LargeOriginalChecks {
       int before = settings.getInt("fullMediaConsent", 0);
       try {
         settings.edit().putInt("fullMediaConsent", 1).commit();
-        if (E2SyncJob.fullMediaConsent(context)) throw new AssertionError("Old size consent still accepted");
+        if (E2SyncJob.fullMediaConsent(context))
+          throw new AssertionError("Old size consent still accepted");
       } finally {
         var restore = settings.edit();
         if (hadConsent) restore.putInt("fullMediaConsent", before);
@@ -147,56 +169,94 @@ final class E2LargeOriginalChecks {
     File other = restoreFixture(cache, bytes);
     String sha = E2Archive.sha256(bytes);
     try {
-      test.runOnMainSync(() -> {
-        var picker = new E2RestorePicker(cache, null);
-        var noHandler = new E2Photos.PreparedRestore(unavailable, bytes.length, sha);
-        requirePicker(!picker.open(noHandler, "image/jpeg", "Synthetic.jpg", intent -> {
-          throw new android.content.ActivityNotFoundException();
-        }), "launch without an Activity fails");
-        requirePicker(!picker.isWaiting() && !unavailable.exists()
-            && !new File(unavailable.getParentFile(), "picker").exists(),
-            "unavailable picker releases only its prepared file");
-        var forbidden = new E2Photos.PreparedRestore(denied, bytes.length, sha);
-        requirePicker(!picker.open(forbidden, "image/jpeg", "Synthetic.jpg", intent -> {
-          throw new SecurityException();
-        }), "picker launch denied");
-        requirePicker(!picker.isWaiting() && !denied.exists(), "denied launch also releases its file");
-        var abandoned = new E2Photos.PreparedRestore(cancelled, bytes.length, sha);
-        requirePicker(picker.open(abandoned, "image/jpeg", "Synthetic.jpg", intent -> {
-          requirePicker(android.content.Intent.ACTION_CREATE_DOCUMENT.equals(intent.getAction())
-                  && intent.hasCategory(android.content.Intent.CATEGORY_OPENABLE)
-                  && intent.getBooleanExtra(android.content.Intent.EXTRA_LOCAL_ONLY, false)
-                  && "image/jpeg".equals(intent.getType())
-                  && "Synthetic.jpg".equals(intent.getStringExtra(android.content.Intent.EXTRA_TITLE)),
-              "normal request retains its type, title and local-only openable boundary");
-        }), "a later attempt can open the picker");
-        picker.cancel();
-        requirePicker(!picker.isWaiting() && !cancelled.exists(), "ordinary picker cancel releases the staged file");
-        var ready = new E2Photos.PreparedRestore(rotated, bytes.length, sha);
-        requirePicker(picker.open(ready, "image/jpeg", "Synthetic.jpg", intent -> {}), "second attempt starts");
-        var state = new android.os.Bundle();
-        picker.saveState(state);
-        picker.close(false, true);
-        requirePicker(rotated.isFile() && new File(rotated.getParentFile(), "picker").isFile(),
-            "configuration changes keep the pending file and lease");
-        var recreated = new E2RestorePicker(cache, state);
-        requirePicker(ready.equals(recreated.take()) && recreated.take() == null,
-            "recreated picker transfers exactly one matching prepared file");
-        requirePicker(rotated.isFile() && other.isFile() && new File(other.getParentFile(), "picker").isFile(),
-            "handoff retains its file for the exporter and never touches another request");
-        E2Photos.discard(rotated);
-        requirePicker(!new E2RestorePicker(cache, state).isWaiting(),
-            "a missing cache entry cannot be transferred twice");
-      });
+      test.runOnMainSync(
+          () -> {
+            var picker = new E2RestorePicker(cache, null);
+            var noHandler = new E2Photos.PreparedRestore(unavailable, bytes.length, sha);
+            requirePicker(
+                !picker.open(
+                    noHandler,
+                    "image/jpeg",
+                    "Synthetic.jpg",
+                    intent -> {
+                      throw new android.content.ActivityNotFoundException();
+                    }),
+                "launch without an Activity fails");
+            requirePicker(
+                !picker.isWaiting()
+                    && !unavailable.exists()
+                    && !new File(unavailable.getParentFile(), "picker").exists(),
+                "unavailable picker releases only its prepared file");
+            var forbidden = new E2Photos.PreparedRestore(denied, bytes.length, sha);
+            requirePicker(
+                !picker.open(
+                    forbidden,
+                    "image/jpeg",
+                    "Synthetic.jpg",
+                    intent -> {
+                      throw new SecurityException();
+                    }),
+                "picker launch denied");
+            requirePicker(
+                !picker.isWaiting() && !denied.exists(), "denied launch also releases its file");
+            var abandoned = new E2Photos.PreparedRestore(cancelled, bytes.length, sha);
+            requirePicker(
+                picker.open(
+                    abandoned,
+                    "image/jpeg",
+                    "Synthetic.jpg",
+                    intent -> {
+                      requirePicker(
+                          android.content.Intent.ACTION_CREATE_DOCUMENT.equals(intent.getAction())
+                              && intent.hasCategory(android.content.Intent.CATEGORY_OPENABLE)
+                              && intent.getBooleanExtra(
+                                  android.content.Intent.EXTRA_LOCAL_ONLY, false)
+                              && "image/jpeg".equals(intent.getType())
+                              && "Synthetic.jpg"
+                                  .equals(
+                                      intent.getStringExtra(android.content.Intent.EXTRA_TITLE)),
+                          "normal request retains its type, title and local-only openable boundary");
+                    }),
+                "a later attempt can open the picker");
+            picker.cancel();
+            requirePicker(
+                !picker.isWaiting() && !cancelled.exists(),
+                "ordinary picker cancel releases the staged file");
+            var ready = new E2Photos.PreparedRestore(rotated, bytes.length, sha);
+            requirePicker(
+                picker.open(ready, "image/jpeg", "Synthetic.jpg", intent -> {}),
+                "second attempt starts");
+            var state = new android.os.Bundle();
+            picker.saveState(state);
+            picker.close(false, true);
+            requirePicker(
+                rotated.isFile() && new File(rotated.getParentFile(), "picker").isFile(),
+                "configuration changes keep the pending file and lease");
+            var recreated = new E2RestorePicker(cache, state);
+            requirePicker(
+                ready.equals(recreated.take()) && recreated.take() == null,
+                "recreated picker transfers exactly one matching prepared file");
+            requirePicker(
+                rotated.isFile()
+                    && other.isFile()
+                    && new File(other.getParentFile(), "picker").isFile(),
+                "handoff retains its file for the exporter and never touches another request");
+            E2Photos.discard(rotated);
+            requirePicker(
+                !new E2RestorePicker(cache, state).isWaiting(),
+                "a missing cache entry cannot be transferred twice");
+          });
       if (!java.util.Arrays.equals(bytes, Files.readAllBytes(other.toPath())))
         throw new AssertionError("A different restore file was modified");
     } finally {
-      for (File file : List.of(unavailable, denied, cancelled, rotated, other)) E2Photos.discard(file);
+      for (File file : List.of(unavailable, denied, cancelled, rotated, other))
+        E2Photos.discard(file);
     }
   }
 
   private static File restoreFixture(File cache, byte[] bytes) throws Exception {
-    File file = new File(Files.createTempDirectory(cache.toPath(), "e2-export-").toFile(), "original");
+    File file =
+        new File(Files.createTempDirectory(cache.toPath(), "e2-export-").toFile(), "original");
     Files.write(file.toPath(), bytes);
     E2Photos.holdForPicker(file);
     return file;
@@ -224,8 +284,8 @@ final class E2LargeOriginalChecks {
 
   private static void verifyDiskReserve(File cache) throws Exception {
     File file = File.createTempFile("e2-budget-", ".part", cache);
-    try (var output = new E2Archive.TemporaryOutput(file,
-        () -> E2Archive.STORAGE_RESERVE + 2 - file.length())) {
+    try (var output =
+        new E2Archive.TemporaryOutput(file, () -> E2Archive.STORAGE_RESERVE + 2 - file.length())) {
       output.write(new byte[] {1, 2});
       try {
         output.write(new byte[] {3});
@@ -239,8 +299,9 @@ final class E2LargeOriginalChecks {
   }
 
   private static String shell(Instrumentation test, String command) throws Exception {
-    try (InputStream out = new android.os.ParcelFileDescriptor.AutoCloseInputStream(
-        test.getUiAutomation().executeShellCommand(command))) {
+    try (InputStream out =
+        new android.os.ParcelFileDescriptor.AutoCloseInputStream(
+            test.getUiAutomation().executeShellCommand(command))) {
       return new String(out.readAllBytes(), StandardCharsets.UTF_8).trim();
     }
   }

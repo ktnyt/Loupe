@@ -38,7 +38,12 @@ final class E2Panel {
   private final EditText bucket, access, secret;
   private final TextInputLayout searchBox;
   private final TextInputEditText searchInput;
-  private final TextView status, catalogStatus, cleanupStatus, searchCount, transferBucket, uploadCounts;
+  private final TextView status,
+      catalogStatus,
+      cleanupStatus,
+      searchCount,
+      transferBucket,
+      uploadCounts;
   private final TransferRow backup, manualUpload, catalogDownload, originalDownload;
   private final Button connect, save, cancel, autoToggle, catalogLoad, catalogSave, cleanupToggle;
   private final Handler main = new Handler(Looper.getMainLooper());
@@ -57,7 +62,8 @@ final class E2Panel {
   private Runnable pendingSearch;
   private volatile int searchGeneration;
 
-  E2Panel(E2SyncActivity activity, android.widget.ScrollView scroll, LinearLayout root, Bundle state) {
+  E2Panel(
+      E2SyncActivity activity, android.widget.ScrollView scroll, LinearLayout root, Bundle state) {
     this.activity = activity;
     this.scroll = scroll;
     photos = new E2Photos(activity);
@@ -100,11 +106,16 @@ final class E2Panel {
     status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
     background(status, 0xff232327, 12);
     add(card, status);
-    cancel = button(card, "中止", 48, () -> {
-      cancelled = true;
-      Thread thread = operation;
-      if (thread != null) thread.interrupt();
-    });
+    cancel =
+        button(
+            card,
+            "中止",
+            48,
+            () -> {
+              cancelled = true;
+              Thread thread = operation;
+              if (thread != null) thread.interrupt();
+            });
     save = button(card, "オリジナルを1つ選んで保存", 52, this::pick);
     TextView autoTitle = text("自動バックアップ", 16);
     autoTitle.setAccessibilityHeading(true);
@@ -115,8 +126,11 @@ final class E2Panel {
     cleanupStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
     add(card, cleanupStatus);
     cleanupToggle = button(card, "端末オリジナルの整理を有効にする", 48, this::toggleCleanup);
-    button(card, "処理の状況で見る", 48, () ->
-        activity.startActivity(new Intent(activity, DashboardActivity.class)));
+    button(
+        card,
+        "処理の状況で見る",
+        48,
+        () -> activity.startActivity(new Intent(activity, DashboardActivity.class)));
     add(card, text("保存したオリジナル", 16));
     button(card, "保存したオリジナルを更新", 48, () -> run("一覧を読み込んでいます", this::refresh));
     catalogLoad = button(card, "クラウドから復元一覧を取得", 48, () -> catalog(false));
@@ -128,20 +142,30 @@ final class E2Panel {
     searchBox = new TextInputLayout(activity);
     searchBox.setHint("ファイル名で検索");
     searchBox.setEndIconMode(TextInputLayout.END_ICON_CLEAR_TEXT);
-    searchBox.setImportantForContentCapture(View.IMPORTANT_FOR_CONTENT_CAPTURE_NO_EXCLUDE_DESCENDANTS);
+    searchBox.setImportantForContentCapture(
+        View.IMPORTANT_FOR_CONTENT_CAPTURE_NO_EXCLUDE_DESCENDANTS);
     searchBox.setVisibility(View.GONE);
     searchInput = new TextInputEditText(searchBox.getContext());
     searchInput.setSingleLine(true);
     searchInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-    searchInput.setImeOptions(EditorInfo.IME_ACTION_DONE | EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING);
+    searchInput.setImeOptions(
+        EditorInfo.IME_ACTION_DONE | EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING);
     searchInput.setSaveEnabled(false);
     searchInput.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
     searchBox.addView(searchInput, new LinearLayout.LayoutParams(-1, -2));
-    searchInput.addTextChangedListener(new TextWatcher() {
-      @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) {}
-      @Override public void onTextChanged(CharSequence value, int start, int before, int count) {}
-      @Override public void afterTextChanged(Editable value) { searchSaved(value.toString()); }
-    });
+    searchInput.addTextChangedListener(
+        new TextWatcher() {
+          @Override
+          public void beforeTextChanged(CharSequence value, int start, int count, int after) {}
+
+          @Override
+          public void onTextChanged(CharSequence value, int start, int before, int count) {}
+
+          @Override
+          public void afterTextChanged(Editable value) {
+            searchSaved(value.toString());
+          }
+        });
     add(card, searchBox);
     searchCount = text("", 14);
     searchCount.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
@@ -167,7 +191,9 @@ final class E2Panel {
       message("書き出し結果を確認できませんでした", 0xffffb4a8);
   }
 
-  Object retainedState() { return export; }
+  Object retainedState() {
+    return export;
+  }
 
   void saveState(Bundle state) {
     state.putString("e2-picker-bucket", pickerBucket);
@@ -192,8 +218,8 @@ final class E2Panel {
     if (!cleanupText.contentEquals(cleanupStatus.getText())) cleanupStatus.setText(cleanupText);
     cleanupStatus.setVisibility(cleanupText.isEmpty() ? View.GONE : View.VISIBLE);
     cleanupToggle.setText(cleaning ? "端末オリジナルの整理を停止" : "端末オリジナルの整理を有効にする");
-    cleanupToggle.setEnabled(!busy && enabled && E2SyncJob.fullMediaConsent(activity)
-        && activeBucket != null);
+    cleanupToggle.setEnabled(
+        !busy && enabled && E2SyncJob.fullMediaConsent(activity) && activeBucket != null);
   }
 
   private void toggleCleanup() {
@@ -204,34 +230,44 @@ final class E2Panel {
       return;
     }
     if (!android.os.Environment.isExternalStorageManager()) {
-      new GalleryUi.Sheet(activity).setTitle("写真を整理する権限")
+      new GalleryUi.Sheet(activity)
+          .setTitle("写真を整理する権限")
           .setMessage("端末からオリジナルを削除するには、Androidで全ファイルへのアクセスを許可してください。")
           .setNegativeButton("キャンセル", null)
-          .setPositiveButton("Android設定を開く", (dialog, which) -> {
-            Intent settings = new Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                Uri.parse("package:" + activity.getPackageName()));
-            try {
-              activity.startActivity(settings);
-            } catch (android.content.ActivityNotFoundException ignored) {
-              message("Androidの設定から全ファイルへのアクセスを許可してください", 0xffffb4a8);
-            }
-          }).show();
+          .setPositiveButton(
+              "Android設定を開く",
+              (dialog, which) -> {
+                Intent settings =
+                    new Intent(
+                        android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                        Uri.parse("package:" + activity.getPackageName()));
+                try {
+                  activity.startActivity(settings);
+                } catch (android.content.ActivityNotFoundException ignored) {
+                  message("Androidの設定から全ファイルへのアクセスを許可してください", 0xffffb4a8);
+                }
+              })
+          .show();
       return;
     }
     int retention = E2Cleanup.days(activity);
-    new GalleryUi.Sheet(activity).setTitle("端末オリジナルの整理を有効にしますか？")
-        .setMessage(bucket + " に復元できる状態で保管したJPEGのうち、"
-            + retention + "日以上経ったオリジナルを端末から削除します。"
-            + "小さいサムネイルは端末に残ります。")
+    new GalleryUi.Sheet(activity)
+        .setTitle("端末オリジナルの整理を有効にしますか？")
+        .setMessage(
+            bucket
+                + " に復元できる状態で保管したJPEGのうち、"
+                + retention
+                + "日以上経ったオリジナルを端末から削除します。"
+                + "小さいサムネイルは端末に残ります。")
         .setNegativeButton("キャンセル", null)
-        .setPositiveButton("有効にする", (dialog, which) -> setCleanup(bucket, retention)).show();
+        .setPositiveButton("有効にする", (dialog, which) -> setCleanup(bucket, retention))
+        .show();
   }
 
   private void setCleanup(String bucket, int retention) {
     try {
       E2Cleanup.setEnabled(activity, bucket, retention);
-      message(retention > 0 ? "次の自動バックアップで整理対象を確認します" : "端末オリジナルの整理を停止しました",
-          GalleryUi.TEXT);
+      message(retention > 0 ? "次の自動バックアップで整理対象を確認します" : "端末オリジナルの整理を停止しました", GalleryUi.TEXT);
     } catch (java.io.IOException failed) {
       message("容量整理の設定を保存できません。保存先や権限を確認してください", 0xffffb4a8);
     }
@@ -241,46 +277,66 @@ final class E2Panel {
   private boolean backupObserved() {
     String target = E2Settings.configuredBucket(activity);
     android.content.SharedPreferences preferences = E2AutoSync.state(activity);
-    return !target.isEmpty() && (target.equals(preferences.getString("observationBucket", ""))
-        || target.equals(preferences.getString("lastCountBucket", "")));
+    return !target.isEmpty()
+        && (target.equals(preferences.getString("observationBucket", ""))
+            || target.equals(preferences.getString("lastCountBucket", "")));
   }
 
   private void refreshTransfers(boolean enabled, JobState state, String reason) {
     String target = E2Settings.configuredBucket(activity);
     android.content.SharedPreferences preferences = E2AutoSync.state(activity);
-    boolean current = enabled && !target.isEmpty()
-        && target.equals(preferences.getString("destination", ""));
-    boolean publishing = current && state.kind == JobState.Kind.RUNNING
-        && preferences.getBoolean("publishingCatalog", false);
+    boolean current =
+        enabled && !target.isEmpty() && target.equals(preferences.getString("destination", ""));
+    boolean publishing =
+        current
+            && state.kind == JobState.Kind.RUNNING
+            && preferences.getBoolean("publishingCatalog", false);
     boolean scopedCounts = current && state.countsKnown;
     boolean known = scopedCounts && state.kind != JobState.Kind.UNKNOWN;
-    boolean previous = !known && (scopedCounts || (!target.isEmpty()
-        && target.equals(preferences.getString("lastCountBucket", ""))));
+    boolean previous =
+        !known
+            && (scopedCounts
+                || (!target.isEmpty()
+                    && target.equals(preferences.getString("lastCountBucket", ""))));
     int ready = scopedCounts ? state.ready : preferences.getInt("lastReady", 0);
     int total = scopedCounts ? state.total : preferences.getInt("lastTotal", 0);
     int failed = scopedCounts ? state.failed : preferences.getInt("lastFailed", 0);
-    String backupState = publishing ? "復元一覧に反映中"
-        : !current ? (backupObserved() ? "一時停止中" : "未開始")
-        : switch (state.kind) {
-          case RUNNING -> !known ? "対象を確認中"
-              : ready + failed >= total ? "同期結果を確認中" : "アップロード中";
-          case PAUSED -> "中断 · 再開待ち";
-          case COMPLETE -> "完了";
-          case PARTIAL -> "一部失敗";
-          case FAILED -> "失敗";
-          case AUTH_REQUIRED -> "設定の確認が必要";
-          default -> "待機中";
-        };
+    String backupState =
+        publishing
+            ? "復元一覧に反映中"
+            : !current
+                ? (backupObserved() ? "一時停止中" : "未開始")
+                : switch (state.kind) {
+                  case RUNNING ->
+                      !known ? "対象を確認中" : ready + failed >= total ? "同期結果を確認中" : "アップロード中";
+                  case PAUSED -> "中断 · 再開待ち";
+                  case COMPLETE -> "完了";
+                  case PARTIAL -> "一部失敗";
+                  case FAILED -> "失敗";
+                  case AUTH_REQUIRED -> "設定の確認が必要";
+                  default -> "待機中";
+                };
     updateText(transferBucket, target.isEmpty() ? "IDrive e2 未接続" : "IDrive e2 · " + target);
-    backup.render(backupState, current && state.kind == JobState.Kind.RUNNING
-        && (!known || publishing || ready + failed >= total), known ? ready : 0,
+    backup.render(
+        backupState,
+        current
+            && state.kind == JobState.Kind.RUNNING
+            && (!known || publishing || ready + failed >= total),
+        known ? ready : 0,
         known && !publishing ? total : 0);
     String counts = "";
     if (known || previous) {
-      counts = (previous ? "前回の計測 · " : "") + "確認済み "
-          + number(ready) + " / " + number(total)
-          + "件\n残り " + number(Math.max(0, total - ready - failed))
-          + "件 · 失敗 " + number(failed) + "件";
+      counts =
+          (previous ? "前回の計測 · " : "")
+              + "確認済み "
+              + number(ready)
+              + " / "
+              + number(total)
+              + "件\n残り "
+              + number(Math.max(0, total - ready - failed))
+              + "件 · 失敗 "
+              + number(failed)
+              + "件";
     }
     if (known && state.kind == JobState.Kind.RUNNING && !publishing && ready + failed < total) {
       E2AutoSync.Rate rate = E2AutoSync.rate(target);
@@ -299,8 +355,12 @@ final class E2Panel {
     showTransfer(originalDownload, E2TransferStatus.Kind.ORIGINAL_DOWNLOAD, target, "取得中", "取得済み");
   }
 
-  private void showTransfer(TransferRow row, E2TransferStatus.Kind kind, String target,
-      String running, String completed) {
+  private void showTransfer(
+      TransferRow row,
+      E2TransferStatus.Kind kind,
+      String target,
+      String running,
+      String completed) {
     E2TransferStatus.Snapshot item = E2TransferStatus.snapshot(kind, target);
     if (item == null) {
       row.render("未実行", false, 0, 0);
@@ -310,28 +370,37 @@ final class E2Panel {
     long bytes = item.bytes();
     boolean active = item.state() == E2TransferStatus.State.RUNNING;
     boolean verifying = active && total > 0 && bytes == total;
-    String label = switch (item.state()) {
-      case RUNNING -> item.publishing() ? "復元一覧に反映中" : verifying ? "照合中" : running;
-      case COMPLETE -> item.count() == 0 ? "クラウドに一覧なし"
-          : item.count() > 0 ? completed + " · " + number(item.count()) + "件" : completed;
-      case FAILED -> item.publishing() ? "復元一覧の反映に失敗" : "失敗";
-      case CANCELLED -> "中止";
-    };
+    String label =
+        switch (item.state()) {
+          case RUNNING -> item.publishing() ? "復元一覧に反映中" : verifying ? "照合中" : running;
+          case COMPLETE ->
+              item.count() == 0
+                  ? "クラウドに一覧なし"
+                  : item.count() > 0 ? completed + " · " + number(item.count()) + "件" : completed;
+          case FAILED -> item.publishing() ? "復元一覧の反映に失敗" : "失敗";
+          case CANCELLED -> "中止";
+        };
     if (item.originalSaved() && item.state() != E2TransferStatus.State.COMPLETE)
       label = "オリジナル保存済み · " + label;
     if (active && total > 0) {
-      label += " · " + android.text.format.Formatter.formatShortFileSize(activity, bytes)
-          + " / " + android.text.format.Formatter.formatShortFileSize(activity, total);
+      label +=
+          " · "
+              + android.text.format.Formatter.formatShortFileSize(activity, bytes)
+              + " / "
+              + android.text.format.Formatter.formatShortFileSize(activity, total);
     }
     if (active && !verifying && !item.publishing() && total > bytes && item.bytesPerSecond() > 0)
-      label += "\n" + transferSpeed(item.bytesPerSecond()) + " · 転送残り "
-          + estimate((long) Math.ceil((total - bytes) / item.bytesPerSecond()));
-    row.render(label, active && (total <= 0 || verifying), bytes,
-        active && !verifying ? total : 0);
+      label +=
+          "\n"
+              + transferSpeed(item.bytesPerSecond())
+              + " · 転送残り "
+              + estimate((long) Math.ceil((total - bytes) / item.bytesPerSecond()));
+    row.render(label, active && (total <= 0 || verifying), bytes, active && !verifying ? total : 0);
   }
 
   private String transferSpeed(double bytesPerSecond) {
-    return android.text.format.Formatter.formatShortFileSize(activity, (long) bytesPerSecond) + "/s";
+    return android.text.format.Formatter.formatShortFileSize(activity, (long) bytesPerSecond)
+        + "/s";
   }
 
   private String estimate(long seconds) {
@@ -344,7 +413,8 @@ final class E2Panel {
 
   private String number(int value) {
     return java.text.NumberFormat.getIntegerInstance(
-        activity.getResources().getConfiguration().getLocales().get(0)).format(value);
+            activity.getResources().getConfiguration().getLocales().get(0))
+        .format(value);
   }
 
   private void addHeading(LinearLayout parent, String label) {
@@ -366,7 +436,8 @@ final class E2Panel {
       add(parent, container);
       label = text("", 14);
       container.addView(label);
-      indicator = new com.google.android.material.progressindicator.LinearProgressIndicator(activity);
+      indicator =
+          new com.google.android.material.progressindicator.LinearProgressIndicator(activity);
       indicator.setMax(1000);
       indicator.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
       indicator.setVisibility(View.GONE);
@@ -397,17 +468,23 @@ final class E2Panel {
         message("端末オリジナルの整理も停止しました。再開後に設定できます", GalleryUi.TEXT);
     } else if (activeBucket != null) {
       if (!E2Settings.hasMediaAccess(activity)) {
-        new GalleryUi.Sheet(activity).setTitle("写真と動画の読み取りを許可してください")
+        new GalleryUi.Sheet(activity)
+            .setTitle("写真と動画の読み取りを許可してください")
             .setMessage("自動バックアップには、端末のすべての写真・動画とオリジナルの読み取り許可が必要です。")
             .setNegativeButton("キャンセル", null)
-            .setPositiveButton("許可", (dialog, which) -> activity.requestPhotoAccess()).show();
+            .setPositiveButton("許可", (dialog, which) -> activity.requestPhotoAccess())
+            .show();
         return;
       }
-      new GalleryUi.Sheet(activity).setTitle("自動バックアップを開始しますか？")
-          .setMessage("今あるRAW・JPEG・動画と今後追加するオリジナルをIDrive e2（東京）に保存し、読み戻して照合します。一時領域にオリジナルのサイズに応じた空き容量が必要です。"
-              + "\n保存済みのオリジナルもクラウドの復元一覧に反映します。\n保存先バケット " + activeBucket)
+      new GalleryUi.Sheet(activity)
+          .setTitle("自動バックアップを開始しますか？")
+          .setMessage(
+              "今あるRAW・JPEG・動画と今後追加するオリジナルをIDrive e2（東京）に保存し、読み戻して照合します。一時領域にオリジナルのサイズに応じた空き容量が必要です。"
+                  + "\n保存済みのオリジナルもクラウドの復元一覧に反映します。\n保存先バケット "
+                  + activeBucket)
           .setNegativeButton("キャンセル", null)
-          .setPositiveButton("開始", (dialog, which) -> setAuto(true)).show();
+          .setPositiveButton("開始", (dialog, which) -> setAuto(true))
+          .show();
     }
   }
 
@@ -429,21 +506,27 @@ final class E2Panel {
     if (key.isEmpty()) secret.setError("入力してください");
     if (name.isEmpty() || id.isEmpty() || key.isEmpty()) return;
     connecting = true;
-    run("接続を確認しています", () -> {
-      photos.settings.connect(name, id, key);
-      post(() -> {
-        access.setText("");
-        secret.setText("");
-        connect.setText("接続して保存");
-        message("接続しました", 0xff9fe0b5);
-      });
-      refresh();
-    });
+    run(
+        "接続を確認しています",
+        () -> {
+          photos.settings.connect(name, id, key);
+          post(
+              () -> {
+                access.setText("");
+                secret.setText("");
+                connect.setText("接続して保存");
+                message("接続しました", 0xff9fe0b5);
+              });
+          refresh();
+        });
   }
 
   private void pick() {
-    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
-        .setType("*/*").putExtra(Intent.EXTRA_LOCAL_ONLY, true);
+    Intent intent =
+        new Intent(Intent.ACTION_OPEN_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType("*/*")
+            .putExtra(Intent.EXTRA_LOCAL_ONLY, true);
     pickerBucket = activeBucket;
     activity.startActivityForResult(intent, PICK);
   }
@@ -480,47 +563,67 @@ final class E2Panel {
       message("保存先を確認して写真を選び直してください", 0xffffb4a8);
       return;
     }
-    run("写真を確認しています", () -> {
-      String name = photos.name(uri);
-      post(() -> new GalleryUi.Sheet(activity).setTitle("オリジナルを保存しますか？")
-          .setMessage(name + "\nIDrive e2（東京） · " + target
-              + "\n保存済みのオリジナルもクラウドの復元一覧に反映します。")
-          .setNegativeButton("キャンセル", null)
-          .setPositiveButton("保存", (dialog, which) -> {
-            long started = SystemClock.elapsedRealtime();
-            runTransfer("オリジナルを保存しています", E2TransferStatus.Kind.MANUAL_UPLOAD, target,
-                -1, transfer -> {
-              long put = photos.save(uri, name, target, transfer);
-              transfer.publishing(true);
-              boolean catalogSaved;
-              try {
-                photos.publishCatalog(target);
-                catalogSaved = true;
-              } catch (Exception publicationFailed) {
-                catalogSaved = false;
-              }
-              if (!cancelled) {
-                if (catalogSaved) transfer.complete(-1);
-                else transfer.fail();
-              }
-              refresh();
-              boolean recovered = catalogSaved;
-              post(() -> {
-                message(recovered ? "オリジナルと復元一覧を保存しました"
-                    : "オリジナルは保存しました。復元一覧を保存できませんでした。「復元一覧をクラウドに保存」で再試行してください",
-                    recovered ? 0xff9fe0b5 : 0xffffb4a8);
-                timing("save " + (name.toLowerCase(java.util.Locale.ROOT).endsWith(".orf")
-                    ? "orf" : "other"), started, " put_ms=" + put);
-              });
-            });
-          }).show());
-    });
+    run(
+        "写真を確認しています",
+        () -> {
+          String name = photos.name(uri);
+          post(
+              () ->
+                  new GalleryUi.Sheet(activity)
+                      .setTitle("オリジナルを保存しますか？")
+                      .setMessage(
+                          name + "\nIDrive e2（東京） · " + target + "\n保存済みのオリジナルもクラウドの復元一覧に反映します。")
+                      .setNegativeButton("キャンセル", null)
+                      .setPositiveButton(
+                          "保存",
+                          (dialog, which) -> {
+                            long started = SystemClock.elapsedRealtime();
+                            runTransfer(
+                                "オリジナルを保存しています",
+                                E2TransferStatus.Kind.MANUAL_UPLOAD,
+                                target,
+                                -1,
+                                transfer -> {
+                                  long put = photos.save(uri, name, target, transfer);
+                                  transfer.publishing(true);
+                                  boolean catalogSaved;
+                                  try {
+                                    photos.publishCatalog(target);
+                                    catalogSaved = true;
+                                  } catch (Exception publicationFailed) {
+                                    catalogSaved = false;
+                                  }
+                                  if (!cancelled) {
+                                    if (catalogSaved) transfer.complete(-1);
+                                    else transfer.fail();
+                                  }
+                                  refresh();
+                                  boolean recovered = catalogSaved;
+                                  post(
+                                      () -> {
+                                        message(
+                                            recovered
+                                                ? "オリジナルと復元一覧を保存しました"
+                                                : "オリジナルは保存しました。復元一覧を保存できませんでした。「復元一覧をクラウドに保存」で再試行してください",
+                                            recovered ? 0xff9fe0b5 : 0xffffb4a8);
+                                        timing(
+                                            "save "
+                                                + (name.toLowerCase(java.util.Locale.ROOT)
+                                                        .endsWith(".orf")
+                                                    ? "orf"
+                                                    : "other"),
+                                            started,
+                                            " put_ms=" + put);
+                                      });
+                                });
+                          })
+                      .show());
+        });
   }
 
   private void reloadAfterExport() {
     setBusy(false);
-    if (activeBucket == null && photos.settings.configured())
-      run("保存先を読み込んでいます", this::refresh);
+    if (activeBucket == null && photos.settings.configured()) run("保存先を読み込んでいます", this::refresh);
   }
 
   private static final class Export {
@@ -529,7 +632,9 @@ final class E2Panel {
     final long started = SystemClock.elapsedRealtime();
     long bytes;
 
-    Export(E2Panel panel) { this.panel = panel; }
+    Export(E2Panel panel) {
+      this.panel = panel;
+    }
 
     void copy(E2Photos photos, E2Photos.PreparedRestore file, Uri destination) {
       boolean ok = false;
@@ -543,10 +648,12 @@ final class E2Panel {
         E2Photos.discard(file.file());
       }
       boolean success = ok;
-      new Handler(Looper.getMainLooper()).post(() -> {
-        outcome = success;
-        if (panel != null) panel.exportFinished(this, success);
-      });
+      new Handler(Looper.getMainLooper())
+          .post(
+              () -> {
+                outcome = success;
+                if (panel != null) panel.exportFinished(this, success);
+              });
     }
   }
 
@@ -565,91 +672,113 @@ final class E2Panel {
     export = null;
     setBusy(false);
     if (activeBucket == null && photos.settings.configured()) {
-      run("保存先を読み込んでいます", () -> {
-        refresh();
-        post(() -> showExportResult(current, success));
-      });
+      run(
+          "保存先を読み込んでいます",
+          () -> {
+            refresh();
+            post(() -> showExportResult(current, success));
+          });
     } else showExportResult(current, success);
   }
 
   private void showExportResult(Export current, boolean success) {
-    message(success ? "オリジナルを復元しました" : "復元先にオリジナルを書き出せませんでした",
-        success ? 0xff9fe0b5 : 0xffffb4a8);
+    message(success ? "オリジナルを復元しました" : "復元先にオリジナルを書き出せませんでした", success ? 0xff9fe0b5 : 0xffffb4a8);
     if (success) timing("restore_export", current.started, " bytes=" + current.bytes);
   }
 
   private void restore(JSONObject record) {
     long started = SystemClock.elapsedRealtime();
-    runTransfer("オリジナルを取得しています", E2TransferStatus.Kind.ORIGINAL_DOWNLOAD,
-        record.optString("bucket"), record.optLong("size", -1), transfer -> {
-      long size = record.getLong("size");
-      String sha = record.getString("sha");
-      File file = photos.downloadRecord(record, transfer);
-      E2Photos.PreparedRestore prepared;
-      try {
-        prepared = new E2Photos.PreparedRestore(file, size, sha);
-        E2Photos.holdForPicker(file);
-        if (!cancelled) transfer.complete(-1);
-      } catch (java.io.IOException | IllegalArgumentException failure) {
-        E2Photos.discard(file);
-        throw failure;
-      }
-      activity.runOnUiThread(() -> {
-        if (activity.isDestroyed() || cancelled) {
-          E2Photos.discard(file);
-          return;
-        }
-        if (!restorePicker.open(prepared, record.optString("mime"), record.optString("name"),
-            intent -> activity.startActivityForResult(intent, CREATE))) {
-          showRestorePickerUnavailable();
-          return;
-        }
-        timing("restore_fetch", started, " bytes=" + file.length());
-      });
-    });
+    runTransfer(
+        "オリジナルを取得しています",
+        E2TransferStatus.Kind.ORIGINAL_DOWNLOAD,
+        record.optString("bucket"),
+        record.optLong("size", -1),
+        transfer -> {
+          long size = record.getLong("size");
+          String sha = record.getString("sha");
+          File file = photos.downloadRecord(record, transfer);
+          E2Photos.PreparedRestore prepared;
+          try {
+            prepared = new E2Photos.PreparedRestore(file, size, sha);
+            E2Photos.holdForPicker(file);
+            if (!cancelled) transfer.complete(-1);
+          } catch (java.io.IOException | IllegalArgumentException failure) {
+            E2Photos.discard(file);
+            throw failure;
+          }
+          activity.runOnUiThread(
+              () -> {
+                if (activity.isDestroyed() || cancelled) {
+                  E2Photos.discard(file);
+                  return;
+                }
+                if (!restorePicker.open(
+                    prepared,
+                    record.optString("mime"),
+                    record.optString("name"),
+                    intent -> activity.startActivityForResult(intent, CREATE))) {
+                  showRestorePickerUnavailable();
+                  return;
+                }
+                timing("restore_fetch", started, " bytes=" + file.length());
+              });
+        });
   }
 
   private void catalog(boolean save) {
     String bucket = activeBucket;
     if (bucket == null) return;
     if (save) {
-      new GalleryUi.Sheet(activity).setTitle("復元一覧を保存しますか？")
+      new GalleryUi.Sheet(activity)
+          .setTitle("復元一覧を保存しますか？")
           .setMessage(bucket + " に保存します。機種変更後にこの一覧からオリジナルを選べます。")
           .setNegativeButton("キャンセル", null)
-          .setPositiveButton("保存", (dialog, which) -> transferCatalog(bucket, true)).show();
+          .setPositiveButton("保存", (dialog, which) -> transferCatalog(bucket, true))
+          .show();
     } else transferCatalog(bucket, false);
   }
 
   private void transferCatalog(String bucket, boolean save) {
     String progress = save ? "復元一覧を保存しています" : "復元一覧を取得しています";
     showCatalogStatus(progress);
-    runTransfer(progress, save ? E2TransferStatus.Kind.MANUAL_UPLOAD
-        : E2TransferStatus.Kind.CATALOG_DOWNLOAD, bucket, -1, transfer -> {
-      try {
-        if (save) transfer.publishing(false);
-        E2RecoveryCatalog.Snapshot result = save
-            ? photos.publishCatalog(bucket) : photos.loadCatalog(bucket);
-        if (!cancelled) transfer.complete(save ? -1 : result == null ? 0 : result.records().size());
-        if (result != null) refresh();
-        post(() -> {
-          String outcome = "クラウドに復元一覧がありません";
-          if (result != null) {
-            String time = java.text.DateFormat.getDateTimeInstance().format(
-                new java.util.Date(result.created()));
-            outcome = (save ? "復元一覧を保存しました" :
-                result.previous() ? "前の復元一覧を読み込みました" : "復元一覧を読み込みました")
-                + "\n" + result.records().size() + "枚 · " + time;
+    runTransfer(
+        progress,
+        save ? E2TransferStatus.Kind.MANUAL_UPLOAD : E2TransferStatus.Kind.CATALOG_DOWNLOAD,
+        bucket,
+        -1,
+        transfer -> {
+          try {
+            if (save) transfer.publishing(false);
+            E2RecoveryCatalog.Snapshot result =
+                save ? photos.publishCatalog(bucket) : photos.loadCatalog(bucket);
+            if (!cancelled)
+              transfer.complete(save ? -1 : result == null ? 0 : result.records().size());
+            if (result != null) refresh();
+            post(
+                () -> {
+                  String outcome = "クラウドに復元一覧がありません";
+                  if (result != null) {
+                    String time =
+                        java.text.DateFormat.getDateTimeInstance()
+                            .format(new java.util.Date(result.created()));
+                    outcome =
+                        (save
+                                ? "復元一覧を保存しました"
+                                : result.previous() ? "前の復元一覧を読み込みました" : "復元一覧を読み込みました")
+                            + "\n"
+                            + result.records().size()
+                            + "枚 · "
+                            + time;
+                  }
+                  showCatalogStatus(outcome);
+                  message(outcome, GalleryUi.TEXT);
+                  if (!save && result != null) revealRecoveryList();
+                });
+          } catch (Exception failure) {
+            post(() -> showCatalogStatus(save ? "復元一覧を保存できませんでした" : "復元一覧を取得できませんでした"));
+            throw failure;
           }
-          showCatalogStatus(outcome);
-          message(outcome, GalleryUi.TEXT);
-          if (!save && result != null) revealRecoveryList();
         });
-      } catch (Exception failure) {
-        post(() -> showCatalogStatus(save ? "復元一覧を保存できませんでした" :
-            "復元一覧を取得できませんでした"));
-        throw failure;
-      }
-    });
   }
 
   private void showCatalogStatus(String label) {
@@ -660,43 +789,55 @@ final class E2Panel {
   private void revealRecoveryList() {
     View first = searchBox.getVisibility() == View.VISIBLE ? searchBox : list.getChildAt(0);
     if (first == null) return;
-    Runnable reveal = () -> {
-      if (!first.isAttachedToWindow() || first.getVisibility() != View.VISIBLE) return;
-      android.graphics.Rect bounds = new android.graphics.Rect();
-      first.getDrawingRect(bounds);
-      scroll.offsetDescendantRectToMyCoords(first, bounds);
-      scroll.scrollTo(0, Math.max(0, bounds.top - dp(64)));
-    };
+    Runnable reveal =
+        () -> {
+          if (!first.isAttachedToWindow() || first.getVisibility() != View.VISIBLE) return;
+          android.graphics.Rect bounds = new android.graphics.Rect();
+          first.getDrawingRect(bounds);
+          scroll.offsetDescendantRectToMyCoords(first, bounds);
+          scroll.scrollTo(0, Math.max(0, bounds.top - dp(64)));
+        };
     if (first.isLaidOut() && !first.isLayoutRequested()) {
       first.post(reveal);
       return;
     }
-    first.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
-      @Override public void onLayoutChange(View row, int left, int top, int right, int bottom,
-          int oldLeft, int oldTop, int oldRight, int oldBottom) {
-        row.removeOnLayoutChangeListener(this);
-        row.post(reveal);
-      }
-    });
+    first.addOnLayoutChangeListener(
+        new View.OnLayoutChangeListener() {
+          @Override
+          public void onLayoutChange(
+              View row,
+              int left,
+              int top,
+              int right,
+              int bottom,
+              int oldLeft,
+              int oldTop,
+              int oldRight,
+              int oldBottom) {
+            row.removeOnLayoutChangeListener(this);
+            row.post(reveal);
+          }
+        });
   }
 
   private void timing(String phase, long start, String detail) {
-    if ((activity.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0)
-      android.util.Log.i("LoupeE2Timing", phase + " ms="
-          + (SystemClock.elapsedRealtime() - start) + detail);
+    if ((activity.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)
+        != 0)
+      android.util.Log.i(
+          "LoupeE2Timing", phase + " ms=" + (SystemClock.elapsedRealtime() - start) + detail);
   }
 
   private void refresh() throws Exception {
     String name = photos.settings.configuration().getString("bucket");
     E2RecoveryCatalog.SavedRows rows = photos.saved(name);
     boolean pending = photos.catalogPending(name);
-    post(() -> {
-      if (!name.equals(activeBucket)) bucket.setText(name);
-      catalogPending = pending;
-      showSaved(name, rows);
-      if (status.getText().toString().equals("保存先を読み込んでいます"))
-        message("接続済み", 0xff9fe0b5);
-    });
+    post(
+        () -> {
+          if (!name.equals(activeBucket)) bucket.setText(name);
+          catalogPending = pending;
+          showSaved(name, rows);
+          if (status.getText().toString().equals("保存先を読み込んでいます")) message("接続済み", 0xff9fe0b5);
+        });
   }
 
   private void showSaved(String name, E2RecoveryCatalog.SavedRows rows) {
@@ -725,16 +866,20 @@ final class E2Panel {
     list.removeAllViews();
     searchCount.setVisibility(View.GONE);
     searchCount.setText("");
-    pendingSearch = () -> {
-      pendingSearch = null;
-      worker.execute(() -> {
-        if (generation != searchGeneration) return;
-        E2RecoveryCatalog.SavedRows matches = source.matchingFilename(query);
-        activity.runOnUiThread(() -> {
-          if (!activity.isDestroyed() && generation == searchGeneration) showSearchResults(matches);
-        });
-      });
-    };
+    pendingSearch =
+        () -> {
+          pendingSearch = null;
+          worker.execute(
+              () -> {
+                if (generation != searchGeneration) return;
+                E2RecoveryCatalog.SavedRows matches = source.matchingFilename(query);
+                activity.runOnUiThread(
+                    () -> {
+                      if (!activity.isDestroyed() && generation == searchGeneration)
+                        showSearchResults(matches);
+                    });
+              });
+        };
     main.postDelayed(pendingSearch, SEARCH_DELAY_MS);
   }
 
@@ -760,10 +905,13 @@ final class E2Panel {
       LinearLayout detail = column();
       item.addView(detail, new LinearLayout.LayoutParams(0, -2, 1));
       detail.addView(text(row.optString("name"), 14));
-      String size = android.text.format.Formatter.formatShortFileSize(activity, row.optLong("size"));
+      String size =
+          android.text.format.Formatter.formatShortFileSize(activity, row.optLong("size"));
       long verifiedAt = row.optLong("verifiedAt");
-      String verification = verifiedAt > 0 ? " · "
-          + android.text.format.DateFormat.format("yyyy/MM/dd", verifiedAt) : "";
+      String verification =
+          verifiedAt > 0
+              ? " · " + android.text.format.DateFormat.format("yyyy/MM/dd", verifiedAt)
+              : "";
       detail.addView(text(size + verification, 12));
       Button restore = new SyncSettingsUi.ActionButton(activity, "復元", () -> restore(row));
       restore.setContentDescription(row.optString("name") + "を復元");
@@ -775,32 +923,48 @@ final class E2Panel {
     }
     if (visibleRows.size() > PAGE_SIZE) {
       add(list, text((start + 1) + "〜" + end + " / " + visibleRows.size(), 14));
-      if (savedPage > 0) button(list, "前の写真", 48, () -> {
-        savedPage--;
-        drawSavedPage();
-      });
-      if (end < visibleRows.size()) button(list, "次の写真", 48, () -> {
-        savedPage++;
-        drawSavedPage();
-      });
+      if (savedPage > 0)
+        button(
+            list,
+            "前の写真",
+            48,
+            () -> {
+              savedPage--;
+              drawSavedPage();
+            });
+      if (end < visibleRows.size())
+        button(
+            list,
+            "次の写真",
+            48,
+            () -> {
+              savedPage++;
+              drawSavedPage();
+            });
     }
   }
 
-  private interface Task { void run() throws Exception; }
+  private interface Task {
+    void run() throws Exception;
+  }
 
-  private interface ObservedTask { void run(E2TransferStatus transfer) throws Exception; }
+  private interface ObservedTask {
+    void run(E2TransferStatus transfer) throws Exception;
+  }
 
-  private void runTransfer(String label, E2TransferStatus.Kind kind, String target, long totalBytes,
-      ObservedTask task) {
-    run(label, () -> {
-      try (E2TransferStatus transfer = E2TransferStatus.begin(kind, target, totalBytes)) {
-        try {
-          task.run(transfer);
-        } finally {
-          if (cancelled) transfer.cancel();
-        }
-      }
-    });
+  private void runTransfer(
+      String label, E2TransferStatus.Kind kind, String target, long totalBytes, ObservedTask task) {
+    run(
+        label,
+        () -> {
+          try (E2TransferStatus transfer = E2TransferStatus.begin(kind, target, totalBytes)) {
+            try {
+              task.run(transfer);
+            } finally {
+              if (cancelled) transfer.cancel();
+            }
+          }
+        });
   }
 
   private void run(String label, Task task) {
@@ -812,34 +976,38 @@ final class E2Panel {
     cancelled = false;
     setBusy(true);
     message(label, GalleryUi.TEXT);
-    worker.execute(() -> {
-      operation = Thread.currentThread();
-      try {
-        if (!cancelled) task.run();
-      } catch (Exception e) {
-        post(() -> {
-          message("処理に失敗しました。設定や通信を確認してもう一度お試しください", 0xffffb4a8);
-          if (label.equals("接続を確認しています")) connect.setText("再試行");
-        });
-      } finally {
-        operation = null;
-        activity.runOnUiThread(() -> {
-          if (activity.isDestroyed()) return;
-          connecting = false;
-          if (cancelled) message("中止しました", GalleryUi.TEXT);
-          if (!restorePicker.isWaiting()) {
-            setBusy(false);
-            consumePick();
+    worker.execute(
+        () -> {
+          operation = Thread.currentThread();
+          try {
+            if (!cancelled) task.run();
+          } catch (Exception e) {
+            post(
+                () -> {
+                  message("処理に失敗しました。設定や通信を確認してもう一度お試しください", 0xffffb4a8);
+                  if (label.equals("接続を確認しています")) connect.setText("再試行");
+                });
+          } finally {
+            operation = null;
+            activity.runOnUiThread(
+                () -> {
+                  if (activity.isDestroyed()) return;
+                  connecting = false;
+                  if (cancelled) message("中止しました", GalleryUi.TEXT);
+                  if (!restorePicker.isWaiting()) {
+                    setBusy(false);
+                    consumePick();
+                  }
+                });
           }
         });
-      }
-    });
   }
 
   private void post(Runnable action) {
-    activity.runOnUiThread(() -> {
-      if (!activity.isDestroyed() && !cancelled) action.run();
-    });
+    activity.runOnUiThread(
+        () -> {
+          if (!activity.isDestroyed() && !cancelled) action.run();
+        });
   }
 
   private void setBusy(boolean value) {
@@ -852,7 +1020,10 @@ final class E2Panel {
     save.setEnabled(!value && activeBucket != null);
     catalogLoad.setEnabled(!value && activeBucket != null);
     catalogSave.setEnabled(!value && activeBucket != null);
-    cancel.setVisibility(value && !connecting && export == null && !restorePicker.isWaiting() ? View.VISIBLE : View.GONE);
+    cancel.setVisibility(
+        value && !connecting && export == null && !restorePicker.isWaiting()
+            ? View.VISIBLE
+            : View.GONE);
     for (int i = 0; i < list.getChildCount(); i++) {
       if (list.getChildAt(i) instanceof LinearLayout) {
         LinearLayout row = (LinearLayout) list.getChildAt(i);
@@ -864,9 +1035,11 @@ final class E2Panel {
   boolean confirmBack() {
     if (!busy) return false;
     if (export != null || connecting) return true;
-    new GalleryUi.Sheet(activity).setTitle("処理を中止して戻りますか？")
+    new GalleryUi.Sheet(activity)
+        .setTitle("処理を中止して戻りますか？")
         .setNegativeButton("続ける", null)
-        .setPositiveButton("中止して戻る", (dialog, which) -> activity.finish()).show();
+        .setPositiveButton("中止して戻る", (dialog, which) -> activity.finish())
+        .show();
     return true;
   }
 
@@ -891,8 +1064,11 @@ final class E2Panel {
     edit.setHintTextColor(0xffb9b9bd);
     edit.setMinHeight(dp(48));
     edit.setPadding(dp(12), 0, dp(12), 0);
-    edit.setInputType(InputType.TYPE_CLASS_TEXT | (masked
-        ? InputType.TYPE_TEXT_VARIATION_PASSWORD : InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS));
+    edit.setInputType(
+        InputType.TYPE_CLASS_TEXT
+            | (masked
+                ? InputType.TYPE_TEXT_VARIATION_PASSWORD
+                : InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS));
     edit.setSaveEnabled(false);
     edit.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
     background(edit, 0xff232327, 12);
@@ -939,5 +1115,7 @@ final class E2Panel {
     view.setBackground(shape);
   }
 
-  private int dp(int value) { return GalleryUi.dp(activity, value); }
+  private int dp(int value) {
+    return GalleryUi.dp(activity, value);
+  }
 }

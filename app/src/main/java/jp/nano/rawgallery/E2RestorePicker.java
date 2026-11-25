@@ -41,8 +41,7 @@ final class E2RestorePicker {
   }
 
   /** Takes ownership of a file already leased by the download worker. */
-  boolean open(
-      E2Photos.PreparedRestore file, String mime, String name, Consumer<Intent> launch) {
+  boolean open(E2Photos.PreparedRestore file, String mime, String name, Consumer<Intent> launch) {
     if (waiting != null) {
       if (!waiting.file().equals(file.file())) E2Photos.discard(file.file());
       return false;
