@@ -52,6 +52,7 @@ final class DiagnosticFailureChecks {
       DiagnosticLog.event("fixture.diagnostics_begin", 0, "fixture", fixture);
       crashAndPrivacy(context, fixture);
       crashBounds(context);
+      partialCrashSummaries(context);
       simultaneousCrashes(context);
       credentialConcurrency(context);
       sourceConcurrency(test);
@@ -208,6 +209,76 @@ final class DiagnosticFailureChecks {
           causes.length() == 8
               && causes.getString(7).equals(IllegalArgumentException.class.getName()),
           "cause traversal stops after eight entries");
+    } finally {
+      Files.deleteIfExists(file.toPath());
+      Files.deleteIfExists(directory.toPath());
+    }
+  }
+
+  private static void partialCrashSummaries(Context context) throws Exception {
+    StackTraceElement first = new StackTraceElement("android.app.Activity", "onCreate", null, 42);
+    StackTraceElement appFrame =
+        new StackTraceElement(DiagnosticCrashHandler.class.getName(), "save", SENTINEL, 17);
+    Throwable missingFrame =
+        new IllegalStateException(SENTINEL) {
+          @Override
+          public StackTraceElement[] getStackTrace() {
+            return new StackTraceElement[] {first, null, appFrame};
+          }
+        };
+    JSONObject partialStack = checkPartialCrash(context, missingFrame);
+    require(
+        partialStack.getJSONArray("frames").length() == 2
+            && partialStack.getJSONArray("frames").getJSONObject(1).getInt("line") == 17
+            && partialStack.getJSONObject("app_frame").getInt("line") == 17,
+        "skip the null stack slot and keep later frames");
+
+    Throwable brokenCause =
+        new IOException(SENTINEL) {
+          @Override
+          public Throwable getCause() {
+            throw new IllegalStateException(SENTINEL);
+          }
+        };
+    Throwable missingCause = new IllegalArgumentException(SENTINEL, brokenCause);
+    missingCause.setStackTrace(new StackTraceElement[] {first, appFrame});
+    JSONObject partialCause = checkPartialCrash(context, missingCause);
+    require(
+        partialCause.getJSONArray("frames").length() == 2
+            && partialCause.getJSONObject("app_frame").getInt("line") == 17
+            && partialCause.getJSONArray("causes").length() == 1
+            && partialCause
+                .getJSONArray("causes")
+                .getString(0)
+                .equals(brokenCause.getClass().getName()),
+        "stop at a failing cause accessor and keep collected details");
+  }
+
+  private static JSONObject checkPartialCrash(Context context, Throwable failure) throws Exception {
+    File directory =
+        Files.createTempDirectory(context.getCacheDir().toPath(), "partial-crash").toFile();
+    File file = new File(directory, "last-crash.json");
+    Thread thread = Thread.currentThread();
+    AtomicInteger delegates = new AtomicInteger();
+    try {
+      new DiagnosticCrashHandler(
+              directory,
+              777,
+              (originalThread, error) -> {
+                require(
+                    originalThread == thread && error == failure, "original crash is delegated");
+                delegates.incrementAndGet();
+              })
+          .uncaughtException(thread, failure);
+      require(delegates.get() == 1, "delegate once after partial collection");
+      String content = read(file);
+      JSONObject note = new JSONObject(content);
+      require(
+          note.getString("exception").equals(failure.getClass().getName())
+              && note.getJSONObject("frame").getInt("line") == 42
+              && !content.contains(SENTINEL),
+          "partial crash retains its legacy exception and frame without private details");
+      return note;
     } finally {
       Files.deleteIfExists(file.toPath());
       Files.deleteIfExists(directory.toPath());

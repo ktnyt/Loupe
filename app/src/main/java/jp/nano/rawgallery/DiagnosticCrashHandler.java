@@ -60,14 +60,17 @@ final class DiagnosticCrashHandler implements Thread.UncaughtExceptionHandler {
     StackTraceElement[] stack = failure.getStackTrace();
     JSONArray frames = new JSONArray();
     for (int index = 0; index < Math.min(stack.length, MAX_FRAMES); index++) {
-      frames.put(frame(stack[index]));
+      StackTraceElement candidate = stack[index];
+      if (candidate == null) continue;
+      JSONObject entry = frame(candidate);
+      if (index == 0) summary.put("frame", entry);
+      frames.put(entry);
     }
-    if (frames.length() > 0) summary.put("frame", frames.getJSONObject(0));
     summary.put("frames", frames);
     // An absent app_frame means none was found within the scan limit.
     for (int index = 0; index < Math.min(stack.length, MAX_SCANNED_FRAMES); index++) {
       StackTraceElement candidate = stack[index];
-      if (candidate.getClassName().startsWith(APP_CLASS_PREFIX)) {
+      if (candidate != null && candidate.getClassName().startsWith(APP_CLASS_PREFIX)) {
         summary.put("app_frame", frame(candidate));
         break;
       }
@@ -77,7 +80,12 @@ final class DiagnosticCrashHandler implements Thread.UncaughtExceptionHandler {
     seen.put(failure, Boolean.TRUE);
     Throwable cause = failure;
     while (causes.length() < MAX_CAUSES) {
-      cause = cause.getCause();
+      try {
+        cause = cause.getCause();
+      } catch (RuntimeException ignored) {
+        // A custom cause accessor can fail. Keep the crash details already collected.
+        break;
+      }
       if (cause == null || seen.put(cause, Boolean.TRUE) != null) break;
       causes.put(codeLabel(cause.getClass().getName()));
     }
