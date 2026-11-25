@@ -11,6 +11,8 @@ import android.database.MatrixCursor;
 import android.net.Uri;
 import android.os.Build;
 import android.os.CancellationSignal;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.OperationCanceledException;
 import android.os.SystemClock;
 import android.provider.DocumentsContract;
@@ -20,6 +22,11 @@ import jp.nano.rawgallery.camera.CameraQrCredentials;
 import jp.nano.rawgallery.camera.SdSourceRegistrationChecks;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -49,6 +56,7 @@ final class CameraQuickImportChecks {
         };
         CameraImportActivity screen=null; boolean first=false,second=false;
         try {
+            sourceCheckLifetime(t);
             SdSourceRegistrationChecks.run(context);
             directoryBoundary(context);
             require(CameraQuickImportSources.resolve(context,new CancellationSignal()).profiles.isEmpty(),"empty source list");
@@ -75,13 +83,59 @@ final class CameraQuickImportChecks {
             require(launches.get()==1,"multiple sources require explicit choice");
             clickText(t,"BLE-TESS");awaitCount(launches,2);
             require(CameraCredentialStore.profileId("BLE-TESS").equals(captured.get().getStringExtra(CameraBleActivity.EXTRA_QUICK_PROFILE_ID)),"explicit camera selected");
-            return "PASS SD registration migration/rollback and mounted-source filtering, quick-import local directory presence/missing/file/error/cancel, empty setup direct SD picker/unique/multiple QR routing, opaque-only Intent, recreation no replay; radio Activity blocked (dedicated emulator).";
+            return "PASS source check cancellation/timeout/stale results, SD registration migration/rollback and mounted-source filtering, quick-import local directory presence/missing/file/error/cancel, empty setup direct SD picker/unique/multiple QR routing, opaque-only Intent, recreation no replay; radio Activity blocked (dedicated emulator).";
         } finally {
             if(screen!=null)finish(t,screen);t.removeMonitor(monitor);
             if(second)store.remove("BLE-TESS");if(first)store.remove("BLE-TEST");
             if(priorTree==null)prefs.edit().remove("sd_tree_uri").commit();else prefs.edit().putString("sd_tree_uri",priorTree).commit();
         }
     }
+    private static void sourceCheckLifetime(Instrumentation test) throws InterruptedException {
+        var workers = new ArrayDeque<Runnable>();
+        var results = new ArrayList<String>();
+        var cancelled = new AtomicReference<CancellationSignal>();
+        var check = new CameraSourceCheck(new Handler(Looper.getMainLooper()), workers::addLast);
+        test.runOnMainSync(() -> {
+            check.start(signal -> {
+                cancelled.set(signal);
+                return "cancelled result";
+            }, results::add, () -> results.add("cancelled timed out"), busy -> results.add("busy"));
+            require(check.cancel(), "pending check cancels");
+            require(!check.cancel(), "cancel is idle after clearing");
+            check.start(signal -> "current", results::add, () -> results.add("current timed out"), busy -> results.add("busy"));
+        });
+        workers.removeFirst().run();
+        require(cancelled.get().isCanceled(), "cancel sets the old signal");
+        test.waitForIdleSync();
+        test.runOnMainSync(() -> {
+            require(results.isEmpty(), "cancelled worker result discarded");
+            require(check.isPending(), "cancelled result preserves the current request");
+        });
+        workers.removeFirst().run();
+        test.waitForIdleSync();
+        test.runOnMainSync(() -> {
+            require(results.equals(List.of("current")), "the current result is delivered once");
+            require(!check.isPending(), "result clears the current request");
+        });
+
+        var deadline = new CountDownLatch(1);
+        test.runOnMainSync(() -> check.start(signal -> {
+            cancelled.set(signal);
+            return "late result";
+        }, results::add, () -> {
+            results.add("timed out");
+            deadline.countDown();
+        }, busy -> results.add("busy")));
+        require(deadline.await(6, TimeUnit.SECONDS), "deadline releases the stalled request");
+        workers.removeFirst().run();
+        require(cancelled.get().isCanceled(), "deadline sets the old signal");
+        test.waitForIdleSync();
+        test.runOnMainSync(() -> {
+            require(results.equals(List.of("current", "timed out")), "late result discarded after deadline");
+            require(!check.isPending(), "deadline clears the stalled request");
+        });
+    }
+
     private static void directoryBoundary(android.content.Context context){
         Uri tree=Uri.parse("content://quick.fixture/tree/card");
         var provider=new ContentProvider(){

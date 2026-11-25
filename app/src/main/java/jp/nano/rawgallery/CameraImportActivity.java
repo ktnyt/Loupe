@@ -98,8 +98,6 @@ public final class CameraImportActivity extends AppCompatActivity {
     private boolean quickImportFlow;
     private String quickRequestId;
     private boolean quickConsumed, quickResumed, pendingSdPermission, resumeSd, pendingUsbPermission, resumeUsb;
-    private android.os.CancellationSignal sourceCancellation;
-    private int sourceGeneration;
     enum SdStartMode { MANUAL, ATTACH, REVIEW_FORMATS }
 
     private record SdPicker(String target, String destination, String kinds, long generation,
@@ -135,6 +133,7 @@ public final class CameraImportActivity extends AppCompatActivity {
             "混雑のため登録できませんでした。少し待って、SDカード取り込み設定からフォルダを選び直してください。";
     private static final java.util.concurrent.Executor SOURCE_IO = new java.util.concurrent.ThreadPoolExecutor(
             0, 2, 30, java.util.concurrent.TimeUnit.SECONDS, new java.util.concurrent.SynchronousQueue<>());
+    private final CameraSourceCheck sourceCheck = new CameraSourceCheck(handler, SOURCE_IO);
     private static final java.util.concurrent.Executor SOURCE_STATUS_IO = new java.util.concurrent.ThreadPoolExecutor(
             0, 2, 30, java.util.concurrent.TimeUnit.SECONDS, new java.util.concurrent.SynchronousQueue<>());
 
@@ -444,7 +443,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         state.putInt("quick_usb_product_id", pendingUsbProductId);
         state.putBoolean("quick_usb_permission", pendingUsbPermission);
         state.putBoolean("quick_usb_resume", resumeUsb);
-        state.putBoolean("quick_source_pending", sourceCancellation != null);
+        state.putBoolean("quick_source_pending", sourceCheck.isPending());
         state.putBoolean("quick_consumed", quickConsumed);
         if (pendingSdStart != null) {
             state.putString("quick_sd_tree", pendingSdStart.tree().toString());
@@ -505,10 +504,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         quickResumed = false;
         abandonSdSubmission();
         cancelSdStatusLoad();
-        if (sourceCancellation != null) {
-            sourceGeneration++;
-            sourceCancellation.cancel();
-            sourceCancellation = null;
+        if (sourceCheck.cancel()) {
             starting = false;
             connectionFailure = "取り込み元の確認を中止しました。もう一度長押ししてください。";
         }
@@ -525,118 +521,111 @@ public final class CameraImportActivity extends AppCompatActivity {
     }
 
     private void discoverQuickSource(boolean manualSd, String attachedSdTarget, SdStartMode mode) {
-        if (!quickAvailable() || starting || sourceCancellation != null || sdConfirmation != null) return;
+        if (!quickAvailable() || starting || sourceCheck.isPending() || sdConfirmation != null) return;
         String destination = PhotoStorage.selected(this);
         UsbDevice usb = manualSd || attachedSdTarget != null ? null : connected();
         String expectedTarget = attachedSdTarget != null ? attachedSdTarget
                 : manualSd ? MountedCameraCard.targetWithGenericReader(this, destination) : guardedSdTarget(usb);
         if (!manualSd && expectedTarget == null && usb != null) { startFromScreen(true); return; }
-        boolean sdOnly = manualSd || expectedTarget != null;
-        long detach = MountedCameraCard.detachGeneration();
-        int generation = ++sourceGeneration;
-        var cancellation = new android.os.CancellationSignal();
-        sourceCancellation = cancellation;
+        var lookup = new SourceLookup(destination, expectedTarget, MountedCameraCard.detachGeneration(), manualSd);
         starting = true;
-        if (sdOnly) {
+        if (lookup.sdOnly()) {
             cancelSdStatusLoad();
             renderSdSource(CameraQuickImportSources.SdState.CHECKING);
         }
         connectionFailure = "取り込み元を確認しています…";
         renderStatus();
-        Runnable timeout = () -> {
-            if (sourceCancellation != cancellation) return;
-            sourceGeneration++;
-            cancellation.cancel();
-            sourceCancellation = null;
-            starting = false;
-            showSdFailure("取り込み元を確認できませんでした。接続を確認してからやり直してください。");
-        };
-        handler.postDelayed(timeout, 3000);
-        try {
-            SOURCE_IO.execute(() -> {
-                CameraQuickImportSources.Sources sources = null;
-                try {
-                    if (sdOnly) {
-                        var selected = CameraQuickImportSources.inspectSd(getApplicationContext(), cancellation);
-                        sources = CameraQuickImportSources.Sources.fromSd(selected, List.of());
-                    } else sources = CameraQuickImportSources.resolve(getApplicationContext(), cancellation);
-                } catch (IOException | RuntimeException unavailable) {
-                    DiagnosticLog.exception("camera.source_lookup", cancellation.isCanceled() ? "cancelled" : "failed",
-                            unavailable);
-                }
-                var outcome = sources;
-                String kinds;
-                if (expectedTarget != null) {
-                    UsbDevice formatDevice = manualSd ? connected() : usb;
-                    kinds = requestedUsbKinds(guardedSdTarget(formatDevice, destination) != null ? formatDevice : null);
-                } else {
-                    kinds = manualSd ? "JPEG,RAW" : null;
-                }
-                handler.post(() -> {
-                    if (generation != sourceGeneration || sourceCancellation != cancellation) return;
-                    handler.removeCallbacks(timeout);
-                    sourceCancellation = null;
+        sourceCheck.start(cancellation -> lookUpSource(lookup, usb, cancellation),
+                result -> showDiscoveredSource(lookup, mode, result),
+                () -> {
                     starting = false;
-                    if (!quickAvailable()) return;
-                    if (!destination.equals(PhotoStorage.selected(this))
-                            || detach != MountedCameraCard.detachGeneration()
-                            || expectedTarget != null && !expectedTarget.equals(destination)) {
-                        showSdFailure("カードの接続または保存先が変わりました。取り込み元を確認してください。");
-                        return;
-                    }
-                    if (!sdOnly && connected() != null) { startFromScreen(true); return; }
-                    var inspected = outcome == null ? null : outcome.sdSource;
-                    var validated = inspected == null ? null : CameraQuickImportSources.recheckSd(this, inspected);
-                    Uri readyTree = validated == null ? null : validated.reachableTree();
-                    boolean chooseSd = inspected != null && (inspected.reachableTree() != null
-                            || inspected.state() == CameraQuickImportSources.SdState.AMBIGUOUS
-                            || validated.state() == CameraQuickImportSources.SdState.AMBIGUOUS);
-                    if (readyTree != null) {
-                        connectionFailure = null;
-                        renderSdSource(CameraQuickImportSources.SdState.READY);
-                        SdStart request = new SdStart(readyTree, expectedTarget, destination, kinds, detach, false, null);
-                        if (expectedTarget == null && SdSourceRegistrations.volumeUuid(readyTree) == null
-                                && mode == SdStartMode.MANUAL) requestSdStart(request);
-                        else confirmSdSource(request, false, mode);
-                    } else if (sdOnly || chooseSd) {
-                        var state = validated == null ? CameraQuickImportSources.SdState.FOLDER_UNAVAILABLE : validated.state();
-                        renderSdSource(state);
-                        connectionFailure = state.message;
-                        renderStatus();
-                        pickSdTree(expectedTarget, kinds, false, mode);
-                    } else if (outcome == null) {
-                        connectionFailure = "登録情報を確認できませんでした。QRの登録を確認してください。";
-                        renderStatus();
-                    } else if (outcome.profiles.size() == 1) openQuickProfile(outcome.profiles.get(0).id);
-                    else if (outcome.profiles.size() > 1) {
-                        String[] names = outcome.profiles.stream().map(p -> p.name).toArray(String[]::new);
-                        new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
-                                .setTitle("取り込むカメラを選択")
-                                .setItems(names, (dialog, index) -> openQuickProfile(outcome.profiles.get(index).id))
-                                .setNegativeButton("キャンセル", (d, w) -> quickCancelled()).setOnCancelListener(d -> quickCancelled()).show();
-                    } else {
-                        new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
-                                .setTitle("取り込み元を登録")
-                                .setMessage("カメラのQRを登録するか、SDカードのフォルダを選んでください。Wi-Fi情報のない登録はQRの再登録が必要です。")
-                                .setPositiveButton("カメラを登録", (d, w) -> { if (quickAvailable()) startActivity(new Intent(this, CameraBleActivity.class)); })
-                                .setNeutralButton("SDを選ぶ", (d, w) -> { if (quickAvailable()) pickSdTree(); })
-                                .setNegativeButton("キャンセル", (d, w) -> quickCancelled()).setOnCancelListener(d -> quickCancelled()).show();
-                    }
+                    showSdFailure("取り込み元を確認できませんでした。接続を確認してからやり直してください。");
+                },
+                busy -> {
+                    DiagnosticLog.exception("camera.source_lookup", "busy", busy);
+                    starting = false;
+                    showSdFailure(IMPORT_NOT_STARTED);
                 });
-            });
-        } catch (java.util.concurrent.RejectedExecutionException busy) {
-            DiagnosticLog.exception("camera.source_lookup", "busy", busy);
-            rejectSourceRequest(timeout, cancellation, IMPORT_NOT_STARTED);
-        }
     }
 
-    private void rejectSourceRequest(Runnable timeout, android.os.CancellationSignal cancellation, String message) {
-        handler.removeCallbacks(timeout);
-        ++sourceGeneration;
-        sourceCancellation = null;
+    private record SourceLookup(String destination, String expectedTarget, long detachGeneration, boolean manualSd) {
+        boolean sdOnly() { return manualSd || expectedTarget != null; }
+    }
+
+    private record SourceLookupResult(CameraQuickImportSources.Sources sources, String kinds) {}
+
+    private SourceLookupResult lookUpSource(SourceLookup lookup, UsbDevice usb, android.os.CancellationSignal cancellation) {
+        CameraQuickImportSources.Sources sources = null;
+        try {
+            if (lookup.sdOnly()) {
+                var selected = CameraQuickImportSources.inspectSd(getApplicationContext(), cancellation);
+                sources = CameraQuickImportSources.Sources.fromSd(selected, List.of());
+            } else {
+                sources = CameraQuickImportSources.resolve(getApplicationContext(), cancellation);
+            }
+        } catch (IOException | RuntimeException unavailable) {
+            DiagnosticLog.exception("camera.source_lookup", cancellation.isCanceled() ? "cancelled" : "failed",
+                    unavailable);
+        }
+        String kinds;
+        if (lookup.expectedTarget() != null) {
+            UsbDevice formatDevice = lookup.manualSd() ? connected() : usb;
+            kinds = requestedUsbKinds(guardedSdTarget(formatDevice, lookup.destination()) != null ? formatDevice : null);
+        } else {
+            kinds = lookup.manualSd() ? "JPEG,RAW" : null;
+        }
+        return new SourceLookupResult(sources, kinds);
+    }
+
+    private void showDiscoveredSource(SourceLookup lookup, SdStartMode mode, SourceLookupResult result) {
         starting = false;
-        cancellation.cancel();
-        showSdFailure(message);
+        if (!quickAvailable()) return;
+        if (!lookup.destination().equals(PhotoStorage.selected(this))
+                || lookup.detachGeneration() != MountedCameraCard.detachGeneration()
+                || lookup.expectedTarget() != null && !lookup.expectedTarget().equals(lookup.destination())) {
+            showSdFailure("カードの接続または保存先が変わりました。取り込み元を確認してください。");
+            return;
+        }
+        if (!lookup.sdOnly() && connected() != null) { startFromScreen(true); return; }
+        var outcome = result.sources();
+        var inspected = outcome == null ? null : outcome.sdSource;
+        var validated = inspected == null ? null : CameraQuickImportSources.recheckSd(this, inspected);
+        Uri readyTree = validated == null ? null : validated.reachableTree();
+        boolean chooseSd = inspected != null && (inspected.reachableTree() != null
+                || inspected.state() == CameraQuickImportSources.SdState.AMBIGUOUS
+                || validated.state() == CameraQuickImportSources.SdState.AMBIGUOUS);
+        if (readyTree != null) {
+            connectionFailure = null;
+            renderSdSource(CameraQuickImportSources.SdState.READY);
+            SdStart request = new SdStart(readyTree, lookup.expectedTarget(), lookup.destination(),
+                    result.kinds(), lookup.detachGeneration(), false, null);
+            if (lookup.expectedTarget() == null && SdSourceRegistrations.volumeUuid(readyTree) == null
+                    && mode == SdStartMode.MANUAL) requestSdStart(request);
+            else confirmSdSource(request, false, mode);
+        } else if (lookup.sdOnly() || chooseSd) {
+            var state = validated == null ? CameraQuickImportSources.SdState.FOLDER_UNAVAILABLE : validated.state();
+            renderSdSource(state);
+            connectionFailure = state.message;
+            renderStatus();
+            pickSdTree(lookup.expectedTarget(), result.kinds(), false, mode);
+        } else if (outcome == null) {
+            connectionFailure = "登録情報を確認できませんでした。QRの登録を確認してください。";
+            renderStatus();
+        } else if (outcome.profiles.size() == 1) openQuickProfile(outcome.profiles.get(0).id);
+        else if (outcome.profiles.size() > 1) {
+            String[] names = outcome.profiles.stream().map(p -> p.name).toArray(String[]::new);
+            new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                    .setTitle("取り込むカメラを選択")
+                    .setItems(names, (dialog, index) -> openQuickProfile(outcome.profiles.get(index).id))
+                    .setNegativeButton("キャンセル", (d, w) -> quickCancelled()).setOnCancelListener(d -> quickCancelled()).show();
+        } else {
+            new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                    .setTitle("取り込み元を登録")
+                    .setMessage("カメラのQRを登録するか、SDカードのフォルダを選んでください。Wi-Fi情報のない登録はQRの再登録が必要です。")
+                    .setPositiveButton("カメラを登録", (d, w) -> { if (quickAvailable()) startActivity(new Intent(this, CameraBleActivity.class)); })
+                    .setNeutralButton("SDを選ぶ", (d, w) -> { if (quickAvailable()) pickSdTree(); })
+                    .setNegativeButton("キャンセル", (d, w) -> quickCancelled()).setOnCancelListener(d -> quickCancelled()).show();
+        }
     }
 
     private boolean canStartSourceAction() {
@@ -1162,15 +1151,10 @@ public final class CameraImportActivity extends AppCompatActivity {
     private void onSdMountChange(boolean detached) {
         if (detached) {
             boolean pending = sdConfirmation != null || pendingSdStart != null || sdPicker != null
-                    || sourceCancellation != null || submittedSd != null;
+                    || sourceCheck.isPending() || submittedSd != null;
             abandonSdSubmission();
             if (sdConfirmation != null) sdConfirmation.dismiss();
-            if (sourceCancellation != null) {
-                ++sourceGeneration;
-                sourceCancellation.cancel();
-                sourceCancellation = null;
-                starting = false;
-            }
+            if (sourceCheck.cancel()) starting = false;
             clearPendingSdStart();
             if (pending) showSdFailure("カードの接続が変わりました。取り込み元を確認してください。");
         }
@@ -1301,7 +1285,7 @@ public final class CameraImportActivity extends AppCompatActivity {
 
     private void verifySdSourceAsync(SdStart request, SdStartMode reselectMode, boolean registrationOnly,
             java.util.function.Consumer<SdLocation> onVerified) {
-        if (PROGRESS.getActive() || starting || migrating || sourceCancellation != null || submittedSd != null) return;
+        if (PROGRESS.getActive() || starting || migrating || sourceCheck.isPending() || submittedSd != null) return;
         if (!stillSelected(request)) {
             showSdFailure("カードの接続または保存先が変わりました。取り込み元を確認してください。");
             return;
@@ -1310,61 +1294,50 @@ public final class CameraImportActivity extends AppCompatActivity {
             showSdFailure("取り込み元のSDカードのDCIMフォルダを選んでください。");
             return;
         }
-        int generation = ++sourceGeneration;
-        var cancellation = new android.os.CancellationSignal();
-        sourceCancellation = cancellation;
         starting = true;
         cancelSdStatusLoad();
         renderSdSource(CameraQuickImportSources.SdState.CHECKING);
         renderStatus();
-        Runnable timeout = () -> {
-            if (sourceCancellation != cancellation) return;
-            sourceGeneration++;
-            cancellation.cancel();
-            sourceCancellation = null;
-            starting = false;
-            showSdFailure("取り込み元のフォルダを確認できません。接続とフォルダを確認してください。");
-        };
-        handler.postDelayed(timeout, 3000);
-        try {
-            SOURCE_IO.execute(() -> {
-                SdLocation location = null;
-                String failure = request.picked() ? PICKED_FOLDER_UNAVAILABLE
-                        : CameraQuickImportSources.SdState.FOLDER_UNAVAILABLE.message;
-                boolean reselect = false;
-                try {
-                    location = sdSourceProbe.verify(request, cancellation);
-                } catch (MountedCameraCard.Unavailable unavailable) {
-                    DiagnosticLog.exception("camera.sd_verify", "unavailable", unavailable);
-                    failure = unavailable.getMessage();
-                    reselect = reselectMode != null && unavailable.canReselect() && !request.picked();
-                } catch (IOException | RuntimeException unavailable) {
-                    DiagnosticLog.exception("camera.sd_verify", cancellation.isCanceled() ? "cancelled" : "failed",
-                            unavailable);
-                }
-                SdLocation confirmed = location;
-                String message = failure;
-                boolean chooseAgain = reselect;
-                handler.post(() -> {
-                    if (generation != sourceGeneration || sourceCancellation != cancellation) return;
-                    handler.removeCallbacks(timeout);
-                    sourceCancellation = null;
+        sourceCheck.start(cancellation -> probeSdSource(request, reselectMode, cancellation),
+                result -> {
                     starting = false;
                     if (isFinishing() || isDestroyed()) return;
                     if (!stillSelected(request)) {
                         showSdFailure("カードの接続または保存先が変わりました。取り込み元を確認してください。");
-                    } else if (confirmed == null) {
-                        showSdFailure(message);
-                        if (chooseAgain) pickSdTree(request.target(), request.kinds(), false, reselectMode);
+                    } else if (result.location() == null) {
+                        showSdFailure(result.failure());
+                        if (result.chooseAgain()) pickSdTree(request.target(), request.kinds(), false, reselectMode);
                     } else {
-                        onVerified.accept(confirmed);
+                        onVerified.accept(result.location());
                     }
+                },
+                () -> {
+                    starting = false;
+                    showSdFailure("取り込み元のフォルダを確認できません。接続とフォルダを確認してください。");
+                },
+                busy -> {
+                    DiagnosticLog.exception("camera.sd_verify", "busy", busy);
+                    starting = false;
+                    showSdFailure(registrationOnly ? SD_REGISTRATION_NOT_SAVED : IMPORT_NOT_STARTED);
                 });
-            });
-        } catch (java.util.concurrent.RejectedExecutionException busy) {
-            DiagnosticLog.exception("camera.sd_verify", "busy", busy);
-            rejectSourceRequest(timeout, cancellation,
-                    registrationOnly ? SD_REGISTRATION_NOT_SAVED : IMPORT_NOT_STARTED);
+    }
+
+    private record SdProbeResult(SdLocation location, String failure, boolean chooseAgain) {}
+
+    private SdProbeResult probeSdSource(SdStart request, SdStartMode reselectMode,
+            android.os.CancellationSignal cancellation) {
+        String failure = request.picked() ? PICKED_FOLDER_UNAVAILABLE
+                : CameraQuickImportSources.SdState.FOLDER_UNAVAILABLE.message;
+        try {
+            return new SdProbeResult(sdSourceProbe.verify(request, cancellation), failure, false);
+        } catch (MountedCameraCard.Unavailable unavailable) {
+            DiagnosticLog.exception("camera.sd_verify", "unavailable", unavailable);
+            return new SdProbeResult(null, unavailable.getMessage(),
+                    reselectMode != null && unavailable.canReselect() && !request.picked());
+        } catch (IOException | RuntimeException unavailable) {
+            DiagnosticLog.exception("camera.sd_verify", cancellation.isCanceled() ? "cancelled" : "failed",
+                    unavailable);
+            return new SdProbeResult(null, failure, false);
         }
     }
 
