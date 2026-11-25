@@ -49,9 +49,11 @@ public final class EncryptedSecretStore {
     SecretKey key = (SecretKey) store.getKey(alias, null);
     if (key != null) return key;
     // A present but unreadable entry must not be replaced during a normal write.
-    if (store.containsAlias(alias)) throw new GeneralSecurityException("Encryption key unavailable");
+    if (store.containsAlias(alias))
+      throw new GeneralSecurityException("Encryption key unavailable");
     KeyGenParameterSpec.Builder spec =
-        new KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
+        new KeyGenParameterSpec.Builder(
+                alias, KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE);
     if (keyBits != null) spec.setKeySize(keyBits);

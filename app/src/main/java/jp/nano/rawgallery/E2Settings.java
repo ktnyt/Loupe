@@ -1,9 +1,9 @@
 package jp.nano.rawgallery;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
-import android.content.SharedPreferences;
 import android.util.Base64;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -43,18 +43,22 @@ final class E2Settings {
   }
 
   static boolean hasMediaAccess(Context context) {
-    return hasPhotoAccess(context) && (Build.VERSION.SDK_INT < 33
-        || context.checkSelfPermission(android.Manifest.permission.READ_MEDIA_VIDEO)
-            == PackageManager.PERMISSION_GRANTED);
+    return hasPhotoAccess(context)
+        && (Build.VERSION.SDK_INT < 33
+            || context.checkSelfPermission(android.Manifest.permission.READ_MEDIA_VIDEO)
+                == PackageManager.PERMISSION_GRANTED);
   }
 
   static String imagePermission() {
-    return Build.VERSION.SDK_INT >= 33 ? android.Manifest.permission.READ_MEDIA_IMAGES
+    return Build.VERSION.SDK_INT >= 33
+        ? android.Manifest.permission.READ_MEDIA_IMAGES
         : android.Manifest.permission.READ_EXTERNAL_STORAGE;
   }
 
   static String configuredBucket(Context context) {
-    return context.getSharedPreferences("e2_connection", Context.MODE_PRIVATE).getString("bucket", "");
+    return context
+        .getSharedPreferences("e2_connection", Context.MODE_PRIVATE)
+        .getString("bucket", "");
   }
 
   static ArchiveStore openRecords(Context context) {
@@ -67,12 +71,14 @@ final class E2Settings {
 
   synchronized void connect(String bucket, String access, String secret) throws Exception {
     E2Archive.forPhotos(records, bucket, access, secret).checkConnection();
-    JSONObject config = new JSONObject().put("bucket", bucket)
-        .put("access", access).put("secret", secret);
+    JSONObject config =
+        new JSONObject().put("bucket", bucket).put("access", access).put("secret", secret);
     Cipher cipher = EncryptedSecretStore.encryptionCipher(ALIAS);
     byte[] encrypted = cipher.doFinal(config.toString().getBytes(StandardCharsets.UTF_8));
-    String encoded = Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP) + "."
-        + Base64.encodeToString(encrypted, Base64.NO_WRAP);
+    String encoded =
+        Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP)
+            + "."
+            + Base64.encodeToString(encrypted, Base64.NO_WRAP);
     synchronized (DESTINATION_LOCK) {
       if (Thread.currentThread().isInterrupted()) throw new IOException("接続を中断しました");
       Context owner = recordsContext;
@@ -88,9 +94,11 @@ final class E2Settings {
     if (encoded.isEmpty()) throw new IOException("IDrive e2を設定してください");
     String[] parts = encoded.split("\\.", 2);
     if (parts.length != 2) throw new IOException("接続設定を読み込めません");
-    Cipher cipher = EncryptedSecretStore.decryptionCipher(ALIAS,
-        () -> new GCMParameterSpec(128, Base64.decode(parts[0], Base64.NO_WRAP)),
-        "接続設定の暗号鍵を読み込めません");
+    Cipher cipher =
+        EncryptedSecretStore.decryptionCipher(
+            ALIAS,
+            () -> new GCMParameterSpec(128, Base64.decode(parts[0], Base64.NO_WRAP)),
+            "接続設定の暗号鍵を読み込めません");
     byte[] data = cipher.doFinal(Base64.decode(parts[1], Base64.NO_WRAP));
     return new JSONObject(new String(data, StandardCharsets.UTF_8));
   }
@@ -103,7 +111,12 @@ final class E2Settings {
     JSONObject config = configuration();
     if (expectedBucket != null && !expectedBucket.equals(config.getString("bucket")))
       throw new IOException("保存先が変わりました");
-    return E2Archive.forPhotos(records, config.getString("bucket"),
-        config.getString("access"), config.getString("secret"), context, network);
+    return E2Archive.forPhotos(
+        records,
+        config.getString("bucket"),
+        config.getString("access"),
+        config.getString("secret"),
+        context,
+        network);
   }
 }
