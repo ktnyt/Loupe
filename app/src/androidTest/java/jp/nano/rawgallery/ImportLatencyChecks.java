@@ -8,10 +8,8 @@ import android.os.SystemClock;
 import android.provider.MediaStore;
 import java.io.*;
 import java.lang.reflect.*;
-import java.nio.file.Files;
 import java.util.*;
 import java.util.concurrent.*;
-import org.json.JSONObject;
 
 /** Imports only generated images; deletes only URIs returned by this invocation's inserts. */
 final class ImportLatencyChecks {
@@ -20,7 +18,29 @@ final class ImportLatencyChecks {
   }
   private static final class ImportInterrupted extends AssertionError {}
 
+  private static void checkFrameCorrelation() {
+    // The committed frame shares an ID with events that belong to a different session or import.
+    String previous = """
+        {"event":"image.request","session":"a","ns":90,"request":6,"photo":3}
+        {"event":"image.request","session":"a","ns":101,"request":7,"photo":3}
+        {"event":"image.request","session":"a","ns":102,"request":8,"photo":4}
+        """;
+    String current = """
+        {"event":"image.frame_commit","session":"b","ns":106,"request":7}
+        {"event":"image.frame_commit","session":"a","ns":107,"request":6}
+        {"event":"image.frame_commit","session":"a","ns":108,"request":8}
+        {"event":"image.frame_commit","session":"a","ns":110,"request":7}
+        {"event":"image.frame_commit"
+        """;
+    Set<Long> photos = Set.of(3L);
+    if (ImportFrameTrace.firstFrame(100, photos, current) != 0
+        || ImportFrameTrace.firstFrame(100, photos, previous, current) != 110) {
+      throw new AssertionError("Import frame correlation crossed the wrong generation or session");
+    }
+  }
+
   static String run(ArchiveInstrumentation test, boolean interrupt, boolean pause, boolean deferred) throws Exception {
+    checkFrameCorrelation();
     Context context = test.getTargetContext();
     ContentResolver resolver = context.getContentResolver();
     String folder = "Pictures/Loupe-import-test-" + UUID.randomUUID() + "/";
@@ -129,7 +149,7 @@ final class ImportLatencyChecks {
         if (test.importResumes() == resumes) throw new AssertionError("activity did not resume");
       } else if (interrupt) test.runOnMainSync(a::onBackPressed);
       long deadline = SystemClock.elapsedRealtime() + 90000;
-      long applied = 0, frame = 0;
+      long applied = 0, frame = 0, nextTraceRead = 0;
       Set<Long> ids = new HashSet<>();
       while (SystemClock.elapsedRealtime() < deadline) {
         boolean[] ready = {false};
@@ -150,18 +170,11 @@ final class ImportLatencyChecks {
         }
         if (ready[0]) {
           if (applied == 0) applied = SystemClock.elapsedRealtimeNanos();
-          // Correlate new fixture requests only; an old screen's frame cannot satisfy the check.
-          Map<Long, Long> requests = new HashMap<>();
-          File log = new File(context.getFilesDir(), "diagnostics/events.jsonl");
-          if (log.isFile()) for (String line : Files.readAllLines(log.toPath())) {
-            if (!line.endsWith("}")) continue; // writer may be appending the last line
-            JSONObject event = new JSONObject(line);
-            if (event.getLong("ns") < publishing) continue;
-            if ("image.request".equals(event.getString("event")) && ids.contains(event.optLong("photo")))
-              requests.put(event.getLong("request"), event.optLong("photo"));
-            if ("image.frame_commit".equals(event.getString("event")) && requests.containsKey(event.getLong("request"))) {
-              frame = event.getLong("ns"); break;
-            }
+          long now = SystemClock.elapsedRealtime();
+          if (now >= nextTraceRead) {
+            nextTraceRead = now + 100;
+            frame = ImportFrameTrace.firstFrame(
+                new File(context.getFilesDir(), "diagnostics"), publishing, ids);
           }
           if (frame != 0) break;
         }
