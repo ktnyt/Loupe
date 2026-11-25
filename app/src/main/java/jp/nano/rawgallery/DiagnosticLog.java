@@ -16,33 +16,70 @@ final class DiagnosticLog {
   private static final AtomicLong IDS = new AtomicLong(), DROPPED = new AtomicLong();
   private static final ArrayBlockingQueue<String> QUEUE = new ArrayBlockingQueue<>(2048);
   private static final ThreadLocal<Long> PARENT = ThreadLocal.withInitial(() -> 0L);
+  private static final Object CONFIG = new Object();
+  static final Object FILES = new Object();
   private static volatile boolean enabled;
+  private static boolean writerStarted;
   private static boolean initialized;
 
   static synchronized void init(Context context) {
     if (initialized) return;
     initialized = true;
-    enabled = (context.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
-    if (!enabled) return;
-    File dir = new File(context.getFilesDir(), "diagnostics");
-    Thread writer = new Thread(() -> {
-      try (DiagnosticWriter sink = new DiagnosticWriter(dir, 2 * 1024 * 1024)) {
-        while (true) {
-          String line = QUEUE.poll(250, java.util.concurrent.TimeUnit.MILLISECONDS);
-          if (line != null) sink.write(line);
-          sink.flush();
-        }
-      } catch (Exception e) {
-        enabled = false;
-        Log.e("LoupeDiagnostic", "writer_failed:" + e.getClass().getSimpleName());
+    boolean debug = (context.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+    enabled = settings(context).getBoolean("record", debug);
+    if (enabled) startWriter(context);
+  }
+
+  static boolean recording() { return enabled; }
+
+  static boolean setRecording(Context context, boolean record) {
+    synchronized (CONFIG) {
+      if (!settings(context).edit().putBoolean("record", record).commit()) return false;
+      synchronized (DiagnosticLog.class) {
+        boolean starting = record && !enabled;
+        enabled = record;
+        if (starting) startWriter(context);
       }
-    }, "loupe-diagnostics");
-    writer.setDaemon(true);
-    writer.start();
+      return true;
+    }
+  }
+
+  private static android.content.SharedPreferences settings(Context context) {
+    return context.getSharedPreferences("diagnostics", Context.MODE_PRIVATE);
+  }
+
+  /** The caller holds the class monitor to serialize starting and stopping capture. */
+  private static void startWriter(Context context) {
+    if (!writerStarted) {
+      writerStarted = true;
+      File dir = new File(context.getFilesDir(), "diagnostics");
+      Thread writer = new Thread(() -> write(dir), "loupe-diagnostics");
+      writer.setDaemon(true);
+      writer.start();
+    }
     long version = 0;
     try { version = context.getPackageManager().getPackageInfo(context.getPackageName(), 0).getLongVersionCode(); }
     catch (android.content.pm.PackageManager.NameNotFoundException ignored) {}
     event("session", 0, "version", version, "wall_ms", System.currentTimeMillis());
+  }
+
+  private static void write(File dir) {
+    try (DiagnosticWriter sink = new DiagnosticWriter(dir, DiagnosticExport.EVENT_FILE_LIMIT)) {
+      while (true) {
+        String line = QUEUE.take();
+        synchronized (FILES) {
+          sink.write(line);
+          sink.flush();
+        }
+      }
+    } catch (Exception error) {
+      synchronized (DiagnosticLog.class) {
+        enabled = false;
+        writerStarted = false;
+        QUEUE.clear();
+      }
+      Log.e("LoupeDiagnostic", "writer_failed:" + error.getClass().getSimpleName());
+    }
   }
 
   static long parent() { return PARENT.get(); }
@@ -64,7 +101,9 @@ final class DiagnosticLog {
           .put("request", request).put("parent", parent())
           .put("thread", Thread.currentThread().getId()).put("dropped", DROPPED.get());
       for (int i = 0; i < fields.length; i += 2) j.put((String) fields[i], fields[i + 1]);
-      if (!QUEUE.offer(j.toString())) DROPPED.incrementAndGet();
+      synchronized (DiagnosticLog.class) {
+        if (enabled && !QUEUE.offer(j.toString())) DROPPED.incrementAndGet();
+      }
     } catch (Exception e) { DROPPED.incrementAndGet(); }
   }
   static Scope span(String name) { return new Scope(name); }

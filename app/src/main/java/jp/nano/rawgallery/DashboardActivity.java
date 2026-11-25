@@ -24,6 +24,7 @@ public final class DashboardActivity extends DiagnosticActivity {
   Source source=()->new DashboardObservation(PreviewPreparationJob.snapshot(this),PreviewPreparationJob.browsing());
   private final ExecutorService worker=new DiagnosticExecutor("Dashboard.read",1);
   private final Handler handler=new Handler(Looper.getMainLooper());
+  private final DiagnosticControls diagnostics = new DiagnosticControls(this, worker);
   private final ArrayList<Runnable> bindings=new ArrayList<>();
   private final Runnable refresh=this::read;
   private DashboardObservation observation=DashboardObservation.empty();
@@ -78,6 +79,7 @@ public final class DashboardActivity extends DiagnosticActivity {
             startActivity(new android.content.Intent(this, E2SyncActivity.class)));
         margin(e2,16,0,16,8);
       }
+      margin(new SyncSettingsUi.ActionButton(this, "診断記録", diagnostics::show), 16, 8, 16, 8);
     }else{
       LinearLayout panel=row();panel.setPadding(dp(14),dp(12),dp(14),dp(12));panel.setMinimumHeight(dp(56));panel.setBackground(GalleryUi.shape(this,GalleryUi.PANEL,14));
       panel.addView(new Mark(StatusView.Symbol.UNKNOWN),new LinearLayout.LayoutParams(dp(24),dp(24)));panel.setContentDescription(NAMES[detail]+"。この工程だけの状態は記録されていません。");margin(panel,16,0,16,12);

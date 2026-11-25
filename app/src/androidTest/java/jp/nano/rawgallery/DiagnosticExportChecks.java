@@ -1,0 +1,103 @@
+package jp.nano.rawgallery;
+
+import android.content.Context;
+import android.content.Intent;
+import android.content.pm.ApplicationInfo;
+import android.os.Build;
+import android.os.SystemClock;
+import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
+import java.util.zip.ZipInputStream;
+import org.json.JSONObject;
+
+final class DiagnosticExportChecks {
+  private static final String SECRET = "synthetic-token-do-not-export";
+  private static final String PATH = "/sdcard/DCIM/private-photo.JPG";
+  private static final String SESSION = "abcdef01-23ab-45cd-67ef-0123456789ab";
+
+  static String run(Context context) throws Exception {
+    require("ranchu".equals(Build.HARDWARE));
+    require((context.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) == 0);
+    require(!DiagnosticLog.recording());
+
+    var intent = DiagnosticExport.saveIntent();
+    require(Intent.ACTION_CREATE_DOCUMENT.equals(intent.getAction())
+        && intent.getBooleanExtra(Intent.EXTRA_LOCAL_ONLY, false));
+
+    File folder = new File(context.getFilesDir(), "diagnostics");
+    require(folder.isDirectory() || folder.mkdirs());
+    write(folder, "previous.jsonl", event("input.back", 1).toString());
+    write(folder, "events.jsonl", event("image.memory", 2).toString()
+        + "\n" + event(SECRET, 3) + "\n" + event("image.request", 4) + "\ninvalid JSON " + SECRET + "\n");
+    write(folder, "last-crash.json", new JSONObject()
+        .put("version_code", 230).put("exception", "java.io.IOException")
+        .put("frame", new JSONObject().put("class", "java.lang.String").put("method", "length").put("line", 10)
+            .put("path", PATH))
+        .put("message", SECRET).toString());
+    for (String name : Set.of("last-crash.json.new", "import.log", "original.jpg", "preferences.xml")) {
+      write(folder, name, SECRET);
+    }
+    Map<String, String> contents = unzip(DiagnosticExport.capture(context));
+    require(contents.keySet().equals(Set.of("events.jsonl", "previous.jsonl", "last-crash.json")));
+    for (String value : contents.values()) {
+      require(!value.contains(SECRET) && !value.contains(PATH) && !value.contains(SESSION));
+    }
+    JSONObject newer = new JSONObject(contents.get("events.jsonl"));
+    JSONObject older = new JSONObject(contents.get("previous.jsonl"));
+    require(contents.get("events.jsonl").lines().count() == 1);
+    require("image.memory".equals(newer.getString("event")) && newer.getBoolean("hit"));
+    require(newer.getInt("session") == older.getInt("session") && newer.getInt("seq") == 2);
+    JSONObject crash = new JSONObject(contents.get("last-crash.json"));
+    require("java.io.IOException".equals(crash.getString("exception"))
+        && "length".equals(crash.getJSONObject("frame").getString("method")));
+    require(DiagnosticExport.archive(Map.of(
+        "events.jsonl", new byte[DiagnosticExport.EVENT_FILE_LIMIT + 1],
+        "last-crash.json", new JSONObject().put("exception", "java.lang." + SECRET)
+            .put("version_code", 230).toString().getBytes(StandardCharsets.UTF_8))).length == 0);
+
+    DiagnosticLog.event("video.prepared", 0, "elapsed_ms", 863241234);
+    require(!unzip(DiagnosticExport.capture(context)).get("events.jsonl").contains("863241234"));
+    require(DiagnosticLog.setRecording(context, true) && DiagnosticLog.recording());
+    DiagnosticLog.event("video.prepared", 0, "elapsed_ms", 556677889, "path", PATH);
+    long deadline = SystemClock.elapsedRealtime() + 3000;
+    while (!unzip(DiagnosticExport.capture(context)).get("events.jsonl").contains("556677889")) {
+      require(SystemClock.elapsedRealtime() < deadline);
+      SystemClock.sleep(25);
+    }
+    require(DiagnosticLog.setRecording(context, false) && !DiagnosticLog.recording());
+    DiagnosticLog.event("video.prepared", 0, "elapsed_ms", 999999991);
+    SystemClock.sleep(100);
+    String events = unzip(DiagnosticExport.capture(context)).get("events.jsonl");
+    require(!events.contains("999999991") && !events.contains(PATH));
+    return "PASS non-debuggable diagnostic opt-in and fixed ZIP data, legacy fields, paths and secrets excluded";
+  }
+
+  private static void write(File folder, String name, String value) throws Exception {
+    Files.write(new File(folder, name).toPath(), value.getBytes(StandardCharsets.UTF_8));
+  }
+
+  private static JSONObject event(String name, int sequence) throws Exception {
+    return new JSONObject().put("event", name).put("session", SESSION).put("seq", sequence)
+        .put("ns", sequence * 100).put("request", 0).put("hit", true).put("file", PATH)
+        .put("error", SECRET).put("unknown", SECRET);
+  }
+
+  private static Map<String, String> unzip(byte[] bytes) throws Exception {
+    Map<String, String> contents = new HashMap<>();
+    try (var zip = new ZipInputStream(new ByteArrayInputStream(bytes))) {
+      for (var entry = zip.getNextEntry(); entry != null; entry = zip.getNextEntry()) {
+        require(contents.put(entry.getName(), new String(zip.readAllBytes(), StandardCharsets.UTF_8)) == null);
+      }
+    }
+    return contents;
+  }
+
+  private static void require(boolean condition) {
+    if (!condition) throw new AssertionError("Diagnostic export fixture check failed");
+  }
+}
