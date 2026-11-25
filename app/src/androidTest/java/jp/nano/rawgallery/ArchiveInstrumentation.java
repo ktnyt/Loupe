@@ -220,7 +220,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
       importPauseTest,
       importDeferredTest,
       indexSignatureTest,
-      indexApplyRaceTest;
+      indexApplyRaceTest,
+      archiveScanTest;
   private volatile long importPauses, importResumes;
 
   @Override
@@ -271,6 +272,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     }
     confidenceUiTest = args != null && "tag-confidence".equals(args.getString("mode"));
     confidenceStoreTest = args != null && "confidence-store".equals(args.getString("mode"));
+    archiveScanTest = args != null && "archive-scan".equals(args.getString("mode"));
     indexSignatureTest = args != null && "index-signature".equals(args.getString("mode"));
     indexApplyRaceTest = args != null && "index-apply-race".equals(args.getString("mode"));
     importDeferredTest = args != null && "import-deferred".equals(args.getString("mode"));
@@ -618,6 +620,11 @@ public final class ArchiveInstrumentation extends Instrumentation {
       }
       if (confidenceStoreTest) {
         results.putString("stream", ConfidenceStoreChecks.run(context));
+        finish(-1, results);
+        return;
+      }
+      if (archiveScanTest) {
+        results.putString("stream", ArchiveScanChecks.run(context));
         finish(-1, results);
         return;
       }
