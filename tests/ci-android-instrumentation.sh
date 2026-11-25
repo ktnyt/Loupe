@@ -66,6 +66,10 @@ run_instrumentation() {
   printf '%s\n' "$result"
   if ! grep -q '^INSTRUMENTATION_RESULT: stream=PASS ' <<< "$result" ||
      ! grep -qx 'INSTRUMENTATION_CODE: -1' <<< "$result"; then
+    if [[ "$label" == photo-edit ]]; then
+      "$adb" -s "$serial" logcat -d -s LoupeRawEdit:I '*:S' |
+        awk '/full[.]prepare|fixture[.]cancel|jpeg[.]load[.]complete/ {print}' || true
+    fi
     echo "$label did not report PASS." >&2
     exit 1
   fi
