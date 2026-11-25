@@ -16,6 +16,15 @@ import org.json.*;
 
 public final class PhotoRepository {
   public static final class Photo {
+    private record FolderRule(String part, String group) {}
+
+    private static final FolderRule[] CAMERA_FOLDER_RULES = {
+        new FolderRule("gr world", "GR"),
+        new FolderRule("om-1", "OM-1"),
+        new FolderRule("e-p7", "E-P7"),
+        new FolderRule("camera/raw", "Leitz"),
+    };
+
     public final Uri uri;
     public final String name, folder;
     public final long size, modified, taken, added, created;
@@ -63,11 +72,10 @@ public final class PhotoRepository {
     }
 
     public String cameraGroup() {
-      String f = folder.toLowerCase(Locale.ROOT);
-      if (f.contains("gr world")) return "GR";
-      if (f.contains("om-1")) return "OM-1";
-      if (f.contains("e-p7")) return "E-P7";
-      if (f.contains("camera/raw")) return "Leitz";
+      String path = folder.toLowerCase(Locale.ROOT);
+      for (FolderRule rule : CAMERA_FOLDER_RULES) {
+        if (path.contains(rule.part())) return rule.group();
+      }
       return "その他";
     }
   }
