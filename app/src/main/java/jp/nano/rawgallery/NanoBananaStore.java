@@ -41,23 +41,50 @@ final class NanoBananaStore {
   void setOutput(String aspectRatio,String resolution) throws IOException {
     NanoBananaOutput value=NanoBananaOutput.of(aspectRatio,resolution);
     synchronized(LOCK) {
-      Object previous=prefs.getAll().get("output");
       try {
-        if(prefs.edit().putString("output",value.json().toString()).commit())return;
-      }catch(Exception e){/* Restore the in-memory preference as well as the durable value. */}
-      SharedPreferences.Editor rollback=prefs.edit();
-      if(previous instanceof String)rollback.putString("output",(String)previous);
-      else if(previous instanceof Integer)rollback.putInt("output",(Integer)previous);
-      else if(previous instanceof Long)rollback.putLong("output",(Long)previous);
-      else if(previous instanceof Float)rollback.putFloat("output",(Float)previous);
-      else if(previous instanceof Boolean)rollback.putBoolean("output",(Boolean)previous);
-      else if(previous instanceof java.util.Set)rollback.putStringSet("output",new java.util.HashSet<>((java.util.Set<String>)previous));
-      else rollback.remove("output");
-      rollback.commit();
-      throw new IOException("出力設定を保存できませんでした。もう一度保存してください");
+        saveSetting("output", value.json().toString());
+      } catch (Exception failure) {
+        throw new IOException("出力設定を保存できませんでした。もう一度保存してください");
+      }
     }
   }
-  boolean hasKey() { return prefs.contains("credential"); }
+
+  /** Caller holds LOCK. A failed commit may already have changed SharedPreferences in memory. */
+  private void saveSetting(String field, String value) throws IOException {
+    Object previous = prefs.getAll().get(field);
+    try {
+      SharedPreferences.Editor edit = prefs.edit();
+      if (value == null) edit.remove(field);
+      else edit.putString(field, value);
+      if (edit.commit()) return;
+    } catch (RuntimeException failure) {
+      DiagnosticLog.exception("nano.settings_commit", "failed", failure);
+    }
+    try {
+      restoreSetting(field, previous);
+    } catch (RuntimeException failure) {
+      DiagnosticLog.exception("nano.settings_restore", "failed", failure);
+    }
+    throw new IOException();
+  }
+
+  @SuppressWarnings("unchecked") // SharedPreferences supports only sets of strings.
+  private void restoreSetting(String field, Object previous) {
+    SharedPreferences.Editor rollback = prefs.edit();
+    if (previous instanceof String) rollback.putString(field, (String) previous);
+    else if (previous instanceof Integer) rollback.putInt(field, (Integer) previous);
+    else if (previous instanceof Long) rollback.putLong(field, (Long) previous);
+    else if (previous instanceof Float) rollback.putFloat(field, (Float) previous);
+    else if (previous instanceof Boolean) rollback.putBoolean(field, (Boolean) previous);
+    else if (previous instanceof java.util.Set) rollback.putStringSet(field,
+        new java.util.HashSet<>((java.util.Set<String>) previous));
+    else rollback.remove(field);
+    if (!rollback.commit()) DiagnosticLog.exception("nano.settings_restore", "failed", new IOException());
+  }
+
+  boolean hasKey() {
+    synchronized (LOCK) { return prefs.contains("credential"); }
+  }
   private static SecretKey key(boolean create) throws Exception {
     KeyStore keys=KeyStore.getInstance("AndroidKeyStore"); keys.load(null);
     if(keys.containsAlias(ALIAS)) return (SecretKey)keys.getKey(ALIAS,null);
@@ -83,7 +110,7 @@ final class NanoBananaStore {
       Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding"); cipher.init(Cipher.ENCRYPT_MODE,key(true));
       String encrypted=Base64.encodeToString(cipher.getIV(),Base64.NO_WRAP)+":"+
           Base64.encodeToString(cipher.doFinal(value.getBytes(StandardCharsets.UTF_8)),Base64.NO_WRAP);
-      if(!prefs.edit().putString(field,encrypted).commit()) throw new IOException();
+      saveSetting(field, encrypted);
   }
   String apiKey() throws IOException {
     synchronized (LOCK) {
@@ -107,10 +134,13 @@ final class NanoBananaStore {
     synchronized (LOCK) {
       if (NanoBananaJob.BUSY.get() || job() != null)
         throw new IOException("進行中の処理を終了してから削除してください");
-      if (!prefs.edit().remove("credential").commit()) throw new IOException("APIキーを削除できませんでした");
+      try { saveSetting("credential", null); }
+      catch (IOException error) { throw new IOException("APIキーを削除できませんでした"); }
     }
   }
-  boolean hasE2() { return prefs.contains("e2"); }
+  boolean hasE2() {
+    synchronized (LOCK) { return prefs.contains("e2"); }
+  }
   void setE2(String bucket, String access, String secret) throws IOException {
     synchronized (LOCK) {
       if (NanoBananaJob.BUSY.get()) throw new IOException("実行が終わってから変更してください");
@@ -155,7 +185,8 @@ final class NanoBananaStore {
     synchronized (LOCK) {
       if (NanoBananaJob.BUSY.get() || job() != null)
         throw new IOException("進行中の処理を終了してから削除してください");
-      if (!prefs.edit().remove("e2").commit()) throw new IOException("設定を削除できませんでした");
+      try { saveSetting("e2", null); }
+      catch (IOException error) { throw new IOException("設定を削除できませんでした"); }
     }
   }
   JSONObject job() throws IOException {

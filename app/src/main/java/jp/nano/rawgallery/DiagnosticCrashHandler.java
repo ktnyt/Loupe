@@ -6,7 +6,6 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.atomic.AtomicBoolean;
 import org.json.JSONObject;
 
 /** Keeps one app-private summary independent of the asynchronous diagnostic queue. */
@@ -14,7 +13,8 @@ final class DiagnosticCrashHandler implements Thread.UncaughtExceptionHandler {
   private final File directory;
   private final int versionCode;
   private final Thread.UncaughtExceptionHandler previous;
-  private final AtomicBoolean recorded = new AtomicBoolean();
+  private final Object saveLock = new Object();
+  private boolean recorded;
 
   DiagnosticCrashHandler(File directory, int versionCode, Thread.UncaughtExceptionHandler previous) {
     this.directory = directory;
@@ -24,7 +24,13 @@ final class DiagnosticCrashHandler implements Thread.UncaughtExceptionHandler {
 
   @Override public void uncaughtException(Thread thread, Throwable failure) {
     try {
-      if (recorded.compareAndSet(false, true)) save(failure);
+      // The previous handler may end the process, so every crashing thread waits for this write.
+      synchronized (saveLock) {
+        if (!recorded) {
+          recorded = true;
+          save(failure);
+        }
+      }
     } catch (Throwable writeFailure) {
       Log.e("LoupeDiagnostic", "crash_summary_failed:" + writeFailure.getClass().getSimpleName());
     } finally {

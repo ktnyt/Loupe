@@ -3,6 +3,7 @@ package jp.nano.rawgallery;
 import android.app.Instrumentation;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.graphics.Rect;
 import android.view.View;
 import android.net.Uri;
@@ -13,12 +14,14 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import jp.nano.rawgallery.camera.ImportLog;
@@ -33,17 +36,23 @@ final class DiagnosticFailureChecks {
   private static final String IMPORT_NOT_STARTED =
       "確認処理が混み合っています。取り込みは始まっていません。少し待ってからやり直してください。";
 
+  private static final String SD_REGISTRATION_NOT_SAVED =
+      "確認処理が混み合っています。SDカードの登録は完了していません。少し待ってからやり直してください。";
+
   static String run(Instrumentation test) throws Exception {
     Context context = test.getTargetContext();
-    crashAndPrivacy(context);
+    long fixture = SystemClock.elapsedRealtimeNanos();
+    DiagnosticLog.event("fixture.diagnostics_begin", 0, "fixture", fixture);
+    crashAndPrivacy(context, fixture);
+    simultaneousCrashes(context);
     credentialConcurrency(context);
     sourceConcurrency(test);
-    checkPrivacy(context);
-    return "PASS crash summary, delegation and storage error, log privacy, generated image without a path, "
-        + "Nano Banana preferences and credential messages, SD/Wi-Fi source rejection and retry";
+    checkPrivacy(context, fixture);
+    return "PASS crash summary, simultaneous delegation and storage error, log privacy, generated image without a path, "
+        + "Nano Banana preferences and credential messages, SD registration and SD/Wi-Fi source rejection and retry";
   }
 
-  private static void crashAndPrivacy(Context context) throws Exception {
+  private static void crashAndPrivacy(Context context, long fixture) throws Exception {
     require(Thread.getDefaultUncaughtExceptionHandler() instanceof DiagnosticCrashHandler, "crash handler installed");
     File directory = Files.createTempDirectory(context.getCacheDir().toPath(), "crash-summary").toFile();
     File file = new File(directory, "last-crash.json");
@@ -81,11 +90,72 @@ final class DiagnosticFailureChecks {
 
     DiagnosticLog.exception("fixture.diagnostics", "failed", failure);
     ImportLog.INSTANCE.init(context);
-    ImportLog.INSTANCE.w("ImportLogFixture", "fixture.import", failure);
+    ImportLog.INSTANCE.w("ImportLogFixture", "fixture.import " + fixture, failure);
+  }
+
+  private static void simultaneousCrashes(Context context) throws Exception {
+    File directory = Files.createTempDirectory(context.getCacheDir().toPath(), "parallel-crash").toFile();
+    File summary = new File(directory, "last-crash.json");
+    CountDownLatch saving = new CountDownLatch(1), allowWrite = new CountDownLatch(1);
+    CountDownLatch secondEntered = new CountDownLatch(1), secondDelegated = new CountDownLatch(1);
+    CountDownLatch firstDelegated = new CountDownLatch(1), allowFirstToReturn = new CountDownLatch(1);
+    AtomicInteger delegatedWithSummary = new AtomicInteger();
+    Throwable firstFailure = new IllegalStateException() {
+      @Override public StackTraceElement[] getStackTrace() {
+        saving.countDown();
+        waitForLatch(allowWrite);
+        return new StackTraceElement[] { new StackTraceElement("First", "crash", null, 4) };
+      }
+    };
+    Throwable secondFailure = new IllegalArgumentException();
+    DiagnosticCrashHandler handler = new DiagnosticCrashHandler(directory, 123, (thread, failure) -> {
+      if (summary.isFile()) delegatedWithSummary.incrementAndGet();
+      if (failure == firstFailure) {
+        firstDelegated.countDown();
+        waitForLatch(allowFirstToReturn);
+      } else if (failure == secondFailure) {
+        secondDelegated.countDown();
+      }
+    });
+    Thread first = new Thread(() -> handler.uncaughtException(Thread.currentThread(), firstFailure), "first-crash");
+    Thread second = new Thread(() -> {
+      secondEntered.countDown();
+      handler.uncaughtException(Thread.currentThread(), secondFailure);
+    }, "second-crash");
+    try {
+      first.start();
+      require(saving.await(3, TimeUnit.SECONDS), "first crash is recording");
+      second.start();
+      require(secondEntered.await(3, TimeUnit.SECONDS), "second crash has entered");
+      long waitingDeadline = SystemClock.elapsedRealtime() + 3000;
+      while (second.getState() != Thread.State.BLOCKED && secondDelegated.getCount() != 0
+          && SystemClock.elapsedRealtime() < waitingDeadline) SystemClock.sleep(10);
+      require(second.getState() == Thread.State.BLOCKED && secondDelegated.getCount() == 1,
+          "second crash cannot end the process while saving");
+      allowWrite.countDown();
+      require(firstDelegated.await(3, TimeUnit.SECONDS), "first crash delegated");
+      require(secondDelegated.await(3, TimeUnit.SECONDS), "delegation does not hold save lock");
+      require(delegatedWithSummary.get() == 2, "both delegates observe the saved summary");
+      require(new JSONObject(read(summary)).getJSONObject("frame").getString("class").equals("First"),
+          "second crash does not overwrite first summary");
+    } finally {
+      allowWrite.countDown();
+      allowFirstToReturn.countDown();
+      first.join(3000);
+      second.join(3000);
+      Files.deleteIfExists(summary.toPath());
+      Files.deleteIfExists(directory.toPath());
+    }
+  }
+
+  private static void waitForLatch(CountDownLatch latch) {
+    try { latch.await(10, TimeUnit.SECONDS); }
+    catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
   }
 
   private static void credentialConcurrency(Context context) throws Exception {
     String namespace = "nano-bananafailure-fixture";
+    SharedPreferences prefs = context.getSharedPreferences(namespace, Context.MODE_PRIVATE);
     NanoBananaStore writer = new NanoBananaStore(context, namespace);
     NanoBananaStore reader = new NanoBananaStore(context, namespace);
     try {
@@ -121,6 +191,15 @@ final class DiagnosticFailureChecks {
       require(finished.await(3, TimeUnit.SECONDS) && error.get() == null
           && "pending".equals(writer.job().getString("stage")), "serialized write visible to both stores");
       writer.job(null);
+      expectIo(() -> failNextCommit(prefs).setKey("different-fixture-key"), "APIキーを保存できません");
+      expectIo(failNextCommit(prefs)::deleteKey, "APIキーを削除できません");
+      require(reader.hasKey() && reader.apiKey().equals("synthetic-fixture-api-key"), "failed API edits preserve key");
+      String priorE2 = prefs.getString("e2", null);
+      expectIo(() -> failNextCommit(prefs).setE2("another-bucket", "A".repeat(20), "B".repeat(40)),
+          "IDrive e2の設定を保存できません");
+      expectIo(failNextCommit(prefs)::deleteE2, "設定を削除できません");
+      require(reader.hasE2() && priorE2.equals(prefs.getString("e2", null)), "failed e2 edits preserve ciphertext");
+      reader.e2();
       writer.deleteE2();
       expectIo(reader::e2, "IDrive e2の設定を読み込めません");
       writer.deleteKey();
@@ -128,6 +207,23 @@ final class DiagnosticFailureChecks {
     } finally {
       context.deleteSharedPreferences(namespace);
     }
+  }
+
+  private static NanoBananaStore failNextCommit(SharedPreferences prefs) {
+    AtomicBoolean fail = new AtomicBoolean(true);
+    SharedPreferences failing = (SharedPreferences) Proxy.newProxyInstance(
+        SharedPreferences.class.getClassLoader(), new Class<?>[]{SharedPreferences.class}, (unused, method, args) -> {
+          Object result = method.invoke(prefs, args);
+          if (!(result instanceof SharedPreferences.Editor editor)) return result;
+          return Proxy.newProxyInstance(SharedPreferences.Editor.class.getClassLoader(),
+              new Class<?>[]{SharedPreferences.Editor.class}, (proxy, edit, values) -> {
+                Object edited = edit.invoke(editor, values);
+                // The first commit mutates memory, but reports failure. The rollback is allowed.
+                if (edit.getName().equals("commit") && fail.getAndSet(false)) return false;
+                return edited == editor ? proxy : edited;
+              });
+        });
+    return new NanoBananaStore(failing);
   }
 
   private static void sourceConcurrency(Instrumentation test) throws Exception {
@@ -156,7 +252,10 @@ final class DiagnosticFailureChecks {
         Method statusRefresh = CameraImportActivity.class.getDeclaredMethod("refreshSdSource");
         Method loadWifi = CameraImportActivity.class.getDeclaredMethod("loadWifiProfiles");
         Method verify = CameraImportActivity.class.getDeclaredMethod("verifySdSourceAsync",
-            CameraImportActivity.SdStart.class, CameraImportActivity.SdStartMode.class, java.util.function.Consumer.class);
+            CameraImportActivity.SdStart.class, CameraImportActivity.SdStartMode.class, boolean.class,
+            java.util.function.Consumer.class);
+        Method confirmPicked = CameraImportActivity.class.getDeclaredMethod("confirmPickedSubmission",
+            CameraImportActivity.SdStart.class, boolean.class);
         CameraImportActivity.SdStart picked = new CameraImportActivity.SdStart(
             Uri.parse("content://com.android.externalstorage.documents/tree/ABCD-1234%3ADCIM"),
             null, PhotoStorage.selected(context), "JPEG", MountedCameraCard.detachGeneration(), true,
@@ -167,9 +266,16 @@ final class DiagnosticFailureChecks {
           invoke(discover, screen, true);
           require(IMPORT_NOT_STARTED.equals(field(screen, "connectionFailure"))
               && field(screen, "sourceCancellation") == null && !((boolean) field(screen, "starting")), "lookup rejected visibly");
-          invoke(verify, screen, picked, null, callback);
+          invoke(verify, screen, picked, null, false, callback);
           require(IMPORT_NOT_STARTED.equals(field(screen, "connectionFailure")) && field(screen, "sourceCancellation") == null,
               "verification rejected visibly");
+          screen.confirmSdSource(picked, true);
+          require(SD_REGISTRATION_NOT_SAVED.equals(field(screen, "connectionFailure"))
+              && field(screen, "sdConfirmation") == null, "register-only preflight reports unsaved registration");
+          invoke(confirmPicked, screen, picked, true);
+          require(SD_REGISTRATION_NOT_SAVED.equals(field(screen, "connectionFailure"))
+              && field(screen, "submittedSd") == null, "register-only confirmation reports unsaved registration");
+          invoke(verify, screen, picked, null, false, callback);
           invoke(statusRefresh, screen);
           require(BUSY.contentEquals(((TextView) field(screen, "sdStatus")).getText())
               && field(screen, "sdStatusCancellation") == null, "SD status busy");
@@ -197,6 +303,8 @@ final class DiagnosticFailureChecks {
               && visible.width() == retry.getWidth() && retry.isEnabled();
         });
         capture(test, screen, "diagnostics-sd-retry-busy.png");
+        test.runOnMainSync(() -> screen.confirmSdSource(picked, true));
+        capture(test, screen, "diagnostics-sd-registration-busy.png");
 
         release.countDown();
         // A new user request is necessary: releasing an executor never replays a rejected import.
@@ -204,7 +312,7 @@ final class DiagnosticFailureChecks {
         require(verified.get() == 0, "no automatic replay");
         test.runOnMainSync(() -> {
           screen.sdSourceProbe = (request, cancellation) -> new CameraImportActivity.SdLocation("fixture", "fixture");
-          invoke(verify, screen, picked, null, callback);
+          invoke(verify, screen, picked, null, false, callback);
           invoke(loadWifi, screen);
         });
         DiagnosticChecks.waitFor(test, () -> verified.get() == 1 && field(screen, "wifiCancellation") == null
@@ -249,22 +357,35 @@ final class DiagnosticFailureChecks {
     });
   }
 
-  private static void checkPrivacy(Context context) throws Exception {
+  private static void checkPrivacy(Context context, long fixture) throws Exception {
     File eventFile = new File(context.getFilesDir(), "diagnostics/events.jsonl");
     long deadline = SystemClock.elapsedRealtime() + 2500;
     String log;
+    String finalPhase = exceptionRecord("camera.wifi_profiles", "failed", IOException.class);
     do {
       log = read(eventFile);
-      if (log.contains("\"phase\":\"camera.wifi_profiles\",\"outcome\":\"failed\"")) break;
+      int start = log.lastIndexOf("\"fixture\":" + fixture + "}");
+      log = start < 0 ? "" : log.substring(start);
+      if (log.contains(finalPhase)) break;
       SystemClock.sleep(50);
     } while (SystemClock.elapsedRealtime() < deadline);
-    for (String phase : List.of("fixture.diagnostics", "camera.source_lookup", "camera.sd_verify", "camera.sd_status",
+    require(log.contains(finalPhase), "this run produced the regular Wi-Fi read error");
+    require(log.contains(exceptionRecord("fixture.diagnostics", "failed", IllegalStateException.class)),
+        "this run produced the fixture failure");
+    for (String phase : List.of("camera.source_lookup", "camera.sd_verify", "camera.sd_status",
         "camera.wifi_profiles")) {
-      require(log.contains("\"phase\":\"" + phase + "\""), "exception event missing: " + phase);
+      require(log.contains(exceptionRecord(phase, "busy", java.util.concurrent.RejectedExecutionException.class)),
+          "busy event missing: " + phase);
     }
     String usbLog = read(ImportLog.INSTANCE.currentFile());
-    require(usbLog.contains("fixture.import | java.lang.IllegalStateException"), "USB exception type");
-    require(!log.contains(SENTINEL) && !usbLog.contains(SENTINEL), "private exception text omitted");
+    int usb = usbLog.lastIndexOf("fixture.import " + fixture + " | java.lang.IllegalStateException");
+    require(usb >= 0, "this run produced a USB exception type");
+    require(!log.contains("synthetic-private-photo.jpg") && !usbLog.substring(usb).contains("synthetic-private-photo.jpg"),
+        "private exception text omitted");
+  }
+
+  private static String exceptionRecord(String phase, String outcome, Class<? extends Throwable> type) {
+    return "\"phase\":\"" + phase + "\",\"outcome\":\"" + outcome + "\",\"exception\":\"" + type.getName() + "\"";
   }
 
   private interface IoAction { void run() throws IOException; }
