@@ -37,6 +37,14 @@ final class DirectExFatReservation {
         return new DirectExFatReservation(disk, diskSectors, expectedUuid).find(path, byteLength);
     }
 
+    /** Before Android allocates its pending file, ensure its allocator cannot reuse live data sectors. */
+    static void checkCanAllocate(BlockDevice disk, long diskSectors, String expectedUuid) throws IOException {
+        require(disk.getBlockSize() == SECTOR_BYTES && diskSectors >= 2048, "Unsupported disk geometry");
+        require(expectedUuid != null && expectedUuid.matches("[0-9a-fA-F]{4}-[0-9a-fA-F]{4}")
+                && !expectedUuid.equals("0000-0000"), "Invalid exFAT volume UUID");
+        new DirectExFatReservation(disk, diskSectors, expectedUuid).find(null, 0);
+    }
+
     private final BlockDevice disk;
     private final long diskSectors;
     private final long partition;
@@ -163,17 +171,24 @@ final class DirectExFatReservation {
         upcase = loadUpcase(upcaseEntry);
         List<FileEntry> otherFiles = new ArrayList<>();
         FileEntry target = scanDirectories(root, path, otherFiles);
+        Bitmap allocation = new Bitmap(bitmap);
+        if (path == null) {
+            for (long cluster : metadataClusters.stream().mapToLong(Long::longValue).sorted().toArray()) {
+                require(allocation.isAllocated(cluster), "exFAT metadata cluster is free");
+            }
+            checkFileAllocations(otherFiles, 0, 0, allocation);
+            return null;
+        }
         require(target != null && !target.directory() && target.contiguous()
                 && target.length() == byteLength && target.validLength() == byteLength,
                 "Missing, fragmented or incompletely initialized exFAT reservation");
         long first = target.cluster();
         long end = first + ceilDiv(byteLength, bytesPerCluster);
-        Bitmap allocation = new Bitmap(bitmap);
         for (long cluster : metadataClusters.stream().mapToLong(Long::longValue).sorted().toArray()) {
             require((cluster < first || cluster >= end) && allocation.isAllocated(cluster),
                     "exFAT reservation overlaps metadata or metadata is free");
         }
-        requireNoOtherOwner(otherFiles, first, end);
+        checkFileAllocations(otherFiles, first, end, null);
         allocation.requireAllocated(first, end);
         return new Extent(clusterLba(first), ceilDiv(byteLength, SECTOR_BYTES));
     }
@@ -185,7 +200,7 @@ final class DirectExFatReservation {
     private FileEntry scanDirectories(List<Long> root, String[] path,
                                       List<FileEntry> otherFiles) throws IOException {
         ArrayDeque<Directory> pending = new ArrayDeque<>();
-        pending.add(new Directory(root, null, 0));
+        pending.add(new Directory(root, null, path == null ? -1 : 0));
         FileEntry target = null;
         // Inspect every directory allocation, including directories outside the requested path.
         while (!pending.isEmpty()) {
@@ -240,7 +255,8 @@ final class DirectExFatReservation {
         return target;
     }
 
-    private void requireNoOtherOwner(List<FileEntry> files, long first, long end) throws IOException {
+    private void checkFileAllocations(List<FileEntry> files, long first, long end, Bitmap preflight)
+            throws IOException {
         long stepsRemaining = MAX_DATA_FAT_STEPS;
         for (FileEntry file : files) {
             long cluster = file.cluster();
@@ -248,6 +264,7 @@ final class DirectExFatReservation {
             if (file.contiguous()) {
                 require(cluster >= end || cluster + count <= first,
                         "exFAT reservation overlaps a live file");
+                if (preflight != null) preflight.requireAllocated(cluster, cluster + count);
                 continue;
             }
             require(count <= stepsRemaining, "Oversized exFAT file chains");
@@ -255,6 +272,7 @@ final class DirectExFatReservation {
             for (long index = 0; index < count; index++) {
                 require(validCluster(cluster), "Invalid exFAT file chain");
                 require(cluster < first || cluster >= end, "exFAT reservation overlaps a live file");
+                if (preflight != null) require(preflight.isAllocated(cluster), "Live exFAT file has a free cluster");
                 cluster = fatNext(cluster);
             }
             require(cluster == END_OF_CHAIN, "Invalid exFAT file chain length or cycle");

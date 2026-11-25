@@ -6,6 +6,7 @@ import java.io.OutputStream
 import java.io.UncheckedIOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.BitSet
 import java.util.GregorianCalendar
 import java.util.ArrayDeque
 import java.util.Collections
@@ -135,8 +136,10 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
         directCheck(selected.size == 1, "A single DCIM folder is required")
         data class Directory(val node: Node, val selected: Boolean, val depth: Int)
         val pending = ArrayDeque<Directory>()
+        val files = ArrayList<Node>()
         for (root in roots) {
             if (root.isDir) pending.add(Directory(root, root === selected.single(), 1))
+            else if (root.length > 0) files.add(root)
         }
         val out = ArrayList<Node>()
         while (pending.isNotEmpty()) {
@@ -147,10 +150,15 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
             val children = allocation.directory(directory.node, budget)
             for (node in children.asReversed()) {
                 CameraPhotoPublisher.check(stopped)
-                if (node.isDir) pending.add(Directory(node, directory.selected, directory.depth + 1))
-                else if (directory.selected && MediaTypes.isTarget(node.name)) out.add(node)
+                if (node.isDir) {
+                    pending.add(Directory(node, directory.selected, directory.depth + 1))
+                } else {
+                    if (node.length > 0) files.add(node)
+                    if (directory.selected && MediaTypes.isTarget(node.name)) out.add(node)
+                }
             }
         }
+        allocation.requireUniqueFileOwners(files, stopped)
         allocation.admitted.addAll(out)
         directAllocation = allocation
         return out.sortedBy { it.relativePath }
@@ -252,6 +260,42 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
                 MAX_DIR_BYTES / bytesPerCluster)
             for (cluster in chain) requireAllocated(cluster)
             return parseDirectory(directoryBytes(chain, budget), node.relativePath, budget, direct = true)
+        }
+
+        fun requireUniqueFileOwners(files: List<Node>, stopped: java.util.function.BooleanSupplier) {
+            directCheck(clusterCount <= MAX_DIRECT_OWNER_CLUSTERS, "exFAT source ownership exceeds the scan budget")
+            val owners = BitSet()
+            var chainStepsRemaining = MAX_DIRECT_FAT_STEPS
+            fun claim(first: Long, end: Long) {
+                val metadataOverlap = metadata.ceiling(first)
+                directCheck(metadataOverlap == null || metadataOverlap >= end,
+                    "exFAT source file overlaps metadata")
+                val dataOverlap = owners.nextSetBit(first.toInt())
+                directCheck(dataOverlap < 0 || dataOverlap >= end,
+                    "Invalid or cyclic exFAT source chain or source file overlaps another file")
+                owners.set(first.toInt(), end.toInt())
+            }
+            for (node in files) {
+                CameraPhotoPublisher.check(stopped)
+                val count = clusterLength(node.length)
+                val first = node.firstCluster
+                directCheck(validCluster(first) && count <= clusterCount &&
+                    (!node.noFatChain || count <= clusterCount + 2 - first), "Invalid exFAT source extent")
+                if (node.noFatChain) {
+                    claim(first, first + count)
+                    continue
+                }
+                directCheck(count <= chainStepsRemaining, "exFAT source chains exceed the scan budget")
+                chainStepsRemaining -= count
+                var cluster = first
+                for (index in 0 until count) {
+                    CameraPhotoPublisher.check(stopped)
+                    directCheck(validCluster(cluster), "Invalid exFAT source chain")
+                    claim(cluster, cluster + 1)
+                    cluster = next(cluster)
+                }
+                directCheck(cluster == 0xFFFFFFFFL, "Invalid end of exFAT source chain")
+            }
         }
 
         fun requireFile(node: Node): LongArray? {
@@ -715,6 +759,8 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
     companion object {
         private const val MAX_SCAN_ENTRIES = 100_000
         private const val MAX_DIR_BYTES = 64 * 1024 * 1024
+        private const val MAX_DIRECT_OWNER_CLUSTERS = 32L * 1024 * 1024
+        private const val MAX_DIRECT_FAT_STEPS = 4_000_000L
         private const val READ_WINDOW_BYTES = 256 * 1024
 
         /** exFAT の 32bit タイムスタンプ (ローカル時刻) を epoch 秒に直す */

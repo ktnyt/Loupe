@@ -29,6 +29,8 @@ public final class DirectExifComparisonCheck {
             byte[] validChanged = tiff(order, "+09:00\0", "+00:00\0", "-04:00\0");
             match(source, validChanged, false, "already-valid source offset changed");
             match(saved, source, false, "originally valid offsets must survive");
+            byte[] differentlyBroken = tiff(order, "abc:de\0", "-03:30\0", BROKEN);
+            match(source, differentlyBroken, false, "unverified broken saved offsets cannot collapse to +00:00");
 
             byte[] blank = tiff(order, BROKEN, BROKEN, BROKEN);
             byte[] legacy = blank.clone();

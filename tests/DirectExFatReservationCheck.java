@@ -23,6 +23,15 @@ public final class DirectExFatReservationCheck {
         Image image = new Image(0);
         check(image, "import/reservation long.jpg", FIRST_TARGET);
         check(new Image(2048), PATH, FIRST_TARGET);
+        DirectExFatReservation.checkCanAllocate(image, image.availableSectors, UUID);
+        Image unallocated = new Image(0);
+        unallocated.file(unallocated.root() + 160, "Unsafe.jpg", false, true, 21, SECTOR, SECTOR);
+        reject(() -> DirectExFatReservation.checkCanAllocate(unallocated, unallocated.availableSectors, UUID),
+                "free cluster");
+        unallocated.file(unallocated.root() + 160, "Unsafe.jpg", false, false, 21, SECTOR, SECTOR);
+        unallocated.fat(21, -1);
+        reject(() -> DirectExFatReservation.checkCanAllocate(unallocated, unallocated.availableSectors, UUID),
+                "free cluster");
         image.file(image.root() + 160, "Root.JPG", false, true, 4099, LENGTH, LENGTH);
         check(image, "root.jpg", 4099); // The allocated target uses the second bitmap cluster.
         Arrays.fill(image.disk, image.cluster(5), image.cluster(5) + SECTOR, (byte) 0);

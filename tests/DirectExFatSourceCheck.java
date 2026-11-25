@@ -112,6 +112,10 @@ public final class DirectExFatSourceCheck {
                 "OTHER", true, true, other, SECTOR, SECTOR);
         overlapsUnselectedDirectory.fat(SECOND, other);
         rejects(overlapsUnselectedDirectory::open, "source file overlaps metadata");
+        Image overlapsUnselectedFile = new Image(true, LENGTH, LENGTH);
+        overlapsUnselectedFile.entry(overlapsUnselectedFile.cluster(2) + 160,
+                "OTHER.JPG", false, true, FIRST + 1, SECTOR, SECTOR);
+        rejects(overlapsUnselectedFile::open, "source file overlaps another file");
         Image freeDirectory = new Image(true, LENGTH, LENGTH);
         freeDirectory.allocated(4, false);
         rejects(freeDirectory::open, "free cluster");
@@ -124,7 +128,7 @@ public final class DirectExFatSourceCheck {
 
     private static void fullDcimListing() throws IOException {
         Image disk = new Image(true, LENGTH, LENGTH);
-        disk.entry(disk.cluster(3) + 96, "ROOT.JPG", false, true, FIRST, LENGTH, LENGTH);
+        disk.entry(disk.cluster(3) + 96, "ROOT.JPG", false, true, 11, LENGTH, LENGTH);
         disk.entry(disk.cluster(4) + 96, "SUB", true, true, 5, SECTOR, SECTOR);
         disk.entry(disk.cluster(5), "B.ORF", false, true, 20, LENGTH, LENGTH);
         var fs = disk.mounted();

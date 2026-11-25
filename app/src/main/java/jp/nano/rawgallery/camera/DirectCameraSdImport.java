@@ -96,7 +96,12 @@ final class DirectCameraSdImport {
                 requireSameListing(expectedEntries, source.entries());
                 var receipts = destinations == null ? Map.<String, CameraImportLedger.Content>of()
                         : ledger.sourceSnapshot("sd-usb:" + source.fs().getVolumeId());
-                scanned.set(scan(source, kinds, accounted, receipts, destinations, cancelled));
+                Batch batch = scan(source, kinds, accounted, receipts, destinations, cancelled);
+                if (!batch.candidates().isEmpty()) {
+                    DirectExFatReservation.checkCanAllocate(cancellable(reader.readView(1), cancelled),
+                            reader.sectors(1), targetVolume);
+                }
+                scanned.set(batch);
             });
             Batch batch = scanned.get();
             if (batch == null) throw new IOException("SDの写真一覧を確認できませんでした。");

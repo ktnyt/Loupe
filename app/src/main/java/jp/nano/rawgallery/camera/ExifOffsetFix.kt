@@ -53,11 +53,25 @@ object ExifOffsetFix {
     @JvmStatic
     fun sameAfterOffsetRepair(sourcePrefix: ByteArray, savedPrefix: ByteArray): Boolean {
         if (sourcePrefix.isEmpty() || sourcePrefix.size != savedPrefix.size) return false
-        val source = sourcePrefix.copyOf()
-        val saved = savedPrefix.copyOf()
+        if (sourcePrefix.contentEquals(savedPrefix)) return true
+        val normalized = sourcePrefix.copyOf()
+        val source = PrefixAccess(normalized)
+        val saved = PrefixAccess(savedPrefix)
         return try {
-            normalizeForComparison(PrefixAccess(source), PrefixAccess(saved))
-            source.contentEquals(saved)
+            val directory = directory(source) ?: return false
+            val entries = repairableEntries(source)
+            patch(source, validOffsets(saved), entries)
+            for (entry in entries) {
+                val tag = readU16(source, entry, directory.little)
+                if (tag !in OFFSET_TAGS || readU16(saved, entry, directory.little) != TAG_PADDING ||
+                    readU32(source, entry + 4, directory.little) != OFFSET_LEN.toLong()) continue
+                val value = ByteArray(OFFSET_LEN)
+                source.seek(directory.base + readU32(source, entry + 8, directory.little))
+                source.readFully(value)
+                // Older CameraSync releases changed the tag to Padding and kept its blank value.
+                if (isBlankOffset(value)) writeU16(source, entry, directory.little, TAG_PADDING)
+            }
+            normalized.contentEquals(savedPrefix)
         } catch (_: EOFException) {
             false
         }
