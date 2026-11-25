@@ -39,7 +39,6 @@ android {
         versionName distributionVersion.version_name
         testInstrumentationRunner 'jp.nano.rawgallery.ArchiveInstrumentation'
     }
-    sourceSets { main { assets.srcDir rootProject.file('third-party/libraw'); assets.srcDir rootProject.file('third-party/libjpeg-turbo') } }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }
 dependencies {
@@ -50,3 +49,5 @@ dependencies {
 
 kotlin { jvmToolchain(17) }
 dependencies { implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1' }
+
+apply from: rootProject.file('gradle/native-licenses.gradle')

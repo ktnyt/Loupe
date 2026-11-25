@@ -1,8 +1,9 @@
 Loupe native RAW decoder uses unmodified LibRaw 0.22.3 under CDDL 1.0.
 
 Official source: https://www.libraw.org/data/LibRaw-0.22.3.tar.gz
-The complete corresponding upstream source, including per-file notices and
-licenses, is included alongside this notice as LibRaw-0.22.3.tar.gz.
+The complete corresponding source archive, including per-file notices and
+licenses, is available from the official URL above and from Loupe:
+https://github.com/ktnyt/Loupe/blob/ffed20f03207b254fe181926278e0f0db42460fc/third-party/libraw/LibRaw-0.22.3.tar.gz
 The CDDL license is included as LICENSE.CDDL.
 
  ** LibRaw: Raw images processing library **

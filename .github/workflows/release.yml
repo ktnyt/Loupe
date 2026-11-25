@@ -45,7 +45,12 @@ jobs:
           sh tests/camera-dual-slot.sh
           sh tests/ep7-wifi.sh
       - name: Android build and lint
-        run: python3 scripts/ci_gradle.py :app:assembleDebug :app:lintDebug
+        run: python3 scripts/ci_gradle.py :app:assembleDebug :app:lintDebug :raw-experiment:mergeDebugAssets
+      - name: Inspect native assets in the app APK and raw-experiment
+        run: |
+          python3 scripts/check-native-apk-assets.py \
+            app/build/outputs/apk/debug/app-debug.apk \
+            --merged-assets raw-experiment/build/intermediates/assets/debug/mergeDebugAssets
       - name: exFAT parser regression
         run: python3 tests/camera-exfat.py
       - name: Inspect APK signature and required features

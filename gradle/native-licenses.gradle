@@ -1,0 +1,13 @@
+// Keep the native build inputs outside Android assets. Only distribute the notices.
+def nativeLicenseAssets = layout.buildDirectory.dir('generated/native-license-assets')
+def copyNativeLicenses = tasks.register('copyNativeLicenses', Sync) {
+    from(rootProject.file('third-party/libraw')) {
+        include 'COPYRIGHT', 'LICENSE.CDDL', 'NOTICE.txt'
+    }
+    from(rootProject.file('third-party/libjpeg-turbo')) {
+        include 'LICENSE.md', 'README.ijg', 'NOTICE-libjpeg-turbo.txt'
+    }
+    into nativeLicenseAssets
+}
+android.sourceSets.main.assets.srcDir nativeLicenseAssets
+tasks.named('preBuild').configure { dependsOn copyNativeLicenses }
