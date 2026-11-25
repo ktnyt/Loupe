@@ -78,6 +78,9 @@ run_instrumentation() {
   printf '\nRunning Android instrumentation: %s\n' "$label"
   result=$("$adb" -s "$serial" shell am instrument -w -r "$@" < /dev/null)
   printf '%s\n' "$result"
+  if [[ "$label" == system-insets ]]; then
+    "$adb" -s "$serial" logcat -d -s LoupeInsetsProbe:I '*:S' || true
+  fi
   if ! grep -q '^INSTRUMENTATION_RESULT: stream=PASS ' <<< "$result" ||
      ! grep -qx 'INSTRUMENTATION_CODE: -1' <<< "$result"; then
     if [[ "$label" == photo-edit ]]; then
@@ -112,7 +115,7 @@ if ! "$ran"; then
   exit 1
 fi
 
-if [[ "$segment" != before-camera ]]; then
+if [[ "$segment" != before-camera && "${LOUPE_DIAGNOSTIC_SKIP_RAW:-false}" != true ]]; then
   "$adb" -s "$serial" install -g raw-experiment/build/outputs/apk/debug/raw-experiment-debug.apk
   "$adb" -s "$serial" install -g raw-experiment/build/outputs/apk/androidTest/debug/raw-experiment-debug-androidTest.apk
   run_instrumentation 'raw-edit-full' -e full true \

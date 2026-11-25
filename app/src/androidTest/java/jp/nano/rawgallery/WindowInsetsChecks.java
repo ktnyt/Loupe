@@ -20,10 +20,26 @@ import static jp.nano.rawgallery.RankingResultChecks.*;
 final class WindowInsetsChecks {
   private static View root(MainActivity a){return (View)get(a,"root");}
   private static Rect screen(View v){int[] at=new int[2];v.getLocationOnScreen(at);return new Rect(at[0],at[1],at[0]+v.getWidth(),at[1]+v.getHeight());}
+  private static void observe(MainActivity a,String stage){
+    View view=root(a);
+    if(view==null){android.util.Log.i("LoupeInsetsProbe",stage+" rootMissing=true");return;}
+    View decor=view.getRootView();
+    WindowInsets actual=view.getRootWindowInsets();
+    int status=WindowInsets.Type.statusBars(), types=WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout();
+    android.util.Log.i("LoupeInsetsProbe",stage+" visible="+(actual!=null&&actual.isVisible(status))
+        +" status="+(actual==null?"null":actual.getInsets(status))
+        +" statusIgnoringVisibility="+(actual==null?"null":actual.getInsetsIgnoringVisibility(status))
+        +" nativeBars="+(actual==null?"null":actual.getInsets(types))
+        +" root="+screen(view)+" decor="+screen(decor)
+        +" metrics="+a.getWindowManager().getCurrentWindowMetrics().getBounds()
+        +" focus="+view.hasWindowFocus()+" shown="+view.isShown()+" layoutRequested="+view.isLayoutRequested()
+        +" flags="+a.getWindow().getAttributes().flags+" decorSystemUi="+decor.getSystemUiVisibility());
+  }
   private static Insets bars(MainActivity a){
     WindowInsets actual=root(a).getRootWindowInsets();
     require(actual!=null,"actual OS rootWindowInsets available");
     Insets result=actual.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());
+    if(result.top<=0)observe(a,"nonpositiveTop");
     require(result.top>0,"real status bar inset must be nonzero: "+result);
     return result;
   }
@@ -88,7 +104,9 @@ final class WindowInsetsChecks {
     MainActivity a=(MainActivity)t.startActivitySync(new Intent(t.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     SharedPreferences prefs=a.getSharedPreferences("system-insets-checks",0);ArrayList<File> files=new ArrayList<>();
     try{
+      ui(t,()->observe(a,"activityStarted"));
       GalleryScreenChecks.portraitFixture(t,a,width,font);GalleryScreenChecks.finishInitialIndex(t,a);
+      ui(t,()->observe(a,"portraitFixture"));
       require(prefs.edit().clear().commit(),"reset isolated ranking fixture");RankingStore rankings=new RankingStore(prefs);ArrayList<PhotoRepository.Photo> photos=new ArrayList<>();
       for(int n=0;n<4;n++){
         File file=new File(a.getCacheDir(),"system-insets-synthetic-"+n+".jpg");files.add(file);Bitmap bitmap=Bitmap.createBitmap(480,320,Bitmap.Config.ARGB_8888);bitmap.eraseColor(0xff527c88+n*0x080600);
@@ -103,6 +121,7 @@ final class WindowInsetsChecks {
         set(a,"albumHome",true);set(a,"albumFolder","/synthetic-insets");call(a,"gallery");
       });settle(t,a);
       File dir=new File(a.getCacheDir(),"consistency-checks");require(dir.isDirectory()||dir.mkdirs(),"capture directory");
+      ui(t,()->observe(a,"albumGallerySettled"));
       try{safety(t,a,dir,"album-gallery-"+width+"-"+font);}
       catch(AssertionError original){
         // Preserve the original failure while observing the reported Look-visible/star-hidden state.

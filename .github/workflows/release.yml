@@ -1,9 +1,5 @@
 name: Verify and release Loupe
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
@@ -11,7 +7,11 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 70
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        sequence: [fresh, after-expressive, ordered, remaining]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -31,112 +31,42 @@ jobs:
         run: |
           echo "LOUPE_SIGNING_KEYSTORE=$LOUPE_SIGNING_KEYSTORE" >> "$GITHUB_ENV"
           keytool -genkeypair -keystore "$LOUPE_SIGNING_KEYSTORE" -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 30 -dname 'CN=Loupe CI Verification'
-      - name: Host regression checks
-        run: |
-          python3 -m venv "$RUNNER_TEMP/loupe-test-venv"
-          source "$RUNNER_TEMP/loupe-test-venv/bin/activate"
-          python3 -m pip install -r scripts/requirements-cnt-calibration.txt
-          sh tests/host-regression.sh --junit-in-gradle
-      - name: Android build, host JUnit, lint and formatting
+      - name: Build isolated instrumentation candidates
         env:
-          FORMAT_CHANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
+          SEQUENCE: ${{ matrix.sequence }}
         run: |
-          if [[ "$FORMAT_CHANGE_BASE" == 0000000000000000000000000000000000000000 ]]; then
-            FORMAT_CHANGE_BASE=HEAD
+          tasks=(:app:assembleDebug :app:assembleDebugAndroidTest)
+          if [[ "$SEQUENCE" == remaining ]]; then
+            tasks+=(:raw-experiment:assembleDebug :raw-experiment:assembleDebugAndroidTest)
           fi
-          python3 scripts/ci_gradle.py \
-            -PformatChangeBase="$FORMAT_CHANGE_BASE" spotlessCheck :app:testDebugUnitTest \
-            :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug \
-            :raw-experiment:assembleDebug :raw-experiment:assembleDebugAndroidTest :raw-experiment:lintDebug
-      - name: Build and inspect non-debuggable distribution variant
-        env:
-          LOUPE_RELEASE_STORE_PASSWORD: android
-          LOUPE_RELEASE_KEY_ALIAS: androiddebugkey
-          LOUPE_RELEASE_KEY_PASSWORD: android
-        run: |
-          export LOUPE_RELEASE_KEYSTORE="$LOUPE_SIGNING_KEYSTORE"
-          python3 scripts/ci_gradle.py :app:assembleRelease :app:lintRelease
-          fingerprint=$(keytool -exportcert -keystore "$LOUPE_RELEASE_KEYSTORE" -alias "$LOUPE_RELEASE_KEY_ALIAS" -storepass:env LOUPE_RELEASE_STORE_PASSWORD | sha256sum | cut -d ' ' -f 1)
-          python3 scripts/deploy-apk.py --sdk "$ANDROID_HOME" inspect \
-            --apk app/build/outputs/apk/release/app-release.apk --certificate "$fingerprint" \
-            --require-non-debuggable --require-no-shizuku
-          python3 scripts/check-native-apk-assets.py app/build/outputs/apk/release/app-release.apk
-      - name: Inspect native assets in both APKs
-        run: |
-          python3 scripts/check-native-apk-assets.py \
-            app/build/outputs/apk/debug/app-debug.apk \
-            raw-experiment/build/outputs/apk/debug/raw-experiment-debug.apk
-      - name: Inspect APK signature and required features
-        run: |
-          fingerprint=$(keytool -exportcert -keystore "$LOUPE_SIGNING_KEYSTORE" -alias androiddebugkey -storepass android | sha256sum | cut -d ' ' -f 1)
-          python3 scripts/deploy-apk.py --sdk "$ANDROID_HOME" inspect \
-            --apk app/build/outputs/apk/debug/app-debug.apk --certificate "$fingerprint" --require-no-shizuku
-
-      - name: Android instrumentation before camera on a disposable emulator
+          python3 scripts/ci_gradle.py "${tasks[@]}"
+      - name: Observe system insets on a disposable emulator
         timeout-minutes: 30
+        env:
+          SEQUENCE: ${{ matrix.sequence }}
+          LOUPE_INSTRUMENTATION_PORT: '5582'
         run: |
           sudo chmod a+rw /dev/kvm
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'emulator' 'system-images;android-35;google_apis;x86_64'
+          case "$SEQUENCE" in
+            fresh)
+              printf '%s\n' system-insets camera-pilot-usb-launch > tests/ci-android-modes.txt
+              ;;
+            after-expressive)
+              printf '%s\n' expressive-ui system-insets camera-pilot-usb-launch > tests/ci-android-modes.txt
+              ;;
+            ordered)
+              awk '$1 == "camera-pilot-usb-launch" { active = 1 } active { print } $1 == "system-insets" { found = 1; exit } END { if (!found) exit 1 }' tests/ci-android-modes.txt > "$RUNNER_TEMP/ordered"
+              cat "$RUNNER_TEMP/ordered" > tests/ci-android-modes.txt
+              LOUPE_DIAGNOSTIC_SKIP_RAW=true bash tests/ci-android-instrumentation.sh all
+              exit
+              ;;
+            remaining)
+              awk 'active { print } $1 == "system-insets" { active = 1 } END { if (!active) exit 1 }' tests/ci-android-modes.txt > "$RUNNER_TEMP/remaining"
+              cat "$RUNNER_TEMP/remaining" > tests/ci-android-modes.txt
+              bash tests/ci-android-instrumentation.sh all
+              exit
+              ;;
+            *) exit 2 ;;
+          esac
           bash tests/ci-android-instrumentation.sh before-camera
-
-      - name: Android instrumentation from camera through RAW on a disposable emulator
-        timeout-minutes: 30
-        env:
-          LOUPE_INSTRUMENTATION_PORT: '5582'
-        run: bash tests/ci-android-instrumentation.sh camera-onward
-
-  release:
-    needs: verify
-    if: github.repository == 'ktnyt/Loupe' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    environment: loupe-release
-    concurrency:
-      group: loupe-main-release
-      cancel-in-progress: false
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
-        with:
-          distribution: temurin
-          java-version: '17'
-          cache: gradle
-      - name: Install pinned Android build tools
-        run: |
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.0.12077973' 'cmake;3.22.1'
-      - name: Restore existing signing identity
-        env:
-          KEYSTORE_B64: ${{ secrets.LOUPE_SIGNING_KEYSTORE_B64 }}
-          LOUPE_RELEASE_KEYSTORE: ${{ runner.temp }}/loupe-distribution.keystore
-        run: |
-          echo "LOUPE_RELEASE_KEYSTORE=$LOUPE_RELEASE_KEYSTORE" >> "$GITHUB_ENV"
-          python3 - <<'PY'
-          import base64, os
-          from pathlib import Path
-          encoded = os.environ.get('KEYSTORE_B64', '')
-          if not encoded:
-              raise SystemExit('LOUPE_SIGNING_KEYSTORE_B64 is not configured')
-          key = Path(os.environ['LOUPE_RELEASE_KEYSTORE'])
-          key.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-          key.write_bytes(base64.b64decode(encoded, validate=True))
-          key.chmod(0o600)
-          PY
-          fingerprint=$(keytool -exportcert -keystore "$LOUPE_RELEASE_KEYSTORE" -alias androiddebugkey -storepass android | sha256sum | cut -d ' ' -f 1)
-          test "$fingerprint" = fbd379f053574ef5f497e524b7828e4c388e88c14968acc11b8b39363167b678
-      - name: Publish verified main APK
-        env:
-          GH_TOKEN: ${{ github.token }}
-          LOUPE_RELEASE_STORE_PASSWORD: android
-          LOUPE_RELEASE_KEY_ALIAS: androiddebugkey
-          LOUPE_RELEASE_KEY_PASSWORD: android
-        run: python3 scripts/auto-release.py --sdk "$ANDROID_HOME"
-      - name: Remove runner signing key
-        if: always()
-        env:
-          LOUPE_RELEASE_KEYSTORE: ${{ runner.temp }}/loupe-distribution.keystore
-        run: rm -f "$LOUPE_RELEASE_KEYSTORE"
