@@ -23,6 +23,37 @@ android {
             keyPassword 'android'
         }
     }
+    def releaseSigning = [
+        LOUPE_RELEASE_KEYSTORE: System.getenv('LOUPE_RELEASE_KEYSTORE'),
+        LOUPE_RELEASE_STORE_PASSWORD: System.getenv('LOUPE_RELEASE_STORE_PASSWORD'),
+        LOUPE_RELEASE_KEY_ALIAS: System.getenv('LOUPE_RELEASE_KEY_ALIAS'),
+        LOUPE_RELEASE_KEY_PASSWORD: System.getenv('LOUPE_RELEASE_KEY_PASSWORD'),
+    ]
+    if (releaseSigning.values().any()) {
+        def missing = releaseSigning.findAll { !it.value }.keySet()
+        if (missing || !file(releaseSigning.LOUPE_RELEASE_KEYSTORE).isFile()) {
+            throw new GradleException('Incomplete Loupe release signing configuration')
+        }
+        signingConfigs {
+            release {
+                storeFile file(releaseSigning.LOUPE_RELEASE_KEYSTORE)
+                storePassword releaseSigning.LOUPE_RELEASE_STORE_PASSWORD
+                keyAlias releaseSigning.LOUPE_RELEASE_KEY_ALIAS
+                keyPassword releaseSigning.LOUPE_RELEASE_KEY_PASSWORD
+            }
+        }
+    }
+    buildTypes {
+        release {
+            debuggable false
+            minifyEnabled false
+            shrinkResources false
+            // Allow an unsigned local candidate. Publication must verify the expected signer.
+            if (releaseSigning.LOUPE_RELEASE_KEYSTORE) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
     compileSdk 35
     buildFeatures { buildConfig true }
     ndkVersion '27.0.12077973'
