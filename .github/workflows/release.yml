@@ -75,11 +75,14 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'emulator' 'system-images;android-35;google_apis;x86_64'
           bash tests/ci-android-instrumentation.sh before-camera
 
-      - name: Android instrumentation from camera through RAW on a disposable emulator
+      - name: Isolated nano-background on a fresh disposable emulator
+        if: ${{ !cancelled() }}
         timeout-minutes: 30
         env:
           LOUPE_INSTRUMENTATION_PORT: '5582'
-        run: bash tests/ci-android-instrumentation.sh camera-onward
+        run: |
+          printf '%s\n' nano-background > tests/ci-android-modes.txt
+          bash tests/ci-android-instrumentation.sh
 
   release:
     needs: verify

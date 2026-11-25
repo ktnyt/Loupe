@@ -76,7 +76,16 @@ run_instrumentation() {
   local label=$1 result
   shift
   printf '\nRunning Android instrumentation: %s\n' "$label"
+  if [[ "$label" == nano-background ]]; then
+    "$adb" -s "$serial" shell dumpsys activity activities |
+      awk '/topResumedActivity/ && /jp[.]nano[.]rawgallery/ {app=1} END {print "Before Nano app resumed=" (app ? "true" : "false")}'
+    "$adb" -s "$serial" shell dumpsys activity services jp.nano.rawgallery |
+      awk '/ServiceRecord.*NanoBananaService/ {service=1} END {print "Before Nano service record=" (service ? "true" : "false")}'
+  fi
   result=$("$adb" -s "$serial" shell am instrument -w -r "$@" < /dev/null)
+  if [[ "$label" == nano-background ]]; then
+    "$adb" -s "$serial" logcat -d -s LoupeNanoTiming:I '*:S' || true
+  fi
   printf '%s\n' "$result"
   if ! grep -q '^INSTRUMENTATION_RESULT: stream=PASS ' <<< "$result" ||
      ! grep -qx 'INSTRUMENTATION_CODE: -1' <<< "$result"; then

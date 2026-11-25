@@ -141,25 +141,42 @@ final class NanoBananaBackgroundChecks {
       TagDetailChecks.require(!NanoBananaService.start(screen,photo,prompt),"duplicate admission rejected");
       store.setOutput("16:9","4K");store.savePrompt(store.prompts().get(0).id,"変更した設定","changed after admission");
       TagDetailChecks.require(first.entered.await(15,TimeUnit.SECONDS),"real OS service reached fake provider");
+      Thread timingWatch = watchTiming(first, Thread.currentThread());
+      timing(first, "provider entered");
       TagDetailChecks.require(first.submits==1&&first.prompt.equals(prompt.text)&&first.output.aspectRatio.equals("4:3")&&first.output.resolution.equals("1K"),"admission captures prompt and output before settings edits");
       TagDetailChecks.ui(test,()->{View more=findLabel(screen.getWindow().getDecorView(),"写真のその他の操作");TagDetailChecks.require(more!=null&&more.performClick(),"open current viewer action sheet");View nextControl=findWindowLabel("次の写真");TagDetailChecks.require(nextControl!=null&&nextControl.isEnabled()&&nextControl.performClick(),"normal next-photo control responds during generation");});
+      timing(first, "begin next photo idle");
       await("next photo usable while service waits",()->((Integer)RankingResultChecks.get(screen,"index"))==1);test.waitForIdleSync();
+      timing(first, "end next photo idle");
       Instrumentation.ActivityMonitor tags=test.addMonitor(TagActivity.class.getName(),null,false);
       TagDetailChecks.ui(test,()->{View more=findLabel(screen.getWindow().getDecorView(),"写真のその他の操作");TagDetailChecks.require(more!=null&&more.performClick(),"open current viewer tag sheet");View tag=findWindowLabel("タグ");TagDetailChecks.require(tag!=null&&tag.performClick(),"normal viewer tag control responds during generation");});
+      timing(first, "begin tag activity monitor");
       Activity tagScreen=tags.waitForActivityWithTimeout(10000);test.removeMonitor(tags);
+      timing(first, "end tag activity monitor");
       TagDetailChecks.require(tagScreen instanceof TagActivity,"normal tag screen opens during generation");
+      timing(first, "begin tag close idle");
       TagDetailChecks.ui(test,tagScreen::finish);test.waitForIdleSync();
+      timing(first, "end tag close idle");
       synchronized(created){TagDetailChecks.require(created.equals(List.of(TagActivity.class.getName())),"only requested tag navigation occurred while generating");created.clear();}
+      timing(first, "begin viewer capture");
       capture(test,screen,"nano-background-viewer-"+width+"-"+font);
+      timing(first, "end viewer capture");
       Dialog[] menu={null};TagDetailChecks.ui(test,()->{menu[0]=NanoBananaUi.show(screen,next,store,NanoBananaUi.ACTUAL);});
+      timing(first, "begin busy capture and close");
       capture(test,screen,"nano-background-busy-"+width+"-"+font);TagDetailChecks.ui(test,()->{verifyMenuTargets(menu[0].getWindow().getDecorView());menu[0].dismiss();});
+      timing(first, "end busy capture and close");
       // Verify both sides of OS navigation while the provider expressly remains blocked.
+      timing(first, "begin before Home");
       requireGenerationBlocked(store,first,"before Home");
+      timing(first, "end before Home");
       TagDetailChecks.require(test.getUiAutomation().performGlobalAction(
           android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME),"Android accepted Home");
       test.waitForIdleSync();
+      timing(first, "begin after Home");
       requireGenerationBlocked(store,first,"after Home");
+      timing(first, "end after Home");
       long homeWaitMs=SystemClock.elapsedRealtime()-first.statusEnteredAt;
+      timingWatch.interrupt();
       first.release.countDown();idle(test);
       TagDetailChecks.require(first.downloads==1&&first.deletes==1&&store.job()==null,"background completion saves, cleans and clears durable record");
       synchronized(created){TagDetailChecks.require(created.isEmpty(),"generation and completion do not launch another Activity");}
@@ -242,6 +259,39 @@ final class NanoBananaBackgroundChecks {
       NanoBananaService.dependencies=NanoBananaService.PRODUCTION;
     }
   }
+  private static void timing(Fake fake, String checkpoint) {
+    android.util.Log.i("LoupeNanoTiming", checkpoint + " elapsedMs="
+        + (SystemClock.elapsedRealtime() - fake.statusEnteredAt)
+        + " lease=" + NanoBananaService.busy() + " providerExited=" + fake.statusExited);
+  }
+
+  private static Thread watchTiming(Fake fake, Thread instrumentation) {
+    Thread watcher = new Thread(() -> {
+      try {
+        Thread.sleep(15000);
+        while (fake.release.getCount() == 1 && !fake.statusExited) {
+          timing(fake, "watchdog sampled instrumentation and main");
+          for (Thread thread : List.of(instrumentation, android.os.Looper.getMainLooper().getThread())) {
+            android.util.Log.i("LoupeNanoTiming", "thread="
+                + (thread == instrumentation ? "instrumentation" : "main") + " state=" + thread.getState());
+            StackTraceElement[] stack = thread.getStackTrace();
+            for (int i = 0; i < Math.min(9, stack.length); i++) {
+              StackTraceElement frame = stack[i];
+              android.util.Log.i("LoupeNanoTiming", frame.getClassName() + "." + frame.getMethodName()
+                  + ":" + frame.getLineNumber());
+            }
+          }
+          Thread.sleep(15000);
+        }
+      } catch (InterruptedException ignored) {
+        Thread.currentThread().interrupt();
+      }
+    }, "NanoFixtureTiming");
+    watcher.setDaemon(true);
+    watcher.start();
+    return watcher;
+  }
+
   private static void requireGenerationBlocked(NanoBananaStore store,Fake first,String checkpoint) throws Exception {
     JSONObject record=store.job();
     boolean generating=record!=null&&"generating".equals(record.optString("stage"));
