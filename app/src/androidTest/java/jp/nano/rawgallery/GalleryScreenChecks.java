@@ -20,7 +20,13 @@ final class GalleryScreenChecks {
       cell.measure(View.MeasureSpec.makeMeasureSpec(w,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(h,View.MeasureSpec.EXACTLY));cell.layout(0,0,w,h);
       Bitmap without=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888),with=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);
       try{cell.draw(new Canvas(without));cell.badges.cloud=true;cell.draw(new Canvas(with));
-        int changed=0;Rect expected=new Rect(w-GalleryUi.dp(a,(selected?14:5)+24),h-GalleryUi.dp(a,(selected?14:5)+20),w-GalleryUi.dp(a,selected?14:5),h-GalleryUi.dp(a,selected?14:5));
+        int changed = 0;
+        float density = a.getResources().getDisplayMetrics().density;
+        int edge = selected ? 14 : 5;
+        // The drawing covers partial pixels at fractional-density bounds.
+        Rect expected = new Rect((int) Math.floor(w - (edge + 24) * density),
+            (int) Math.floor(h - (edge + 20) * density), (int) Math.ceil(w - edge * density),
+            (int) Math.ceil(h - edge * density));
         for(int y=0;y<h;y++)for(int x=0;x<w;x++)if(without.getPixel(x,y)!=with.getPixel(x,y)){changed++;if(!expected.contains(x,y))throw new AssertionError("cloud badge outside reference position");}
         try(FileOutputStream out=new FileOutputStream(new File(dir,"selection-cloud-"+a.getResources().getConfiguration().screenWidthDp+"-"+a.getResources().getConfiguration().fontScale+"-"+selected+".png"))){with.compress(Bitmap.CompressFormat.PNG,100,out);}catch(IOException e){throw new java.io.UncheckedIOException(e);}
         if(changed<GalleryUi.dp(a,20))throw new AssertionError("cloud badge hidden during selection");

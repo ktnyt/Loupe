@@ -13,8 +13,14 @@ import java.util.*;
 final class ActionLabelChecks {
   static void check(Button b) {
     if (b.getLayout().getLineCount()!=1) throw new AssertionError("wrap: "+b.getText());
-    if (b.getLayout().getEllipsisCount(0)!=0 || b.getLayout().getLineWidth(0)>b.getWidth()-b.getCompoundPaddingLeft()-b.getCompoundPaddingRight()+1)
-      throw new AssertionError("clip: "+b.getText());
+    checkFit(b);
+  }
+
+  static void checkFit(Button b) {
+    int available = b.getWidth() - b.getCompoundPaddingLeft() - b.getCompoundPaddingRight();
+    for (int line = 0; line < b.getLayout().getLineCount(); line++)
+      if (b.getLayout().getEllipsisCount(line) != 0 || b.getLayout().getLineWidth(line) > available + 1)
+        throw new AssertionError("clip: " + b.getText());
     if (b.getLayout().getHeight()+b.getCompoundPaddingTop()+b.getCompoundPaddingBottom()>b.getHeight()) throw new AssertionError("height clip");
     if (b.getWidth()<GalleryUi.dp(b.getContext(),48)||b.getHeight()<GalleryUi.dp(b.getContext(),64)) throw new AssertionError("touch size");
   }

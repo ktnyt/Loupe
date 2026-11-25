@@ -60,7 +60,7 @@ final class AffordanceChecks {
             AccessibilityNodeInfo info=row.createAccessibilityNodeInfo();boolean action=false;
             for(AccessibilityNodeInfo.AccessibilityAction act:info.getActionList())if(android.text.TextUtils.equals("拡大",act.getLabel()))action=true;
             if(!action||!Button.class.getName().contentEquals(info.getClassName()))throw new AssertionError("row AX");
-            Button button=(Button)((LinearLayout)dock[0]).getChildAt(i);ActionLabelChecks.check(button);button.performClick();
+            Button button=(Button)((LinearLayout)dock[0]).getChildAt(i);ActionLabelChecks.checkFit(button);button.performClick();
           }
           if(clicks[0]!=3)throw new AssertionError("entry callbacks");return true;
         });

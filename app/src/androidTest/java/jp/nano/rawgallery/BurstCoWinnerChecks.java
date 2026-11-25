@@ -40,8 +40,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -119,7 +117,9 @@ final class BurstCoWinnerChecks {
     int[] point = new int[2];
     ui(t, () -> {
       View activity = a.getWindow().getDecorView();
-      View sheet = windowView(label).getRootView();
+      View sheet = windowView(label).getRootView()
+          .findViewById(com.google.android.material.R.id.design_bottom_sheet);
+      check(sheet != null && sheet.getHeight() > 0, "Native bottom sheet is laid out");
       int[] activityOrigin = new int[2];
       int[] sheetOrigin = new int[2];
       activity.getLocationOnScreen(activityOrigin);
@@ -314,7 +314,10 @@ final class BurstCoWinnerChecks {
 
   private static void assertWinners(RankingStore store, List<String> keys, int... winners)
       throws Exception {
-    PhotoRanking result = store.load(keys);
+    assertWinners(store.load(keys), keys, winners);
+  }
+
+  private static void assertWinners(PhotoRanking result, List<String> keys, int... winners) {
     check(result.done(), "Saved ranking incomplete");
     List<String> expected = new ArrayList<>();
     for (int winner : winners) expected.add(keys.get(winner));
@@ -345,7 +348,7 @@ final class BurstCoWinnerChecks {
                 if (edit.getName().equals("commit")) {
                   memory.putAll(pending);
                   if (commits.incrementAndGet() == 1) {
-                    check(release.await(10, TimeUnit.SECONDS), "Release first commit");
+                    release.await();
                     return false;
                   }
                 }
@@ -362,7 +365,7 @@ final class BurstCoWinnerChecks {
     List<File> files = new ArrayList<>();
     CountDownLatch release = new CountDownLatch(1);
     try {
-      ((ExecutorService) get(a, "scans")).submit(() -> {}).get(10, TimeUnit.SECONDS);
+      GalleryScreenChecks.finishInitialIndex(t, a);
       check(prefs.edit().clear().commit(), "Reset fixture rankings");
       RankingStore disk = new RankingStore(prefs);
       List<PhotoRepository.Photo> photos = new ArrayList<>();
@@ -454,7 +457,11 @@ final class BurstCoWinnerChecks {
       back(t);
       visible(t, "保存しています");
       await(t, "first commit entered", () -> commits.get() == 1);
-      assertWinners(store, keys, 0, 2);
+      // Read the fixture's uncommitted value without taking the lock held by save().
+      Map<String, ?> persisted = prefs.getAll();
+      check(persisted.size() == 1, "Expected one stored ranking journal");
+      String journal = failurePrefs.getString(persisted.keySet().iterator().next(), "");
+      assertWinners(new PhotoRanking(keys.stream().sorted().toList(), journal), keys, 0, 2);
       assertWinners(disk, keys, 2);
       release.countDown();
       visible(t, ERROR);

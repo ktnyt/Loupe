@@ -81,7 +81,7 @@ final class LookRemovalChecks {
       ui(t,()->{set(gallery,"albumHome",false);set(gallery,"photos",new ArrayList<>(List.of(photo)));call(gallery,"showPhoto",new Class<?>[]{int.class},0);return true;});
       GenerationIndicatorChecks.await(t, "viewer original loaded", () -> {
         ZoomImageView image = ViewerScreenChecks.viewer(gallery).image;
-        return "元のファイルを表示しています".contentEquals(image.getStateDescription())
+        return android.text.TextUtils.equals("元のファイルを表示しています", image.getStateDescription())
             && image.photoBounds() != null;
       });
       ui(t,()->{PhotoViewerUi viewer=ViewerScreenChecks.viewer(gallery);noLook(viewer);safe(gallery,viewer);TagDetailChecks.require(GenerationIndicatorChecks.find(viewer,"viewer-look")==null&&GenerationIndicatorChecks.find(viewer,"viewer-before")==null,"no viewer look controls");return true;});

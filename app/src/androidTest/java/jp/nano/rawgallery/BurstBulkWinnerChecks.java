@@ -36,8 +36,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -61,7 +59,7 @@ final class BurstBulkWinnerChecks {
     List<File> files = new ArrayList<>();
     CountDownLatch release = new CountDownLatch(1);
     try {
-      ((ExecutorService) get(a, "scans")).submit(() -> {}).get(10, TimeUnit.SECONDS);
+      GalleryScreenChecks.finishInitialIndex(t, a);
       check(prefs.edit().clear().commit(), "Reset fixture rankings");
       List<PhotoRepository.Photo> photos = fixtures(a, files);
       List<String> fixtureKeys = new ArrayList<>();
@@ -170,7 +168,11 @@ final class BurstBulkWinnerChecks {
       clickExact(t, a, "選択");
       tapPhoto(t, 2);
       tapPhoto(t, 4);
-      clickExact(t, a, "1位");
+      // Selection no longer offers a filter picker. Seed the hidden selection state directly.
+      ui(t, () -> {
+        set(a, "rankFilter", 1);
+        RankingResultChecks.call(a, "gallery");
+      });
       await(t, "rank filter hides selected photos", () ->
           windowView(photoLabel(2)) == null && windowView(photoLabel(4)) == null);
       open(t, a);

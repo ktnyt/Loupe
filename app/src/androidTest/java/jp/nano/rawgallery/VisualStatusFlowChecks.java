@@ -17,7 +17,7 @@ final class VisualStatusFlowChecks {
     while(android.os.SystemClock.uptimeMillis()<end){
       AccessibilityNodeInfo root=t.getUiAutomation().getRootInActiveWindow();
       if(root!=null)for(AccessibilityNodeInfo n:root.findAccessibilityNodeInfosByText(label))
-        if(label.contentEquals(n.getText()==null?"":n.getText())&&n.isClickable()&&n.performAction(AccessibilityNodeInfo.ACTION_CLICK)){t.waitForIdleSync();return;}
+        if(label.equals(n.getText()==null?"":n.getText().toString().strip())&&n.isClickable()&&n.performAction(AccessibilityNodeInfo.ACTION_CLICK)){t.waitForIdleSync();return;}
       Thread.sleep(80);
     }throw new AssertionError("Missing action "+label);
   }
@@ -97,9 +97,9 @@ final class VisualStatusFlowChecks {
       try {
         waitFor(t,"tag entry",()->button(tags.getWindow().getDecorView(),"新しいタグ")!=null);
         main(t,()->{button(tags.getWindow().getDecorView(),"新しいタグ").performClick();return true;});
-        click(t,"作成");AccessibilityNodeInfo edit=input(t);if(edit==null||edit.getStateDescription()==null)throw new AssertionError("tag input error missing");
+        click(t,"作成");AccessibilityNodeInfo edit=input(t);if(edit==null||!android.text.TextUtils.equals("1〜80文字で入力してください",edit.getError()))throw new AssertionError("tag input error missing");
         android.os.Bundle value=new android.os.Bundle();value.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,"synthetic-cancel-only");if(!edit.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,value))throw new AssertionError("tag input edit");
-        Thread.sleep(250);edit=input(t);if(edit==null||edit.getStateDescription()!=null)throw new AssertionError("corrected input error remains");click(t,"キャンセル");
+        Thread.sleep(250);edit=input(t);if(edit==null||edit.getError()!=null)throw new AssertionError("corrected input error remains");click(t,"キャンセル");
       }finally{main(t,()->{tags.finish();return true;});}
       return "PASS injected touch left/right swipes: missing original -> orange JPEG pixel verified, old failure detached and no visible status -> missing original -> retry -> blue JPEG pixel verified.\nPASS tag empty input error -> valid edit clears error -> cancel without persistence.\nPASS detail missing original -> persistent error -> actual AX retry after synthetic JPEG restore -> image recovered.\nPASS actual share preparation cancel -> selection retained; injected failure -> retry calls writer again -> return retains selection. No recipient or external transfer.\n";
     } finally {release.countDown();File[] files=dir.listFiles();if(files!=null)for(File f:files)f.delete();dir.delete();}
