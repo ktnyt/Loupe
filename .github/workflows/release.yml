@@ -36,10 +36,13 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/loupe-test-venv"
           source "$RUNNER_TEMP/loupe-test-venv/bin/activate"
           python3 -m pip install -r scripts/requirements-cnt-calibration.txt
-          sh tests/host-regression.sh
-      - name: Android build and lint
+          sh tests/host-regression.sh --junit-in-gradle
+      - name: Android build, host JUnit, lint and formatting
+        env:
+          FORMAT_CHANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
         run: |
           python3 scripts/ci_gradle.py \
+            -PformatChangeBase="$FORMAT_CHANGE_BASE" spotlessCheck :app:testDebugUnitTest \
             :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug \
             :raw-experiment:assembleDebug :raw-experiment:assembleDebugAndroidTest :raw-experiment:lintDebug
       - name: Build and inspect non-debuggable distribution variant
@@ -60,8 +63,6 @@ jobs:
           python3 scripts/check-native-apk-assets.py \
             app/build/outputs/apk/debug/app-debug.apk \
             raw-experiment/build/outputs/apk/debug/raw-experiment-debug.apk
-      - name: exFAT parser regression
-        run: python3 tests/camera-exfat.py
       - name: Inspect APK signature and required features
         run: |
           fingerprint=$(keytool -exportcert -keystore "$LOUPE_SIGNING_KEYSTORE" -alias androiddebugkey -storepass android | sha256sum | cut -d ' ' -f 1)

@@ -121,7 +121,7 @@ TalkBackの有効化を許可されたこと自体は、検証の必須要件を
 
 ## CIで実行する回帰テスト
 
-同じホスト検査を手元で実行するには、JDK 17とAndroid SDKを設定した上で、仮想環境に `scripts/requirements-cnt-calibration.txt` のPythonライブラリをインストールし、`sh tests/host-regression.sh` を実行する。Gitで追跡中のテストを選ぶため、作業フォルダの未追跡コピーは実行されない。GitHub Actionsの `verify` で、APKのビルドとLint、exFAT検査、合成データによるAndroid計測も実行する。
+GitHub Actionsの `verify` は `:app:testDebugUnitTest` でexFATを含むJVM回帰を実行し、Spotless、APKのビルドとLint、合成データによるAndroid計測も実行する。手元で同じホスト検査を実行するには、JDK 17とAndroid SDKを設定し、仮想環境に `scripts/requirements-cnt-calibration.txt` をインストールして、`./gradlew :app:testDebugUnitTest spotlessCheck` と `sh tests/host-regression.sh --junit-in-gradle` を実行する。シェルはGitで追跡中のPython検査とJUnitに含まれないシェル検査を実行する。単独のシェル検査もまとめて起動する場合は、引数なしの `sh tests/host-regression.sh` を使う。
 
 | 検査 | 入口と実行条件 |
 | --- | --- |
