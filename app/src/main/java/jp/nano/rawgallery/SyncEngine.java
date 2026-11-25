@@ -38,6 +38,7 @@ final class SyncEngine {
                         : 0,
                     p.movedIdentity));
         } catch (Exception e) {
+          DiagnosticLog.exception("amazon.candidate_preview", "skipped", e);
           /* Unsupported or unreadable RAWs are never cleanup candidates. */
         }
       }
@@ -88,6 +89,7 @@ final class SyncEngine {
     try {
       runBatch(c, cookies, agent, candidates(c), true);
     } catch (Exception e) {
+      DiagnosticLog.exception("amazon.scan", "failed", e);
       status(c, JobState.Kind.FAILED, "対象フォルダを読み取れませんでした。アクセス許可を確認してください。");
     }
   }
@@ -193,7 +195,9 @@ final class SyncEngine {
         } catch (CloudVerifier.AuthException e) {
           throw e;
         } catch (Exception e) {
-          if (Thread.currentThread().isInterrupted()) {reachedEnd=false;break;}
+          boolean interrupted = Thread.currentThread().isInterrupted();
+          DiagnosticLog.exception("amazon.sync_item", interrupted ? "cancelled" : "failed", e);
+          if (interrupted) {reachedEnd=false;break;}
           JSONObject failed = store.get(ArchiveStore.key(p));
           if (failed == null) failed = ArchiveStore.base(p);
           String state = failed.optString("state", "error");
@@ -208,10 +212,12 @@ final class SyncEngine {
       status(
           c, deferred > 0 ? JobState.Kind.PARTIAL : JobState.Kind.WAITING, "今回の同期処理を終了しました（確認したオリジナル：" + processed + "枚、保留：" + deferred + "枚）。未完了のオリジナルは次の定期処理で確認します。");
     } catch (CloudVerifier.AuthException e) {
+      DiagnosticLog.exception("amazon.sync", "auth_required", e);
       c.getSharedPreferences("settings", 0).edit().putBoolean("syncEnabled", false).apply();
       SyncJob.schedule(c);
       status(c, JobState.Kind.AUTH_REQUIRED, "Amazonへの再ログインが必要なため、自動同期と整理を停止しました。");
     } catch (Exception e) {
+      DiagnosticLog.exception("amazon.sync", Thread.currentThread().isInterrupted() ? "cancelled" : "failed", e);
       status(c, JobState.Kind.FAILED, "同期を中断しました。未確認のオリジナルは整理しません。通信・アクセス許可・空き容量を確認してください。");
     } finally {
       RUNNING.set(false);
@@ -231,6 +237,7 @@ final class SyncEngine {
           && p.size == cursor.getLong(1)
           && p.modified == cursor.getLong(2);
     } catch (Exception e) {
+      DiagnosticLog.exception("amazon.local_revision", "failed", e);
       return false;
     }
   }
