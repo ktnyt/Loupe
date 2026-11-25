@@ -13,6 +13,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.zip.ZipInputStream;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 final class DiagnosticExportChecks {
@@ -59,6 +60,12 @@ final class DiagnosticExportChecks {
         "events.jsonl", new byte[DiagnosticExport.EVENT_FILE_LIMIT + 1],
         "last-crash.json", new JSONObject().put("exception", "java.lang." + SECRET)
             .put("version_code", 230).toString().getBytes(StandardCharsets.UTF_8))).length == 0);
+
+    // Five levels are sufficient to test the policy without stressing the Android parser.
+    JSONObject nested = new JSONObject().put("version_code", 230).put("exception", "java.io.IOException")
+        .put("unknown", new JSONArray().put(new JSONArray().put(new JSONArray().put(new JSONArray().put(0)))));
+    require(DiagnosticExport.archive(Map.of(
+        "last-crash.json", nested.toString().getBytes(StandardCharsets.UTF_8))).length == 0);
 
     DiagnosticLog.event("video.prepared", 0, "elapsed_ms", 863241234);
     require(!unzip(DiagnosticExport.capture(context)).get("events.jsonl").contains("863241234"));

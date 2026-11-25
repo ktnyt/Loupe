@@ -6,6 +6,8 @@ import android.content.pm.ApplicationInfo;
 import android.net.Uri;
 import android.provider.DocumentsContract;
 import android.provider.OpenableColumns;
+import android.util.JsonReader;
+import android.util.JsonToken;
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -29,6 +31,7 @@ import org.json.JSONObject;
 final class DiagnosticExport {
   static final int EVENT_FILE_LIMIT = 2 * 1024 * 1024;
   private static final int CRASH_FILE_LIMIT = 1024;
+  private static final int CRASH_JSON_DEPTH = 4;
   private static final int EVENT_LINE_LIMIT = 8192;
   private static final Pattern SESSION = Pattern.compile("[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}");
   private static final String[] EVENT_FILES = {"previous.jsonl", "events.jsonl"};
@@ -196,7 +199,34 @@ final class DiagnosticExport {
     return safe.toString();
   }
 
+  // JSONTokener recursively parses nested JSON. Bound the retained crash file's depth first.
+  private static boolean crashDepthAllowed(String source) {
+    try (JsonReader reader = new JsonReader(new StringReader(source))) {
+      int depth = 0;
+      while (reader.peek() != JsonToken.END_DOCUMENT) {
+        switch (reader.peek()) {
+          case BEGIN_OBJECT -> {
+            if (++depth > CRASH_JSON_DEPTH) return false;
+            reader.beginObject();
+          }
+          case BEGIN_ARRAY -> {
+            if (++depth > CRASH_JSON_DEPTH) return false;
+            reader.beginArray();
+          }
+          case END_OBJECT -> { reader.endObject(); depth--; }
+          case END_ARRAY -> { reader.endArray(); depth--; }
+          case NAME -> reader.nextName();
+          default -> reader.skipValue();
+        }
+      }
+      return depth == 0;
+    } catch (IOException | IllegalStateException ignored) {
+      return false;
+    }
+  }
+
   private static JSONObject crash(String source) {
+    if (!crashDepthAllowed(source)) return null;
     try {
       JSONObject input = new JSONObject(source);
       Number version = number(input.opt("version_code"));
