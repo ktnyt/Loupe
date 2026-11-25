@@ -15,6 +15,7 @@ final class ArchiveStore extends SQLiteOpenHelper {
   static final ReentrantLock E2_PHOTO_UPSERT = new ReentrantLock(true);
   static final int JPEG_BURST_SCAN_LIMIT = 1024 * 1024;
   private static final String[] METADATA_COLUMNS = {"key", "model", "taken", "burst_mode", "burst_frame"};
+  private static final int E2_INDEX_QUERY_KEYS = 512;
   private final Context context;
   private final boolean e2Photos;
 
@@ -307,6 +308,37 @@ final class ArchiveStore extends SQLiteOpenHelper {
     return result;
   }
 
+  /** Reads metadata for the requested E2 keys; a missing or malformed row has no fallback. */
+  Map<String, RawMetadata> releasedIndexMetadata(Set<String> keys,
+      java.util.function.BooleanSupplier cancelled) {
+    if (cancelled.getAsBoolean()) return null;
+    Map<String, RawMetadata> result = new HashMap<>();
+    List<String> requested = new ArrayList<>(keys);
+    SQLiteDatabase db = getReadableDatabase();
+    for (int first = 0; first < requested.size(); first += E2_INDEX_QUERY_KEYS) {
+      if (cancelled.getAsBoolean()) return null;
+      int size = Math.min(E2_INDEX_QUERY_KEYS, requested.size() - first);
+      String[] args = new String[size + 2];
+      args[0] = E2Cleanup.RELEASING;
+      args[1] = E2Cleanup.RELEASED;
+      for (int i = 0; i < size; i++) args[i + 2] = requested.get(first + i);
+      String where = "state IN (?,?) AND key IN (" + String.join(",", Collections.nCopies(size, "?")) + ")";
+      try (Cursor c = db.query("photos", new String[] {"key", "payload"}, where, args, null, null, null)) {
+        while (c.moveToNext()) {
+          if (cancelled.getAsBoolean()) return null;
+          try {
+            result.put(c.getString(0), RawMetadata.fromReceipt(new JSONObject(c.getString(1))));
+          } catch (JSONException malformed) {
+            DiagnosticLog.exception("index.e2_metadata_row", "skipped", malformed);
+          }
+        }
+      } catch (android.database.sqlite.SQLiteException unavailable) {
+        DiagnosticLog.exception("index.e2_metadata", "failed", unavailable);
+      }
+    }
+    return result;
+  }
+
   private static RawMetadata rawMetadata(Cursor c) {
     RawPreview.BurstFrame frame = c.isNull(3) || c.isNull(4) ? null
         : new RawPreview.BurstFrame(c.getInt(3), c.getInt(4));
@@ -317,6 +349,10 @@ final class ArchiveStore extends SQLiteOpenHelper {
     final String model;
     final long taken;
     final RawPreview.BurstFrame burstFrame;
+
+    static RawMetadata fromReceipt(JSONObject receipt) {
+      return receipt == null ? null : new RawMetadata(receipt.optString("model", ""), receipt.optLong("taken", 0));
+    }
 
     RawMetadata(String model, long taken) {
       this(model, taken, null);
