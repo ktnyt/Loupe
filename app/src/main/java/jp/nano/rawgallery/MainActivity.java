@@ -16,6 +16,7 @@ import java.io.*;
 import java.util.*;
 import java.util.concurrent.*;
 import jp.nano.rawgallery.camera.ImportProgress;
+import jp.nano.rawgallery.gallery.LibraryScreen;
 
 public final class MainActivity extends DiagnosticActivity {
   private static final int BG = GalleryUi.BG,
@@ -1961,13 +1962,8 @@ public final class MainActivity extends DiagnosticActivity {
             GalleryIndex.Snapshot snapshot = catalog.load(folder, selected);
             main.post(
                 () -> {
-                  if (isDestroyed()
-                      || albumHome
-                      || detail
-                      || selecting
-                      || burstMembers != null
-                      || rankingScreen
-                      || token != generation) return;
+                  if (isDestroyed() || token != generation || !libraryScreen().showsPhotoList())
+                    return;
                   GalleryPosition position = GalleryPosition.capture(grid, photos, displayed);
                   rankCache.clear();
                   photos = snapshot.photos;
@@ -2067,9 +2063,10 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private void applyPendingIndexUpdate() {
-    if (!pendingIndexUpdate || detail || selecting || burstMembers != null || rankingScreen) return;
-    if (albumHome) loadAlbums();
-    else loadIndexedPhotos();
+    if (!pendingIndexUpdate) return;
+    LibraryScreen shown = libraryScreen();
+    if (shown == LibraryScreen.ALBUMS) loadAlbums();
+    else if (shown.showsPhotoList()) loadIndexedPhotos();
   }
 
   private void requestPhotoAccess() {
@@ -2616,18 +2613,27 @@ public final class MainActivity extends DiagnosticActivity {
             });
   }
 
+  private LibraryScreen libraryScreen() {
+    return LibraryScreen.shown(
+        albumHome, detail, rankingScreen, selecting, burstMembers != null, albumFolder != null);
+  }
+
   public void onBackPressed() {
     DiagnosticLog.event("action.back", 0, "screen", "MainActivity");
-    if (rankingScreen) leaveRanking();
-    else if (selecting && !detail) endSelection();
-    else if (detail) {
-      if (returnToRanking) showRanking();
-      else gallery();
-    } else if (burstMembers != null) {
-      burstMembers = null;
-      gallery();
-    } else if (!albumHome && albumFolder != null) returnLibraryRoot();
-    else super.onBackPressed();
+    switch (libraryScreen()) {
+      case RANKING -> leaveRanking();
+      case SELECTION -> endSelection();
+      case PHOTO -> {
+        if (returnToRanking) showRanking();
+        else gallery();
+      }
+      case BURST -> {
+        burstMembers = null;
+        gallery();
+      }
+      case ALBUM_PHOTOS -> returnLibraryRoot();
+      case ALBUMS, ALL_PHOTOS -> super.onBackPressed();
+    }
   }
 
   private void openRanking() {
