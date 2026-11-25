@@ -12,13 +12,18 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.function.BooleanSupplier;
 import org.json.JSONObject;
 
 /** Releases local JPEGs; the e2 receipt and thumbnail stay available to the gallery. */
 final class E2Cleanup {
   private static final String SCHEME = "e2archive";
+  private static final Pattern RECORD_KEY = Pattern.compile("[0-9a-f]{32}");
   static final String RELEASING = "releasing", RELEASED = "released";
   private static final int EDGE = 256;
   private record Eligible(E2AutoSync.Candidate candidate, JSONObject receipt) {}
@@ -255,11 +260,35 @@ final class E2Cleanup {
         record.optLong("created"));
   }
 
-  static JSONObject localRecord(Context c, Uri uri) throws Exception {
-    if (!archived(uri) || uri.getHost() == null || !uri.getHost().matches("[0-9a-f]{32}"))
-      throw new IOException("オリジナルの識別子が不正です");
+  private static String recordKey(Uri uri) {
+    if (!archived(uri)) return null;
+    String key = uri.getHost();
+    return key != null && RECORD_KEY.matcher(key).matches() ? key : null;
+  }
+
+  /** Resolves E2 cache misses in the scanned photo list through one database helper. */
+  static Map<String, ArchiveStore.RawMetadata> localIndexMetadata(Context c, List<PhotoRepository.Photo> photos,
+      Map<String, ArchiveStore.RawMetadata> cachedMetadata, BooleanSupplier cancelled) throws IOException {
+    Set<String> keys = new HashSet<>();
+    for (PhotoRepository.Photo photo : photos) {
+      if (cancelled.getAsBoolean()) return null;
+      String key = recordKey(photo.uri);
+      if (key != null && !cachedMetadata.containsKey(ArchiveStore.key(photo))) keys.add(key);
+    }
+    if (keys.isEmpty()) return Map.of();
     try (ArchiveStore store = E2Settings.openRecords(c)) {
-      JSONObject record = store.get(uri.getHost());
+      return store.releasedIndexMetadata(keys, cancelled);
+    } catch (RuntimeException unavailable) {
+      DiagnosticLog.exception("index.e2_metadata", "failed", unavailable);
+      return Map.of();
+    }
+  }
+
+  static JSONObject localRecord(Context c, Uri uri) throws Exception {
+    String key = recordKey(uri);
+    if (key == null) throw new IOException("オリジナルの識別子が不正です");
+    try (ArchiveStore store = E2Settings.openRecords(c)) {
+      JSONObject record = store.get(key);
       if (record == null || !(released(record) || RELEASING.equals(record.optString("state"))))
         throw new IOException("オリジナルの保管記録がありません");
       record.put("state", "verified");
