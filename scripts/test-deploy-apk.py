@@ -127,6 +127,15 @@ class DeployTests(unittest.TestCase):
                 self.assertEqual(self.calls, [])
                 self.assertFalse(self.record_path().exists())
 
+    def test_old_debug_recovery_bundle_keeps_existing_acknowledgment_flow(self):
+        self.bundle.update(mode='recovery', issue=199)
+        self.bundle.pop('debuggable')
+        self.info['debuggable'] = True
+        self.stamp()
+        self.args.ack_recovery = True
+        self.apply()
+        self.assertEqual(deploy.load(self.record_path())['status'], 'pending-main-integration')
+
     def test_ota_requires_non_debuggable_readback_for_legacy_bundle(self):
         self.bundle.pop('debuggable')
         with self.assertRaisesRegex(ValueError, 'non-debuggable Release'):
@@ -346,6 +355,16 @@ class DeployTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'clean worktree'):
                 deploy.prepare(args)
             command.assert_not_called()
+
+    def test_only_recovery_of_sources_before_release_signing_uses_debug(self):
+        old, new = 'a'*40, 'b'*40
+        with patch.object(deploy, 'contains', return_value=False) as ancestry:
+            self.assertEqual(deploy.prepare_variant(self.root, 'main', old), 'release')
+            ancestry.assert_not_called()
+            self.assertEqual(deploy.prepare_variant(self.root, 'recovery', old), 'debug')
+            ancestry.assert_called_once_with(self.root, deploy.RELEASE_SIGNING_SOURCE, old)
+        with patch.object(deploy, 'contains', return_value=True):
+            self.assertEqual(deploy.prepare_variant(self.root, 'recovery', new), 'release')
 
     def test_release_prepare_requires_signing_inputs_before_build(self):
         args = argparse.Namespace(repo=str(self.root), mode='main', ref=None, issue=None,

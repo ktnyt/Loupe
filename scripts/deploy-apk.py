@@ -24,6 +24,8 @@ REQUIRED = {'library', 'video', 'nano-banana', 'camera-import'}
 SCHEMA = 1
 CERTIFICATE = 'fbd379f053574ef5f497e524b7828e4c388e88c14968acc11b8b39363167b678'
 PROVENANCE = "assets/loupe-deployment.json"
+# First revision with the explicit Release signing configuration.
+RELEASE_SIGNING_SOURCE = '8d1dc9d5b2b949bccf0c375801afdf3481cdccda'
 RELEASE_SIGNING_ENV = ('LOUPE_RELEASE_KEYSTORE', 'LOUPE_RELEASE_STORE_PASSWORD',
                        'LOUPE_RELEASE_KEY_ALIAS', 'LOUPE_RELEASE_KEY_PASSWORD')
 
@@ -221,6 +223,12 @@ def contains(repo, ancestor, descendant='origin/main'):
     return result.returncode == 0
 
 
+def prepare_variant(repo, mode, source):
+    if mode == 'recovery' and not contains(repo, RELEASE_SIGNING_SOURCE, source):
+        return 'debug'
+    return 'release'
+
+
 def prepare(args):
     repo = Path(git(args.repo, 'rev-parse', '--show-toplevel'))
     if git(repo, 'status', '--porcelain', '--untracked-files=all'):
@@ -238,11 +246,13 @@ def prepare(args):
     output = Path(args.output).resolve()
     if output.exists():
         raise ValueError('Use a new output directory; existing bundles are not overwritten')
+    variant = prepare_variant(repo, args.mode, source)
     env = environment()
-    if (any(not env.get(name) for name in RELEASE_SIGNING_ENV)
-            or not Path(env['LOUPE_RELEASE_KEYSTORE']).is_file()):
-        raise ValueError('Release signing requires an existing LOUPE_RELEASE_KEYSTORE and its signing inputs')
-    env['LOUPE_RELEASE_KEYSTORE'] = str(Path(env['LOUPE_RELEASE_KEYSTORE']).resolve())
+    if variant == 'release':
+        if (any(not env.get(name) for name in RELEASE_SIGNING_ENV)
+                or not Path(env['LOUPE_RELEASE_KEYSTORE']).is_file()):
+            raise ValueError('Release signing requires an existing LOUPE_RELEASE_KEYSTORE and its signing inputs')
+        env['LOUPE_RELEASE_KEYSTORE'] = str(Path(env['LOUPE_RELEASE_KEYSTORE']).resolve())
     env['ANDROID_HOME'] = str(Path(args.sdk).resolve())
     with tempfile.TemporaryDirectory(prefix='loupe-apk-') as temp:
         checkout = Path(temp) / 'source'
@@ -253,17 +263,18 @@ def prepare(args):
             save(assets / 'loupe-deployment.json', provenance)
             init = Path(temp) / 'deployment.init.gradle'
             init.write_text('allprojects { p -> p.plugins.withId("com.android.application") { p.android.sourceSets.main.assets.srcDir(' + json.dumps(str(assets)) + ') } }\n')
-            command = ['./gradlew', '-I', str(init), ':app:assembleRelease', '--console=plain']
+            command = ['./gradlew', '-I', str(init), f':app:assemble{variant.capitalize()}', '--console=plain']
             if env.get('GITHUB_ACTIONS') == 'true':
                 status = ci_gradle.run(command, cwd=checkout, env=env)
                 if status:
                     raise subprocess.CalledProcessError(status, command)
             else:
                 subprocess.run(command, cwd=checkout, env=env, check=True)
-            apk = checkout / 'app/build/outputs/apk/release/app-release.apk'
+            apk = checkout / f'app/build/outputs/apk/{variant}/app-{variant}.apk'
             info = apk_info(apk, args.sdk)
             check_features(info)
-            require_release(info)
+            if variant == 'release':
+                require_release(info)
             if args.mode == 'main' and info['certificates'] != [CERTIFICATE]:
                 raise ValueError('Daily preparation requires the existing Loupe signing certificate')
             if info.get('provenance') != provenance:
