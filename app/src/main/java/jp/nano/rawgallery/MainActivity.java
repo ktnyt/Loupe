@@ -3010,9 +3010,10 @@ public final class MainActivity extends DiagnosticActivity {
   private void shareMenu(List<PhotoRepository.Photo> selection) {
     List<PhotoRepository.Photo> frozen = List.copyOf(selection);
     Set<String> best = new HashSet<>();
-    int cloud = 0;
+    int e2 = 0, legacy = 0;
     for (PhotoRepository.Photo photo : frozen) {
-      if (photo.isArchived()) cloud++;
+      if (E2Cleanup.archived(photo.uri)) e2++;
+      else if (photo.isArchived()) legacy++;
       int index = photos.indexOf(photo);
       List<Integer> group = photoBundles.get(index);
       if (group != null)
@@ -3033,9 +3034,10 @@ public final class MainActivity extends DiagnosticActivity {
             this,
             frozen,
             ShareTargets.load(this),
-            cloud,
+            e2,
             best,
             (raw, target) -> export(frozen, raw, target));
+    if (legacy > 0) menu.archiveNotice(e2, legacy);
     capacityMenu = menu;
     menu.capacity(shareCapacity.request(frozen));
     shareDialog = menu;

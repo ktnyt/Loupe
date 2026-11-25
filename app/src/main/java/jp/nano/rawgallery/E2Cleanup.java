@@ -51,6 +51,38 @@ final class E2Cleanup {
     return value >= 1 && value <= 365 ? value : SettingsRepository.DEFAULT_RETENTION_DAYS;
   }
 
+  static boolean setRetentionDays(Context context, int next) throws IOException {
+    if (next != 7 && next != 30 && next != 90) throw new IllegalArgumentException("retention");
+    synchronized (E2Settings.DESTINATION_LOCK) {
+      if (next == days(context)) return false;
+      SharedPreferences settings = SettingsRepository.open(context);
+      boolean hadValue = settings.contains(SettingsRepository.RETENTION_DAYS);
+      int previous = SettingsRepository.retentionDays(settings);
+      // Revoke the old consent durably before changing its associated policy.
+      if (!options(context).edit().remove("cleanupBucket").remove("cleanupDays").commit()) {
+        throw new IOException("容量整理の停止を保存できません");
+      }
+      if (!settings.edit().putInt(SettingsRepository.RETENTION_DAYS, next).commit()) {
+        var rollback = settings.edit();
+        if (hadValue) rollback.putInt(SettingsRepository.RETENTION_DAYS, previous);
+        else rollback.remove(SettingsRepository.RETENTION_DAYS);
+        IOException failure = new IOException("写真を残す期間を保存できません");
+        if (!rollback.commit()) {
+          failure.addSuppressed(new IOException("以前の保存期間を復元できません"));
+        }
+        throw failure;
+      }
+      try {
+        if (!E2SyncJob.ensureRecoverySchedule(context)) {
+          android.util.Log.w("LoupeE2Sync", "Recovery scheduling declined");
+        }
+      } catch (IllegalStateException unavailable) {
+        android.util.Log.w("LoupeE2Sync", "Recovery scheduler unavailable");
+      }
+      return true;
+    }
+  }
+
   static void setEnabled(Context c, String bucket, int retention) throws IOException {
     boolean enabled = retention > 0;
     synchronized (E2Settings.DESTINATION_LOCK) {

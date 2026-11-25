@@ -27,6 +27,16 @@ public final class ArchiveInstrumentation extends Instrumentation {
         (CameraDualSlotUiChecks.MODE.equals(cameraPilotMode)
                 || CameraSdSwapChecks.MODE.equals(cameraPilotMode))
             && activity instanceof CameraImportActivity;
+    if (amazonRetirementUi
+        && (activity instanceof MainActivity || activity instanceof E2SyncActivity)) {
+      var config =
+          new android.content.res.Configuration(activity.getResources().getConfiguration());
+      config.fontScale = tagFont;
+      config.screenWidthDp = tagWidth;
+      activity
+          .getResources()
+          .updateConfiguration(config, activity.getResources().getDisplayMetrics());
+    }
     if (dualSlotUi) {
       var config =
           new android.content.res.Configuration(activity.getResources().getConfiguration());
@@ -110,6 +120,13 @@ public final class ArchiveInstrumentation extends Instrumentation {
           .getWindow()
           .setLayout(
               GalleryUi.dp(activity, tagWidth), android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+    if (amazonRetirementUi
+        && (activity instanceof MainActivity || activity instanceof E2SyncActivity)) {
+      activity
+          .getWindow()
+          .setLayout(
+              GalleryUi.dp(activity, tagWidth), android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+    }
     if (photoStorageUi)
       activity
           .getWindow()
@@ -206,6 +223,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private String e2RunId;
   private boolean jpegTest;
   private String amazonRetirementUpgrade;
+  private boolean amazonRetirementUi;
   private boolean importLatencyTest,
       importInterruptionTest,
       importPauseTest,
@@ -244,8 +262,11 @@ public final class ArchiveInstrumentation extends Instrumentation {
       String mode = args.getString("mode", "");
       if (mode.equals("amazon-retirement-seed")
           || mode.equals("amazon-retirement-verify")
-          || mode.equals("amazon-retirement-viewer")) {
+          || mode.equals("amazon-retirement-viewer")
+          || mode.equals("amazon-retirement-controls")) {
         amazonRetirementUpgrade = mode;
+        amazonRetirementUi =
+            mode.equals("amazon-retirement-viewer") || mode.equals("amazon-retirement-controls");
       }
     }
     videoTest = args != null && "video".equals(args.getString("mode"));
@@ -438,6 +459,10 @@ public final class ArchiveInstrumentation extends Instrumentation {
                 "e2-catalog-previous")
             .contains(args.getString("mode", ""))) e2CatalogMode = args.getString("mode");
     sheetTest = args != null && "sheets".equals(args.getString("mode"));
+    if (amazonRetirementUi) {
+      tagWidth = Integer.parseInt(args.getString("width", "400"));
+      tagFont = Float.parseFloat(args.getString("font", "1.0"));
+    }
     start();
   }
 
@@ -618,12 +643,24 @@ public final class ArchiveInstrumentation extends Instrumentation {
         return;
       }
       if (amazonRetirementUpgrade != null) {
+        AmazonRetirementUpgradeChecks.requireDisposable(
+            context, "true".equals(cameraPilotArguments.getString("disposable-avd")));
         results.putString(
             "stream",
             switch (amazonRetirementUpgrade) {
-              case "amazon-retirement-seed" -> AmazonRetirementUpgradeChecks.seed(context);
+              case "amazon-retirement-seed" ->
+                  AmazonRetirementUpgradeChecks.seed(
+                      this,
+                      switch (cameraPilotArguments.getString("consent", "")) {
+                        case "active" -> true;
+                        case "absent" -> false;
+                        default ->
+                            throw new IllegalArgumentException("consent must be active or absent");
+                      });
               case "amazon-retirement-verify" -> AmazonRetirementUpgradeChecks.verify(context);
-              default -> AmazonRetirementUpgradeChecks.viewer(this);
+              case "amazon-retirement-viewer" ->
+                  AmazonRetirementUpgradeChecks.viewer(this, tagWidth, tagFont);
+              default -> AmazonRetirementUpgradeChecks.controls(this, tagWidth, tagFont);
             });
         finish(-1, results);
         return;
