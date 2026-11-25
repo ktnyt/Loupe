@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.io.File;
 import java.lang.reflect.Method;
+import java.util.Arrays;
 import java.util.UUID;
 import org.json.JSONObject;
 
@@ -30,14 +31,51 @@ final class IndexSignatureChecks {
       }
     };
   }
-  private static String signature(Context context) throws Exception {
+  private record SourceSignature(String whole, String media, long moveRevision,
+      long archiveRevision, long e2Revision, String permissions, String uriGrants) {}
+
+  private static SourceSignature signature(Context context) throws Exception {
     Method method = GalleryIndex.class.getDeclaredMethod("signature", Context.class, int.class);
     method.setAccessible(true);
-    return (String) method.invoke(null, context,
-        BurstGapSettings.readMillis(context.getSharedPreferences("settings", 0)));
+    String whole = (String) method.invoke(null, context, 1000);
+    String moveMarker = ":move-v1:", archiveMarker = ":archive-v3:";
+    int mediaEnd = whole.indexOf(moveMarker);
+    int moveStart = mediaEnd + moveMarker.length();
+    int moveEnd = whole.indexOf(':', moveStart);
+    int archiveMarkerAt = whole.indexOf(archiveMarker, moveEnd);
+    check(mediaEnd >= 0 && moveEnd > moveStart && archiveMarkerAt > moveEnd, "signature layout");
+    int archiveStart = archiveMarkerAt + archiveMarker.length();
+    int archiveEnd = whole.indexOf(':', archiveStart);
+    int e2End = whole.indexOf(':', archiveEnd + 1);
+    check(archiveEnd > archiveStart && e2End > archiveEnd + 1, "archive and e2 revisions present");
+    String[] grants = whole.substring(e2End + 1).split(":", 5);
+    check(grants.length == 5, "signature grants present");
+    return new SourceSignature(whole, whole.substring(0, mediaEnd),
+        Long.parseLong(whole.substring(moveStart, moveEnd)),
+        Long.parseLong(whole.substring(archiveStart, archiveEnd)),
+        Long.parseLong(whole.substring(archiveEnd + 1, e2End)),
+        String.join(":", Arrays.copyOf(grants, 4)), grants[4]);
   }
+
+  private static String checkStableSignature(SourceSignature before, SourceSignature after, String stage) {
+    boolean sameMedia = before.media().equals(after.media());
+    boolean sameMove = before.moveRevision() == after.moveRevision();
+    boolean sameE2 = before.e2Revision() == after.e2Revision();
+    boolean samePermissions = before.permissions().equals(after.permissions());
+    boolean sameUriGrants = before.uriGrants().equals(after.uriGrants());
+    boolean sameWhole = before.whole().equals(after.whole());
+
+    check(before.archiveRevision() == after.archiveRevision(), stage + ": archive revision stable");
+    check(sameMove && sameE2, stage + ": other isolated database revisions stable");
+    // Real Android MediaStore and grants can change while a private archive fixture is open.
+    if (sameMedia && samePermissions && sameUriGrants)
+      check(sameWhole, stage + ": complete signature stable when external inputs match");
+    return stage + " changed(media=" + !sameMedia + ", move=" + !sameMove + ", e2=" + !sameE2
+        + ", permissions=" + !samePermissions + ", grants=" + !sameUriGrants + ", whole=" + !sameWhole + ")";
+  }
+
   private static void check(boolean valid, String label) { if (!valid) throw new AssertionError(label); }
-  private static void runVersion(Context context, int oldVersion) throws Exception {
+  private static String runVersion(Context context, int oldVersion) throws Exception {
     File root = new File(context.getCacheDir(), "index-signature-" + UUID.randomUUID());
     check(root.mkdir(), "isolated directory");
     Context isolated = isolated(context, root);
@@ -68,18 +106,20 @@ final class IndexSignatureChecks {
         check(oldVersion < 3 || revision == 91, "version 3 revision preserved");
         check(oldVersion < 2 || store.metadataSnapshot().get("existing").burstFrame == null,
             "existing entries start unprobed");
-        String before = signature(isolated);
+        SourceSignature before = signature(isolated);
         if (oldVersion == 3) checkBurstCache(isolated, root, store);
-        check(before.equals(signature(isolated)), "burst metadata does not change source revision");
+        checkStableSignature(before, signature(isolated), "burst metadata");
         ContentValues metadata = new ContentValues();
         metadata.put("key", "new-derived"); metadata.put("model", "synthetic"); metadata.put("taken", 123);
         check(db.insertOrThrow("metadata", null, metadata) >= 0, "metadata saved");
         check(store.indexRevision() == revision, "metadata does not invalidate source");
-        check(before.equals(signature(isolated)), "metadata signature stable");
+        checkStableSignature(before, signature(isolated), "metadata insert");
         JSONObject photo = new JSONObject().put("key", "new-photo").put("name", "synthetic");
         store.put(photo, "pending");
         check(store.indexRevision() > revision, "insert invalidates");
-        check(!before.equals(signature(isolated)), "photo signature changes");
+        SourceSignature afterInsert = signature(isolated);
+        check(before.archiveRevision() != afterInsert.archiveRevision()
+            && !before.whole().equals(afterInsert.whole()), "photo signature changes");
         revision = store.indexRevision();
         photo.put("name", "replacement"); store.put(photo, "verified");
         check(store.indexRevision() > revision, "replace invalidates");
@@ -92,16 +132,29 @@ final class IndexSignatureChecks {
         try { store.put(new JSONObject().put("key", "rolled-back"), "pending"); }
         finally { db.endTransaction(); }
         check(store.get("rolled-back") == null, "photo rolled back");
-        check(store.indexRevision() == revision && before.equals(signature(isolated)), "revision rolled back");
+        check(store.indexRevision() == revision, "revision rolled back");
+        checkStableSignature(before, signature(isolated), "rollback");
         db.delete("photos", "key=?", new String[] {"new-photo"});
         check(store.indexRevision() > revision, "delete invalidates");
         before = signature(isolated);
         store.setWriteAheadLoggingEnabled(true);
-        metadata.put("key", "wal-derived"); db.insertOrThrow("metadata", null, metadata);
+        check(db.isWriteAheadLoggingEnabled(), "WAL enabled for checkpoint fixture");
+        SourceSignature afterWal = signature(isolated);
+        String walChange = checkStableSignature(before, afterWal, "WAL switch");
+
+        metadata.put("key", "wal-derived");
+        db.insertOrThrow("metadata", null, metadata);
+        SourceSignature afterMetadata = signature(isolated);
+        String metadataChange = checkStableSignature(afterWal, afterMetadata, "WAL metadata");
+
         try (Cursor checkpoint = db.rawQuery("PRAGMA wal_checkpoint(FULL)", null)) {
-          check(checkpoint.moveToFirst() && checkpoint.getInt(0) == 0, "checkpoint completed");
+          check(checkpoint.moveToFirst() && checkpoint.getInt(0) == 0 && checkpoint.getInt(1) >= 0,
+              "WAL checkpoint completed");
         }
-        check(before.equals(signature(isolated)), "checkpoint signature stable");
+        SourceSignature afterCheckpoint = signature(isolated);
+        String checkpointChange = checkStableSignature(afterMetadata, afterCheckpoint, "checkpoint");
+        return "Archive v" + oldVersion + ": " + walChange + "; " + metadataChange
+            + "; " + checkpointChange + "\n";
       }
     } finally {
       File[] files = root.listFiles();
@@ -292,10 +345,11 @@ final class IndexSignatureChecks {
 
   static String run(Context context) throws Exception {
     checkBurstVolumes();
-    for (int version : new int[] {0, 1, 2, 3}) runVersion(context, version);
+    StringBuilder observations = new StringBuilder();
+    for (int version : new int[] {0, 1, 2, 3}) observations.append(runVersion(context, version));
     return "PASS archive schema 1/2/3 migration and fresh create preserve records; JPEG burst cache NULL/retry/zero, "
         + "original key/model/taken and competing winner preserved; JPEG signature, segment bounds, short reads, zero skip and stop-before-pixels checked; I/O and scan-limit failures propagated; "
-        + "storage volumes stay separate and E2 legacy aliases fall back; metadata/checkpoint signatures stable; "
-        + "photo insert/replace/update/delete invalidate; rollback atomic; isolated DBs removed.\n";
+        + "storage volumes stay separate and E2 legacy aliases fall back; archive revision stable across WAL switch, metadata and checkpoint; "
+        + "photo insert/replace/update/delete invalidate; rollback atomic; isolated DBs removed.\n" + observations;
   }
 }
