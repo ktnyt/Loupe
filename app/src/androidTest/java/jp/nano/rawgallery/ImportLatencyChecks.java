@@ -26,6 +26,7 @@ final class ImportLatencyChecks {
     String folder = "Pictures/Loupe-import-test-" + UUID.randomUUID() + "/";
     List<Uri> fixtures = new ArrayList<>();
     MainActivity activity = null;
+    ImportLatencyProbe probe = null;
     File container = File.createTempFile("import-test-", ".dng", context.getCacheDir());
     final int count = 6, padding = 24 * 1024 * 1024;
     try {
@@ -86,6 +87,7 @@ final class ImportLatencyChecks {
           in.transferTo(out);
         }
       }
+      if (!deferred && !interrupt && !pause) probe = new ImportLatencyProbe(test, a, folder);
       long publishing = SystemClock.elapsedRealtimeNanos();
       DiagnosticLog.event("test.import_publish", 0);
       for (Uri uri : fixtures) {
@@ -167,6 +169,7 @@ final class ImportLatencyChecks {
         }
         Thread.sleep(20);
       }
+      if (probe != null) probe.record(context, fixtures, container.length(), publishing, applied, frame, ids);
       if (applied == 0 || frame == 0) throw new AssertionError("new import did not reach list and image frame");
       if (interrupt) throw new AssertionError("screen change was not detected");
       return String.format(Locale.ROOT,
@@ -176,6 +179,7 @@ final class ImportLatencyChecks {
       if (!interrupt) throw interrupted;
       return "PASS import test detects changed screen without waiting for timeout; fixture cleanup runs in finally.\n";
     } finally {
+      if (probe != null) probe.close();
       if (activity != null) { MainActivity a = activity; test.runOnMainSync(a::finish); }
       for (Uri uri : fixtures) resolver.delete(uri, null, null);
       container.delete();
