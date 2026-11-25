@@ -1,6 +1,6 @@
 # 処理状況ダッシュボードの契約
 
-Issue #16の設計をもとに、#39で独立した`DashboardActivity`として実装した読取専用画面の契約である。画面・寸法は[Claude参照HTML](design/loupe-issue16-dashboard.html)の現在取得可能モードを基準とする。#17の非テキスト状態部品を使用する。
+Issue #16の設計をもとに、#39で独立した`DashboardActivity`として実装した読取専用画面の契約である。画面・寸法は[Claude参照HTML](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-issue16-dashboard.html)の現在取得可能モードを基準とする。#17の非テキスト状態部品を使用する。
 
 ## 目的と機能
 

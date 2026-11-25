@@ -21,9 +21,9 @@
 
 端末instrumentationのcurve/cursor/uiで点追加・相対ドラッグ・端点・選択・削除・bank保持・数値入力・Undo/Redo・リセット・ピンチ/CANCEL・スライダーの操作単位・比較・Bundle再生成を検証しPASS。描画待ちのMOVEを残したstop/startコールバックでも、操作の取消・再読込・最新frameの到着を確認した。未確定数値を残した選択移動・点削除・リセット後のDoneでも別の点を変更しない。値の小数表示を未編集の座標へ戻さない。
 
-400dp通常/font1.0、400×640dp/font1.3、320×640dp/font1.3で描画完了後にPixelCopyした。Claude完成HTMLとの[通常比較](design/loupe63-comparison-normal.png)・[短い画面比較](design/loupe63-comparison-short.png)は左が参照、右が端末。通常は高さの丸め1px差がある。写真は参照側がSVG近似、端末側が合成画像なので色の一致を判定しない。既存ヘッダーやタブの字体差は残る。短画面のタブは既存の横スクロールを維持する。
+400dp通常/font1.0、400×640dp/font1.3、320×640dp/font1.3で描画完了後にPixelCopyした。Claude完成HTMLとの[通常比較](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe63-comparison-normal.png)・[短い画面比較](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe63-comparison-short.png)は左が参照、右が端末。通常は高さの丸め1px差がある。写真は参照側がSVG近似、端末側が合成画像なので色の一致を判定しない。既存ヘッダーやタブの字体差は残る。短画面のタブは既存の横スクロールを維持する。
 
-独立UI評価後に[選択端点のリング](design/loupe63-endpoint.png)を追加し、再評価で対応必須の不一致・切れなし。Cold Reviewの範囲内指摘を修正して再評価を受けた。security-reviewに沿う独立静的確認で対応必須指摘なし。数値境界、固定LUTとGL解放、不変snapshot、別JPEG/失敗cleanup、debug gate、診断の匿名性を確認した。ネイティブライブラリの脆弱性監査ではない。
+独立UI評価後に[選択端点のリング](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe63-endpoint.png)を追加し、再評価で対応必須の不一致・切れなし。Cold Reviewの範囲内指摘を修正して再評価を受けた。security-reviewに沿う独立静的確認で対応必須指摘なし。数値境界、固定LUTとGL解放、不変snapshot、別JPEG/失敗cleanup、debug gate、診断の匿名性を確認した。ネイティブライブラリの脆弱性監査ではない。
 
 通常版0.22.0/code144のphoto-edit検査もPASS。内部現像Activity、Mono/変更後の戻る操作・再生成、別JPEGの寸法・色・オリジナル不変、保存中の戻る操作によるcancelと自己生成物cleanup、失敗/retryを確認した。外部editorは起動しておらず、その保存互換性は別の検証範囲。
 

@@ -23,7 +23,7 @@ CIではAndroid SDKの `system-images;android-35;google_apis;x86_64` とANGLEの
 | `jpeg` | 読み取り許可のあるJPEG 3枚をMediaStoreに用意する。元データと表示用プレビューの照合を行う。 |
 | `tag-lifecycle`、`related` | タグの付いた検査用写真を索引に登録する。`tag-lifecycle` は `DCIM/OMDS/`、`related` は同じフォルダにタグ付与済みの例と未判定の候補が必要。素材がない場合、`related` の合成画像によるモデル推論までは動くが、類似写真の選出やキャッシュ再読込は未検査。 |
 | `camera-pilot-dual-slot-ui`、`camera-pilot-sd-swap`、`camera-pilot-sd-revision` | 合成カードでもテストコードが隔離APKのapplicationIdとエミュレータを要求する。通常の本体APKは起動時に拒否される。UIは400dp/1.0と320dp/1.3の既存手順で確認する。[二つのSDスロットの検証 #184](https://github.com/ktnyt/Loupe/issues/184)、[再挿入と保存済み判定 #166](https://github.com/ktnyt/Loupe/issues/166) |
-| `burst-real`、`burst-gap-millis` の実RAW指定 | 承認済みのRAWコーパスを検査用領域に用意する。合成fixtureによる連写状態と区別する。[連写番号の検証](design/burst-gap-millis/README.md) |
+| `burst-real`、`burst-gap-millis` の実RAW指定 | 承認済みのRAWコーパスを検査用領域に用意する。合成fixtureによる連写状態と区別する。[連写番号の検証](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/burst-gap-millis/README.md) |
 | `camera-benchmark`、`camera-pilot-wifi`、`camera-pilot-paired-wifi` | 実際のカメラへのWi-Fi経路、検査用の写真、ペア接続が必要。[ペア接続の契約](camera-paired-connection.md) |
 | `camera-pilot-qr-status`、`camera-pilot-ble-advertisement`、`camera-pilot-ble-saved` | 実カメラの登録状態、BLE通知、無線接続条件を指定。合成QRやペアセッションの検査とは区別する。[BLE起動の契約](camera-ble-wake.md) |
 | `camera-pilot-sd`、`camera-pilot-sd-source-diagnostic`、`camera-pilot-cleanup` | 参照元のSD、必要な読み取り許可、承認済みfixture、対応する既存試行の記録が必要。[カメラ取り込みの契約](camera-import-contract.md) |

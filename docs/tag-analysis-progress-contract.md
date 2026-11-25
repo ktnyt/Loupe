@@ -2,7 +2,7 @@
 
 ## 目的と範囲
 
-「写真を解析」を押した利用者が、処理の継続・解析済み枚数/対象枚数・中止・完了を画面から判別できる。[タグConfidence](tag-confidence-contract.md)と[参照HTML](design/loupe-tag-analysis-progress.html)の解析中表示を回復する。
+「写真を解析」を押した利用者が、処理の継続・解析済み枚数/対象枚数・中止・完了を画面から判別できる。[タグConfidence](tag-confidence-contract.md)と[参照HTML](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-tag-analysis-progress.html)の解析中表示を回復する。
 
 ## 要件と契約
 
@@ -20,4 +20,4 @@
 
 ## 参照の採用範囲
 
-Claudeの[補足HTML](design/loupe-tag-analysis-progress.html)は解析中の回る印と解析済み/対象枚数の可視性・桁数の参照とする。320dp・文字1.3倍のブラウザ表示を確認した。HTMLの状態行の位置、中止の遅延、完了/失敗の通知、パネル高さ62%は模擬であり、今回の変更要求に含めない。Androidの既存配置・48%上限・中止の即時操作・完了/失敗の契約を維持する。ブラウザの線形文字拡大とAndroidの非線形拡大の差は実機で照合する。
+Claudeの[補足HTML](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-tag-analysis-progress.html)は解析中の回る印と解析済み/対象枚数の可視性・桁数の参照とする。320dp・文字1.3倍のブラウザ表示を確認した。HTMLの状態行の位置、中止の遅延、完了/失敗の通知、パネル高さ62%は模擬であり、今回の変更要求に含めない。Androidの既存配置・48%上限・中止の即時操作・完了/失敗の契約を維持する。ブラウザの線形文字拡大とAndroidの非線形拡大の差は実機で照合する。

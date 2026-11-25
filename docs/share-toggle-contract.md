@@ -20,7 +20,7 @@
 
 ## 表示と検証
 
-既存の `docs/design/loupe-select-share.html` と `SelectionUi.BestSwitch.onDraw` のON/OFFの形状・色・配置を維持する。
+既存の `https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-select-share.html` と `SelectionUi.BestSwitch.onDraw` のON/OFFの形状・色・配置を維持する。
 
 確認は設定値の反転だけでなく、画面に描かれたスイッチを対象にする。ON→OFF→ON、件数不変、連続操作、画面再構築を確認する。ハードウェア描画のキャプチャを用い、テスト側の強制再描画で不具合を隠さない。
 

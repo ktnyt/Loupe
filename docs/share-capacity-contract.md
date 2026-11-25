@@ -17,7 +17,7 @@
 
 ## 表示
 
-[Claudeの参照HTML](design/loupe-share-capacity.html)を基準とする。既存の枚数の札の右に容量の札を置き、必要なら札の行を折り返す。写真や操作に重ねない。
+[Claudeの参照HTML](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-share-capacity.html)を基準とする。既存の枚数の札の右に容量の札を置き、必要なら札の行を折り返す。写真や操作に重ねない。
 
 - 通常は`130 / 512 MiB`。1バイトでも超過なら切り上げて`512.1 / 512 MiB`と赤い警告にする。
 - 測定中は進行の印と`/ 512 MiB`、失敗は警告と`確認できません`、取得を後で行う未確認は通常色の`? / 512 MiB`。
