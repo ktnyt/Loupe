@@ -471,11 +471,13 @@ final class IndexSignatureChecks {
     checkBurstVolumes();
     checkE2IndexMetadata(context);
     for (int version : new int[] {0, 1, 2, 3}) runVersion(context, version);
+    String databaseEvidence = DatabaseAccessChecks.run(context);
     return "PASS archive schema 1/2/3 migration and fresh create preserve records; JPEG burst cache NULL/retry/zero, "
         + "original key/model/taken and competing winner preserved; JPEG signature, segment bounds, short reads, zero skip and stop-before-pixels checked; I/O and scan-limit failures propagated; "
         + "bounded metadata transaction rollback, retry, competing winner and deleted row preserved; "
         + "E2 batch ID, states, missing rows, logical aliases, cancellation and revision retry; "
         + "storage volumes stay separate and E2 legacy aliases fall back; metadata/checkpoint signatures stable; "
-        + "photo insert/replace/update/delete invalidate; rollback atomic; isolated DBs removed.\n";
+        + "photo insert/replace/update/delete invalidate; rollback atomic; isolated DBs removed.\n"
+        + databaseEvidence;
   }
 }
