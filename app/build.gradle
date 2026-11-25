@@ -3,8 +3,8 @@ import org.gradle.process.CommandLineArgumentProvider
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
-    id 'com.android.application'
-    id 'org.jetbrains.kotlin.android'
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
 }
 // The same source always has the same version; main merges advance one patch.
 def distributionVersion = new groovy.json.JsonSlurper().parseText(providers.exec {
@@ -147,17 +147,17 @@ android {
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }
-dependencies {
-    testImplementation platform('org.junit:junit-bom:5.14.3')
-    testImplementation 'org.junit.jupiter:junit-jupiter'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
-    implementation 'com.google.mediapipe:tasks-vision:0.10.35'
-    implementation 'com.google.android.material:material:1.13.0'
-    implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
-}
-
 kotlin { jvmToolchain(17) }
-dependencies { implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1' }
+
+dependencies {
+    implementation libs.mediapipe.tasks.vision
+    implementation libs.material
+    implementation libs.zxing.embedded
+    implementation libs.kotlinx.coroutines.android
+    testImplementation platform(libs.junit.bom)
+    testImplementation libs.junit.jupiter
+    testRuntimeOnly libs.junit.platform.launcher
+}
 
 apply from: rootProject.file('gradle/native-licenses.gradle')
 
