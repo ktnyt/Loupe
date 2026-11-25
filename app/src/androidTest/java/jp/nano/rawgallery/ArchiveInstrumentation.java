@@ -91,7 +91,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean rankingModesTest;
   private boolean systemBackTest;
   private boolean burstTest, realBurstTest, burstGapTest;
-  private boolean diagnosticTest, sheetTest;
+  private boolean diagnosticTest, diagnosticFailureTest, sheetTest;
   private boolean tagTest, lifecycleTest;
   private boolean relatedTest;
   private boolean bulkWinnerTest, coWinnerTest, positionTest, sortTest, tabsTest, albumTagsTest, comparisonLabelsTest, actionLabelsTest;
@@ -215,6 +215,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     burstTest = args != null && "burst".equals(args.getString("mode"));
     realBurstTest = args != null && "burst-real".equals(args.getString("mode"));
     diagnosticTest = args != null && "diagnostics".equals(args.getString("mode"));
+    diagnosticFailureTest = args != null && "diagnostic-failures".equals(args.getString("mode"));
     lifecycleTest = args != null && "tag-lifecycle".equals(args.getString("mode"));
     tagTest = args != null && "tags".equals(args.getString("mode"));
     relatedTest = args != null && "related".equals(args.getString("mode"));
@@ -485,6 +486,9 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if (sheetTest) { results.putString("stream", SheetChecks.run(this)); finish(-1, results); return; }
       if (diagnosticTest) {
         results.putString("stream", DiagnosticChecks.run(this)); finish(-1, results); return;
+      }
+      if (diagnosticFailureTest) {
+        results.putString("stream", DiagnosticFailureChecks.run(this)); finish(-1, results); return;
       }
       if (lifecycleTest) {
         results.putString("stream", TagLifecycleChecks.run(this)); finish(-1, results); return;

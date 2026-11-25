@@ -227,7 +227,7 @@ object MassStorageImporter {
         val cameraHead = try {
             exfat.readHead(node, want)
         } catch (e: Exception) {
-            ImportLog.w(TAG, "readHead failed: ${node.name}", e)
+            ImportLog.w(TAG, "readHead failed", e)
             return false
         }
         if (cameraHead.size != want) return false

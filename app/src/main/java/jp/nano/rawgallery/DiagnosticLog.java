@@ -67,6 +67,11 @@ final class DiagnosticLog {
       if (!QUEUE.offer(j.toString())) DROPPED.incrementAndGet();
     } catch (Exception e) { DROPPED.incrementAndGet(); }
   }
+  /** Pass only fixed phase/outcome labels. Never record exception text or stack traces here. */
+  static void exception(String phase, String outcome, Throwable error) {
+    event("operation.exception", 0, "phase", phase, "outcome", outcome,
+        "exception", error.getClass().getName());
+  }
   static Scope span(String name) { return new Scope(name); }
   static final class Scope implements AutoCloseable {
     final String name;

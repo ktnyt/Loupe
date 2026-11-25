@@ -83,6 +83,7 @@ final class E2Cleanup {
         try {
           E2AutoSync.requireCurrentRevision(c, candidate);
         } catch (IOException changed) {
+          DiagnosticLog.exception("e2_cleanup.current_revision", "skipped", changed);
           continue;
         }
         eligible.add(new Eligible(candidate, record));
@@ -94,6 +95,7 @@ final class E2Cleanup {
       }
       return new Plan(retention, eligible);
     } catch (Exception failure) {
+      DiagnosticLog.exception("e2_cleanup.plan", stopped.getAsBoolean() ? "cancelled" : "failed", failure);
       if (!stopped.getAsBoolean()) updateStatus(c, "容量整理を中断しました。保存先や権限を確認してください");
       return null;
     }
@@ -116,6 +118,7 @@ final class E2Cleanup {
       }
       updateStatus(c, "端末オリジナルを整理 · " + removed + "枚");
     } catch (Exception failure) {
+      DiagnosticLog.exception("e2_cleanup.remove", stopped.getAsBoolean() ? "cancelled" : "failed", failure);
       if (!stopped.getAsBoolean()) updateStatus(c, "容量整理を中断しました。保存先や権限を確認してください");
     }
   }
@@ -273,6 +276,7 @@ final class E2Cleanup {
         throw new IOException("保存済みサムネイルがありません");
       return new PhotoRepository.Preview(file, record.optString("model"), width, height, 1);
     } catch (Exception e) {
+      DiagnosticLog.exception("e2_cleanup.preview", "failed", e);
       throw new IOException("保存済みサムネイルを読めません", e);
     }
   }
