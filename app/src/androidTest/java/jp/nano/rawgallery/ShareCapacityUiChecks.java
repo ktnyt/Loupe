@@ -87,7 +87,8 @@ final class ShareCapacityUiChecks {
         sort.performClick();Dialog dialog=(Dialog)RankingResultChecks.get(a,"shareDialog");dialogs.add(dialog);
         TagDetailChecks.require(dialog instanceof ShareUi.Confirmation&&dialog.isShowing(),"sort can open unresolved confirmation despite share capacity");dialog.dismiss();
       });
-      return "PASS share capacity: selection over/exact/reduced/best-only, AX, disabled taps, per-format saved targets, stale result and unresolved sort; "+width+"dp font"+font;
+      ShareSelectionResultChecks.run(t,a,photos,fixtures);
+      return "PASS share capacity: selection over/exact/reduced/best-only, AX, disabled taps, per-format saved targets, stale result and unresolved sort; stable selection reuse and exact targets across photo, burst, ranking, capacity, album and selection changes; "+width+"dp font"+font;
     } finally {
       TagDetailChecks.ui(t,()->{for(Dialog dialog:dialogs)if(dialog.isShowing())dialog.dismiss();a.finish();});
       for(File file:files)file.delete();fixtures.delete();
