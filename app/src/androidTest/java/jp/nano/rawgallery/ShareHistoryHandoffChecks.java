@@ -74,13 +74,21 @@ final class ShareHistoryHandoffChecks {
   private static void awaitText(Instrumentation t,String text,long timeout)throws Exception {long end=SystemClock.uptimeMillis()+timeout;do{if(find(t.getUiAutomation().getRootInActiveWindow(),text)!=null)return;Thread.sleep(60);}while(SystemClock.uptimeMillis()<end);throw new AssertionError("test recipient receipt missing");}
   private static void awaitChooser(Instrumentation t,long timeout)throws Exception {long end=SystemClock.uptimeMillis()+timeout;do{AccessibilityNodeInfo root=t.getUiAutomation().getRootInActiveWindow();if(root!=null&&root.getPackageName()!=null&&!root.getPackageName().toString().startsWith("jp.nano.rawgallery"))return;Thread.sleep(60);}while(SystemClock.uptimeMillis()<end);throw new AssertionError("OS chooser not visible");}
   private static boolean scroll(AccessibilityNodeInfo node){if(node==null)return false;for(int i=0;i<node.getChildCount();i++)if(scroll(node.getChild(i)))return true;return node.isScrollable()&&node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD);}
-  private static void choose(Instrumentation t,String label)throws Exception {
-    for(int pass=0;pass<12;pass++){
-      AccessibilityNodeInfo root=t.getUiAutomation().getRootInActiveWindow(),target=find(root,label);
-      if(target!=null){while(target!=null&&!target.isClickable())target=target.getParent();check(target!=null&&target.performAction(AccessibilityNodeInfo.ACTION_CLICK),"test target click");return;}
-      if(!scroll(root))break;Thread.sleep(150);
-    }
-    throw new AssertionError("test-only share target not found; no other target selected");
+  private static void choose(Instrumentation t, String label) throws Exception {
+    long deadline = SystemClock.uptimeMillis() + 15000;
+    do {
+      AccessibilityNodeInfo root = t.getUiAutomation().getRootInActiveWindow();
+      AccessibilityNodeInfo target = find(root, label);
+      if (target == null) {
+        // The chooser window can appear before its targets or scroll controls are ready.
+        scroll(root);
+      } else {
+        while (target != null && !target.isClickable()) target = target.getParent();
+        if (target != null && target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return;
+      }
+      Thread.sleep(150);
+    } while (SystemClock.uptimeMillis() < deadline);
+    throw new AssertionError("test-only share target not found or clickable; no other target selected");
   }
   private static void check(boolean value,String message){if(!value)throw new AssertionError(message);}
 }
