@@ -132,7 +132,7 @@ public final class CameraImportActivity extends AppCompatActivity {
     private static final String IMPORT_NOT_STARTED =
             "確認処理が混み合っています。取り込みは始まっていません。少し待ってからやり直してください。";
     private static final String SD_REGISTRATION_NOT_SAVED =
-            "確認処理が混み合っています。SDカードの登録は完了していません。少し待ってからやり直してください。";
+            "混雑のため登録できませんでした。少し待って、SDカード取り込み設定からフォルダを選び直してください。";
     private static final java.util.concurrent.Executor SOURCE_IO = new java.util.concurrent.ThreadPoolExecutor(
             0, 2, 30, java.util.concurrent.TimeUnit.SECONDS, new java.util.concurrent.SynchronousQueue<>());
     private static final java.util.concurrent.Executor SOURCE_STATUS_IO = new java.util.concurrent.ThreadPoolExecutor(

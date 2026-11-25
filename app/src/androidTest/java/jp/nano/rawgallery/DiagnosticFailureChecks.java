@@ -1,11 +1,13 @@
 package jp.nano.rawgallery;
 
+import android.app.Activity;
 import android.app.Instrumentation;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Rect;
 import android.view.View;
+import android.view.ViewGroup;
 import android.net.Uri;
 import android.os.SystemClock;
 import android.widget.TextView;
@@ -37,7 +39,7 @@ final class DiagnosticFailureChecks {
       "確認処理が混み合っています。取り込みは始まっていません。少し待ってからやり直してください。";
 
   private static final String SD_REGISTRATION_NOT_SAVED =
-      "確認処理が混み合っています。SDカードの登録は完了していません。少し待ってからやり直してください。";
+      "混雑のため登録できませんでした。少し待って、SDカード取り込み設定からフォルダを選び直してください。";
 
   static String run(Instrumentation test) throws Exception {
     Context context = test.getTargetContext();
@@ -228,6 +230,23 @@ final class DiagnosticFailureChecks {
 
   private static void sourceConcurrency(Instrumentation test) throws Exception {
     Context context = test.getTargetContext();
+    SharedPreferences registration = context.getSharedPreferences("camera_import", Context.MODE_PRIVATE);
+    String volumeKey = "sd_tree_uri_volume_2301-1220", latestKey = "sd_tree_uri";
+    String oldVolume = registration.getString(volumeKey, null);
+    String oldLatest = registration.getString(latestKey, null);
+    Uri previousTree = Uri.parse("content://com.android.externalstorage.documents/tree/2301-1220%3ADCIM");
+    require(registration.edit().putString(latestKey, previousTree.toString())
+        .putString(volumeKey, previousTree.toString()).commit(), "previous registration fixture");
+    try {
+      verifyBusyOperations(test, previousTree);
+    } finally {
+      require(registration.edit().putString(latestKey, oldLatest).putString(volumeKey, oldVolume).commit(),
+          "restore previous registration fixture");
+    }
+  }
+
+  private static void verifyBusyOperations(Instrumentation test, Uri previousTree) throws Exception {
+    Context context = test.getTargetContext();
     MainActivity gallery = (MainActivity) test.startActivitySync(new Intent(context, MainActivity.class)
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra(MainActivity.GENERATED_IMAGE, "content://media"));
     test.runOnMainSync(gallery::finish);
@@ -305,6 +324,10 @@ final class DiagnosticFailureChecks {
         capture(test, screen, "diagnostics-sd-retry-busy.png");
         test.runOnMainSync(() -> screen.confirmSdSource(picked, true));
         capture(test, screen, "diagnostics-sd-registration-busy.png");
+        verifyRegistrationRetry(test, screen);
+        require(previousTree.toString().equals(SdSourceRegistrations.latest(context))
+            && previousTree.equals(SdSourceRegistrations.forVolume(context, "2301-1220")),
+            "rejected registration and retry preserve the old source");
 
         release.countDown();
         // A new user request is necessary: releasing an executor never replays a rejected import.
@@ -333,6 +356,43 @@ final class DiagnosticFailureChecks {
     } finally {
       test.runOnMainSync(screen::finish);
     }
+  }
+
+  private static void verifyRegistrationRetry(Instrumentation test, CameraImportActivity screen) {
+    AtomicInteger launches = new AtomicInteger();
+    var picker = new Instrumentation.ActivityMonitor() {
+      @Override public Instrumentation.ActivityResult onStartActivity(Intent intent) {
+        if (!Intent.ACTION_OPEN_DOCUMENT_TREE.equals(intent.getAction())) return null;
+        launches.incrementAndGet();
+        return new Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null);
+      }
+    };
+    test.addMonitor(picker);
+    try {
+      test.runOnMainSync(() -> {
+        View edit = (View) field(screen, "sdSettingsButton");
+        require(edit.isEnabled() && edit.performClick(), "SD edit button opens settings");
+        var settings = (androidx.appcompat.app.AlertDialog) field(screen, "sdSettingsDialog");
+        require(settings.isShowing(), "SD settings dialog shown");
+        View choose = textView(settings.getWindow().getDecorView(), "SDカードのフォルダを選ぶ");
+        require(choose != null && choose.isEnabled() && choose.performClick(), "settings action reopens folder picker");
+      });
+      test.waitForIdleSync();
+      require(launches.get() == 1, "one folder selection Intent requested");
+    } finally {
+      test.removeMonitor(picker);
+    }
+  }
+
+  private static View textView(View root, String text) {
+    if (root instanceof TextView view && text.contentEquals(view.getText())) return root;
+    if (root instanceof ViewGroup group) {
+      for (int i = 0; i < group.getChildCount(); i++) {
+        View match = textView(group.getChildAt(i), text);
+        if (match != null) return match;
+      }
+    }
+    return null;
   }
 
   private static void capture(Instrumentation test, CameraImportActivity screen, String filename) throws IOException {
