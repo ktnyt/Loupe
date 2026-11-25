@@ -180,5 +180,4 @@ final class ConfidenceStoreChecks {
       context.deleteDatabase(database);
     }
   }
-
 }

@@ -16,7 +16,10 @@ final class TagStoreIncrementalChecks {
   static void run(Context context) {
     String name = "tag-incremental-test-" + UUID.randomUUID() + ".db";
     try {
-      String tag = "legacy-tag", first = "legacy-first", second = "legacy-second", third = "legacy-third";
+      String tag = "legacy-tag",
+          first = "legacy-first",
+          second = "legacy-second",
+          third = "legacy-third";
       TagJudgments expected = new TagJudgments().record("first", tag, first, 0, YES);
       try (var db = context.openOrCreateDatabase(name, Context.MODE_PRIVATE, null)) {
         LegacyTagDatabase.create(db, 3);
