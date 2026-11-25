@@ -26,6 +26,7 @@ class PublishTests(unittest.TestCase):
         self.bundle = dict(schema=1, mode='main', source_commit='a'*40, source_tree='b'*40,
             issue=None, apk='loupe.apk', package=deploy.PACKAGE, version_code=167,
             version_name='0.31.3', certificates=[publish.CERTIFICATE], features=sorted(deploy.REQUIRED),
+            debuggable=False,
             apk_sha256=deploy.sha256(self.root / 'loupe.apk'))
         self.info = copy.deepcopy(self.bundle)
         self.info['provenance'] = {k: self.bundle[k] for k in ('schema', 'mode', 'source_commit', 'source_tree', 'issue')}
@@ -290,6 +291,15 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 1)
         self.assertFalse(self.draft_created)
         self.assert_unpublished()
+
+    def test_rejects_signed_debuggable_apk_and_missing_debuggable_field(self):
+        with patch.object(deploy, 'apk_info', return_value=dict(self.info, debuggable=True)):
+            with self.assertRaisesRegex(ValueError, 'debuggable'):
+                publish.verify_candidate(self.args, self.root, dict(self.bundle, debuggable=True), self.root / 'loupe.apk')
+        self.bundle.pop('debuggable')
+        with patch.object(deploy, 'apk_info', return_value=self.info):
+            with self.assertRaisesRegex(ValueError, 'deployment fields'):
+                publish.verify_candidate(self.args, self.root, self.bundle, self.root / 'loupe.apk')
 
     def test_tag_appearing_during_download_keeps_draft_unpublished(self):
         self.tag_race = True

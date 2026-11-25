@@ -55,7 +55,8 @@ class DeployTests(unittest.TestCase):
                            source_commit='a'*40, source_tree='b'*40)
         self.stamp()
         self.bundle_path = self.root / 'bundle.json'
-        self.previous = dict(self.info, provenance=None, version_code=164, version_name='0.31.0', apk_sha256='prior-hash')
+        self.previous = dict(self.info, provenance=None, version_code=164, version_name='0.31.0',
+                             apk_sha256='prior-hash', debuggable=True)
         self.args = argparse.Namespace(repo=str(self.root), sdk='synthetic-sdk', bundle=str(self.bundle_path),
             serial='fake-phone', adb='fake-adb', ack_recovery=False, records=str(self.root/'records'))
         self.calls = []
@@ -114,6 +115,22 @@ class DeployTests(unittest.TestCase):
         self.assertEqual(record['status'], 'installed-main')
         self.assertEqual(record['method'], 'ota-readback')
         self.assertEqual(record['previous_apk_sha256'], 'recovery-hash')
+        self.assert_not_installed()
+
+    def test_daily_install_and_ota_reject_debuggable_even_with_legacy_bundle(self):
+        self.info['debuggable'] = True
+        self.bundle.pop('debuggable')
+        for action in (self.apply, self.confirm):
+            with self.subTest(action=action):
+                with self.assertRaisesRegex(ValueError, 'non-debuggable Release'):
+                    action()
+                self.assertEqual(self.calls, [])
+                self.assertFalse(self.record_path().exists())
+
+    def test_ota_requires_non_debuggable_readback_for_legacy_bundle(self):
+        self.bundle.pop('debuggable')
+        with self.assertRaisesRegex(ValueError, 'non-debuggable Release'):
+            self.confirm(after=dict(self.info, debuggable=True))
         self.assert_not_installed()
 
     def test_ota_mismatch_preserves_pending(self):
@@ -199,6 +216,13 @@ class DeployTests(unittest.TestCase):
 
     def assert_not_installed(self):
         self.assertFalse(any(x[0] == 'install' for x in self.calls))
+
+    def test_manifest_debuggable_default_and_explicit_values(self):
+        for value, expected in ((None, False), ('true', True), ('false', False)):
+            application = '<application>' if value is None else f'<application android:debuggable="{value}">'
+            self.assertIs(deploy.manifest_info(XML.replace('<application>', application))['debuggable'], expected)
+        with self.assertRaisesRegex(ValueError, 'debuggable'):
+            deploy.manifest_info(XML.replace('<application>', '<application android:debuggable="invalid">'))
 
     def test_manifest_complete(self):
         self.assertEqual(set(self.info['features']), deploy.REQUIRED)
@@ -320,6 +344,15 @@ class DeployTests(unittest.TestCase):
         with patch.object(deploy, 'git', side_effect=[str(self.root), ' M app/example.java']), \
              patch.object(subprocess, 'run') as command:
             with self.assertRaisesRegex(ValueError, 'clean worktree'):
+                deploy.prepare(args)
+            command.assert_not_called()
+
+    def test_release_prepare_requires_signing_inputs_before_build(self):
+        args = argparse.Namespace(repo=str(self.root), mode='main', ref=None, issue=None,
+                                  output=self.root / 'new-bundle')
+        with patch.object(deploy, 'git', side_effect=[str(self.root), '', '', 'a'*40, 'a'*40, 'b'*40, XML]), \
+             patch.object(deploy, 'environment', return_value={}), patch.object(subprocess, 'run') as command:
+            with self.assertRaisesRegex(ValueError, 'Release signing'):
                 deploy.prepare(args)
             command.assert_not_called()
 

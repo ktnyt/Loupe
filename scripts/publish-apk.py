@@ -17,7 +17,7 @@ spec.loader.exec_module(deploy)
 REPOSITORY = 'ktnyt/Loupe'
 CERTIFICATE = deploy.CERTIFICATE
 BUNDLE_FIELDS = {'schema', 'mode', 'source_commit', 'source_tree', 'issue', 'apk',
-                 'package', 'version_code', 'version_name', 'certificates', 'features',
+                 'package', 'version_code', 'version_name', 'certificates', 'features', 'debuggable',
                  'apk_sha256', 'provenance'}
 
 
@@ -49,6 +49,7 @@ def require_absent(args, endpoint):
 def verify_candidate(args, repo, bundle, apk):
     actual = deploy.apk_info(apk, args.sdk)
     deploy.verify_bundle(bundle, actual)
+    deploy.require_release(actual)
     if set(bundle) != BUNDLE_FIELDS:
         raise ValueError('Publication bundle must contain only the verified deployment fields')
     if bundle['provenance'] != actual['provenance']:

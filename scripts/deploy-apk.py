@@ -24,6 +24,8 @@ REQUIRED = {'library', 'video', 'nano-banana', 'camera-import'}
 SCHEMA = 1
 CERTIFICATE = 'fbd379f053574ef5f497e524b7828e4c388e88c14968acc11b8b39363167b678'
 PROVENANCE = "assets/loupe-deployment.json"
+RELEASE_SIGNING_ENV = ('LOUPE_RELEASE_KEYSTORE', 'LOUPE_RELEASE_STORE_PASSWORD',
+                       'LOUPE_RELEASE_KEY_ALIAS', 'LOUPE_RELEASE_KEY_PASSWORD')
 
 
 def run(parts, cwd=None, env=None):
@@ -67,6 +69,9 @@ def manifest_info(xml):
     app = root.find('application')
     if app is None or app.get(ANDROID + 'enabled', 'true') == 'false':
         raise ValueError('Application is absent or disabled')
+    debuggable = app.get(ANDROID + 'debuggable', 'false')
+    if debuggable not in {'true', 'false'}:
+        raise ValueError('Manifest debuggable value is not a boolean')
     entries = {qualified(x.get(ANDROID + 'name', '')): x for x in app
                if x.tag in {'activity', 'service'} and x.get(ANDROID + 'enabled', 'true') != 'false'}
     activities = {name: node for name, node in entries.items() if node.tag == 'activity'}
@@ -125,7 +130,7 @@ def manifest_info(xml):
     return {'package': root.get('package'),
             'version_code': int(root.get(ANDROID + 'versionCode', '0'), 0),
             'version_name': root.get(ANDROID + 'versionName', ''),
-            'features': sorted(features)}
+            'features': sorted(features), 'debuggable': debuggable == 'true'}
 
 
 def tools(sdk):
@@ -187,6 +192,11 @@ def read_provenance(apk):
         return value
 
 
+def require_release(info):
+    if info.get('debuggable') is not False:
+        raise ValueError('A non-debuggable Release APK is required')
+
+
 def check_features(info, installed=None):
     if info['package'] != PACKAGE:
         raise ValueError('This installer only accepts the Loupe application ID')
@@ -228,27 +238,34 @@ def prepare(args):
     output = Path(args.output).resolve()
     if output.exists():
         raise ValueError('Use a new output directory; existing bundles are not overwritten')
+    env = environment()
+    if (any(not env.get(name) for name in RELEASE_SIGNING_ENV)
+            or not Path(env['LOUPE_RELEASE_KEYSTORE']).is_file()):
+        raise ValueError('Release signing requires an existing LOUPE_RELEASE_KEYSTORE and its signing inputs')
+    env['LOUPE_RELEASE_KEYSTORE'] = str(Path(env['LOUPE_RELEASE_KEYSTORE']).resolve())
+    env['ANDROID_HOME'] = str(Path(args.sdk).resolve())
     with tempfile.TemporaryDirectory(prefix='loupe-apk-') as temp:
         checkout = Path(temp) / 'source'
         git(repo, 'worktree', 'add', '--detach', str(checkout), source)
         try:
-            env = environment()
-            env['ANDROID_HOME'] = str(Path(args.sdk).resolve())
             provenance = dict(schema=SCHEMA, source_commit=source, source_tree=tree, mode=args.mode, issue=args.issue)
             assets = Path(temp) / 'assets'
             save(assets / 'loupe-deployment.json', provenance)
             init = Path(temp) / 'deployment.init.gradle'
             init.write_text('allprojects { p -> p.plugins.withId("com.android.application") { p.android.sourceSets.main.assets.srcDir(' + json.dumps(str(assets)) + ') } }\n')
-            command = ['./gradlew', '-I', str(init), ':app:assembleDebug', '--console=plain']
+            command = ['./gradlew', '-I', str(init), ':app:assembleRelease', '--console=plain']
             if env.get('GITHUB_ACTIONS') == 'true':
                 status = ci_gradle.run(command, cwd=checkout, env=env)
                 if status:
                     raise subprocess.CalledProcessError(status, command)
             else:
                 subprocess.run(command, cwd=checkout, env=env, check=True)
-            apk = checkout / 'app/build/outputs/apk/debug/app-debug.apk'
+            apk = checkout / 'app/build/outputs/apk/release/app-release.apk'
             info = apk_info(apk, args.sdk)
             check_features(info)
+            require_release(info)
+            if args.mode == 'main' and info['certificates'] != [CERTIFICATE]:
+                raise ValueError('Daily preparation requires the existing Loupe signing certificate')
             if info.get('provenance') != provenance:
                 raise ValueError('Signed APK does not contain the requested source provenance')
             output.mkdir(parents=True)
@@ -283,6 +300,9 @@ def verify_bundle(bundle, actual):
     for name in ('package', 'version_code', 'version_name', 'certificates', 'apk_sha256', 'features'):
         if bundle.get(name) != actual.get(name):
             raise ValueError('Prepared APK identity mismatch: ' + name)
+    # Legacy bundles were signed and hashed before this field was recorded.
+    if 'debuggable' in bundle and bundle['debuggable'] is not actual.get('debuggable'):
+        raise ValueError('Prepared APK identity mismatch: debuggable')
     expected = {key: bundle.get(key) for key in ('schema', 'source_commit', 'source_tree', 'mode', 'issue')}
     if actual.get('provenance') != expected:
         raise ValueError('Signed APK source provenance differs from bundle')
@@ -319,6 +339,8 @@ def install(args):
 def install_candidate(args, repo, bundle, apk):
     actual = apk_info(apk, args.sdk)
     verify_bundle(bundle, actual)
+    if bundle['mode'] == 'main':
+        require_release(actual)
     if getattr(args, 'confirm_only', False):
         if bundle['mode'] != 'main':
             raise ValueError('OTA confirmation requires a main bundle')
@@ -385,11 +407,13 @@ def install_locked(args, repo, bundle, actual, apk, source, state_path):
     if confirming:
         # previous is already the OTA-installed APK, not the pre-update version.
         verify_bundle(bundle, previous)
+        require_release(previous)
     else:
         validate_update(actual, previous)
     record = dict(schema=SCHEMA, mode=bundle['mode'], source_commit=source, issue=bundle.get('issue'),
                   apk_sha256=actual['apk_sha256'], previous_apk_sha256=previous['apk_sha256'],
                   version_code=actual['version_code'], features=actual['features'],
+                  debuggable=actual['debuggable'],
                   serial=args.serial, at=datetime.now(timezone.utc).isoformat(), status='pending-readback')
     if confirming:
         record['previous_apk_sha256'] = (previous_record or {}).get('apk_sha256')
@@ -402,7 +426,7 @@ def install_locked(args, repo, bundle, actual, apk, source, state_path):
     # No downgrade flags, uninstall, preference/database reads, or application-data writes.
     adb(args, 'install', '-r', str(apk))
     after = installed(args)
-    for field in ('apk_sha256', 'package', 'certificates', 'version_code', 'features'):
+    for field in ('apk_sha256', 'package', 'certificates', 'version_code', 'features', 'debuggable'):
         if after[field] != actual[field]:
             raise ValueError('Installed APK read-back mismatch; pending record retained: ' + field)
     record['status'] = 'installed-main' if bundle['mode'] == 'main' else 'pending-main-integration'
@@ -448,12 +472,15 @@ def main():
     p.add_argument('--apk', required=True)
     p.add_argument('--certificate', help='Expected SHA-256 signing certificate fingerprint')
     p.add_argument('--require-no-shizuku', action='store_true')
+    p.add_argument('--require-non-debuggable', action='store_true')
     def inspect(args):
         info = apk_info(args.apk, args.sdk)
         print(json.dumps(info, ensure_ascii=False))
         check_features(info)
         if args.require_no_shizuku:
             require_no_shizuku(args.apk, args.sdk)
+        if args.require_non_debuggable:
+            require_release(info)
         if args.certificate and info['certificates'] != [args.certificate]:
             raise ValueError('APK does not use the explicitly expected signing certificate')
     p.set_defaults(action=inspect)
