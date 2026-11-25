@@ -8,6 +8,7 @@ import android.graphics.Rect;
 import android.media.ExifInterface;
 import java.io.*;
 import java.nio.*;
+import java.nio.file.Files;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** Private synthetic JPEGs only. Exercises the same entry point as a content-URI copy. */
@@ -41,8 +42,49 @@ final class RawEditSourceChecks {
       throw new IOException("Missing fixture dimensions");
     }
   }
+  private static void checkSyntheticDng(File dir) throws IOException {
+    // Minimal little-endian TIFF/DNG with a 64x64, 16-bit Bayer mosaic.
+    int edge = 64;
+    int pixels = edge * edge * Short.BYTES;
+    int[][] tags = {
+        {256, 4, 1, edge}, {257, 4, 1, edge}, {258, 3, 1, 16}, {259, 3, 1, 1},
+        {262, 3, 1, 32803}, {273, 4, 1, 0}, {277, 3, 1, 1}, {278, 4, 1, edge},
+        {279, 4, 1, pixels}, {284, 3, 1, 1}, {33421, 3, 2, 0x00020002},
+        {33422, 1, 4, 0x02010100}, {50706, 1, 4, 0x00000401}, {50717, 4, 1, 65535},
+    };
+    int offset = 8 + Short.BYTES + tags.length * 12 + Integer.BYTES;
+    tags[5][3] = offset;
+    ByteBuffer dng = ByteBuffer.allocate(offset + pixels).order(ByteOrder.LITTLE_ENDIAN);
+    dng.putShort((short) 0x4949).putShort((short) 42).putInt(8).putShort((short) tags.length);
+    for (int[] tag : tags) {
+      dng.putShort((short) tag[0]).putShort((short) tag[1]).putInt(tag[2]).putInt(tag[3]);
+    }
+    dng.putInt(0);
+    for (int i = 0; i < edge * edge; i++) dng.putShort((short) (i * 181));
+    File input = File.createTempFile("synthetic-source-", ".dng", dir);
+    File output = unused(dir);
+    try {
+      Files.write(input.toPath(), dng.array());
+      try (RawEditSource source = RawEditSource.fromPrivateCopy(input)) {
+        require(source.pixels != null && source.originalWidth() == edge && source.originalHeight() == edge,
+            "synthetic DNG preview uses native decode and preserves original dimensions");
+        source.prepareFull(output, new NativeRaw.Cancellation());
+        try (RawEditFullSource full = RawEditFullSource.open(output)) {
+          require(full.width == edge && full.height == edge, "native DNG full dimensions");
+          float channel = full.region(new Rect(7, 8, 8, 9)).getFloat(0);
+          require(channel > 0 && channel <= 1, "native DNG full cache contains a linear pixel");
+        }
+      }
+      require(!input.exists(), "last DNG lease removes the private fixture");
+    } finally {
+      Files.deleteIfExists(input.toPath());
+      Files.deleteIfExists(output.toPath());
+    }
+  }
+
   static void run(Instrumentation instrumentation)throws Exception {
     File dir=instrumentation.getTargetContext().getCacheDir();
+    checkSyntheticDng(dir);
     for(boolean fullOnly:new boolean[]{false,true})for(int orientation=1;orientation<=8;orientation++){
       int w=513,h=323;File input=jpeg(dir,w,h,orientation),output=unused(dir);Bitmap expected=BitmapFactory.decodeFile(input.getPath());
       RawEditSource owner=null,work=null;

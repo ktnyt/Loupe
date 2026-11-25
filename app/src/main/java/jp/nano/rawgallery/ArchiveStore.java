@@ -79,7 +79,17 @@ final class ArchiveStore extends SQLiteOpenHelper {
     RawMetadata cached = readMetadata(key);
     if (cached != null) return cached;
 
-    RawMetadata inspected;
+    RawMetadata inspected = inspectMetadata(p);
+    if (insertMetadata(getWritableDatabase(), key, inspected) >= 0) return inspected;
+    // Another caller may have completed a burst probe since this caller read the source.
+    cached = readMetadata(key);
+    if (cached == null) throw new IOException("写真のメタデータを保存できません");
+    return cached;
+  }
+
+  /** Reads the source without writing or opening a database transaction. */
+  RawMetadata inspectMetadata(PhotoRepository.Photo p) throws Exception {
+    if (p.isVideo()) return new RawMetadata("動画", p.taken);
     if (p.isJpeg()) {
       try (InputStream in = context.getContentResolver().openInputStream(p.uri)) {
         if (in == null) throw new IOException("JPEGを開けません");
@@ -88,29 +98,31 @@ final class ArchiveStore extends SQLiteOpenHelper {
         long taken = RawPreview.captureTime(
             exif.getAttribute(android.media.ExifInterface.TAG_DATETIME_ORIGINAL),
             exif.getAttribute(android.media.ExifInterface.TAG_OFFSET_TIME_ORIGINAL));
-        inspected = new RawMetadata(model == null ? "JPEG" : model, taken);
+        return new RawMetadata(model == null ? "JPEG" : model, taken);
       }
     } else {
       try (PhotoRepository.DescriptorSource source =
           new PhotoRepository.DescriptorSource(context.getContentResolver(), p.uri, p.size)) {
         RawPreview.Result result = RawPreview.inspect(source);
-        inspected = new RawMetadata(result.model, result.taken);
+        return new RawMetadata(result.model, result.taken);
       }
     }
-    ContentValues values = new ContentValues();
-    values.put("key", key);
-    values.put("model", inspected.model);
-    values.put("taken", inspected.taken);
-    if (getWritableDatabase().insertWithOnConflict("metadata", null, values, SQLiteDatabase.CONFLICT_IGNORE) >= 0)
-      return inspected;
-    // Another caller may have completed a burst probe since this caller read the source.
-    cached = readMetadata(key);
-    if (cached == null) throw new IOException("写真のメタデータを保存できません");
-    return cached;
   }
 
-  private RawMetadata readMetadata(String key) {
-    try (Cursor c = getReadableDatabase().query("metadata", METADATA_COLUMNS,
+  private static long insertMetadata(SQLiteDatabase db, String key, RawMetadata metadata) {
+    ContentValues values = new ContentValues();
+    values.put("key", key);
+    values.put("model", metadata.model);
+    values.put("taken", metadata.taken);
+    return db.insertWithOnConflict("metadata", null, values, SQLiteDatabase.CONFLICT_IGNORE);
+  }
+
+  RawMetadata readMetadata(String key) {
+    return readMetadata(getReadableDatabase(), key);
+  }
+
+  private static RawMetadata readMetadata(SQLiteDatabase db, String key) {
+    try (Cursor c = db.query("metadata", METADATA_COLUMNS,
         "key=?", new String[] {key}, null, null, null)) {
       return c.moveToFirst() ? rawMetadata(c) : null;
     }
@@ -128,29 +140,64 @@ final class ArchiveStore extends SQLiteOpenHelper {
         || "com.android.providers.downloads.documents".equals(authority);
   }
 
-  /** Gallery-only: I/O failures leave the existing metadata and its NULL probe status intact. */
-  RawMetadata probeBurstFrame(PhotoRepository.Photo p, String key, RawMetadata metadata) throws IOException {
-    if (metadata.burstFrame != null || !canProbeBurstFrame(p)) return metadata;
-    RawPreview.BurstFrame frame;
+  /** Reads only the source. Callers leave the burst cache NULL when inspection fails. */
+  RawPreview.BurstFrame inspectBurstFrame(PhotoRepository.Photo p) throws IOException {
     if (p.isJpeg()) {
       try (InputStream in = context.getContentResolver().openInputStream(p.uri)) {
         if (in == null) throw new IOException("JPEGを開けません");
-        frame = readJpegBurstFrame(in);
-      }
-    } else {
-      try (PhotoRepository.DescriptorSource source =
-          new PhotoRepository.DescriptorSource(context.getContentResolver(), p.uri, p.size)) {
-        frame = RawPreview.readBurstFrame(source);
+        return readJpegBurstFrame(in);
       }
     }
-    ContentValues values = new ContentValues();
-    values.put("burst_mode", frame.mode());
-    values.put("burst_frame", frame.number());
-    if (getWritableDatabase().update("metadata", values,
-        "key=? AND burst_mode IS NULL AND burst_frame IS NULL", new String[] {key}) == 1)
-      return new RawMetadata(metadata.model, metadata.taken, frame);
-    RawMetadata cached = readMetadata(key);
-    return cached == null ? metadata : cached;
+    try (PhotoRepository.DescriptorSource source =
+        new PhotoRepository.DescriptorSource(context.getContentResolver(), p.uri, p.size)) {
+      return RawPreview.readBurstFrame(source);
+    }
+  }
+
+  record IndexMetadata(String key, RawMetadata inspected, boolean insert, RawPreview.BurstFrame frame) {}
+
+  /**
+   * Writes a bounded set of already inspected records. The returned metadata reflects the row
+   * that won each insert/probe race. Cancellation rolls back the batch and returns null.
+   */
+  Map<String, RawMetadata> writeIndexMetadata(List<IndexMetadata> batch,
+      java.util.function.BooleanSupplier cancelled) throws IOException {
+    if (cancelled.getAsBoolean()) return null;
+    if (batch.isEmpty()) return Map.of();
+    Map<String, RawMetadata> committed = new HashMap<>();
+    SQLiteDatabase db = getWritableDatabase();
+    db.beginTransactionNonExclusive();
+    try {
+      for (IndexMetadata change : batch) {
+        if (cancelled.getAsBoolean()) return null;
+        RawMetadata metadata = change.inspected();
+        if (change.insert() && insertMetadata(db, change.key(), metadata) < 0) {
+          metadata = readMetadata(db, change.key());
+          if (metadata == null) throw new IOException("写真のメタデータを保存できません");
+        }
+        if (change.frame() != null && metadata.burstFrame == null
+            && metadata.model.equals(change.inspected().model) && metadata.taken == change.inspected().taken) {
+          ContentValues values = new ContentValues();
+          values.put("burst_mode", change.frame().mode());
+          values.put("burst_frame", change.frame().number());
+          int rows = db.update("metadata", values,
+              "key=? AND model=? AND taken=? AND burst_mode IS NULL AND burst_frame IS NULL",
+              new String[] {change.key(), metadata.model, Long.toString(metadata.taken)});
+          if (rows == 1) {
+            metadata = new RawMetadata(metadata.model, metadata.taken, change.frame());
+          } else {
+            RawMetadata current = readMetadata(db, change.key());
+            if (current != null) metadata = current;
+          }
+        }
+        committed.put(change.key(), metadata);
+      }
+      if (cancelled.getAsBoolean()) return null;
+      db.setTransactionSuccessful();
+    } finally {
+      db.endTransaction();
+    }
+    return committed;
   }
 
   static RawPreview.BurstFrame readJpegBurstFrame(InputStream input) throws IOException {

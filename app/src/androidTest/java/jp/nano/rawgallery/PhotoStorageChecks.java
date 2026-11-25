@@ -502,6 +502,11 @@ final class PhotoStorageChecks {
     }
   }
 
+  static String checkImportHistoryGuard(Instrumentation test) throws Exception {
+    checkJournalUpgrade(test.getTargetContext(), "test-secondary", JournalFixture.EARLY_QUEUED);
+    return "PASS photo storage import guard: imports proceed before a move mutates history and stop while history updates";
+  }
+
   private enum JournalFixture { EARLY_QUEUED, LATER_CLAIMS, MISSING_ACTIVE_IDENTITY, EARLIEST_ALL_DONE }
 
   private static void checkJournalUpgrade(Context base, String secondary, JournalFixture schema) throws Exception {
@@ -620,6 +625,7 @@ final class PhotoStorageChecks {
                 "Later v1 archive claims migrate without replacing explicit moved aliases");
           }
         }
+        ImportHistoryGuard.requireReady(fixture);
         if (allDone) {
           store.finish();
           try (Cursor remaining = updated.rawQuery("SELECT archive_key FROM local_photos WHERE location=?",
@@ -633,6 +639,13 @@ final class PhotoStorageChecks {
           store.updatingHistory(store.next(), identity);
           require(store.historyUpdatePending() && identity.equals(store.next().identity()),
               "An upgraded queue can persist an active photo identity in the new columns");
+          try {
+            ImportHistoryGuard.requireReady(fixture);
+            throw new CheckFailure("Import accepted a move with pending history updates");
+          } catch (PhotoStorage.Unavailable expected) {
+            require(expected.getMessage().equals("写真・動画の保存先から移動を再開してください。"),
+                "Import tells the user how to resume the pending move");
+          }
         }
       }
     }
@@ -684,6 +697,9 @@ final class PhotoStorageChecks {
       String photoKey = ArchiveStore.key(oldPhoto);
       String otherKey = ArchiveStore.key(otherPhoto);
       require(!photoKey.equals(otherKey), "Same-name photos have different logical keys");
+      require(GalleryIndex.rebuild(f.context, true, () -> false), "index before moving imported photos");
+      require(indexedPhotos(f).stream().anyMatch(photo -> photo.uri.equals(oldPhoto.uri)),
+          "index starts with the original location");
       TagStore.Tag tag = tags.create("Synthetic assignment");
       String tagId = tags.photoId(oldPhoto, true);
       String otherTagId = tags.photoId(otherPhoto, true);
@@ -783,6 +799,23 @@ final class PhotoStorageChecks {
       CameraPhotoImporter.Result saved = f.importPhoto(new CameraPhotoImporter(f.context, ledger), fresh, freshBytes);
       require(saved.imported && f.secondary.equals(PhotoStorage.volumeOf(saved.uri))
           && Arrays.equals(freshBytes, f.read(saved.uri)), "New import writes full bytes to the selected SD volume");
+      PhotoRepository.Photo newPhoto = f.photo(saved.uri);
+      require(!GalleryIndex.rebuild(f.context, true, () -> true), "cancel the first post-move rebuild");
+      require(indexedPhotos(f).stream().anyMatch(photo -> photo.uri.equals(oldPhoto.uri)),
+          "cancelled rebuild retains the last published index");
+      require(GalleryIndex.rebuild(f.context, true, () -> false), "retry the post-move rebuild");
+      List<PhotoRepository.Photo> indexed = indexedPhotos(f);
+      require(indexed.stream().noneMatch(photo -> photo.uri.equals(oldPhoto.uri))
+          && indexed.stream().anyMatch(photo -> photo.uri.equals(movedPhoto.uri) && photo.movedIdentity != null
+              && photoKey.equals(photo.movedIdentity.archiveKey()))
+          && indexed.stream().anyMatch(photo -> photo.uri.equals(newPhoto.uri)),
+          "new index has the relocated identity and newly imported photo, without a missing original");
+    }
+  }
+
+  private static List<PhotoRepository.Photo> indexedPhotos(Fixture fixture) throws IOException {
+    try (GalleryIndex index = new GalleryIndex(fixture.context)) {
+      return index.load(fixture.path, "すべて").photos;
     }
   }
 

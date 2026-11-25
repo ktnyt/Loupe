@@ -16,6 +16,7 @@ import android.mtp.MtpDevice
 import android.os.IBinder
 import android.widget.Toast
 import jp.nano.rawgallery.R
+import jp.nano.rawgallery.ImportHistoryGuard
 import jp.nano.rawgallery.PhotoStorage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -132,7 +133,7 @@ class ImportService : Service() {
             notify(NOTIF_DONE, notification(message))
             return false
         }
-        PhotoStorage.requireImportReady(this)
+        ImportHistoryGuard.requireReady(this)
         val isMtp = !UsbMassStorage.isMassStorage(usbDevice)
         val route = CameraCardRouting.route(!isMtp, CameraUsb.knownCamera(usbDevice), volume != PhotoStorage.PRIMARY)
         if (route == CameraCardRouting.Route.MOUNTED_SOURCE) {

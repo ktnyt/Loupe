@@ -15,6 +15,7 @@ import java.util.concurrent.*;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import jp.nano.rawgallery.CameraImportActivity;
+import jp.nano.rawgallery.ImportHistoryGuard;
 import jp.nano.rawgallery.PhotoStorage;
 
 /** Read-only Wi-Fi and mounted SD imports, serialized with the existing USB importer. */
@@ -207,7 +208,7 @@ public final class CameraDifferentialService extends Service {
             if (!registerOnly) {
                 requirePhotoLibraryPermission();
                 if (sdRequest) CameraDocumentSource.requireOriginalPermission(this);
-                PhotoStorage.requireImportReady(this);
+                ImportHistoryGuard.requireReady(this);
             }
             String volume = PhotoStorage.selected(this);
             String source = null;

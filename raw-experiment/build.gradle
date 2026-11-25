@@ -26,7 +26,11 @@ android {
 // Give javac and lint the same bounded source tree; includes alone is ignored by lint.
 def syncRawEditorSources = tasks.register('syncRawEditorSources', Sync) {
     from('../app/src/main/java') {
-        include 'jp/nano/rawgallery/RawEdit*.java', 'jp/nano/rawgallery/NativeRaw.java', 'jp/nano/rawgallery/NativeJpeg.java', 'jp/nano/rawgallery/MaterialUi.java'
+        include 'jp/nano/rawgallery/RawEdit*.java',
+                'jp/nano/rawgallery/NativeRaw.java',
+                'jp/nano/rawgallery/NativeJpeg.java',
+                'jp/nano/rawgallery/MaterialUi.java',
+                'jp/nano/rawgallery/PhotoStorage.java'
     }
     into layout.buildDirectory.dir('generated/raw-editor/java')
 }
