@@ -11,23 +11,30 @@ import android.content.ContextWrapper;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Rect;
 import android.net.Uri;
 import android.os.SystemClock;
 import android.provider.MediaStore;
+import android.text.Layout;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.TextView;
 import androidx.core.content.ContextCompat;
+import com.google.android.material.snackbar.Snackbar;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -647,7 +654,7 @@ final class NanoBananaBackgroundChecks {
           "current request cleanup removes B once without generation or polling");
       verifyDiscardWithRenamedPublishedResult(
           test, screen, store, factory, saved, input, prompt, jpeg);
-      verifySubmitFailureMessage(test, screen, factory, jpeg, saved, input, prompt);
+      verifySubmitFailureMessage(test, screen, factory, jpeg, saved, input, prompt, width, font);
       verifyFailureMessage(
           test,
           screen,
@@ -744,12 +751,16 @@ final class NanoBananaBackgroundChecks {
       byte[] jpeg,
       List<String> saved,
       PhotoRepository.Photo input,
-      NanoBananaStore.Prompt prompt)
+      NanoBananaStore.Prompt prompt,
+      int width,
+      float font)
       throws Exception {
     Fake network = new Fake(factory.store, jpeg, saved);
     network.submitApi = NanoBananaApiChecks.rateLimitedApi();
     factory.fake = network;
+    String captureSuffix = "-" + width + "-" + font;
     TagDetailChecks.require(NanoBananaService.start(screen, input, prompt), "start provider POST");
+    String noticeProblem = captureSubmitFailureNotice(test, screen, captureSuffix);
     idle(test);
     JSONObject pending = factory.store.job();
     TagDetailChecks.require(
@@ -762,15 +773,18 @@ final class NanoBananaBackgroundChecks {
             && pending.optString("stage").equals("submitting")
             && !pending.has("task"),
         "failed POST retains ambiguous state and does not poll or resend");
+    Dialog[] menu = {null};
+    TagDetailChecks.ui(
+        test, () -> menu[0] = NanoBananaUi.show(screen, input, factory.store, NanoBananaUi.ACTUAL));
+    View menuWindow = menu[0].getWindow().getDecorView();
+    captureWindow(test, menuWindow, "nano-background-submit-429-menu" + captureSuffix);
     TagDetailChecks.ui(
         test,
         () -> {
-          Dialog menu = NanoBananaUi.show(screen, input, factory.store, NanoBananaUi.ACTUAL);
-          View decor = menu.getWindow().getDecorView();
-          View end = findLabel(decor, "処理を終了");
+          View end = findLabel(menuWindow, "処理を終了");
           TagDetailChecks.require(
-              findLabel(decor, "設定") != null
-                  && findLabel(decor, "状態を再確認") == null
+              findLabel(menuWindow, "設定") != null
+                  && findLabel(menuWindow, "状態を再確認") == null
                   && end != null
                   && end.performClick(),
               "the ambiguous submission menu offers end and settings but no status check");
@@ -790,6 +804,150 @@ final class NanoBananaBackgroundChecks {
             && network.submits == 1
             && network.statuses == 0,
         "explicit end cleans the temporary input without resubmitting or polling");
+    TagDetailChecks.require(noticeProblem == null, noticeProblem);
+  }
+
+  private static String captureSubmitFailureNotice(
+      Instrumentation test, MainActivity screen, String captureSuffix) throws Exception {
+    TextView[] notice = {null};
+    View decor = screen.getWindow().getDecorView();
+    Field instance = indicatorField("instance"),
+        snackbarField = indicatorField("snackbar"),
+        stateField = indicatorField("state"),
+        resumedField = indicatorField("resumed"),
+        hostField = indicatorField("host"),
+        messageField = indicatorField("message");
+    LinkedHashSet<String> observations = new LinkedHashSet<>();
+    long deadline = SystemClock.uptimeMillis() + 10000;
+    do {
+      TagDetailChecks.ui(
+          test,
+          () -> {
+            try {
+              Object indicator = instance.get(null);
+              if (indicator == null) {
+                observations.add("indicator=absent");
+                return;
+              }
+              Snackbar snackbar = (Snackbar) snackbarField.get(indicator);
+              Activity resumed = (Activity) resumedField.get(indicator);
+              View host = (View) hostField.get(indicator);
+              boolean messageMatches =
+                  NanoBananaApiChecks.SUBMIT_RATE_LIMIT.equals(messageField.get(indicator));
+              TextView text =
+                  snackbar == null
+                      ? null
+                      : snackbar
+                          .getView()
+                          .findViewById(com.google.android.material.R.id.snackbar_text);
+              boolean textMatches =
+                  text != null
+                      && NanoBananaApiChecks.SUBMIT_RATE_LIMIT.contentEquals(text.getText());
+              boolean attached = text != null && text.isAttachedToWindow();
+              boolean laidOut = text != null && text.getLayout() != null && text.isShown();
+              observations.add(
+                  "state="
+                      + ((Enum<?>) stateField.get(indicator)).name()
+                      + ", resumed="
+                      + (resumed == null ? "none" : resumed == screen ? "fixture" : "other")
+                      + ", host="
+                      + (host == null ? "none" : host == decor ? "activity" : "other-window")
+                      + ", hostFocused="
+                      + (host != null && host.hasWindowFocus())
+                      + ", messageMatches="
+                      + messageMatches
+                      + ", snackbar="
+                      + (snackbar != null)
+                      + ", queuedOrShowing="
+                      + (snackbar != null && snackbar.isShownOrQueued())
+                      + ", textMatches="
+                      + textMatches
+                      + ", attached="
+                      + attached
+                      + ", laidOut="
+                      + laidOut);
+              if (textMatches && attached && laidOut) notice[0] = text;
+            } catch (IllegalAccessException error) {
+              throw new AssertionError(error);
+            }
+          });
+      if (notice[0] == null) Thread.sleep(50);
+    } while (notice[0] == null && SystemClock.uptimeMillis() < deadline);
+
+    String name = "nano-background-submit-429-notice" + captureSuffix;
+    if (notice[0] == null) {
+      saveCapture(test, name);
+      String problem = "POST 429 Snackbar not visible " + captureSuffix;
+      saveNoticeTrace(test, name, observations, problem);
+      return problem;
+    }
+    // Let the currently attached Snackbar complete its entry animation.
+    Thread.sleep(350);
+    String[] issue = {null};
+    TagDetailChecks.ui(
+        test,
+        () -> {
+          TextView text = notice[0];
+          Layout layout = text.getLayout();
+          if (!text.isAttachedToWindow() || !text.isShown() || layout == null) {
+            issue[0] = "POST 429 Snackbar was detached before capture " + captureSuffix;
+            return;
+          }
+          int lines = layout.getLineCount();
+          int end = lines == 0 ? 0 : layout.getLineEnd(lines - 1);
+          int ellipses = 0;
+          boolean lineFits = true;
+          for (int line = 0; line < lines; line++) {
+            ellipses += layout.getEllipsisCount(line);
+            lineFits &=
+                layout.getLineLeft(line) >= -1
+                    && layout.getLineRight(line) <= layout.getWidth() + 1;
+          }
+          Rect visible = new Rect();
+          boolean boundsFit =
+              text.getGlobalVisibleRect(visible)
+                  && visible.width() == text.getWidth()
+                  && visible.height() == text.getHeight()
+                  && layout.getHeight() + text.getTotalPaddingTop() + text.getTotalPaddingBottom()
+                      <= text.getHeight();
+          if (ellipses != 0 || end != text.length() || !lineFits || !boundsFit) {
+            issue[0] =
+                "POST 429 Snackbar text does not fit "
+                    + captureSuffix
+                    + ": lines="
+                    + lines
+                    + ", ellipsized="
+                    + ellipses
+                    + ", lineEnd="
+                    + end
+                    + "/"
+                    + text.length()
+                    + ", lineFits="
+                    + lineFits
+                    + ", boundsFit="
+                    + boundsFit;
+          }
+        });
+    saveCapture(test, name);
+    saveNoticeTrace(test, name, observations, issue[0] == null ? "layout fits" : issue[0]);
+    return issue[0];
+  }
+
+  private static void saveNoticeTrace(
+      Instrumentation test, String name, LinkedHashSet<String> observations, String layout)
+      throws IOException {
+    String trace = String.join("\n", observations) + "\n" + layout + "\n";
+    android.util.Log.i("LoupeNanoFixture", "POST 429 Snackbar states\n" + trace);
+    try (FileOutputStream output =
+        new FileOutputStream(new File(captureDirectory(test), name + ".txt"))) {
+      output.write(trace.getBytes(StandardCharsets.UTF_8));
+    }
+  }
+
+  private static Field indicatorField(String name) throws NoSuchFieldException {
+    Field field = GenerationIndicator.class.getDeclaredField(name);
+    field.setAccessible(true);
+    return field;
   }
 
   private static void verifyFailureMessage(
@@ -1118,13 +1276,22 @@ final class NanoBananaBackgroundChecks {
     while (factory.lastMessageAt > 0 && SystemClock.uptimeMillis() - factory.lastMessageAt < 2500)
       Thread.sleep(50);
     Thread.sleep(250);
-    File dir = new File(test.getTargetContext().getCacheDir(), "consistency-checks");
-    dir.mkdirs();
+    saveCapture(test, name);
+  }
+
+  private static void saveCapture(Instrumentation test, String name) throws Exception {
     Bitmap image = test.getUiAutomation().takeScreenshot();
-    try (FileOutputStream output = new FileOutputStream(new File(dir, name + ".png"))) {
+    try (FileOutputStream output =
+        new FileOutputStream(new File(captureDirectory(test), name + ".png"))) {
       image.compress(Bitmap.CompressFormat.PNG, 100, output);
     } finally {
       image.recycle();
     }
+  }
+
+  private static File captureDirectory(Instrumentation test) {
+    File dir = new File(test.getTargetContext().getCacheDir(), "consistency-checks");
+    dir.mkdirs();
+    return dir;
   }
 }
