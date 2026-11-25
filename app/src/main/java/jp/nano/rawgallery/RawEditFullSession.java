@@ -102,7 +102,9 @@ final class RawEditFullSession implements AutoCloseable {
   }
   void save(RawEditState snapshot){
     if(closed||!prepared||export!=null){main.post(()->{if(!closed)listener.saveFailed();});return;}
-    export=new Export(snapshot,PhotoStorage.selected(context));enqueue();
+    export=new Export(snapshot,PhotoStorage.selected(context));
+    RawEditLog.event("save.accepted",0,full.width,full.height);
+    enqueue();
   }
   void cancelSave(){Export current=export;if(current!=null)current.phase.compareAndSet(0,1);enqueue();}
   private void enqueue(){
@@ -118,7 +120,13 @@ final class RawEditFullSession implements AutoCloseable {
       if(closed)return;
       Export current=export;
       if(current!=null&&current.cancelled()){abort(current);export=null;main.post(()->{if(!closed)listener.saveCancelled();});return;}
-      if(previewBusy.getAsBoolean()){work=true;return;}
+      if(previewBusy.getAsBoolean()){
+        if(current!=null&&RawEditLog.enabled&&!current.reportedPreviewWait){
+          current.reportedPreviewWait=true;
+          RawEditLog.event("save.wait.preview",SystemClock.elapsedRealtime()-current.started,0,0);
+        }
+        work=true;return;
+      }
       DetailRequest request=desired;
       if(request==null)discardDetail();
       boolean idle=!editorPreview||SystemClock.elapsedRealtimeNanos()-lastInput>=120000000L;
@@ -155,11 +163,13 @@ final class RawEditFullSession implements AutoCloseable {
   private void renderExport(Export job)throws IOException {
     if(closed||job.cancelled())throw new IOException("中止");
     if(job.encoder==null){
+      RawEditLog.event("save.pending.start",SystemClock.elapsedRealtime()-job.started,full.width,full.height);
       PhotoStorage.requireWritable(context,job.volume);
       ContentValues v=new ContentValues();v.put(MediaStore.Images.Media.DISPLAY_NAME,"Loupe-"+UUID.randomUUID()+".jpg");v.put(MediaStore.Images.Media.MIME_TYPE,"image/jpeg");v.put(MediaStore.Images.Media.RELATIVE_PATH,"Pictures/LoupeDevelop");v.put(MediaStore.Images.Media.IS_PENDING,1);
       job.pending=context.getContentResolver().insert(MediaStore.Images.Media.getContentUri(job.volume),v);if(job.pending==null)throw new IOException("保存先");
       job.fd=context.getContentResolver().openFileDescriptor(job.pending,"w");if(job.fd==null)throw new IOException("保存先");
       job.encoder=NativeJpeg.open(job.fd.getFd(),full.width,full.height,95);
+      RawEditLog.event("save.encoder.open",SystemClock.elapsedRealtime()-job.started,full.width,full.height);
       job.strip=ByteBuffer.allocateDirect(full.width*Math.min(128,full.height)*3);
     }
     if(job.plan==null){
@@ -167,7 +177,9 @@ final class RawEditFullSession implements AutoCloseable {
       job.plan=new RawEditTilePlan(new RectF(0,job.y,full.width,job.y+job.rows),full.width,job.rows,full.width,full.height).iterator();
     }
     RawEditTilePlan.Tile tile=job.plan.next();
+    RawEditLog.event("save.tile.start",SystemClock.elapsedRealtime()-job.started,tile.width,tile.height);
     ByteBuffer bytes=renderer().renderRegionBytes(full,job.state,false,false,tile.source,tile.width,tile.height);
+    RawEditLog.event("save.tile.complete",SystemClock.elapsedRealtime()-job.started,tile.width,tile.height);
     for(int y=0;y<tile.height;y++){
       if(closed||job.cancelled())throw new IOException("中止");
       job.strip.position(((tile.y+y)*full.width+tile.x)*3);
@@ -175,6 +187,7 @@ final class RawEditFullSession implements AutoCloseable {
     }
     if(!job.plan.hasNext()){
       job.strip.position(0);job.strip.limit(full.width*job.rows*3);job.encoder.write(job.strip,job.rows);job.y+=job.rows;job.plan=null;
+      RawEditLog.event("save.rows",SystemClock.elapsedRealtime()-job.started,full.width,job.y);
       if(job.y==full.height){
         job.encoder.finish();job.encoder=null;job.fd.close();job.fd=null;
         if(closed||job.cancelled())throw new IOException("中止");
@@ -182,6 +195,7 @@ final class RawEditFullSession implements AutoCloseable {
         // Cancellation and committing have one non-blocking linearization point.
         // Once PUBLISHING wins, Back must receive the eventual success/failure notification.
         if(!job.phase.compareAndSet(0,2))throw new IOException("中止");
+        RawEditLog.event("save.publish.start",SystemClock.elapsedRealtime()-job.started,full.width,full.height);
         if(context.getContentResolver().update(job.pending,v,null,null)!=1)throw new IOException("公開");job.phase.set(3);job.pending=null;export=null;
         RawEditLog.event("save.complete",SystemClock.elapsedRealtime()-job.started,full.width,full.height);
         main.post(()->{if(!closed&&!job.cancelled())listener.saved(job.state);});
@@ -210,6 +224,7 @@ final class RawEditFullSession implements AutoCloseable {
   }
   private static final class Export {
     final RawEditState state;final String volume;final long started=SystemClock.elapsedRealtime();final AtomicInteger phase=new AtomicInteger();
+    boolean reportedPreviewWait;
     boolean cancelled(){return phase.get()==1;}Uri pending;ParcelFileDescriptor fd;NativeJpeg encoder;ByteBuffer strip;Iterator<RawEditTilePlan.Tile> plan;int y,rows;
     Export(RawEditState snapshot,String volume){state=snapshot;this.volume=volume;}
   }

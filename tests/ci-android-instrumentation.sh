@@ -73,7 +73,7 @@ run_instrumentation() {
       "$adb" -s "$serial" logcat -d -s LoupeNanoFixture:E '*:S' || true
     elif [[ "$label" == look-removal ]]; then
       "$adb" -s "$serial" logcat -d -s LoupeLookFixture:I LoupeRawEdit:I '*:S' |
-        awk '/LoupeLookFixture|full[.]prepare|jpeg[.]load|save[.]/ {print}' || true
+        awk '/LoupeLookFixture|full[.]prepare|full[.]render|jpeg[.]load|save[.]/ {print}' || true
     fi
     echo "$label did not report PASS." >&2
     exit 1

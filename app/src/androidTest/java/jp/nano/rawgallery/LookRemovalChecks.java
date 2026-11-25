@@ -119,6 +119,12 @@ final class LookRemovalChecks {
             return true;
           });
         } catch (AssertionError diagnostic) { failure.addSuppressed(diagnostic); }
+        try {
+          GenerationIndicatorChecks.await(t,"diagnostic late JPEG",()->!(boolean)get(raw,"saving")&&outputs(c).size()==previous.size()+1);
+          Set<Uri> lateOutputs=outputs(c);lateOutputs.removeAll(previous);
+          if(lateOutputs.size()==1)owned.addAll(lateOutputs);
+          android.util.Log.i("LoupeLookFixture","save observed after failure: elapsedMs="+(SystemClock.elapsedRealtime()-requestedAt));
+        } catch (AssertionError diagnostic) { failure.addSuppressed(diagnostic); }
         throw failure;
       }
       android.util.Log.i("LoupeLookFixture","save observed: elapsedMs="+(SystemClock.elapsedRealtime()-requestedAt));
