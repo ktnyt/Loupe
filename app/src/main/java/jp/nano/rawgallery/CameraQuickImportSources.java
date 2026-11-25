@@ -37,7 +37,7 @@ final class CameraQuickImportSources {
         CHECKING("SDカードを確認しています…"),
         UNREGISTERED("取り込み元のDCIMフォルダを選んでください。"),
         NO_GRANT("SDカードの読み取り許可がありません。フォルダを選び直してください。"),
-        DISCONNECTED("登録したSDカードを接続するか、別のカードのフォルダを選んでください。"),
+        DISCONNECTED("取り込み元のSDカードを接続してください。表示されないときは、カードかリーダーを挿し直してください。"),
         FOLDER_UNAVAILABLE("登録したフォルダを確認できません。接続を確認するか、フォルダを選び直してください。"),
         SAME_CARD("取り込み元と保存先が同じカードです。取り込み元を選び直してください。"),
         AMBIGUOUS("登録済みのSDカードが複数つながっています。"),

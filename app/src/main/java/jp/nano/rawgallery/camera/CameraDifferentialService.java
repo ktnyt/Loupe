@@ -125,8 +125,6 @@ public final class CameraDifferentialService extends Service {
             mediaReceiver = new BroadcastReceiver() {
                 @Override public void onReceive(Context context, Intent event) {
                     String uuid = MountedCameraCard.notifiedVolumeUuid(event);
-                    // The remount owns the storage gate and the import screen refreshes its source when it ends.
-                    if (SdRemountMountNotice.suppressMount(uuid) || SdCardRemount.isRunning()) return;
                     String destination = PhotoStorage.selected(context);
                     Uri tree = MountedCameraCard.registeredMountSource(context, uuid, destination);
                     if (tree == null || !SdSourceRegistrations.hasReadGrant(context, tree)) return;
@@ -336,7 +334,6 @@ public final class CameraDifferentialService extends Service {
             saved = SdSourceRegistrations.save(this, tree);
             if (!saved)
                 throw new MountedCameraCard.Unavailable("取り込み元のフォルダを保存できませんでした。");
-            SdCardRemount.sourcesChanged(this);
         } finally {
             if (!saved && !hadGrant) {
                 try { resolver.releasePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION); }

@@ -150,18 +150,25 @@ class PublishTests(unittest.TestCase):
         if self.corrupt and asset_id == 501:
             Path(output).write_bytes(b'wrong-created-draft-bytes')
 
-    def apply(self):
+    def apply(self, shizuku_error=None):
         self.tag_created = False
         self.draft_created = False
         deploy.save(self.args.bundle, self.bundle)
         with patch.object(deploy, 'git', side_effect=self.fake_git), \
              patch.object(deploy, 'apk_info', return_value=self.info), \
+             patch.object(deploy, 'require_no_shizuku', side_effect=shizuku_error), \
              patch.object(publish, 'gh', side_effect=self.fake_gh), \
              patch.object(publish, 'download_asset', side_effect=self.fake_download_asset), patch('builtins.print'):
             publish.publish(self.args)
 
     def assert_unpublished(self):
         self.assertFalse(any('--method' in x and x[x.index('--method')+1] == 'PATCH' for x in self.calls))
+
+    def test_candidate_with_shizuku_is_rejected_before_creating_draft(self):
+        with self.assertRaisesRegex(ValueError, 'DEX includes a Shizuku dependency'):
+            self.apply(ValueError('The APK DEX includes a Shizuku dependency.'))
+        self.assertFalse(self.calls)
+        self.assertFalse(self.draft_created)
 
     def test_success_publishes_only_verified_main_assets(self):
         self.apply()

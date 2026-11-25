@@ -55,6 +55,7 @@ def verify_candidate(args, repo, bundle, apk):
         raise ValueError('Publication bundle provenance differs from signed APK')
     if bundle['mode'] != 'main':
         raise ValueError('Only main bundles may be published')
+    deploy.require_no_shizuku(apk, args.sdk)
     source = bundle.get('source_commit', '')
     if not re.fullmatch(r'[0-9a-f]{40}', source):
         raise ValueError('Invalid source commit')

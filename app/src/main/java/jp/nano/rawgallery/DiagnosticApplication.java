@@ -3,12 +3,10 @@ package jp.nano.rawgallery;
 import android.app.Application;
 import android.app.Activity;
 import android.os.Bundle;
-import jp.nano.rawgallery.camera.SdCardRemount;
 
 public final class DiagnosticApplication extends Application {
   @Override public void onCreate() {
     super.onCreate();
-    SdCardRemount.restoreReservation(this);
     DiagnosticLog.init(this);
     GenerationIndicator.install(this);
     registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {

@@ -4,12 +4,9 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.net.Uri;
 import android.os.Build;
-import android.os.Environment;
-import android.os.storage.StorageManager;
 import android.os.storage.StorageVolume;
 import java.io.IOException;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -57,59 +54,17 @@ public final class MountedCameraCard {
         filter.addDataScheme("file");
         BroadcastReceiver receiver = new BroadcastReceiver() {
             @Override public void onReceive(Context received, Intent event) {
-                String action = event.getAction();
-                if (UsbManager.ACTION_USB_DEVICE_DETACHED.equals(action)) {
-                    reconnectReaderDeparture(app, event);
-                    return;
-                }
-                boolean detached = !Intent.ACTION_MEDIA_MOUNTED.equals(action);
+                boolean detached = !Intent.ACTION_MEDIA_MOUNTED.equals(event.getAction());
                 if (detached) detachGeneration.incrementAndGet();
-                if (Intent.ACTION_MEDIA_REMOVED.equals(action) || Intent.ACTION_MEDIA_BAD_REMOVAL.equals(action)) {
-                    String uuid = notifiedVolumeUuid(event);
-                    SdRemountMountNotice.physicalDeparture(uuid);
-                    if (uuid != null && isVolumeUnmounted(app, uuid)) {
-                        SdRemountMountNotice.reconnectPhysicalDeparture(uuid);
-                    }
-                } else if (!detached && SdRemountMountNotice.requiresReconnectMountMatch()) {
-                    String uuid = notifiedVolumeUuid(event);
-                    Uri source = SdSourceRegistrations.forVolume(app, uuid);
-                    if (source != null && SdSourceRegistrations.mountedVolume(app, source) != null) {
-                        SdRemountMountNotice.reconnectMountObserved(uuid);
-                    }
-                }
                 for (Consumer<Boolean> listener : mountListeners) listener.accept(detached);
             }
         };
-        var usbDetach = new IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED);
         if (Build.VERSION.SDK_INT >= 33) {
             app.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
-            app.registerReceiver(receiver, usbDetach, Context.RECEIVER_NOT_EXPORTED);
         } else {
             app.registerReceiver(receiver, filter);
-            app.registerReceiver(receiver, usbDetach);
         }
         observing = true;
-    }
-
-    private static void reconnectReaderDeparture(Context app, Intent event) {
-        if (!SdRemountMountNotice.requiresReconnectMountMatch()) return;
-        UsbDevice device = Build.VERSION.SDK_INT >= 33
-                ? event.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice.class)
-                : event.getParcelableExtra(UsbManager.EXTRA_DEVICE);
-        if (!reconnectReader(device)) return;
-        try {
-            UsbManager manager = app.getSystemService(UsbManager.class);
-            if (manager != null && manager.getDeviceList().values().stream().noneMatch(MountedCameraCard::reconnectReader)) {
-                SdRemountMountNotice.reconnectReaderDeparted();
-            }
-        } catch (RuntimeException unavailable) {
-            // A stale detach broadcast cannot authorize imports from an unknown USB topology.
-        }
-    }
-
-    private static boolean reconnectReader(UsbDevice device) {
-        return device != null && device.getVendorId() == SdRemountUsbPort.VENDOR
-                && device.getProductId() == SdRemountUsbPort.PRODUCT;
     }
 
     static void requireGeneration(long expected) throws Unavailable {
@@ -208,22 +163,6 @@ public final class MountedCameraCard {
     private static String mountedSourceVolume(Context context, Uri tree, boolean requireDcim) {
         return CameraDocumentSource.isImportTree(tree, !requireDcim)
                 ? SdSourceRegistrations.mountedVolume(context, tree) : null;
-    }
-
-    private static boolean readable(String state) {
-        return Environment.MEDIA_MOUNTED.equals(state) || Environment.MEDIA_MOUNTED_READ_ONLY.equals(state);
-    }
-
-    private static boolean isVolumeUnmounted(Context context, String uuid) {
-        try {
-            for (StorageVolume volume : context.getSystemService(StorageManager.class).getStorageVolumes()) {
-                String current = SdSourceRegistrations.normalizeVolumeUuid(volume.getUuid());
-                if (uuid.equals(current) && readable(volume.getState())) return false;
-            }
-            return true;
-        } catch (RuntimeException unavailable) {
-            return false;
-        }
     }
 
     static void requireMountedSource(Context context, Uri tree, String expected) throws Unavailable {
