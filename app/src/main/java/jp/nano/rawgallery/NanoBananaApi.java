@@ -16,6 +16,8 @@ import org.json.JSONObject;
 final class NanoBananaApi {
   private static final String ROOT = "https://api.nanobananaapi.ai/api/v1/nanobanana/";
   private static final String API_FAILURE = "APIとの通信に失敗しました。APIキー・残高・通信を確認し、状態を再確認してください";
+  private static final String SUBMIT_RECOVERY = "AI編集メニューから「処理を終了」し、必要に応じて「設定」を確認してください";
+  private static final String SUBMIT_FAILURE = "生成依頼の結果を確認できませんでした。" + SUBMIT_RECOVERY;
   private static final String DOWNLOAD_FAILURE = "結果画像を取得できませんでした。状態を再確認してください";
   private static final String INVALID_TASK = "生成タスクの応答を確認できませんでした";
 
@@ -60,14 +62,14 @@ final class NanoBananaApi {
 
   String generate(String prompt, String imageUrl, NanoBananaOutput output) throws Exception {
     JSONObject result = call("generate-2", request(prompt, imageUrl, output));
-    String id;
     try {
-      id = result.getString("taskId");
+      Object id = result.get("taskId");
+      if (!(id instanceof String) || !((String) id).matches("[A-Za-z0-9_-]{1,256}"))
+        throw new JSONException("Invalid API task ID");
+      return (String) id;
     } catch (JSONException error) {
-      throw new SafeFailure(INVALID_TASK, error);
+      throw new SafeFailure(INVALID_TASK + "。" + SUBMIT_RECOVERY, error);
     }
-    if (!id.matches("[A-Za-z0-9_-]{1,256}")) throw new SafeFailure(INVALID_TASK);
-    return id;
   }
 
   JSONObject status(String task) throws Exception {
@@ -76,13 +78,14 @@ final class NanoBananaApi {
   }
 
   private JSONObject call(String route, JSONObject body) throws Exception {
+    boolean submitting = body != null;
     HttpsURLConnection connection = null;
     try {
       connection = connections.open(new URL(ROOT + route));
       configure(connection);
       connection.setRequestProperty("Authorization", "Bearer " + key);
       connection.setRequestProperty("Accept-Encoding", "identity");
-      if (body != null) {
+      if (submitting) {
         byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
         connection.setRequestMethod("POST");
         connection.setDoOutput(true);
@@ -93,23 +96,31 @@ final class NanoBananaApi {
         }
       }
       int code = connection.getResponseCode();
-      if (code != 200)
-        throw new SafeFailure(
+      if (code != 200) {
+        String message =
             code == 401 || code == 403
                 ? "APIキーまたは利用権限を確認してください"
-                : code == 429
-                    ? "APIの利用上限に達しました。時間をおいて状態を確認してください"
-                    : "APIとの通信に失敗しました (HTTP " + code + ")");
+                : code == 429 ? "APIの利用上限に達しました" : "APIとの通信に失敗しました (HTTP " + code + ")";
+        if (submitting) message += "。" + SUBMIT_RECOVERY;
+        else if (code == 429) message += "。時間をおいて状態を確認してください";
+        throw new SafeFailure(message);
+      }
       JSONObject value;
       try (InputStream in = connection.getInputStream()) {
         value = new JSONObject(new String(read(in, 1024 * 1024), StandardCharsets.UTF_8));
       }
-      if (value.optInt("code") != 200) throw new SafeFailure("APIが処理を受け付けませんでした。キーと残高を確認してください");
+      Object responseCode = value.get("code");
+      if (!(responseCode instanceof Number)) throw new JSONException("API code must be numeric");
+      if (((Number) responseCode).doubleValue() != 200) {
+        String message = "APIが処理を受け付けませんでした。キーと残高を確認してください";
+        if (submitting) message += "。" + SUBMIT_RECOVERY;
+        throw new SafeFailure(message);
+      }
       return value.getJSONObject("data");
     } catch (SafeFailure error) {
       throw error;
     } catch (Exception error) {
-      throw new SafeFailure(API_FAILURE, error);
+      throw new SafeFailure(submitting ? SUBMIT_FAILURE : API_FAILURE, error);
     } finally {
       if (connection != null) connection.disconnect();
     }

@@ -74,6 +74,7 @@ final class NanoBananaBackgroundChecks {
     volatile boolean deleteFailure, ignoreInterrupt, requireVersion;
     volatile boolean statusTimedOut, statusExited;
     volatile IOException statusFailure;
+    NanoBananaApi submitApi;
     volatile long statusEnteredAt;
     volatile String prompt;
     volatile NanoBananaOutput output;
@@ -88,10 +89,14 @@ final class NanoBananaBackgroundChecks {
       return "synthetic-version";
     }
 
-    public String generate(String text, String object, String version, NanoBananaOutput requested) {
+    public String generate(String text, String object, String version, NanoBananaOutput requested)
+        throws Exception {
       submits++;
       prompt = text;
       output = requested;
+      if (submitApi != null) {
+        return submitApi.generate(text, "https://synthetic.invalid/input?token=private", requested);
+      }
       return "synthetic-task";
     }
 
@@ -642,6 +647,7 @@ final class NanoBananaBackgroundChecks {
           "current request cleanup removes B once without generation or polling");
       verifyDiscardWithRenamedPublishedResult(
           test, screen, store, factory, saved, input, prompt, jpeg);
+      verifySubmitFailureMessage(test, screen, factory, jpeg, saved, input, prompt);
       verifyFailureMessage(
           test,
           screen,
@@ -729,6 +735,61 @@ final class NanoBananaBackgroundChecks {
               + (SystemClock.elapsedRealtime() - first.statusEnteredAt));
       throw new AssertionError("Service and fake provider must still be running " + checkpoint);
     }
+  }
+
+  private static void verifySubmitFailureMessage(
+      Instrumentation test,
+      MainActivity screen,
+      FixtureFactory factory,
+      byte[] jpeg,
+      List<String> saved,
+      PhotoRepository.Photo input,
+      NanoBananaStore.Prompt prompt)
+      throws Exception {
+    Fake network = new Fake(factory.store, jpeg, saved);
+    network.submitApi = NanoBananaApiChecks.rateLimitedApi();
+    factory.fake = network;
+    TagDetailChecks.require(NanoBananaService.start(screen, input, prompt), "start provider POST");
+    idle(test);
+    JSONObject pending = factory.store.job();
+    TagDetailChecks.require(
+        NanoBananaApiChecks.SUBMIT_RATE_LIMIT.equals(factory.lastResult),
+        "service offers the pending submission's real recovery actions");
+    TagDetailChecks.require(
+        network.submits == 1
+            && network.statuses == 0
+            && pending != null
+            && pending.optString("stage").equals("submitting")
+            && !pending.has("task"),
+        "failed POST retains ambiguous state and does not poll or resend");
+    TagDetailChecks.ui(
+        test,
+        () -> {
+          Dialog menu = NanoBananaUi.show(screen, input, factory.store, NanoBananaUi.ACTUAL);
+          View decor = menu.getWindow().getDecorView();
+          View end = findLabel(decor, "処理を終了");
+          TagDetailChecks.require(
+              findLabel(decor, "設定") != null
+                  && findLabel(decor, "状態を再確認") == null
+                  && end != null
+                  && end.performClick(),
+              "the ambiguous submission menu offers end and settings but no status check");
+        });
+    test.waitForIdleSync();
+    android.view.accessibility.AccessibilityNodeInfo confirmation =
+        findAccessibleExact(test.getUiAutomation().getRootInActiveWindow(), "終了");
+    TagDetailChecks.require(
+        confirmation != null
+            && confirmation.performAction(
+                android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK),
+        "explicit end confirmation starts cleanup");
+    idle(test);
+    TagDetailChecks.require(
+        factory.store.job() == null
+            && network.deletes == 1
+            && network.submits == 1
+            && network.statuses == 0,
+        "explicit end cleans the temporary input without resubmitting or polling");
   }
 
   private static void verifyFailureMessage(
