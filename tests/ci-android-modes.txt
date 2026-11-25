@@ -104,3 +104,6 @@ import-latency
 import-deferred
 import-interruption
 import-pause-interruption
+
+# Run the legacy import/index fixture after other app modes.
+archive-scan
