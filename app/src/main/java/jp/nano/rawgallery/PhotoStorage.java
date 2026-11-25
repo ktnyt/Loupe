@@ -73,13 +73,6 @@ public final class PhotoStorage {
       throw new Unavailable(label(context, volume) + "の空き容量が足りません。");
   }
 
-  /** Import deduplication must not read references between the two history updates. */
-  public static void requireImportReady(Context context) throws Unavailable {
-    try (PhotoMoveStore store = new PhotoMoveStore(context)) {
-      if (store.historyUpdatePending()) throw new Unavailable("写真・動画の保存先から移動を再開してください。");
-    }
-  }
-
   public static String volumeOf(Uri uri) {
     String volume = MediaStore.getVolumeName(uri);
     return MediaStore.VOLUME_EXTERNAL.equals(volume) ? PRIMARY : volume;
