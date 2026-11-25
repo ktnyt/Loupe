@@ -44,14 +44,56 @@ final class DiagnosticFailureChecks {
   static String run(Instrumentation test) throws Exception {
     Context context = test.getTargetContext();
     long fixture = SystemClock.elapsedRealtimeNanos();
-    DiagnosticLog.event("fixture.diagnostics_begin", 0, "fixture", fixture);
-    crashAndPrivacy(context, fixture);
-    simultaneousCrashes(context);
-    credentialConcurrency(context);
-    sourceConcurrency(test);
-    checkPrivacy(context, fixture);
+    try (FixtureRecording recording = new FixtureRecording(context)) {
+      require(DiagnosticLog.startRecording(context), "start diagnostic recording in the test process");
+      DiagnosticLog.event("fixture.diagnostics_begin", 0, "fixture", fixture);
+      crashAndPrivacy(context, fixture);
+      simultaneousCrashes(context);
+      credentialConcurrency(context);
+      sourceConcurrency(test);
+      recording.drain();
+      checkPrivacy(context, fixture);
+    }
     return "PASS crash summary, simultaneous delegation and storage error, log privacy, generated image without a path, "
         + "Nano Banana preferences and credential messages, SD registration and SD/Wi-Fi source rejection and retry";
+  }
+
+  private static final class FixtureRecording implements AutoCloseable {
+    private final Context context;
+    private final SharedPreferences settings;
+    private final boolean settingExisted;
+    private final boolean settingEnabled;
+    private final boolean wasRecording;
+
+    FixtureRecording(Context context) {
+      this.context = context;
+      settings = context.getSharedPreferences("diagnostics", Context.MODE_PRIVATE);
+      settingExisted = settings.contains("record");
+      settingEnabled = settings.getBoolean("record", false);
+      wasRecording = DiagnosticLog.currentRecorder() != null;
+    }
+
+    void drain() {
+      var recorder = DiagnosticLog.currentRecorder();
+      require(recorder != null && DiagnosticLog.stopRecording(context, recorder),
+          "drain the diagnostic recorder before checking its files");
+    }
+
+    @Override public void close() {
+      try {
+        var recorder = DiagnosticLog.currentRecorder();
+        if (wasRecording && recorder == null) {
+          require(DiagnosticLog.startRecording(context), "restore the running recorder");
+        } else if (!wasRecording && recorder != null) {
+          require(DiagnosticLog.stopRecording(context, recorder), "stop the fixture recorder");
+        }
+      } finally {
+        SharedPreferences.Editor restore = settings.edit();
+        if (settingExisted) restore.putBoolean("record", settingEnabled);
+        else restore.remove("record");
+        require(restore.commit(), "restore the original diagnostic setting");
+      }
+    }
   }
 
   private static void crashAndPrivacy(Context context, long fixture) throws Exception {
@@ -418,17 +460,13 @@ final class DiagnosticFailureChecks {
   }
 
   private static void checkPrivacy(Context context, long fixture) throws Exception {
-    File eventFile = new File(context.getFilesDir(), "diagnostics/events.jsonl");
-    long deadline = SystemClock.elapsedRealtime() + 2500;
-    String log;
+    File directory = new File(context.getFilesDir(), "diagnostics");
+    File previous = new File(directory, "previous.jsonl");
+    String log = (previous.isFile() ? read(previous) : "") + read(new File(directory, "events.jsonl"));
+    int start = log.lastIndexOf("\"fixture\":" + fixture + "}");
+    require(start >= 0, "this run produced the diagnostic fixture marker");
+    log = log.substring(start);
     String finalPhase = exceptionRecord("camera.wifi_profiles", "failed", IOException.class);
-    do {
-      log = read(eventFile);
-      int start = log.lastIndexOf("\"fixture\":" + fixture + "}");
-      log = start < 0 ? "" : log.substring(start);
-      if (log.contains(finalPhase)) break;
-      SystemClock.sleep(50);
-    } while (SystemClock.elapsedRealtime() < deadline);
     require(log.contains(finalPhase), "this run produced the regular Wi-Fi read error");
     require(log.contains(exceptionRecord("fixture.diagnostics", "failed", IllegalStateException.class)),
         "this run produced the fixture failure");
