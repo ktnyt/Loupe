@@ -145,6 +145,17 @@ def environment():
     return env
 
 
+def require_no_shizuku(apk, sdk):
+    analyzer, _ = tools(sdk)
+    env = environment()
+    manifest = run([analyzer, 'manifest', 'print', apk], env=env)
+    if 'shizuku' in manifest.casefold():
+        raise ValueError('The APK manifest includes a Shizuku component or dependency.')
+    packages = run([analyzer, 'dex', 'packages', '--defined-only', apk], env=env)
+    if 'rikka.shizuku.' in packages:
+        raise ValueError('The APK DEX includes a Shizuku dependency.')
+
+
 def apk_info(apk, sdk):
     analyzer, signer = tools(sdk)
     env = environment()
@@ -436,10 +447,13 @@ def main():
     p = commands.add_parser('inspect')
     p.add_argument('--apk', required=True)
     p.add_argument('--certificate', help='Expected SHA-256 signing certificate fingerprint')
+    p.add_argument('--require-no-shizuku', action='store_true')
     def inspect(args):
         info = apk_info(args.apk, args.sdk)
         print(json.dumps(info, ensure_ascii=False))
         check_features(info)
+        if args.require_no_shizuku:
+            require_no_shizuku(args.apk, args.sdk)
         if args.certificate and info['certificates'] != [args.certificate]:
             raise ValueError('APK does not use the explicitly expected signing certificate')
     p.set_defaults(action=inspect)

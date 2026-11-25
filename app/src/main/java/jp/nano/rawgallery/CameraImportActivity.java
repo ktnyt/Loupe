@@ -2,9 +2,6 @@ package jp.nano.rawgallery;
 
 import android.Manifest;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.lifecycle.MutableLiveData;
-import androidx.lifecycle.ViewModel;
-import androidx.lifecycle.ViewModelProvider;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.progressindicator.LinearProgressIndicator;
 import com.google.android.material.materialswitch.MaterialSwitch;
@@ -45,7 +42,6 @@ import jp.nano.rawgallery.camera.ImportProgress;
 import jp.nano.rawgallery.camera.ImportService;
 import jp.nano.rawgallery.camera.MediaTypes;
 import jp.nano.rawgallery.camera.MountedCameraCard;
-import jp.nano.rawgallery.camera.SdCardRemount;
 import jp.nano.rawgallery.camera.SdSourceRegistrations;
 import jp.nano.rawgallery.camera.SdManualFormats;
 
@@ -55,14 +51,10 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.Executors;
-import java.util.function.Consumer;
 
 public final class CameraImportActivity extends AppCompatActivity {
     static final String START_IMPORT_KEEP_ORIGINALS = "start_import_keep_originals";
-    static final String SD_REMOUNT_ON_ENTRY = SdCardRemount.ENABLED_PREFERENCE;
-    static final String SD_RECONNECT_ON_ENTRY = "sd_reconnect_on_entry";
     private static final String ATTACHED_SD_TARGET = "attached_sd_target";
-    private static final String CHOOSE_RECONNECTED_SD = "再接続したSDカードのDCIMフォルダを選んでください。";
 
     public static Intent mountedReaderAttachIntent(Context context, String expectedTarget) {
         return new Intent(context, CameraImportActivity.class).putExtra(ATTACHED_SD_TARGET, expectedTarget);
@@ -88,13 +80,6 @@ public final class CameraImportActivity extends AppCompatActivity {
     private MaterialButton sdSettingsButton;
     private TextView sdSettingsStatus;
     private androidx.appcompat.app.AlertDialog sdSettingsDialog;
-    private MaterialSwitch sdRemount, sdReconnectOnEntry;
-    private TextView sdRemountInfo, sdRemountResult;
-    private Button sdRemountPermission, sdReconnect;
-    private androidx.appcompat.app.AlertDialog sdReconnectConfirmation;
-    private SdRemountState sdRemountState;
-    private boolean freshManualEntry, sdRefreshAfterRemount, discoverAfterRemount;
-    private boolean sdRemountPermissionPending, sdRemountPermissionDenied;
     private android.os.CancellationSignal sdStatusCancellation;
     private Runnable removeMountObserver;
     private androidx.appcompat.app.AlertDialog sdConfirmation;
@@ -118,22 +103,16 @@ public final class CameraImportActivity extends AppCompatActivity {
     enum SdStartMode { MANUAL, ATTACH, REVIEW_FORMATS }
 
     private record SdPicker(String target, String destination, String kinds, long generation,
-            boolean registrationOnly, String previousRegistration, String expectedSourceUuid, SdStartMode mode) {}
+            boolean registrationOnly, String previousRegistration, SdStartMode mode) {}
     record SdStart(Uri tree, String target, String destination, String kinds, long generation,
-            boolean picked, String previousRegistration, String expectedSourceUuid, boolean rememberFormats) {
+            boolean picked, String previousRegistration, boolean rememberFormats) {
         SdStart(Uri tree, String target, String destination, String kinds, long generation,
-                boolean picked, String previousRegistration, String expectedSourceUuid) {
-            this(tree, target, destination, kinds, generation, picked, previousRegistration, expectedSourceUuid, false);
+                boolean picked, String previousRegistration) {
+            this(tree, target, destination, kinds, generation, picked, previousRegistration, false);
         }
 
         SdStart withKinds(String kinds, boolean remember) {
-            return new SdStart(tree, target, destination, kinds, generation, picked, previousRegistration,
-                    expectedSourceUuid, remember);
-        }
-
-        SdStart(Uri tree, String target, String destination, String kinds, long generation,
-                boolean picked, String previousRegistration) {
-            this(tree, target, destination, kinds, generation, picked, previousRegistration, null);
+            return new SdStart(tree, target, destination, kinds, generation, picked, previousRegistration, remember);
         }
     }
     private SdPicker sdPicker;
@@ -162,53 +141,6 @@ public final class CameraImportActivity extends AppCompatActivity {
     }
     WifiProfileLoader wifiProfileLoader = CameraQuickImportSources::wifiProfiles;
 
-    interface SdRemountAccess {
-        SdCardRemount.Status status();
-        void requestPermission(Consumer<Boolean> callback);
-        boolean start(Consumer<SdCardRemount.Result> callback);
-        SdCardRemount.ReconnectTarget reconnectTarget();
-        boolean reconnect(SdCardRemount.ReconnectTarget target, Consumer<SdCardRemount.ReconnectResult> callback);
-        boolean isRunning();
-    }
-
-    private record QuickSdReconnect(String volume, String readerDestination, String kinds) {}
-
-    public static final class SdRemountState extends ViewModel {
-        private boolean running;
-        private boolean reconnecting;
-        private QuickSdReconnect quickReconnect;
-        private SdCardRemount.ReconnectResult readerResult;
-        private String entryReconnectFailure;
-        private final MutableLiveData<SdCardRemount.Result> completion = new MutableLiveData<>();
-
-        private void finish(SdCardRemount.Result outcome) {
-            running = false;
-            if (outcome != SdCardRemount.Result.RECONNECTED) quickReconnect = null;
-            completion.setValue(outcome);
-        }
-
-        private void finishReader(SdCardRemount.ReconnectResult result) {
-            readerResult = result;
-            finish(result.outcome());
-        }
-    }
-
-    SdRemountAccess sdRemountAccess = new SdRemountAccess() {
-        @Override public SdCardRemount.Status status() { return SdCardRemount.status(); }
-        @Override public void requestPermission(Consumer<Boolean> callback) {
-            SdCardRemount.requestPermission(callback);
-        }
-        @Override public boolean start(Consumer<SdCardRemount.Result> callback) {
-            return SdCardRemount.start(getApplicationContext(), callback);
-        }
-        @Override public SdCardRemount.ReconnectTarget reconnectTarget() {
-            return SdCardRemount.reconnectTarget(CameraImportActivity.this);
-        }
-        @Override public boolean reconnect(SdCardRemount.ReconnectTarget target, Consumer<SdCardRemount.ReconnectResult> callback) {
-            return SdCardRemount.reconnect(getApplicationContext(), target, callback);
-        }
-        @Override public boolean isRunning() { return SdCardRemount.isRunning(); }
-    };
     private LinearLayout wifiActions;
     private TextView wifiStatus;
     private MaterialButton wifiSettings;
@@ -221,19 +153,14 @@ public final class CameraImportActivity extends AppCompatActivity {
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
             renderStatus();
-            resumeAfterSdRemount();
             handler.postDelayed(this, 350);
         }
     };
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        sdRemountState = new ViewModelProvider(this).get(SdRemountState.class);
         settings = getSharedPreferences("camera_import", MODE_PRIVATE);
-        freshManualEntry = state == null && getIntent().getAction() == null
-                && !getIntent().hasExtra(ATTACHED_SD_TARGET);
         if (state != null) {
-            discoverAfterRemount = state.getBoolean("sd_remount_discover_pending");
             pendingUsbDeviceId = state.getInt("quick_usb_device_id", -1);
             pendingUsbDeviceName = state.getString("quick_usb_device_name");
             pendingUsbVolume = state.getString("quick_usb_volume");
@@ -243,22 +170,16 @@ public final class CameraImportActivity extends AppCompatActivity {
             resumeUsb = state.getBoolean("quick_usb_resume");
             quickConsumed = state.getBoolean("quick_consumed");
             if (state.getBoolean("quick_source_pending")) connectionFailure = "取り込み元の確認を中止しました。もう一度長押ししてください。";
-            if (state.getBoolean("sd_reconnect_quick_pending") && sdRemountState.quickReconnect == null
-                    && sdRemountState.completion.getValue() == null) {
-                sdRemountState.entryReconnectFailure =
-                        "再接続の結果を確認できませんでした。接続を確認してもう一度長押ししてください。";
-            }
             String pendingTree = state.getString("quick_sd_tree");
             if (pendingTree != null) pendingSdStart = new SdStart(Uri.parse(pendingTree),
                     state.getString("quick_sd_target"), state.getString("quick_sd_destination"),
                     state.getString("quick_sd_kinds"), state.getLong("quick_sd_generation"),
                     state.getBoolean("quick_sd_picked"), state.getString("quick_sd_previous_registration"),
-                    state.getString("quick_sd_source_uuid"), state.getBoolean("quick_sd_remember_formats"));
+                    state.getBoolean("quick_sd_remember_formats"));
             String pickerDestination = state.getString("sd_picker_destination");
             if (pickerDestination != null) sdPicker = new SdPicker(state.getString("sd_picker_target"),
                     pickerDestination, state.getString("sd_picker_kinds"), state.getLong("sd_picker_generation"),
                     state.getBoolean("sd_picker_registration"), state.getString("sd_picker_previous_registration"),
-                    state.getString("sd_picker_source_uuid"),
                     SdStartMode.values()[state.getInt("sd_picker_mode", SdStartMode.MANUAL.ordinal())]);
             pendingSdPermission = state.getBoolean("quick_sd_permission");
             resumeSd = state.getBoolean("quick_sd_resume");
@@ -305,12 +226,6 @@ public final class CameraImportActivity extends AppCompatActivity {
         result.setTag("camera-import-stage");
         result.setTextColor(GalleryUi.TEXT);
         result.setTextSize(16);
-        sdRemountResult = status(importing);
-        sdRemountResult.setTag("sd-remount-result");
-        sdRemountResult.setTextColor(GalleryUi.TEXT);
-        sdRemountResult.setTextSize(16);
-        sdRemountResult.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
-        sdRemountResult.setVisibility(View.GONE);
         progressDetail = text("", 14, GalleryUi.MUTED);
         progressDetail.setTag("camera-import-counts");
         importing.addView(progressDetail);
@@ -398,9 +313,6 @@ public final class CameraImportActivity extends AppCompatActivity {
         var migrationButtonLayout = (LinearLayout.LayoutParams) migrate.getLayoutParams();
         migrationButtonLayout.topMargin = dp(8);
         migrate.setLayoutParams(migrationButtonLayout);
-        if (sdRemountState.running) showSdRemountProgress();
-        else if (sdRemountState.entryReconnectFailure != null) showSdRemountResult(sdRemountState.entryReconnectFailure);
-        sdRemountState.completion.observe(this, this::showSdRemountCompletion);
         renderSettingsVisibility();
         renderStatus();
     }
@@ -444,40 +356,6 @@ public final class CameraImportActivity extends AppCompatActivity {
             sdSettingsDialog.dismiss();
             startSd(SdStartMode.REVIEW_FORMATS);
         });
-        sdReconnect = button(options, "リーダーを再接続", this::confirmSdReconnect);
-        sdReconnect.setTag("sd-reader-reconnect");
-        sdReconnect.setSingleLine(false);
-        sdReconnect.setMinHeight(dp(48));
-        MaterialUi.outlined(sdReconnect);
-        sdReconnectOnEntry = new MaterialSwitch(this);
-        sdReconnectOnEntry.setText("取り込み時にリーダーを再接続");
-        sdReconnectOnEntry.setTag("sd-reconnect-on-entry");
-        sdReconnectOnEntry.setSingleLine(false);
-        sdReconnectOnEntry.setMinHeight(dp(48));
-        sdReconnectOnEntry.setChecked(settings.getBoolean(SD_RECONNECT_ON_ENTRY, false));
-        sdReconnectOnEntry.setOnCheckedChangeListener((v, checked) -> {
-            settings.edit().putBoolean(SD_RECONNECT_ON_ENTRY, checked).apply();
-            renderSdRemountSettings();
-        });
-        options.addView(sdReconnectOnEntry);
-        options.addView(text("画面を開くときや長押しするときに、SDとmicroSDが一時的に切断されます。", 14, GalleryUi.MUTED));
-        sdRemount = new MaterialSwitch(this);
-        sdRemount.setText("取り込み画面を開くと取り込み元のSDを再マウント");
-        sdRemount.setTag("sd-remount-switch");
-        sdRemount.setSingleLine(false);
-        sdRemount.setMinHeight(dp(48));
-        sdRemount.setChecked(settings.getBoolean(SD_REMOUNT_ON_ENTRY, false));
-        sdRemount.setOnCheckedChangeListener((v, checked) -> {
-            settings.edit().putBoolean(SD_REMOUNT_ON_ENTRY, checked).apply();
-            sdRemountPermissionDenied = false;
-            if (checked) requestSdRemountPermission();
-            else renderSdRemountSettings();
-        });
-        options.addView(sdRemount);
-        sdRemountInfo = status(options);
-        sdRemountInfo.setTag("sd-remount-info");
-        sdRemountPermission = button(options, "Shizukuの使用を許可する", this::requestSdRemountPermission);
-        sdRemountPermission.setTag("sd-remount-permission");
         sdVerify = new MaterialSwitch(this);
         sdVerify.setText("内容も確認する");
         sdVerify.setMinHeight(dp(48));
@@ -519,187 +397,7 @@ public final class CameraImportActivity extends AppCompatActivity {
 
     private void openSdSettings() {
         if (quickAvailable() && sdSettingsButton.isEnabled() && !sdSettingsDialog.isShowing()) {
-            renderSdRemountSettings();
             sdSettingsDialog.show();
-        }
-    }
-
-    private void renderSdRemountSettings() {
-        boolean reader = sdRemountAccess.reconnectTarget() != null;
-        SdCardRemount.Status status = sdRemount.isChecked() || sdReconnectOnEntry.isChecked() || reader
-                ? sdRemountAccess.status() : null;
-        String info = "";
-        if (status == SdCardRemount.Status.UNAVAILABLE)
-            info = "Shizukuをインストールし、ADBモードで起動してください。";
-        else if (status == SdCardRemount.Status.NEEDS_PERMISSION)
-            info = sdRemountPermissionDenied ? "使用が許可されませんでした。ShizukuでLoupeの使用を許可してください。"
-                    : "Shizukuの使用を許可してください。";
-        setText(sdRemountInfo, info);
-        sdRemountInfo.setVisibility(info.isEmpty() ? View.GONE : View.VISIBLE);
-        sdRemountPermission.setVisibility(status == SdCardRemount.Status.NEEDS_PERMISSION ? View.VISIBLE : View.GONE);
-        sdRemountPermission.setEnabled(!sdRemountPermissionPending);
-        sdReconnect.setVisibility(reader ? View.VISIBLE : View.GONE);
-        sdReconnect.setEnabled(status == SdCardRemount.Status.READY && canStartSourceAction());
-    }
-
-    private void requestSdRemountPermission() {
-        if (!sdRemountPermissionPending && (sdRemount.isChecked() || sdReconnectOnEntry.isChecked()
-                || sdRemountAccess.reconnectTarget() != null)
-                && sdRemountAccess.status() == SdCardRemount.Status.NEEDS_PERMISSION) {
-            sdRemountPermissionPending = true;
-            sdRemountPermissionDenied = false;
-            sdRemountAccess.requestPermission(granted -> {
-                if (isFinishing() || isDestroyed()) return;
-                sdRemountPermissionPending = false;
-                sdRemountPermissionDenied = !granted;
-                renderSdRemountSettings();
-            });
-        }
-        renderSdRemountSettings();
-    }
-
-    private void confirmSdReconnect() {
-        SdCardRemount.ReconnectTarget target = sdRemountAccess.reconnectTarget();
-        if (!canStartSourceAction() || sdReconnectConfirmation != null || target == null
-                || sdRemountAccess.status() != SdCardRemount.Status.READY) {
-            renderSdRemountSettings();
-            return;
-        }
-        sdReconnectConfirmation = new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
-                .setTitle("リーダーを再接続しますか？")
-                .setMessage("SDカードとmicroSDが一時的に切断されます。ほかのアプリも含め、カードの読み書きが終わってから再接続してください。")
-                .setNegativeButton("キャンセル", null)
-                .setPositiveButton("再接続", (dialog, which) -> startSdReconnect(target))
-                .create();
-        sdReconnectConfirmation.setOnDismissListener(dialog -> sdReconnectConfirmation = null);
-        sdReconnectConfirmation.show();
-    }
-
-    private void startSdReconnect(SdCardRemount.ReconnectTarget target) {
-        if (!canStartSourceAction()) return;
-        sdSettingsDialog.dismiss();
-        if (!target.equals(sdRemountAccess.reconnectTarget())) {
-            showSdRemountResult("リーダーかカードの接続が変わりました。接続を確認してからやり直してください。");
-            return;
-        }
-        if (!sdRemountAccess.reconnect(target, sdRemountState::finishReader)) {
-            showSdRemountResult("再接続を開始できませんでした。Shizukuとリーダーの接続を確認してください。");
-            return;
-        }
-        beginSdRemount(true);
-    }
-
-    private boolean remountBusy() {
-        return sdRemountState.running || sdRemountAccess.isRunning();
-    }
-
-    private boolean startSdReconnectOnEntry() {
-        if (!settings.getBoolean(SD_RECONNECT_ON_ENTRY, false)) return false;
-        if (remountBusy()) {
-            consumeQuickImportIntent();
-            showEntryReconnectFailure("リーダーの処理中です。終わってから、もう一度取り込みを開いてください。");
-            return true;
-        }
-        String volume = PhotoStorage.selected(this);
-        SdCardRemount.ReconnectTarget target = sdRemountAccess.reconnectTarget();
-        if (target == null) return false;
-
-        boolean quick = consumeQuickImportIntent();
-        var status = sdRemountAccess.status();
-        if (status != SdCardRemount.Status.READY) {
-            showEntryReconnectFailure(status == SdCardRemount.Status.NEEDS_PERMISSION
-                    ? "SDカード取り込み設定からShizukuの使用を許可してください。"
-                    : "Shizukuを起動してから、取り込み画面を開き直してください。");
-            return true;
-        }
-        if (!canStartSourceAction() || !volume.equals(PhotoStorage.selected(this))) {
-            showEntryReconnectFailure("リーダーを再接続できませんでした。処理の状況と接続を確認してください。");
-            return true;
-        }
-        UsbDevice device = quick ? connected() : null;
-        // A temporary USB grant can be lost during reconnect. Preserve any configured formats it exposes now.
-        String kinds = device != null && target.address().equals(device.getDeviceName()) ? configuredUsbKinds(device) : null;
-        if (!sdRemountAccess.reconnect(target, sdRemountState::finishReader)) {
-            showEntryReconnectFailure("リーダーを再接続できませんでした。処理の状況と接続を確認してください。");
-        } else {
-            if (quick) sdRemountState.quickReconnect = new QuickSdReconnect(volume, target.destination(), kinds);
-            beginSdRemount(true);
-        }
-        return true;
-    }
-
-    private void startSdRemountOnEntry() {
-        if (!settings.getBoolean(SD_REMOUNT_ON_ENTRY, false) || !canStartSourceAction()
-                || sdPicker != null || pendingSdStart != null || sdConfirmation != null || sdSettingsDialog.isShowing()
-                || sdRemountAccess.status() != SdCardRemount.Status.READY) return;
-        if (!sdRemountAccess.start(sdRemountState::finish)) return;
-        beginSdRemount(false);
-    }
-
-    private void beginSdRemount(boolean reconnecting) {
-        sdRemountState.entryReconnectFailure = null;
-        sdRemountState.readerResult = null;
-        sdRemountState.reconnecting = reconnecting;
-        sdRemountState.running = true;
-        cancelSdStatusLoad();
-        showSdRemountProgress();
-        renderStatus();
-    }
-
-    private void showSdRemountProgress() {
-        sdChecking.setVisibility(View.GONE);
-        showSdRemountResult(sdRemountState.reconnecting ? "リーダーを再接続しています…" : "SDカードを再マウントしています…");
-    }
-
-    private void showSdRemountCompletion(SdCardRemount.Result outcome) {
-        if (isFinishing() || isDestroyed() || sdRemountState.running || sdRemountState.entryReconnectFailure != null) return;
-        boolean reconnecting = sdRemountState.reconnecting;
-        showSdRemountResult(switch (outcome) {
-            case MOUNTED -> "SDカードを再マウントしました。";
-            case RECONNECTED -> "リーダーを再接続しました。";
-            case SOURCE_MISSING -> "保存先は再接続しました。取り込み元のSDカードを認識できませんでした。認識されたら手動で取り込んでください。";
-            case SKIPPED -> reconnecting ? "リーダーや保存先の接続を確認してください。" : "";
-            case UNAVAILABLE -> reconnecting ? "Shizukuを起動してから、再接続を試してください。"
-                    : "Shizukuを起動してから、取り込み画面を開き直してください。";
-            case FAILED -> reconnecting ? "リーダーを再接続できませんでした。SDカードと保存先の接続を確認してください。"
-                    : "SDカードを再マウントできませんでした。接続を確認してください。";
-        });
-        sdRefreshAfterRemount = true;
-        renderStatus();
-        resumeAfterSdRemount();
-    }
-
-    private void showSdRemountResult(String message) {
-        setText(sdRemountResult, message);
-        sdRemountResult.setVisibility(message.isEmpty() ? View.GONE : View.VISIBLE);
-    }
-
-    private void showEntryReconnectFailure(String message) {
-        sdRemountState.entryReconnectFailure = message;
-        showSdRemountResult(message);
-    }
-
-    private void resumeAfterSdRemount() {
-        QuickSdReconnect quickReconnect = sdRemountState.quickReconnect;
-        if ((!sdRefreshAfterRemount && !discoverAfterRemount && quickReconnect == null)
-                || !canStartSourceAction()) return;
-        if (sdPicker != null || sdConfirmation != null || pendingSdStart != null) return;
-        if (sdRefreshAfterRemount) refreshSdSource();
-        if (quickReconnect != null) {
-            sdRemountState.quickReconnect = null;
-            SdCardRemount.ReconnectResult proof = sdRemountState.readerResult;
-            SdCardRemount.ReconnectTarget current = sdRemountAccess.reconnectTarget();
-            if (proof == null || proof.mountedSourceUuid() == null
-                    || current == null || !quickReconnect.readerDestination().equals(current.destination())
-                    || !quickReconnect.volume().equals(PhotoStorage.selected(this))
-                    || proof.detachGeneration() != MountedCameraCard.detachGeneration()) {
-                showEntryReconnectFailure("リーダーか保存先の接続が変わりました。接続を確認してもう一度長押ししてください。");
-                return;
-            }
-            discoverQuickSource(true, quickReconnect.volume(), proof.mountedSourceUuid(), quickReconnect.kinds(), SdStartMode.MANUAL);
-        } else if (discoverAfterRemount) {
-            discoverAfterRemount = false;
-            discoverQuickSource(false);
         }
     }
 
@@ -726,7 +424,6 @@ public final class CameraImportActivity extends AppCompatActivity {
         if (removeMountObserver != null) removeMountObserver.run();
         abandonSdSubmission();
         cancelSdStatusLoad();
-        if (sdReconnectConfirmation != null) sdReconnectConfirmation.dismiss();
         sdSettingsDialog.dismiss();
         if (permission != null) {
             try { permission.close(); } catch (IOException ignored) {}
@@ -736,8 +433,6 @@ public final class CameraImportActivity extends AppCompatActivity {
 
     @Override protected void onSaveInstanceState(Bundle state) {
         super.onSaveInstanceState(state);
-        state.putBoolean("sd_remount_discover_pending", discoverAfterRemount);
-        state.putBoolean("sd_reconnect_quick_pending", sdRemountState.quickReconnect != null);
         state.putInt("quick_usb_device_id", pendingUsbDeviceId);
         state.putString("quick_usb_device_name", pendingUsbDeviceName);
         state.putString("quick_usb_volume", pendingUsbVolume);
@@ -755,7 +450,6 @@ public final class CameraImportActivity extends AppCompatActivity {
             state.putLong("quick_sd_generation", pendingSdStart.generation());
             state.putBoolean("quick_sd_picked", pendingSdStart.picked());
             state.putString("quick_sd_previous_registration", pendingSdStart.previousRegistration());
-            state.putString("quick_sd_source_uuid", pendingSdStart.expectedSourceUuid());
             state.putBoolean("quick_sd_remember_formats", pendingSdStart.rememberFormats());
         }
         if (sdPicker != null) {
@@ -765,7 +459,6 @@ public final class CameraImportActivity extends AppCompatActivity {
             state.putLong("sd_picker_generation", sdPicker.generation());
             state.putBoolean("sd_picker_registration", sdPicker.registrationOnly());
             state.putString("sd_picker_previous_registration", sdPicker.previousRegistration());
-            state.putString("sd_picker_source_uuid", sdPicker.expectedSourceUuid());
             state.putInt("sd_picker_mode", sdPicker.mode().ordinal());
         }
         state.putBoolean("quick_sd_permission", pendingSdPermission);
@@ -780,11 +473,6 @@ public final class CameraImportActivity extends AppCompatActivity {
         quickResumed = true;
         wifiLaunching = false;
         renderStatus();
-        if (freshManualEntry) {
-            freshManualEntry = false;
-            if (!startSdReconnectOnEntry()) startSdRemountOnEntry();
-        }
-        if (sdSettingsDialog.isShowing()) renderSdRemountSettings();
         if (sdConfirmation == null && !starting && sdPicker == null && pendingSdStart == null) refreshSdSource();
         if (resumeUsb || (pendingUsbPermission && permission == null)) continuePendingUsb();
         else if (resumeSd) resumeSdStart();
@@ -792,12 +480,8 @@ public final class CameraImportActivity extends AppCompatActivity {
             quickConsumed = true;
             String target = getIntent().getStringExtra(ATTACHED_SD_TARGET);
             getIntent().removeExtra(ATTACHED_SD_TARGET);
-            if (target != null) discoverQuickSource(false, target, null, null, SdStartMode.ATTACH);
-        } else if (consumeQuickImportIntent()) {
-            if (remountBusy()) discoverAfterRemount = true;
-            else discoverQuickSource(false);
-        }
-        resumeAfterSdRemount();
+            if (target != null) discoverQuickSource(false, target, SdStartMode.ATTACH);
+        } else if (consumeQuickImportIntent()) discoverQuickSource(false);
     }
 
     private boolean consumeQuickImportIntent() {
@@ -811,11 +495,6 @@ public final class CameraImportActivity extends AppCompatActivity {
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        if (intent.getAction() != null || intent.hasExtra(ATTACHED_SD_TARGET)) {
-            freshManualEntry = false;
-            discoverAfterRemount = false;
-            sdRemountState.quickReconnect = null;
-        }
     }
 
     @Override protected void onPause() {
@@ -834,15 +513,14 @@ public final class CameraImportActivity extends AppCompatActivity {
 
     private boolean quickAvailable() {
         return quickResumed && !isFinishing() && !isDestroyed() && !PROGRESS.getActive()
-                && !CameraImportGate.lock.isLocked() && !migrating && submittedSd == null && !remountBusy();
+                && !CameraImportGate.lock.isLocked() && !migrating && submittedSd == null;
     }
 
     private void discoverQuickSource(boolean manualSd) {
-        discoverQuickSource(manualSd, null, null, null, SdStartMode.MANUAL);
+        discoverQuickSource(manualSd, null, SdStartMode.MANUAL);
     }
 
-    private void discoverQuickSource(boolean manualSd, String attachedSdTarget, String expectedSourceUuid,
-            String readerKinds, SdStartMode mode) {
+    private void discoverQuickSource(boolean manualSd, String attachedSdTarget, SdStartMode mode) {
         if (!quickAvailable() || starting || sourceCancellation != null || sdConfirmation != null) return;
         String destination = PhotoStorage.selected(this);
         UsbDevice usb = manualSd || attachedSdTarget != null ? null : connected();
@@ -881,9 +559,7 @@ public final class CameraImportActivity extends AppCompatActivity {
                 } catch (IOException | RuntimeException ignored) { }
                 var outcome = sources;
                 String kinds;
-                if (readerKinds != null) {
-                    kinds = readerKinds;
-                } else if (expectedTarget != null) {
+                if (expectedTarget != null) {
                     UsbDevice formatDevice = manualSd ? connected() : usb;
                     kinds = requestedUsbKinds(guardedSdTarget(formatDevice, destination) != null ? formatDevice : null);
                 } else {
@@ -908,20 +584,19 @@ public final class CameraImportActivity extends AppCompatActivity {
                     boolean chooseSd = inspected != null && (inspected.reachableTree() != null
                             || inspected.state() == CameraQuickImportSources.SdState.AMBIGUOUS
                             || validated.state() == CameraQuickImportSources.SdState.AMBIGUOUS);
-                    if (readyTree != null && matchesReconnectSource(readyTree, expectedSourceUuid)) {
+                    if (readyTree != null) {
                         connectionFailure = null;
                         renderSdSource(CameraQuickImportSources.SdState.READY);
-                        SdStart request = new SdStart(readyTree, expectedTarget, destination, kinds, detach, false, null,
-                                expectedSourceUuid);
+                        SdStart request = new SdStart(readyTree, expectedTarget, destination, kinds, detach, false, null);
                         if (expectedTarget == null && SdSourceRegistrations.volumeUuid(readyTree) == null
                                 && mode == SdStartMode.MANUAL) requestSdStart(request);
                         else confirmSdSource(request, false, mode);
                     } else if (sdOnly || chooseSd) {
                         var state = validated == null ? CameraQuickImportSources.SdState.FOLDER_UNAVAILABLE : validated.state();
-                        renderSdSource(readyTree == null ? state : CameraQuickImportSources.SdState.FOLDER_UNAVAILABLE);
-                        connectionFailure = readyTree == null ? state.message : CHOOSE_RECONNECTED_SD;
+                        renderSdSource(state);
+                        connectionFailure = state.message;
                         renderStatus();
-                        pickSdTree(expectedTarget, kinds, false, expectedSourceUuid, mode);
+                        pickSdTree(expectedTarget, kinds, false, mode);
                     } else if (outcome == null) {
                         connectionFailure = "登録情報を確認できませんでした。QRの登録を確認してください。";
                         renderStatus();
@@ -1136,11 +811,9 @@ public final class CameraImportActivity extends AppCompatActivity {
                       granted ? (manualOnly ? " · 手動取り込み" : " · 接続済み") : " · USBの使用許可が必要です"));
         ImportProgressPresentation presentation = ImportProgressPresentation.current();
         setText(result, !active && connectionFailure != null ? connectionFailure : presentation.primary);
-        boolean showRemountProgress = !active && sdRemountState.running;
-        result.setVisibility(showRemountProgress ? View.GONE : View.VISIBLE);
         setText(progressDetail, presentation.secondary);
-        progressDetail.setVisibility(showRemountProgress || presentation.secondary.isEmpty() ? View.GONE : View.VISIBLE);
-        progress.setVisibility(active || showRemountProgress ? View.VISIBLE : View.GONE);
+        progressDetail.setVisibility(presentation.secondary.isEmpty() ? View.GONE : View.VISIBLE);
+        progress.setVisibility(active ? View.VISIBLE : View.GONE);
         if (active) {
             progress.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_AUTO);
             progress.setContentDescription(presentation.accessibility());
@@ -1149,16 +822,12 @@ public final class CameraImportActivity extends AppCompatActivity {
                 progress.setMax(presentation.total);
                 progress.setProgress(presentation.done);
             }
-        } else if (showRemountProgress) {
-            progress.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-            progress.setIndeterminate(true);
         }
         setText(run, device != null && !granted ? "USBの使用を許可する"
                 : settings.getBoolean("configured", false) ? "今すぐ取り込む" : "取り込みの設定をする");
-        boolean remountBusy = remountBusy();
         run.setEnabled(device != null && !active && !starting && permission == null && !migrating
-                && submittedSd == null && !remountBusy);
-        run.setVisibility(active || mountedRoute || showRemountProgress ? View.GONE : View.VISIBLE);
+                && submittedSd == null);
+        run.setVisibility(active || mountedRoute ? View.GONE : View.VISIBLE);
         if (notifyButton != null) notifyButton.setVisibility(
                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
                 ? View.VISIBLE : View.GONE);
@@ -1167,9 +836,9 @@ public final class CameraImportActivity extends AppCompatActivity {
         setText(stop, PROGRESS.getStopRequested() ? "中止しています" : "中止");
         renderWifiEnabled();
         auto.setEnabled(UsbLaunchSettings.isEnabled(this) && !active && !migrating && !manualOnly);
-        migrate.setEnabled(!active && !starting && !migrating && !remountBusy);
+        migrate.setEnabled(!active && !starting && !migrating);
         boolean sdAvailable = !active && !starting && !migrating && permission == null
-                && sdConfirmation == null && sdPicker == null && submittedSd == null && !remountBusy;
+                && sdConfirmation == null && sdPicker == null && submittedSd == null;
         sdStart.setEnabled(sdAvailable);
         sdSettingsButton.setEnabled(sdAvailable);
         if (active && sdSettingsDialog.isShowing()) sdSettingsDialog.dismiss();
@@ -1185,7 +854,7 @@ public final class CameraImportActivity extends AppCompatActivity {
     private void startFromScreen() { startFromScreen(quickImportFlow); }
 
     private void startFromScreen(boolean keepOriginals) {
-        if (PROGRESS.getActive() || starting || migrating || permission != null || remountBusy()) return;
+        if (PROGRESS.getActive() || starting || migrating || permission != null) return;
         UsbDevice device = connected();
         if (device == null) return;
         String expectedVolume = PhotoStorage.selected(this);
@@ -1305,27 +974,21 @@ public final class CameraImportActivity extends AppCompatActivity {
 
     private void pickSdTree() {
         pickSdTree(MountedCameraCard.targetWithGenericReader(this, PhotoStorage.selected(this)), null, true,
-                null, SdStartMode.MANUAL);
+                SdStartMode.MANUAL);
     }
 
-    private void pickSdTree(String expectedTarget, String kinds, boolean registrationOnly, String expectedSourceUuid,
-            SdStartMode mode) {
+    private void pickSdTree(String expectedTarget, String kinds, boolean registrationOnly, SdStartMode mode) {
         if (sdPicker != null || sdConfirmation != null || PROGRESS.getActive() || starting || migrating
-                || submittedSd != null || remountBusy()) return;
+                || submittedSd != null) return;
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         sdPicker = new SdPicker(expectedTarget, PhotoStorage.selected(this), kinds,
-                MountedCameraCard.detachGeneration(), registrationOnly, SdSourceRegistrations.latest(this),
-                expectedSourceUuid, mode);
+                MountedCameraCard.detachGeneration(), registrationOnly, SdSourceRegistrations.latest(this), mode);
         try { startActivityForResult(intent, PICK_SD_TREE); }
         catch (RuntimeException failure) {
             sdPicker = null;
             showSdPermissionStatus("フォルダ選択を開けませんでした。");
         }
-    }
-
-    private static boolean matchesReconnectSource(Uri tree, String expectedSourceUuid) {
-        return expectedSourceUuid == null || expectedSourceUuid.equals(SdSourceRegistrations.volumeUuid(tree));
     }
 
     @Override protected void onActivityResult(int request, int code, Intent data) {
@@ -1341,12 +1004,8 @@ public final class CameraImportActivity extends AppCompatActivity {
                 showSdFailure("フォルダの読み取りが許可されませんでした。");
                 return;
             }
-            if (!matchesReconnectSource(data.getData(), picker.expectedSourceUuid())) {
-                showSdFailure(CHOOSE_RECONNECTED_SD);
-                return;
-            }
             confirmSdSource(new SdStart(data.getData(), picker.target(), picker.destination(),
-                    picker.kinds(), picker.generation(), true, picker.previousRegistration(), picker.expectedSourceUuid()),
+                    picker.kinds(), picker.generation(), true, picker.previousRegistration()),
                     picker.registrationOnly(), picker.mode());
             return;
         }
@@ -1433,8 +1092,6 @@ public final class CameraImportActivity extends AppCompatActivity {
     }
 
     private void refreshSdSource() {
-        sdRefreshAfterRemount = remountBusy();
-        if (sdRefreshAfterRemount) return;
         cancelSdStatusLoad();
         var cancellation = new android.os.CancellationSignal();
         sdStatusCancellation = cancellation;
@@ -1512,9 +1169,9 @@ public final class CameraImportActivity extends AppCompatActivity {
             String target = MountedCameraCard.targetWithGenericReader(this, PhotoStorage.selected(this));
             UsbDevice device = connected();
             String kinds = target == null ? "JPEG,RAW" : requestedUsbKinds(guardedSdTarget(device) != null ? device : null);
-            pickSdTree(target, kinds, false, null, mode);
+            pickSdTree(target, kinds, false, mode);
         } else {
-            discoverQuickSource(true, null, null, null, mode);
+            discoverQuickSource(true, null, mode);
         }
     }
 
@@ -1549,7 +1206,6 @@ public final class CameraImportActivity extends AppCompatActivity {
     static boolean matchesSelection(SdStart request, String destination, long generation, String registration) {
         return request.generation() == generation && request.destination() != null
                 && request.destination().equals(destination)
-                && matchesReconnectSource(request.tree(), request.expectedSourceUuid())
                 && (!request.picked() || java.util.Objects.equals(request.previousRegistration(), registration));
     }
 
@@ -1658,8 +1314,7 @@ public final class CameraImportActivity extends AppCompatActivity {
                         showSdFailure("カードの接続または保存先が変わりました。取り込み元を確認してください。");
                     } else if (confirmed == null) {
                         showSdFailure(message);
-                        if (chooseAgain) pickSdTree(request.target(), request.kinds(), false,
-                                request.expectedSourceUuid(), reselectMode);
+                        if (chooseAgain) pickSdTree(request.target(), request.kinds(), false, reselectMode);
                     } else {
                         onVerified.accept(confirmed);
                     }
@@ -1775,7 +1430,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         if (!request.picked() && !CameraQuickImportSources.matchesRegisteredSelection(this, request.tree())) {
             clearPendingSdStart();
             showSdFailure("取り込むSDカードのフォルダを選んでください。");
-            pickSdTree(request.target(), request.kinds(), false, request.expectedSourceUuid(),
+            pickSdTree(request.target(), request.kinds(), false,
                     request.rememberFormats() ? SdStartMode.REVIEW_FORMATS : SdStartMode.MANUAL);
             return;
         }

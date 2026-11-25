@@ -107,8 +107,15 @@ final class CameraSdSwapChecks {
             var options = (androidx.appcompat.app.AlertDialog) field(screen, "sdSettingsDialog");
             require(options.isShowing() && pickerCount.get() == 0 && started.get() == 0,
                     "opening SD settings does not register or import");
-            capture(test, screen, options.getWindow().getDecorView(), captures, prefix + "-settings",
-                    "SDカード取り込み設定", "SDカードのフォルダを選ぶ", "内容も確認する");
+            View optionsView = options.getWindow().getDecorView();
+            test.runOnMainSync(() -> {
+                for (String tag : new String[]{"sd-reader-reconnect", "sd-reconnect-on-entry", "sd-remount-switch",
+                        "sd-remount-permission"}) {
+                    require(optionsView.findViewWithTag(tag) == null, "SD settings contain the retired control " + tag);
+                }
+            });
+            capture(test, screen, optionsView, captures, prefix + "-settings", "SDカード取り込み設定",
+                    "SDカードのフォルダを選ぶ", "形式を選んで取り込む", "内容も確認する");
             test.runOnMainSync(() -> options.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick());
             test.waitForIdleSync();
             require(!options.isShowing(), "close returns to the single SD action");
@@ -229,7 +236,7 @@ final class CameraSdSwapChecks {
             });
             captureTerminalSdPanel(test, screen, settings, sdStatus, captures, prefix + "-complete-source");
             require(result.getText().toString().equals("取り込み完了"), "completion belongs to the operation panel");
-            return "PASS isolated SD swap: incomplete and complete listing, stale registration and picker, synthetic confirmation/cancel and stale request, native status at "
+            return "PASS isolated SD swap: SD settings, incomplete and complete listing, stale registration and picker, synthetic confirmation/cancel and stale request, native status at "
                     + width + "dp/" + font + ". No physical card or original reads.";
         } finally {
             progress.removeListener(observe);

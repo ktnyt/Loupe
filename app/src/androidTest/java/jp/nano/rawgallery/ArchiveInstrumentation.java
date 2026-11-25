@@ -22,9 +22,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   @Override public void callActivityOnCreate(android.app.Activity activity, Bundle state) {
     if("camera-pilot-wifi-quick".equals(cameraPilotMode))CameraWifiQuickChecks.activityCreated(activity);
     if(nanoBackgroundTest)NanoBananaBackgroundChecks.activityCreated(activity);
-    if (CameraSdRemountUiChecks.MODE.equals(cameraPilotMode)) CameraSdRemountUiChecks.activityCreated(activity);
-    boolean dualSlotUi = (CameraDualSlotUiChecks.MODE.equals(cameraPilotMode) || CameraSdSwapChecks.MODE.equals(cameraPilotMode)
-        || CameraSdRemountUiChecks.MODE.equals(cameraPilotMode))
+    boolean dualSlotUi = (CameraDualSlotUiChecks.MODE.equals(cameraPilotMode) || CameraSdSwapChecks.MODE.equals(cameraPilotMode))
         && activity instanceof CameraImportActivity;
     if (dualSlotUi) {
       var config = new android.content.res.Configuration(activity.getResources().getConfiguration());
@@ -193,8 +191,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     albumTagsTest = args != null && "album-tags".equals(args.getString("mode"));
     cameraPilotMode = args == null ? null : args.getString("mode");
     if(cameraPilotMode!=null&&!cameraPilotMode.startsWith("camera-pilot-"))cameraPilotMode=null;
-    if (CameraDualSlotUiChecks.MODE.equals(cameraPilotMode) || CameraSdSwapChecks.MODE.equals(cameraPilotMode)
-        || CameraSdRemountUiChecks.MODE.equals(cameraPilotMode)) {
+    if (CameraDualSlotUiChecks.MODE.equals(cameraPilotMode) || CameraSdSwapChecks.MODE.equals(cameraPilotMode)) {
       tagWidth = Integer.parseInt(args.getString("width", "400"));
       tagFont = Float.parseFloat(args.getString("font", "1.0"));
     }
@@ -410,9 +407,6 @@ public final class ArchiveInstrumentation extends Instrumentation {
         else if(cameraPilotMode.equals("camera-pilot-usb-launch"))result=CameraUsbLaunchChecks.run(this);
         else if(CameraDualSlotUiChecks.MODE.equals(cameraPilotMode))result=CameraDualSlotUiChecks.run(this, tagWidth, tagFont);
         else if(CameraSdSwapChecks.MODE.equals(cameraPilotMode))result=CameraSdSwapChecks.run(this, tagWidth, tagFont);
-        else if(CameraSdRemountUiChecks.MODE.equals(cameraPilotMode))result=CameraSdRemountUiChecks.run(this);
-        else if(jp.nano.rawgallery.camera.SdCardRemountBindingChecks.MODE.equals(cameraPilotMode))
-          result=jp.nano.rawgallery.camera.SdCardRemountBindingChecks.run(this);
         else if(cameraPilotMode.equals("camera-pilot-import-progress"))result=CameraImportProgressChecks.run(this);
         else if(cameraPilotMode.equals("camera-pilot-import-history"))result=CameraImportHistoryChecks.run(this);
         else if(cameraPilotMode.equals("camera-pilot-wifi-quick"))result=CameraWifiQuickChecks.run(this);
