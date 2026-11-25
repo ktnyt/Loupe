@@ -109,7 +109,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean jpegTest;
   private boolean jpegCloudTest;
   private boolean jpegCleanupTest;
-  private boolean importLatencyTest, importInterruptionTest, importPauseTest, importDeferredTest, indexSignatureTest, indexApplyRaceTest;
+  private boolean importLatencyTest, importInterruptionTest, importPauseTest, importDeferredTest, indexSignatureTest, indexApplyRaceTest, archiveScanTest;
   private volatile long importPauses, importResumes;
 
   @Override public void callActivityOnPause(android.app.Activity activity) {
@@ -149,6 +149,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
     }
     confidenceUiTest=args!=null&&"tag-confidence".equals(args.getString("mode"));
     confidenceStoreTest=args!=null&&"confidence-store".equals(args.getString("mode"));
+    archiveScanTest = args != null && "archive-scan".equals(args.getString("mode"));
     indexSignatureTest = args != null && "index-signature".equals(args.getString("mode"));
     indexApplyRaceTest = args != null && "index-apply-race".equals(args.getString("mode"));
     importDeferredTest = args != null && "import-deferred".equals(args.getString("mode"));
@@ -348,6 +349,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       }
       if(confidenceUiTest){results.putString("stream",ConfidenceUiChecks.run(this,tagWidth));finish(-1,results);return;}
       if(confidenceStoreTest){results.putString("stream",ConfidenceStoreChecks.run(context));finish(-1,results);return;}
+      if (archiveScanTest) { results.putString("stream", ArchiveScanChecks.run(context)); finish(-1, results); return; }
       if (indexSignatureTest) { results.putString("stream", IndexSignatureChecks.run(context)); finish(-1, results); return; }
       if (indexApplyRaceTest) { results.putString("stream", IndexApplyRaceChecks.run(this)); finish(-1, results); return; }
       if (shareHistoryRestartSeed || shareHistoryRestartVerify) {
