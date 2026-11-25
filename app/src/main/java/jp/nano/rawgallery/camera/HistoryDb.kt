@@ -29,7 +29,11 @@ data class ImportedKey(
  * 取り込み履歴とカメラ別設定。スキーマは仕様書 5.2 に従う
  * (Room ではなく素の SQLite。テーブル 2 つの規模で依存を増やさないため)
  */
-class HistoryDb @JvmOverloads constructor(context: Context, databaseName: String = "camera-import-history.db") : SQLiteOpenHelper(context, databaseName, null, 4) {
+class HistoryDb @JvmOverloads constructor(context: Context, databaseName: String = "camera-import-history.db") : SQLiteOpenHelper(context, databaseName, null, 5) {
+
+    init {
+        setWriteAheadLoggingEnabled(true)
+    }
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -60,6 +64,7 @@ class HistoryDb @JvmOverloads constructor(context: Context, databaseName: String
         db.execSQL(
             "CREATE INDEX idx_imported_key ON imported(camera_model, camera_serial, file_name, file_size, shot_at)"
         )
+        createDestinationIndex(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -80,6 +85,11 @@ class HistoryDb @JvmOverloads constructor(context: Context, databaseName: String
             // 再判定されるため、消しても二重取り込みにはならない
             db.execSQL("DELETE FROM imported WHERE dest_uri='existing'")
         }
+        if (oldVersion < 5) createDestinationIndex(db)
+    }
+
+    private fun createDestinationIndex(db: SQLiteDatabase) {
+        db.execSQL("CREATE INDEX idx_imported_dest_uri ON imported(dest_uri)")
     }
 
     fun findCamera(model: String, serial: String): Camera? =
@@ -211,7 +221,7 @@ class HistoryDb @JvmOverloads constructor(context: Context, databaseName: String
             arrayOf(source, aggregate, destination ?: source, destinationAlias ?: source))
 
     private fun moveEvidenceWhere(where: String, args: Array<String>?): List<MoveEvidence> =
-        readableDatabase.rawQuery("SELECT id,dest_uri,file_name,file_size,shot_at,imported_at,camera_model,camera_serial FROM imported" + where, args).use { rows ->
+        readableDatabase.rawQuery("SELECT id,dest_uri,file_name,file_size,shot_at,imported_at,camera_model,camera_serial FROM imported" + where + " ORDER BY id", args).use { rows ->
             buildList {
                 while (rows.moveToNext()) add(MoveEvidence(rows.getLong(0), rows.getString(1),
                     rows.getString(2), rows.getLong(3), rows.getLong(4), rows.getLong(5), rows.getString(6), rows.getString(7)))
@@ -254,6 +264,7 @@ class HistoryDb @JvmOverloads constructor(context: Context, databaseName: String
 
     companion object {
         @Volatile private var instance: HistoryDb? = null
+        /** Shared by the application's import and move flows; those callers leave it open. */
         fun get(context: Context): HistoryDb =
             instance ?: synchronized(this) {
                 instance ?: HistoryDb(context.applicationContext).also { instance = it }

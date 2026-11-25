@@ -50,24 +50,34 @@ final class IndexSignatureChecks {
           db.execSQL("CREATE TABLE metadata (key TEXT PRIMARY KEY, model TEXT NOT NULL, taken INTEGER NOT NULL)");
           db.execSQL("INSERT INTO metadata VALUES ('existing','synthetic',42)");
         }
-        if (oldVersion == 3) {
+        if (oldVersion >= 3) {
           db.execSQL("CREATE TABLE index_revision (id INTEGER PRIMARY KEY CHECK(id=1), value INTEGER NOT NULL)");
           db.execSQL("INSERT INTO index_revision VALUES (1,91)");
           for (String operation : new String[] {"INSERT", "UPDATE", "DELETE"})
             db.execSQL("CREATE TRIGGER index_revision_" + operation + " AFTER " + operation
                 + " ON photos BEGIN UPDATE index_revision SET value=value+1 WHERE id=1; END");
         }
+        if (oldVersion == 4) {
+          db.execSQL("ALTER TABLE metadata ADD COLUMN burst_mode INTEGER");
+          db.execSQL("ALTER TABLE metadata ADD COLUMN burst_frame INTEGER");
+          db.execSQL("UPDATE metadata SET burst_mode=3, burst_frame=7 WHERE key='existing'");
+        }
         db.setVersion(oldVersion);
       }
       try (ArchiveStore store = new ArchiveStore(isolated)) {
         SQLiteDatabase db = store.getWritableDatabase();
-        check(db.getVersion() == 4, "schema upgraded");
+        check(db.getVersion() == 5, "schema upgraded");
         check(oldVersion == 0 || "synthetic".equals(store.get("seed").getString("name")), "photo payload preserved");
         check(oldVersion < 2 || store.metadataSnapshot().get("existing").taken == 42, "metadata preserved");
         long revision = store.indexRevision();
-        check(oldVersion < 3 || revision == 91, "version 3 revision preserved");
-        check(oldVersion < 2 || store.metadataSnapshot().get("existing").burstFrame == null,
-            "existing entries start unprobed");
+        check(oldVersion < 3 || revision == 91, "source revision survives additive migration");
+        if (oldVersion == 4) {
+          check(store.metadataSnapshot().get("existing").burstFrame.number() == 7,
+              "v4 preserves recorded burst numbering");
+        } else {
+          check(oldVersion < 2 || store.metadataSnapshot().get("existing").burstFrame == null,
+              "older entries start unprobed");
+        }
         String before = signature(isolated);
         if (oldVersion == 3) {
           checkBurstCache(isolated, root, store);
@@ -470,9 +480,9 @@ final class IndexSignatureChecks {
   static String run(Context context) throws Exception {
     checkBurstVolumes();
     checkE2IndexMetadata(context);
-    for (int version : new int[] {0, 1, 2, 3}) runVersion(context, version);
+    for (int version : new int[] {0, 1, 2, 3, 4}) runVersion(context, version);
     String databaseEvidence = DatabaseAccessChecks.run(context);
-    return "PASS archive schema 1/2/3 migration and fresh create preserve records; JPEG burst cache NULL/retry/zero, "
+    return "PASS archive schema 1/2/3/4 migration and fresh create preserve records; JPEG burst cache NULL/retry/zero, "
         + "original key/model/taken and competing winner preserved; JPEG signature, segment bounds, short reads, zero skip and stop-before-pixels checked; I/O and scan-limit failures propagated; "
         + "bounded metadata transaction rollback, retry, competing winner and deleted row preserved; "
         + "E2 batch ID, states, missing rows, logical aliases, cancellation and revision retry; "

@@ -21,10 +21,10 @@ final class DatabaseAccessChecks {
   private static final String SOURCE = "content://media/external/images/media/55000";
   private static final String ALIAS = "content://media/external/file/55000";
   private static final String ARCHIVE_LOOKUP =
-      "SELECT state,payload FROM photos WHERE state IN (?,?)";
+      "SELECT state,payload FROM photos WHERE state IN (?,?) ORDER BY rowid";
   private static final String HISTORY_LOOKUP =
       "SELECT id,dest_uri,file_name,file_size,shot_at,imported_at,camera_model,camera_serial"
-          + " FROM imported WHERE dest_uri IN (?,?,?,?)";
+          + " FROM imported WHERE dest_uri IN (?,?,?,?) ORDER BY id";
 
   static String run(Context context) throws Exception {
     String suffix = UUID.randomUUID().toString();
@@ -34,7 +34,10 @@ final class DatabaseAccessChecks {
       try (ArchiveStore seed = new ArchiveStore(context, archiveName);
           HistoryDb cameras = new HistoryDb(context, historyName)) {
         seedArchives(seed.getWritableDatabase());
-        seedHistory(cameras.getWritableDatabase());
+        SQLiteDatabase history = cameras.getWritableDatabase();
+        seedHistory(history);
+        history.execSQL("DROP INDEX idx_imported_dest_uri");
+        history.setVersion(4);
       }
       return checkArchives(context, archiveName) + "\n" + checkHistory(context, historyName);
     } finally {
@@ -69,7 +72,11 @@ final class DatabaseAccessChecks {
       check("released".equals(records.get(0).getString("state")), "state column remains authoritative");
       long revision = active.indexRevision();
       check(revision == ROWS, "all receipt revisions preserved");
+      check(active.verifiedKeys().size() == ROWS - 48, "verified receipts remain available");
       String plan = plan(db, ARCHIVE_LOOKUP, states);
+      check(plan.contains("SEARCH photos USING INDEX photos_state_key"), "state filter uses its index");
+      check(plan(db, "SELECT key FROM photos WHERE state=?", new String[] {"verified"})
+          .contains("COVERING INDEX photos_state_key"), "verified keys use the covering index");
       double millis = median(() -> active.inStates(states[0], states[1]).size());
       String overlap = overlap(db,
           () -> active.put(new JSONObject().put("key", "fixture-1").put("fixture", -1), "pending"),
@@ -93,12 +100,16 @@ final class DatabaseAccessChecks {
       check(active.findCamera("fixture", "camera").getMassStorage(), "camera settings preserved");
       check(active.photoImportRecords("fixture", "camera").stream()
           .anyMatch(row -> row.key.equals("fixture-2.jpg|2|10") && row.deleted), "deletion evidence preserved");
+      check(db.getVersion() == 5, "camera history schema 4 upgraded");
+      check("wal".equals(journal(db)), "shared history enables WAL");
       String plan = plan(db, HISTORY_LOOKUP, new String[] {SOURCE, ALIAS, SOURCE, ALIAS});
+      check(plan.contains("SEARCH imported USING INDEX idx_imported_dest_uri"), "destination lookup uses its index");
       double millis = median(() -> active.moveEvidenceFor(SOURCE, ALIAS, null, null).size());
       String overlap = overlap(db,
           () -> check(active.relocate(SOURCE, ALIAS, "content://test/new", "1"), "tentative relocation"),
           () -> active.moveEvidenceFor(SOURCE, ALIAS, null, null).get(0).getId(),
           () -> other.moveEvidenceFor(SOURCE, ALIAS, null, null).get(0).getId());
+      check(overlap.equals("same:true,separate:true"), "shared and separate readers finish while writer holds WAL");
       check(active.hasMoveEvidence(SOURCE, ALIAS, "1") && active.containsMoveEvidence(1),
           "rollback restores import history identity and destination");
       return String.format(Locale.ROOT, "DB history schema=%d journal=%s count=%d median_ms=%.3f plan=%s overlap=%s",

@@ -9,7 +9,7 @@ import java.util.*;
 import java.util.concurrent.locks.ReentrantLock;
 import org.json.*;
 
-/** Durable verification metadata and previews, separate from expendable caches. */
+/** Durable verification metadata and previews. Each caller owns and closes its helper. */
 final class ArchiveStore extends SQLiteOpenHelper {
   // Only a single E2 photos write and the last legacy proof scan use this lock.
   static final ReentrantLock E2_PHOTO_UPSERT = new ReentrantLock(true);
@@ -24,7 +24,7 @@ final class ArchiveStore extends SQLiteOpenHelper {
   }
 
   ArchiveStore(Context c, String databaseName) {
-    super(c, databaseName, null, 4);
+    super(c, databaseName, null, 5);
     context = c.getApplicationContext();
     e2Photos = E2Settings.DATABASE.equals(databaseName);
   }
@@ -36,6 +36,7 @@ final class ArchiveStore extends SQLiteOpenHelper {
     db.execSQL(
         "CREATE TABLE photos (key TEXT PRIMARY KEY, state TEXT NOT NULL, payload TEXT NOT NULL)");
     createIndexRevision(db);
+    createStateIndex(db);
   }
 
   public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
@@ -48,6 +49,11 @@ final class ArchiveStore extends SQLiteOpenHelper {
       db.execSQL("ALTER TABLE metadata ADD COLUMN burst_mode INTEGER");
       db.execSQL("ALTER TABLE metadata ADD COLUMN burst_frame INTEGER");
     }
+    if (oldVersion < 5) createStateIndex(db);
+  }
+
+  private static void createStateIndex(SQLiteDatabase db) {
+    db.execSQL("CREATE INDEX photos_state_key ON photos(state,key)");
   }
 
   /** Only source photo records invalidate browsing; derived metadata and WAL checkpoints do not. */
@@ -457,7 +463,7 @@ final class ArchiveStore extends SQLiteOpenHelper {
 
   private boolean visitReceipts(String where, String[] args, ReceiptVisitor visitor) throws Exception {
     try (Cursor c = getReadableDatabase()
-        .query("photos", new String[] {"state", "payload"}, where, args, null, null, null)) {
+        .query("photos", new String[] {"state", "payload"}, where, args, null, null, "rowid")) {
       while (c.moveToNext())
         if (!visitor.visit(new JSONObject(c.getString(1)).put("state", c.getString(0)))) return false;
     }
