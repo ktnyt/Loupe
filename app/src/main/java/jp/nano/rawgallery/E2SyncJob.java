@@ -56,8 +56,7 @@ public final class E2SyncJob extends JobService {
   }
 
   static void setEnabled(Context context, boolean enabled, String bucket) {
-    if (enabled && !ORIGINALS.tryLock())
-      throw new IllegalStateException("端末オリジナルの整理が終わるまで待ってください");
+    if (enabled && !ORIGINALS.tryLock()) throw new IllegalStateException("端末オリジナルの整理が終わるまで待ってください");
     try {
       synchronized (E2Settings.DESTINATION_LOCK) {
         setEnabledLocked(context, enabled, bucket);
@@ -68,16 +67,16 @@ public final class E2SyncJob extends JobService {
   }
 
   private static void setEnabledLocked(Context context, boolean enabled, String bucket) {
-    if (enabled && (RUNNING.get()
-        || context.getSharedPreferences("settings", 0).getBoolean("cleanupEnabled", false)))
+    if (enabled
+        && (RUNNING.get() || SettingsRepository.cleanupEnabled(SettingsRepository.open(context))))
       throw new IllegalStateException("既存のオリジナル整理を停止してから開始してください");
     if (enabled && (bucket == null || !bucket.equals(E2Settings.configuredBucket(context))))
       throw new IllegalStateException("保存先が変わりました。設定を開き直してください");
     JobScheduler scheduler = context.getSystemService(JobScheduler.class);
     android.content.SharedPreferences state = E2AutoSync.state(context);
     String observed = enabled ? bucket : state.getString("destination", "");
-    android.content.SharedPreferences.Editor setting = state.edit().putBoolean("enabled", enabled)
-        .putString("destination", enabled ? bucket : "");
+    android.content.SharedPreferences.Editor setting =
+        state.edit().putBoolean("enabled", enabled).putString("destination", enabled ? bucket : "");
     E2AutoSync.clearBatch(setting);
     E2AutoSync.clearSettled(setting);
     if (!observed.isEmpty()) setting.putString("observationBucket", observed);
@@ -86,8 +85,7 @@ public final class E2SyncJob extends JobService {
       JobState.write(setting, "", JobState.Kind.WAITING, System.currentTimeMillis())
           .putBoolean("CountsKnown", false);
     } else setting.remove("cleanupBucket").remove("cleanupDays").remove("fullMediaConsent");
-    if (!setting.commit())
-      throw new IllegalStateException("自動同期の設定を保存できません");
+    if (!setting.commit()) throw new IllegalStateException("自動同期の設定を保存できません");
     if (!enabled) {
       scheduler.cancel(PERIODIC);
       scheduler.cancel(FIRST);
@@ -114,12 +112,19 @@ public final class E2SyncJob extends JobService {
   // Content jobs cannot be persisted. Android owns these observers, including when Loupe exits.
   private static boolean scheduleMediaJob(Context context) {
     ComponentName service = new ComponentName(context, E2SyncJob.class);
-    JobInfo.Builder builder = job(MEDIA_CHANGED, service)
-        .setTriggerContentUpdateDelay(500).setTriggerContentMaxDelay(2_000);
-    for (android.net.Uri uri : new android.net.Uri[] {MediaStore.Files.getContentUri("external"),
-        MediaStore.Images.Media.EXTERNAL_CONTENT_URI, MediaStore.Video.Media.EXTERNAL_CONTENT_URI})
-      builder.addTriggerContentUri(new JobInfo.TriggerContentUri(uri,
-          JobInfo.TriggerContentUri.FLAG_NOTIFY_FOR_DESCENDANTS));
+    JobInfo.Builder builder =
+        job(MEDIA_CHANGED, service)
+            .setTriggerContentUpdateDelay(500)
+            .setTriggerContentMaxDelay(2_000);
+    for (android.net.Uri uri :
+        new android.net.Uri[] {
+          MediaStore.Files.getContentUri("external"),
+          MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+          MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+        })
+      builder.addTriggerContentUri(
+          new JobInfo.TriggerContentUri(
+              uri, JobInfo.TriggerContentUri.FLAG_NOTIFY_FOR_DESCENDANTS));
     return context.getSystemService(JobScheduler.class).schedule(builder.build())
         == JobScheduler.RESULT_SUCCESS;
   }
@@ -131,30 +136,36 @@ public final class E2SyncJob extends JobService {
       long interval = E2Cleanup.enabled(context, bucket) ? RETRY_DELAY_MS : RECOVERY_INTERVAL_MS;
       JobScheduler scheduler = context.getSystemService(JobScheduler.class);
       JobInfo pending = scheduler.getPendingJob(PERIODIC);
-      if (pending != null && pending.isPeriodic() && pending.getIntervalMillis() == interval) return true;
+      if (pending != null && pending.isPeriodic() && pending.getIntervalMillis() == interval)
+        return true;
       ComponentName service = new ComponentName(context, E2SyncJob.class);
-      return scheduler.schedule(job(PERIODIC, service).setPersisted(true).setPeriodic(interval).build())
+      return scheduler.schedule(
+              job(PERIODIC, service).setPersisted(true).setPeriodic(interval).build())
           == JobScheduler.RESULT_SUCCESS;
     }
   }
 
   private static void ensureMediaJob(Context context) {
     synchronized (E2Settings.DESTINATION_LOCK) {
-      if (enabled(context) && fullMediaConsent(context) && E2Settings.hasMediaAccess(context)
+      if (enabled(context)
+          && fullMediaConsent(context)
+          && E2Settings.hasMediaAccess(context)
           && context.getSystemService(JobScheduler.class).getPendingJob(MEDIA_CHANGED) == null
-          && !scheduleMediaJob(context)) Log.w("LoupeE2Sync", "Media observation scheduling declined");
+          && !scheduleMediaJob(context))
+        Log.w("LoupeE2Sync", "Media observation scheduling declined");
     }
   }
 
   static void recoverOnOpen(Context context) {
     if (!OPEN_RECOVERY_QUEUED.compareAndSet(false, true)) return;
-    CompletableFuture.runAsync(() -> {
-      try {
-        recoverSchedules(context, false);
-      } finally {
-        OPEN_RECOVERY_QUEUED.set(false);
-      }
-    });
+    CompletableFuture.runAsync(
+        () -> {
+          try {
+            recoverSchedules(context, false);
+          } finally {
+            OPEN_RECOVERY_QUEUED.set(false);
+          }
+        });
   }
 
   private static void recoverSchedules(Context context, boolean systemRestart) {
@@ -166,11 +177,15 @@ public final class E2SyncJob extends JobService {
         boolean missingObserver = scheduler.getPendingJob(MEDIA_CHANGED) == null;
         // Schedule the catch-up first so a refused request leaves the observer eligible
         // for on-open repair. Existing active or pending work can perform the catch-up.
-        if ((missingObserver || systemRestart) && !RUNNING.get()
+        if ((missingObserver || systemRestart)
+            && !RUNNING.get()
             && scheduler.getPendingJob(FIRST) == null
             && scheduler.getPendingJob(CONTINUATION) == null
-            && !scheduleContinuation(context, E2AutoSync.state(context).getString("destination", ""),
-                0, systemRestart ? CONTINUATION_DELAY_MS : 0)) return;
+            && !scheduleContinuation(
+                context,
+                E2AutoSync.state(context).getString("destination", ""),
+                0,
+                systemRestart ? CONTINUATION_DELAY_MS : 0)) return;
         if (missingObserver) ensureMediaJob(context);
       } catch (IllegalStateException unavailable) {
         Log.w("LoupeE2Sync", "Recovery scheduler unavailable");
@@ -178,11 +193,14 @@ public final class E2SyncJob extends JobService {
     }
   }
 
-  private static boolean scheduleContinuation(Context context, String bucket, int finishedJobId,
-      long delay) {
+  private static boolean scheduleContinuation(
+      Context context, String bucket, int finishedJobId, long delay) {
     synchronized (E2Settings.DESTINATION_LOCK) {
-      if (!enabled(context) || !fullMediaConsent(context) || !E2Settings.hasMediaAccess(context)
-          || bucket == null || bucket.isEmpty()
+      if (!enabled(context)
+          || !fullMediaConsent(context)
+          || !E2Settings.hasMediaAccess(context)
+          || bucket == null
+          || bucket.isEmpty()
           || !bucket.equals(E2AutoSync.state(context).getString("destination", ""))
           || !bucket.equals(E2Settings.configuredBucket(context))) return false;
       int jobId = finishedJobId == CONTINUATION ? FIRST : CONTINUATION;
@@ -200,7 +218,8 @@ public final class E2SyncJob extends JobService {
   }
 
   public static final class AfterUpdate extends BroadcastReceiver {
-    @Override public void onReceive(Context context, Intent intent) {
+    @Override
+    public void onReceive(Context context, Intent intent) {
       if (Intent.ACTION_MY_PACKAGE_REPLACED.equals(intent.getAction())
           || Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) {
         recoverSchedules(context, true);
@@ -208,7 +227,8 @@ public final class E2SyncJob extends JobService {
     }
   }
 
-  @Override public boolean onStartJob(JobParameters params) {
+  @Override
+  public boolean onStartJob(JobParameters params) {
     if (!enabled(this)) return false;
     boolean media = params.getJobId() == MEDIA_CHANGED;
     if (!media) ensureMediaJob(this);
@@ -222,44 +242,58 @@ public final class E2SyncJob extends JobService {
     current = params;
     AtomicBoolean cancel = new AtomicBoolean();
     stopped = cancel;
-    worker.execute(() -> {
-      runningThread = Thread.currentThread();
-      E2AutoSync.FollowUp followUp = E2AutoSync.FollowUp.NONE;
-      try {
-        followUp = E2AutoSync.run(getApplicationContext(), network,
-            () -> cancel.get() || !enabled(this) || !E2Archive.unmetered(this, network));
-      } finally {
-        runningThread = null;
-        E2AutoSync.FollowUp result = followUp;
-        String destination = result.destination();
-        new Handler(Looper.getMainLooper()).post(() -> {
-          RUNNING.set(false);
-          if (current != params) return;
-          current = null;
-          JobState.Kind kind;
-          synchronized (E2Settings.DESTINATION_LOCK) {
-            kind = E2AutoSync.snapshot(this, false).kind;
-            boolean rearmed = media && enabled(this) && scheduleMediaJob(this);
-            if (!rearmed) jobFinished(params, media && enabled(this));
-            if (!cancel.get() && result.retryUnnecessary() && kind == JobState.Kind.COMPLETE
-                && enabled(this)) {
-              JobScheduler scheduler = getSystemService(JobScheduler.class);
-              if (rearmed || (!media && scheduler.getPendingJob(MEDIA_CHANGED) != null))
-                cancelDeferredRetries(scheduler, params.getJobId());
-            }
-          }
-          if (!ensureRecoverySchedule(this)) Log.w("LoupeE2Sync", "Recovery scheduling declined");
-          if (cancel.get()) return;
-          if (destination != null) {
-            scheduleContinuation(this, destination, params.getJobId(), CONTINUATION_DELAY_MS);
-          } else if (kind == JobState.Kind.FAILED || kind == JobState.Kind.PARTIAL
-              || kind == JobState.Kind.PAUSED) {
-            scheduleContinuation(this, E2AutoSync.state(this).getString("destination", ""),
-                params.getJobId(), RETRY_DELAY_MS);
+    worker.execute(
+        () -> {
+          runningThread = Thread.currentThread();
+          E2AutoSync.FollowUp followUp = E2AutoSync.FollowUp.NONE;
+          try {
+            followUp =
+                E2AutoSync.run(
+                    getApplicationContext(),
+                    network,
+                    () -> cancel.get() || !enabled(this) || !E2Archive.unmetered(this, network));
+          } finally {
+            runningThread = null;
+            E2AutoSync.FollowUp result = followUp;
+            String destination = result.destination();
+            new Handler(Looper.getMainLooper())
+                .post(
+                    () -> {
+                      RUNNING.set(false);
+                      if (current != params) return;
+                      current = null;
+                      JobState.Kind kind;
+                      synchronized (E2Settings.DESTINATION_LOCK) {
+                        kind = E2AutoSync.snapshot(this, false).kind;
+                        boolean rearmed = media && enabled(this) && scheduleMediaJob(this);
+                        if (!rearmed) jobFinished(params, media && enabled(this));
+                        if (!cancel.get()
+                            && result.retryUnnecessary()
+                            && kind == JobState.Kind.COMPLETE
+                            && enabled(this)) {
+                          JobScheduler scheduler = getSystemService(JobScheduler.class);
+                          if (rearmed || (!media && scheduler.getPendingJob(MEDIA_CHANGED) != null))
+                            cancelDeferredRetries(scheduler, params.getJobId());
+                        }
+                      }
+                      if (!ensureRecoverySchedule(this))
+                        Log.w("LoupeE2Sync", "Recovery scheduling declined");
+                      if (cancel.get()) return;
+                      if (destination != null) {
+                        scheduleContinuation(
+                            this, destination, params.getJobId(), CONTINUATION_DELAY_MS);
+                      } else if (kind == JobState.Kind.FAILED
+                          || kind == JobState.Kind.PARTIAL
+                          || kind == JobState.Kind.PAUSED) {
+                        scheduleContinuation(
+                            this,
+                            E2AutoSync.state(this).getString("destination", ""),
+                            params.getJobId(),
+                            RETRY_DELAY_MS);
+                      }
+                    });
           }
         });
-      }
-    });
     return true;
   }
 
@@ -272,7 +306,8 @@ public final class E2SyncJob extends JobService {
     }
   }
 
-  @Override public boolean onStopJob(JobParameters params) {
+  @Override
+  public boolean onStopJob(JobParameters params) {
     if (current != null && current.getJobId() == params.getJobId()) {
       current = null;
       interrupt();
@@ -286,7 +321,8 @@ public final class E2SyncJob extends JobService {
     if (thread != null) thread.interrupt();
   }
 
-  @Override public void onDestroy() {
+  @Override
+  public void onDestroy() {
     interrupt();
     worker.shutdown();
     super.onDestroy();

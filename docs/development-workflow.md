@@ -48,7 +48,7 @@ python3 scripts/issue-progress.py record --issue ISSUE --run WORK_ID --phase ins
 python3 scripts/deploy-apk.py status
 ```
 
-prepareはcallerの未保存変更を拒否し、origin/mainをfetchして、そのコミットだけを新しい一時worktreeでビルドする。APKとsource commit/tree、SHA-256、applicationId、versionCode、署名証明書、検出した必須機能を同じbundleへ記録する。source commit/tree・mode・issueはビルド時にassetとしてAPKへ埋め込み、APKの署名対象に含める。installはbundleとの一致を確認し、JSONだけをmain扱いに書き換えたAPKを拒否する。既存APKへmain証明を後付けするコマンドは設けない。bundleと端末記録はgit管理外。
+prepareはcallerの未保存変更を拒否し、origin/mainをfetchして、そのコミットだけを新しい一時worktreeでReleaseとしてビルドする。APKとsource commit/tree、SHA-256、applicationId、versionCode、署名証明書、非デバッグ設定、検出した必須機能を同じbundleへ記録する。署名入力は `LOUPE_RELEASE_KEYSTORE`、`LOUPE_RELEASE_STORE_PASSWORD`、`LOUPE_RELEASE_KEY_ALIAS`、`LOUPE_RELEASE_KEY_PASSWORD`。常用版では配布済みの証明書と一致させる。source commit/tree・mode・issueはビルド時にassetとしてAPKへ埋め込み、APKの署名対象に含める。installはbundleとの一致を確認し、JSONだけをmain扱いに書き換えたAPKを拒否する。既存APKへmain証明を後付けするコマンドは設けない。bundleと端末記録はgit管理外。
 
 installはAPKを非公開の一時ディレクトリへコピーし、同じスナップショットを検査・導入する。サイズ上限付きで署名対象provenanceを読み、重複を拒否する。これらを再計算し、ソースがmainに含まれること、端末と同じpackage/署名でversionCodeが下がらないこと、library/video/nano-banana/camera-importを備えることを確認する。現在の端末がcameraなしでも必須検査は残す。カメラは手動取込activity、有効なconnectedDevice serviceと権限、USB attach filter/metadataを検査する。USB受信は、従来の有効な公開CameraAttachActivity、または有効な非公開CameraAttachActivityを指す公開UsbAttachEntry aliasを認める。aliasは設定で切り替えるため初期無効でもよいが、正しいtargetActivityとUSB filter、camera_import_devicesのmetadata resource（APKでは数値参照も可）を必須とする。ただしmanifestだけではmenu欠落が分からないため、camera-tabsの常設カメラ/Nano設定遷移などのUI検査も行う。
 
@@ -60,6 +60,8 @@ main前に常用端末で確認が必要な場合は、issueと目的を明記�
 python3 scripts/deploy-apk.py prepare --mode recovery --ref <保存済みcommit> --issue ISSUE --output outputs/apk/recovery-<作業名>
 python3 scripts/issue-progress.py record --issue ISSUE --run WORK_ID --phase install --status start --note '復元用commitと対象端末' --then python3 scripts/deploy-apk.py install --bundle outputs/apk/recovery-<作業名>/bundle.json --serial SERIAL --ack-recovery
 ```
+
+同じ `prepare --mode recovery` で、Release署名設定を持つソースはRelease、設定導入前の保存済みコミットは従来のDebugとして準備します。旧ソースが読む `LOUPE_SIGNING_KEYSTORE` を指定するか、その版のビルドが参照する場所に更新と互換のある従来の署名鍵を用意します。後者にもissue・署名対象の来歴・必須機能の検査と導入時の `--ack-recovery` が必要です。以前に作成済みのrecovery bundleは元のAPKと来歴を照合して導入でき、再prepareは不要です。main用に新しく準備・公開・OTA照合するAPKには非デバッグのReleaseを使います。
 
 recovery導入後はpending-main-integrationとなり、statusは成功にしない。次のAPKもrecoveryであっても、未統合の復元コミットを含まなければ上書きを拒否する。端末から取得したAPK内の署名provenanceもmain/recoveryの両方で祖先検査するため、Mac側の記録がない場合やADB serialが変わった場合も復元コミットを引き継ぐ。ソースcommitはmerge commitまたはfast-forwardで祖先関係を保ってmainへ反映する。導入済recoveryをsquash/rebaseして元commitを祖先から外さない。その後、mainから作り直したAPKを導入・読み戻して閉じる。機能を欠くmainを戻し先にしない。実機で確認できないまま常用検証APKを残してdeliveryを完了にしない。実機導入・確認が残るPRはRefsとして、完了前のissue自動クローズを避ける。
 
