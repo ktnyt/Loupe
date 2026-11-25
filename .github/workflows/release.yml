@@ -41,6 +41,9 @@ jobs:
         env:
           FORMAT_CHANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
         run: |
+          if [[ "$FORMAT_CHANGE_BASE" == 0000000000000000000000000000000000000000 ]]; then
+            FORMAT_CHANGE_BASE=HEAD
+          fi
           python3 scripts/ci_gradle.py \
             -PformatChangeBase="$FORMAT_CHANGE_BASE" spotlessCheck :app:testDebugUnitTest \
             :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug \
