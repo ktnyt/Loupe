@@ -4,11 +4,16 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 sdk=${ANDROID_HOME:?Set ANDROID_HOME to the Android SDK directory}
 image=${LOUPE_INSTRUMENTATION_IMAGE:-system-images;android-35;google_apis;x86_64}
+port=${LOUPE_INSTRUMENTATION_PORT:-5580}
+if [[ ! "$port" =~ ^[0-9]{4}$ ]] || (( 10#$port < 5554 || 10#$port > 5682 || 10#$port % 2 )); then
+  echo 'Use an even emulator console port from 5554 through 5682.' >&2
+  exit 2
+fi
+serial="emulator-$port"
 work=$(mktemp -d)
 export ANDROID_AVD_HOME="$work"
 adb="$sdk/platform-tools/adb"
-port=5580
-serial="emulator-$port"
+avd="loupe-ci-${work##*.}"
 emulator_pid=
 cleanup() {
   if [[ -n "$emulator_pid" ]]; then
@@ -24,8 +29,8 @@ if [[ "$devices" == *"$serial"$'\t'* ]]; then
   echo "$serial already exists; refusing to run CI checks on it." >&2
   exit 1
 fi
-"$sdk/cmdline-tools/latest/bin/avdmanager" create avd --name loupe-ci --package "$image" --device pixel_6 < /dev/null
-"$sdk/emulator/emulator" -avd loupe-ci -port "$port" \
+"$sdk/cmdline-tools/latest/bin/avdmanager" create avd --name "$avd" --package "$image" --device pixel_6 < /dev/null
+"$sdk/emulator/emulator" -avd "$avd" -port "$port" \
   -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect >"$work/emulator.log" 2>&1 &
 emulator_pid=$!
 deadline=$((SECONDS + 240))
@@ -38,6 +43,11 @@ until [[ $("$adb" -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr
   fi
   sleep 2
 done
+running_avd=$("$adb" -s "$serial" emu avd name | tr -d '\r' | head -n 1)
+if [[ "$running_avd" != "$avd" ]]; then
+  echo "The selected serial does not belong to the disposable AVD ($running_avd)." >&2
+  exit 1
+fi
 abi=$("$adb" -s "$serial" shell getprop ro.product.cpu.abilist | tr -d '\r')
 case ",$abi," in
   *,arm64-v8a,*) ;;
