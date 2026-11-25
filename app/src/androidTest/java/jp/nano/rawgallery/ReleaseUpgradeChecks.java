@@ -1,5 +1,6 @@
 package jp.nano.rawgallery;
 
+import android.content.ContentUris;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -11,6 +12,7 @@ import android.provider.MediaStore;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 import jp.nano.rawgallery.camera.HistoryDb;
 import jp.nano.rawgallery.camera.ImportedKey;
@@ -56,11 +58,21 @@ final class ReleaseUpgradeChecks {
     try (HistoryDb history = new HistoryDb(context)) {
       history.recordImport(MODEL, SERIAL, key, originalUri.toString());
     }
-    require(new RankingStore(context).saveSingleBest(originalUri.toString(), false, true));
+    List<PhotoRepository.Photo> photos = new PhotoRepository(context).scan("すべて");
+    PhotoRepository.Photo originalPhoto = photo(photos, originalUri, ORIGINAL);
+    PhotoRepository.Photo editPhoto = photo(photos, editUri, EDIT);
+    String originalKey = ArchiveStore.key(originalPhoto);
+    String editKey = ArchiveStore.key(editPhoto);
+    RankingStore rankings = new RankingStore(context);
+    require(rankings.saveSingleBest(originalKey, false, true));
+    PhotoRanking comparison = rankings.load(List.of(originalKey, editKey));
+    comparison = comparison.choose(comparison.upper().equals(originalKey));
+    require(comparison.best().equals(List.of(originalKey)));
+    require(rankings.save(comparison));
     String tagId, photoId;
     try (TagStore tags = new TagStore(context)) {
       tagId = tags.create(TAG).id;
-      photoId = tags.photoId(photo(originalUri, original.length), true);
+      photoId = tags.photoId(originalPhoto, true);
       tags.record("release-upgrade", tagId, photoId, 0, TagJudgments.Value.ASSIGNED);
     }
     settings.setOutput("16:9", "2K");
@@ -68,7 +80,8 @@ final class ReleaseUpgradeChecks {
     require(witness.edit().putLong("version", version).putLong("installed", installed)
         .putString("original", originalUri.toString()).putString("edit", editUri.toString())
         .putInt("size", original.length).putString("tag", tagId).putString("tag-photo", photoId)
-        .commit());
+        .putString("original-key", originalKey).putString("edit-key", editKey)
+        .putString("comparison", comparison.journal).commit());
   }
 
   private static void verify(Context context, SharedPreferences witness) throws Exception {
@@ -85,11 +98,26 @@ final class ReleaseUpgradeChecks {
       require(Boolean.FALSE.equals(history.importedKeys(MODEL, SERIAL).get(key.asString())));
       require(history.importDestinations().contains(originalUri.toString()));
     }
-    require(new RankingStore(context).singleBest(originalUri.toString()));
+    List<PhotoRepository.Photo> photos = new PhotoRepository(context).scan("すべて");
+    PhotoRepository.Photo originalPhoto = photo(photos, originalUri, ORIGINAL);
+    PhotoRepository.Photo editPhoto = photo(photos, editUri, EDIT);
+    String originalKey = ArchiveStore.key(originalPhoto);
+    String editKey = ArchiveStore.key(editPhoto);
+    require(originalKey.equals(witness.getString("original-key", "")));
+    require(editKey.equals(witness.getString("edit-key", "")));
+    RankingStore rankings = new RankingStore(context);
+    require(rankings.singleBest(originalKey));
+    PhotoRanking comparison = rankings.load(List.of(originalKey, editKey));
+    require(comparison.journal.equals(witness.getString("comparison", "")));
+    require(comparison.done() && comparison.order.equals(List.of(originalKey, editKey)));
+    require(comparison.best().equals(List.of(originalKey)) && comparison.selectionCount(originalKey) == 1);
+    require(comparison.selectionCount(editKey) == 0);
     try (TagStore tags = new TagStore(context)) {
-      String photoId = tags.photoId(photo(originalUri, size), false);
+      String tagId = witness.getString("tag", "");
+      require(tags.tags().stream().anyMatch(tag -> TAG.equals(tag.name) && tagId.equals(tag.id)));
+      String photoId = tags.photoId(originalPhoto, false);
       require(Objects.equals(photoId, witness.getString("tag-photo", null)));
-      require(tags.load().value(witness.getString("tag", ""), photoId) == TagJudgments.Value.ASSIGNED);
+      require(tags.load().value(tagId, photoId) == TagJudgments.Value.ASSIGNED);
     }
     NanoBananaStore settings = new NanoBananaStore(context);
     require(CREDENTIAL.equals(settings.apiKey()));
@@ -97,8 +125,11 @@ final class ReleaseUpgradeChecks {
     require("16:9".equals(output.aspectRatio) && "2K".equals(output.resolution));
   }
 
-  private static PhotoRepository.Photo photo(Uri uri, long size) {
-    return new PhotoRepository.Photo(uri, ORIGINAL, DIR, size, SHOT_AT, 0);
+  private static PhotoRepository.Photo photo(List<PhotoRepository.Photo> photos, Uri uri, String name) {
+    long id = ContentUris.parseId(uri);
+    return photos.stream().filter(photo -> name.equals(photo.name) && !photo.isArchived()
+        && ContentUris.parseId(photo.uri) == id)
+        .findFirst().orElseThrow(() -> new AssertionError("Synthetic photo not visible in library"));
   }
 
   private static byte[] jpeg(int color) {
