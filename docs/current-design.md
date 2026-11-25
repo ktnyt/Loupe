@@ -1,18 +1,52 @@
 # Loupeの目的と現行設計
 
-整理日: 2026年10月25日（日本時間）。対象は `ab903e5` と、この時点の作業ツリー。
+現行のアプリ構成と機能の入口を記す。UIの方針は[Material 3 UI契約](material3-ui.md)、開発環境は[README](../README.md#ビルド)、設計の経緯は[設計履歴](design.md)を参照する。`docs/design/`のHTMLや画像と、この文書の2026年10月25日の検証結果は、当時の状態を記録したもの。
 
-本書は既存要件とコードを照合した設計の整理であり、新機能の採用や挙動変更の合意ではない。現行のUI設計方針は[Material 3 UI契約](material3-ui.md)に記し、`docs/design/`のHTMLや画像は歴史的資料として扱う。[design.md](design.md)は設計の履歴、[README](../README.md)は利用方法と過去の検証記録として残す。本書の契約は既存要件を整理したもので、実装前に作成された契約とは扱わない。
+## アプリの構成
 
-調査開始時点でREADME、`GalleryIndex.java`、`MainActivity.java`に未コミット変更があり、`IndexRefreshRequests.java`とそのテストが未追跡だった。写真追加の反映改善として本書に含める。最初の整理では文書のみ変更し、その後の依頼で共有準備と順位保存を分離した。分離前の契約と実施結果は末尾に記録する。
+通常配布する `app` は `jp.nano.rawgallery`。写真・動画の閲覧と選抜、カメラ取り込み、共有、RAWとNano Bananaの編集、クラウド保管、処理状況を提供する。`raw-experiment` は別のapplicationIdでRAW編集を検証する。共用するJavaを絞って取り込み、同じネイティブ実装をビルドする。
+
+```mermaid
+flowchart LR
+  User[利用者] --> Library[ライブラリ・選抜・タグ]
+  User --> Import[カメラ取り込み]
+  User --> Monitor[処理の状況・診断]
+  Library --> Index[端末の閲覧索引と保管記録]
+  Library --> Video[動画再生]
+  Library --> Share[共有用コピー]
+  Library --> Raw[RAW編集]
+  Library --> Nano[Nano Banana]
+  Library --> Backup[保管・復元・容量整理]
+  Camera[USBカメラ・SDカード・対応Wi-Fiカメラ] --> Import
+  Import --> Target[PhotoStorageで書き込み先を選択]
+  Import --> History[HistoryDb・CameraImportLedgerに記録]
+  Import --> Media[端末のオリジナルと新規出力]
+  Media --> Index
+  Index --> Video
+  Raw --> Media
+  Nano --> Media
+  Backup <--> Media
+  Backup <--> E2[IDrive e2 東京]
+  Nano --> E2
+  Nano <--> AI[NanoBananaAPI.ai]
+  Backup --> Monitor
+  Index --> Monitor
+```
+
+| 利用する機能 | 実装の入口と状態 | 詳細 |
+| --- | --- | --- |
+| ライブラリ・再生・選抜 | `MainActivity` が `PhotoRepository` と `GalleryIndex` で写真・動画の一覧を開く。`VideoActivity` が動画を再生し、順位とタグはそれぞれ `RankingStore` と `TagStore` が保存する | [閲覧の契約](#p1-写真を探して確認する)・[タグ](tag-confidence-contract.md) |
+| カメラ取り込み | `CameraImportActivity` と取り込み処理がUSB・SD・対応Wi-Fiの入力を扱う。`PhotoStorage` が書き込み先のMediaStoreボリュームを選ぶ。カメラ設定と従来形式の履歴を `HistoryDb`、内容照合済みの取り込み記録と公開の復旧情報を `CameraImportLedger` が保存する | [取り込みの入口](camera-quick-import.md)・[保存先と履歴](photo-storage-contract.md) |
+| 共有とRAW編集 | `SharePreparation` は共有コピーを用意する。`RawEditActivity` / `RawEditFullSession` はLibRaw・EGLなどで処理し、調整したJPEGを別ファイルとして保存する | [共有](#p4-指定形式で外部アプリへ渡す)・[原寸RAW現像](raw-full-resolution-contract.md) |
+| IDrive e2保管・復元 | `E2SyncActivity` と `E2SyncJob` が写真・動画のバックアップと復元一覧を扱う。`ArchiveStore` の保管記録を索引とは別に持ち、容量整理は照合済みの条件で実行する | [IDrive e2の運用](e2-production-contract.md) |
+| Nano Banana | `NanoBananaSettingsActivity` で認証情報とプロンプトを設定する。`NanoBananaService` はe2に置いた限定の送信用画像で外部の生成を依頼し、検査した結果を別JPEGへ保存する | [Nano Bananaの設定と後処理](nano-banana.md) |
+| 処理の状況・診断 | `DashboardActivity` が保存済みの処理状態を表示する。診断はアプリ専用領域に記録し、利用者の保存操作で許可範囲の項目を端末内のZIPへ出す | [処理状況](background-dashboard.md)・[診断記録](diagnostics.md) |
 
 ## 文脈と最上位の目的
 
-個人のAndroid端末で、撮った写真を見返し、連写から好みの写真を選び、希望するアプリへ渡す。オリジナルをクラウドに保管し、端末容量を空けた後も写真を利用できるようにする。
+個人のAndroid端末に写真・動画を取り込み、見返し、連写から好みの写真を選び、編集結果や選んだ写真を使う。オリジナルを保管し、端末容量を整理した後も利用できるようにする。
 
-Android 11以降を対象とする。RAWの現像エンジンを作るのではなく、カメラの埋め込みJPEGを使う。Amazon Photosの非公式接続は既存の試作方式であり、将来の接続継続を保証しない。閲覧・選抜・共有では端末オリジナルを変更せず、削除は明示的に有効化する容量整理だけが担う。
-
-以下の親子関係は、既存の要件を今回整理したもの。目的名自体が過去に合意されたという意味ではない。
+ライブラリのRAW表示には埋め込みJPEGを使い、RAW編集では現像結果を別ファイルへ保存する。クラウド保管・復元の現行e2経路は[運用契約](e2-production-contract.md)に定める。以下の目的図とP1〜P6は、閲覧・選抜・共有・保管に関する2026年10月25日からの整理を引き継いでいる。
 
 ```mermaid
 flowchart TD
@@ -185,7 +219,9 @@ flowchart TD
 
 既存のUI・クラウド方式・識別子・保存形式は今回変更しない。新たな抽象層の一律導入も要件とはしない。
 
-## 今回の検証記録
+## 2026年10月25日の検証記録
+
+初回整理は `ab903e5` と当時の作業ツリーが対象だった。README、`GalleryIndex.java`、`MainActivity.java`の未コミット変更、および当時未追跡の `IndexRefreshRequests.java` とテストを照合した。その後、共有準備と順位保存を分離した。
 
 ### 共有準備・順位保存の分離契約（2026年10月25日、実装前）
 
@@ -248,6 +284,6 @@ JobState.snapshot相当の読取では旧データ・不明コード・時刻欠
 
 可視の状態文を形と数値へ統一し、操作名・機能見出し・写真メタデータ・安全確認を保持する。実装前契約と全対象は[状態表示](visual-status.md)を正とする。明示した状態と原因を描画し、JobStateの未知・未計測を成功や0件と扱わない。読み上げと明示的な復帰操作を保持する。実装/実機検証は進行に応じて別記する。
 
-## 処理状況ダッシュボード（設計・未実装）
+## 処理状況ダッシュボード
 
-#16の[観測契約](background-dashboard.md)と[当時のHTMLプロトタイプ](design/loupe-issue16-dashboard.html)を使用する。その他から4工程と共通準備ジョブの保存済み状態を読取専用で確認する設計で、現在のAndroidに画面はまだない。未計測は—、工程別の結果と共通ジョブ結果、前面抑制条件を区別する。[実装#39](https://github.com/ktnyt/Loupe/issues/39)で実機検証まで行う。
+「処理の状況」を開くと、`DashboardActivity` が保存済みの観測値を表示する。未計測値は「—」とし、工程ごとの結果、共通の準備ジョブ、前面での実行抑制を区別する。診断の記録・ZIP保存もここから操作できる。 [観測契約](background-dashboard.md) [診断記録](diagnostics.md) [初期実装 #39](https://github.com/ktnyt/Loupe/issues/39)
