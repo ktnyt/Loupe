@@ -5,7 +5,7 @@ test_dir=$(mktemp -d)
 trap 'rm -rf "$test_dir"' EXIT HUP INT TERM
 javac -d "$test_dir" "$project_dir/app/src/main/java/jp/nano/rawgallery/RawPreview.java" \
   "$project_dir/app/src/main/java/jp/nano/rawgallery/RawFormats.java" "$project_dir/tests/RawPreviewStructureTest.java" \
-  "$project_dir/app/src/androidTest/java/jp/nano/rawgallery/BurstMakerNoteFixture.java" \
+  "$project_dir/app/src/sharedTest/java/jp/nano/rawgallery/BurstMakerNoteFixture.java" \
   "$project_dir/tests/BurstFrameTest.java"
 java -Djava.awt.headless=true -cp "$test_dir" jp.nano.rawgallery.RawPreviewStructureTest
 java -cp "$test_dir" jp.nano.rawgallery.BurstFrameTest "$@"
