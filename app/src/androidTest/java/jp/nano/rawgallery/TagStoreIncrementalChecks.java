@@ -16,21 +16,20 @@ final class TagStoreIncrementalChecks {
   static void run(Context context) {
     String name = "tag-incremental-test-" + UUID.randomUUID() + ".db";
     try {
-      String tag, first, second, third;
-      TagJudgments expected;
-      try (TagStore store = new TagStore(context, name)) {
-        tag = store.create("判断").id;
-        first = photoId(store, 1);
-        second = photoId(store, 2);
-        third = photoId(store, 3);
-        expected = new TagJudgments().record("first", tag, first, 0, YES);
-        same(expected, store.record("first", tag, first, 0, YES));
-        // Reproduce the schema readers used before the incremental update, with live rows.
-        store.getWritableDatabase().execSQL("DROP INDEX history_judgment_revision");
-        store.getWritableDatabase().setVersion(3);
+      String tag = "legacy-tag",
+          first = "legacy-first",
+          second = "legacy-second",
+          third = "legacy-third";
+      TagJudgments expected = new TagJudgments().record("first", tag, first, 0, YES);
+      try (var db = context.openOrCreateDatabase(name, Context.MODE_PRIVATE, null)) {
+        LegacyTagDatabase.create(db, 3);
+        LegacyTagDatabase.insertAssignment(db, tag, "判断", first, photo(1), "first");
+        LegacyTagDatabase.insertPhoto(db, second, photo(2));
+        LegacyTagDatabase.insertPhoto(db, third, photo(3));
       }
       try (TagStore store = new TagStore(context, name)) {
         same(expected, store.load());
+        same(expected, store.record("first", tag, first, 0, YES));
         check(
             store.getReadableDatabase().getVersion() == 4, "version 3 upgraded with same history");
         assertPlan(
@@ -155,16 +154,14 @@ final class TagStoreIncrementalChecks {
     }
   }
 
-  private static String photoId(TagStore store, int index) {
-    return store.photoId(
-        new PhotoRepository.Photo(
-            Uri.parse("content://test/tag-photo/" + index),
-            "fixture-" + index + ".jpg",
-            "test/",
-            10,
-            2,
-            0),
-        true);
+  private static PhotoRepository.Photo photo(int index) {
+    return new PhotoRepository.Photo(
+        Uri.parse("content://test/tag-photo/" + index),
+        "fixture-" + index + ".jpg",
+        "test/",
+        10,
+        2,
+        0);
   }
 
   private static void assertPlan(TagStore store, String sql, String[] args, String index) {
