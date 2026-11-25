@@ -1,0 +1,990 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<issues format="6" by="lint 8.10.1" type="baseline" client="gradle" dependencies="false" name="AGP (8.10.1)" variant="all" version="8.10.1">
+
+    <issue
+        id="ExifInterface"
+        message="Avoid using `android.media.ExifInterface`; use `androidx.exifinterface.media.ExifInterface` instead"
+        errorLine1="import android.media.ExifInterface;"
+        errorLine2="       ~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build/generated/raw-editor/java/jp/nano/rawgallery/RawEditSource.java"
+            line="5"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="LockedOrientationActivity"
+        message="Expecting `android:screenOrientation=&quot;unspecified&quot;` or `&quot;fullSensor&quot;` for this activity so the user can use the application in any orientation and provide a great experience on Chrome OS devices"
+        errorLine1="        &lt;activity android:name=&quot;jp.nano.rawgallery.RawEditActivity&quot; android:exported=&quot;true&quot; android:screenOrientation=&quot;portrait&quot;>"
+        errorLine2="                                                                                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/AndroidManifest.xml"
+            line="4"
+            column="93"/>
+    </issue>
+
+    <issue
+        id="SourceLockedOrientationActivity"
+        message="You should not lock orientation of your activities, so that you can support a good user experience for any device or orientation"
+        errorLine1="    super.onCreate(bundle);RawEditLog.enabled=(getApplicationInfo().flags&amp;ApplicationInfo.FLAG_DEBUGGABLE)!=0;setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);"
+        errorLine2="                                                                                                              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build/generated/raw-editor/java/jp/nano/rawgallery/RawEditActivity.java"
+            line="78"
+            column="111"/>
+    </issue>
+
+    <issue
+        id="DiscouragedApi"
+        message="Should not restrict activity to fixed orientation. This may not be suitable for different form factors, causing the app to be letterboxed."
+        errorLine1="        &lt;activity android:name=&quot;jp.nano.rawgallery.RawEditActivity&quot; android:exported=&quot;true&quot; android:screenOrientation=&quot;portrait&quot;>"
+        errorLine2="                                                                                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/AndroidManifest.xml"
+            line="4"
+            column="93"/>
+    </issue>
+
+    <issue
+        id="PluralsCandidate"
+        message="Formatting %d followed by words (&quot;already&quot;): This should probably be a plural rather than a string"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_done_nothing&quot;>No new photos or videos (%d already imported)&lt;/string>"
+        errorLine2="    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="15"
+            column="5"/>
+    </issue>
+
+    <issue
+        id="PluralsCandidate"
+        message="Formatting %d followed by words (&quot;from&quot;): This should probably be a plural rather than a string"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_deleted_suffix&quot;>. Deleted %d from the camera&lt;/string>"
+        errorLine2="    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="21"
+            column="5"/>
+    </issue>
+
+    <issue
+        id="PluralsCandidate"
+        message="Formatting %d followed by words (&quot;previously&quot;): This should probably be a plural rather than a string"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_resurrected_suffix&quot;>. %d previously deleted files have reappeared on the camera; they are already imported and will be skipped&lt;/string>"
+        errorLine2="    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="24"
+            column="5"/>
+    </issue>
+
+    <issue
+        id="PluralsCandidate"
+        message="Formatting %d followed by words (&quot;saved&quot;): This should probably be a plural rather than a string"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_delete_unverified_suffix&quot;>. Could not verify %1$d saved files; kept the camera originals&lt;/string>"
+        errorLine2="    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="26"
+            column="5"/>
+    </issue>
+
+    <issue
+        id="ChromeOsAbiSupport"
+        message="Missing x86_64 ABI support for ChromeOS"
+        errorLine1="        ndk { abiFilters &apos;arm64-v8a&apos; }"
+        errorLine2="                         ~~~~~~~~~~~">
+        <location
+            file="build.gradle"
+            line="12"
+            column="26"/>
+    </issue>
+
+    <issue
+        id="DataExtractionRules"
+        message="The attribute `android:allowBackup` is deprecated from Android 12 and higher and may be removed in future versions. Consider adding the attribute `android:dataExtractionRules` specifying an `@xml` resource which configures cloud backups and device transfers on Android 12 and higher."
+        errorLine1="    &lt;application android:label=&quot;Loupe 現像（実験）&quot; android:theme=&quot;@style/RawExperimentTheme&quot; android:allowBackup=&quot;false&quot; android:fullBackupContent=&quot;false&quot; android:usesCleartextTraffic=&quot;false&quot;>"
+        errorLine2="                                                                                                             ~~~~~">
+        <location
+            file="src/main/AndroidManifest.xml"
+            line="3"
+            column="110"/>
+    </issue>
+
+    <issue
+        id="DrawAllocation"
+        message="Avoid object allocations during draw/layout operations (preallocate and reuse instead)"
+        errorLine1="      super.onDraw(canvas);float cx=getWidth()/2f,cy=getHeight()/2f;RectF bg=new RectF(cx-dp(23),cy-dp(14),cx+dp(23),cy+dp(14));"
+        errorLine2="                                                                             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build/generated/raw-editor/java/jp/nano/rawgallery/RawEditActivity.java"
+            line="522"
+            column="78"/>
+    </issue>
+
+    <issue
+        id="DrawAllocation"
+        message="Avoid object allocations during draw/layout operations (preallocate and reuse instead)"
+        errorLine1="      canvas.save();canvas.translate(cx-dp(17),cy-dp(8));canvas.scale(dp(16)/24f,dp(16)/24f);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1.8f);paint.setColor(INK);for(float gx:new float[]{4,13})for(float gy:new float[]{4,13})canvas.drawRoundRect(gx,gy,gx+7,gy+7,1,1,paint);canvas.restore();"
+        errorLine2="                                                                                                                                                                                            ~~~~~~~~~~~~~~~~~">
+        <location
+            file="build/generated/raw-editor/java/jp/nano/rawgallery/RawEditActivity.java"
+            line="525"
+            column="189"/>
+    </issue>
+
+    <issue
+        id="DrawAllocation"
+        message="Avoid object allocations during draw/layout operations (preallocate and reuse instead)"
+        errorLine1="      canvas.save();canvas.translate(cx-dp(17),cy-dp(8));canvas.scale(dp(16)/24f,dp(16)/24f);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1.8f);paint.setColor(INK);for(float gx:new float[]{4,13})for(float gy:new float[]{4,13})canvas.drawRoundRect(gx,gy,gx+7,gy+7,1,1,paint);canvas.restore();"
+        errorLine2="                                                                                                                                                                                                                           ~~~~~~~~~~~~~~~~~">
+        <location
+            file="build/generated/raw-editor/java/jp/nano/rawgallery/RawEditActivity.java"
+            line="525"
+            column="220"/>
+    </issue>
+
+    <issue
+        id="DrawAllocation"
+        message="Avoid object allocations during draw/layout operations (preallocate and reuse instead)"
+        errorLine1="      if(preparationFailed){canvas.save();canvas.translate(cx+dp(1),cy-dp(8));new Icon(&quot;warning&quot;,16,0xffff8a7a).draw(canvas);canvas.restore();}"
+        errorLine2="                                                                              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build/generated/raw-editor/java/jp/nano/rawgallery/RawEditActivity.java"
+            line="526"
+            column="79"/>
+    </issue>
+
+    <issue
+        id="DrawAllocation"
+        message="Avoid object allocations during draw/layout operations (preallocate and reuse instead)"
+        errorLine1="    protected void onDraw(Canvas c){super.onDraw(c);c.save();c.translate((getWidth()-dp(20))/2f,(getHeight()-dp(20))/2f);c.scale(dp(20)/24f,dp(20)/24f);p.setColor(isEnabled()?INK:0xff626b72);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1.8f);p.setStrokeCap(Paint.Cap.ROUND);p.setStrokeJoin(Paint.Join.ROUND);Path path=new Path();"
+        errorLine2="                                                                                                                                                                                                                                                                                                                                 ~~~~~~~~~~">
+        <location
+            file="build/generated/raw-editor/java/jp/nano/rawgallery/RawEditCurvePanel.java"
+            line="105"
+            column="322"/>
+    </issue>
+
+    <issue
+        id="DrawAllocation"
+        message="Avoid object allocations during draw/layout operations (preallocate and reuse instead)"
+        errorLine1="    protected void onDraw(Canvas canvas){super.onDraw(canvas);RawEditCurve c=state.curve(bank);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(1));paint.setColor(0x40ededea);canvas.drawRect(sx(0),sy(1),sx(1),sy(0),paint);paint.setColor(0x1fededea);for(float f:new float[]{.25f,.5f,.75f}){canvas.drawLine(sx(f),sy(0),sx(f),sy(1),paint);canvas.drawLine(sx(0),sy(f),sx(1),sy(f),paint);}paint.setColor(0x2eededea);paint.setPathEffect(new DashPathEffect(new float[]{dp(3),dp(3)},0));canvas.drawLine(sx(0),sy(0),sx(1),sy(1),paint);paint.setPathEffect(null);paint.setColor(COLORS[bank]);paint.setStrokeWidth(dp(2));Path line=new Path();for(int i=0;i&lt;=192;i++){float x=i/192f;if(i==0)line.moveTo(sx(x),sy(c.at(x)));else line.lineTo(sx(x),sy(c.at(x)));}canvas.drawPath(line,paint);paint.setAlpha(255);paint.setPathEffect(null);"
+        errorLine2="                                                                                                                                                                                                                                                                               ~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build/generated/raw-editor/java/jp/nano/rawgallery/RawEditCurvePanel.java"
+            line="112"
+            column="272"/>
+    </issue>
+
+    <issue
+        id="DrawAllocation"
+        message="Avoid object allocations during draw/layout operations (preallocate and reuse instead)"
+        errorLine1="    protected void onDraw(Canvas canvas){super.onDraw(canvas);RawEditCurve c=state.curve(bank);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(1));paint.setColor(0x40ededea);canvas.drawRect(sx(0),sy(1),sx(1),sy(0),paint);paint.setColor(0x1fededea);for(float f:new float[]{.25f,.5f,.75f}){canvas.drawLine(sx(f),sy(0),sx(f),sy(1),paint);canvas.drawLine(sx(0),sy(f),sx(1),sy(f),paint);}paint.setColor(0x2eededea);paint.setPathEffect(new DashPathEffect(new float[]{dp(3),dp(3)},0));canvas.drawLine(sx(0),sy(0),sx(1),sy(1),paint);paint.setPathEffect(null);paint.setColor(COLORS[bank]);paint.setStrokeWidth(dp(2));Path line=new Path();for(int i=0;i&lt;=192;i++){float x=i/192f;if(i==0)line.moveTo(sx(x),sy(c.at(x)));else line.lineTo(sx(x),sy(c.at(x)));}canvas.drawPath(line,paint);paint.setAlpha(255);paint.setPathEffect(null);"
+        errorLine2="                                                                                                                                                                                                                                                                                                                                                                                                                                                         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build/generated/raw-editor/java/jp/nano/rawgallery/RawEditCurvePanel.java"
+            line="112"
+            column="442"/>
+    </issue>
+
+    <issue
+        id="DrawAllocation"
+        message="Avoid object allocations during draw/layout operations (preallocate and reuse instead)"
+        errorLine1="    protected void onDraw(Canvas canvas){super.onDraw(canvas);RawEditCurve c=state.curve(bank);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(1));paint.setColor(0x40ededea);canvas.drawRect(sx(0),sy(1),sx(1),sy(0),paint);paint.setColor(0x1fededea);for(float f:new float[]{.25f,.5f,.75f}){canvas.drawLine(sx(f),sy(0),sx(f),sy(1),paint);canvas.drawLine(sx(0),sy(f),sx(1),sy(f),paint);}paint.setColor(0x2eededea);paint.setPathEffect(new DashPathEffect(new float[]{dp(3),dp(3)},0));canvas.drawLine(sx(0),sy(0),sx(1),sy(1),paint);paint.setPathEffect(null);paint.setColor(COLORS[bank]);paint.setStrokeWidth(dp(2));Path line=new Path();for(int i=0;i&lt;=192;i++){float x=i/192f;if(i==0)line.moveTo(sx(x),sy(c.at(x)));else line.lineTo(sx(x),sy(c.at(x)));}canvas.drawPath(line,paint);paint.setAlpha(255);paint.setPathEffect(null);"
+        errorLine2="                                                                                                                                                                                                                                                                                                                                                                                                                                                                            ~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build/generated/raw-editor/java/jp/nano/rawgallery/RawEditCurvePanel.java"
+            line="112"
+            column="461"/>
+    </issue>
+
+    <issue
+        id="DrawAllocation"
+        message="Avoid object allocations during draw/layout operations (preallocate and reuse instead)"
+        errorLine1="    protected void onDraw(Canvas canvas){super.onDraw(canvas);RawEditCurve c=state.curve(bank);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(1));paint.setColor(0x40ededea);canvas.drawRect(sx(0),sy(1),sx(1),sy(0),paint);paint.setColor(0x1fededea);for(float f:new float[]{.25f,.5f,.75f}){canvas.drawLine(sx(f),sy(0),sx(f),sy(1),paint);canvas.drawLine(sx(0),sy(f),sx(1),sy(f),paint);}paint.setColor(0x2eededea);paint.setPathEffect(new DashPathEffect(new float[]{dp(3),dp(3)},0));canvas.drawLine(sx(0),sy(0),sx(1),sy(1),paint);paint.setPathEffect(null);paint.setColor(COLORS[bank]);paint.setStrokeWidth(dp(2));Path line=new Path();for(int i=0;i&lt;=192;i++){float x=i/192f;if(i==0)line.moveTo(sx(x),sy(c.at(x)));else line.lineTo(sx(x),sy(c.at(x)));}canvas.drawPath(line,paint);paint.setAlpha(255);paint.setPathEffect(null);"
+        errorLine2="                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     ~~~~~~~~~~">
+        <location
+            file="build/generated/raw-editor/java/jp/nano/rawgallery/RawEditCurvePanel.java"
+            line="112"
+            column="630"/>
+    </issue>
+
+    <issue
+        id="DrawAllocation"
+        message="Avoid object allocations during draw/layout operations (preallocate and reuse instead)"
+        errorLine1="      RectF overlay=new RectF(destination.left+detailSource.left*scale,destination.top+detailSource.top*scale,"
+        errorLine2="                    ^">
+        <location
+            file="build/generated/raw-editor/java/jp/nano/rawgallery/RawEditImageView.java"
+            line="142"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="DrawAllocation"
+        message="Avoid object allocations during draw/layout operations (preallocate and reuse instead)"
+        errorLine1="          for(float f:new float[]{.25f,.5f,.75f}){c.drawLine(w*f,0,w*f,h,paint);c.drawLine(0,h*f,w,h*f,paint);}"
+        errorLine2="                      ~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build/generated/raw-editor/java/jp/nano/rawgallery/RawEditPad.java"
+            line="156"
+            column="23"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.camera_import_title` appears to be unused"
+        errorLine1="    &lt;string name=&quot;camera_import_title&quot;>USB camera import&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="3"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.camera_import_notif_channel` appears to be unused"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_channel&quot;>Import&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="4"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.camera_import_notif_connecting` appears to be unused"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_connecting&quot;>Connecting to camera…&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="5"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.camera_import_notif_attempting` appears to be unused"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_attempting&quot;>Trying to connect to the camera (attempt %d, waiting up to 30 s)…&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="6"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.camera_import_notif_waiting_camera` appears to be unused"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_waiting_camera&quot;>Waiting for the camera to respond (attempt %d)…&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="7"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.camera_import_notif_waiting_busy` appears to be unused"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_waiting_busy&quot;>The camera is busy with another connection. Waiting for it to finish…&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="8"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.camera_import_notif_waiting_replug` appears to be unused"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_waiting_replug&quot;>Camera not responding. Replugging the cable often fixes this (waiting, attempt %d). The import will continue automatically&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="9"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.camera_import_notif_open_failed` appears to be unused"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_open_failed&quot;>Could not open the camera. Re-select the USB mode (PTP/MTP) on the camera; if that does not help, power-cycle the camera&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="10"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.camera_import_notif_stalled_all` appears to be unused"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_stalled_all&quot;>The camera did not respond. Re-plug the cable or power-cycle the camera, then try again&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="11"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.camera_import_usb_permission_denied` appears to be unused"
+        errorLine1="    &lt;string name=&quot;camera_import_usb_permission_denied&quot;>USB access was denied. Reconnect and allow access.&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="12"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.camera_import_notif_progress` appears to be unused"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_progress&quot;>%1$s: importing %2$d/%3$d&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="13"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.camera_import_notif_done` appears to be unused"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_done&quot;>Imported %1$d, skipped %2$d (%3$.1f s)&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="14"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.camera_import_notif_done_nothing` appears to be unused"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_done_nothing&quot;>No new photos or videos (%d already imported)&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="15"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.camera_import_notif_done_partial` appears to be unused"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_done_partial&quot;>Imported %1$d, failed %2$d&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="16"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.camera_import_notif_aborted` appears to be unused"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_aborted&quot;>Cable disconnected. Imported %d — the rest will continue next time&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="17"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.camera_import_notif_read_error` appears to be unused"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_read_error&quot;>Card read failed (imported %d). Reconnect the camera or check the connection, then try again&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="18"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.camera_import_notif_busy` appears to be unused"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_busy&quot;>An import is already running&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="19"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.camera_import_notif_detached_cancel` appears to be unused"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_detached_cancel&quot;>Cancelled because the camera was disconnected&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="20"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.camera_import_notif_deleted_suffix` appears to be unused"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_deleted_suffix&quot;>. Deleted %d from the camera&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="21"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.camera_import_notif_delete_failed_suffix` appears to be unused"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_delete_failed_suffix&quot;>. Could not delete from the camera&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="22"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.camera_import_notif_delete_remained_suffix` appears to be unused"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_delete_remained_suffix&quot;>. %d of them still remain on the camera (some cameras do not persist deletions)&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="23"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.camera_import_notif_resurrected_suffix` appears to be unused"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_resurrected_suffix&quot;>. %d previously deleted files have reappeared on the camera; they are already imported and will be skipped&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="24"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.camera_import_notif_degraded_suffix` appears to be unused"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_degraded_suffix&quot;>. Ran in degraded mode without some RAW queries; import again if RAW files are missing&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="25"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.camera_import_notif_delete_unverified_suffix` appears to be unused"
+        errorLine1="    &lt;string name=&quot;camera_import_notif_delete_unverified_suffix&quot;>. Could not verify %1$d saved files; kept the camera originals&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/values/camera_import.xml"
+            line="26"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.xml.camera_import_devices` appears to be unused"
+        errorLine1="&lt;resources>"
+        errorLine2="^">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/xml/camera_import_devices.xml"
+            line="2"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.xml.data_extraction_rules` appears to be unused"
+        errorLine1="&lt;data-extraction-rules>"
+        errorLine2="^">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/xml/data_extraction_rules.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.layout.ep7_photo_item` appears to be unused"
+        errorLine1="&lt;TextView xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot;"
+        errorLine2="^">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/layout/ep7_photo_item.xml"
+            line="2"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_back` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot; android:width=&quot;24dp&quot; android:height=&quot;24dp&quot; android:viewportWidth=&quot;24&quot; android:viewportHeight=&quot;24&quot;>&lt;path android:fillColor=&quot;#E2E2E9&quot; android:pathData=&quot;M20,11H7.83l5.59,-5.59L12,4 4,12l8,8 1.41,-1.41L7.83,13H20z&quot;/>&lt;/vector>"
+        errorLine2="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_back.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_camera_import_notification` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot;"
+        errorLine2="^">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_camera_import_notification.xml"
+            line="2"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_camera_usb` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot;"
+        errorLine2="^">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_camera_usb.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_close` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot; android:width=&quot;24dp&quot; android:height=&quot;24dp&quot; android:viewportWidth=&quot;24&quot; android:viewportHeight=&quot;24&quot;>&lt;path android:fillColor=&quot;#E2E2E9&quot; android:pathData=&quot;M19,6.41L17.59,5 12,10.59 6.41,5 5,6.41 10.59,12 5,17.59 6.41,19 12,13.41 17.59,19 19,17.59 13.41,12z&quot;/>&lt;/vector>"
+        errorLine2="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_close.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_confirmation_pause` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot; android:width=&quot;18dp&quot; android:height=&quot;18dp&quot; android:viewportWidth=&quot;24&quot; android:viewportHeight=&quot;24&quot;>"
+        errorLine2="^">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_confirmation_pause.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_filter` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot; android:width=&quot;24dp&quot; android:height=&quot;24dp&quot; android:viewportWidth=&quot;24&quot; android:viewportHeight=&quot;24&quot;>&lt;path android:fillColor=&quot;#E2E2E9&quot; android:pathData=&quot;M3,17h6v-2H3v2zM3,5v2h10V5H3zM13,19v-2h8v-2h-8v-2h-2v6h2zM7,9v2H3v2h4v2h2V9H7zM21,11V9H11v2h10zM15,9h2V7h4V5h-4V3h-2v6z&quot;/>&lt;/vector>"
+        errorLine2="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_filter.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_gallery` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot; android:width=&quot;108dp&quot; android:height=&quot;108dp&quot; android:viewportWidth=&quot;108&quot; android:viewportHeight=&quot;108&quot;>"
+        errorLine2="^">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_gallery.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_loupe` appears to be unused">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable-nodpi/ic_loupe.png"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_loupe_padded` appears to be unused"
+        errorLine1="&lt;layer-list xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot;>"
+        errorLine2="^">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_loupe_padded.xml"
+            line="2"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_more` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot; android:width=&quot;24dp&quot; android:height=&quot;24dp&quot; android:viewportWidth=&quot;24&quot; android:viewportHeight=&quot;24&quot;>&lt;path android:fillColor=&quot;#E2E2E9&quot; android:pathData=&quot;M12,8a2,2 0,1 0,0 -4a2,2 0,0 0,0 4zM12,14a2,2 0,1 0,0 -4a2,2 0,0 0,0 4zM12,20a2,2 0,1 0,0 -4a2,2 0,0 0,0 4z&quot;/>&lt;/vector>"
+        errorLine2="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_more.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_nano_banana` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot; android:width=&quot;24dp&quot; android:height=&quot;24dp&quot; android:viewportWidth=&quot;24&quot; android:viewportHeight=&quot;24&quot;>"
+        errorLine2="^">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_nano_banana.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_nav_albums` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot;"
+        errorLine2="^">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_nav_albums.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_nav_photos` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot; android:width=&quot;24dp&quot; android:height=&quot;24dp&quot; android:viewportWidth=&quot;24&quot; android:viewportHeight=&quot;24&quot;>&lt;path android:fillColor=&quot;#E2E2E9&quot; android:pathData=&quot;M19,3H5c-1.1,0 -2,0.9 -2,2v14c0,1.1 0.9,2 2,2h14c1.1,0 2,-0.9 2,-2V5c0,-1.1 -0.9,-2 -2,-2zM5,19V5h14v14H5zM6,17h12l-4,-5 -3,4 -2,-3zM8.5,10A1.5,1.5 0,1 0,8.5 7a1.5,1.5 0,0 0,0 3z&quot;/>&lt;/vector>"
+        errorLine2="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_nav_photos.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_selection_cloud` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot; android:width=&quot;14dp&quot; android:height=&quot;14dp&quot; android:viewportWidth=&quot;24&quot; android:viewportHeight=&quot;24&quot;>"
+        errorLine2="^">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_selection_cloud.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_settings` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot; android:width=&quot;24dp&quot; android:height=&quot;24dp&quot; android:viewportWidth=&quot;24&quot; android:viewportHeight=&quot;24&quot;>&lt;path android:fillColor=&quot;#E2E2E9&quot; android:pathData=&quot;M19.43,12.98c0.04,-0.32 0.07,-0.65 0.07,-0.98s-0.03,-0.66 -0.08,-0.98l2.11,-1.65 -2,-3.46 -2.49,1c-0.52,-0.4 -1.08,-0.73 -1.69,-0.98L15,3h-4l-0.35,2.93c-0.61,0.25 -1.17,0.59 -1.69,0.98l-2.49,-1 -2,3.46 2.11,1.65c-0.05,0.32 -0.08,0.66 -0.08,0.98s0.03,0.66 0.08,0.98l-2.11,1.65 2,3.46 2.49,-1c0.52,0.4 1.08,0.73 1.69,0.98L11,21h4l0.35,-2.93c0.61,-0.25 1.17,-0.59 1.69,-0.98l2.49,1 2,-3.46 -2.1,-1.65zM13,15.5A3.5,3.5 0,1 1,13 8a3.5,3.5 0,0 1,0 7.5z&quot;/>&lt;/vector>"
+        errorLine2="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_settings.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_share_failure` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot; android:width=&quot;18dp&quot; android:height=&quot;18dp&quot; android:viewportWidth=&quot;24&quot; android:viewportHeight=&quot;24&quot;>&lt;path android:pathData=&quot;M12,4l9,15.5H3z M12,10v4.5 M12,17.2v0.1&quot; android:fillColor=&quot;@android:color/transparent&quot; android:strokeColor=&quot;#FF8A7A&quot; android:strokeWidth=&quot;1.8&quot; android:strokeLineCap=&quot;round&quot; android:strokeLineJoin=&quot;round&quot; />&lt;/vector>"
+        errorLine2="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_share_failure.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_share_retry` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot; android:width=&quot;18dp&quot; android:height=&quot;18dp&quot; android:viewportWidth=&quot;24&quot; android:viewportHeight=&quot;24&quot;>&lt;path android:pathData=&quot;M19.5,12a7.5,7.5 0,1 1,-2.2 -5.3 M19.5,4.5v4h-4&quot; android:fillColor=&quot;@android:color/transparent&quot; android:strokeColor=&quot;#111111&quot; android:strokeWidth=&quot;1.8&quot; android:strokeLineCap=&quot;round&quot; android:strokeLineJoin=&quot;round&quot; />&lt;/vector>"
+        errorLine2="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_share_retry.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_video_play` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot;"
+        errorLine2="^">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_video_play.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_viewer_best` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot; android:width=&quot;24dp&quot; android:height=&quot;24dp&quot; android:viewportWidth=&quot;24&quot; android:viewportHeight=&quot;24&quot;>"
+        errorLine2="^">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_viewer_best.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_viewer_best_outline` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot; android:width=&quot;24dp&quot; android:height=&quot;24dp&quot; android:viewportWidth=&quot;24&quot; android:viewportHeight=&quot;24&quot;>&lt;path android:fillColor=&quot;#E2E2E9&quot; android:fillType=&quot;evenOdd&quot; android:pathData=&quot;M22,9.24l-7.19,-0.62L12,2 9.19,8.63 2,9.24l5.46,4.73L5.82,21 12,17.27 18.18,21 16.55,13.97 22,9.24zM12,15.4l-3.76,2.27 1,-4.28 -3.32,-2.88 4.38,-0.38L12,6.1l1.71,4.04 4.38,0.38 -3.32,2.88 1,4.28z&quot;/>&lt;/vector>"
+        errorLine2="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_viewer_best_outline.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_viewer_cloud` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot;"
+        errorLine2="^">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_viewer_cloud.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_viewer_edit` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot; android:width=&quot;24dp&quot; android:height=&quot;24dp&quot; android:viewportWidth=&quot;24&quot; android:viewportHeight=&quot;24&quot;>"
+        errorLine2="^">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_viewer_edit.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_viewer_info` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot; android:width=&quot;24dp&quot; android:height=&quot;24dp&quot; android:viewportWidth=&quot;24&quot; android:viewportHeight=&quot;24&quot;>"
+        errorLine2="^">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_viewer_info.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_viewer_next` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot; android:width=&quot;24dp&quot; android:height=&quot;24dp&quot; android:viewportWidth=&quot;24&quot; android:viewportHeight=&quot;24&quot;>"
+        errorLine2="^">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_viewer_next.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_viewer_previous` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot; android:width=&quot;24dp&quot; android:height=&quot;24dp&quot; android:viewportWidth=&quot;24&quot; android:viewportHeight=&quot;24&quot;>"
+        errorLine2="^">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_viewer_previous.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_viewer_share` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot; android:width=&quot;24dp&quot; android:height=&quot;24dp&quot; android:viewportWidth=&quot;24&quot; android:viewportHeight=&quot;24&quot;>"
+        errorLine2="^">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_viewer_share.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_viewer_tag` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot; android:width=&quot;24dp&quot; android:height=&quot;24dp&quot; android:viewportWidth=&quot;24&quot; android:viewportHeight=&quot;24&quot;>"
+        errorLine2="^">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_viewer_tag.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_viewer_untag` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot; android:width=&quot;24dp&quot; android:height=&quot;24dp&quot; android:viewportWidth=&quot;24&quot; android:viewportHeight=&quot;24&quot;>"
+        errorLine2="^">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_viewer_untag.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_viewer_zoom_in` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot; android:width=&quot;24dp&quot; android:height=&quot;24dp&quot; android:viewportWidth=&quot;24&quot; android:viewportHeight=&quot;24&quot;>"
+        errorLine2="^">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_viewer_zoom_in.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_viewer_zoom_out` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot; android:width=&quot;24dp&quot; android:height=&quot;24dp&quot; android:viewportWidth=&quot;24&quot; android:viewportHeight=&quot;24&quot;>"
+        errorLine2="^">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/drawable/ic_viewer_zoom_out.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.xml.network_security_config` appears to be unused"
+        errorLine1="&lt;network-security-config>"
+        errorLine2="^">
+        <location
+            file="${:raw-experiment*debug*MAIN*sourceProvider*0*resDir*1}/xml/network_security_config.xml"
+            line="2"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UsableSpace"
+        message="Consider also using `StorageManager#getAllocatableBytes` and `allocateBytes` which will consider clearable cached data"
+        errorLine1="    if (requireWritable(context, volume).getUsableSpace() &lt; bytes)"
+        errorLine2="                                         ~~~~~~~~~~~~~~">
+        <location
+            file="build/generated/raw-editor/java/jp/nano/rawgallery/PhotoStorage.java"
+            line="72"
+            column="42"/>
+    </issue>
+
+    <issue
+        id="MissingApplicationIcon"
+        message="Should explicitly set `android:icon`, there is no default"
+        errorLine1="    &lt;application android:label=&quot;Loupe 現像（実験）&quot; android:theme=&quot;@style/RawExperimentTheme&quot; android:allowBackup=&quot;false&quot; android:fullBackupContent=&quot;false&quot; android:usesCleartextTraffic=&quot;false&quot;>"
+        errorLine2="     ~~~~~~~~~~~">
+        <location
+            file="src/main/AndroidManifest.xml"
+            line="3"
+            column="6"/>
+    </issue>
+
+    <issue
+        id="ViewConstructor"
+        message="Custom view `RawEditCurvePanel` is missing constructor used by tools: `(Context)` or `(Context,AttributeSet)` or `(Context,AttributeSet,int)`"
+        errorLine1="final class RawEditCurvePanel extends FrameLayout {"
+        errorLine2="            ~~~~~~~~~~~~~~~~~">
+        <location
+            file="build/generated/raw-editor/java/jp/nano/rawgallery/RawEditCurvePanel.java"
+            line="18"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="ViewConstructor"
+        message="Custom view `RawEditPad` is missing constructor used by tools: `(Context)` or `(Context,AttributeSet)` or `(Context,AttributeSet,int)`"
+        errorLine1="final class RawEditPad extends FrameLayout {"
+        errorLine2="            ~~~~~~~~~~">
+        <location
+            file="build/generated/raw-editor/java/jp/nano/rawgallery/RawEditPad.java"
+            line="21"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="ClickableViewAccessibility"
+        message="Custom view `ResetSeekBar` overrides `onTouchEvent` but not `performClick`"
+        errorLine1="    public boolean onTouchEvent(MotionEvent event){"
+        errorLine2="                   ~~~~~~~~~~~~">
+        <location
+            file="build/generated/raw-editor/java/jp/nano/rawgallery/RawEditActivity.java"
+            line="189"
+            column="20"/>
+    </issue>
+
+    <issue
+        id="ClickableViewAccessibility"
+        message="Custom view `PhotoSurface` overrides `onTouchEvent` but not `performClick`"
+        errorLine1="    public boolean onTouchEvent(MotionEvent e){return pinch||super.onTouchEvent(e);}"
+        errorLine2="                   ~~~~~~~~~~~~">
+        <location
+            file="build/generated/raw-editor/java/jp/nano/rawgallery/RawEditActivity.java"
+            line="287"
+            column="20"/>
+    </issue>
+
+    <issue
+        id="ClickableViewAccessibility"
+        message="Custom view `RollSlider` overrides `onTouchEvent` but not `performClick`"
+        errorLine1="    public boolean onTouchEvent(MotionEvent e){if(!isEnabled())return false;if(taps.completed(e)){listener.changed(RawEditCurvePanel.this.state.with(RawEditState.ROLLOFF,.5f));MotionEvent cancel=MotionEvent.obtain(e);cancel.setAction(MotionEvent.ACTION_CANCEL);super.onTouchEvent(cancel);cancel.recycle();return true;}return super.onTouchEvent(e);}"
+        errorLine2="                   ~~~~~~~~~~~~">
+        <location
+            file="build/generated/raw-editor/java/jp/nano/rawgallery/RawEditCurvePanel.java"
+            line="99"
+            column="20"/>
+    </issue>
+
+    <issue
+        id="ClickableViewAccessibility"
+        message="`Surface#onTouchEvent` should call `Surface#performClick` when a click is detected"
+        errorLine1="    public boolean onTouchEvent(MotionEvent e){return touch(e,false);}"
+        errorLine2="                   ~~~~~~~~~~~~">
+        <location
+            file="build/generated/raw-editor/java/jp/nano/rawgallery/RawEditPad.java"
+            line="182"
+            column="20"/>
+    </issue>
+
+    <issue
+        id="RtlHardcoded"
+        message="Use &quot;`Gravity.START`&quot; instead of &quot;`Gravity.LEFT`&quot; to ensure correct behavior in right-to-left locales"
+        errorLine1="    badge=text(&quot;&quot;,12,INK);badge.setGravity(Gravity.CENTER);badge.setPadding(dp(10),0,dp(10),0);badge.setBackground(rounded(0x9e000000,12));badge.setVisibility(View.GONE);badge.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);FrameLayout.LayoutParams bp=new FrameLayout.LayoutParams(-2,dp(24),Gravity.TOP|Gravity.LEFT);bp.leftMargin=bp.topMargin=dp(12);picture.addView(badge,bp);"
+        errorLine2="                                                                                                                                                                                                                                                                                                                                         ~~~~">
+        <location
+            file="build/generated/raw-editor/java/jp/nano/rawgallery/RawEditActivity.java"
+            line="119"
+            column="330"/>
+    </issue>
+
+    <issue
+        id="RtlHardcoded"
+        message="Use &quot;`Gravity.END`&quot; instead of &quot;`Gravity.RIGHT`&quot; to ensure correct behavior in right-to-left locales"
+        errorLine1="    busyIcon=new ProgressBar(this);busyIcon.setIndeterminateTintList(ColorStateList.valueOf(INK));busyIcon.setBackground(rounded(0x9e000000,14));busyIcon.setPadding(dp(5),dp(5),dp(5),dp(5));busyIcon.setVisibility(View.GONE);busyIcon.setContentDescription(&quot;反映しています&quot;);FrameLayout.LayoutParams ip=new FrameLayout.LayoutParams(dp(28),dp(28),Gravity.TOP|Gravity.RIGHT);ip.rightMargin=ip.topMargin=dp(12);picture.addView(busyIcon,ip);"
+        errorLine2="                                                                                                                                                                                                                                                                                                                                                                     ~~~~~">
+        <location
+            file="build/generated/raw-editor/java/jp/nano/rawgallery/RawEditActivity.java"
+            line="120"
+            column="358"/>
+    </issue>
+
+    <issue
+        id="RtlHardcoded"
+        message="Use &quot;`Gravity.END`&quot; instead of &quot;`Gravity.RIGHT`&quot; to ensure correct behavior in right-to-left locales"
+        errorLine1="    fullBadge=new FullBadge();fullBadge.setVisibility(View.GONE);fullBadge.setOnClickListener(v->retryPreparation());FrameLayout.LayoutParams fp=new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.TOP|Gravity.RIGHT);fp.rightMargin=dp(4);fp.topMargin=dp(2);picture.addView(fullBadge,fp);"
+        errorLine2="                                                                                                                                                                                                                ~~~~~">
+        <location
+            file="build/generated/raw-editor/java/jp/nano/rawgallery/RawEditActivity.java"
+            line="121"
+            column="209"/>
+    </issue>
+
+</issues>

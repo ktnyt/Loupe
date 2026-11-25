@@ -31,6 +31,12 @@ JDK 17 と Android SDK を用意し、`./gradlew testDebugUnitTest` で合成入
 
 チェック本体は既存の `tests/` に置き、Gradle から実行する場合は `HostRegressionTest` から同じ本体を呼ぶ。新しい standalone Java チェックを Gradle に追加する場合は `app/build.gradle` の `hostJavaChecks` に登録する。既存シェルからも実行できる。外部 RAW コーパス（`tests/run.sh`、`tests/raw-corpus.sh`）と Android SQLite を使う検査は、それぞれ専用の実行環境を使う。
 
+## Android Lintとソースの整形
+
+`./gradlew :app:lintDebug :raw-experiment:lintDebug` で各モジュールを検査する。既存の指摘はモジュール別の `lint-baseline.xml` に記録する。新しい警告は修正し、通常の修正で baseline に加えない。依存ライブラリ・ビルドツールの新バージョン案内（`GradleDependency`、`AndroidGradlePluginVersion`）は公開状況で変わるため、Lint の情報として表示する。既存の targetSdk 35 とインストール済み SDK の差による案内（`OldTargetApi`）も、targetSdk が 35 の場合に限って情報として表示する。Lint の実行時は、各 variant の実効 targetSdk が 35 未満であれば失敗する。
+
+`./gradlew spotlessCheck` は導入前の固定コミットから内容が変わった `app/src/`、`raw-experiment/src/`、`tests/` の Java・Kotlin ファイルを検査する。作業中の差分も対象になる。新規ファイルは `git add` してから確認する。レビュー対象のコミットと比較する場合は `-PformatChangeBase=<基点コミット>` を渡す。`./gradlew spotlessApply` は同じ対象をファイル単位で整形する。固定コミットが必要なため、浅いcloneでは `git fetch --unshallow origin` で履歴を取得する。
+
 ## APKとmainの照合
 
 常用端末の本体はmainからビルドしたAPKへ統一する。PR branchの動作検証と、普段使う端末への常用導入を分ける。通常はエミュレータや予備端末で実装・独立レビューを先に確かめ、main反映後に常用APKを用意する。
