@@ -12,6 +12,10 @@ jobs:
   verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        sequence: [normal-tail, fresh-import]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -68,18 +72,20 @@ jobs:
           python3 scripts/deploy-apk.py --sdk "$ANDROID_HOME" inspect \
             --apk app/build/outputs/apk/debug/app-debug.apk --certificate "$fingerprint" --require-no-shizuku
 
-      - name: Android instrumentation before camera on a disposable emulator
+      - name: Compare import latency on a disposable emulator
         timeout-minutes: 30
+        env:
+          SEQUENCE: ${{ matrix.sequence }}
+          LOUPE_INSTRUMENTATION_PORT: '5582'
         run: |
           sudo chmod a+rw /dev/kvm
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'emulator' 'system-images;android-35;google_apis;x86_64'
-          bash tests/ci-android-instrumentation.sh before-camera
-
-      - name: Android instrumentation from camera through RAW on a disposable emulator
-        timeout-minutes: 30
-        env:
-          LOUPE_INSTRUMENTATION_PORT: '5582'
-        run: bash tests/ci-android-instrumentation.sh camera-onward
+          if [[ "$SEQUENCE" == fresh-import ]]; then
+            printf '%s\n' import-latency camera-pilot-usb-launch > tests/ci-android-modes.txt
+            bash tests/ci-android-instrumentation.sh before-camera
+          else
+            bash tests/ci-android-instrumentation.sh camera-onward
+          fi
 
   release:
     needs: verify
