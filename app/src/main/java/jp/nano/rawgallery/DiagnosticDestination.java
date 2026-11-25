@@ -34,7 +34,8 @@ final class DiagnosticDestination {
     int systemFlags = ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP;
     for (ResolveInfo candidate : candidates) {
       var activity = candidate.activityInfo;
-      if (activity == null || !activity.enabled || !activity.exported || activity.applicationInfo == null
+      if (candidate.isCrossProfileIntentForwarderActivity()
+          || activity == null || !activity.enabled || !activity.exported || activity.applicationInfo == null
           || !activity.applicationInfo.enabled || (activity.applicationInfo.flags & systemFlags) == 0) {
         continue;
       }

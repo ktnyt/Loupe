@@ -122,11 +122,15 @@ final class DiagnosticExportChecks {
     ResolveInfo privateSystem = pickerCandidate("sample.private", ApplicationInfo.FLAG_SYSTEM, true, false);
     ResolveInfo updatedSystem = pickerCandidate(
         "sample.updated.documents", ApplicationInfo.FLAG_UPDATED_SYSTEM_APP, true, true);
+    ResolveInfo forwarder = new ResolveInfo(system) {
+      @Override public boolean isCrossProfileIntentForwarderActivity() { return true; }
+    };
     require(DiagnosticDestination.systemFolderPicker(List.of()) == null);
+    require(DiagnosticDestination.systemFolderPicker(List.of(forwarder)) == null);
     require(DiagnosticDestination.systemFolderPicker(List.of(ordinary, disabled, privateSystem)) == null);
     require(DiagnosticDestination.systemFolderPicker(List.of(system, updatedSystem)) == null);
     require(new ComponentName("sample.oem.documents", "sample.Picker").equals(
-        DiagnosticDestination.systemFolderPicker(List.of(ordinary, disabled, system, privateSystem))));
+        DiagnosticDestination.systemFolderPicker(List.of(ordinary, disabled, system, privateSystem, forwarder))));
     require(new ComponentName("sample.updated.documents", "sample.Picker").equals(
         DiagnosticDestination.systemFolderPicker(List.of(updatedSystem))));
 
