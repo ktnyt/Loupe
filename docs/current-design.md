@@ -18,6 +18,8 @@ flowchart LR
   Library --> Nano[Nano Banana]
   Library --> Backup[保管・復元・容量整理]
   Camera[USBカメラ・SDカード・対応Wi-Fiカメラ] --> Import
+  Import --> Target[PhotoStorageで書き込み先を選択]
+  Import --> History[HistoryDb・CameraImportLedgerに記録]
   Import --> Media[端末のオリジナルと新規出力]
   Media --> Index
   Index --> Video
@@ -34,7 +36,7 @@ flowchart LR
 | 利用する機能 | 実装の入口と状態 | 詳細 |
 | --- | --- | --- |
 | ライブラリ・再生・選抜 | `MainActivity` が `PhotoRepository` と `GalleryIndex` で写真・動画の一覧を開く。`VideoActivity` が動画を再生し、順位とタグはそれぞれ `RankingStore` と `TagStore` が保存する | [閲覧の契約](#p1-写真を探して確認する)・[タグ](tag-confidence-contract.md) |
-| カメラ取り込み | `CameraImportActivity` と取り込み処理がUSB・SD・対応Wi-Fiの入力を扱う。`PhotoStorage` が保存先と取り込み履歴を扱い、完了したメディアをライブラリの対象にする | [取り込みの入口](camera-quick-import.md)・[保存先と履歴](photo-storage-contract.md) |
+| カメラ取り込み | `CameraImportActivity` と取り込み処理がUSB・SD・対応Wi-Fiの入力を扱う。`PhotoStorage` が書き込み先のMediaStoreボリュームを選ぶ。カメラ設定と従来形式の履歴を `HistoryDb`、内容照合済みの取り込み記録と公開の復旧情報を `CameraImportLedger` が保存する | [取り込みの入口](camera-quick-import.md)・[保存先と履歴](photo-storage-contract.md) |
 | 共有とRAW編集 | `SharePreparation` は共有コピーを用意する。`RawEditActivity` / `RawEditFullSession` はLibRaw・EGLなどで処理し、調整したJPEGを別ファイルとして保存する | [共有](#p4-指定形式で外部アプリへ渡す)・[原寸RAW現像](raw-full-resolution-contract.md) |
 | IDrive e2保管・復元 | `E2SyncActivity` と `E2SyncJob` が写真・動画のバックアップと復元一覧を扱う。`ArchiveStore` の保管記録を索引とは別に持ち、容量整理は照合済みの条件で実行する | [IDrive e2の運用](e2-production-contract.md) |
 | Nano Banana | `NanoBananaSettingsActivity` で認証情報とプロンプトを設定する。`NanoBananaService` はe2に置いた限定の送信用画像で外部の生成を依頼し、検査した結果を別JPEGへ保存する | [Nano Bananaの設定と後処理](nano-banana.md) |
