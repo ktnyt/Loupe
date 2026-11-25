@@ -16,8 +16,11 @@ import org.json.JSONObject;
 
 final class DatabaseAccessChecks {
   private static final int ROWS = 24_000;
-  private static final String SEED = "WITH RECURSIVE rows(n) AS (VALUES(1)"
-      + " UNION ALL SELECT n + 1 FROM rows WHERE n < " + ROWS + ") ";
+  private static final String SEED =
+      "WITH RECURSIVE rows(n) AS (VALUES(1)"
+          + " UNION ALL SELECT n + 1 FROM rows WHERE n < "
+          + ROWS
+          + ") ";
   private static final String SOURCE = "content://media/external/images/media/55000";
   private static final String ALIAS = "content://media/external/file/55000";
   private static final String ARCHIVE_LOOKUP =
@@ -49,17 +52,23 @@ final class DatabaseAccessChecks {
   }
 
   private static void seedArchives(SQLiteDatabase db) {
-    db.execSQL(SEED + "INSERT INTO photos(key,state,payload) SELECT printf('fixture-%d',n),"
-        + " CASE WHEN n % 1000 = 1 THEN 'released' WHEN n % 1000 = 2 THEN 'releasing' ELSE 'verified' END,"
-        + " json_object('key',printf('fixture-%d',n),'fixture',n,'state','ignored') FROM rows");
+    db.execSQL(
+        SEED
+            + "INSERT INTO photos(key,state,payload) SELECT printf('fixture-%d',n),"
+            + " CASE WHEN n % 1000 = 1 THEN 'released' WHEN n % 1000 = 2 THEN 'releasing' ELSE 'verified' END,"
+            + " json_object('key',printf('fixture-%d',n),'fixture',n,'state','ignored') FROM rows");
   }
 
   private static void seedHistory(SQLiteDatabase db) {
-    db.execSQL("INSERT INTO camera(model,serial,folder,mass_storage) VALUES('fixture','camera','Photos',1)");
-    db.execSQL(SEED + "INSERT INTO imported(camera_model,camera_serial,file_name,file_size,shot_at,imported_at,dest_uri,deleted_at)"
-        + " SELECT 'fixture','camera',printf('fixture-%d.jpg',n),n,10,20,"
-        + " CASE WHEN n % 1000 = 1 THEN ? WHEN n % 1000 = 2 THEN ? ELSE printf('content://test/%d',n) END,"
-        + " CASE WHEN n % 2 = 0 THEN 3 ELSE NULL END FROM rows", new Object[] {SOURCE, ALIAS});
+    db.execSQL(
+        "INSERT INTO camera(model,serial,folder,mass_storage) VALUES('fixture','camera','Photos',1)");
+    db.execSQL(
+        SEED
+            + "INSERT INTO imported(camera_model,camera_serial,file_name,file_size,shot_at,imported_at,dest_uri,deleted_at)"
+            + " SELECT 'fixture','camera',printf('fixture-%d.jpg',n),n,10,20,"
+            + " CASE WHEN n % 1000 = 1 THEN ? WHEN n % 1000 = 2 THEN ? ELSE printf('content://test/%d',n) END,"
+            + " CASE WHEN n % 2 = 0 THEN 3 ELSE NULL END FROM rows",
+        new Object[] {SOURCE, ALIAS});
   }
 
   private static String checkArchives(Context context, String name) throws Exception {
@@ -69,25 +78,46 @@ final class DatabaseAccessChecks {
       other.getReadableDatabase();
       String[] states = {E2Cleanup.RELEASING, E2Cleanup.RELEASED};
       var records = active.inStates(states[0], states[1]);
-      check(records.size() == 48 && records.get(0).getInt("fixture") == 1
-          && records.get(1).getInt("fixture") == 2, "archive matches and legacy row order");
-      check("released".equals(records.get(0).getString("state")), "state column remains authoritative");
+      check(
+          records.size() == 48
+              && records.get(0).getInt("fixture") == 1
+              && records.get(1).getInt("fixture") == 2,
+          "archive matches and legacy row order");
+      check(
+          "released".equals(records.get(0).getString("state")),
+          "state column remains authoritative");
       long revision = active.indexRevision();
       check(revision == ROWS, "all receipt revisions preserved");
       check(active.verifiedKeys().size() == ROWS - 48, "verified receipts remain available");
       String plan = plan(db, ARCHIVE_LOOKUP, states);
-      check(plan.contains("SEARCH photos USING INDEX photos_state_key"), "state filter uses its index");
-      check(plan(db, "SELECT key FROM photos WHERE state=?", new String[] {"verified"})
-          .contains("COVERING INDEX photos_state_key"), "verified keys use the covering index");
+      check(
+          plan.contains("SEARCH photos USING INDEX photos_state_key"),
+          "state filter uses its index");
+      check(
+          plan(db, "SELECT key FROM photos WHERE state=?", new String[] {"verified"})
+              .contains("COVERING INDEX photos_state_key"),
+          "verified keys use the covering index");
       double millis = median(() -> active.inStates(states[0], states[1]).size());
-      String overlap = overlap(db,
-          () -> active.put(new JSONObject().put("key", "fixture-1").put("fixture", -1), "pending"),
-          () -> active.get("fixture-1").getInt("fixture"),
-          () -> other.get("fixture-1").getInt("fixture"));
-      check(active.indexRevision() == revision && active.get("fixture-1").getInt("fixture") == 1,
+      String overlap =
+          overlap(
+              db,
+              () ->
+                  active.put(
+                      new JSONObject().put("key", "fixture-1").put("fixture", -1), "pending"),
+              () -> active.get("fixture-1").getInt("fixture"),
+              () -> other.get("fixture-1").getInt("fixture"));
+      check(
+          active.indexRevision() == revision && active.get("fixture-1").getInt("fixture") == 1,
           "rollback restores archive payload, state, and revision");
-      return String.format(Locale.ROOT, "DB archive schema=%d journal=%s count=%d median_ms=%.3f plan=%s overlap=%s",
-          db.getVersion(), journal(db), ROWS, millis, plan, overlap);
+      return String.format(
+          Locale.ROOT,
+          "DB archive schema=%d journal=%s count=%d median_ms=%.3f plan=%s overlap=%s",
+          db.getVersion(),
+          journal(db),
+          ROWS,
+          millis,
+          plan,
+          overlap);
     }
   }
 
@@ -97,30 +127,54 @@ final class DatabaseAccessChecks {
       SQLiteDatabase db = active.getWritableDatabase();
       other.getReadableDatabase();
       var matches = active.moveEvidenceFor(SOURCE, ALIAS, null, null);
-      check(matches.size() == 48 && matches.get(0).getId() == 1 && matches.get(1).getId() == 2,
+      check(
+          matches.size() == 48 && matches.get(0).getId() == 1 && matches.get(1).getId() == 2,
           "history matches and legacy row order");
       check(active.findCamera("fixture", "camera").getMassStorage(), "camera settings preserved");
-      check(active.photoImportRecords("fixture", "camera").stream()
-          .anyMatch(row -> row.key.equals("fixture-2.jpg|2|10") && row.deleted), "deletion evidence preserved");
+      check(
+          active.photoImportRecords("fixture", "camera").stream()
+              .anyMatch(row -> row.key.equals("fixture-2.jpg|2|10") && row.deleted),
+          "deletion evidence preserved");
       check(db.getVersion() == 5, "camera history schema 4 upgraded");
       check("wal".equals(journal(db)), "shared history enables WAL");
       String plan = plan(db, HISTORY_LOOKUP, new String[] {SOURCE, ALIAS, SOURCE, ALIAS});
-      check(plan.contains("SEARCH imported USING INDEX idx_imported_dest_uri"), "destination lookup uses its index");
+      check(
+          plan.contains("SEARCH imported USING INDEX idx_imported_dest_uri"),
+          "destination lookup uses its index");
       double millis = median(() -> active.moveEvidenceFor(SOURCE, ALIAS, null, null).size());
-      String overlap = overlap(db,
-          () -> check(active.relocate(SOURCE, ALIAS, "content://test/new", "1"), "tentative relocation"),
-          () -> active.moveEvidenceFor(SOURCE, ALIAS, null, null).get(0).getId(),
-          () -> other.moveEvidenceFor(SOURCE, ALIAS, null, null).get(0).getId());
-      check(overlap.equals("same:true,separate:true"), "shared and separate readers finish while writer holds WAL");
-      check(active.hasMoveEvidence(SOURCE, ALIAS, "1") && active.containsMoveEvidence(1),
+      String overlap =
+          overlap(
+              db,
+              () ->
+                  check(
+                      active.relocate(SOURCE, ALIAS, "content://test/new", "1"),
+                      "tentative relocation"),
+              () -> active.moveEvidenceFor(SOURCE, ALIAS, null, null).get(0).getId(),
+              () -> other.moveEvidenceFor(SOURCE, ALIAS, null, null).get(0).getId());
+      check(
+          overlap.equals("same:true,separate:true"),
+          "shared and separate readers finish while writer holds WAL");
+      check(
+          active.hasMoveEvidence(SOURCE, ALIAS, "1") && active.containsMoveEvidence(1),
           "rollback restores import history identity and destination");
-      return String.format(Locale.ROOT, "DB history schema=%d journal=%s count=%d median_ms=%.3f plan=%s overlap=%s",
-          db.getVersion(), journal(db), ROWS, millis, plan, overlap);
+      return String.format(
+          Locale.ROOT,
+          "DB history schema=%d journal=%s count=%d median_ms=%.3f plan=%s overlap=%s",
+          db.getVersion(),
+          journal(db),
+          ROWS,
+          millis,
+          plan,
+          overlap);
     }
   }
 
-  private static String overlap(SQLiteDatabase writer, CheckedRunnable update,
-      Callable<? extends Number> same, Callable<? extends Number> other) throws Exception {
+  private static String overlap(
+      SQLiteDatabase writer,
+      CheckedRunnable update,
+      Callable<? extends Number> same,
+      Callable<? extends Number> other)
+      throws Exception {
     var threads = Executors.newFixedThreadPool(2);
     CountDownLatch started = new CountDownLatch(2);
     try {
@@ -129,16 +183,27 @@ final class DatabaseAccessChecks {
       writer.beginTransactionNonExclusive();
       try {
         update.run();
-        sameRead = threads.submit(() -> { started.countDown(); return same.call(); });
-        otherRead = threads.submit(() -> { started.countDown(); return other.call(); });
+        sameRead =
+            threads.submit(
+                () -> {
+                  started.countDown();
+                  return same.call();
+                });
+        otherRead =
+            threads.submit(
+                () -> {
+                  started.countDown();
+                  return other.call();
+                });
         check(started.await(5, TimeUnit.SECONDS), "both readers ready");
         sameDuring = completedWhileOpen(sameRead);
         otherDuring = completedWhileOpen(otherRead);
       } finally {
         writer.endTransaction();
       }
-      check(sameRead.get(5, TimeUnit.SECONDS).longValue() == 1
-          && otherRead.get(5, TimeUnit.SECONDS).longValue() == 1,
+      check(
+          sameRead.get(5, TimeUnit.SECONDS).longValue() == 1
+              && otherRead.get(5, TimeUnit.SECONDS).longValue() == 1,
           "readers only see committed data");
       return "same:" + sameDuring + ",separate:" + otherDuring;
     } finally {

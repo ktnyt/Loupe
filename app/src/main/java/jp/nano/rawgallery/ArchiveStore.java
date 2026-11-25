@@ -14,7 +14,9 @@ final class ArchiveStore extends SQLiteOpenHelper {
   // Only a single E2 photos write and the last legacy proof scan use this lock.
   static final ReentrantLock E2_PHOTO_UPSERT = new ReentrantLock(true);
   static final int JPEG_BURST_SCAN_LIMIT = 1024 * 1024;
-  private static final String[] METADATA_COLUMNS = {"key", "model", "taken", "burst_mode", "burst_frame"};
+  private static final String[] METADATA_COLUMNS = {
+    "key", "model", "taken", "burst_mode", "burst_frame"
+  };
   private static final int E2_INDEX_QUERY_KEYS = 512;
   private final Context context;
   private final boolean e2Photos;
@@ -58,23 +60,30 @@ final class ArchiveStore extends SQLiteOpenHelper {
 
   /** Only source photo records invalidate browsing; derived metadata and WAL checkpoints do not. */
   private static void createIndexRevision(SQLiteDatabase db) {
-    db.execSQL("CREATE TABLE index_revision (id INTEGER PRIMARY KEY CHECK(id=1), value INTEGER NOT NULL)");
+    db.execSQL(
+        "CREATE TABLE index_revision (id INTEGER PRIMARY KEY CHECK(id=1), value INTEGER NOT NULL)");
     db.execSQL("INSERT INTO index_revision VALUES (1,0)");
     for (String operation : new String[] {"INSERT", "UPDATE", "DELETE"})
-      db.execSQL("CREATE TRIGGER index_revision_" + operation + " AFTER " + operation
-          + " ON photos BEGIN UPDATE index_revision SET value=value+1 WHERE id=1; END");
+      db.execSQL(
+          "CREATE TRIGGER index_revision_"
+              + operation
+              + " AFTER "
+              + operation
+              + " ON photos BEGIN UPDATE index_revision SET value=value+1 WHERE id=1; END");
   }
 
   java.util.Set<String> verifiedKeys() {
     java.util.Set<String> keys = new java.util.HashSet<>();
-    try (Cursor c = getReadableDatabase().rawQuery("SELECT key FROM photos WHERE state='verified'", null)) {
+    try (Cursor c =
+        getReadableDatabase().rawQuery("SELECT key FROM photos WHERE state='verified'", null)) {
       while (c.moveToNext()) keys.add(c.getString(0));
     }
     return keys;
   }
 
   long indexRevision() {
-    try (Cursor c = getReadableDatabase().rawQuery("SELECT value FROM index_revision WHERE id=1", null)) {
+    try (Cursor c =
+        getReadableDatabase().rawQuery("SELECT value FROM index_revision WHERE id=1", null)) {
       if (!c.moveToFirst()) throw new IllegalStateException("Archive index revision missing");
       return c.getLong(0);
     }
@@ -102,9 +111,10 @@ final class ArchiveStore extends SQLiteOpenHelper {
         if (in == null) throw new IOException("JPEGを開けません");
         android.media.ExifInterface exif = new android.media.ExifInterface(in);
         String model = exif.getAttribute(android.media.ExifInterface.TAG_MODEL);
-        long taken = RawPreview.captureTime(
-            exif.getAttribute(android.media.ExifInterface.TAG_DATETIME_ORIGINAL),
-            exif.getAttribute(android.media.ExifInterface.TAG_OFFSET_TIME_ORIGINAL));
+        long taken =
+            RawPreview.captureTime(
+                exif.getAttribute(android.media.ExifInterface.TAG_DATETIME_ORIGINAL),
+                exif.getAttribute(android.media.ExifInterface.TAG_OFFSET_TIME_ORIGINAL));
         return new RawMetadata(model == null ? "JPEG" : model, taken);
       }
     } else {
@@ -129,8 +139,8 @@ final class ArchiveStore extends SQLiteOpenHelper {
   }
 
   private static RawMetadata readMetadata(SQLiteDatabase db, String key) {
-    try (Cursor c = db.query("metadata", METADATA_COLUMNS,
-        "key=?", new String[] {key}, null, null, null)) {
+    try (Cursor c =
+        db.query("metadata", METADATA_COLUMNS, "key=?", new String[] {key}, null, null, null)) {
       return c.moveToFirst() ? rawMetadata(c) : null;
     }
   }
@@ -142,7 +152,8 @@ final class ArchiveStore extends SQLiteOpenHelper {
     if (ContentResolver.SCHEME_FILE.equals(p.uri.getScheme())) return true;
     if (!ContentResolver.SCHEME_CONTENT.equals(p.uri.getScheme())) return false;
     String authority = p.uri.getAuthority();
-    return "media".equals(authority) || "com.android.externalstorage.documents".equals(authority)
+    return "media".equals(authority)
+        || "com.android.externalstorage.documents".equals(authority)
         || "com.android.providers.media.documents".equals(authority)
         || "com.android.providers.downloads.documents".equals(authority);
   }
@@ -161,14 +172,15 @@ final class ArchiveStore extends SQLiteOpenHelper {
     }
   }
 
-  record IndexMetadata(String key, RawMetadata inspected, boolean insert, RawPreview.BurstFrame frame) {}
+  record IndexMetadata(
+      String key, RawMetadata inspected, boolean insert, RawPreview.BurstFrame frame) {}
 
   /**
-   * Writes a bounded set of already inspected records. The returned metadata reflects the row
-   * that won each insert/probe race. Cancellation rolls back the batch and returns null.
+   * Writes a bounded set of already inspected records. The returned metadata reflects the row that
+   * won each insert/probe race. Cancellation rolls back the batch and returns null.
    */
-  Map<String, RawMetadata> writeIndexMetadata(List<IndexMetadata> batch,
-      java.util.function.BooleanSupplier cancelled) throws IOException {
+  Map<String, RawMetadata> writeIndexMetadata(
+      List<IndexMetadata> batch, java.util.function.BooleanSupplier cancelled) throws IOException {
     if (cancelled.getAsBoolean()) return null;
     if (batch.isEmpty()) return Map.of();
     Map<String, RawMetadata> committed = new HashMap<>();
@@ -182,14 +194,19 @@ final class ArchiveStore extends SQLiteOpenHelper {
           metadata = readMetadata(db, change.key());
           if (metadata == null) throw new IOException("写真のメタデータを保存できません");
         }
-        if (change.frame() != null && metadata.burstFrame == null
-            && metadata.model.equals(change.inspected().model) && metadata.taken == change.inspected().taken) {
+        if (change.frame() != null
+            && metadata.burstFrame == null
+            && metadata.model.equals(change.inspected().model)
+            && metadata.taken == change.inspected().taken) {
           ContentValues values = new ContentValues();
           values.put("burst_mode", change.frame().mode());
           values.put("burst_frame", change.frame().number());
-          int rows = db.update("metadata", values,
-              "key=? AND model=? AND taken=? AND burst_mode IS NULL AND burst_frame IS NULL",
-              new String[] {change.key(), metadata.model, Long.toString(metadata.taken)});
+          int rows =
+              db.update(
+                  "metadata",
+                  values,
+                  "key=? AND model=? AND taken=? AND burst_mode IS NULL AND burst_frame IS NULL",
+                  new String[] {change.key(), metadata.model, Long.toString(metadata.taken)});
           if (rows == 1) {
             metadata = new RawMetadata(metadata.model, metadata.taken, change.frame());
           } else {
@@ -217,7 +234,9 @@ final class ArchiveStore extends SQLiteOpenHelper {
     private final InputStream input;
     private int remaining = JPEG_BURST_SCAN_LIMIT;
 
-    JpegBurstProbe(InputStream input) { this.input = input; }
+    JpegBurstProbe(InputStream input) {
+      this.input = input;
+    }
 
     RawPreview.BurstFrame read() throws IOException {
       if (requiredByte() != 0xff || requiredByte() != 0xd8 || requiredByte() != 0xff)
@@ -239,12 +258,17 @@ final class ArchiveStore extends SQLiteOpenHelper {
             requireBudget(payload);
             byte[] tiff = new byte[payload];
             readFully(tiff);
-            RawPreview.BurstFrame frame = RawPreview.readBurstFrame(new RawPreview.Source() {
-              public long length() { return tiff.length; }
-              public void read(long offset, byte[] data) {
-                System.arraycopy(tiff, (int) offset, data, 0, data.length);
-              }
-            });
+            RawPreview.BurstFrame frame =
+                RawPreview.readBurstFrame(
+                    new RawPreview.Source() {
+                      public long length() {
+                        return tiff.length;
+                      }
+
+                      public void read(long offset, byte[] data) {
+                        System.arraycopy(tiff, (int) offset, data, 0, data.length);
+                      }
+                    });
             if (frame.number() > 0) return frame;
             continue;
           }
@@ -307,16 +331,16 @@ final class ArchiveStore extends SQLiteOpenHelper {
 
   Map<String, RawMetadata> metadataSnapshot() {
     Map<String, RawMetadata> result = new HashMap<>();
-    try (Cursor c = getReadableDatabase().query("metadata", METADATA_COLUMNS,
-        null, null, null, null, null)) {
+    try (Cursor c =
+        getReadableDatabase().query("metadata", METADATA_COLUMNS, null, null, null, null, null)) {
       while (c.moveToNext()) result.put(c.getString(0), rawMetadata(c));
     }
     return result;
   }
 
   /** Reads metadata for the requested E2 keys; a missing or malformed row has no fallback. */
-  Map<String, RawMetadata> releasedIndexMetadata(Set<String> keys,
-      java.util.function.BooleanSupplier cancelled) {
+  Map<String, RawMetadata> releasedIndexMetadata(
+      Set<String> keys, java.util.function.BooleanSupplier cancelled) {
     if (cancelled.getAsBoolean()) return null;
     Map<String, RawMetadata> result = new HashMap<>();
     List<String> requested = new ArrayList<>(keys);
@@ -328,8 +352,10 @@ final class ArchiveStore extends SQLiteOpenHelper {
       args[0] = E2Cleanup.RELEASING;
       args[1] = E2Cleanup.RELEASED;
       for (int i = 0; i < size; i++) args[i + 2] = requested.get(first + i);
-      String where = "state IN (?,?) AND key IN (" + String.join(",", Collections.nCopies(size, "?")) + ")";
-      try (Cursor c = db.query("photos", new String[] {"key", "payload"}, where, args, null, null, null)) {
+      String where =
+          "state IN (?,?) AND key IN (" + String.join(",", Collections.nCopies(size, "?")) + ")";
+      try (Cursor c =
+          db.query("photos", new String[] {"key", "payload"}, where, args, null, null, null)) {
         while (c.moveToNext()) {
           if (cancelled.getAsBoolean()) return null;
           try {
@@ -346,8 +372,8 @@ final class ArchiveStore extends SQLiteOpenHelper {
   }
 
   private static RawMetadata rawMetadata(Cursor c) {
-    RawPreview.BurstFrame frame = c.isNull(3) || c.isNull(4) ? null
-        : new RawPreview.BurstFrame(c.getInt(3), c.getInt(4));
+    RawPreview.BurstFrame frame =
+        c.isNull(3) || c.isNull(4) ? null : new RawPreview.BurstFrame(c.getInt(3), c.getInt(4));
     return new RawMetadata(c.getString(1), c.getLong(2), frame);
   }
 
@@ -357,7 +383,9 @@ final class ArchiveStore extends SQLiteOpenHelper {
     final RawPreview.BurstFrame burstFrame;
 
     static RawMetadata fromReceipt(JSONObject receipt) {
-      return receipt == null ? null : new RawMetadata(receipt.optString("model", ""), receipt.optLong("taken", 0));
+      return receipt == null
+          ? null
+          : new RawMetadata(receipt.optString("model", ""), receipt.optLong("taken", 0));
     }
 
     RawMetadata(String model, long taken) {
@@ -461,11 +489,14 @@ final class ArchiveStore extends SQLiteOpenHelper {
     return visitReceipts(null, null, visitor);
   }
 
-  private boolean visitReceipts(String where, String[] args, ReceiptVisitor visitor) throws Exception {
-    try (Cursor c = getReadableDatabase()
-        .query("photos", new String[] {"state", "payload"}, where, args, null, null, "rowid")) {
+  private boolean visitReceipts(String where, String[] args, ReceiptVisitor visitor)
+      throws Exception {
+    try (Cursor c =
+        getReadableDatabase()
+            .query("photos", new String[] {"state", "payload"}, where, args, null, null, "rowid")) {
       while (c.moveToNext())
-        if (!visitor.visit(new JSONObject(c.getString(1)).put("state", c.getString(0)))) return false;
+        if (!visitor.visit(new JSONObject(c.getString(1)).put("state", c.getString(0))))
+          return false;
     }
     return true;
   }
