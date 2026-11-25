@@ -167,12 +167,33 @@ final class DiagnosticControls {
       exportFailed(export, "保存先を選び直してください");
       return;
     }
-    export.pending = archive;
-    try { picker.launch(DiagnosticDestination.folderPicker()); }
-    catch (ActivityNotFoundException error) {
-      export.pending = null;
-      exportFailed(export, "保存先の選択画面を開けませんでした");
+    try {
+      Intent target = DiagnosticDestination.folderPicker(activity);
+      if (target != null) {
+        export.pending = archive;
+        picker.launch(target);
+        return;
+      }
+    } catch (ActivityNotFoundException | SecurityException unavailable) {
+      // The resolved system activity may no longer be available when Android launches it.
     }
+    offerDownloads(export, archive);
+  }
+
+  private void offerDownloads(ExportState export, byte[] archive) {
+    export.pending = null;
+    export.exporting = false;
+    lastFailure = "フォルダの選択画面を開けませんでした";
+    new MaterialAlertDialogBuilder(activity).setTitle("診断ZIPの保存先")
+        .setMessage(lastFailure + "。")
+        .setPositiveButton("ダウンロードに保存", (dialog, which) -> {
+          if (export.exporting) return;
+          export.exporting = true;
+          Context app = activity.getApplicationContext();
+          WORKER.execute(() -> save(export, app, null, archive));
+        })
+        .setNegativeButton("キャンセル", null)
+        .show();
   }
 
   private void onFolder(ActivityResult result) {

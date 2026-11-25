@@ -1,9 +1,12 @@
 package jp.nano.rawgallery;
 
+import android.content.ComponentName;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.net.Uri;
 import android.os.Environment;
 import android.provider.DocumentsContract;
@@ -11,14 +14,36 @@ import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.util.List;
 import java.util.UUID;
 
 /** Publishes a completed archive to a location explicitly chosen by the user. */
 final class DiagnosticDestination {
   private static final String FILE_NAME = "Loupe-diagnostics.zip";
 
-  static Intent folderPicker() {
-    return new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).putExtra(Intent.EXTRA_LOCAL_ONLY, true);
+  static Intent folderPicker(Context context) {
+    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).putExtra(Intent.EXTRA_LOCAL_ONLY, true);
+    PackageManager packages = context.getPackageManager();
+    ComponentName target = systemFolderPicker(packages.queryIntentActivities(intent,
+        PackageManager.MATCH_DEFAULT_ONLY | PackageManager.MATCH_SYSTEM_ONLY));
+    return target == null ? null : intent.setComponent(target);
+  }
+
+  static ComponentName systemFolderPicker(List<ResolveInfo> candidates) {
+    ComponentName selected = null;
+    int systemFlags = ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP;
+    for (ResolveInfo candidate : candidates) {
+      var activity = candidate.activityInfo;
+      if (activity == null || !activity.enabled || !activity.exported || activity.applicationInfo == null
+          || !activity.applicationInfo.enabled || (activity.applicationInfo.flags & systemFlags) == 0) {
+        continue;
+      }
+      ComponentName component = new ComponentName(activity.packageName, activity.name);
+      // Multiple system components are ambiguous. Never delegate the decision to an implicit chooser.
+      if (selected != null && !selected.equals(component)) return null;
+      selected = component;
+    }
+    return selected;
   }
 
   static String downloads(Context context, byte[] archive) throws IOException {

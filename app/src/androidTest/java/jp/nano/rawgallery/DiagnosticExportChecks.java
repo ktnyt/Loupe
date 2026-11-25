@@ -1,9 +1,12 @@
 package jp.nano.rawgallery;
 
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.ContextWrapper;
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.ResolveInfo;
 import android.os.Build;
 import android.os.SystemClock;
 import java.io.ByteArrayInputStream;
@@ -33,9 +36,7 @@ final class DiagnosticExportChecks {
     require((context.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) == 0);
     require(DiagnosticLog.currentRecorder() == null);
 
-    var intent = DiagnosticDestination.folderPicker();
-    require(Intent.ACTION_OPEN_DOCUMENT_TREE.equals(intent.getAction())
-        && intent.getBooleanExtra(Intent.EXTRA_LOCAL_ONLY, false));
+    checkFolderPicker(context);
 
     File folder = new File(context.getFilesDir(), "diagnostics");
     require(folder.isDirectory() || folder.mkdirs());
@@ -111,7 +112,43 @@ final class DiagnosticExportChecks {
     checkOutput("close", false);
     checkOutput("close", true);
     checkOutput("", false);
-    return "PASS non-debuggable diagnostics, failed open, stop tail, E2 phases, redaction, ZIP output failures, and failed recorder identity";
+    return "PASS non-debuggable diagnostics, failed open, stop tail, E2 phases, redaction, ZIP output failures, failed recorder identity, and system-only picker";
+  }
+
+  private static void checkFolderPicker(Context context) throws Exception {
+    ResolveInfo ordinary = pickerCandidate("sample.ordinary", 0, true, true);
+    ResolveInfo system = pickerCandidate("sample.oem.documents", ApplicationInfo.FLAG_SYSTEM, true, true);
+    ResolveInfo disabled = pickerCandidate("sample.disabled", ApplicationInfo.FLAG_SYSTEM, false, true);
+    ResolveInfo privateSystem = pickerCandidate("sample.private", ApplicationInfo.FLAG_SYSTEM, true, false);
+    ResolveInfo updatedSystem = pickerCandidate(
+        "sample.updated.documents", ApplicationInfo.FLAG_UPDATED_SYSTEM_APP, true, true);
+    require(DiagnosticDestination.systemFolderPicker(List.of()) == null);
+    require(DiagnosticDestination.systemFolderPicker(List.of(ordinary, disabled, privateSystem)) == null);
+    require(DiagnosticDestination.systemFolderPicker(List.of(system, updatedSystem)) == null);
+    require(new ComponentName("sample.oem.documents", "sample.Picker").equals(
+        DiagnosticDestination.systemFolderPicker(List.of(ordinary, disabled, system, privateSystem))));
+    require(new ComponentName("sample.updated.documents", "sample.Picker").equals(
+        DiagnosticDestination.systemFolderPicker(List.of(updatedSystem))));
+
+    Intent intent = DiagnosticDestination.folderPicker(context);
+    require(intent != null && Intent.ACTION_OPEN_DOCUMENT_TREE.equals(intent.getAction())
+        && intent.getBooleanExtra(Intent.EXTRA_LOCAL_ONLY, false) && intent.getComponent() != null
+        && intent.getData() == null && intent.getClipData() == null);
+    var resolved = context.getPackageManager().getActivityInfo(intent.getComponent(), 0);
+    require(resolved.exported && (resolved.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0);
+  }
+
+  private static ResolveInfo pickerCandidate(String name, int flags, boolean enabled, boolean exported) {
+    ResolveInfo candidate = new ResolveInfo();
+    candidate.activityInfo = new ActivityInfo();
+    candidate.activityInfo.packageName = name;
+    candidate.activityInfo.name = "sample.Picker";
+    candidate.activityInfo.enabled = enabled;
+    candidate.activityInfo.exported = exported;
+    candidate.activityInfo.applicationInfo = new ApplicationInfo();
+    candidate.activityInfo.applicationInfo.enabled = true;
+    candidate.activityInfo.applicationInfo.flags = flags;
+    return candidate;
   }
 
   private static void checkFailedRecording(Context context) throws Exception {
