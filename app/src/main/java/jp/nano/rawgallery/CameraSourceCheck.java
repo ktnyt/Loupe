@@ -22,11 +22,12 @@ final class CameraSourceCheck {
     final Runnable timeout;
 
     Request(Runnable onTimeout) {
-      timeout = () -> {
-        if (!clear(this)) return;
-        cancellation.cancel();
-        onTimeout.run();
-      };
+      timeout =
+          () -> {
+            if (!clear(this)) return;
+            cancellation.cancel();
+            onTimeout.run();
+          };
     }
   }
 
@@ -57,12 +58,14 @@ final class CameraSourceCheck {
     pending = request;
     main.postDelayed(request.timeout, TIMEOUT_MILLIS);
     try {
-      worker.execute(() -> {
-        T result = check.apply(request.cancellation);
-        main.post(() -> {
-          if (clear(request)) onResult.accept(result);
-        });
-      });
+      worker.execute(
+          () -> {
+            T result = check.apply(request.cancellation);
+            main.post(
+                () -> {
+                  if (clear(request)) onResult.accept(result);
+                });
+          });
     } catch (RejectedExecutionException busy) {
       clear(request);
       request.cancellation.cancel();
