@@ -164,8 +164,20 @@ final class VisualStatusFlowChecks {
             0,
             0);
     List<PhotoRepository.Photo> selection = List.of(photo);
+    AtomicInteger shareLaunches = new AtomicInteger();
     Instrumentation.ActivityMonitor chooser =
-        t.addMonitor(new IntentFilter(Intent.ACTION_CHOOSER), null, true);
+        new Instrumentation.ActivityMonitor() {
+          @Override
+          public Instrumentation.ActivityResult onStartActivity(Intent intent) {
+            String action = intent.getAction();
+            if (!Intent.ACTION_CHOOSER.equals(action)
+                && !Intent.ACTION_SEND.equals(action)
+                && !Intent.ACTION_SEND_MULTIPLE.equals(action)) return null;
+            shareLaunches.incrementAndGet();
+            return new Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null);
+          }
+        };
+    t.addMonitor(chooser);
     try {
       ((ExecutorService) field(a, "scans")).submit(() -> {}).get(10, TimeUnit.SECONDS);
       t.waitForIdleSync();
@@ -221,12 +233,12 @@ final class VisualStatusFlowChecks {
       release.countDown();
       ((ExecutorService) field(a, "actions")).submit(() -> {}).get(10, TimeUnit.SECONDS);
       String[] afterCancel = dir.list();
-      TagDetailChecks.require(
-          afterCancel != null && afterCancel.length == 0 && chooser.getHits() == 0,
-          "cancel removes the partial share copy without opening a chooser");
       shareOnMain(
           t,
           () -> {
+            TagDetailChecks.require(
+                afterCancel != null && afterCancel.length == 0 && shareLaunches.get() == 0,
+                "cancel removes the partial share copy without starting an external share");
             if (!((Set<?>) field(a, "selectedPhotos")).contains(photo.uri.toString()))
               throw new AssertionError("cancel lost selection");
             Method export =
@@ -241,12 +253,12 @@ final class VisualStatusFlowChecks {
       click(t, "選択に戻る");
       ((ExecutorService) field(a, "actions")).submit(() -> {}).get(10, TimeUnit.SECONDS);
       String[] afterFailure = dir.list();
-      TagDetailChecks.require(
-          afterFailure != null && afterFailure.length == 0 && chooser.getHits() == 0,
-          "failed copies are removed without opening a chooser");
       main(
           t,
           () -> {
+            TagDetailChecks.require(
+                afterFailure != null && afterFailure.length == 0 && shareLaunches.get() == 0,
+                "failed copies are removed without starting an external share");
             if (!((Set<?>) field(a, "selectedPhotos")).contains(photo.uri.toString()))
               throw new AssertionError("failure lost selection");
             return true;
@@ -383,7 +395,7 @@ final class VisualStatusFlowChecks {
               return true;
             });
       }
-      return "PASS injected touch left/right swipes: missing original -> orange JPEG pixel verified, old failure detached and no visible status -> missing original -> retry -> blue JPEG pixel verified.\nPASS tag empty input error -> valid edit clears error -> cancel without persistence.\nPASS detail missing original -> persistent error -> actual AX retry after synthetic JPEG restore -> image recovered.\nPASS actual share cancel interrupts the writer and retains selection; failure and retry remove partial files without starting a chooser. No recipient or external transfer.\n";
+      return "PASS injected touch left/right swipes: missing original -> orange JPEG pixel verified, old failure detached and no visible status -> missing original -> retry -> blue JPEG pixel verified.\nPASS tag empty input error -> valid edit clears error -> cancel without persistence.\nPASS detail missing original -> persistent error -> actual AX retry after synthetic JPEG restore -> image recovered.\nPASS actual share cancel interrupts the writer and retains selection; cancel, failure and retry remove partial files without starting a chooser or recipient. No external transfer.\n";
     } finally {
       release.countDown();
       t.removeMonitor(chooser);
