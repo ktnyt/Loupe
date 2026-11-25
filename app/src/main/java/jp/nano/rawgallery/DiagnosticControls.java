@@ -20,6 +20,9 @@ import java.util.concurrent.Executors;
 final class DiagnosticControls {
   // The user's operations finish in order even if DashboardActivity is recreated.
   private static final Executor WORKER = Executors.newSingleThreadExecutor();
+  // Displayed only in this app process. Never store destination names in diagnostic records.
+  private static String lastDestination;
+  private static String lastFailure;
   private final AppCompatActivity activity;
   private final ActivityResultLauncher<Intent> picker;
 
@@ -42,9 +45,12 @@ final class DiagnosticControls {
 
   void show() {
     boolean recording = DiagnosticLog.recording();
+    String message = (recording ? "処理の記録中です。" : "処理の記録は停止中です。")
+        + "\n処理時間とクラッシュの概要をZIPに保存できます。";
+    if (lastFailure != null) message += "\n\n" + lastFailure;
+    if (lastDestination != null) message += "\n\n直近の保存先\n" + lastDestination;
     new MaterialAlertDialogBuilder(activity).setTitle("診断記録")
-        .setMessage((recording ? "処理の記録中です。" : "処理の記録は停止中です。")
-            + "\n処理時間とクラッシュの概要をZIPに保存できます。")
+        .setMessage(message)
         .setNeutralButton(recording ? "記録を止める" : "記録を始める",
             (dialog, which) -> setRecording(!recording))
         .setPositiveButton("ZIPを保存", (dialog, which) -> chooseLocation())
@@ -79,11 +85,11 @@ final class DiagnosticControls {
       byte[] archive;
       try { archive = DiagnosticExport.capture(app); }
       catch (IOException | SecurityException error) {
-        exportFeedback(export, "診断記録を読み込めませんでした");
+        exportFailed(export, "診断記録を読み込めませんでした");
         return;
       }
       if (archive.length == 0) {
-        exportFeedback(export, "保存できる診断記録がありません");
+        exportFailed(export, "保存できる診断記録がありません");
       } else if (selectFolder) {
         activity.runOnUiThread(() -> openFolderPicker(export, archive));
       } else {
@@ -94,14 +100,14 @@ final class DiagnosticControls {
 
   private void openFolderPicker(ExportState export, byte[] archive) {
     if (activity.isDestroyed() || activity.isFinishing()) {
-      exportFeedback(export, "保存先を選び直してください");
+      exportFailed(export, "保存先を選び直してください");
       return;
     }
     export.pending = archive;
     try { picker.launch(DiagnosticDestination.folderPicker()); }
     catch (ActivityNotFoundException error) {
       export.pending = null;
-      exportFeedback(export, "保存先の選択画面を開けませんでした");
+      exportFailed(export, "保存先の選択画面を開けませんでした");
     }
   }
 
@@ -116,7 +122,7 @@ final class DiagnosticControls {
       return;
     }
     if (selected == null) {
-      exportFeedback(export, "診断記録を保存し直してください");
+      exportFailed(export, "診断記録を保存し直してください");
       return;
     }
     Context app = activity.getApplicationContext();
@@ -127,16 +133,22 @@ final class DiagnosticControls {
     try {
       String location = folder == null ? DiagnosticDestination.downloads(app, archive)
           : DiagnosticDestination.folder(app, folder, archive);
-      exportFeedback(export, "診断ZIPを保存しました\n" + location);
+      activity.runOnUiThread(() -> {
+        lastDestination = location;
+        lastFailure = null;
+        export.exporting = false;
+        feedback("診断ZIPを保存しました");
+      });
     } catch (DiagnosticDestination.CleanupFailed error) {
-      exportFeedback(export, "保存できませんでした。保存先に一時ファイルが残った可能性があります");
+      exportFailed(export, "保存できませんでした。保存先に一時ファイルが残った可能性があります");
     } catch (IOException | RuntimeException error) {
-      exportFeedback(export, "診断記録を保存できませんでした");
+      exportFailed(export, "診断記録を保存できませんでした");
     }
   }
 
-  private void exportFeedback(ExportState export, String message) {
+  private void exportFailed(ExportState export, String message) {
     activity.runOnUiThread(() -> {
+      lastFailure = message;
       export.exporting = false;
       feedback(message);
     });

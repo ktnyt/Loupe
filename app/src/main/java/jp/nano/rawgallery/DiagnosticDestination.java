@@ -96,7 +96,7 @@ final class DiagnosticDestination {
 
   private static String describe(Context context, Uri file, String folderName) {
     String filename = displayName(context, file);
-    return filename == null ? folderName : folderName + "／" + filename;
+    return filename == null ? folderName : folderName + "\n" + filename;
   }
 
   private static String displayName(Context context, Uri uri) {
