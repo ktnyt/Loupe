@@ -9,6 +9,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.view.View;
 import android.view.ViewGroup;
@@ -20,6 +21,8 @@ import java.util.*;
 
 /** Baseline-format recipes, owned synthetic JPEGs and isolated tag stores only. */
 final class LookRemovalChecks {
+  private static final long JPEG_SAVE_TIMEOUT_MS = 30_000;
+
   static Bundle legacyState(Intent intent) {
     Bundle state = new Bundle();
     state.putFloatArray("values", new RawEditState().with(RawEditState.EXPOSURE, .25f).snapshot());
@@ -349,16 +352,30 @@ final class LookRemovalChecks {
           t,
           "full editor prepared",
           () -> ((RawEditFullSession) get(raw, "fullSession")).isPrepared());
+      long[] saveStartedAt = {0};
       ui(
           t,
           () -> {
+            saveStartedAt[0] = SystemClock.uptimeMillis();
             call(raw, "saveImage", new Class<?>[0]);
             return true;
           });
-      GenerationIndicatorChecks.await(
-          t,
-          "editor JPEG saved",
-          () -> !(boolean) get(raw, "saving") && outputs(c).size() == previous.size() + 1);
+      boolean[] saved = {false};
+      long saveElapsedMs;
+      while (true) {
+        ui(
+            t,
+            () -> {
+              saved[0] = !(boolean) get(raw, "saving") && outputs(c).size() == previous.size() + 1;
+              return true;
+            });
+        saveElapsedMs = SystemClock.uptimeMillis() - saveStartedAt[0];
+        if (saved[0] || saveElapsedMs >= JPEG_SAVE_TIMEOUT_MS) break;
+        Thread.sleep(50);
+      }
+      android.util.Log.i("LoupeLookFixture", "JPEG save observation elapsedMs=" + saveElapsedMs);
+      TagDetailChecks.require(
+          saved[0] && saveElapsedMs <= JPEG_SAVE_TIMEOUT_MS, "editor JPEG saved within deadline");
       Set<Uri> newOutputs = outputs(c);
       newOutputs.removeAll(previous);
       owned.addAll(newOutputs);
@@ -385,7 +402,9 @@ final class LookRemovalChecks {
         TagDetailChecks.require(
             Arrays.equals(input.readAllBytes(), jpeg), "original synthetic photo unchanged");
       }
-      return "PASS look-removal: normal/tag viewers have no Look controls, saved legacy photo selection does not change source pixels; actual baseline preset/photo/session bytes and timestamps preserved across viewing/editor legacy Bundle restore/finish; ordinary compare and full JPEG save/readback; width="
+      return "PASS look-removal: normal/tag viewers have no Look controls, saved legacy photo selection does not change source pixels; actual baseline preset/photo/session bytes and timestamps preserved across viewing/editor legacy Bundle restore/finish; ordinary compare and full JPEG save/readback after "
+          + saveElapsedMs
+          + " ms; width="
           + width
           + " font="
           + font

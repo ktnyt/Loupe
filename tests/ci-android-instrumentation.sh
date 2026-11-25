@@ -71,6 +71,8 @@ run_instrumentation() {
         awk '/full[.]prepare|fixture[.]cancel|jpeg[.]load[.]complete/ {print}' || true
     elif [[ "$label" == nano-background ]]; then
       "$adb" -s "$serial" logcat -d -s LoupeNanoFixture:E '*:S' || true
+    elif [[ "$label" == look-removal ]]; then
+      "$adb" -s "$serial" logcat -d -s LoupeLookFixture:I '*:S' || true
     fi
     echo "$label did not report PASS." >&2
     exit 1
