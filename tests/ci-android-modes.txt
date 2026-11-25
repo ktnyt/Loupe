@@ -7,6 +7,7 @@ camera-ledger
 index-signature
 photo-storage-import-guard
 index-apply-race
+media-observer-lifecycle
 burst
 burst-gap-millis
 burst-gap-millis numbered true
@@ -21,7 +22,7 @@ automatic
 tag-detail
 tag-confidence
 selected-tags
-album-tags
+album-tags libraryFixture true
 
 # Sharing and process restart
 share-screen
@@ -72,7 +73,8 @@ ep7-wifi
 
 # Gallery and navigation
 camera-tabs
-library-tabs
+library-tabs libraryFixture true
+gallery-position libraryFixture true
 gallery-screen
 viewer-screen
 gallery-material3

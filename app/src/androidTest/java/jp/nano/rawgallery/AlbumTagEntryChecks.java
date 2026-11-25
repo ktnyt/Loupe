@@ -9,6 +9,7 @@ import android.view.*;
 import android.widget.*;
 import java.io.*;
 import java.lang.reflect.*;
+import java.util.List;
 
 /** Entry/return checks only; never create, infer, edit or delete user tags. */
 final class AlbumTagEntryChecks {
@@ -66,16 +67,69 @@ final class AlbumTagEntryChecks {
       Activity scoped=openTagsViaMenu(t,a,false);tagScreen[0]=scoped;
       if(!"/__existing_scope__".equals(scoped.getIntent().getStringExtra("folder"))||!"GR".equals(scoped.getIntent().getStringExtra("camera")))throw new AssertionError("existing scope changed");
       main(t,()->{scoped.finish();return true;});waitFor(t,"main focus",()->a.hasWindowFocus());
-      // Use a real indexed cover if present; no retired recent-photo state is manufactured.
-      PhotoRepository.Photo cover=null;for(GalleryIndex.Album album:albums)if(!album.cover.isVideo()){cover=album.cover;break;}
-      if(cover==null)result.append("SKIP real viewer tag entry: no indexed non-video album cover is available.\n");
+      int eligibleAlbum=-1;
+      PhotoRepository.Photo firstPhoto=null;
+      try(GalleryIndex catalog=new GalleryIndex(a)){
+        for(int i=0;i<albums.size();i++){
+          GalleryIndex.Snapshot gallery=catalog.load(albums.get(i).folder,"すべて");
+          if(gallery.bundles.isEmpty()||gallery.bundles.get(0).size()!=1)continue;
+          PhotoRepository.Photo first=gallery.photos.get(gallery.bundles.get(0).get(0));
+          if(!first.isVideo()) { eligibleAlbum=i; firstPhoto=first; break; }
+        }
+      }
+      if(firstPhoto==null)result.append("SKIP real viewer tag entry: no album begins with a single indexed photo.\n");
       else{
-        PhotoRepository.Photo photo=cover;
-        main(t,()->{set(a,"photos",new java.util.ArrayList<>(java.util.List.of(photo)));set(a,"albumHome",true);return true;});ViewerScreenChecks.open(t,a,0);
+        int albumPosition=eligibleAlbum;
+        GalleryIndex.Album album=albums.get(albumPosition);
+        PhotoRepository.Photo photo=firstPhoto;
+        t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
+        waitFor(t,"album home restored",()->a.hasWindowFocus()&&(boolean)field(a,"albumHome"));
+        GalleryScreenChecks.settle(t,a);
+        main(t,()->{((ScrollingGrid)field(a,"albumGridView")).restoreCell(albumPosition,0,false);return true;});
+        String albumLabel="アルバム、"+album.folder+"、"+album.count+"枚";
+        View[] albumCell={null};
+        waitFor(t,"indexed album cell visible",()->{
+          albumCell[0]=ExpressiveUiChecks.description((View)field(a,"albumGridView"),albumLabel);
+          return albumCell[0]!=null&&albumCell[0].isShown();
+        });
+        main(t,()->{
+          if(!albumCell[0].performClick())throw new AssertionError("indexed album did not open");
+          return true;
+        });
+        ThumbnailCell[] photoCell={null};
+        waitFor(t,"indexed photo cell visible",()->{
+          photoCell[0]=GalleryScreenChecks.firstPhoto((View)field(a,"grid"));
+          return !(boolean)field(a,"albumHome")&&album.folder.equals(field(a,"albumFolder"))
+              &&photoCell[0]!=null&&photoCell[0].isShown()
+              &&String.valueOf(photoCell[0].getContentDescription()).startsWith(photo.name+"、");
+        });
+        main(t,()->{
+          if(!photoCell[0].performClick())throw new AssertionError("indexed photo did not open");
+          return true;
+        });
+        waitFor(t,"indexed photo viewer visible",()->a.hasWindowFocus()&&(boolean)field(a,"detail"));
         Activity fromPhoto=openTagsViaMenu(t,a,true);tagScreen[0]=fromPhoto;
-        if(!"/__existing_scope__".equals(fromPhoto.getIntent().getStringExtra("folder"))||!"GR".equals(fromPhoto.getIntent().getStringExtra("camera"))||!photo.uri.toString().equals(fromPhoto.getIntent().getStringExtra("photo")))throw new AssertionError("viewer-photo scope changed");
-        main(t,()->{fromPhoto.finish();return true;});waitFor(t,"viewer resumed",()->a.hasWindowFocus());
+        waitFor(t,"viewer tag screen visible",()->fromPhoto.hasWindowFocus()&&button(fromPhoto.getWindow().getDecorView(),"新しいタグ")!=null);
+        if(!album.folder.equals(fromPhoto.getIntent().getStringExtra("folder"))||!"すべて".equals(fromPhoto.getIntent().getStringExtra("camera"))||!photo.uri.toString().equals(fromPhoto.getIntent().getStringExtra("photo")))throw new AssertionError("viewer-photo scope changed");
+        t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
+        waitFor(t,"viewer tag screen finished",()->!fromPhoto.hasWindowFocus()&&(fromPhoto.isFinishing()||fromPhoto.isDestroyed()));
+        View restoredMenu=ShareScreenChecks.modal(t,a);
+        waitFor(t,"viewer action sheet restored",()->restoredMenu.hasWindowFocus()&&button(restoredMenu,"タグ")!=null&&button(restoredMenu,"閉じる")!=null);
+        main(t,()->{if(!button(restoredMenu,"閉じる").performClick())throw new AssertionError("viewer sheet did not close");return true;});
+        waitFor(t,"viewer resumed",()->a.hasWindowFocus()&&(boolean)field(a,"detail"));
+        main(t,()->{
+          List<?> visible=(List<?>)field(a,"photos");
+          int index=(int)field(a,"index");
+          if(!album.folder.equals(field(a,"albumFolder"))||!"すべて".equals(field(a,"filter"))
+              ||index<0||index>=visible.size()||!photo.uri.equals(((PhotoRepository.Photo)visible.get(index)).uri))
+            throw new AssertionError("viewer selection lost after tags");
+          return true;
+        });
         t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);waitFor(t,"viewer back",()->!(boolean)field(a,"detail"));
+        try(GalleryIndex catalog=new GalleryIndex(a)){
+          if(catalog.albums().size()!=albums.size()||catalog.load(photo.folder,"すべて").photos.stream()
+              .noneMatch(indexed->photo.uri.equals(indexed.uri)))throw new AssertionError("tag visit changed the gallery index");
+        }
         result.append("PASS real viewer secondary menu retains photo/folder/camera scope.\n");
       }
       for(int width:new int[]{320,400})for(float scale:new float[]{1f,1.3f}){

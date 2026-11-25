@@ -399,6 +399,20 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if (systemBackTest) { results.putString("stream", SystemBackChecks.run(this)); finish(-1, results); return; }
       if (actionLabelsTest) { results.putString("stream", ActionLabelChecks.run(this)); finish(-1, results); return; }
       if (comparisonLabelsTest) { results.putString("stream", ComparisonLabelChecks.run(this)); finish(-1, results); return; }
+      if ((albumTagsTest || tabsTest || positionTest) && "true".equals(cameraPilotArguments.getString("libraryFixture"))) {
+        String libraryReport;
+        try (LibraryMediaFixture fixture = new LibraryMediaFixture(context)) {
+          fixture.seed();
+          libraryReport = albumTagsTest ? AlbumTagEntryChecks.run(this)
+              : tabsTest ? LibraryTabsChecks.run(this) : GalleryPositionChecks.run(this);
+          if (libraryReport.contains("SKIP ") || libraryReport.contains("UNVERIFIED ")) {
+            throw new AssertionError("Rich library test did not validate every fixture-dependent check");
+          }
+        }
+        results.putString("stream", libraryReport);
+        finish(-1, results);
+        return;
+      }
       if (albumTagsTest) { results.putString("stream", AlbumTagEntryChecks.run(this)); finish(-1, results); return; }
       if (material3Test) { results.putString("stream", Material3Checks.run(this)); finish(-1, results); return; }
       if (cameraPilotMode!=null) {

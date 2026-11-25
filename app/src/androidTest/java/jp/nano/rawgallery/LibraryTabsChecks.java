@@ -14,6 +14,7 @@ import java.util.*;
 
 /** Real navigation is read-only; captures contain only the new tab bar. */
 final class LibraryTabsChecks {
+  private static final int PHOTO_ANCHOR = 27; // First cell of the ninth row in the three-column gallery.
   interface Check { boolean done() throws Exception; }
   private static Object field(Object o,String n)throws Exception{Field f=o.getClass().getDeclaredField(n);f.setAccessible(true);return f.get(o);}
   private static void set(Object o,String n,Object v)throws Exception{Field f=o.getClass().getDeclaredField(n);f.setAccessible(true);f.set(o,v);}
@@ -100,12 +101,12 @@ final class LibraryTabsChecks {
       main(t,()->{((ScrollingGrid)field(a,"albumGridView")).restoreCell(8,-37,false);return true;});
       waitFor(t,"album scroll",()->{ScrollingGrid g=(ScrollingGrid)field(a,"albumGridView");return g.firstCellPosition()==8&&g.getChildAt(0).getTop()==-37;});
       switchTo(t,a,false);capture(t,a,tabs(a),"photos");
-      main(t,()->{((ScrollingGrid)field(a,"grid")).restoreCell(28,-49,false);return true;});
-      waitFor(t,"photo scroll",()->{ScrollingGrid g=(ScrollingGrid)field(a,"grid");return g.firstCellPosition()==28&&g.getChildAt(0).getTop()==-49;});
+      main(t,()->{((ScrollingGrid)field(a,"grid")).restoreCell(PHOTO_ANCHOR,-49,false);return true;});
+      waitFor(t,"photo scroll",()->{ScrollingGrid g=(ScrollingGrid)field(a,"grid");return g.firstCellPosition()==PHOTO_ANCHOR&&g.getChildAt(0).getTop()==-49;});
       switchTo(t,a,true);
       waitFor(t,"album restored",()->{ScrollingGrid g=(ScrollingGrid)field(a,"albumGridView");return g.firstCellPosition()==8&&g.getChildAt(0).getTop()==-37;});
       switchTo(t,a,false);
-      waitFor(t,"photo restored",()->{ScrollingGrid g=(ScrollingGrid)field(a,"grid");return g.firstCellPosition()==28&&g.getChildAt(0).getTop()==-49;});
+      waitFor(t,"photo restored",()->{ScrollingGrid g=(ScrollingGrid)field(a,"grid");return g.firstCellPosition()==PHOTO_ANCHOR&&g.getChildAt(0).getTop()==-49;});
       // Enter selection using the existing screen behavior, then attempt the disabled peer tab.
       main(t,()->{set(a,"selecting",true);Set<String> selected=(Set<String>)field(a,"selectedPhotos");selected.add(((List<PhotoRepository.Photo>)field(a,"photos")).get(0).uri.toString());invoke(a,"gallery");return true;});
 
@@ -141,10 +142,10 @@ final class LibraryTabsChecks {
       waitFor(t,"second albums",()->tabs(fixture)!=null);
       t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);waitFor(t,"album root exit",()->fixture.isFinishing()||!fixture.hasWindowFocus());
       main(t,()->{fixture.finish();return true;});
-      log.append("PASS rich-data navigation retains album cell8/top-37 and photos cell28/top-49, selection hiding/Back, filters, recreation and root Back exits.\n");
+      log.append("PASS rich-data navigation retains album cell8/top-37 and photos cell").append(PHOTO_ANCHOR).append("/top-49, selection hiding/Back, filters, recreation and root Back exits.\n");
       }else{
         checkSparseLibrary(t,a);
-        log.append("PASS sparse-library native photo/album navigation, empty-result camera/rank filter retention, synthetic selection-state navigation hiding and Back restoration. Observed album rows=").append(counts[0]).append(", photo rows=").append(counts[1]).append(". UNVERIFIED scroll restoration: insufficient fixture data for album cell8/photo cell28 offsets; rich-data checks were not executed.\n");
+        log.append("PASS sparse-library native photo/album navigation, empty-result camera/rank filter retention, synthetic selection-state navigation hiding and Back restoration. Observed album rows=").append(counts[0]).append(", photo rows=").append(counts[1]).append(". UNVERIFIED scroll restoration: insufficient fixture data for album cell8/photo cell").append(PHOTO_ANCHOR).append(" offsets; rich-data checks were not executed.\n");
         main(t,()->{a.finish();return true;});
       }
       MainActivity display=(MainActivity)t.startActivitySync(new Intent(t.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));current[0]=display;

@@ -8,6 +8,10 @@ CIではAndroid SDKの `system-images;android-35;google_apis;x86_64` とANGLEの
 
 `RawEditInstrumentation` の `full` はEGLの色・向き・比較表示に加え、合成DNGのデコード、原寸タイル、JPEG保存と中止を検査する。本体の `photo-storage-import-guard` は、移動が取り込み履歴を更新する間だけ、新しい取り込みを止めることを確かめる。`diagnostic-failures` は合成エラーを使い、クラッシュや保存失敗の記録と、個人データを出力しないことを検査する。
 
+`album-tags`、`library-tabs`、`gallery-position` はそれぞれ、空のAVDに合成JPEG 72枚と24アルバムを作り、実際の索引を使う。セル8／上端-37px（アルバム）とセル27／上端-49px（3列の写真一覧）の位置復帰、アルバムと写真のセルから開いたビューアとタグ画面の往復、索引を再読込したあとの位置を検査する。CIは素材不足で検査が省略された場合に失敗する。各検査の終了時に作成した写真を削除し、索引を更新する。
+
+`media-observer-lifecycle` は開いている一覧の通常更新と、Activityの破棄後に届くMediaStore通知と更新処理が再実行されないことを確かめる。
+
 `import-latency`、`import-deferred`、`import-interruption`、`import-pause-interruption` は、合成RAWを使って新規入力の表示と中断を確認する。処理速度を比較する場合は、端末、画面、画像、診断の条件をそろえて測定する。[取り込みから一覧反映まで](diagnostics.md#新規取り込みから一覧反映まで)
 
 ## 専用の準備が必要なモード
@@ -15,8 +19,6 @@ CIではAndroid SDKの `system-images;android-35;google_apis;x86_64` とANGLEの
 | モード | 必要な準備と確認先 |
 | --- | --- |
 | `release-upgrade-seed`、`release-upgrade-verify` | 専用AVDで、デバッグ版に合成データを作り、同じ署名かつ上位versionCodeの非デバッグ版をデータ保持で上書きする。上書き後に写真・履歴・順位・タグ・暗号化された合成設定を照合する。[非デバッグ版への移行 #199](https://github.com/ktnyt/Loupe/issues/199) |
-| `album-tags` の写真ライブラリを使う分岐 | 空のAVDではライブラリとアルバム内のタグ入口、Back後の観測位置の復帰を検査する。セル8／上端-37pxまでの深いスクロールには、その位置へ到達できるだけの索引済みアルバムが必要。ビューアのタグ入口には、動画以外の表紙がある索引済みアルバムが必要。CIで `SKIP` と出る分岐は未検査。 |
-| `gallery-position` | 索引に40以上の写真グループを用意する。空のライブラリでは通常索引の再読込を検証できない。 |
 | `jpeg` | 読み取り許可のあるJPEG 3枚をMediaStoreに用意する。元データと表示用プレビューの照合を行う。 |
 | `tag-lifecycle`、`related` | タグの付いた検査用写真を索引に登録する。`tag-lifecycle` は `DCIM/OMDS/`、`related` は同じフォルダにタグ付与済みの例と未判定の候補が必要。素材がない場合、`related` の合成画像によるモデル推論までは動くが、類似写真の選出やキャッシュ再読込は未検査。 |
 | `camera-pilot-dual-slot-ui`、`camera-pilot-sd-swap`、`camera-pilot-sd-revision` | 合成カードでもテストコードが隔離APKのapplicationIdとエミュレータを要求する。通常の本体APKは起動時に拒否される。UIは400dp/1.0と320dp/1.3の既存手順で確認する。[二つのSDスロットの検証 #184](https://github.com/ktnyt/Loupe/issues/184)、[再挿入と保存済み判定 #166](https://github.com/ktnyt/Loupe/issues/166) |

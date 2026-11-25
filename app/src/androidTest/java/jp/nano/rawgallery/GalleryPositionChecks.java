@@ -10,11 +10,9 @@ import java.util.*;
 import java.util.concurrent.*;
 
 final class GalleryPositionChecks {
+  private static final int GALLERY_ANCHOR = 27; // The real gallery spans three columns.
   private static Object field(Object o, String name) throws Exception {
     Field f=o.getClass().getDeclaredField(name); f.setAccessible(true); return f.get(o);
-  }
-  private static void set(Object o, String name, Object value) throws Exception {
-    Field f=o.getClass().getDeclaredField(name); f.setAccessible(true); f.set(o,value);
   }
   private static void waitFor(Instrumentation test,String stage,DiagnosticChecks.Check check) throws Exception {
     try { DiagnosticChecks.waitFor(test,check); }
@@ -23,26 +21,27 @@ final class GalleryPositionChecks {
   static String run(Instrumentation test) throws Exception {
     MainActivity a=(MainActivity)test.startActivitySync(new Intent(test.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     try {
+      GalleryScreenChecks.finishInitialIndex(test,a);
       GalleryIndex.Snapshot snapshot;
       try(GalleryIndex index=new GalleryIndex(a)){snapshot=index.load(null,"すべて");}
       if(snapshot.bundles.size()<40)throw new AssertionError("Need 40 groups for read-only integration check");
-      Method gallery=MainActivity.class.getDeclaredMethod("gallery");gallery.setAccessible(true);
       Method load=MainActivity.class.getDeclaredMethod("loadIndexedPhotos");load.setAccessible(true);
-      ScrollingGrid[] real={null};
-      test.runOnMainSync(()->{try{
-        set(a,"photos",snapshot.photos);set(a,"bundles",snapshot.bundles);set(a,"albumFolder",null);
-        set(a,"rankFilter",0);set(a,"burstMembers",null);gallery.invoke(a);real[0]=(ScrollingGrid)field(a,"grid");
-      }catch(Exception e){throw new RuntimeException(e);}});
-      waitFor(test,"stage 1",()->real[0].getChildCount()>1);
-      test.runOnMainSync(()->real[0].restoreCell(28,-37,false));
-      waitFor(test,"stage 2",()->real[0].firstCellPosition()==28 && real[0].getChildAt(0).getTop()==-37);
+      TagDetailChecks.ui(test,()->{
+        LibraryTabs tabs=ExpressiveUiChecks.find(a.getWindow().getDecorView(),LibraryTabs.class);
+        TagDetailChecks.require(tabs!=null&&tabs.destinationView(0).performClick(),"open native photo destination");
+      });
+      GalleryScreenChecks.settle(test,a);
+      ScrollingGrid real=(ScrollingGrid)field(a,"grid");
+      waitFor(test,"real grid loaded",()->real.isAttachedToWindow()&&real.getChildCount()>1);
+      test.runOnMainSync(()->real.restoreCell(GALLERY_ANCHOR,-37,false));
+      waitFor(test,"real grid scrolled",()->real.firstCellPosition()==GALLERY_ANCHOR&&real.getChildAt(0).getTop()==-37);
+      Object beforeReload=field(a,"photos");
       test.runOnMainSync(()->{try{load.invoke(a);}catch(Exception e){throw new RuntimeException(e);}});
       ((ExecutorService)field(a,"scans")).submit(()->{}).get(8,TimeUnit.SECONDS);
       test.waitForIdleSync();
-      test.runOnMainSync(()->{
-        if(real[0].firstCellPosition()!=28 || real[0].getChildAt(0).getTop()!=-37)
-          throw new AssertionError("index apply reset live position");
-      });
+      waitFor(test,"index reload applied and preserved live position",()->RankingResultChecks.get(a,"photos")!=beforeReload
+          &&RankingResultChecks.get(a,"grid")==real&&real.isAttachedToWindow()&&real.getChildCount()>0
+          &&real.firstCellPosition()==GALLERY_ANCHOR&&real.getChildAt(0).getTop()==-37);
 
       List<PhotoRepository.Photo> photos=new ArrayList<>();
       List<List<Integer>> shown=new ArrayList<>();
