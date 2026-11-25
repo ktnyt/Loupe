@@ -14,71 +14,170 @@ import org.json.JSONObject;
  */
 public final class ArchiveInstrumentation extends Instrumentation {
   private boolean systemInsetsTest, singleBestTest, expressiveUiTest, selectedTagsTest;
-  private boolean videoTest, nanoBananaTest, nanoBackgroundTest, generationIndicatorTest, removeLookTest;
+  private boolean videoTest,
+      nanoBananaTest,
+      nanoBackgroundTest,
+      generationIndicatorTest,
+      removeLookTest;
   private boolean material3Test, materialGalleryTest;
   private int tagWidth;
   private boolean sortDimensionsSpecified;
   private float tagFont;
-  @Override public void callActivityOnCreate(android.app.Activity activity, Bundle state) {
-    if("camera-pilot-wifi-quick".equals(cameraPilotMode))CameraWifiQuickChecks.activityCreated(activity);
-    if(nanoBackgroundTest)NanoBananaBackgroundChecks.activityCreated(activity);
-    boolean dualSlotUi = (CameraDualSlotUiChecks.MODE.equals(cameraPilotMode) || CameraSdSwapChecks.MODE.equals(cameraPilotMode))
-        && activity instanceof CameraImportActivity;
+
+  @Override
+  public void callActivityOnCreate(android.app.Activity activity, Bundle state) {
+    if ("camera-pilot-wifi-quick".equals(cameraPilotMode))
+      CameraWifiQuickChecks.activityCreated(activity);
+    if (nanoBackgroundTest) NanoBananaBackgroundChecks.activityCreated(activity);
+    boolean dualSlotUi =
+        (CameraDualSlotUiChecks.MODE.equals(cameraPilotMode)
+                || CameraSdSwapChecks.MODE.equals(cameraPilotMode))
+            && activity instanceof CameraImportActivity;
     if (dualSlotUi) {
-      var config = new android.content.res.Configuration(activity.getResources().getConfiguration());
+      var config =
+          new android.content.res.Configuration(activity.getResources().getConfiguration());
       config.fontScale = tagFont;
       config.screenWidthDp = tagWidth;
-      activity.getResources().updateConfiguration(config, activity.getResources().getDisplayMetrics());
+      activity
+          .getResources()
+          .updateConfiguration(config, activity.getResources().getDisplayMetrics());
     }
-    if((ep7WifiTest || ("camera-pilot-qr-ui".equals(cameraPilotMode) || (("camera-pilot-wifi-quick".equals(cameraPilotMode) || "camera-pilot-quick-import".equals(cameraPilotMode)) || ("camera-pilot-import-progress".equals(cameraPilotMode) || "camera-pilot-usb-launch".equals(cameraPilotMode))))) && (activity instanceof Ep7WifiActivity || activity instanceof CameraImportActivity || activity instanceof CameraBleActivity)) {
-      var config = new android.content.res.Configuration(activity.getBaseContext().getResources().getConfiguration());
-      config.fontScale = tagFont; config.screenWidthDp = tagWidth;
-      activity.getResources().updateConfiguration(config, activity.getResources().getDisplayMetrics());
+    if ((ep7WifiTest
+            || ("camera-pilot-qr-ui".equals(cameraPilotMode)
+                || (("camera-pilot-wifi-quick".equals(cameraPilotMode)
+                        || "camera-pilot-quick-import".equals(cameraPilotMode))
+                    || ("camera-pilot-import-progress".equals(cameraPilotMode)
+                        || "camera-pilot-usb-launch".equals(cameraPilotMode)))))
+        && (activity instanceof Ep7WifiActivity
+            || activity instanceof CameraImportActivity
+            || activity instanceof CameraBleActivity)) {
+      var config =
+          new android.content.res.Configuration(
+              activity.getBaseContext().getResources().getConfiguration());
+      config.fontScale = tagFont;
+      config.screenWidthDp = tagWidth;
+      activity
+          .getResources()
+          .updateConfiguration(config, activity.getResources().getDisplayMetrics());
     }
 
-    if ((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || photoEditTest || sortTest || videoTest || removeLookTest) && (activity instanceof TagActivity || activity instanceof MainActivity || activity instanceof VideoActivity || removeLookTest && activity instanceof RawEditActivity) && tagWidth > 0) {
-      android.content.res.Configuration config = new android.content.res.Configuration(activity.getBaseContext().getResources().getConfiguration());
-      config.fontScale = tagFont; config.screenWidthDp = tagWidth;
+    if ((systemInsetsTest
+            || selectedTagsTest
+            || singleBestTest
+            || tagDetailTest
+            || confidenceUiTest
+            || resultTest
+            || galleryScreenTest
+            || photoEditTest
+            || sortTest
+            || videoTest
+            || removeLookTest)
+        && (activity instanceof TagActivity
+            || activity instanceof MainActivity
+            || activity instanceof VideoActivity
+            || removeLookTest && activity instanceof RawEditActivity)
+        && tagWidth > 0) {
+      android.content.res.Configuration config =
+          new android.content.res.Configuration(
+              activity.getBaseContext().getResources().getConfiguration());
+      config.fontScale = tagFont;
+      config.screenWidthDp = tagWidth;
       // Test process resources only; never writes system settings.
-      activity.getResources().updateConfiguration(config, activity.getResources().getDisplayMetrics());
+      activity
+          .getResources()
+          .updateConfiguration(config, activity.getResources().getDisplayMetrics());
     }
-    if((confidenceUiTest||tagDetailTest||removeLookTest)&&activity instanceof TagActivity)TagFixtureIsolation.install((TagActivity)activity);
-    if(removeLookTest&&activity instanceof RawEditActivity&&state==null&&activity.getIntent().getBooleanExtra("removeLookLegacyFixture",false))state=LookRemovalChecks.legacyState(activity.getIntent());
-    boolean photoStorageUi = photoStorageUiMode() && (activity instanceof PhotoStorageActivity
-        || activity instanceof PhotoStorageInventoryActivity);
+    if ((confidenceUiTest || tagDetailTest || removeLookTest) && activity instanceof TagActivity)
+      TagFixtureIsolation.install((TagActivity) activity);
+    if (removeLookTest
+        && activity instanceof RawEditActivity
+        && state == null
+        && activity.getIntent().getBooleanExtra("removeLookLegacyFixture", false))
+      state = LookRemovalChecks.legacyState(activity.getIntent());
+    boolean photoStorageUi =
+        photoStorageUiMode()
+            && (activity instanceof PhotoStorageActivity
+                || activity instanceof PhotoStorageInventoryActivity);
     if (photoStorageUi) {
       int availablePx = PhotoStorageChecks.availableDisplay(activity).width();
       float density = activity.getResources().getDisplayMetrics().density;
       photoStorageEffectiveWidth = Math.min(tagWidth, (int) Math.floor(availablePx / density));
-      var config = new android.content.res.Configuration(activity.getResources().getConfiguration());
+      var config =
+          new android.content.res.Configuration(activity.getResources().getConfiguration());
       config.fontScale = tagFont;
       config.screenWidthDp = photoStorageEffectiveWidth;
-      activity.getResources().updateConfiguration(config, activity.getResources().getDisplayMetrics());
+      activity
+          .getResources()
+          .updateConfiguration(config, activity.getResources().getDisplayMetrics());
     }
     super.callActivityOnCreate(activity, state);
     if (dualSlotUi)
-      activity.getWindow().setLayout(GalleryUi.dp(activity, tagWidth), android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+      activity
+          .getWindow()
+          .setLayout(
+              GalleryUi.dp(activity, tagWidth), android.view.ViewGroup.LayoutParams.MATCH_PARENT);
     if (photoStorageUi)
-      activity.getWindow().setLayout(GalleryUi.dp(activity, photoStorageEffectiveWidth),
-          android.view.ViewGroup.LayoutParams.MATCH_PARENT);
-    if(ep7WifiTest || ("camera-pilot-qr-ui".equals(cameraPilotMode) || (("camera-pilot-wifi-quick".equals(cameraPilotMode) || "camera-pilot-quick-import".equals(cameraPilotMode)) || ("camera-pilot-import-progress".equals(cameraPilotMode) || "camera-pilot-usb-launch".equals(cameraPilotMode)))))activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
-    if ((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || photoEditTest || sortTest || videoTest || removeLookTest) && tagWidth > 0) activity.getWindow().setLayout(GalleryUi.dp(activity,tagWidth),android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+      activity
+          .getWindow()
+          .setLayout(
+              GalleryUi.dp(activity, photoStorageEffectiveWidth),
+              android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+    if (ep7WifiTest
+        || ("camera-pilot-qr-ui".equals(cameraPilotMode)
+            || (("camera-pilot-wifi-quick".equals(cameraPilotMode)
+                    || "camera-pilot-quick-import".equals(cameraPilotMode))
+                || ("camera-pilot-import-progress".equals(cameraPilotMode)
+                    || "camera-pilot-usb-launch".equals(cameraPilotMode)))))
+      activity
+          .getWindow()
+          .setLayout(
+              GalleryUi.dp(activity, tagWidth), android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+    if ((systemInsetsTest
+            || selectedTagsTest
+            || singleBestTest
+            || tagDetailTest
+            || confidenceUiTest
+            || resultTest
+            || galleryScreenTest
+            || photoEditTest
+            || sortTest
+            || videoTest
+            || removeLookTest)
+        && tagWidth > 0)
+      activity
+          .getWindow()
+          .setLayout(
+              GalleryUi.dp(activity, tagWidth), android.view.ViewGroup.LayoutParams.MATCH_PARENT);
   }
-  private boolean shareHistoryTest, shareHistoryScreenTest, shareHistoryHandoffTest, shareHistoryCallbackTest;
+
+  private boolean shareHistoryTest,
+      shareHistoryScreenTest,
+      shareHistoryHandoffTest,
+      shareHistoryCallbackTest;
   private boolean shareHistoryRestartSeed, shareHistoryRestartVerify;
   private boolean cameraTabsTest, ep7WifiTest, cameraLedgerTest, cameraBenchmarkTest;
   private String photoStorageMode;
   private int photoStorageEffectiveWidth;
 
-  int photoStorageEffectiveWidth() { return photoStorageEffectiveWidth; }
+  int photoStorageEffectiveWidth() {
+    return photoStorageEffectiveWidth;
+  }
 
   private boolean photoStorageUiMode() {
-    return "photo-storage-ui".equals(photoStorageMode) || "photo-storage-ui-run".equals(photoStorageMode)
-        || "photo-storage-ui-run-skipped".equals(photoStorageMode) || "photo-storage-inventory-ui".equals(photoStorageMode)
+    return "photo-storage-ui".equals(photoStorageMode)
+        || "photo-storage-ui-run".equals(photoStorageMode)
+        || "photo-storage-ui-run-skipped".equals(photoStorageMode)
+        || "photo-storage-inventory-ui".equals(photoStorageMode)
         || "photo-storage-archive-ui".equals(photoStorageMode);
   }
+
   private String cameraPilotMode;
-  private boolean shareCapacityTest, shareToggleTest, galleryScreenTest, galleryTalkBack, viewerScreenTest, shareScreenTest;
+  private boolean shareCapacityTest,
+      shareToggleTest,
+      galleryScreenTest,
+      galleryTalkBack,
+      viewerScreenTest,
+      shareScreenTest;
   private boolean photoEditTest;
   private boolean consistencyTest, syncControlsTest, tagDetailTest, resultTest, resultTalkBack;
   private boolean dashboardTalkBackTest;
@@ -94,7 +193,14 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean diagnosticTest, diagnosticFailureTest, sheetTest;
   private boolean tagTest, lifecycleTest;
   private boolean relatedTest;
-  private boolean bulkWinnerTest, coWinnerTest, positionTest, sortTest, tabsTest, albumTagsTest, comparisonLabelsTest, actionLabelsTest;
+  private boolean bulkWinnerTest,
+      coWinnerTest,
+      positionTest,
+      sortTest,
+      tabsTest,
+      albumTagsTest,
+      comparisonLabelsTest,
+      actionLabelsTest;
   private boolean automaticTest, confidenceStoreTest, confidenceUiTest;
   private boolean cleanupTest;
   private boolean compactTest;
@@ -109,18 +215,31 @@ public final class ArchiveInstrumentation extends Instrumentation {
   private boolean jpegTest;
   private boolean jpegCloudTest;
   private boolean jpegCleanupTest;
-  private boolean importLatencyTest, importInterruptionTest, importPauseTest, importDeferredTest, indexSignatureTest, indexApplyRaceTest, archiveScanTest;
+  private boolean importLatencyTest,
+      importInterruptionTest,
+      importPauseTest,
+      importDeferredTest,
+      indexSignatureTest,
+      indexApplyRaceTest,
+      archiveScanTest;
   private volatile long importPauses, importResumes;
 
-  @Override public void callActivityOnPause(android.app.Activity activity) {
+  @Override
+  public void callActivityOnPause(android.app.Activity activity) {
     if (importLatencyTest && activity instanceof MainActivity) importPauses++;
     super.callActivityOnPause(activity);
   }
 
-  long importPauses() { return importPauses; }
-  long importResumes() { return importResumes; }
+  long importPauses() {
+    return importPauses;
+  }
 
-  @Override public void callActivityOnResume(android.app.Activity activity) {
+  long importResumes() {
+    return importResumes;
+  }
+
+  @Override
+  public void callActivityOnResume(android.app.Activity activity) {
     super.callActivityOnResume(activity);
     if (importLatencyTest && activity instanceof MainActivity) importResumes++;
   }
@@ -130,59 +249,96 @@ public final class ArchiveInstrumentation extends Instrumentation {
   public void onCreate(Bundle args) {
     super.onCreate(args);
     cameraPilotArguments = args == null ? new Bundle() : new Bundle(args);
-    videoTest=args!=null&&"video".equals(args.getString("mode"));
-    nanoBananaTest=args!=null&&"nano-banana".equals(args.getString("mode"));
-    removeLookTest=args!=null&&"look-removal".equals(args.getString("mode"));
-    generationIndicatorTest=args!=null&&"generation-indicator".equals(args.getString("mode"));
-    nanoBackgroundTest=args!=null&&"nano-background".equals(args.getString("mode"));
-    material3Test=args!=null&&"material3".equals(args.getString("mode"));
-    materialGalleryTest=args!=null&&"gallery-material3".equals(args.getString("mode"));
+    videoTest = args != null && "video".equals(args.getString("mode"));
+    nanoBananaTest = args != null && "nano-banana".equals(args.getString("mode"));
+    removeLookTest = args != null && "look-removal".equals(args.getString("mode"));
+    generationIndicatorTest = args != null && "generation-indicator".equals(args.getString("mode"));
+    nanoBackgroundTest = args != null && "nano-background".equals(args.getString("mode"));
+    material3Test = args != null && "material3".equals(args.getString("mode"));
+    materialGalleryTest = args != null && "gallery-material3".equals(args.getString("mode"));
     shareHistoryTest = args != null && "share-history".equals(args.getString("mode"));
     shareHistoryScreenTest = args != null && "share-history-screen".equals(args.getString("mode"));
-    shareHistoryHandoffTest = args != null && "share-history-handoff".equals(args.getString("mode"));
-    shareHistoryCallbackTest = args != null && "share-history-callback".equals(args.getString("mode"));
-    shareHistoryRestartSeed = args != null && "share-history-restart-seed".equals(args.getString("mode"));
-    shareHistoryRestartVerify = args != null && "share-history-restart-verify".equals(args.getString("mode"));
+    shareHistoryHandoffTest =
+        args != null && "share-history-handoff".equals(args.getString("mode"));
+    shareHistoryCallbackTest =
+        args != null && "share-history-callback".equals(args.getString("mode"));
+    shareHistoryRestartSeed =
+        args != null && "share-history-restart-seed".equals(args.getString("mode"));
+    shareHistoryRestartVerify =
+        args != null && "share-history-restart-verify".equals(args.getString("mode"));
     if (shareHistoryScreenTest) {
       tagWidth = Integer.parseInt(args.getString("width", "400"));
       tagFont = Float.parseFloat(args.getString("font", "1.0"));
     }
-    confidenceUiTest=args!=null&&"tag-confidence".equals(args.getString("mode"));
-    confidenceStoreTest=args!=null&&"confidence-store".equals(args.getString("mode"));
+    confidenceUiTest = args != null && "tag-confidence".equals(args.getString("mode"));
+    confidenceStoreTest = args != null && "confidence-store".equals(args.getString("mode"));
     archiveScanTest = args != null && "archive-scan".equals(args.getString("mode"));
     indexSignatureTest = args != null && "index-signature".equals(args.getString("mode"));
     indexApplyRaceTest = args != null && "index-apply-race".equals(args.getString("mode"));
     importDeferredTest = args != null && "import-deferred".equals(args.getString("mode"));
     importPauseTest = args != null && "import-pause-interruption".equals(args.getString("mode"));
-    importInterruptionTest = importPauseTest || (args != null && "import-interruption".equals(args.getString("mode")));
-    importLatencyTest = importInterruptionTest || importDeferredTest || (args != null && "import-latency".equals(args.getString("mode")));
+    importInterruptionTest =
+        importPauseTest || (args != null && "import-interruption".equals(args.getString("mode")));
+    importLatencyTest =
+        importInterruptionTest
+            || importDeferredTest
+            || (args != null && "import-latency".equals(args.getString("mode")));
     coWinnerTest = args != null && "burst-co-winners".equals(args.getString("mode"));
     bulkWinnerTest = args != null && "burst-bulk-winners".equals(args.getString("mode"));
     burstGapTest = args != null && "burst-gap-millis".equals(args.getString("mode"));
-    sortTest = bulkWinnerTest || coWinnerTest || (args != null && "sort-naming".equals(args.getString("mode")));
-    shareScreenTest=args!=null&&"share-screen".equals(args.getString("mode"));
-    shareCapacityTest=args!=null&&"share-capacity".equals(args.getString("mode"));
-    systemInsetsTest=args!=null&&"system-insets".equals(args.getString("mode"));
-    singleBestTest=args!=null&&"single-best".equals(args.getString("mode"));
-    expressiveUiTest=args!=null&&"expressive-ui".equals(args.getString("mode"));
-    selectedTagsTest=args!=null&&"selected-tags".equals(args.getString("mode"));
-    viewerScreenTest=args!=null&&"viewer-screen".equals(args.getString("mode"));
-    photoEditTest=args!=null&&"photo-edit".equals(args.getString("mode"));
-    shareToggleTest=args!=null&&"share-toggle".equals(args.getString("mode"));
-    galleryTalkBack=args!=null&&"gallery-screen-talkback".equals(args.getString("mode"));
-    galleryScreenTest=expressiveUiTest||materialGalleryTest||shareCapacityTest||shareToggleTest||shareScreenTest||viewerScreenTest||galleryTalkBack||(args!=null&&"gallery-screen".equals(args.getString("mode")));
-    resultTalkBack=args!=null&&"ranking-result-talkback".equals(args.getString("mode"));
-    resultTest=resultTalkBack||(args!=null&&"ranking-result".equals(args.getString("mode")));
-    tagDetailTest=args!=null&&"tag-detail".equals(args.getString("mode"));
-    if((systemInsetsTest || selectedTagsTest || singleBestTest || tagDetailTest || confidenceUiTest || resultTest || galleryScreenTest || photoEditTest || sortTest || videoTest || nanoBananaTest || nanoBackgroundTest || generationIndicatorTest || removeLookTest) && args.containsKey("width")){tagWidth=Integer.parseInt(args.getString("width"));tagFont=Float.parseFloat(args.getString("font","1.0"));}
-    sortDimensionsSpecified=sortTest && args.containsKey("width");
-    syncControlsTest=args!=null&&"sync-controls".equals(args.getString("mode"));
-    consistencyTest=args!=null&&"consistency-layout".equals(args.getString("mode"));
-    dashboardTalkBackTest=args!=null&&"dashboard-talkback".equals(args.getString("mode"));
-    dashboardLayoutTest=args!=null&&"dashboard-layout".equals(args.getString("mode"));
-    dashboardTest=args!=null&&"dashboard".equals(args.getString("mode"));
-    talkBackStatusTest=args!=null&&"talkback-status".equals(args.getString("mode"));
-    visualStatusTest=args!=null&&"visual-status".equals(args.getString("mode"));
+    sortTest =
+        bulkWinnerTest
+            || coWinnerTest
+            || (args != null && "sort-naming".equals(args.getString("mode")));
+    shareScreenTest = args != null && "share-screen".equals(args.getString("mode"));
+    shareCapacityTest = args != null && "share-capacity".equals(args.getString("mode"));
+    systemInsetsTest = args != null && "system-insets".equals(args.getString("mode"));
+    singleBestTest = args != null && "single-best".equals(args.getString("mode"));
+    expressiveUiTest = args != null && "expressive-ui".equals(args.getString("mode"));
+    selectedTagsTest = args != null && "selected-tags".equals(args.getString("mode"));
+    viewerScreenTest = args != null && "viewer-screen".equals(args.getString("mode"));
+    photoEditTest = args != null && "photo-edit".equals(args.getString("mode"));
+    shareToggleTest = args != null && "share-toggle".equals(args.getString("mode"));
+    galleryTalkBack = args != null && "gallery-screen-talkback".equals(args.getString("mode"));
+    galleryScreenTest =
+        expressiveUiTest
+            || materialGalleryTest
+            || shareCapacityTest
+            || shareToggleTest
+            || shareScreenTest
+            || viewerScreenTest
+            || galleryTalkBack
+            || (args != null && "gallery-screen".equals(args.getString("mode")));
+    resultTalkBack = args != null && "ranking-result-talkback".equals(args.getString("mode"));
+    resultTest =
+        resultTalkBack || (args != null && "ranking-result".equals(args.getString("mode")));
+    tagDetailTest = args != null && "tag-detail".equals(args.getString("mode"));
+    if ((systemInsetsTest
+            || selectedTagsTest
+            || singleBestTest
+            || tagDetailTest
+            || confidenceUiTest
+            || resultTest
+            || galleryScreenTest
+            || photoEditTest
+            || sortTest
+            || videoTest
+            || nanoBananaTest
+            || nanoBackgroundTest
+            || generationIndicatorTest
+            || removeLookTest)
+        && args.containsKey("width")) {
+      tagWidth = Integer.parseInt(args.getString("width"));
+      tagFont = Float.parseFloat(args.getString("font", "1.0"));
+    }
+    sortDimensionsSpecified = sortTest && args.containsKey("width");
+    syncControlsTest = args != null && "sync-controls".equals(args.getString("mode"));
+    consistencyTest = args != null && "consistency-layout".equals(args.getString("mode"));
+    dashboardTalkBackTest = args != null && "dashboard-talkback".equals(args.getString("mode"));
+    dashboardLayoutTest = args != null && "dashboard-layout".equals(args.getString("mode"));
+    dashboardTest = args != null && "dashboard".equals(args.getString("mode"));
+    talkBackStatusTest = args != null && "talkback-status".equals(args.getString("mode"));
+    visualStatusTest = args != null && "visual-status".equals(args.getString("mode"));
     jobStateTest = args != null && "job-state".equals(args.getString("mode"));
     affordancesTest = args != null && "affordances".equals(args.getString("mode"));
     rankingModesTest = args != null && "ranking-modes".equals(args.getString("mode"));
@@ -191,25 +347,54 @@ public final class ArchiveInstrumentation extends Instrumentation {
     comparisonLabelsTest = args != null && "comparison-labels".equals(args.getString("mode"));
     albumTagsTest = args != null && "album-tags".equals(args.getString("mode"));
     cameraPilotMode = args == null ? null : args.getString("mode");
-    if(cameraPilotMode!=null&&!cameraPilotMode.startsWith("camera-pilot-"))cameraPilotMode=null;
-    if (CameraDualSlotUiChecks.MODE.equals(cameraPilotMode) || CameraSdSwapChecks.MODE.equals(cameraPilotMode)) {
+    if (cameraPilotMode != null && !cameraPilotMode.startsWith("camera-pilot-"))
+      cameraPilotMode = null;
+    if (CameraDualSlotUiChecks.MODE.equals(cameraPilotMode)
+        || CameraSdSwapChecks.MODE.equals(cameraPilotMode)) {
       tagWidth = Integer.parseInt(args.getString("width", "400"));
       tagFont = Float.parseFloat(args.getString("font", "1.0"));
     }
-    if (("camera-pilot-qr-ui".equals(cameraPilotMode) || (("camera-pilot-wifi-quick".equals(cameraPilotMode) || "camera-pilot-quick-import".equals(cameraPilotMode)) || ("camera-pilot-import-progress".equals(cameraPilotMode) || "camera-pilot-usb-launch".equals(cameraPilotMode))))) { tagWidth=Integer.parseInt(args.getString("width","400"));tagFont=Float.parseFloat(args.getString("font","1.0")); }
+    if (("camera-pilot-qr-ui".equals(cameraPilotMode)
+        || (("camera-pilot-wifi-quick".equals(cameraPilotMode)
+                || "camera-pilot-quick-import".equals(cameraPilotMode))
+            || ("camera-pilot-import-progress".equals(cameraPilotMode)
+                || "camera-pilot-usb-launch".equals(cameraPilotMode))))) {
+      tagWidth = Integer.parseInt(args.getString("width", "400"));
+      tagFont = Float.parseFloat(args.getString("font", "1.0"));
+    }
     cameraBenchmarkTest = args != null && "camera-benchmark".equals(args.getString("mode"));
     cameraLedgerTest = args != null && "camera-ledger".equals(args.getString("mode"));
-    if (args != null && java.util.List.of("photo-storage", "photo-storage-import-guard", "photo-storage-archive", "photo-storage-archive-snapshot", "photo-storage-archive-ui", "photo-storage-inventory", "photo-storage-inventory-ui", "photo-storage-performance", "photo-storage-ui", "photo-storage-ui-run", "photo-storage-ui-run-skipped", "photo-storage-detach-seed",
-        "photo-storage-detach-absent", "photo-storage-detach-restored", "photo-storage-saf-seed",
-        "photo-storage-saf-verify", "photo-storage-abandon-detach-seed", "photo-storage-abandon-detach-absent",
-        "photo-storage-abandon-detach-restored").contains(args.getString("mode", "")))
-      photoStorageMode = args.getString("mode");
+    if (args != null
+        && java.util.List.of(
+                "photo-storage",
+                "photo-storage-import-guard",
+                "photo-storage-archive",
+                "photo-storage-archive-snapshot",
+                "photo-storage-archive-ui",
+                "photo-storage-inventory",
+                "photo-storage-inventory-ui",
+                "photo-storage-performance",
+                "photo-storage-ui",
+                "photo-storage-ui-run",
+                "photo-storage-ui-run-skipped",
+                "photo-storage-detach-seed",
+                "photo-storage-detach-absent",
+                "photo-storage-detach-restored",
+                "photo-storage-saf-seed",
+                "photo-storage-saf-verify",
+                "photo-storage-abandon-detach-seed",
+                "photo-storage-abandon-detach-absent",
+                "photo-storage-abandon-detach-restored")
+            .contains(args.getString("mode", ""))) photoStorageMode = args.getString("mode");
     if (photoStorageUiMode()) {
       tagWidth = Integer.parseInt(args.getString("width", "400"));
       tagFont = Float.parseFloat(args.getString("font", "1.0"));
     }
     ep7WifiTest = args != null && "ep7-wifi".equals(args.getString("mode"));
-    if(ep7WifiTest){tagWidth=Integer.parseInt(args.getString("width","400"));tagFont=Float.parseFloat(args.getString("font","1.0"));}
+    if (ep7WifiTest) {
+      tagWidth = Integer.parseInt(args.getString("width", "400"));
+      tagFont = Float.parseFloat(args.getString("font", "1.0"));
+    }
     cameraTabsTest = args != null && "camera-tabs".equals(args.getString("mode"));
     tabsTest = args != null && "library-tabs".equals(args.getString("mode"));
     positionTest = args != null && "gallery-position".equals(args.getString("mode"));
@@ -250,54 +435,117 @@ public final class ArchiveInstrumentation extends Instrumentation {
       e2StaleId = Long.parseLong(args.getString("stale-id", "0"));
       e2MatchId = Long.parseLong(args.getString("match-id", "0"));
     }
-    if (args != null && java.util.Set.of("e2-catalog-publish", "e2-catalog-republish",
-        "e2-catalog-restore", "e2-catalog-previous")
-        .contains(args.getString("mode", ""))) e2CatalogMode = args.getString("mode");
+    if (args != null
+        && java.util.Set.of(
+                "e2-catalog-publish",
+                "e2-catalog-republish",
+                "e2-catalog-restore",
+                "e2-catalog-previous")
+            .contains(args.getString("mode", ""))) e2CatalogMode = args.getString("mode");
     sheetTest = args != null && "sheets".equals(args.getString("mode"));
     start();
   }
 
-  private void validateSortDimensions(Context context){
-    if(tagWidth<=0 || !Float.isFinite(tagFont) || tagFont<=0)throw new IllegalArgumentException("sort dimensions must be finite and positive");
-    if(GalleryUi.dp(context,tagWidth)>context.getResources().getDisplayMetrics().widthPixels)throw new IllegalArgumentException("sort width exceeds device");
+  private void validateSortDimensions(Context context) {
+    if (tagWidth <= 0 || !Float.isFinite(tagFont) || tagFont <= 0)
+      throw new IllegalArgumentException("sort dimensions must be finite and positive");
+    if (GalleryUi.dp(context, tagWidth) > context.getResources().getDisplayMetrics().widthPixels)
+      throw new IllegalArgumentException("sort width exceeds device");
   }
 
   public void onStart() {
     Bundle results = new Bundle();
     File restored = null;
     try {
-      String report=failureReport(new AssertionError(new java.io.IOException("PRIVATE_VALUE")));
-      if(report.contains("PRIVATE_VALUE")||!report.contains("java.io.IOException")||!report.contains("ArchiveInstrumentation.java:"))throw new AssertionError();
+      String report = failureReport(new AssertionError(new java.io.IOException("PRIVATE_VALUE")));
+      if (report.contains("PRIVATE_VALUE")
+          || !report.contains("java.io.IOException")
+          || !report.contains("ArchiveInstrumentation.java:")) throw new AssertionError();
       Context context = getTargetContext();
       String mode = cameraPilotArguments.getString("mode", "");
       if ("release-upgrade-seed".equals(mode) || "release-upgrade-verify".equals(mode)) {
-        results.putString("stream", ReleaseUpgradeChecks.run(context, "release-upgrade-seed".equals(mode)));
+        results.putString(
+            "stream", ReleaseUpgradeChecks.run(context, "release-upgrade-seed".equals(mode)));
         finish(-1, results);
         return;
       }
-      if(selectedTagsTest){results.putString("stream",SelectedPhotoTagsChecks.run(this,tagWidth>0?tagWidth:400,tagFont>0?tagFont:1f));finish(-1,results);return;}
-      if(expressiveUiTest){results.putString("stream",ExpressiveUiChecks.run(this,tagWidth>0?tagWidth:400,tagFont>0?tagFont:1f));finish(-1,results);return;}
-      if(systemInsetsTest){results.putString("stream",WindowInsetsChecks.run(this,tagWidth>0?tagWidth:400,tagFont>0?tagFont:1f));finish(-1,results);return;}
-      if(singleBestTest){results.putString("stream",SingleBestChecks.run(this,tagWidth>0?tagWidth:400,tagFont>0?tagFont:1f));finish(-1,results);return;}
-      if(removeLookTest){results.putString("stream",LookRemovalChecks.run(this,tagWidth>0?tagWidth:400,tagFont>0?tagFont:1f));finish(-1,results);return;}
-      if(generationIndicatorTest){results.putString("stream",GenerationIndicatorChecks.run(this,tagWidth>0?tagWidth:400,tagFont>0?tagFont:1f));finish(-1,results);return;}
-      if(nanoBackgroundTest){results.putString("stream",NanoBananaBackgroundChecks.run(this,tagWidth>0?tagWidth:400,tagFont>0?tagFont:1f));finish(-1,results);return;}
+      if (selectedTagsTest) {
+        results.putString(
+            "stream",
+            SelectedPhotoTagsChecks.run(
+                this, tagWidth > 0 ? tagWidth : 400, tagFont > 0 ? tagFont : 1f));
+        finish(-1, results);
+        return;
+      }
+      if (expressiveUiTest) {
+        results.putString(
+            "stream",
+            ExpressiveUiChecks.run(
+                this, tagWidth > 0 ? tagWidth : 400, tagFont > 0 ? tagFont : 1f));
+        finish(-1, results);
+        return;
+      }
+      if (systemInsetsTest) {
+        results.putString(
+            "stream",
+            WindowInsetsChecks.run(
+                this, tagWidth > 0 ? tagWidth : 400, tagFont > 0 ? tagFont : 1f));
+        finish(-1, results);
+        return;
+      }
+      if (singleBestTest) {
+        results.putString(
+            "stream",
+            SingleBestChecks.run(this, tagWidth > 0 ? tagWidth : 400, tagFont > 0 ? tagFont : 1f));
+        finish(-1, results);
+        return;
+      }
+      if (removeLookTest) {
+        results.putString(
+            "stream",
+            LookRemovalChecks.run(this, tagWidth > 0 ? tagWidth : 400, tagFont > 0 ? tagFont : 1f));
+        finish(-1, results);
+        return;
+      }
+      if (generationIndicatorTest) {
+        results.putString(
+            "stream",
+            GenerationIndicatorChecks.run(
+                this, tagWidth > 0 ? tagWidth : 400, tagFont > 0 ? tagFont : 1f));
+        finish(-1, results);
+        return;
+      }
+      if (nanoBackgroundTest) {
+        results.putString(
+            "stream",
+            NanoBananaBackgroundChecks.run(
+                this, tagWidth > 0 ? tagWidth : 400, tagFont > 0 ? tagFont : 1f));
+        finish(-1, results);
+        return;
+      }
       if (nanoBananaTest) {
-        results.putString("stream", NanoBananaChecks.run(this, tagWidth > 0 ? tagWidth : 400, tagFont > 0 ? tagFont : 1f));
-        finish(-1, results); return;
+        results.putString(
+            "stream",
+            NanoBananaChecks.run(this, tagWidth > 0 ? tagWidth : 400, tagFont > 0 ? tagFont : 1f));
+        finish(-1, results);
+        return;
       }
       if (videoTest) {
-        results.putString("stream", VideoChecks.run(this, tagWidth > 0 ? tagWidth : 400, tagFont > 0 ? tagFont : 1f));
+        results.putString(
+            "stream",
+            VideoChecks.run(this, tagWidth > 0 ? tagWidth : 400, tagFont > 0 ? tagFont : 1f));
         finish(-1, results);
         return;
       }
       if (e2LargeCacheTest) {
         results.putString("stream", E2LargeOriginalChecks.cache(this));
-        finish(-1, results); return;
+        finish(-1, results);
+        return;
       }
       if (e2LargeOriginalTest) {
         results.putString("stream", E2LargeOriginalChecks.run(this, e2LargeOriginalToken));
-        finish(-1, results); return;
+        finish(-1, results);
+        return;
       }
       if (e2CatalogScaleTest) {
         results.putString("stream", E2CatalogChecks.runScale(context));
@@ -306,36 +554,49 @@ public final class ArchiveInstrumentation extends Instrumentation {
       }
       if (e2CatalogLocalTest) {
         results.putString("stream", E2CatalogChecks.run(context));
-        finish(-1, results); return;
+        finish(-1, results);
+        return;
       }
       if (e2MixedMediaOperation != null) {
-        results.putString("stream", E2MixedMediaChecks.run(this, e2MixedMediaOperation, e2MixedMediaToken));
-        finish(-1, results); return;
+        results.putString(
+            "stream", E2MixedMediaChecks.run(this, e2MixedMediaOperation, e2MixedMediaToken));
+        finish(-1, results);
+        return;
       }
       if ("e2-transfer-dashboard".equals(cameraPilotArguments.getString("mode"))) {
         results.putString("stream", E2TransferDashboardChecks.run(this));
-        finish(-1, results); return;
+        finish(-1, results);
+        return;
       }
       if (e2BatchTest) {
         results.putString("stream", E2BatchChecks.run(context));
-        finish(-1, results); return;
+        finish(-1, results);
+        return;
       }
       if (e2CleanupBoundaryTest) {
         results.putString("stream", E2BackgroundChecks.cleanupBoundary(this));
-        finish(-1, results); return;
+        finish(-1, results);
+        return;
       }
       if (e2ProductCleanupMode != null) {
-        results.putString("stream", E2BackgroundChecks.product(this, e2ProductCleanupMode, e2ProductCleanupToken));
-        finish(-1, results); return;
+        results.putString(
+            "stream",
+            E2BackgroundChecks.product(this, e2ProductCleanupMode, e2ProductCleanupToken));
+        finish(-1, results);
+        return;
       }
       if (e2SharedCleanupMode != null) {
-        results.putString("stream", E2BackgroundChecks.sharedCleanup(
-            this, e2SharedCleanupMode, e2StaleGeneration, e2StaleId, e2MatchId));
-        finish(-1, results); return;
+        results.putString(
+            "stream",
+            E2BackgroundChecks.sharedCleanup(
+                this, e2SharedCleanupMode, e2StaleGeneration, e2StaleId, e2MatchId));
+        finish(-1, results);
+        return;
       }
       if (e2CatalogMode != null) {
         results.putString("stream", E2BackgroundChecks.catalog(this, e2CatalogMode));
-        finish(-1, results); return;
+        finish(-1, results);
+        return;
       }
       if (e2BackgroundTest) {
         results.putString("stream", E2BackgroundChecks.run(this));
@@ -347,14 +608,37 @@ public final class ArchiveInstrumentation extends Instrumentation {
         finish(-1, results);
         return;
       }
-      if(confidenceUiTest){results.putString("stream",ConfidenceUiChecks.run(this,tagWidth));finish(-1,results);return;}
-      if(confidenceStoreTest){results.putString("stream",ConfidenceStoreChecks.run(context));finish(-1,results);return;}
-      if (archiveScanTest) { results.putString("stream", ArchiveScanChecks.run(context)); finish(-1, results); return; }
-      if (indexSignatureTest) { results.putString("stream", IndexSignatureChecks.run(context)); finish(-1, results); return; }
-      if (indexApplyRaceTest) { results.putString("stream", IndexApplyRaceChecks.run(this)); finish(-1, results); return; }
+      if (confidenceUiTest) {
+        results.putString("stream", ConfidenceUiChecks.run(this, tagWidth));
+        finish(-1, results);
+        return;
+      }
+      if (confidenceStoreTest) {
+        results.putString("stream", ConfidenceStoreChecks.run(context));
+        finish(-1, results);
+        return;
+      }
+      if (archiveScanTest) {
+        results.putString("stream", ArchiveScanChecks.run(context));
+        finish(-1, results);
+        return;
+      }
+      if (indexSignatureTest) {
+        results.putString("stream", IndexSignatureChecks.run(context));
+        finish(-1, results);
+        return;
+      }
+      if (indexApplyRaceTest) {
+        results.putString("stream", IndexApplyRaceChecks.run(this));
+        finish(-1, results);
+        return;
+      }
       if (shareHistoryRestartSeed || shareHistoryRestartVerify) {
-        results.putString("stream", shareHistoryRestartSeed
-            ? ShareHistoryRestartChecks.seed(context) : ShareHistoryRestartChecks.verify(context));
+        results.putString(
+            "stream",
+            shareHistoryRestartSeed
+                ? ShareHistoryRestartChecks.seed(context)
+                : ShareHistoryRestartChecks.verify(context));
         finish(-1, results);
         return;
       }
@@ -373,77 +657,234 @@ public final class ArchiveInstrumentation extends Instrumentation {
         finish(-1, results);
         return;
       }
-      if (shareHistoryTest) { String storeResult=ShareHistoryChecks.run(context); runOnMainSync(()->ShareHistoryUiChecks.run(context)); results.putString("stream", storeResult+"PASS share-history UI: narrow tiles, font scaling, AX, noninteractive badges\n"); finish(-1, results); return; }
-      if (importLatencyTest) { results.putString("stream", ImportLatencyChecks.run(this, importInterruptionTest, importPauseTest, importDeferredTest)); finish(-1, results); return; }
-      if(sortDimensionsSpecified)validateSortDimensions(context);
-      if(shareScreenTest){results.putString("stream",ShareScreenChecks.run(this,tagWidth));finish(-1,results);return;}
-      if(shareCapacityTest){results.putString("stream",ShareCapacityUiChecks.run(this,tagWidth,tagFont));finish(-1,results);return;}
-      if(photoEditTest){results.putString("stream",PhotoEditChecks.run(this, tagWidth, tagFont));finish(-1,results);return;}
-      if(viewerScreenTest){results.putString("stream",ViewerScreenChecks.run(this,tagWidth));finish(-1,results);return;}
-      if(galleryScreenTest){results.putString("stream",GalleryScreenChecks.run(this,tagWidth,galleryTalkBack,shareToggleTest,materialGalleryTest));finish(-1,results);return;}
-      if(resultTest){results.putString("stream",RankingResultChecks.run(this,tagWidth,resultTalkBack));finish(-1,results);return;}
-      if(tagDetailTest){results.putString("stream",TagDetailChecks.run(this,tagWidth));finish(-1,results);return;}
-      if(syncControlsTest){results.putString("stream",SyncControlChecks.run(this));finish(-1,results);return;}
-      if(consistencyTest){results.putString("stream",ConsistencyLayoutChecks.run(this));finish(-1,results);return;}
-      if(dashboardTalkBackTest){results.putString("stream",DashboardTalkBackChecks.run(this));finish(-1,results);return;}
-      if(dashboardLayoutTest){results.putString("stream",DashboardLayoutChecks.run(this));finish(-1,results);return;}
-      if(dashboardTest){results.putString("stream",DashboardChecks.run(this));finish(-1,results);return;}
-      if(talkBackStatusTest){results.putString("stream",TalkBackStatusChecks.run(this));finish(-1,results);return;}
-      if(visualStatusTest){results.putString("stream",VisualStatusChecks.run(this));finish(-1,results);return;}
-      if (jobStateTest) { results.putString("stream", JobStateChecks.run(context)); finish(-1, results); return; }
-      if (affordancesTest) { results.putString("stream", AffordanceChecks.run(this)); finish(-1, results); return; }
-      if (rankingModesTest) { results.putString("stream", RankingModeChecks.run(this)); finish(-1, results); return; }
-      if (systemBackTest) { results.putString("stream", SystemBackChecks.run(this)); finish(-1, results); return; }
-      if (actionLabelsTest) { results.putString("stream", ActionLabelChecks.run(this)); finish(-1, results); return; }
-      if (comparisonLabelsTest) { results.putString("stream", ComparisonLabelChecks.run(this)); finish(-1, results); return; }
-      if (albumTagsTest) { results.putString("stream", AlbumTagEntryChecks.run(this)); finish(-1, results); return; }
-      if (material3Test) { results.putString("stream", Material3Checks.run(this)); finish(-1, results); return; }
-      if (cameraPilotMode!=null) {
-        String result;
-        if(cameraPilotMode.equals("camera-pilot-wifi")) {
-          android.app.Activity pilotUi=startActivitySync(new android.content.Intent(getTargetContext(),Ep7WifiActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
-          try {
-            runOnMainSync(()->{
-              pilotUi.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-              disablePilotActions(pilotUi.getWindow().getDecorView());
-              android.widget.TextView status=pilotUi.getWindow().getDecorView().findViewWithTag("ep7-status");
-              if(status!=null)status.setText("4枚の保存と差分取り込みを検査しています…");
-            });
-            result=CameraImportPilotChecks.runWifi(this);
-          } finally {runOnMainSync(()->{pilotUi.getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);pilotUi.finish();});}
-        }
-        else if(cameraPilotMode.equals("camera-pilot-usb-launch-choice"))result=CameraUsbLaunchChecks.choice(this,cameraPilotArguments);
-        else if(cameraPilotMode.equals("camera-pilot-usb-launch"))result=CameraUsbLaunchChecks.run(this);
-        else if(CameraDualSlotUiChecks.MODE.equals(cameraPilotMode))result=CameraDualSlotUiChecks.run(this, tagWidth, tagFont);
-        else if(CameraSdSwapChecks.MODE.equals(cameraPilotMode))result=CameraSdSwapChecks.run(this, tagWidth, tagFont);
-        else if(cameraPilotMode.equals("camera-pilot-import-progress"))result=CameraImportProgressChecks.run(this);
-        else if(cameraPilotMode.equals("camera-pilot-import-history"))result=CameraImportHistoryChecks.run(this);
-        else if(cameraPilotMode.equals("camera-pilot-wifi-quick"))result=CameraWifiQuickChecks.run(this);
-        else if(cameraPilotMode.equals("camera-pilot-quick-import"))result=CameraQuickImportChecks.run(this);
-        else if(cameraPilotMode.equals("camera-pilot-qr-ui"))result=CameraQrUiChecks.run(this);
-        else if(cameraPilotMode.equals("camera-pilot-qr-image"))result=CameraQrImageChecks.run(this);
-        else if(cameraPilotMode.equals("camera-pilot-qr-status"))result=CameraSavedWakeChecks.status(this);
-        else if(cameraPilotMode.equals("camera-pilot-sd-source-diagnostic"))result=CameraImportPilotChecks.runSdSourceDiagnostic(this,cameraPilotArguments);
-        else if(cameraPilotMode.equals("camera-pilot-sd-source-synthetic"))result=CameraImportPilotChecks.runSdSourceDiagnosticSyntheticChecks();
-        else if(cameraPilotMode.equals("camera-pilot-sd-original"))result=jp.nano.rawgallery.camera.CameraDocumentSourceChecks.run(this);
-        else if(cameraPilotMode.equals("camera-pilot-sd-revision"))result=jp.nano.rawgallery.camera.SdSavedRevisionChecks.run(this);
-        else if(cameraPilotMode.equals("camera-pilot-paired-guards"))result=CameraPairedPilotChecks.guardChecks(this);
-        else if(cameraPilotMode.equals("camera-pilot-paired-wifi"))result=CameraPairedPilotChecks.run(this);
-        else if(cameraPilotMode.equals("camera-pilot-paired-session"))result=jp.nano.rawgallery.camera.CameraPairedSessionChecks.run();
-        else if(cameraPilotMode.equals("camera-pilot-ble-advertisement"))result=CameraSavedWakeChecks.advertisement(this);
-        else if(cameraPilotMode.equals("camera-pilot-ble-saved"))result=CameraSavedWakeChecks.run(this);
-        else if(cameraPilotMode.equals("camera-pilot-qr-credentials"))result=jp.nano.rawgallery.camera.CameraCredentialChecks.run(this);
-        else if(cameraPilotMode.equals("camera-pilot-qr-seed"))result=jp.nano.rawgallery.camera.CameraCredentialChecks.seed(this);
-        else if(cameraPilotMode.equals("camera-pilot-qr-verify"))result=jp.nano.rawgallery.camera.CameraCredentialChecks.verify(this);
-        else if(cameraPilotMode.equals("camera-pilot-ble-diagnostics"))result=CameraBleDiagnosticsChecks.run(this);
-        else if(cameraPilotMode.equals("camera-pilot-sd-guards"))result=CameraImportPilotChecks.runSdGuardChecks(this);
-        else if(cameraPilotMode.equals("camera-pilot-sd"))result=CameraImportPilotChecks.runSd(this);
-        else if(cameraPilotMode.equals("camera-pilot-cleanup"))result=CameraImportPilotChecks.cleanup(this);
-        else throw new IllegalArgumentException("Unknown pilot mode");
-        results.putString("stream",result);finish(-1,results);return;
+      if (shareHistoryTest) {
+        String storeResult = ShareHistoryChecks.run(context);
+        runOnMainSync(() -> ShareHistoryUiChecks.run(context));
+        results.putString(
+            "stream",
+            storeResult
+                + "PASS share-history UI: narrow tiles, font scaling, AX, noninteractive badges\n");
+        finish(-1, results);
+        return;
       }
-      if (cameraBenchmarkTest) { results.putString("stream", CameraImportBenchmarkChecks.run(this)); finish(-1, results); return; }
-      if (cameraLedgerTest) { results.putString("stream", CameraImportLedgerChecks.run(this)); finish(-1, results); return; }
+      if (importLatencyTest) {
+        results.putString(
+            "stream",
+            ImportLatencyChecks.run(
+                this, importInterruptionTest, importPauseTest, importDeferredTest));
+        finish(-1, results);
+        return;
+      }
+      if (sortDimensionsSpecified) validateSortDimensions(context);
+      if (shareScreenTest) {
+        results.putString("stream", ShareScreenChecks.run(this, tagWidth));
+        finish(-1, results);
+        return;
+      }
+      if (shareCapacityTest) {
+        results.putString("stream", ShareCapacityUiChecks.run(this, tagWidth, tagFont));
+        finish(-1, results);
+        return;
+      }
+      if (photoEditTest) {
+        results.putString("stream", PhotoEditChecks.run(this, tagWidth, tagFont));
+        finish(-1, results);
+        return;
+      }
+      if (viewerScreenTest) {
+        results.putString("stream", ViewerScreenChecks.run(this, tagWidth));
+        finish(-1, results);
+        return;
+      }
+      if (galleryScreenTest) {
+        results.putString(
+            "stream",
+            GalleryScreenChecks.run(
+                this, tagWidth, galleryTalkBack, shareToggleTest, materialGalleryTest));
+        finish(-1, results);
+        return;
+      }
+      if (resultTest) {
+        results.putString("stream", RankingResultChecks.run(this, tagWidth, resultTalkBack));
+        finish(-1, results);
+        return;
+      }
+      if (tagDetailTest) {
+        results.putString("stream", TagDetailChecks.run(this, tagWidth));
+        finish(-1, results);
+        return;
+      }
+      if (syncControlsTest) {
+        results.putString("stream", SyncControlChecks.run(this));
+        finish(-1, results);
+        return;
+      }
+      if (consistencyTest) {
+        results.putString("stream", ConsistencyLayoutChecks.run(this));
+        finish(-1, results);
+        return;
+      }
+      if (dashboardTalkBackTest) {
+        results.putString("stream", DashboardTalkBackChecks.run(this));
+        finish(-1, results);
+        return;
+      }
+      if (dashboardLayoutTest) {
+        results.putString("stream", DashboardLayoutChecks.run(this));
+        finish(-1, results);
+        return;
+      }
+      if (dashboardTest) {
+        results.putString("stream", DashboardChecks.run(this));
+        finish(-1, results);
+        return;
+      }
+      if (talkBackStatusTest) {
+        results.putString("stream", TalkBackStatusChecks.run(this));
+        finish(-1, results);
+        return;
+      }
+      if (visualStatusTest) {
+        results.putString("stream", VisualStatusChecks.run(this));
+        finish(-1, results);
+        return;
+      }
+      if (jobStateTest) {
+        results.putString("stream", JobStateChecks.run(context));
+        finish(-1, results);
+        return;
+      }
+      if (affordancesTest) {
+        results.putString("stream", AffordanceChecks.run(this));
+        finish(-1, results);
+        return;
+      }
+      if (rankingModesTest) {
+        results.putString("stream", RankingModeChecks.run(this));
+        finish(-1, results);
+        return;
+      }
+      if (systemBackTest) {
+        results.putString("stream", SystemBackChecks.run(this));
+        finish(-1, results);
+        return;
+      }
+      if (actionLabelsTest) {
+        results.putString("stream", ActionLabelChecks.run(this));
+        finish(-1, results);
+        return;
+      }
+      if (comparisonLabelsTest) {
+        results.putString("stream", ComparisonLabelChecks.run(this));
+        finish(-1, results);
+        return;
+      }
+      if (albumTagsTest) {
+        results.putString("stream", AlbumTagEntryChecks.run(this));
+        finish(-1, results);
+        return;
+      }
+      if (material3Test) {
+        results.putString("stream", Material3Checks.run(this));
+        finish(-1, results);
+        return;
+      }
+      if (cameraPilotMode != null) {
+        String result;
+        if (cameraPilotMode.equals("camera-pilot-wifi")) {
+          android.app.Activity pilotUi =
+              startActivitySync(
+                  new android.content.Intent(getTargetContext(), Ep7WifiActivity.class)
+                      .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+          try {
+            runOnMainSync(
+                () -> {
+                  pilotUi
+                      .getWindow()
+                      .addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                  disablePilotActions(pilotUi.getWindow().getDecorView());
+                  android.widget.TextView status =
+                      pilotUi.getWindow().getDecorView().findViewWithTag("ep7-status");
+                  if (status != null) status.setText("4枚の保存と差分取り込みを検査しています…");
+                });
+            result = CameraImportPilotChecks.runWifi(this);
+          } finally {
+            runOnMainSync(
+                () -> {
+                  pilotUi
+                      .getWindow()
+                      .clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                  pilotUi.finish();
+                });
+          }
+        } else if (cameraPilotMode.equals("camera-pilot-usb-launch-choice"))
+          result = CameraUsbLaunchChecks.choice(this, cameraPilotArguments);
+        else if (cameraPilotMode.equals("camera-pilot-usb-launch"))
+          result = CameraUsbLaunchChecks.run(this);
+        else if (CameraDualSlotUiChecks.MODE.equals(cameraPilotMode))
+          result = CameraDualSlotUiChecks.run(this, tagWidth, tagFont);
+        else if (CameraSdSwapChecks.MODE.equals(cameraPilotMode))
+          result = CameraSdSwapChecks.run(this, tagWidth, tagFont);
+        else if (cameraPilotMode.equals("camera-pilot-import-progress"))
+          result = CameraImportProgressChecks.run(this);
+        else if (cameraPilotMode.equals("camera-pilot-import-history"))
+          result = CameraImportHistoryChecks.run(this);
+        else if (cameraPilotMode.equals("camera-pilot-wifi-quick"))
+          result = CameraWifiQuickChecks.run(this);
+        else if (cameraPilotMode.equals("camera-pilot-quick-import"))
+          result = CameraQuickImportChecks.run(this);
+        else if (cameraPilotMode.equals("camera-pilot-qr-ui")) result = CameraQrUiChecks.run(this);
+        else if (cameraPilotMode.equals("camera-pilot-qr-image"))
+          result = CameraQrImageChecks.run(this);
+        else if (cameraPilotMode.equals("camera-pilot-qr-status"))
+          result = CameraSavedWakeChecks.status(this);
+        else if (cameraPilotMode.equals("camera-pilot-sd-source-diagnostic"))
+          result = CameraImportPilotChecks.runSdSourceDiagnostic(this, cameraPilotArguments);
+        else if (cameraPilotMode.equals("camera-pilot-sd-source-synthetic"))
+          result = CameraImportPilotChecks.runSdSourceDiagnosticSyntheticChecks();
+        else if (cameraPilotMode.equals("camera-pilot-sd-original"))
+          result = jp.nano.rawgallery.camera.CameraDocumentSourceChecks.run(this);
+        else if (cameraPilotMode.equals("camera-pilot-sd-revision"))
+          result = jp.nano.rawgallery.camera.SdSavedRevisionChecks.run(this);
+        else if (cameraPilotMode.equals("camera-pilot-paired-guards"))
+          result = CameraPairedPilotChecks.guardChecks(this);
+        else if (cameraPilotMode.equals("camera-pilot-paired-wifi"))
+          result = CameraPairedPilotChecks.run(this);
+        else if (cameraPilotMode.equals("camera-pilot-paired-session"))
+          result = jp.nano.rawgallery.camera.CameraPairedSessionChecks.run();
+        else if (cameraPilotMode.equals("camera-pilot-ble-advertisement"))
+          result = CameraSavedWakeChecks.advertisement(this);
+        else if (cameraPilotMode.equals("camera-pilot-ble-saved"))
+          result = CameraSavedWakeChecks.run(this);
+        else if (cameraPilotMode.equals("camera-pilot-qr-credentials"))
+          result = jp.nano.rawgallery.camera.CameraCredentialChecks.run(this);
+        else if (cameraPilotMode.equals("camera-pilot-qr-seed"))
+          result = jp.nano.rawgallery.camera.CameraCredentialChecks.seed(this);
+        else if (cameraPilotMode.equals("camera-pilot-qr-verify"))
+          result = jp.nano.rawgallery.camera.CameraCredentialChecks.verify(this);
+        else if (cameraPilotMode.equals("camera-pilot-ble-diagnostics"))
+          result = CameraBleDiagnosticsChecks.run(this);
+        else if (cameraPilotMode.equals("camera-pilot-sd-guards"))
+          result = CameraImportPilotChecks.runSdGuardChecks(this);
+        else if (cameraPilotMode.equals("camera-pilot-sd"))
+          result = CameraImportPilotChecks.runSd(this);
+        else if (cameraPilotMode.equals("camera-pilot-cleanup"))
+          result = CameraImportPilotChecks.cleanup(this);
+        else throw new IllegalArgumentException("Unknown pilot mode");
+        results.putString("stream", result);
+        finish(-1, results);
+        return;
+      }
+      if (cameraBenchmarkTest) {
+        results.putString("stream", CameraImportBenchmarkChecks.run(this));
+        finish(-1, results);
+        return;
+      }
+      if (cameraLedgerTest) {
+        results.putString("stream", CameraImportLedgerChecks.run(this));
+        finish(-1, results);
+        return;
+      }
       if (photoStorageMode != null) {
         String secondary = cameraPilotArguments.getString("secondaryVolume");
         String photoStorageReport;
@@ -455,15 +896,24 @@ public final class ArchiveInstrumentation extends Instrumentation {
           String cadence = cameraPilotArguments.getString("archive_cadence_ms");
           photoStorageReport = LegacyArchiveMoveChecks.checkSnapshots(this, secondary, cadence);
         } else if ("photo-storage-archive-ui".equals(photoStorageMode)) {
-          photoStorageReport = LegacyArchiveMoveChecks.captureUi(this, secondary, tagWidth, tagFont);
+          photoStorageReport =
+              LegacyArchiveMoveChecks.captureUi(this, secondary, tagWidth, tagFont);
         } else if ("photo-storage-inventory-ui".equals(photoStorageMode)) {
           int records = Integer.parseInt(cameraPilotArguments.getString("history_count", "1900"));
-          photoStorageReport = PhotoStorageChecks.captureInventoryUi(this, secondary, tagWidth, tagFont, records);
+          photoStorageReport =
+              PhotoStorageChecks.captureInventoryUi(this, secondary, tagWidth, tagFont, records);
         } else if (photoStorageUiMode()) {
-          photoStorageReport = PhotoStorageChecks.captureUi(this, secondary, tagWidth, tagFont, !"photo-storage-ui".equals(photoStorageMode),
-              "photo-storage-ui-run".equals(photoStorageMode) ? 0 : 1);
+          photoStorageReport =
+              PhotoStorageChecks.captureUi(
+                  this,
+                  secondary,
+                  tagWidth,
+                  tagFont,
+                  !"photo-storage-ui".equals(photoStorageMode),
+                  "photo-storage-ui-run".equals(photoStorageMode) ? 0 : 1);
         } else if ("photo-storage-performance".equals(photoStorageMode)) {
-          photoStorageReport = PhotoStorageChecks.performance(this, secondary, cameraPilotArguments);
+          photoStorageReport =
+              PhotoStorageChecks.performance(this, secondary, cameraPilotArguments);
         } else {
           photoStorageReport = PhotoStorageChecks.run(this, photoStorageMode, secondary);
         }
@@ -471,37 +921,85 @@ public final class ArchiveInstrumentation extends Instrumentation {
         finish(-1, results);
         return;
       }
-      if (ep7WifiTest) { results.putString("stream", Ep7WifiChecks.run(this)); finish(-1, results); return; }
-      if (cameraTabsTest) { results.putString("stream", CameraTabsChecks.run(this)); finish(-1, results); return; }
-      if (tabsTest) { results.putString("stream", LibraryTabsChecks.run(this)); finish(-1, results); return; }
-      if (burstGapTest) {
-        results.putString("stream", BurstGapChecks.run(this, Boolean.parseBoolean(cameraPilotArguments.getString("numbered")),
-            cameraPilotArguments.getString("raw_samples")));
+      if (ep7WifiTest) {
+        results.putString("stream", Ep7WifiChecks.run(this));
         finish(-1, results);
         return;
       }
-      if (bulkWinnerTest) { results.putString("stream", BurstBulkWinnerChecks.run(this,tagWidth,tagFont)); finish(-1, results); return; }
-      if (coWinnerTest) { results.putString("stream", BurstCoWinnerChecks.run(this,tagWidth,tagFont)); finish(-1, results); return; }
-      if (sortTest) { results.putString("stream", SortNamingChecks.run(this,tagWidth,tagFont)); finish(-1, results); return; }
-      if (positionTest) { results.putString("stream", GalleryPositionChecks.run(this)); finish(-1, results); return; }
-      if (burstTest || realBurstTest) { results.putString("stream", BurstPreviewChecks.run(this, realBurstTest)); finish(-1, results); return; }
-      if (sheetTest) { results.putString("stream", SheetChecks.run(this)); finish(-1, results); return; }
+      if (cameraTabsTest) {
+        results.putString("stream", CameraTabsChecks.run(this));
+        finish(-1, results);
+        return;
+      }
+      if (tabsTest) {
+        results.putString("stream", LibraryTabsChecks.run(this));
+        finish(-1, results);
+        return;
+      }
+      if (burstGapTest) {
+        results.putString(
+            "stream",
+            BurstGapChecks.run(
+                this,
+                Boolean.parseBoolean(cameraPilotArguments.getString("numbered")),
+                cameraPilotArguments.getString("raw_samples")));
+        finish(-1, results);
+        return;
+      }
+      if (bulkWinnerTest) {
+        results.putString("stream", BurstBulkWinnerChecks.run(this, tagWidth, tagFont));
+        finish(-1, results);
+        return;
+      }
+      if (coWinnerTest) {
+        results.putString("stream", BurstCoWinnerChecks.run(this, tagWidth, tagFont));
+        finish(-1, results);
+        return;
+      }
+      if (sortTest) {
+        results.putString("stream", SortNamingChecks.run(this, tagWidth, tagFont));
+        finish(-1, results);
+        return;
+      }
+      if (positionTest) {
+        results.putString("stream", GalleryPositionChecks.run(this));
+        finish(-1, results);
+        return;
+      }
+      if (burstTest || realBurstTest) {
+        results.putString("stream", BurstPreviewChecks.run(this, realBurstTest));
+        finish(-1, results);
+        return;
+      }
+      if (sheetTest) {
+        results.putString("stream", SheetChecks.run(this));
+        finish(-1, results);
+        return;
+      }
       if ("diagnostic-local-export".equals(cameraPilotArguments.getString("mode"))) {
         results.putString("stream", DiagnosticExportChecks.run(context));
         finish(-1, results);
         return;
       }
       if (diagnosticTest) {
-        results.putString("stream", DiagnosticChecks.run(this)); finish(-1, results); return;
+        results.putString("stream", DiagnosticChecks.run(this));
+        finish(-1, results);
+        return;
       }
       if (diagnosticFailureTest) {
-        results.putString("stream", DiagnosticFailureChecks.run(this)); finish(-1, results); return;
+        results.putString("stream", DiagnosticFailureChecks.run(this));
+        finish(-1, results);
+        return;
       }
       if ("media-observer-lifecycle".equals(cameraPilotArguments.getString("mode"))) {
-        results.putString("stream", MediaObserverLifecycleChecks.run(this)); finish(-1, results); return;
+        results.putString("stream", MediaObserverLifecycleChecks.run(this));
+        finish(-1, results);
+        return;
       }
       if (lifecycleTest) {
-        results.putString("stream", TagLifecycleChecks.run(this)); finish(-1, results); return;
+        results.putString("stream", TagLifecycleChecks.run(this));
+        finish(-1, results);
+        return;
       }
       if (automaticTest) {
         results.putString("stream", AutomaticTagChecks.run(context) + BatchTagChecks.run(context));
@@ -601,32 +1099,42 @@ public final class ArchiveInstrumentation extends Instrumentation {
               + " original download, source unchanged\n");
       finish(-1, results);
     } catch (Throwable failure) {
-      results.putString("stream",failureReport(failure));
+      results.putString("stream", failureReport(failure));
       finish(0, results);
     } finally {
       if (restored != null) restored.delete();
     }
   }
 
-  private static String failureReport(Throwable failure){
-    return failureLocations(failure)+"Archive device checks failed: "+failure.getClass().getSimpleName()+"\n";
+  private static String failureReport(Throwable failure) {
+    return failureLocations(failure)
+        + "Archive device checks failed: "
+        + failure.getClass().getSimpleName()
+        + "\n";
   }
-  /** Source locations aid synthetic checks without printing file paths or other exception values. */
+
+  /**
+   * Source locations aid synthetic checks without printing file paths or other exception values.
+   */
   private static String failureLocations(Throwable failure) {
     StringBuilder result = new StringBuilder();
-    java.util.Set<Throwable> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    java.util.Set<Throwable> seen =
+        java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
     appendFailureLocations(result, seen, failure, "");
     return result.toString();
   }
 
-  private static void appendFailureLocations(StringBuilder result, java.util.Set<Throwable> seen,
-      Throwable failure, String prefix) {
+  private static void appendFailureLocations(
+      StringBuilder result, java.util.Set<Throwable> seen, Throwable failure, String prefix) {
     if (failure == null || !seen.add(failure)) return;
     result.append(prefix).append(failure.getClass().getName());
-    if (failure instanceof PhotoStorageChecks.CheckFailure) result.append(": ").append(failure.getMessage());
+    if (failure instanceof PhotoStorageChecks.CheckFailure)
+      result.append(": ").append(failure.getMessage());
     result.append('\n');
-    for (StackTraceElement frame : failure.getStackTrace()) result.append("  at ").append(frame).append('\n');
-    for (Throwable suppressed : failure.getSuppressed()) appendFailureLocations(result, seen, suppressed, "Suppressed: ");
+    for (StackTraceElement frame : failure.getStackTrace())
+      result.append("  at ").append(frame).append('\n');
+    for (Throwable suppressed : failure.getSuppressed())
+      appendFailureLocations(result, seen, suppressed, "Suppressed: ");
     appendFailureLocations(result, seen, failure.getCause(), "Caused by: ");
   }
 
@@ -884,9 +1392,11 @@ public final class ArchiveInstrumentation extends Instrumentation {
       }
     }
   }
-  private static void disablePilotActions(android.view.View view) {
-    if(view instanceof android.widget.Button)view.setEnabled(false);
-    if(view instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)view).getChildCount();i++)disablePilotActions(((android.view.ViewGroup)view).getChildAt(i));
-  }
 
+  private static void disablePilotActions(android.view.View view) {
+    if (view instanceof android.widget.Button) view.setEnabled(false);
+    if (view instanceof android.view.ViewGroup)
+      for (int i = 0; i < ((android.view.ViewGroup) view).getChildCount(); i++)
+        disablePilotActions(((android.view.ViewGroup) view).getChildAt(i));
+  }
 }

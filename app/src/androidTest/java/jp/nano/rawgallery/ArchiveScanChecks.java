@@ -28,13 +28,34 @@ final class ArchiveScanChecks {
     File root = Files.createTempDirectory(target.getCacheDir().toPath(), "scan-").toFile();
     Context context =
         new ContextWrapper(target) {
-          @Override public Context getApplicationContext() { return this; }
-          @Override public File getFilesDir() { return root; }
-          @Override public File getCacheDir() { return root; }
-          @Override public File getDatabasePath(String name) { return new File(root, name); }
-          @Override public SQLiteDatabase openOrCreateDatabase(
-              String name, int mode, SQLiteDatabase.CursorFactory factory, DatabaseErrorHandler handler) {
-            return SQLiteDatabase.openOrCreateDatabase(getDatabasePath(name).getPath(), factory, handler);
+          @Override
+          public Context getApplicationContext() {
+            return this;
+          }
+
+          @Override
+          public File getFilesDir() {
+            return root;
+          }
+
+          @Override
+          public File getCacheDir() {
+            return root;
+          }
+
+          @Override
+          public File getDatabasePath(String name) {
+            return new File(root, name);
+          }
+
+          @Override
+          public SQLiteDatabase openOrCreateDatabase(
+              String name,
+              int mode,
+              SQLiteDatabase.CursorFactory factory,
+              DatabaseErrorHandler handler) {
+            return SQLiteDatabase.openOrCreateDatabase(
+                getDatabasePath(name).getPath(), factory, handler);
           }
         };
     String folder = "Pictures/LoupeScan-" + UUID.randomUUID() + "/";
@@ -43,23 +64,27 @@ final class ArchiveScanChecks {
         ArchiveStore e2 = E2Settings.openRecords(context)) {
       var repository = new PhotoRepository(context);
       local = publish(context, folder, "local.jpg");
-      Uri localFile = ContentUris.withAppendedId(
-          MediaStore.Files.getContentUri("external"), ContentUris.parseId(local));
+      Uri localFile =
+          ContentUris.withAppendedId(
+              MediaStore.Files.getContentUri("external"), ContentUris.parseId(local));
       var original = only(entries(repository.scan("すべて"), folder, "local.jpg"));
       check(localFile.equals(original.uri), "local-only URI");
       checkOriginal(context, original, LOCAL);
       var moveKey = ArchiveStore.key(original);
       try (PhotoMoveStore moves = new PhotoMoveStore(context)) {
-        PhotoIdentityIndex.save(moves.getWritableDatabase(), original,
-            new PhotoMoveStore.Identity(PhotoRepository.digest("original:" + folder), TagStore.source(original)),
+        PhotoIdentityIndex.save(
+            moves.getWritableDatabase(),
+            original,
+            new PhotoMoveStore.Identity(
+                PhotoRepository.digest("original:" + folder), TagStore.source(original)),
             localFile.toString());
       }
 
       var moved = only(entries(repository.scan("すべて"), folder, "local.jpg"));
       String stable = ArchiveStore.key(moved);
       check(!stable.equals(moveKey), "old logical ID bound to the moved row");
-      var historicPath = receipt(folder, "formerly-local.jpg", "amazon-moved", AMAZON)
-          .put("key", stable);
+      var historicPath =
+          receipt(folder, "formerly-local.jpg", "amazon-moved", AMAZON).put("key", stable);
       amazon.put(historicPath, "verified");
       amazon.put(receipt(folder, "local.jpg", "amazon-local", AMAZON), "verified");
       amazon.put(receipt(folder, "amazon.jpg", "amazon-only", AMAZON), "verified");
@@ -72,41 +97,84 @@ final class ArchiveScanChecks {
       e2.put(receipt(folder, "released.jpg", "verified-excluded", E2), "verified");
 
       var scanned = repository.scan("すべて");
-      check(entries(scanned, folder, "formerly-local.jpg").isEmpty(), "old path shadowed by logical ID");
+      check(
+          entries(scanned, folder, "formerly-local.jpg").isEmpty(),
+          "old path shadowed by logical ID");
       moved = only(entries(scanned, folder, "local.jpg"));
-      check(localFile.equals(moved.uri) && stable.equals(ArchiveStore.key(moved)), "moved local and releasing overlap");
+      check(
+          localFile.equals(moved.uri) && stable.equals(ArchiveStore.key(moved)),
+          "moved local and releasing overlap");
       checkOriginal(context, moved, LOCAL);
-      checkArchived(repository, context, only(entries(scanned, folder, "amazon.jpg")), "archive", "amazon-only", AMAZON);
-      checkArchived(repository, context, only(entries(scanned, folder, "e2.jpg")), "e2archive", "e2-only", E2);
-      checkArchived(repository, context, only(entries(scanned, folder, "same.jpg")), "e2archive", "e2-same", E2);
+      checkArchived(
+          repository,
+          context,
+          only(entries(scanned, folder, "amazon.jpg")),
+          "archive",
+          "amazon-only",
+          AMAZON);
+      checkArchived(
+          repository,
+          context,
+          only(entries(scanned, folder, "e2.jpg")),
+          "e2archive",
+          "e2-only",
+          E2);
+      checkArchived(
+          repository,
+          context,
+          only(entries(scanned, folder, "same.jpg")),
+          "e2archive",
+          "e2-same",
+          E2);
       var different = entries(scanned, folder, "different.jpg");
-      check(different.stream().map(photo -> photo.uri.getScheme()).collect(Collectors.toSet())
-          .equals(Set.of("archive", "e2archive")) && different.size() == 2, "different SHA preserves both providers");
+      check(
+          different.stream()
+                  .map(photo -> photo.uri.getScheme())
+                  .collect(Collectors.toSet())
+                  .equals(Set.of("archive", "e2archive"))
+              && different.size() == 2,
+          "different SHA preserves both providers");
       for (var photo : different) {
         boolean legacy = photo.uri.getScheme().equals("archive");
-        checkArchived(repository, context, photo, photo.uri.getScheme(),
-            legacy ? "amazon-different" : "e2-different", legacy ? AMAZON : E2);
+        checkArchived(
+            repository,
+            context,
+            photo,
+            photo.uri.getScheme(),
+            legacy ? "amazon-different" : "e2-different",
+            legacy ? AMAZON : E2);
       }
       check(entries(scanned, folder, "released.jpg").isEmpty(), "verified-only E2 excluded");
       return "PASS archive scan, identity, preview and cached originals";
     } finally {
       if (local != null) context.getContentResolver().delete(local, null, null);
       try (var paths = Files.walk(root.toPath())) {
-        for (var path : paths.sorted(java.util.Comparator.reverseOrder()).toList()) Files.delete(path);
+        for (var path : paths.sorted(java.util.Comparator.reverseOrder()).toList())
+          Files.delete(path);
       }
     }
   }
 
-  private static JSONObject receipt(String folder, String name, String caseName, byte[] bytes) throws Exception {
+  private static JSONObject receipt(String folder, String name, String caseName, byte[] bytes)
+      throws Exception {
     return new JSONObject()
         .put("uri", "content://media/external/file/1")
         .put("folder", folder)
         .put("name", name)
         .put("key", receiptKey(folder, caseName))
-        .put("sha", java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)))
-        .put("size", bytes.length).put("modified", 2).put("taken", 0)
-        .put("model", caseName).put("width", 1).put("height", 1).put("orientation", 1)
-        .put("thumbWidth", 1).put("thumbHeight", 1).put("previewFormat", "webp");
+        .put(
+            "sha",
+            java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)))
+        .put("size", bytes.length)
+        .put("modified", 2)
+        .put("taken", 0)
+        .put("model", caseName)
+        .put("width", 1)
+        .put("height", 1)
+        .put("orientation", 1)
+        .put("thumbWidth", 1)
+        .put("thumbHeight", 1)
+        .put("previewFormat", "webp");
   }
 
   private static String receiptKey(String folder, String caseName) throws Exception {
@@ -143,7 +211,8 @@ final class ArchiveScanChecks {
   private static List<PhotoRepository.Photo> entries(
       List<PhotoRepository.Photo> scanned, String folder, String name) {
     return scanned.stream()
-        .filter(photo -> folder.equals(photo.folder) && name.equals(photo.name)).toList();
+        .filter(photo -> folder.equals(photo.folder) && name.equals(photo.name))
+        .toList();
   }
 
   private static PhotoRepository.Photo only(List<PhotoRepository.Photo> entries) {
@@ -151,8 +220,14 @@ final class ArchiveScanChecks {
     return entries.get(0);
   }
 
-  private static void checkArchived(PhotoRepository repository, Context context, PhotoRepository.Photo photo,
-      String scheme, String caseName, byte[] bytes) throws Exception {
+  private static void checkArchived(
+      PhotoRepository repository,
+      Context context,
+      PhotoRepository.Photo photo,
+      String scheme,
+      String caseName,
+      byte[] bytes)
+      throws Exception {
     String key = receiptKey(photo.folder, caseName);
     check(photo.uri.toString().equals(scheme + "://" + key), "archive URI for " + caseName);
     boolean legacy = scheme.equals("archive");
@@ -168,9 +243,11 @@ final class ArchiveScanChecks {
     checkOriginal(context, photo, bytes);
   }
 
-  private static void checkOriginal(Context context, PhotoRepository.Photo photo, byte[] bytes) throws Exception {
+  private static void checkOriginal(Context context, PhotoRepository.Photo photo, byte[] bytes)
+      throws Exception {
     var recovered = OriginalCache.obtain(context, photo);
-    check(Arrays.equals(bytes, Files.readAllBytes(new File(recovered.uri.getPath()).toPath())),
+    check(
+        Arrays.equals(bytes, Files.readAllBytes(new File(recovered.uri.getPath()).toPath())),
         "original data from " + photo.uri.getScheme());
   }
 

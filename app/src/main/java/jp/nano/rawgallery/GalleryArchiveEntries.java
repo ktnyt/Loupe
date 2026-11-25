@@ -11,7 +11,9 @@ import jp.nano.rawgallery.PhotoRepository.Photo;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-/** Reconciles retained Amazon and E2 archive entries with the gallery's resolved local identities. */
+/**
+ * Reconciles retained Amazon and E2 archive entries with the gallery's resolved local identities.
+ */
 final class GalleryArchiveEntries {
   private GalleryArchiveEntries() {}
 
