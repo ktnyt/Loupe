@@ -1,3 +1,7 @@
+import javax.inject.Inject
+import org.gradle.process.CommandLineArgumentProvider
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
@@ -8,6 +12,71 @@ def distributionVersion = new groovy.json.JsonSlurper().parseText(providers.exec
     commandLine 'python3', rootProject.file('scripts/release-version.py').absolutePath,
             '--repo', rootProject.rootDir.absolutePath
 }.standardOutput.asText.get())
+// Only known standalone checks join the Android unit-test source set.
+def hostChecksDirectory = rootProject.file('tests')
+def hostJavaChecks = [
+    'AutomaticTagsTest.java', 'BestShotSelectionTest.java', 'BurstFrameTest.java',
+    'BurstGapSettingsTest.java', 'BurstGroupsTest.java', 'CameraBleProtocolTest.java',
+    'CameraBleRecoveryTest.java', 'CameraCardRoutingTest.java', 'CameraConnectionWaitTest.java',
+    'CameraExFatCheck.java', 'CameraImportCopyTest.java', 'CameraImportOperationGateTest.java',
+    'CameraQrCredentialsTest.java', 'CameraRegisteredQueueTest.java', 'CameraSourceKeyTest.java',
+    'CloudPolicyTest.java', 'ComparisonLayoutTest.java', 'DiagnosticWriterTest.java',
+    'DigestCompatibilityTest.java', 'Ep7WifiClientTest.java', 'GalleryCaptureDatesTest.java',
+    'IndexRefreshRequestsTest.java', 'NanoBananaE2Test.java', 'PhotoRankingTest.java',
+    'RankingStoreTest.java', 'RawEditStateTest.java', 'RawEditToneTest.java',
+    'RawPreviewStructureTest.java', 'RelatedPhotosTest.java', 'ShareCapacityTest.java',
+    'ShareHistoryValidationTest.java', 'SharePreparationTest.java', 'SyncPolicyTest.java',
+    'TagConfidenceTest.java', 'TagJudgmentsTest.java', 'VideoFormatsTest.java',
+]
+
+abstract class StageHostChecks extends DefaultTask {
+    @InputFiles @PathSensitive(PathSensitivity.RELATIVE)
+    abstract ConfigurableFileCollection getJavaChecks()
+
+    @InputFiles @PathSensitive(PathSensitivity.RELATIVE)
+    abstract ConfigurableFileCollection getKotlinChecks()
+
+    @OutputDirectory
+    abstract DirectoryProperty getJavaSources()
+
+    @OutputDirectory
+    abstract DirectoryProperty getKotlinSources()
+
+    @Inject
+    abstract FileSystemOperations getFiles()
+
+    @TaskAction
+    void stage() {
+        files.sync { spec ->
+            spec.from(javaChecks)
+            spec.into(javaSources)
+        }
+        files.sync { spec ->
+            spec.from(kotlinChecks)
+            spec.into(kotlinSources)
+        }
+    }
+}
+
+androidComponents.onVariants(androidComponents.selector().all(), { variant ->
+    def unitTest = variant.unitTest
+    if (unitTest != null) {
+        def stage = tasks.register(unitTest.computeTaskName('stage', 'HostChecks'), StageHostChecks) {
+            javaChecks.from(hostJavaChecks.collect { new File(hostChecksDirectory, it) })
+            kotlinChecks.from(new File(hostChecksDirectory, 'PhotoImportCopyCheck.kt'))
+        }
+        unitTest.sources.java.addGeneratedSourceDirectory(stage) { it.javaSources }
+        unitTest.sources.kotlin.addGeneratedSourceDirectory(stage) { it.kotlinSources }
+        // KGP 2.1 does not consume the Android-generated Kotlin source registration.
+        def kotlinTask = unitTest.computeTaskName('compile', 'Kotlin')
+        tasks.withType(KotlinCompile).configureEach {
+            if (name == kotlinTask) {
+                source stage.flatMap { it.kotlinSources }
+            }
+        }
+    }
+} as Action)
+
 android {
     namespace 'jp.nano.rawgallery'
     // CI binds the exact restored/test key instead of relying on Android's home lookup.
@@ -55,6 +124,12 @@ android {
         }
     }
     compileSdk 35
+    sourceSets.androidTest.java.srcDir 'src/sharedTest/java'
+    sourceSets.test.java.srcDir 'src/sharedTest/java'
+    testOptions.unitTests.all {
+        useJUnitPlatform()
+        systemProperty 'loupe.repoRoot', rootProject.projectDir.absolutePath
+    }
     buildFeatures { buildConfig true }
     ndkVersion '27.0.12077973'
     externalNativeBuild { cmake { path file('src/main/cpp/CMakeLists.txt'); version '3.22.1' } }
@@ -73,6 +148,9 @@ android {
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }
 dependencies {
+    testImplementation platform('org.junit:junit-bom:5.14.3')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     implementation 'com.google.mediapipe:tasks-vision:0.10.35'
     implementation 'com.google.android.material:material:1.13.0'
     implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
@@ -82,3 +160,16 @@ kotlin { jvmToolchain(17) }
 dependencies { implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1' }
 
 apply from: rootProject.file('gradle/native-licenses.gradle')
+
+// JVM checks use ImageIO and HttpServer. Append the host system image after
+// AGP's javac arguments; javac uses the last --system option.
+afterEvaluate {
+    tasks.withType(JavaCompile).configureEach {
+        if (name.endsWith('UnitTestJavaWithJavac')) {
+            def hostJdk = javaCompiler.get().metadata.installationPath.asFile.absolutePath
+            options.compilerArgumentProviders.add({
+                ['--system', hostJdk]
+            } as CommandLineArgumentProvider)
+        }
+    }
+}

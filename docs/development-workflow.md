@@ -25,6 +25,12 @@ mainが別worktreeで使用中なら、そのworktreeの状態と利用状況を
 
 branchは `18/development-workflow` のように作成する。先行issueにもその番号のbranchを使う。先行リファクタリングのマージ後はmainの最新化を再実行してから本題のbranchを作成する。変更前の実機確認で再現操作・期待・実測・対象端末・アプリ版・写真枚数/形式・キャッシュ状態を残す。アプリに影響しない文書や開発ツールの変更など、省略できる場合は理由を記録する。接続できないことは「不要」の根拠にならない。
 
+## ホスト回帰テスト
+
+JDK 17 と Android SDK を用意し、`./gradlew testDebugUnitTest` で合成入力の JVM 回帰を実行する。Android Studio では `HostRegressionTest` のクラスまたはテストメソッドを Gradle で実行できる。CLI で個別に実行する例は `./gradlew :app:testDebugUnitTest --tests HostRegressionTest.indexRefreshRequests`。結果は `app/build/reports/tests/testDebugUnitTest/` に出る。
+
+チェック本体は既存の `tests/` に置き、Gradle から実行する場合は `HostRegressionTest` から同じ本体を呼ぶ。新しい standalone Java チェックを Gradle に追加する場合は `app/build.gradle` の `hostJavaChecks` に登録する。既存シェルからも実行できる。外部 RAW コーパス（`tests/run.sh`、`tests/raw-corpus.sh`）と Android SQLite を使う検査は、それぞれ専用の実行環境を使う。
+
 ## APKとmainの照合
 
 常用端末の本体はmainからビルドしたAPKへ統一する。PR branchの動作検証と、普段使う端末への常用導入を分ける。通常はエミュレータや予備端末で実装・独立レビューを先に確かめ、main反映後に常用APKを用意する。
