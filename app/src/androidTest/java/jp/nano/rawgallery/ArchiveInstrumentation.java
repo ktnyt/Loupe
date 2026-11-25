@@ -267,6 +267,11 @@ public final class ArchiveInstrumentation extends Instrumentation {
       String report=failureReport(new AssertionError(new java.io.IOException("PRIVATE_VALUE")));
       if(report.contains("PRIVATE_VALUE")||!report.contains("java.io.IOException")||!report.contains("ArchiveInstrumentation.java:"))throw new AssertionError();
       Context context = getTargetContext();
+      if ("camera-history-migration".equals(cameraPilotMode)) {
+        results.putString("stream", CameraSyncHistoryMigrationCheck.run(getContext()));
+        finish(-1, results);
+        return;
+      }
       if(selectedTagsTest){results.putString("stream",SelectedPhotoTagsChecks.run(this,tagWidth>0?tagWidth:400,tagFont>0?tagFont:1f));finish(-1,results);return;}
       if(expressiveUiTest){results.putString("stream",ExpressiveUiChecks.run(this,tagWidth>0?tagWidth:400,tagFont>0?tagFont:1f));finish(-1,results);return;}
       if(systemInsetsTest){results.putString("stream",WindowInsetsChecks.run(this,tagWidth>0?tagWidth:400,tagFont>0?tagFont:1f));finish(-1,results);return;}

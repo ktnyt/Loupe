@@ -1,15 +1,19 @@
 package jp.nano.rawgallery;
 
+import android.content.Context;
 import android.database.DatabaseUtils;
 import android.database.sqlite.SQLiteDatabase;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
 
-/** Runs on Android with a disposable directory supplied by the test launcher. */
+/** Exercises Android SQLite history migration with disposable databases. */
 public final class CameraSyncHistoryMigrationCheck {
-    public static void main(String[] args) {
-        File input = new File(args[0], "source.db");
-        File output = new File(args[0], "target.db");
+    static String run(Context context) throws IOException {
+        File dir = Files.createTempDirectory(context.getCacheDir().toPath(), "history-migration-").toFile();
+        File input = new File(dir, "source.db");
+        File output = new File(dir, "target.db");
         try (SQLiteDatabase source = create(input); SQLiteDatabase target = create(output)) {
             source.execSQL("INSERT INTO camera VALUES (1,'PEN','serial','PEN',1,'RAW',0)");
             source.execSQL("INSERT INTO imported VALUES (1,'PEN','serial','shot.ORF',9,1,2,'content://media/external/images/media/1',NULL)");
@@ -33,8 +37,12 @@ public final class CameraSyncHistoryMigrationCheck {
                 check(value(target, "SELECT COUNT(*) FROM camera") == 1);
                 check(value(target, "SELECT COUNT(*) FROM imported") == 1);
             }
+        } finally {
+            SQLiteDatabase.deleteDatabase(input);
+            SQLiteDatabase.deleteDatabase(output);
+            Files.delete(dir.toPath());
         }
-        System.out.println("PASS CameraSync history migration");
+        return "PASS CameraSync history migration";
     }
 
     private static SQLiteDatabase create(File file) {

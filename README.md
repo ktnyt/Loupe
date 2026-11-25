@@ -130,8 +130,7 @@ GR IVは `SubIFD1:PreviewImage`、Leitzphoneは `SubIFD:PreviewImage`、OMの２
 
 ```sh
 ./tests/cloud-policy.sh
-javac -d /tmp/yohaku-policy app/src/main/java/jp/nano/rawgallery/SyncPolicy.java app/src/main/java/jp/nano/rawgallery/RawPreview.java tests/SyncPolicyTest.java
-java -cp /tmp/yohaku-policy jp.nano.rawgallery.SyncPolicyTest
+sh tests/sync-policy.sh
 ```
 
 接続先の制限は22件、保持期間・機種・撮影日の判定は44件を検証します。
