@@ -217,35 +217,7 @@ public final class PhotoRepository {
     try (PhotoMoveStore store = new PhotoMoveStore(context)) {
       PhotoIdentityIndex.resolve(context, store, result, media);
     }
-    Set<String> localArchiveKeys = new HashSet<>();
-    for (Photo photo : result.values()) {
-      localArchiveKeys.add(ArchiveStore.key(photo));
-    }
-    java.util.Map<String, String> amazonHashes = new java.util.HashMap<>();
-    try (ArchiveStore store = new ArchiveStore(context)) {
-      for (JSONObject record : store.all())
-        if (record.has("sha")) {
-          String path = archivePath(record);
-          if (!result.containsKey(path) && !localArchiveKeys.contains(record.getString("key"))) {
-            result.put(path, store.cloudPhoto(record));
-            amazonHashes.put(path, record.getString("sha"));
-          }
-        }
-    } catch (Exception e) {
-      throw new IOException("クラウドオリジナルの記録を読めません", e);
-    }
-    try (ArchiveStore archive = E2Settings.openRecords(context)) {
-      for (JSONObject record : archive.inStates(E2Cleanup.RELEASING, E2Cleanup.RELEASED)) {
-        String path = archivePath(record);
-        Photo local = result.get(path);
-        if (local != null && !local.isArchived() && E2Cleanup.releasing(record)) continue;
-        if (record.getString("sha").equals(amazonHashes.get(path))) result.remove(path);
-        Photo cloud = E2Cleanup.galleryPhoto(record);
-        result.put(cloud.uri.toString(), cloud);
-      }
-    } catch (Exception e) {
-      throw new IOException("IDrive e2の保管記録を読めません", e);
-    }
+    GalleryArchiveEntries.appendTo(context, result);
     List<Photo> photos = new ArrayList<>();
     for (Photo p : result.values())
       if (filter.equals("すべて") || p.cameraGroup().equals(filter)) photos.add(p);
@@ -347,10 +319,6 @@ public final class PhotoRepository {
     PhotoIdentityIndex.resolve(context, store, visible, Map.of(path, media));
     Photo photo = visible.get(path);
     return new PhotoMoveStore.Identity(ArchiveStore.key(photo), TagStore.source(photo), photo.sortTime());
-  }
-
-  private static String archivePath(JSONObject record) throws JSONException {
-    return PhotoIdentityIndex.path(Uri.parse(record.optString("uri")), record.getString("folder"), record.getString("name"));
   }
 
   private static String findMovedPath(Map<String, Photo> photos, String imageUri) {
