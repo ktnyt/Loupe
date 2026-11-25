@@ -61,7 +61,7 @@ final class IndexSignatureChecks {
   private static SourceSignature signature(Context context, ArchiveStore store) throws Exception {
     Method method = GalleryIndex.class.getDeclaredMethod("signature", Context.class, int.class);
     method.setAccessible(true);
-    int burstGapMillis = 1000;
+    int burstGapMillis = BurstGapSettings.readMillis(context.getSharedPreferences("settings", 0));
     String whole = (String) method.invoke(null, context, burstGapMillis);
     String burstPrefix = ":burst-gap-ms:" + burstGapMillis + ":burst-number-v1:";
     String moveMarker = ":move-v1:";
@@ -144,7 +144,7 @@ final class IndexSignatureChecks {
                 "CREATE TABLE metadata (key TEXT PRIMARY KEY, model TEXT NOT NULL, taken INTEGER NOT NULL)");
             db.execSQL("INSERT INTO metadata VALUES ('existing','synthetic',42)");
           }
-          if (oldVersion == 3) {
+          if (oldVersion >= 3) {
             db.execSQL(
                 "CREATE TABLE index_revision (id INTEGER PRIMARY KEY CHECK(id=1), value INTEGER NOT NULL)");
             db.execSQL("INSERT INTO index_revision VALUES (1,91)");
@@ -156,11 +156,16 @@ final class IndexSignatureChecks {
                       + operation
                       + " ON photos BEGIN UPDATE index_revision SET value=value+1 WHERE id=1; END");
           }
+          if (oldVersion == 4) {
+            db.execSQL("ALTER TABLE metadata ADD COLUMN burst_mode INTEGER");
+            db.execSQL("ALTER TABLE metadata ADD COLUMN burst_frame INTEGER");
+            db.execSQL("UPDATE metadata SET burst_mode=3, burst_frame=7 WHERE key='existing'");
+          }
           db.setVersion(oldVersion);
         }
       try (ArchiveStore store = new ArchiveStore(isolated)) {
         SQLiteDatabase db = store.getWritableDatabase();
-        check(db.getVersion() == 4, "schema upgraded");
+        check(db.getVersion() == 5, "schema upgraded");
         check(
             oldVersion == 0 || "synthetic".equals(store.get("seed").getString("name")),
             "photo payload preserved");
@@ -168,10 +173,16 @@ final class IndexSignatureChecks {
             oldVersion < 2 || store.metadataSnapshot().get("existing").taken == 42,
             "metadata preserved");
         long revision = store.indexRevision();
-        check(oldVersion < 3 || revision == 91, "version 3 revision preserved");
-        check(
-            oldVersion < 2 || store.metadataSnapshot().get("existing").burstFrame == null,
-            "existing entries start unprobed");
+        check(oldVersion < 3 || revision == 91, "source revision survives additive migration");
+        if (oldVersion == 4) {
+          check(
+              store.metadataSnapshot().get("existing").burstFrame.number() == 7,
+              "v4 preserves recorded burst numbering");
+        } else {
+          check(
+              oldVersion < 2 || store.metadataSnapshot().get("existing").burstFrame == null,
+              "older entries start unprobed");
+        }
         SourceSignature before = signature(isolated, store);
         if (oldVersion == 3) {
           checkBurstCache(isolated, root, store);
@@ -808,13 +819,15 @@ final class IndexSignatureChecks {
     checkBurstVolumes();
     checkE2IndexMetadata(context);
     StringBuilder observations = new StringBuilder();
-    for (int version : new int[] {0, 1, 2, 3}) observations.append(runVersion(context, version));
-    return "PASS archive schema 1/2/3 migration and fresh create preserve records; JPEG burst cache NULL/retry/zero, "
+    for (int version : new int[] {0, 1, 2, 3, 4}) observations.append(runVersion(context, version));
+    String databaseEvidence = DatabaseAccessChecks.run(context);
+    return "PASS archive schema 1/2/3/4 migration and fresh create preserve records; JPEG burst cache NULL/retry/zero, "
         + "original key/model/taken and competing winner preserved; JPEG signature, segment bounds, short reads, zero skip and stop-before-pixels checked; I/O and scan-limit failures propagated; "
         + "bounded metadata transaction rollback, retry, competing winner and deleted row preserved; "
         + "E2 batch ID, states, missing rows, logical aliases, cancellation and revision retry; "
         + "storage volumes stay separate and E2 legacy aliases fall back; archive revision stable across WAL switch, metadata and checkpoint; "
         + "photo insert/replace/update/delete invalidate; rollback atomic; isolated DBs removed.\n"
-        + observations;
+        + observations
+        + databaseEvidence;
   }
 }
