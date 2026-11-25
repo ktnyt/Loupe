@@ -12,17 +12,17 @@ import org.json.JSONObject;
 /** Bounded, recoverable originals. Durable proxies are stored elsewhere. */
 final class OriginalCache {
   static final long LIMIT = 512L * 1024 * 1024;
-  static boolean supportsSize(long bytes) { return bytes > 0 && bytes <= LIMIT; }
+
+  static boolean supportsSize(long bytes) {
+    return bytes > 0 && bytes <= LIMIT;
+  }
 
   static synchronized PhotoRepository.Photo obtain(Context c, PhotoRepository.Photo p)
       throws Exception {
     File dir = new File(c.getCacheDir(), "originals");
     if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("オリジナル用の空き領域を作れません");
     String key = ArchiveStore.key(p);
-    File target =
-        new File(
-            dir,
-            key + "." + RawFormats.originalExtension(p.name));
+    File target = new File(dir, key + "." + RawFormats.originalExtension(p.name));
     JSONObject record = null;
     if (E2Cleanup.archived(p.uri)) {
       record = E2Cleanup.localRecord(c, p.uri);
@@ -43,9 +43,13 @@ final class OriginalCache {
     if (!supportsSize(p.size)) throw new IOException("オリジナルの一時保存上限は512 MiBです");
     trim(dir, null, p.size);
     File partial = new File(dir, key + ".part");
-    E2TransferStatus transfer = E2Cleanup.archived(p.uri)
-        ? E2TransferStatus.begin(E2TransferStatus.Kind.ORIGINAL_DOWNLOAD,
-            record.getString("bucket"), record.getLong("size")) : null;
+    E2TransferStatus transfer =
+        E2Cleanup.archived(p.uri)
+            ? E2TransferStatus.begin(
+                E2TransferStatus.Kind.ORIGINAL_DOWNLOAD,
+                record.getString("bucket"),
+                record.getLong("size"))
+            : null;
     try (transfer) {
       if (transfer != null) {
         E2Settings settings = new E2Settings(c);

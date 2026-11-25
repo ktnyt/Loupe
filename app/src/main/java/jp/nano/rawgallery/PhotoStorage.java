@@ -28,7 +28,8 @@ public final class PhotoStorage {
 
   static List<StorageVolume> volumes(Context context) {
     List<StorageVolume> out = new ArrayList<>();
-    for (StorageVolume volume : context.getSystemService(StorageManager.class).getStorageVolumes()) {
+    for (StorageVolume volume :
+        context.getSystemService(StorageManager.class).getStorageVolumes()) {
       if (volume.getMediaStoreVolumeName() != null
           && (volume.isPrimary() || volume.isRemovable() && !volume.isEmulated())) out.add(volume);
     }
@@ -42,8 +43,13 @@ public final class PhotoStorage {
       if (!volume.equals(candidate.getMediaStoreVolumeName())) continue;
       String description = candidate.getDescription(context);
       if (description == null || description.isEmpty()) break;
-      long sameLabel = available.stream().filter(item -> description.equals(item.getDescription(context))).count();
-      return sameLabel > 1 ? description + "（" + volume.toUpperCase(java.util.Locale.ROOT) + "）" : description;
+      long sameLabel =
+          available.stream()
+              .filter(item -> description.equals(item.getDescription(context)))
+              .count();
+      return sameLabel > 1
+          ? description + "（" + volume.toUpperCase(java.util.Locale.ROOT) + "）"
+          : description;
     }
     return "SDカード（" + volume.toUpperCase(java.util.Locale.ROOT) + "）";
   }
@@ -58,13 +64,15 @@ public final class PhotoStorage {
   }
 
   public static class Unavailable extends IOException {
-    Unavailable(String message) { super(message); }
+    Unavailable(String message) {
+      super(message);
+    }
   }
 
   public static File requireWritable(Context context, String volume) throws Unavailable {
     File directory = directoryIfWritable(context, volume);
-    if (directory == null) throw new Unavailable(label(context, volume)
-        + "に書き込めません。接続または保存先を確認してください。");
+    if (directory == null)
+      throw new Unavailable(label(context, volume) + "に書き込めません。接続または保存先を確認してください。");
     return directory;
   }
 

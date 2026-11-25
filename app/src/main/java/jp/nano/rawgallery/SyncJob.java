@@ -41,7 +41,8 @@ public final class SyncJob extends JobService {
     if (!SettingsRepository.syncEnabled(SettingsRepository.open(this))) return false;
     String cookie = CookieManager.getInstance().getCookie(CloudVerifier.ORIGIN + "/drive/v1/nodes");
     String agent =
-        SettingsRepository.cloudUserAgent(SettingsRepository.open(this), WebSettings.getDefaultUserAgent(this));
+        SettingsRepository.cloudUserAgent(
+            SettingsRepository.open(this), WebSettings.getDefaultUserAgent(this));
     running =
         worker.submit(
             () -> {

@@ -13,10 +13,12 @@ final class GalleryIndex extends SQLiteOpenHelper {
   static final java.util.concurrent.ExecutorService WORKER =
       new DiagnosticExecutor("GalleryIndex.worker", 1);
   private static final int METADATA_BATCH_SIZE = 64;
-  private static final String COLS = "uri,name,folder,size,modified,taken,added,created,archive_key,tag_source,sort_time";
+  private static final String COLS =
+      "uri,name,folder,size,modified,taken,added,created,archive_key,tag_source,sort_time";
   private static final String BURST_GAP_PREFIX = ":burst-gap-ms:";
   private static final String BURST_RULE_MARKER = ":burst-number-v1:";
-  private static final int BURST_GAP_SIGNATURE_LENGTH = BURST_GAP_PREFIX.length() + 10 + BURST_RULE_MARKER.length();
+  private static final int BURST_GAP_SIGNATURE_LENGTH =
+      BURST_GAP_PREFIX.length() + 10 + BURST_RULE_MARKER.length();
 
   GalleryIndex(Context c) {
     super(c, "gallery-index.db", null, 2);
@@ -75,7 +77,10 @@ final class GalleryIndex extends SQLiteOpenHelper {
         c.getLong(o + 5),
         c.getLong(o + 6),
         c.getLong(o + 7),
-        c.isNull(o + 8) ? null : new PhotoMoveStore.Identity(c.getString(o + 8), c.getString(o + 9), c.getLong(o + 10)));
+        c.isNull(o + 8)
+            ? null
+            : new PhotoMoveStore.Identity(
+                c.getString(o + 8), c.getString(o + 9), c.getLong(o + 10)));
   }
 
   List<Album> albums() {
@@ -105,9 +110,14 @@ final class GalleryIndex extends SQLiteOpenHelper {
     }
     Map<Integer, List<Integer>> groups = new LinkedHashMap<>();
     // Read the grouping marker from the same statement as the photo memberships.
-    String query = "SELECT " + COLS + ",bundle,(SELECT substr(signature,1," + BURST_GAP_SIGNATURE_LENGTH
-        + ") FROM state WHERE id=1) FROM photos"
-        + (where.isEmpty() ? "" : " WHERE " + String.join(" AND ", where)) + " ORDER BY ordinal";
+    String query =
+        "SELECT "
+            + COLS
+            + ",bundle,(SELECT substr(signature,1,"
+            + BURST_GAP_SIGNATURE_LENGTH
+            + ") FROM state WHERE id=1) FROM photos"
+            + (where.isEmpty() ? "" : " WHERE " + String.join(" AND ", where))
+            + " ORDER BY ordinal";
     try (Cursor c = getReadableDatabase().rawQuery(query, args.toArray(new String[0]))) {
       String firstSignature = null;
       while (c.moveToNext()) {
@@ -116,7 +126,8 @@ final class GalleryIndex extends SQLiteOpenHelper {
         if (i == 0) {
           firstSignature = marker;
           result.burstGapMillis = burstGapFromSignature(marker);
-        } else if (result.burstGapMillis >= 0 && !Objects.equals(firstSignature, marker)
+        } else if (result.burstGapMillis >= 0
+            && !Objects.equals(firstSignature, marker)
             && result.burstGapMillis != burstGapFromSignature(marker)) {
           // A cursor window refilled after publication may span two grouping settings.
           result.burstGapMillis = -1;
@@ -169,10 +180,16 @@ final class GalleryIndex extends SQLiteOpenHelper {
     try (PhotoMoveStore store = new PhotoMoveStore(c)) {
       moveRevision = store.revision();
     }
-    return BURST_GAP_PREFIX + burstGapMillis + BURST_RULE_MARKER + media + ":move-v1:" + moveRevision
+    return BURST_GAP_PREFIX
+        + burstGapMillis
+        + BURST_RULE_MARKER
+        + media
+        + ":move-v1:"
+        + moveRevision
         + ":capture-order-v1:video-v1:archive-v3:"
         + archiveRevision
-        + ":" + e2Revision
+        + ":"
+        + e2Revision
         + ":"
         + c.checkSelfPermission(android.Manifest.permission.READ_MEDIA_VIDEO)
         + ":"
@@ -212,7 +229,8 @@ final class GalleryIndex extends SQLiteOpenHelper {
       long probeMillis = 0;
       try (ArchiveStore store = new ArchiveStore(c)) {
         metadata = store.metadataSnapshot();
-        Map<String, ArchiveStore.RawMetadata> e2Metadata = E2Cleanup.localIndexMetadata(c, photos, metadata, cancelled);
+        Map<String, ArchiveStore.RawMetadata> e2Metadata =
+            E2Cleanup.localIndexMetadata(c, photos, metadata, cancelled);
         if (e2Metadata == null) return false;
         List<ArchiveStore.IndexMetadata> batch = new ArrayList<>(METADATA_BATCH_SIZE);
         for (int first = 0; first < photos.size(); first += METADATA_BATCH_SIZE) {
@@ -225,8 +243,10 @@ final class GalleryIndex extends SQLiteOpenHelper {
             if (meta == null) {
               try {
                 if (p.isArchived()) {
-                  meta = E2Cleanup.archived(p.uri) ? e2Metadata.get(p.uri.getHost())
-                      : ArchiveStore.RawMetadata.fromReceipt(store.get(p.uri.getHost()));
+                  meta =
+                      E2Cleanup.archived(p.uri)
+                          ? e2Metadata.get(p.uri.getHost())
+                          : ArchiveStore.RawMetadata.fromReceipt(store.get(p.uri.getHost()));
                 } else if (p.isVideo()) {
                   meta = store.inspectMetadata(p);
                 } else {
@@ -242,8 +262,11 @@ final class GalleryIndex extends SQLiteOpenHelper {
             }
             if (meta == null) continue;
             RawPreview.BurstFrame frame = null;
-            if (meta.burstFrame == null && burstGapMillis > 0 && meta.taken > 0
-                && !burstCamera(meta).isEmpty() && ArchiveStore.canProbeBurstFrame(p)) {
+            if (meta.burstFrame == null
+                && burstGapMillis > 0
+                && meta.taken > 0
+                && !burstCamera(meta).isEmpty()
+                && ArchiveStore.canProbeBurstFrame(p)) {
               probes++;
               long started = android.os.SystemClock.elapsedRealtime();
               try {
@@ -260,7 +283,8 @@ final class GalleryIndex extends SQLiteOpenHelper {
               metadata.put(key, meta);
             }
           }
-          Map<String, ArchiveStore.RawMetadata> committed = store.writeIndexMetadata(batch, cancelled);
+          Map<String, ArchiveStore.RawMetadata> committed =
+              store.writeIndexMetadata(batch, cancelled);
           if (committed == null) return false;
           for (ArchiveStore.IndexMetadata change : batch) {
             if (change.frame() == null) continue;
@@ -272,8 +296,17 @@ final class GalleryIndex extends SQLiteOpenHelper {
           batch.clear();
         }
       }
-      DiagnosticLog.event("index.burst_probe", request, "count", probes, "numbered", numbered,
-          "failed", failures, "elapsedMillis", probeMillis);
+      DiagnosticLog.event(
+          "index.burst_probe",
+          request,
+          "count",
+          probes,
+          "numbered",
+          numbered,
+          "failed",
+          failures,
+          "elapsedMillis",
+          probeMillis);
       orderByCapture(photos, metadata);
       List<BurstGroups.Entry> entries = new ArrayList<>();
       for (int i = 0; i < photos.size(); i++) {
@@ -286,10 +319,10 @@ final class GalleryIndex extends SQLiteOpenHelper {
             new BurstGroups.Entry(
                 i,
                 meta == null ? 0 : meta.taken,
-                p.isVideo() || model.isEmpty()
-                    ? ""
-                    : burstStream(p, model),
-                p.name, frame.mode(), frame.number()));
+                p.isVideo() || model.isEmpty() ? "" : burstStream(p, model),
+                p.name,
+                frame.mode(),
+                frame.number()));
       }
       DiagnosticLog.event("index.metadata_end", request, "count", entries.size());
       if (cancelled.getAsBoolean()) return false;
@@ -360,7 +393,8 @@ final class GalleryIndex extends SQLiteOpenHelper {
     }
   }
 
-  static RawPreview.BurstFrame burstFrame(PhotoRepository.Photo photo, ArchiveStore.RawMetadata metadata) {
+  static RawPreview.BurstFrame burstFrame(
+      PhotoRepository.Photo photo, ArchiveStore.RawMetadata metadata) {
     // An E2 object ID does not prove which moved local identity owns the cached frame.
     if (E2Cleanup.archived(photo.uri) || metadata == null || metadata.burstFrame == null)
       return RawPreview.BurstFrame.NONE;
@@ -375,8 +409,16 @@ final class GalleryIndex extends SQLiteOpenHelper {
       String path = location.getEncodedPath();
       folder = path.substring(0, path.lastIndexOf('/') + 1);
     }
-    return model.length() + ":" + model + location.getScheme() + "://"
-        + Objects.toString(location.getAuthority(), "") + ":" + folder + "|" + photo.isJpeg();
+    return model.length()
+        + ":"
+        + model
+        + location.getScheme()
+        + "://"
+        + Objects.toString(location.getAuthority(), "")
+        + ":"
+        + folder
+        + "|"
+        + photo.isJpeg();
   }
 
   private static String burstCamera(ArchiveStore.RawMetadata metadata) {
@@ -393,10 +435,22 @@ final class GalleryIndex extends SQLiteOpenHelper {
       PhotoRepository.Photo photo = photos.get(i);
       ArchiveStore.RawMetadata capture = metadata.get(ArchiveStore.key(photo));
       if (capture != null && capture.taken > 0 && capture.taken != photo.taken)
-        photos.set(i, new PhotoRepository.Photo(photo.uri, photo.name, photo.folder, photo.size,
-            photo.modified, capture.taken, photo.added, photo.created, photo.movedIdentity));
+        photos.set(
+            i,
+            new PhotoRepository.Photo(
+                photo.uri,
+                photo.name,
+                photo.folder,
+                photo.size,
+                photo.modified,
+                capture.taken,
+                photo.added,
+                photo.created,
+                photo.movedIdentity));
     }
-    photos.sort(Comparator.comparingLong(PhotoRepository.Photo::sortTime)
-        .reversed().thenComparing(p -> p.name));
+    photos.sort(
+        Comparator.comparingLong(PhotoRepository.Photo::sortTime)
+            .reversed()
+            .thenComparing(p -> p.name));
   }
 }

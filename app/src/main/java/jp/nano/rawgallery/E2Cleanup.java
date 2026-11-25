@@ -16,8 +16,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Pattern;
 import java.util.function.BooleanSupplier;
+import java.util.regex.Pattern;
 import org.json.JSONObject;
 
 /** Releases local JPEGs; the e2 receipt and thumbnail stay available to the gallery. */
@@ -26,17 +26,22 @@ final class E2Cleanup {
   private static final Pattern RECORD_KEY = Pattern.compile("[0-9a-f]{32}");
   static final String RELEASING = "releasing", RELEASED = "released";
   private static final int EDGE = 256;
+
   private record Eligible(E2AutoSync.Candidate candidate, JSONObject receipt) {}
+
   record Plan(int retention, List<Eligible> eligible) {}
 
   static boolean archived(Uri uri) {
     return uri != null && SCHEME.equals(uri.getScheme());
   }
 
-  private static SharedPreferences options(Context c) { return E2AutoSync.state(c); }
+  private static SharedPreferences options(Context c) {
+    return E2AutoSync.state(c);
+  }
 
   static boolean enabled(Context c, String bucket) {
-    return bucket != null && !bucket.isEmpty()
+    return bucket != null
+        && !bucket.isEmpty()
         && bucket.equals(options(c).getString("cleanupBucket", ""))
         && days(c) == options(c).getInt("cleanupDays", 0);
   }
@@ -49,14 +54,20 @@ final class E2Cleanup {
   static void setEnabled(Context c, String bucket, int retention) throws IOException {
     boolean enabled = retention > 0;
     synchronized (E2Settings.DESTINATION_LOCK) {
-      if (enabled && (retention != days(c) || !Environment.isExternalStorageManager() || !E2Settings.hasPhotoAccess(c)
-          || !E2SyncJob.enabled(c) || !bucket.equals(E2Settings.configuredBucket(c))
-          || !bucket.equals(options(c).getString("destination", ""))
-          || SettingsRepository.cleanupEnabled(SettingsRepository.open(c))))
+      if (enabled
+          && (retention != days(c)
+              || !Environment.isExternalStorageManager()
+              || !E2Settings.hasPhotoAccess(c)
+              || !E2SyncJob.enabled(c)
+              || !bucket.equals(E2Settings.configuredBucket(c))
+              || !bucket.equals(options(c).getString("destination", ""))
+              || SettingsRepository.cleanupEnabled(SettingsRepository.open(c))))
         throw new IOException("自動バックアップと写真の整理権限を確認してください");
-      if (!options(c).edit().putString("cleanupBucket", enabled ? bucket : "")
-          .putInt("cleanupDays", retention).commit())
-        throw new IOException("容量整理の設定を保存できません");
+      if (!options(c)
+          .edit()
+          .putString("cleanupBucket", enabled ? bucket : "")
+          .putInt("cleanupDays", retention)
+          .commit()) throw new IOException("容量整理の設定を保存できません");
       if (!E2SyncJob.ensureRecoverySchedule(c))
         android.util.Log.w("LoupeE2Sync", "Recovery scheduling declined");
     }
@@ -66,8 +77,12 @@ final class E2Cleanup {
     return options(c).getString("cleanupStatus", "");
   }
 
-  static Plan plan(Context c, E2Photos photos, List<E2AutoSync.Candidate> candidates,
-      String bucket, BooleanSupplier stopped) {
+  static Plan plan(
+      Context c,
+      E2Photos photos,
+      List<E2AutoSync.Candidate> candidates,
+      String bucket,
+      BooleanSupplier stopped) {
     try {
       if (!canStart(c, bucket, stopped)) return null;
       long now = System.currentTimeMillis();
@@ -76,14 +91,17 @@ final class E2Cleanup {
       for (E2AutoSync.Candidate candidate : candidates) {
         if (!allowed(c, bucket, stopped)) return null;
         PhotoRepository.Photo p = candidate.photo();
-        if (!p.isJpeg() || candidate.generation() <= 0
+        if (!p.isJpeg()
+            || candidate.generation() <= 0
             || !MediaStore.VOLUME_EXTERNAL_PRIMARY.equals(candidate.volume())) continue;
-        JSONObject record = photos.settings.records.get(E2AutoSync.key(candidate, bucket,
-            Long.toString(candidate.generation())));
+        JSONObject record =
+            photos.settings.records.get(
+                E2AutoSync.key(candidate, bucket, Long.toString(candidate.generation())));
         if (record == null || !"verified".equals(record.optString("state"))) continue;
         long date = SyncPolicy.retentionDate(p.taken, p.added, p.created, true);
         if (!SyncPolicy.eligible(date, now, retention, true, true, true)
-            || !bucket.equals(record.optString("bucket")) || !p.uri.toString().equals(record.optString("uri"))
+            || !bucket.equals(record.optString("bucket"))
+            || !p.uri.toString().equals(record.optString("uri"))
             || recentlyRestored(c, record.getString("sha"), retention)) continue;
         try {
           E2AutoSync.requireCurrentRevision(c, candidate);
@@ -100,13 +118,19 @@ final class E2Cleanup {
       }
       return new Plan(retention, eligible);
     } catch (Exception failure) {
-      DiagnosticLog.exception("e2_cleanup.plan", stopped.getAsBoolean() ? "cancelled" : "failed", failure);
+      DiagnosticLog.exception(
+          "e2_cleanup.plan", stopped.getAsBoolean() ? "cancelled" : "failed", failure);
       if (!stopped.getAsBoolean()) updateStatus(c, "容量整理を中断しました。保存先や権限を確認してください");
       return null;
     }
   }
 
-  static void sweep(Context c, E2Photos photos, Plan plan, String bucket, BooleanSupplier stopped,
+  static void sweep(
+      Context c,
+      E2Photos photos,
+      Plan plan,
+      String bucket,
+      BooleanSupplier stopped,
       E2RecoveryCatalog.Snapshot published) {
     try {
       if (!canStart(c, bucket, stopped) || days(c) != plan.retention()) return;
@@ -123,7 +147,8 @@ final class E2Cleanup {
       }
       updateStatus(c, "端末オリジナルを整理 · " + removed + "枚");
     } catch (Exception failure) {
-      DiagnosticLog.exception("e2_cleanup.remove", stopped.getAsBoolean() ? "cancelled" : "failed", failure);
+      DiagnosticLog.exception(
+          "e2_cleanup.remove", stopped.getAsBoolean() ? "cancelled" : "failed", failure);
       if (!stopped.getAsBoolean()) updateStatus(c, "容量整理を中断しました。保存先や権限を確認してください");
     }
   }
@@ -137,16 +162,25 @@ final class E2Cleanup {
   }
 
   private static boolean allowed(Context c, String bucket, BooleanSupplier stopped) {
-    return !stopped.getAsBoolean() && !Thread.currentThread().isInterrupted()
-        && enabled(c, bucket) && E2SyncJob.enabled(c) && E2Settings.hasPhotoAccess(c)
+    return !stopped.getAsBoolean()
+        && !Thread.currentThread().isInterrupted()
+        && enabled(c, bucket)
+        && E2SyncJob.enabled(c)
+        && E2Settings.hasPhotoAccess(c)
         && Environment.isExternalStorageManager()
         && bucket.equals(E2Settings.configuredBucket(c))
         && bucket.equals(options(c).getString("destination", ""))
         && !SettingsRepository.cleanupEnabled(SettingsRepository.open(c));
   }
 
-  private static boolean release(Context c, E2Photos photos, Eligible item, String bucket,
-      int retention, BooleanSupplier stopped) throws Exception {
+  private static boolean release(
+      Context c,
+      E2Photos photos,
+      Eligible item,
+      String bucket,
+      int retention,
+      BooleanSupplier stopped)
+      throws Exception {
     E2AutoSync.Candidate candidate = item.candidate();
     PhotoRepository.Photo photo = candidate.photo();
     JSONObject record = item.receipt();
@@ -154,13 +188,20 @@ final class E2Cleanup {
     File verified = photos.downloadRecord(record);
     try {
       if (!allowed(c, bucket, stopped)) return false;
-      PhotoRepository.Photo copy = new PhotoRepository.Photo(Uri.fromFile(verified), photo.name,
-          photo.folder, photo.size, photo.modified, photo.taken);
+      PhotoRepository.Photo copy =
+          new PhotoRepository.Photo(
+              Uri.fromFile(verified),
+              photo.name,
+              photo.folder,
+              photo.size,
+              photo.modified,
+              photo.taken);
       File thumb = thumbnail(c, key);
-      if (!thumb.getParentFile().isDirectory() && !thumb.getParentFile().mkdirs()
+      if (!thumb.getParentFile().isDirectory()
+          && !thumb.getParentFile().mkdirs()
           && !thumb.getParentFile().isDirectory()) throw new IOException("サムネイルを保存できません");
-      PhotoRepository.Preview saved = CompactPreview.save(
-          new PhotoRepository(c).fullPreview(copy), thumb, EDGE);
+      PhotoRepository.Preview saved =
+          CompactPreview.save(new PhotoRepository(c).fullPreview(copy), thumb, EDGE);
       Bitmap test = PhotoRepository.bitmap(saved, EDGE);
       test.recycle();
       Files.deleteIfExists(new File(thumb.getParentFile(), key + ".webp").toPath());
@@ -170,20 +211,33 @@ final class E2Cleanup {
         if (!allowed(c, bucket, stopped)) return false;
         E2AutoSync.requireCurrentRevision(c, candidate);
         try (InputStream source = PhotoRepository.original(c, photo)) {
-          if (!record.getString("sha").equals(E2Archive.readHash(source, null, photo.size))) return false;
+          if (!record.getString("sha").equals(E2Archive.readHash(source, null, photo.size)))
+            return false;
         }
         E2AutoSync.requireCurrentRevision(c, candidate);
         synchronized (E2Settings.DESTINATION_LOCK) {
-          if (!allowed(c, bucket, stopped) || days(c) != retention
+          if (!allowed(c, bucket, stopped)
+              || days(c) != retention
               || recentlyRestored(c, record.getString("sha"), retention)) return false;
           E2AutoSync.requireCurrentRevision(c, candidate);
-          record.put("cleanupVolume", candidate.volume()).put("cleanupDb", candidate.version())
-              .put("cleanupGeneration", candidate.generation()).put("thumbWidth", saved.width).put("thumbHeight", saved.height);
+          record
+              .put("cleanupVolume", candidate.volume())
+              .put("cleanupDb", candidate.version())
+              .put("cleanupGeneration", candidate.generation())
+              .put("thumbWidth", saved.width)
+              .put("thumbHeight", saved.height);
           photos.settings.records.put(record, RELEASING);
-          int changed = c.getContentResolver().delete(photo.uri,
-              MediaStore.MediaColumns.GENERATION_MODIFIED + "=? AND "
-                  + MediaStore.MediaColumns.SIZE + "=?",
-              new String[]{Long.toString(candidate.generation()), Long.toString(photo.size)});
+          int changed =
+              c.getContentResolver()
+                  .delete(
+                      photo.uri,
+                      MediaStore.MediaColumns.GENERATION_MODIFIED
+                          + "=? AND "
+                          + MediaStore.MediaColumns.SIZE
+                          + "=?",
+                      new String[] {
+                        Long.toString(candidate.generation()), Long.toString(photo.size)
+                      });
           if (changed != 1) {
             if (changed == 0) photos.settings.records.put(record, "verified");
             throw new IOException("Androidが端末オリジナルの整理を確定しませんでした");
@@ -211,16 +265,32 @@ final class E2Cleanup {
           || !record.getString("cleanupDb").equals(MediaStore.getVersion(c, volume))) continue;
       Uri uri = Uri.parse(record.getString("uri"));
       if (!uri.toString().matches("content://media/external/file/[0-9]+")) continue;
-      try (Cursor item = c.getContentResolver().query(uri,
-          new String[]{MediaStore.MediaColumns.GENERATION_MODIFIED, MediaStore.MediaColumns.SIZE},
-          null, null, null)) {
+      try (Cursor item =
+          c.getContentResolver()
+              .query(
+                  uri,
+                  new String[] {
+                    MediaStore.MediaColumns.GENERATION_MODIFIED, MediaStore.MediaColumns.SIZE
+                  },
+                  null,
+                  null,
+                  null)) {
         if (item == null) continue;
-        boolean same = item.moveToFirst() && record.optLong("cleanupGeneration") == item.getLong(0)
-            && record.getLong("size") == item.getLong(1);
+        boolean same =
+            item.moveToFirst()
+                && record.optLong("cleanupGeneration") == item.getLong(0)
+                && record.getLong("size") == item.getLong(1);
         store.put(record, same ? "verified" : RELEASED);
-        if (!same) new PhotoRepository(c).removePreparedPreview(new PhotoRepository.Photo(
-            uri, record.getString("name"), record.getString("folder"), record.getLong("size"),
-            record.getLong("modified"), record.optLong("taken")));
+        if (!same)
+          new PhotoRepository(c)
+              .removePreparedPreview(
+                  new PhotoRepository.Photo(
+                      uri,
+                      record.getString("name"),
+                      record.getString("folder"),
+                      record.getLong("size"),
+                      record.getLong("modified"),
+                      record.optLong("taken")));
       }
     }
   }
@@ -231,7 +301,8 @@ final class E2Cleanup {
       long now = System.currentTimeMillis();
       SharedPreferences.Editor edit = restored.edit().putLong(sha, now);
       for (var entry : restored.getAll().entrySet()) {
-        if (!sha.equals(entry.getKey()) && entry.getValue() instanceof Long time
+        if (!sha.equals(entry.getKey())
+            && entry.getValue() instanceof Long time
             && SyncPolicy.eligible(time, now, 365, true, true, true)) edit.remove(entry.getKey());
       }
       if (!edit.commit()) throw new IOException("復元するオリジナルの保存期間を設定できません");
@@ -240,8 +311,8 @@ final class E2Cleanup {
 
   private static boolean recentlyRestored(Context c, String sha, int retention) {
     long restored = c.getSharedPreferences("e2_restored", Context.MODE_PRIVATE).getLong(sha, 0);
-    return restored > 0 && !SyncPolicy.eligible(restored, System.currentTimeMillis(), retention,
-        true, true, true);
+    return restored > 0
+        && !SyncPolicy.eligible(restored, System.currentTimeMillis(), retention, true, true, true);
   }
 
   static boolean recoverable(JSONObject record) {
@@ -249,14 +320,23 @@ final class E2Cleanup {
     return "verified".equals(state) || RELEASING.equals(state) || RELEASED.equals(state);
   }
 
-  static boolean released(JSONObject record) { return RELEASED.equals(record.optString("state")); }
+  static boolean released(JSONObject record) {
+    return RELEASED.equals(record.optString("state"));
+  }
 
-  static boolean releasing(JSONObject record) { return RELEASING.equals(record.optString("state")); }
+  static boolean releasing(JSONObject record) {
+    return RELEASING.equals(record.optString("state"));
+  }
 
   static PhotoRepository.Photo galleryPhoto(JSONObject record) throws Exception {
-    return new PhotoRepository.Photo(Uri.parse(SCHEME + "://" + record.getString("key")),
-        record.getString("name"), record.getString("folder"), record.getLong("size"),
-        record.getLong("modified"), record.optLong("taken"), record.optLong("added"),
+    return new PhotoRepository.Photo(
+        Uri.parse(SCHEME + "://" + record.getString("key")),
+        record.getString("name"),
+        record.getString("folder"),
+        record.getLong("size"),
+        record.getLong("modified"),
+        record.optLong("taken"),
+        record.optLong("added"),
         record.optLong("created"));
   }
 
@@ -267,8 +347,12 @@ final class E2Cleanup {
   }
 
   /** Resolves E2 cache misses in the scanned photo list through one database helper. */
-  static Map<String, ArchiveStore.RawMetadata> localIndexMetadata(Context c, List<PhotoRepository.Photo> photos,
-      Map<String, ArchiveStore.RawMetadata> cachedMetadata, BooleanSupplier cancelled) throws IOException {
+  static Map<String, ArchiveStore.RawMetadata> localIndexMetadata(
+      Context c,
+      List<PhotoRepository.Photo> photos,
+      Map<String, ArchiveStore.RawMetadata> cachedMetadata,
+      BooleanSupplier cancelled)
+      throws IOException {
     Set<String> keys = new HashSet<>();
     for (PhotoRepository.Photo photo : photos) {
       if (cancelled.getAsBoolean()) return null;
@@ -301,8 +385,12 @@ final class E2Cleanup {
       JSONObject record = localRecord(c, uri);
       File file = thumbnail(c, record.getString("key"));
       int width = record.getInt("thumbWidth"), height = record.getInt("thumbHeight");
-      if (!file.isFile() || file.length() == 0 || width < 1 || height < 1 || width > EDGE || height > EDGE)
-        throw new IOException("保存済みサムネイルがありません");
+      if (!file.isFile()
+          || file.length() == 0
+          || width < 1
+          || height < 1
+          || width > EDGE
+          || height > EDGE) throw new IOException("保存済みサムネイルがありません");
       return new PhotoRepository.Preview(file, record.optString("model"), width, height, 1);
     } catch (Exception e) {
       DiagnosticLog.exception("e2_cleanup.preview", "failed", e);

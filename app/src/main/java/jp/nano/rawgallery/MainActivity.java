@@ -1,23 +1,21 @@
 package jp.nano.rawgallery;
 
-import androidx.appcompat.app.AlertDialog;
-
 import android.Manifest;
 import android.app.*;
 import android.content.*;
 import android.content.pm.*;
 import android.graphics.*;
-import android.net.Uri;
 import android.hardware.usb.UsbManager;
-import jp.nano.rawgallery.camera.ImportProgress;
-import jp.nano.rawgallery.camera.ImportService;
+import android.net.Uri;
 import android.os.*;
 import android.util.LruCache;
 import android.view.*;
 import android.widget.*;
+import androidx.appcompat.app.AlertDialog;
 import java.io.*;
 import java.util.*;
 import java.util.concurrent.*;
+import jp.nano.rawgallery.camera.ImportProgress;
 
 public final class MainActivity extends DiagnosticActivity {
   private static final int BG = GalleryUi.BG,
@@ -36,50 +34,102 @@ public final class MainActivity extends DiagnosticActivity {
         }
       };
   private final ExecutorService historyReads = new DiagnosticExecutor("MainActivity.history", 1);
-  private Map<String,List<ShareHistoryUi.Item>> shareHistory=Collections.emptyMap();
-  private boolean historyLoaded, historyReadFailed, historyReading, historyReload, historyForeground, historyAnimating;
-  private Runnable refreshShareBadges=()->{}, refreshShareInfo=()->{};
-  private Runnable refreshSingleBest=()->{};
+  private Map<String, List<ShareHistoryUi.Item>> shareHistory = Collections.emptyMap();
+  private boolean historyLoaded,
+      historyReadFailed,
+      historyReading,
+      historyReload,
+      historyForeground,
+      historyAnimating;
+  private Runnable refreshShareBadges = () -> {}, refreshShareInfo = () -> {};
+  private Runnable refreshSingleBest = () -> {};
   private AlertDialog shareHistoryFailure;
-  private final SharedPreferences.OnSharedPreferenceChangeListener historyChanges=(prefs,key)-> {
-    if("revision".equals(key))loadShareHistory();
-    if("failure_revision".equals(key))showShareHistoryFailure();
-    if("write_failed".equals(key)&&!prefs.getBoolean(key,false)&&shareHistoryFailure!=null)shareHistoryFailure.dismiss();
-  };
-  private List<ShareHistoryUi.Item> historyFor(PhotoRepository.Photo photo){try{return shareHistory.getOrDefault(ArchiveStore.key(photo),Collections.emptyList());}catch(IOException unavailable){return Collections.emptyList();}}
-  private void loadShareHistory(){
-    if(isDestroyed())return;
-    if(historyReading){historyReload=true;return;}
-    historyReading=true;
-    historyReads.execute(()->{
-      Map<String,List<ShareHistoryUi.Item>> loaded=null;
-      try{loaded=ShareHistoryUi.load(getApplicationContext());}catch(RuntimeException ignored){}
-      Map<String,List<ShareHistoryUi.Item>> result=loaded;
-      main.post(()->{
-        historyReading=false;if(isDestroyed())return;
-        historyReadFailed=result==null;
-        historyAnimating=historyLoaded&&result!=null;
-        boolean added=false;
-        if(historyAnimating)for(String key:result.keySet())if(ShareHistoryUi.added(shareHistory.getOrDefault(key,Collections.emptyList()),result.get(key))){added=true;break;}
-        if(result!=null){shareHistory=result;historyLoaded=true;}
-        if(added&&historyForeground)Toast.makeText(this,"共有の記録を更新しました",Toast.LENGTH_LONG).show();
-        if(grid!=null&&grid.isAttachedToWindow())grid.invalidateViews();
-        refreshShareBadges.run();refreshShareInfo.run();
-        historyAnimating=false;
-        if(historyReload){historyReload=false;loadShareHistory();}
-      });
-    });
-  }
-  private void showShareHistoryFailure(){
-    if(!historyForeground||isDestroyed()||shareHistoryFailure!=null)return;
-    SharedPreferences prefs=getSharedPreferences(ShareHistoryReceiver.PREFS,0);
-    if(!prefs.getBoolean("write_failed",false))return;
-    GalleryUi.Sheet sheet=new GalleryUi.Sheet(this);
-    sheet.setTitle("共有の記録を保存できませんでした").setMessage("前の記録は残っています。写真の共有はやり直しません。").setNegativeButton("閉じる",(d,w)->{if(!ShareHistoryReceiver.canRetry())prefs.edit().remove("write_failed").apply();});
-    if(ShareHistoryReceiver.canRetry())sheet.setPositiveButton("もう一度保存",(dialog,which)->ShareHistoryReceiver.retryLater(getApplicationContext()));
+  private final SharedPreferences.OnSharedPreferenceChangeListener historyChanges =
+      (prefs, key) -> {
+        if ("revision".equals(key)) loadShareHistory();
+        if ("failure_revision".equals(key)) showShareHistoryFailure();
+        if ("write_failed".equals(key)
+            && !prefs.getBoolean(key, false)
+            && shareHistoryFailure != null) shareHistoryFailure.dismiss();
+      };
 
-    shareHistoryFailure=sheet.create();shareHistoryFailure.setOnDismissListener(dialog->shareHistoryFailure=null);shareHistoryFailure.show();
+  private List<ShareHistoryUi.Item> historyFor(PhotoRepository.Photo photo) {
+    try {
+      return shareHistory.getOrDefault(ArchiveStore.key(photo), Collections.emptyList());
+    } catch (IOException unavailable) {
+      return Collections.emptyList();
+    }
   }
+
+  private void loadShareHistory() {
+    if (isDestroyed()) return;
+    if (historyReading) {
+      historyReload = true;
+      return;
+    }
+    historyReading = true;
+    historyReads.execute(
+        () -> {
+          Map<String, List<ShareHistoryUi.Item>> loaded = null;
+          try {
+            loaded = ShareHistoryUi.load(getApplicationContext());
+          } catch (RuntimeException ignored) {
+          }
+          Map<String, List<ShareHistoryUi.Item>> result = loaded;
+          main.post(
+              () -> {
+                historyReading = false;
+                if (isDestroyed()) return;
+                historyReadFailed = result == null;
+                historyAnimating = historyLoaded && result != null;
+                boolean added = false;
+                if (historyAnimating)
+                  for (String key : result.keySet())
+                    if (ShareHistoryUi.added(
+                        shareHistory.getOrDefault(key, Collections.emptyList()), result.get(key))) {
+                      added = true;
+                      break;
+                    }
+                if (result != null) {
+                  shareHistory = result;
+                  historyLoaded = true;
+                }
+                if (added && historyForeground)
+                  Toast.makeText(this, "共有の記録を更新しました", Toast.LENGTH_LONG).show();
+                if (grid != null && grid.isAttachedToWindow()) grid.invalidateViews();
+                refreshShareBadges.run();
+                refreshShareInfo.run();
+                historyAnimating = false;
+                if (historyReload) {
+                  historyReload = false;
+                  loadShareHistory();
+                }
+              });
+        });
+  }
+
+  private void showShareHistoryFailure() {
+    if (!historyForeground || isDestroyed() || shareHistoryFailure != null) return;
+    SharedPreferences prefs = getSharedPreferences(ShareHistoryReceiver.PREFS, 0);
+    if (!prefs.getBoolean("write_failed", false)) return;
+    GalleryUi.Sheet sheet = new GalleryUi.Sheet(this);
+    sheet
+        .setTitle("共有の記録を保存できませんでした")
+        .setMessage("前の記録は残っています。写真の共有はやり直しません。")
+        .setNegativeButton(
+            "閉じる",
+            (d, w) -> {
+              if (!ShareHistoryReceiver.canRetry()) prefs.edit().remove("write_failed").apply();
+            });
+    if (ShareHistoryReceiver.canRetry())
+      sheet.setPositiveButton(
+          "もう一度保存", (dialog, which) -> ShareHistoryReceiver.retryLater(getApplicationContext()));
+
+    shareHistoryFailure = sheet.create();
+    shareHistoryFailure.setOnDismissListener(dialog -> shareHistoryFailure = null);
+    shareHistoryFailure.show();
+  }
+
   private PhotoRepository repository;
   private static final int PHOTO_TILE_HEIGHT_DP = 96;
   private RankingStore rankingStore;
@@ -103,18 +153,25 @@ public final class MainActivity extends DiagnosticActivity {
   private final Map<String, GalleryPosition> galleryScroll = new HashMap<>();
 
   private void rememberGallery() {
-    if (!albumHome && !detail && grid != null && grid.isAttachedToWindow()
-        && shownGalleryKey != null && !photos.isEmpty()) {
+    if (!albumHome
+        && !detail
+        && grid != null
+        && grid.isAttachedToWindow()
+        && shownGalleryKey != null
+        && !photos.isEmpty()) {
       GalleryPosition position = GalleryPosition.capture(grid, photos, displayed);
       if (position != null) galleryScroll.put(shownGalleryKey, position);
     }
     if (!albumHome && !detail && albumFolder == null && burstMembers == null) {
-      allPhotosFilter = filter; allPhotosRankFilter = rankFilter;
+      allPhotosFilter = filter;
+      allPhotosRankFilter = rankFilter;
     }
   }
 
   private void rememberAlbums() {
-    if (albumHome && albumGridView != null && albumGridView.isAttachedToWindow()
+    if (albumHome
+        && albumGridView != null
+        && albumGridView.isAttachedToWindow()
         && albumGridView.getChildCount() > 0) {
       albumScroll = albumGridView.firstCellPosition();
       albumTop = albumGridView.getChildAt(0).getTop();
@@ -130,18 +187,27 @@ public final class MainActivity extends DiagnosticActivity {
 
   private void switchLibraryTab(boolean albums) {
     if (selecting) return;
-    rememberGallery(); rememberAlbums();
+    rememberGallery();
+    rememberAlbums();
     DiagnosticLog.event("library.tab", 0, "albums", albums);
     libraryAlbums = albums;
     if (albums) albumHome();
     else {
-      albumFolder = null; filter = allPhotosFilter; rankFilter = allPhotosRankFilter;
-      burstMembers = null; rankCache.clear(); photos = new ArrayList<>(); bundles = new ArrayList<>();
-      gallery(); loadIndexedPhotos();
+      albumFolder = null;
+      filter = allPhotosFilter;
+      rankFilter = allPhotosRankFilter;
+      burstMembers = null;
+      rankCache.clear();
+      photos = new ArrayList<>();
+      bundles = new ArrayList<>();
+      gallery();
+      loadIndexedPhotos();
     }
   }
 
-  private void returnLibraryRoot() { switchLibraryTab(libraryAlbums); }
+  private void returnLibraryRoot() {
+    switchLibraryTab(libraryAlbums);
+  }
 
   private boolean selecting, bestOnly = true, rankingFromSelection;
   private final Set<String> selectedPhotos = new LinkedHashSet<>();
@@ -165,9 +231,10 @@ public final class MainActivity extends DiagnosticActivity {
   private final long startedAt = SystemClock.elapsedRealtime();
   private boolean reportedAlbums, reportedCover;
   private boolean mediaRefreshClosed;
-  private final Runnable mediaChanged = () -> {
-    if (!mediaRefreshClosed) refresh();
-  };
+  private final Runnable mediaChanged =
+      () -> {
+        if (!mediaRefreshClosed) refresh();
+      };
   private final android.database.ContentObserver mediaObserver =
       new android.database.ContentObserver(main) {
         public void onChange(boolean selfChange) {
@@ -198,7 +265,7 @@ public final class MainActivity extends DiagnosticActivity {
   private int burstPosition;
 
   private String generatedViewerUri;
-  static final String GENERATED_IMAGE="jp.nano.rawgallery.GENERATED_IMAGE";
+  static final String GENERATED_IMAGE = "jp.nano.rawgallery.GENERATED_IMAGE";
 
   public void onCreate(Bundle state) {
     super.onCreate(state);
@@ -206,12 +273,16 @@ public final class MainActivity extends DiagnosticActivity {
     repository = new PhotoRepository(this);
     rankingStore = new RankingStore(this);
     sharePreparation = new SharePreparation(this, repository);
-    shareCapacity = new ShareCapacityChecks(this,repository,()->{
-      if(isDestroyed())return;
-      if(selecting)updateSelection();
-      if(capacityMenu!=null&&capacityMenu.isShowing())
-        capacityMenu.capacity(shareCapacity.snapshot(capacityMenu.photos));
-    });
+    shareCapacity =
+        new ShareCapacityChecks(
+            this,
+            repository,
+            () -> {
+              if (isDestroyed()) return;
+              if (selecting) updateSelection();
+              if (capacityMenu != null && capacityMenu.isShowing())
+                capacityMenu.capacity(shareCapacity.snapshot(capacityMenu.photos));
+            });
     targets = ShareTargets.load(this);
     if (state != null) {
       libraryAlbums = state.getBoolean("libraryAlbums", state.getBoolean("home", true));
@@ -236,35 +307,77 @@ public final class MainActivity extends DiagnosticActivity {
             : Manifest.permission.READ_EXTERNAL_STORAGE;
     if (checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED
         || (Build.VERSION.SDK_INT >= 33
-            && checkSelfPermission(Manifest.permission.READ_MEDIA_VIDEO) != PackageManager.PERMISSION_GRANTED))
-      requestPhotoAccess();
-    openGeneratedImage(state==null?getIntent().getStringExtra(GENERATED_IMAGE):state.getString(GENERATED_IMAGE));
+            && checkSelfPermission(Manifest.permission.READ_MEDIA_VIDEO)
+                != PackageManager.PERMISSION_GRANTED)) requestPhotoAccess();
+    openGeneratedImage(
+        state == null
+            ? getIntent().getStringExtra(GENERATED_IMAGE)
+            : state.getString(GENERATED_IMAGE));
   }
 
   /** Only a published MediaStore image can enter the saved-result viewer. */
   private void openGeneratedImage(String value) {
-    if(value==null)return;
-    Uri uri=Uri.parse(value);
+    if (value == null) return;
+    Uri uri = Uri.parse(value);
     String path = uri.getPath();
-    if (!"content".equals(uri.getScheme()) || !"media".equals(uri.getAuthority())
-        || path == null || !path.matches("/(external|external_primary)/images/media/[0-9]+")) return;
-    try(android.database.Cursor cursor=getContentResolver().query(uri,
-        new String[]{android.provider.MediaStore.Images.Media.DISPLAY_NAME,android.provider.MediaStore.Images.Media.SIZE,
-          android.provider.MediaStore.Images.Media.DATE_MODIFIED,android.provider.MediaStore.Images.Media.DATE_TAKEN,
-          android.provider.MediaStore.Images.Media.IS_PENDING,android.provider.MediaStore.Images.Media.OWNER_PACKAGE_NAME},null,null,null)){
-      if(cursor==null||!cursor.moveToFirst()||cursor.getInt(4)!=0||!getPackageName().equals(cursor.getString(5)))return;
-      generatedViewerUri=value;getIntent().removeExtra(GENERATED_IMAGE);
-      albumHome=false;libraryAlbums=false;pendingRestore=null;burstMembers=null;
-      photos=new ArrayList<>(java.util.List.of(new PhotoRepository.Photo(uri,cursor.getString(0),"Nano Banana",cursor.getLong(1),cursor.getLong(2),cursor.getLong(3))));
-      bundles=new ArrayList<>();showPhoto(0);
-    }catch(RuntimeException error){android.widget.Toast.makeText(this,"生成画像を開けませんでした",android.widget.Toast.LENGTH_SHORT).show();}
+    if (!"content".equals(uri.getScheme())
+        || !"media".equals(uri.getAuthority())
+        || path == null
+        || !path.matches("/(external|external_primary)/images/media/[0-9]+")) return;
+    try (android.database.Cursor cursor =
+        getContentResolver()
+            .query(
+                uri,
+                new String[] {
+                  android.provider.MediaStore.Images.Media.DISPLAY_NAME,
+                  android.provider.MediaStore.Images.Media.SIZE,
+                  android.provider.MediaStore.Images.Media.DATE_MODIFIED,
+                  android.provider.MediaStore.Images.Media.DATE_TAKEN,
+                  android.provider.MediaStore.Images.Media.IS_PENDING,
+                  android.provider.MediaStore.Images.Media.OWNER_PACKAGE_NAME
+                },
+                null,
+                null,
+                null)) {
+      if (cursor == null
+          || !cursor.moveToFirst()
+          || cursor.getInt(4) != 0
+          || !getPackageName().equals(cursor.getString(5))) return;
+      generatedViewerUri = value;
+      getIntent().removeExtra(GENERATED_IMAGE);
+      albumHome = false;
+      libraryAlbums = false;
+      pendingRestore = null;
+      burstMembers = null;
+      photos =
+          new ArrayList<>(
+              java.util.List.of(
+                  new PhotoRepository.Photo(
+                      uri,
+                      cursor.getString(0),
+                      "Nano Banana",
+                      cursor.getLong(1),
+                      cursor.getLong(2),
+                      cursor.getLong(3))));
+      bundles = new ArrayList<>();
+      showPhoto(0);
+    } catch (RuntimeException error) {
+      android.widget.Toast.makeText(this, "生成画像を開けませんでした", android.widget.Toast.LENGTH_SHORT)
+          .show();
+    }
   }
 
   @Override
   protected void onSaveInstanceState(Bundle state) {
     super.onSaveInstanceState(state);
-    rememberGallery(); rememberAlbums();
-    if(detail&&generatedViewerUri!=null&&index>=0&&index<photos.size()&&generatedViewerUri.equals(photos.get(index).uri.toString()))state.putString(GENERATED_IMAGE,generatedViewerUri);
+    rememberGallery();
+    rememberAlbums();
+    if (detail
+        && generatedViewerUri != null
+        && index >= 0
+        && index < photos.size()
+        && generatedViewerUri.equals(photos.get(index).uri.toString()))
+      state.putString(GENERATED_IMAGE, generatedViewerUri);
     state.putBoolean("libraryAlbums", libraryAlbums);
     state.putString("allPhotosFilter", allPhotosFilter);
     state.putInt("allPhotosRankFilter", allPhotosRankFilter);
@@ -317,15 +430,17 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private void base() {
-    refreshSingleBest=()->{};
-    refreshShareBadges=()->{};refreshShareInfo=()->{};
+    refreshSingleBest = () -> {};
+    refreshShareBadges = () -> {};
+    refreshShareInfo = () -> {};
     root = vertical();
     cameraImportBand = null;
     libraryTabs = null;
     root.setBackgroundColor(BG);
     root.setOnApplyWindowInsetsListener(
         (v, insets) -> {
-          Insets i = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+          Insets i =
+              insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
           v.setPadding(i.left, i.top, i.right, i.bottom);
           return insets;
         });
@@ -337,47 +452,68 @@ public final class MainActivity extends DiagnosticActivity {
   private LibraryTabs libraryTabs;
   private boolean quickImportOpening;
   private boolean usbReceiverRegistered;
-  private final BroadcastReceiver usbChanges = new BroadcastReceiver() {
-    @Override public void onReceive(Context context, Intent intent) {
-      updateCameraTab();
-    }
-  };
+  private final BroadcastReceiver usbChanges =
+      new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+          updateCameraTab();
+        }
+      };
+
   private void addLibraryTabs(boolean albums, boolean enabled) {
-    libraryTabs = new LibraryTabs(this, albums, enabled, this::switchLibraryTab,
-        () -> startActivity(new Intent(this, CameraImportActivity.class)), this::startCameraImportFromTab);
+    libraryTabs =
+        new LibraryTabs(
+            this,
+            albums,
+            enabled,
+            this::switchLibraryTab,
+            () -> startActivity(new Intent(this, CameraImportActivity.class)),
+            this::startCameraImportFromTab);
     root.addView(libraryTabs);
     updateCameraTab();
   }
+
   private void updateCameraTab() {
     if (libraryTabs == null) return;
     var device = CameraImportActivity.connected(this);
     var state = ImportProgress.INSTANCE;
-    libraryTabs.setCameraState(device != null, device == null ? null : device.getProductName(),
-        state.getActive(), state.getDone(), state.getTotal(), state.getWaiting(),
+    libraryTabs.setCameraState(
+        device != null,
+        device == null ? null : device.getProductName(),
+        state.getActive(),
+        state.getDone(),
+        state.getTotal(),
+        state.getWaiting(),
         ImportProgressPresentation.current());
   }
+
   private void startCameraImportFromTab() {
     if (selecting || ImportProgress.INSTANCE.getActive() || quickImportOpening) return;
     quickImportOpening = true;
-    startActivity(new Intent(this, CameraImportActivity.class)
-        .putExtra(CameraImportActivity.START_IMPORT_KEEP_ORIGINALS, true));
+    startActivity(
+        new Intent(this, CameraImportActivity.class)
+            .putExtra(CameraImportActivity.START_IMPORT_KEEP_ORIGINALS, true));
   }
 
   private TextView cameraImportBand;
-  private final Runnable refreshCameraImportBand = () -> {
-    updateCameraTab();
-    TextView band = cameraImportBand;
-    if (band == null) return;
-    var state = jp.nano.rawgallery.camera.ImportProgress.INSTANCE;
-    String text = state.getActive() || state.getLastMessage() != null
-        ? ImportProgressPresentation.current().text() : null;
-    band.setVisibility(text == null ? View.GONE : View.VISIBLE);
-    if (!android.text.TextUtils.equals(band.getText(), text)) band.setText(text);
-  };
-  private final Runnable cameraImportChanged = () -> {
-    main.removeCallbacks(refreshCameraImportBand);
-    main.post(refreshCameraImportBand);
-  };
+  private final Runnable refreshCameraImportBand =
+      () -> {
+        updateCameraTab();
+        TextView band = cameraImportBand;
+        if (band == null) return;
+        var state = jp.nano.rawgallery.camera.ImportProgress.INSTANCE;
+        String text =
+            state.getActive() || state.getLastMessage() != null
+                ? ImportProgressPresentation.current().text()
+                : null;
+        band.setVisibility(text == null ? View.GONE : View.VISIBLE);
+        if (!android.text.TextUtils.equals(band.getText(), text)) band.setText(text);
+      };
+  private final Runnable cameraImportChanged =
+      () -> {
+        main.removeCallbacks(refreshCameraImportBand);
+        main.post(refreshCameraImportBand);
+      };
 
   private void gallery() {
     DiagnosticLog.event("screen.gallery", burstRequest);
@@ -390,35 +526,50 @@ public final class MainActivity extends DiagnosticActivity {
     generation++;
     activePreview = null;
     base();
-    if (burstMembers != null && !selecting) { burstDetail(); return; }
-    refreshSingleBest=this::gallery;
+    if (burstMembers != null && !selecting) {
+      burstDetail();
+      return;
+    }
+    refreshSingleBest = this::gallery;
     subtitle = label("", 14, MUTED);
     listStatus = new StatusView(this);
-    String title=burstMembers!=null?"連写":albumFolder==null?"写真":new File(albumFolder).getName();
+    String title =
+        burstMembers != null ? "連写" : albumFolder == null ? "写真" : new File(albumFolder).getName();
     LinearLayout header;
-    if(selecting) {
-      selectionAll=LibraryUi.text(this,"表示分を選択",this::toggleVisibleSelection);
-      header=LibraryUi.toolbar(this,"写真を選択",selectionAll);
-      selectionTitle=(TextView)header.getChildAt(0);selectionTitle.setTextSize(20);
-      header.addView(LibraryUi.icon(this,R.drawable.ic_close,"選択を終了",this::endSelection),0);
-    }else {
-      header=LibraryUi.toolbar(this,title,LibraryUi.text(this,"選択",this::beginSelection),
-          LibraryUi.icon(this,R.drawable.ic_filter,"絞り込み",this::chooseFilter),
-          LibraryUi.icon(this,R.drawable.ic_settings,"設定とその他",this::libraryMenu));
-      selectionTitle=null;
+    if (selecting) {
+      selectionAll = LibraryUi.text(this, "表示分を選択", this::toggleVisibleSelection);
+      header = LibraryUi.toolbar(this, "写真を選択", selectionAll);
+      selectionTitle = (TextView) header.getChildAt(0);
+      selectionTitle.setTextSize(20);
+      header.addView(LibraryUi.icon(this, R.drawable.ic_close, "選択を終了", this::endSelection), 0);
+    } else {
+      header =
+          LibraryUi.toolbar(
+              this,
+              title,
+              LibraryUi.text(this, "選択", this::beginSelection),
+              LibraryUi.icon(this, R.drawable.ic_filter, "絞り込み", this::chooseFilter),
+              LibraryUi.icon(this, R.drawable.ic_settings, "設定とその他", this::libraryMenu));
+      selectionTitle = null;
     }
     root.addView(header);
-    if(!selecting)root.addView(LibraryUi.metadata(this,subtitle,listStatus));
-    if(rankFilter!=0||!filter.equals("すべて")) {
-      String condition=(rankFilter==0?"":PhotoFilterSheet.RANKS[rankFilter])
-          +(rankFilter!=0&&!filter.equals("すべて")?" · ":"")+(filter.equals("すべて")?"":filter);
-      if(selecting){
-        TextView applied=PhotoListUi.text(this,"絞り込み："+condition,13,20,MUTED);
-        applied.setTag("photo-filter-condition");applied.setPadding(dp(20),0,dp(16),dp(8));
-        applied.setContentDescription("適用中の絞り込み："+condition+"。選択を終了すると変更できます");root.addView(applied);
-      }else{
-        Button clear=LibraryUi.text(this,condition+"  ×",()->applyPhotoFilter("すべて",0));
-        clear.setContentDescription("絞り込みを解除："+condition);clear.setTag("photo-filter-condition");root.addView(clear);
+    if (!selecting) root.addView(LibraryUi.metadata(this, subtitle, listStatus));
+    if (rankFilter != 0 || !filter.equals("すべて")) {
+      String condition =
+          (rankFilter == 0 ? "" : PhotoFilterSheet.RANKS[rankFilter])
+              + (rankFilter != 0 && !filter.equals("すべて") ? " · " : "")
+              + (filter.equals("すべて") ? "" : filter);
+      if (selecting) {
+        TextView applied = PhotoListUi.text(this, "絞り込み：" + condition, 13, 20, MUTED);
+        applied.setTag("photo-filter-condition");
+        applied.setPadding(dp(20), 0, dp(16), dp(8));
+        applied.setContentDescription("適用中の絞り込み：" + condition + "。選択を終了すると変更できます");
+        root.addView(applied);
+      } else {
+        Button clear = LibraryUi.text(this, condition + "  ×", () -> applyPhotoFilter("すべて", 0));
+        clear.setContentDescription("絞り込みを解除：" + condition);
+        clear.setTag("photo-filter-condition");
+        root.addView(clear);
       }
     }
     if (!selecting && burstMembers == null) {
@@ -427,7 +578,8 @@ public final class MainActivity extends DiagnosticActivity {
       cameraImportBand.setMinHeight(dp(48));
       cameraImportBand.setGravity(Gravity.CENTER_VERTICAL);
       cameraImportBand.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
-      cameraImportBand.setOnClickListener(v -> startActivity(CameraImportActivity.showProgressIntent(this)));
+      cameraImportBand.setOnClickListener(
+          v -> startActivity(CameraImportActivity.showProgressIntent(this)));
       root.addView(cameraImportBand);
       refreshCameraImportBand.run();
     }
@@ -446,7 +598,8 @@ public final class MainActivity extends DiagnosticActivity {
     rebuildDisplayed();
     adapter = new GalleryAdapter();
     grid.setCells(adapter);
-    shownGalleryKey = albumFolder + "|" + filter + "|" + rankFilter + "|" + String.valueOf(burstMembers);
+    shownGalleryKey =
+        albumFolder + "|" + filter + "|" + rankFilter + "|" + String.valueOf(burstMembers);
     restoreGallery();
     grid.onCellClick(
         (p, v, pos, id) -> {
@@ -472,7 +625,7 @@ public final class MainActivity extends DiagnosticActivity {
     grid.onCellLongClick(
         (parent, view, pos, id) -> {
           if (photos.get(displayed.get(pos).get(0)).isVideo()) {
-            feedback(StatusView.Symbol.PAUSED,"動画はタップして再生できます",null,"");
+            feedback(StatusView.Symbol.PAUSED, "動画はタップして再生できます", null, "");
             return true;
           }
           if (!requireCurrentBurstGrouping()) return true;
@@ -488,16 +641,21 @@ public final class MainActivity extends DiagnosticActivity {
         });
     FrameLayout gridFrame = new FrameLayout(this);
     gridFrame.addView(grid, new FrameLayout.LayoutParams(-1, -1));
-    StatusView empty = status(StatusView.Symbol.EMPTY,"","表示する写真がありません");
+    StatusView empty = status(StatusView.Symbol.EMPTY, "", "表示する写真がありません");
     gridFrame.addView(empty, new FrameLayout.LayoutParams(-1, -1));
     grid.setEmptyView(empty);
     body.addView(gridFrame, new LinearLayout.LayoutParams(-1, -1));
     int controlsStart = root.getChildCount();
     if (selecting) {
       selectionControls();
-      SelectionUi.finishFooter(root,controlsStart,burstMembers==null?null:()->header.getMeasuredHeight()+dp(PHOTO_TILE_HEIGHT_DP));
+      SelectionUi.finishFooter(
+          root,
+          controlsStart,
+          burstMembers == null
+              ? null
+              : () -> header.getMeasuredHeight() + dp(PHOTO_TILE_HEIGHT_DP));
     }
-    if (albumFolder == null && burstMembers == null && !selecting) addLibraryTabs(false,true);
+    if (albumFolder == null && burstMembers == null && !selecting) addLibraryTabs(false, true);
     if (selecting) updateSelection();
     else if (!photos.isEmpty()) updateCount();
     applyPendingIndexUpdate();
@@ -505,12 +663,18 @@ public final class MainActivity extends DiagnosticActivity {
 
   private void photoMenu() {
     DiagnosticLog.event("screen.photoMenu", 0);
-    MoreMenuUi.show(this,"その他",new String[] {"カメラで絞り込み", "タグ", "設定とその他"}, (d, which) -> {
-      if (which == 0 && !selecting) chooseFilter();
-      else if (which == 0) feedback(StatusView.Symbol.PAUSED,"選択を終了してからカメラを変更してください",this::endSelection,"選択を終了");
-      else if (which == 1) openTags(null);
-      else galleryMenu();
-    });
+    MoreMenuUi.show(
+        this,
+        "その他",
+        new String[] {"カメラで絞り込み", "タグ", "設定とその他"},
+        (d, which) -> {
+          if (which == 0 && !selecting) chooseFilter();
+          else if (which == 0)
+            feedback(
+                StatusView.Symbol.PAUSED, "選択を終了してからカメラを変更してください", this::endSelection, "選択を終了");
+          else if (which == 1) openTags(null);
+          else galleryMenu();
+        });
   }
 
   private static final class ImageLoad {
@@ -525,10 +689,23 @@ public final class MainActivity extends DiagnosticActivity {
     previewInto(image, photo, size, success -> {});
   }
 
-  private void previewInto(ImageView image, PhotoRepository.Photo photo, int size, java.util.function.Consumer<Boolean> complete) {
+  private void previewInto(
+      ImageView image,
+      PhotoRepository.Photo photo,
+      int size,
+      java.util.function.Consumer<Boolean> complete) {
     long request = DiagnosticLog.id();
-    DiagnosticLog.event("image.request", request, "burst", burstRequest,
-        "photo", DiagnosticLog.photo(photo), "size", size, "format", photo.isVideo() ? "VIDEO" : photo.isJpeg() ? "JPEG" : "RAW");
+    DiagnosticLog.event(
+        "image.request",
+        request,
+        "burst",
+        burstRequest,
+        "photo",
+        DiagnosticLog.photo(photo),
+        "size",
+        size,
+        "format",
+        photo.isVideo() ? "VIDEO" : photo.isJpeg() ? "JPEG" : "RAW");
     String key = imageKey(photo, size);
     if (image.getTag() instanceof ImageLoad) ((ImageLoad) image.getTag()).cancelled = true;
     ImageLoad load = new ImageLoad();
@@ -553,47 +730,66 @@ public final class MainActivity extends DiagnosticActivity {
       image.setImageBitmap(provisional);
       DiagnosticLog.event("image.provisional", request, "kind", "thumbnail");
     } else if (size >= 400 && size <= 600) {
-      PreviewPlaceholders.get(this).load(photo, () -> !cancelled.getAsBoolean() && !load.complete,
-          bitmap -> {
-            image.setImageBitmap(bitmap);
-            image.setStateDescription("読み込み中");
-            DiagnosticLog.event("image.placeholder", request);
-          });
+      PreviewPlaceholders.get(this)
+          .load(
+              photo,
+              () -> !cancelled.getAsBoolean() && !load.complete,
+              bitmap -> {
+                image.setImageBitmap(bitmap);
+                image.setStateDescription("読み込み中");
+                DiagnosticLog.event("image.placeholder", request);
+              });
     }
     long previous = DiagnosticLog.use(request);
-    images.execute(() -> {
-      if (cancelled.getAsBoolean()) { DiagnosticLog.event("image.discard", request); return; }
-      try {
-        Bitmap bitmap = size <= 600 || photo.isVideo() ? repository.thumbnail(photo, size, cancelled)
-            : PhotoRepository.bitmap(repository.preview(photo, cancelled), size);
-        if (cancelled.getAsBoolean()) { bitmap.recycle(); DiagnosticLog.event("image.discard", request); return; }
-        thumbs.put(key, bitmap);
-        DiagnosticLog.event("image.post", request);
-        main.post(() -> {
-          if (!isDestroyed() && !cancelled.getAsBoolean() && image.getTag() == load) {
-            load.complete = true;
-            if (image instanceof DiagnosticImageView) ((DiagnosticImageView) image).bound(request);
-            image.setImageBitmap(bitmap);
-            image.setStateDescription("表示済み");
-            DiagnosticLog.event("image.bind", request);
-            complete.accept(true);
-          } else DiagnosticLog.event("image.discard", request);
+    images.execute(
+        () -> {
+          if (cancelled.getAsBoolean()) {
+            DiagnosticLog.event("image.discard", request);
+            return;
+          }
+          try {
+            Bitmap bitmap =
+                size <= 600 || photo.isVideo()
+                    ? repository.thumbnail(photo, size, cancelled)
+                    : PhotoRepository.bitmap(repository.preview(photo, cancelled), size);
+            if (cancelled.getAsBoolean()) {
+              bitmap.recycle();
+              DiagnosticLog.event("image.discard", request);
+              return;
+            }
+            thumbs.put(key, bitmap);
+            DiagnosticLog.event("image.post", request);
+            main.post(
+                () -> {
+                  if (!isDestroyed() && !cancelled.getAsBoolean() && image.getTag() == load) {
+                    load.complete = true;
+                    if (image instanceof DiagnosticImageView)
+                      ((DiagnosticImageView) image).bound(request);
+                    image.setImageBitmap(bitmap);
+                    image.setStateDescription("表示済み");
+                    DiagnosticLog.event("image.bind", request);
+                    complete.accept(true);
+                  } else DiagnosticLog.event("image.discard", request);
+                });
+            PreviewPlaceholders.get(this).remember(photo, bitmap);
+          } catch (Exception e) {
+            if (cancelled.getAsBoolean()) {
+              DiagnosticLog.event("image.discard", request);
+              return;
+            }
+            DiagnosticLog.event("image.fail", request, "error", e.getClass().getSimpleName());
+            main.post(
+                () -> {
+                  if (!isDestroyed() && !cancelled.getAsBoolean() && image.getTag() == load) {
+                    load.complete = true;
+                    image.setStateDescription("読み込めませんでした");
+                    image.setContentDescription(photo.name + "、プレビューを読み込めませんでした");
+                    DiagnosticLog.event("image.failure_applied", request);
+                    complete.accept(false);
+                  } else DiagnosticLog.event("image.discard", request);
+                });
+          }
         });
-        PreviewPlaceholders.get(this).remember(photo, bitmap);
-      } catch (Exception e) {
-        if (cancelled.getAsBoolean()) { DiagnosticLog.event("image.discard", request); return; }
-        DiagnosticLog.event("image.fail", request, "error", e.getClass().getSimpleName());
-        main.post(() -> {
-          if (!isDestroyed() && !cancelled.getAsBoolean() && image.getTag() == load) {
-            load.complete = true;
-            image.setStateDescription("読み込めませんでした");
-            image.setContentDescription(photo.name + "、プレビューを読み込めませんでした");
-            DiagnosticLog.event("image.failure_applied", request);
-            complete.accept(false);
-          } else DiagnosticLog.event("image.discard", request);
-        });
-      }
-    });
     DiagnosticLog.use(previous);
   }
 
@@ -607,8 +803,13 @@ public final class MainActivity extends DiagnosticActivity {
     header.setPadding(dp(20), dp(40), dp(20), dp(16));
 
     LinearLayout heading = vertical();
-    TextView title=label("連写 "+burstMembers.size()+"枚",20,TEXT);
-    title.setAccessibilityHeading(true);title.setIncludeFontPadding(false);title.setTypeface(android.graphics.Typeface.create("sans-serif-medium",android.graphics.Typeface.NORMAL));title.setMinHeight(dp(28));heading.addView(title);
+    TextView title = label("連写 " + burstMembers.size() + "枚", 20, TEXT);
+    title.setAccessibilityHeading(true);
+    title.setIncludeFontPadding(false);
+    title.setTypeface(
+        android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL));
+    title.setMinHeight(dp(28));
+    heading.addView(title);
     subtitle = label("", 12, MUTED);
     header.addView(heading, new LinearLayout.LayoutParams(0, -2, 1));
 
@@ -617,23 +818,50 @@ public final class MainActivity extends DiagnosticActivity {
     ImageView hero = new DiagnosticImageView(this);
     hero.setScaleType(ImageView.ScaleType.FIT_CENTER);
     stage.addView(hero, new FrameLayout.LayoutParams(-1, -1));
-    ShareHistoryUi.Overlay sharedHero=new ShareHistoryUi.Overlay(this,()->{
-      android.graphics.drawable.Drawable drawable=hero.getDrawable();
-      if(drawable==null||drawable.getIntrinsicWidth()<=0||drawable.getIntrinsicHeight()<=0)
-        return new RectF(0,0,stage.getWidth(),stage.getHeight());
-      RectF bounds=new RectF(0,0,drawable.getIntrinsicWidth(),drawable.getIntrinsicHeight());
-      hero.getImageMatrix().mapRect(bounds);
-      bounds.offset(hero.getLeft()+hero.getPaddingLeft(),hero.getTop()+hero.getPaddingTop());
-      return bounds;
-    },42,3,false);
-    stage.addView(sharedHero,new FrameLayout.LayoutParams(-1,-1));
-    TextView rank = label("",12,Color.WHITE);rank.setGravity(Gravity.CENTER);rank.setIncludeFontPadding(false);rank.setPadding(dp(10),0,dp(10),0);
-    TextView rankState=label("",13,MUTED);rankState.setVisibility(View.GONE);heading.addView(rankState);
-    FrameLayout.LayoutParams badge = new FrameLayout.LayoutParams(-2, dp(28), Gravity.TOP | Gravity.START);
+    ShareHistoryUi.Overlay sharedHero =
+        new ShareHistoryUi.Overlay(
+            this,
+            () -> {
+              android.graphics.drawable.Drawable drawable = hero.getDrawable();
+              if (drawable == null
+                  || drawable.getIntrinsicWidth() <= 0
+                  || drawable.getIntrinsicHeight() <= 0)
+                return new RectF(0, 0, stage.getWidth(), stage.getHeight());
+              RectF bounds =
+                  new RectF(0, 0, drawable.getIntrinsicWidth(), drawable.getIntrinsicHeight());
+              hero.getImageMatrix().mapRect(bounds);
+              bounds.offset(
+                  hero.getLeft() + hero.getPaddingLeft(), hero.getTop() + hero.getPaddingTop());
+              return bounds;
+            },
+            42,
+            3,
+            false);
+    stage.addView(sharedHero, new FrameLayout.LayoutParams(-1, -1));
+    TextView rank = label("", 12, Color.WHITE);
+    rank.setGravity(Gravity.CENTER);
+    rank.setIncludeFontPadding(false);
+    rank.setPadding(dp(10), 0, dp(10), 0);
+    TextView rankState = label("", 13, MUTED);
+    rankState.setVisibility(View.GONE);
+    heading.addView(rankState);
+    FrameLayout.LayoutParams badge =
+        new FrameLayout.LayoutParams(-2, dp(28), Gravity.TOP | Gravity.START);
     badge.setMargins(dp(12), dp(12), dp(12), 0);
     stage.addView(rank, badge);
-    TextView notice=label("",14,TEXT);notice.setMinHeight(dp(48));notice.setGravity(Gravity.CENTER_VERTICAL);notice.setPadding(dp(14),dp(8),dp(14),dp(8));android.graphics.drawable.GradientDrawable noticeBackground=GalleryUi.shape(this,0xf01c1c1f,24);noticeBackground.setStroke(dp(1),0xff3a3a3f);notice.setBackground(noticeBackground);notice.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);notice.setVisibility(View.GONE);
-    FrameLayout.LayoutParams np=new FrameLayout.LayoutParams(-1,-2,Gravity.TOP);np.setMargins(dp(16),dp(48),dp(16),0);stage.addView(notice,np);
+    TextView notice = label("", 14, TEXT);
+    notice.setMinHeight(dp(48));
+    notice.setGravity(Gravity.CENTER_VERTICAL);
+    notice.setPadding(dp(14), dp(8), dp(14), dp(8));
+    android.graphics.drawable.GradientDrawable noticeBackground =
+        GalleryUi.shape(this, 0xf01c1c1f, 24);
+    noticeBackground.setStroke(dp(1), 0xff3a3a3f);
+    notice.setBackground(noticeBackground);
+    notice.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    notice.setVisibility(View.GONE);
+    FrameLayout.LayoutParams np = new FrameLayout.LayoutParams(-1, -2, Gravity.TOP);
+    np.setMargins(dp(16), dp(48), dp(16), 0);
+    stage.addView(notice, np);
     hero.setOnClickListener(v -> showPhoto(burstMembers.get(burstPosition)));
     HorizontalScrollView stripScroll = new HorizontalScrollView(this);
     stripScroll.setHorizontalScrollBarEnabled(false);
@@ -645,125 +873,248 @@ public final class MainActivity extends DiagnosticActivity {
     for (int member : burstMembers) members.add(photos.get(member));
     int screenGeneration = generation;
     StatusView loading = new StatusView(this);
-    loading.collapseWhenIdle();loading.asCompact();heading.addView(loading);
+    loading.collapseWhenIdle();
+    loading.asCompact();
+    heading.addView(loading);
     Button retry = button("再試行", () -> {});
     final Runnable[] selection = new Runnable[1];
-    BurstPreviews previews = new BurstPreviews(this, hero, stage, strip, loading, retry,
-        members, (image, photo, edge, complete) -> previewInto(image, photo, edge, loaded -> {
-          complete.accept(loaded);
-          sharedHero.postInvalidateOnAnimation();
-        }), () -> screenGeneration == generation && !isDestroyed(),
-        position -> { burstPosition = position; selection[0].run(); });
-    refreshShareBadges=()->{
-      if(burstMembers==null||burstPosition>=burstMembers.size())return;
-      PhotoRepository.Photo current=photos.get(burstMembers.get(burstPosition));
-      sharedHero.items(historyFor(current),historyAnimating);
-      hero.setContentDescription(current.name+"、タップで写真を拡大"+ShareHistoryUi.description(historyFor(current)));
-      previews.history(this::historyFor);
-    };
-    Runnable update = () -> {
-      DiagnosticLog.event("burst.select", burstRequest, "position", burstPosition);
-      int member = burstMembers.get(burstPosition);
-      PhotoRepository.Photo photo = photos.get(member);
-      notice.setVisibility(View.GONE);
-      previews.select(burstPosition);
-      refreshShareBadges.run();
-      int bestPosition=0;
-      String winners="";
-      boolean tied=false;
-      String rankNumber="",rankDescription="順位が未決定";
-      StatusView.Symbol rankSymbol=StatusView.Symbol.UNKNOWN;
-      try {
-        PhotoRanking saved=rankingFor(burstMembers);
-        if(saved.done()){
-          List<String> positions=new ArrayList<>();
-          int[] ranks=new int[burstMembers.size()];
-          for(int i=0;i<burstMembers.size();i++){
-            ranks[i]=saved.rankOf(ArchiveStore.key(photos.get(burstMembers.get(i))));
-            if(ranks[i]==1)positions.add(Integer.toString(i+1));
+    BurstPreviews previews =
+        new BurstPreviews(
+            this,
+            hero,
+            stage,
+            strip,
+            loading,
+            retry,
+            members,
+            (image, photo, edge, complete) ->
+                previewInto(
+                    image,
+                    photo,
+                    edge,
+                    loaded -> {
+                      complete.accept(loaded);
+                      sharedHero.postInvalidateOnAnimation();
+                    }),
+            () -> screenGeneration == generation && !isDestroyed(),
+            position -> {
+              burstPosition = position;
+              selection[0].run();
+            });
+    refreshShareBadges =
+        () -> {
+          if (burstMembers == null || burstPosition >= burstMembers.size()) return;
+          PhotoRepository.Photo current = photos.get(burstMembers.get(burstPosition));
+          sharedHero.items(historyFor(current), historyAnimating);
+          hero.setContentDescription(
+              current.name + "、タップで写真を拡大" + ShareHistoryUi.description(historyFor(current)));
+          previews.history(this::historyFor);
+        };
+    Runnable update =
+        () -> {
+          DiagnosticLog.event("burst.select", burstRequest, "position", burstPosition);
+          int member = burstMembers.get(burstPosition);
+          PhotoRepository.Photo photo = photos.get(member);
+          notice.setVisibility(View.GONE);
+          previews.select(burstPosition);
+          refreshShareBadges.run();
+          int bestPosition = 0;
+          String winners = "";
+          boolean tied = false;
+          String rankNumber = "", rankDescription = "順位が未決定";
+          StatusView.Symbol rankSymbol = StatusView.Symbol.UNKNOWN;
+          try {
+            PhotoRanking saved = rankingFor(burstMembers);
+            if (saved.done()) {
+              List<String> positions = new ArrayList<>();
+              int[] ranks = new int[burstMembers.size()];
+              for (int i = 0; i < burstMembers.size(); i++) {
+                ranks[i] = saved.rankOf(ArchiveStore.key(photos.get(burstMembers.get(i))));
+                if (ranks[i] == 1) positions.add(Integer.toString(i + 1));
+              }
+              winners = String.join("・", positions);
+              bestPosition = Integer.parseInt(positions.get(0));
+              tied = positions.size() > 1;
+              previews.ranks(ranks);
+              int number = saved.rankOf(ArchiveStore.key(photo));
+              rankNumber = (number == 1 && tied ? "同率" : "") + number + "位";
+              rankDescription = rankNumber + "、順位決定済み";
+              rankSymbol = StatusView.Symbol.COMPLETE;
+            } else if (saved.decisions() > 0) {
+              rankDescription = "順位決めの途中";
+              rankSymbol = StatusView.Symbol.PAUSED;
+            }
+          } catch (Exception e) {
+            rankDescription = "順位を読み込めません";
+            rankSymbol = StatusView.Symbol.FAILED;
           }
-          winners=String.join("・",positions);bestPosition=Integer.parseInt(positions.get(0));tied=positions.size()>1;
-          previews.ranks(ranks);
-          int number=saved.rankOf(ArchiveStore.key(photo));
-          rankNumber=(number==1&&tied?"同率":"")+number+"位";
-          rankDescription=rankNumber+"、順位決定済み";rankSymbol=StatusView.Symbol.COMPLETE;
-        }
-        else if(saved.decisions()>0){rankDescription="順位決めの途中";rankSymbol=StatusView.Symbol.PAUSED;}
-      }catch(Exception e){rankDescription="順位を読み込めません";rankSymbol=StatusView.Symbol.FAILED;}
-      rank.setVisibility(rankSymbol==StatusView.Symbol.COMPLETE?View.VISIBLE:View.GONE);
-      rank.setText(rankNumber);rank.setContentDescription(rankDescription);
-      boolean winner="1位".equals(rankNumber)||"同率1位".equals(rankNumber);rank.setTextColor(winner?0xff241800:Color.WHITE);
-      rank.setBackground(GalleryUi.shape(this,winner?0xfff5b947:0xa8000000,14));
-      rankState.setVisibility(rankSymbol==StatusView.Symbol.UNKNOWN?View.GONE:View.VISIBLE);
-      RankingUi.state(rankState,rankSymbol,bestPosition);
-      if(rankSymbol==StatusView.Symbol.COMPLETE)rankState.setText(winners+"枚目");
-      rankState.setContentDescription(rankSymbol==StatusView.Symbol.COMPLETE?"順位決定済み、1位は"+winners+"枚目"+(tied?"、同率":""):rankDescription);
-      heading.setContentDescription("連写 "+burstMembers.size()+"枚、"+rankDescription);
-    };
+          rank.setVisibility(rankSymbol == StatusView.Symbol.COMPLETE ? View.VISIBLE : View.GONE);
+          rank.setText(rankNumber);
+          rank.setContentDescription(rankDescription);
+          boolean winner = "1位".equals(rankNumber) || "同率1位".equals(rankNumber);
+          rank.setTextColor(winner ? 0xff241800 : Color.WHITE);
+          rank.setBackground(GalleryUi.shape(this, winner ? 0xfff5b947 : 0xa8000000, 14));
+          rankState.setVisibility(
+              rankSymbol == StatusView.Symbol.UNKNOWN ? View.GONE : View.VISIBLE);
+          RankingUi.state(rankState, rankSymbol, bestPosition);
+          if (rankSymbol == StatusView.Symbol.COMPLETE) rankState.setText(winners + "枚目");
+          rankState.setContentDescription(
+              rankSymbol == StatusView.Symbol.COMPLETE
+                  ? "順位決定済み、1位は" + winners + "枚目" + (tied ? "、同率" : "")
+                  : rankDescription);
+          heading.setContentDescription("連写 " + burstMembers.size() + "枚、" + rankDescription);
+        };
     selection[0] = update;
     stripScroll.addView(strip);
     LinearLayout controls = vertical();
     controls.setPadding(dp(16), dp(8), dp(16), dp(20));
-    controls.addView(stripScroll); controls.addView(retry);
+    controls.addView(stripScroll);
+    controls.addView(retry);
     Button sort = GalleryUi.neutralPrimary(button(sortLabel(), this::openRanking));
-    sort.setElevation(0);sort.setStateListAnimator(null);
-    RankingUi.add(controls,sort,8);
-    Button best = RankingUi.action(button("この写真を1位に", this::chooseCurrentBest),false,48,14,null);
-    RankingUi.inline(best,RankingUi.star(this),"1位にする",18);best.setTooltipText(best.getContentDescription());
-    Button share=RankingUi.action(button("共有", () -> {
-      List<PhotoRepository.Photo> selected = new ArrayList<>();
-      for (int member : burstMembers) selected.add(photos.get(member));
-      shareMenu(selected);
-    }),false,48,14,"共有");
-    RankingUi.add(controls,RankingUi.pair(this,best,share),8);
-    RankingUi.addDock(controls,RankingUi.dock(this,
-        button("前の写真", () -> { burstPosition = (burstPosition + burstMembers.size() - 1) % burstMembers.size(); update.run(); }),
-        button("次の写真", () -> { burstPosition = (burstPosition + 1) % burstMembers.size(); update.run(); }),
-        button("拡大", () -> showPhoto(burstMembers.get(burstPosition))),
-        button("選択", () -> { selecting = true; bestOnly = true; gallery(); }),button("その他",this::photoMenu)),8);
-    root.addView(new RankingUi.Screen(this,header,stage,controls,true),new LinearLayout.LayoutParams(-1,0,1));
+    sort.setElevation(0);
+    sort.setStateListAnimator(null);
+    RankingUi.add(controls, sort, 8);
+    Button best =
+        RankingUi.action(button("この写真を1位に", this::chooseCurrentBest), false, 48, 14, null);
+    RankingUi.inline(best, RankingUi.star(this), "1位にする", 18);
+    best.setTooltipText(best.getContentDescription());
+    Button share =
+        RankingUi.action(
+            button(
+                "共有",
+                () -> {
+                  List<PhotoRepository.Photo> selected = new ArrayList<>();
+                  for (int member : burstMembers) selected.add(photos.get(member));
+                  shareMenu(selected);
+                }),
+            false,
+            48,
+            14,
+            "共有");
+    RankingUi.add(controls, RankingUi.pair(this, best, share), 8);
+    RankingUi.addDock(
+        controls,
+        RankingUi.dock(
+            this,
+            button(
+                "前の写真",
+                () -> {
+                  burstPosition = (burstPosition + burstMembers.size() - 1) % burstMembers.size();
+                  update.run();
+                }),
+            button(
+                "次の写真",
+                () -> {
+                  burstPosition = (burstPosition + 1) % burstMembers.size();
+                  update.run();
+                }),
+            button("拡大", () -> showPhoto(burstMembers.get(burstPosition))),
+            button(
+                "選択",
+                () -> {
+                  selecting = true;
+                  bestOnly = true;
+                  gallery();
+                }),
+            button("その他", this::photoMenu)),
+        8);
+    root.addView(
+        new RankingUi.Screen(this, header, stage, controls, true),
+        new LinearLayout.LayoutParams(-1, 0, 1));
     update.run();
-    if(burstSavedNotice!=null){notice.setText("✓  "+burstSavedNotice);burstSavedNotice=null;notice.setVisibility(View.VISIBLE);notice.postDelayed(()->notice.setVisibility(View.GONE),4000);}
+    if (burstSavedNotice != null) {
+      notice.setText("✓  " + burstSavedNotice);
+      burstSavedNotice = null;
+      notice.setVisibility(View.VISIBLE);
+      notice.postDelayed(() -> notice.setVisibility(View.GONE), 4000);
+    }
   }
 
   private void chooseCurrentBest() {
     try {
-      PhotoRanking saved=rankingFor(burstMembers);
-      List<Integer> members=List.copyOf(burstMembers);
-      String current=ArchiveStore.key(photos.get(members.get(burstPosition)));
-      int position=burstPosition, screen=generation;
-      List<String> winners=new ArrayList<>();
-      if(saved.done())for(int i=0;i<members.size();i++)if(saved.best().contains(ArchiveStore.key(photos.get(members.get(i)))))winners.add((i+1)+"枚目");
-      boolean canAdd=saved.done()&&!saved.best().contains(current);
-      boolean tiedWinner=saved.done()&&saved.best().contains(current)&&saved.best().size()>1;
-      RankingStore store=rankingStore;
-      new BurstBestSheet(this,canAdd,tiedWinner,(position+1)+"枚目。いまの1位："+String.join("・",winners),(together,done)->{
-        long request=DiagnosticLog.id();DiagnosticLog.event("ranking.direct.start",request,"together",together?1:0,"count",saved.ids.size());
-        actions.execute(()->{
-          boolean success=false;
-          try {
-            PhotoRanking next;
-            if(together)next=saved.addCoWinner(current);
-            else{next=new PhotoRanking(saved.ids,"B:");while(!next.done())next=next.choose(next.upper().equals(current));}
-            success=store.save(next);
-          }catch(Exception ignored){}
-          // SharedPreferences may publish new memory before reporting a disk failure.
-          if(!success)try{store.save(saved);}catch(Exception ignored){}
-          final boolean persisted=success;
-          DiagnosticLog.event(persisted?"ranking.direct.saved":"ranking.direct.failed",request);
-          main.post(()->{
-            if(isDestroyed())return;
-            if(persisted)rankCache.clear();
-            done.accept(persisted);
-            if(persisted&&generation==screen&&members.equals(burstMembers)&&burstPosition==position){
-              burstSavedNotice=together?"同率1位に追加しました":"1位にしました";gallery();
-              root.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener(){public boolean onPreDraw(){root.getViewTreeObserver().removeOnPreDrawListener(this);if(root.isHardwareAccelerated())root.getViewTreeObserver().registerFrameCommitCallback(()->DiagnosticLog.event("ranking.direct.frame",request));return true;}});
-              root.invalidate();
-            }
-          });
-        });
-      }).show();
-    }catch(Exception e){feedback(StatusView.Symbol.FAILED,"順位を読み込めませんでした",this::chooseCurrentBest,"再試行");}
+      PhotoRanking saved = rankingFor(burstMembers);
+      List<Integer> members = List.copyOf(burstMembers);
+      String current = ArchiveStore.key(photos.get(members.get(burstPosition)));
+      int position = burstPosition, screen = generation;
+      List<String> winners = new ArrayList<>();
+      if (saved.done())
+        for (int i = 0; i < members.size(); i++)
+          if (saved.best().contains(ArchiveStore.key(photos.get(members.get(i)))))
+            winners.add((i + 1) + "枚目");
+      boolean canAdd = saved.done() && !saved.best().contains(current);
+      boolean tiedWinner =
+          saved.done() && saved.best().contains(current) && saved.best().size() > 1;
+      RankingStore store = rankingStore;
+      new BurstBestSheet(
+              this,
+              canAdd,
+              tiedWinner,
+              (position + 1) + "枚目。いまの1位：" + String.join("・", winners),
+              (together, done) -> {
+                long request = DiagnosticLog.id();
+                DiagnosticLog.event(
+                    "ranking.direct.start",
+                    request,
+                    "together",
+                    together ? 1 : 0,
+                    "count",
+                    saved.ids.size());
+                actions.execute(
+                    () -> {
+                      boolean success = false;
+                      try {
+                        PhotoRanking next;
+                        if (together) next = saved.addCoWinner(current);
+                        else {
+                          next = new PhotoRanking(saved.ids, "B:");
+                          while (!next.done()) next = next.choose(next.upper().equals(current));
+                        }
+                        success = store.save(next);
+                      } catch (Exception ignored) {
+                      }
+                      // SharedPreferences may publish new memory before reporting a disk failure.
+                      if (!success)
+                        try {
+                          store.save(saved);
+                        } catch (Exception ignored) {
+                        }
+                      final boolean persisted = success;
+                      DiagnosticLog.event(
+                          persisted ? "ranking.direct.saved" : "ranking.direct.failed", request);
+                      main.post(
+                          () -> {
+                            if (isDestroyed()) return;
+                            if (persisted) rankCache.clear();
+                            done.accept(persisted);
+                            if (persisted
+                                && generation == screen
+                                && members.equals(burstMembers)
+                                && burstPosition == position) {
+                              burstSavedNotice = together ? "同率1位に追加しました" : "1位にしました";
+                              gallery();
+                              root.getViewTreeObserver()
+                                  .addOnPreDrawListener(
+                                      new ViewTreeObserver.OnPreDrawListener() {
+                                        public boolean onPreDraw() {
+                                          root.getViewTreeObserver().removeOnPreDrawListener(this);
+                                          if (root.isHardwareAccelerated())
+                                            root.getViewTreeObserver()
+                                                .registerFrameCommitCallback(
+                                                    () ->
+                                                        DiagnosticLog.event(
+                                                            "ranking.direct.frame", request));
+                                          return true;
+                                        }
+                                      });
+                              root.invalidate();
+                            }
+                          });
+                    });
+              })
+          .show();
+    } catch (Exception e) {
+      feedback(StatusView.Symbol.FAILED, "順位を読み込めませんでした", this::chooseCurrentBest, "再試行");
+    }
   }
 
   private PhotoRanking rankingFor(List<Integer> members) throws IOException {
@@ -784,7 +1135,8 @@ public final class MainActivity extends DiagnosticActivity {
   private SelectionResult resolveSelection() {
     Set<Integer> requested = new LinkedHashSet<>();
     for (int i = 0; i < photos.size(); i++)
-      if (!photos.get(i).isVideo() && selectedPhotos.contains(photos.get(i).uri.toString())) requested.add(i);
+      if (!photos.get(i).isVideo() && selectedPhotos.contains(photos.get(i).uri.toString()))
+        requested.add(i);
     BestShotSelection resolved =
         BestShotSelection.resolve(
             requested,
@@ -818,13 +1170,14 @@ public final class MainActivity extends DiagnosticActivity {
   private void toggleSelection(int pos) {
     List<Integer> members = displayed.get(pos);
     if (photos.get(members.get(0)).isVideo()) {
-      feedback(StatusView.Symbol.PAUSED,"動画は写真の選択対象外です",null,"");
+      feedback(StatusView.Symbol.PAUSED, "動画は写真の選択対象外です", null, "");
       return;
     }
     boolean remove = tileSelected(members);
     for (int member : members) {
       String key = photos.get(member).uri.toString();
-      if (remove) selectedPhotos.remove(key); else selectedPhotos.add(key);
+      if (remove) selectedPhotos.remove(key);
+      else selectedPhotos.add(key);
     }
     adapter.notifyDataSetChanged();
     updateSelection();
@@ -845,18 +1198,31 @@ public final class MainActivity extends DiagnosticActivity {
     try {
       PhotoRanking saved = rankingFor(burstMembers);
       return saved.done() ? "ソート結果" : saved.decisions() > 0 ? "ソートを再開" : "ソート";
-    } catch (Exception e) { return "ソート"; }
+    } catch (Exception e) {
+      return "ソート";
+    }
   }
-
 
   private void rebuildDisplayed() {
     photoBundles.clear();
-    for(List<Integer> group:bundles)for(int member:group)photoBundles.put(member,group);
-    displayed=RankedPhotoGroups.filter(photos,burstMembers==null?bundles:List.of(burstMembers),
-        burstMembers!=null,rankFilter,rankingStore,this::rankingFor);
+    for (List<Integer> group : bundles) for (int member : group) photoBundles.put(member, group);
+    displayed =
+        RankedPhotoGroups.filter(
+            photos,
+            burstMembers == null ? bundles : List.of(burstMembers),
+            burstMembers != null,
+            rankFilter,
+            rankingStore,
+            this::rankingFor);
   }
 
-  private void beginSelection(){if(photos.isEmpty() || !requireCurrentBurstGrouping())return;selecting=true;bestOnly=true;selectedPhotos.clear();gallery();}
+  private void beginSelection() {
+    if (photos.isEmpty() || !requireCurrentBurstGrouping()) return;
+    selecting = true;
+    bestOnly = true;
+    selectedPhotos.clear();
+    gallery();
+  }
 
   private int savedBurstGapMillis() {
     return BurstGapSettings.readMillis(SettingsRepository.open(this));
@@ -868,40 +1234,68 @@ public final class MainActivity extends DiagnosticActivity {
     refreshIndex(false);
     return false;
   }
-  private void tagSelectedPhotos(){
-    LinkedHashMap<String,PhotoRepository.Photo> chosen=new LinkedHashMap<>();
-    for(PhotoRepository.Photo photo:photos)if(selectedPhotos.contains(photo.uri.toString())&&!photo.isVideo())chosen.put(photo.uri.toString(),photo);
-    if(chosen.isEmpty())return;
-    if(chosen.size()!=selectedPhotos.size()){feedback(StatusView.Symbol.FAILED,"選択した写真を確認できませんでした。選択は保持されています",null,"");return;}
-    selectionTags=new SelectedPhotoTags(this,new ArrayList<>(chosen.values()),actions);selectionTags.show();
-  }
-  private void toggleVisibleSelection(){
-    boolean remove=allVisibleSelected();
-    for(List<Integer> members:displayed)for(int member:members){
-      if(photos.get(member).isVideo())continue;
-      String key=photos.get(member).uri.toString();if(remove)selectedPhotos.remove(key);else selectedPhotos.add(key);
+
+  private void tagSelectedPhotos() {
+    LinkedHashMap<String, PhotoRepository.Photo> chosen = new LinkedHashMap<>();
+    for (PhotoRepository.Photo photo : photos)
+      if (selectedPhotos.contains(photo.uri.toString()) && !photo.isVideo())
+        chosen.put(photo.uri.toString(), photo);
+    if (chosen.isEmpty()) return;
+    if (chosen.size() != selectedPhotos.size()) {
+      feedback(StatusView.Symbol.FAILED, "選択した写真を確認できませんでした。選択は保持されています", null, "");
+      return;
     }
-    adapter.notifyDataSetChanged();updateSelection();
+    selectionTags = new SelectedPhotoTags(this, new ArrayList<>(chosen.values()), actions);
+    selectionTags.show();
   }
 
-  private void libraryMenu(){MoreMenuUi.show(this,"ライブラリ",new String[]{"タグ","設定とその他"},(dialog,which)->{if(which==0)openTags(null);else galleryMenu();});}
+  private void toggleVisibleSelection() {
+    boolean remove = allVisibleSelected();
+    for (List<Integer> members : displayed)
+      for (int member : members) {
+        if (photos.get(member).isVideo()) continue;
+        String key = photos.get(member).uri.toString();
+        if (remove) selectedPhotos.remove(key);
+        else selectedPhotos.add(key);
+      }
+    adapter.notifyDataSetChanged();
+    updateSelection();
+  }
+
+  private void libraryMenu() {
+    MoreMenuUi.show(
+        this,
+        "ライブラリ",
+        new String[] {"タグ", "設定とその他"},
+        (dialog, which) -> {
+          if (which == 0) openTags(null);
+          else galleryMenu();
+        });
+  }
 
   private void selectionControls() {
     DiagnosticLog.event("screen.selectionControls", 0);
     selectionCount = new SelectionUi.Summary(this);
     root.addView(selectionCount);
-    SelectionUi.BestSwitch check=new SelectionUi.BestSwitch(this);check.setChecked(bestOnly);check.setOnClickListener(GalleryUi::feedback);check.setOnCheckedChangeListener((v,enabled)->{bestOnly=enabled;updateSelection();});
-    root.addView(check,new LinearLayout.LayoutParams(-1,-2));
+    SelectionUi.BestSwitch check = new SelectionUi.BestSwitch(this);
+    check.setChecked(bestOnly);
+    check.setOnClickListener(GalleryUi::feedback);
+    check.setOnCheckedChangeListener(
+        (v, enabled) -> {
+          bestOnly = enabled;
+          updateSelection();
+        });
+    root.addView(check, new LinearLayout.LayoutParams(-1, -2));
     selectionBulk = null;
     bulkSavedNotice = null;
     if (burstMembers != null) {
       selectionBulk = new BulkBestSheet.Entry(this, this::confirmBulkBest);
       root.addView(selectionBulk, new LinearLayout.LayoutParams(-1, -2));
     }
-    selectionShare = SelectionUi.action(this,"共有",true,this::shareSelection);
-    selectionSort = SelectionUi.action(this,"比較",false,()->shareSelection(true));
-    selectionTag=SelectionUi.action(this,"タグ",false,this::tagSelectedPhotos);
-    root.addView(LibraryUi.actionBar(this,selectionTag,selectionSort,selectionShare));
+    selectionShare = SelectionUi.action(this, "共有", true, this::shareSelection);
+    selectionSort = SelectionUi.action(this, "比較", false, () -> shareSelection(true));
+    selectionTag = SelectionUi.action(this, "タグ", false, this::tagSelectedPhotos);
+    root.addView(LibraryUi.actionBar(this, selectionTag, selectionSort, selectionShare));
     updateSelection();
   }
 
@@ -909,32 +1303,36 @@ public final class MainActivity extends DiagnosticActivity {
     if (!selecting || selectionCount == null) return;
     SelectionResult result = resolveSelection();
     subtitle.setText(selectedPhotos.size() + "枚選択");
-    subtitle.setVisibility(selectedPhotos.isEmpty()?View.GONE:View.VISIBLE);
+    subtitle.setVisibility(selectedPhotos.isEmpty() ? View.GONE : View.VISIBLE);
     Set<String> visible = new HashSet<>();
-    for (List<Integer> members : displayed) for (int member : members)
-      visible.add(photos.get(member).uri.toString());
+    for (List<Integer> members : displayed)
+      for (int member : members) visible.add(photos.get(member).uri.toString());
     int hidden = 0;
     for (String key : selectedPhotos) if (!visible.contains(key)) hidden++;
     List<Integer> bulkTargets = selectionBulk == null ? List.of() : selectedBurstMembers();
     int outside = selectionBulk == null ? 0 : selectedPhotos.size() - bulkTargets.size();
-    selectionCount.counts(result.photos.size(), hidden - outside, result.unresolved.size(),
-        outside, !selectedPhotos.isEmpty());
+    selectionCount.counts(
+        result.photos.size(),
+        hidden - outside,
+        result.unresolved.size(),
+        outside,
+        !selectedPhotos.isEmpty());
     if (selectionBulk != null) updateBulkBest(bulkTargets);
-    if(selectionTitle!=null)selectionTitle.setText(selectedPhotos.isEmpty()?"写真を選択":selectedPhotos.size()+"枚を選択");
+    if (selectionTitle != null)
+      selectionTitle.setText(selectedPhotos.isEmpty() ? "写真を選択" : selectedPhotos.size() + "枚を選択");
     selectionSort.setEnabled(!result.unresolved.isEmpty());
     selectionTag.setEnabled(!selectedPhotos.isEmpty());
-    ShareCapacityChecks.Snapshot capacity=shareCapacity.request(result.photos);
-    selectionCount.capacity(result.photos.isEmpty()?null:capacity.available);
-    selectionShare.setEnabled((!result.photos.isEmpty()&&capacity.available.actionable())
-        || (result.photos.isEmpty()&&!result.unresolved.isEmpty()));
-    selectionShare.setContentDescription("共有"+(!result.photos.isEmpty()?"。"+capacity.available.description():""));
-    selectionShare.setStateDescription(selectionShare.isEnabled()?null:"使えません");
-    String allLabel =
-        allVisibleSelected()
-            ? "表示分を解除"
-            : "表示分を選択";
+    ShareCapacityChecks.Snapshot capacity = shareCapacity.request(result.photos);
+    selectionCount.capacity(result.photos.isEmpty() ? null : capacity.available);
+    selectionShare.setEnabled(
+        (!result.photos.isEmpty() && capacity.available.actionable())
+            || (result.photos.isEmpty() && !result.unresolved.isEmpty()));
+    selectionShare.setContentDescription(
+        "共有" + (!result.photos.isEmpty() ? "。" + capacity.available.description() : ""));
+    selectionShare.setStateDescription(selectionShare.isEnabled() ? null : "使えません");
+    String allLabel = allVisibleSelected() ? "表示分を解除" : "表示分を選択";
     selectionAll.setText(allLabel);
-    selectionAll.setContentDescription(allVisibleSelected()?"表示中の写真の選択を解除":"表示中の写真をすべて選択");
+    selectionAll.setContentDescription(allVisibleSelected() ? "表示中の写真の選択を解除" : "表示中の写真をすべて選択");
     selectionAll.setTooltipText(allLabel);
   }
 
@@ -954,23 +1352,21 @@ public final class MainActivity extends DiagnosticActivity {
 
   private void updateBulkBest(List<Integer> targets) {
     if (targets.isEmpty()) {
-      selectionBulk.update("同率1位にする", "同率1位にする。この連写の写真を選ぶと使えます",
-          "この連写の写真を選ぶと使えます");
+      selectionBulk.update("同率1位にする", "同率1位にする。この連写の写真を選ぶと使えます", "この連写の写真を選ぶと使えます");
       return;
     }
     try {
       PhotoRanking saved = rankingFor(burstMembers);
       if (saved.done() && new HashSet<>(saved.best()).containsAll(rankingIds(targets))) {
-        selectionBulk.update("選んだ写真はすべて1位", "選んだ写真はすべて1位です",
-            "選んだ写真はすべて1位です");
+        selectionBulk.update("選んだ写真はすべて1位", "選んだ写真はすべて1位です", "選んだ写真はすべて1位です");
         return;
       }
     } catch (IOException | IllegalArgumentException ignored) {
       // Let the action surface the load error and offer a retry.
     }
     int count = targets.size();
-    String label = count == 1 ? "1枚を1位に"
-        : count + (count == burstMembers.size() ? "枚すべてを" : "枚を") + "同率1位に";
+    String label =
+        count == 1 ? "1枚を1位に" : count + (count == burstMembers.size() ? "枚すべてを" : "枚を") + "同率1位に";
     selectionBulk.update(label, "選んだ" + label + "する", null);
   }
 
@@ -1010,42 +1406,64 @@ public final class MainActivity extends DiagnosticActivity {
     String action = original.done() ? result + "する" : count + "枚を1位にする";
     String summary;
     if (original.done()) {
-      summary = all ? total + "枚すべてが同率1位になります。"
-          : "いまの1位（" + winners.size() + "枚）はそのまま。ほかの順位の並びも保ちます。";
+      summary =
+          all ? total + "枚すべてが同率1位になります。" : "いまの1位（" + winners.size() + "枚）はそのまま。ほかの順位の並びも保ちます。";
       if (already > 0) summary += "うち" + already + "枚はすでに1位です。";
     } else {
-      summary = all ? total + "枚すべてを同率1位にします。"
-          : "選んだ" + count + (count == 1 ? "枚を1位、" : "枚を同率1位、")
-              + "ほかの" + (total - count) + "枚を同率" + (count + 1) + "位にします。";
+      summary =
+          all
+              ? total + "枚すべてを同率1位にします。"
+              : "選んだ"
+                  + count
+                  + (count == 1 ? "枚を1位、" : "枚を同率1位、")
+                  + "ほかの"
+                  + (total - count)
+                  + "枚を同率"
+                  + (count + 1)
+                  + "位にします。";
       if (original.decisions() > 0) summary += "途中の比較は置き換えます。";
     }
 
     int screen = generation;
     RankingStore store = rankingStore;
-    new BulkBestSheet(this, original.done(), action, summary, hidden,
-        selectedPhotos.size() - targets.size(), ordinals,
-        (ordinal, image) -> previewInto(image, photos.get(members.get(ordinal - 1)), dp(40)), done -> {
-          long request = DiagnosticLog.id();
-          DiagnosticLog.event("ranking.bulk.start", request, "count", count);
-          actions.execute(() -> {
-            PhotoRanking saved = null;
-            try {
-              PhotoRanking next = original.addCoWinners(ids);
-              if (store.saveBulk(original, next)) saved = next;
-            } catch (IOException | RuntimeException ignored) {
-              // Keep the confirmation open for retry.
-            }
-            PhotoRanking persisted = saved;
-            DiagnosticLog.event(persisted != null ? "ranking.bulk.saved" : "ranking.bulk.failed", request);
-            main.post(() -> {
-              if (isDestroyed()) return;
-              if (persisted != null) rankCache.put(members, persisted);
-              done.accept(persisted != null);
-              if (persisted != null && generation == screen && selecting && members.equals(burstMembers))
-                refreshAfterBulkBest(result + "しました", request);
-            });
-          });
-        }).show();
+    new BulkBestSheet(
+            this,
+            original.done(),
+            action,
+            summary,
+            hidden,
+            selectedPhotos.size() - targets.size(),
+            ordinals,
+            (ordinal, image) -> previewInto(image, photos.get(members.get(ordinal - 1)), dp(40)),
+            done -> {
+              long request = DiagnosticLog.id();
+              DiagnosticLog.event("ranking.bulk.start", request, "count", count);
+              actions.execute(
+                  () -> {
+                    PhotoRanking saved = null;
+                    try {
+                      PhotoRanking next = original.addCoWinners(ids);
+                      if (store.saveBulk(original, next)) saved = next;
+                    } catch (IOException | RuntimeException ignored) {
+                      // Keep the confirmation open for retry.
+                    }
+                    PhotoRanking persisted = saved;
+                    DiagnosticLog.event(
+                        persisted != null ? "ranking.bulk.saved" : "ranking.bulk.failed", request);
+                    main.post(
+                        () -> {
+                          if (isDestroyed()) return;
+                          if (persisted != null) rankCache.put(members, persisted);
+                          done.accept(persisted != null);
+                          if (persisted != null
+                              && generation == screen
+                              && selecting
+                              && members.equals(burstMembers))
+                            refreshAfterBulkBest(result + "しました", request);
+                        });
+                  });
+            })
+        .show();
   }
 
   private void refreshAfterBulkBest(String notice, long request) {
@@ -1065,26 +1483,36 @@ public final class MainActivity extends DiagnosticActivity {
     message.setMinHeight(dp(48));
     message.setGravity(Gravity.CENTER_VERTICAL);
     message.setPadding(dp(14), dp(8), dp(14), dp(8));
-    android.graphics.drawable.GradientDrawable noticeShape=GalleryUi.shape(this,0xf01c1c1f,24);
-    noticeShape.setStroke(dp(1),0xff3a3a3f);message.setBackground(noticeShape);
+    android.graphics.drawable.GradientDrawable noticeShape = GalleryUi.shape(this, 0xf01c1c1f, 24);
+    noticeShape.setStroke(dp(1), 0xff3a3a3f);
+    message.setBackground(noticeShape);
     message.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
     FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
     params.setMargins(dp(16), 0, dp(16), dp(8));
     gridFrame.addView(message, params);
-    message.postDelayed(() -> {
-      gridFrame.removeView(message);
-      if (bulkSavedNotice == message) bulkSavedNotice = null;
-    }, 4000);
+    message.postDelayed(
+        () -> {
+          gridFrame.removeView(message);
+          if (bulkSavedNotice == message) bulkSavedNotice = null;
+        },
+        4000);
 
     View screen = root;
-    screen.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
-      @Override public boolean onPreDraw() {
-        screen.getViewTreeObserver().removeOnPreDrawListener(this);
-        if (screen.isHardwareAccelerated()) screen.getViewTreeObserver().registerFrameCommitCallback(
-            () -> DiagnosticLog.event("ranking.bulk.frame", request));
-        return true;
-      }
-    });
+    screen
+        .getViewTreeObserver()
+        .addOnPreDrawListener(
+            new ViewTreeObserver.OnPreDrawListener() {
+              @Override
+              public boolean onPreDraw() {
+                screen.getViewTreeObserver().removeOnPreDrawListener(this);
+                if (screen.isHardwareAccelerated())
+                  screen
+                      .getViewTreeObserver()
+                      .registerFrameCommitCallback(
+                          () -> DiagnosticLog.event("ranking.bulk.frame", request));
+                return true;
+              }
+            });
     screen.invalidate();
   }
 
@@ -1101,18 +1529,28 @@ public final class MainActivity extends DiagnosticActivity {
   private void shareSelection() {
     shareSelection(false);
   }
+
   private void shareSelection(boolean sorting) {
     DiagnosticLog.event("screen.shareSelection", 0);
     SelectionResult result = resolveSelection();
-    if(!sorting&&!result.photos.isEmpty()&&!shareCapacity.snapshot(result.photos).available.actionable())return;
+    if (!sorting
+        && !result.photos.isEmpty()
+        && !shareCapacity.snapshot(result.photos).available.actionable()) return;
     if (!result.unresolved.isEmpty()) {
-      shareDialog = new ShareUi.Confirmation(this,result.unresolved.size(),
-          () -> {
-            selectionBurst = burstMembers == null ? null : new ArrayList<>(burstMembers);
-            rankingFromSelection = true;
-            burstMembers = new ArrayList<>(result.unresolved.get(0));
-            openRanking();
-          },result.photos.isEmpty()||!shareCapacity.snapshot(result.photos).available.actionable()?null:() -> shareMenu(result.photos));
+      shareDialog =
+          new ShareUi.Confirmation(
+              this,
+              result.unresolved.size(),
+              () -> {
+                selectionBurst = burstMembers == null ? null : new ArrayList<>(burstMembers);
+                rankingFromSelection = true;
+                burstMembers = new ArrayList<>(result.unresolved.get(0));
+                openRanking();
+              },
+              result.photos.isEmpty()
+                      || !shareCapacity.snapshot(result.photos).available.actionable()
+                  ? null
+                  : () -> shareMenu(result.photos));
       shareDialog.show();
     } else if (!result.photos.isEmpty()) shareMenu(result.photos);
   }
@@ -1126,43 +1564,80 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private void chooseFilter() {
-    if(selecting)return;
-    DiagnosticLog.event("screen.photoFilter",0);
-    new PhotoFilterSheet(this,filter,rankFilter,this::countPhotoFilter,this::applyPhotoFilter).show();
+    if (selecting) return;
+    DiagnosticLog.event("screen.photoFilter", 0);
+    new PhotoFilterSheet(this, filter, rankFilter, this::countPhotoFilter, this::applyPhotoFilter)
+        .show();
   }
 
-  private void countPhotoFilter(String camera,int rank,java.util.function.IntConsumer result){
+  private void countPhotoFilter(String camera, int rank, java.util.function.IntConsumer result) {
     // A queued index load posts its UI snapshot before this barrier reaches the UI thread.
-    scans.execute(()->main.post(()->{
-      if(isDestroyed())return;
-      String currentCamera=filter,folder=albumFolder;
-      List<PhotoRepository.Photo> observed=photos,current=List.copyOf(photos);
-      List<List<Integer>> groups=List.copyOf(bundles);
-      scans.execute(()->{
-        int count=-1;
-        try {
-          List<PhotoRepository.Photo> candidates=current;List<List<Integer>> candidateGroups=groups;
-          if(!camera.equals(currentCamera)||current.isEmpty())try(GalleryIndex catalog=new GalleryIndex(this)){GalleryIndex.Snapshot loaded=catalog.load(folder,camera);candidates=loaded.photos;candidateGroups=loaded.bundles;}
-          final List<PhotoRepository.Photo> snapshot=candidates;
-          List<List<Integer>> shown=RankedPhotoGroups.filter(candidates,candidateGroups,false,rank,rankingStore,members->{
-            List<String> ids=new ArrayList<>();for(int member:members)ids.add(ArchiveStore.key(snapshot.get(member)));return rankingStore.load(ids);
-          });
-          count=0;for(List<Integer> group:shown)count+=group.size();
-        }catch(Exception unavailable){}
-        int value=count;main.post(()->{
-          if(isDestroyed())return;
-          if(observed!=photos&&camera.equals(filter)){countPhotoFilter(camera,rank,result);return;}
-          result.accept(value);
-        });
-      });
-    }));
+    scans.execute(
+        () ->
+            main.post(
+                () -> {
+                  if (isDestroyed()) return;
+                  String currentCamera = filter, folder = albumFolder;
+                  List<PhotoRepository.Photo> observed = photos, current = List.copyOf(photos);
+                  List<List<Integer>> groups = List.copyOf(bundles);
+                  scans.execute(
+                      () -> {
+                        int count = -1;
+                        try {
+                          List<PhotoRepository.Photo> candidates = current;
+                          List<List<Integer>> candidateGroups = groups;
+                          if (!camera.equals(currentCamera) || current.isEmpty())
+                            try (GalleryIndex catalog = new GalleryIndex(this)) {
+                              GalleryIndex.Snapshot loaded = catalog.load(folder, camera);
+                              candidates = loaded.photos;
+                              candidateGroups = loaded.bundles;
+                            }
+                          final List<PhotoRepository.Photo> snapshot = candidates;
+                          List<List<Integer>> shown =
+                              RankedPhotoGroups.filter(
+                                  candidates,
+                                  candidateGroups,
+                                  false,
+                                  rank,
+                                  rankingStore,
+                                  members -> {
+                                    List<String> ids = new ArrayList<>();
+                                    for (int member : members)
+                                      ids.add(ArchiveStore.key(snapshot.get(member)));
+                                    return rankingStore.load(ids);
+                                  });
+                          count = 0;
+                          for (List<Integer> group : shown) count += group.size();
+                        } catch (Exception unavailable) {
+                        }
+                        int value = count;
+                        main.post(
+                            () -> {
+                              if (isDestroyed()) return;
+                              if (observed != photos && camera.equals(filter)) {
+                                countPhotoFilter(camera, rank, result);
+                                return;
+                              }
+                              result.accept(value);
+                            });
+                      });
+                }));
   }
 
-  private void applyPhotoFilter(String camera,int rank){
-    if(selecting)return;
-    rememberGallery();boolean reload=!filter.equals(camera)||photos.isEmpty();filter=camera;rankFilter=rank;rankCache.clear();burstMembers=null;
-    if(reload){photos=new ArrayList<>();bundles=new ArrayList<>();}
-    gallery();if(reload)loadIndexedPhotos();
+  private void applyPhotoFilter(String camera, int rank) {
+    if (selecting) return;
+    rememberGallery();
+    boolean reload = !filter.equals(camera) || photos.isEmpty();
+    filter = camera;
+    rankFilter = rank;
+    rankCache.clear();
+    burstMembers = null;
+    if (reload) {
+      photos = new ArrayList<>();
+      bundles = new ArrayList<>();
+    }
+    gallery();
+    if (reload) loadIndexedPhotos();
   }
 
   private void openTags(PhotoRepository.Photo photo) {
@@ -1176,39 +1651,60 @@ public final class MainActivity extends DiagnosticActivity {
 
   private android.app.Dialog galleryMenu() {
     DiagnosticLog.event("screen.galleryMenu", 0);
-    return MoreMenuUi.show(this,"設定とその他の操作",
-            new String[] {"クラウドと同期", "共有先の設定", "連写のまとめ方", "写真へのアクセス", "再読み込み", "写真のプレビュー", "処理の状況", "Nano Banana", "カメラから取り込む", "写真・動画の保存先"},
-            (d, which) -> {
-              switch (which) {
-                case 9:
-                  startActivity(new Intent(this, PhotoStorageActivity.class));
-                  break;
-                case 8:
-                  startActivity(new Intent(this, CameraImportActivity.class));
-                  break;
-                case 7:
-                  startActivity(new Intent(this, NanoBananaSettingsActivity.class));
-                  break;
-                case 6:
-                  startActivity(new Intent(this, DashboardActivity.class));
-                  break;
-                case 5:
-                  new GalleryUi.Sheet(this).setTitle("写真のプレビュー")
-                      .setView(preparationStatus())
-                      .setPositiveButton("もう一度準備する", (dialog, w) -> {
+    return MoreMenuUi.show(
+        this,
+        "設定とその他の操作",
+        new String[] {
+          "クラウドと同期",
+          "共有先の設定",
+          "連写のまとめ方",
+          "写真へのアクセス",
+          "再読み込み",
+          "写真のプレビュー",
+          "処理の状況",
+          "Nano Banana",
+          "カメラから取り込む",
+          "写真・動画の保存先"
+        },
+        (d, which) -> {
+          switch (which) {
+            case 9:
+              startActivity(new Intent(this, PhotoStorageActivity.class));
+              break;
+            case 8:
+              startActivity(new Intent(this, CameraImportActivity.class));
+              break;
+            case 7:
+              startActivity(new Intent(this, NanoBananaSettingsActivity.class));
+              break;
+            case 6:
+              startActivity(new Intent(this, DashboardActivity.class));
+              break;
+            case 5:
+              new GalleryUi.Sheet(this)
+                  .setTitle("写真のプレビュー")
+                  .setView(preparationStatus())
+                  .setPositiveButton(
+                      "もう一度準備する",
+                      (dialog, w) -> {
                         PreviewPreparationJob.schedule(this);
-                        feedback(StatusView.Symbol.PAUSED,"Loupeを閉じると準備を再開します",null,"");
-                      }).setNegativeButton("閉じる", null).show();
-                  break;
-                case 0:
-                  startActivity(new Intent(this, CloudActivity.class));
-                  break;
-                case 1:
-                  editTargets();
-                  break;
-                case 2:
-                  var settings = SettingsRepository.open(this);
-                  BurstGapDialog.show(this, BurstGapSettings.readMillis(settings), millis -> {
+                        feedback(StatusView.Symbol.PAUSED, "Loupeを閉じると準備を再開します", null, "");
+                      })
+                  .setNegativeButton("閉じる", null)
+                  .show();
+              break;
+            case 0:
+              startActivity(new Intent(this, CloudActivity.class));
+              break;
+            case 1:
+              editTargets();
+              break;
+            case 2:
+              var settings = SettingsRepository.open(this);
+              BurstGapDialog.show(
+                  this,
+                  BurstGapSettings.readMillis(settings),
+                  millis -> {
                     boolean changed = millis != BurstGapSettings.readMillis(settings);
                     if (!BurstGapSettings.saveMillis(settings, millis)) return false;
                     if (changed && pendingRestore != null) pendingRestore.remove("burst");
@@ -1219,24 +1715,24 @@ public final class MainActivity extends DiagnosticActivity {
                     refreshIndex(true);
                     return true;
                   });
-                  break;
-                case 3:
-                  new GalleryUi.Sheet(this)
-                      .setTitle("写真へのアクセス")
-                      .setItems(
-                          new String[] {"写真へのアクセスを許可・変更", "RAWフォルダを追加"},
-                          (dialog, choice) -> {
-                            if (choice == 0) requestPhotoAccess();
-                            else chooseFolder();
-                          })
-                      .setNegativeButton("閉じる", null)
-                      .show();
-                  break;
-                case 4:
-                  refreshIndex(true);
-                  break;
-              }
-            });
+              break;
+            case 3:
+              new GalleryUi.Sheet(this)
+                  .setTitle("写真へのアクセス")
+                  .setItems(
+                      new String[] {"写真へのアクセスを許可・変更", "RAWフォルダを追加"},
+                      (dialog, choice) -> {
+                        if (choice == 0) requestPhotoAccess();
+                        else chooseFolder();
+                      })
+                  .setNegativeButton("閉じる", null)
+                  .show();
+              break;
+            case 4:
+              refreshIndex(true);
+              break;
+          }
+        });
   }
 
   private String countText() {
@@ -1250,18 +1746,18 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private int adjacentPhotoPosition(int direction) {
-    if(burstMembers!=null) {
-      int next=burstMembers.indexOf(index)+direction;
-      return next>=0&&next<burstMembers.size()?burstMembers.get(next):-1;
+    if (burstMembers != null) {
+      int next = burstMembers.indexOf(index) + direction;
+      return next >= 0 && next < burstMembers.size() ? burstMembers.get(next) : -1;
     }
-    for(int next=index+direction;next>=0&&next<photos.size();next+=direction)
-      if(!photos.get(next).isVideo())return next;
+    for (int next = index + direction; next >= 0 && next < photos.size(); next += direction)
+      if (!photos.get(next).isVideo()) return next;
     return -1;
   }
 
   private void adjacentPhoto(int direction) {
-    int next=adjacentPhotoPosition(direction);
-    if(next>=0)showPhoto(next);
+    int next = adjacentPhotoPosition(direction);
+    if (next >= 0) showPhoto(next);
   }
 
   private void albumHome() {
@@ -1276,9 +1772,15 @@ public final class MainActivity extends DiagnosticActivity {
     burstMembers = null;
     generation++;
     base();
-    subtitle=new TextView(this);listStatus=new StatusView(this);listStatus.begin("アルバムを読み込んでいます");
-    root.addView(LibraryUi.toolbar(this,"アルバム",LibraryUi.icon(this,R.drawable.ic_settings,"設定とその他",this::libraryMenu)));
-    root.addView(LibraryUi.metadata(this,subtitle,listStatus));
+    subtitle = new TextView(this);
+    listStatus = new StatusView(this);
+    listStatus.begin("アルバムを読み込んでいます");
+    root.addView(
+        LibraryUi.toolbar(
+            this,
+            "アルバム",
+            LibraryUi.icon(this, R.drawable.ic_settings, "設定とその他", this::libraryMenu)));
+    root.addView(LibraryUi.metadata(this, subtitle, listStatus));
     collectListHeader();
     body = vertical();
     root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -1288,10 +1790,15 @@ public final class MainActivity extends DiagnosticActivity {
 
   private void collectListHeader() {
     listHeader = vertical();
-    for(int i=0;i<root.getChildCount();){
-      View child=root.getChildAt(i);
-      if("library-toolbar".equals(child.getTag())||"photo-filter-condition".equals(child.getTag())){i++;continue;}
-      root.removeViewAt(i);listHeader.addView(child);
+    for (int i = 0; i < root.getChildCount(); ) {
+      View child = root.getChildAt(i);
+      if ("library-toolbar".equals(child.getTag())
+          || "photo-filter-condition".equals(child.getTag())) {
+        i++;
+        continue;
+      }
+      root.removeViewAt(i);
+      listHeader.addView(child);
     }
   }
 
@@ -1306,16 +1813,20 @@ public final class MainActivity extends DiagnosticActivity {
             main.post(
                 () -> {
                   if (isDestroyed() || !albumHome || token != generation) return;
-                  subtitle.setText(albums.size()+"件");
-                  if(albums.isEmpty())listStatus.show(StatusView.Symbol.EMPTY,"写真がありません");else listStatus.finish();
+                  subtitle.setText(albums.size() + "件");
+                  if (albums.isEmpty()) listStatus.show(StatusView.Symbol.EMPTY, "写真がありません");
+                  else listStatus.finish();
                   rememberAlbums();
                   body.removeAllViews();
                   // ListView owns attached headers; update its adapter instead of reparenting one.
-                  ScrollingGrid albumGrid = listHeader.getParent() instanceof ScrollingGrid
-                      ? (ScrollingGrid) listHeader.getParent() : new ScrollingGrid(this);
-                  if (listHeader.getParent() == null) albumGrid.addHeaderView(listHeader, null, false);
+                  ScrollingGrid albumGrid =
+                      listHeader.getParent() instanceof ScrollingGrid
+                          ? (ScrollingGrid) listHeader.getParent()
+                          : new ScrollingGrid(this);
+                  if (listHeader.getParent() == null)
+                    albumGrid.addHeaderView(listHeader, null, false);
                   albumGridView = albumGrid;
-                  AlbumListUi.configureGrid(this,albumGrid);
+                  AlbumListUi.configureGrid(this, albumGrid);
                   albumGrid.setCells(
                       new BaseAdapter() {
                         public int getCount() {
@@ -1343,13 +1854,21 @@ public final class MainActivity extends DiagnosticActivity {
                           ((TextView) cell.getChildAt(2)).setText(album.count + "枚");
                           cell.setContentDescription(
                               "アルバム、" + album.folder + "、" + album.count + "枚");
-                          previewInto(cover, album.cover, 600, success -> {
-                            if (success && !reportedCover) {
-                              reportedCover = true;
-                              cover.postOnAnimation(() -> android.util.Log.i("YohakuStartup",
-                                  "album_cover_ms=" + (SystemClock.elapsedRealtime() - startedAt)));
-                            }
-                          });
+                          previewInto(
+                              cover,
+                              album.cover,
+                              600,
+                              success -> {
+                                if (success && !reportedCover) {
+                                  reportedCover = true;
+                                  cover.postOnAnimation(
+                                      () ->
+                                          android.util.Log.i(
+                                              "YohakuStartup",
+                                              "album_cover_ms="
+                                                  + (SystemClock.elapsedRealtime() - startedAt)));
+                                }
+                              });
                           return cell;
                         }
                       });
@@ -1360,7 +1879,7 @@ public final class MainActivity extends DiagnosticActivity {
                         albumFolder = albums.get(pos).folder;
                         filter = "すべて";
                         rankCache.clear();
-              photos = new ArrayList<>();
+                        photos = new ArrayList<>();
                         bundles = new ArrayList<>();
                         gallery();
                         loadIndexedPhotos();
@@ -1382,7 +1901,8 @@ public final class MainActivity extends DiagnosticActivity {
             main.post(
                 () -> {
                   if (!isDestroyed() && albumHome && token == generation)
-                    listStatus.show(StatusView.Symbol.FAILED,"","アルバムを読み込めません",this::refresh,"再試行");
+                    listStatus.show(
+                        StatusView.Symbol.FAILED, "", "アルバムを読み込めません", this::refresh, "再試行");
                 });
           }
         });
@@ -1392,7 +1912,7 @@ public final class MainActivity extends DiagnosticActivity {
     DiagnosticLog.event("screen.loadIndexedPhotos", burstRequest);
     int token = generation;
     long updateVersion = indexUpdateVersion;
-    if(listStatus!=null)listStatus.begin("写真の一覧を読み込んでいます");
+    if (listStatus != null) listStatus.begin("写真の一覧を読み込んでいます");
     String folder = albumFolder, selected = filter;
     scans.execute(
         () -> {
@@ -1415,7 +1935,8 @@ public final class MainActivity extends DiagnosticActivity {
                   if (updateVersion == indexUpdateVersion) pendingIndexUpdate = false;
                   DiagnosticLog.event("screen.index_applied", 0, "count", photos.size());
                   burstMembers = null;
-                  if (pendingRestore != null && (photos.isEmpty() || indexedBurstGapMillis == savedBurstGapMillis())) {
+                  if (pendingRestore != null
+                      && (photos.isEmpty() || indexedBurstGapMillis == savedBurstGapMillis())) {
                     Bundle restored = pendingRestore;
                     pendingRestore = null;
                     selecting = restored.getBoolean("selecting");
@@ -1440,7 +1961,8 @@ public final class MainActivity extends DiagnosticActivity {
             main.post(
                 () -> {
                   if (!isDestroyed() && !albumHome && token == generation)
-                    listStatus.show(StatusView.Symbol.FAILED,"","一覧を読み込めませんでした",this::refresh,"再試行");
+                    listStatus.show(
+                        StatusView.Symbol.FAILED, "", "一覧を読み込めませんでした", this::refresh, "再試行");
                 });
           }
         });
@@ -1485,7 +2007,11 @@ public final class MainActivity extends DiagnosticActivity {
                 int next = refreshRequests.finish();
                 if (isDestroyed()) return;
                 if (failed) {
-                  feedback(StatusView.Symbol.FAILED,"写真の一覧を更新できませんでした。保存済みの一覧を表示しています。",this::refresh,"再読み込み");
+                  feedback(
+                      StatusView.Symbol.FAILED,
+                      "写真の一覧を更新できませんでした。保存済みの一覧を表示しています。",
+                      this::refresh,
+                      "再読み込み");
                 }
                 if (!failed) {
                   // A preceding background job may have published the current index.
@@ -1515,10 +2041,12 @@ public final class MainActivity extends DiagnosticActivity {
           },
           1);
     else if (Build.VERSION.SDK_INT >= 33)
-      requestPermissions(new String[] {Manifest.permission.READ_MEDIA_IMAGES,
-          Manifest.permission.READ_MEDIA_VIDEO}, 1);
-    else
-      requestPermissions(new String[] {Manifest.permission.READ_EXTERNAL_STORAGE}, 1);
+      requestPermissions(
+          new String[] {
+            Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO
+          },
+          1);
+    else requestPermissions(new String[] {Manifest.permission.READ_EXTERNAL_STORAGE}, 1);
   }
 
   protected void onResume() {
@@ -1526,14 +2054,17 @@ public final class MainActivity extends DiagnosticActivity {
     quickImportOpening = false;
     var filter = new IntentFilter(UsbManager.ACTION_USB_DEVICE_ATTACHED);
     filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
-    if (Build.VERSION.SDK_INT >= 33) registerReceiver(usbChanges, filter, Context.RECEIVER_EXPORTED);
+    if (Build.VERSION.SDK_INT >= 33)
+      registerReceiver(usbChanges, filter, Context.RECEIVER_EXPORTED);
     else registerReceiver(usbChanges, filter);
     usbReceiverRegistered = true;
     jp.nano.rawgallery.camera.ImportProgress.INSTANCE.addListener(cameraImportChanged);
     refreshCameraImportBand.run();
-    historyForeground=true;
-    getSharedPreferences(ShareHistoryReceiver.PREFS,0).registerOnSharedPreferenceChangeListener(historyChanges);
-    loadShareHistory();showShareHistoryFailure();
+    historyForeground = true;
+    getSharedPreferences(ShareHistoryReceiver.PREFS, 0)
+        .registerOnSharedPreferenceChangeListener(historyChanges);
+    loadShareHistory();
+    showShareHistoryFailure();
     if (repository != null) {
       if (resumed) refresh();
       else {
@@ -1563,21 +2094,30 @@ public final class MainActivity extends DiagnosticActivity {
             .takePersistableUriPermission(data.getData(), Intent.FLAG_GRANT_READ_URI_PERMISSION);
         refresh();
       } catch (SecurityException e) {
-        feedback(StatusView.Symbol.PERMISSION,"読み取り許可を保存できませんでした",this::chooseFolder,"写真へのアクセス");
+        feedback(StatusView.Symbol.PERMISSION, "読み取り許可を保存できませんでした", this::chooseFolder, "写真へのアクセス");
       }
     }
   }
 
   private StatusView listStatus;
-  private StatusView status(StatusView.Symbol kind,String numbers,String message) {
-    StatusView view=new StatusView(this);view.show(kind,numbers,message,null,"");return view;
+
+  private StatusView status(StatusView.Symbol kind, String numbers, String message) {
+    StatusView view = new StatusView(this);
+    view.show(kind, numbers, message, null, "");
+    return view;
   }
+
   private View preparationStatus() {
-    JobState state=PreviewPreparationJob.snapshot(this);
-    return status(StatusView.symbol(state.kind),state.countsKnown?state.ready+"/"+state.total+" · "+state.failed:"—",(state.kind==JobState.Kind.UNKNOWN?"現在の状態は不明です。最後の記録: ":"")+PreviewPreparationJob.status(this));
+    JobState state = PreviewPreparationJob.snapshot(this);
+    return status(
+        StatusView.symbol(state.kind),
+        state.countsKnown ? state.ready + "/" + state.total + " · " + state.failed : "—",
+        (state.kind == JobState.Kind.UNKNOWN ? "現在の状態は不明です。最後の記録: " : "")
+            + PreviewPreparationJob.status(this));
   }
-  private void feedback(StatusView.Symbol state,String text,Runnable action,String label) {
-    StatusFeedback.show(this,state,text,action,label);
+
+  private void feedback(StatusView.Symbol state, String text, Runnable action, String label) {
+    StatusFeedback.show(this, state, text, action, label);
   }
 
   private final class GalleryAdapter extends BaseAdapter {
@@ -1602,11 +2142,17 @@ public final class MainActivity extends DiagnosticActivity {
       ImageView image = cell.image;
       List<Integer> members = displayed.get(position);
       int representative = members.get(0);
-      if (members.size() > 1) try {
-        PhotoRanking saved = rankingFor(members);
-        if (saved.done()) for (int member : members)
-          if (saved.best().contains(ArchiveStore.key(photos.get(member)))) { representative = member; break; }
-      } catch (Exception ignored) {}
+      if (members.size() > 1)
+        try {
+          PhotoRanking saved = rankingFor(members);
+          if (saved.done())
+            for (int member : members)
+              if (saved.best().contains(ArchiveStore.key(photos.get(member)))) {
+                representative = member;
+                break;
+              }
+        } catch (Exception ignored) {
+        }
       PhotoRepository.Photo p = photos.get(representative);
 
       cell.setContentDescription(
@@ -1622,43 +2168,60 @@ public final class MainActivity extends DiagnosticActivity {
       cell.badges.burstSelection = selecting && burstMembers != null;
       cell.badges.selected = selecting && tileSelected(members);
       cell.badges.partial = false;
-      if (selecting && !cell.badges.selected) for (int member : members)
-        if (selectedPhotos.contains(photos.get(member).uri.toString())) cell.badges.partial = true;
+      if (selecting && !cell.badges.selected)
+        for (int member : members)
+          if (selectedPhotos.contains(photos.get(member).uri.toString()))
+            cell.badges.partial = true;
       cell.setSelected(cell.badges.selected || cell.badges.partial);
       int inset = cell.badges.selected ? dp(10) : 0;
-      cell.setBackgroundColor(cell.badges.selected?0xff1e2b42:0xff22272a);
+      cell.setBackgroundColor(cell.badges.selected ? 0xff1e2b42 : 0xff22272a);
       image.setPadding(inset, inset, inset, inset);
       if (selecting)
         cell.setContentDescription(
-            cell.getContentDescription() + (cell.badges.selected ? "、選択済み" : cell.badges.partial ? "、一部選択" : "、未選択"));
-      cell.badges.shared(p.uri.toString(),historyFor(p));
-      cell.setContentDescription(cell.getContentDescription()+ShareHistoryUi.description(cell.badges.shared));
+            cell.getContentDescription()
+                + (cell.badges.selected ? "、選択済み" : cell.badges.partial ? "、一部選択" : "、未選択"));
+      cell.badges.shared(p.uri.toString(), historyFor(p));
+      cell.setContentDescription(
+          cell.getContentDescription() + ShareHistoryUi.description(cell.badges.shared));
       cell.badges.camera = "";
       cell.badges.video = p.isVideo();
       cell.badges.cloud = p.isArchived();
       cell.badges.count = members.size();
-      cell.badges.rank = "";cell.badges.rankFailed=false;
+      cell.badges.rank = "";
+      cell.badges.rankFailed = false;
       List<Integer> group = photoBundles.get(members.get(0));
       if (group != null && group.size() == 1 && !p.isVideo()) {
-        try { if (rankingStore.singleBest(ArchiveStore.key(p))) cell.badges.rank = "1位"; }
-        catch (Exception e) { cell.badges.rankFailed=true;cell.setContentDescription(cell.getContentDescription()+"、順位を読み込めませんでした"); }
+        try {
+          if (rankingStore.singleBest(ArchiveStore.key(p))) cell.badges.rank = "1位";
+        } catch (Exception e) {
+          cell.badges.rankFailed = true;
+          cell.setContentDescription(cell.getContentDescription() + "、順位を読み込めませんでした");
+        }
       } else if (group != null && group.size() > 1) {
         try {
           PhotoRanking saved = rankingFor(group);
-          cell.badges.rank = saved.done()
-              ? (members.size() > 1 ? "1位" : saved.rankOf(ArchiveStore.key(p)) + "位")
-              : "";
-        } catch (Exception e) { cell.badges.rankFailed=true;cell.setContentDescription(cell.getContentDescription()+"、順位を読み込めませんでした"); }
+          cell.badges.rank =
+              saved.done()
+                  ? (members.size() > 1 ? "1位" : saved.rankOf(ArchiveStore.key(p)) + "位")
+                  : "";
+        } catch (Exception e) {
+          cell.badges.rankFailed = true;
+          cell.setContentDescription(cell.getContentDescription() + "、順位を読み込めませんでした");
+        }
       }
       if (!cell.badges.rank.isEmpty())
         cell.setContentDescription(cell.getContentDescription() + "、" + cell.badges.rank);
       cell.badges.failed = false;
       cell.badges.invalidate();
-      previewInto(image, p, 400, success -> {
-        cell.badges.failed = !success;
-        cell.badges.invalidate();
-        if (!success) cell.setContentDescription(cell.getContentDescription() + "、プレビューなし");
-      });
+      previewInto(
+          image,
+          p,
+          400,
+          success -> {
+            cell.badges.failed = !success;
+            cell.badges.invalidate();
+            if (!success) cell.setContentDescription(cell.getContentDescription() + "、プレビューなし");
+          });
       return cell;
     }
   }
@@ -1673,68 +2236,107 @@ public final class MainActivity extends DiagnosticActivity {
   private void singleBestAction(PhotoViewerUi viewer, PhotoRepository.Photo photo, int screen) {
     RankingStore store = rankingStore;
     final String key;
-    try { key = ArchiveStore.key(photo); }
-    catch (IOException e) {
-      Button retry = viewer.action("1位", "1位", "順位を読み込めませんでした。押すと再試行", () -> showPhoto(index, false));
+    try {
+      key = ArchiveStore.key(photo);
+    } catch (IOException e) {
+      Button retry =
+          viewer.action("1位", "1位", "順位を読み込めませんでした。押すと再試行", () -> showPhoto(index, false));
       PhotoViewerUi.bestState(retry, false, false, true, true);
       return;
     }
     boolean[] chosen = {false}, loaded = {false}, busy = {false};
     Button button = viewer.action("1位", "1位", "1位にする", () -> {});
-    try { chosen[0] = store.singleBest(key); loaded[0] = true; }
-    catch (Exception ignored) {}
+    try {
+      chosen[0] = store.singleBest(key);
+      loaded[0] = true;
+    } catch (Exception ignored) {
+    }
     PhotoViewerUi.bestState(button, chosen[0], false, !loaded[0], !loaded[0]);
-    refreshSingleBest = () -> {
-      if (busy[0]) return;
-      try { chosen[0] = store.singleBest(key); loaded[0] = true; }
-      catch (Exception ignored) { loaded[0] = false; }
-      PhotoViewerUi.bestState(button, chosen[0], false, !loaded[0], !loaded[0]);
-    };
-    button.setOnClickListener(v -> {
-      if (busy[0]) return;
-      GalleryUi.feedback(v);
-      boolean expected = chosen[0], reading = !loaded[0];
-      busy[0] = true;
-      long request = DiagnosticLog.id();
-      DiagnosticLog.event("ranking.single.start", request, "chosen", expected ? 0 : 1);
-      PhotoViewerUi.bestState(button, expected, true, false, reading);
-      actions.execute(() -> {
-        boolean success = false, result = expected;
-        try {
-          if (reading) { result = store.singleBest(key); success = true; }
-          else { success = store.saveSingleBest(key, expected, !expected); if (success) result = !expected; }
-        } catch (Exception ignored) {}
-        final boolean saved = success, value = result;
-        DiagnosticLog.event(saved ? "ranking.single.saved" : "ranking.single.failed", request);
-        main.post(() -> {
-          if (isDestroyed()) return;
-          if (generation != screen || !detail) {
-            // The visible viewer/filter may have read the old value while this write was queued.
-            refreshSingleBest.run();
-            return;
+    refreshSingleBest =
+        () -> {
+          if (busy[0]) return;
+          try {
+            chosen[0] = store.singleBest(key);
+            loaded[0] = true;
+          } catch (Exception ignored) {
+            loaded[0] = false;
           }
-          busy[0] = false;
-          if (saved) { chosen[0] = value; loaded[0] = true; }
-          else if (!reading) {
-            // A rejected stale expectation must refresh before another retry.
-            try { chosen[0] = store.singleBest(key); loaded[0] = true; }
-            catch (Exception ignored) { loaded[0] = false; }
-          }
-          PhotoViewerUi.bestState(button, chosen[0], false, !saved, !loaded[0]);
-          button.announceForAccessibility(reading
-              ? (saved ? "順位を読み込みました" : "順位を読み込めませんでした。もう一度押すと再試行")
-              : (saved ? (value ? "1位にしました" : "1位を解除しました") : "保存できませんでした。もう一度押すと再試行"));
-          button.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
-            public boolean onPreDraw() {
-              button.getViewTreeObserver().removeOnPreDrawListener(this);
-              if (button.isHardwareAccelerated()) button.getViewTreeObserver().registerFrameCommitCallback(() -> DiagnosticLog.event("ranking.single.frame", request));
-              return true;
-            }
-          });
-          button.invalidate();
+          PhotoViewerUi.bestState(button, chosen[0], false, !loaded[0], !loaded[0]);
+        };
+    button.setOnClickListener(
+        v -> {
+          if (busy[0]) return;
+          GalleryUi.feedback(v);
+          boolean expected = chosen[0], reading = !loaded[0];
+          busy[0] = true;
+          long request = DiagnosticLog.id();
+          DiagnosticLog.event("ranking.single.start", request, "chosen", expected ? 0 : 1);
+          PhotoViewerUi.bestState(button, expected, true, false, reading);
+          actions.execute(
+              () -> {
+                boolean success = false, result = expected;
+                try {
+                  if (reading) {
+                    result = store.singleBest(key);
+                    success = true;
+                  } else {
+                    success = store.saveSingleBest(key, expected, !expected);
+                    if (success) result = !expected;
+                  }
+                } catch (Exception ignored) {
+                }
+                final boolean saved = success, value = result;
+                DiagnosticLog.event(
+                    saved ? "ranking.single.saved" : "ranking.single.failed", request);
+                main.post(
+                    () -> {
+                      if (isDestroyed()) return;
+                      if (generation != screen || !detail) {
+                        // The visible viewer/filter may have read the old value while this write
+                        // was queued.
+                        refreshSingleBest.run();
+                        return;
+                      }
+                      busy[0] = false;
+                      if (saved) {
+                        chosen[0] = value;
+                        loaded[0] = true;
+                      } else if (!reading) {
+                        // A rejected stale expectation must refresh before another retry.
+                        try {
+                          chosen[0] = store.singleBest(key);
+                          loaded[0] = true;
+                        } catch (Exception ignored) {
+                          loaded[0] = false;
+                        }
+                      }
+                      PhotoViewerUi.bestState(button, chosen[0], false, !saved, !loaded[0]);
+                      button.announceForAccessibility(
+                          reading
+                              ? (saved ? "順位を読み込みました" : "順位を読み込めませんでした。もう一度押すと再試行")
+                              : (saved
+                                  ? (value ? "1位にしました" : "1位を解除しました")
+                                  : "保存できませんでした。もう一度押すと再試行"));
+                      button
+                          .getViewTreeObserver()
+                          .addOnPreDrawListener(
+                              new ViewTreeObserver.OnPreDrawListener() {
+                                public boolean onPreDraw() {
+                                  button.getViewTreeObserver().removeOnPreDrawListener(this);
+                                  if (button.isHardwareAccelerated())
+                                    button
+                                        .getViewTreeObserver()
+                                        .registerFrameCommitCallback(
+                                            () ->
+                                                DiagnosticLog.event(
+                                                    "ranking.single.frame", request));
+                                  return true;
+                                }
+                              });
+                      button.invalidate();
+                    });
+              });
         });
-      });
-    });
   }
 
   private void showPhoto(int position, boolean fromRanking) {
@@ -1743,7 +2345,8 @@ public final class MainActivity extends DiagnosticActivity {
     if (position < 0 || position >= photos.size()) return;
     if (photos.get(position).isVideo()) {
       PhotoRepository.Photo video = photos.get(position);
-      startActivity(new Intent(this, VideoActivity.class).setData(video.uri).putExtra("name", video.name));
+      startActivity(
+          new Intent(this, VideoActivity.class).setData(video.uri).putExtra("name", video.name));
       return;
     }
     if (viewing != null) viewing.cancel(true);
@@ -1756,65 +2359,107 @@ public final class MainActivity extends DiagnosticActivity {
     PhotoRepository.Photo photo = photos.get(position);
     base();
     root.setBackgroundColor(Color.BLACK);
-    PhotoViewerUi viewer=new PhotoViewerUi(this,photo);
-    root.addView(viewer,new LinearLayout.LayoutParams(-1,0,1));
-    FrameLayout photoFrame=viewer.stage;
-    ZoomImageView image=viewer.image;
-    String photoDescription=image.getContentDescription().toString();
-    refreshShareBadges=()->{viewer.shared.items(historyFor(photo),historyAnimating);image.setContentDescription(photoDescription+ShareHistoryUi.description(historyFor(photo)));};
+    PhotoViewerUi viewer = new PhotoViewerUi(this, photo);
+    root.addView(viewer, new LinearLayout.LayoutParams(-1, 0, 1));
+    FrameLayout photoFrame = viewer.stage;
+    ZoomImageView image = viewer.image;
+    String photoDescription = image.getContentDescription().toString();
+    refreshShareBadges =
+        () -> {
+          viewer.shared.items(historyFor(photo), historyAnimating);
+          image.setContentDescription(
+              photoDescription + ShareHistoryUi.description(historyFor(photo)));
+        };
     refreshShareBadges.run();
-    image.setPageListener(direction->{if(!fromRanking)adjacentPhoto(direction);});
-    StatusView loadStatus=new StatusView(this);
-    loadStatus.asPhotoOverlay();viewer.status(loadStatus);
+    image.setPageListener(
+        direction -> {
+          if (!fromRanking) adjacentPhoto(direction);
+        });
+    StatusView loadStatus = new StatusView(this);
+    loadStatus.asPhotoOverlay();
+    viewer.status(loadStatus);
     loadStatus.begin("元のファイルを読み込んでいます");
     TextView model = label("", 16, TEXT), dimensions = label(photo.name, 11, MUTED);
-    if(!fromRanking){
-      int within=burstMembers==null?position:burstMembers.indexOf(position);
-      int count=burstMembers==null?photos.size():burstMembers.size();
-      Button previous=viewer.action("前の写真","前へ","前の写真",()->adjacentPhoto(-1));
-      Button next=viewer.action("次の写真","次へ","次の写真",()->adjacentPhoto(1));
-      previous.setEnabled(adjacentPhotoPosition(-1)>=0);next.setEnabled(adjacentPhotoPosition(1)>=0);
+    if (!fromRanking) {
+      int within = burstMembers == null ? position : burstMembers.indexOf(position);
+      int count = burstMembers == null ? photos.size() : burstMembers.size();
+      Button previous = viewer.action("前の写真", "前へ", "前の写真", () -> adjacentPhoto(-1));
+      Button next = viewer.action("次の写真", "次へ", "次の写真", () -> adjacentPhoto(1));
+      previous.setEnabled(adjacentPhotoPosition(-1) >= 0);
+      next.setEnabled(adjacentPhotoPosition(1) >= 0);
     }
     viewer.zoom();
-    if (!fromRanking && photoBundles.get(position) != null && photoBundles.get(position).size() == 1)
-      singleBestAction(viewer, photo, token);
-    Button editPhoto=PhotoEditor.add(this,viewer,photo,actions);
-    viewer.action("共有","共有","共有（元のファイルを共有します）",()->shareMenu(photo));
-    if(!fromRanking)viewer.action("Nano Banana","AI編集","Nano Bananaで写真を編集",()->NanoBananaUi.show(this,photo));
-    if(!fromRanking&&"content".equals(photo.uri.getScheme()))viewer.action("タグ","タグ","タグ",()->openTags(photo));
-    viewer.action("情報","情報","写真の情報",()->{
-      LinearLayout information=vertical();
-      String[] storage = {"保存場所を確認しています。"};
-      refreshShareInfo=()->{
-        information.removeAllViews();
-        String metadata = model.getText() + "\n" + dimensions.getText() + "\n" + storage[0];
-        information.addView(ShareHistoryUi.information(this, metadata, historyFor(photo), historyLoaded,
-            historyReadFailed), new LinearLayout.LayoutParams(-1,-2));
-      };
-      refreshShareInfo.run();
-      AlertDialog dialog=new GalleryUi.Sheet(this).setTitle(photo.name).setView(information)
-          .setNeutralButton(PhotoEditor.PICKER_ACTION,(d,which)->{d.dismiss();editPhoto.post(()->editPhoto.performLongClick());})
-          .setPositiveButton("閉じる",null).create();
-      Future<?> locationRead = historyReads.submit(() -> {
-        PhotoStorageLocation resolved = PhotoStorageLocation.resolve(this, photo);
-        String label = resolved.kind() == PhotoStorageLocation.Kind.UNKNOWN
-            ? resolved.display() : "保存場所　" + resolved.display();
-        if (!resolved.folder().isEmpty()) label += "\nフォルダ　" + resolved.folder();
-        String details = label;
-        main.post(() -> {
-          if (!dialog.isShowing() || isDestroyed() || isFinishing() || !detail || token != generation) return;
-          storage[0] = details;
+    if (!fromRanking
+        && photoBundles.get(position) != null
+        && photoBundles.get(position).size() == 1) singleBestAction(viewer, photo, token);
+    Button editPhoto = PhotoEditor.add(this, viewer, photo, actions);
+    viewer.action("共有", "共有", "共有（元のファイルを共有します）", () -> shareMenu(photo));
+    if (!fromRanking)
+      viewer.action(
+          "Nano Banana", "AI編集", "Nano Bananaで写真を編集", () -> NanoBananaUi.show(this, photo));
+    if (!fromRanking && "content".equals(photo.uri.getScheme()))
+      viewer.action("タグ", "タグ", "タグ", () -> openTags(photo));
+    viewer.action(
+        "情報",
+        "情報",
+        "写真の情報",
+        () -> {
+          LinearLayout information = vertical();
+          String[] storage = {"保存場所を確認しています。"};
+          refreshShareInfo =
+              () -> {
+                information.removeAllViews();
+                String metadata = model.getText() + "\n" + dimensions.getText() + "\n" + storage[0];
+                information.addView(
+                    ShareHistoryUi.information(
+                        this, metadata, historyFor(photo), historyLoaded, historyReadFailed),
+                    new LinearLayout.LayoutParams(-1, -2));
+              };
           refreshShareInfo.run();
+          AlertDialog dialog =
+              new GalleryUi.Sheet(this)
+                  .setTitle(photo.name)
+                  .setView(information)
+                  .setNeutralButton(
+                      PhotoEditor.PICKER_ACTION,
+                      (d, which) -> {
+                        d.dismiss();
+                        editPhoto.post(() -> editPhoto.performLongClick());
+                      })
+                  .setPositiveButton("閉じる", null)
+                  .create();
+          Future<?> locationRead =
+              historyReads.submit(
+                  () -> {
+                    PhotoStorageLocation resolved = PhotoStorageLocation.resolve(this, photo);
+                    String label =
+                        resolved.kind() == PhotoStorageLocation.Kind.UNKNOWN
+                            ? resolved.display()
+                            : "保存場所　" + resolved.display();
+                    if (!resolved.folder().isEmpty()) label += "\nフォルダ　" + resolved.folder();
+                    String details = label;
+                    main.post(
+                        () -> {
+                          if (!dialog.isShowing()
+                              || isDestroyed()
+                              || isFinishing()
+                              || !detail
+                              || token != generation) return;
+                          storage[0] = details;
+                          refreshShareInfo.run();
+                        });
+                  });
+          dialog.setOnDismissListener(
+              d -> {
+                locationRead.cancel(true);
+                refreshShareInfo = () -> {};
+              });
+          dialog.show();
+          if (!historyLoaded || historyReadFailed) loadShareHistory();
         });
-      });
-      dialog.setOnDismissListener(d -> {
-        locationRead.cancel(true);
-        refreshShareInfo = () -> {};
-      });
-      dialog.show();
-      if(!historyLoaded||historyReadFailed)loadShareHistory();
-    });
-    if(fromRanking&&!ranking.done())viewer.choose(()->saveRanking(ranking.choose(rankingMembers.get(ranking.upper())==position)));
+    if (fromRanking && !ranking.done())
+      viewer.choose(
+          () -> saveRanking(ranking.choose(rankingMembers.get(ranking.upper()) == position)));
     viewing =
         actions.submit(
             () -> {
@@ -1831,14 +2476,14 @@ public final class MainActivity extends DiagnosticActivity {
                       image.setBitmap(bitmap);
                       model.setText(preview.model);
                       dimensions.setText(photo.name);
-                      loadStatus.companion(StatusView.Symbol.PREVIEW);viewer.refreshStatus();
+                      loadStatus.companion(StatusView.Symbol.PREVIEW);
+                      viewer.refreshStatus();
                       image.setStateDescription("プレビューを表示しています。元のファイルを読み込んでいます");
                     });
               } catch (Exception missingPreview) {
                 main.post(
                     () -> {
-                      if (!isDestroyed() && detail && token == generation)
-                        model.setText("");
+                      if (!isDestroyed() && detail && token == generation) model.setText("");
                     });
               }
               try {
@@ -1855,7 +2500,9 @@ public final class MainActivity extends DiagnosticActivity {
                         high.recycle();
                         return;
                       }
-                      loadStatus.companion(null);loadStatus.finish();viewer.refreshStatus();
+                      loadStatus.companion(null);
+                      loadStatus.finish();
+                      viewer.refreshStatus();
                       image.setStateDescription("元のファイルを表示しています");
                       activePreview = full;
                       image.setBitmap(high);
@@ -1875,22 +2522,50 @@ public final class MainActivity extends DiagnosticActivity {
                 main.post(
                     () -> {
                       if (!isDestroyed() && detail && token == generation) {
-                        String failure=activePreview==null?"写真を読み込めませんでした":"プレビューを表示しています。元のファイルを読み込めませんでした";
-                        if(activePreview==null){
+                        String failure =
+                            activePreview == null
+                                ? "写真を読み込めませんでした"
+                                : "プレビューを表示しています。元のファイルを読み込めませんでした";
+                        if (activePreview == null) {
                           viewer.failed();
                           photoFrame.removeView(loadStatus);
-                          LinearLayout recovery=new LinearLayout(this);recovery.setTag("viewer-original-recovery");recovery.setOrientation(LinearLayout.VERTICAL);recovery.setGravity(Gravity.CENTER);
-                          loadStatus.asPhotoFailure();loadStatus.show(StatusView.Symbol.FAILED,failure);recovery.addView(loadStatus,new LinearLayout.LayoutParams(dp(32),dp(32)));
-                          Button retry=button("再試行",()->showPhoto(position,fromRanking));retry.setContentDescription(failure+"。再試行");retry.setTextSize(14);retry.setPadding(dp(18),0,dp(18),0);
+                          LinearLayout recovery = new LinearLayout(this);
+                          recovery.setTag("viewer-original-recovery");
+                          recovery.setOrientation(LinearLayout.VERTICAL);
+                          recovery.setGravity(Gravity.CENTER);
+                          loadStatus.asPhotoFailure();
+                          loadStatus.show(StatusView.Symbol.FAILED, failure);
+                          recovery.addView(
+                              loadStatus, new LinearLayout.LayoutParams(dp(32), dp(32)));
+                          Button retry = button("再試行", () -> showPhoto(position, fromRanking));
+                          retry.setContentDescription(failure + "。再試行");
+                          retry.setTextSize(14);
+                          retry.setPadding(dp(18), 0, dp(18), 0);
                           MaterialUi.outlined(retry);
-                          ActionIcon retryIcon=new ActionIcon("再試行",getResources().getDisplayMetrics().density*20/26);retryIcon.setBounds(0,0,dp(20),dp(20));retry.setCompoundDrawables(retryIcon,null,null,null);retry.setCompoundDrawablePadding(dp(6));recovery.addView(retry,new LinearLayout.LayoutParams(-2,dp(48)));
+                          ActionIcon retryIcon =
+                              new ActionIcon(
+                                  "再試行", getResources().getDisplayMetrics().density * 20 / 26);
+                          retryIcon.setBounds(0, 0, dp(20), dp(20));
+                          retry.setCompoundDrawables(retryIcon, null, null, null);
+                          retry.setCompoundDrawablePadding(dp(6));
+                          recovery.addView(retry, new LinearLayout.LayoutParams(-2, dp(48)));
                           MaterialUi.outlined(retry);
-                          LinearLayout.LayoutParams retryPosition=(LinearLayout.LayoutParams)retry.getLayoutParams();retryPosition.topMargin=dp(12);retry.setLayoutParams(retryPosition);
-                          photoFrame.addView(recovery,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER));
-                        }else loadStatus.show(StatusView.Symbol.FAILED,"",failure,()->showPhoto(position,fromRanking),"再試行");
+                          LinearLayout.LayoutParams retryPosition =
+                              (LinearLayout.LayoutParams) retry.getLayoutParams();
+                          retryPosition.topMargin = dp(12);
+                          retry.setLayoutParams(retryPosition);
+                          photoFrame.addView(
+                              recovery, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
+                        } else
+                          loadStatus.show(
+                              StatusView.Symbol.FAILED,
+                              "",
+                              failure,
+                              () -> showPhoto(position, fromRanking),
+                              "再試行");
                         viewer.refreshStatus();
                         image.setStateDescription(failure);
-                        if(activePreview==null)model.setText("");
+                        if (activePreview == null) model.setText("");
                         dimensions.setText(photo.name);
                       }
                     });
@@ -1925,7 +2600,8 @@ public final class MainActivity extends DiagnosticActivity {
       if (ranking.journal.isEmpty()) ranking = new PhotoRanking(ranking.ids, "B:");
       showRanking();
     } catch (Exception e) {
-      feedback(StatusView.Symbol.FAILED,"順位の記録を読み込めませんでした。保存済みの記録は変更していません。",this::openRanking,"再試行");
+      feedback(
+          StatusView.Symbol.FAILED, "順位の記録を読み込めませんでした。保存済みの記録は変更していません。", this::openRanking, "再試行");
     }
   }
 
@@ -1935,14 +2611,15 @@ public final class MainActivity extends DiagnosticActivity {
         rankCache.clear();
         ranking = next;
         rankingResultState = null;
-    rankingResultFocus = null;
+        rankingResultFocus = null;
         showRanking();
         return;
       }
     } catch (IOException e) {
       // Keep the displayed comparison unchanged when the journal cannot be saved.
     }
-    feedback(StatusView.Symbol.STORAGE,"順位を保存できませんでした。空き容量を確認してください。",this::showRanking,"ソートに戻る");
+    feedback(
+        StatusView.Symbol.STORAGE, "順位を保存できませんでした。空き容量を確認してください。", this::showRanking, "ソートに戻る");
   }
 
   private void showRanking() {
@@ -1953,102 +2630,264 @@ public final class MainActivity extends DiagnosticActivity {
     rankingScreen = true;
     int token = ++generation;
     base();
-    if (ranking.done()) { showRankingResult(token); return; }
+    if (ranking.done()) {
+      showRankingResult(token);
+      return;
+    }
     LinearLayout top = vertical();
-    top.setGravity(Gravity.CENTER_HORIZONTAL|Gravity.BOTTOM);
-    top.setPadding(dp(16),0,dp(16),0);top.setMinimumHeight(dp(52));
+    top.setGravity(Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM);
+    top.setPadding(dp(16), 0, dp(16), 0);
+    top.setMinimumHeight(dp(52));
 
     TextView sortHeading = label(ranking.done() ? "ソート結果" : "ソート", 17, TEXT);
-    sortHeading.setAccessibilityHeading(true);sortHeading.setGravity(Gravity.CENTER);sortHeading.setIncludeFontPadding(false);sortHeading.setMinHeight(dp(22));sortHeading.setTypeface(android.graphics.Typeface.create("sans-serif-medium",android.graphics.Typeface.NORMAL));
+    sortHeading.setAccessibilityHeading(true);
+    sortHeading.setGravity(Gravity.CENTER);
+    sortHeading.setIncludeFontPadding(false);
+    sortHeading.setMinHeight(dp(22));
+    sortHeading.setTypeface(
+        android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL));
     top.addView(sortHeading);
-    TextView comparisonCount=label("比較 "+(ranking.decisions()+1)+"回目",12,MUTED);comparisonCount.setGravity(Gravity.CENTER);comparisonCount.setIncludeFontPadding(false);comparisonCount.setMinHeight(dp(16));top.addView(comparisonCount);
-    LinearLayout modes = RankingModes.create(this, ranking.bestOnly(),
-        () -> changeRankingMode(true), () -> changeRankingMode(false));
+    TextView comparisonCount = label("比較 " + (ranking.decisions() + 1) + "回目", 12, MUTED);
+    comparisonCount.setGravity(Gravity.CENTER);
+    comparisonCount.setIncludeFontPadding(false);
+    comparisonCount.setMinHeight(dp(16));
+    top.addView(comparisonCount);
+    LinearLayout modes =
+        RankingModes.create(
+            this,
+            ranking.bestOnly(),
+            () -> changeRankingMode(true),
+            () -> changeRankingMode(false));
 
     Button undo = button("直前の操作を取り消す", () -> saveRanking(ranking.undo()));
     undo.setText("取り消し");
     undo.setEnabled(ranking.decisions() > 0);
-    Button chooseA = GalleryUi.neutralPrimary(button("Aを選ぶ", () -> saveRanking(ranking.choose(true))));
-    Button chooseB = GalleryUi.neutralPrimary(button("Bを選ぶ", () -> saveRanking(ranking.choose(false))));
-    chooseA.setEnabled(false); chooseB.setEnabled(false);
+    Button chooseA =
+        GalleryUi.neutralPrimary(button("Aを選ぶ", () -> saveRanking(ranking.choose(true))));
+    Button chooseB =
+        GalleryUi.neutralPrimary(button("Bを選ぶ", () -> saveRanking(ranking.choose(false))));
+    chooseA.setEnabled(false);
+    chooseB.setEnabled(false);
     Button tie = button("同じ順位", () -> saveRanking(ranking.tie()));
     tie.setEnabled(false);
 
+    LinearLayout comparison = new LinearLayout(this);
+    comparison.setBackgroundColor(Color.BLACK);
+    ImageView[] candidates = new ImageView[2];
+    double[] ratios = new double[2];
+    Runnable arrange =
+        () -> {
+          if (ratios[0] <= 0
+              || ratios[1] <= 0
+              || comparison.getWidth() == 0
+              || comparison.getHeight() == 0) return;
+          tie.setEnabled(!ranking.bestOnly());
+          chooseA.setEnabled(true);
+          chooseB.setEnabled(true);
+          boolean horizontal =
+              ComparisonLayout.horizontal(
+                  comparison.getWidth(), comparison.getHeight(), ratios[0], ratios[1]);
+          int orientation = horizontal ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL;
+          if (comparison.getTag() != null && comparison.getTag().equals(orientation)) return;
+          comparison.setTag(orientation);
+          comparison.setOrientation(orientation);
+          for (ImageView image : candidates)
+            image.setLayoutParams(
+                new LinearLayout.LayoutParams(horizontal ? 0 : -1, horizontal ? -1 : 0, 1));
+        };
+    comparison.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> arrange.run());
+    rankingCandidate(ranking.upper(), true, token, comparison, candidates, ratios, arrange);
+    rankingCandidate(ranking.lower(), false, token, comparison, candidates, ratios, arrange);
 
-      LinearLayout comparison = new LinearLayout(this);
-      comparison.setBackgroundColor(Color.BLACK);
-      ImageView[] candidates = new ImageView[2];
-      double[] ratios = new double[2];
-      Runnable arrange =
-          () -> {
-            if (ratios[0] <= 0
-                || ratios[1] <= 0
-                || comparison.getWidth() == 0
-                || comparison.getHeight() == 0) return;
-            tie.setEnabled(!ranking.bestOnly());
-            chooseA.setEnabled(true); chooseB.setEnabled(true);
-            boolean horizontal =
-                ComparisonLayout.horizontal(
-                    comparison.getWidth(), comparison.getHeight(), ratios[0], ratios[1]);
-            int orientation = horizontal ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL;
-            if (comparison.getTag() != null && comparison.getTag().equals(orientation)) return;
-            comparison.setTag(orientation);
-            comparison.setOrientation(orientation);
-            for (ImageView image : candidates)
-              image.setLayoutParams(
-                  new LinearLayout.LayoutParams(horizontal ? 0 : -1, horizontal ? -1 : 0, 1));
-          };
-      comparison.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> arrange.run());
-      rankingCandidate(ranking.upper(), true, token, comparison, candidates, ratios, arrange);
-      rankingCandidate(ranking.lower(), false, token, comparison, candidates, ratios, arrange);
-
-    LinearLayout controls=vertical();controls.setPadding(dp(16),dp(10),dp(16),dp(20));
-    RankingUi.action(chooseA,true,52,15,null);RankingUi.action(chooseB,true,52,15,null);
-    RankingUi.choice(chooseA,"A");RankingUi.choice(chooseB,"B");
-    RankingUi.add(controls,RankingUi.pair(this,RankingUi.countedChoice(this,chooseA,ranking.selectionCount(ranking.upper())),RankingUi.countedChoice(this,chooseB,ranking.selectionCount(ranking.lower()))),0);
-    Button zoomA=RankingUi.action(button("Aを拡大",()->showRankedPhoto(rankingMembers.get(ranking.upper()))),false,48,13,"拡大");
-    Button zoomB=RankingUi.action(button("Bを拡大",()->showRankedPhoto(rankingMembers.get(ranking.lower()))),false,48,13,"拡大");
-    RankingUi.action(tie,false,48,13,"同じ順位");
-    RankingUi.add(controls,RankingUi.zooms(this,zoomA,ranking.bestOnly()?null:tie,zoomB),8);
-    modes.setPadding(0,0,0,0);modes.setBackgroundColor(RankingUi.BG);
-    RankingUi.add(controls,modes,8);
-    RankingUi.addDock(controls,RankingUi.dock(this,undo,button("その他",this::rankingMenu)),8);
-    root.addView(new RankingUi.Screen(this,top,comparison,controls,false),new LinearLayout.LayoutParams(-1,0,1));
+    LinearLayout controls = vertical();
+    controls.setPadding(dp(16), dp(10), dp(16), dp(20));
+    RankingUi.action(chooseA, true, 52, 15, null);
+    RankingUi.action(chooseB, true, 52, 15, null);
+    RankingUi.choice(chooseA, "A");
+    RankingUi.choice(chooseB, "B");
+    RankingUi.add(
+        controls,
+        RankingUi.pair(
+            this,
+            RankingUi.countedChoice(this, chooseA, ranking.selectionCount(ranking.upper())),
+            RankingUi.countedChoice(this, chooseB, ranking.selectionCount(ranking.lower()))),
+        0);
+    Button zoomA =
+        RankingUi.action(
+            button("Aを拡大", () -> showRankedPhoto(rankingMembers.get(ranking.upper()))),
+            false,
+            48,
+            13,
+            "拡大");
+    Button zoomB =
+        RankingUi.action(
+            button("Bを拡大", () -> showRankedPhoto(rankingMembers.get(ranking.lower()))),
+            false,
+            48,
+            13,
+            "拡大");
+    RankingUi.action(tie, false, 48, 13, "同じ順位");
+    RankingUi.add(
+        controls, RankingUi.zooms(this, zoomA, ranking.bestOnly() ? null : tie, zoomB), 8);
+    modes.setPadding(0, 0, 0, 0);
+    modes.setBackgroundColor(RankingUi.BG);
+    RankingUi.add(controls, modes, 8);
+    RankingUi.addDock(controls, RankingUi.dock(this, undo, button("その他", this::rankingMenu)), 8);
+    root.addView(
+        new RankingUi.Screen(this, top, comparison, controls, false),
+        new LinearLayout.LayoutParams(-1, 0, 1));
   }
 
   private void showRankingResult(int token) {
-    ListView results=new ListView(this);results.setDivider(null);results.setDividerHeight(0);results.setSelector(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));results.setItemsCanFocus(true);
-    results.addHeaderView(RankingResultUi.heading(this,ranking.ids.size(),ranking.bestOnly()),null,false);
-    results.setAdapter(new android.widget.BaseAdapter(){
-      public int getCount(){return 1;} public Object getItem(int p){return ranking;} public long getItemId(int p){return p;} public boolean isEnabled(int p){return false;}
-      public View getView(int p,View recycled,ViewGroup parent){
-        return RankingResultUi.body(MainActivity.this,ranking,id->photos.get(rankingMembers.get(id)).name,
-          (id,image,failed)->{PhotoRepository.Photo photo=photos.get(rankingMembers.get(id));int edge=Math.max(1,image.getWidth());images.execute(()->{if(isDestroyed()||token!=generation)return;try{PhotoRepository.Preview preview=repository.preview(photo,()->isDestroyed()||token!=generation);if(isDestroyed()||token!=generation)return;Bitmap bitmap=PhotoRepository.bitmap(preview,edge);main.post(()->{if(!isDestroyed()&&token==generation)image.setImageBitmap(bitmap);else bitmap.recycle();});}catch(Exception e){main.post(()->{if(!isDestroyed()&&token==generation)failed.run();});}});},
-          (id,target)->{rankingResultState=results.onSaveInstanceState();rankingResultPosition=results.getFirstVisiblePosition();rankingResultOffset=results.getChildAt(0)==null?0:results.getChildAt(0).getTop();rankingResultFocus=(String)target.getTag();rankingResultInputFocus=target.hasFocus();rankingResultAccessibilityFocus=target.isAccessibilityFocused();showRankedPhoto(rankingMembers.get(id));},MainActivity.this::confirmResort);
-      }
-    });
-    root.addView(results,new LinearLayout.LayoutParams(-1,0,1));
-    if(rankingResultState!=null)results.onRestoreInstanceState(rankingResultState);
-    results.post(()->{if(rankingResultState!=null){results.setSelectionFromTop(rankingResultPosition,rankingResultOffset);results.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener(){public boolean onPreDraw(){results.getViewTreeObserver().removeOnPreDrawListener(this);View target=rankingResultFocus==null?null:results.findViewWithTag(rankingResultFocus);if(target!=null){if(rankingResultInputFocus)target.requestFocus();if(rankingResultAccessibilityFocus)target.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS,null);}return true;}});}});
-    int first=root.getChildCount();LinearLayout controls=vertical();
-    Button share=TagDetailUi.action(this,"共有",true,()->{selecting=true;bestOnly=true;leaveRanking();});share.setCompoundDrawables(null,null,null,null);controls.addView(share,new LinearLayout.LayoutParams(-1,-2));
-    Button mode=TagDetailUi.action(this,ranking.bestOnly()?"すべての順位を決める":"1位を決める",false,()->changeRankingMode(!ranking.bestOnly()));mode.setText(ranking.bestOnly()?"すべての順位を決める":"1位を決める");controls.addView(mode,new LinearLayout.LayoutParams(-1,-2));
-    Button undo=TagDetailUi.dockButton(this,"直前の操作を取り消す",()->saveRanking(ranking.undo()));undo.setText("取り消し");undo.setEnabled(ranking.decisions()>0);controls.addView(TagDetailUi.dock(this,undo));TagDetailUi.gaps(controls);root.addView(controls);TagDetailUi.footer(root,first);
+    ListView results = new ListView(this);
+    results.setDivider(null);
+    results.setDividerHeight(0);
+    results.setSelector(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+    results.setItemsCanFocus(true);
+    results.addHeaderView(
+        RankingResultUi.heading(this, ranking.ids.size(), ranking.bestOnly()), null, false);
+    results.setAdapter(
+        new android.widget.BaseAdapter() {
+          public int getCount() {
+            return 1;
+          }
+
+          public Object getItem(int p) {
+            return ranking;
+          }
+
+          public long getItemId(int p) {
+            return p;
+          }
+
+          public boolean isEnabled(int p) {
+            return false;
+          }
+
+          public View getView(int p, View recycled, ViewGroup parent) {
+            return RankingResultUi.body(
+                MainActivity.this,
+                ranking,
+                id -> photos.get(rankingMembers.get(id)).name,
+                (id, image, failed) -> {
+                  PhotoRepository.Photo photo = photos.get(rankingMembers.get(id));
+                  int edge = Math.max(1, image.getWidth());
+                  images.execute(
+                      () -> {
+                        if (isDestroyed() || token != generation) return;
+                        try {
+                          PhotoRepository.Preview preview =
+                              repository.preview(photo, () -> isDestroyed() || token != generation);
+                          if (isDestroyed() || token != generation) return;
+                          Bitmap bitmap = PhotoRepository.bitmap(preview, edge);
+                          main.post(
+                              () -> {
+                                if (!isDestroyed() && token == generation)
+                                  image.setImageBitmap(bitmap);
+                                else bitmap.recycle();
+                              });
+                        } catch (Exception e) {
+                          main.post(
+                              () -> {
+                                if (!isDestroyed() && token == generation) failed.run();
+                              });
+                        }
+                      });
+                },
+                (id, target) -> {
+                  rankingResultState = results.onSaveInstanceState();
+                  rankingResultPosition = results.getFirstVisiblePosition();
+                  rankingResultOffset =
+                      results.getChildAt(0) == null ? 0 : results.getChildAt(0).getTop();
+                  rankingResultFocus = (String) target.getTag();
+                  rankingResultInputFocus = target.hasFocus();
+                  rankingResultAccessibilityFocus = target.isAccessibilityFocused();
+                  showRankedPhoto(rankingMembers.get(id));
+                },
+                MainActivity.this::confirmResort);
+          }
+        });
+    root.addView(results, new LinearLayout.LayoutParams(-1, 0, 1));
+    if (rankingResultState != null) results.onRestoreInstanceState(rankingResultState);
+    results.post(
+        () -> {
+          if (rankingResultState != null) {
+            results.setSelectionFromTop(rankingResultPosition, rankingResultOffset);
+            results
+                .getViewTreeObserver()
+                .addOnPreDrawListener(
+                    new ViewTreeObserver.OnPreDrawListener() {
+                      public boolean onPreDraw() {
+                        results.getViewTreeObserver().removeOnPreDrawListener(this);
+                        View target =
+                            rankingResultFocus == null
+                                ? null
+                                : results.findViewWithTag(rankingResultFocus);
+                        if (target != null) {
+                          if (rankingResultInputFocus) target.requestFocus();
+                          if (rankingResultAccessibilityFocus)
+                            target.performAccessibilityAction(
+                                android.view.accessibility.AccessibilityNodeInfo
+                                    .ACTION_ACCESSIBILITY_FOCUS,
+                                null);
+                        }
+                        return true;
+                      }
+                    });
+          }
+        });
+    int first = root.getChildCount();
+    LinearLayout controls = vertical();
+    Button share =
+        TagDetailUi.action(
+            this,
+            "共有",
+            true,
+            () -> {
+              selecting = true;
+              bestOnly = true;
+              leaveRanking();
+            });
+    share.setCompoundDrawables(null, null, null, null);
+    controls.addView(share, new LinearLayout.LayoutParams(-1, -2));
+    Button mode =
+        TagDetailUi.action(
+            this,
+            ranking.bestOnly() ? "すべての順位を決める" : "1位を決める",
+            false,
+            () -> changeRankingMode(!ranking.bestOnly()));
+    mode.setText(ranking.bestOnly() ? "すべての順位を決める" : "1位を決める");
+    controls.addView(mode, new LinearLayout.LayoutParams(-1, -2));
+    Button undo = TagDetailUi.dockButton(this, "直前の操作を取り消す", () -> saveRanking(ranking.undo()));
+    undo.setText("取り消し");
+    undo.setEnabled(ranking.decisions() > 0);
+    controls.addView(TagDetailUi.dock(this, undo));
+    TagDetailUi.gaps(controls);
+    root.addView(controls);
+    TagDetailUi.footer(root, first);
   }
 
   private void confirmResort() {
-    new GalleryUi.Sheet(this).setTitle("この連写を再ソートしますか？")
-      .setMessage("この連写の選択履歴を消して、最初から比較します。写真は変更しません。")
-      .setPositiveButton("再ソート",(dialog,which)->saveRanking(new PhotoRanking(ranking.ids,ranking.bestOnly()?"B:":"A:")))
-      .setNegativeButton("キャンセル",null).show();
+    new GalleryUi.Sheet(this)
+        .setTitle("この連写を再ソートしますか？")
+        .setMessage("この連写の選択履歴を消して、最初から比較します。写真は変更しません。")
+        .setPositiveButton(
+            "再ソート",
+            (dialog, which) ->
+                saveRanking(new PhotoRanking(ranking.ids, ranking.bestOnly() ? "B:" : "A:")))
+        .setNegativeButton("キャンセル", null)
+        .show();
   }
 
   private void changeRankingMode(boolean best) {
     if (ranking.bestOnly() == best) return;
-    new GalleryUi.Sheet(this).setTitle("ソート方式を変更しますか？")
+    new GalleryUi.Sheet(this)
+        .setTitle("ソート方式を変更しますか？")
         .setMessage("この連写の結果と途中の判断を置き換え、最初から比較します。")
-        .setPositiveButton("変更", (d, w) -> saveRanking(new PhotoRanking(ranking.ids, best ? "B:" : "A:")))
-        .setNegativeButton("キャンセル", null).show();
+        .setPositiveButton(
+            "変更", (d, w) -> saveRanking(new PhotoRanking(ranking.ids, best ? "B:" : "A:")))
+        .setNegativeButton("キャンセル", null)
+        .show();
   }
 
   private void rankingMenu() {
@@ -2074,7 +2913,8 @@ public final class MainActivity extends DiagnosticActivity {
       double[] ratios,
       Runnable arrange) {
     PhotoRepository.Photo photo = photos.get(rankingMembers.get(key));
-    ComparisonPhotoView image = new ComparisonPhotoView(this, upper ? "A" : "B", photo.name, ranking.selectionCount(key));
+    ComparisonPhotoView image =
+        new ComparisonPhotoView(this, upper ? "A" : "B", photo.name, ranking.selectionCount(key));
     image.setOnClickListener(
         v -> {
           if (rankingScreen && token == generation && ratios[0] > 0 && ratios[1] > 0) {
@@ -2113,7 +2953,11 @@ public final class MainActivity extends DiagnosticActivity {
                 () -> {
                   if (!isDestroyed() && token == generation) {
                     image.failed();
-                    feedback(StatusView.Symbol.FAILED,"写真を読み込めませんでした。一覧へ戻って開き直してください。",this::leaveRanking,"一覧へ");
+                    feedback(
+                        StatusView.Symbol.FAILED,
+                        "写真を読み込めませんでした。一覧へ戻って開き直してください。",
+                        this::leaveRanking,
+                        "一覧へ");
                   }
                 });
           }
@@ -2125,132 +2969,190 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private Dialog shareDialog;
+
   private void shareMenu(List<PhotoRepository.Photo> selection) {
     List<PhotoRepository.Photo> frozen = List.copyOf(selection);
-    Set<String> best = new HashSet<>();int cloud=0;
-    for(PhotoRepository.Photo photo:frozen){
-      if(photo.isArchived())cloud++;
-      int index=photos.indexOf(photo);List<Integer> group=photoBundles.get(index);
-      if(group!=null)try{
-        if(group.size()==1){if(!photo.isVideo()&&rankingStore.singleBest(ArchiveStore.key(photo)))best.add(photo.uri.toString());}
-        else{PhotoRanking rank=rankingFor(group);if(rank.done()&&rank.best().contains(ArchiveStore.key(photo)))best.add(photo.uri.toString());}
-      }catch(Exception ignored){}
+    Set<String> best = new HashSet<>();
+    int cloud = 0;
+    for (PhotoRepository.Photo photo : frozen) {
+      if (photo.isArchived()) cloud++;
+      int index = photos.indexOf(photo);
+      List<Integer> group = photoBundles.get(index);
+      if (group != null)
+        try {
+          if (group.size() == 1) {
+            if (!photo.isVideo() && rankingStore.singleBest(ArchiveStore.key(photo)))
+              best.add(photo.uri.toString());
+          } else {
+            PhotoRanking rank = rankingFor(group);
+            if (rank.done() && rank.best().contains(ArchiveStore.key(photo)))
+              best.add(photo.uri.toString());
+          }
+        } catch (Exception ignored) {
+        }
     }
-    ShareUi.Menu menu=new ShareUi.Menu(this,frozen,ShareTargets.load(this),cloud,best,(raw,target)->export(frozen,raw,target));
-    capacityMenu=menu;
+    ShareUi.Menu menu =
+        new ShareUi.Menu(
+            this,
+            frozen,
+            ShareTargets.load(this),
+            cloud,
+            best,
+            (raw, target) -> export(frozen, raw, target));
+    capacityMenu = menu;
     menu.capacity(shareCapacity.request(frozen));
-    shareDialog=menu;
-    menu.setOnDismissListener(d->{if(capacityMenu==menu)capacityMenu=null;for(ImageView image:menu.previews)if(image.getTag() instanceof ImageLoad)((ImageLoad)image.getTag()).cancelled=true;});
+    shareDialog = menu;
+    menu.setOnDismissListener(
+        d -> {
+          if (capacityMenu == menu) capacityMenu = null;
+          for (ImageView image : menu.previews)
+            if (image.getTag() instanceof ImageLoad) ((ImageLoad) image.getTag()).cancelled = true;
+        });
     menu.show();
-    for(int i=0;i<menu.previews.size();i++)previewInto(menu.previews.get(i),menu.previewPhotos.get(i),dp(52));
+    for (int i = 0; i < menu.previews.size(); i++)
+      previewInto(menu.previews.get(i), menu.previewPhotos.get(i), dp(52));
   }
 
   private void export(
       List<PhotoRepository.Photo> selection, boolean raw, ShareTargets.Target target) {
     if (shareProgress != null && shareProgress.isShowing()) return;
     final int attempt = ++shareAttempt;
-    shareProgress = new ShareUi.Preparing(this,selection.size(),raw,()->{
-      if(attempt!=shareAttempt)return;
-      shareAttempt++;
-      if(sharing!=null)sharing.cancel(true);
-      feedback(StatusView.Symbol.CANCELLED,"共有の準備を中止しました",null,"");
-    });
-    shareProgress.show();
-    sharing = actions.submit(
-        () -> {
-          try {
-            SharePreparation.Result prepared = sharePreparation.prepare(selection, raw);
-            ArrayList<Uri> uris = new ArrayList<>();
-            for (File file : prepared.files)
-              uris.add(Uri.parse("content://jp.nano.rawgallery.share/" + file.getName()));
-            ArrayList<String> historyKeys = new ArrayList<>();
-            for (PhotoRepository.Photo photo : selection) historyKeys.add(ArchiveStore.key(photo));
-            final String historySession = ShareHistoryReceiver.begin(getApplicationContext(),historyKeys,System.currentTimeMillis());
-            String type = prepared.mimeType;
-            String action = uris.size() == 1 ? Intent.ACTION_SEND : Intent.ACTION_SEND_MULTIPLE;
-            main.post(
-                () -> {
-                  shareCapacity.observed(prepared.jpegSizes);
-                  if (isDestroyed() || attempt != shareAttempt) {
-                    ShareHistoryReceiver.cancelLater(getApplicationContext(), historySession);
-                    return;
-                  }
-                  shareProgress.dismiss();
-                  Intent send =
-                      new Intent(action)
-                          .setType(type)
-                          .putExtra(Intent.EXTRA_TITLE, selection.size() + "枚の写真")
-                          .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                  if (uris.size() == 1) send.putExtra(Intent.EXTRA_STREAM, uris.get(0));
-                  else send.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
-                  ClipData clip = ClipData.newRawUri("写真", uris.get(0));
-                  for (int i = 1; i < uris.size(); i++)
-                    clip.addItem(new ClipData.Item(uris.get(i)));
-                  send.setClipData(clip);
-                  if (target != null) {
-                    ComponentName component = ComponentName.unflattenFromString(target.component);
-                    boolean supported = false;
-                    for (ResolveInfo candidate :
-                        getPackageManager()
-                            .queryIntentActivities(new Intent(action).setType(type), 0)) {
-                      if (new ComponentName(
-                              candidate.activityInfo.packageName, candidate.activityInfo.name)
-                          .equals(component)) {
-                        supported = true;
-                        break;
-                      }
-                    }
-                    if (!supported) {
-                      ShareHistoryReceiver.cancelLater(getApplicationContext(), historySession);
-                      feedback(StatusView.Symbol.FORMAT,"この共有先は選んだ画像形式に対応していません。共有先の形式を変更してください。",this::editTargets,"共有先の設定");
-                      return;
-                    }
-                    send.setComponent(component);
-                  }
-                  try {
-                    if (target == null) {
-                      if (historySession == null) {
-                        startActivity(Intent.createChooser(send, "写真を共有"));
-                        ShareHistoryReceiver.failed(getApplicationContext());
-                      } else {
-                        android.app.PendingIntent callback = ShareHistoryReceiver.callback(this, historySession);
-                        try {
-                          startActivity(Intent.createChooser(send, "写真を共有", callback.getIntentSender()));
-                        } catch (RuntimeException launchFailure) {
-                          callback.cancel();
-                          throw launchFailure;
-                        }
-                      }
-                    } else {
-                      startActivity(send);
-                      ShareHistoryReceiver.recordLater(getApplicationContext(), historySession, send.getComponent());
-                    }
-                  } catch (ActivityNotFoundException | SecurityException e) {
-                    ShareHistoryReceiver.cancelLater(getApplicationContext(), historySession);
-                    feedback(StatusView.Symbol.NO_APP,"共有先が見つかりません。共有先の設定を変更してください。",this::editTargets,"共有先の設定");
-                  }
-                });
-          } catch (Exception e) {
-            main.post(() -> {
-              if (isDestroyed() || attempt != shareAttempt) return;
-              shareProgress.dismiss();
-              if(e instanceof SharePreparation.CapacityException){
-                SharePreparation.CapacityException limit=(SharePreparation.CapacityException)e;
-                shareCapacity.observed(limit.jpegSizes);
-                if(selecting)updateSelection();
-                ShareCapacityChecks.Snapshot capacity=shareCapacity.snapshot(selection);
-                ShareCapacity.Result other=raw?capacity.jpeg:capacity.original;
-                shareDialog=new ShareUi.OverLimit(this,selection.size(),raw,limit.bytes,
-                    other.actionable()?()->export(selection,!raw,null):null);
-                shareDialog.show();return;
-              }
-              shareDialog=new ShareUi.Failure(this,selection.size(),raw,
-                  selection.size()+"枚の選択は保持されています。共有を準備できませんでした。空き容量・通信・読み取り許可を確認してください。",
-                  ()->export(selection,raw,target));
-              shareDialog.show();
+    shareProgress =
+        new ShareUi.Preparing(
+            this,
+            selection.size(),
+            raw,
+            () -> {
+              if (attempt != shareAttempt) return;
+              shareAttempt++;
+              if (sharing != null) sharing.cancel(true);
+              feedback(StatusView.Symbol.CANCELLED, "共有の準備を中止しました", null, "");
             });
-          }
-        });
+    shareProgress.show();
+    sharing =
+        actions.submit(
+            () -> {
+              try {
+                SharePreparation.Result prepared = sharePreparation.prepare(selection, raw);
+                ArrayList<Uri> uris = new ArrayList<>();
+                for (File file : prepared.files)
+                  uris.add(Uri.parse("content://jp.nano.rawgallery.share/" + file.getName()));
+                ArrayList<String> historyKeys = new ArrayList<>();
+                for (PhotoRepository.Photo photo : selection)
+                  historyKeys.add(ArchiveStore.key(photo));
+                final String historySession =
+                    ShareHistoryReceiver.begin(
+                        getApplicationContext(), historyKeys, System.currentTimeMillis());
+                String type = prepared.mimeType;
+                String action = uris.size() == 1 ? Intent.ACTION_SEND : Intent.ACTION_SEND_MULTIPLE;
+                main.post(
+                    () -> {
+                      shareCapacity.observed(prepared.jpegSizes);
+                      if (isDestroyed() || attempt != shareAttempt) {
+                        ShareHistoryReceiver.cancelLater(getApplicationContext(), historySession);
+                        return;
+                      }
+                      shareProgress.dismiss();
+                      Intent send =
+                          new Intent(action)
+                              .setType(type)
+                              .putExtra(Intent.EXTRA_TITLE, selection.size() + "枚の写真")
+                              .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                      if (uris.size() == 1) send.putExtra(Intent.EXTRA_STREAM, uris.get(0));
+                      else send.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
+                      ClipData clip = ClipData.newRawUri("写真", uris.get(0));
+                      for (int i = 1; i < uris.size(); i++)
+                        clip.addItem(new ClipData.Item(uris.get(i)));
+                      send.setClipData(clip);
+                      if (target != null) {
+                        ComponentName component =
+                            ComponentName.unflattenFromString(target.component);
+                        boolean supported = false;
+                        for (ResolveInfo candidate :
+                            getPackageManager()
+                                .queryIntentActivities(new Intent(action).setType(type), 0)) {
+                          if (new ComponentName(
+                                  candidate.activityInfo.packageName, candidate.activityInfo.name)
+                              .equals(component)) {
+                            supported = true;
+                            break;
+                          }
+                        }
+                        if (!supported) {
+                          ShareHistoryReceiver.cancelLater(getApplicationContext(), historySession);
+                          feedback(
+                              StatusView.Symbol.FORMAT,
+                              "この共有先は選んだ画像形式に対応していません。共有先の形式を変更してください。",
+                              this::editTargets,
+                              "共有先の設定");
+                          return;
+                        }
+                        send.setComponent(component);
+                      }
+                      try {
+                        if (target == null) {
+                          if (historySession == null) {
+                            startActivity(Intent.createChooser(send, "写真を共有"));
+                            ShareHistoryReceiver.failed(getApplicationContext());
+                          } else {
+                            android.app.PendingIntent callback =
+                                ShareHistoryReceiver.callback(this, historySession);
+                            try {
+                              startActivity(
+                                  Intent.createChooser(send, "写真を共有", callback.getIntentSender()));
+                            } catch (RuntimeException launchFailure) {
+                              callback.cancel();
+                              throw launchFailure;
+                            }
+                          }
+                        } else {
+                          startActivity(send);
+                          ShareHistoryReceiver.recordLater(
+                              getApplicationContext(), historySession, send.getComponent());
+                        }
+                      } catch (ActivityNotFoundException | SecurityException e) {
+                        ShareHistoryReceiver.cancelLater(getApplicationContext(), historySession);
+                        feedback(
+                            StatusView.Symbol.NO_APP,
+                            "共有先が見つかりません。共有先の設定を変更してください。",
+                            this::editTargets,
+                            "共有先の設定");
+                      }
+                    });
+              } catch (Exception e) {
+                main.post(
+                    () -> {
+                      if (isDestroyed() || attempt != shareAttempt) return;
+                      shareProgress.dismiss();
+                      if (e instanceof SharePreparation.CapacityException) {
+                        SharePreparation.CapacityException limit =
+                            (SharePreparation.CapacityException) e;
+                        shareCapacity.observed(limit.jpegSizes);
+                        if (selecting) updateSelection();
+                        ShareCapacityChecks.Snapshot capacity = shareCapacity.snapshot(selection);
+                        ShareCapacity.Result other = raw ? capacity.jpeg : capacity.original;
+                        shareDialog =
+                            new ShareUi.OverLimit(
+                                this,
+                                selection.size(),
+                                raw,
+                                limit.bytes,
+                                other.actionable() ? () -> export(selection, !raw, null) : null);
+                        shareDialog.show();
+                        return;
+                      }
+                      shareDialog =
+                          new ShareUi.Failure(
+                              this,
+                              selection.size(),
+                              raw,
+                              selection.size()
+                                  + "枚の選択は保持されています。共有を準備できませんでした。空き容量・通信・読み取り許可を確認してください。",
+                              () -> export(selection, raw, target));
+                      shareDialog.show();
+                    });
+              }
+            });
   }
 
   private void editTargets() {
@@ -2321,7 +3223,7 @@ public final class MainActivity extends DiagnosticActivity {
               String component = entries.get(i).getKey();
               for (ShareTargets.Target t : targets)
                 if (t.component.equals(component)) {
-                  feedback(StatusView.Symbol.ALREADY,"登録済みです",null,"");
+                  feedback(StatusView.Symbol.ALREADY, "登録済みです", null, "");
                   return;
                 }
               targets.add(new ShareTargets.Target(component, names[i], false));
@@ -2333,21 +3235,23 @@ public final class MainActivity extends DiagnosticActivity {
         .show();
   }
 
-  @Override protected void onPause(){
+  @Override
+  protected void onPause() {
     if (usbReceiverRegistered) {
       unregisterReceiver(usbChanges);
       usbReceiverRegistered = false;
     }
     jp.nano.rawgallery.camera.ImportProgress.INSTANCE.removeListener(cameraImportChanged);
     main.removeCallbacks(refreshCameraImportBand);
-    historyForeground=false;
-    getSharedPreferences(ShareHistoryReceiver.PREFS,0).unregisterOnSharedPreferenceChangeListener(historyChanges);
+    historyForeground = false;
+    getSharedPreferences(ShareHistoryReceiver.PREFS, 0)
+        .unregisterOnSharedPreferenceChangeListener(historyChanges);
     super.onPause();
   }
 
   protected void onDestroy() {
     mediaRefreshClosed = true;
-    if(selectionTags!=null)selectionTags.dismiss();
+    if (selectionTags != null) selectionTags.dismiss();
     generation++;
     shareAttempt++;
     if (shareProgress != null) shareProgress.dismiss();

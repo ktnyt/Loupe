@@ -16,13 +16,20 @@ class SettingsRepositoryTest {
     SharedPreferences settings =
         preferences(
             Map.of(
-                "syncEnabled", true,
-                "cleanupEnabled", true,
-                "retentionDays", 42,
-                "syncStatus", "existing status",
-                "syncFinishedAt", 120L,
-                "cloudUserAgent", "existing agent",
-                "cloudVerificationResult", "SUCCESS"));
+                "syncEnabled",
+                true,
+                "cleanupEnabled",
+                true,
+                "retentionDays",
+                42,
+                "syncStatus",
+                "existing status",
+                "syncFinishedAt",
+                120L,
+                "cloudUserAgent",
+                "existing agent",
+                "cloudVerificationResult",
+                "SUCCESS"));
 
     assertTrue(SettingsRepository.syncEnabled(settings));
     assertTrue(SettingsRepository.cleanupEnabled(settings));
