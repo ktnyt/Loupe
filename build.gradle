@@ -4,6 +4,8 @@ plugins {
     id 'com.diffplug.spotless' version '8.12.0'
 }
 
+def existingTargetSdk = 35
+
 subprojects {
     pluginManager.withPlugin('com.android.application') {
         android.lint {
@@ -11,6 +13,26 @@ subprojects {
             baseline = file('lint-baseline.xml')
             warningsAsErrors = true
         }
+        // The CI SDK is newer than the existing target. Show the notice only for
+        // the recorded target, so changing targetSdk does not inherit the exception.
+        androidComponents.finalizeDsl({ dsl ->
+            if (dsl.defaultConfig.targetSdk == existingTargetSdk && dsl.productFlavors.isEmpty()) {
+                dsl.lint.informational.add('OldTargetApi')
+            }
+        } as Action)
+        androidComponents.onVariants(androidComponents.selector().all(), { variant ->
+            def targetSdk = variant.targetSdk.apiLevel
+            def lintTask = 'lint' + variant.name.capitalize()
+            def label = "${project.path}:${variant.name}"
+            tasks.matching { it.name == lintTask }.configureEach {
+                doFirst {
+                    if (targetSdk < existingTargetSdk) {
+                        throw new GradleException(
+                                "${label} targetSdk ${targetSdk} is below ${existingTargetSdk}")
+                    }
+                }
+            }
+        } as Action)
     }
 }
 
