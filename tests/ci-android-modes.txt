@@ -1,2 +1,103 @@
-# Short probe for the emulator graphics backend.
+# mode [argument value]. Seed/verify pairs run in this order.
+
+# SQLite, index and ranking
+camera-history-migration
+confidence-store
+camera-ledger
+index-signature
+photo-storage-import-guard
+index-apply-race
+burst
+burst-gap-millis
+burst-gap-millis numbered true
+burst-co-winners
+burst-bulk-winners
+sort-naming
+single-best
+
+# Tagging and selection
+tags
+automatic
+tag-detail
+tag-confidence
+selected-tags
+album-tags
+
+# Sharing and process restart
+share-screen
+share-capacity
+share-toggle
+share-history
+share-history-screen
+share-history-handoff
+share-history-callback
+share-history-restart-seed
+share-history-restart-verify
+
+# Editing, video and local e2 behavior
 photo-edit
+video
+look-removal
+nano-banana
+nano-background
+generation-indicator
+e2-batches
+e2-catalog-local
+e2-catalog-scale
+e2-transfer-dashboard
+
+# Camera fixtures and USB resolver settings
+camera-pilot-usb-launch
+camera-pilot-usb-launch-choice choice on
+camera-pilot-usb-launch-choice choice verify-on
+camera-pilot-usb-launch-choice choice off
+camera-pilot-usb-launch-choice choice verify-off
+camera-pilot-usb-launch-choice choice default
+camera-pilot-import-progress
+camera-pilot-import-history
+camera-pilot-wifi-quick
+camera-pilot-quick-import
+camera-pilot-qr-ui
+camera-pilot-qr-image
+camera-pilot-sd-source-synthetic
+camera-pilot-sd-original
+camera-pilot-sd-guards
+camera-pilot-paired-guards
+camera-pilot-paired-session
+camera-pilot-ble-diagnostics
+camera-pilot-qr-credentials
+camera-pilot-qr-seed
+camera-pilot-qr-verify
+ep7-wifi
+
+# Gallery and navigation
+camera-tabs
+library-tabs
+gallery-screen
+viewer-screen
+gallery-material3
+expressive-ui
+system-insets
+material3
+
+# Settings, status and accessibility actions
+sheets
+sync-controls
+consistency-layout
+dashboard
+dashboard-layout
+visual-status
+job-state
+affordances
+ranking-modes
+system-back
+action-labels
+comparison-labels
+ranking-result
+diagnostics
+
+# Synthetic imports and interruption
+import-latency
+import-deferred
+import-interruption
+import-pause-interruption
