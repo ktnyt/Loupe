@@ -1,6 +1,5 @@
 package jp.nano.rawgallery;
 
-import android.app.Instrumentation;
 import android.content.*;
 import android.graphics.*;
 import android.net.Uri;
@@ -8,19 +7,45 @@ import android.os.SystemClock;
 import android.provider.MediaStore;
 import java.io.*;
 import java.lang.reflect.*;
-import java.nio.file.Files;
 import java.util.*;
 import java.util.concurrent.*;
-import org.json.JSONObject;
 
 /** Imports only generated images; deletes only URIs returned by this invocation's inserts. */
 final class ImportLatencyChecks {
   private static Object field(Object target, String name) throws Exception {
-    Field f = MainActivity.class.getDeclaredField(name); f.setAccessible(true); return f.get(target);
+    Field f = MainActivity.class.getDeclaredField(name);
+    f.setAccessible(true);
+    return f.get(target);
   }
+
   private static final class ImportInterrupted extends AssertionError {}
 
-  static String run(ArchiveInstrumentation test, boolean interrupt, boolean pause, boolean deferred) throws Exception {
+  private static void checkFrameCorrelation() {
+    // The committed frame shares an ID with events that belong to a different session or import.
+    String previous =
+        """
+        {"event":"image.request","session":"a","ns":90,"request":6,"photo":3}
+        {"event":"image.request","session":"a","ns":101,"request":7,"photo":3}
+        {"event":"image.request","session":"a","ns":102,"request":8,"photo":4}
+        """;
+    String current =
+        """
+        {"event":"image.frame_commit","session":"b","ns":106,"request":7}
+        {"event":"image.frame_commit","session":"a","ns":107,"request":6}
+        {"event":"image.frame_commit","session":"a","ns":108,"request":8}
+        {"event":"image.frame_commit","session":"a","ns":110,"request":7}
+        {"event":"image.frame_commit"
+        """;
+    Set<Long> photos = Set.of(3L);
+    if (ImportFrameTrace.firstFrame(100, photos, current) != 0
+        || ImportFrameTrace.firstFrame(100, photos, previous, current) != 110) {
+      throw new AssertionError("Import frame correlation crossed the wrong generation or session");
+    }
+  }
+
+  static String run(ArchiveInstrumentation test, boolean interrupt, boolean pause, boolean deferred)
+      throws Exception {
+    checkFrameCorrelation();
     Context context = test.getTargetContext();
     ContentResolver resolver = context.getContentResolver();
     String folder = "Pictures/Loupe-import-test-" + UUID.randomUUID() + "/";
@@ -35,37 +60,64 @@ final class ImportLatencyChecks {
         byte[] block = new byte[65536];
         for (int i = 0; i < padding / block.length; i++) output.write(block);
         bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output);
-      } finally { bitmap.recycle(); }
-      activity = (MainActivity) test.startActivitySync(new Intent(context, MainActivity.class)
-          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+      } finally {
+        bitmap.recycle();
+      }
+      activity =
+          (MainActivity)
+              test.startActivitySync(
+                  new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       final MainActivity a = activity;
       // Drain the initial refresh before the measured import. No existing cache is removed.
       GalleryIndex.WORKER.submit(() -> {}).get(90, TimeUnit.SECONDS);
       test.waitForIdleSync();
       int[] generation = {0};
-      test.runOnMainSync(() -> {
-        try {
-          Field restore = MainActivity.class.getDeclaredField("pendingRestore"); restore.setAccessible(true); restore.set(a, null);
-          Field f = MainActivity.class.getDeclaredField("albumFolder"); f.setAccessible(true); f.set(a, folder);
-          Method gallery = MainActivity.class.getDeclaredMethod("gallery"); gallery.setAccessible(true); gallery.invoke(a);
-          Method load = MainActivity.class.getDeclaredMethod("loadIndexedPhotos"); load.setAccessible(true); load.invoke(a);
-          generation[0] = (int) field(a, "generation");
-        } catch (Exception e) { throw new RuntimeException(e); }
-      });
+      test.runOnMainSync(
+          () -> {
+            try {
+              Field restore = MainActivity.class.getDeclaredField("pendingRestore");
+              restore.setAccessible(true);
+              restore.set(a, null);
+              Field f = MainActivity.class.getDeclaredField("albumFolder");
+              f.setAccessible(true);
+              f.set(a, folder);
+              Method gallery = MainActivity.class.getDeclaredMethod("gallery");
+              gallery.setAccessible(true);
+              gallery.invoke(a);
+              Method load = MainActivity.class.getDeclaredMethod("loadIndexedPhotos");
+              load.setAccessible(true);
+              load.invoke(a);
+              generation[0] = (int) field(a, "generation");
+            } catch (Exception e) {
+              throw new RuntimeException(e);
+            }
+          });
       ((ExecutorService) field(a, "scans")).submit(() -> {}).get(30, TimeUnit.SECONDS);
       test.waitForIdleSync();
       if (deferred) {
         // A synthetic local seed supplies the viewer; no user's photo is selected or edited.
-        PhotoRepository.Photo seed = new PhotoRepository.Photo(Uri.fromFile(container), "seed.dng", folder,
-            container.length(), System.currentTimeMillis(), 0);
-        test.runOnMainSync(() -> {
-          try {
-            Field photos = MainActivity.class.getDeclaredField("photos"); photos.setAccessible(true);
-            photos.set(a, new ArrayList<>(Collections.singletonList(seed)));
-            Method show = MainActivity.class.getDeclaredMethod("showPhoto", int.class); show.setAccessible(true); show.invoke(a, 0);
-            generation[0] = (int) field(a, "generation");
-          } catch (Exception e) { throw new RuntimeException(e); }
-        });
+        PhotoRepository.Photo seed =
+            new PhotoRepository.Photo(
+                Uri.fromFile(container),
+                "seed.dng",
+                folder,
+                container.length(),
+                System.currentTimeMillis(),
+                0);
+        test.runOnMainSync(
+            () -> {
+              try {
+                Field photos = MainActivity.class.getDeclaredField("photos");
+                photos.setAccessible(true);
+                photos.set(a, new ArrayList<>(Collections.singletonList(seed)));
+                Method show = MainActivity.class.getDeclaredMethod("showPhoto", int.class);
+                show.setAccessible(true);
+                show.invoke(a, 0);
+                generation[0] = (int) field(a, "generation");
+              } catch (Exception e) {
+                throw new RuntimeException(e);
+              }
+            });
         ((ExecutorService) field(a, "images")).submit(() -> {}).get(30, TimeUnit.SECONDS);
         test.waitForIdleSync();
       }
@@ -81,7 +133,8 @@ final class ImportLatencyChecks {
         Uri uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
         if (uri == null) throw new AssertionError("fixture insert failed");
         fixtures.add(uri);
-        try (InputStream in = new FileInputStream(container); OutputStream out = resolver.openOutputStream(uri)) {
+        try (InputStream in = new FileInputStream(container);
+            OutputStream out = resolver.openOutputStream(uri)) {
           if (out == null) throw new AssertionError("fixture output missing");
           in.transferTo(out);
         }
@@ -89,7 +142,8 @@ final class ImportLatencyChecks {
       long publishing = SystemClock.elapsedRealtimeNanos();
       DiagnosticLog.event("test.import_publish", 0);
       for (Uri uri : fixtures) {
-        ContentValues values = new ContentValues(); values.put(MediaStore.MediaColumns.IS_PENDING, 0);
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.MediaColumns.IS_PENDING, 0);
         resolver.update(uri, values, null, null);
       }
       DiagnosticLog.event("test.import_published", 0);
@@ -98,92 +152,128 @@ final class ImportLatencyChecks {
         boolean pending = false;
         while (SystemClock.elapsedRealtime() < readyDeadline) {
           boolean[] state = {false, false};
-          test.runOnMainSync(() -> {
-            try {
-              state[0] = (boolean) field(a, "pendingIndexUpdate");
-              state[1] = (int) field(a, "generation") != generation[0] || !(boolean) field(a, "detail");
-            } catch (Exception e) { throw new RuntimeException(e); }
-          });
+          test.runOnMainSync(
+              () -> {
+                try {
+                  state[0] = (boolean) field(a, "pendingIndexUpdate");
+                  state[1] =
+                      (int) field(a, "generation") != generation[0]
+                          || !(boolean) field(a, "detail");
+                } catch (Exception e) {
+                  throw new RuntimeException(e);
+                }
+              });
           if (state[1] || test.importPauses() != pauses) throw new ImportInterrupted();
-          if (state[0]) { pending = true; break; }
+          if (state[0]) {
+            pending = true;
+            break;
+          }
           Thread.sleep(20);
         }
         if (!pending) throw new AssertionError("viewer did not retain pending index update");
-        test.runOnMainSync(() -> {
-          a.onBackPressed();
-          try { generation[0] = (int) field(a, "generation"); }
-          catch (Exception e) { throw new RuntimeException(e); }
-        });
+        test.runOnMainSync(
+            () -> {
+              a.onBackPressed();
+              try {
+                generation[0] = (int) field(a, "generation");
+              } catch (Exception e) {
+                throw new RuntimeException(e);
+              }
+            });
       }
       if (pause) {
         long resumes = test.importResumes();
         test.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_HOME);
         long pauseDeadline = SystemClock.elapsedRealtime() + 5000;
-        while (test.importPauses() == pauses && SystemClock.elapsedRealtime() < pauseDeadline) Thread.sleep(20);
+        while (test.importPauses() == pauses && SystemClock.elapsedRealtime() < pauseDeadline)
+          Thread.sleep(20);
         if (test.importPauses() == pauses) throw new AssertionError("home did not pause activity");
         // Existing activities do not call onCreate, which startActivitySync waits for.
-        test.runOnMainSync(() -> context.startActivity(new Intent(context, MainActivity.class)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)));
+        test.runOnMainSync(
+            () ->
+                context.startActivity(
+                    new Intent(context, MainActivity.class)
+                        .addFlags(
+                            Intent.FLAG_ACTIVITY_NEW_TASK
+                                | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)));
         long resumeDeadline = SystemClock.elapsedRealtime() + 5000;
-        while (test.importResumes() == resumes && SystemClock.elapsedRealtime() < resumeDeadline) Thread.sleep(20);
+        while (test.importResumes() == resumes && SystemClock.elapsedRealtime() < resumeDeadline)
+          Thread.sleep(20);
         if (test.importResumes() == resumes) throw new AssertionError("activity did not resume");
       } else if (interrupt) test.runOnMainSync(a::onBackPressed);
       long deadline = SystemClock.elapsedRealtime() + 90000;
-      long applied = 0, frame = 0;
+      long applied = 0, frame = 0, nextTraceRead = 0;
       Set<Long> ids = new HashSet<>();
       while (SystemClock.elapsedRealtime() < deadline) {
         boolean[] ready = {false};
         boolean[] changed = {false};
-        test.runOnMainSync(() -> {
-          try {
-            changed[0] = (int) field(a, "generation") != generation[0]
-                || !folder.equals(field(a, "albumFolder")) || (boolean) field(a, "albumHome");
-            @SuppressWarnings("unchecked") List<PhotoRepository.Photo> photos = (List<PhotoRepository.Photo>) field(a, "photos");
-            ready[0] = photos.size() == count;
-            for (PhotoRepository.Photo p : photos) ready[0] &= p.folder.equals(folder) && p.size == container.length();
-            if (ready[0]) for (PhotoRepository.Photo p : photos) ids.add(DiagnosticLog.photo(p));
-          } catch (Exception e) { throw new RuntimeException(e); }
-        });
+        test.runOnMainSync(
+            () -> {
+              try {
+                changed[0] =
+                    (int) field(a, "generation") != generation[0]
+                        || !folder.equals(field(a, "albumFolder"))
+                        || (boolean) field(a, "albumHome");
+                @SuppressWarnings("unchecked")
+                List<PhotoRepository.Photo> photos =
+                    (List<PhotoRepository.Photo>) field(a, "photos");
+                ready[0] = photos.size() == count;
+                for (PhotoRepository.Photo p : photos)
+                  ready[0] &= p.folder.equals(folder) && p.size == container.length();
+                if (ready[0])
+                  for (PhotoRepository.Photo p : photos) ids.add(DiagnosticLog.photo(p));
+              } catch (Exception e) {
+                throw new RuntimeException(e);
+              }
+            });
         if (changed[0] || test.importPauses() != pauses) {
           DiagnosticLog.event("test.import_interrupted", 0);
           throw new ImportInterrupted();
         }
         if (ready[0]) {
           if (applied == 0) applied = SystemClock.elapsedRealtimeNanos();
-          // Correlate new fixture requests only; an old screen's frame cannot satisfy the check.
-          Map<Long, Long> requests = new HashMap<>();
-          File log = new File(context.getFilesDir(), "diagnostics/events.jsonl");
-          if (log.isFile()) for (String line : Files.readAllLines(log.toPath())) {
-            if (!line.endsWith("}")) continue; // writer may be appending the last line
-            JSONObject event = new JSONObject(line);
-            if (event.getLong("ns") < publishing) continue;
-            if ("image.request".equals(event.getString("event")) && ids.contains(event.optLong("photo")))
-              requests.put(event.getLong("request"), event.optLong("photo"));
-            if ("image.frame_commit".equals(event.getString("event")) && requests.containsKey(event.getLong("request"))) {
-              frame = event.getLong("ns"); break;
-            }
+          long now = SystemClock.elapsedRealtime();
+          if (now >= nextTraceRead) {
+            nextTraceRead = now + 100;
+            frame =
+                ImportFrameTrace.firstFrame(
+                    new File(context.getFilesDir(), "diagnostics"), publishing, ids);
           }
           if (frame != 0) break;
         }
         Thread.sleep(20);
       }
-      if (applied == 0 || frame == 0) throw new AssertionError("new import did not reach list and image frame");
+      if (applied == 0 || frame == 0)
+        throw new AssertionError("new import did not reach list and image frame");
       if (interrupt) throw new AssertionError("screen change was not detected");
-      return String.format(Locale.ROOT,
+      return String.format(
+          Locale.ROOT,
           "PASS new synthetic RAW6, 24MiB padding each, no derived cache; import_to_list_ms=%.3f publish_to_list_ms=%.3f publish_to_frame_ms=%.3f deferred=%s. Existing photos untouched; fixture URIs removed in finally.\n",
-          (applied-begin)/1e6, (applied-publishing)/1e6, (frame-publishing)/1e6, deferred);
+          (applied - begin) / 1e6,
+          (applied - publishing) / 1e6,
+          (frame - publishing) / 1e6,
+          deferred);
     } catch (ImportInterrupted interrupted) {
       if (!interrupt) throw interrupted;
       return "PASS import test detects changed screen without waiting for timeout; fixture cleanup runs in finally.\n";
     } finally {
-      if (activity != null) { MainActivity a = activity; test.runOnMainSync(a::finish); }
+      if (activity != null) {
+        MainActivity a = activity;
+        test.runOnMainSync(a::finish);
+      }
       for (Uri uri : fixtures) resolver.delete(uri, null, null);
       container.delete();
       // Restore the rebuildable index after removing only this test's fixtures.
-      GalleryIndex.WORKER.submit(() -> {
-        try { GalleryIndex.rebuild(context, true, () -> false); }
-        catch (Exception e) { throw new RuntimeException(e); }
-      }).get(90, TimeUnit.SECONDS);
+      GalleryIndex.WORKER
+          .submit(
+              () -> {
+                try {
+                  GalleryIndex.rebuild(context, true, () -> false);
+                } catch (Exception e) {
+                  throw new RuntimeException(e);
+                }
+              })
+          .get(90, TimeUnit.SECONDS);
     }
   }
 }

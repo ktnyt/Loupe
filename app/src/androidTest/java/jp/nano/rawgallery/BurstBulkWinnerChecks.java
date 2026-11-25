@@ -36,8 +36,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -55,13 +53,16 @@ final class BurstBulkWinnerChecks {
   private static final String SWITCH = "連写は1位だけ共有";
 
   static String run(Instrumentation t, int width, float font) throws Exception {
-    MainActivity a = (MainActivity) t.startActivitySync(new Intent(t.getTargetContext(),
-        MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    MainActivity a =
+        (MainActivity)
+            t.startActivitySync(
+                new Intent(t.getTargetContext(), MainActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     SharedPreferences prefs = a.getSharedPreferences("burst-bulk-winners-test", 0);
     List<File> files = new ArrayList<>();
     CountDownLatch release = new CountDownLatch(1);
     try {
-      ((ExecutorService) get(a, "scans")).submit(() -> {}).get(10, TimeUnit.SECONDS);
+      GalleryScreenChecks.finishInitialIndex(t, a);
       check(prefs.edit().clear().commit(), "Reset fixture rankings");
       List<PhotoRepository.Photo> photos = fixtures(a, files);
       List<String> fixtureKeys = new ArrayList<>();
@@ -84,24 +85,39 @@ final class BurstBulkWinnerChecks {
       tapPhoto(t, 0);
       tapPhoto(t, 3);
       await(t, "two selected", () -> bulkEnabled(a) && bulk(a).getText().toString().contains("2枚"));
-      ui(t, () -> {
-        if (width > 0) {
-          check(a.getWindow().getDecorView().getWidth() == GalleryUi.dp(a, width), "Activity width");
-          check(Math.abs(a.getResources().getConfiguration().fontScale - font) < .001f, "Font scale");
-        }
-        check(((CompoundButton) windowView(SWITCH)).isChecked(), "Best-only sharing starts enabled");
-        check(shared(a).isEmpty(), "Best-only sharing initially excludes lower photos");
-      });
+      ui(
+          t,
+          () -> {
+            if (width > 0) {
+              check(
+                  a.getWindow().getDecorView().getWidth() == GalleryUi.dp(a, width),
+                  "Activity width");
+              check(
+                  Math.abs(a.getResources().getConfiguration().fontScale - font) < .001f,
+                  "Font scale");
+            }
+            check(
+                ((CompoundButton) windowView(SWITCH)).isChecked(),
+                "Best-only sharing starts enabled");
+            check(shared(a).isEmpty(), "Best-only sharing initially excludes lower photos");
+          });
       if (width > 0) ui(t, () -> logDockGeometry(a, "before capture"));
       capture(t, a, prefix + "-selection", SWITCH);
-      if (width > 0) ui(t, () -> {
-        logDockGeometry(a, "after capture");
-        inspectDock(a);
-      });
+      if (width > 0)
+        ui(
+            t,
+            () -> {
+              logDockGeometry(a, "after capture");
+              inspectDock(a);
+            });
 
       click(t, SWITCH);
-      ui(t, () -> check(shared(a).equals(List.of(photos.get(0), photos.get(3))),
-          "Sharing switch includes both lower photos when off"));
+      ui(
+          t,
+          () ->
+              check(
+                  shared(a).equals(List.of(photos.get(0), photos.get(3))),
+                  "Sharing switch includes both lower photos when off"));
       open(t, a);
       capture(t, a, prefix + "-confirm", CONFIRM);
       click(t, CANCEL);
@@ -129,10 +145,12 @@ final class BurstBulkWinnerChecks {
       click(t, APPLY);
       visible(t, "保存しています");
       await(t, "first commit entered", () -> commits.get() == 1);
-      ui(t, () -> {
-        check(!windowView("保存しています").isEnabled(), "Confirm still enabled during save");
-        check(!windowView(CANCEL).isEnabled(), "Cancel still enabled during save");
-      });
+      ui(
+          t,
+          () -> {
+            check(!windowView("保存しています").isEnabled(), "Confirm still enabled during save");
+            check(!windowView(CANCEL).isEnabled(), "Cancel still enabled during save");
+          });
       back(t);
       visible(t, "保存しています");
       tapOutside(t, a, CONFIRM);
@@ -151,15 +169,25 @@ final class BurstBulkWinnerChecks {
       assertRanks(new RankingStore(prefs), keys, PROMOTED);
       check(disk.load(otherKeys).journal.equals(otherRanking.journal), "Other burst changed");
       check(Arrays.equals(gridPosition(t, a), before), "Bulk save moved the grid");
-      ui(t, () -> {
-        check(Boolean.TRUE.equals(get(a, "selecting")) && get(a, "burstMembers").equals(members),
-            "Bulk save left selection or changed bursts");
-        check(selections(a).equals(Set.of(photos.get(0).uri.toString(),
-            photos.get(3).uri.toString(), outside)), "Bulk save changed selected photos");
-        check(((CompoundButton) windowView(SWITCH)).isChecked(), "Bulk save changed sharing setting");
-        check(shared(a).equals(List.of(photos.get(0), photos.get(3))),
-            "Best-only sharing did not use the newly saved winners");
-      });
+      ui(
+          t,
+          () -> {
+            check(
+                Boolean.TRUE.equals(get(a, "selecting")) && get(a, "burstMembers").equals(members),
+                "Bulk save left selection or changed bursts");
+            check(
+                selections(a)
+                    .equals(
+                        Set.of(
+                            photos.get(0).uri.toString(), photos.get(3).uri.toString(), outside)),
+                "Bulk save changed selected photos");
+            check(
+                ((CompoundButton) windowView(SWITCH)).isChecked(),
+                "Bulk save changed sharing setting");
+            check(
+                shared(a).equals(List.of(photos.get(0), photos.get(3))),
+                "Best-only sharing did not use the newly saved winners");
+          });
       capture(t, a, prefix + "-success", SAVED, true);
       ui(t, () -> bulk(a).performClick());
       ui(t, () -> check(a.hasWindowFocus(), "Disabled action opened confirmation"));
@@ -170,20 +198,37 @@ final class BurstBulkWinnerChecks {
       clickExact(t, a, "選択");
       tapPhoto(t, 2);
       tapPhoto(t, 4);
-      clickExact(t, a, "1位");
-      await(t, "rank filter hides selected photos", () ->
-          windowView(photoLabel(2)) == null && windowView(photoLabel(4)) == null);
+      // Selection no longer offers a filter picker. Seed the hidden selection state directly.
+      ui(
+          t,
+          () -> {
+            set(a, "rankFilter", 1);
+            RankingResultChecks.call(a, "gallery");
+          });
+      await(
+          t,
+          "rank filter hides selected photos",
+          () -> windowView(photoLabel(2)) == null && windowView(photoLabel(4)) == null);
       open(t, a);
       visible(t, "絞り込みで見えない2枚を含みます");
       click(t, APPLY);
       await(t, "hidden selection saved", () -> a.hasWindowFocus() && !bulkEnabled(a));
       check(commits.get() == 4, "Hidden selection needs a single save");
-      check(Set.copyOf(disk.load(keys).best()).equals(Set.of(keys.get(0), keys.get(1),
-          keys.get(2), keys.get(3), keys.get(4), keys.get(6))), "Hidden selections omitted");
+      check(
+          Set.copyOf(disk.load(keys).best())
+              .equals(
+                  Set.of(
+                      keys.get(0),
+                      keys.get(1),
+                      keys.get(2),
+                      keys.get(3),
+                      keys.get(4),
+                      keys.get(6))),
+          "Hidden selections omitted");
 
       // An unfinished journal can be replaced after warning, including selecting the entire burst.
-      List<Integer> longBurst = IntStream.range(0, fixtureKeys.size()).boxed()
-          .collect(Collectors.toList());
+      List<Integer> longBurst =
+          IntStream.range(0, fixtureKeys.size()).boxed().collect(Collectors.toList());
       PhotoRanking mid = new PhotoRanking(disk.load(fixtureKeys).ids, "B:").choose(false);
       check(store.save(mid), "Seed an unfinished comparison");
       ui(t, () -> seed(a, photos, longBurst, List.of(), store));
@@ -194,7 +239,8 @@ final class BurstBulkWinnerChecks {
       visible(t, "途中の比較");
       click(t, CANCEL);
       await(t, "unfinished confirmation closed", a::hasWindowFocus);
-      check(disk.load(fixtureKeys).journal.equals(mid.journal), "Cancel replaced unfinished journal");
+      check(
+          disk.load(fixtureKeys).journal.equals(mid.journal), "Cancel replaced unfinished journal");
       click(t, "表示中の写真をすべて選択");
       t.waitForIdleSync();
       int[] unscrolled = gridPosition(t, a);
@@ -207,7 +253,9 @@ final class BurstBulkWinnerChecks {
       click(t, fixtureKeys.size() + "枚を1位にする");
       await(t, "all selected saved", () -> a.hasWindowFocus() && !bulkEnabled(a));
       t.waitForIdleSync();
-      check(disk.load(fixtureKeys).best().size() == fixtureKeys.size(), "All selected photos must tie first");
+      check(
+          disk.load(fixtureKeys).best().size() == fixtureKeys.size(),
+          "All selected photos must tie first");
       check(Arrays.equals(gridPosition(t, a), scrolled), "Bulk save moved a scrolled grid");
       return "PASS isolated burst bulk UI: multiple selections, empty/already disabled, cancel, Back, "
           + "outside, busy Back, rollback and single retry, frozen targets, selection/grid retention, "
@@ -233,26 +281,46 @@ final class BurstBulkWinnerChecks {
       Rect visible = new Rect();
       boolean hasVisibleArea = view.getLocalVisibleRect(visible);
       String label = view instanceof Button ? ((Button) view).getText().toString() : "";
-      android.util.Log.i("LoupeFixtureGeometry", "bulk dock " + stage + " "
-          + view.getClass().getSimpleName() + " " + label
-          + " size=" + view.getWidth() + "x" + view.getHeight()
-          + " measured=" + view.getMeasuredWidth() + "x" + view.getMeasuredHeight()
-          + " visible=" + (hasVisibleArea ? visible.toShortString() : "none")
-          + " requested=" + view.isLayoutRequested()
-          + " textLayout=" + (view instanceof Button && ((Button) view).getLayout() != null));
+      android.util.Log.i(
+          "LoupeFixtureGeometry",
+          "bulk dock "
+              + stage
+              + " "
+              + view.getClass().getSimpleName()
+              + " "
+              + label
+              + " size="
+              + view.getWidth()
+              + "x"
+              + view.getHeight()
+              + " measured="
+              + view.getMeasuredWidth()
+              + "x"
+              + view.getMeasuredHeight()
+              + " visible="
+              + (hasVisibleArea ? visible.toShortString() : "none")
+              + " requested="
+              + view.isLayoutRequested()
+              + " textLayout="
+              + (view instanceof Button && ((Button) view).getLayout() != null));
     }
   }
 
   private static void inspectDock(MainActivity a) {
-    for (String label : List.of("選択を終了", "すべて選択")) {
+    for (String label : List.of("選択を終了", "表示中の写真をすべて選択")) {
       Button button = exactButton(a.getWindow().getDecorView(), label);
       check(button != null, "Missing dock button " + label);
       check(button.getLayout() != null, "Missing dock text layout " + label);
       Rect visible = new Rect();
-      check(button.getLocalVisibleRect(visible) && visible.height() == button.getHeight(),
+      check(
+          button.getLocalVisibleRect(visible) && visible.height() == button.getHeight(),
           "Footer clips dock button " + label);
-      check(button.getLayout().getHeight() + button.getCompoundPaddingTop()
-          + button.getCompoundPaddingBottom() <= button.getHeight(), "Clipped dock label " + label);
+      check(
+          button.getLayout().getHeight()
+                  + button.getCompoundPaddingTop()
+                  + button.getCompoundPaddingBottom()
+              <= button.getHeight(),
+          "Clipped dock label " + label);
     }
   }
 
@@ -283,16 +351,24 @@ final class BurstBulkWinnerChecks {
 
   private static void clickExact(Instrumentation t, MainActivity a, String label)
       throws InterruptedException {
-    await(t, "button " + label, () -> a.hasWindowFocus()
-        && exactButton(a.getWindow().getDecorView(), label) != null);
-    ui(t, () -> check(exactButton(a.getWindow().getDecorView(), label)
-        .performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK, null), "Click " + label));
+    await(
+        t,
+        "button " + label,
+        () -> a.hasWindowFocus() && exactButton(a.getWindow().getDecorView(), label) != null);
+    ui(
+        t,
+        () ->
+            check(
+                exactButton(a.getWindow().getDecorView(), label)
+                    .performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK, null),
+                "Click " + label));
   }
 
   private static Button exactButton(View view, String label) {
     if (!view.isShown()) return null;
-    if (view instanceof Button && (label.contentEquals(((Button) view).getText())
-        || label.equals(view.getContentDescription()))) return (Button) view;
+    if (view instanceof Button
+        && (label.contentEquals(((Button) view).getText())
+            || label.equals(view.getContentDescription()))) return (Button) view;
     if (view instanceof ViewGroup) {
       ViewGroup group = (ViewGroup) view;
       for (int i = 0; i < group.getChildCount(); i++) {
@@ -305,32 +381,38 @@ final class BurstBulkWinnerChecks {
 
   private static int[] gridPosition(Instrumentation t, MainActivity a) {
     int[] position = new int[2];
-    ui(t, () -> {
-      ScrollingGrid grid = (ScrollingGrid) get(a, "grid");
-      position[0] = grid.getFirstVisiblePosition();
-      position[1] = grid.getChildAt(0).getTop();
-    });
+    ui(
+        t,
+        () -> {
+          ScrollingGrid grid = (ScrollingGrid) get(a, "grid");
+          position[0] = grid.getFirstVisiblePosition();
+          position[1] = grid.getChildAt(0).getTop();
+        });
     return position;
   }
 
   private static void tapPhoto(Instrumentation t, int index) throws InterruptedException {
     String label = photoLabel(index);
     int[] point = new int[2];
-    await(t, "visible photo tile " + index, () -> {
-      View tile = windowView(label);
-      Rect rect = new Rect();
-      Point origin = new Point();
-      if (tile == null || !tile.getGlobalVisibleRect(rect, origin) || rect.height() < 8) return false;
-      int[] screen = new int[2];
-      tile.getLocationOnScreen(screen);
-      point[0] = rect.centerX() + screen[0] - origin.x;
-      point[1] = rect.centerY() + screen[1] - origin.y;
-      return true;
-    });
+    await(
+        t,
+        "visible photo tile " + index,
+        () -> {
+          View tile = windowView(label);
+          Rect rect = new Rect();
+          Point origin = new Point();
+          if (tile == null || !tile.getGlobalVisibleRect(rect, origin) || rect.height() < 8)
+            return false;
+          int[] screen = new int[2];
+          tile.getLocationOnScreen(screen);
+          point[0] = rect.centerX() + screen[0] - origin.x;
+          point[1] = rect.centerY() + screen[1] - origin.y;
+          return true;
+        });
     long down = SystemClock.uptimeMillis();
     for (int action : new int[] {MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP}) {
-      MotionEvent event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action,
-          point[0], point[1], 0);
+      MotionEvent event =
+          MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, point[0], point[1], 0);
       event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
       try {
         check(t.getUiAutomation().injectInputEvent(event, true), "Tap photo tile " + index);
@@ -339,10 +421,13 @@ final class BurstBulkWinnerChecks {
       }
     }
     t.waitForIdleSync();
-    await(t, "photo selected " + index, () -> {
-      View tile = windowView(label);
-      return tile != null && tile.getContentDescription().toString().contains("選択済み");
-    });
+    await(
+        t,
+        "photo selected " + index,
+        () -> {
+          View tile = windowView(label);
+          return tile != null && tile.getContentDescription().toString().contains("選択済み");
+        });
   }
 
   private static String photoLabel(int index) {
@@ -367,8 +452,12 @@ final class BurstBulkWinnerChecks {
     }
   }
 
-  private static void seed(MainActivity a, List<PhotoRepository.Photo> photos,
-      List<Integer> members, List<Integer> other, RankingStore store) {
+  private static void seed(
+      MainActivity a,
+      List<PhotoRepository.Photo> photos,
+      List<Integer> members,
+      List<Integer> other,
+      RankingStore store) {
     set(a, "rankingStore", store);
     set(a, "photos", photos);
     set(a, "bundles", other.isEmpty() ? List.of(members) : List.of(members, other));
@@ -402,9 +491,16 @@ final class BurstBulkWinnerChecks {
 
   private static List<PhotoRepository.Photo> fixtures(MainActivity a, List<File> files)
       throws Exception {
-    String[][] colors = {{"#8D979E", "#586065"}, {"#34443A", "#1C2419"}, {"#A9C3D8", "#69736A"},
-        {"#7B5B45", "#2A201B"}, {"#C8B08A", "#6E5A44"}, {"#3A3F45", "#8AB4F8"},
-        {"#B6463C", "#E9C46A"}, {"#5D6B58", "#C9A27E"}};
+    String[][] colors = {
+      {"#8D979E", "#586065"},
+      {"#34443A", "#1C2419"},
+      {"#A9C3D8", "#69736A"},
+      {"#7B5B45", "#2A201B"},
+      {"#C8B08A", "#6E5A44"},
+      {"#3A3F45", "#8AB4F8"},
+      {"#B6463C", "#E9C46A"},
+      {"#5D6B58", "#C9A27E"}
+    };
     List<PhotoRepository.Photo> photos = new ArrayList<>();
     for (int i = 0; i < SCROLL_BURST_SIZE; i++) {
       File file = new File(a.getCacheDir(), photoLabel(i));
@@ -414,8 +510,15 @@ final class BurstBulkWinnerChecks {
         Canvas canvas = new Canvas(bitmap);
         Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         String[] color = colors[i % colors.length];
-        paint.setShader(new LinearGradient(0, 0, 360, 480, Color.parseColor(color[0]),
-            Color.parseColor(color[1]), Shader.TileMode.CLAMP));
+        paint.setShader(
+            new LinearGradient(
+                0,
+                0,
+                360,
+                480,
+                Color.parseColor(color[0]),
+                Color.parseColor(color[1]),
+                Shader.TileMode.CLAMP));
         canvas.drawPaint(paint);
         paint.setShader(null);
         paint.setColor(0xd9ede2cd);
@@ -424,7 +527,8 @@ final class BurstBulkWinnerChecks {
       } finally {
         bitmap.recycle();
       }
-      photos.add(new PhotoRepository.Photo(Uri.fromFile(file), photoLabel(i), "", file.length(), i, 0));
+      photos.add(
+          new PhotoRepository.Photo(Uri.fromFile(file), photoLabel(i), "", file.length(), i, 0));
     }
     return photos;
   }

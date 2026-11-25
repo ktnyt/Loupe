@@ -469,6 +469,11 @@ public final class ArchiveInstrumentation extends Instrumentation {
         finish(-1, results);
         return;
       }
+      if ("camera-history-migration".equals(mode)) {
+        results.putString("stream", CameraSyncHistoryMigrationCheck.run(context));
+        finish(-1, results);
+        return;
+      }
       if (selectedTagsTest) {
         results.putString(
             "stream",
@@ -784,6 +789,24 @@ public final class ArchiveInstrumentation extends Instrumentation {
         finish(-1, results);
         return;
       }
+      if ((albumTagsTest || tabsTest || positionTest)
+          && "true".equals(cameraPilotArguments.getString("libraryFixture"))) {
+        String libraryReport;
+        try (LibraryMediaFixture fixture = new LibraryMediaFixture(context)) {
+          fixture.seed();
+          libraryReport =
+              albumTagsTest
+                  ? AlbumTagEntryChecks.run(this)
+                  : tabsTest ? LibraryTabsChecks.run(this) : GalleryPositionChecks.run(this);
+          if (libraryReport.contains("SKIP ") || libraryReport.contains("UNVERIFIED ")) {
+            throw new AssertionError(
+                "Rich library test did not validate every fixture-dependent check");
+          }
+        }
+        results.putString("stream", libraryReport);
+        finish(-1, results);
+        return;
+      }
       if (albumTagsTest) {
         results.putString("stream", AlbumTagEntryChecks.run(this));
         finish(-1, results);
@@ -1007,7 +1030,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
         return;
       }
       if (automaticTest) {
-        results.putString("stream", AutomaticTagChecks.run(context) + BatchTagChecks.run(context));
+        results.putString(
+            "stream", "PASS " + AutomaticTagChecks.run(context) + BatchTagChecks.run(context));
         finish(-1, results);
         return;
       }
@@ -1017,7 +1041,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
         return;
       }
       if (tagTest) {
-        results.putString("stream", TagStoreChecks.run(context));
+        results.putString("stream", "PASS " + TagStoreChecks.run(context));
         finish(-1, results);
         return;
       }
@@ -1133,7 +1157,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
       StringBuilder result, java.util.Set<Throwable> seen, Throwable failure, String prefix) {
     if (failure == null || !seen.add(failure)) return;
     result.append(prefix).append(failure.getClass().getName());
-    if (failure instanceof PhotoStorageChecks.CheckFailure)
+    if (failure instanceof PhotoStorageChecks.CheckFailure
+        || failure instanceof PhotoEditChecks.MonoTintFailure)
       result.append(": ").append(failure.getMessage());
     result.append('\n');
     for (StackTraceElement frame : failure.getStackTrace())
