@@ -608,7 +608,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
       Throwable failure, String prefix) {
     if (failure == null || !seen.add(failure)) return;
     result.append(prefix).append(failure.getClass().getName());
-    if (failure instanceof PhotoStorageChecks.CheckFailure) result.append(": ").append(failure.getMessage());
+    if (failure instanceof PhotoStorageChecks.CheckFailure || failure instanceof PhotoEditChecks.MonoTintFailure)
+      result.append(": ").append(failure.getMessage());
     result.append('\n');
     for (StackTraceElement frame : failure.getStackTrace()) result.append("  at ").append(frame).append('\n');
     for (Throwable suppressed : failure.getSuppressed()) appendFailureLocations(result, seen, suppressed, "Suppressed: ");

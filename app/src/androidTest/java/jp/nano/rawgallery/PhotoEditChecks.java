@@ -21,6 +21,10 @@ import java.util.function.BooleanSupplier;
 
 /** Synthetic originals only. Synthetic build of the external recipient plus real internal editor end to end. */
 final class PhotoEditChecks {
+  static final class MonoTintFailure extends AssertionError {
+    MonoTintFailure(String message) { super(message); }
+  }
+
   static void await(BooleanSupplier condition)throws Exception{
     long until=android.os.SystemClock.uptimeMillis()+5000;
     while(!condition.getAsBoolean()){
@@ -219,14 +223,7 @@ final class PhotoEditChecks {
       Bitmap original=BitmapFactory.decodeByteArray(before,0,before.length);
       try{
         TagDetailChecks.require(written!=null&&written.getWidth()==192&&written.getHeight()==128,"MediaStore JPEG preserves fixture dimensions");
-        for(int x:new int[]{32,96,160}){
-          int start=original.getPixel(x,64),pixel=written.getPixel(x,64);
-          float luminance=(.2126f*Color.red(start)+.7152f*Color.green(start)+.0722f*Color.blue(start))/255f;
-          float light=Math.min(1,luminance+.02f),chroma=(1-Math.abs(2*light-1))*.11f;
-          int[] expected={Math.round((light-chroma/6)*255),Math.round((light-chroma/2)*255),Math.round((light+chroma/2)*255)};
-          TagDetailChecks.require(Math.abs(Color.red(pixel)-expected[0])<=6&&Math.abs(Color.green(pixel)-expected[1])<=6&&Math.abs(Color.blue(pixel)-expected[2])<=6,"saved Mono follows hue260/saturation11/lightness+2 within JPEG tolerance");
-          TagDetailChecks.require(Color.blue(pixel)>Color.red(pixel)&&Color.red(pixel)>Color.green(pixel),"saved Mono tint channel order");
-        }
+        checkSavedMonoTint(original,written);
       }finally{if(written!=null)written.recycle();if(original!=null)original.recycle();}
       TagDetailChecks.require(Arrays.equals(before,Files.readAllBytes(source.toPath()))&&Arrays.equals(before,Files.readAllBytes(copy.toPath())),"full editor/save leaves synthetic original and input copy unchanged");
       t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
@@ -250,6 +247,37 @@ final class PhotoEditChecks {
       if(cleanup!=null){if(primary!=null)primary.addSuppressed(cleanup);else if(cleanup instanceof Error)throw (Error)cleanup;else throw (Exception)cleanup;}
     }
   }
+  private static void checkSavedMonoTint(Bitmap original, Bitmap written) {
+    StringBuilder samples = new StringBuilder();
+    boolean withinTolerance = true;
+    boolean tintOrder = true;
+    for (int x : new int[]{32, 96, 160}) {
+      int start = original.getPixel(x, 64);
+      int pixel = written.getPixel(x, 64);
+      int[] input = {Color.red(start), Color.green(start), Color.blue(start)};
+      int[] actual = {Color.red(pixel), Color.green(pixel), Color.blue(pixel)};
+      float luminance = (.2126f * input[0] + .7152f * input[1] + .0722f * input[2]) / 255f;
+      float light = Math.min(1, luminance + .02f);
+      float chroma = (1 - Math.abs(2 * light - 1)) * .11f;
+      int[] expected = {
+          Math.round((light - chroma / 6) * 255),
+          Math.round((light - chroma / 2) * 255),
+          Math.round((light + chroma / 2) * 255)
+      };
+      for (int channel = 0; channel < 3; channel++) {
+        withinTolerance &= Math.abs(actual[channel] - expected[channel]) <= 6;
+      }
+      tintOrder &= actual[2] > actual[0] && actual[0] > actual[1];
+      samples.append(" x=").append(x).append(" input=").append(Arrays.toString(input))
+          .append(" expected=").append(Arrays.toString(expected))
+          .append(" saved=").append(Arrays.toString(actual));
+    }
+    if (!withinTolerance || !tintOrder) {
+      // Input and output are generated from the test's three synthetic color bands.
+      throw new MonoTintFailure("Mono JPEG tolerance=" + withinTolerance + " tintOrder=" + tintOrder + samples);
+    }
+  }
+
   private static AccessibilityNodeInfo activeNode(Instrumentation t, String text) {
     return node(t.getUiAutomation().getRootInActiveWindow(), text, false);
   }
