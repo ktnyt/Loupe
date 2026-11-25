@@ -1,7 +1,5 @@
 # mode [argument value]. Seed/verify pairs run in this order.
 
-photo-edit
-
 # SQLite, index and ranking
 camera-history-migration
 confidence-store
@@ -37,6 +35,7 @@ share-history-restart-seed
 share-history-restart-verify
 
 # Editing, video and local e2 behavior
+photo-edit
 video
 look-removal
 nano-banana
