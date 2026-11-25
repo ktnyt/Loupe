@@ -44,7 +44,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-/** Exercises the burst detail and confirmation sheet using generated photos and isolated rankings. */
+/**
+ * Exercises the burst detail and confirmation sheet using generated photos and isolated rankings.
+ */
 final class BurstCoWinnerChecks {
   private static final String ENTRY = "この写真を1位に";
   private static final String ADD = "同率1位に追加。いまの1位はそのまま";
@@ -59,9 +61,11 @@ final class BurstCoWinnerChecks {
   }
 
   private static View find(View view, String label) {
-    if (view.isShown() && ((view.getContentDescription() != null
-            && view.getContentDescription().toString().contains(label))
-        || (view instanceof TextView && ((TextView) view).getText().toString().contains(label)))) {
+    if (view.isShown()
+        && ((view.getContentDescription() != null
+                && view.getContentDescription().toString().contains(label))
+            || (view instanceof TextView
+                && ((TextView) view).getText().toString().contains(label)))) {
       return view;
     }
     if (view instanceof ViewGroup) {
@@ -100,12 +104,20 @@ final class BurstCoWinnerChecks {
   }
 
   static void click(Instrumentation t, String label) throws InterruptedException {
-    await(t, label, () -> {
-      View view = windowView(label);
-      return view != null && view.isClickable() && view.isEnabled();
-    });
-    ui(t, () -> check(windowView(label).performAccessibilityAction(
-        AccessibilityNodeInfo.ACTION_CLICK, null), "AX click " + label));
+    await(
+        t,
+        label,
+        () -> {
+          View view = windowView(label);
+          return view != null && view.isClickable() && view.isEnabled();
+        });
+    ui(
+        t,
+        () ->
+            check(
+                windowView(label)
+                    .performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK, null),
+                "AX click " + label));
   }
 
   static void back(Instrumentation t) {
@@ -115,26 +127,31 @@ final class BurstCoWinnerChecks {
 
   static void tapOutside(Instrumentation t, MainActivity a, String label) {
     int[] point = new int[2];
-    ui(t, () -> {
-      View activity = a.getWindow().getDecorView();
-      View sheet = windowView(label).getRootView()
-          .findViewById(com.google.android.material.R.id.design_bottom_sheet);
-      check(sheet != null && sheet.getHeight() > 0, "Native bottom sheet is laid out");
-      int[] activityOrigin = new int[2];
-      int[] sheetOrigin = new int[2];
-      activity.getLocationOnScreen(activityOrigin);
-      sheet.getLocationOnScreen(sheetOrigin);
-      int left = Math.max(activityOrigin[0], sheetOrigin[0]);
-      int right = Math.min(activityOrigin[0] + activity.getWidth(), sheetOrigin[0] + sheet.getWidth());
-      int bottom = Math.min(sheetOrigin[1], activityOrigin[1] + activity.getHeight());
-      check(right > left && bottom > activityOrigin[1], "No exposed activity above sheet");
-      point[0] = (left + right) / 2;
-      point[1] = (activityOrigin[1] + bottom) / 2;
-    });
+    ui(
+        t,
+        () -> {
+          View activity = a.getWindow().getDecorView();
+          View sheet =
+              windowView(label)
+                  .getRootView()
+                  .findViewById(com.google.android.material.R.id.design_bottom_sheet);
+          check(sheet != null && sheet.getHeight() > 0, "Native bottom sheet is laid out");
+          int[] activityOrigin = new int[2];
+          int[] sheetOrigin = new int[2];
+          activity.getLocationOnScreen(activityOrigin);
+          sheet.getLocationOnScreen(sheetOrigin);
+          int left = Math.max(activityOrigin[0], sheetOrigin[0]);
+          int right =
+              Math.min(activityOrigin[0] + activity.getWidth(), sheetOrigin[0] + sheet.getWidth());
+          int bottom = Math.min(sheetOrigin[1], activityOrigin[1] + activity.getHeight());
+          check(right > left && bottom > activityOrigin[1], "No exposed activity above sheet");
+          point[0] = (left + right) / 2;
+          point[1] = (activityOrigin[1] + bottom) / 2;
+        });
     long down = SystemClock.uptimeMillis();
     for (int action : new int[] {MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP}) {
-      MotionEvent event = MotionEvent.obtain(down, SystemClock.uptimeMillis(),
-          action, point[0], point[1], 0);
+      MotionEvent event =
+          MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, point[0], point[1], 0);
       event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
       try {
         check(t.getUiAutomation().injectInputEvent(event, true), "Outside touch " + action);
@@ -158,7 +175,8 @@ final class BurstCoWinnerChecks {
       Object result = resolve.invoke(a);
       Field matches = result.getClass().getDeclaredField("photos");
       matches.setAccessible(true);
-      check(matches.get(result).equals(List.of(photos.get(0), photos.get(2))),
+      check(
+          matches.get(result).equals(List.of(photos.get(0), photos.get(2))),
           "Best-shot selection did not resolve both co-winners");
     } catch (ReflectiveOperationException error) {
       throw new AssertionError("Best-shot selection unavailable", error);
@@ -175,8 +193,12 @@ final class BurstCoWinnerChecks {
     Button button = (Button) view;
     check(button.getHeight() >= GalleryUi.dp(a, height), "Small button " + label);
     check(button.getLayout() != null, "Missing button layout " + label);
-    check(button.getLayout().getHeight() + button.getCompoundPaddingTop()
-        + button.getCompoundPaddingBottom() <= button.getHeight(), "Clipped height " + label);
+    check(
+        button.getLayout().getHeight()
+                + button.getCompoundPaddingTop()
+                + button.getCompoundPaddingBottom()
+            <= button.getHeight(),
+        "Clipped height " + label);
     for (int line = 0; line < button.getLayout().getLineCount(); line++) {
       check(button.getLayout().getEllipsisCount(line) == 0, "Clipped line " + label);
     }
@@ -187,16 +209,24 @@ final class BurstCoWinnerChecks {
     capture(t, a, name, label, false);
   }
 
-  static void capture(Instrumentation t, MainActivity a, String name, String label,
-      boolean requireClearSelectionFooter) throws Exception {
+  static void capture(
+      Instrumentation t,
+      MainActivity a,
+      String name,
+      String label,
+      boolean requireClearSelectionFooter)
+      throws Exception {
     if (name.endsWith("-success")) {
-      await(t, "saved sheet dismissed", () -> {
-        if (!a.hasWindowFocus()) return false;
-        for (View root : WindowInspector.getGlobalWindowViews()) {
-          if (find(root, "保存しています") != null) return false;
-        }
-        return true;
-      });
+      await(
+          t,
+          "saved sheet dismissed",
+          () -> {
+            if (!a.hasWindowFocus()) return false;
+            for (View root : WindowInspector.getGlobalWindowViews()) {
+              if (find(root, "保存しています") != null) return false;
+            }
+            return true;
+          });
     }
     // App frame completion does not include removal of a separate dialog surface.
     // Allow the window compositor to settle; this delay is not part of timing metrics.
@@ -205,16 +235,18 @@ final class BurstCoWinnerChecks {
     View[] focused = new View[1];
     int[][] geometry = new int[4][];
     Insets[] systemBars = new Insets[1];
-    ui(t, () -> {
-      focused[0] = windowView(label);
-      View decor = a.getWindow().getDecorView();
-      geometry[0] = screenBounds(decor);
-      geometry[1] = screenBounds(decor.findViewById(android.R.id.content));
-      geometry[2] = screenBounds((View) get(a, "root"));
-      if (focused[0] != null) geometry[3] = screenBounds(focused[0].getRootView());
-      WindowInsets insets = decor.getRootWindowInsets();
-      if (insets != null) systemBars[0] = insets.getInsets(WindowInsets.Type.systemBars());
-    });
+    ui(
+        t,
+        () -> {
+          focused[0] = windowView(label);
+          View decor = a.getWindow().getDecorView();
+          geometry[0] = screenBounds(decor);
+          geometry[1] = screenBounds(decor.findViewById(android.R.id.content));
+          geometry[2] = screenBounds((View) get(a, "root"));
+          if (focused[0] != null) geometry[3] = screenBounds(focused[0].getRootView());
+          WindowInsets insets = decor.getRootWindowInsets();
+          if (insets != null) systemBars[0] = insets.getInsets(WindowInsets.Type.systemBars());
+        });
     int[] bounds = geometry[0];
     check(focused[0] != null, "Capture screen " + label);
     ConsistencyLayoutChecks.frame(t, focused[0]);
@@ -227,8 +259,9 @@ final class BurstCoWinnerChecks {
       Insets bars = systemBars[0];
       check(bars != null, "Missing system bar insets");
       int[] root = geometry[2];
-      screen = captureClearFooter(t, root[0] + root[2] / 2,
-          root[1] + root[3] - bars.bottom - GalleryUi.dp(a, 10));
+      screen =
+          captureClearFooter(
+              t, root[0] + root[2] / 2, root[1] + root[3] - bars.bottom - GalleryUi.dp(a, 10));
     } else {
       screen = t.getUiAutomation().takeScreenshot();
       check(screen != null, "Screenshot unavailable");
@@ -243,19 +276,26 @@ final class BurstCoWinnerChecks {
       check(crop.compress(Bitmap.CompressFormat.PNG, 100, out), "Screenshot write");
       android.util.DisplayMetrics metrics = a.getResources().getDisplayMetrics();
       Insets bars = systemBars[0];
-      JSONObject metadata = new JSONObject()
-          .put("decor", boundsJson(geometry[0]))
-          .put("content", boundsJson(geometry[1]))
-          .put("root", boundsJson(geometry[2]))
-          .put("focusedWindow", boundsJson(geometry[3]))
-          .put("crop", boundsJson(new int[] {left, top, right - left, bottom - top}))
-          .put("display", boundsJson(new int[] {0, 0, screen.getWidth(), screen.getHeight()}))
-          .put("density", metrics.density)
-          .put("densityDpi", metrics.densityDpi)
-          .put("fontScale", a.getResources().getConfiguration().fontScale)
-          .put("systemBars", bars == null ? JSONObject.NULL : new JSONObject()
-              .put("left", bars.left).put("top", bars.top)
-              .put("right", bars.right).put("bottom", bars.bottom));
+      JSONObject metadata =
+          new JSONObject()
+              .put("decor", boundsJson(geometry[0]))
+              .put("content", boundsJson(geometry[1]))
+              .put("root", boundsJson(geometry[2]))
+              .put("focusedWindow", boundsJson(geometry[3]))
+              .put("crop", boundsJson(new int[] {left, top, right - left, bottom - top}))
+              .put("display", boundsJson(new int[] {0, 0, screen.getWidth(), screen.getHeight()}))
+              .put("density", metrics.density)
+              .put("densityDpi", metrics.densityDpi)
+              .put("fontScale", a.getResources().getConfiguration().fontScale)
+              .put(
+                  "systemBars",
+                  bars == null
+                      ? JSONObject.NULL
+                      : new JSONObject()
+                          .put("left", bars.left)
+                          .put("top", bars.top)
+                          .put("right", bars.right)
+                          .put("bottom", bars.bottom));
       try (FileOutputStream metadataOut = new FileOutputStream(new File(dir, name + ".json"))) {
         metadataOut.write(metadata.toString(2).getBytes(StandardCharsets.UTF_8));
       }
@@ -289,8 +329,11 @@ final class BurstCoWinnerChecks {
   }
 
   private static JSONObject boundsJson(int[] bounds) throws JSONException {
-    return new JSONObject().put("x", bounds[0]).put("y", bounds[1])
-        .put("width", bounds[2]).put("height", bounds[3]);
+    return new JSONObject()
+        .put("x", bounds[0])
+        .put("y", bounds[1])
+        .put("width", bounds[2])
+        .put("height", bounds[3]);
   }
 
   private static void seed(MainActivity a, List<PhotoRepository.Photo> photos, RankingStore store) {
@@ -327,40 +370,47 @@ final class BurstCoWinnerChecks {
     }
   }
 
-  static SharedPreferences failFirstCommit(SharedPreferences prefs,
-      CountDownLatch release, AtomicInteger commits) {
+  static SharedPreferences failFirstCommit(
+      SharedPreferences prefs, CountDownLatch release, AtomicInteger commits) {
     // SharedPreferences can publish a commit to process memory before its disk write fails.
     Map<String, String> memory = new ConcurrentHashMap<>();
-    return (SharedPreferences) Proxy.newProxyInstance(
-        BurstCoWinnerChecks.class.getClassLoader(), new Class<?>[] {SharedPreferences.class},
-        (proxy, method, args) -> {
-          if (method.getName().equals("getString") && memory.containsKey(args[0])) {
-            return memory.get(args[0]);
-          }
-          if (!method.getName().equals("edit")) return method.invoke(prefs, args);
-          SharedPreferences.Editor editor = prefs.edit();
-          Map<String, String> pending = new HashMap<>();
-          return Proxy.newProxyInstance(BurstCoWinnerChecks.class.getClassLoader(),
-              new Class<?>[] {SharedPreferences.Editor.class}, (wrapper, edit, values) -> {
-                if (edit.getName().equals("putString")) {
-                  pending.put((String) values[0], (String) values[1]);
-                }
-                if (edit.getName().equals("commit")) {
-                  memory.putAll(pending);
-                  if (commits.incrementAndGet() == 1) {
-                    release.await();
-                    return false;
-                  }
-                }
-                Object result = edit.invoke(editor, values);
-                return result == editor ? wrapper : result;
-              });
-        });
+    return (SharedPreferences)
+        Proxy.newProxyInstance(
+            BurstCoWinnerChecks.class.getClassLoader(),
+            new Class<?>[] {SharedPreferences.class},
+            (proxy, method, args) -> {
+              if (method.getName().equals("getString") && memory.containsKey(args[0])) {
+                return memory.get(args[0]);
+              }
+              if (!method.getName().equals("edit")) return method.invoke(prefs, args);
+              SharedPreferences.Editor editor = prefs.edit();
+              Map<String, String> pending = new HashMap<>();
+              return Proxy.newProxyInstance(
+                  BurstCoWinnerChecks.class.getClassLoader(),
+                  new Class<?>[] {SharedPreferences.Editor.class},
+                  (wrapper, edit, values) -> {
+                    if (edit.getName().equals("putString")) {
+                      pending.put((String) values[0], (String) values[1]);
+                    }
+                    if (edit.getName().equals("commit")) {
+                      memory.putAll(pending);
+                      if (commits.incrementAndGet() == 1) {
+                        release.await();
+                        return false;
+                      }
+                    }
+                    Object result = edit.invoke(editor, values);
+                    return result == editor ? wrapper : result;
+                  });
+            });
   }
 
   static String run(Instrumentation t, int width, float font) throws Exception {
-    MainActivity a = (MainActivity) t.startActivitySync(
-        new Intent(t.getTargetContext(), MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    MainActivity a =
+        (MainActivity)
+            t.startActivitySync(
+                new Intent(t.getTargetContext(), MainActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     SharedPreferences prefs = a.getSharedPreferences("burst-co-winners-test", 0);
     List<File> files = new ArrayList<>();
     CountDownLatch release = new CountDownLatch(1);
@@ -387,8 +437,9 @@ final class BurstCoWinnerChecks {
         } finally {
           bitmap.recycle();
         }
-        PhotoRepository.Photo photo = new PhotoRepository.Photo(Uri.fromFile(file),
-            "co-winner-" + (i + 1) + ".jpg", "", file.length(), i, 0);
+        PhotoRepository.Photo photo =
+            new PhotoRepository.Photo(
+                Uri.fromFile(file), "co-winner-" + (i + 1) + ".jpg", "", file.length(), i, 0);
         photos.add(photo);
         keys.add(ArchiveStore.key(photo));
       }
@@ -407,27 +458,39 @@ final class BurstCoWinnerChecks {
       SharedPreferences failurePrefs = failFirstCommit(prefs, release, commits);
       RankingStore store = new RankingStore(failurePrefs);
       ui(t, () -> seed(a, photos, store));
-      await(t, "fixture photo painted", () -> {
-        View hero = windowView("co-winner-1.jpg、タップで写真を拡大");
-        return hero instanceof ImageView && ((ImageView) hero).getDrawable() != null;
-      });
+      await(
+          t,
+          "fixture photo painted",
+          () -> {
+            View hero = windowView("co-winner-1.jpg、タップで写真を拡大");
+            return hero instanceof ImageView && ((ImageView) hero).getDrawable() != null;
+          });
       visible(t, "5枚目、2位、表示済み");
       String prefix = "burst-co-winners-" + width + "-" + font;
       click(t, ENTRY);
       visible(t, ADD);
-      ui(t, () -> {
-        if (width > 0) {
-          check(a.getWindow().getDecorView().getWidth() == GalleryUi.dp(a, width), "Activity width");
-          check(Math.abs(a.getResources().getConfiguration().fontScale - font) < .001f, "Font scale");
-          View surface = windowView(ADD).getRootView()
-              .findViewById(com.google.android.material.R.id.design_bottom_sheet);
-          check(surface != null && surface.getWidth() == GalleryUi.dp(a, Math.min(width, 640)),
-              "Native sheet surface width");
-        }
-        inspectButton(a, ADD, 56);
-        inspectButton(a, SOLE, 56);
-        inspectButton(a, CANCEL, 48);
-      });
+      ui(
+          t,
+          () -> {
+            if (width > 0) {
+              check(
+                  a.getWindow().getDecorView().getWidth() == GalleryUi.dp(a, width),
+                  "Activity width");
+              check(
+                  Math.abs(a.getResources().getConfiguration().fontScale - font) < .001f,
+                  "Font scale");
+              View surface =
+                  windowView(ADD)
+                      .getRootView()
+                      .findViewById(com.google.android.material.R.id.design_bottom_sheet);
+              check(
+                  surface != null && surface.getWidth() == GalleryUi.dp(a, Math.min(width, 640)),
+                  "Native sheet surface width");
+            }
+            inspectButton(a, ADD, 56);
+            inspectButton(a, SOLE, 56);
+            inspectButton(a, CANCEL, 48);
+          });
       capture(t, a, prefix + "-sheet", ADD);
       click(t, CANCEL);
       visible(t, ENTRY);
@@ -449,11 +512,13 @@ final class BurstCoWinnerChecks {
       click(t, ENTRY);
       click(t, ADD);
       visible(t, "保存しています");
-      ui(t, () -> {
-        check(!windowView("保存しています").isEnabled(), "Saving action still enabled");
-        check(!windowView(SOLE).isEnabled(), "Replacement still enabled while saving");
-        check(!windowView(CANCEL).isEnabled(), "Cancel still enabled while saving");
-      });
+      ui(
+          t,
+          () -> {
+            check(!windowView("保存しています").isEnabled(), "Saving action still enabled");
+            check(!windowView(SOLE).isEnabled(), "Replacement still enabled while saving");
+            check(!windowView(CANCEL).isEnabled(), "Cancel still enabled while saving");
+          });
       back(t);
       visible(t, "保存しています");
       await(t, "first commit entered", () -> commits.get() == 1);

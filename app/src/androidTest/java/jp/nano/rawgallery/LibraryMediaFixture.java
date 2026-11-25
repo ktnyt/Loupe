@@ -25,7 +25,8 @@ final class LibraryMediaFixture implements AutoCloseable {
 
   LibraryMediaFixture(Context context) throws Exception {
     if (!"ranchu".equals(Build.HARDWARE)
-        || context.checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED
+        || context.checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES)
+            != PackageManager.PERMISSION_GRANTED
         || !new PhotoRepository(context).scan("すべて").isEmpty()) {
       throw new AssertionError("Rich library fixtures require an empty Android emulator");
     }
@@ -43,7 +44,9 @@ final class LibraryMediaFixture implements AutoCloseable {
         row.put(MediaStore.Images.Media.DISPLAY_NAME, "Fixture-" + photo + ".jpg");
         row.put(MediaStore.Images.Media.RELATIVE_PATH, root + "Album-" + album + "/");
         row.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
-        row.put(MediaStore.Images.Media.DATE_TAKEN, 1700000000000L + (album * PHOTOS_PER_ALBUM + photo) * 30000L);
+        row.put(
+            MediaStore.Images.Media.DATE_TAKEN,
+            1700000000000L + (album * PHOTOS_PER_ALBUM + photo) * 30000L);
         row.put(MediaStore.Images.Media.IS_PENDING, 1);
         Uri uri = resolver.insert(collection, row);
         if (uri == null) throw new IOException("Synthetic library photo could not be created");
@@ -63,7 +66,8 @@ final class LibraryMediaFixture implements AutoCloseable {
     try (GalleryIndex index = new GalleryIndex(context)) {
       if (index.albums().size() != ALBUMS
           || index.load(null, "GR").bundles.size() != inserted.size()) {
-        throw new AssertionError("Synthetic library did not produce the expected albums and groups");
+        throw new AssertionError(
+            "Synthetic library did not produce the expected albums and groups");
       }
     }
   }
@@ -88,7 +92,8 @@ final class LibraryMediaFixture implements AutoCloseable {
     }
   }
 
-  @Override public void close() throws Exception {
+  @Override
+  public void close() throws Exception {
     if (inserted.isEmpty()) return;
     Exception cleanup = new IOException("Synthetic library fixture cleanup failed");
     for (Uri uri : inserted) {
