@@ -103,9 +103,9 @@ public final class CloudActivity extends DiagnosticActivity {
     web.setBackgroundColor(Color.WHITE);
     WebView.setWebContentsDebuggingEnabled(false);
     WebSettings s = web.getSettings();
-    getSharedPreferences("settings", 0)
+    SettingsRepository.open(this)
         .edit()
-        .putString("cloudUserAgent", s.getUserAgentString())
+        .putString(SettingsRepository.CLOUD_USER_AGENT, s.getUserAgentString())
         .apply();
     s.setJavaScriptEnabled(true);
     s.setDomStorageEnabled(true);
@@ -145,10 +145,10 @@ public final class CloudActivity extends DiagnosticActivity {
     logout.setText("このアプリのログイン情報を消す");
     logout.setOnClickListener(
         v -> {
-          getSharedPreferences("settings", 0)
+          SettingsRepository.open(this)
               .edit()
-              .putBoolean("syncEnabled", false)
-              .putBoolean("cleanupEnabled", false)
+              .putBoolean(SettingsRepository.SYNC_ENABLED, false)
+              .putBoolean(SettingsRepository.CLEANUP_ENABLED, false)
               .apply();
           SyncJob.schedule(this);
           web.stopLoading();
@@ -159,10 +159,10 @@ public final class CloudActivity extends DiagnosticActivity {
                     CookieManager.getInstance().flush();
                     WebStorage.getInstance().deleteAllData();
                     web.clearCache(true);
-                    getSharedPreferences("settings", 0)
+                    SettingsRepository.open(this)
                         .edit()
-                        .remove("cloudCheckedAt")
-                        .remove("cloudCount")
+                        .remove(SettingsRepository.CLOUD_CHECKED_AT)
+                        .remove(SettingsRepository.CLOUD_COUNT)
                         .apply();
                     setStatus(StatusView.Symbol.COMPLETE,"このアプリのログイン情報を消しました。",null);
                   });
@@ -268,16 +268,16 @@ public final class CloudActivity extends DiagnosticActivity {
                 setStatus(resultKind,result,resultKind==StatusView.Symbol.AUTH?()->loginButton.performClick():found>=0?null:this::diagnose);
                 if(found>=0)status.counts(found+"件");
                 if (found >= 0)
-                  getSharedPreferences("settings", 0)
+                  SettingsRepository.open(this)
                       .edit()
-                      .putLong("cloudCheckedAt", System.currentTimeMillis())
-                      .putInt("cloudCount", found)
+                      .putLong(SettingsRepository.CLOUD_CHECKED_AT, System.currentTimeMillis())
+                      .putInt(SettingsRepository.CLOUD_COUNT, found)
                       .apply();
                 else
-                  getSharedPreferences("settings", 0)
+                  SettingsRepository.open(this)
                       .edit()
-                      .remove("cloudCheckedAt")
-                      .remove("cloudCount")
+                      .remove(SettingsRepository.CLOUD_CHECKED_AT)
+                      .remove(SettingsRepository.CLOUD_COUNT)
                       .apply();
               });
         });
@@ -397,7 +397,7 @@ public final class CloudActivity extends DiagnosticActivity {
           SyncEngine.RUNNING.set(false);
           final String message = result;
           final StatusView.Symbol resultKind=outcome;
-          if(!uploading)getSharedPreferences("settings",0).edit().putString("cloudVerificationResult",outcome.name()).apply();
+          if(!uploading)SettingsRepository.open(this).edit().putString(SettingsRepository.CLOUD_VERIFICATION_RESULT,outcome.name()).apply();
           runOnUiThread(
               () -> {
                 if (isDestroyed()) return;

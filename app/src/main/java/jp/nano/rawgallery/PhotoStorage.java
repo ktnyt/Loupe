@@ -19,11 +19,11 @@ public final class PhotoStorage {
   private PhotoStorage() {}
 
   public static String selected(Context context) {
-    return context.getSharedPreferences("settings", 0).getString(PREFERENCE, PRIMARY);
+    return SettingsRepository.open(context).getString(PREFERENCE, PRIMARY);
   }
 
   static boolean select(Context context, String volume) {
-    return context.getSharedPreferences("settings", 0).edit().putString(PREFERENCE, volume).commit();
+    return SettingsRepository.open(context).edit().putString(PREFERENCE, volume).commit();
   }
 
   static List<StorageVolume> volumes(Context context) {

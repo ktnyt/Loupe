@@ -69,7 +69,7 @@ public final class E2SyncJob extends JobService {
 
   private static void setEnabledLocked(Context context, boolean enabled, String bucket) {
     if (enabled && (RUNNING.get()
-        || context.getSharedPreferences("settings", 0).getBoolean("cleanupEnabled", false)))
+        || SettingsRepository.cleanupEnabled(SettingsRepository.open(context))))
       throw new IllegalStateException("既存のオリジナル整理を停止してから開始してください");
     if (enabled && (bucket == null || !bucket.equals(E2Settings.configuredBucket(context))))
       throw new IllegalStateException("保存先が変わりました。設定を開き直してください");

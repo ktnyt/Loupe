@@ -25,12 +25,13 @@ public final class SyncActivity extends DiagnosticActivity {
       new Runnable() {
         public void run() {
           if(progress!=null){JobState state=SyncEngine.snapshot(SyncActivity.this);
-            String description=getSharedPreferences("settings",0).getString("syncStatus","まだ同期していません");
+            SharedPreferences settings = SettingsRepository.open(SyncActivity.this);
+            String description=SettingsRepository.syncStatus(settings);
             if(state.kind==JobState.Kind.UNKNOWN)description="現在の処理状態を確認できません。"+description;
             progress.show(StatusView.symbol(state.kind),"",description,null,"");
-            long finishedAt=getSharedPreferences("settings",0).getLong("syncFinishedAt",0);
+            long finishedAt=SettingsRepository.syncFinishedAt(settings);
             if(lastSync!=null)lastSync.setText("最後の同期："+(finishedAt>0?android.text.format.DateFormat.format("M月d日 HH:mm",finishedAt):"—"));
-            if(verificationStatus!=null){String result=getSharedPreferences("settings",0).getString("cloudVerificationResult","");
+            if(verificationStatus!=null){String result=SettingsRepository.cloudVerificationResult(settings);
               StatusView.Symbol symbol=result.equals("COMPLETE")?StatusView.Symbol.COMPLETE:result.equals("FAILED")?StatusView.Symbol.FAILED:StatusView.Symbol.UNKNOWN;
               verificationStatus.show(symbol,result.equals("COMPLETE")?"前回選んだ写真は元どおりダウンロードできました":result.equals("FAILED")?"前回の写真の確認に失敗しました":"写真の確認結果は記録されていません");}
 
@@ -117,8 +118,8 @@ public final class SyncActivity extends DiagnosticActivity {
                             return;
                           }
                         }
-                        getSharedPreferences("settings", 0).edit().putInt("retentionDays", retention)
-                            .putBoolean("cleanupEnabled", false).apply();
+                        SettingsRepository.open(this).edit().putInt(SettingsRepository.RETENTION_DAYS, retention)
+                            .putBoolean(SettingsRepository.CLEANUP_ENABLED, false).apply();
                       }
                       refresh();
                     })
@@ -137,9 +138,9 @@ public final class SyncActivity extends DiagnosticActivity {
                       else if (which == 1) confirm(true);
                       else {
                         if (which == 2)
-                          getSharedPreferences("settings", 0)
+                          SettingsRepository.open(this)
                               .edit()
-                              .putBoolean("cleanupEnabled", false)
+                              .putBoolean(SettingsRepository.CLEANUP_ENABLED, false)
                               .apply();
                         else stop();
                         refresh();
@@ -167,11 +168,11 @@ public final class SyncActivity extends DiagnosticActivity {
     Button allFiles = !Environment.isExternalStorageManager()?settingsButtons.get(permissionIndex++):null;
     Button location = checkSelfPermission(android.Manifest.permission.ACCESS_MEDIA_LOCATION)
         != android.content.pm.PackageManager.PERMISSION_GRANTED?settingsButtons.get(permissionIndex):null;
-    settings.setOnClickListener(v->{if(!getSharedPreferences("settings",0).getBoolean("syncEnabled",false)){confirm(false);return;}SyncJob.now(this);refresh();});
+    settings.setOnClickListener(v->{if(!SettingsRepository.syncEnabled(SettingsRepository.open(this))){confirm(false);return;}SyncJob.now(this);refresh();});
     other.setOnClickListener(v->refresh());
     retention=SyncSettingsUi.populate(this,root,screen,info,collection,permissionState,progress,progressTime,
         syncState,cleanupState,allFiles,location,keep,settings,other);
-    retention.setText(retentionLabel(getSharedPreferences("settings",0)));
+    retention.setText(retentionLabel(SettingsRepository.open(this)));
     lastSync=root.findViewWithTag("last-sync");
     verificationStatus=new StatusView(this);
     Button verify=new SyncSettingsUi.ActionButton(this,"確認する",()->startActivity(new Intent(this,CloudActivity.class).putExtra("verify-on-open",true)));
@@ -185,23 +186,23 @@ public final class SyncActivity extends DiagnosticActivity {
 
   }
 
-  static String retentionLabel(SharedPreferences settings){return "撮影日から"+settings.getInt("retentionDays",7)+"日";}
+  static String retentionLabel(SharedPreferences settings){return "撮影日から"+SettingsRepository.retentionDays(settings)+"日";}
 
   private void changeSetting(boolean cleanup,boolean checked){
     if(updatingSwitches)return;
-    SharedPreferences prefs=getSharedPreferences("settings",0);boolean saved=prefs.getBoolean(cleanup?"cleanupEnabled":"syncEnabled",false);
+    SharedPreferences prefs=SettingsRepository.open(this);boolean saved=cleanup ? SettingsRepository.cleanupEnabled(prefs) : SettingsRepository.syncEnabled(prefs);
     updatingSwitches=true;(cleanup?cleanupState:syncState).setChecked(saved);updatingSwitches=false;
     if(saved==checked)return;
     if(checked)confirm(cleanup);
-    else {if(cleanup)prefs.edit().putBoolean("cleanupEnabled",false).apply();else stop();
-      updatingSwitches=true;syncState.setChecked(prefs.getBoolean("syncEnabled",false));cleanupState.setChecked(prefs.getBoolean("cleanupEnabled",false));updatingSwitches=false;refresh();}
+    else {if(cleanup)prefs.edit().putBoolean(SettingsRepository.CLEANUP_ENABLED,false).apply();else stop();
+      updatingSwitches=true;syncState.setChecked(SettingsRepository.syncEnabled(prefs));cleanupState.setChecked(SettingsRepository.cleanupEnabled(prefs));updatingSwitches=false;refresh();}
   }
 
   private void stop() {
-    getSharedPreferences("settings", 0)
+    SettingsRepository.open(this)
         .edit()
-        .putBoolean("syncEnabled", false)
-        .putBoolean("cleanupEnabled", false)
+        .putBoolean(SettingsRepository.SYNC_ENABLED, false)
+        .putBoolean(SettingsRepository.CLEANUP_ENABLED, false)
         .apply();
     SyncJob.schedule(this);
   }
@@ -222,8 +223,8 @@ public final class SyncActivity extends DiagnosticActivity {
               () -> {
                 refreshing = false;
                 if (isDestroyed()) return;
-                SharedPreferences s = getSharedPreferences("settings", 0);
-                updatingSwitches=true;syncState.setChecked(s.getBoolean("syncEnabled",false));cleanupState.setChecked(s.getBoolean("cleanupEnabled",false));updatingSwitches=false;
+                SharedPreferences s = SettingsRepository.open(this);
+                updatingSwitches=true;syncState.setChecked(SettingsRepository.syncEnabled(s));cleanupState.setChecked(SettingsRepository.cleanupEnabled(s));updatingSwitches=false;
                 retention.setText(retentionLabel(s));
                 permissionState.show(Environment.isExternalStorageManager()?StatusView.Symbol.COMPLETE:StatusView.Symbol.PERMISSION,Environment.isExternalStorageManager()?"自動管理の権限は許可済み":"自動管理の権限は未許可。必要なアクセスを許可する操作を選んでください");
                 info.setText(collected?message:"—");
@@ -267,7 +268,7 @@ public final class SyncActivity extends DiagnosticActivity {
                 () -> {
                   if (isDestroyed()) return;
                   if (cleanup
-                      && !getSharedPreferences("settings", 0).getBoolean("syncEnabled", false)) {
+                      && !SettingsRepository.syncEnabled(SettingsRepository.open(this))) {
                     new GalleryUi.Sheet(this)
                         .setTitle("自動同期")
                         .setView(requirement(StatusView.Symbol.PAUSED,"先に自動同期を開始してください"))
@@ -291,9 +292,9 @@ public final class SyncActivity extends DiagnosticActivity {
                               confirm(true);
                               return;
                             }
-                            getSharedPreferences("settings", 0)
+                            SettingsRepository.open(this)
                                 .edit()
-                                .putBoolean(cleanup ? "cleanupEnabled" : "syncEnabled", true)
+                                .putBoolean(cleanup ? SettingsRepository.CLEANUP_ENABLED : SettingsRepository.SYNC_ENABLED, true)
                                 .apply();
                             try {
                               SyncJob.schedule(this);

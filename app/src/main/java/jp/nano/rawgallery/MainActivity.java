@@ -859,7 +859,7 @@ public final class MainActivity extends DiagnosticActivity {
   private void beginSelection(){if(photos.isEmpty() || !requireCurrentBurstGrouping())return;selecting=true;bestOnly=true;selectedPhotos.clear();gallery();}
 
   private int savedBurstGapMillis() {
-    return BurstGapSettings.readMillis(getSharedPreferences("settings", MODE_PRIVATE));
+    return BurstGapSettings.readMillis(SettingsRepository.open(this));
   }
 
   private boolean requireCurrentBurstGrouping() {
@@ -1207,7 +1207,7 @@ public final class MainActivity extends DiagnosticActivity {
                   editTargets();
                   break;
                 case 2:
-                  var settings = getSharedPreferences("settings", MODE_PRIVATE);
+                  var settings = SettingsRepository.open(this);
                   BurstGapDialog.show(this, BurstGapSettings.readMillis(settings), millis -> {
                     boolean changed = millis != BurstGapSettings.readMillis(settings);
                     if (!BurstGapSettings.saveMillis(settings, millis)) return false;

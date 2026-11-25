@@ -57,7 +57,7 @@ final class OriginalCache {
             CookieManager.getInstance().getCookie(CloudVerifier.ORIGIN + "/drive/v1/nodes");
         if (cookies == null || cookies.isBlank()) throw new IOException("Amazonへの再ログインが必要です");
         new CloudVerifier(
-                cookies, c.getSharedPreferences("settings", 0).getString("cloudUserAgent", ""))
+                cookies, SettingsRepository.cloudUserAgent(SettingsRepository.open(c), ""))
             .download(record, partial);
       } else {
         try (InputStream in = PhotoRepository.original(c, p);

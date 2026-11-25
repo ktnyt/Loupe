@@ -192,7 +192,7 @@ final class GalleryIndex extends SQLiteOpenHelper {
     long request = DiagnosticLog.id();
     DiagnosticLog.event("index.start", request, "force", force);
     try (GalleryIndex index = new GalleryIndex(c)) {
-      int burstGapMillis = BurstGapSettings.readMillis(c.getSharedPreferences("settings", 0));
+      int burstGapMillis = BurstGapSettings.readMillis(SettingsRepository.open(c));
       String before = signature(c, burstGapMillis);
       try (Cursor state =
           index
