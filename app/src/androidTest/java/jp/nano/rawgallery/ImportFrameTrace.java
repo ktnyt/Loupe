@@ -23,7 +23,9 @@ final class ImportFrameTrace {
   }
 
   private static String read(File file) throws IOException {
-    return file.isFile() ? new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8) : "";
+    return file.isFile()
+        ? new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8)
+        : "";
   }
 
   private record Request(String session, long id) {}
@@ -45,9 +47,11 @@ final class ImportFrameTrace {
         long id = event.optLong("request");
         if (time < publishing || session.isEmpty() || id <= 0) continue;
         Request request = new Request(session, id);
-        if (event.optString("event").equals("image.request") && photos.contains(event.optLong("photo"))) {
+        if (event.optString("event").equals("image.request")
+            && photos.contains(event.optLong("photo"))) {
           requests.add(request);
-        } else if (event.optString("event").equals("image.frame_commit") && requests.contains(request)) {
+        } else if (event.optString("event").equals("image.frame_commit")
+            && requests.contains(request)) {
           return time;
         }
       }
