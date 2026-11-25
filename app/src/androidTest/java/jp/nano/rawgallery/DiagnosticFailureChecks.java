@@ -435,13 +435,13 @@ final class DiagnosticFailureChecks {
               invoke(discover, screen, true);
               require(
                   IMPORT_NOT_STARTED.equals(field(screen, "connectionFailure"))
-                      && field(screen, "sourceCancellation") == null
+                      && !((CameraSourceCheck) field(screen, "sourceCheck")).isPending()
                       && !((boolean) field(screen, "starting")),
                   "lookup rejected visibly");
               invoke(verify, screen, picked, null, false, callback);
               require(
                   IMPORT_NOT_STARTED.equals(field(screen, "connectionFailure"))
-                      && field(screen, "sourceCancellation") == null,
+                      && !((CameraSourceCheck) field(screen, "sourceCheck")).isPending(),
                   "verification rejected visibly");
               screen.confirmSdSource(picked, true);
               require(
