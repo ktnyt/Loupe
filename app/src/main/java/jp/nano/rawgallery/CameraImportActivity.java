@@ -129,7 +129,8 @@ public final class CameraImportActivity extends AppCompatActivity {
                     request.previousRegistration(), request.rememberFormats(), confirmation);
     private int pendingUsbDeviceId = -1, pendingUsbVendorId = -1, pendingUsbProductId = -1;
     private String pendingUsbDeviceName, pendingUsbVolume;
-    private static final String SOURCE_BUSY = "確認処理が混み合っています。少し待ってからやり直してください。";
+    private static final String IMPORT_NOT_STARTED =
+            "確認処理が混み合っています。取り込みは始まっていません。少し待ってからやり直してください。";
     private static final java.util.concurrent.Executor SOURCE_IO = new java.util.concurrent.ThreadPoolExecutor(
             0, 2, 30, java.util.concurrent.TimeUnit.SECONDS, new java.util.concurrent.SynchronousQueue<>());
     private static final java.util.concurrent.Executor SOURCE_STATUS_IO = new java.util.concurrent.ThreadPoolExecutor(
@@ -633,7 +634,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         sourceCancellation = null;
         starting = false;
         cancellation.cancel();
-        showSdFailure(SOURCE_BUSY);
+        showSdFailure(IMPORT_NOT_STARTED);
     }
 
     private boolean canStartSourceAction() {
@@ -717,7 +718,7 @@ public final class CameraImportActivity extends AppCompatActivity {
         } catch (java.util.concurrent.RejectedExecutionException busy) {
             DiagnosticLog.exception("camera.wifi_profiles", "busy", busy);
             cancelWifiLoad();
-            showWifiProfiles(null, SOURCE_BUSY);
+            showWifiProfiles(null, CameraQuickImportSources.SdState.BUSY.message);
         }
     }
 

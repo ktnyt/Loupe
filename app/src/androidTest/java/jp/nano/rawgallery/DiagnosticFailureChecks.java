@@ -3,6 +3,8 @@ package jp.nano.rawgallery;
 import android.app.Instrumentation;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Rect;
+import android.view.View;
 import android.net.Uri;
 import android.os.SystemClock;
 import android.widget.TextView;
@@ -28,6 +30,8 @@ import org.json.JSONObject;
 final class DiagnosticFailureChecks {
   private static final String SENTINEL = "content://example/synthetic-private-photo.jpg";
   private static final String BUSY = "確認処理が混み合っています。少し待ってからやり直してください。";
+  private static final String IMPORT_NOT_STARTED =
+      "確認処理が混み合っています。取り込みは始まっていません。少し待ってからやり直してください。";
 
   static String run(Instrumentation test) throws Exception {
     Context context = test.getTargetContext();
@@ -142,7 +146,7 @@ final class DiagnosticFailureChecks {
       CountDownLatch entered = new CountDownLatch(4), release = new CountDownLatch(1);
       Runnable hold = () -> {
         entered.countDown();
-        try { release.await(10, TimeUnit.SECONDS); }
+        try { release.await(20, TimeUnit.SECONDS); }
         catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
       };
       try {
@@ -161,10 +165,10 @@ final class DiagnosticFailureChecks {
         java.util.function.Consumer<CameraImportActivity.SdLocation> callback = ignored -> verified.incrementAndGet();
         test.runOnMainSync(() -> {
           invoke(discover, screen, true);
-          require(BUSY.equals(field(screen, "connectionFailure"))
+          require(IMPORT_NOT_STARTED.equals(field(screen, "connectionFailure"))
               && field(screen, "sourceCancellation") == null && !((boolean) field(screen, "starting")), "lookup rejected visibly");
           invoke(verify, screen, picked, null, callback);
-          require(BUSY.equals(field(screen, "connectionFailure")) && field(screen, "sourceCancellation") == null,
+          require(IMPORT_NOT_STARTED.equals(field(screen, "connectionFailure")) && field(screen, "sourceCancellation") == null,
               "verification rejected visibly");
           invoke(statusRefresh, screen);
           require(BUSY.contentEquals(((TextView) field(screen, "sdStatus")).getText())
@@ -174,12 +178,25 @@ final class DiagnosticFailureChecks {
           require(BUSY.contentEquals(((TextView) field(screen, "wifiStatus")).getText())
               && field(screen, "wifiCancellation") == null, "Wi-Fi status busy");
         });
+        capture(test, screen, "diagnostics-source-busy.png");
+        test.runOnMainSync(() -> {
+          View retry = (View) field(screen, "sdStart");
+          require(retry.isEnabled() && retry.performClick(), "SD retry action handles click while busy");
+          require(IMPORT_NOT_STARTED.equals(field(screen, "connectionFailure")), "retry still reports no import");
+        });
+        // The production failure handler first scrolls the updated status into view.
         test.waitForIdleSync();
-        var screenshot = test.getUiAutomation().takeScreenshot();
-        require(screenshot != null, "busy screenshot");
-        try (var output = new FileOutputStream(new File(context.getCacheDir(), "diagnostics-source-busy.png"))) {
-          screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output);
-        } finally { screenshot.recycle(); }
+        test.runOnMainSync(() -> {
+          View retry = (View) field(screen, "sdStart");
+          retry.requestRectangleOnScreen(new Rect(0, 0, retry.getWidth(), retry.getHeight()), true);
+        });
+        DiagnosticChecks.waitFor(test, () -> {
+          View retry = (View) field(screen, "sdStart");
+          Rect visible = new Rect();
+          return retry.getGlobalVisibleRect(visible) && visible.height() == retry.getHeight()
+              && visible.width() == retry.getWidth() && retry.isEnabled();
+        });
+        capture(test, screen, "diagnostics-sd-retry-busy.png");
 
         release.countDown();
         // A new user request is necessary: releasing an executor never replays a rejected import.
@@ -192,18 +209,44 @@ final class DiagnosticFailureChecks {
         });
         DiagnosticChecks.waitFor(test, () -> verified.get() == 1 && field(screen, "wifiCancellation") == null
             && ((TextView) field(screen, "wifiStatus")).getText().toString().contains("QR"));
+        showWifiCard(test, screen);
+        capture(test, screen, "diagnostics-wifi-unregistered.png");
         test.runOnMainSync(() -> {
           screen.wifiProfileLoader = (owner, cancellation) -> { throw new IOException(SENTINEL); };
           invoke(loadWifi, screen);
         });
         DiagnosticChecks.waitFor(test, () -> "登録カメラを確認できませんでした。"
             .contentEquals(((TextView) field(screen, "wifiStatus")).getText()));
+        showWifiCard(test, screen);
+        capture(test, screen, "diagnostics-wifi-read-error.png");
       } finally {
         release.countDown();
       }
     } finally {
       test.runOnMainSync(screen::finish);
     }
+  }
+
+  private static void capture(Instrumentation test, CameraImportActivity screen, String filename) throws IOException {
+    test.waitForIdleSync();
+    SystemClock.sleep(200); // Allow the compositor to present the laid-out and scrolled frame.
+    var screenshot = test.getUiAutomation().takeScreenshot();
+    require(screenshot != null, "busy screenshot");
+    try {
+      View root = screen.getWindow().getDecorView();
+      require(root.getWidth() <= screenshot.getWidth(), "capture contains the full window width");
+      try (var output = new FileOutputStream(new File(test.getTargetContext().getCacheDir(), filename))) {
+        screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output);
+      }
+    } finally { screenshot.recycle(); }
+  }
+
+  private static void showWifiCard(Instrumentation test, CameraImportActivity screen) {
+    test.runOnMainSync(() -> {
+      View status = (View) field(screen, "wifiStatus");
+      View card = (View) status.getParent();
+      card.requestRectangleOnScreen(new Rect(0, 0, card.getWidth(), card.getHeight()), true);
+    });
   }
 
   private static void checkPrivacy(Context context) throws Exception {
