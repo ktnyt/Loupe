@@ -182,7 +182,7 @@ table.t code{background:#1C1C1F;padding:1px 5px;border-radius:4px;font-size:12px
 
 <h2 class="sec">4. 更新の頻度・動き</h2>
 <ul>
-<li>保存済みの値と browsing() を読むだけ。開いたとき、onResume、表示中は5秒ごと（または snapshot の変更を監視）。原本の走査や写真の読み込みはしない。</li>
+<li>保存済みの値と browsing() を読むだけ。開いたとき、onResume、表示中は5秒ごと（または snapshot の変更を監視）。オリジナルの走査や写真の読み込みはしない。</li>
 <li>回る弧は kind=RUNNING（取得時に active &gt; 0 の観測）のときだけ使う。取得後も続く保証はないので、必ず観測時刻を添える。減らす設定では回さない。</li>
 <li>新しい操作（開始・一時停止・再開・再試行・削除・再解析・読み込み直し）は置かない。</li>
 </ul>

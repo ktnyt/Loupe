@@ -55,7 +55,7 @@ final class Ep7WifiChecks {
             new String[]{android.Manifest.permission.ACCESS_MEDIA_LOCATION}, new int[]{android.content.pm.PackageManager.PERMISSION_DENIED}));
         t.waitForIdleSync();
         TagDetailChecks.ui(t, () -> {
-          TextView denied = require(camera.getWindow().getDecorView(), "原本の保存には写真の位置情報へのアクセスが必要です。再度操作するか、アプリの権限設定を確認してください。");
+          TextView denied = require(camera.getWindow().getDecorView(), "オリジナルの保存には写真の位置情報へのアクセスが必要です。再度操作するか、アプリの権限設定を確認してください。");
           Rect visible = new Rect();
           check(denied.getGlobalVisibleRect(visible) && visible.height() == denied.getHeight(), "Denied original access guidance stays fully visible");
         });
@@ -68,12 +68,12 @@ final class Ep7WifiChecks {
       final Ep7WifiActivity screen = wifi;
       TagDetailChecks.ui(t, () -> {
         View root = screen.getWindow().getDecorView();
-        for (String label : new String[]{"手動でWi-Fiに接続して取り込む", "Wi-Fi設定を開く", "写真のアクセス権限を確認", "アプリの権限設定を開く", "カメラの登録を編集", "写真を取り込む", "中止", "カメラの原本も確認する", "カメラのWi-Fi接続時に自動で取り込む"}) {
+        for (String label : new String[]{"手動でWi-Fiに接続して取り込む", "Wi-Fi設定を開く", "写真のアクセス権限を確認", "アプリの権限設定を開く", "カメラの登録を編集", "写真を取り込む", "中止", "カメラのオリジナルも確認する", "カメラのWi-Fi接続時に自動で取り込む"}) {
           TextView v = require(root, label);
           check(v.getMinimumHeight() >= GalleryUi.dp(screen, 48), label + " touch minimum");
         }
         check(require(root, "手動でWi-Fiに接続して取り込む").isEnabled(), "connect entry enabled while idle");
-        check(((android.widget.CompoundButton) require(root, "カメラの原本も確認する")).isChecked() == screen.getSharedPreferences("camera_import", 0).getBoolean("wifi_verify_all", false), "Wi-Fi verify reflects saved preference");
+        check(((android.widget.CompoundButton) require(root, "カメラのオリジナルも確認する")).isChecked() == screen.getSharedPreferences("camera_import", 0).getBoolean("wifi_verify_all", false), "Wi-Fi verify reflects saved preference");
         View status = root.findViewWithTag("ep7-status");
         check(status != null && status.getAccessibilityLiveRegion() == View.ACCESSIBILITY_LIVE_REGION_POLITE, "status live region");
         String before = ((TextView) status).getText().toString();
@@ -88,7 +88,7 @@ final class Ep7WifiChecks {
       TagDetailChecks.ui(t,()->findScroll(screen.getWindow().getDecorView()).fullScroll(View.FOCUS_DOWN));
       capture(t,wifi,"wifi-import-bottom");
       if(screen.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)!=android.content.pm.PackageManager.PERMISSION_GRANTED
-          && !((android.widget.CompoundButton)require(screen.getWindow().getDecorView(),"カメラの原本も確認する")).isChecked()
+          && !((android.widget.CompoundButton)require(screen.getWindow().getDecorView(),"カメラのオリジナルも確認する")).isChecked()
           && !screen.getSharedPreferences("camera_import",0).getBoolean("wifi_identity_asked",false)) {
         TagDetailChecks.ui(t,()->{
           try{var method=Ep7WifiActivity.class.getDeclaredMethod("startWifi");method.setAccessible(true);method.invoke(screen);}

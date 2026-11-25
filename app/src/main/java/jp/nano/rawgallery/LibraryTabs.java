@@ -131,7 +131,7 @@ final class LibraryTabs extends BottomNavigationView {
     ViewCompat.removeAccessibilityAction(camera, AccessibilityNodeInfoCompat.ACTION_LONG_CLICK);
     if (quickImport) ViewCompat.replaceAccessibilityAction(camera,
         AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_LONG_CLICK,
-        "原本を削除せずに取り込む", (view, arguments) -> view.performLongClick());
+        "オリジナルを削除せずに取り込む", (view, arguments) -> view.performLongClick());
     camera.setLongClickable(quickImport);
   }
 

@@ -33,7 +33,7 @@ public final class PreviewPreparationJob extends JobService {
     String state = browsing() ? "閲覧中のため一時停止" : p.getString("state", "準備を待っています");
     return p.getInt("ready", 0) + " / " + p.getInt("total", 0) + "枚の準備ができました\n"
         + state + "\n準備できなかった写真：" + p.getInt("failed", 0) + "枚"
-        + "\n充電中以外も、Loupeを閉じている間に進めます。写真の原本は変更しません。";
+        + "\n充電中以外も、Loupeを閉じている間に進めます。写真のオリジナルは変更しません。";
   }
   static JobState snapshot(Context c) {
     return JobState.read(c.getSharedPreferences("preview-preparation",0),"preparation",active.get()>0,true);

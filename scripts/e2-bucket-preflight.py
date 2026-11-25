@@ -57,7 +57,7 @@ def main():
         )
         if expiration_count:
             raise ValueError(f"有効な有効期限ルール {expiration_count} 件。"
-                             "原本とカタログが適用範囲に含まれるか確認してください")
+                             "オリジナルとカタログが適用範囲に含まれるか確認してください")
     except subprocess.TimeoutExpired:
         print("検査中断: AWS CLI の応答がタイムアウトしました", file=sys.stderr)
         return 1

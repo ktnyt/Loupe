@@ -13,6 +13,6 @@
 
 captureは描画commit後のcomposed displayで、OS領域も含む。狭幅captureの左右余白は検査Window外。スワイプや音声を静止画だけで確認済みとは扱わない。
 
-検査は `Ep7WifiChecks` の `ep7-wifi` mode。待機、初期無効操作、処理中、失敗・再実行可能状態、onStop中止要求、設定導線、48dp最小領域、toolbar/scrollの安全領域、限定cleartext policy、形式の選択中表示とdropdown内の読み上げ文字を確認する。実TalkBack音声、E-P7とのWi-Fi接続・原本転送・実速度は未検査。
+検査は `Ep7WifiChecks` の `ep7-wifi` mode。待機、初期無効操作、処理中、失敗・再実行可能状態、onStop中止要求、設定導線、48dp最小領域、toolbar/scrollの安全領域、限定cleartext policy、形式の選択中表示とdropdown内の読み上げ文字を確認する。実TalkBack音声、E-P7とのWi-Fi接続・オリジナル転送・実速度は未検査。
 
 独立UI再レビューで形式の判別と初期OSアイコンを確認し、要修正指摘なし。dropdownを閉じる途中の `list` captureは、安定した状態の証拠に使わず保存対象から除外した。

@@ -114,7 +114,7 @@ final class E2Cleanup {
         item.receipt().put("version", entry.getString("version"));
         if (release(c, photos, item, bucket, plan.retention(), stopped)) removed++;
       }
-      updateStatus(c, "端末原本を整理 · " + removed + "枚");
+      updateStatus(c, "端末オリジナルを整理 · " + removed + "枚");
     } catch (Exception failure) {
       if (!stopped.getAsBoolean()) updateStatus(c, "容量整理を中断しました。保存先や権限を確認してください");
     }
@@ -178,7 +178,7 @@ final class E2Cleanup {
               new String[]{Long.toString(candidate.generation()), Long.toString(photo.size)});
           if (changed != 1) {
             if (changed == 0) photos.settings.records.put(record, "verified");
-            throw new IOException("Androidが端末原本の整理を確定しませんでした");
+            throw new IOException("Androidが端末オリジナルの整理を確定しませんでした");
           }
           photos.settings.records.put(record, RELEASED);
           new PhotoRepository(c).removePreparedPreview(photo);
@@ -226,7 +226,7 @@ final class E2Cleanup {
         if (!sha.equals(entry.getKey()) && entry.getValue() instanceof Long time
             && SyncPolicy.eligible(time, now, 365, true, true, true)) edit.remove(entry.getKey());
       }
-      if (!edit.commit()) throw new IOException("復元する原本の保存期間を設定できません");
+      if (!edit.commit()) throw new IOException("復元するオリジナルの保存期間を設定できません");
     }
   }
 
@@ -254,11 +254,11 @@ final class E2Cleanup {
 
   static JSONObject localRecord(Context c, Uri uri) throws Exception {
     if (!archived(uri) || uri.getHost() == null || !uri.getHost().matches("[0-9a-f]{32}"))
-      throw new IOException("原本の識別子が不正です");
+      throw new IOException("オリジナルの識別子が不正です");
     try (ArchiveStore store = E2Settings.openRecords(c)) {
       JSONObject record = store.get(uri.getHost());
       if (record == null || !(released(record) || RELEASING.equals(record.optString("state"))))
-        throw new IOException("原本の保管記録がありません");
+        throw new IOException("オリジナルの保管記録がありません");
       record.put("state", "verified");
       return record;
     }

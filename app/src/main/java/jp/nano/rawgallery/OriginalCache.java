@@ -17,7 +17,7 @@ final class OriginalCache {
   static synchronized PhotoRepository.Photo obtain(Context c, PhotoRepository.Photo p)
       throws Exception {
     File dir = new File(c.getCacheDir(), "originals");
-    if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("原本用の空き領域を作れません");
+    if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("オリジナル用の空き領域を作れません");
     String key = ArchiveStore.key(p);
     File target =
         new File(
@@ -30,7 +30,7 @@ final class OriginalCache {
       try (ArchiveStore store = new ArchiveStore(c)) {
         record = store.get(p.uri.getHost());
       }
-      if (record == null || !record.has("sha")) throw new IOException("原本の保存記録がありません");
+      if (record == null || !record.has("sha")) throw new IOException("オリジナルの保存記録がありません");
     }
     if (target.isFile()
         && target.length() == p.size
@@ -40,7 +40,7 @@ final class OriginalCache {
       return local(p, target);
     }
     target.delete();
-    if (!supportsSize(p.size)) throw new IOException("原本の一時保存上限は512 MiBです");
+    if (!supportsSize(p.size)) throw new IOException("オリジナルの一時保存上限は512 MiBです");
     trim(dir, null, p.size);
     File partial = new File(dir, key + ".part");
     E2TransferStatus transfer = E2Cleanup.archived(p.uri)
@@ -66,12 +66,12 @@ final class OriginalCache {
           long count = 0;
           int n;
           while ((n = in.read(buffer)) != -1) {
-            if (Thread.currentThread().isInterrupted()) throw new IOException("原本の取得を中断しました");
+            if (Thread.currentThread().isInterrupted()) throw new IOException("オリジナルの取得を中断しました");
             count += n;
-            if (count > p.size) throw new IOException("原本のサイズが変わりました");
+            if (count > p.size) throw new IOException("オリジナルのサイズが変わりました");
             out.write(buffer, 0, n);
           }
-          if (count != p.size) throw new IOException("原本のサイズが変わりました");
+          if (count != p.size) throw new IOException("オリジナルのサイズが変わりました");
           out.getFD().sync();
         }
       }
@@ -106,7 +106,7 @@ final class OriginalCache {
 
   private static void trim(File dir, File keep, long reserve) throws IOException {
     File[] files = dir.listFiles();
-    if (files == null) throw new IOException("原本の一時領域を読めません");
+    if (files == null) throw new IOException("オリジナルの一時領域を読めません");
     Arrays.sort(files, Comparator.comparingLong(File::lastModified));
     long total = reserve;
     for (File f : files) total += f.length();
@@ -118,6 +118,6 @@ final class OriginalCache {
         long bytes = f.length();
         if (f.delete()) total -= bytes;
       }
-    if (total > LIMIT) throw new IOException("原本の一時保存容量が足りません");
+    if (total > LIMIT) throw new IOException("オリジナルの一時保存容量が足りません");
   }
 }

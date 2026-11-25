@@ -20,7 +20,7 @@ final class TalkBackStatusChecks {
         a.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         LinearLayout root=new LinearLayout(a);root.setOrientation(1);root.setPadding(24,180,24,0);root.setBackgroundColor(GalleryUi.BG);
         StatusView.Symbol[] kinds={StatusView.Symbol.UNKNOWN,StatusView.Symbol.RUNNING,StatusView.Symbol.WAITING,StatusView.Symbol.PAUSED,StatusView.Symbol.COMPLETE,StatusView.Symbol.PARTIAL,StatusView.Symbol.AUTH,StatusView.Symbol.FAILED};
-        String[] labels={"準備状況は不明です","写真を読み込んでいます。12枚中3枚","同期を待機しています","同期を一時停止しています","準備が完了しました","12枚中3枚の準備に失敗しました","ログインが必要です","写真の原本を読み込めませんでした"};
+        String[] labels={"準備状況は不明です","写真を読み込んでいます。12枚中3枚","同期を待機しています","同期を一時停止しています","準備が完了しました","12枚中3枚の準備に失敗しました","ログインが必要です","写真のオリジナルを読み込めませんでした"};
         StatusView state=new StatusView(a);root.addView(state,new LinearLayout.LayoutParams(-1,GalleryUi.dp(a,64)));
         int[] index={0};
         Runnable focus=()->{if(done.getCount()!=0)state.performAccessibilityAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS,null);};

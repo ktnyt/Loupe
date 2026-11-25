@@ -127,15 +127,15 @@ final class CloudVerifier {
     lastVerified = null;
     if (p.size <= 0 || p.size > 512L * 1024 * 1024)
       throw new VerificationException("検証対象は512 MiB以下の画像です");
-    progress.show(p.name + "\n端末の原本を照合しています…");
+    progress.show(p.name + "\n端末のオリジナルを照合しています…");
     String md5, sha;
     try (InputStream in = PhotoRepository.original(context, p)) {
-      if (in == null) throw new VerificationException("原本を開けません");
+      if (in == null) throw new VerificationException("オリジナルを開けません");
       String[] hashes = hashes(in, p.size);
       md5 = hashes[0];
       sha = hashes[1];
     }
-    progress.show(p.name + "\n同じ原本をクラウドで探しています…");
+    progress.show(p.name + "\n同じオリジナルをクラウドで探しています…");
     JSONObject results =
         get(
             "/drive/v1/nodes?filters="
@@ -156,11 +156,11 @@ final class CloudVerifier {
         break;
       }
     }
-    if (node == null) return p.name + "\n同じ原本は見つかりませんでした。アップロードも削除もしていません。";
+    if (node == null) return p.name + "\n同じオリジナルは見つかりませんでした。アップロードも削除もしていません。";
     String id = node.getString("id"), owner = node.getString("ownerId");
     if (!id.matches("[A-Za-z0-9_-]{1,128}") || !owner.matches("[A-Za-z0-9_-]{1,128}"))
-      throw new VerificationException("原本の識別情報を確認できません");
-    progress.show(p.name + "\n原本をダウンロードして内容を照合しています…");
+      throw new VerificationException("オリジナルの識別情報を確認できません");
+    progress.show(p.name + "\nオリジナルをダウンロードして内容を照合しています…");
     URL url =
         new URL(
             ORIGIN
@@ -178,15 +178,15 @@ final class CloudVerifier {
           url = new URL(url, location);
           continue;
         }
-        if (code != 200) throw new VerificationException("原本の取得に失敗しました（" + code + "）");
+        if (code != 200) throw new VerificationException("オリジナルの取得に失敗しました（" + code + "）");
         long length = c.getContentLengthLong();
-        if (length >= 0 && length != p.size) throw new VerificationException("復元した原本のサイズが違います");
+        if (length >= 0 && length != p.size) throw new VerificationException("復元したオリジナルのサイズが違います");
         try (InputStream in = c.getInputStream()) {
           String[] restored = hashes(in, p.size);
-          if (!sha.equals(restored[1])) throw new VerificationException("原本の内容が一致しません。削除できません");
+          if (!sha.equals(restored[1])) throw new VerificationException("オリジナルの内容が一致しません。削除できません");
         }
         lastVerified = new Verified(id, owner, sha, md5);
-        return p.name + "\n復元した原本のサイズとSHA-256が一致しました。\n端末とクラウドの写真は変更していません。";
+        return p.name + "\n復元したオリジナルのサイズとSHA-256が一致しました。\n端末とクラウドの写真は変更していません。";
       } finally {
         c.disconnect();
       }
@@ -209,10 +209,10 @@ final class CloudVerifier {
       throws Exception {
     if (p.size <= 0 || p.size > 512L * 1024 * 1024)
       throw new VerificationException("対象は512 MiB以下の画像です");
-    progress.show(p.name + "\n送信前に原本を照合しています…");
+    progress.show(p.name + "\n送信前にオリジナルを照合しています…");
     String md5;
     try (InputStream in = PhotoRepository.original(context, p)) {
-      if (in == null) throw new VerificationException("原本を開けません");
+      if (in == null) throw new VerificationException("オリジナルを開けません");
       md5 = hashes(in, p.size)[0];
     }
     JSONObject existing =
@@ -257,7 +257,7 @@ final class CloudVerifier {
     try (ArchiveStore store = new ArchiveStore(context)) {
       store.pending(p);
     }
-    progress.show(p.name + "\nAmazon Photosに原本を保存しています…");
+    progress.show(p.name + "\nAmazon Photosにオリジナルを保存しています…");
     // A deadline disconnects blocked writes as well as reads. Never retry an uncertain POST.
     java.util.concurrent.ScheduledExecutorService timer =
         java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
@@ -266,17 +266,17 @@ final class CloudVerifier {
     try {
       try (InputStream in = PhotoRepository.original(context, p);
           OutputStream out = c.getOutputStream()) {
-        if (in == null) throw new VerificationException("原本を開けません");
+        if (in == null) throw new VerificationException("オリジナルを開けません");
         byte[] b = new byte[65536];
         int n;
         long sent = 0;
         while ((n = in.read(b)) != -1) {
           if (Thread.currentThread().isInterrupted()) throw new VerificationException("送信を中断しました");
           sent += n;
-          if (sent > p.size) throw new VerificationException("原本のサイズが変わりました");
+          if (sent > p.size) throw new VerificationException("オリジナルのサイズが変わりました");
           out.write(b, 0, n);
         }
-        if (sent != p.size) throw new VerificationException("原本を最後まで読めませんでした");
+        if (sent != p.size) throw new VerificationException("オリジナルを最後まで読めませんでした");
       }
       int code = c.getResponseCode();
       if (code != 200 && code != 201 && code != 409)
@@ -308,7 +308,7 @@ final class CloudVerifier {
     String result = verify(context, p, progress);
     if (result.contains("見つかりません"))
       return p.name + "\n保存要求は受け付けられましたが、検索への反映を確認できていません。後で復元検証を行ってください。";
-    return result.replace("端末とクラウドの写真は変更していません。", "クラウドへの保存と復元を確認しました。端末の原本は残しています。");
+    return result.replace("端末とクラウドの写真は変更していません。", "クラウドへの保存と復元を確認しました。端末のオリジナルは残しています。");
   }
 
   void download(JSONObject record, File destination) throws Exception {
@@ -316,7 +316,7 @@ final class CloudVerifier {
         owner = record.getString("owner"),
         sha = record.getString("sha");
     if (!id.matches("[A-Za-z0-9_-]{1,128}") || !owner.matches("[A-Za-z0-9_-]{1,128}"))
-      throw new VerificationException("原本の識別情報が不正です");
+      throw new VerificationException("オリジナルの識別情報が不正です");
     URL url =
         new URL(
             ORIGIN
@@ -337,10 +337,10 @@ final class CloudVerifier {
             continue;
           }
           if (code == 401 || code == 403) throw new AuthException();
-          if (code != 200) throw new VerificationException("原本を取得できません（" + code + "）");
+          if (code != 200) throw new VerificationException("オリジナルを取得できません（" + code + "）");
           long expected = record.getLong("size");
           if (expected <= 0 || expected > 512L * 1024 * 1024)
-            throw new VerificationException("原本のサイズが不正です");
+            throw new VerificationException("オリジナルのサイズが不正です");
           try (InputStream in = c.getInputStream();
               FileOutputStream out = new FileOutputStream(destination)) {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -351,12 +351,12 @@ final class CloudVerifier {
               if (Thread.currentThread().isInterrupted() || System.nanoTime() > deadline)
                 throw new VerificationException("復元を中断しました");
               total += n;
-              if (total > expected) throw new VerificationException("原本のサイズが違います");
+              if (total > expected) throw new VerificationException("オリジナルのサイズが違います");
               digest.update(b, 0, n);
               out.write(b, 0, n);
             }
             if (total != expected || !sha.equals(hex(digest.digest())))
-              throw new VerificationException("原本の内容が一致しません");
+              throw new VerificationException("オリジナルの内容が一致しません");
             out.getFD().sync();
             completed = true;
             return;
@@ -373,7 +373,7 @@ final class CloudVerifier {
 
   static String localSha(Context context, PhotoRepository.Photo p) throws Exception {
     try (InputStream in = PhotoRepository.original(context, p)) {
-      if (in == null) throw new VerificationException("原本を開けません");
+      if (in == null) throw new VerificationException("オリジナルを開けません");
       return hashes(in, p.size)[1];
     }
   }
@@ -388,11 +388,11 @@ final class CloudVerifier {
       if (Thread.currentThread().isInterrupted() || System.nanoTime() > deadline)
         throw new VerificationException("検証を中断しました");
       count += n;
-      if (count > expected) throw new VerificationException("原本のサイズが変わりました");
+      if (count > expected) throw new VerificationException("オリジナルのサイズが変わりました");
       md5.update(b, 0, n);
       sha.update(b, 0, n);
     }
-    if (count != expected) throw new VerificationException("原本を最後まで取得できませんでした");
+    if (count != expected) throw new VerificationException("オリジナルを最後まで取得できませんでした");
     return new String[] {hex(md5.digest()), hex(sha.digest())};
   }
 

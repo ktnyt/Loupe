@@ -8,9 +8,9 @@
 
 利用者指定は、プレビューへの計算の優先、バックグラウンドの原寸準備、元解像度による拡大表示。原寸JPEG別保存は直前の解像度に関する相談と合わせた具体化。UIは[ガイドと軸別初期化の契約](raw-editor-guides-contract.md)・7タブ・Monoを保持する。
 
-## 原本と原寸データの契約
+## オリジナルと原寸データの契約
 
-- 原本はcontent URIで読み取り専用。セッションごとの256MiB以下のprivate入力コピーを保持する。個人写真・URI・パス・例外本文は外部やログへ出さない。
+- オリジナルはcontent URIで読み取り専用。セッションごとの256MiB以下のprivate入力コピーを保持する。個人写真・URI・パス・例外本文は外部やログへ出さない。
 - 初回プレビューは現在のhalf-size/長辺2048px以下を利用。原寸準備は別の低優先度workerで、一つのLibRaw処理だけ実行する。新しい編集値では再デモザイクしない。
 - 原寸はLibRawのhalf_size=0、撮影時WB、auto-brightなし、linear sRGB16、user_qual=0で展開する。有効画像寸法と向きはprocess後のget_mem_image_formatと既存writerに従い、センサー外縁のraw寸法で代替しない。
 - 未変更のLibRaw PPM/PGM16 writerでprivate一時キャッシュを出力する。Javaのfull-size FloatRGBAやAndroid Bitmap、full-size GL textureは作らない。LibRaw内部の全画像bufferは残るため、原寸準備のメモリがタイルサイズに制限されるとは扱わない。
@@ -56,7 +56,7 @@ hostでは実GR DNGの有効寸法6224×4160、実OM ORFの6132×8172につい�
 
 端末b1454f51・実験版0.3.0/3でSource/Tile/Session/公開取消ラッチ検査を通過。実MediaStoreのpendingを明示queryし、insert直後のgateで取消前の状態を固定してcleanupを確認した。最初のpending観測検査は既定の除外条件とpoll競合で失敗し、取得条件と同期方法を修正してから再実行した。準備だけを止めた合成Activity検査では編集を続けられ、Save再押/Backは待ちだけを取り消し、最新Mono値による6000×4000 JPEG保存を確認した。
 
-実GR/OMを端末内で原寸JPEG別保存し、寸法6224×4160/6132×8172、EXIF非継承、原本SHAの前後一致、当該testの一意のJPEGだけの削除を確認した。確認ボタンから完了を観測するまでGR20898ms・OM42617msで、UI取得を含むためencoder単体の時間ではない。
+実GR/OMを端末内で原寸JPEG別保存し、寸法6224×4160/6132×8172、EXIF非継承、オリジナルSHAの前後一致、当該testの一意のJPEGだけの削除を確認した。確認ボタンから完了を観測するまでGR20898ms・OM42617msで、UI取得を含むためencoder単体の時間ではない。
 
 実OM約50MPで原寸準備11707msと651入力/636反映が重なり、この区間の入力→frame commitは中央値9.19ms/p9510.28ms。準備中も操作の反映を継続した。準備後は19.17/25.28ms。温度34.9→34.7℃、終了後RSS384208KiB、HWM1127676KiB、PSS284976KiB。HWMはプロセス全体で約1.08GiBあり、LibRaw内部の全画像bufferを含む。タイル方式を理由に全処理のメモリが小さいとは扱わない。
 

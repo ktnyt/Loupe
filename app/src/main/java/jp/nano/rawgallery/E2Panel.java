@@ -80,7 +80,7 @@ final class E2Panel {
     manualUpload = new TransferRow(dashboard, "手動保存");
     addHeading(dashboard, "ダウンロード");
     catalogDownload = new TransferRow(dashboard, "復元一覧");
-    originalDownload = new TransferRow(dashboard, "原本");
+    originalDownload = new TransferRow(dashboard, "オリジナル");
     card = column();
     card.setPadding(dp(16), dp(16), dp(16), dp(16));
     background(card, 0xff19191b, 16);
@@ -104,20 +104,20 @@ final class E2Panel {
       Thread thread = operation;
       if (thread != null) thread.interrupt();
     });
-    save = button(card, "原本を1つ選んで保存", 52, this::pick);
+    save = button(card, "オリジナルを1つ選んで保存", 52, this::pick);
     TextView autoTitle = text("自動バックアップ", 16);
     autoTitle.setAccessibilityHeading(true);
     add(card, autoTitle);
-    add(card, text("従量制でない回線でRAW・JPEG・動画の原本を保存します。", 14));
+    add(card, text("従量制でない回線でRAW・JPEG・動画のオリジナルを保存します。", 14));
     autoToggle = button(card, "開始", 48, this::toggleAuto);
     cleanupStatus = text("", 14);
     cleanupStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
     add(card, cleanupStatus);
-    cleanupToggle = button(card, "端末原本の整理を有効にする", 48, this::toggleCleanup);
+    cleanupToggle = button(card, "端末オリジナルの整理を有効にする", 48, this::toggleCleanup);
     button(card, "処理の状況で見る", 48, () ->
         activity.startActivity(new Intent(activity, DashboardActivity.class)));
-    add(card, text("保存した原本", 16));
-    button(card, "保存した原本を更新", 48, () -> run("一覧を読み込んでいます", this::refresh));
+    add(card, text("保存したオリジナル", 16));
+    button(card, "保存したオリジナルを更新", 48, () -> run("一覧を読み込んでいます", this::refresh));
     catalogLoad = button(card, "クラウドから復元一覧を取得", 48, () -> catalog(false));
     catalogSave = button(card, "復元一覧をクラウドに保存", 48, () -> catalog(true));
     catalogStatus = text("", 14);
@@ -169,7 +169,7 @@ final class E2Panel {
       export = (Export) retained;
       export.panel = this;
       setBusy(true);
-      message("原本を書き出しています", GalleryUi.TEXT);
+      message("オリジナルを書き出しています", GalleryUi.TEXT);
       if (export.outcome != null) exportFinished(export, export.outcome);
     } else if (verified != null) {
       setBusy(true);
@@ -208,7 +208,7 @@ final class E2Panel {
     String cleanupText = cleaning ? E2Cleanup.status(activity) : "";
     if (!cleanupText.contentEquals(cleanupStatus.getText())) cleanupStatus.setText(cleanupText);
     cleanupStatus.setVisibility(cleanupText.isEmpty() ? View.GONE : View.VISIBLE);
-    cleanupToggle.setText(cleaning ? "端末原本の整理を停止" : "端末原本の整理を有効にする");
+    cleanupToggle.setText(cleaning ? "端末オリジナルの整理を停止" : "端末オリジナルの整理を有効にする");
     cleanupToggle.setEnabled(!busy && enabled && E2SyncJob.fullMediaConsent(activity)
         && activeBucket != null);
   }
@@ -222,7 +222,7 @@ final class E2Panel {
     }
     if (!android.os.Environment.isExternalStorageManager()) {
       new GalleryUi.Sheet(activity).setTitle("写真を整理する権限")
-          .setMessage("端末から原本を削除するには、Androidで全ファイルへのアクセスを許可してください。")
+          .setMessage("端末からオリジナルを削除するには、Androidで全ファイルへのアクセスを許可してください。")
           .setNegativeButton("キャンセル", null)
           .setPositiveButton("Android設定を開く", (dialog, which) -> {
             Intent settings = new Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
@@ -236,9 +236,9 @@ final class E2Panel {
       return;
     }
     int retention = E2Cleanup.days(activity);
-    new GalleryUi.Sheet(activity).setTitle("端末原本の整理を有効にしますか？")
+    new GalleryUi.Sheet(activity).setTitle("端末オリジナルの整理を有効にしますか？")
         .setMessage(bucket + " に復元できる状態で保管したJPEGのうち、"
-            + retention + "日以上経った原本を端末から削除します。"
+            + retention + "日以上経ったオリジナルを端末から削除します。"
             + "小さいサムネイルは端末に残ります。")
         .setNegativeButton("キャンセル", null)
         .setPositiveButton("有効にする", (dialog, which) -> setCleanup(bucket, retention)).show();
@@ -247,7 +247,7 @@ final class E2Panel {
   private void setCleanup(String bucket, int retention) {
     try {
       E2Cleanup.setEnabled(activity, bucket, retention);
-      message(retention > 0 ? "次の自動バックアップで整理対象を確認します" : "端末原本の整理を停止しました",
+      message(retention > 0 ? "次の自動バックアップで整理対象を確認します" : "端末オリジナルの整理を停止しました",
           GalleryUi.TEXT);
     } catch (java.io.IOException failed) {
       message("容量整理の設定を保存できません。保存先や権限を確認してください", 0xffffb4a8);
@@ -335,7 +335,7 @@ final class E2Panel {
       case CANCELLED -> "中止";
     };
     if (item.originalSaved() && item.state() != E2TransferStatus.State.COMPLETE)
-      label = "原本保存済み · " + label;
+      label = "オリジナル保存済み · " + label;
     if (active && total > 0) {
       label += " · " + android.text.format.Formatter.formatShortFileSize(activity, bytes)
           + " / " + android.text.format.Formatter.formatShortFileSize(activity, total);
@@ -411,18 +411,18 @@ final class E2Panel {
       boolean cleaning = E2Cleanup.enabled(activity, activeBucket);
       setAuto(false);
       if (cleaning && !E2SyncJob.enabled(activity))
-        message("端末原本の整理も停止しました。再開後に設定できます", GalleryUi.TEXT);
+        message("端末オリジナルの整理も停止しました。再開後に設定できます", GalleryUi.TEXT);
     } else if (activeBucket != null) {
       if (!E2Settings.hasMediaAccess(activity)) {
         new GalleryUi.Sheet(activity).setTitle("写真と動画の読み取りを許可してください")
-            .setMessage("自動バックアップには、端末のすべての写真・動画と原本の読み取り許可が必要です。")
+            .setMessage("自動バックアップには、端末のすべての写真・動画とオリジナルの読み取り許可が必要です。")
             .setNegativeButton("キャンセル", null)
             .setPositiveButton("許可", (dialog, which) -> activity.requestPhotoAccess()).show();
         return;
       }
       new GalleryUi.Sheet(activity).setTitle("自動バックアップを開始しますか？")
-          .setMessage("今あるRAW・JPEG・動画と今後追加する原本をIDrive e2（東京）に保存し、読み戻して照合します。一時領域に原本のサイズに応じた空き容量が必要です。"
-              + "\n保存済みの原本もクラウドの復元一覧に反映します。\n保存先バケット " + activeBucket)
+          .setMessage("今あるRAW・JPEG・動画と今後追加するオリジナルをIDrive e2（東京）に保存し、読み戻して照合します。一時領域にオリジナルのサイズに応じた空き容量が必要です。"
+              + "\n保存済みのオリジナルもクラウドの復元一覧に反映します。\n保存先バケット " + activeBucket)
           .setNegativeButton("キャンセル", null)
           .setPositiveButton("開始", (dialog, which) -> setAuto(true)).show();
     }
@@ -477,7 +477,7 @@ final class E2Panel {
       verified = null;
       if (file == null) {
         if (result == Activity.RESULT_OK)
-          message("復元を再開できませんでした。原本をもう一度選んでください", 0xffffb4a8);
+          message("復元を再開できませんでした。オリジナルをもう一度選んでください", 0xffffb4a8);
       } else if (result != Activity.RESULT_OK || uri == null) {
         E2Photos.discard(file.file());
         message("復元先の選択を中止しました", GalleryUi.TEXT);
@@ -498,13 +498,13 @@ final class E2Panel {
     }
     run("写真を確認しています", () -> {
       String name = photos.name(uri);
-      post(() -> new GalleryUi.Sheet(activity).setTitle("原本を保存しますか？")
+      post(() -> new GalleryUi.Sheet(activity).setTitle("オリジナルを保存しますか？")
           .setMessage(name + "\nIDrive e2（東京） · " + target
-              + "\n保存済みの原本もクラウドの復元一覧に反映します。")
+              + "\n保存済みのオリジナルもクラウドの復元一覧に反映します。")
           .setNegativeButton("キャンセル", null)
           .setPositiveButton("保存", (dialog, which) -> {
             long started = SystemClock.elapsedRealtime();
-            runTransfer("原本を保存しています", E2TransferStatus.Kind.MANUAL_UPLOAD, target,
+            runTransfer("オリジナルを保存しています", E2TransferStatus.Kind.MANUAL_UPLOAD, target,
                 -1, transfer -> {
               long put = photos.save(uri, name, target, transfer);
               transfer.publishing(true);
@@ -522,8 +522,8 @@ final class E2Panel {
               refresh();
               boolean recovered = catalogSaved;
               post(() -> {
-                message(recovered ? "原本と復元一覧を保存しました"
-                    : "原本は保存しました。復元一覧を保存できませんでした。「復元一覧をクラウドに保存」で再試行してください",
+                message(recovered ? "オリジナルと復元一覧を保存しました"
+                    : "オリジナルは保存しました。復元一覧を保存できませんでした。「復元一覧をクラウドに保存」で再試行してください",
                     recovered ? 0xff9fe0b5 : 0xffffb4a8);
                 timing("save " + (name.toLowerCase(java.util.Locale.ROOT).endsWith(".orf")
                     ? "orf" : "other"), started, " put_ms=" + put);
@@ -570,7 +570,7 @@ final class E2Panel {
     Export current = new Export(this);
     export = current;
     setBusy(true);
-    message("原本を書き出しています", GalleryUi.TEXT);
+    message("オリジナルを書き出しています", GalleryUi.TEXT);
     E2Photos transfer = photos;
     worker.execute(() -> current.copy(transfer, file, uri));
   }
@@ -589,14 +589,14 @@ final class E2Panel {
   }
 
   private void showExportResult(Export current, boolean success) {
-    message(success ? "原本を復元しました" : "復元先に原本を書き出せませんでした",
+    message(success ? "オリジナルを復元しました" : "復元先にオリジナルを書き出せませんでした",
         success ? 0xff9fe0b5 : 0xffffb4a8);
     if (success) timing("restore_export", current.started, " bytes=" + current.bytes);
   }
 
   private void restore(JSONObject record) {
     long started = SystemClock.elapsedRealtime();
-    runTransfer("原本を取得しています", E2TransferStatus.Kind.ORIGINAL_DOWNLOAD,
+    runTransfer("オリジナルを取得しています", E2TransferStatus.Kind.ORIGINAL_DOWNLOAD,
         record.optString("bucket"), record.optLong("size", -1), transfer -> {
       long size = record.getLong("size");
       String sha = record.getString("sha");
@@ -631,7 +631,7 @@ final class E2Panel {
     if (bucket == null) return;
     if (save) {
       new GalleryUi.Sheet(activity).setTitle("復元一覧を保存しますか？")
-          .setMessage(bucket + " に保存します。機種変更後にこの一覧から原本を選べます。")
+          .setMessage(bucket + " に保存します。機種変更後にこの一覧からオリジナルを選べます。")
           .setNegativeButton("キャンセル", null)
           .setPositiveButton("保存", (dialog, which) -> transferCatalog(bucket, true)).show();
     } else transferCatalog(bucket, false);

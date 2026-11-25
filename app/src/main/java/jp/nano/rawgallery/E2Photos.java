@@ -81,7 +81,7 @@ final class E2Photos implements AutoCloseable {
   long saveIndexed(E2AutoSync.Candidate candidate, String id, String bucket, String fallbackHash)
       throws Exception {
     PhotoRepository.Photo photo = candidate.photo();
-    if (mime(photo.name) == null) throw new IOException("原本のファイル名を確認できません");
+    if (mime(photo.name) == null) throw new IOException("オリジナルのファイル名を確認できません");
     E2AutoSync.requireCurrentRevision(context, candidate);
     File staged = stage(() -> PhotoRepository.original(context, photo), photo.size);
     try {
@@ -89,7 +89,7 @@ final class E2Photos implements AutoCloseable {
       if (fallbackHash != null) {
         try (InputStream in = Files.newInputStream(staged.toPath())) {
           if (!fallbackHash.equals(E2Archive.readHash(in, null, photo.size)))
-            throw new IOException("原本が変わりました。次回の同期で確認します");
+            throw new IOException("オリジナルが変わりました。次回の同期で確認します");
         }
       }
       // Original backup does not depend on a RAW decoder or video preview.
@@ -164,7 +164,7 @@ final class E2Photos implements AutoCloseable {
   }
 
   File stage(Source source, long expected) throws IOException {
-    if (expected > E2Archive.ORIGINAL_LIMIT) throw new IOException("原本のサイズが対応範囲外です");
+    if (expected > E2Archive.ORIGINAL_LIMIT) throw new IOException("オリジナルのサイズが対応範囲外です");
     File cache = context.getCacheDir();
     discardInterruptedStaging(cache, System.currentTimeMillis());
     E2Archive.requireTemporarySpace(cache, expected);
@@ -174,17 +174,17 @@ final class E2Photos implements AutoCloseable {
       long size = 0;
       try (InputStream in = source.open();
           FileOutputStream out = new E2Archive.TemporaryOutput(staged)) {
-        if (in == null) throw new IOException("原本を読み込めません");
+        if (in == null) throw new IOException("オリジナルを読み込めません");
         byte[] buffer = new byte[65536];
         for (int read; (read = in.read(buffer)) != -1; ) {
           size += read;
-          if (expected >= 0 && size > expected) throw new IOException("原本のサイズが変わりました");
+          if (expected >= 0 && size > expected) throw new IOException("オリジナルのサイズが変わりました");
           if (size > E2Archive.ORIGINAL_LIMIT || Thread.currentThread().isInterrupted())
-            throw new IOException("原本を読み込めません");
+            throw new IOException("オリジナルを読み込めません");
           out.write(buffer, 0, read);
         }
       }
-      if (expected >= 0 && size != expected) throw new IOException("原本のサイズが変わりました");
+      if (expected >= 0 && size != expected) throw new IOException("オリジナルのサイズが変わりました");
       complete = true;
       return staged;
     } finally {
@@ -201,7 +201,7 @@ final class E2Photos implements AutoCloseable {
   }
 
   File downloadRecord(JSONObject record, E2TransferStatus observation) throws Exception {
-    if (record == null) throw new IOException("原本の保管記録が見つかりません");
+    if (record == null) throw new IOException("オリジナルの保管記録が見つかりません");
     File cache = context.getCacheDir();
     discardInterruptedStaging(cache, System.currentTimeMillis());
     File directory = Files.createTempDirectory(cache.toPath(), "e2-export-").toFile();
@@ -224,7 +224,7 @@ final class E2Photos implements AutoCloseable {
     void verifyStagedFile() throws Exception {
       try (InputStream source = Files.newInputStream(file.toPath())) {
         if (!sha.equals(E2Archive.readHash(source, null, size)))
-          throw new IOException("復元した一時ファイルが原本と一致しません");
+          throw new IOException("復元した一時ファイルがオリジナルと一致しません");
       }
     }
   }
@@ -241,13 +241,13 @@ final class E2Photos implements AutoCloseable {
       if (descriptor.getStatSize() != 0) throw new IOException("復元先にファイルがあります");
       try (InputStream source = Files.newInputStream(verified.file().toPath())) {
         if (!verified.sha().equals(E2Archive.readHash(source, out, verified.size())))
-          throw new IOException("書き出し中に原本が変わりました");
+          throw new IOException("書き出し中にオリジナルが変わりました");
       }
       out.getFD().sync();
     }
     try (InputStream copy = context.getContentResolver().openInputStream(destination)) {
       if (copy == null || !verified.sha().equals(E2Archive.readHash(copy, null, verified.size())))
-        throw new IOException("書き出した原本が一致しません");
+        throw new IOException("書き出したオリジナルが一致しません");
     }
   }
 

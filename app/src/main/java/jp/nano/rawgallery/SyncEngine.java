@@ -164,7 +164,7 @@ final class SyncEngine {
             // media-item delete.
             store.preview(record.getString("key"));
             if (!unchanged(c, p) || !cloud.lastVerified.sha.equals(CloudVerifier.localSha(c, p))) {
-              status(c, JobState.Kind.PAUSED, p.name + "：端末の原本が変わったため整理を見送りました。");
+              status(c, JobState.Kind.PAUSED, p.name + "：端末のオリジナルが変わったため整理を見送りました。");
               continue;
             }
             if (Thread.currentThread().isInterrupted()
@@ -206,13 +206,13 @@ final class SyncEngine {
       if(reachedEnd && deferred==0 && !Thread.currentThread().isInterrupted())
         c.getSharedPreferences("settings",0).edit().putLong("syncFinishedAt",System.currentTimeMillis()).apply();
       status(
-          c, deferred > 0 ? JobState.Kind.PARTIAL : JobState.Kind.WAITING, "今回の同期処理を終了しました（確認した原本：" + processed + "枚、保留：" + deferred + "枚）。未完了の原本は次の定期処理で確認します。");
+          c, deferred > 0 ? JobState.Kind.PARTIAL : JobState.Kind.WAITING, "今回の同期処理を終了しました（確認したオリジナル：" + processed + "枚、保留：" + deferred + "枚）。未完了のオリジナルは次の定期処理で確認します。");
     } catch (CloudVerifier.AuthException e) {
       c.getSharedPreferences("settings", 0).edit().putBoolean("syncEnabled", false).apply();
       SyncJob.schedule(c);
       status(c, JobState.Kind.AUTH_REQUIRED, "Amazonへの再ログインが必要なため、自動同期と整理を停止しました。");
     } catch (Exception e) {
-      status(c, JobState.Kind.FAILED, "同期を中断しました。未確認の原本は整理しません。通信・アクセス許可・空き容量を確認してください。");
+      status(c, JobState.Kind.FAILED, "同期を中断しました。未確認のオリジナルは整理しません。通信・アクセス許可・空き容量を確認してください。");
     } finally {
       RUNNING.set(false);
     }

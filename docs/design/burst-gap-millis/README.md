@@ -10,7 +10,7 @@ Androidエミュレータemulator-5580に既存導入されていたLoupe 0.31.5
 - [通常幅/font1.0](before-normal.png): 1080×2400px、411dp、density420、縦画面。
 - [320dp/font1.3](before-narrow.png): 840×2400px、density420、縦画面。
 
-撮影後にエミュレータの画面サイズ・文字倍率を元の値へ戻した。OSバーを含むcapture。写真原本を検証用データとして使用していない。
+撮影後にエミュレータの画面サイズ・文字倍率を元の値へ戻した。OSバーを含むcapture。写真オリジナルを検証用データとして使用していない。
 
 ## 確認の範囲
 
@@ -18,7 +18,7 @@ Androidエミュレータemulator-5580に既存導入されていたLoupe 0.31.5
 
 ## 変更後
 
-検査用APKはLoupe 0.31.59（versionCode 223）、専用エミュレータemulator-5580で取得した。通常幅411dp/font1.0と320dp/font1.3、density420、縦画面のOSバーを含むcapture。画面データは空の検査UIで、写真原本を表示していない。
+検査用APKはLoupe 0.31.59（versionCode 223）、専用エミュレータemulator-5580で取得した。通常幅411dp/font1.0と320dp/font1.3、density420、縦画面のOSバーを含むcapture。画面データは空の検査UIで、写真オリジナルを表示していない。
 
 | 状態 | 通常幅 | 320dp/font1.3 |
 | --- | --- | --- |

@@ -107,7 +107,7 @@ final class E2LargeOriginalChecks {
         photos.stage(() -> new java.io.ByteArrayInputStream(new byte[] {1}), 2);
         throw new AssertionError("Truncated source was accepted");
       } catch (java.io.IOException expected) {
-        if (!"原本のサイズが変わりました".equals(expected.getMessage())) throw expected;
+        if (!"オリジナルのサイズが変わりました".equals(expected.getMessage())) throw expected;
       }
       E2Photos.discardInterruptedStaging(cache,
           System.currentTimeMillis() + java.util.concurrent.TimeUnit.DAYS.toMillis(1));

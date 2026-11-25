@@ -100,11 +100,11 @@ final class E2BackgroundChecks {
       waitFor("backup consent", 12000,
           () -> clickPositive(test, "自動バックアップを開始しますか？"));
       waitFor("backup enabled", 10000, () -> E2SyncJob.enabled(c));
-      clickView(test, root, "端末原本の整理を有効にする", false);
-      waitFor("cleanup consent visible", 10000, () -> activeContains(test, APP, "端末原本の整理を有効にしますか？"));
+      clickView(test, root, "端末オリジナルの整理を有効にする", false);
+      waitFor("cleanup consent visible", 10000, () -> activeContains(test, APP, "端末オリジナルの整理を有効にしますか？"));
       SystemClock.sleep(350);
       capture(test, c, "e2-product-consent.png");
-      waitFor("cleanup consent", 10000, () -> clickPositive(test, "端末原本の整理を有効にしますか？"));
+      waitFor("cleanup consent", 10000, () -> clickPositive(test, "端末オリジナルの整理を有効にしますか？"));
       waitFor("cleanup enabled", 10000, () -> E2Cleanup.enabled(c, BUCKET));
       SystemClock.sleep(350);
       capture(test, c, "e2-product-enabled.png");
@@ -165,7 +165,7 @@ final class E2BackgroundChecks {
     Activity activity = test.startActivitySync(new Intent(c, E2SyncActivity.class)
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     View root = activity.getWindow().getDecorView();
-    clickView(test, root, "保存した原本を更新", false);
+    clickView(test, root, "保存したオリジナルを更新", false);
     clickView(test, root, old + "を復元", true);
     waitFor("Android save dialog", 25000, () -> {
       AccessibilityNodeInfo picker = test.getUiAutomation().getRootInActiveWindow();
@@ -183,7 +183,7 @@ final class E2BackgroundChecks {
       }
       return false;
     });
-    waitFor("restore success", 25000, () -> activeContains(test, APP, "原本を復元しました"));
+    waitFor("restore success", 25000, () -> activeContains(test, APP, "オリジナルを復元しました"));
     String downloads = new String(shell(test, "content query --user " + user
         + " --uri content://media/external_primary/downloads --projection _id:_display_name"));
     java.util.regex.Matcher row = java.util.regex.Pattern.compile(
@@ -587,7 +587,7 @@ final class E2BackgroundChecks {
           if (button.isEnabled() && button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true;
         return false;
       });
-      waitFor("restore success", 20000, () -> activeContains(test, APP, "原本を復元しました"));
+      waitFor("restore success", 20000, () -> activeContains(test, APP, "オリジナルを復元しました"));
       byte[] resultRows = shell(test, "content query --user " + user
           + " --uri content://media/external_primary/downloads --projection _id:_display_name");
       java.util.regex.Matcher row = java.util.regex.Pattern.compile(
@@ -685,7 +685,7 @@ final class E2BackgroundChecks {
               | Intent.FLAG_ACTIVITY_SINGLE_TOP));
       waitFor("return to app", 12000, () -> activePackage(test, APP));
       View restoreRoot = owner.getWindow().getDecorView();
-      test.runOnMainSync(() -> find(restoreRoot, "保存した原本を更新", false).performClick());
+      test.runOnMainSync(() -> find(restoreRoot, "保存したオリジナルを更新", false).performClick());
       waitFor("restore button", 12000, () -> onUi(test, () -> {
         View button = findDescription(restoreRoot, name + "を復元");
         if (button == null || !button.isEnabled()) return false;
@@ -705,7 +705,7 @@ final class E2BackgroundChecks {
         return save != null && save.performAction(AccessibilityNodeInfo.ACTION_CLICK);
       });
       waitFor("restore success", 20000,
-          () -> activeContains(test, APP, "原本を復元しました"));
+          () -> activeContains(test, APP, "オリジナルを復元しました"));
       capture(test, context, "e2-restored.png");
       if (!Arrays.equals(expected, shell(test, "cat /sdcard/Download/" + name)))
         throw new AssertionError("Exported JPEG bytes differ");

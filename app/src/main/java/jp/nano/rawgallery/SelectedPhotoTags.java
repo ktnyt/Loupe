@@ -74,7 +74,7 @@ final class SelectedPhotoTags extends BottomSheetDialog {
     for(TagStore.Tag tag:tags){
       Button row=LibraryUi.text(activity,tag.name,()->{if(busy)return;new GalleryUi.Sheet(activity)
           .setTitle(photos.size()+"枚に「"+tag.name+"」を付ける")
-          .setMessage("選択した写真だけが対象です。写真の原本は変更しません。")
+          .setMessage("選択した写真だけが対象です。写真のオリジナルは変更しません。")
           .setNegativeButton("戻る",null).setPositiveButton("付ける",(d,w)->{chosen=tag;save();}).show();});
       row.setEnabled(!busy);body.addView(row,new LinearLayout.LayoutParams(-1,-2));
     }

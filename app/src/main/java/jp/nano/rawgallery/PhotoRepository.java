@@ -232,7 +232,7 @@ public final class PhotoRepository {
           }
         }
     } catch (Exception e) {
-      throw new IOException("クラウド原本の記録を読めません", e);
+      throw new IOException("クラウドオリジナルの記録を読めません", e);
     }
     try (ArchiveStore archive = E2Settings.openRecords(context)) {
       for (JSONObject record : archive.inStates(E2Cleanup.RELEASING, E2Cleanup.RELEASED)) {
@@ -584,7 +584,7 @@ public final class PhotoRepository {
 
   /** Called with a materialized original, never with the small archive proxy. */
   public Preview fullPreview(Photo p) throws IOException {
-    if (!"file".equals(p.uri.getScheme())) throw new IOException("原本の取得が必要です");
+    if (!"file".equals(p.uri.getScheme())) throw new IOException("オリジナルの取得が必要です");
     if (!p.isJpeg()) return sourcePreview(p);
     File f = new File(p.uri.getPath());
     ExifInterface exif = new ExifInterface(f);
@@ -594,7 +594,7 @@ public final class PhotoRepository {
     if (bounds.outWidth <= 0
         || bounds.outHeight <= 0
         || (long) bounds.outWidth * bounds.outHeight > 120_000_000L)
-      throw new IOException("原本の画素数を読み取れません");
+      throw new IOException("オリジナルの画素数を読み取れません");
     String model = exif.getAttribute(ExifInterface.TAG_MODEL);
     return new Preview(
         f,
@@ -679,7 +679,7 @@ public final class PhotoRepository {
   static InputStream original(Context c, Photo p) throws IOException {
     Uri uri = "media".equals(p.uri.getAuthority()) ? MediaStore.setRequireOriginal(p.uri) : p.uri;
     InputStream in = c.getContentResolver().openInputStream(uri);
-    if (in == null) throw new IOException("原本を開けません");
+    if (in == null) throw new IOException("オリジナルを開けません");
     return in;
   }
 

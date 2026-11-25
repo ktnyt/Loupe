@@ -170,7 +170,7 @@ final class E2MixedMediaChecks {
     AccessibilityNodeInfo dialog = test.getUiAutomation().getRootInActiveWindow();
     if (dialog == null || dialog.findAccessibilityNodeInfosByText("RAW・JPEG・動画").isEmpty()
         || dialog.findAccessibilityNodeInfosByText(BUCKET).isEmpty()
-        || dialog.findAccessibilityNodeInfosByText("保存済みの原本もクラウドの復元一覧に反映します。").isEmpty())
+        || dialog.findAccessibilityNodeInfosByText("保存済みのオリジナルもクラウドの復元一覧に反映します。").isEmpty())
       throw new AssertionError("Missing scope description");
     if (!accept) return;
     boolean accepted = false;
