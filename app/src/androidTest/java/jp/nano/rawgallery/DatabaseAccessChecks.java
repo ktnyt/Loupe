@@ -34,7 +34,9 @@ final class DatabaseAccessChecks {
       try (ArchiveStore seed = new ArchiveStore(context, archiveName);
           HistoryDb cameras = new HistoryDb(context, historyName)) {
         seedArchives(seed.getWritableDatabase());
+        cameras.setWriteAheadLoggingEnabled(false);
         SQLiteDatabase history = cameras.getWritableDatabase();
+        check("truncate".equals(journal(history)), "version 4 fixture starts with truncate");
         seedHistory(history);
         history.execSQL("DROP INDEX idx_imported_dest_uri");
         history.setVersion(4);
