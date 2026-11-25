@@ -416,7 +416,10 @@ final class BurstCoWinnerChecks {
         if (width > 0) {
           check(a.getWindow().getDecorView().getWidth() == GalleryUi.dp(a, width), "Activity width");
           check(Math.abs(a.getResources().getConfiguration().fontScale - font) < .001f, "Font scale");
-          check(windowView(ADD).getRootView().getWidth() == GalleryUi.dp(a, width), "Sheet width");
+          View surface = windowView(ADD).getRootView()
+              .findViewById(com.google.android.material.R.id.design_bottom_sheet);
+          check(surface != null && surface.getWidth() == GalleryUi.dp(a, Math.min(width, 640)),
+              "Native sheet surface width");
         }
         inspectButton(a, ADD, 56);
         inspectButton(a, SOLE, 56);

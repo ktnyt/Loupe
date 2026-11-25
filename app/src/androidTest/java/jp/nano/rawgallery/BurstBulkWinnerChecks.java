@@ -244,7 +244,7 @@ final class BurstBulkWinnerChecks {
   }
 
   private static void inspectDock(MainActivity a) {
-    for (String label : List.of("選択を終了", "すべて選択")) {
+    for (String label : List.of("選択を終了", "表示中の写真をすべて選択")) {
       Button button = exactButton(a.getWindow().getDecorView(), label);
       check(button != null, "Missing dock button " + label);
       check(button.getLayout() != null, "Missing dock text layout " + label);

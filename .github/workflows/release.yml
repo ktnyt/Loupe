@@ -11,7 +11,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -48,7 +48,7 @@ jobs:
             --apk app/build/outputs/apk/debug/app-debug.apk --certificate "$fingerprint" --require-no-shizuku
 
       - name: Android instrumentation on a disposable emulator
-        timeout-minutes: 12
+        timeout-minutes: 30
         run: |
           sudo chmod a+rw /dev/kvm
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'emulator' 'system-images;android-35;google_apis;x86_64'

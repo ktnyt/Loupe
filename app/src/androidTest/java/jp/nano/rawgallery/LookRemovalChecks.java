@@ -79,7 +79,11 @@ final class LookRemovalChecks {
       main=(MainActivity)t.startActivitySync(new Intent(c,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));final MainActivity gallery=main;
       GalleryScreenChecks.finishInitialIndex(t,gallery);GalleryScreenChecks.portraitFixture(t,gallery,width,font);
       ui(t,()->{set(gallery,"albumHome",false);set(gallery,"photos",new ArrayList<>(List.of(photo)));call(gallery,"showPhoto",new Class<?>[]{int.class},0);return true;});
-      GenerationIndicatorChecks.await(t,"viewer original loaded",()->get(gallery,"activePreview")!=null&&ViewerScreenChecks.viewer(gallery).image.photoBounds()!=null);
+      GenerationIndicatorChecks.await(t, "viewer original loaded", () -> {
+        ZoomImageView image = ViewerScreenChecks.viewer(gallery).image;
+        return "元のファイルを表示しています".contentEquals(image.getStateDescription())
+            && image.photoBounds() != null;
+      });
       ui(t,()->{PhotoViewerUi viewer=ViewerScreenChecks.viewer(gallery);noLook(viewer);safe(gallery,viewer);TagDetailChecks.require(GenerationIndicatorChecks.find(viewer,"viewer-look")==null&&GenerationIndicatorChecks.find(viewer,"viewer-before")==null,"no viewer look controls");return true;});
       Bitmap expectedImage=BitmapFactory.decodeByteArray(jpeg,0,jpeg.length);
       ui(t,()->{Bitmap actual=(Bitmap)get(ViewerScreenChecks.viewer(gallery).image,"bitmap");TagDetailChecks.require(actual.sameAs(expectedImage),"saved look never auto-applies to original pixels");return true;});expectedImage.recycle();

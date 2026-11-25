@@ -57,8 +57,26 @@ esac
 "$adb" -s "$serial" shell wm dismiss-keyguard
 "$adb" -s "$serial" install -g app/build/outputs/apk/debug/app-debug.apk
 "$adb" -s "$serial" install -g app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-for mode in confidence-store camera-ledger camera-history-migration; do
-  printf '\nRunning Android instrumentation: %s\n' "$mode"
-  python3 scripts/device-check.py --adb "$adb" --serial "$serial" --mode "$mode" \
-    --no-standby-video 'Disposable CI emulator'
-done
+# Modes are ordered because seed/verify pairs must share the same disposable device.
+ran=false
+while read -r mode key value; do
+  case "$mode" in ''|\#*) continue ;; esac
+  ran=true
+  args=(-e width 400 -e font 1.0)
+  if [[ -n "$key" ]]; then
+    args+=(-e "$key" "$value")
+  fi
+  printf '\nRunning Android instrumentation: %s%s\n' "$mode" "${key:+ ($key=$value)}"
+  result=$("$adb" -s "$serial" shell am instrument -w -r -e mode "$mode" \
+    "${args[@]}" jp.nano.rawgallery.test/jp.nano.rawgallery.ArchiveInstrumentation < /dev/null)
+  printf '%s\n' "$result"
+  if ! grep -q '^INSTRUMENTATION_RESULT: stream=PASS ' <<< "$result" ||
+     ! grep -qx 'INSTRUMENTATION_CODE: -1' <<< "$result"; then
+    echo "$mode did not report PASS." >&2
+    exit 1
+  fi
+done < tests/ci-android-modes.txt
+if ! "$ran"; then
+  echo 'No Android instrumentation modes were configured.' >&2
+  exit 1
+fi

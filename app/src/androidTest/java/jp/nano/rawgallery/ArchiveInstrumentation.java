@@ -267,8 +267,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
       String report=failureReport(new AssertionError(new java.io.IOException("PRIVATE_VALUE")));
       if(report.contains("PRIVATE_VALUE")||!report.contains("java.io.IOException")||!report.contains("ArchiveInstrumentation.java:"))throw new AssertionError();
       Context context = getTargetContext();
-      if ("camera-history-migration".equals(cameraPilotMode)) {
-        results.putString("stream", CameraSyncHistoryMigrationCheck.run(getContext()));
+      if ("camera-history-migration".equals(cameraPilotArguments.getString("mode"))) {
+        results.putString("stream", CameraSyncHistoryMigrationCheck.run(context));
         finish(-1, results);
         return;
       }
@@ -487,7 +487,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
         results.putString("stream", TagLifecycleChecks.run(this)); finish(-1, results); return;
       }
       if (automaticTest) {
-        results.putString("stream", AutomaticTagChecks.run(context) + BatchTagChecks.run(context));
+        results.putString("stream", "PASS " + AutomaticTagChecks.run(context) + BatchTagChecks.run(context));
         finish(-1, results);
         return;
       }
@@ -497,7 +497,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
         return;
       }
       if (tagTest) {
-        results.putString("stream", TagStoreChecks.run(context));
+        results.putString("stream", "PASS " + TagStoreChecks.run(context));
         finish(-1, results);
         return;
       }

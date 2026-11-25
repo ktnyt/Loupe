@@ -148,10 +148,10 @@ final class ShareHistoryScreenChecks {
         decoration(viewer.shared);
       });
       capture(test, activity, captures, prefix + "-viewer-many", null, width, font);
-      ui(test, () -> TagDetailChecks.button(root(activity), "拡大").performClick());
+      ViewerScreenChecks.clickSecondary(test, activity, "拡大");
       ui(test, () -> require(ViewerScreenChecks.viewer(activity).image.isZoomed(), "Viewer zoomed"));
       capture(test, activity, captures, prefix + "-viewer-zoom", null, width, font);
-      ui(test, () -> TagDetailChecks.button(root(activity), "全体を表示").performClick());
+      ViewerScreenChecks.clickSecondary(test, activity, "拡大");
       information(test, activity, captures, prefix + "-info-many", width, font, true);
       ui(test, () -> { activity.onBackPressed(); activity.onBackPressed(); });
       GalleryScreenChecks.settle(test, activity);
@@ -258,7 +258,7 @@ final class ShareHistoryScreenChecks {
 
   private static void information(Instrumentation test, MainActivity activity, File directory,
       String name, int width, float font, boolean many) throws Exception {
-    ui(test, () -> TagDetailChecks.button(root(activity), "情報").performClick());
+    ViewerScreenChecks.clickSecondary(test, activity, "情報");
     View[] dialog = new View[1];
     TextView[] expected = new TextView[1];
     for (int i = 0; i < 100 && expected[0] == null; i++) {
