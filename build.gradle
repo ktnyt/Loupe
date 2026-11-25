@@ -1,2 +1,43 @@
-plugins { id 'com.android.application' version '8.10.1' apply false }
-plugins { id 'org.jetbrains.kotlin.android' version '2.1.21' apply false }
+plugins {
+    id 'com.android.application' version '8.10.1' apply false
+    id 'org.jetbrains.kotlin.android' version '2.1.21' apply false
+    id 'com.diffplug.spotless' version '8.12.0'
+}
+
+subprojects {
+    pluginManager.withPlugin('com.android.application') {
+        android.lint {
+            lintConfig = rootProject.file('lint.xml')
+            baseline = file('lint-baseline.xml')
+            warningsAsErrors = true
+        }
+    }
+}
+
+def changedSourcesSince = { revision ->
+    providers.exec {
+        workingDir rootDir
+        commandLine 'git', 'diff', '--name-only', '-z', '--diff-filter=ACMRT', revision,
+                '--', 'app/src', 'raw-experiment/src', 'tests'
+    }.standardOutput.asText.map { it.tokenize('\u0000') }
+}
+
+// The fixed base keeps committed changes in scope after main advances. The incoming
+// base also detects a change that restores an already formatted file to its old bytes.
+def formatBase = '56b3c9a5c241036dc4d5c01730bc67df72bc528e'
+def incomingBase = providers.gradleProperty('formatChangeBase').orElse('HEAD')
+def changedSources = changedSourcesSince(formatBase).zip(incomingBase.flatMap(changedSourcesSince)) {
+    baselinePaths, incomingPaths -> (baselinePaths + incomingPaths).unique()
+}
+
+spotless {
+    lineEndings = com.diffplug.spotless.LineEnding.UNIX
+    java {
+        target changedSources.map { paths -> paths.findAll { it.endsWith('.java') } }
+        googleJavaFormat('1.28.0')
+    }
+    kotlin {
+        target changedSources.map { paths -> paths.findAll { it.endsWith('.kt') } }
+        ktlint('1.8.0')
+    }
+}
