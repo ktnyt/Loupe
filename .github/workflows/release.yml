@@ -48,7 +48,9 @@ jobs:
       - name: Android build and lint
         run: python3 scripts/ci_gradle.py :app:assembleDebug :app:lintDebug
       - name: exFAT parser regression
-        run: python3 tests/camera-exfat.py
+        run: |
+          python3 tests/camera-exfat.py
+          python3 tests/direct-exfat-reservation.py
       - name: Inspect APK signature and required features
         run: |
           fingerprint=$(keytool -exportcert -keystore "$LOUPE_SIGNING_KEYSTORE" -alias androiddebugkey -storepass android | sha256sum | cut -d ' ' -f 1)

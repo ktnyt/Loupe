@@ -126,7 +126,8 @@ public final class CameraDifferentialService extends Service {
                 @Override public void onReceive(Context context, Intent event) {
                     String uuid = MountedCameraCard.notifiedVolumeUuid(event);
                     // The remount owns the storage gate and the import screen refreshes its source when it ends.
-                    if (SdRemountMountNotice.suppressMount(uuid) || SdCardRemount.isRunning()) return;
+                    if (SdRemountMountNotice.suppressMount(uuid) || SdCardRemount.isRunning()
+                            || DirectUsbHandoff.suppressAutomaticMount(context)) return;
                     String destination = PhotoStorage.selected(context);
                     Uri tree = MountedCameraCard.registeredMountSource(context, uuid, destination);
                     if (tree == null || !SdSourceRegistrations.hasReadGrant(context, tree)) return;

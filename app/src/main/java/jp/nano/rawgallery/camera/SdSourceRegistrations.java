@@ -119,6 +119,12 @@ public final class SdSourceRegistrations {
         return false;
     }
 
+    public static boolean directDcimAuthorized(Context context, Uri tree) {
+        String uuid = volumeUuid(tree);
+        return uuid != null && (uuid + ":DCIM").equalsIgnoreCase(DocumentsContract.getTreeDocumentId(tree))
+                && contains(context, tree) && hasReadGrant(context, tree);
+    }
+
     public static boolean hasReadGrant(Context context, Uri tree) {
         if (tree == null) return false;
         try {

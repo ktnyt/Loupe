@@ -92,6 +92,8 @@ final class CameraSdRemountUiChecks {
                         "no permission action while Shizuku is unavailable");
                 require(settingsView("sd-reader-reconnect").getVisibility() == View.GONE,
                         "no reader reconnect action for an unsupported configuration");
+                require(settingsView("sd-direct-import").getVisibility() == View.GONE,
+                        "no direct write action in an unsupported configuration");
             });
             capture(test, "unavailable");
             require(fake.requests == 0 && fake.starts == 0, "turning on with unavailable Shizuku is quiet");
@@ -205,7 +207,21 @@ final class CameraSdRemountUiChecks {
                 reveal(reconnect);
             });
             capture(test, "reader-reconnect-settings");
-            test.runOnMainSync(() -> settingsView("sd-reader-reconnect").performClick());
+            // Render the real control for inspection while keeping the write action disabled.
+            test.runOnMainSync(() -> {
+                TextView direct = (TextView) settingsView("sd-direct-import");
+                require(!direct.isSingleLine() && direct.getMinHeight() >= GalleryUi.dp(direct.getContext(), 48),
+                        "direct action wraps and has a 48dp touch target");
+                require(direct.getText().toString().contains("microSD"), "direct action names the destination");
+                direct.setVisibility(View.VISIBLE);
+                direct.setEnabled(false);
+                reveal(direct);
+            });
+            capture(test, "direct-import-setting");
+            test.runOnMainSync(() -> {
+                settingsView("sd-direct-import").setVisibility(View.GONE);
+                settingsView("sd-reader-reconnect").performClick();
+            });
             await(test, () -> hasDialog("リーダーを再接続しますか？"), "reconnect confirmation appears");
             capture(test, "reader-reconnect-confirmation");
             test.runOnMainSync(() -> {

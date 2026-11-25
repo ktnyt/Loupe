@@ -72,7 +72,7 @@ public final class CameraPhotoImporter {
         return content.sameRow(ledger.known(source)) && proof.equals(ledger.sdRevision(content.sourceSha));
     }
 
-    private boolean available(CameraImportLedger.Content content,BooleanSupplier cancelled)throws IOException {
+    boolean available(CameraImportLedger.Content content,BooleanSupplier cancelled)throws IOException {
         return available(content, cancelled, false, false, CameraPhotoPublisher.NO_COMMIT_CHECK);
     }
 
@@ -147,7 +147,7 @@ public final class CameraPhotoImporter {
         return importPhoto(source, copy, folderHint, stableSource, verifyAll, cancelled, beforeCommit, attempt, false);
     }
 
-    private void requireLibraryPermission() throws IOException {
+    void requireLibraryPermission() throws IOException {
         String read=android.os.Build.VERSION.SDK_INT>=33?android.Manifest.permission.READ_MEDIA_IMAGES:android.Manifest.permission.READ_EXTERNAL_STORAGE;
         if(context.checkSelfPermission(read)!=android.content.pm.PackageManager.PERMISSION_GRANTED)
             throw new IOException("Full photo access required for duplicate verification");

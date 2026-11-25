@@ -96,7 +96,7 @@ public final class CameraImportFile {
         digest.update(bytes);
     }
 
-    private static String hex(byte[] digest) {
+    static String hex(byte[] digest) {
         char[] result = new char[digest.length * 2];
         final char[] alphabet = "0123456789abcdef".toCharArray();
         for (int i = 0; i < digest.length; i++) {

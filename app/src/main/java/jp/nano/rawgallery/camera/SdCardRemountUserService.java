@@ -11,6 +11,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
@@ -76,6 +77,65 @@ public final class SdCardRemountUserService extends ISdCardRemountService.Stub {
             };
         }
         send(callback, result, mountedSource.get());
+    }
+
+    @Override public void leaseDirect(String address, String sdUuid, String microSdUuid, long deadlineMs,
+            ISdCardDirectLeaseCallback callback) {
+        if (Binder.getCallingUid() != ownerUid || Process.myUid() != SHELL_UID || callback == null) return;
+        long now = SystemClock.elapsedRealtime();
+        int result = ISdCardDirectLeaseCallback.SKIPPED;
+        if (supportsUsbReconnect() && deadlineMs > now && deadlineMs <= now + DirectUsbLeasePlan.EJECT_MS) {
+            // The synchronous transfer acknowledgement is the application's proof that the USB owner has closed.
+            String recoveryToken = UUID.randomUUID().toString();
+            DirectUsbLeasePlan.Journal journal = new DirectUsbLeasePlan.Journal() {
+                @Override public void begin(DirectUsbLeasePlan.Obligation obligation) throws IOException {
+                    try {
+                        if (!callback.persist(recoveryToken, obligation.sd().uuid(), obligation.microSd().uuid())) {
+                            throw new IOException("The app did not persist the USB recovery obligation");
+                        }
+                    } catch (RemoteException unavailable) {
+                        throw new IOException("Could not confirm USB recovery obligation persistence", unavailable);
+                    }
+                }
+
+                @Override public void complete(DirectUsbLeasePlan.Obligation obligation) throws IOException {
+                    try {
+                        if (!callback.clear(recoveryToken)) {
+                            throw new IOException("The app did not clear the USB recovery obligation");
+                        }
+                    } catch (RemoteException unavailable) {
+                        throw new IOException("Could not confirm USB recovery obligation removal", unavailable);
+                    }
+                }
+            };
+            var lease = DirectUsbLeasePlan.execute(new Sm(callback.asBinder()), journal, address, sdUuid, microSdUuid,
+                    deadlineMs, () -> transferDirect(callback, recoveryToken));
+            result = switch (lease.outcome()) {
+                case SKIPPED -> ISdCardDirectLeaseCallback.SKIPPED;
+                case IMPORTED -> ISdCardDirectLeaseCallback.TRANSFERRED;
+                case FAILED_RESTORED -> ISdCardDirectLeaseCallback.FAILED_RESTORED;
+                case RECOVERY_PENDING -> ISdCardDirectLeaseCallback.RECOVERY_PENDING;
+            };
+        }
+        try {
+            callback.onFinished(result);
+        } catch (RemoteException | RuntimeException unavailable) {
+            // The durable app record, if still owed, survives a lost completion callback.
+        }
+    }
+
+    private static void transferDirect(ISdCardDirectLeaseCallback callback, String recoveryToken) throws IOException {
+        int transfer;
+        try {
+            transfer = callback.transfer(recoveryToken);
+        } catch (RemoteException | RuntimeException | Error unknown) {
+            throw new DirectUsbLeasePlan.OwnershipUnknownException(unknown);
+        }
+        switch (transfer) {
+            case ISdCardDirectLeaseCallback.TRANSFER_OK -> { }
+            case ISdCardDirectLeaseCallback.FAILED_CLOSED -> throw new IOException("Direct USB transfer failed after closing");
+            default -> throw new DirectUsbLeasePlan.OwnershipUnknownException(null);
+        }
     }
 
     private static void send(ISdCardRemountCallback callback, int result, String mountedSourceUuid) {

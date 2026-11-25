@@ -1,5 +1,6 @@
 package jp.nano.rawgallery.camera
 
+import java.io.EOFException
 import java.io.File
 import java.io.RandomAccessFile
 import java.text.SimpleDateFormat
@@ -30,7 +31,7 @@ object ExifOffsetFix {
     /** 壊れた OffsetTime タグを直し、書き換えた個数を返す。対象外・異常時は 0 */
     fun patchIfBroken(file: File): Int =
         try {
-            RandomAccessFile(file, "rw").use { patch(it) }
+            RandomAccessFile(file, "rw").use { patch(FileAccess(it)) }
         } catch (e: Exception) {
             0
         }
@@ -38,20 +39,87 @@ object ExifOffsetFix {
     /** Comparison uses the imported values only for fields the source repair is allowed to change. */
     internal fun patchForComparison(sourceCopy: File, importedHeader: File) {
         try {
-            val entries = RandomAccessFile(sourceCopy, "r").use { repairableEntries(it) }
-            val offsets = OFFSET_TAGS.associateWith { "+00:00\u0000".toByteArray(Charsets.US_ASCII) }
-                .toMutableMap()
-            RandomAccessFile(importedHeader, "r").use { offsets.putAll(validOffsets(it)) }
-            RandomAccessFile(sourceCopy, "rw").use { patch(it, offsets, entries) }
-            RandomAccessFile(importedHeader, "rw").use { patch(it, offsets, entries) }
+            RandomAccessFile(sourceCopy, "rw").use { source ->
+                RandomAccessFile(importedHeader, "rw").use { imported ->
+                    normalizeForComparison(FileAccess(source), FileAccess(imported))
+                }
+            }
         } catch (e: Exception) {
             // The full-byte comparison still rejects any remaining difference.
         }
     }
 
+    /** The caller must compare the file length and every byte beyond these equal-length prefixes. */
+    @JvmStatic
+    fun sameAfterOffsetRepair(sourcePrefix: ByteArray, savedPrefix: ByteArray): Boolean {
+        if (sourcePrefix.isEmpty() || sourcePrefix.size != savedPrefix.size) return false
+        val source = sourcePrefix.copyOf()
+        val saved = savedPrefix.copyOf()
+        return try {
+            normalizeForComparison(PrefixAccess(source), PrefixAccess(saved))
+            source.contentEquals(saved)
+        } catch (_: EOFException) {
+            false
+        }
+    }
+
+    private fun normalizeForComparison(source: Access, imported: Access) {
+        val entries = repairableEntries(source)
+        val offsets = OFFSET_TAGS.associateWith { "+00:00\u0000".toByteArray(Charsets.US_ASCII) }
+            .toMutableMap()
+        offsets.putAll(validOffsets(imported))
+        patch(source, offsets, entries)
+        patch(imported, offsets, entries)
+    }
+
+    private interface Access {
+        fun length(): Long
+        fun seek(offset: Long)
+        fun read(): Int
+        fun readFully(destination: ByteArray)
+        fun write(bytes: ByteArray)
+    }
+
+    private class FileAccess(private val file: RandomAccessFile) : Access {
+        override fun length() = file.length()
+        override fun seek(offset: Long) = file.seek(offset)
+        override fun read() = file.read()
+        override fun readFully(destination: ByteArray) = file.readFully(destination)
+        override fun write(bytes: ByteArray) = file.write(bytes)
+    }
+
+    private class PrefixAccess(private val bytes: ByteArray) : Access {
+        private var position = 0
+
+        override fun length() = bytes.size.toLong()
+
+        override fun seek(offset: Long) {
+            if (offset < 0 || offset > bytes.size) throw EOFException()
+            position = offset.toInt()
+        }
+
+        override fun read(): Int = bytes[advance(1)].toInt() and 0xFF
+
+        override fun readFully(destination: ByteArray) {
+            val start = advance(destination.size)
+            bytes.copyInto(destination, startIndex = start, endIndex = position)
+        }
+
+        override fun write(bytes: ByteArray) {
+            bytes.copyInto(this.bytes, destinationOffset = advance(bytes.size))
+        }
+
+        private fun advance(count: Int): Int {
+            if (count > bytes.size - position) throw EOFException()
+            val start = position
+            position += count
+            return start
+        }
+    }
+
     private data class Directory(val base: Long, val offset: Long, val little: Boolean, val count: Int)
 
-    private fun directory(f: RandomAccessFile): Directory? {
+    private fun directory(f: Access): Directory? {
         val tiffBase = findTiffBase(f) ?: return null
         // "II"/"MM" は 2 バイト同値なのでエンディアン指定はどちらでもよい
         val le = when (readU16(f, tiffBase, le = true)) {
@@ -67,7 +135,7 @@ object ExifOffsetFix {
         return Directory(tiffBase, exifIfd, le, count)
     }
 
-    private fun validOffsets(f: RandomAccessFile): Map<Int, ByteArray> {
+    private fun validOffsets(f: Access): Map<Int, ByteArray> {
         val d = directory(f) ?: return emptyMap()
         val result = HashMap<Int, ByteArray>()
         for (i in 0 until d.count) {
@@ -83,7 +151,7 @@ object ExifOffsetFix {
         return result
     }
 
-    private fun repairableEntries(f: RandomAccessFile): Set<Long> {
+    private fun repairableEntries(f: Access): Set<Long> {
         val d = directory(f) ?: return emptySet()
         val result = HashSet<Long>()
         for (i in 0 until d.count) {
@@ -104,7 +172,7 @@ object ExifOffsetFix {
     }
 
     private fun patch(
-        f: RandomAccessFile,
+        f: Access,
         comparisonOffsets: Map<Int, ByteArray>? = null,
         comparisonEntries: Set<Long>? = null,
     ): Int {
@@ -192,7 +260,7 @@ object ExifOffsetFix {
 
     /** ExifIFD 内の ASCII タグの文字列値。無ければ null */
     private fun readAsciiTag(
-        f: RandomAccessFile,
+        f: Access,
         tiffBase: Long,
         ifd: Long,
         le: Boolean,
@@ -215,7 +283,7 @@ object ExifOffsetFix {
     }
 
     /** JPEG なら APP1 の Exif ヘッダ直後、TIFF 構造 (ORF 含む) なら 0。それ以外は null */
-    private fun findTiffBase(f: RandomAccessFile): Long? {
+    private fun findTiffBase(f: Access): Long? {
         if (f.length() < 16) return null
         f.seek(0)
         val b0 = f.read()
@@ -243,7 +311,7 @@ object ExifOffsetFix {
         return null
     }
 
-    private fun findTagValue(f: RandomAccessFile, ifd: Long, le: Boolean, wanted: Int): Long? {
+    private fun findTagValue(f: Access, ifd: Long, le: Boolean, wanted: Int): Long? {
         val count = readU16(f, ifd, le)
         if (count <= 0 || count > MAX_IFD_ENTRIES) return null
         for (i in 0 until count) {
@@ -253,7 +321,7 @@ object ExifOffsetFix {
         return null
     }
 
-    private fun readU16(f: RandomAccessFile, pos: Long, le: Boolean): Int {
+    private fun readU16(f: Access, pos: Long, le: Boolean): Int {
         f.seek(pos)
         val a = f.read()
         val b = f.read()
@@ -261,7 +329,7 @@ object ExifOffsetFix {
         return if (le) a or (b shl 8) else (a shl 8) or b
     }
 
-    private fun readU32(f: RandomAccessFile, pos: Long, le: Boolean): Long {
+    private fun readU32(f: Access, pos: Long, le: Boolean): Long {
         f.seek(pos)
         val b = ByteArray(4)
         f.readFully(b)
@@ -274,14 +342,14 @@ object ExifOffsetFix {
         }
     }
 
-    private fun writeU16(f: RandomAccessFile, pos: Long, le: Boolean, v: Int) {
+    private fun writeU16(f: Access, pos: Long, le: Boolean, v: Int) {
         f.seek(pos)
+        val low = v.toByte()
+        val high = (v shr 8).toByte()
         if (le) {
-            f.write(v and 0xFF)
-            f.write((v shr 8) and 0xFF)
+            f.write(byteArrayOf(low, high))
         } else {
-            f.write((v shr 8) and 0xFF)
-            f.write(v and 0xFF)
+            f.write(byteArrayOf(high, low))
         }
     }
 }

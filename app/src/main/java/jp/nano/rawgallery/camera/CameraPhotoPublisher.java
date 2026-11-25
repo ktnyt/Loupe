@@ -80,18 +80,10 @@ public final class CameraPhotoPublisher {
                 source.name, folder, kind, group, volume, replacement);
         faults.after(Boundary.ALLOCATED);
         try {
-            ContentValues values=new ContentValues();
-            values.put(MediaStore.MediaColumns.DISPLAY_NAME,p.pendingName);
-            values.put(MediaStore.MediaColumns.MIME_TYPE,MediaTypes.INSTANCE.mimeOf(source.name));
-            values.put(MediaStore.MediaColumns.RELATIVE_PATH,p.relativeFolder);
-            if(source.captureSeconds>0)values.put(MediaStore.MediaColumns.DATE_TAKEN,source.captureSeconds*1000);
-            values.put(MediaStore.MediaColumns.IS_PENDING,1);
-            Uri target=resolver.insert(MediaStore.Images.Media.getContentUri(p.volume),values);
-            if(target==null)throw new IOException("Photo insert failed");
-            faults.after(Boundary.URI_INSERTED);
-            ledger.attach(p.token,target.toString());p=ledger.pending(p.token);
-            Revision allocated = new Revision(requirePublicationRow(p, target, true), epoch(p.volume));
-            faults.after(Boundary.URI_RECORDED);
+            Attached attached = attach(p, source);
+            p = attached.pending();
+            Uri target = attached.uri();
+            Revision allocated = attached.revision();
             ParcelFileDescriptor fd = openPendingForWrite(p, target, allocated, cancelled);
             try(InputStream input=new FileInputStream(staged); ParcelFileDescriptor.AutoCloseOutputStream out=new ParcelFileDescriptor.AutoCloseOutputStream(fd)) {
 
@@ -100,16 +92,7 @@ public final class CameraPhotoPublisher {
                     if(total!=p.storedBytes)throw new IOException("Staged photo is incomplete");
                     out.getFD().sync();
             }
-            check(cancelled);
-            verify(p, target, true, cancelled);
-            requirePublicationContent(p);
-            // READY is the durable admission to publication. A refused source check must leave
-            // the row unready so recovery can only discard it, never publish it later.
-            beforeCommit.check();
-            ledger.ready(p.token);p=ledger.pending(p.token);
-            faults.after(Boundary.FILE_VERIFIED);
-            // An admitted publication must finish or recover with its receipt, even after a stop.
-            completePublication(p, target, () -> false);
+            verifyAndPublish(p, target, cancelled, beforeCommit);
             return target;
         } catch(IOException|RuntimeException failure) {
             CameraImportLedger.Pending current=ledger.pending(p.token);
@@ -126,6 +109,127 @@ public final class CameraPhotoPublisher {
             throw failure;
         }
     }
+    private record Attached(CameraImportLedger.Pending pending, Uri uri, Revision revision) {}
+
+    /** Opaque reservation; it stays unready in the journal until Android verifies the photo. */
+    record DirectReservation(String token, Uri uri, String path, long bytes, DirectReservationMarker marker) {}
+
+    private Attached attach(CameraImportLedger.Pending p, CameraImportFile source) throws IOException {
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.MediaColumns.DISPLAY_NAME, p.pendingName);
+        values.put(MediaStore.MediaColumns.MIME_TYPE, MediaTypes.INSTANCE.mimeOf(source.name));
+        values.put(MediaStore.MediaColumns.RELATIVE_PATH, p.relativeFolder);
+        if (source.captureSeconds > 0) values.put(MediaStore.MediaColumns.DATE_TAKEN, source.captureSeconds * 1000);
+        values.put(MediaStore.MediaColumns.IS_PENDING, 1);
+        Uri target = resolver.insert(MediaStore.Images.Media.getContentUri(p.volume), values);
+        if (target == null) throw new IOException("Photo insert failed");
+        faults.after(Boundary.URI_INSERTED);
+        ledger.attach(p.token, target.toString());
+        p = ledger.pending(p.token);
+        Revision allocated = new Revision(requirePublicationRow(p, target, true), epoch(p.volume));
+        faults.after(Boundary.URI_RECORDED);
+        return new Attached(p, target, allocated);
+    }
+
+    private void verifyAndPublish(CameraImportLedger.Pending pending, Uri target, BooleanSupplier cancelled,
+            CommitCheck beforeCommit) throws IOException {
+        check(cancelled);
+        verify(pending, target, true, cancelled);
+        requirePublicationContent(pending);
+        // READY is the durable admission to publication. Recovery may only discard unready rows.
+        beforeCommit.check();
+        ledger.ready(pending.token);
+        faults.after(Boundary.FILE_VERIFIED);
+        // Complete an admitted publication with its receipt even after a cancellation.
+        completePublication(ledger.pending(pending.token), target, () -> false);
+    }
+
+    DirectReservation reserveDirect(CameraImportFile source, String originalSha, String storedSha,
+            long storedBytes, String kind, String folder, String group, BooleanSupplier cancelled,
+            CameraImportLedger.Content replacement) throws IOException {
+        check(cancelled);
+        if (PhotoStorage.PRIMARY.equals(volume) || storedBytes <= 0
+                || !Objects.equals(volume, PhotoStorage.selected(context))) {
+            throw new IOException("保存先のmicroSDを確認できませんでした。");
+        }
+        PhotoStorage.requireSpace(context, volume, storedBytes);
+        CameraImportLedger.Pending pending = ledger.allocate(source, originalSha, storedSha, storedBytes,
+                source.name, folder, kind, group, volume, replacement);
+        faults.after(Boundary.ALLOCATED);
+        try {
+            Attached attached = attach(pending, source);
+            pending = attached.pending();
+            Uri target = attached.uri();
+            Revision revision = attached.revision();
+            DirectReservationMarker marker = new DirectReservationMarker();
+            ParcelFileDescriptor fd = openPendingForWrite(pending, target, revision, cancelled);
+            try (ParcelFileDescriptor.AutoCloseOutputStream output = new ParcelFileDescriptor.AutoCloseOutputStream(fd)) {
+                byte[] buffer = new byte[64 * 1024];
+                for (long offset = 0; offset < storedBytes;) {
+                    check(cancelled);
+                    int count = (int) Math.min(buffer.length, storedBytes - offset);
+                    marker.fill(buffer, 0, count, offset);
+                    output.write(buffer, 0, count);
+                    offset += count;
+                }
+                output.getFD().sync();
+            }
+            // MediaProvider may update GENERATION_MODIFIED on close. Resolve its current owned row
+            // and physical pending path after the reserved bytes have reached the card.
+            Revision synced = new Revision(requirePublicationRow(pending, target, true), epoch(volume));
+            String relative = physicalPendingPath(pending, target, synced);
+            return new DirectReservation(pending.token, target, relative, storedBytes, marker);
+        } catch (IOException | RuntimeException failure) {
+            try {
+                abandonDirect(pending.token);
+            } catch (IOException cleanup) {
+                failure.addSuppressed(cleanup);
+            }
+            throw failure;
+        }
+    }
+
+    private String physicalPendingPath(CameraImportLedger.Pending pending, Uri uri, Revision expected)
+            throws IOException {
+        requirePendingRevision(pending, uri, expected);
+        String[] fields = {MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DATA};
+        try (Cursor row = metadataQuery.query(uri, fields, includeAllPhotos())) {
+            requireColumns(row, fields);
+            if (!moveToOnlyMediaRow(row) || id(row) != ContentUris.parseId(uri)) {
+                throw new IOException("保存用ファイルの位置を確認できませんでした。");
+            }
+            String physical = row.getString(row.getColumnIndexOrThrow(MediaStore.MediaColumns.DATA));
+            if (physical == null || !new File(physical).isAbsolute())
+                throw new IOException("保存用ファイルの位置を確認できませんでした。");
+            requireComplete(row);
+            File directory = PhotoStorage.requireWritable(context, volume).getCanonicalFile();
+            File pendingFile = new File(physical).getCanonicalFile();
+            File expectedFolder = new File(directory, pending.relativeFolder).getCanonicalFile();
+            if (!pendingFile.toPath().startsWith(directory.toPath())
+                    || !expectedFolder.equals(pendingFile.getParentFile())
+                    || !pendingFile.getName().endsWith(pending.pendingName))
+                throw new IOException("保存用ファイルが選択したmicroSDにありません。");
+            requirePendingRevision(pending, uri, expected);
+            return directory.toPath().relativize(pendingFile.toPath()).toString();
+        }
+    }
+
+    Uri finishDirect(DirectReservation held, BooleanSupplier cancelled, CommitCheck beforeCommit) throws IOException {
+        CameraImportLedger.Pending pending = ledger.pending(held.token());
+        if (pending == null || pending.ready || !volume.equals(pending.volume)
+                || !held.uri().toString().equals(pending.uri) || held.bytes() != pending.storedBytes
+                || !volume.equals(PhotoStorage.selected(context))) {
+            throw new IOException("保存用ファイルの記録が変わりました。");
+        }
+        verifyAndPublish(pending, held.uri(), cancelled, beforeCommit);
+        return held.uri();
+    }
+
+    void abandonDirect(String token) throws IOException {
+        CameraImportLedger.Pending pending = ledger.pending(token);
+        if (pending != null && !pending.ready) discardUnpublished(pending);
+    }
+
     private record State(boolean pending, boolean trashed, String owner, String name, String folder,
             long generationAdded, long generationModified) {}
     private record Revision(State row, String epoch) {}

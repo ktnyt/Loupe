@@ -8,6 +8,7 @@ import jp.nano.rawgallery.camera.SdCardRemount;
 public final class DiagnosticApplication extends Application {
   @Override public void onCreate() {
     super.onCreate();
+    jp.nano.rawgallery.camera.CameraImportGate.initialize(this);
     SdCardRemount.restoreReservation(this);
     DiagnosticLog.init(this);
     GenerationIndicator.install(this);

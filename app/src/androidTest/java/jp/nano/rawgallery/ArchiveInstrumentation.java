@@ -440,6 +440,11 @@ public final class ArchiveInstrumentation extends Instrumentation {
         results.putString("stream",result);finish(-1,results);return;
       }
       if (cameraBenchmarkTest) { results.putString("stream", CameraImportBenchmarkChecks.run(this)); finish(-1, results); return; }
+      if ("camera-direct-publication".equals(cameraPilotArguments.getString("mode"))) {
+        results.putString("stream", jp.nano.rawgallery.camera.DirectPublicationChecks.run(this));
+        finish(-1, results);
+        return;
+      }
       if (cameraLedgerTest) { results.putString("stream", CameraImportLedgerChecks.run(this)); finish(-1, results); return; }
       if (photoStorageMode != null) {
         String secondary = cameraPilotArguments.getString("secondaryVolume");

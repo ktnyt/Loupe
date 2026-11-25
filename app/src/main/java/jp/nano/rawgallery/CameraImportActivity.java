@@ -21,6 +21,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.DocumentsContract;
 import android.provider.Settings;
 import android.view.View;
 import android.widget.Button;
@@ -86,6 +87,7 @@ public final class CameraImportActivity extends AppCompatActivity {
     private Button sdStart;
     private CameraQuickImportSources.SdState sdSourceState;
     private MaterialButton sdSettingsButton;
+    private Button sdDirect;
     private TextView sdSettingsStatus;
     private androidx.appcompat.app.AlertDialog sdSettingsDialog;
     private MaterialSwitch sdRemount, sdReconnectOnEntry;
@@ -444,6 +446,12 @@ public final class CameraImportActivity extends AppCompatActivity {
             sdSettingsDialog.dismiss();
             startSd(SdStartMode.REVIEW_FORMATS);
         });
+        sdDirect = button(options, "USBでmicroSDへ直接保存", this::startDirectSd);
+        sdDirect.setTag("sd-direct-import");
+        sdDirect.setSingleLine(false);
+        sdDirect.setMinHeight(dp(48));
+        MaterialUi.outlined(sdDirect);
+        sdDirect.setVisibility(View.GONE);
         sdReconnect = button(options, "リーダーを再接続", this::confirmSdReconnect);
         sdReconnect.setTag("sd-reader-reconnect");
         sdReconnect.setSingleLine(false);
@@ -526,7 +534,8 @@ public final class CameraImportActivity extends AppCompatActivity {
 
     private void renderSdRemountSettings() {
         boolean reader = sdRemountAccess.reconnectTarget() != null;
-        SdCardRemount.Status status = sdRemount.isChecked() || sdReconnectOnEntry.isChecked() || reader
+        boolean direct = canOfferDirectSd();
+        SdCardRemount.Status status = sdRemount.isChecked() || sdReconnectOnEntry.isChecked() || reader || direct
                 ? sdRemountAccess.status() : null;
         String info = "";
         if (status == SdCardRemount.Status.UNAVAILABLE)
@@ -540,11 +549,17 @@ public final class CameraImportActivity extends AppCompatActivity {
         sdRemountPermission.setEnabled(!sdRemountPermissionPending);
         sdReconnect.setVisibility(reader ? View.VISIBLE : View.GONE);
         sdReconnect.setEnabled(status == SdCardRemount.Status.READY && canStartSourceAction());
+        sdDirect.setVisibility(direct ? View.VISIBLE : View.GONE);
+        sdDirect.setEnabled(direct && status == SdCardRemount.Status.READY && canStartSourceAction());
+    }
+
+    private boolean canOfferDirectSd() {
+        return ImportService.supportsDirect(connected()) && !PhotoStorage.PRIMARY.equals(PhotoStorage.selected(this));
     }
 
     private void requestSdRemountPermission() {
         if (!sdRemountPermissionPending && (sdRemount.isChecked() || sdReconnectOnEntry.isChecked()
-                || sdRemountAccess.reconnectTarget() != null)
+                || sdRemountAccess.reconnectTarget() != null || canOfferDirectSd())
                 && sdRemountAccess.status() == SdCardRemount.Status.NEEDS_PERMISSION) {
             sdRemountPermissionPending = true;
             sdRemountPermissionDenied = false;
@@ -1420,8 +1435,10 @@ public final class CameraImportActivity extends AppCompatActivity {
 
     void renderSdSource(CameraQuickImportSources.SdState state) {
         sdSourceState = state;
-        setText(sdStatus, state.message);
-        setText(sdSettingsStatus, state.message);
+        String message = ImportService.directRecoveryPending(this)
+                ? "カードリーダーを挿し直し、Androidで両方のカードを確認してください。" : state.message;
+        setText(sdStatus, message);
+        setText(sdSettingsStatus, message);
         setText(sdStart, state == CameraQuickImportSources.SdState.AMBIGUOUS
                 ? "取り込み元を選ぶ" : "SDカードから取り込む");
         sdChecking.setVisibility(state == CameraQuickImportSources.SdState.CHECKING ? View.VISIBLE : View.GONE);
@@ -1502,6 +1519,59 @@ public final class CameraImportActivity extends AppCompatActivity {
         SdStart request = pendingSdStart;
         clearPendingSdStart();
         if (request != null) requestSdStart(request);
+    }
+
+    private void startDirectSd() {
+        if (!canStartSourceAction()) return;
+        UsbDevice device = connected();
+        String destination = PhotoStorage.selected(this);
+        String registered = SdSourceRegistrations.latest(this);
+        Uri sourceTree = registered == null ? null : Uri.parse(registered);
+        String source = SdSourceRegistrations.volumeUuid(sourceTree);
+        if (!ImportService.supportsDirect(device) || SdCardRemount.status() != SdCardRemount.Status.READY
+                || PhotoStorage.PRIMARY.equals(destination)) {
+            showSdFailure("対応するUSBリーダー、microSD、Shizukuの接続を確認してください。");
+            return;
+        }
+        if (source == null || source.equalsIgnoreCase(destination)
+                || !SdSourceRegistrations.directDcimAuthorized(this, sourceTree)) {
+            showSdFailure("取り込み元SDのDCIMフォルダを選んでください。");
+            return;
+        }
+        if (!ensureSdPermissions()) return;
+        sdSettingsDialog.dismiss();
+        String savedKinds = requestedUsbKinds(device);
+        java.util.Set<MediaTypes.Kind> kinds = new java.util.HashSet<>(
+                MediaTypes.INSTANCE.kindsFromString(savedKinds));
+        kinds.remove(MediaTypes.Kind.VIDEO);
+        if (kinds.isEmpty()) {
+            showSdFailure("JPEGまたはRAWを取り込み形式に指定してください。");
+            return;
+        }
+        Runnable start = () -> {
+            UsbDevice attached = connected();
+            if (isFinishing() || isDestroyed() || !device.equals(attached)
+                    || !destination.equals(PhotoStorage.selected(this))
+                    || !java.util.Objects.equals(registered, SdSourceRegistrations.latest(this))) {
+                if (!isFinishing() && !isDestroyed()) showSdFailure("SDカードか保存先が変わりました。");
+                return;
+            }
+            try {
+                ImportService.startDirect(this, device, sourceTree, destination, kinds);
+            } catch (RuntimeException failure) {
+                showSdFailure("USB取り込みを開始できませんでした。");
+            }
+        };
+        if (getSystemService(UsbManager.class).hasPermission(device)) start.run();
+        else try {
+            permission = CameraUsb.request(this, device, granted -> {
+                permission = null;
+                if (granted) start.run();
+                else if (!isFinishing() && !isDestroyed()) showSdFailure("USBリーダーの利用が許可されませんでした。");
+            });
+        } catch (RuntimeException failure) {
+            showSdFailure("USBリーダーの利用許可を確認できませんでした。");
+        }
     }
 
     private void startSd() { startSd(SdStartMode.MANUAL); }

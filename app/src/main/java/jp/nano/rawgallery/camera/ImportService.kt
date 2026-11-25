@@ -13,6 +13,7 @@ import android.content.IntentFilter
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.mtp.MtpDevice
+import android.net.Uri
 import android.os.IBinder
 import android.widget.Toast
 import jp.nano.rawgallery.R
@@ -56,6 +57,7 @@ class ImportService : Service() {
         }
         val requestId = intent?.getStringExtra(EXTRA_REQUEST_ID)
         val expectedVolume = intent?.getStringExtra(EXTRA_EXPECTED_VOLUME)
+        val directSource = intent?.getStringExtra(EXTRA_DIRECT_SOURCE)?.let(Uri::parse)
         if (usbDevice == null || expectedVolume == null) {
             ImportProgress.completeRequest(requestId, false)
             stopSelf(startId)
@@ -82,7 +84,9 @@ class ImportService : Service() {
             try {
                 if (lock.tryLock()) {
                     try {
-                        succeeded = runImport(usbDevice, requestedKinds, allowDeletion, expectedVolume)
+                        succeeded = if (directSource == null) {
+                            runImport(usbDevice, requestedKinds, allowDeletion, expectedVolume)
+                        } else runDirectImport(usbDevice, directSource, expectedVolume, requestedKinds)
                     } finally {
                         lock.unlock()
                     }
@@ -112,6 +116,37 @@ class ImportService : Service() {
             }
         }
         return START_NOT_STICKY
+    }
+
+    private fun runDirectImport(
+        device: UsbDevice, source: Uri, volume: String, requested: Set<MediaTypes.Kind>?,
+    ): Boolean {
+        cancelled.set(false)
+        ImportProgress.connecting("USBリーダーと2枚のカードを確認しています…")
+        fun stopped() = cancelled.get() || ImportProgress.stopRequested || Thread.currentThread().isInterrupted
+        return try {
+            PhotoStorage.requireImportReady(this)
+            val kinds = (requested ?: setOf(MediaTypes.Kind.JPEG, MediaTypes.Kind.RAW)) - MediaTypes.Kind.VIDEO
+            if (!SdSourceRegistrations.directDcimAuthorized(this, source)) {
+                throw java.io.IOException("取り込み元SDのDCIMフォルダを選び直してください。")
+            }
+            val result = DirectCameraSdImport.run(this, device, source, volume, kinds, ::stopped)
+            ImportProgress.photoContent(result.saved() + result.skipped(), result.saved() + result.skipped(),
+                result.saved(), result.skipped(), -1, -1)
+            val message = "新規保存 " + result.saved() + "件・保存済み " + result.skipped() + "件"
+            ImportProgress.photoTerminal("complete", message)
+            notify(NOTIF_DONE, notification(message))
+            true
+        } catch (failure: Exception) {
+            ImportLog.w(TAG, "direct SD import failed", failure)
+            val recovery = DirectUsbHandoff.recoveryPending(this)
+            val message = if (recovery) DirectUsbHandoff.RECOVERY
+                else if (stopped()) "取り込みを中止しました。"
+                else failure.message ?: "SDからmicroSDへ直接保存できませんでした。"
+            ImportProgress.photoTerminal(if (!recovery && stopped()) "cancelled" else "failed", message)
+            notify(NOTIF_DONE, notification(message))
+            false
+        }
     }
 
     private fun runImport(
@@ -633,6 +668,23 @@ class ImportService : Service() {
         private const val EXTRA_REQUEST_ID = "import_request_id"
         private const val EXTRA_ALLOW_DELETION = "allow_camera_deletion"
         private const val EXTRA_EXPECTED_VOLUME = "import_expected_volume"
+        private const val EXTRA_DIRECT_SOURCE = "import_direct_sd_source"
+
+        @JvmStatic
+        fun supportsDirect(device: UsbDevice?): Boolean = DirectUsbHandoff.supported(device)
+
+        @JvmStatic
+        fun directRecoveryPending(context: Context): Boolean = DirectUsbHandoff.blocksImport(context)
+
+        @JvmStatic
+        fun startDirect(context: Context, device: UsbDevice, source: Uri, volume: String,
+                        kinds: Set<MediaTypes.Kind>) {
+            context.startForegroundService(Intent(context, ImportService::class.java)
+                .putExtra(UsbManager.EXTRA_DEVICE, device)
+                .putExtra(EXTRA_DIRECT_SOURCE, source.toString())
+                .putExtra(EXTRA_EXPECTED_VOLUME, volume)
+                .putExtra(EXTRA_KINDS, MediaTypes.kindsToString(kinds)))
+        }
 
         @JvmStatic @JvmOverloads
         fun start(
