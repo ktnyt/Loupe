@@ -61,7 +61,7 @@ python3 scripts/deploy-apk.py prepare --mode recovery --ref <保存済みcommit>
 python3 scripts/issue-progress.py record --issue ISSUE --run WORK_ID --phase install --status start --note '復元用commitと対象端末' --then python3 scripts/deploy-apk.py install --bundle outputs/apk/recovery-<作業名>/bundle.json --serial SERIAL --ack-recovery
 ```
 
-同じ `prepare --mode recovery` で、Release署名設定を持つソースはRelease、設定導入前の保存済みコミットは従来のDebugとして準備します。後者にもissue・署名対象の来歴・必須機能の検査と導入時の `--ack-recovery` が必要です。以前に作成済みのrecovery bundleは元のAPKと来歴を照合して導入でき、再prepareは不要です。main用に新しく準備・公開・OTA照合するAPKには非デバッグのReleaseを使います。
+同じ `prepare --mode recovery` で、Release署名設定を持つソースはRelease、設定導入前の保存済みコミットは従来のDebugとして準備します。旧ソースが読む `LOUPE_SIGNING_KEYSTORE` を指定するか、その版のビルドが参照する場所に更新と互換のある従来の署名鍵を用意します。後者にもissue・署名対象の来歴・必須機能の検査と導入時の `--ack-recovery` が必要です。以前に作成済みのrecovery bundleは元のAPKと来歴を照合して導入でき、再prepareは不要です。main用に新しく準備・公開・OTA照合するAPKには非デバッグのReleaseを使います。
 
 recovery導入後はpending-main-integrationとなり、statusは成功にしない。次のAPKもrecoveryであっても、未統合の復元コミットを含まなければ上書きを拒否する。端末から取得したAPK内の署名provenanceもmain/recoveryの両方で祖先検査するため、Mac側の記録がない場合やADB serialが変わった場合も復元コミットを引き継ぐ。ソースcommitはmerge commitまたはfast-forwardで祖先関係を保ってmainへ反映する。導入済recoveryをsquash/rebaseして元commitを祖先から外さない。その後、mainから作り直したAPKを導入・読み戻して閉じる。機能を欠くmainを戻し先にしない。実機で確認できないまま常用検証APKを残してdeliveryを完了にしない。実機導入・確認が残るPRはRefsとして、完了前のissue自動クローズを避ける。
 
