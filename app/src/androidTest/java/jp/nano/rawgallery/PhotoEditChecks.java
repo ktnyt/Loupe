@@ -4,6 +4,7 @@ import android.app.*;
 import android.content.*;
 import android.graphics.*;
 import android.net.Uri;
+import android.os.ParcelFileDescriptor;
 import android.database.Cursor;
 import android.provider.MediaStore;
 import android.view.View;
@@ -13,6 +14,7 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.inspector.WindowInspector;
 import android.widget.*;
 import java.io.*;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.util.*;
 import java.util.concurrent.*;
@@ -223,7 +225,7 @@ final class PhotoEditChecks {
       Bitmap original=BitmapFactory.decodeByteArray(before,0,before.length);
       try{
         TagDetailChecks.require(written!=null&&written.getWidth()==192&&written.getHeight()==128,"MediaStore JPEG preserves fixture dimensions");
-        checkSavedMonoTint(original,written);
+        checkSavedMonoTint(main,input,original,written);
       }finally{if(written!=null)written.recycle();if(original!=null)original.recycle();}
       TagDetailChecks.require(Arrays.equals(before,Files.readAllBytes(source.toPath()))&&Arrays.equals(before,Files.readAllBytes(copy.toPath())),"full editor/save leaves synthetic original and input copy unchanged");
       t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
@@ -247,7 +249,7 @@ final class PhotoEditChecks {
       if(cleanup!=null){if(primary!=null)primary.addSuppressed(cleanup);else if(cleanup instanceof Error)throw (Error)cleanup;else throw (Exception)cleanup;}
     }
   }
-  private static void checkSavedMonoTint(Bitmap original, Bitmap written) {
+  private static void checkSavedMonoTint(Context context, Uri inputUri, Bitmap original, Bitmap written) {
     StringBuilder samples = new StringBuilder();
     boolean withinTolerance = true;
     boolean tintOrder = true;
@@ -274,7 +276,84 @@ final class PhotoEditChecks {
     }
     if (!withinTolerance || !tintOrder) {
       // Input and output are generated from the test's three synthetic color bands.
-      throw new MonoTintFailure("Mono JPEG tolerance=" + withinTolerance + " tintOrder=" + tintOrder + samples);
+      throw new MonoTintFailure("Mono JPEG tolerance=" + withinTolerance + " tintOrder="
+          + tintOrder + samples + describeMonoExport(context, inputUri));
+    }
+  }
+
+  /** Repeats each export boundary on the verified synthetic copy after a color assertion fails. */
+  private static String describeMonoExport(Context context, Uri inputUri) {
+    StringBuilder report = new StringBuilder();
+    File directory = null;
+    File fullCache = null;
+    File jpeg = null;
+    String stage = "source";
+    try (RawEditSource source = RawEditSource.load(context, inputUri)) {
+      directory = Files.createTempDirectory(context.getCacheDir().toPath(), "mono-probe-").toFile();
+      fullCache = new File(directory, "rgb16.ppm");
+      jpeg = new File(directory, "mono.jpg");
+      source.prepareFull(fullCache, new NativeRaw.Cancellation());
+      stage = "linear cache";
+      int[] columns = {32, 96, 160};
+      try (RawEditFullSource full = RawEditFullSource.open(fullCache)) {
+        for (int x : columns) {
+          ByteBuffer decoded = full.region(new Rect(x, 64, x + 1, 65));
+          int[] rgb = new int[3];
+          for (int c = 0; c < rgb.length; c++) rgb[c] = (int)Math.round(RawEditTone.encode(decoded.getFloat()) * 255);
+          report.append(" cache[").append(x).append("]=").append(Arrays.toString(rgb));
+        }
+        stage = "EGL readback";
+        try (RawEditRenderer renderer = new RawEditRenderer()) {
+          RectF bounds = new RectF(0, 0, full.width, full.height);
+          RawEditState mono = new RawEditState().with(RawEditState.MONO, 1);
+          ByteBuffer before = renderer.renderRegionBytes(full, mono, true, false, bounds, full.width, full.height);
+          appendRenderedSamples(report, "eglBefore", before, full.width, columns);
+          ByteBuffer rendered = renderer.renderRegionBytes(full, mono, false, false, bounds, full.width, full.height);
+          appendRenderedSamples(report, "eglMono", rendered, full.width, columns);
+          stage = "JPEG encoder";
+          ByteBuffer strip = ByteBuffer.allocateDirect(full.width * full.height * 3);
+          while (rendered.hasRemaining()) {
+            strip.put(rendered.get()).put(rendered.get()).put(rendered.get());
+            rendered.get();
+          }
+          strip.flip();
+          try (ParcelFileDescriptor fd = ParcelFileDescriptor.open(jpeg,
+              ParcelFileDescriptor.MODE_CREATE | ParcelFileDescriptor.MODE_WRITE_ONLY);
+               NativeJpeg encoder = NativeJpeg.open(fd.getFd(), full.width, full.height, 95)) {
+            encoder.write(strip, full.height);
+            encoder.finish();
+          }
+          stage = "JPEG decoder";
+          Bitmap decoded = BitmapFactory.decodeFile(jpeg.getPath());
+          if (decoded == null) return report.append(" jpeg=unreadable").toString();
+          try {
+            for (int x : columns) {
+              int pixel = decoded.getPixel(x, 64);
+              int[] rgb = {Color.red(pixel), Color.green(pixel), Color.blue(pixel)};
+              report.append(" jpeg[").append(x).append("]=").append(Arrays.toString(rgb));
+            }
+          } finally {
+            decoded.recycle();
+          }
+        }
+      }
+    } catch (Exception | LinkageError failure) {
+      report.append(" probe stopped at ").append(stage).append(" (")
+          .append(failure.getClass().getSimpleName()).append(')');
+    } finally {
+      if (jpeg != null) jpeg.delete();
+      if (fullCache != null) fullCache.delete();
+      if (directory != null) directory.delete();
+    }
+    return report.toString();
+  }
+
+  private static void appendRenderedSamples(StringBuilder report, String label, ByteBuffer pixels,
+      int width, int[] columns) {
+    for (int x : columns) {
+      int offset = (64 * width + x) * 4;
+      int[] rgb = {pixels.get(offset) & 255, pixels.get(offset + 1) & 255, pixels.get(offset + 2) & 255};
+      report.append(' ').append(label).append('[').append(x).append("]=").append(Arrays.toString(rgb));
     }
   }
 
