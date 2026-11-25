@@ -127,7 +127,8 @@ GitHub Actionsの `verify` は `:app:testDebugUnitTest` でexFATを含むJVM回�
 | --- | --- |
 | 既存ホスト回帰 | `ranking.sh`、`raw-structure.sh`、`preparation-storage.sh`、`camera-{import-copy,ble,connection,source,dual-slot}.sh`、`ep7-wifi.sh`。SDKが必要なテストにはAndroid API 35を使う。 |
 | 追加したホスト回帰 | `automatic-tags.sh`、`cloud-policy.sh`、`index-refresh.sh`、`nano-banana-e2.sh`、`raw-edit-state.sh`、`raw-full-source.sh`、`related-photos.sh`、`share-history.sh`、`tag-confidence.sh`、`tag-judgments.sh`、`video-formats.sh`、`sync-policy.sh`、`diagnostic-writer.sh`。撮影日の並べ替えと永続キーの互換性は `preparation-storage.sh` で実行する。 |
-| Python・exFAT | `scripts/test-*.py`、`tests/test-*.py`、`tests/test_*.py` はホストで自動実行。合成画像の校正テストは仮想環境の追加依存を使う。 `tests/camera-exfat.py` はアプリのKotlinコンパイル結果を使うため、ビルド後に別途実行する。 |
+| Python | `scripts/test-*.py`、`tests/test-*.py`、`tests/test_*.py` はホストで自動実行。合成画像の校正テストは仮想環境の追加依存を使う。 |
+| exFAT | CIではJUnitの `HostRegressionTest.cameraExFatCheck` がアプリのKotlin実装を検査する。手動で従来の入口を使う場合は、`:app:assembleDebug` の後に `python3 tests/camera-exfat.py` を実行する。 |
 | Android計測 | 本体と実験用RAWエディタの計測APKをビルドし、`bash tests/ci-android-instrumentation.sh` が使い捨てAndroid 15エミュレータで両方の合成モードを実行する。対象モードと専用fixtureの条件は[Android計測テストの実行条件](android-test-coverage.md)を参照。 |
 | RAWコーパス・索引DB | `tests/raw-corpus.sh <RAWディレクトリ>` は `sample.*` とExifTool、 `tests/run.sh <RAWディレクトリ> <参照JPEGディレクトリ>` は承認済みの写真セット、 `python3 tests/check-index.py <DBコピー>` はチェックポイント済みの索引DBが必要。手元の指定入力で実行する。 |
 
