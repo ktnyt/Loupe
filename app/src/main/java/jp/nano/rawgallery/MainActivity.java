@@ -211,6 +211,7 @@ public final class MainActivity extends DiagnosticActivity {
 
   private boolean selecting, bestOnly = true, rankingFromSelection;
   private final Set<String> selectedPhotos = new LinkedHashSet<>();
+  private SelectionResult presentedSelection;
   private int rankFilter;
   private final Map<Integer, List<Integer>> photoBundles = new HashMap<>();
   private final Map<List<Integer>, PhotoRanking> rankCache = new HashMap<>();
@@ -430,6 +431,7 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private void base() {
+    presentedSelection = null;
     refreshSingleBest = () -> {};
     refreshShareBadges = () -> {};
     refreshShareInfo = () -> {};
@@ -1084,7 +1086,10 @@ public final class MainActivity extends DiagnosticActivity {
                       main.post(
                           () -> {
                             if (isDestroyed()) return;
-                            if (persisted) rankCache.clear();
+                            if (persisted) {
+                              rankCache.clear();
+                              presentedSelection = null;
+                            }
                             done.accept(persisted);
                             if (persisted
                                 && generation == screen
@@ -1127,12 +1132,36 @@ public final class MainActivity extends DiagnosticActivity {
     return saved;
   }
 
-  private static final class SelectionResult {
+  private final class SelectionResult {
+    final List<PhotoRepository.Photo> galleryPhotos = MainActivity.this.photos;
+    final List<List<Integer>> galleryBundles = bundles;
+    final Set<String> chosen = Set.copyOf(selectedPhotos);
+    final boolean winnersOnly = bestOnly;
     final List<PhotoRepository.Photo> photos = new ArrayList<>();
     final List<List<Integer>> unresolved = new ArrayList<>();
+    boolean retryRanking;
+
+    boolean matchesSelection() {
+      return galleryPhotos == MainActivity.this.photos
+          && galleryBundles == bundles
+          && winnersOnly == bestOnly
+          && chosen.equals(selectedPhotos);
+    }
+  }
+
+  private SelectionResult selectionResult() {
+    if (presentedSelection == null
+        || !presentedSelection.matchesSelection()
+        || presentedSelection.retryRanking) presentedSelection = resolveSelection();
+    return presentedSelection;
+  }
+
+  private boolean isCurrentSelection(SelectionResult result) {
+    return presentedSelection == result && result.matchesSelection();
   }
 
   private SelectionResult resolveSelection() {
+    SelectionResult result = new SelectionResult();
     Set<Integer> requested = new LinkedHashSet<>();
     for (int i = 0; i < photos.size(); i++)
       if (!photos.get(i).isVideo() && selectedPhotos.contains(photos.get(i).uri.toString()))
@@ -1152,10 +1181,10 @@ public final class MainActivity extends DiagnosticActivity {
                   if (best.contains(ArchiveStore.key(photos.get(member)))) winners.add(member);
                 return winners;
               } catch (IllegalArgumentException | IOException e) {
+                result.retryRanking = true;
                 return null;
               }
             });
-    SelectionResult result = new SelectionResult();
     for (int member : resolved.members) result.photos.add(photos.get(member));
     result.unresolved.addAll(resolved.unresolved);
     return result;
@@ -1301,7 +1330,7 @@ public final class MainActivity extends DiagnosticActivity {
 
   private void updateSelection() {
     if (!selecting || selectionCount == null) return;
-    SelectionResult result = resolveSelection();
+    SelectionResult result = selectionResult();
     subtitle.setText(selectedPhotos.size() + "枚選択");
     subtitle.setVisibility(selectedPhotos.isEmpty() ? View.GONE : View.VISIBLE);
     Set<String> visible = new HashSet<>();
@@ -1425,6 +1454,8 @@ public final class MainActivity extends DiagnosticActivity {
     }
 
     int screen = generation;
+    List<PhotoRepository.Photo> galleryPhotos = photos;
+    List<List<Integer>> galleryBundles = bundles;
     RankingStore store = rankingStore;
     new BulkBestSheet(
             this,
@@ -1453,7 +1484,12 @@ public final class MainActivity extends DiagnosticActivity {
                     main.post(
                         () -> {
                           if (isDestroyed()) return;
-                          if (persisted != null) rankCache.put(members, persisted);
+                          if (persisted != null) {
+                            presentedSelection = null;
+                            if (galleryPhotos == photos && galleryBundles == bundles)
+                              rankCache.put(members, persisted);
+                            else rankCache.clear();
+                          }
                           done.accept(persisted != null);
                           if (persisted != null
                               && generation == screen
@@ -1532,7 +1568,7 @@ public final class MainActivity extends DiagnosticActivity {
 
   private void shareSelection(boolean sorting) {
     DiagnosticLog.event("screen.shareSelection", 0);
-    SelectionResult result = resolveSelection();
+    SelectionResult result = selectionResult();
     if (!sorting
         && !result.photos.isEmpty()
         && !shareCapacity.snapshot(result.photos).available.actionable()) return;
@@ -1542,6 +1578,7 @@ public final class MainActivity extends DiagnosticActivity {
               this,
               result.unresolved.size(),
               () -> {
+                if (!isCurrentSelection(result)) return;
                 selectionBurst = burstMembers == null ? null : new ArrayList<>(burstMembers);
                 rankingFromSelection = true;
                 burstMembers = new ArrayList<>(result.unresolved.get(0));
@@ -1550,7 +1587,11 @@ public final class MainActivity extends DiagnosticActivity {
               result.photos.isEmpty()
                       || !shareCapacity.snapshot(result.photos).available.actionable()
                   ? null
-                  : () -> shareMenu(result.photos));
+                  : () -> {
+                    if (isCurrentSelection(result)
+                        && shareCapacity.snapshot(result.photos).available.actionable())
+                      shareMenu(result.photos);
+                  });
       shareDialog.show();
     } else if (!result.photos.isEmpty()) shareMenu(result.photos);
   }
@@ -2066,8 +2107,10 @@ public final class MainActivity extends DiagnosticActivity {
     loadShareHistory();
     showShareHistoryFailure();
     if (repository != null) {
-      if (resumed) refresh();
-      else {
+      if (resumed) {
+        presentedSelection = null;
+        refresh();
+      } else {
         resumed = true;
         refreshIndex(false);
       }
@@ -2609,6 +2652,7 @@ public final class MainActivity extends DiagnosticActivity {
     try {
       if (rankingStore.save(next)) {
         rankCache.clear();
+        presentedSelection = null;
         ranking = next;
         rankingResultState = null;
         rankingResultFocus = null;

@@ -508,16 +508,41 @@ public final class PhotoRepository {
 
   Preview preview(Photo p, java.util.function.BooleanSupplier cancelled) throws IOException {
     try (DiagnosticLog.Scope span = DiagnosticLog.span("repository.preview")) {
-      DiagnosticLog.event("repository.lock_wait", span.id);
-      synchronized (processingLock) {
-        DiagnosticLog.event("repository.lock_acquired", span.id);
-        try {
-          return previewLocked(p, cancelled);
-        } catch (IOException | RuntimeException e) {
-          DiagnosticLog.event("repository.fail", span.id, "error", e.getClass().getSimpleName());
-          throw e;
+      try {
+        if (!p.isVideo() && !p.isArchived()) {
+          String key = previewKey(p);
+          synchronized (PUBLISH_LOCK) {
+            checkPreparation(cancelled);
+            Preview hit =
+                readPreparedPreview(
+                    new File(prepared, key + ".webp"), new File(prepared, key + ".webp.json"));
+            if (hit != null) {
+              DiagnosticLog.event("cache.compact", span.id, "hit", true);
+              return hit;
+            }
+          }
         }
+        DiagnosticLog.event("repository.lock_wait", span.id);
+        synchronized (processingLock) {
+          DiagnosticLog.event("repository.lock_acquired", span.id);
+          return previewLocked(p, cancelled);
+        }
+      } catch (IOException | RuntimeException e) {
+        DiagnosticLog.event("repository.fail", span.id, "error", e.getClass().getSimpleName());
+        throw e;
       }
+    }
+  }
+
+  /** The caller holds PUBLISH_LOCK. Repairs belong to the generation path. */
+  private static Preview readPreparedPreview(File image, File metadata) {
+    if (!image.isFile() || !metadata.isFile()) return null;
+    try {
+      JSONObject j = new JSONObject(readText(metadata));
+      return preparedPreview(
+          image, metadata, j.getString("model"), j.getInt("width"), j.getInt("height"));
+    } catch (Exception invalid) {
+      return null;
     }
   }
 
@@ -561,14 +586,10 @@ public final class PhotoRepository {
       DiagnosticLog.event(
           "cache.compact", DiagnosticLog.parent(), "hit", webp.isFile() && meta.isFile());
       if (webp.isFile() && meta.isFile()) {
-        try {
-          JSONObject j = new JSONObject(readText(meta));
-          return preparedPreview(
-              webp, meta, j.getString("model"), j.getInt("width"), j.getInt("height"));
-        } catch (Exception ignored) {
-          webp.delete();
-          meta.delete();
-        }
+        Preview hit = readPreparedPreview(webp, meta);
+        if (hit != null) return hit;
+        webp.delete();
+        meta.delete();
       }
     }
     checkPreparation(cancelled);
@@ -768,11 +789,18 @@ public final class PhotoRepository {
     return in;
   }
 
+  private static final int JPEG_BOUNDS_REWIND_BYTES = 64 * 1024;
+
+  private InputStream openJpegStream(Photo p) throws IOException {
+    InputStream in = context.getContentResolver().openInputStream(p.uri);
+    if (in == null) throw new IOException("JPEGを開けません");
+    return in;
+  }
+
   private Preview jpegPreview(Photo p, File jpg, File meta) throws IOException {
     String model;
     int orientation;
-    try (InputStream in = context.getContentResolver().openInputStream(p.uri)) {
-      if (in == null) throw new IOException("JPEGを開けません");
+    try (InputStream in = openJpegStream(p)) {
       ExifInterface exif = new ExifInterface(in);
       model = exif.getAttribute(ExifInterface.TAG_MODEL);
       if (model == null) model = "JPEG";
@@ -781,20 +809,31 @@ public final class PhotoRepository {
     }
     BitmapFactory.Options options = new BitmapFactory.Options();
     options.inJustDecodeBounds = true;
-    try (InputStream in = context.getContentResolver().openInputStream(p.uri)) {
+    Bitmap bitmap = null;
+    boolean reopen;
+    try (BufferedInputStream in = new BufferedInputStream(openJpegStream(p))) {
+      in.mark(JPEG_BOUNDS_REWIND_BYTES);
       BitmapFactory.decodeStream(in, null, options);
+      if (options.outWidth <= 0
+          || options.outHeight <= 0
+          || (long) options.outWidth * options.outHeight > 120_000_000L)
+        throw new IOException("JPEGの画素数を読み取れません");
+      options.inJustDecodeBounds = false;
+      options.inSampleSize = 1;
+      while (Math.max(options.outWidth, options.outHeight) / options.inSampleSize > 2560)
+        options.inSampleSize *= 2;
+      try {
+        in.reset();
+        reopen = false;
+      } catch (IOException prefixTooLarge) {
+        reopen = true;
+      }
+      if (!reopen) bitmap = BitmapFactory.decodeStream(in, null, options);
     }
-    if (options.outWidth <= 0
-        || options.outHeight <= 0
-        || (long) options.outWidth * options.outHeight > 120_000_000L)
-      throw new IOException("JPEGの画素数を読み取れません");
-    options.inJustDecodeBounds = false;
-    options.inSampleSize = 1;
-    while (Math.max(options.outWidth, options.outHeight) / options.inSampleSize > 2560)
-      options.inSampleSize *= 2;
-    Bitmap bitmap;
-    try (InputStream in = context.getContentResolver().openInputStream(p.uri)) {
-      bitmap = BitmapFactory.decodeStream(in, null, options);
+    if (reopen) {
+      try (InputStream in = openJpegStream(p)) {
+        bitmap = BitmapFactory.decodeStream(in, null, options);
+      }
     }
     if (bitmap == null) throw new IOException("JPEGを読み取れません");
     File part = new File(jpg.getPath() + ".part");

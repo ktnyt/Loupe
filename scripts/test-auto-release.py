@@ -30,7 +30,7 @@ class AutomaticReleaseTests(unittest.TestCase):
         self.args = argparse.Namespace(repo=self.repo, sdk='/synthetic/android-sdk', gh='fake-gh')
         self.apk = b'synthetic signed apk'
         self.bundle = dict(schema=1, mode='main', source_commit=self.source, source_tree='b'*40,
-            issue=None, apk='loupe.apk', package=deploy.PACKAGE, **self.version,
+            issue=None, apk='loupe.apk', package=deploy.PACKAGE, debuggable=False, **self.version,
             certificates=[deploy.CERTIFICATE], features=sorted(deploy.REQUIRED))
         (self.repo / 'hash-input').write_bytes(self.apk)
         self.bundle['apk_sha256'] = deploy.sha256(self.repo / 'hash-input')
@@ -182,6 +182,12 @@ class AutomaticReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'version_code'):
             auto.automatic_release(self.args)
         self.assertEqual(self.publications, [])
+
+    def test_bundle_requires_explicit_non_debuggable_boolean(self):
+        for value in (None, True, 0, 'false'):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, 'debuggable'):
+                    auto.expected_bundle(dict(self.bundle, debuggable=value), self.source, self.version)
 
     def test_mismatch_diagnostics_only_include_public_compared_fields(self):
         self.bundle['version_code'] += 1
