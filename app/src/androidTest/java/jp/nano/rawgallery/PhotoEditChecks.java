@@ -124,9 +124,21 @@ final class PhotoEditChecks {
       TagDetailChecks.require(opened instanceof RawEditActivity,"second real internal Activity starts");current=(RawEditActivity)opened;RawEditActivity editor=current;
       Uri input=editor.getIntent().getData();TagDetailChecks.require(input!=null&&"jp.nano.rawgallery.share".equals(input.getAuthority()),"cancel test has its own prepared copy");
       File copy=new File(main.getCacheDir(),"shares/"+input.getLastPathSegment());copies.add(copy);
+      long openedAt = android.os.SystemClock.elapsedRealtime();
       awaitUi(t,15000,()->button(editor,"保存")!=null&&button(editor,"保存").isEnabled(),"cancel test preview ready");
-      TagDetailChecks.ui(t,()->button(editor,"保存").performClick());
-      awaitUi(t,30000,()->dialogButton("JPEGで保存","保存")!=null,"cancel test full-resolution confirmation visible");
+      RawEditLog.event("fixture.cancel.preview.ready", android.os.SystemClock.elapsedRealtime() - openedAt, 2048, 1536);
+      long clickedAt = android.os.SystemClock.elapsedRealtime();
+      TagDetailChecks.ui(t,()->{
+        boolean clicked = button(editor,"保存").performClick();
+        RawEditLog.event(clicked ? "fixture.cancel.save.clicked" : "fixture.cancel.save.no_listener", 0, 2048, 1536);
+      });
+      try {
+        awaitUi(t,30000,()->dialogButton("JPEGで保存","保存")!=null,"cancel test full-resolution confirmation visible");
+        RawEditLog.event("fixture.cancel.dialog.visible", android.os.SystemClock.elapsedRealtime() - clickedAt, 2048, 1536);
+      } catch (AssertionError missingDialog) {
+        RawEditLog.event("fixture.cancel.dialog.missing", android.os.SystemClock.elapsedRealtime() - clickedAt, 2048, 1536);
+        throw missingDialog;
+      }
       TagDetailChecks.ui(t,()->dialogButton("JPEGで保存","保存").performClick());
       // AlertDialog posts its listener through a Handler. A later UI callback
       // must observe saving before Back; a completed/unstarted save is a failure.
