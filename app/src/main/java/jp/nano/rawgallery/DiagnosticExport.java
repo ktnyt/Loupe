@@ -1,18 +1,12 @@
 package jp.nano.rawgallery;
 
 import android.content.Context;
-import android.content.Intent;
-import android.content.pm.ApplicationInfo;
-import android.net.Uri;
-import android.provider.DocumentsContract;
-import android.provider.OpenableColumns;
 import android.util.JsonReader;
 import android.util.JsonToken;
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -84,6 +78,7 @@ final class DiagnosticExport {
       "kind", Set.of("thumbnail", "dispatchTouchEvent", "dispatchKeyEvent"),
       "result", Set.of("success", "complete", "cancelled", "paused", "failed"),
       "phase", Set.of("camera.source_lookup", "camera.wifi_profiles", "camera.sd_status", "camera.sd_verify",
+          "index.e2_metadata", "index.e2_metadata_row",
           "e2_cleanup.current_revision", "e2_cleanup.plan", "e2_cleanup.remove", "e2_cleanup.preview",
           "nano.admission", "nano.foreground", "nano.foreground_stop", "nano.resume",
           "nano.worker_start", "nano.result_recovery", "nano.discard", "nano.execute",
@@ -272,31 +267,4 @@ final class DiagnosticExport {
         || Arrays.stream(owner.getDeclaredMethods()).anyMatch(method -> method.getName().equals(name));
   }
 
-  static Intent saveIntent() {
-    return new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
-        .setType("application/zip").putExtra(Intent.EXTRA_LOCAL_ONLY, true)
-        .putExtra(Intent.EXTRA_TITLE, "Loupe-diagnostics.zip");
-  }
-
-  static void save(Context context, Uri uri, byte[] bytes) throws IOException {
-    String authority = uri.getAuthority();
-    if (!"com.android.externalstorage.documents".equals(authority)
-        && !"com.android.providers.downloads.documents".equals(authority)) {
-      throw new IOException("Unsupported local document provider");
-    }
-    var provider = context.getPackageManager().resolveContentProvider(authority, 0);
-    if (provider == null || (provider.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) == 0
-        || !DocumentsContract.isDocumentUri(context, uri)) {
-      throw new IOException("Invalid local document provider");
-    }
-    var resolver = context.getContentResolver();
-    try (var row = resolver.query(uri, new String[]{OpenableColumns.SIZE}, null, null, null)) {
-      if (row == null || !row.moveToFirst() || row.isNull(0) || row.getLong(0) != 0)
-        throw new IOException("Diagnostic document must be empty");
-    }
-    try (OutputStream out = resolver.openOutputStream(uri, "w")) {
-      if (out == null) throw new IOException("Diagnostic document unavailable");
-      out.write(bytes);
-    }
-  }
 }

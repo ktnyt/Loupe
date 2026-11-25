@@ -24,7 +24,7 @@ public final class DashboardActivity extends DiagnosticActivity {
   Source source=()->new DashboardObservation(PreviewPreparationJob.snapshot(this),PreviewPreparationJob.browsing());
   private final ExecutorService worker=new DiagnosticExecutor("Dashboard.read",1);
   private final Handler handler=new Handler(Looper.getMainLooper());
-  private final DiagnosticControls diagnostics = new DiagnosticControls(this, worker);
+  private final DiagnosticControls diagnostics = new DiagnosticControls(this);
   private final ArrayList<Runnable> bindings=new ArrayList<>();
   private final Runnable refresh=this::read;
   private DashboardObservation observation=DashboardObservation.empty();

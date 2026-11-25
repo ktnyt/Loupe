@@ -1,6 +1,7 @@
 package jp.nano.rawgallery;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.os.SystemClock;
 import android.util.Log;
@@ -14,71 +15,133 @@ import org.json.JSONObject;
 final class DiagnosticLog {
   private static final String SESSION = UUID.randomUUID().toString();
   private static final AtomicLong IDS = new AtomicLong(), DROPPED = new AtomicLong();
-  private static final ArrayBlockingQueue<String> QUEUE = new ArrayBlockingQueue<>(2048);
   private static final ThreadLocal<Long> PARENT = ThreadLocal.withInitial(() -> 0L);
   private static final Object CONFIG = new Object();
   static final Object FILES = new Object();
-  private static volatile boolean enabled;
-  private static boolean writerStarted;
+  private static volatile Recorder recorder;
   private static boolean initialized;
 
-  static synchronized void init(Context context) {
-    if (initialized) return;
-    initialized = true;
-    boolean debug = (context.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
-    enabled = settings(context).getBoolean("record", debug);
-    if (enabled) startWriter(context);
+  static void init(Context context) {
+    synchronized (CONFIG) {
+      if (initialized) return;
+      initialized = true;
+      boolean debug = (context.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+      SharedPreferences prefs = settings(context);
+      if (prefs.getBoolean("record", debug) && !start(context, prefs, false) && prefs.contains("record")) {
+        remember(prefs, false);
+      }
+    }
   }
 
-  static boolean recording() { return enabled; }
+  static boolean recording() { return recorder != null; }
 
   static boolean setRecording(Context context, boolean record) {
     synchronized (CONFIG) {
-      if (!settings(context).edit().putBoolean("record", record).commit()) return false;
-      synchronized (DiagnosticLog.class) {
-        boolean starting = record && !enabled;
-        enabled = record;
-        if (starting) startWriter(context);
+      SharedPreferences prefs = settings(context);
+      if (record) {
+        if (recorder != null || start(context, prefs, true)) return true;
+        if (prefs.getBoolean("record", false)) remember(prefs, false);
+        return false;
       }
-      return true;
+      if (!remember(prefs, false)) return false;
+      Recorder stopped;
+      synchronized (DiagnosticLog.class) {
+        stopped = recorder;
+        recorder = null;
+        if (stopped != null) stopped.queue.add(Recorder.STOP);
+      }
+      return stopped == null || stopped.awaitStop();
     }
   }
 
-  private static android.content.SharedPreferences settings(Context context) {
+  private static SharedPreferences settings(Context context) {
     return context.getSharedPreferences("diagnostics", Context.MODE_PRIVATE);
   }
 
-  /** The caller holds the class monitor to serialize starting and stopping capture. */
-  private static void startWriter(Context context) {
-    if (!writerStarted) {
-      writerStarted = true;
-      File dir = new File(context.getFilesDir(), "diagnostics");
-      Thread writer = new Thread(() -> write(dir), "loupe-diagnostics");
-      writer.setDaemon(true);
-      writer.start();
+  private static boolean remember(SharedPreferences prefs, boolean record) {
+    boolean hadSetting = prefs.contains("record");
+    boolean previous = prefs.getBoolean("record", false);
+    if (prefs.edit().putBoolean("record", record).commit()) return true;
+    // commit() updates the in-memory value even when writing to disk fails.
+    SharedPreferences.Editor restore = prefs.edit();
+    if (hadSetting) restore.putBoolean("record", previous);
+    else restore.remove("record");
+    restore.apply();
+    return false;
+  }
+
+  // The configuration lock serializes open, preference updates and draining the previous recorder.
+  private static boolean start(Context context, SharedPreferences prefs, boolean persist) {
+    DiagnosticWriter sink;
+    try {
+      synchronized (FILES) {
+        sink = new DiagnosticWriter(new File(context.getFilesDir(), "diagnostics"),
+            DiagnosticExport.EVENT_FILE_LIMIT);
+      }
+    } catch (IOException | SecurityException error) {
+      logFailure(error);
+      return false;
     }
+    if (persist && !remember(prefs, true)) {
+      try { sink.close(); } catch (IOException error) { logFailure(error); }
+      return false;
+    }
+
+    Recorder started = new Recorder(sink);
+    started.thread.start();
+    recorder = started;
     long version = 0;
     try { version = context.getPackageManager().getPackageInfo(context.getPackageName(), 0).getLongVersionCode(); }
     catch (android.content.pm.PackageManager.NameNotFoundException ignored) {}
     event("session", 0, "version", version, "wall_ms", System.currentTimeMillis());
+    return true;
   }
 
-  private static void write(File dir) {
-    try (DiagnosticWriter sink = new DiagnosticWriter(dir, DiagnosticExport.EVENT_FILE_LIMIT)) {
-      while (true) {
-        String line = QUEUE.take();
-        synchronized (FILES) {
-          sink.write(line);
-          sink.flush();
+  private static void logFailure(Exception error) {
+    Log.e("LoupeDiagnostic", "writer_failed:" + error.getClass().getSimpleName());
+  }
+
+  private static final class Recorder {
+    private static final String STOP = new String();
+    // The last slot is reserved for STOP, even when the event queue is full.
+    private final ArrayBlockingQueue<String> queue = new ArrayBlockingQueue<>(2049);
+    private final Thread thread;
+    private boolean failed;
+
+    Recorder(DiagnosticWriter sink) {
+      thread = new Thread(() -> write(sink), "loupe-diagnostics");
+      thread.setDaemon(true);
+    }
+
+    private void write(DiagnosticWriter sink) {
+      try (sink) {
+        while (true) {
+          String line = queue.take();
+          if (line == STOP) return;
+          synchronized (FILES) {
+            sink.write(line);
+            sink.flush();
+          }
         }
+      } catch (Exception error) {
+        failed = true;
+        synchronized (DiagnosticLog.class) {
+          if (recorder == this) recorder = null;
+        }
+        logFailure(error);
       }
-    } catch (Exception error) {
-      synchronized (DiagnosticLog.class) {
-        enabled = false;
-        writerStarted = false;
-        QUEUE.clear();
+    }
+
+    boolean awaitStop() {
+      boolean interrupted = false;
+      try {
+        while (true) {
+          try { thread.join(); return !failed; }
+          catch (InterruptedException ignored) { interrupted = true; }
+        }
+      } finally {
+        if (interrupted) Thread.currentThread().interrupt();
       }
-      Log.e("LoupeDiagnostic", "writer_failed:" + error.getClass().getSimpleName());
     }
   }
 
@@ -94,15 +157,19 @@ final class DiagnosticLog {
     } catch (java.security.NoSuchAlgorithmException e) { throw new AssertionError(e); }
   }
   static void event(String event, long request, Object... fields) {
-    if (!enabled) return;
+    Recorder target = recorder;
+    if (target == null) return;
     try {
       JSONObject j = new JSONObject().put("session", SESSION).put("seq", id())
           .put("ns", SystemClock.elapsedRealtimeNanos()).put("event", event)
           .put("request", request).put("parent", parent())
           .put("thread", Thread.currentThread().getId()).put("dropped", DROPPED.get());
       for (int i = 0; i < fields.length; i += 2) j.put((String) fields[i], fields[i + 1]);
+      String line = j.toString();
       synchronized (DiagnosticLog.class) {
-        if (enabled && !QUEUE.offer(j.toString())) DROPPED.incrementAndGet();
+        if (recorder == target && (target.queue.remainingCapacity() <= 1 || !target.queue.offer(line))) {
+          DROPPED.incrementAndGet();
+        }
       }
     } catch (Exception e) { DROPPED.incrementAndGet(); }
   }
