@@ -111,11 +111,25 @@ final class VisualStatusFlowChecks {
 
   static void swipe(Instrumentation t, MainActivity a, boolean left) throws Exception {
     int[] bounds = new int[4];
+    String direction = left ? "left" : "right";
+    android.view.View[] watched = {null};
+    android.view.VelocityTracker velocity = android.view.VelocityTracker.obtain();
     main(
         t,
         () -> {
           android.view.View view = photoView(a.getWindow().getDecorView());
           if (view == null) throw new AssertionError("photo missing");
+          watched[0] = view;
+          view.setOnTouchListener((v, event) -> {
+            velocity.addMovement(event);
+            velocity.computeCurrentVelocity(1000);
+            android.util.Log.i("LoupeSwipeTiming", direction + " action=" + event.getActionMasked()
+                + " x=" + Math.round(event.getX()) + " y=" + Math.round(event.getY())
+                + " ageMs=" + (event.getEventTime() - event.getDownTime())
+                + " vx=" + Math.round(velocity.getXVelocity()) + " vy=" + Math.round(velocity.getYVelocity())
+                + " focus=" + v.hasWindowFocus() + " zoomed=" + ((ZoomImageView) v).isZoomed());
+            return false;
+          });
           int[] xy = new int[2];
           view.getLocationOnScreen(xy);
           bounds[0] = xy[0];
@@ -141,6 +155,22 @@ final class VisualStatusFlowChecks {
       Thread.sleep(12);
     }
     t.waitForIdleSync();
+    TagDetailChecks.ui(t, () -> watched[0].setOnTouchListener(null));
+    velocity.recycle();
+  }
+
+  private static boolean photoState(MainActivity a, String direction, String[] last, boolean left)
+      throws Exception {
+    int index = (int) field(a, "index");
+    boolean preview = field(a, "activePreview") != null;
+    boolean failure = failed(a.getWindow().getDecorView()) != null;
+    boolean focus = a.getWindow().getDecorView().hasWindowFocus();
+    String state = "index=" + index + " preview=" + preview + " failure=" + failure + " focus=" + focus;
+    if (!state.equals(last[0])) {
+      android.util.Log.i("LoupeSwipeTiming", direction + " state " + state);
+      last[0] = state;
+    }
+    return left ? index == 1 && preview : index == 0 && failure;
   }
 
   static String run(Instrumentation t, MainActivity a) throws Exception {
@@ -311,11 +341,12 @@ final class VisualStatusFlowChecks {
             set(a, "photos", new ArrayList<>(List.of(photo, second)));
             return true;
           });
+      String[] leftState = {null};
       swipe(t, a, true);
       waitFor(
           t,
           "left swipe second photo",
-          () -> ((Integer) field(a, "index")) == 1 && field(a, "activePreview") != null);
+          () -> photoState(a, "left", leftState, true));
       Thread.sleep(1000);
       capture(t, a, content, content.getHeight(), "status-swipe-left");
       main(
@@ -327,11 +358,12 @@ final class VisualStatusFlowChecks {
             assertNoStatus(a.getWindow().getDecorView());
             return true;
           });
+      String[] rightState = {null};
       swipe(t, a, false);
       waitFor(
           t,
           "right swipe first photo failure",
-          () -> ((Integer) field(a, "index")) == 0 && failed(a.getWindow().getDecorView()) != null);
+          () -> photoState(a, "right", rightState, false));
       capture(t, a, content, content.getHeight(), "status-swipe-right");
       File restored = new File(photo.uri.getPath());
       dir.mkdirs();
