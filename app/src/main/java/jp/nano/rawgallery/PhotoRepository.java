@@ -19,10 +19,10 @@ public final class PhotoRepository {
     private record FolderRule(String part, String group) {}
 
     private static final FolderRule[] CAMERA_FOLDER_RULES = {
-        new FolderRule("gr world", "GR"),
-        new FolderRule("om-1", "OM-1"),
-        new FolderRule("e-p7", "E-P7"),
-        new FolderRule("camera/raw", "Leitz"),
+      new FolderRule("gr world", "GR"),
+      new FolderRule("om-1", "OM-1"),
+      new FolderRule("e-p7", "E-P7"),
+      new FolderRule("camera/raw", "Leitz"),
     };
 
     public final Uri uri;
@@ -38,7 +38,15 @@ public final class PhotoRepository {
       this(u, n, f, s, m, t, a, birth, null);
     }
 
-    Photo(Uri u, String n, String f, long s, long m, long t, long a, long birth,
+    Photo(
+        Uri u,
+        String n,
+        String f,
+        long s,
+        long m,
+        long t,
+        long a,
+        long birth,
         PhotoMoveStore.Identity movedIdentity) {
       uri = u;
       name = n;
@@ -61,7 +69,9 @@ public final class PhotoRepository {
       return modified * 1000;
     }
 
-    public boolean isVideo() { return VideoFormats.accepts(name); }
+    public boolean isVideo() {
+      return VideoFormats.accepts(name);
+    }
 
     public boolean isArchived() {
       return uri != null && ("archive".equals(uri.getScheme()) || E2Cleanup.archived(uri));
@@ -86,7 +96,9 @@ public final class PhotoRepository {
     public final int width, height, orientation;
     private final Runnable invalidate;
 
-    Preview(File f, String m, int w, int h, int o) { this(f, m, w, h, o, null); }
+    Preview(File f, String m, int w, int h, int o) {
+      this(f, m, w, h, o, null);
+    }
 
     private Preview(File f, String m, int w, int h, int o, Runnable invalidation) {
       file = f;
@@ -141,14 +153,17 @@ public final class PhotoRepository {
   private final Object processingLock;
   private final File legacyPreviews;
 
-  public PhotoRepository(Context c) { this(c, false); }
+  public PhotoRepository(Context c) {
+    this(c, false);
+  }
 
   PhotoRepository(Context c, boolean background) {
     processingLock = background ? BACKGROUND_LOCK : PREVIEW_LOCK;
     context = c.getApplicationContext();
     DiagnosticLog.init(context);
     legacyPreviews = new File(context.getCacheDir(), "previews");
-    previews = background ? new File(context.getCacheDir(), "preview-preparation-source") : legacyPreviews;
+    previews =
+        background ? new File(context.getCacheDir(), "preview-preparation-source") : legacyPreviews;
     previews.mkdirs();
     prepared = new File(context.getFilesDir(), "prepared-previews");
     prepared.mkdirs();
@@ -171,10 +186,17 @@ public final class PhotoRepository {
       MediaStore.MediaColumns.VOLUME_NAME
     };
     Uri root = MediaStore.Files.getContentUri("external");
-    String[] patterns = java.util.stream.Stream.concat(
-        Arrays.stream(RawFormats.patterns()), Arrays.stream(VideoFormats.patterns())).toArray(String[]::new);
-    String condition = "(" + String.join(" OR ",
-        Collections.nCopies(patterns.length, MediaStore.Files.FileColumns.DISPLAY_NAME + " LIKE ?")) + ")";
+    String[] patterns =
+        java.util.stream.Stream.concat(
+                Arrays.stream(RawFormats.patterns()), Arrays.stream(VideoFormats.patterns()))
+            .toArray(String[]::new);
+    String condition =
+        "("
+            + String.join(
+                " OR ",
+                Collections.nCopies(
+                    patterns.length, MediaStore.Files.FileColumns.DISPLAY_NAME + " LIKE ?"))
+            + ")";
     try (Cursor c =
         context
             .getContentResolver()
@@ -191,7 +213,8 @@ public final class PhotoRepository {
           String galleryVolume = PhotoStorage.PRIMARY.equals(volume) ? "external" : volume;
           Photo p =
               new Photo(
-                  ContentUris.withAppendedId(MediaStore.Files.getContentUri(galleryVolume), c.getLong(0)),
+                  ContentUris.withAppendedId(
+                      MediaStore.Files.getContentUri(galleryVolume), c.getLong(0)),
                   name,
                   folder,
                   c.getLong(3),
@@ -257,10 +280,7 @@ public final class PhotoRepository {
     List<Photo> photos = new ArrayList<>();
     for (Photo p : result.values())
       if (filter.equals("すべて") || p.cameraGroup().equals(filter)) photos.add(p);
-    photos.sort(
-        Comparator.comparingLong(Photo::sortTime)
-            .reversed()
-            .thenComparing(p -> p.name));
+    photos.sort(Comparator.comparingLong(Photo::sortTime).reversed().thenComparing(p -> p.name));
     return photos;
   }
 
@@ -283,17 +303,22 @@ public final class PhotoRepository {
           scanTree(tree, child, result, depth + 1);
           continue;
         }
-        if (!RawFormats.accepts(name) && !VideoFormats.accepts(name))
-          continue;
-        boolean external = "com.android.externalstorage.documents".equals(tree.getAuthority()) && child.contains(":");
+        if (!RawFormats.accepts(name) && !VideoFormats.accepts(name)) continue;
+        boolean external =
+            "com.android.externalstorage.documents".equals(tree.getAuthority())
+                && child.contains(":");
         int separator = external ? child.indexOf(':') : -1;
         String volume = external ? child.substring(0, separator).toLowerCase(Locale.ROOT) : "";
         String relative = child.substring(separator + 1);
         String folder = relative.substring(0, Math.max(0, relative.lastIndexOf('/') + 1));
         Uri document = DocumentsContract.buildDocumentUriUsingTree(tree, child);
         String key = PhotoIdentityIndex.path(document, folder, name);
-        // Preexisting SAF rankings used the document ID's secondary-volume prefix as part of the folder.
-        String originalFolder = external && !"primary".equals(volume) ? child.substring(0, separator + 1) + folder : folder;
+        // Preexisting SAF rankings used the document ID's secondary-volume prefix as part of the
+        // folder.
+        String originalFolder =
+            external && !"primary".equals(volume)
+                ? child.substring(0, separator + 1) + folder
+                : folder;
         Photo previous = result.get(key);
         Photo p =
             new Photo(
@@ -319,7 +344,8 @@ public final class PhotoRepository {
     Photo preferred = photo;
     for (UriPermission grant : context.getContentResolver().getPersistedUriPermissions()) {
       Uri tree = grant.getUri();
-      if (!grant.isReadPermission() || !DocumentsContract.isTreeUri(tree)
+      if (!grant.isReadPermission()
+          || !DocumentsContract.isTreeUri(tree)
           || !"com.android.externalstorage.documents".equals(tree.getAuthority())) continue;
       String root = DocumentsContract.getTreeDocumentId(tree);
       int colon = root.indexOf(':');
@@ -328,12 +354,24 @@ public final class PhotoRepository {
       if (!directory.isEmpty() && !path.startsWith(directory + "/")) continue;
       String prefix = root.substring(0, colon + 1);
       Uri document = DocumentsContract.buildDocumentUriUsingTree(tree, prefix + path);
-      try (Cursor row = context.getContentResolver().query(document,
-          new String[]{DocumentsContract.Document.COLUMN_SIZE, DocumentsContract.Document.COLUMN_LAST_MODIFIED},
-          null, null, null)) {
+      try (Cursor row =
+          context
+              .getContentResolver()
+              .query(
+                  document,
+                  new String[] {
+                    DocumentsContract.Document.COLUMN_SIZE,
+                    DocumentsContract.Document.COLUMN_LAST_MODIFIED
+                  },
+                  null,
+                  null,
+                  null)) {
         if (row != null && row.moveToFirst() && row.getLong(0) == photo.size) {
-          String folder = PhotoStorage.PRIMARY.equals(volume) ? photo.folder : prefix + photo.folder;
-          preferred = new Photo(document, photo.name, folder, photo.size, row.getLong(1) / 1000, photo.taken);
+          String folder =
+              PhotoStorage.PRIMARY.equals(volume) ? photo.folder : prefix + photo.folder;
+          preferred =
+              new Photo(
+                  document, photo.name, folder, photo.size, row.getLong(1) / 1000, photo.taken);
         }
       } catch (RuntimeException unavailable) {
         // The media row remains the source if the saved tree grant is inaccessible.
@@ -348,25 +386,32 @@ public final class PhotoRepository {
     }
   }
 
-  static PhotoMoveStore.Identity moveIdentity(Context context, PhotoMoveStore store, Photo media) throws IOException {
+  static PhotoMoveStore.Identity moveIdentity(Context context, PhotoMoveStore store, Photo media)
+      throws IOException {
     String path = PhotoIdentityIndex.path(media);
     Map<String, Photo> visible = new HashMap<>();
     visible.put(path, preferredDocument(context, media));
     PhotoIdentityIndex.resolve(context, store, visible, Map.of(path, media));
     Photo photo = visible.get(path);
-    return new PhotoMoveStore.Identity(ArchiveStore.key(photo), TagStore.source(photo), photo.sortTime());
+    return new PhotoMoveStore.Identity(
+        ArchiveStore.key(photo), TagStore.source(photo), photo.sortTime());
   }
 
   private static String archivePath(JSONObject record) throws JSONException {
-    return PhotoIdentityIndex.path(Uri.parse(record.optString("uri")), record.getString("folder"), record.getString("name"));
+    return PhotoIdentityIndex.path(
+        Uri.parse(record.optString("uri")), record.getString("folder"), record.getString("name"));
   }
 
   private static String findMovedPath(Map<String, Photo> photos, String imageUri) {
     Uri image = Uri.parse(imageUri);
     String volume = PhotoStorage.volumeOf(image);
-    Uri file = ContentUris.withAppendedId(MediaStore.Files.getContentUri(
-        PhotoStorage.PRIMARY.equals(volume) ? "external" : volume), ContentUris.parseId(image));
-    for (var entry : photos.entrySet()) if (file.equals(entry.getValue().uri)) return entry.getKey();
+    Uri file =
+        ContentUris.withAppendedId(
+            MediaStore.Files.getContentUri(
+                PhotoStorage.PRIMARY.equals(volume) ? "external" : volume),
+            ContentUris.parseId(image));
+    for (var entry : photos.entrySet())
+      if (file.equals(entry.getValue().uri)) return entry.getKey();
     return null;
   }
 
@@ -416,8 +461,9 @@ public final class PhotoRepository {
     synchronized (processingLock) {
       if (cancelled.getAsBoolean()) return false;
       DiagnosticLog.event("preparation.item_start", 0, "photo", DiagnosticLog.photo(p));
-      try { previewLocked(p, cancelled); }
-      catch (java.io.InterruptedIOException e) {
+      try {
+        previewLocked(p, cancelled);
+      } catch (java.io.InterruptedIOException e) {
         DiagnosticLog.event("preparation.item_cancel", 0, "photo", DiagnosticLog.photo(p));
         return false;
       }
@@ -435,22 +481,32 @@ public final class PhotoRepository {
       String name = file.getName();
       if (!name.endsWith(".webp") && !name.endsWith(".webp.json")) continue;
       String key = name.substring(0, name.indexOf(".webp"));
-      if (!keep.contains(key)) synchronized (PUBLISH_LOCK) {
-        if (cancelled.getAsBoolean()) return;
-        file.delete();
-      }
+      if (!keep.contains(key))
+        synchronized (PUBLISH_LOCK) {
+          if (cancelled.getAsBoolean()) return;
+          file.delete();
+        }
     }
   }
 
-  Bitmap thumbnail(Photo p, int edge, java.util.function.BooleanSupplier cancelled) throws IOException {
+  Bitmap thumbnail(Photo p, int edge, java.util.function.BooleanSupplier cancelled)
+      throws IOException {
     checkPreparation(cancelled);
     if ("media".equals(p.uri.getAuthority())) {
       try (DiagnosticLog.Scope ignored = DiagnosticLog.span("thumbnail.provider")) {
-        Bitmap bitmap = context.getContentResolver().loadThumbnail(p.uri, new android.util.Size(edge, edge), null);
+        Bitmap bitmap =
+            context
+                .getContentResolver()
+                .loadThumbnail(p.uri, new android.util.Size(edge, edge), null);
         if (bitmap == null) throw new IOException("No provider thumbnail");
-        if (cancelled.getAsBoolean()) { bitmap.recycle(); checkPreparation(cancelled); }
+        if (cancelled.getAsBoolean()) {
+          bitmap.recycle();
+          checkPreparation(cancelled);
+        }
         return bitmap;
-      } catch (IOException | RuntimeException e) { checkPreparation(cancelled); }
+      } catch (IOException | RuntimeException e) {
+        checkPreparation(cancelled);
+      }
     }
     if (p.isVideo()) return videoThumbnail(p, edge, cancelled);
     return bitmap(preview(p, cancelled), edge);
@@ -459,25 +515,38 @@ public final class PhotoRepository {
   private Bitmap videoThumbnail(Photo p, int edge, java.util.function.BooleanSupplier cancelled)
       throws IOException {
     checkPreparation(cancelled);
-    try (android.media.MediaMetadataRetriever retriever = new android.media.MediaMetadataRetriever()) {
+    try (android.media.MediaMetadataRetriever retriever =
+        new android.media.MediaMetadataRetriever()) {
       retriever.setDataSource(context, p.uri);
-      Bitmap frame = retriever.getScaledFrameAtTime(0,
-          android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC, Math.max(1, edge), Math.max(1, edge));
+      Bitmap frame =
+          retriever.getScaledFrameAtTime(
+              0,
+              android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+              Math.max(1, edge),
+              Math.max(1, edge));
       if (frame == null) throw new IOException("動画のサムネイルを取得できません");
-      if (cancelled.getAsBoolean()) { frame.recycle(); checkPreparation(cancelled); }
+      if (cancelled.getAsBoolean()) {
+        frame.recycle();
+        checkPreparation(cancelled);
+      }
       return frame;
-    } catch (RuntimeException error) { throw new IOException("動画のサムネイルを取得できません", error); }
+    } catch (RuntimeException error) {
+      throw new IOException("動画のサムネイルを取得できません", error);
+    }
   }
 
-  public Preview preview(Photo p) throws IOException { return preview(p, () -> false); }
+  public Preview preview(Photo p) throws IOException {
+    return preview(p, () -> false);
+  }
 
   Preview preview(Photo p, java.util.function.BooleanSupplier cancelled) throws IOException {
     try (DiagnosticLog.Scope span = DiagnosticLog.span("repository.preview")) {
       DiagnosticLog.event("repository.lock_wait", span.id);
       synchronized (processingLock) {
         DiagnosticLog.event("repository.lock_acquired", span.id);
-        try { return previewLocked(p, cancelled); }
-        catch (IOException | RuntimeException e) {
+        try {
+          return previewLocked(p, cancelled);
+        } catch (IOException | RuntimeException e) {
           DiagnosticLog.event("repository.fail", span.id, "error", e.getClass().getSimpleName());
           throw e;
         }
@@ -489,11 +558,14 @@ public final class PhotoRepository {
     return previewLocked(p, () -> false);
   }
 
-  private static void checkPreparation(java.util.function.BooleanSupplier cancelled) throws IOException {
-    if (cancelled.getAsBoolean()) throw new java.io.InterruptedIOException("Preview preparation paused");
+  private static void checkPreparation(java.util.function.BooleanSupplier cancelled)
+      throws IOException {
+    if (cancelled.getAsBoolean())
+      throw new java.io.InterruptedIOException("Preview preparation paused");
   }
 
-  private Preview previewLocked(Photo p, java.util.function.BooleanSupplier cancelled) throws IOException {
+  private Preview previewLocked(Photo p, java.util.function.BooleanSupplier cancelled)
+      throws IOException {
     if (p.isVideo()) throw new IOException("動画は写真プレビューの対象外です");
     if (E2Cleanup.archived(p.uri)) return E2Cleanup.preview(context, p.uri);
     if ("archive".equals(p.uri.getScheme())) {
@@ -505,23 +577,30 @@ public final class PhotoRepository {
     }
     String key = digest("raw-preview-v2:" + p.uri + ":" + p.size + ":" + p.modified);
     File webp = new File(prepared, key + ".webp"), meta = new File(prepared, key + ".webp.json");
-    // Only metadata/file publication is shared. No parsing, decoding or compression under this lock.
+    // Only metadata/file publication is shared. No parsing, decoding or compression under this
+    // lock.
     synchronized (PUBLISH_LOCK) {
       checkPreparation(cancelled);
       if (!webp.isFile() || !meta.isFile()) {
-        File old = new File(legacyPreviews, key + ".webp"), oldMeta = new File(legacyPreviews, key + ".webp.json");
+        File old = new File(legacyPreviews, key + ".webp"),
+            oldMeta = new File(legacyPreviews, key + ".webp.json");
         if (old.isFile() && oldMeta.isFile()) {
-          java.nio.file.Files.move(old.toPath(), webp.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-          java.nio.file.Files.move(oldMeta.toPath(), meta.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+          java.nio.file.Files.move(
+              old.toPath(), webp.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+          java.nio.file.Files.move(
+              oldMeta.toPath(), meta.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         }
       }
-      DiagnosticLog.event("cache.compact", DiagnosticLog.parent(), "hit", webp.isFile() && meta.isFile());
+      DiagnosticLog.event(
+          "cache.compact", DiagnosticLog.parent(), "hit", webp.isFile() && meta.isFile());
       if (webp.isFile() && meta.isFile()) {
         try {
           JSONObject j = new JSONObject(readText(meta));
-          return preparedPreview(webp, meta, j.getString("model"), j.getInt("width"), j.getInt("height"));
+          return preparedPreview(
+              webp, meta, j.getString("model"), j.getInt("width"), j.getInt("height"));
         } catch (Exception ignored) {
-          webp.delete(); meta.delete();
+          webp.delete();
+          meta.delete();
         }
       }
     }
@@ -538,16 +617,27 @@ public final class PhotoRepository {
       checkPreparation(cancelled);
       stagedMeta = File.createTempFile("compact-meta-", ".part", previews);
       try (FileOutputStream out = new FileOutputStream(stagedMeta)) {
-        JSONObject j = new JSONObject().put("model", compact.model)
-            .put("width", compact.width).put("height", compact.height);
+        JSONObject j =
+            new JSONObject()
+                .put("model", compact.model)
+                .put("width", compact.width)
+                .put("height", compact.height);
         out.write(j.toString().getBytes(StandardCharsets.UTF_8));
-      } catch (JSONException e) { throw new IOException(e); }
+      } catch (JSONException e) {
+        throw new IOException(e);
+      }
       synchronized (PUBLISH_LOCK) {
         checkPreparation(cancelled);
-        java.nio.file.Files.move(staged.toPath(), webp.toPath(),
-            java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-        java.nio.file.Files.move(stagedMeta.toPath(), meta.toPath(),
-            java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        java.nio.file.Files.move(
+            staged.toPath(),
+            webp.toPath(),
+            java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+            java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        java.nio.file.Files.move(
+            stagedMeta.toPath(),
+            meta.toPath(),
+            java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+            java.nio.file.StandardCopyOption.ATOMIC_MOVE);
         return preparedPreview(webp, meta, compact.model, compact.width, compact.height);
       }
     } finally {
@@ -564,7 +654,7 @@ public final class PhotoRepository {
   void removePreparedPreview(Photo photo) throws IOException {
     String key = digest("raw-preview-v2:" + photo.uri + ":" + photo.size + ":" + photo.modified);
     synchronized (PUBLISH_LOCK) {
-      for (File root : new File[]{prepared, legacyPreviews}) {
+      for (File root : new File[] {prepared, legacyPreviews}) {
         new File(root, key + ".webp").delete();
         new File(root, key + ".webp.json").delete();
       }
@@ -575,19 +665,31 @@ public final class PhotoRepository {
   private static Preview preparedPreview(File webp, File meta, String model, int width, int height)
       throws IOException {
     final StructStat identity;
-    try { identity = Os.stat(webp.getPath()); }
-    catch (ErrnoException error) { throw new IOException(error); }
-    return new Preview(webp, model, width, height, 1, () -> {
-      synchronized (PUBLISH_LOCK) {
-        try {
-          StructStat current = Os.stat(webp.getPath());
-          // A concurrent publication may already have replaced the failed file.
-          if (current.st_dev != identity.st_dev || current.st_ino != identity.st_ino) return;
-          webp.delete(); meta.delete();
-          DiagnosticLog.event("cache.compact_invalidated", DiagnosticLog.parent());
-        } catch (ErrnoException ignored) { /* Already removed; the next request regenerates it. */ }
-      }
-    });
+    try {
+      identity = Os.stat(webp.getPath());
+    } catch (ErrnoException error) {
+      throw new IOException(error);
+    }
+    return new Preview(
+        webp,
+        model,
+        width,
+        height,
+        1,
+        () -> {
+          synchronized (PUBLISH_LOCK) {
+            try {
+              StructStat current = Os.stat(webp.getPath());
+              // A concurrent publication may already have replaced the failed file.
+              if (current.st_dev != identity.st_dev || current.st_ino != identity.st_ino) return;
+              webp.delete();
+              meta.delete();
+              DiagnosticLog.event("cache.compact_invalidated", DiagnosticLog.parent());
+            } catch (ErrnoException ignored) {
+              /* Already removed; the next request regenerates it. */
+            }
+          }
+        });
   }
 
   /** Called with a materialized original, never with the small archive proxy. */
@@ -617,8 +719,9 @@ public final class PhotoRepository {
       DiagnosticLog.event("repository.lock_wait", span.id);
       synchronized (processingLock) {
         DiagnosticLog.event("repository.lock_acquired", span.id);
-        try { return sourcePreviewLocked(p); }
-        catch (IOException | RuntimeException e) {
+        try {
+          return sourcePreviewLocked(p);
+        } catch (IOException | RuntimeException e) {
           DiagnosticLog.event("repository.fail", span.id, "error", e.getClass().getSimpleName());
           throw e;
         }
@@ -638,7 +741,8 @@ public final class PhotoRepository {
     }
     String key = digest("raw-preview-v2:" + p.uri + ":" + p.size + ":" + p.modified);
     File jpg = new File(previews, key + ".jpg"), meta = new File(previews, key + ".json");
-    DiagnosticLog.event("cache.source", DiagnosticLog.parent(), "hit", jpg.isFile() && meta.isFile());
+    DiagnosticLog.event(
+        "cache.source", DiagnosticLog.parent(), "hit", jpg.isFile() && meta.isFile());
     if (jpg.isFile() && meta.isFile()) {
       try {
         JSONObject j = new JSONObject(readText(meta));
@@ -655,15 +759,21 @@ public final class PhotoRepository {
       }
     }
     if (p.isJpeg()) {
-      try (DiagnosticLog.Scope ignored = DiagnosticLog.span("jpeg.source")) { return jpegPreview(p, jpg, meta); }
+      try (DiagnosticLog.Scope ignored = DiagnosticLog.span("jpeg.source")) {
+        return jpegPreview(p, jpg, meta);
+      }
     }
     try (DescriptorSource source =
         new DescriptorSource(context.getContentResolver(), p.uri, p.size)) {
       RawPreview.Result r;
-      try (DiagnosticLog.Scope ignored = DiagnosticLog.span("raw.inspect")) { r = RawPreview.inspect(source); }
+      try (DiagnosticLog.Scope ignored = DiagnosticLog.span("raw.inspect")) {
+        r = RawPreview.inspect(source);
+      }
       File partial = new File(previews, key + ".part");
       try (FileOutputStream f = new FileOutputStream(partial)) {
-        try (DiagnosticLog.Scope ignored = DiagnosticLog.span("raw.extract")) { f.write(r.jpeg(source)); }
+        try (DiagnosticLog.Scope ignored = DiagnosticLog.span("raw.extract")) {
+          f.write(r.jpeg(source));
+        }
       }
       if (!partial.renameTo(jpg)) throw new IOException("プレビューを保存できません");
       try {
@@ -761,12 +871,13 @@ public final class PhotoRepository {
   }
 
   private void trim(File keep) {
-    try (DiagnosticLog.Scope ignored = DiagnosticLog.span("cache.trim")) { trimFiles(keep); }
+    try (DiagnosticLog.Scope ignored = DiagnosticLog.span("cache.trim")) {
+      trimFiles(keep);
+    }
   }
 
   private void trimFiles(File keep) {
-    File[] files =
-        previews.listFiles((dir, name) -> name.endsWith(".jpg"));
+    File[] files = previews.listFiles((dir, name) -> name.endsWith(".jpg"));
     if (files == null) return;
     long total = 0;
     for (File f : files) total += f.length();
