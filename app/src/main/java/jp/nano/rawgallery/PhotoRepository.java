@@ -64,7 +64,9 @@ public final class PhotoRepository {
       return new Photo(uri, name, folder, size, modified, taken, added, created, identity);
     }
 
-    /** Caches the successful legacy digest of this immutable snapshot; failures remain retryable. */
+    /**
+     * Caches the successful legacy digest of this immutable snapshot; failures remain retryable.
+     */
     String legacyArchiveKey() throws IOException {
       String key = cachedLegacyArchiveKey;
       if (key != null) return key;
