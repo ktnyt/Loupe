@@ -704,6 +704,7 @@ public final class CameraImportActivity extends AppCompatActivity {
   }
 
   private void retrySdReprobe() {
+    if (!sdObserversReady()) return;
     usbObservation = observeUsb(this);
     requestSdReprobe(true, this::showRestoredSdSource);
   }
@@ -953,6 +954,10 @@ public final class CameraImportActivity extends AppCompatActivity {
           .setOnCancelListener(d -> quickCancelled())
           .show();
     }
+  }
+
+  private boolean sdObserversReady() {
+    return removeMountObserver != null && sdReprobe.observersReady();
   }
 
   private boolean canStartSourceAction() {
@@ -1274,10 +1279,11 @@ public final class CameraImportActivity extends AppCompatActivity {
     renderWifiEnabled();
     auto.setEnabled(UsbLaunchSettings.isEnabled(this) && !active && !migrating && !manualOnly);
     migrate.setEnabled(!active && !starting && !migrating && !sdReprobe.busy());
-    sdReprobeButton.setEnabled(!sdReprobeDisplay.busy() && canStartSdReprobe());
+    sdReprobeButton.setEnabled(
+        sdObserversReady() && !sdReprobeDisplay.busy() && canStartSdReprobe());
     boolean sdAvailable =
         !sdReprobeDisplay.busy()
-            && removeMountObserver != null
+            && sdObserversReady()
             && usbObservation.available()
             && !active
             && !starting
@@ -1789,7 +1795,7 @@ public final class CameraImportActivity extends AppCompatActivity {
   }
 
   private void startSd(SdStartMode mode) {
-    if (!canStartSourceAction() || removeMountObserver == null) return;
+    if (!canStartSourceAction() || !sdObserversReady()) return;
     UsbObservation observation = observeUsb(this);
     if (!observation.available()) {
       showSdFailure(USB_OBSERVATION_UNAVAILABLE);

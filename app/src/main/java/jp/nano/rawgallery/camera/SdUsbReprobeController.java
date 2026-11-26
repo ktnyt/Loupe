@@ -152,6 +152,10 @@ public final class SdUsbReprobeController {
     return pending != null || running != null;
   }
 
+  public boolean observersReady() {
+    return observingUsb && removeSelectionObserver != null && removeMediaObserver != null;
+  }
+
   public void resume(boolean activityObserverAvailable) {
     if (destroyed) return;
     foreground = true;
@@ -170,8 +174,7 @@ public final class SdUsbReprobeController {
       } catch (RuntimeException unavailable) {
         // Never claim without the connection and inventory observers.
       } finally {
-        if (!observingUsb || removeSelectionObserver == null || removeMediaObserver == null)
-          stopObserving();
+        if (!observersReady()) stopObserving();
       }
     }
     continuePermission();
@@ -225,7 +228,10 @@ public final class SdUsbReprobeController {
     if (busy()) return true;
     if (!activityObserverAvailable || !usbObserved) {
       discardSourceStatus.run();
-      show(activityObserverAvailable ? State.UNAVAILABLE : State.OBSERVER_UNAVAILABLE);
+      show(
+          activityObserverAvailable && observersReady()
+              ? State.UNAVAILABLE
+              : State.OBSERVER_UNAVAILABLE);
       return true;
     }
     Snapshot snapshot = platform.snapshot();
@@ -238,9 +244,9 @@ public final class SdUsbReprobeController {
       show(State.BUSY);
       return true;
     }
-    if (admission == State.UNAVAILABLE || removeMediaObserver == null) {
+    if (admission == State.UNAVAILABLE || !observersReady()) {
       discardSourceStatus.run();
-      show(removeMediaObserver == null ? State.OBSERVER_UNAVAILABLE : State.UNAVAILABLE);
+      show(observersReady() ? State.UNAVAILABLE : State.OBSERVER_UNAVAILABLE);
       return true;
     }
     var reservation = CameraImportGate.tryReservePreparation();

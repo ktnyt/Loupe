@@ -18,6 +18,8 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.lang.reflect.Field;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import jp.nano.rawgallery.camera.CameraAttachActivity;
 import jp.nano.rawgallery.camera.ImportProgress;
 import jp.nano.rawgallery.camera.MountedCameraCard;
@@ -290,6 +292,8 @@ final class CameraSdUsbReprobeChecks {
     var statusLoad = field("sdStatusCancellation");
     var settingsStatus = field("sdSettingsStatus");
     var connectionFailure = field("connectionFailure");
+    var render = CameraImportActivity.class.getDeclaredMethod("renderStatus");
+    render.setAccessible(true);
     View root = activity.getWindow().getDecorView();
     test.runOnMainSync(
         () -> {
@@ -306,6 +310,9 @@ final class CameraSdUsbReprobeChecks {
                 "Neither manual entry can queue a claim with an incomplete observation");
             require(
                 !((Boolean) invoke(consume, activity)), "An unavailable entry is consumed once");
+            require(
+                root.findViewWithTag("sd-reprobe-start").isEnabled(),
+                "A query failure permits the on-screen retry");
             bringIntoView(root.findViewWithTag("sd-reprobe-status"));
           } catch (ReflectiveOperationException failure) {
             throw new AssertionError(failure);
@@ -327,7 +334,11 @@ final class CameraSdUsbReprobeChecks {
             assertUnavailableEntry(
                 activity, consume, true, lookup, statusLoad, storedSettingsStatus, reopen);
             View action = root.findViewWithTag("sd-reprobe-start");
-            require(action.isEnabled() && action.performClick(), "Tap retry without observers");
+            require(
+                !action.isEnabled()
+                    && !root.findViewWithTag("sd-import-start").isEnabled()
+                    && !root.findViewWithTag("sd-import-settings").isEnabled(),
+                "Retry and SD actions are disabled until reopening can restore observers");
             TextView status = root.findViewWithTag("sd-reprobe-status");
             require(
                 status.getText().toString().contains(reopen)
@@ -337,7 +348,7 @@ final class CameraSdUsbReprobeChecks {
                     && harness.claims() == 0
                     && !lookup.isPending()
                     && !ImportProgress.INSTANCE.getActive(),
-                "Retry requires reopening when the observer is still absent and starts no import");
+                "Missing observers show reopen guidance and start no import");
             bringIntoView(status);
           } catch (ReflectiveOperationException failure) {
             throw new AssertionError(failure);
@@ -349,9 +360,12 @@ final class CameraSdUsbReprobeChecks {
           try {
             harness.controller().pause();
             harness.start();
+            invoke(render, activity);
             require(
-                observer.get(harness.controller()) != null && harness.queued() == 0,
-                "Reentry registers an observer without starting a refresh by itself");
+                observer.get(harness.controller()) != null
+                    && harness.queued() == 0
+                    && root.findViewWithTag("sd-reprobe-start").isEnabled(),
+                "Reentry registers observers and restores retry without starting refresh");
             var lookup = (CameraSourceCheck) sourceCheck.get(activity);
             var app = test.getTargetContext();
             harness.setUnsupportedLayout();
@@ -434,6 +448,8 @@ final class CameraSdUsbReprobeChecks {
             require(
                 settings.isEnabled() && settings.performClick(), "Open SD settings after retry");
             dialog.set((androidx.appcompat.app.AlertDialog) dialogField.get(activity));
+            // Leave the composed Activity unobscured before capturing the next state.
+            dialog.get().getWindow().setWindowAnimations(0);
             TextView settingsStatus = (TextView) cachedStatus.get(activity);
             require(
                 dialog.get().isShowing()
@@ -452,8 +468,26 @@ final class CameraSdUsbReprobeChecks {
       capture(
           test, dialog.get().getWindow(), directory, width, font, "settings-after-failed-retry");
     } finally {
-      test.runOnMainSync(dialog.get()::dismiss);
-      test.waitForIdleSync();
+      var detached = new CountDownLatch(1);
+      test.runOnMainSync(
+          () -> {
+            View decor = dialog.get().getWindow().getDecorView();
+            decor.addOnAttachStateChangeListener(
+                new View.OnAttachStateChangeListener() {
+                  @Override
+                  public void onViewAttachedToWindow(View view) {}
+
+                  @Override
+                  public void onViewDetachedFromWindow(View view) {
+                    view.removeOnAttachStateChangeListener(this);
+                    detached.countDown();
+                  }
+                });
+            dialog.get().dismiss();
+            if (!decor.isAttachedToWindow()) detached.countDown();
+          });
+      require(detached.await(5, TimeUnit.SECONDS), "Settings window actually detached");
+      ConsistencyLayoutChecks.frame(test, activity.getWindow().getDecorView());
     }
   }
 

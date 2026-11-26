@@ -187,12 +187,16 @@ final class CameraUsbBoundaryChecks {
                     !activity.isFinishing() && status.getText().toString().contains(expected),
                     "Real import opening survived and shows " + expected);
                 View action = root.findViewWithTag("sd-reprobe-start");
-                require(
-                    action.isEnabled() && action.performClick(),
-                    "Tap actual SD retry during error");
-                require(
-                    status.getText().toString().contains(expected),
-                    "Retry survives the same error");
+                if (REOPEN.equals(expected)) {
+                  require(!action.isEnabled(), "Reopening is required before retry is available");
+                } else {
+                  require(
+                      action.isEnabled() && action.performClick(),
+                      "Tap actual SD retry during a query error");
+                  require(
+                      status.getText().toString().contains(expected),
+                      "Retry survives the same query error");
+                }
                 require(
                     !root.findViewWithTag("sd-import-start").isEnabled()
                         && !root.findViewWithTag("sd-import-settings").isEnabled(),
