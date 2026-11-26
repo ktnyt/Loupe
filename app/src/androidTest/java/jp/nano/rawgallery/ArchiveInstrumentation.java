@@ -1015,6 +1015,11 @@ public final class ArchiveInstrumentation extends Instrumentation {
         finish(-1, results);
         return;
       }
+      if ("gallery-photo-key-compat".equals(mode)) {
+        results.putString("stream", GalleryPhotoKeyCompatibilityChecks.run(this));
+        finish(-1, results);
+        return;
+      }
       if ("diagnostic-local-export".equals(cameraPilotArguments.getString("mode"))) {
         results.putString("stream", DiagnosticExportChecks.run(context));
         finish(-1, results);
