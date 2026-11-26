@@ -401,7 +401,7 @@ final class ArchiveStore extends SQLiteOpenHelper {
 
   static String key(PhotoRepository.Photo p) throws IOException {
     if (p.movedIdentity != null) return p.movedIdentity.archiveKey();
-    return PhotoRepository.digest(legacyIdentity(p));
+    return p.legacyArchiveKey();
   }
 
   static String legacyIdentity(PhotoRepository.Photo p) {

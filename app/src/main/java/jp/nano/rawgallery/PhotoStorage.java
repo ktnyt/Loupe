@@ -22,6 +22,16 @@ public final class PhotoStorage {
     return SettingsRepository.open(context).getString(PREFERENCE, PRIMARY);
   }
 
+  public static Runnable observeSelection(Context context, Runnable changed) {
+    var settings = SettingsRepository.open(context);
+    android.content.SharedPreferences.OnSharedPreferenceChangeListener listener =
+        (ignored, key) -> {
+          if (PREFERENCE.equals(key) || key == null) changed.run();
+        };
+    settings.registerOnSharedPreferenceChangeListener(listener);
+    return () -> settings.unregisterOnSharedPreferenceChangeListener(listener);
+  }
+
   static boolean select(Context context, String volume) {
     return SettingsRepository.open(context).edit().putString(PREFERENCE, volume).commit();
   }

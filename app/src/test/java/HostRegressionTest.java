@@ -36,6 +36,7 @@ import jp.nano.rawgallery.camera.CameraImportCopyTest;
 import jp.nano.rawgallery.camera.CameraImportOperationGateTest;
 import jp.nano.rawgallery.camera.CameraRegisteredQueueTest;
 import jp.nano.rawgallery.camera.PhotoImportCopyCheckKt;
+import jp.nano.rawgallery.camera.SdUsbReprobeTest;
 import org.junit.jupiter.api.Test;
 
 /** Lets Gradle and IDEs run the same checks as the standalone host commands. */
@@ -80,6 +81,11 @@ public class HostRegressionTest {
   @Test
   void cameraCardRouting() throws Exception {
     CameraCardRoutingTest.main(NO_ARGS);
+  }
+
+  @Test
+  void sdUsbReprobe() throws Exception {
+    SdUsbReprobeTest.main(NO_ARGS);
   }
 
   @Test
