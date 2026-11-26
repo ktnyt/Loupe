@@ -47,6 +47,7 @@ import jp.nano.rawgallery.camera.MediaTypes;
 import jp.nano.rawgallery.camera.MountedCameraCard;
 import jp.nano.rawgallery.camera.SdManualFormats;
 import jp.nano.rawgallery.camera.SdSourceRegistrations;
+import jp.nano.rawgallery.camera.SdUsbReprobeController;
 import jp.nano.rawgallery.camera.UsbLaunchSettings;
 import jp.nano.rawgallery.camera.UsbMassStorage;
 
@@ -74,7 +75,10 @@ public final class CameraImportActivity extends AppCompatActivity {
   private TextView connection, result, migrationResult, sdStatus, ledgerStatus;
   private MaterialSwitch sdVerify, sdAuto;
   private LinearProgressIndicator sdChecking;
-  private Button sdStart;
+  private Button sdStart, sdReprobeButton;
+  private TextView sdReprobeStatus;
+  private LinearProgressIndicator sdReprobeProgress;
+  private SdUsbReprobeController sdReprobe;
   private CameraQuickImportSources.SdState sdSourceState;
   private MaterialButton sdSettingsButton;
   private TextView sdSettingsStatus;
@@ -455,6 +459,21 @@ public final class CameraImportActivity extends AppCompatActivity {
     sdStart = button(sd, "SDカードから取り込む", this::startSd);
     sdStart.setTag("sd-import-start");
     MaterialUi.filled(sdStart);
+    sdReprobe =
+        new SdUsbReprobeController(
+            this, this::canPrepareSdReprobe, this::renderSdReprobe, this::refreshSdAfterReprobe);
+    sdReprobeButton = button(sd, "SDカードを再認識", sdReprobe::request);
+    sdReprobeButton.setTag("sd-reprobe-start");
+    MaterialUi.outlined(sdReprobeButton);
+    sdReprobeStatus = status(sd);
+    sdReprobeStatus.setTag("sd-reprobe-status");
+    sdReprobeStatus.setVisibility(View.GONE);
+    sdReprobeProgress = new LinearProgressIndicator(this);
+    sdReprobeProgress.setTag("sd-reprobe-progress");
+    sdReprobeProgress.setIndeterminate(true);
+    sdReprobeProgress.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    sdReprobeProgress.setVisibility(View.GONE);
+    sd.addView(sdReprobeProgress);
 
     var scroll = new ScrollView(this);
     LinearLayout options = new LinearLayout(this);
@@ -544,6 +563,7 @@ public final class CameraImportActivity extends AppCompatActivity {
 
   @Override
   protected void onStop() {
+    sdReprobe.stop();
     handler.removeCallbacks(refresh);
     cancelWifiLoad();
     super.onStop();
@@ -613,6 +633,7 @@ public final class CameraImportActivity extends AppCompatActivity {
     super.onPostResume();
     quickResumed = true;
     wifiLaunching = false;
+    sdReprobe.resume();
     renderStatus();
     if (sdConfirmation == null && !starting && sdPicker == null && pendingSdStart == null)
       refreshSdSource();
@@ -644,6 +665,7 @@ public final class CameraImportActivity extends AppCompatActivity {
   @Override
   protected void onPause() {
     quickResumed = false;
+    sdReprobe.pause();
     abandonSdSubmission();
     cancelSdStatusLoad();
     if (sourceCheck.cancel()) {
@@ -654,6 +676,10 @@ public final class CameraImportActivity extends AppCompatActivity {
   }
 
   private boolean quickAvailable() {
+    return !sdReprobe.busy() && baseQuickAvailable();
+  }
+
+  private boolean baseQuickAvailable() {
     return quickResumed
         && !isFinishing()
         && !isDestroyed()
@@ -822,8 +848,15 @@ public final class CameraImportActivity extends AppCompatActivity {
   }
 
   private boolean canStartSourceAction() {
-    return quickAvailable()
+    return !sdReprobe.busy() && canPrepareSdReprobe();
+  }
+
+  private boolean canPrepareSdReprobe() {
+    return baseQuickAvailable()
         && !starting
+        && sdPicker == null
+        && sdConfirmation == null
+        && !sourceCheck.isPending()
         && permission == null
         && !pendingSdPermission
         && !pendingUsbPermission
@@ -1089,6 +1122,7 @@ public final class CameraImportActivity extends AppCompatActivity {
             && !starting
             && permission == null
             && !migrating
+            && !sdReprobe.busy()
             && submittedSd == null);
     run.setVisibility(active || mountedRoute ? View.GONE : View.VISIBLE);
     if (notifyButton != null)
@@ -1102,7 +1136,8 @@ public final class CameraImportActivity extends AppCompatActivity {
     setText(stop, PROGRESS.getStopRequested() ? "中止しています" : "中止");
     renderWifiEnabled();
     auto.setEnabled(UsbLaunchSettings.isEnabled(this) && !active && !migrating && !manualOnly);
-    migrate.setEnabled(!active && !starting && !migrating);
+    migrate.setEnabled(!active && !starting && !migrating && !sdReprobe.busy());
+    sdReprobeButton.setEnabled(canStartSourceAction());
     boolean sdAvailable =
         !active
             && !starting
@@ -1128,6 +1163,7 @@ public final class CameraImportActivity extends AppCompatActivity {
   }
 
   private void startFromScreen(boolean keepOriginals) {
+    if (sdReprobe.busy()) return;
     if (PROGRESS.getActive() || starting || migrating || permission != null) return;
     UsbDevice device = connected();
     if (device == null) return;
@@ -1447,6 +1483,18 @@ public final class CameraImportActivity extends AppCompatActivity {
     pendingSdPermission = false;
   }
 
+  void renderSdReprobe(SdUsbReprobeController.Display display) {
+    setText(sdReprobeStatus, display.message());
+    sdReprobeStatus.setVisibility(display.message().isEmpty() ? View.GONE : View.VISIBLE);
+    sdReprobeProgress.setVisibility(display.busy() ? View.VISIBLE : View.GONE);
+    renderStatus();
+  }
+
+  private void refreshSdAfterReprobe() {
+    if (quickAvailable() && !starting && sdPicker == null && sdConfirmation == null)
+      refreshSdSource();
+  }
+
   void renderSdSource(CameraQuickImportSources.SdState state) {
     sdSourceState = state;
     setText(sdStatus, state.message);
@@ -1519,7 +1567,7 @@ public final class CameraImportActivity extends AppCompatActivity {
       clearPendingSdStart();
       if (pending) showSdFailure("カードの接続が変わりました。取り込み元を確認してください。");
     }
-    if (quickResumed && !starting && sdPicker == null && sdConfirmation == null) refreshSdSource();
+    refreshSdAfterReprobe();
   }
 
   private void showSdPermissionStatus(String message) {
@@ -1553,7 +1601,8 @@ public final class CameraImportActivity extends AppCompatActivity {
 
   private void startSd(SdStartMode mode) {
     if (!canStartSourceAction()) return;
-    if (sdSourceState == CameraQuickImportSources.SdState.AMBIGUOUS) {
+    if (sdSourceState == CameraQuickImportSources.SdState.AMBIGUOUS
+        || sdReprobe.requiresSourceSelection()) {
       String target = MountedCameraCard.targetWithGenericReader(this, PhotoStorage.selected(this));
       UsbDevice device = connected();
       String kinds =
@@ -1905,6 +1954,7 @@ public final class CameraImportActivity extends AppCompatActivity {
               if (failure != null) showSdFailure(failure);
               else {
                 connectionFailure = null;
+                if (request.picked()) sdReprobe.sourceSelected();
                 // Acceptance updates the registered source. The progress panel owns operation
                 // status.
                 refreshSdSource();
