@@ -170,7 +170,7 @@ final class GenerationIndicator implements Application.ActivityLifecycleCallback
     if (announceResult) {
       announceResult = false;
       snackbar = Snackbar.make(target, message, Snackbar.LENGTH_LONG);
-      snackbar.setTextMaxLines(5);
+      snackbar.setTextMaxLines(Integer.MAX_VALUE);
       View anchor = target.findViewWithTag("viewer-actions");
       if (anchor == null) anchor = target.findViewWithTag("library-navigation");
       if (anchor == null)
