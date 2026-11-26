@@ -21,6 +21,7 @@ import android.net.ConnectivityManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
+import android.provider.Settings;
 import android.system.Os;
 import android.util.Base64;
 import android.view.KeyEvent;
@@ -36,6 +37,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
+import java.nio.file.Path;
 import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.util.ArrayDeque;
@@ -100,9 +102,24 @@ final class AmazonRetirementUpgradeChecks {
   }
 
   private static void requireOffline(Context context) {
-    require(
-        context.getSystemService(ConnectivityManager.class).getActiveNetwork() == null,
-        "retirement fixture requires an offline AVD");
+    var resolver = context.getContentResolver();
+    int airplane = Settings.Global.getInt(resolver, Settings.Global.AIRPLANE_MODE_ON, -1);
+    int wifi = Settings.Global.getInt(resolver, Settings.Global.WIFI_ON, -1);
+    var connectivity = context.getSystemService(ConnectivityManager.class);
+    var active = connectivity.getActiveNetwork();
+    int networkCount = connectivity.getAllNetworks().length;
+    if (airplane == 1 && wifi == 0 && active == null && networkCount == 0) return;
+    String observed =
+        "retirement fixture offline admission rejected: airplane="
+            + airplane
+            + " wifi="
+            + wifi
+            + " activeNetwork="
+            + (active == null ? "none" : Long.toString(active.getNetworkHandle()))
+            + " visibleNetworks="
+            + networkCount;
+    android.util.Log.w("LoupeRetirementFixture", observed);
+    throw new AssertionError(observed);
   }
 
   private static void requireEmptyShareCache(Context context) throws IOException {
@@ -115,6 +132,62 @@ final class AmazonRetirementUpgradeChecks {
       require(
           !copies.iterator().hasNext(),
           "retirement fixture requires an absent or empty share cache");
+    }
+  }
+
+  private static PhotoRepository.Photo localShareFixture(Context context) throws Exception {
+    var localSource = preview(context, key(false), false).toPath();
+    require(
+        Files.isRegularFile(localSource, LinkOption.NOFOLLOW_LINKS),
+        "missing fixture source for local share original");
+    return new PhotoRepository.Photo(
+        android.net.Uri.fromFile(localSource.toFile()),
+        "local.jpg",
+        "fixture",
+        Files.size(localSource),
+        0,
+        0);
+  }
+
+  private static void requireFixtureOriginalCache(Context context, PhotoRepository.Photo local)
+      throws Exception {
+    var legacy = original(context, key(false)).toPath();
+    var e2 =
+        original(context, ArchiveStore.key(E2Cleanup.galleryPhoto(e2FixtureRecord(true)))).toPath();
+    var localCache = original(context, ArchiveStore.key(local)).toPath();
+    var directory = legacy.getParent();
+    require(
+        Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)
+            && Files.isRegularFile(legacy, LinkOption.NOFOLLOW_LINKS)
+            && Files.isRegularFile(e2, LinkOption.NOFOLLOW_LINKS),
+        "retirement fixture requires its two seeded cached originals");
+    String seededHash = digest(ORIGINAL);
+    try (var originals = Files.newDirectoryStream(directory)) {
+      for (Path cached : originals) {
+        require(
+            Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS),
+            "retirement fixture rejects non-regular original cache entries");
+        if (cached.equals(legacy) || cached.equals(e2)) {
+          require(
+              seededHash.equals(originalCacheHash(cached, ORIGINAL.length)),
+              "retirement fixture rejects changed seeded cached originals");
+        } else {
+          require(
+              cached.equals(localCache), "retirement fixture rejects unrelated cached originals");
+          var source = new File(local.uri.getPath()).toPath();
+          require(
+              Files.isRegularFile(source, LinkOption.NOFOLLOW_LINKS)
+                  && originalCacheHash(source, local.size)
+                      .equals(originalCacheHash(cached, local.size)),
+              "retirement fixture rejects a changed local cache copy");
+        }
+      }
+    }
+  }
+
+  private static String originalCacheHash(Path file, long size) throws Exception {
+    try (var input = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) {
+      return E2Archive.readHash(input, null, size);
     }
   }
 
@@ -438,24 +511,25 @@ final class AmazonRetirementUpgradeChecks {
     return PhotoRepository.digest(FIXTURE + "-e2-" + cached).substring(0, 32);
   }
 
+  private static JSONObject e2FixtureRecord(boolean cached) throws Exception {
+    return new JSONObject()
+        .put("key", e2Key(cached))
+        .put("uri", "content://media/external/file/999998")
+        .put("name", FIXTURE + "-e2-" + cached + ".jpg")
+        .put("folder", "Pictures/LoupeFixture/")
+        .put("size", ORIGINAL.length)
+        .put("modified", 1)
+        .put("taken", 1)
+        .put("sha", HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(ORIGINAL)))
+        .put("bucket", BUCKET)
+        .put("model", "Synthetic")
+        .put("thumbWidth", 32)
+        .put("thumbHeight", 24);
+  }
+
   private static void storeE2Fixture(Context context, boolean cached) throws Exception {
-    String key = e2Key(cached);
-    var record =
-        new JSONObject()
-            .put("key", key)
-            .put("uri", "content://media/external/file/999998")
-            .put("name", FIXTURE + "-e2-" + cached + ".jpg")
-            .put("folder", "Pictures/LoupeFixture/")
-            .put("size", ORIGINAL.length)
-            .put("modified", 1)
-            .put("taken", 1)
-            .put(
-                "sha",
-                HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(ORIGINAL)))
-            .put("bucket", BUCKET)
-            .put("model", "Synthetic")
-            .put("thumbWidth", 32)
-            .put("thumbHeight", 24);
+    var record = e2FixtureRecord(cached);
+    String key = record.getString("key");
     try (var archive = E2Settings.openRecords(context)) {
       archive.put(record, E2Cleanup.RELEASED);
     }
@@ -477,6 +551,7 @@ final class AmazonRetirementUpgradeChecks {
     var witness = context.getSharedPreferences(FIXTURE, Context.MODE_PRIVATE);
     require("seeded".equals(witness.getString("phase", "")), "fixture was not seeded");
     Profile profile = Profile.parse(witness.getString("consent", ""));
+    requireFixtureOriginalCache(context, localShareFixture(context));
     require(
         context.getSystemService(ConnectivityManager.class).getActiveNetwork() == null,
         "verification requires an offline AVD");
@@ -793,6 +868,8 @@ final class AmazonRetirementUpgradeChecks {
     require(
         "seeded".equals(witness.getString("phase", "")) && E2Cleanup.days(context) == 31,
         "upgrade fixture retention was not seeded");
+    var local = localShareFixture(context);
+    requireFixtureOriginalCache(context, local);
     checkRetentionWrites(context);
     checkCleanupConsentWrites(context);
     var sync =
@@ -827,15 +904,6 @@ final class AmazonRetirementUpgradeChecks {
     List<PhotoRepository.Photo> mixed;
     try (var archive = new ArchiveStore(context);
         var e2 = E2Settings.openRecords(context)) {
-      File localSource = preview(context, key(false), false);
-      var local =
-          new PhotoRepository.Photo(
-              android.net.Uri.fromFile(localSource),
-              "local.jpg",
-              "fixture",
-              localSource.length(),
-              0,
-              0);
       mixed =
           List.of(
               local,
@@ -890,6 +958,7 @@ final class AmazonRetirementUpgradeChecks {
                 "could not select original share format");
             requireOffline(context);
             requireEmptyShareCache(context);
+            requireFixtureOriginalCache(context, local);
             require(menu.continueButton.performClick(), "could not prepare selected originals");
             return true;
           });
