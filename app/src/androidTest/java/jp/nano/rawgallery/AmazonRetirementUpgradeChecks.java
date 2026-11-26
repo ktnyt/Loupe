@@ -96,6 +96,26 @@ final class AmazonRetirementUpgradeChecks {
             && "jp.nano.rawgallery".equals(context.getPackageName())
             && (context.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0,
         "requires a dedicated debug emulator and -e disposable-avd true");
+    requireOffline(context);
+  }
+
+  private static void requireOffline(Context context) {
+    require(
+        context.getSystemService(ConnectivityManager.class).getActiveNetwork() == null,
+        "retirement fixture requires an offline AVD");
+  }
+
+  private static void requireEmptyShareCache(Context context) throws IOException {
+    var directory = new File(context.getCacheDir(), "shares").toPath();
+    if (Files.notExists(directory, LinkOption.NOFOLLOW_LINKS)) return;
+    require(
+        Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS),
+        "retirement fixture requires an absent or empty share cache");
+    try (var copies = Files.newDirectoryStream(directory)) {
+      require(
+          !copies.iterator().hasNext(),
+          "retirement fixture requires an absent or empty share cache");
+    }
   }
 
   static String seed(Instrumentation test, String consentProfile) throws Exception {
@@ -701,16 +721,19 @@ final class AmazonRetirementUpgradeChecks {
             return true;
           });
       View decor = screen.getWindow().getDecorView();
+      File expectedPreview = preview(context, key, false);
       AlbumTagEntryChecks.waitFor(
           test,
-          "legacy preview and recovery action",
+          "decoded blue legacy fixture preview and recovery action",
+          () -> loadedLegacyPreview(screen, photo, expectedPreview, decor));
+      ConsistencyLayoutChecks.frame(test, decor);
+      AlbumTagEntryChecks.main(
+          test,
           () -> {
-            var viewer =
-                (PhotoViewerUi)
-                    ((ViewGroup) AlbumTagEntryChecks.field(screen, "root")).getChildAt(0);
-            return viewer.stage.findViewWithTag("viewer-original-recovery") == null
-                && String.valueOf(viewer.image.getStateDescription()).contains("プレビューを表示")
-                && recovery(decor) != null;
+            require(
+                loadedLegacyPreview(screen, photo, expectedPreview, decor),
+                "legacy fixture preview changed before capture");
+            return true;
           });
       SyncControlChecks.capture(test, "amazon-retirement-preview-" + width + "-" + font);
       AlbumTagEntryChecks.main(test, () -> recovery(decor).performClick());
@@ -734,8 +757,38 @@ final class AmazonRetirementUpgradeChecks {
     }
   }
 
+  private static boolean loadedLegacyPreview(
+      MainActivity screen, PhotoRepository.Photo photo, File expectedPreview, View decor)
+      throws Exception {
+    if (!screen.hasWindowFocus()
+        || !Boolean.TRUE.equals(AlbumTagEntryChecks.field(screen, "detail"))) return false;
+    var photos = (List<?>) AlbumTagEntryChecks.field(screen, "photos");
+    int index = (int) AlbumTagEntryChecks.field(screen, "index");
+    if (index < 0
+        || index >= photos.size()
+        || !(photos.get(index) instanceof PhotoRepository.Photo current)
+        || !photo.uri.equals(current.uri)) return false;
+    var active = (PhotoRepository.Preview) AlbumTagEntryChecks.field(screen, "activePreview");
+    var root = (ViewGroup) AlbumTagEntryChecks.field(screen, "root");
+    if (active == null
+        || !expectedPreview.equals(active.file)
+        || !(root.getChildAt(0) instanceof PhotoViewerUi viewer)) return false;
+    Bitmap bitmap = (Bitmap) AlbumTagEntryChecks.field(viewer.image, "bitmap");
+    var bounds = viewer.image.photoBounds();
+    if (bitmap == null || bitmap.isRecycled() || bounds == null || bounds.isEmpty()) return false;
+    int color = bitmap.getPixel(bitmap.getWidth() / 2, bitmap.getHeight() / 2);
+    // The fixture's solid blue JPEG can shift slightly when transcoded to WebP.
+    return Color.blue(color) >= 200
+        && Color.red(color) <= 40
+        && Color.green(color) <= 40
+        && viewer.stage.findViewWithTag("viewer-original-recovery") == null
+        && String.valueOf(viewer.image.getStateDescription()).contains("プレビューを表示")
+        && recovery(decor) != null;
+  }
+
   static String controls(Instrumentation test, int width, float font) throws Exception {
     Context context = test.getTargetContext();
+    requireEmptyShareCache(context);
     var witness = context.getSharedPreferences(FIXTURE, Context.MODE_PRIVATE);
     require(
         "seeded".equals(witness.getString("phase", "")) && E2Cleanup.days(context) == 31,
@@ -833,10 +886,11 @@ final class AmazonRetirementUpgradeChecks {
           () -> {
             var menu = (ShareUi.Menu) AlbumTagEntryChecks.field(main, "shareDialog");
             require(
-                menu.original.performClick()
-                    && menu.continueButton.isEnabled()
-                    && menu.continueButton.performClick(),
-                "could not prepare selected originals");
+                menu.original.performClick() && menu.continueButton.isEnabled(),
+                "could not select original share format");
+            requireOffline(context);
+            requireEmptyShareCache(context);
+            require(menu.continueButton.performClick(), "could not prepare selected originals");
             return true;
           });
       AlbumTagEntryChecks.waitFor(
