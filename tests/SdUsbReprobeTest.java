@@ -26,6 +26,7 @@ public final class SdUsbReprobeTest {
     admission();
     claimAuthorization();
     runPaths();
+    transitionalInventoryKeepsPermission();
     mountCycleAttribution();
     unavailableObservation();
     topology();
@@ -266,6 +267,40 @@ public final class SdUsbReprobeTest {
       release.countDown();
       other.join();
     }
+  }
+
+  private static void transitionalInventoryKeepsPermission() throws Exception {
+    var primary = new SdUsbReprobe.VisibleVolume(null, "mounted", true, true, false);
+    var target = new SdUsbReprobe.VisibleVolume(TARGET, "mounted", false, false, true);
+    var unidentified = new SdUsbReprobe.VisibleVolume(null, "unmounted", false, false, true);
+    var transitionalVolumes = List.of(primary, target, unidentified);
+    Snapshot transitional = Snapshot.fromVisibleVolumes(READER, TARGET, transitionalVolumes, true);
+    require(
+        transitional.admission() == State.UNSUPPORTED
+            && transitional.permitted()
+            && !transitional.sourceUnavailable(SOURCE),
+        "A transitional null UUID neither admits a claim nor invents permission loss or source removal");
+
+    String remountedSource = "7400-d209";
+    var source = new SdUsbReprobe.VisibleVolume(remountedSource, "mounted", false, false, true);
+    var ready = new Fake();
+    ready.snapshotOnSourceDetach = null;
+    ready.expectedSource = remountedSource;
+    ready.postRelease.add(transitional);
+    ready.restored =
+        Snapshot.fromVisibleVolumes(READER, TARGET, List.of(primary, target, source), true);
+    require(
+        run(ready, new ReentrantLock(), () -> false, 2) == State.READY
+            && ready.calls.equals(
+                List.of("open", "claim", "release", "close", "waiting", "source", "restored")),
+        "The same reader can finish restoration after Android assigns the source UUID");
+
+    var denied = new Fake();
+    denied.postRelease.add(Snapshot.fromVisibleVolumes(READER, TARGET, transitionalVolumes, false));
+    require(
+        run(denied, new ReentrantLock(), () -> false, 2) == State.DENIED
+            && denied.calls.equals(List.of("open", "claim", "release", "close", "waiting")),
+        "Actual loss of USB permission still ends the attempt during transitional discovery");
   }
 
   private static void mountCycleAttribution() throws Exception {

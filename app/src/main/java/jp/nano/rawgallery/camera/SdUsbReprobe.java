@@ -123,6 +123,12 @@ final class SdUsbReprobe {
       this(reader, destination, volumes, permitted, Observation.COMPLETE);
     }
 
+    static Snapshot fromVisibleVolumes(
+        Reader reader, String destination, List<VisibleVolume> visible, boolean permitted) {
+      var portable = portableLayout(visible);
+      return new Snapshot(reader, destination, portable == null ? List.of() : portable, permitted);
+    }
+
     static Snapshot unobserved(String destination) {
       return new Snapshot(null, destination, List.of(), false, Observation.CONNECTION_UNKNOWN);
     }

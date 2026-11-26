@@ -574,19 +574,17 @@ public final class SdUsbReprobeController {
       if (reader == null) return new Snapshot(null, destination, List.of(), false);
       Snapshot connection = Snapshot.connectionOnly(reader, destination);
       return Snapshot.observe(
-          () -> {
-            var volumes = currentVolumes();
-            if (volumes == null) return new Snapshot(reader, destination, List.of(), false);
-            return new Snapshot(reader, destination, volumes, CameraUsb.hasPermission(app, device));
-          },
+          () ->
+              Snapshot.fromVisibleVolumes(
+                  reader, destination, visibleVolumes(), CameraUsb.hasPermission(app, device)),
           connection);
     }
 
-    private List<SdUsbReprobe.Volume> currentVolumes() {
+    private List<SdUsbReprobe.VisibleVolume> visibleVolumes() {
       StorageManager storage = app.getSystemService(StorageManager.class);
       var visible = new ArrayList<SdUsbReprobe.VisibleVolume>();
       for (StorageVolume volume : storage.getStorageVolumes()) visible.add(visible(volume));
-      return SdUsbReprobe.portableLayout(visible);
+      return visible;
     }
 
     private static Reader reader(UsbDevice device) {
