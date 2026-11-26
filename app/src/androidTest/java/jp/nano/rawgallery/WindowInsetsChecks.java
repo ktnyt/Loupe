@@ -404,10 +404,10 @@ final class WindowInsetsChecks {
           "LoupeInsetsCheck",
           "PASS singleton grid pointer mark/unmark/readback and burst isolation");
       return "PASS system-insets: actual OS bars and any reported cutout, full-display captures,"
-                 + " album-gallery/all-photos navigation/selection/Back rerenders, physical"
-                 + " singleton grid and 1位 mark/unmark/readback/reentry, burst isolation; synthetic"
-                 + " cache files and isolated rankings only. Video behavior remains covered by"
-                 + " video mode.\n";
+          + " album-gallery/all-photos navigation/selection/Back rerenders, physical"
+          + " singleton grid and 1位 mark/unmark/readback/reentry, burst isolation; synthetic"
+          + " cache files and isolated rankings only. Video behavior remains covered by"
+          + " video mode.\n";
     } finally {
       ui(
           t,

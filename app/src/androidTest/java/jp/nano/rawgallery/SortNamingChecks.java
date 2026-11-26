@@ -626,12 +626,12 @@ final class SortNamingChecks {
                 }
           });
       return "PASS selection counts initial/choose A/choose B/undo/resume and button AX states;"
-                 + " synthetic actual screens: start, compare, resume, finish, result, redo"
-                 + " cancel/execute, mode cancel, share guidance/return; mode"
-                 + " same/cancel/confirm/save failure; AX ACTION_CLICK opens result; 40-result"
-                 + " scroll/open/Back restores first row and pixel offset; isolated rankings; 24"
-                 + " button size/font checks; accessibility names/headings. Screenshots"
-                 + " cache/sort-test-*.png. TalkBack spoken order not tested.\n";
+          + " synthetic actual screens: start, compare, resume, finish, result, redo"
+          + " cancel/execute, mode cancel, share guidance/return; mode"
+          + " same/cancel/confirm/save failure; AX ACTION_CLICK opens result; 40-result"
+          + " scroll/open/Back restores first row and pixel offset; isolated rankings; 24"
+          + " button size/font checks; accessibility names/headings. Screenshots"
+          + " cache/sort-test-*.png. TalkBack spoken order not tested.\n";
     } finally {
       main(t, a::finish);
       a.deleteSharedPreferences(namespace);

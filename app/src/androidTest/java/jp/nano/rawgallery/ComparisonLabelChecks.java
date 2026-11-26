@@ -328,10 +328,10 @@ final class ComparisonLabelChecks {
             return true;
           });
       return "PASS actual comparison vertical/horizontal/vertical, A/B names and candidate"
-                 + " correspondence, both buttons/photo taps/long presses/zoom/undo, unreadable"
-                 + " pair disabled, 16 size/font/orientation/brightness fixtures and tiny image"
-                 + " fallback. Private ranking store only. TalkBack speech and first-frame latency"
-                 + " unmeasured.\n";
+          + " correspondence, both buttons/photo taps/long presses/zoom/undo, unreadable"
+          + " pair disabled, 16 size/font/orientation/brightness fixtures and tiny image"
+          + " fallback. Private ranking store only. TalkBack speech and first-frame latency"
+          + " unmeasured.\n";
     } finally {
       main(
           t,

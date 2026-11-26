@@ -568,10 +568,10 @@ final class BurstCoWinnerChecks {
       assertWinners(RankingPersistenceWaitChecks.readSavedBurst(prefs, keys), keys, 1);
       check((int) get(a, "burstPosition") == 1, "Replacement moved the photo");
       return "PASS isolated burst UI: unfinished, cancel, Back, outside tap, busy and Back, failed"
-                 + " save, restore of cached and stored ranks, retry, two co-adds, reopen, all"
-                 + " winner labels, best-shot selection, single replacement, and photo position. AX"
-                 + " ACTION_CLICK and button bounds checked; spoken TalkBack and finger taps"
-                 + " untested.\n";
+          + " save, restore of cached and stored ranks, retry, two co-adds, reopen, all"
+          + " winner labels, best-shot selection, single replacement, and photo position. AX"
+          + " ACTION_CLICK and button bounds checked; spoken TalkBack and finger taps"
+          + " untested.\n";
     } finally {
       release.countDown();
       ui(t, a::finish);

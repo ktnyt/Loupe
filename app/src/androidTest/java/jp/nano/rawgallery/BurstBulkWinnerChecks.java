@@ -265,9 +265,9 @@ final class BurstBulkWinnerChecks {
           "All selected photos must tie first");
       check(Arrays.equals(gridPosition(t, a), scrolled), "Bulk save moved a scrolled grid");
       return "PASS isolated burst bulk UI: multiple selections, empty/already disabled, cancel,"
-                 + " Back, outside, busy Back, rollback and single retry, frozen targets,"
-                 + " selection/grid retention, best-only independence, hidden and other burst"
-                 + " selections, unfinished and all selected.\n";
+          + " Back, outside, busy Back, rollback and single retry, frozen targets,"
+          + " selection/grid retention, best-only independence, hidden and other burst"
+          + " selections, unfinished and all selected.\n";
     } finally {
       release.countDown();
       ui(t, a::finish);
