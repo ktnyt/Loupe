@@ -74,7 +74,7 @@ flowchart TD
 
 - 機能: アルバム・機種から写真を探し、一覧、拡大、前後移動で内容を確認する。
 - 要件: 全件走査を毎回待たず保存済み一覧を開ける。追加写真を裏で反映する。RAWは埋め込みJPEG、JPEGは画像そのものを表示する。オリジナル取得に失敗しても取得済みプレビューを残す。
-- 根拠・状態: `design.md`の閲覧、プレビュー、v0.11索引は既存設計。300msの更新要求は作業ツリーのREADMEに記録された現行仕様であり、新たな反映時間保証ではない。
+- 根拠・状態: `design.md`の閲覧、プレビュー、v0.11索引は既存設計。300msの更新要求は[写真追加の反映改善](history/initial-implementation.md#写真追加の反映改善)に記録された現行仕様であり、新たな反映時間保証ではない。
 
 ### P1.1 完成済みの一覧をすぐ表示する
 
@@ -84,7 +84,7 @@ flowchart TD
 - 一覧の背景反映: 反映直前に先頭可視行の写真と行上端を保持し、更新後は同じ写真を含む束の行へ復元する。対象が消えた場合は元のセル位置を新しい範囲内へ丸める。ヘッダーの途中表示は維持し、初回の空一覧だけ保存済み位置を使う。`GalleryPosition`と`ScrollingGrid`が担当。オリジナル・順位・タグ・選択は変更しない。
 - 更新契約: 画面の変更通知は最初の通知から300ms後に要求する。更新中の追加要求は次回へまとめ、強制要求を優先する。これは表示完了までの300ms保証ではない。定期更新もAndroidの実行制御を受ける。
 - 実装: [GalleryIndex.java](../app/src/main/java/jp/nano/rawgallery/GalleryIndex.java) `load/rebuild/signature`、[IndexRefreshRequests.java](../app/src/main/java/jp/nano/rawgallery/IndexRefreshRequests.java) `start/finish`、[MainActivity.java](../app/src/main/java/jp/nano/rawgallery/MainActivity.java) `mediaObserver/refreshIndex`、[GalleryIndexJob.java](../app/src/main/java/jp/nano/rawgallery/GalleryIndexJob.java)。主な位置はそれぞれ85、117、154行、8行、64・653行。
-- 検証: 更新要求の単体回帰テスト成功。DBのロールバック、実端末での通知、外部ストレージは今回未検査。READMEの約2.5秒という実測は小さな検証JPEGに限る過去記録。
+- 検証: 更新要求の単体回帰テスト成功。DBのロールバック、実端末での通知、外部ストレージは今回未検査。[写真追加の反映改善](history/initial-implementation.md#写真追加の反映改善)にある約2.5秒の実測は小さな検証JPEGに限る過去記録。
 
 ### P1.2 写真の内容を確認する
 
@@ -92,13 +92,13 @@ flowchart TD
 - 事前条件: オリジナルまたは保存済みプレビューへアクセスできること。クラウドオリジナルの取得はP5に依存する。
 - 事後条件: 先に小サイズプレビューを表示し、オリジナル取得成功後に高画質表示へ移る。取得失敗ではプレビューと失敗表示を残す。
 - 実装: [RawPreview.java](../app/src/main/java/jp/nano/rawgallery/RawPreview.java) `inspect/bytes/candidate`（77・115・261行）、[PhotoRepository.java](../app/src/main/java/jp/nano/rawgallery/PhotoRepository.java) `scan/sourcePreview/fullPreview/bitmap`、[MainActivity.java](../app/src/main/java/jp/nano/rawgallery/MainActivity.java) `showPhoto`（823行）、`ZoomImageView`。
-- 検証: 抽出方式とエラー経路を読解。実写真の抽出一致、回転、拡大操作は今回未検査。READMEにある8枚の一致は過去の検証結果であり全RAW形式の保証ではない。
+- 検証: 抽出方式とエラー経路を読解。実写真の抽出一致、回転、拡大操作は今回未検査。[当時のRAW検証](history/initial-implementation.md#検証したraw)にある8枚の一致は過去の検証結果であり全RAW形式の保証ではない。
 
 ## P2: 連写から好みの写真を決める
 
 - 機能: 連写をまとめ、2枚ずつ比較し、全写真の順位と同順位を決める。
 - 要件: 比較範囲が明確で、途中保存・再開・一手戻しができる。判断はオリジナルの削除や移動を起こさない。
-- 根拠・状態: 連写と保存は`design.md`。同順位はREADME v0.14と現行コードによる後続仕様。旧「同順位は扱わない」は現行契約ではない。
+- 根拠・状態: 連写と保存は`design.md`。同順位は[v0.14の記録](history/initial-implementation.md#v0140の複数選択とベストショット)と現行コードによる後続仕様。旧「同順位は扱わない」は現行契約ではない。
 - 上位との対応: P1の見やすさとは別に、写真を選ぶための比較範囲と判断結果を保証する。
 
 ### P2.1 比較する範囲を定める
@@ -125,7 +125,7 @@ flowchart TD
 
 - 機能: 写真や連写枠を選び、選択済み写真から共有対象を決める。
 - 要件: 順位の保存を変えずに共有範囲を変えられる。未選択写真を勝手に追加しない。未確定の連写を確定済みと扱わない。
-- 根拠・状態: README v0.14の後続仕様を整理。既存設計文書には不足していた契約。
+- 根拠・状態: [v0.14の選択仕様](history/initial-implementation.md#v0140の複数選択とベストショット)を整理。既存設計文書には不足していた契約。
 - 不変条件: `対象 ⊆ 明示選択した写真`。ベスト限定なら対象はその中の確定1位すべてと単写真。同率1位を1枚へ勝手に絞らない。対象IDの重複を除く。
 - 事前条件: 選択する枠と、その枠が含む写真が特定できること。選択開始時にベスト限定をオンにする。
 - 事後条件: ベスト限定オフなら選択した全写真。オンで未確定の束があれば、その束を未確定として返し、比較へ進む・選択へ戻る・確定分だけ共有する選択肢を示す。枠数と実対象枚数を区別する。
@@ -137,7 +137,7 @@ flowchart TD
 
 - 機能: 共有先と順序・形式を保存し、1枚または複数枚を共有する。
 - 要件: 明示操作時だけ渡し、元の品質と向きを保つ。準備失敗で一部だけを渡さない。受信アプリへオリジナルの書き込み権限を渡さない。
-- 根拠・状態: `design.md`の共有契約に、README v0.14の複数共有を統合した既存仕様。
+- 根拠・状態: `design.md`の共有契約に、[v0.14の複数共有](history/initial-implementation.md#v0140の複数選択とベストショット)を統合した既存仕様。
 - 不変条件: オリジナル形式ではバイト列を変更しない。JPEGオリジナルはそのまま、RAWのJPEG共有はオリジナル内JPEGの画素を再圧縮せず向き情報を付ける。小サイズWebPで代用しない。
 - 事前条件: P3で固定した対象の全オリジナルを準備でき、共有先が形式・複数共有を受け付けること。
 - 事後条件: 全ファイルの準備成功後にのみ共有Intentを起動する。準備失敗では生成途中の共有コピーを取り除き、共有しない。権限は専用領域の対象URIに対する読み取りのみ。
@@ -156,7 +156,7 @@ flowchart TD
 - 失敗・再試行: 認証失敗は自動同期を停止。個別保留には再試行待ちを置く。定期バッチは最大20枚・時間制限付き。これは全写真の保管完了時刻を保証しない。
 - 参照: P1・P4へ取得済みオリジナルを供給し、P6へ照合済み記録を供給する。DB記録、プレビューファイル、クラウド保存は単一トランザクションではない。
 - 実装: [CloudVerifier.java](../app/src/main/java/jp/nano/rawgallery/CloudVerifier.java) `verify/uploadAndVerify/download`（126付近・208・314行）、[ArchiveStore.java](../app/src/main/java/jp/nano/rawgallery/ArchiveStore.java) `pending/verified`（144・148行）、[OriginalCache.java](../app/src/main/java/jp/nano/rawgallery/OriginalCache.java) `obtain`（16行）、`SyncEngine.runBatch`、`CloudActivity`、`SyncJob`。
-- 検証: 送信前記録・復元照合・キャッシュのハッシュ再検査を読解。今回ネットワーク接続、認証切れ、プロセス終了からの回復は未検査。READMEのアップロード等の成功は過去の特定ファイルの実測に限る。
+- 検証: 送信前記録・復元照合・キャッシュのハッシュ再検査を読解。今回ネットワーク接続、認証切れ、プロセス終了からの回復は未検査。[当時の実機確認](history/initial-implementation.md#実機での確認)にあるアップロード等の成功は過去の特定ファイルの実測に限る。
 
 ## P6: 安全条件を満たす端末オリジナルだけ整理する
 
@@ -191,11 +191,11 @@ flowchart TD
 | 履歴にある記述 | 現行での扱い | 根拠 |
 | --- | --- | --- |
 | 初回は接続診断のみ、削除しない | 初回試作限定。現在は保存・復元・任意の自動整理を持つ | design.md追加仕様、`SyncEngine` |
-| 保持期間は未決定 | 現行初期値7日、設定範囲1〜365日 | README、`SyncPolicy` |
-| 同順位は扱わない | v0.14で同順位を扱う | README v0.14、`PhotoRanking.tie` |
+| 保持期間は未決定 | 現行初期値7日、設定範囲1〜365日 | [当時の自動整理](history/initial-implementation.md#自動同期と容量整理)、`SyncPolicy` |
+| 同順位は扱わない | v0.14で同順位を扱う | [v0.14の記録](history/initial-implementation.md#v0140の複数選択とベストショット)、`PhotoRanking.tie` |
 | オリジナル整理後のJPEG共有 | 小サイズWebPを共有せずオリジナルから用意する | design.mdオリジナル取得の追加仕様、`export` |
-| 主要操作は上部メニュー | v0.12以降、下部操作とアイコンへ変更 | README v0.12〜v0.14、`GalleryUi` |
-| 写真の変更通知をまとめる | 最初の通知から300ms、更新中の要求も引き継ぐ | 作業ツリーREADME、`IndexRefreshRequests` |
+| 主要操作は上部メニュー | v0.12以降、下部操作とアイコンへ変更 | [v0.12〜v0.14の記録](history/initial-implementation.md#v0120の下部操作)、`GalleryUi` |
+| 写真の変更通知をまとめる | 最初の通知から300ms、更新中の要求も引き継ぐ | [写真追加の反映改善](history/initial-implementation.md#写真追加の反映改善)、`IndexRefreshRequests` |
 
 ## 対応の判定と残る作業
 
@@ -243,7 +243,7 @@ flowchart TD
 - `SyncPolicyTest`: 機種・保持期間・撮影日44検査成功。
 - `BurstGroupsTest`: 8ケース成功。
 
-後二者は`SyncPolicy.java`、`RawPreview.java`、`BurstGroups.java`とテストを一時ディレクトリへ`javac`でコンパイルして実行した。アプリ全体のビルド・lint・実機操作・外部サービス接続・削除は今回の文書整理では再実施していない。過去の実機記録はREADMEに残し、今回のテスト結果と混同しない。
+後二者は`SyncPolicy.java`、`RawPreview.java`、`BurstGroups.java`とテストを一時ディレクトリへ`javac`でコンパイルして実行した。アプリ全体のビルド・lint・実機操作・外部サービス接続・削除は今回の文書整理では再実施していない。過去の実機結果は[初期実装と検証の記録](history/initial-implementation.md#実機での確認)に残している。この文書整理で実行したテストとは別の結果である。
 
 
 ### 分離後の検証（2026年10月25日）

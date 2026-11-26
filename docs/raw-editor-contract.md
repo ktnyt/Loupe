@@ -57,7 +57,7 @@ Android端末内でRAWを現像し、主題を拡大して質感を決め、全�
 
 ## Claude参照HTMLの具体化
 
-基本配置は `https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-raw-editor-overlay.html`。ガイドと初期化は最新の `https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-raw-editor-cursor-navigation.html` を優先する。HTMLの取得・構造確認、ClaudeオリジナルのWB/Monoと元S08の表示確認済み。Androidにも実装済み。Claudeオリジナルの描画済み参照キャプチャを取得し、AndroidのWB画面との独立比較を実施済み。
+基本配置は [現像画面の基本配置HTML](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-raw-editor-overlay.html)。ガイドと初期化は最新の [ガイドと初期化の参照HTML](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-raw-editor-cursor-navigation.html) を優先する。HTMLの取得・構造確認、ClaudeオリジナルのWB/Monoと元S08の表示確認済み。Androidにも実装済み。Claudeオリジナルの描画済み参照キャプチャを取得し、AndroidのWB画面との独立比較を実施済み。
 
 - 上56dp、補助操作56dp、下タブ64dp＋下余白20dp。写真は残りを全体フィットで使用する。400×844では写真400×648dp、400×640では400×444dp。
 - 操作面Sは `min(画面幅-72,写真領域の高さ-72)` dp、面＋右/下帯の全体（S+56dp）を写真領域中央に配置。外側8dp以上、間8dp、各帯48dp。400dp幅ではS=328dp。タブによって位置/寸法を変えない。

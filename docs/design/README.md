@@ -6,13 +6,23 @@
 
 ## 当時の資料を取り出す
 
-次のコマンドで、当時の `docs/design` 配下の381ファイル（合計92,042,584バイト）を空の一時ディレクトリに展開します。`tar.umask` を明示し、通常ファイルをGitに記録された `0644` で展開します。
+指定のコミットを取得したLoupeのGit作業コピーで実行してください。空の一時ディレクトリに当時の `docs/design` 配下の381ファイル（合計92,042,584バイト）を展開します。通常ファイルのモードはGitに記録された `0644` です。展開が完了すると保存先が表示されます。
 
 ```sh
-design_commit=b7b917850eb45aa85dfe4352151071a89c61cc75
-design_dir=$(mktemp -d)
-git -c tar.umask=0022 archive "$design_commit" docs/design | tar -xp -C "$design_dir"
-printf '%s\n' "$design_dir"
+(
+  design_commit=b7b917850eb45aa85dfe4352151071a89c61cc75
+  if [ "$(git rev-parse --is-inside-work-tree)" != true ]; then
+    printf '%s\n' 'LoupeのGit作業コピーで実行してください。' >&2
+    exit 1
+  fi
+  git cat-file -e "$design_commit^{commit}" || exit
+  design_dir=$(mktemp -d) || exit
+  design_tar="$design_dir/design.tar"
+  trap 'rm -f "$design_tar"' 0
+  git -c tar.umask=0022 archive --format=tar --output="$design_tar" "$design_commit" docs/design || exit
+  tar -xpf "$design_tar" -C "$design_dir" || exit
+  printf '%s\n' "$design_dir"
+)
 ```
 
 ## 当時の索引から
@@ -96,11 +106,11 @@ FIT_CENTERの実画像矩形から毎描画時に配置し、読込前/失敗時
 
 ## Issue #6 ソート方式
 
-参照: [https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-issue6-ranking-modes.html](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-issue6-ranking-modes.html)。Claudeの完成案を採用し、写真を人に限定しない名称「すべてに順位」へ短いラベルを調整した。1位方式は1/2/2/2、全順位方式は1/2/2/4の例を表示し、同順位をまとめる。2択の枠とチェックで現在方式を示す。写真や他のdockは簡略模擬であり新規配置の仕様ではない。320/400dp・文字1/1.3倍、選択/確認/キャンセル/保存失敗を収録。
+参照: [loupe-issue6-ranking-modes.html](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-issue6-ranking-modes.html)。Claudeの完成案を採用し、写真を人に限定しない名称「すべてに順位」へ短いラベルを調整した。1位方式は1/2/2/2、全順位方式は1/2/2/4の例を表示し、同順位をまとめる。2択の枠とチェックで現在方式を示す。写真や他のdockは簡略模擬であり新規配置の仕様ではない。320/400dp・文字1/1.3倍、選択/確認/キャンセル/保存失敗を収録。
 
 ## Issue #14 操作の手がかり
 
-参照: [https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-issue14-direct-affordances.html](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-issue14-direct-affordances.html)。結果一覧の説明文を除き、左右8dp・行間4dp・角丸12dpのカード、88×72dp/角丸8dpの写真、14sp/20sp行高の順位と省略しないファイル名、右24dpの拡大印を表示する。行全体が1操作で、画像や印は別のフォーカスを持たない。失敗時は画像の代わりの印を表示する。
+参照: [loupe-issue14-direct-affordances.html](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-issue14-direct-affordances.html)。結果一覧の説明文を除き、左右8dp・行間4dp・角丸12dpのカード、88×72dp/角丸8dpの写真、14sp/20sp行高の順位と省略しないファイル名、右24dpの拡大印を表示する。行全体が1操作で、画像や印は別のフォーカスを持たない。失敗時は画像の代わりの印を表示する。
 
 Cloudの入口はログイン・同期の設定・接続と確認。初期説明と空statusを隠し、実際の認証・通信・失敗・結果は既存メッセージを保持して表示する。HTMLの状態別色/アイコン/短い文言は#17に属する提案として採用せず、今回の変更は可視性とpolite通知に限定する。Cloudのヘッダ・メニュー・周辺余白は模擬で既存実装を維持。接続メニューの4操作、ログアウトの確認、FLAG_SECURE、自動送信しない契約を保持する。
 
@@ -118,7 +128,7 @@ Android実装は[#39](https://github.com/ktnyt/Loupe/issues/39)で導入済み�
 
 ## Issue #8で使わない派生案
 
-[https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-issue8-consistency.html](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-issue8-consistency.html)はタグの写真・件数と同期の直接操作を省いたため、比較基準には使わない。T1/T11は下記の元画面に変更要求を反映したHTMLを参照する。画面横断の残る確認範囲は[比較契約](../ui-consistency.md)にまとめる。
+[loupe-issue8-consistency.html](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-issue8-consistency.html)はタグの写真・件数と同期の直接操作を省いたため、比較基準には使わない。T1/T11は下記の元画面に変更要求を反映したHTMLを参照する。画面横断の残る確認範囲は[比較契約](../ui-consistency.md)にまとめる。
 
 ## タグ一覧とクラウド同期
 
@@ -141,17 +151,17 @@ Android実装は[#39](https://github.com/ktnyt/Loupe/issues/39)で導入済み�
 
 ## 連写詳細・比較の全体配置（Issue #8）
 
-[https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-burst-compare.html](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-burst-compare.html)は2026-10-27に取得したClaudeの補足設計。左は元S04/W01/W02とS05/T06、右は#5/6/7/9/10/17の採用済み変更を適用する。元の大きな写真、サムネイル列、主/副操作を保ち、#6の順位例と枠/チェックを置換しない。常時1位保存確認、読込中の連写操作、履歴が残る間の連続取消、前/次の循環、連写全写真の共有を保持する。
+[loupe-burst-compare.html](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-burst-compare.html)は2026-10-27に取得したClaudeの補足設計。左は元S04/W01/W02とS05/T06、右は#5/6/7/9/10/17の採用済み変更を適用する。元の大きな写真、サムネイル列、主/副操作を保ち、#6の順位例と枠/チェックを置換しない。常時1位保存確認、読込中の連写操作、履歴が残る間の連続取消、前/次の循環、連写全写真の共有を保持する。
 
 ローカルで元画面との配置を確認し、読込中でも1位操作が確認を開くこと、比較3回目から2回続けて取り消して1回目へ戻ること、完全な方式のAX説明を確認。AndroidのSPは非線形のためHTMLの線形倍率との実寸差を区別する。Androidへの適用と実機比較はこのHTML取得だけでは完了しない。
 
 ## その他メニュー（Issue #8）
 
-[https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-more-menu.html](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-more-menu.html)は元の18その他と、photoMenu/galleryMenuの既存項目・遷移を保持した縦画面の補足設計。見出し・矢印・全幅の閉じるを元に揃え、window幅・角20dp・高さ48%上限は#13を維持する。元アーティファクトを直接表示して確認し、単体HTMLの表示と2段の遷移を確認。写真、キーボード高さと下端距離は合成例。APK122で縦320/400dp・文字1/1.3の実機比較と独立UI評価を確認。取消・2段遷移・末尾到達、初回/再表示の寸法安定と低い領域での操作到達も確認。実キーボード・指スワイプ・音声は未検査。
+[loupe-more-menu.html](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-more-menu.html)は元の18その他と、photoMenu/galleryMenuの既存項目・遷移を保持した縦画面の補足設計。見出し・矢印・全幅の閉じるを元に揃え、window幅・角20dp・高さ48%上限は#13を維持する。元アーティファクトを直接表示して確認し、単体HTMLの表示と2段の遷移を確認。写真、キーボード高さと下端距離は合成例。APK122で縦320/400dp・文字1/1.3の実機比較と独立UI評価を確認。取消・2段遷移・末尾到達、初回/再表示の寸法安定と低い領域での操作到達も確認。実キーボード・指スワイプ・音声は未検査。
 
 ## Issue #46 タグConfidence
 
-[https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-tag-confidence.html](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-tag-confidence.html) はタグ詳細と基準を教える画面の現行参照。ClaudeのLoupe UIブラッシュアップから出力し、ブラウザ表示と閾値変更・基準を教える画面への遷移を確認した。上部の説明文1か所を、判断後のキャッシュによる再学習と明示的な写真解析を区別する文へ補正した。写真とスコアは合成例。Android実装の検証状況はissue #46へ記録する。
+[loupe-tag-confidence.html](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-tag-confidence.html) はタグ詳細と基準を教える画面の現行参照。ClaudeのLoupe UIブラッシュアップから出力し、ブラウザ表示と閾値変更・基準を教える画面への遷移を確認した。上部の説明文1か所を、判断後のキャッシュによる再学習と明示的な写真解析を区別する文へ補正した。写真とスコアは合成例。Android実装の検証状況はissue #46へ記録する。
 
 ## Issue #48 タグ解析の進捗
 
@@ -186,7 +196,7 @@ Issue #55の[4状態の参照・実機比較](https://github.com/ktnyt/Loupe/blo
 
 ## 現像の下部タブ（Issue #61）
 
-[https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-raw-editor-footer-v2.html](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-raw-editor-footer-v2.html)が現行の下部配置参照。旧footer.htmlは基準版。上56dp・写真は残り・下80dp。補助行と拡大ボタンを削除し、必要4タブだけ高さ48dp/下8dpの補助操作を写真へ重ねる。7タブでviewportと2DUI座標を固定。参照PNG: [WB](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe61-reference-wb.png)、[トーン](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe61-reference-tone.png)。400×(2416/3)dp・密度3・文字1.0・初期値・fit、実出力1200×2415px（丸め1px差）。短いcontentの面サイズはmin(幅−72,写真高さ−176)で契約と統一。[短い参照](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe61-v2-reference-short.png)は400×576dp/密度3/文字1.3、実寸1200×1728px。通常PNGはv1/v2で同一ハッシュを確認。Android実装・通常/短Windowの実機検査と独立比較を完了。[実測短Windowの参照](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe61-v2-reference-short640.png)はcontent400×640dp/font1.3、実寸1200×1920px。[通常WB比較](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe61-comparison-wb.png)・[トーン比較](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe61-comparison-tone.png)・[短いWB比較](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe61-comparison-short.png)（左参照/右実機）。576dpの参照は設計上の参考寸法。字体・合成注記/斜線・既存ヘッダー・chip幅・線端には差があり、全画素一致とは扱わない。
+[loupe-raw-editor-footer-v2.html](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-raw-editor-footer-v2.html)が現行の下部配置参照。旧footer.htmlは基準版。上56dp・写真は残り・下80dp。補助行と拡大ボタンを削除し、必要4タブだけ高さ48dp/下8dpの補助操作を写真へ重ねる。7タブでviewportと2DUI座標を固定。参照PNG: [WB](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe61-reference-wb.png)、[トーン](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe61-reference-tone.png)。400×(2416/3)dp・密度3・文字1.0・初期値・fit、実出力1200×2415px（丸め1px差）。短いcontentの面サイズはmin(幅−72,写真高さ−176)で契約と統一。[短い参照](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe61-v2-reference-short.png)は400×576dp/密度3/文字1.3、実寸1200×1728px。通常PNGはv1/v2で同一ハッシュを確認。Android実装・通常/短Windowの実機検査と独立比較を完了。[実測短Windowの参照](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe61-v2-reference-short640.png)はcontent400×640dp/font1.3、実寸1200×1920px。[通常WB比較](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe61-comparison-wb.png)・[トーン比較](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe61-comparison-tone.png)・[短いWB比較](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe61-comparison-short.png)（左参照/右実機）。576dpの参照は設計上の参考寸法。字体・合成注記/斜線・既存ヘッダー・chip幅・線端には差があり、全画素一致とは扱わない。
 
 ## 多点トーンカーブ（Issue #63）
 
@@ -202,7 +212,7 @@ Issue #55の[4状態の参照・実機比較](https://github.com/ktnyt/Loupe/blo
 
 ### #65の比較条件
 
-現行の比較基準はClaude作成の[レイアウト修正版](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-cnt-look-layout-fixed.html)と[通常PNG](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe65-layout-fixed-reference-normal.png)・[短画面PNG](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe65-layout-fixed-reference-short.png)。シートの直下の子を`flex-shrink:0`とし、ハンドル4dpと区切り線1dp、状態の行を縮めず、シート内でスクロールする。プリセット・動作・シート高の契約は維持する。元の`https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-cnt-look-final.html`とPNGも保管するが、その版のハンドル等はflex縮小で高さ0になるため現行の寸法比較には使わない。
+現行の比較基準はClaude作成の[レイアウト修正版](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-cnt-look-layout-fixed.html)と[通常PNG](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe65-layout-fixed-reference-normal.png)・[短画面PNG](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe65-layout-fixed-reference-short.png)。シートの直下の子を`flex-shrink:0`とし、ハンドル4dpと区切り線1dp、状態の行を縮めず、シート内でスクロールする。プリセット・動作・シート高の契約は維持する。元の[旧CNT-like参照HTML](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-cnt-look-final.html)とPNGも保管するが、その版のハンドル等はflex縮小で高さ0になるため現行の寸法比較には使わない。
 
 実機UIの通常400dp/font1.0と短画面400×640dp/font1.3の操作検査は通過した。[通常比較](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe65-comparison-normal.png)と[短画面比較](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe65-comparison-short.png)は左が参照、右が実機。独立評価では追加修正が必要な重大UI/UX差なし。[通常座標](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe65-capture-normal.json)・[短画面座標](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe65-capture-short.json)に物理Window座標とcropを残す。短画面は制約付きActivityと独立Dialogの条件を合わせるためtest-onlyでWindow.yを296px変更し、シート全883pxをcontent内へ配置した結果であり、実際の短い端末そのものではない。全画面は補正しない。合成写真の入力・現像条件、HTMLのSVGノイズとGPU粒子、代替フォントの違いを含むため、UI参照から画質一致を判定しない。字形・改行・行間等の小差、実指/実IME/TalkBackの未確認を区別する。
 
