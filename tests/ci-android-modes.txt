@@ -21,6 +21,7 @@ tags
 automatic
 tag-detail
 tag-confidence
+tag-confidence confidence_rebuild_delay_ms 12000
 selected-tags
 album-tags libraryFixture true
 
@@ -49,6 +50,7 @@ e2-transfer-dashboard
 
 # Camera fixtures and USB resolver settings
 camera-pilot-usb-launch
+camera-pilot-operation-admission
 camera-pilot-usb-launch-choice choice on
 camera-pilot-usb-launch-choice choice verify-on
 camera-pilot-usb-launch-choice choice off
@@ -61,6 +63,7 @@ camera-pilot-quick-import
 camera-pilot-qr-ui
 camera-pilot-qr-image
 camera-pilot-sd-source-synthetic
+camera-pilot-sd-usb-reprobe
 camera-pilot-sd-original
 camera-pilot-sd-guards
 camera-pilot-paired-guards

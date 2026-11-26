@@ -470,7 +470,7 @@ public final class MainActivity extends DiagnosticActivity {
             albums,
             enabled,
             this::switchLibraryTab,
-            () -> startActivity(new Intent(this, CameraImportActivity.class)),
+            () -> startActivity(CameraImportActivity.manualImportIntent(this, false)),
             this::startCameraImportFromTab);
     root.addView(libraryTabs);
     updateCameraTab();
@@ -493,9 +493,7 @@ public final class MainActivity extends DiagnosticActivity {
   private void startCameraImportFromTab() {
     if (selecting || ImportProgress.INSTANCE.getActive() || quickImportOpening) return;
     quickImportOpening = true;
-    startActivity(
-        new Intent(this, CameraImportActivity.class)
-            .putExtra(CameraImportActivity.START_IMPORT_KEEP_ORIGINALS, true));
+    startActivity(CameraImportActivity.manualImportIntent(this, true));
   }
 
   private TextView cameraImportBand;
@@ -1714,7 +1712,7 @@ public final class MainActivity extends DiagnosticActivity {
               startActivity(new Intent(this, PhotoStorageActivity.class));
               break;
             case 8:
-              startActivity(new Intent(this, CameraImportActivity.class));
+              startActivity(CameraImportActivity.manualImportIntent(this, false));
               break;
             case 7:
               startActivity(new Intent(this, NanoBananaSettingsActivity.class));
