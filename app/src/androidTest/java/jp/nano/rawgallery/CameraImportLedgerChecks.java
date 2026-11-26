@@ -83,7 +83,8 @@ final class CameraImportLedgerChecks {
 
   private enum Deletion {
     RETURNED_FALSE,
-    THREW
+    THREW,
+    ABSENCE_UNCONFIRMED
   }
 
   private record OwnedDatabase(
@@ -146,13 +147,14 @@ final class CameraImportLedgerChecks {
   }
 
   private static FixtureDiagnostic databaseFailure(
-      Context context,
       OwnedDatabase database,
       DatabaseFiles before,
+      DatabaseFiles after,
       Deletion deletion,
+      boolean proofRemainder,
       Throwable cause) {
     return new FixtureDiagnostic(
-        "cleanup=db role="
+        (proofRemainder ? "cleanup=proof-remainder role=" : "cleanup=db role=")
             + database.role().name()
             + boundaryDetail(database.boundary())
             + " delete="
@@ -160,7 +162,7 @@ final class CameraImportLedgerChecks {
             + " before="
             + before
             + " after="
-            + DatabaseFiles.observe(context, database.name()),
+            + after,
         cause);
   }
 
@@ -199,22 +201,36 @@ final class CameraImportLedgerChecks {
           first = recordCleanup(first, new FixtureDiagnostic("cleanup=media-folder", failure));
         }
       }
+      cleanDatabases(context, false, first);
+    }
+
+    AutoCloseable proofCleanup(Context realContext) {
+      return () -> cleanDatabases(realContext, true, null);
+    }
+
+    private void cleanDatabases(Context owner, boolean proofRemainder, FixtureDiagnostic first)
+        throws FixtureDiagnostic {
       for (OwnedDatabase database : databases) {
-        DatabaseFiles before = DatabaseFiles.observe(context, database.name());
-        boolean deleted;
+        DatabaseFiles before = DatabaseFiles.observe(owner, database.name());
+        // The proof has already exercised strict deletion. Its outer resource removes leftovers.
+        if (proofRemainder && before.allAbsent()) continue;
+        Deletion failure = null;
+        Throwable cause = null;
         try {
-          deleted = context.deleteDatabase(database.name());
-        } catch (Exception | Error failure) {
-          first =
-              recordCleanup(
-                  first, databaseFailure(context, database, before, Deletion.THREW, failure));
-          continue;
+          if (!owner.deleteDatabase(database.name())) failure = Deletion.RETURNED_FALSE;
+        } catch (Exception | Error thrown) {
+          failure = Deletion.THREW;
+          cause = thrown;
         }
-        if (!deleted) {
-          first =
-              recordCleanup(
-                  first, databaseFailure(context, database, before, Deletion.RETURNED_FALSE, null));
+        if (failure == null && !proofRemainder) continue;
+        DatabaseFiles after = DatabaseFiles.observe(owner, database.name());
+        if (failure == null) {
+          if (after.allAbsent()) continue;
+          failure = Deletion.ABSENCE_UNCONFIRMED;
         }
+        first =
+            recordCleanup(
+                first, databaseFailure(database, before, after, failure, proofRemainder, cause));
       }
       if (first != null) throw first;
     }
@@ -260,7 +276,7 @@ final class CameraImportLedgerChecks {
       LedgerFixture fixture = new LedgerFixture(rejectingFirst);
       Exception primaryException = new IOException();
       Error primaryError = new AssertionError();
-      try {
+      try (var proofCleanup = fixture.proofCleanup(context)) {
         // Leave the first planned DB unopened for body failures. A later real owned DB
         // must still be removed after the first delete attempt rejects.
         createTeardownDatabase(context, fixture.savedDestination);
@@ -314,26 +330,71 @@ final class CameraImportLedgerChecks {
                 && cleanup.detail.contains(
                     "after=DatabaseFiles[db=" + (bodyFailed ? "ABSENT" : "PRESENT")),
             "cleanup identifies the unopened or remaining database without its name");
-      } finally {
-        // Remove the probe's retained files with the real Context, checking both slots.
-        boolean firstClean = removeProofDatabase(context, fixture.crossRoute);
-        boolean secondClean = removeProofDatabase(context, fixture.savedDestination);
-        require(firstClean && secondClean, "proof fixture databases removed");
       }
     }
+    checkProofCleanup(context, true);
+    checkProofCleanup(context, false);
     return "PASS camera ledger teardown: exception and error primary, absent delete rejection retained, "
-        + "cleanup-only failure retained, remaining database attempted and successful path unchanged";
+        + "cleanup-only failure retained, remaining database attempted, proof cleanup preserves earlier failures, "
+        + "and successful path unchanged";
+  }
+
+  private static void checkProofCleanup(Context context, boolean failAssertion) throws Exception {
+    LedgerFixture fixture = new LedgerFixture(context);
+    List<String> attempts = new ArrayList<>();
+    var assertion = new AssertionError();
+    var deletion = new IllegalStateException();
+    Context fault =
+        new ContextWrapper(context) {
+          @Override
+          public boolean deleteDatabase(String name) {
+            attempts.add(name);
+            if (name.equals(fixture.crossRoute)) {
+              if (failAssertion) throw deletion;
+              return false;
+            }
+            return super.deleteDatabase(name);
+          }
+        };
+    // Use the same outer resource for restoring only the files left by this injected failure.
+    try (var finalCleanup = fixture.proofCleanup(context)) {
+      Throwable observed = null;
+      try (var cleanup = fixture.proofCleanup(fault)) {
+        createTeardownDatabase(context, fixture.crossRoute);
+        createTeardownDatabase(context, fixture.savedDestination);
+        if (failAssertion) throw assertion;
+      } catch (Exception | Error failure) {
+        observed = failure;
+      }
+      require(
+          attempts.equals(List.of(fixture.crossRoute, fixture.savedDestination)),
+          "proof cleanup attempts the second database after the first fails");
+      require(
+          DatabaseFiles.observe(context, fixture.savedDestination).allAbsent(),
+          "proof cleanup removed the second owned database and its sidecars");
+      if (failAssertion) {
+        require(
+            observed == assertion && assertion.getSuppressed().length == 1,
+            "proof cleanup preserves the earlier assertion");
+        require(
+            assertion.getSuppressed()[0] instanceof FixtureDiagnostic cleanup
+                && cleanup.getCause() == deletion
+                && cleanup.detail.contains("cleanup=proof-remainder role=CROSS_ROUTE delete=THREW"),
+            "proof cleanup attaches the thrown deletion to the assertion");
+      } else {
+        require(
+            observed instanceof FixtureDiagnostic cleanup
+                && cleanup.detail.contains(
+                    "cleanup=proof-remainder role=CROSS_ROUTE delete=RETURNED_FALSE"),
+            "proof cleanup rejection alone fails the resource");
+      }
+    }
   }
 
   private static void createTeardownDatabase(Context context, String name) {
     try (CameraImportLedger ledger = new CameraImportLedger(context, name)) {
       ledger.getWritableDatabase();
     }
-  }
-
-  private static boolean removeProofDatabase(Context context, String name) {
-    if (DatabaseFiles.observe(context, name).allAbsent()) return true;
-    return context.deleteDatabase(name) && DatabaseFiles.observe(context, name).allAbsent();
   }
 
   private static String diagnostic(Throwable failure) {
