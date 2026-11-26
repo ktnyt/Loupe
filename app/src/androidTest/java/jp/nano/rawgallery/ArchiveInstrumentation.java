@@ -203,6 +203,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       comparisonLabelsTest,
       actionLabelsTest;
   private boolean automaticTest, confidenceStoreTest, confidenceUiTest;
+  private int confidenceRebuildDelayMillis;
   private boolean cleanupTest;
   private boolean compactTest;
   private boolean e2ArchiveTest, e2BackgroundTest, e2CatalogLocalTest, e2CatalogScaleTest;
@@ -272,6 +273,14 @@ public final class ArchiveInstrumentation extends Instrumentation {
       tagFont = Float.parseFloat(args.getString("font", "1.0"));
     }
     confidenceUiTest = args != null && "tag-confidence".equals(args.getString("mode"));
+    if (confidenceUiTest) {
+      confidenceRebuildDelayMillis =
+          switch (args.getString("confidence_rebuild_delay_ms", "0")) {
+            case "0" -> 0;
+            case "12000" -> 12_000;
+            default -> -1;
+          };
+    }
     confidenceStoreTest = args != null && "confidence-store".equals(args.getString("mode"));
     archiveScanTest = args != null && "archive-scan".equals(args.getString("mode"));
     indexSignatureTest = args != null && "index-signature".equals(args.getString("mode"));
@@ -618,6 +627,9 @@ public final class ArchiveInstrumentation extends Instrumentation {
         return;
       }
       if (confidenceUiTest) {
+        if (confidenceRebuildDelayMillis < 0) {
+          throw new IllegalArgumentException("confidence_rebuild_delay_ms must be 0 or 12000");
+        }
         results.putString("stream", ConfidenceUiChecks.run(this, tagWidth));
         finish(-1, results);
         return;
@@ -1141,6 +1153,10 @@ public final class ArchiveInstrumentation extends Instrumentation {
     } finally {
       if (restored != null) restored.delete();
     }
+  }
+
+  int confidenceRebuildDelayMillis() {
+    return confidenceRebuildDelayMillis;
   }
 
   private static String failureReport(Throwable failure) {

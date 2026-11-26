@@ -21,6 +21,7 @@ tags
 automatic
 tag-detail
 tag-confidence
+tag-confidence confidence_rebuild_delay_ms 12000
 selected-tags
 album-tags libraryFixture true
 
