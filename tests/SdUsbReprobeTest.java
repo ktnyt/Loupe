@@ -27,6 +27,7 @@ public final class SdUsbReprobeTest {
     claimAuthorization();
     runPaths();
     mountCycleAttribution();
+    unavailableObservation();
     topology();
     System.out.println("SdUsbReprobeTest passed");
   }
@@ -323,6 +324,55 @@ public final class SdUsbReprobeTest {
             new Snapshot(
                 new Reader(READER.name(), 15, 8644, 45152, 0), TARGET, MOUNTED.volumes(), true)),
         "Unverified attribution cannot suppress another reader/target connection");
+  }
+
+  private static void unavailableObservation() {
+    Snapshot usbUnavailable =
+        Snapshot.observe(
+            () -> {
+              throw new IllegalStateException("USB enumeration failed");
+            },
+            Snapshot.unobserved(TARGET));
+    Snapshot permissionUnavailable =
+        Snapshot.observe(
+            () -> {
+              throw new SecurityException("USB permission query failed");
+            },
+            Snapshot.connectionOnly(READER, TARGET));
+    Snapshot storageUnavailable =
+        Snapshot.observe(
+            () -> {
+              throw new IllegalStateException("Storage inventory failed");
+            },
+            Snapshot.connectionOnly(READER, TARGET));
+    var waiting = new SdUsbReprobe.MountCycle(MOUNTED);
+    var restored = new SdUsbReprobe.MountCycle(MOUNTED);
+    restored.finish(MOUNTED);
+    for (Snapshot failure : List.of(usbUnavailable, permissionUnavailable, storageUnavailable)) {
+      require(
+          failure.admission() == State.UNSUPPORTED && !MOUNTED.sameAdmission(failure),
+          "An unknown observation cannot authorize a claim");
+      require(
+          !waiting.expired(failure, true, SOURCE) && waiting.suppresses(SOURCE, failure),
+          "A failed observation cannot expire pending attribution or let an own mount through");
+      require(
+          !restored.expired(failure, true, null) && restored.suppresses("2233-4455", failure),
+          "A failed observation cannot attest an independent source or detach after restoration");
+    }
+    require(
+        waiting.suppresses(SOURCE, MOUNTED) && restored.suppresses(SOURCE, MOUNTED),
+        "A later reliable observation of the same cycle keeps delayed mounts suppressed");
+    require(
+        waiting.expired(new Snapshot(null, TARGET, List.of(), false), false, null),
+        "A successfully queried empty USB inventory confirms the reader went away");
+    require(
+        waiting.expired(Snapshot.unobserved(SOURCE), false, null)
+            && !waiting.matchesDestination(SOURCE),
+        "A confirmed destination change retires attribution even if the USB query fails");
+    var newReader = new Reader(READER.name(), 15, 8644, 45152, 0);
+    require(
+        waiting.expired(Snapshot.connectionOnly(newReader, TARGET), false, null),
+        "A known replacement reader retires attribution despite an unavailable permission query");
   }
 
   private static void topology() {

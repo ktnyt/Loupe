@@ -46,9 +46,11 @@ public final class SdUsbReprobeController {
   static boolean suppressAutomaticMount(String uuid, String target) {
     var mounts = ownMounts.get();
     if (mounts == null) return false;
-    var current = mounts.platform().snapshot();
-    if (!Objects.equals(current.destination(), SdSourceRegistrations.normalizeVolumeUuid(target)))
+    if (!mounts.cycle().matchesDestination(SdSourceRegistrations.normalizeVolumeUuid(target))) {
+      ownMounts.compareAndSet(mounts, null);
       return false;
+    }
+    var current = mounts.platform().snapshot();
     if (mounts.cycle().expired(current, false, null)) {
       ownMounts.compareAndSet(mounts, null);
       return false;
@@ -516,38 +518,40 @@ public final class SdUsbReprobeController {
 
     @Override
     public Snapshot snapshot() {
-      try {
-        if (!SdUsbReprobe.supportedPhone(Build.DEVICE, Build.VERSION.SDK_INT, Build.FINGERPRINT))
-          return unavailable();
-        String destination = SdSourceRegistrations.normalizeVolumeUuid(PhotoStorage.selected(app));
-        UserManager users = app.getSystemService(UserManager.class);
-        if (destination == null || users == null || !users.isUserUnlocked()) return unavailable();
-        var devices = usb.getDeviceList();
-        if (devices.size() != 1) return unavailable();
-        UsbDevice device = devices.values().iterator().next();
-        Reader reader = reader(device);
-        if (reader == null) return unavailable();
-        return new Snapshot(reader, destination, currentVolumes(), usb.hasPermission(device));
-      } catch (RuntimeException unavailable) {
-        return unavailable();
-      }
+      return Snapshot.observe(this::observeDestination, Snapshot.unobserved(null));
+    }
+
+    private Snapshot observeDestination() {
+      if (!SdUsbReprobe.supportedPhone(Build.DEVICE, Build.VERSION.SDK_INT, Build.FINGERPRINT))
+        return new Snapshot(null, null, List.of(), false);
+      String destination = SdSourceRegistrations.normalizeVolumeUuid(PhotoStorage.selected(app));
+      if (destination == null) return new Snapshot(null, null, List.of(), false);
+      return Snapshot.observe(() -> observeReader(destination), Snapshot.unobserved(destination));
+    }
+
+    private Snapshot observeReader(String destination) {
+      UserManager users = app.getSystemService(UserManager.class);
+      if (users == null || !users.isUserUnlocked()) return Snapshot.unobserved(destination);
+      var devices = usb.getDeviceList();
+      if (devices.size() != 1) return new Snapshot(null, destination, List.of(), false);
+      UsbDevice device = devices.values().iterator().next();
+      Reader reader = reader(device);
+      if (reader == null) return new Snapshot(null, destination, List.of(), false);
+      Snapshot connection = Snapshot.connectionOnly(reader, destination);
+      return Snapshot.observe(
+          () -> {
+            var volumes = currentVolumes();
+            if (volumes == null) return connection;
+            return new Snapshot(reader, destination, volumes, usb.hasPermission(device));
+          },
+          connection);
     }
 
     private List<SdUsbReprobe.Volume> currentVolumes() {
-      try {
-        StorageManager storage = app.getSystemService(StorageManager.class);
-        var visible = new ArrayList<SdUsbReprobe.VisibleVolume>();
-        for (StorageVolume volume : storage.getStorageVolumes()) visible.add(visible(volume));
-        var volumes = SdUsbReprobe.portableLayout(visible);
-        return volumes == null ? List.of() : volumes;
-      } catch (RuntimeException unavailable) {
-        // USB and the selected target can still be known while vold discovers the media.
-        return List.of();
-      }
-    }
-
-    private Snapshot unavailable() {
-      return new Snapshot(null, null, List.of(), false);
+      StorageManager storage = app.getSystemService(StorageManager.class);
+      var visible = new ArrayList<SdUsbReprobe.VisibleVolume>();
+      for (StorageVolume volume : storage.getStorageVolumes()) visible.add(visible(volume));
+      return SdUsbReprobe.portableLayout(visible);
     }
 
     private static Reader reader(UsbDevice device) {
