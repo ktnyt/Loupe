@@ -12,11 +12,19 @@ import java.lang.reflect.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 
 /** Only synthetic cache images; no source photos, tags or rankings are edited. */
 final class DiagnosticChecks {
+  private static final String FRAME_TIMEOUT =
+      "fixture frame commit was not persisted before deadline";
+
   static String run(Instrumentation test) throws Exception {
-    checkRotatedCapture(test.getTargetContext().getCacheDir());
+    File cache = test.getTargetContext().getCacheDir();
+    checkRotatedCapture(cache);
+    checkFrameDeadline(cache);
     MainActivity activity =
         (MainActivity)
             test.startActivitySync(
@@ -70,11 +78,14 @@ final class DiagnosticChecks {
     imagesField.setAccessible(true);
     ExecutorService images = (ExecutorService) imagesField.get(activity);
     DiagnosticImageView[] view = new DiagnosticImageView[1];
+    Field requestField = DiagnosticImageView.class.getDeclaredField("request");
+    requestField.setAccessible(true);
     long run = ThreadLocalRandom.current().nextLong(1, Long.MAX_VALUE);
     String begin = marker("test.begin", run);
     File folder = new File(test.getTargetContext().getFilesDir(), "diagnostics");
     try {
-      if (DiagnosticLog.currentRecorder() == null) {
+      var recorder = DiagnosticLog.currentRecorder();
+      if (recorder == null) {
         throw new AssertionError("diagnostic recorder is not active");
       }
       DiagnosticLog.event("test.begin", run);
@@ -93,15 +104,21 @@ final class DiagnosticChecks {
             activity.setContentView(view[0]);
             invoke(preview, activity, view[0], good);
           });
-      waitFor(test, () -> view[0].getDrawable() != null);
+      long[] boundRequest = {0};
+      waitFor(
+          test,
+          () -> {
+            if (view[0].getDrawable() == null) return false;
+            try {
+              boundRequest[0] = requestField.getLong(view[0]);
+            } catch (IllegalAccessException error) {
+              throw new AssertionError(error);
+            }
+            return boundRequest[0] > 0;
+          });
       // The first frame must commit without requiring a subsequent UI update.
       long commitDeadline = SystemClock.elapsedRealtime() + 2000;
-      awaitEvent(
-          folder,
-          begin,
-          eventToken("image.frame_commit"),
-          commitDeadline,
-          "frame commit needed another UI update");
+      awaitFrame(folder, begin, boundRequest[0], commitDeadline, SystemClock::elapsedRealtime);
       // Queue two different image requests against a reused target behind blocked workers.
       CountDownLatch entered = new CountDownLatch(2), release = new CountDownLatch(1);
       for (int i = 0; i < 2; i++)
@@ -136,7 +153,8 @@ final class DiagnosticChecks {
               begin,
               end,
               SystemClock.elapsedRealtime() + 2000,
-              "diagnostic test end was not persisted");
+              "diagnostic test end was not persisted",
+              SystemClock::elapsedRealtime);
       text = text.substring(0, text.indexOf('\n', text.indexOf(end)) + 1);
       for (String event :
           new String[] {
@@ -150,6 +168,9 @@ final class DiagnosticChecks {
           }) if (!text.contains(eventToken(event))) throw new AssertionError("missing " + event);
       if (text.contains("private-sentinel") || text.contains("diagnostic-fixture.jpg"))
         throw new AssertionError("private string leaked");
+      if (DiagnosticLog.currentRecorder() != recorder) {
+        throw new AssertionError("diagnostic recorder changed before validation completed");
+      }
       return "PASS synthetic cache miss/hit, bind/draw/frame commit, failure, stale discard, no filename leakage\n";
     } finally {
       test.runOnMainSync(activity::finish);
@@ -165,16 +186,28 @@ final class DiagnosticChecks {
     return eventToken(event) + ",\"request\":" + run + ",";
   }
 
+  private static void awaitFrame(
+      File folder, String begin, long request, long deadline, LongSupplier clock)
+      throws IOException, InterruptedException {
+    awaitEvent(
+        folder, begin, marker("image.frame_commit", request), deadline, FRAME_TIMEOUT, clock);
+  }
+
   private static String awaitEvent(
-      File folder, String begin, String expected, long deadline, String missingEvent)
-      throws Exception {
+      File folder,
+      String begin,
+      String expected,
+      long deadline,
+      String missingEvent,
+      LongSupplier clock)
+      throws IOException, InterruptedException {
     boolean sawBegin = false;
-    while (SystemClock.elapsedRealtime() < deadline) {
+    while (clock.getAsLong() < deadline) {
       String capture = readAfterBegin(folder, begin);
-      if (capture != null) {
-        sawBegin = true;
-        if (capture.contains(expected)) return capture;
-      }
+      sawBegin |= capture != null;
+      boolean found = capture != null && capture.contains(expected);
+      if (clock.getAsLong() >= deadline) break;
+      if (found) return capture;
       Thread.sleep(20);
     }
     throw new AssertionError(sawBegin ? missingEvent : "diagnostic test begin was not persisted");
@@ -229,6 +262,78 @@ final class DiagnosticChecks {
       Files.deleteIfExists(new File(folder, "previous.jsonl").toPath());
       Files.delete(folder.toPath());
     }
+  }
+
+  private static void checkFrameDeadline(File cache) throws Exception {
+    File folder = Files.createTempDirectory(cache.toPath(), "diagnostic-deadline-fixture").toFile();
+    String begin = marker("test.begin", 41);
+    long request = 15;
+    long deadline = 100;
+    ExecutorService executor = Executors.newSingleThreadExecutor();
+    try (DiagnosticWriter writer = new DiagnosticWriter(folder, 1024)) {
+      writer.write("{" + begin + "\"fixture\":true}");
+      writer.write("{" + marker("image.frame_commit", 150) + "\"fixture\":true}");
+      writer.flush();
+      var polls = new AtomicInteger();
+      requireFrameTimeout(
+          folder,
+          begin,
+          request,
+          deadline,
+          () -> polls.getAndIncrement() < 2 ? deadline - 1 : deadline);
+
+      var now = new AtomicLong(deadline - 1);
+      var beganPoll = new CountDownLatch(1);
+      Future<?> expired;
+      synchronized (DiagnosticLog.FILES) {
+        expired =
+            executor.submit(
+                () -> {
+                  requireFrameTimeout(
+                      folder,
+                      begin,
+                      request,
+                      deadline,
+                      () -> {
+                        long sampled = now.get();
+                        beganPoll.countDown();
+                        return sampled;
+                      });
+                  return null;
+                });
+        if (!beganPoll.await(5, TimeUnit.SECONDS)) {
+          throw new AssertionError("diagnostic poll did not start");
+        }
+        now.set(deadline + 1);
+        writer.write("{" + marker("image.frame_commit", request) + "\"fixture\":true}");
+        writer.flush();
+      }
+      expired.get(5, TimeUnit.SECONDS);
+      polls.set(0);
+      awaitFrame(
+          folder,
+          begin,
+          request,
+          deadline,
+          () -> polls.getAndIncrement() < 2 ? deadline - 1 : deadline);
+    } finally {
+      executor.shutdownNow();
+      Files.deleteIfExists(new File(folder, "events.jsonl").toPath());
+      Files.deleteIfExists(new File(folder, "previous.jsonl").toPath());
+      Files.delete(folder.toPath());
+    }
+  }
+
+  private static void requireFrameTimeout(
+      File folder, String begin, long request, long deadline, LongSupplier clock)
+      throws IOException, InterruptedException {
+    try {
+      awaitFrame(folder, begin, request, deadline, clock);
+    } catch (AssertionError error) {
+      if (FRAME_TIMEOUT.equals(error.getMessage())) return;
+      throw error;
+    }
+    throw new AssertionError("diagnostic test accepted an unrelated or late frame");
   }
 
   private static void invoke(Method method, MainActivity a, ImageView v, PhotoRepository.Photo p) {
