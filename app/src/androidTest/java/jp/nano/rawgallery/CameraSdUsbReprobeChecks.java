@@ -168,18 +168,30 @@ final class CameraSdUsbReprobeChecks {
                 && !root.findAccessibilityNodeInfosByText("フォーマットは選ばないでください").isEmpty(),
             "Show all-cards and no-format instructions before opening Settings");
       }
-      var needsScroll = new AtomicBoolean();
-      var positiveBounds = screenBounds(dialogButton(root, positiveLabel));
-      var cancelBounds = screenBounds(dialogButton(root, "キャンセル"));
-      test.runOnMainSync(
-          () -> {
-            var body = checkDialogBounds(activity, positiveLabel, positiveBounds, cancelBounds);
-            if (preparing) {
-              requireInitiallyVisible(body, "フォーマットは選ばないでください。");
-              requireInitiallyVisible(body, "両方のカードがポータブルストレージで、各カードにパーティションが1つの場合に使えます。");
-            }
-            needsScroll.set(body.canScrollVertically(1));
-          });
+      boolean overflow = checkDialogControls(test, activity, root, positiveLabel);
+      var positive = dialogButton(root, positiveLabel);
+      var cancel = dialogButton(root, "キャンセル");
+      require(positive.isEnabled() == (!preparing || !overflow), "Initial action enabled state");
+      require(cancel.isEnabled(), "Cancel is enabled before exposing the rest of the text");
+      if (preparing && overflow) {
+        require(
+            !root.findAccessibilityNodeInfosByText("最後までスクロールすると設定を開けます").isEmpty(),
+            "Explain how to enable Settings while instructions overflow");
+        int beforeTap = positiveCount.get();
+        tapDialogButton(test, positive);
+        require(positiveCount.get() == beforeTap, "A real tap on disabled Settings does nothing");
+      }
+      tapDialogButton(test, cancel);
+      require(cancelCount.get() == (preparing ? 1 : 2), "Cancel works without scrolling " + name);
+
+      showFakeDialog(test, show, dialogs, positiveCount, cancelCount);
+      root = automation.getRootInActiveWindow();
+      require(root != null, "Reopened dialog retains its window " + name);
+      var reopened = dialogButton(root, positiveLabel);
+      var needsScroll = new AtomicBoolean(checkDialogControls(test, activity, root, positiveLabel));
+      require(
+          reopened.isEnabled() == (!preparing || !needsScroll.get()),
+          "Opening a new dialog starts with the original action state");
       if (needsScroll.get()) {
         int previousY = 0;
         for (int page = 0; page < 5 && needsScroll.get(); page++) {
@@ -207,6 +219,11 @@ final class CameraSdUsbReprobeChecks {
           previousY = position.get();
           root = automation.getRootInActiveWindow();
           require(root != null, "Scrolled dialog retains its window " + name);
+          if (preparing && needsScroll.get()) {
+            require(
+                !dialogButton(root, positiveLabel).isEnabled(),
+                "Settings stays disabled mid-scroll");
+          }
         }
         require(!needsScroll.get(), "Entire dialog instructions are reachable " + name);
         var endPositiveBounds = screenBounds(dialogButton(root, positiveLabel));
@@ -215,12 +232,9 @@ final class CameraSdUsbReprobeChecks {
             () -> checkDialogBounds(activity, positiveLabel, endPositiveBounds, endCancelBounds));
         capture(test, directory, width, font, "dialog-" + name + "-scrolled");
       }
-      tapDialogButton(test, dialogButton(root, "キャンセル"));
-      require(cancelCount.get() == (preparing ? 1 : 2), "The visible cancel action works " + name);
-      showFakeDialog(test, show, dialogs, positiveCount, cancelCount);
-      root = automation.getRootInActiveWindow();
-      require(root != null, "Reopened dialog retains its window " + name);
-      tapDialogButton(test, dialogButton(root, positiveLabel));
+      var ready = dialogButton(root, positiveLabel);
+      require(ready.isEnabled(), "Primary action is available after exposing all instructions");
+      tapDialogButton(test, ready);
       require(
           positiveCount.get() == (preparing ? 1 : 2), "The visible positive action works " + name);
     }
@@ -274,22 +288,17 @@ final class CameraSdUsbReprobeChecks {
     test.waitForIdleSync();
   }
 
-  private static void requireInitiallyVisible(ScrollView body, String warning) {
-    var text = (TextView) body.getChildAt(0);
-    var layout = text.getLayout();
-    int start = text.getText().toString().indexOf(warning);
-    require(start >= 0 && layout != null, "Expected laid-out safety warning: " + warning);
-    int textTop = text.getTop() + text.getTotalPaddingTop();
-    int lineTop = textTop + layout.getLineTop(layout.getLineForOffset(start));
-    int lineBottom =
-        textTop + layout.getLineBottom(layout.getLineForOffset(start + warning.length() - 1));
-    var visible = new Rect();
-    require(
-        body.getGlobalVisibleRect(visible)
-            && visible.height() == body.getHeight()
-            && lineTop >= body.getScrollY() + body.getPaddingTop()
-            && lineBottom <= body.getScrollY() + body.getHeight() - body.getPaddingBottom(),
-        "The complete safety warning is visible without scrolling: " + warning);
+  private static boolean checkDialogControls(
+      Instrumentation test, Activity activity, AccessibilityNodeInfo root, String positiveLabel) {
+    var positiveBounds = screenBounds(dialogButton(root, positiveLabel));
+    var cancelBounds = screenBounds(dialogButton(root, "キャンセル"));
+    var overflow = new AtomicBoolean();
+    test.runOnMainSync(
+        () ->
+            overflow.set(
+                checkDialogBounds(activity, positiveLabel, positiveBounds, cancelBounds)
+                    .canScrollVertically(1)));
+    return overflow.get();
   }
 
   private static ScrollView dialogBody() {
@@ -400,7 +409,6 @@ final class CameraSdUsbReprobeChecks {
                 node ->
                     label.contentEquals(node.getText())
                         && node.isClickable()
-                        && node.isEnabled()
                         && node.isVisibleToUser())
             .findFirst()
             .orElseThrow(() -> new AssertionError("Visible dialog button " + label));

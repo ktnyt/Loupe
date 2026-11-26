@@ -570,7 +570,8 @@ public final class SdUsbReprobeController {
     public void prepare(Runnable open, Runnable cancel) {
       show(
           "Androidでカードを取り出す",
-          "フォーマットは選ばないでください。\n"
+          "案内が続く場合は、最後までスクロールすると設定を開けます。\n\n"
+              + "フォーマットは選ばないでください。\n"
               + "両方のカードがポータブルストレージで、各カードにパーティションが1つの場合に使えます。"
               + "\n\n「デバイス情報」→「ストレージ」を開き、下にある「USBドライブ」欄の"
               + "「USBデバイスのマウントを解除」で、表示されるカードをすべて取り出してください。"
@@ -578,7 +579,8 @@ public final class SdUsbReprobeController {
               + "\n\n構成が分からない場合は、安全に取り出してリーダーを挿し直してください。",
           "設定を開く",
           open,
-          cancel);
+          cancel,
+          true);
     }
 
     @Override
@@ -589,11 +591,17 @@ public final class SdUsbReprobeController {
               + "リーダーはつないだままにし、フォーマットやマウントが進行中ならキャンセルしてください。",
           "取り出し済み",
           confirm,
-          cancel);
+          cancel,
+          false);
     }
 
     private void show(
-        String title, String message, String actionLabel, Runnable action, Runnable cancel) {
+        String title,
+        String message,
+        String actionLabel,
+        Runnable action,
+        Runnable cancel,
+        boolean requireFullInstructions) {
       var builder = new MaterialAlertDialogBuilder(activity);
       Context context = builder.getContext();
       float density = context.getResources().getDisplayMetrics().density;
@@ -633,9 +641,22 @@ public final class SdUsbReprobeController {
       dialog
           .getButton(android.content.DialogInterface.BUTTON_NEGATIVE)
           .setMinHeight(minimumTouchHeight);
-      dialog
-          .getButton(android.content.DialogInterface.BUTTON_POSITIVE)
-          .setMinHeight(minimumTouchHeight);
+      var positive = dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE);
+      positive.setMinHeight(minimumTouchHeight);
+      if (requireFullInstructions) {
+        positive.setEnabled(false);
+        Runnable enableAtEnd =
+            () -> {
+              if (scroll.getHeight() > 0 && !scroll.canScrollVertically(1)) {
+                positive.setEnabled(true);
+              }
+            };
+        scroll.addOnLayoutChangeListener(
+            (view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) ->
+                enableAtEnd.run());
+        scroll.setOnScrollChangeListener((view, x, y, oldX, oldY) -> enableAtEnd.run());
+        enableAtEnd.run();
+      }
     }
 
     @Override
