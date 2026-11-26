@@ -10,10 +10,12 @@ import android.Manifest;
 import android.app.Instrumentation;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Bitmap;
+import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -26,6 +28,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewTreeObserver;
 import android.widget.Button;
+import android.widget.TextView;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -39,6 +42,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -53,6 +57,7 @@ final class RankingPersistenceWaitChecks {
   private static final long PROOF_MS = 650;
   private static final long GATE_LIMIT_MS = 2200;
   private static final long FRAME_WAIT_MS = 5000;
+  private static final long CAPTURE_GATE_MS = 3500;
   private static final List<Integer> BURST = List.of(1, 2, 3);
 
   static String run(Instrumentation test, Bundle args) throws Exception {
@@ -100,6 +105,7 @@ final class RankingPersistenceWaitChecks {
     Map<String, Object> originalFields = new LinkedHashMap<>();
     Commit held = new Commit(true);
     CountDownLatch releaseInitial = new CountDownLatch(capture ? 1 : 0);
+    CountDownLatch releaseRetry = new CountDownLatch(capture ? 1 : 0);
     try {
       seedXml(prefs, entries);
       long xmlBytes = xml.length();
@@ -108,31 +114,46 @@ final class RankingPersistenceWaitChecks {
       AtomicReference<Commit> next = new AtomicReference<>();
       SharedPreferences instrumented = observe(prefs, next);
       RankingStore observed =
-          new RankingStore(capture ? delayFirstLoad(instrumented, releaseInitial) : instrumented);
+          new RankingStore(
+              capture
+                  ? delayFailedLoads(instrumented, releaseInitial, releaseRetry)
+                  : instrumented);
       activity =
           (MainActivity)
               test.startActivitySync(
                   new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       GalleryScreenChecks.finishInitialIndex(test, activity);
       GalleryScreenChecks.settle(test, activity);
+      int expectedWidth = 0;
       if (capture) {
         int displayWidth = activity.getResources().getConfiguration().screenWidthDp;
-        GalleryScreenChecks.portraitFixture(
-            test, activity, captureWidth == 0 ? displayWidth : captureWidth, captureFont);
+        expectedWidth = captureWidth == 0 ? displayWidth : captureWidth;
+        GalleryScreenChecks.portraitFixture(test, activity, expectedWidth, captureFont);
       } else observed.awaitReady();
       installFixture(test, activity, originalFields, photos, observed);
       String profile = (captureWidth == 0 ? "native" : "320") + "-" + captureFont;
       if (capture)
-        captureReadStates(test, activity, observed, releaseInitial, profile, entries, prefs);
+        captureReadStates(
+            test,
+            activity,
+            observed,
+            releaseInitial,
+            releaseRetry,
+            profile,
+            entries,
+            prefs,
+            photos);
       String read = heldRead(test, activity, prefs, next, held, baseline, photos.get(0));
-      if (capture) captureScreen(test, activity, "ranking-star-ready-on-" + profile);
+      if (capture) {
+        captureScreen(test, activity, "ranking-star-ready-on-" + profile);
+        captureStarSave(test, activity, prefs, next, photos.get(0), profile);
+      }
       String choose = choose(test, activity, prefs, next, baseline, photos);
       if (capture) {
         captureScreen(test, activity, "ranking-compare-success-" + profile);
         captureComparisonStates(test, activity, prefs, observed, next, photos, profile);
       }
-      int width = context.getResources().getConfiguration().screenWidthDp;
-      float font = context.getResources().getConfiguration().fontScale;
+      String dimensions = activityDimensions(test, activity, expectedWidth, captureFont);
       return "PASS ranking persistence waits baseline="
           + baseline
           + " entries="
@@ -146,10 +167,8 @@ final class RankingPersistenceWaitChecks {
           + " xmlBytesAfter="
           + xml.length()
           + " photos=4 burstMembers=3 jpegWidth=320 jpegHeight=240 prefsWarm=true"
-          + " firstPairReady=true widthDp="
-          + width
-          + " fontScale="
-          + font
+          + " firstPairReady=true "
+          + dimensions
           + "\n"
           + read
           + "\n"
@@ -158,6 +177,7 @@ final class RankingPersistenceWaitChecks {
           + (capture ? "verified and captured initial, filter and comparison states\n" : "");
     } finally {
       releaseInitial.countDown();
+      releaseRetry.countDown();
       held.release();
       try {
         if (activity != null) restoreAndFinish(test, activity, originalFields);
@@ -176,17 +196,22 @@ final class RankingPersistenceWaitChecks {
     }
   }
 
-  private static SharedPreferences delayFirstLoad(
-      SharedPreferences actual, CountDownLatch release) {
-    var first = new java.util.concurrent.atomic.AtomicBoolean(true);
+  private static SharedPreferences delayFailedLoads(
+      SharedPreferences actual, CountDownLatch initial, CountDownLatch retry) {
+    List<CountDownLatch> gates = List.of(initial, retry);
+    var load = new java.util.concurrent.atomic.AtomicInteger();
     return (SharedPreferences)
         Proxy.newProxyInstance(
             SharedPreferences.class.getClassLoader(),
             new Class<?>[] {SharedPreferences.class},
             (proxy, method, args) -> {
-              if (method.getName().equals("getAll") && first.getAndSet(false)) {
-                release.await(18, TimeUnit.SECONDS);
-                throw new IllegalStateException("Synthetic rank initialization failure");
+              if (method.getName().equals("getAll")) {
+                int attempt = load.getAndIncrement();
+                if (attempt < gates.size()) {
+                  require(
+                      gates.get(attempt).await(18, TimeUnit.SECONDS), "read capture gate expired");
+                  throw new IllegalStateException("Synthetic rank initialization failure");
+                }
               }
               return invoke(method, actual, args);
             });
@@ -196,10 +221,12 @@ final class RankingPersistenceWaitChecks {
       Instrumentation test,
       MainActivity activity,
       RankingStore store,
-      CountDownLatch release,
+      CountDownLatch releaseInitial,
+      CountDownLatch releaseRetry,
       String profile,
       int entries,
-      SharedPreferences prefs)
+      SharedPreferences prefs,
+      List<PhotoRepository.Photo> photos)
       throws Exception {
     ViewerScreenChecks.open(test, activity, 0);
     ui(
@@ -218,6 +245,60 @@ final class RankingPersistenceWaitChecks {
         test,
         () -> {
           activity.onBackPressed();
+          openWinnerSelection(activity, photos);
+        });
+    captureScreen(
+        test,
+        activity,
+        activity.getWindow().getDecorView(),
+        () -> pendingShare(activity, photos),
+        "ranking-share-pending-" + profile);
+    ui(
+        test,
+        () -> {
+          int before = (int) get(activity, "shareAttempt");
+          call(activity, "shareSelection");
+          require(
+              before == (int) get(activity, "shareAttempt")
+                  && get(activity, "shareProgress") == null
+                  && pendingShare(activity, photos),
+              "pending share kept selection and exposed no inferred target");
+          call(activity, "endSelection");
+        });
+    ViewerScreenChecks.open(test, activity, 0);
+    releaseInitial.countDown();
+    View viewerDecor = activity.getWindow().getDecorView();
+    captureScreen(
+        test,
+        activity,
+        viewerDecor,
+        () -> {
+          Button button = star(activity);
+          return button != null
+              && button.isEnabled()
+              && "読み込み失敗".contentEquals(button.getStateDescription())
+              && !button.createAccessibilityNodeInfo().isCheckable()
+              && hasHitBounds(button);
+        },
+        "ranking-star-read-failure-" + profile);
+    ui(test, () -> require(star(activity).performClick(), "retry unreadable star"));
+    captureScreen(
+        test,
+        activity,
+        viewerDecor,
+        () -> {
+          Button button = star(activity);
+          return button != null
+              && !button.isEnabled()
+              && "順位を読み込み中".contentEquals(button.getStateDescription())
+              && !button.createAccessibilityNodeInfo().isCheckable();
+        },
+        "ranking-star-read-retry-pending-" + profile);
+    require(prefs.getAll().size() == entries, "read retry did not write a rank");
+    ui(
+        test,
+        () -> {
+          activity.onBackPressed();
           call(activity, "chooseFilter");
         });
     PhotoFilterSheet sheet = (PhotoFilterSheet) get(activity, "rankFilterSheet");
@@ -230,34 +311,155 @@ final class RankingPersistenceWaitChecks {
         test,
         () -> !apply.isEnabled() && "読み込み中".contentEquals(apply.getText()),
         "pending rank filter has no count");
-    captureScreen(test, activity, "ranking-filter-pending-" + profile);
-    release.countDown();
+    captureScreen(
+        test,
+        activity,
+        decor,
+        () -> visibleLabel(apply, "読み込み中"),
+        "ranking-filter-pending-" + profile);
+    releaseRetry.countDown();
     waitFor(
         test,
         () -> apply.isEnabled() && "件数を再確認".contentEquals(apply.getText()),
         "failed rank filter offers retry");
-    captureScreen(test, activity, "ranking-filter-failed-" + profile);
+    captureScreen(
+        test,
+        activity,
+        decor,
+        () ->
+            visibleLabel(apply, "件数を再確認")
+                && visibleLabel(
+                    decor.findViewWithTag("photo-filter-count-failure"), "件数を読み込めませんでした"),
+        "ranking-filter-failed-" + profile);
     require(store.snapshot().phase() == RankingStore.Phase.FAILED, "fixture initialization failed");
     ui(test, () -> require(apply.performClick(), "retry filter read"));
     waitFor(
         test,
         () -> apply.isEnabled() && "0件を表示".contentEquals(apply.getText()),
         "ready empty rank count appears only after retry");
-    captureScreen(test, activity, "ranking-filter-recovered-" + profile);
-    ui(test, sheet::dismiss);
+    captureScreen(
+        test,
+        activity,
+        decor,
+        () ->
+            visibleLabel(apply, "0件を表示")
+                && apply.isEnabled()
+                && !decor.findViewWithTag("photo-filter-count-failure").isShown(),
+        "ranking-filter-recovered-" + profile);
+    dismissFilter(test, activity, sheet);
     require(
         prefs.getAll().size() == entries && (int) get(activity, "rankFilter") == 0,
         "filter retry saved nothing and did not apply draft");
     ViewerScreenChecks.open(test, activity, 0);
-    ui(
+    captureScreen(
         test,
-        () ->
-            require(
-                star(activity).isEnabled()
-                    && !star(activity).isSelected()
-                    && star(activity).createAccessibilityNodeInfo().isCheckable(),
-                "ready star is native unchecked"));
-    captureScreen(test, activity, "ranking-star-ready-off-" + profile);
+        activity,
+        activity.getWindow().getDecorView(),
+        () -> starState(activity, true, false, "未指定"),
+        "ranking-star-ready-off-" + profile);
+  }
+
+  private static void dismissFilter(
+      Instrumentation test, MainActivity activity, PhotoFilterSheet sheet) throws Exception {
+    View decor = sheet.getWindow().getDecorView();
+    ui(test, sheet::dismiss);
+    waitFor(
+        test,
+        () -> !decor.isAttachedToWindow() && activity.hasWindowFocus(),
+        "filter dismissed before activity capture");
+  }
+
+  private static void openWinnerSelection(
+      MainActivity activity, List<PhotoRepository.Photo> photos) {
+    call(activity, "beginSelection");
+    require(Boolean.TRUE.equals(get(activity, "selecting")), "synthetic gallery entered selection");
+    selected(activity).addAll(burstSelection(photos));
+    call(activity, "updateSelection");
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Set<String> selected(MainActivity activity) {
+    return (Set<String>) get(activity, "selectedPhotos");
+  }
+
+  private static Set<String> burstSelection(List<PhotoRepository.Photo> photos) {
+    return Set.of(
+        photos.get(BURST.get(0)).uri.toString(),
+        photos.get(BURST.get(1)).uri.toString(),
+        photos.get(BURST.get(2)).uri.toString());
+  }
+
+  private static boolean pendingShare(MainActivity activity, List<PhotoRepository.Photo> photos) {
+    return selected(activity).equals(burstSelection(photos))
+        && Boolean.TRUE.equals(get(activity, "bestOnly"))
+        && ((View) get(activity, "selectionRankStatus")).isShown()
+        && !((View) get(activity, "selectionCount")).isShown()
+        && !((View) get(activity, "selectionShare")).isEnabled();
+  }
+
+  private static boolean starState(
+      MainActivity activity, boolean enabled, boolean checked, String state) {
+    Button button = star(activity);
+    if (button == null
+        || !button.isShown()
+        || button.isSelected() != checked
+        || !state.contentEquals(button.getStateDescription())
+        || !hasHitBounds(button)) return false;
+    var node = button.createAccessibilityNodeInfo();
+    return node.isEnabled() == enabled && node.isCheckable() && node.isChecked() == checked;
+  }
+
+  private static boolean hasHitBounds(View button) {
+    Rect bounds = new Rect();
+    return button.getGlobalVisibleRect(bounds)
+        && bounds.height() >= GalleryUi.dp(button.getContext(), 48)
+        && bounds.width() >= GalleryUi.dp(button.getContext(), 48);
+  }
+
+  private static void captureStarSave(
+      Instrumentation test,
+      MainActivity activity,
+      SharedPreferences prefs,
+      AtomicReference<Commit> next,
+      PhotoRepository.Photo photo,
+      String profile)
+      throws Exception {
+    String key = "single-best-v1-" + PhotoRepository.digest(ArchiveStore.key(photo));
+    Commit fail = new Commit(true, true, CAPTURE_GATE_MS);
+    next.set(fail);
+    Bitmap busy;
+    try {
+      ui(test, () -> require(star(activity).performClick(), "start unmarking the committed star"));
+      require(fail.entered.await(2, TimeUnit.SECONDS), "singleton writer entered");
+      busy =
+          settledScreenshot(
+              test,
+              activity.getWindow().getDecorView(),
+              () -> starState(activity, false, true, "保存中"));
+      ui(test, () -> star(activity).performClick());
+      require(
+          !fail.timedOut && fail.delegateStart == 0 && "1".equals(prefs.getString(key, null)),
+          "held star did not expose or publish its proposed value");
+    } finally {
+      fail.release();
+    }
+    writeCapture(activity, busy, "ranking-star-busy-" + profile);
+    View decor = activity.getWindow().getDecorView();
+    captureScreen(
+        test,
+        activity,
+        decor,
+        () -> starState(activity, true, true, "保存失敗"),
+        "ranking-star-failure-" + profile);
+    require("1".equals(prefs.getString(key, null)), "failed star kept committed checked value");
+    ui(test, () -> require(star(activity).performClick(), "retry star with a new tap"));
+    captureScreen(
+        test,
+        activity,
+        decor,
+        () -> starState(activity, true, false, "未指定"),
+        "ranking-star-save-recovered-" + profile);
+    require("0".equals(prefs.getString(key, null)), "fresh tap cleared the saved star");
   }
 
   private static void captureComparisonStates(
@@ -271,30 +473,26 @@ final class RankingPersistenceWaitChecks {
       throws Exception {
     List<String> ids = new ArrayList<>();
     for (int member : BURST) ids.add(ArchiveStore.key(photos.get(member)));
-    Commit fail = new Commit(true, true);
+    View decor = activity.getWindow().getDecorView();
+    Commit fail = new Commit(true, true, CAPTURE_GATE_MS);
     next.set(fail);
-    Bitmap busy = null;
+    Bitmap busy;
     try {
       ui(test, () -> require(choice(activity).performClick(), "start second comparison"));
       require(fail.entered.await(2, TimeUnit.SECONDS), "comparison writer entered");
-      ui(
-          test,
-          () -> {
-            View root = (View) get(activity, "root");
-            View status = root.findViewWithTag("ranking-save-status");
-            require(
-                status != null
-                    && status.isShown()
-                    && !choice(activity).isEnabled()
-                    && ((List<?>) get(activity, "rankingActions"))
-                        .stream().allMatch(view -> !((View) view).isEnabled()),
-                "comparison holds every mutation action disabled");
-            require(
-                !((PhotoRanking) get(activity, "ranking")).done(), "pending choice kept old model");
-          });
-      busy = test.getUiAutomation().takeScreenshot();
-      require(
-          busy != null && !fail.timedOut && fail.delegateStart == 0, "capture during held commit");
+      busy =
+          settledScreenshot(
+              test,
+              decor,
+              () ->
+                  comparisonStatus(activity, "順位を保存しています")
+                      && hasHitBounds(choice(activity))
+                      && !choice(activity).createAccessibilityNodeInfo().isEnabled()
+                      && ((List<?>) get(activity, "rankingActions"))
+                          .stream().allMatch(view -> !((View) view).isEnabled())
+                      && "B:0".equals(((PhotoRanking) get(activity, "ranking")).journal));
+      ui(test, () -> choice(activity).performClick());
+      require(!fail.timedOut && fail.delegateStart == 0, "capture during held commit");
     } finally {
       fail.release();
     }
@@ -304,9 +502,14 @@ final class RankingPersistenceWaitChecks {
         () -> !Boolean.TRUE.equals(get(activity, "rankingBusy")),
         "comparison failure settled");
     require("B:0".equals(readSavedBurst(prefs, ids).journal), "rollback kept original comparison");
-    waitFor(
-        test, () -> comparisonVisible(activity, "B:0"), "failed comparison remained interactive");
-    captureScreen(test, activity, "ranking-compare-failure-" + profile);
+    captureScreen(
+        test,
+        activity,
+        decor,
+        () ->
+            comparisonVisible(activity, "B:0")
+                && comparisonStatus(activity, "順位を保存できませんでした。もう一度選んでください"),
+        "ranking-compare-failure-" + profile);
 
     // Queue a change from another handle in the same UI turn, then activate the still-shown pair.
     RankingStore.Burst old = store.snapshot().burst(ids);
@@ -325,7 +528,190 @@ final class RankingPersistenceWaitChecks {
     require(
         "B:".equals(readSavedBurst(prefs, ids).journal),
         "stale action did not overwrite other handle");
-    captureScreen(test, activity, "ranking-compare-conflict-" + profile);
+    captureScreen(
+        test,
+        activity,
+        decor,
+        () ->
+            comparisonVisible(activity, "B:")
+                && comparisonStatus(activity, "順位が変わりました。確認して選び直してください"),
+        "ranking-compare-conflict-" + profile);
+    ui(
+        test,
+        () -> require(choice(activity).performClick(), "select again after seeing latest pair"));
+    captureScreen(
+        test,
+        activity,
+        decor,
+        () -> comparisonVisible(activity, "B:0") && !comparisonStatusShown(activity),
+        "ranking-compare-recovered-" + profile);
+
+    Commit finishing = new Commit(true, false, CAPTURE_GATE_MS);
+    next.set(finishing);
+    try {
+      ui(test, () -> require(choice(activity).performClick(), "start final comparison"));
+      require(finishing.entered.await(2, TimeUnit.SECONDS), "final comparison writer entered");
+      ui(test, activity::onBackPressed);
+      captureScreen(
+          test,
+          activity,
+          decor,
+          () ->
+              !Boolean.TRUE.equals(get(activity, "rankingScreen"))
+                  && !comparisonStatusShown(activity),
+          "ranking-compare-back-while-busy-" + profile);
+      require(
+          finishing.delegateStart == 0 && !finishing.timedOut,
+          "Back rendered while persistence is held");
+    } finally {
+      finishing.release();
+    }
+    require(finishing.done.await(5, TimeUnit.SECONDS) && finishing.success, "write survived Back");
+    waitFor(test, () -> !Boolean.TRUE.equals(get(activity, "rankingBusy")), "Back write published");
+    require(
+        "B:00".equals(readSavedBurst(prefs, ids).journal), "Back did not discard accepted choice");
+    captureChangedShare(test, activity, other, ids, photos, profile);
+  }
+
+  private static void captureChangedShare(
+      Instrumentation test,
+      MainActivity activity,
+      RankingStore store,
+      List<String> ids,
+      List<PhotoRepository.Photo> photos,
+      String profile)
+      throws Exception {
+    ui(test, () -> openWinnerSelection(activity, photos));
+    Button share = (Button) get(activity, "selectionShare");
+    waitFor(test, share::isEnabled, "ready winner can be shared");
+    ui(
+        test,
+        () -> {
+          require(share.performClick(), "open actual winner share menu");
+          require(get(activity, "shareDialog") instanceof ShareUi.Menu, "complete winner menu");
+        });
+    ShareUi.Menu menu = (ShareUi.Menu) get(activity, "shareDialog");
+    waitFor(test, menu.continueButton::isEnabled, "old reviewed share action available");
+    RankingStore.Burst original = store.snapshot().burst(ids);
+    require(
+        menu.previewPhotos.equals(List.of(photoForRankKey(photos, original.ids().get(2)))),
+        "reviewed only the old winner");
+    RankingStore.WriteResult changed =
+        store
+            .submitBurst(original, () -> new PhotoRanking(original.ids(), "B:11"))
+            .toCompletableFuture()
+            .get(5, TimeUnit.SECONDS);
+    require(changed.outcome() == RankingStore.Outcome.SAVED, "other handle changed the winner");
+
+    IntentFilter outbound = new IntentFilter();
+    outbound.addAction(Intent.ACTION_CHOOSER);
+    outbound.addAction(Intent.ACTION_SEND);
+    outbound.addAction(Intent.ACTION_SEND_MULTIPLE);
+    outbound.addCategory(Intent.CATEGORY_DEFAULT);
+    outbound.addDataType("*/*");
+    var sharing = test.addMonitor(outbound, null, true);
+    var chooser = test.addMonitor(new IntentFilter(Intent.ACTION_CHOOSER), null, true);
+    View menuDecor = menu.getWindow().getDecorView();
+    try {
+      ui(
+          test,
+          () -> {
+            int before = (int) get(activity, "shareAttempt");
+            require(menu.continueButton.performClick(), "continue with formerly reviewed target");
+            require(
+                before == (int) get(activity, "shareAttempt")
+                    && get(activity, "shareProgress") == null
+                    && selected(activity).equals(burstSelection(photos)),
+                "obsolete reviewed target was rejected before export, with exact selection retained");
+          });
+      waitFor(
+          test,
+          () -> !menuDecor.isAttachedToWindow() && activity.hasWindowFocus(),
+          "old share review dismissed");
+      waitFor(test, share::isEnabled, "changed winner requires a new review");
+      ui(test, () -> require(share.performClick(), "user reopens review explicitly"));
+      ShareUi.Menu renewed = (ShareUi.Menu) get(activity, "shareDialog");
+      require(
+          renewed != menu
+              && renewed.previewPhotos.equals(
+                  List.of(photoForRankKey(photos, original.ids().get(0)))),
+          "fresh review shows only the new winner");
+      captureScreen(
+          test,
+          activity,
+          renewed.getWindow().getDecorView(),
+          () -> renewed.isShowing() && renewed.continueButton.isShown(),
+          "ranking-share-renewed-review-" + profile);
+      require(sharing.getHits() == 0 && chooser.getHits() == 0, "no outbound share started");
+      ui(test, renewed::dismiss);
+    } finally {
+      if (get(activity, "shareProgress") == null) {
+        test.removeMonitor(sharing);
+        test.removeMonitor(chooser);
+      }
+    }
+  }
+
+  private static PhotoRepository.Photo photoForRankKey(
+      List<PhotoRepository.Photo> photos, String key) throws Exception {
+    for (int member : BURST) {
+      PhotoRepository.Photo photo = photos.get(member);
+      if (key.equals(ArchiveStore.key(photo))) return photo;
+    }
+    throw new AssertionError("expected generated winner is absent");
+  }
+
+  private static boolean comparisonStatusShown(MainActivity activity) {
+    View status = ((View) get(activity, "root")).findViewWithTag("ranking-save-status");
+    return status != null && status.isShown();
+  }
+
+  private static boolean comparisonStatus(MainActivity activity, String message) {
+    TextView status = ((View) get(activity, "root")).findViewWithTag("ranking-save-status");
+    return visibleLabel(status, message)
+        && status.getAccessibilityLiveRegion() == View.ACCESSIBILITY_LIVE_REGION_POLITE;
+  }
+
+  private static boolean visibleLabel(TextView view, String message) {
+    if (view == null || !view.isShown() || !message.contentEquals(view.getText())) return false;
+    Rect bounds = new Rect();
+    return view.getGlobalVisibleRect(bounds)
+        && bounds.height() == view.getHeight()
+        && view.getLayout() != null
+        && view.getLineCount() > 0
+        && view.getLayout().getEllipsisCount(view.getLineCount() - 1) == 0;
+  }
+
+  private static String activityDimensions(
+      Instrumentation test, MainActivity activity, int expectedWidth, float expectedFont)
+      throws Exception {
+    String[] measured = {null};
+    ui(
+        test,
+        () -> {
+          var config = activity.getResources().getConfiguration();
+          View decor = activity.getWindow().getDecorView();
+          int widthPx = decor.getWidth();
+          int widthDp = Math.round(widthPx / activity.getResources().getDisplayMetrics().density);
+          if (expectedWidth != 0) {
+            require(
+                widthPx == GalleryUi.dp(activity, expectedWidth)
+                    && ((View) get(activity, "root")).getWidth() == widthPx
+                    && config.screenWidthDp == expectedWidth
+                    && Math.abs(config.fontScale - expectedFont) < .001f,
+                "capture profile matches rendered Activity bounds and configuration");
+          }
+          measured[0] =
+              "widthDp="
+                  + widthDp
+                  + " widthPx="
+                  + widthPx
+                  + " configWidthDp="
+                  + config.screenWidthDp
+                  + " fontScale="
+                  + config.fontScale;
+        });
+    return measured[0];
   }
 
   private static void waitFor(Instrumentation test, BooleanSupplier check, String label)
@@ -340,10 +726,35 @@ final class RankingPersistenceWaitChecks {
     throw new AssertionError(label);
   }
 
-  private static void captureScreen(Instrumentation test, Context context, String name)
+  private static void captureScreen(Instrumentation test, MainActivity activity, String name)
       throws Exception {
-    test.waitForIdleSync();
-    writeCapture(context, test.getUiAutomation().takeScreenshot(), name);
+    captureScreen(test, activity, activity.getWindow().getDecorView(), () -> true, name);
+  }
+
+  private static void captureScreen(
+      Instrumentation test, Context context, View decor, BooleanSupplier matches, String name)
+      throws Exception {
+    writeCapture(context, settledScreenshot(test, decor, matches), name);
+  }
+
+  private static Bitmap settledScreenshot(Instrumentation test, View decor, BooleanSupplier matches)
+      throws Exception {
+    // The render thread commits matching content, then a subsequent matching frame gives the
+    // compositor a fresh frame before capture. A focused, visible window excludes outgoing sheets.
+    for (int pass = 0; pass < 2; pass++) {
+      Frame frame =
+          new Frame(
+              decor, () -> decor.isShown() && decor.hasWindowFocus() && matches.getAsBoolean());
+      ui(test, frame::arm);
+      try {
+        require(frame.ready.await(FRAME_WAIT_MS, TimeUnit.MILLISECONDS), "matching capture frame");
+      } finally {
+        ui(test, frame::disarm);
+      }
+    }
+    Bitmap image = test.getUiAutomation().takeScreenshot();
+    require(image != null, "capture synthetic screen");
+    return image;
   }
 
   private static void writeCapture(Context context, Bitmap image, String name) throws Exception {
@@ -820,6 +1231,7 @@ final class RankingPersistenceWaitChecks {
     final CountDownLatch entered = new CountDownLatch(1), done = new CountDownLatch(1);
     private final CountDownLatch gate;
     private final boolean rejectCommitted;
+    private final long gateLimitMillis;
     volatile long commitEntry, released, delegateStart, delegateEnd;
     volatile boolean onMain, success, timedOut;
 
@@ -828,7 +1240,12 @@ final class RankingPersistenceWaitChecks {
     }
 
     Commit(boolean held, boolean rejectCommitted) {
+      this(held, rejectCommitted, GATE_LIMIT_MS);
+    }
+
+    Commit(boolean held, boolean rejectCommitted, long gateLimitMillis) {
       this.rejectCommitted = rejectCommitted;
+      this.gateLimitMillis = gateLimitMillis;
       gate = new CountDownLatch(held ? 1 : 0);
     }
 
@@ -844,7 +1261,7 @@ final class RankingPersistenceWaitChecks {
       commitEntry = now();
       entered.countDown();
       try {
-        if (!gate.await(GATE_LIMIT_MS, TimeUnit.MILLISECONDS)) {
+        if (!gate.await(gateLimitMillis, TimeUnit.MILLISECONDS)) {
           timedOut = true;
           return false;
         }

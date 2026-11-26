@@ -2724,6 +2724,7 @@ public final class MainActivity extends DiagnosticActivity {
     if (fromRanking && !ranking.done()) {
       boolean upper = rankingMembers.get(ranking.upper()) == position;
       viewer.choose(() -> saveRanking(candidateRank -> candidateRank.choose(upper)));
+      viewer.footer.getChildAt(0).setEnabled(!rankingBusy);
       rankingActions.add(viewer.footer.getChildAt(0));
       rankingSaveIndicator(viewer.footer);
     }
@@ -2900,7 +2901,8 @@ public final class MainActivity extends DiagnosticActivity {
       UnaryOperator<PhotoRanking> change) {
     if (rankingBusy || basis == null) return;
     if (screen != generation || basis != rankingBasis) {
-      rankChangedFeedback();
+      if (rankingScreen || detail && returnToRanking)
+        rankingMessage("順位が変わりました。確認して選び直してください", false);
       return;
     }
     RankingStore store = rankingStore;
@@ -2912,8 +2914,7 @@ public final class MainActivity extends DiagnosticActivity {
       view.setEnabled(false);
     }
     TextView saveStatus = rankingSaveStatus;
-    if (saveStatus != null) saveStatus.setVisibility(View.VISIBLE);
-    root.announceForAccessibility("順位を保存しています");
+    rankingMessage("順位を保存しています", false);
     store
         .submitBurst(basis, () -> change.apply(new PhotoRanking(members, displayedJournal)))
         .whenCompleteAsync(
@@ -2939,28 +2940,35 @@ public final class MainActivity extends DiagnosticActivity {
                   rankingResultFocus = null;
                   showRanking();
                   if (!rankingAccepted(result, error)
-                      || !result.ranking().journal.equals(ranking.journal)) rankChangedFeedback();
+                      || !result.ranking().journal.equals(ranking.journal))
+                    rankingMessage("順位が変わりました。確認して選び直してください", false);
                   return;
                 } catch (IOException | IllegalArgumentException unreadable) {
-                  reportUnreadableRanking(store.snapshot(), this::openRanking);
+                  rankingMessage("順位を読み込めませんでした。比較を開き直してください", true);
                   return;
                 }
               }
-              feedback(
-                  StatusView.Symbol.STORAGE,
-                  "順位を保存できませんでした。空き容量を確認してください。",
-                  this::showRanking,
-                  "ソートに戻る");
+              rankingMessage("順位を保存できませんでした。もう一度選んでください", true);
             },
             main::post);
   }
 
   private void rankingSaveIndicator(LinearLayout parent) {
-    rankingSaveStatus = label("順位を保存しています", 14, MUTED);
+    rankingSaveStatus = label("", 14, TEXT);
     rankingSaveStatus.setTag("ranking-save-status");
+    rankingSaveStatus.setGravity(Gravity.CENTER);
+    rankingSaveStatus.setPadding(dp(12), dp(4), dp(12), dp(4));
     rankingSaveStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
-    rankingSaveStatus.setVisibility(rankingBusy ? View.VISIBLE : View.GONE);
+    rankingSaveStatus.setVisibility(View.GONE);
     parent.addView(rankingSaveStatus, new LinearLayout.LayoutParams(-1, -2));
+    if (rankingBusy) rankingMessage("順位を保存しています", false);
+  }
+
+  private void rankingMessage(String message, boolean failed) {
+    if (rankingSaveStatus == null) return;
+    rankingSaveStatus.setTextColor(failed ? 0xffffb4a8 : TEXT);
+    rankingSaveStatus.setText(message);
+    rankingSaveStatus.setVisibility(View.VISIBLE);
   }
 
   private void showRanking() {
@@ -3014,8 +3022,11 @@ public final class MainActivity extends DiagnosticActivity {
     tie.setEnabled(false);
     rankingActions.addAll(List.of(undo, chooseA, chooseB, tie));
     ViewGroup modeChoices = (ViewGroup) modes.getChildAt(0);
-    for (int i = 0; i < modeChoices.getChildCount(); i++)
-      rankingActions.add(modeChoices.getChildAt(i));
+    for (int i = 0; i < modeChoices.getChildCount(); i++) {
+      View modeChoice = modeChoices.getChildAt(i);
+      modeChoice.setEnabled(!rankingBusy);
+      rankingActions.add(modeChoice);
+    }
 
     LinearLayout comparison = new LinearLayout(this);
     comparison.setBackgroundColor(Color.BLACK);
@@ -3079,6 +3090,7 @@ public final class MainActivity extends DiagnosticActivity {
     modes.setBackgroundColor(RankingUi.BG);
     RankingUi.add(controls, modes, 8);
     Button more = button("その他", this::rankingMenu);
+    more.setEnabled(!rankingBusy);
     rankingActions.add(more);
     RankingUi.addDock(controls, RankingUi.dock(this, undo, more), 8);
     root.addView(
@@ -3205,11 +3217,12 @@ public final class MainActivity extends DiagnosticActivity {
             false,
             () -> changeRankingMode(!ranking.bestOnly()));
     mode.setText(ranking.bestOnly() ? "すべての順位を決める" : "1位を決める");
+    mode.setEnabled(!rankingBusy);
     controls.addView(mode, new LinearLayout.LayoutParams(-1, -2));
     rankingSaveIndicator(controls);
     Button undo = TagDetailUi.dockButton(this, "直前の操作を取り消す", () -> saveRanking(PhotoRanking::undo));
     undo.setText("取り消し");
-    undo.setEnabled(ranking.decisions() > 0);
+    undo.setEnabled(!rankingBusy && ranking.decisions() > 0);
     controls.addView(TagDetailUi.dock(this, undo));
     rankingActions.addAll(List.of(undo, mode));
     TagDetailUi.gaps(controls);

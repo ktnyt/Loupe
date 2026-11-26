@@ -46,6 +46,7 @@ final class PhotoFilterSheet extends BottomSheetDialog {
   static final String[] RANKS = {"すべて", "1位", "順位が未決定", "順位決定済み"};
   private final List<MaterialButton> ranks = new ArrayList<>(), cameras = new ArrayList<>();
   private final MaterialButton apply;
+  private final TextView countFailure;
   private final RankedCount count;
   private final Runnable retry;
   private CountResult result = CountResult.pending();
@@ -138,6 +139,12 @@ final class PhotoFilterSheet extends BottomSheetDialog {
       cameraGrid.addView(b, p);
     }
     body.addView(cameraGrid, new LinearLayout.LayoutParams(-1, -2));
+    countFailure = PhotoListUi.text(c, "件数を読み込めませんでした", 14, 20, 0xffffb4a8);
+    countFailure.setTag("photo-filter-count-failure");
+    countFailure.setPadding(0, dp(12), 0, 0);
+    countFailure.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    countFailure.setVisibility(View.GONE);
+    body.addView(countFailure, new LinearLayout.LayoutParams(-1, -2));
     LinearLayout footer = new LinearLayout(c);
     footer.setGravity(Gravity.CENTER_VERTICAL);
     footer.setPadding(0, dp(20), 0, 0);
@@ -200,6 +207,7 @@ final class PhotoFilterSheet extends BottomSheetDialog {
 
   private void showCount(CountResult value) {
     result = value;
+    countFailure.setVisibility(value.state() == State.FAILED ? View.VISIBLE : View.GONE);
     apply.setEnabled(value.state() != State.PENDING);
     apply.setText(
         switch (value.state()) {
