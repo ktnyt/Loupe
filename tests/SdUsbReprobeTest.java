@@ -267,7 +267,7 @@ public final class SdUsbReprobeTest {
     }
   }
 
-  private static void mountCycleAttribution() {
+  private static void mountCycleAttribution() throws Exception {
     var cycle = new SdUsbReprobe.MountCycle(MOUNTED);
     String different = "ABCD-1234";
     Snapshot newSource =
@@ -282,33 +282,47 @@ public final class SdUsbReprobeTest {
         cycle.suppresses(different, newSource) && cycle.suppresses(different, newSource),
         "Even a late or repeated broadcast for the restored cycle cannot start auto-import");
     require(
-        !cycle.expired(newSource, different),
-        "A queued detach broadcast cannot clear a source Android currently reports mounted");
+        !cycle.expired(newSource, true, different),
+        "A queued detach cannot clear attribution while Android still reports the source mounted");
     require(
         !cycle.suppresses(SOURCE, MOUNTED),
         "A genuinely different currently mounted source preserves automatic import");
     require(
-        cycle.expired(
-            new Snapshot(READER, TARGET, List.of(new Volume(TARGET, "mounted")), true), different),
+        cycle.expired(TARGET_ONLY, true, different),
         "Recognized removal of the restored source ends attribution");
     require(
-        cycle.expired(new Snapshot(null, null, List.of(), false), null),
+        !cycle.expired(TARGET_ONLY, false, null),
+        "Ordinary polling is not an anonymous detach notification");
+    require(
+        !cycle.expired(new Snapshot(READER, TARGET, List.of(), true), true, null),
+        "An anonymous detach needs a trustworthy inventory");
+    require(
+        cycle.expired(TARGET_ONLY, true, null),
+        "After verified restoration, an anonymous detach and target-only inventory allow reinsertion");
+    require(
+        cycle.expired(new Snapshot(null, null, List.of(), false), false, null),
         "A different connection ends attribution");
 
+    var cancelled = new Fake();
+    cancelled.failure = "cancel_while_waiting";
+    require(
+        run(cancelled, new ReentrantLock(), cancelled.cancel::get, 0) == State.CANCELLED
+            && cancelled.calls.equals(List.of("open", "claim", "release", "close", "waiting")),
+        "Foreground cancellation during remount reconciliation follows a clean USB handoff");
     cycle = new SdUsbReprobe.MountCycle(MOUNTED);
     cycle.finish(null);
     require(
-        !cycle.expired(MOUNTED, SOURCE) && cycle.suppresses(SOURCE, MOUNTED),
-        "After failure a delayed notice cannot expire attribution for the still-mounted source");
+        !cycle.expired(TARGET_ONLY, true, SOURCE) && cycle.suppresses(SOURCE, MOUNTED),
+        "When cancellation leaves restoration unverified, own delayed unmount and remount are suppressed");
     require(
-        cycle.expired(TARGET_ONLY, SOURCE),
-        "After failure an observed actual removal clears attribution before an independent mount");
+        !cycle.expired(TARGET_ONLY, true, null) && cycle.suppresses(different, newSource),
+        "A timeout or uncertain claim with no verified restoration also preserves attribution");
     require(
-        cycle.suppresses(different, newSource),
-        "Without an observed removal, timeout cannot replay the first late mount as a new automatic import");
-    require(
-        !cycle.suppresses(SOURCE, MOUNTED),
-        "Once current, late-source attribution stays scoped to that source");
+        !cycle.suppresses(
+            SOURCE,
+            new Snapshot(
+                new Reader(READER.name(), 15, 8644, 45152, 0), TARGET, MOUNTED.volumes(), true)),
+        "Unverified attribution cannot suppress another reader/target connection");
   }
 
   private static void topology() {
@@ -369,6 +383,7 @@ public final class SdUsbReprobeTest {
           @Override
           public void waiting() {
             fake.calls.add("waiting");
+            if (fake.failure.equals("cancel_while_waiting")) fake.cancel.set(true);
           }
 
           @Override

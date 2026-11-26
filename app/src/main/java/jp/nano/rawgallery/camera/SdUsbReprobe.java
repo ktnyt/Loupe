@@ -142,44 +142,33 @@ final class SdUsbReprobe {
     }
   }
 
-  /** Attributes notifications on the same mounted source until Android observes another cycle. */
+  /** Suppresses automatic imports from a handoff until another mount cycle is observable. */
   static final class MountCycle {
     private final Snapshot initial;
-    private boolean finished, waitingForLateMount;
-    private String source;
+    private volatile String restoredSource;
 
     MountCycle(Snapshot initial) {
       this.initial = initial;
-      this.source = readableSource(initial);
     }
 
-    synchronized void finish(Snapshot restored) {
-      if (restored != null) source = readableSource(restored);
-      waitingForLateMount = restored == null;
-      finished = true;
+    void finish(Snapshot restored) {
+      if (restored != null) restoredSource = readableSource(restored);
     }
 
-    synchronized boolean suppresses(String notifiedSource, Snapshot current) {
-      if (!initial.sameConnection(current)) return false;
-      if (!finished) return true;
-      String mounted = readableSource(current);
-      // Without an observed removal, the next new readable source can still be the handoff's
-      // delayed remount. Keep the old source as an expiry boundary until then.
-      if (waitingForLateMount
-          && notifiedSource != null
-          && notifiedSource.equals(mounted)
-          && !notifiedSource.equals(source)) {
-        source = mounted;
-        waitingForLateMount = false;
-      }
-      return source == null || source.equals(notifiedSource);
+    boolean suppresses(String notifiedSource, Snapshot current) {
+      String source = restoredSource;
+      return initial.sameConnection(current) && (source == null || source.equals(notifiedSource));
     }
 
-    synchronized boolean expired(Snapshot current, String detached) {
+    boolean expired(Snapshot current, boolean detachObserved, String detachedSource) {
       if (!initial.sameConnection(current)) return true;
-      if (!finished || source == null || !source.equals(detached)) return false;
-      // A queued notice cannot clear the attribution while Android still reports that source.
-      return current.sourceUnavailable(source);
+      String source = restoredSource;
+      // When restoration is unverified, a detach on this connection can still be our own
+      // delayed handoff. A new explicit refresh or a connection change can replace the cycle.
+      return detachObserved
+          && source != null
+          && (detachedSource == null || source.equals(detachedSource))
+          && current.sourceUnavailable(source);
     }
   }
 

@@ -49,7 +49,7 @@ public final class SdUsbReprobeController {
     var current = mounts.platform().snapshot();
     if (!Objects.equals(current.destination(), SdSourceRegistrations.normalizeVolumeUuid(target)))
       return false;
-    if (mounts.cycle().expired(current, null)) {
+    if (mounts.cycle().expired(current, false, null)) {
       ownMounts.compareAndSet(mounts, null);
       return false;
     }
@@ -59,8 +59,9 @@ public final class SdUsbReprobeController {
   static void observeMountCycle(MountedCameraCard.MountChange change) {
     var mounts = ownMounts.get();
     if (mounts == null) return;
-    String detached = change.detached() ? change.volumeUuid() : null;
-    if (mounts.cycle().expired(mounts.platform().snapshot(), detached))
+    if (mounts
+        .cycle()
+        .expired(mounts.platform().snapshot(), change.detached(), change.volumeUuid()))
       ownMounts.compareAndSet(mounts, null);
   }
 
