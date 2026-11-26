@@ -696,17 +696,19 @@ public final class MainActivity extends DiagnosticActivity {
       int size,
       java.util.function.Consumer<Boolean> complete) {
     long request = DiagnosticLog.id();
-    DiagnosticLog.event(
-        "image.request",
-        request,
-        "burst",
-        burstRequest,
-        "photo",
-        DiagnosticLog.photo(photo),
-        "size",
-        size,
-        "format",
-        photo.isVideo() ? "VIDEO" : photo.isJpeg() ? "JPEG" : "RAW");
+    if (DiagnosticLog.currentRecorder() != null) {
+      DiagnosticLog.event(
+          "image.request",
+          request,
+          "burst",
+          burstRequest,
+          "photo",
+          DiagnosticLog.photo(photo),
+          "size",
+          size,
+          "format",
+          photo.isVideo() ? "VIDEO" : photo.isJpeg() ? "JPEG" : "RAW");
+    }
     String key = imageKey(photo, size);
     if (image.getTag() instanceof ImageLoad) ((ImageLoad) image.getTag()).cancelled = true;
     ImageLoad load = new ImageLoad();

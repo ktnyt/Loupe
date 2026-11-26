@@ -5,6 +5,7 @@ camera-history-migration
 confidence-store
 camera-ledger
 index-signature
+gallery-photo-key-compat
 photo-storage-import-guard
 index-apply-race
 media-observer-lifecycle
