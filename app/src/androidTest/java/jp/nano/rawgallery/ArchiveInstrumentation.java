@@ -666,13 +666,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
             switch (amazonRetirementUpgrade) {
               case "amazon-retirement-seed" ->
                   AmazonRetirementUpgradeChecks.seed(
-                      this,
-                      switch (cameraPilotArguments.getString("consent", "")) {
-                        case "active" -> true;
-                        case "absent" -> false;
-                        default ->
-                            throw new IllegalArgumentException("consent must be active or absent");
-                      });
+                      this, cameraPilotArguments.getString("consent", ""));
               case "amazon-retirement-verify" -> AmazonRetirementUpgradeChecks.verify(context);
               case "amazon-retirement-viewer" ->
                   AmazonRetirementUpgradeChecks.viewer(this, tagWidth, tagFont);

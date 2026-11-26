@@ -82,7 +82,7 @@ public final class E2SyncJob extends JobService {
       setting.putInt("fullMediaConsent", MEDIA_CONSENT_VERSION);
       JobState.write(setting, "", JobState.Kind.WAITING, System.currentTimeMillis())
           .putBoolean("CountsKnown", false);
-    } else setting.remove("cleanupBucket").remove("cleanupDays").remove("fullMediaConsent");
+    } else E2Cleanup.clearConsent(setting).remove("fullMediaConsent");
     if (!setting.commit()) throw new IllegalStateException("自動同期の設定を保存できません");
     if (!enabled) {
       scheduler.cancel(PERIODIC);

@@ -7,6 +7,7 @@ import android.app.job.JobScheduler;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.database.sqlite.SQLiteDatabase;
 import android.graphics.Bitmap;
@@ -18,12 +19,17 @@ import android.view.View;
 import android.view.ViewGroup;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Files;
 import java.security.MessageDigest;
+import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.json.JSONObject;
 
 /** Run seed on the old APK and verify on its replacement using a disposable test installation. */
@@ -32,6 +38,31 @@ final class AmazonRetirementUpgradeChecks {
   private static final byte[] ORIGINAL = {9, 4, 2, 1};
 
   private static final String BUCKET = "loupe-amazon-retirement-fixture";
+  private static final String FRESH_CONSENT = "cleanupConsentAfterAmazonRetirement";
+
+  private enum Profile {
+    ABSENT(true, false),
+    ACTIVE(false, true),
+    CONTRADICTORY(true, true);
+
+    final boolean legacyCleanup;
+    final boolean e2Cleanup;
+
+    Profile(boolean legacyCleanup, boolean e2Cleanup) {
+      this.legacyCleanup = legacyCleanup;
+      this.e2Cleanup = e2Cleanup;
+    }
+
+    static Profile parse(String name) {
+      return switch (name) {
+        case "absent" -> ABSENT;
+        case "active" -> ACTIVE;
+        case "contradictory" -> CONTRADICTORY;
+        default ->
+            throw new IllegalArgumentException("consent must be absent, active or contradictory");
+      };
+    }
+  }
 
   static void requireDisposable(Context context, boolean acknowledged) {
     require(
@@ -42,7 +73,8 @@ final class AmazonRetirementUpgradeChecks {
         "requires a dedicated debug emulator and -e disposable-avd true");
   }
 
-  static String seed(Instrumentation test, boolean existingConsent) throws Exception {
+  static String seed(Instrumentation test, String consentProfile) throws Exception {
+    Profile profile = Profile.parse(consentProfile);
     Context context = test.getTargetContext();
     var scheduler = context.getSystemService(JobScheduler.class);
     var oldJob = component(context, "SyncJob");
@@ -79,7 +111,7 @@ final class AmazonRetirementUpgradeChecks {
     require(witness.edit().putString("phase", "seeding").commit(), "fixture marker");
 
     int oldTask = -1;
-    if (existingConsent) {
+    if (profile.e2Cleanup) {
       var old =
           test.startActivitySync(
               new Intent()
@@ -103,7 +135,7 @@ final class AmazonRetirementUpgradeChecks {
     File cache = original(context, key);
     require(cache.getParentFile().isDirectory() || cache.getParentFile().mkdirs(), "cache folder");
     Files.write(cache.toPath(), ORIGINAL);
-    if (existingConsent) {
+    if (profile.e2Cleanup) {
       require(connection.edit().putString("bucket", BUCKET).commit(), "synthetic destination");
       require(
           e2State
@@ -120,21 +152,25 @@ final class AmazonRetirementUpgradeChecks {
         settings
             .edit()
             .putBoolean("syncEnabled", true)
-            .putBoolean("cleanupEnabled", true)
+            .putBoolean("cleanupEnabled", profile.legacyCleanup)
             .putInt("retentionDays", 31)
             .commit(),
         "old configuration");
+    if (profile.e2Cleanup) {
+      E2SyncJob.recoverOnOpen(context);
+      awaitE2Schedule(scheduler, 15);
+    }
     defer(scheduler, 71, oldJob, true);
     defer(scheduler, 72, oldJob, false);
     require(
         witness
             .edit()
             .putString("phase", "seeded")
-            .putBoolean("consent", existingConsent)
+            .putString("consent", consentProfile)
             .putInt("oldTask", oldTask)
             .commit(),
         "fixture seeded marker");
-    return "PASS old JPG/WebP receipts, cache, deferred Amazon jobs and consent scenario seeded";
+    return "PASS old JPG/WebP receipts, cache, deferred Amazon jobs and " + consentProfile;
   }
 
   private static String key(boolean jpeg) throws Exception {
@@ -251,6 +287,7 @@ final class AmazonRetirementUpgradeChecks {
     SyncControlChecks.checkInstalledComponents(context);
     var witness = context.getSharedPreferences(FIXTURE, Context.MODE_PRIVATE);
     require("seeded".equals(witness.getString("phase", "")), "fixture was not seeded");
+    Profile profile = Profile.parse(witness.getString("consent", ""));
     require(
         context.getSystemService(ConnectivityManager.class).getActiveNetwork() == null,
         "verification requires an offline AVD");
@@ -260,32 +297,26 @@ final class AmazonRetirementUpgradeChecks {
         "retired jobs remain");
     var settings = SettingsRepository.open(context);
     require(
-        settings.getBoolean("syncEnabled", false) && settings.getBoolean("cleanupEnabled", false),
-        "old settings were erased");
+        settings.getBoolean("syncEnabled", false)
+            && settings.contains("cleanupEnabled")
+            && settings.getBoolean("cleanupEnabled", !profile.legacyCleanup)
+                == profile.legacyCleanup,
+        "old settings changed");
     require(E2Cleanup.days(context) == 31, "shared retention was changed");
     var e2State = E2AutoSync.state(context);
-    if (witness.getBoolean("consent", false)) {
+    require(!e2State.contains(FRESH_CONSENT), "upgrade granted a new cleanup marker");
+    require(
+        E2Cleanup.enabled(context, BUCKET) == (profile == Profile.ACTIVE),
+        "cleanup eligibility changed independently of network or storage permission");
+    if (profile.e2Cleanup) {
       require(
           E2SyncJob.fullMediaConsent(context)
               && E2SyncJob.enabled(context)
-              && E2Cleanup.enabled(context, BUCKET)
-              && BUCKET.equals(e2State.getString("destination", "")),
-          "existing E2 consent was changed");
-      long deadline = android.os.SystemClock.elapsedRealtime() + 5000;
-      while (scheduler.getPendingJob(80) == null
-          && android.os.SystemClock.elapsedRealtime() < deadline) Thread.sleep(50);
-      JobInfo periodic = scheduler.getPendingJob(77);
-      JobInfo continuation = scheduler.getPendingJob(79);
-      JobInfo observer = scheduler.getPendingJob(80);
-      require(
-          periodic != null
-              && periodic.isPersisted()
-              && periodic.getIntervalMillis() == TimeUnit.MINUTES.toMillis(15)
-              && continuation != null
-              && scheduler.getPendingJob(78) == null
-              && observer != null
-              && observer.getTriggerContentUris().length == 3,
-          "E2 periodic, catch-up and observer schedules differ");
+              && BUCKET.equals(e2State.getString("destination", ""))
+              && BUCKET.equals(e2State.getString("cleanupBucket", ""))
+              && e2State.getInt("cleanupDays", 0) == 31,
+          "existing E2 state or raw consent was changed");
+      awaitE2Schedule(scheduler, profile == Profile.ACTIVE ? 15 : 12 * 60);
       int oldTask = witness.getInt("oldTask", -1);
       require(oldTask >= 0, "old task was not seeded");
       for (ActivityManager.AppTask task :
@@ -329,7 +360,27 @@ final class AmazonRetirementUpgradeChecks {
         }
       }
     }
-    return "PASS old jobs retired; consent and actual E2 schedules checked; old JPG/WebP previews, history and cache retained";
+    return "PASS old jobs retired; consent and actual E2 schedules checked; old JPG/WebP previews,"
+        + " history and cache retained";
+  }
+
+  private static void awaitE2Schedule(JobScheduler scheduler, int intervalMinutes)
+      throws InterruptedException {
+    long deadline = android.os.SystemClock.elapsedRealtime() + 5000;
+    do {
+      JobInfo periodic = scheduler.getPendingJob(77);
+      JobInfo continuation = scheduler.getPendingJob(79);
+      JobInfo observer = scheduler.getPendingJob(80);
+      if (periodic != null
+          && periodic.isPersisted()
+          && periodic.getIntervalMillis() == TimeUnit.MINUTES.toMillis(intervalMinutes)
+          && continuation != null
+          && scheduler.getPendingJob(78) == null
+          && observer != null
+          && observer.getTriggerContentUris().length == 3) return;
+      Thread.sleep(50);
+    } while (android.os.SystemClock.elapsedRealtime() < deadline);
+    throw new AssertionError("E2 periodic, catch-up and observer schedules differ");
   }
 
   static String viewer(Instrumentation test, int width, float font) throws Exception {
@@ -402,6 +453,7 @@ final class AmazonRetirementUpgradeChecks {
         "seeded".equals(witness.getString("phase", "")) && E2Cleanup.days(context) == 31,
         "upgrade fixture retention was not seeded");
     checkRetentionWrites(context);
+    checkCleanupConsentWrites(context);
     var sync =
         (E2SyncActivity)
             test.startActivitySync(
@@ -523,7 +575,9 @@ final class AmazonRetirementUpgradeChecks {
     } finally {
       test.runOnMainSync(main::finish);
     }
-    return "PASS retention chooser and recreation; conditional archive share notice, missing-original recovery, copy rollback and preserved selection";
+    return "PASS explicit E2 consent and fail-closed writes; retention chooser and recreation;"
+        + " conditional archive share notice, missing-original recovery, copy rollback and"
+        + " preserved selection";
   }
 
   private static void checkRetentionWrites(Context target) throws Exception {
@@ -533,19 +587,11 @@ final class AmazonRetirementUpgradeChecks {
     require(
         settings.edit().clear().commit() && e2.edit().clear().commit(),
         "isolated test reset failed");
-    var failSettings = new java.util.concurrent.atomic.AtomicBoolean();
-    var failConsent = new java.util.concurrent.atomic.AtomicBoolean();
+    var failSettings = new AtomicBoolean();
+    var failConsent = new AtomicBoolean();
     Context context =
-        new android.content.ContextWrapper(target) {
-          @Override
-          public android.content.SharedPreferences getSharedPreferences(String name, int mode) {
-            return switch (name) {
-              case "settings" -> failNextCommit(settings, failSettings);
-              case "e2_auto_sync" -> failNextCommit(e2, failConsent);
-              default -> throw new AssertionError("unexpected preferences: " + name);
-            };
-          }
-        };
+        isolatedConsentContext(
+            target, failNextCommit(settings, failSettings), failNextCommit(e2, failConsent));
     try {
       require(E2Cleanup.days(context) == 7, "absent retention should display seven days");
       require(
@@ -598,23 +644,163 @@ final class AmazonRetirementUpgradeChecks {
     }
   }
 
-  private static android.content.SharedPreferences failNextCommit(
-      android.content.SharedPreferences delegate,
-      java.util.concurrent.atomic.AtomicBoolean failOnce) {
-    return (android.content.SharedPreferences)
+  private enum CommitFault {
+    FALSE_AFTER_WRITE,
+    THROW_AFTER_WRITE,
+    FALSE_BEFORE_WRITE
+  }
+
+  private static void checkCleanupConsentWrites(Context target) throws Exception {
+    var settings =
+        target.getSharedPreferences(FIXTURE + "-new-consent-settings", Context.MODE_PRIVATE);
+    var options =
+        target.getSharedPreferences(FIXTURE + "-new-consent-options", Context.MODE_PRIVATE);
+    require(
+        settings.edit().clear().commit() && options.edit().clear().commit(),
+        "reset consent fixture");
+    require(
+        settings.edit().putBoolean("cleanupEnabled", true).putInt("retentionDays", 31).commit()
+            && options.edit().putString("cleanupBucket", BUCKET).putInt("cleanupDays", 31).commit(),
+        "seed contradictory consent");
+    var faults = new ArrayDeque<CommitFault>();
+    var beforeAcknowledgement = new AtomicReference<Runnable>();
+    SharedPreferences consent =
+        withCommitHook(
+            options,
+            editor -> {
+              CommitFault fault = faults.poll();
+              if (fault == CommitFault.FALSE_BEFORE_WRITE) return false;
+              boolean saved = editor.commit();
+              Runnable observer = beforeAcknowledgement.getAndSet(null);
+              if (observer != null) observer.run();
+              if (fault == CommitFault.FALSE_AFTER_WRITE) return false;
+              if (fault == CommitFault.THROW_AFTER_WRITE)
+                throw new IllegalStateException("synthetic consent acknowledgement failure");
+              return saved;
+            });
+    Context context = isolatedConsentContext(target, settings, consent);
+    try {
+      require(!E2Cleanup.enabled(context, BUCKET), "old contradictory consent must be blocked");
+      faults.add(CommitFault.FALSE_AFTER_WRITE);
+      faults.add(CommitFault.FALSE_BEFORE_WRITE);
+      expectConsentWriteFailure(consent, 31);
+      require(
+          options.getBoolean(FRESH_CONSENT, false), "failed confirmation left changed preferences");
+      require(options.edit().putBoolean("fixtureUnrelated", true).commit(), "unrelated preference");
+      require(!E2Cleanup.enabled(context, BUCKET), "unacknowledged grant became eligible");
+      applyConsentAfterPreconditions(consent, 0);
+      require(!options.contains(FRESH_CONSENT), "durable revoke left the marker behind");
+
+      faults.add(CommitFault.THROW_AFTER_WRITE);
+      expectConsentWriteFailure(consent, 31);
+      require(
+          !options.contains(FRESH_CONSENT) && !E2Cleanup.enabled(context, BUCKET),
+          "throwing grant wasn't revoked");
+
+      beforeAcknowledgement.set(
+          () ->
+              require(!E2Cleanup.enabled(context, BUCKET), "grant visible before acknowledgement"));
+      applyConsentAfterPreconditions(consent, 31);
+      require(
+          E2Cleanup.enabled(context, BUCKET) && options.getBoolean(FRESH_CONSENT, false),
+          "explicit acknowledged consent wasn't accepted");
+      require(
+          E2Cleanup.setRetentionDays(context, 90)
+              && !options.contains(FRESH_CONSENT)
+              && !E2Cleanup.enabled(context, BUCKET),
+          "new retention failed to revoke the fresh consent");
+      applyConsentAfterPreconditions(consent, 90);
+      E2Cleanup.setEnabled(context, BUCKET, 0);
+      require(
+          !options.contains(FRESH_CONSENT) && !E2Cleanup.enabled(context, BUCKET),
+          "disabling cleanup failed to revoke the fresh consent");
+
+      applyConsentAfterPreconditions(consent, 90);
+      faults.add(CommitFault.THROW_AFTER_WRITE);
+      expectConsentWriteFailure(consent, 0);
+      require(
+          !options.contains(FRESH_CONSENT)
+              && !E2Cleanup.enabled(context, BUCKET)
+              && settings.getBoolean("cleanupEnabled", false)
+              && options.getBoolean("fixtureUnrelated", false),
+          "revoke failure granted cleanup or touched unrelated settings");
+    } finally {
+      faults.clear();
+      beforeAcknowledgement.set(null);
+      try {
+        applyConsentAfterPreconditions(consent, 0);
+      } finally {
+        require(
+            settings.edit().clear().commit() && options.edit().clear().commit(),
+            "clear consent fixture");
+      }
+    }
+  }
+
+  private static void expectConsentWriteFailure(SharedPreferences consent, int retention)
+      throws Exception {
+    try {
+      applyConsentAfterPreconditions(consent, retention);
+      throw new AssertionError("consent write was not acknowledged");
+    } catch (IOException expected) {
+      // Failure tests exercise the storage step without granting deletion permission to the AVD.
+    }
+  }
+
+  private static void applyConsentAfterPreconditions(SharedPreferences consent, int retention)
+      throws Exception {
+    var write =
+        E2Cleanup.class.getDeclaredMethod(
+            "writeConsent", SharedPreferences.class, String.class, int.class);
+    write.setAccessible(true);
+    try {
+      write.invoke(null, consent, BUCKET, retention);
+    } catch (InvocationTargetException failure) {
+      if (failure.getCause() instanceof IOException io) throw io;
+      throw failure;
+    }
+  }
+
+  private static Context isolatedConsentContext(
+      Context target, SharedPreferences settings, SharedPreferences consent) {
+    return new android.content.ContextWrapper(target) {
+      @Override
+      public SharedPreferences getSharedPreferences(String name, int mode) {
+        return switch (name) {
+          case "settings" -> settings;
+          case "e2_auto_sync" -> consent;
+          default -> throw new AssertionError("unexpected preferences: " + name);
+        };
+      }
+    };
+  }
+
+  private static SharedPreferences failNextCommit(
+      SharedPreferences delegate, AtomicBoolean failOnce) {
+    return withCommitHook(
+        delegate,
+        editor -> {
+          boolean saved = editor.commit();
+          return !failOnce.getAndSet(false) && saved;
+        });
+  }
+
+  private static SharedPreferences withCommitHook(
+      SharedPreferences delegate, java.util.function.Predicate<SharedPreferences.Editor> commit) {
+    return (SharedPreferences)
         java.lang.reflect.Proxy.newProxyInstance(
             AmazonRetirementUpgradeChecks.class.getClassLoader(),
-            new Class<?>[] {android.content.SharedPreferences.class},
+            new Class<?>[] {SharedPreferences.class},
             (ignored, method, args) -> {
               Object result = method.invoke(delegate, args);
               if (!"edit".equals(method.getName())) return result;
               return java.lang.reflect.Proxy.newProxyInstance(
                   AmazonRetirementUpgradeChecks.class.getClassLoader(),
-                  new Class<?>[] {android.content.SharedPreferences.Editor.class},
+                  new Class<?>[] {SharedPreferences.Editor.class},
                   (editor, editMethod, values) -> {
+                    if ("commit".equals(editMethod.getName()))
+                      return commit.test((SharedPreferences.Editor) result);
                     Object value = editMethod.invoke(result, values);
-                    if ("commit".equals(editMethod.getName()) && failOnce.getAndSet(false))
-                      return false;
                     return value == result ? editor : value;
                   });
             });

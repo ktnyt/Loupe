@@ -12,7 +12,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -26,6 +28,10 @@ final class E2Cleanup {
   private static final Pattern RECORD_KEY = Pattern.compile("[0-9a-f]{32}");
   static final String RELEASING = "releasing", RELEASED = "released";
   private static final int EDGE = 256;
+  private static final String LEGACY_CLEANUP_ENABLED = "cleanupEnabled";
+  private static final String FRESH_CONSENT = "cleanupConsentAfterAmazonRetirement";
+  private static final Set<SharedPreferences> unconfirmedConsentWrites =
+      Collections.newSetFromMap(new IdentityHashMap<>());
 
   private record Eligible(E2AutoSync.Candidate candidate, JSONObject receipt) {}
 
@@ -40,10 +46,55 @@ final class E2Cleanup {
   }
 
   static boolean enabled(Context c, String bucket) {
-    return bucket != null
-        && !bucket.isEmpty()
-        && bucket.equals(options(c).getString("cleanupBucket", ""))
-        && days(c) == options(c).getInt("cleanupDays", 0);
+    if (bucket == null || bucket.isEmpty()) return false;
+    SharedPreferences consent = options(c);
+    synchronized (unconfirmedConsentWrites) {
+      if (unconfirmedConsentWrites.contains(consent)) return false;
+      try {
+        return bucket.equals(consent.getString("cleanupBucket", ""))
+            && days(c) == consent.getInt("cleanupDays", 0)
+            && (!SettingsRepository.open(c).getBoolean(LEGACY_CLEANUP_ENABLED, false)
+                || consent.getBoolean(FRESH_CONSENT, false));
+      } catch (ClassCastException invalidConsent) {
+        return false;
+      }
+    }
+  }
+
+  static SharedPreferences.Editor clearConsent(SharedPreferences.Editor editor) {
+    return editor.remove("cleanupBucket").remove("cleanupDays").remove(FRESH_CONSENT);
+  }
+
+  private static void writeConsent(SharedPreferences consent, String bucket, int retention)
+      throws IOException {
+    synchronized (unconfirmedConsentWrites) {
+      // Framework listeners can read the changed in-memory preferences before commit returns.
+      unconfirmedConsentWrites.add(consent);
+      IOException failure;
+      try {
+        SharedPreferences.Editor editor = clearConsent(consent.edit());
+        if (retention > 0) {
+          editor
+              .putString("cleanupBucket", bucket)
+              .putInt("cleanupDays", retention)
+              .putBoolean(FRESH_CONSENT, true);
+        }
+        if (editor.commit()) {
+          unconfirmedConsentWrites.remove(consent);
+          return;
+        }
+        failure = new IOException("容量整理の設定を保存できません");
+      } catch (RuntimeException writeFailure) {
+        failure = new IOException("容量整理の設定を保存できません", writeFailure);
+      }
+      try {
+        if (clearConsent(consent.edit()).commit()) unconfirmedConsentWrites.remove(consent);
+        else failure.addSuppressed(new IOException("容量整理の停止を保存できません"));
+      } catch (RuntimeException revokeFailure) {
+        failure.addSuppressed(revokeFailure);
+      }
+      throw failure;
+    }
   }
 
   static int days(Context c) {
@@ -59,16 +110,25 @@ final class E2Cleanup {
       boolean hadValue = settings.contains(SettingsRepository.RETENTION_DAYS);
       int previous = SettingsRepository.retentionDays(settings);
       // Revoke the old consent durably before changing its associated policy.
-      if (!options(context).edit().remove("cleanupBucket").remove("cleanupDays").commit()) {
-        throw new IOException("容量整理の停止を保存できません");
-      }
-      if (!settings.edit().putInt(SettingsRepository.RETENTION_DAYS, next).commit()) {
-        var rollback = settings.edit();
-        if (hadValue) rollback.putInt(SettingsRepository.RETENTION_DAYS, previous);
-        else rollback.remove(SettingsRepository.RETENTION_DAYS);
-        IOException failure = new IOException("写真を残す期間を保存できません");
-        if (!rollback.commit()) {
-          failure.addSuppressed(new IOException("以前の保存期間を復元できません"));
+      writeConsent(options(context), null, 0);
+      try {
+        if (!settings.edit().putInt(SettingsRepository.RETENTION_DAYS, next).commit()) {
+          throw new IOException("写真を残す期間を保存できません");
+        }
+      } catch (IOException | RuntimeException writeFailure) {
+        IOException failure =
+            writeFailure instanceof IOException io
+                ? io
+                : new IOException("写真を残す期間を保存できません", writeFailure);
+        try {
+          var rollback = settings.edit();
+          if (hadValue) rollback.putInt(SettingsRepository.RETENTION_DAYS, previous);
+          else rollback.remove(SettingsRepository.RETENTION_DAYS);
+          if (!rollback.commit()) {
+            failure.addSuppressed(new IOException("以前の保存期間を復元できません"));
+          }
+        } catch (RuntimeException rollbackFailure) {
+          if (rollbackFailure != writeFailure) failure.addSuppressed(rollbackFailure);
         }
         throw failure;
       }
@@ -94,11 +154,7 @@ final class E2Cleanup {
               || !bucket.equals(E2Settings.configuredBucket(c))
               || !bucket.equals(options(c).getString("destination", ""))))
         throw new IOException("自動バックアップと写真の整理権限を確認してください");
-      if (!options(c)
-          .edit()
-          .putString("cleanupBucket", enabled ? bucket : "")
-          .putInt("cleanupDays", retention)
-          .commit()) throw new IOException("容量整理の設定を保存できません");
+      writeConsent(options(c), bucket, retention);
       if (!E2SyncJob.ensureRecoverySchedule(c))
         android.util.Log.w("LoupeE2Sync", "Recovery scheduling declined");
     }
