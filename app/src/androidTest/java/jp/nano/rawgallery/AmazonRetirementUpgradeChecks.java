@@ -925,36 +925,42 @@ final class AmazonRetirementUpgradeChecks {
             panel.refreshAuto();
             return true;
           });
-      AlbumTagEntryChecks.waitFor(
-          test,
-          "visible unknown E2 state and accessible stop action",
-          () -> {
-            if (!status.isShown() || status.getHeight() <= 0) return false;
-            var card = (View) stop.getParent();
-            card.requestRectangleOnScreen(
-                new Rect(0, status.getTop(), card.getWidth(), stop.getBottom()), true);
-            var node = stop.createAccessibilityNodeInfo();
-            var bounds = new Rect();
-            node.getBoundsInScreen(bounds);
-            var visibleStatus = new Rect();
-            var visibleStop = new Rect();
-            int touchSize = GalleryUi.dp(screen, 48);
-            return screen.hasWindowFocus()
-                && status.isShown()
-                && unknownLabel.contentEquals(status.getText())
-                && status.getGlobalVisibleRect(visibleStatus)
-                && visibleStatus.height() >= status.getHeight()
-                && status.getAccessibilityLiveRegion() == View.ACCESSIBILITY_LIVE_REGION_POLITE
-                && stopLabel.contentEquals(node.getText())
-                && node.isVisibleToUser()
-                && node.isEnabled()
-                && node.isClickable()
-                && stop.getGlobalVisibleRect(visibleStop)
-                && visibleStop.width() >= touchSize
-                && visibleStop.height() >= touchSize
-                && bounds.width() >= touchSize
-                && bounds.height() >= touchSize;
-          });
+      try {
+        AlbumTagEntryChecks.waitFor(
+            test,
+            "visible unknown E2 state and accessible stop action",
+            () -> {
+              if (!status.isShown() || status.getHeight() <= 0) return false;
+              var card = (View) stop.getParent();
+              card.requestRectangleOnScreen(
+                  new Rect(0, status.getTop(), card.getWidth(), stop.getBottom()), true);
+              var node = stop.createAccessibilityNodeInfo();
+              var bounds = new Rect();
+              node.getBoundsInScreen(bounds);
+              var visibleStatus = new Rect();
+              var visibleStop = new Rect();
+              int touchSize = GalleryUi.dp(screen, 48);
+              return screen.hasWindowFocus()
+                  && status.isShown()
+                  && unknownLabel.contentEquals(status.getText())
+                  && status.getGlobalVisibleRect(visibleStatus)
+                  && visibleStatus.height() >= status.getHeight()
+                  && status.getAccessibilityLiveRegion() == View.ACCESSIBILITY_LIVE_REGION_POLITE
+                  && stopLabel.contentEquals(node.getText())
+                  && node.isVisibleToUser()
+                  && node.isEnabled()
+                  && node.isClickable()
+                  && stop.getGlobalVisibleRect(visibleStop)
+                  && visibleStop.width() >= touchSize
+                  && visibleStop.height() >= touchSize
+                  && bounds.width() >= touchSize
+                  && bounds.height() >= touchSize;
+            });
+      } catch (AssertionError failure) {
+        captureCleanupUnknownFailure(
+            test, screen, panel, status, stop, unknownLabel, stopLabel, suffix, failure);
+        throw failure;
+      }
       SyncControlChecks.capture(test, "amazon-retirement-consent-unknown" + suffix);
       AlbumTagEntryChecks.main(
           test,
@@ -1016,6 +1022,77 @@ final class AmazonRetirementUpgradeChecks {
             "unknown UI proof changed preferences, credentials, history or production journal");
       }
     }
+  }
+
+  private static void captureCleanupUnknownFailure(
+      Instrumentation test,
+      E2SyncActivity screen,
+      E2Panel panel,
+      TextView status,
+      Button stop,
+      String unknownLabel,
+      String stopLabel,
+      String suffix,
+      AssertionError failure) {
+    String name = "amazon-retirement-consent-unknown-failure" + suffix;
+    try {
+      var diagnostics = new JSONObject();
+      AlbumTagEntryChecks.main(
+          test,
+          () -> {
+            var node = stop.createAccessibilityNodeInfo();
+            var bounds = new Rect();
+            node.getBoundsInScreen(bounds);
+            var visibleStatus = new Rect();
+            boolean statusOnScreen = status.getGlobalVisibleRect(visibleStatus);
+            var visibleStop = new Rect();
+            boolean stopOnScreen = stop.getGlobalVisibleRect(visibleStop);
+            diagnostics
+                .put("windowFocused", screen.hasWindowFocus())
+                .put("statusShown", status.isShown())
+                .put("statusHeightPx", status.getHeight())
+                .put(
+                    "statusTextMatches",
+                    android.text.TextUtils.equals(unknownLabel, status.getText()))
+                .put("statusOnScreen", statusOnScreen)
+                .put("statusGlobalVisibleRect", rectCoordinates(visibleStatus))
+                .put("statusLiveRegion", status.getAccessibilityLiveRegion())
+                .put(
+                    "statusLiveRegionPolite",
+                    status.getAccessibilityLiveRegion() == View.ACCESSIBILITY_LIVE_REGION_POLITE)
+                .put("stopAxVisible", node.isVisibleToUser())
+                .put("stopAxEnabled", node.isEnabled())
+                .put("stopAxClickable", node.isClickable())
+                .put("stopAxLabelMatches", android.text.TextUtils.equals(stopLabel, node.getText()))
+                .put("stopAxBoundsInScreen", rectCoordinates(bounds))
+                .put("stopOnScreen", stopOnScreen)
+                .put("stopGlobalVisibleRect", rectCoordinates(visibleStop))
+                .put("touchThresholdPx", GalleryUi.dp(screen, 48))
+                .put(
+                    "syntheticBucketMatches",
+                    BUCKET.equals(AlbumTagEntryChecks.field(panel, "activeBucket")))
+                .put("consentUnknown", E2Cleanup.consentUnknown(screen));
+            return true;
+          });
+      Files.writeString(
+          new File(test.getTargetContext().getCacheDir(), name + ".json").toPath(),
+          diagnostics.toString(2));
+    } catch (Exception | AssertionError diagnosticFailure) {
+      failure.addSuppressed(diagnosticFailure);
+    }
+    try {
+      SyncControlChecks.capture(test, name);
+    } catch (Exception | AssertionError diagnosticFailure) {
+      failure.addSuppressed(diagnosticFailure);
+    }
+  }
+
+  private static org.json.JSONArray rectCoordinates(Rect bounds) {
+    return new org.json.JSONArray()
+        .put(bounds.left)
+        .put(bounds.top)
+        .put(bounds.right)
+        .put(bounds.bottom);
   }
 
   private static List<String> consentUiHistory(Context context) throws Exception {
