@@ -89,6 +89,9 @@ run_instrumentation() {
       "$adb" -s "$serial" logcat -d -s LoupeVisualSwipe:I '*:S' || true
     elif [[ "$label" == look-removal ]]; then
       "$adb" -s "$serial" logcat -d -s LoupeLookFixture:I '*:S' || true
+    elif [[ "$label" == tag-confidence ||
+            "$label" == 'tag-confidence (confidence_rebuild_delay_ms=12000)' ]]; then
+      "$adb" -s "$serial" logcat -d -s LoupeConfidenceGate:I '*:S' || true
     fi
     echo "$label did not report PASS." >&2
     exit 1
