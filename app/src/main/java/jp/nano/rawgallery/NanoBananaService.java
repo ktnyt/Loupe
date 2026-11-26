@@ -18,247 +18,432 @@ import org.json.JSONObject;
 
 /** Owns a single background edit, independent of the browsing Activity. */
 public class NanoBananaService extends Service {
-  private static final String CHANNEL="nano-banana-progress", EXTRA_NONCE="request_nonce";
-  private static final int NOTIFICATION=107;
-  private static final Handler MAIN=new Handler(Looper.getMainLooper());
+  private static final String CHANNEL = "nano-banana-progress", EXTRA_NONCE = "request_nonce";
+  private static final int NOTIFICATION = 107;
+  private static final Handler MAIN = new Handler(Looper.getMainLooper());
   // All admission and worker ownership changes use Store.LOCK, including BUSY.
   private static Request reserved;
   private static Toast latestToast;
+
   /** In-process dependency seam; no Intent can select fixture dependencies. */
   interface Factory {
     NanoBananaStore store(Context context);
-    NanoBananaJob job(Context context,NanoBananaStore store);
-    default void result(String message){}
+
+    NanoBananaJob job(Context context, NanoBananaStore store);
+
+    default void result(String message) {}
   }
-  static final Factory PRODUCTION=new Factory(){
-    public NanoBananaStore store(Context context){return new NanoBananaStore(context);}
-    public NanoBananaJob job(Context context,NanoBananaStore store){return new NanoBananaJob(context,store);}
-  };
-  static volatile Factory dependencies=PRODUCTION;
+
+  static final Factory PRODUCTION =
+      new Factory() {
+        public NanoBananaStore store(Context context) {
+          return new NanoBananaStore(context);
+        }
+
+        public NanoBananaJob job(Context context, NanoBananaStore store) {
+          return new NanoBananaJob(context, store);
+        }
+      };
+  static volatile Factory dependencies = PRODUCTION;
+
   private static final class Request {
-    final String nonce=UUID.randomUUID().toString();
+    final String nonce = UUID.randomUUID().toString();
     final NanoBananaStore store;
     final PhotoRepository.Photo photo;
     final NanoBananaStore.Prompt prompt;
     final NanoBananaOutput output;
     final boolean discard;
     boolean consumed;
-    Request(NanoBananaStore store,PhotoRepository.Photo photo,NanoBananaStore.Prompt prompt,
-        NanoBananaOutput output,boolean discard) {
-      this.store=store;this.photo=photo;this.prompt=prompt;this.output=output;this.discard=discard;
+
+    Request(
+        NanoBananaStore store,
+        PhotoRepository.Photo photo,
+        NanoBananaStore.Prompt prompt,
+        NanoBananaOutput output,
+        boolean discard) {
+      this.store = store;
+      this.photo = photo;
+      this.prompt = prompt;
+      this.output = output;
+      this.discard = discard;
     }
   }
+
   private Thread worker;
   private Request running;
-  private boolean destroyed,stopping;
+  private boolean destroyed, stopping;
 
-  static boolean busy(){return NanoBananaJob.BUSY.get();}
-  static boolean start(Context c,PhotoRepository.Photo p,NanoBananaStore.Prompt prompt){
-    return start(c,dependencies.store(c),NanoBananaService.class,p,prompt);
+  static boolean busy() {
+    return NanoBananaJob.BUSY.get();
   }
-  static boolean resume(Context c){return resume(c,dependencies.store(c),NanoBananaService.class);}
-  static boolean discard(Context c){return discard(c,dependencies.store(c),NanoBananaService.class);}
-  static boolean discard(Context c,String expectedObject,String expectedOwner){
-    return launch(c,dependencies.store(c),NanoBananaService.class,null,null,true,true,
-        true,expectedObject,expectedOwner);
+
+  static boolean start(Context c, PhotoRepository.Photo p, NanoBananaStore.Prompt prompt) {
+    return start(c, dependencies.store(c), NanoBananaService.class, p, prompt);
   }
-  static boolean start(Context c,NanoBananaStore store,Class<? extends NanoBananaService> type,
-      PhotoRepository.Photo photo,NanoBananaStore.Prompt prompt){
-    return launch(c,store,type,photo,prompt,false,false);
+
+  static boolean resume(Context c) {
+    return resume(c, dependencies.store(c), NanoBananaService.class);
   }
-  static boolean resume(Context c,NanoBananaStore store,Class<? extends NanoBananaService> type){
-    return launch(c,store,type,null,null,true,false);
+
+  static boolean discard(Context c) {
+    return discard(c, dependencies.store(c), NanoBananaService.class);
   }
-  static boolean discard(Context c,NanoBananaStore store,Class<? extends NanoBananaService> type){
-    return launch(c,store,type,null,null,true,true);
+
+  static boolean discard(Context c, String expectedObject, String expectedOwner) {
+    return launch(
+        c,
+        dependencies.store(c),
+        NanoBananaService.class,
+        null,
+        null,
+        true,
+        true,
+        true,
+        expectedObject,
+        expectedOwner);
   }
+
+  static boolean start(
+      Context c,
+      NanoBananaStore store,
+      Class<? extends NanoBananaService> type,
+      PhotoRepository.Photo photo,
+      NanoBananaStore.Prompt prompt) {
+    return launch(c, store, type, photo, prompt, false, false);
+  }
+
+  static boolean resume(Context c, NanoBananaStore store, Class<? extends NanoBananaService> type) {
+    return launch(c, store, type, null, null, true, false);
+  }
+
+  static boolean discard(
+      Context c, NanoBananaStore store, Class<? extends NanoBananaService> type) {
+    return launch(c, store, type, null, null, true, true);
+  }
+
   static void forgetComplete(NanoBananaStore store) throws IOException {
-    synchronized(NanoBananaStore.LOCK){
-      if(busy())return;
-      JSONObject job=store.job();
-      if(job!=null&&job.optString("stage").equals("complete"))store.job(null);
+    synchronized (NanoBananaStore.LOCK) {
+      if (busy()) return;
+      JSONObject job = store.job();
+      if (job != null && job.optString("stage").equals("complete")) store.job(null);
     }
   }
-  private static boolean launch(Context context,NanoBananaStore store,Class<? extends NanoBananaService> type,
-      PhotoRepository.Photo photo,NanoBananaStore.Prompt prompt,boolean resume,boolean discard){
-    return launch(context,store,type,photo,prompt,resume,discard,false,null,null);
+
+  private static boolean launch(
+      Context context,
+      NanoBananaStore store,
+      Class<? extends NanoBananaService> type,
+      PhotoRepository.Photo photo,
+      NanoBananaStore.Prompt prompt,
+      boolean resume,
+      boolean discard) {
+    return launch(context, store, type, photo, prompt, resume, discard, false, null, null);
   }
-  private static boolean launch(Context context,NanoBananaStore store,Class<? extends NanoBananaService> type,
-      PhotoRepository.Photo photo,NanoBananaStore.Prompt prompt,boolean resume,boolean discard,
-      boolean guardDiscard,String expectedObject,String expectedOwner){
-    Context app=context.getApplicationContext();
-    Request request=null;
+
+  private static boolean launch(
+      Context context,
+      NanoBananaStore store,
+      Class<? extends NanoBananaService> type,
+      PhotoRepository.Photo photo,
+      NanoBananaStore.Prompt prompt,
+      boolean resume,
+      boolean discard,
+      boolean guardDiscard,
+      String expectedObject,
+      String expectedOwner) {
+    Context app = context.getApplicationContext();
+    Request request = null;
     try {
-      synchronized(NanoBananaStore.LOCK){
-        if(guardDiscard){
-          JSONObject current=store.job();
-          if(expectedObject==null||expectedObject.isEmpty()||expectedOwner==null||expectedOwner.isEmpty()
-              ||current==null||!expectedObject.equals(current.optString("object"))
-              ||!expectedOwner.equals(current.optString("owner"))){
-            toast(app,"処理が変わりました。メニューを開き直してください");return false;
+      synchronized (NanoBananaStore.LOCK) {
+        if (guardDiscard) {
+          JSONObject current = store.job();
+          if (expectedObject == null
+              || expectedObject.isEmpty()
+              || expectedOwner == null
+              || expectedOwner.isEmpty()
+              || current == null
+              || !expectedObject.equals(current.optString("object"))
+              || !expectedOwner.equals(current.optString("owner"))) {
+            toast(app, "処理が変わりました。メニューを開き直してください");
+            return false;
           }
         }
-        if(busy()){toast(app,"画像を生成しています");return false;}
-        forgetComplete(store);
-        JSONObject job=store.job();
-        if(resume&&job==null){toast(app,"再開する処理はありません");return false;}
-        if(!resume&&(job!=null||photo==null||prompt==null)){
-          toast(app,job!=null?"残っている処理を確認してください":"写真とプロンプトを選び直してください");return false;
+        if (busy()) {
+          toast(app, "画像を生成しています");
+          return false;
         }
-        NanoBananaOutput output=resume?null:store.output();
+        forgetComplete(store);
+        JSONObject job = store.job();
+        if (resume && job == null) {
+          toast(app, "再開する処理はありません");
+          return false;
+        }
+        if (!resume && (job != null || photo == null || prompt == null)) {
+          toast(app, job != null ? "残っている処理を確認してください" : "写真とプロンプトを選び直してください");
+          return false;
+        }
+        NanoBananaOutput output = resume ? null : store.output();
         // Manual resume must retain a durable cancellation's operation and result wording.
-        boolean discardOperation=discard||(resume&&job.optString("stage").equals("discarding"));
-        if(discardOperation)NanoBananaJob.markDiscarding(store);
-        NanoBananaStore.Prompt snapshot=prompt==null?null:new NanoBananaStore.Prompt(prompt.id,prompt.name,prompt.text);
-        request=new Request(store,photo,snapshot,output,discardOperation);
-        reserved=request;NanoBananaJob.BUSY.set(true);
+        boolean discardOperation =
+            discard || (resume && job.optString("stage").equals("discarding"));
+        if (discardOperation) NanoBananaJob.markDiscarding(store);
+        NanoBananaStore.Prompt snapshot =
+            prompt == null ? null : new NanoBananaStore.Prompt(prompt.id, prompt.name, prompt.text);
+        request = new Request(store, photo, snapshot, output, discardOperation);
+        reserved = request;
+        NanoBananaJob.BUSY.set(true);
       }
-      ContextCompat.startForegroundService(app,new Intent(app,type).putExtra(EXTRA_NONCE,request.nonce));
-      GenerationIndicator.running(request.discard?"送信用画像の後処理中":"画像を生成しています");
-      final String startMessage=request.discard?"後処理を開始しました":"画像の生成を開始しました";
-      MAIN.post(()->{if(GenerationIndicator.foreground())dependencies.result(startMessage);else toast(app,startMessage);});
+      ContextCompat.startForegroundService(
+          app, new Intent(app, type).putExtra(EXTRA_NONCE, request.nonce));
+      GenerationIndicator.running(request.discard ? "送信用画像の後処理中" : "画像を生成しています");
+      final String startMessage = request.discard ? "後処理を開始しました" : "画像の生成を開始しました";
+      MAIN.post(
+          () -> {
+            if (GenerationIndicator.foreground()) dependencies.result(startMessage);
+            else toast(app, startMessage);
+          });
       return true;
-    }catch(Exception failure){
+    } catch (Exception failure) {
       DiagnosticLog.exception("nano.admission", "failed", failure);
-      synchronized(NanoBananaStore.LOCK){
-        if(request!=null&&reserved==request&&!request.consumed){reserved=null;NanoBananaJob.BUSY.set(false);}
+      synchronized (NanoBananaStore.LOCK) {
+        if (request != null && reserved == request && !request.consumed) {
+          reserved = null;
+          NanoBananaJob.BUSY.set(false);
+        }
       }
-      toast(app,"処理を開始できませんでした。もう一度お試しください");return false;
+      toast(app, "処理を開始できませんでした。もう一度お試しください");
+      return false;
     }
   }
-  private static void toast(Context context,String message){
-    Context app=context.getApplicationContext();
-    Runnable show=()->{
-      if(latestToast!=null)latestToast.cancel();
-      latestToast=Toast.makeText(app,message,Toast.LENGTH_SHORT);
-      latestToast.show();
-      dependencies.result(message);
-    };
-    if(Looper.myLooper()==Looper.getMainLooper())show.run();else MAIN.post(show);
+
+  private static void toast(Context context, String message) {
+    Context app = context.getApplicationContext();
+    Runnable show =
+        () -> {
+          if (latestToast != null) latestToast.cancel();
+          latestToast = Toast.makeText(app, message, Toast.LENGTH_SHORT);
+          latestToast.show();
+          dependencies.result(message);
+        };
+    if (Looper.myLooper() == Looper.getMainLooper()) show.run();
+    else MAIN.post(show);
   }
-  protected NanoBananaStore createStore(){return dependencies.store(this);}
-  protected NanoBananaJob createJob(NanoBananaStore store){return dependencies.job(this,store);}
+
+  protected NanoBananaStore createStore() {
+    return dependencies.store(this);
+  }
+
+  protected NanoBananaJob createJob(NanoBananaStore store) {
+    return dependencies.job(this, store);
+  }
+
   /** Called on the main thread. */
-  protected void notifyResult(String message){if(GenerationIndicator.foreground()){if(latestToast!=null)latestToast.cancel();dependencies.result(message);}else toast(this,message);}
-  @Override public IBinder onBind(Intent intent){return null;}
-  private Notification notification(){
-    NotificationManager manager=getSystemService(NotificationManager.class);
-    NotificationChannel channel=new NotificationChannel(CHANNEL,"画像の生成",NotificationManager.IMPORTANCE_LOW);
-    channel.setSound(null,null);channel.enableVibration(false);channel.setShowBadge(false);
-    channel.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);manager.createNotificationChannel(channel);
-    return new Notification.Builder(this,CHANNEL).setSmallIcon(R.drawable.ic_nano_banana)
-        .setContentTitle("画像を処理しています").setOngoing(true).setOnlyAlertOnce(true)
-        .setCategory(Notification.CATEGORY_PROGRESS).setVisibility(Notification.VISIBILITY_PRIVATE)
-        .setProgress(0,0,true).build();
+  protected void notifyResult(String message) {
+    if (GenerationIndicator.foreground()) {
+      if (latestToast != null) latestToast.cancel();
+      dependencies.result(message);
+    } else toast(this, message);
   }
-  @Override public int onStartCommand(Intent intent,int flags,int startId){
+
+  @Override
+  public IBinder onBind(Intent intent) {
+    return null;
+  }
+
+  private Notification notification() {
+    NotificationManager manager = getSystemService(NotificationManager.class);
+    NotificationChannel channel =
+        new NotificationChannel(CHANNEL, "画像の生成", NotificationManager.IMPORTANCE_LOW);
+    channel.setSound(null, null);
+    channel.enableVibration(false);
+    channel.setShowBadge(false);
+    channel.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
+    manager.createNotificationChannel(channel);
+    return new Notification.Builder(this, CHANNEL)
+        .setSmallIcon(R.drawable.ic_nano_banana)
+        .setContentTitle("画像を処理しています")
+        .setOngoing(true)
+        .setOnlyAlertOnce(true)
+        .setCategory(Notification.CATEGORY_PROGRESS)
+        .setVisibility(Notification.VISIBILITY_PRIVATE)
+        .setProgress(0, 0, true)
+        .build();
+  }
+
+  @Override
+  public int onStartCommand(Intent intent, int flags, int startId) {
     try {
-      startForeground(NOTIFICATION,notification());
-    }catch(RuntimeException failure){
+      startForeground(NOTIFICATION, notification());
+    } catch (RuntimeException failure) {
       DiagnosticLog.exception("nano.foreground", "failed", failure);
       // Quota/permission/restart restrictions must not take down the browsing process.
-      stopping=true;
-      if(worker!=null)worker.interrupt();
-      try{stopForeground(STOP_FOREGROUND_REMOVE);}catch(RuntimeException error){ DiagnosticLog.exception("nano.foreground_stop", "failed", error); }
+      stopping = true;
+      if (worker != null) worker.interrupt();
+      try {
+        stopForeground(STOP_FOREGROUND_REMOVE);
+      } catch (RuntimeException error) {
+        DiagnosticLog.exception("nano.foreground_stop", "failed", error);
+      }
       stopSelf();
-      synchronized(NanoBananaStore.LOCK){
-        String nonce=intent==null?null:intent.getStringExtra(EXTRA_NONCE);
-        if(running==null&&reserved!=null&&!reserved.consumed&&reserved.nonce.equals(nonce)){
-          reserved=null;NanoBananaJob.BUSY.set(false);
+      synchronized (NanoBananaStore.LOCK) {
+        String nonce = intent == null ? null : intent.getStringExtra(EXTRA_NONCE);
+        if (running == null
+            && reserved != null
+            && !reserved.consumed
+            && reserved.nonce.equals(nonce)) {
+          reserved = null;
+          NanoBananaJob.BUSY.set(false);
         }
         // A consumed lease belongs to its worker until that thread actually exits.
       }
-      GenerationIndicator.finished("処理を開始できませんでした。もう一度お試しください",null,true);
+      GenerationIndicator.finished("処理を開始できませんでした。もう一度お試しください", null, true);
       notifyResult("処理を開始できませんでした。もう一度お試しください");
       return START_NOT_STICKY;
     }
     Request request;
-    synchronized(NanoBananaStore.LOCK){
-      if(running!=null)return START_STICKY;
-      String nonce=intent==null?null:intent.getStringExtra(EXTRA_NONCE);
-      if(reserved!=null&&!reserved.consumed&&reserved.nonce.equals(nonce))request=reserved;
+    synchronized (NanoBananaStore.LOCK) {
+      if (running != null) return START_STICKY;
+      String nonce = intent == null ? null : intent.getStringExtra(EXTRA_NONCE);
+      if (reserved != null && !reserved.consumed && reserved.nonce.equals(nonce))
+        request = reserved;
       else {
-        if(busy()){
+        if (busy()) {
           // A stale start can arrive ahead of the admitted nonce; leave its lease intact.
-          if(reserved!=null&&!reserved.consumed)return START_STICKY;
-          stopForeground(STOP_FOREGROUND_REMOVE);stopSelfResult(startId);return START_NOT_STICKY;
+          if (reserved != null && !reserved.consumed) return START_STICKY;
+          stopForeground(STOP_FOREGROUND_REMOVE);
+          stopSelfResult(startId);
+          return START_NOT_STICKY;
         }
-        NanoBananaStore store=createStore();
+        NanoBananaStore store = createStore();
         try {
-          JSONObject job=store.job();String stage=job==null?"":job.optString("stage");
-          if(!stage.equals("generating")&&!stage.equals("cleanup")&&!stage.equals("discarding")){
-            stopForeground(STOP_FOREGROUND_REMOVE);stopSelfResult(startId);return START_NOT_STICKY;
+          JSONObject job = store.job();
+          String stage = job == null ? "" : job.optString("stage");
+          if (!stage.equals("generating")
+              && !stage.equals("cleanup")
+              && !stage.equals("discarding")) {
+            stopForeground(STOP_FOREGROUND_REMOVE);
+            stopSelfResult(startId);
+            return START_NOT_STICKY;
           }
-          request=new Request(store,null,null,null,stage.equals("discarding"));
-          reserved=request;NanoBananaJob.BUSY.set(true);
-        }catch(IOException error){DiagnosticLog.exception("nano.resume", "failed", error);stopForeground(STOP_FOREGROUND_REMOVE);stopSelfResult(startId);return START_NOT_STICKY;}
+          request = new Request(store, null, null, null, stage.equals("discarding"));
+          reserved = request;
+          NanoBananaJob.BUSY.set(true);
+        } catch (IOException error) {
+          DiagnosticLog.exception("nano.resume", "failed", error);
+          stopForeground(STOP_FOREGROUND_REMOVE);
+          stopSelfResult(startId);
+          return START_NOT_STICKY;
+        }
       }
-      request.consumed=true;running=request;
+      request.consumed = true;
+      running = request;
     }
-    GenerationIndicator.running(request.discard?"AI編集の後処理中":"AI編集の処理を続けています");
-    final Request owned=request;
+    GenerationIndicator.running(request.discard ? "AI編集の後処理中" : "AI編集の処理を続けています");
+    final Request owned = request;
     try {
-      worker=new Thread(()->execute(owned),"nano-banana");worker.start();
-    }catch(RuntimeException|OutOfMemoryError failure){
+      worker = new Thread(() -> execute(owned), "nano-banana");
+      worker.start();
+    } catch (RuntimeException | OutOfMemoryError failure) {
       DiagnosticLog.exception("nano.worker_start", "failed", failure);
-      finish(owned,"処理を開始できませんでした。もう一度お試しください");
+      finish(owned, "処理を開始できませんでした。もう一度お試しください");
       return START_NOT_STICKY;
     }
     return START_STICKY;
   }
-  private void execute(Request request){
+
+  private void execute(Request request) {
     String message;
-    android.net.Uri saved=null;
-    boolean attention=false;
+    android.net.Uri saved = null;
+    boolean attention = false;
     try {
       Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
-      NanoBananaJob job=createJob(request.store);
-      if(request.discard)job.discard();
-      else job.run(request.photo,request.prompt,request.output,GenerationIndicator::running);
-      synchronized(NanoBananaStore.LOCK){
-        JSONObject record=request.store.job();
-        if(record!=null&&record.has("saved"))saved=android.net.Uri.parse(record.optString("saved"));
-        if(record!=null&&record.optString("stage").equals("complete"))request.store.job(null);
+      NanoBananaJob job = createJob(request.store);
+      if (request.discard) job.discard();
+      else job.run(request.photo, request.prompt, request.output, GenerationIndicator::running);
+      synchronized (NanoBananaStore.LOCK) {
+        JSONObject record = request.store.job();
+        if (record != null && record.has("saved"))
+          saved = android.net.Uri.parse(record.optString("saved"));
+        if (record != null && record.optString("stage").equals("complete")) request.store.job(null);
       }
-      message=request.discard?"後処理が完了しました":"生成画像を保存しました";
-    }catch(Exception|OutOfMemoryError error){
-      attention=true;
-      message="処理を続けられませんでした。AI編集メニューから確認してください";
+      message = request.discard ? "後処理が完了しました" : "生成画像を保存しました";
+    } catch (Exception | OutOfMemoryError error) {
+      attention = true;
+      message =
+          error instanceof NanoBananaApi.SafeFailure
+              ? error.getMessage()
+              : "処理を続けられませんでした。AI編集メニューから確認してください";
       try {
-        synchronized(NanoBananaStore.LOCK){
-          JSONObject record=request.store.job();
-          if(record!=null&&record.optString("stage").equals("complete")){
-            if(record.has("saved"))saved=android.net.Uri.parse(record.optString("saved"));
-            request.store.job(null);message="生成画像を保存しました";attention=false;
-          }else if(record!=null&&record.has("saved"))message="画像は保存済みです。後処理を再試行してください";
+        synchronized (NanoBananaStore.LOCK) {
+          JSONObject record = request.store.job();
+          if (record != null && record.optString("stage").equals("complete")) {
+            if (record.has("saved")) saved = android.net.Uri.parse(record.optString("saved"));
+            request.store.job(null);
+            message = "生成画像を保存しました";
+            attention = false;
+          } else if (record != null && record.has("saved")) message = "画像は保存済みです。後処理を再試行してください";
         }
-      }catch(IOException recovery){DiagnosticLog.exception("nano.result_recovery", "failed", recovery);}
-      DiagnosticLog.exception(request.discard ? "nano.discard" : "nano.execute",
-          attention ? (stopping ? "cancelled" : "failed") : "recovered", error);
+      } catch (IOException recovery) {
+        DiagnosticLog.exception("nano.result_recovery", "failed", recovery);
+      }
+      DiagnosticLog.exception(
+          request.discard ? "nano.discard" : "nano.execute",
+          attention ? (stopping ? "cancelled" : "failed") : "recovered",
+          error);
     }
-    final String result=message;
-    final android.net.Uri resultUri=saved;final boolean needsAttention=attention;
-    MAIN.post(()->finish(request,result,resultUri,needsAttention));
+    final String result = message;
+    final android.net.Uri resultUri = saved;
+    final boolean needsAttention = attention;
+    MAIN.post(() -> finish(request, result, resultUri, needsAttention));
   }
-  private void finish(Request request,String message){finish(request,message,null,true);}
-  private void finish(Request request,String message,android.net.Uri saved,boolean attention){
-    synchronized(NanoBananaStore.LOCK){
-      if(running!=request)return;
+
+  private void finish(Request request, String message) {
+    finish(request, message, null, true);
+  }
+
+  private void finish(Request request, String message, android.net.Uri saved, boolean attention) {
+    synchronized (NanoBananaStore.LOCK) {
+      if (running != request) return;
       // Posting from the worker can race its return; never release a still-live lease.
-      if(worker!=null&&worker.isAlive()){MAIN.postDelayed(()->finish(request,message,saved,attention),10);return;}
-      running=null;worker=null;
-      if(!destroyed){stopForeground(STOP_FOREGROUND_REMOVE);stopSelf();}
+      if (worker != null && worker.isAlive()) {
+        MAIN.postDelayed(() -> finish(request, message, saved, attention), 10);
+        return;
+      }
+      running = null;
+      worker = null;
+      if (!destroyed) {
+        stopForeground(STOP_FOREGROUND_REMOVE);
+        stopSelf();
+      }
       // Stop/instance state transitions precede release, so a new launch cannot be dropped.
-      if(reserved==request){reserved=null;NanoBananaJob.BUSY.set(false);}
+      if (reserved == request) {
+        reserved = null;
+        NanoBananaJob.BUSY.set(false);
+      }
     }
-    if(!stopping){GenerationIndicator.finished(message,saved,attention);notifyResult(message);}
+    if (!stopping) {
+      GenerationIndicator.finished(message, saved, attention);
+      notifyResult(message);
+    }
   }
-  @Override public void onTimeout(int startId,int fgsType){stopWorker();stopSelf();}
-  private void stopWorker(){
-    stopping=true;
-    if(running!=null)GenerationIndicator.finished("AI編集の処理状況を確認してください",null,true);
-    if(worker!=null)worker.interrupt();
+
+  @Override
+  public void onTimeout(int startId, int fgsType) {
+    stopWorker();
+    stopSelf();
+  }
+
+  private void stopWorker() {
+    stopping = true;
+    if (running != null) GenerationIndicator.finished("AI編集の処理状況を確認してください", null, true);
+    if (worker != null) worker.interrupt();
     stopForeground(STOP_FOREGROUND_REMOVE);
   }
-  @Override public void onDestroy(){destroyed=true;stopWorker();super.onDestroy();}
+
+  @Override
+  public void onDestroy() {
+    destroyed = true;
+    stopWorker();
+    super.onDestroy();
+  }
 }
