@@ -76,6 +76,8 @@ final class SingleBestChecks {
     List<File> files = new ArrayList<>();
     String namespace = "single-best-checks-" + UUID.randomUUID();
     SharedPreferences prefs = a.getSharedPreferences(namespace, 0);
+    RankingStore ordinaryOwner = null;
+    RankingStore flakyOwner = null;
     try {
       ((ExecutorService) get(a, "scans")).submit(() -> {}).get(20, TimeUnit.SECONDS);
       GalleryScreenChecks.portraitFixture(t, a, width, font);
@@ -83,6 +85,7 @@ final class SingleBestChecks {
       var next =
           new java.util.concurrent.atomic.AtomicReference<RankingPersistenceWaitChecks.Commit>();
       RankingStore store = new RankingStore(RankingPersistenceWaitChecks.observe(prefs, next));
+      ordinaryOwner = store;
       List<PhotoRepository.Photo> photos = new ArrayList<>();
       for (int i = 0; i < 4; i++) {
         File f = new File(a.getCacheDir(), "single-best-fixture-" + i + ".jpg");
@@ -303,6 +306,7 @@ final class SingleBestChecks {
                     return method.invoke(prefs, args);
                   });
       RankingStore flakyStore = new RankingStore(flaky);
+      flakyOwner = flakyStore;
       ui(t, () -> set(a, "rankingStore", flakyStore));
       ViewerScreenChecks.open(t, a, 0);
       await(
@@ -338,9 +342,18 @@ final class SingleBestChecks {
           + " stale retry, failed commit/read recovery, burst isolation; screenshots in"
           + " consistency-checks\n";
     } finally {
-      ui(t, () -> a.finish());
-      a.deleteSharedPreferences(namespace);
-      for (File f : files) f.delete();
+      try {
+        ui(t, () -> a.finish());
+      } finally {
+        try {
+          RankingPersistenceWaitChecks.drainRankingWriter(ordinaryOwner);
+          RankingPersistenceWaitChecks.drainRankingWriter(flakyOwner);
+          if (!a.deleteSharedPreferences(namespace))
+            throw new AssertionError("Delete drained isolated rankings");
+        } finally {
+          for (File f : files) f.delete();
+        }
+      }
     }
   }
 }

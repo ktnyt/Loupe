@@ -1333,7 +1333,8 @@ public final class MainActivity extends DiagnosticActivity {
     SelectionResult current = selectionResult();
     return !current.retryRanking
         && current.photos.equals(result.photos)
-        && current.unresolved.equals(result.unresolved);
+        && current.unresolved.equals(result.unresolved)
+        && current.ranks == rankingStore.snapshot();
   }
 
   private void shareSelectionChanged() {
@@ -3650,29 +3651,34 @@ public final class MainActivity extends DiagnosticActivity {
                         }
                         send.setComponent(component);
                       }
+                      android.app.PendingIntent callback = null;
                       try {
+                        Intent outgoing = send;
                         if (target == null) {
-                          if (historySession == null) {
-                            startActivity(Intent.createChooser(send, "写真を共有"));
-                            ShareHistoryReceiver.failed(getApplicationContext());
-                          } else {
-                            android.app.PendingIntent callback =
-                                ShareHistoryReceiver.callback(this, historySession);
-                            try {
-                              startActivity(
-                                  Intent.createChooser(send, "写真を共有", callback.getIntentSender()));
-                            } catch (RuntimeException launchFailure) {
-                              callback.cancel();
-                              throw launchFailure;
-                            }
-                          }
-                        } else {
-                          startActivity(send);
+                          if (historySession != null)
+                            callback = ShareHistoryReceiver.callback(this, historySession);
+                          outgoing =
+                              callback == null
+                                  ? Intent.createChooser(send, "写真を共有")
+                                  : Intent.createChooser(send, "写真を共有", callback.getIntentSender());
+                        }
+                        if (!validSelection.getAsBoolean()) {
+                          if (callback != null) callback.cancel();
+                          ShareHistoryReceiver.cancelLater(getApplicationContext(), historySession);
+                          shareSelectionChanged();
+                          return;
+                        }
+                        startActivity(outgoing);
+                        if (target != null)
                           ShareHistoryReceiver.recordLater(
                               getApplicationContext(), historySession, send.getComponent());
-                        }
-                      } catch (ActivityNotFoundException | SecurityException e) {
+                        else if (historySession == null)
+                          ShareHistoryReceiver.failed(getApplicationContext());
+                      } catch (RuntimeException failure) {
+                        if (callback != null) callback.cancel();
                         ShareHistoryReceiver.cancelLater(getApplicationContext(), historySession);
+                        if (!(failure instanceof ActivityNotFoundException)
+                            && !(failure instanceof SecurityException)) throw failure;
                         feedback(
                             StatusView.Symbol.NO_APP,
                             "共有先が見つかりません。共有先の設定を変更してください。",

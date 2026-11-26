@@ -230,11 +230,13 @@ final class WindowInsetsChecks {
     String namespace = "system-insets-checks-" + java.util.UUID.randomUUID();
     SharedPreferences prefs = a.getSharedPreferences(namespace, 0);
     ArrayList<File> files = new ArrayList<>();
+    RankingStore cleanupOwner = null;
     try {
       GalleryScreenChecks.portraitFixture(t, a, width, font);
       GalleryScreenChecks.finishInitialIndex(t, a);
       require(prefs.edit().clear().commit(), "reset isolated ranking fixture");
       RankingStore rankings = new RankingStore(prefs);
+      cleanupOwner = rankings;
       rankings.awaitReady();
       ArrayList<PhotoRepository.Photo> photos = new ArrayList<>();
       for (int n = 0; n < 4; n++) {
@@ -409,14 +411,22 @@ final class WindowInsetsChecks {
           + " cache files and isolated rankings only. Video behavior remains covered by"
           + " video mode.\n";
     } finally {
-      ui(
-          t,
-          () -> {
-            a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-            a.finish();
-          });
-      a.deleteSharedPreferences(namespace);
-      for (File file : files) file.delete();
+      try {
+        ui(
+            t,
+            () -> {
+              a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+              a.finish();
+            });
+      } finally {
+        try {
+          RankingPersistenceWaitChecks.drainRankingWriter(cleanupOwner);
+          if (!a.deleteSharedPreferences(namespace))
+            throw new AssertionError("Delete drained isolated rankings");
+        } finally {
+          for (File file : files) file.delete();
+        }
+      }
     }
   }
 }

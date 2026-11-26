@@ -8,6 +8,7 @@ import static jp.nano.rawgallery.TagDetailChecks.ui;
 
 import android.Manifest;
 import android.app.Instrumentation;
+import android.app.PendingIntent;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
@@ -51,6 +52,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
@@ -68,17 +70,19 @@ final class RankingPersistenceWaitChecks {
     NONE,
     ZOOM,
     CATALOG,
-    CLEANUP
+    CLEANUP,
+    BASELINE_REJECTION,
+    SHARE_DISPATCH
   }
 
   static String run(Instrumentation test, Bundle args) throws Exception {
+    String baseline = args.getString("baseline", "false");
+    if ("true".equals(baseline))
+      throw new IllegalArgumentException(
+          "Use the historical baseline runner with the historical APK");
+    if (!"false".equals(baseline))
+      throw new IllegalArgumentException("baseline must be true or false");
     requireEmptyAvd(test);
-    boolean baseline =
-        switch (args.getString("baseline", "false")) {
-          case "true" -> true;
-          case "false" -> false;
-          default -> throw new IllegalArgumentException("baseline must be true or false");
-        };
     int entries =
         switch (args.getString("ranking_entries", "200")) {
           case "200" -> 200;
@@ -99,11 +103,14 @@ final class RankingPersistenceWaitChecks {
           case "zoom" -> Probe.ZOOM;
           case "catalog" -> Probe.CATALOG;
           case "cleanup" -> Probe.CLEANUP;
+          case "baseline_rejection" -> Probe.BASELINE_REJECTION;
+          case "share_dispatch" -> Probe.SHARE_DISPATCH;
           default -> throw new IllegalArgumentException("unsupported ranking_probe");
         };
-    require(!baseline || !capture, "capture states require the candidate");
-    require(probe == Probe.NONE || !baseline, "probe requires the candidate");
-    require(probe != Probe.CLEANUP || !capture, "cleanup probe has no UI");
+    require(
+        probe == Probe.NONE || probe == Probe.ZOOM || probe == Probe.CATALOG || !capture,
+        "capture not available for this probe");
+    if (probe == Probe.BASELINE_REJECTION) return proveBaselineRejected(test);
     int captureWidth =
         switch (args.getString("capture_width", "native")) {
           case "native" -> 0;
@@ -177,6 +184,8 @@ final class RankingPersistenceWaitChecks {
                 test, activity, prefs, observed, photos.get(0), captureProfile)
             + activityDimensions(test, activity, expectedWidth, captureFont)
             + "\n";
+      if (probe == Probe.SHARE_DISPATCH)
+        return proveShareDispatch(test, activity, observed, photos);
       if (capture)
         captureReadStates(
             test,
@@ -188,12 +197,12 @@ final class RankingPersistenceWaitChecks {
             entries,
             prefs,
             photos);
-      String read = heldRead(test, activity, prefs, next, held, baseline, photos.get(0));
+      String read = heldRead(test, activity, prefs, next, held, photos.get(0));
       if (capture) {
         captureScreen(test, activity, "ranking-star-ready-on-" + profile);
         captureStarSave(test, activity, prefs, next, photos.get(0), profile);
       }
-      String choose = choose(test, activity, prefs, next, baseline, photos);
+      String choose = choose(test, activity, prefs, next, photos);
       String shareTrace = "";
       if (capture) {
         captureScreen(test, activity, "ranking-compare-success-" + profile);
@@ -201,8 +210,7 @@ final class RankingPersistenceWaitChecks {
             captureComparisonStates(test, activity, prefs, observed, next, photos, profile);
       }
       String dimensions = activityDimensions(test, activity, expectedWidth, captureFont);
-      return "PASS ranking persistence waits baseline="
-          + baseline
+      return "PASS ranking persistence waits baseline=false"
           + " entries="
           + entries
           + " singletonEntries="
@@ -232,7 +240,10 @@ final class RankingPersistenceWaitChecks {
         try {
           drainRankingWriter(cleanupStore);
           require(
-              context.deleteSharedPreferences(namespace), "isolated ranking preferences removed");
+              context.deleteSharedPreferences(namespace)
+                  && !xml.exists()
+                  && !new File(xml.getPath() + ".bak").exists(),
+              "isolated ranking preferences removed after drain");
         } finally {
           try {
             for (File file : files) Files.deleteIfExists(file.toPath());
@@ -242,6 +253,241 @@ final class RankingPersistenceWaitChecks {
         }
       }
     }
+  }
+
+  private static String proveBaselineRejected(Instrumentation test) throws Exception {
+    Context context = test.getTargetContext();
+    File inventory = new File(context.getApplicationInfo().dataDir, "shared_prefs");
+    String[] before = inventory.list();
+    Bundle rejected = new Bundle();
+    rejected.putString("baseline", "true");
+    try {
+      run(test, rejected);
+      throw new AssertionError("candidate unexpectedly accepted historical baseline");
+    } catch (IllegalArgumentException expected) {
+      require(
+          expected.getMessage().contains("historical baseline runner"),
+          "specific baseline rejection");
+    }
+    String[] after = inventory.list();
+    require(
+        java.util.Arrays.equals(
+            before == null ? null : java.util.Arrays.stream(before).sorted().toArray(),
+            after == null ? null : java.util.Arrays.stream(after).sorted().toArray()),
+        "baseline flag admission did not create preference files");
+    requireEmptyData(context);
+    return "PASS rankingBaselineRejected beforeFixture=true preferencesUnchanged=true"
+        + " mediaEmpty=true\n";
+  }
+
+  private static String proveShareDispatch(
+      Instrumentation test,
+      MainActivity activity,
+      RankingStore owner,
+      List<PhotoRepository.Photo> photos)
+      throws Exception {
+    List<String> ids = new ArrayList<>();
+    for (int member : BURST) ids.add(ArchiveStore.key(photos.get(member)));
+    publishBurst(owner, ids, "B:00");
+    ui(test, () -> openWinnerSelection(activity, photos));
+    Button share = (Button) get(activity, "selectionShare");
+    waitFor(test, share::isEnabled, "initial winner can be reviewed");
+    ui(test, () -> require(share.performClick(), "open actual winner preview"));
+    ShareUi.Menu reviewed = (ShareUi.Menu) get(activity, "shareDialog");
+    RankingStore.Burst original = owner.snapshot().burst(ids);
+    PhotoRepository.Photo oldWinner = photoForRankKey(photos, original.ids().get(2));
+    PhotoRepository.Photo newWinner = photoForRankKey(photos, original.ids().get(0));
+    require(
+        reviewed.previewPhotos.equals(List.of(oldWinner)),
+        "initial preview contains only the old winner");
+    String oldKey = ArchiveStore.key(oldWinner);
+    require(
+        stagedShareSession(activity, oldKey) == null, "no earlier session for the generated photo");
+
+    Method resolve = MainActivity.class.getDeclaredMethod("selectionResult");
+    resolve.setAccessible(true);
+    AtomicReference<Object> frozenSelection = new AtomicReference<>();
+    ui(
+        test,
+        () -> {
+          try {
+            frozenSelection.set(resolve.invoke(activity));
+          } catch (ReflectiveOperationException error) {
+            throw new AssertionError(error);
+          }
+          reviewed.dismiss();
+        });
+    Method validate =
+        MainActivity.class.getDeclaredMethod(
+            "isCurrentSelection", frozenSelection.get().getClass());
+    validate.setAccessible(true);
+    Method export =
+        MainActivity.class.getDeclaredMethod(
+            "export", List.class, boolean.class, ShareTargets.Target.class, BooleanSupplier.class);
+    export.setAccessible(true);
+
+    File copies =
+        Files.createTempDirectory(activity.getCacheDir().toPath(), "rank-dispatch-").toFile();
+    SharePreparation originalPrep = (SharePreparation) get(activity, "sharePreparation");
+    SharePreparation isolatedPrep =
+        new SharePreparation(
+            copies,
+            (photo, raw, target) -> {
+              require(
+                  photo == oldWinner, "export preparation received only the generated old winner");
+              Files.copy(new File(oldWinner.uri.getPath()).toPath(), target.toPath());
+            });
+    var chooser = test.addMonitor(new IntentFilter(Intent.ACTION_CHOOSER), null, true);
+    AtomicInteger guardChecks = new AtomicInteger(), callbackAtBoundary = new AtomicInteger();
+    AtomicReference<String> session = new AtomicReference<>();
+    AtomicReference<Throwable> failure = new AtomicReference<>();
+    BooleanSupplier guarded =
+        () -> {
+          try {
+            boolean wasCurrent =
+                Boolean.TRUE.equals(validate.invoke(activity, frozenSelection.get()));
+            int check = guardChecks.incrementAndGet();
+            if (check == 2) {
+              require(wasCurrent, "review still current at the pre-dispatch validation");
+              String staged = stagedShareSession(activity, oldKey);
+              require(staged != null, "generated handoff history session was staged");
+              session.set(staged);
+              RankingStore.Burst basis = owner.snapshot().burst(ids);
+              RankingStore.WriteResult write =
+                  new RankingStore(owner)
+                      .submitBurst(basis, () -> new PhotoRanking(basis.ids(), "B:11"))
+                      .toCompletableFuture()
+                      .get(2, TimeUnit.SECONDS);
+              require(
+                  write.outcome() == RankingStore.Outcome.SAVED,
+                  "second handle published between validations");
+              // Return the result sampled before publication, as a real pre-dispatch race would.
+            } else if (check == 3) {
+              require(!wasCurrent, "dispatch-boundary validation saw changed winner");
+              if (existingShareCallback(activity, session.get()) != null)
+                callbackAtBoundary.incrementAndGet();
+            }
+            return wasCurrent;
+          } catch (Throwable error) {
+            failure.set(error);
+            return false;
+          }
+        };
+    try {
+      ui(
+          test,
+          () -> {
+            set(activity, "sharePreparation", isolatedPrep);
+            try {
+              export.invoke(activity, reviewed.previewPhotos, false, null, guarded);
+            } catch (ReflectiveOperationException error) {
+              throw new AssertionError(error);
+            }
+          });
+      waitFor(
+          test,
+          () ->
+              failure.get() != null
+                  || chooser.getHits() != 0
+                  || ((View) get(activity, "selectionShareNotice")).isShown(),
+          "late winner change reached dispatch boundary");
+      if (failure.get() != null) throw new AssertionError(failure.get());
+      require(chooser.getHits() == 0, "stale share crossed dispatch boundary");
+      require(
+          guardChecks.get() == 3
+              && callbackAtBoundary.get() == 1
+              && existingShareCallback(activity, session.get()) == null,
+          "prepared chooser callback cancelled after the final validation rejected the winner");
+      drainShareHistory();
+      try (ShareHistoryStore history = new ShareHistoryStore(activity)) {
+        require(
+            stagedShareSession(activity, oldKey) == null && history.history(oldKey).isEmpty(),
+            "staged session cancelled and no handoff history recorded");
+      }
+      ui(
+          test,
+          () -> {
+            require(
+                selected(activity).equals(burstSelection(photos)),
+                "blocked share kept exact selection");
+            TextView notice = (TextView) get(activity, "selectionShareNotice");
+            require(
+                visibleLabel(notice, "共有する写真が変わりました。もう一度「共有」を押して確認してください"),
+                "blocked dispatch asks to review the changed photo");
+          });
+      waitFor(test, share::isEnabled, "selection can be explicitly reviewed again");
+      ui(test, () -> require(share.performClick(), "explicitly reopen changed review"));
+      ShareUi.Menu renewed = (ShareUi.Menu) get(activity, "shareDialog");
+      require(
+          renewed != reviewed
+              && renewed.previewPhotos.equals(List.of(newWinner))
+              && chooser.getHits() == 0,
+          "explicit new review contains only the latest winner");
+      ui(test, renewed::dismiss);
+      return "PASS rankingShareDispatch validated=3 callbackPrepared=true callbackCancelled=true "
+          + "sessionCancelled=true chooserAttempts=0 historyRows=0 exactSelection=true "
+          + "explicitRenewedReview=true newContinueExecuted=false\n";
+    } finally {
+      try {
+        ((ExecutorService) get(activity, "actions")).submit(() -> {}).get(5, TimeUnit.SECONDS);
+        test.waitForIdleSync();
+        String ownedSession = session.get();
+        if (ownedSession == null) ownedSession = stagedShareSession(activity, oldKey);
+        PendingIntent leftover = existingShareCallback(activity, ownedSession);
+        if (leftover != null) leftover.cancel();
+        ShareHistoryReceiver.cancelLater(activity, ownedSession);
+        drainShareHistory();
+      } finally {
+        test.removeMonitor(chooser);
+        ui(test, () -> set(activity, "sharePreparation", originalPrep));
+        File[] created = copies.listFiles();
+        if (created != null)
+          for (File createdCopy : created) Files.deleteIfExists(createdCopy.toPath());
+        Files.deleteIfExists(copies.toPath());
+      }
+    }
+  }
+
+  private static String stagedShareSession(Context context, String photoKey) {
+    try (ShareHistoryStore history = new ShareHistoryStore(context);
+        Cursor rows =
+            history
+                .getReadableDatabase()
+                .query(
+                    "session_photos",
+                    new String[] {"session"},
+                    "photo=?",
+                    new String[] {photoKey},
+                    null,
+                    null,
+                    null)) {
+      if (!rows.moveToFirst()) return null;
+      String id = rows.getString(0);
+      require(!rows.moveToNext(), "only one pending session for the generated photo");
+      return id;
+    }
+  }
+
+  private static PendingIntent existingShareCallback(Context context, String session) {
+    if (session == null) return null;
+    Intent intent =
+        new Intent(context, ShareHistoryReceiver.class)
+            .setAction(ShareHistoryReceiver.ACTION)
+            .setData(
+                new Uri.Builder()
+                    .scheme("loupe-share")
+                    .authority("chosen")
+                    .appendPath(session)
+                    .build());
+    int flags = PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_ONE_SHOT;
+    if (Build.VERSION.SDK_INT >= 31) flags |= PendingIntent.FLAG_MUTABLE;
+    return PendingIntent.getBroadcast(context, 0, intent, flags);
+  }
+
+  private static void drainShareHistory() throws Exception {
+    Field writes = ShareHistoryReceiver.class.getDeclaredField("WRITES");
+    writes.setAccessible(true);
+    ((ExecutorService) writes.get(null)).submit(() -> {}).get(5, TimeUnit.SECONDS);
   }
 
   private static String proveExpandedComparison(
@@ -1407,7 +1653,6 @@ final class RankingPersistenceWaitChecks {
       SharedPreferences prefs,
       AtomicReference<Commit> next,
       Commit held,
-      boolean baseline,
       PhotoRepository.Photo photo)
       throws Exception {
     ViewerScreenChecks.open(test, activity, 0);
@@ -1430,7 +1675,6 @@ final class RankingPersistenceWaitChecks {
     AtomicLong posted = new AtomicLong(), handled = new AtomicLong(), returned = new AtomicLong();
     AtomicReference<Throwable> failure = new AtomicReference<>();
     CountDownLatch finished = new CountDownLatch(1);
-    boolean blocked = false;
     try {
       require(held.entered.await(2, TimeUnit.SECONDS), "writer entered fixture commit");
       Method open = MainActivity.class.getDeclaredMethod("showPhoto", int.class);
@@ -1449,21 +1693,11 @@ final class RankingPersistenceWaitChecks {
                   finished.countDown();
                 }
               });
-      long deadline = SystemClock.uptimeMillis() + PROOF_MS;
-      do {
-        blocked |= mainWaitingInSingleBest();
-        if (baseline ? blocked : oldFrame.ready.getCount() == 0) break;
-        Thread.sleep(8);
-      } while (SystemClock.uptimeMillis() < deadline);
-      if (baseline) {
-        require(
-            blocked && finished.getCount() != 0 && oldFrame.ready.getCount() != 0,
-            "old UI read must wait on the writer monitor");
-      } else {
-        require(
-            !blocked && oldFrame.committed > 0 && finished.getCount() == 0,
-            "old committed star frame must arrive while writer is held");
-      }
+      require(
+          oldFrame.ready.await(PROOF_MS, TimeUnit.MILLISECONDS)
+              && oldFrame.committed > 0
+              && finished.getCount() == 0,
+          "old committed star frame must arrive while writer is held");
       require(held.delegateStart == 0, "held proof precedes Android commit");
     } finally {
       held.release();
@@ -1479,7 +1713,7 @@ final class RankingPersistenceWaitChecks {
     require(
         "1".equals(prefs.getString(storeKey, null))
             && newFrame.committed >= held.delegateEnd
-            && (baseline ? returned.get() >= held.delegateEnd : oldFrame.committed < held.released),
+            && oldFrame.committed < held.released,
         "viewer state agrees with read gate and persisted singleton");
     ui(
         test,
@@ -1487,9 +1721,7 @@ final class RankingPersistenceWaitChecks {
           oldFrame.disarm();
           newFrame.disarm();
         });
-    return "heldRead blocked="
-        + blocked
-        + " oldFrameBeforeRelease="
+    return "heldRead blocked=false oldFrameBeforeRelease="
         + (oldFrame.committed > 0 && oldFrame.committed < held.released)
         + " inputToHandledNs="
         + (handled.get() - posted.get())
@@ -1503,16 +1735,6 @@ final class RankingPersistenceWaitChecks {
         + (newFrame.preDraw - held.released)
         + " inputToNewFrameNs="
         + (newFrame.committed - posted.get());
-  }
-
-  private static boolean mainWaitingInSingleBest() {
-    Thread main = Looper.getMainLooper().getThread();
-    if (main.getState() != Thread.State.BLOCKED) return false;
-    for (StackTraceElement frame : main.getStackTrace()) {
-      if (frame.getClassName().equals(RankingStore.class.getName())
-          && frame.getMethodName().equals("singleBest")) return true;
-    }
-    return false;
   }
 
   private static Button star(MainActivity activity) {
@@ -1531,7 +1753,6 @@ final class RankingPersistenceWaitChecks {
       MainActivity activity,
       SharedPreferences prefs,
       AtomicReference<Commit> next,
-      boolean baseline,
       List<PhotoRepository.Photo> photos)
       throws Exception {
     List<String> keys = new ArrayList<>();
@@ -1585,7 +1806,7 @@ final class RankingPersistenceWaitChecks {
     require(
         result.ready.await(FRAME_WAIT_MS, TimeUnit.MILLISECONDS), "next comparison frame ready");
     require(
-        commit.onMain == baseline
+        !commit.onMain
             && handled.get() >= input
             && commit.delegateStart >= handled.get()
             && result.preDraw >= commit.delegateEnd

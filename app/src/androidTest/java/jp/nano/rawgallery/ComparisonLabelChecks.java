@@ -80,6 +80,7 @@ final class ComparisonLabelChecks {
     SharedPreferences prefs = a.getSharedPreferences(namespace, 0);
     List<File> files = new ArrayList<>();
     List<Bitmap> bitmaps = new ArrayList<>();
+    RankingStore cleanupOwner = null;
     try {
       ((ExecutorService) field(a, "scans")).submit(() -> {}).get(10, TimeUnit.SECONDS);
       t.waitForIdleSync();
@@ -99,6 +100,7 @@ final class ComparisonLabelChecks {
                 Uri.fromFile(f), "fixture-" + i + ".jpg", "", f.length(), i, 0));
       }
       RankingStore store = new RankingStore(prefs);
+      cleanupOwner = store;
       store.awaitReady();
       main(
           t,
@@ -333,15 +335,23 @@ final class ComparisonLabelChecks {
           + " fallback. Private ranking store only. TalkBack speech and first-frame latency"
           + " unmeasured.\n";
     } finally {
-      main(
-          t,
-          () -> {
-            a.finish();
-            return true;
-          });
-      a.deleteSharedPreferences(namespace);
-      for (File f : files) f.delete();
-      for (Bitmap b : bitmaps) b.recycle();
+      try {
+        main(
+            t,
+            () -> {
+              a.finish();
+              return true;
+            });
+      } finally {
+        try {
+          RankingPersistenceWaitChecks.drainRankingWriter(cleanupOwner);
+          if (!a.deleteSharedPreferences(namespace))
+            throw new AssertionError("Delete drained isolated rankings");
+        } finally {
+          for (File f : files) f.delete();
+          for (Bitmap b : bitmaps) b.recycle();
+        }
+      }
     }
   }
 }

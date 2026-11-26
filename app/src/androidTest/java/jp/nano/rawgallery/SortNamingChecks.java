@@ -299,6 +299,7 @@ final class SortNamingChecks {
     String namespace = "sort-naming-test-" + UUID.randomUUID();
     SharedPreferences prefs = a.getSharedPreferences(namespace, 0);
     List<File> files = new ArrayList<>();
+    RankingStore cleanupOwner = null;
     try {
       ((ExecutorService) field(a, "scans")).submit(() -> {}).get(10, TimeUnit.SECONDS);
       t.waitForIdleSync();
@@ -307,6 +308,7 @@ final class SortNamingChecks {
       var next =
           new java.util.concurrent.atomic.AtomicReference<RankingPersistenceWaitChecks.Commit>();
       RankingStore store = new RankingStore(RankingPersistenceWaitChecks.observe(prefs, next));
+      cleanupOwner = store;
       store.awaitReady();
       List<PhotoRepository.Photo> photos = new ArrayList<>();
       for (int i = 0; i < 3; i++) {
@@ -633,9 +635,17 @@ final class SortNamingChecks {
           + " button size/font checks; accessibility names/headings. Screenshots"
           + " cache/sort-test-*.png. TalkBack spoken order not tested.\n";
     } finally {
-      main(t, a::finish);
-      a.deleteSharedPreferences(namespace);
-      for (File f : files) f.delete();
+      try {
+        main(t, a::finish);
+      } finally {
+        try {
+          RankingPersistenceWaitChecks.drainRankingWriter(cleanupOwner);
+          if (!a.deleteSharedPreferences(namespace))
+            throw new AssertionError("Delete drained isolated rankings");
+        } finally {
+          for (File f : files) f.delete();
+        }
+      }
     }
   }
 }
