@@ -2,7 +2,9 @@ package jp.nano.rawgallery;
 
 import android.app.Dialog;
 import android.app.Instrumentation;
+import android.view.View;
 import android.widget.Button;
+import android.widget.TextView;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -53,18 +55,56 @@ final class ShareSelectionResultChecks {
                       attempted.set(photo);
                       throw new IOException("Synthetic export stopped");
                     }));
-            choose(a, single);
-            RankingResultChecks.call(a, "updateSelection");
-            menu.continueButton.performClick();
+            continueSharing(menu);
           });
       ShareScreenChecks.worker(t, a);
       TagDetailChecks.ui(
           t,
           () -> {
             TagDetailChecks.require(
-                attempted.get() == best, "opened menu exports its frozen photos");
-            ((Dialog) RankingResultChecks.get(a, "shareDialog")).dismiss();
-            menu(a, List.of(single)).dismiss();
+                attempted.getAndSet(null) == best,
+                "current menu exports its exact reviewed winner");
+            returnToSelection(a);
+
+            ShareUi.Menu obsolete = menu(a, List.of(best));
+            choose(a, single);
+            RankingResultChecks.call(a, "updateSelection");
+            Object previousProgress = RankingResultChecks.get(a, "shareProgress");
+            continueSharing(obsolete);
+            TagDetailChecks.require(
+                dialog(a) == obsolete
+                    && !obsolete.isShowing()
+                    && RankingResultChecks.get(a, "shareProgress") == previousProgress,
+                "obsolete menu closes without opening another review or starting preparation");
+          });
+      ShareScreenChecks.worker(t, a);
+      TagDetailChecks.ui(
+          t,
+          () -> {
+            TagDetailChecks.require(attempted.get() == null, "obsolete menu never starts a writer");
+            TagDetailChecks.require(
+                Set.of(single.uri.toString()).equals(RankingResultChecks.get(a, "selectedPhotos")),
+                "obsolete menu preserves the current selection");
+            TextView notice =
+                ((View) RankingResultChecks.get(a, "root"))
+                    .findViewWithTag("selection-share-notice");
+            TagDetailChecks.require(
+                notice != null
+                    && notice.isShown()
+                    && notice.getText().toString().contains("もう一度「共有」を押して確認してください"),
+                "selection explains how to review the changed share");
+
+            ShareUi.Menu renewed = menu(a, List.of(single));
+            TagDetailChecks.require(!notice.isShown(), "manual review clears the prompt");
+            continueSharing(renewed);
+          });
+      ShareScreenChecks.worker(t, a);
+      TagDetailChecks.ui(
+          t,
+          () -> {
+            TagDetailChecks.require(
+                attempted.get() == single, "renewed menu exports its exact reviewed singleton");
+            returnToSelection(a);
           });
       rankings.save(undecided);
       TagDetailChecks.ui(
@@ -158,6 +198,22 @@ final class ShareSelectionResultChecks {
 
   private static Dialog dialog(MainActivity a) {
     return (Dialog) RankingResultChecks.get(a, "shareDialog");
+  }
+
+  private static void continueSharing(ShareUi.Menu menu) {
+    TagDetailChecks.require(
+        menu.continueButton.isEnabled() && menu.continueButton.performClick(),
+        "continue uses the enabled share menu action");
+  }
+
+  private static void returnToSelection(MainActivity a) {
+    Dialog failure = dialog(a);
+    TagDetailChecks.require(
+        failure instanceof ShareUi.Failure && failure.isShowing(),
+        "synthetic writer failure returns to the selection");
+    Button back = TagDetailChecks.button(failure.getWindow().getDecorView(), "選択に戻る");
+    TagDetailChecks.require(
+        back != null && back.performClick(), "use the return to selection action");
   }
 
   private static ShareUi.Menu menu(MainActivity a, List<PhotoRepository.Photo> expected) {
