@@ -1252,11 +1252,14 @@ final class AmazonRetirementUpgradeChecks {
       AlbumTagEntryChecks.main(
           test,
           () -> {
-            if (dialog.get() != null) {
-              var cancel = AlbumTagEntryChecks.button(dialog.get(), "キャンセル");
-              require(cancel != null && cancel.performClick(), "could not cancel fresh consent");
+            try {
+              if (dialog.get() != null) {
+                Button cancel = freshConsentAction(dialog.get(), android.R.id.button2, "キャンセル");
+                require(cancel != null && cancel.performClick(), "could not cancel fresh consent");
+              }
+            } finally {
+              scroll.scrollTo(0, previousScroll[0]);
             }
-            scroll.scrollTo(0, previousScroll[0]);
             return true;
           });
     }
@@ -1279,15 +1282,19 @@ final class AmazonRetirementUpgradeChecks {
   }
 
   private static boolean freshConsentDialogVisible(View root, String title, String details) {
-    var cancel = AlbumTagEntryChecks.button(root, "キャンセル");
-    var enable = AlbumTagEntryChecks.button(root, "有効にする");
     return root.hasWindowFocus()
         && fullyVisible(SyncControlChecks.find(root, title))
         && fullyVisible(SyncControlChecks.find(root, details))
-        && fullyVisible(cancel)
-        && cancel.isEnabled()
-        && fullyVisible(enable)
-        && enable.isEnabled();
+        && freshConsentAction(root, android.R.id.button2, "キャンセル") != null
+        && freshConsentAction(root, android.R.id.button1, "有効にする") != null;
+  }
+
+  private static Button freshConsentAction(View root, int id, String label) {
+    if (root.findViewById(id) instanceof Button button
+        && fullyVisible(button)
+        && button.isEnabled()
+        && android.text.TextUtils.equals(label, button.getText())) return button;
+    return null;
   }
 
   private static Map<String, String> freshConsentOriginals(Context context) throws Exception {
