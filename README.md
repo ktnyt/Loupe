@@ -16,11 +16,12 @@ LoupeはAndroid 11以降向けの写真・動画ライブラリです。カメ�
 ## 開発資料
 
 - [現行の目的駆動設計](docs/current-design.md)
-- [設計の経緯](docs/design.md)
-- [UIデザイン資料](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/README.md)
 - [issue進捗記録](docs/issue-progress.md)
 
+## 履歴資料
 
+- [初期設計の記録](docs/design.md)
+- [過去のUIデザイン・検証資料の索引](docs/design/README.md)
 - [初期実装と検証の記録](docs/history/initial-implementation.md)
 
 ## ビルド

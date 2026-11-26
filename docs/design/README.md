@@ -1,20 +1,23 @@
 # Loupe UIデザイン資料の索引
 
-この作業コピーでは、デザイン案・capture・検証資料は履歴資産としてGit履歴に保持しています。現行の視覚・操作契約は[Material 3 UI契約](../material3-ui.md)、動作は各issueと現行契約を参照してください。以下の旧資料はコミット `b7b917850eb45aa85dfe4352151071a89c61cc75` 時点の記録です。
+現行UIの見た目と操作は[Material 3 UI契約](../material3-ui.md)を参照してください。アプリの動作は[現行設計](../current-design.md)と各機能の契約に記載しています。
 
-履歴資産を復元する場合は、空の新規フォルダで次を実行します。
+以下の設計案、画面画像、検証結果は、コミット `b7b917850eb45aa85dfe4352151071a89c61cc75` 時点の記録です。 [当時の索引](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/README.md)
+
+## 当時の資料を取り出す
+
+次のコマンドで、当時の `docs/design` 配下の381ファイル（合計92,042,584バイト）を空の一時ディレクトリに展開します。`tar.umask` を明示し、通常ファイルをGitに記録された `0644` で展開します。
 
 ```sh
-git archive b7b917850eb45aa85dfe4352151071a89c61cc75 docs/design | tar -x -C <新規フォルダ>
+design_commit=b7b917850eb45aa85dfe4352151071a89c61cc75
+design_dir=$(mktemp -d)
+git -c tar.umask=0022 archive "$design_commit" docs/design | tar -xp -C "$design_dir"
+printf '%s\n' "$design_dir"
 ```
 
-アーカイブのローカル保存先は `outputs/local-archive/health244-design-b7b9178.tar.gz`、ファイル別SHA-256・mode・sizeのmanifestは `outputs/local-archive/health244-design-b7b9178.manifest.json` です。
+## 当時の索引から
 
----
-
-# Loupe UIデザイン案
-
-> このディレクトリは過去のHTMLプロトタイプ、設計メモ、captureの履歴です。これらは現行UIの視覚的権威ではありません。現在のUI方針は[Material 3 UI契約](../material3-ui.md)、動作は各issueおよび現行契約を参照してください。過去の検証記録は当時の結果として保持します。
+本文の「現行」「完成」は各資料を記録した時点を指します。
 
 ## Material 3移行の実機記録（Issue #92）
 

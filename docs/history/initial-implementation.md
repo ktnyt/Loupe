@@ -1,6 +1,8 @@
 # 初期実装と検証の記録
 
-この文書はREADMEから移した初期実装・過去版・当時の実測記録です。記載内容は各記録時点のもので、現行の動作仕様ではありません。
+初期実装、過去版の操作手順、当時の実測結果をまとめた記録です。 [移動前のREADME](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/README.md)
+
+現行の機能と開発手順は[README](../../README.md)を参照してください。
 
 ## 初期実装と検証の記録
 
@@ -98,6 +100,8 @@ Amazonのログイン情報はこのアプリのWebViewで扱い、ログや成�
 接続先の参考資料は `../cloud-research.md` に記載しています。
 
 ## 追加の検証
+
+当時の検証には[接続先の検査](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/tests/cloud-policy.sh)と[保持期間の検査](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/tests/sync-policy.sh)を使いました。現行版の検査は[開発手順](../development-workflow.md#ciで実行する回帰テスト)を参照してください。
 
 ```sh
 ./tests/cloud-policy.sh
@@ -258,4 +262,3 @@ ANDROID_HOME=/path/to/android-sdk sh tests/preparation-storage.sh
 表示と新しい写真の解析は現在のアルバム・カメラ範囲を対象とし、学習は全アルバムの当該タグの判断と互換な特徴を使います。写真の送信やオリジナル・EXIFの変更はしません。RAW・JPEG・別保存先のコピーは別写真です。旧方式の自動結果は、新しい学習結果ができるまで保持し、スコアを推測で付けません。
 
 契約は[タグConfidence](../tag-confidence-contract.md)、[タグUI](../tag-ui-contract.md)、[保存と互換性](../automatic-tag-contract.md)を参照してください。`sh tests/tag-confidence.sh`、instrumentation mode `confidence-store` / `tag-confidence` が学習・保存・新UIを検証します。鳥種の識別精度、部分画像、確率校正、大量ライブラリでの負荷は親issue #1の評価範囲です。
-
