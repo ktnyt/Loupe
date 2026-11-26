@@ -1,21 +1,33 @@
 package jp.nano.rawgallery;
 
+import android.app.Activity;
 import android.app.Instrumentation;
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.hardware.usb.UsbManager;
 import android.net.Uri;
 import android.os.Build;
+import android.os.SystemClock;
 import android.provider.DocumentsContract;
+import android.provider.Settings;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.inspector.WindowInspector;
 import android.widget.Button;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import jp.nano.rawgallery.camera.ImportProgress;
 import jp.nano.rawgallery.camera.MountedCameraCard;
@@ -126,49 +138,187 @@ final class CameraSdUsbReprobeChecks {
     var constructor = type.getDeclaredConstructor(android.app.Activity.class);
     constructor.setAccessible(true);
     var dialogs = constructor.newInstance(activity);
+    test.runOnMainSync(
+        () -> {
+          try {
+            checkSettingsRecipients(type, constructor);
+          } catch (ReflectiveOperationException failure) {
+            throw new AssertionError(failure);
+          }
+        });
     var cancelCount = new AtomicInteger();
     var positiveCount = new AtomicInteger();
     for (String name : List.of("prepare", "confirm")) {
       boolean preparing = name.equals("prepare");
       var show = type.getDeclaredMethod(name, Runnable.class, Runnable.class);
       show.setAccessible(true);
-      test.runOnMainSync(
-          () -> {
-            try {
-              show.invoke(
-                  dialogs,
-                  (Runnable) positiveCount::incrementAndGet,
-                  (Runnable) cancelCount::incrementAndGet);
-            } catch (ReflectiveOperationException failure) {
-              throw new AssertionError(failure);
-            }
-          });
+      showFakeDialog(test, show, dialogs, positiveCount, cancelCount);
       capture(test, directory, width, font, "dialog-" + name);
       var automation = test.getUiAutomation();
       var root = automation.getRootInActiveWindow();
       require(root != null, "Dialog has an accessibility window " + name);
-      var positiveLabel = preparing ? "ストレージ設定を開く" : "取り出し済み";
+      var positiveLabel = preparing ? "設定を開く" : "取り出し済み";
       var safetyText = preparing ? "各カードにパーティションが1つ" : "フォーマットやマウントが進行中";
       require(
           !root.findAccessibilityNodeInfosByText(safetyText).isEmpty(),
           "Safety instructions are exposed to accessibility " + name);
+      if (preparing) {
+        require(
+            !root.findAccessibilityNodeInfosByText("カードをすべて取り出してください").isEmpty()
+                && !root.findAccessibilityNodeInfosByText("フォーマットは選ばないでください").isEmpty(),
+            "Show all-cards and no-format instructions before opening Settings");
+      }
       dialogButton(root, positiveLabel);
       dialogButton(root, "キャンセル");
-      var scroll = scrollable(root);
-      if (scroll != null && scroll.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
+      var needsScroll = new AtomicBoolean();
+      test.runOnMainSync(
+          () -> needsScroll.set(checkDialogBounds(activity, positiveLabel).canScrollVertically(1)));
+      if (needsScroll.get()) {
+        int previousY = 0;
+        for (int page = 0; page < 5 && needsScroll.get(); page++) {
+          var scroll = scrollable(root);
+          require(
+              scroll != null && scroll.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD),
+              "Overflowing dialog instructions can scroll through accessibility");
+          int beforeScroll = previousY;
+          var position = new AtomicInteger();
+          long deadline = SystemClock.uptimeMillis() + 1500;
+          do {
+            SystemClock.sleep(80);
+            test.runOnMainSync(
+                () -> {
+                  var body = checkDialogBounds(activity, positiveLabel);
+                  position.set(body.getScrollY());
+                  needsScroll.set(body.canScrollVertically(1));
+                });
+          } while (position.get() == beforeScroll && SystemClock.uptimeMillis() < deadline);
+          require(
+              position.get() > beforeScroll,
+              "The instruction body scrolled while actions stayed fully visible");
+          previousY = position.get();
+          root = automation.getRootInActiveWindow();
+          require(root != null, "Scrolled dialog retains its window " + name);
+        }
+        require(!needsScroll.get(), "Entire dialog instructions are reachable " + name);
         capture(test, directory, width, font, "dialog-" + name + "-scrolled");
-        root = automation.getRootInActiveWindow();
-        require(root != null, "Scrolled dialog retains its window " + name);
-        dialogButton(root, positiveLabel);
       }
+      tapDialogButton(test, dialogButton(root, "キャンセル"));
+      require(cancelCount.get() == (preparing ? 1 : 2), "The visible cancel action works " + name);
+      showFakeDialog(test, show, dialogs, positiveCount, cancelCount);
+      root = automation.getRootInActiveWindow();
+      require(root != null, "Reopened dialog retains its window " + name);
+      tapDialogButton(test, dialogButton(root, positiveLabel));
       require(
-          dialogButton(root, "キャンセル").performAction(AccessibilityNodeInfo.ACTION_CLICK),
-          "Cancel closes the dialog without invoking its action " + name);
-      test.waitForIdleSync();
+          positiveCount.get() == (preparing ? 1 : 2), "The visible positive action works " + name);
     }
-    require(
-        cancelCount.get() == 2 && positiveCount.get() == 0,
-        "The actual dialogs were canceled without opening Settings or re-detecting");
+  }
+
+  private static void showFakeDialog(
+      Instrumentation test,
+      Method show,
+      Object dialogs,
+      AtomicInteger positive,
+      AtomicInteger cancel) {
+    test.runOnMainSync(
+        () -> {
+          try {
+            show.invoke(
+                dialogs, (Runnable) positive::incrementAndGet, (Runnable) cancel::incrementAndGet);
+          } catch (ReflectiveOperationException failure) {
+            throw new AssertionError(failure);
+          }
+        });
+    test.waitForIdleSync();
+  }
+
+  private static void tapDialogButton(Instrumentation test, AccessibilityNodeInfo button) {
+    var bounds = new Rect();
+    button.getBoundsInScreen(bounds);
+    long start = SystemClock.uptimeMillis();
+    for (int action : new int[] {MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP}) {
+      var event =
+          MotionEvent.obtain(
+              start,
+              SystemClock.uptimeMillis(),
+              action,
+              bounds.exactCenterX(),
+              bounds.exactCenterY(),
+              0);
+      try {
+        test.sendPointerSync(event);
+      } finally {
+        event.recycle();
+      }
+    }
+    test.waitForIdleSync();
+  }
+
+  private static ScrollView checkDialogBounds(Activity activity, String positiveLabel) {
+    for (var window : WindowInspector.getGlobalWindowViews()) {
+      ScrollView body = window.findViewWithTag("sd-reprobe-dialog-body");
+      if (body == null || !body.isShown()) continue;
+      var positive = (Button) window.findViewById(android.R.id.button1);
+      var negative = (Button) window.findViewById(android.R.id.button2);
+      require(positiveLabel.contentEquals(positive.getText()), "Actual positive button");
+      require("キャンセル".contentEquals(negative.getText()), "Actual cancel button");
+      var visibleBody = new Rect();
+      require(body.getGlobalVisibleRect(visibleBody), "Visible instructions");
+      for (Button button : List.of(positive, negative)) {
+        var visible = new Rect();
+        var local = new Rect();
+        require(
+            button.getLocalVisibleRect(local)
+                && local.equals(new Rect(0, 0, button.getWidth(), button.getHeight()))
+                && button.getHeight() >= GalleryUi.dp(activity, 48)
+                && button.getGlobalVisibleRect(visible)
+                && !Rect.intersects(visibleBody, visible),
+            "Full 48dp action visible outside the scroll body: " + button.getText() + " " + local);
+      }
+      return body;
+    }
+    throw new AssertionError("Expected a visible re-detection dialog");
+  }
+
+  private static void checkSettingsRecipients(Class<?> type, Constructor<?> ctor)
+      throws ReflectiveOperationException {
+    var open = type.getDeclaredMethod("openSettings");
+    open.setAccessible(true);
+    for (int unavailableCount = 0; unavailableCount <= 2; unavailableCount++) {
+      var activity = new SettingsLauncher(unavailableCount);
+      boolean exhausted = false;
+      try {
+        open.invoke(ctor.newInstance(activity));
+      } catch (InvocationTargetException failed) {
+        if (!(failed.getCause() instanceof ActivityNotFoundException)) throw failed;
+        exhausted = true;
+      }
+      require(exhausted == (unavailableCount == 2), "Propagate unavailable pinned routes");
+      var actions =
+          unavailableCount == 0
+              ? List.of(Settings.ACTION_MEMORY_CARD_SETTINGS)
+              : List.of(
+                  Settings.ACTION_MEMORY_CARD_SETTINGS, Settings.ACTION_INTERNAL_STORAGE_SETTINGS);
+      require(
+          actions.equals(activity.attempts.stream().map(Intent::getAction).toList())
+              && activity.attempts.stream()
+                  .allMatch(intent -> "com.android.settings".equals(intent.getPackage())),
+          "Both Settings actions can reach only the Android Settings package");
+    }
+  }
+
+  private static final class SettingsLauncher extends Activity {
+    final List<Intent> attempts = new ArrayList<>();
+    final int unavailableCount;
+
+    SettingsLauncher(int unavailableCount) {
+      this.unavailableCount = unavailableCount;
+    }
+
+    @Override
+    public void startActivity(Intent intent) {
+      attempts.add(intent);
+      if (attempts.size() <= unavailableCount) throw new ActivityNotFoundException();
+    }
   }
 
   private static AccessibilityNodeInfo dialogButton(AccessibilityNodeInfo root, String label) {

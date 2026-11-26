@@ -19,6 +19,9 @@ import android.os.UserManager;
 import android.os.storage.StorageManager;
 import android.os.storage.StorageVolume;
 import android.provider.Settings;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import com.google.android.material.color.MaterialColors;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import java.io.Closeable;
 import java.io.IOException;
@@ -561,37 +564,87 @@ public final class SdUsbReprobeController {
   }
 
   private record AndroidDialogs(Activity activity) implements Dialogs {
+    private static final String ANDROID_SETTINGS = "com.android.settings";
+
     @Override
     public void prepare(Runnable open, Runnable cancel) {
-      new MaterialAlertDialogBuilder(activity)
-          .setTitle("Androidでカードを取り出す")
-          .setMessage(
-              "設定 → デバイス情報 → ストレージを開き、下にある「USBドライブ」欄の「USBデバイスのマウントを解除」を選びます。リーダーはつないだまま、取り出しが完了したらLoupeに戻ってください。"
-                  + "\n\n両方のカードがポータブルストレージで、各カードにパーティションが1つの場合に使えます。構成が分からない場合は、安全に取り出してからリーダーを挿し直してください。")
-          .setNegativeButton("キャンセル", (dialog, which) -> cancel.run())
-          .setOnCancelListener(dialog -> cancel.run())
-          .setPositiveButton("ストレージ設定を開く", (dialog, which) -> open.run())
-          .show();
+      show(
+          "Androidでカードを取り出す",
+          "「デバイス情報」→「ストレージ」を開き、下にある「USBドライブ」欄の"
+              + "「USBデバイスのマウントを解除」で、表示されるカードをすべて取り出してください。"
+              + "フォーマットは選ばないでください。リーダーはつないだままLoupeに戻ります。"
+              + "\n\n両方のカードがポータブルストレージで、各カードにパーティションが1つの場合に使えます。"
+              + "構成が分からない場合は、安全に取り出してリーダーを挿し直してください。",
+          "設定を開く",
+          open,
+          cancel);
     }
 
     @Override
     public void confirm(Runnable confirm, Runnable cancel) {
-      new MaterialAlertDialogBuilder(activity)
-          .setTitle("カードの取り出しを確認")
-          .setMessage(
-              "Androidが表示中のすべてのカードを安全に取り外せると案内したことを確認してください。リーダーはつないだままにし、フォーマットやマウントが進行中ならキャンセルしてください。")
-          .setNegativeButton("キャンセル", (dialog, which) -> cancel.run())
-          .setOnCancelListener(dialog -> cancel.run())
-          .setPositiveButton("取り出し済み", (dialog, which) -> confirm.run())
-          .show();
+      show(
+          "カードの取り出しを確認",
+          "Androidが表示中のすべてのカードを安全に取り外せると案内したことを確認してください。"
+              + "リーダーはつないだままにし、フォーマットやマウントが進行中ならキャンセルしてください。",
+          "取り出し済み",
+          confirm,
+          cancel);
+    }
+
+    private void show(
+        String title, String message, String actionLabel, Runnable action, Runnable cancel) {
+      var builder = new MaterialAlertDialogBuilder(activity);
+      Context context = builder.getContext();
+      float density = context.getResources().getDisplayMetrics().density;
+      int windowHeight = context.getResources().getConfiguration().screenHeightDp;
+      int maxBodyHeight = Math.round(Math.min(245f, windowHeight / 2f) * density);
+      var scroll =
+          new ScrollView(context) {
+            @Override
+            protected void onMeasure(int width, int height) {
+              int limit =
+                  MeasureSpec.getMode(height) == MeasureSpec.UNSPECIFIED
+                      ? maxBodyHeight
+                      : Math.min(MeasureSpec.getSize(height), maxBodyHeight);
+              super.onMeasure(width, MeasureSpec.makeMeasureSpec(limit, MeasureSpec.AT_MOST));
+            }
+          };
+      scroll.setTag("sd-reprobe-dialog-body");
+      scroll.setScrollbarFadingEnabled(false);
+      var text = new TextView(context);
+      text.setTextAppearance(
+          com.google.android.material.R.style.TextAppearance_Material3_BodyLarge);
+      text.setTextColor(
+          MaterialColors.getColor(text, com.google.android.material.R.attr.colorOnSurfaceVariant));
+      int side = Math.round(24 * density);
+      text.setPadding(side, Math.round(8 * density), side, Math.round(12 * density));
+      text.setText(message);
+      scroll.addView(text);
+      var dialog =
+          builder
+              .setTitle(title)
+              .setView(scroll)
+              .setNegativeButton("キャンセル", (ignored, which) -> cancel.run())
+              .setOnCancelListener(ignored -> cancel.run())
+              .setPositiveButton(actionLabel, (ignored, which) -> action.run())
+              .show();
+      int minimumTouchHeight = Math.round(48 * density);
+      dialog
+          .getButton(android.content.DialogInterface.BUTTON_NEGATIVE)
+          .setMinHeight(minimumTouchHeight);
+      dialog
+          .getButton(android.content.DialogInterface.BUTTON_POSITIVE)
+          .setMinHeight(minimumTouchHeight);
     }
 
     @Override
     public void openSettings() {
       try {
-        activity.startActivity(new Intent(Settings.ACTION_MEMORY_CARD_SETTINGS));
+        activity.startActivity(
+            new Intent(Settings.ACTION_MEMORY_CARD_SETTINGS).setPackage(ANDROID_SETTINGS));
       } catch (ActivityNotFoundException unavailable) {
-        activity.startActivity(new Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS));
+        activity.startActivity(
+            new Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS).setPackage(ANDROID_SETTINGS));
       }
     }
   }

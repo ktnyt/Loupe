@@ -2,6 +2,7 @@ package jp.nano.rawgallery.camera;
 
 import android.app.Activity;
 import android.app.Instrumentation;
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.net.Uri;
 import android.provider.DocumentsContract;
@@ -40,6 +41,16 @@ public final class SdUsbReprobeFlowChecks {
                     && flow.platform.claims == 0
                     && flow.last.message().contains("処理中"),
                 "An admitted but queued transfer blocks opening Settings");
+          }
+          try (var flow = new Flow(activity)) {
+            flow.settingsUnavailable = true;
+            flow.arm();
+            require(
+                !flow.controller.preparing()
+                    && !CameraImportGate.isPreparationReserved()
+                    && flow.platform.claims == 0
+                    && flow.last.message().contains("リーダーを挿し直してください"),
+                "Unavailable Settings releases preparation and shows manual reconnection");
           }
           try (var flow = new Flow(activity)) {
             flow.arm();
@@ -292,6 +303,7 @@ public final class SdUsbReprobeFlowChecks {
     final ArrayDeque<Runnable> tasks = new ArrayDeque<>();
     final SdUsbReprobeController controller;
     long now;
+    boolean settingsUnavailable;
     Runnable open, confirm;
     SdUsbReprobeController.Display last;
 
@@ -321,6 +333,7 @@ public final class SdUsbReprobeFlowChecks {
     @Override
     public void openSettings() {
       assertReserved();
+      if (settingsUnavailable) throw new ActivityNotFoundException();
       controller.stop();
     }
 
