@@ -19,6 +19,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
@@ -29,6 +30,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import jp.nano.rawgallery.camera.ImportLog;
 import jp.nano.rawgallery.camera.MountedCameraCard;
 import jp.nano.rawgallery.camera.SdSourceRegistrations;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 /**
@@ -50,14 +52,18 @@ final class DiagnosticFailureChecks {
           DiagnosticLog.startRecording(context), "start diagnostic recording in the test process");
       DiagnosticLog.event("fixture.diagnostics_begin", 0, "fixture", fixture);
       crashAndPrivacy(context, fixture);
+      crashBounds(context);
+      partialCrashSummaries(context);
+      unsupportedPrimaryCrash(context);
       simultaneousCrashes(context);
       credentialConcurrency(context);
       sourceConcurrency(test);
       recording.drain();
       checkPrivacy(context, fixture);
     }
-    return "PASS crash summary, simultaneous delegation and storage error, log privacy, generated image without a path, "
-        + "Nano Banana preferences and credential messages, SD registration and SD/Wi-Fi source rejection and retry";
+    return "PASS bounded crash summary, simultaneous delegation and storage error, log privacy,"
+        + " generated image without a path, Nano Banana preferences and credential messages,"
+        + " SD registration and SD/Wi-Fi source rejection and retry";
   }
 
   private static final class FixtureRecording implements AutoCloseable {
@@ -111,11 +117,16 @@ final class DiagnosticFailureChecks {
     require(unavailable.createNewFile(), "storage error fixture");
     Throwable cause = new IOException("private cause " + SENTINEL);
     Throwable failure = new IllegalStateException("private failure " + SENTINEL, cause);
-    failure.setStackTrace(
-        new StackTraceElement[] {
-          new StackTraceElement("Fixture", "check", SENTINEL, 42),
-          new StackTraceElement("Other", "discarded", "Other.java", 15)
-        });
+    cause.initCause(failure);
+    StackTraceElement[] stack = new StackTraceElement[20];
+    Arrays.fill(
+        stack, new StackTraceElement("java.lang.String", "length", "private-photo.jpg", 15));
+    stack[0] = new StackTraceElement("android.app.Activity", "onCreate", SENTINEL, 42);
+    stack[12] = new StackTraceElement(DiagnosticCrashHandler.class.getName(), "save", SENTINEL, 17);
+    stack[16] =
+        new StackTraceElement(
+            DiagnosticCrashHandler.class.getName(), "uncaughtException", SENTINEL, 23);
+    failure.setStackTrace(stack);
     Thread thread = Thread.currentThread();
     AtomicInteger delegates = new AtomicInteger();
     Thread.UncaughtExceptionHandler previous =
@@ -130,21 +141,36 @@ final class DiagnosticFailureChecks {
       String content = read(file);
       JSONObject note = new JSONObject(content);
       JSONObject frame = note.getJSONObject("frame");
+      var frames = note.getJSONArray("frames");
+      JSONObject appFrame = note.getJSONObject("app_frame");
+      var causes = note.getJSONArray("causes");
       require(
-          note.length() == 3
+          note.length() == 6
               && note.getInt("version_code") == 777
               && note.getString("exception").equals(IllegalStateException.class.getName()),
           "summary metadata");
       require(
           frame.length() == 3
-              && frame.getString("class").equals("Fixture")
-              && frame.getString("method").equals("check")
-              && frame.getInt("line") == 42,
-          "top frame only");
+              && frame.getString("class").equals("android.app.Activity")
+              && frame.getString("method").equals("onCreate")
+              && frame.getInt("line") == 42
+              && frames.length() == 8
+              && frames.getJSONObject(0).toString().equals(frame.toString())
+              && frames.getJSONObject(7).getString("class").equals("java.lang.String"),
+          "legacy frame and eight top frames in order");
       require(
-          content.length() < 1024
-              && !content.contains(SENTINEL)
-              && !content.contains("discarded")
+          appFrame.length() == 3
+              && appFrame.getString("class").equals(DiagnosticCrashHandler.class.getName())
+              && appFrame.getString("method").equals("save")
+              && appFrame.getInt("line") == 17,
+          "first app frame beyond the top eight frames");
+      require(
+          causes.length() == 1 && causes.getString(0).equals(IOException.class.getName()),
+          "cause traversal stops at identity cycle");
+      require(
+          !content.contains(SENTINEL)
+              && !content.contains("private-photo.jpg")
+              && !content.contains("private cause")
               && !content.contains("private failure"),
           "no private crash detail");
     } finally {
@@ -156,6 +182,192 @@ final class DiagnosticFailureChecks {
     DiagnosticLog.exception("fixture.diagnostics", "failed", failure);
     ImportLog.INSTANCE.init(context);
     ImportLog.INSTANCE.w("ImportLogFixture", "fixture.import " + fixture, failure);
+  }
+
+  private static void crashBounds(Context context) throws Exception {
+    File directory =
+        Files.createTempDirectory(context.getCacheDir().toPath(), "bounded-crash").toFile();
+    File file = new File(directory, "last-crash.json");
+    Throwable cause = new Error("past cause limit");
+    for (int index = 0; index < 16; index++) {
+      cause = new IllegalArgumentException("private cause", cause);
+    }
+    Throwable failure = new IllegalStateException("private failure", cause);
+    StackTraceElement[] stack =
+        new StackTraceElement[DiagnosticCrashHandler.MAX_SCANNED_FRAMES + 1];
+    Arrays.fill(stack, new StackTraceElement("android.app.Activity", "onCreate", null, 42));
+    stack[stack.length - 1] =
+        new StackTraceElement(DiagnosticCrashHandler.class.getName(), "save", null, 60);
+    failure.setStackTrace(stack);
+    try {
+      new DiagnosticCrashHandler(directory, 777, null)
+          .uncaughtException(Thread.currentThread(), failure);
+      JSONObject note = new JSONObject(read(file));
+      var causes = note.getJSONArray("causes");
+      require(
+          note.getJSONArray("frames").length() == 8 && !note.has("app_frame"),
+          "stack traversal stops before the frame past the scan limit");
+      require(
+          causes.length() == 8
+              && causes.getString(7).equals(IllegalArgumentException.class.getName()),
+          "cause traversal stops after eight entries");
+    } finally {
+      Files.deleteIfExists(file.toPath());
+      Files.deleteIfExists(directory.toPath());
+    }
+  }
+
+  private static void partialCrashSummaries(Context context) throws Exception {
+    StackTraceElement first = new StackTraceElement("android.app.Activity", "onCreate", null, 42);
+    StackTraceElement appFrame =
+        new StackTraceElement(DiagnosticCrashHandler.class.getName(), "save", SENTINEL, 17);
+    Throwable missingFrame =
+        new IllegalStateException(SENTINEL) {
+          @Override
+          public StackTraceElement[] getStackTrace() {
+            return new StackTraceElement[] {first, null, appFrame};
+          }
+        };
+    JSONObject partialStack = checkPartialCrash(context, missingFrame);
+    require(
+        partialStack.getJSONObject("frame").getInt("line") == 42
+            && partialStack.getJSONArray("frames").length() == 2
+            && partialStack.getJSONArray("frames").getJSONObject(1).getInt("line") == 17
+            && partialStack.getJSONObject("app_frame").getInt("line") == 17,
+        "skip the null stack slot and keep later frames");
+
+    Throwable cause = new IOException(SENTINEL);
+    checkUnavailableStack(
+        context,
+        new IllegalStateException(SENTINEL, cause) {
+          @Override
+          public StackTraceElement[] getStackTrace() {
+            return null;
+          }
+        });
+    checkUnavailableStack(
+        context,
+        new IllegalStateException(SENTINEL, cause) {
+          @Override
+          public StackTraceElement[] getStackTrace() {
+            throw new IllegalStateException(SENTINEL);
+          }
+        });
+    checkUnavailableStack(
+        context,
+        new IllegalStateException(SENTINEL, cause) {
+          @Override
+          public StackTraceElement[] getStackTrace() {
+            throw new AssertionError(SENTINEL);
+          }
+        });
+
+    checkBrokenCause(
+        context,
+        first,
+        appFrame,
+        new IOException(SENTINEL) {
+          @Override
+          public Throwable getCause() {
+            throw new IllegalStateException(SENTINEL);
+          }
+        });
+    checkBrokenCause(
+        context,
+        first,
+        appFrame,
+        new IOException(SENTINEL) {
+          @Override
+          public Throwable getCause() {
+            throw new AssertionError(SENTINEL);
+          }
+        });
+  }
+
+  private static void checkUnavailableStack(Context context, Throwable failure) throws Exception {
+    JSONObject summary = checkPartialCrash(context, failure);
+    var causes = summary.getJSONArray("causes");
+    require(
+        !summary.has("frame")
+            && !summary.has("app_frame")
+            && summary.getJSONArray("frames").length() == 0
+            && causes.length() == 1
+            && causes.getString(0).equals(IOException.class.getName()),
+        "unavailable stack leaves metadata and the readable cause");
+  }
+
+  private static void checkBrokenCause(
+      Context context, StackTraceElement first, StackTraceElement appFrame, Throwable brokenCause)
+      throws Exception {
+    Throwable missingCause = new IllegalArgumentException(SENTINEL, brokenCause);
+    missingCause.setStackTrace(new StackTraceElement[] {first, appFrame});
+    JSONObject partialCause = checkPartialCrash(context, missingCause);
+    require(
+        partialCause.getJSONObject("frame").getInt("line") == 42
+            && partialCause.getJSONArray("frames").length() == 2
+            && partialCause.getJSONObject("app_frame").getInt("line") == 17
+            && partialCause.getJSONArray("causes").length() == 1
+            && partialCause
+                .getJSONArray("causes")
+                .getString(0)
+                .equals(brokenCause.getClass().getName()),
+        "stop at a failing cause accessor and keep collected details");
+  }
+
+  private static JSONObject checkPartialCrash(Context context, Throwable failure) throws Exception {
+    // Instrumentation-only exception classes depend on the target process's class loader.
+    String verified = DiagnosticExport.knownPrimaryException(failure.getClass().getName());
+    return checkPartialCrash(context, failure, verified == null ? "unknown" : verified);
+  }
+
+  private static void unsupportedPrimaryCrash(Context context) throws Exception {
+    JSONException failure = new JSONException(SENTINEL);
+    failure.initCause(new IOException(SENTINEL));
+    failure.setStackTrace(
+        new StackTraceElement[] {
+          new StackTraceElement(DiagnosticCrashHandler.class.getName(), "save", SENTINEL, -2)
+        });
+    JSONObject summary = checkPartialCrash(context, failure, "unknown");
+    require(
+        summary.getJSONObject("frame").getInt("line") == -2
+            && summary.getJSONArray("frames").length() == 1
+            && summary.getJSONObject("app_frame").getString("method").equals("save")
+            && summary.getJSONArray("causes").length() == 1
+            && summary.getJSONArray("causes").getString(0).equals(IOException.class.getName())
+            && !summary.toString().contains(JSONException.class.getName()),
+        "unsupported primary class preserves the safe local crash details");
+  }
+
+  private static JSONObject checkPartialCrash(
+      Context context, Throwable failure, String expectedException) throws Exception {
+    File directory =
+        Files.createTempDirectory(context.getCacheDir().toPath(), "partial-crash").toFile();
+    File file = new File(directory, "last-crash.json");
+    Thread thread = Thread.currentThread();
+    AtomicInteger delegates = new AtomicInteger();
+    try {
+      new DiagnosticCrashHandler(
+              directory,
+              777,
+              (originalThread, error) -> {
+                require(
+                    originalThread == thread && error == failure, "original crash is delegated");
+                delegates.incrementAndGet();
+              })
+          .uncaughtException(thread, failure);
+      require(delegates.get() == 1, "delegate once after partial collection");
+      String content = read(file);
+      JSONObject note = new JSONObject(content);
+      require(
+          note.getInt("version_code") == 777
+              && note.getString("exception").equals(expectedException)
+              && !content.contains(SENTINEL),
+          "partial crash retains version and exception without private details");
+      return note;
+    } finally {
+      Files.deleteIfExists(file.toPath());
+      Files.deleteIfExists(directory.toPath());
+    }
   }
 
   private static void simultaneousCrashes(Context context) throws Exception {
@@ -173,7 +385,9 @@ final class DiagnosticFailureChecks {
           public StackTraceElement[] getStackTrace() {
             saving.countDown();
             waitForLatch(allowWrite);
-            return new StackTraceElement[] {new StackTraceElement("First", "crash", null, 4)};
+            return new StackTraceElement[] {
+              new StackTraceElement("android.app.Activity", "onCreate", null, 4)
+            };
           }
         };
     Throwable secondFailure = new IllegalArgumentException();
@@ -217,7 +431,10 @@ final class DiagnosticFailureChecks {
       require(secondDelegated.await(3, TimeUnit.SECONDS), "delegation does not hold save lock");
       require(delegatedWithSummary.get() == 2, "both delegates observe the saved summary");
       require(
-          new JSONObject(read(summary)).getJSONObject("frame").getString("class").equals("First"),
+          new JSONObject(read(summary))
+              .getJSONObject("frame")
+              .getString("class")
+              .equals("android.app.Activity"),
           "second crash does not overwrite first summary");
     } finally {
       allowWrite.countDown();
