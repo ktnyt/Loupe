@@ -24,12 +24,15 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.function.Supplier;
 import jp.nano.rawgallery.camera.CameraImportGate;
+import jp.nano.rawgallery.camera.CameraOperationTask;
 
 /** Shows the selected volume, then separately asks before moving existing files. */
 public final class PhotoStorageActivity extends AppCompatActivity {
   private record VolumeChoice(String volume, String label) {}
+
   private record StorageOptions(String volume, String label, List<VolumeChoice> choices) {
     boolean writable(String name) {
       return choices.stream().anyMatch(choice -> choice.volume().equals(name));
@@ -41,7 +44,12 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     volatile boolean cancelled;
     volatile PhotoMove.PreflightProgress progress;
     boolean showCancellation;
+    private final CameraImportGate.Admission admission;
     private Thread worker;
+
+    PlanRequest(CameraImportGate.Admission admission) {
+      this.admission = admission;
+    }
 
     synchronized boolean begin() {
       if (cancelled) return false;
@@ -53,17 +61,25 @@ public final class PhotoStorageActivity extends AppCompatActivity {
       this.showCancellation = showCancellation;
       cancelled = true;
       if (worker != null) worker.interrupt();
+      else admission.close();
     }
 
-    synchronized void finish() { worker = null; }
+    synchronized void finish() {
+      worker = null;
+      admission.close();
+    }
   }
 
   private final Handler handler = new Handler(Looper.getMainLooper());
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
   private final Runnable refresh = this::render;
-  private final StorageManager.StorageVolumeCallback volumeChanges = new StorageManager.StorageVolumeCallback() {
-    @Override public void onStateChanged(StorageVolume volume) { if (visible) loadOverview(); }
-  };
+  private final StorageManager.StorageVolumeCallback volumeChanges =
+      new StorageManager.StorageVolumeCallback() {
+        @Override
+        public void onStateChanged(StorageVolume volume) {
+          if (visible) loadOverview();
+        }
+      };
   private LinearLayout content;
   private TextView destination, storageSummary, status, preflightStats, preflightNote;
   private MaterialButton choose, inventory, move, stop, abandon;
@@ -77,17 +93,23 @@ public final class PhotoStorageActivity extends AppCompatActivity {
   private PhotoMoveService.State lastState;
   private String screenMessage;
 
-  @Override public void onCreate(Bundle state) {
+  @Override
+  public void onCreate(Bundle state) {
     super.onCreate(state);
     LinearLayout root = new LinearLayout(this);
     root.setOrientation(LinearLayout.VERTICAL);
-    root.setOnApplyWindowInsetsListener((view, insets) -> {
-      var bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
-      view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
-      return insets;
-    });
-    root.addView(LibraryUi.toolbar(this, "写真・動画の保存先",
-        LibraryUi.icon(this, R.drawable.ic_close, "写真・動画の保存先を閉じる", this::finish)));
+    root.setOnApplyWindowInsetsListener(
+        (view, insets) -> {
+          var bars =
+              insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+          view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+          return insets;
+        });
+    root.addView(
+        LibraryUi.toolbar(
+            this,
+            "写真・動画の保存先",
+            LibraryUi.icon(this, R.drawable.ic_close, "写真・動画の保存先を閉じる", this::finish)));
     ScrollView scroll = new ScrollView(this);
     scroll.setFillViewport(true);
     root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -125,28 +147,34 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     preflightNote.setPadding(0, dp(8), 0, dp(4));
     preflightNote.setText("まだ移動していません。");
     preflightNote.setTextColor(GalleryUi.MUTED);
-    stop = button("中止", () -> {
-      if (planRequest != null) {
-        planRequest.cancel(true);
-        render();
-        return;
-      }
-      PhotoMoveService.stopMove();
-      stop.setEnabled(false);
-      display(status, "移動を中断しています。");
-    });
+    stop =
+        button(
+            "中止",
+            () -> {
+              if (planRequest != null) {
+                planRequest.cancel(true);
+                render();
+                return;
+              }
+              PhotoMoveService.stopMove();
+              stop.setEnabled(false);
+              display(status, "移動を中断しています。");
+            });
     abandon = button("移動を終了", this::confirmAbandon);
     setContentView(root);
   }
 
-  @Override public void onResume() {
+  @Override
+  public void onResume() {
     super.onResume();
     visible = true;
-    getSystemService(StorageManager.class).registerStorageVolumeCallback(getMainExecutor(), volumeChanges);
+    getSystemService(StorageManager.class)
+        .registerStorageVolumeCallback(getMainExecutor(), volumeChanges);
     loadOverview();
   }
 
-  @Override public void onPause() {
+  @Override
+  public void onPause() {
     visible = false;
     ++overviewRequest;
     getSystemService(StorageManager.class).unregisterStorageVolumeCallback(volumeChanges);
@@ -159,7 +187,9 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     super.onPause();
   }
 
-  @Override public void onDestroy() {
+  @Override
+  public void onDestroy() {
+    if (planRequest != null) planRequest.cancel(false);
     worker.shutdownNow();
     super.onDestroy();
   }
@@ -172,45 +202,58 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     lastState = moveState;
     journalReady = false;
     display(storageSummary, moveState.running() ? "保存場所は移動の終了後に確認できます。" : "保存場所を確認しています。");
-    overviewLoad = PhotoStorageInventoryActivity.READS.submit(() -> {
-      try {
-        StorageOptions current = storageOptions();
-        PhotoMoveStore.Batch batch = null;
-        if (!moveState.running()) {
-          try (PhotoMoveStore store = new PhotoMoveStore(this)) {
-            batch = store.batch();
-          }
-        }
-        PhotoMoveStore.Batch pending = batch;
-        updateOverview(request, moveState, () -> {
-          options = current;
-          unfinished = pending;
-          journalReady = true;
-        });
-        if (moveState.running() || request != overviewRequest) return;
-        try (PhotoMove mover = new PhotoMove(this)) {
-          String summary = PhotoStorageInventoryActivity.summary(mover.inventory(current.volume()));
-          updateOverview(request, moveState, () -> display(storageSummary, summary));
-        } catch (PhotoMove.Failure | PhotoStorage.Unavailable unavailable) {
-          updateOverview(request, moveState, () -> display(storageSummary, unavailable.getMessage()));
-        } catch (IOException | RuntimeException unavailable) {
-          updateOverview(request, moveState, () -> display(storageSummary, "保存場所を確認できませんでした。"));
-        }
-      } catch (RuntimeException unavailable) {
-        updateOverview(request, moveState, () -> display(storageSummary, "保存先の状態を読み取れませんでした。"));
-      }
-    });
+    overviewLoad =
+        PhotoStorageInventoryActivity.READS.submit(
+            () -> {
+              try {
+                StorageOptions current = storageOptions();
+                PhotoMoveStore.Batch batch = null;
+                if (!moveState.running()) {
+                  try (PhotoMoveStore store = new PhotoMoveStore(this)) {
+                    batch = store.batch();
+                  }
+                }
+                PhotoMoveStore.Batch pending = batch;
+                updateOverview(
+                    request,
+                    moveState,
+                    () -> {
+                      options = current;
+                      unfinished = pending;
+                      journalReady = true;
+                    });
+                if (moveState.running() || request != overviewRequest) return;
+                try (PhotoMove mover = new PhotoMove(this)) {
+                  String summary =
+                      PhotoStorageInventoryActivity.summary(mover.inventory(current.volume()));
+                  updateOverview(request, moveState, () -> display(storageSummary, summary));
+                } catch (PhotoMove.Failure | PhotoStorage.Unavailable unavailable) {
+                  updateOverview(
+                      request, moveState, () -> display(storageSummary, unavailable.getMessage()));
+                } catch (IOException | RuntimeException unavailable) {
+                  updateOverview(
+                      request, moveState, () -> display(storageSummary, "保存場所を確認できませんでした。"));
+                }
+              } catch (RuntimeException unavailable) {
+                updateOverview(
+                    request, moveState, () -> display(storageSummary, "保存先の状態を読み取れませんでした。"));
+              }
+            });
     render();
   }
 
   private void updateOverview(int request, PhotoMoveService.State moveState, Runnable update) {
-    runOnUiThread(() -> {
-      PhotoMoveService.State current = PhotoMoveService.state();
-      if (request != overviewRequest || !visible || isFinishing() || isDestroyed()
-          || (current != moveState && !(current.running() && moveState.running()))) return;
-      update.run();
-      render();
-    });
+    runOnUiThread(
+        () -> {
+          PhotoMoveService.State current = PhotoMoveService.state();
+          if (request != overviewRequest
+              || !visible
+              || isFinishing()
+              || isDestroyed()
+              || (current != moveState && !(current.running() && moveState.running()))) return;
+          update.run();
+          render();
+        });
   }
 
   private void render() {
@@ -224,11 +267,13 @@ public final class PhotoStorageActivity extends AppCompatActivity {
       return;
     }
     boolean writable = options != null && options.writable(options.volume());
-    display(destination, options == null ? "保存先を確認しています。"
-        : options.label() + (writable ? "" : "（書き込み不可）"));
+    display(
+        destination,
+        options == null ? "保存先を確認しています。" : options.label() + (writable ? "" : "（書き込み不可）"));
     boolean planning = planRequest != null;
     boolean cancelling = planning && planRequest.cancelled;
-    boolean ready = !running && !planning && !selecting && !CameraImportGate.lock.isLocked() && journalReady;
+    boolean ready =
+        !running && !planning && !selecting && !CameraImportGate.lock.isLocked() && journalReady;
     int overviewVisibility = planning ? View.GONE : View.VISIBLE;
     choose.setVisibility(overviewVisibility);
     storageSummary.setVisibility(overviewVisibility);
@@ -252,10 +297,18 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     String message = screenMessage != null ? screenMessage : state.message();
     if (selecting) message = "保存先を変更しています。";
     if (batch != null) {
-      String action = running || options == null || options.writable(batch.volume())
-          ? "" : " 移動先を接続して再開してください。";
-      message = (message == null ? "" : message + " ") + batch.done() + " / " + batch.total()
-          + "枚" + PhotoMoveService.skipped(batch) + action;
+      String action =
+          running || options == null || options.writable(batch.volume())
+              ? ""
+              : " 移動先を接続して再開してください。";
+      message =
+          (message == null ? "" : message + " ")
+              + batch.done()
+              + " / "
+              + batch.total()
+              + "枚"
+              + PhotoMoveService.skipped(batch)
+              + action;
     }
     if (message == null && options != null && !writable) message = "カードを接続するか、保存先を変更してください。";
     if (message == null && options != null && options.choices().size() <= 1)
@@ -276,7 +329,10 @@ public final class PhotoStorageActivity extends AppCompatActivity {
       preflightBar.setIndeterminate(reading == null);
     }
     if (reading != null) {
-      int progress = reading.totalBytes() == 0 ? 0 : (int) (1000d * reading.readBytes() / reading.totalBytes());
+      int progress =
+          reading.totalBytes() == 0
+              ? 0
+              : (int) (1000d * reading.readBytes() / reading.totalBytes());
       int limit = reading.finished() && reading.rejected() == 0 ? 1000 : 999;
       preflightBar.setProgressCompat(Math.min(limit, progress), false);
       String read = Formatter.formatFileSize(this, reading.readBytes());
@@ -285,9 +341,21 @@ public final class PhotoStorageActivity extends AppCompatActivity {
         read = reading.readBytes() + " B";
         total = reading.totalBytes() + " B";
       }
-      display(preflightStats, reading.completed() + " / " + reading.total() + "枚を確認"
-          + "\n一致 " + reading.successful() + "枚・対象外 " + reading.rejected() + "枚"
-          + "\n読み取り " + read + " / " + total);
+      display(
+          preflightStats,
+          reading.completed()
+              + " / "
+              + reading.total()
+              + "枚を確認"
+              + "\n一致 "
+              + reading.successful()
+              + "枚・対象外 "
+              + reading.rejected()
+              + "枚"
+              + "\n読み取り "
+              + read
+              + " / "
+              + total);
     }
     preflightBar.setVisibility(planning ? View.VISIBLE : View.GONE);
     preflightStats.setVisibility(reading != null ? View.VISIBLE : View.GONE);
@@ -312,48 +380,67 @@ public final class PhotoStorageActivity extends AppCompatActivity {
       render();
       return;
     }
-    var selected = new int[]{-1};
+    var selected = new int[] {-1};
     for (int i = 0; i < choices.size(); i++) {
       if (choices.get(i).volume().equals(options.volume())) selected[0] = i;
     }
     String[] labels = choices.stream().map(VolumeChoice::label).toArray(String[]::new);
-    new MaterialAlertDialogBuilder(this).setTitle("写真・動画の保存先")
+    new MaterialAlertDialogBuilder(this)
+        .setTitle("写真・動画の保存先")
         .setSingleChoiceItems(labels, selected[0], (dialog, which) -> selected[0] = which)
         .setNegativeButton("キャンセル", null)
-        .setPositiveButton("設定", (dialog, which) -> {
-          if (selected[0] < 0) return;
-          select(choices.get(selected[0]).volume());
-        }).show();
+        .setPositiveButton(
+            "設定",
+            (dialog, which) -> {
+              if (selected[0] < 0) return;
+              select(choices.get(selected[0]).volume());
+            })
+        .show();
   }
 
   private void select(String volume) {
+    String busy = "取り込みが終わってから保存先を変更してください。";
+    var admission = CameraImportGate.tryAdmit();
+    if (admission == null) {
+      screenMessage = busy;
+      render();
+      return;
+    }
     selecting = true;
     ++overviewRequest;
     if (overviewLoad != null) overviewLoad.cancel(false);
     render();
-    PhotoStorageInventoryActivity.READS.execute(() -> {
-      String message = null;
-      var lock = CameraImportGate.lock;
-      if (!lock.tryLock()) message = "取り込みが終わってから保存先を変更してください。";
-      else {
-        try {
-          PhotoStorage.requireWritable(this, volume);
-          if (!PhotoStorage.select(this, volume)) throw new IllegalStateException();
-        } catch (PhotoStorage.Unavailable unavailable) {
-          message = unavailable.getMessage();
-        } catch (RuntimeException unavailable) {
-          message = "保存先を変更できませんでした。";
-        } finally {
-          lock.unlock();
-        }
-      }
-      String result = message;
-      runOnUiThread(() -> {
-        selecting = false;
-        screenMessage = result;
-        if (visible && !isFinishing() && !isDestroyed()) loadOverview();
-      });
-    });
+    if (!CameraOperationTask.executeAdmitted(
+        PhotoStorageInventoryActivity.READS,
+        admission,
+        () -> {
+          String message = null;
+          var lock = CameraImportGate.lock;
+          if (!lock.tryLock()) message = busy;
+          else {
+            try {
+              PhotoStorage.requireWritable(this, volume);
+              if (!PhotoStorage.select(this, volume)) throw new IllegalStateException();
+            } catch (PhotoStorage.Unavailable unavailable) {
+              message = unavailable.getMessage();
+            } catch (RuntimeException unavailable) {
+              message = "保存先を変更できませんでした。";
+            } finally {
+              lock.unlock();
+            }
+          }
+          String result = message;
+          runOnUiThread(
+              () -> {
+                selecting = false;
+                screenMessage = result;
+                if (visible && !isFinishing() && !isDestroyed()) loadOverview();
+              });
+        })) {
+      selecting = false;
+      screenMessage = "保存先を変更できませんでした。";
+      loadOverview();
+    }
   }
 
   private void openInventory() {
@@ -362,14 +449,18 @@ public final class PhotoStorageActivity extends AppCompatActivity {
   }
 
   private void confirmAbandon() {
-    new MaterialAlertDialogBuilder(this).setTitle("移動を終了しますか？")
+    new MaterialAlertDialogBuilder(this)
+        .setTitle("移動を終了しますか？")
         .setMessage("完了した写真は移動先に残ります。未完了の写真は、それぞれ現在の場所に残ります。")
         .setNegativeButton("キャンセル", null)
-        .setPositiveButton("移動を終了", (dialog, which) -> {
-          screenMessage = null;
-          PhotoMoveService.abandon(this);
-          render();
-        }).show();
+        .setPositiveButton(
+            "移動を終了",
+            (dialog, which) -> {
+              screenMessage = null;
+              PhotoMoveService.abandon(this);
+              render();
+            })
+        .show();
   }
 
   private void plan() {
@@ -377,18 +468,30 @@ public final class PhotoStorageActivity extends AppCompatActivity {
   }
 
   void plan(Supplier<PhotoMove> openMover) {
-    if (!visible || planRequest != null || !move.isEnabled() || isFinishing() || isDestroyed()) return;
+    if (!visible || planRequest != null || !move.isEnabled() || isFinishing() || isDestroyed())
+      return;
     screenMessage = null;
     if (unfinished != null) {
       PhotoMoveService.launch(this, null);
       render();
       return;
     }
-    PlanRequest request = new PlanRequest();
+    var admission = CameraImportGate.tryAdmit();
+    if (admission == null) {
+      screenMessage = "取り込みが終わってからもう一度お試しください。";
+      render();
+      return;
+    }
+    PlanRequest request = new PlanRequest(admission);
     planRequest = request;
     render();
     StorageOptions target = options;
-    worker.execute(() -> plan(request, target, openMover));
+    try {
+      worker.execute(() -> plan(request, target, openMover));
+    } catch (RejectedExecutionException unavailable) {
+      request.finish();
+      showPlan(request, null, "取り込み済みの写真を確認できません。", target.label());
+    }
   }
 
   private void plan(PlanRequest request, StorageOptions target, Supplier<PhotoMove> openMover) {
@@ -403,7 +506,9 @@ public final class PhotoStorageActivity extends AppCompatActivity {
       }
       try (PhotoMove mover = openMover.get()) {
         PhotoMove.Plan proposal = mover.plan(target.volume(), () -> request.cancelled);
-        verified = mover.preflight(proposal, () -> request.cancelled, reading -> request.progress = reading);
+        verified =
+            mover.preflight(
+                proposal, () -> request.cancelled, reading -> request.progress = reading);
       } catch (InterruptedIOException cancelled) {
         message = "写真の確認を中止しました。";
       } catch (PhotoStorage.Unavailable | PhotoMove.Failure unavailable) {
@@ -421,7 +526,8 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     }
   }
 
-  private void showPlan(PlanRequest request, PhotoMove.Plan proposal, String message, String targetLabel) {
+  private void showPlan(
+      PlanRequest request, PhotoMove.Plan proposal, String message, String targetLabel) {
     if (request != planRequest) return;
     planRequest = null;
     if (!visible || isFinishing() || isDestroyed()) return;
@@ -434,36 +540,52 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     if (proposal != null) {
       int count = proposal.items().size();
       boolean otherExcluded = proposal.skipped() > proposal.archiveRejected();
-      String skipped = otherExcluded
-          ? "\n\n移動対象外の項目があります。保存場所の一覧で写真と理由を確認できます。" : "";
+      String skipped = otherExcluded ? "\n\n移動対象外の項目があります。保存場所の一覧で写真と理由を確認できます。" : "";
       if (proposal.archiveRejected() > 0)
         skipped += "\n\n内容を照合できなかった" + proposal.archiveRejected() + "枚は元の場所に残ります。";
       if (count == 0) {
         screenMessage = "移動できる取り込み済みの写真はありません。" + skipped;
       } else {
         long bytes = proposal.items().stream().mapToLong(PhotoMoveStore.Item::bytes).sum();
-        var confirmation = new MaterialAlertDialogBuilder(this)
-            .setTitle("取り込み済みの写真を移動しますか？")
-            .setMessage(targetLabel + "に" + count + "枚（"
-                + Formatter.formatFileSize(this, bytes) + "）の移動を開始します。"
-                + "\n照合できない写真は元の場所に残ります。" + skipped)
-            .setNegativeButton("キャンセル", null)
-            .setPositiveButton("移動", (dialog, which) -> {
-              PhotoMoveService.launch(this, proposal);
-              render();
-            });
-        if (otherExcluded) confirmation.setNeutralButton("理由を見る", (dialog, which) -> openInventory());
+        var confirmation =
+            new MaterialAlertDialogBuilder(this)
+                .setTitle("取り込み済みの写真を移動しますか？")
+                .setMessage(
+                    targetLabel
+                        + "に"
+                        + count
+                        + "枚（"
+                        + Formatter.formatFileSize(this, bytes)
+                        + "）の移動を開始します。"
+                        + "\n照合できない写真は元の場所に残ります。"
+                        + skipped)
+                .setNegativeButton("キャンセル", null)
+                .setPositiveButton(
+                    "移動",
+                    (dialog, which) -> {
+                      PhotoMoveService.launch(this, proposal);
+                      render();
+                    });
+        if (otherExcluded)
+          confirmation.setNeutralButton("理由を見る", (dialog, which) -> openInventory());
         confirmation.show();
       }
     }
     render();
     PhotoMove.PreflightProgress reading = request.progress;
-    DiagnosticLog.event("photo_move.confirmation_ready", 0,
-        "result", proposal == null ? "failed" : proposal.items().isEmpty() ? "empty" : "confirmation",
-        "elapsed_ns", SystemClock.elapsedRealtimeNanos() - request.started,
-        "candidates", reading == null ? 0 : reading.total(),
-        "candidate_bytes", reading == null ? 0 : reading.totalBytes(),
-        "read_bytes", reading == null ? 0 : reading.readBytes());
+    DiagnosticLog.event(
+        "photo_move.confirmation_ready",
+        0,
+        "result",
+        proposal == null ? "failed" : proposal.items().isEmpty() ? "empty" : "confirmation",
+        "elapsed_ns",
+        SystemClock.elapsedRealtimeNanos() - request.started,
+        "candidates",
+        reading == null ? 0 : reading.total(),
+        "candidate_bytes",
+        reading == null ? 0 : reading.totalBytes(),
+        "read_bytes",
+        reading == null ? 0 : reading.readBytes());
   }
 
   private static void display(TextView view, String text) {
@@ -488,5 +610,7 @@ public final class PhotoStorageActivity extends AppCompatActivity {
     return button;
   }
 
-  private int dp(int value) { return GalleryUi.dp(this, value); }
+  private int dp(int value) {
+    return GalleryUi.dp(this, value);
+  }
 }
