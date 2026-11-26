@@ -949,6 +949,11 @@ public final class ArchiveInstrumentation extends Instrumentation {
         finish(-1, results);
         return;
       }
+      if ("camera-ledger-teardown".equals(cameraPilotArguments.getString("mode"))) {
+        results.putString("stream", CameraImportLedgerChecks.checkTeardown(this));
+        finish(-1, results);
+        return;
+      }
       if (cameraLedgerTest) {
         results.putString("stream", CameraImportLedgerChecks.run(this));
         finish(-1, results);
@@ -1215,6 +1220,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
     if (failure instanceof PhotoStorageChecks.CheckFailure
         || failure instanceof PhotoEditChecks.MonoTintFailure)
       result.append(": ").append(failure.getMessage());
+    if (failure instanceof CameraImportLedgerChecks.FixtureDiagnostic diagnostic)
+      result.append(": ").append(diagnostic.detail);
     result.append('\n');
     for (StackTraceElement frame : failure.getStackTrace())
       result.append("  at ").append(frame).append('\n');
