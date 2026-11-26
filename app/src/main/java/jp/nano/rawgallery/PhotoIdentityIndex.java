@@ -20,6 +20,7 @@ final class PhotoIdentityIndex {
   private record Binding(PhotoMoveStore.Identity identity, String moveUri) {}
   private final SQLiteDatabase db;
   private final boolean bulk;
+  private final RankingStore.Snapshot rankings;
   private final Map<String, Map<String, Binding>> byLocation = new HashMap<>();
   private final Set<String> archiveKeys = new HashSet<>(), tagSources = new HashSet<>();
 
@@ -71,11 +72,25 @@ final class PhotoIdentityIndex {
 
   static void resolve(Context context, PhotoMoveStore store, Map<String, PhotoRepository.Photo> visible,
       Map<String, PhotoRepository.Photo> media) throws IOException {
+    resolve(context, store, visible, media, null);
+  }
+
+  /** The explicit store is for isolated callers; production uses the shared default owner. */
+  static void resolve(Context context, PhotoMoveStore store, Map<String, PhotoRepository.Photo> visible,
+      Map<String, PhotoRepository.Photo> media, RankingStore rankingStore) throws IOException {
     if (visible.isEmpty()) return;
     SQLiteDatabase db = store.getWritableDatabase();
+    RankingStore.Snapshot rankings = null;
+    if (needsRanking(visible, media)) {
+      if (db.inTransaction()) {
+        throw new IOException("Ranking readiness must be acquired before the identity transaction");
+      }
+      RankingStore owner = rankingStore == null ? new RankingStore(context) : rankingStore;
+      rankings = owner.awaitReady();
+    }
     db.beginTransactionNonExclusive();
     try {
-      PhotoIdentityIndex index = new PhotoIdentityIndex(db, visible.size() > 1);
+      PhotoIdentityIndex index = new PhotoIdentityIndex(db, visible.size() > 1, rankings);
       // With simultaneous duplicates, the old path-only gallery kept the last reader.
       List<String> keys = new ArrayList<>(visible.keySet());
       Collections.reverse(keys);
@@ -91,9 +106,20 @@ final class PhotoIdentityIndex {
     }
   }
 
-  private PhotoIdentityIndex(SQLiteDatabase db, boolean bulk) {
+  private static boolean needsRanking(Map<String, PhotoRepository.Photo> visible,
+      Map<String, PhotoRepository.Photo> media) throws IOException {
+    for (var entry : visible.entrySet()) {
+      PhotoRepository.Photo display = entry.getValue(), file = media.get(entry.getKey());
+      if (file != null && file != display && file.size == display.size
+          && !ArchiveStore.key(display).equals(ArchiveStore.key(file))) return true;
+    }
+    return false;
+  }
+
+  private PhotoIdentityIndex(SQLiteDatabase db, boolean bulk, RankingStore.Snapshot rankings) {
     this.db = db;
     this.bulk = bulk;
+    this.rankings = rankings;
     if (bulk) load(null, null);
   }
 
@@ -155,10 +181,10 @@ final class PhotoIdentityIndex {
         if (tags.photoId(display, false) == null && tags.photoId(file, false) != null) tag = mediaTag;
       }
       if (!archive.equals(mediaArchive)) {
-        RankingStore ranking = new RankingStore(context);
+        if (rankings == null) throw new IOException("Ranking snapshot was not prepared");
         try (ShareHistoryStore shares = new ShareHistoryStore(context)) {
-          if (!ranking.singleBest(archive) && shares.history(archive).isEmpty()
-              && (ranking.singleBest(mediaArchive) || !shares.history(mediaArchive).isEmpty())) archive = mediaArchive;
+          if (!rankings.singleBest(archive) && shares.history(archive).isEmpty()
+              && (rankings.singleBest(mediaArchive) || !shares.history(mediaArchive).isEmpty())) archive = mediaArchive;
         }
       }
     }
