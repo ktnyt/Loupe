@@ -25,7 +25,7 @@ def hostJavaChecks = [
     'IndexRefreshRequestsTest.java', 'NanoBananaE2Test.java', 'PhotoRankingTest.java',
     'RankingStoreTest.java', 'RawEditStateTest.java', 'RawEditToneTest.java',
     'RawPreviewStructureTest.java', 'RelatedPhotosTest.java', 'ShareCapacityTest.java',
-    'ShareHistoryValidationTest.java', 'SharePreparationTest.java', 'SyncPolicyTest.java',
+    'SdUsbReprobeTest.java', 'ShareHistoryValidationTest.java', 'SharePreparationTest.java', 'SyncPolicyTest.java',
     'TagConfidenceTest.java', 'TagJudgmentsTest.java', 'VideoFormatsTest.java',
 ]
 

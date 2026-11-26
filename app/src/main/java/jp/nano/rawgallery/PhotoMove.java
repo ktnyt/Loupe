@@ -1,5 +1,7 @@
 package jp.nano.rawgallery;
 
+import static android.provider.MediaStore.MediaColumns.*;
+
 import android.content.ContentResolver;
 import android.content.ContentUris;
 import android.content.ContentValues;
@@ -41,25 +43,41 @@ import jp.nano.rawgallery.camera.CameraImportHistoryPlan;
 import jp.nano.rawgallery.camera.CameraImportLedger;
 import jp.nano.rawgallery.camera.HistoryDb;
 import jp.nano.rawgallery.camera.MediaSaver;
-import static android.provider.MediaStore.MediaColumns.*;
 
-/** Copies owned camera imports between volumes. The verified replacement always precedes deletion. */
+/**
+ * Copies owned camera imports between volumes. The verified replacement always precedes deletion.
+ */
 final class PhotoMove implements AutoCloseable {
   enum FailureReason {
-    MOVE_FAILED, LEDGER_OR_HISTORY_CONFLICT, HISTORY_MISSING_OR_DUPLICATE, HISTORY_IDENTITY,
-    HISTORY_FINGERPRINT, HISTORY_RELOCATION, SOURCE_IDENTITY, SOURCE_ALIAS, COMPLETED_PROOF,
-    SHA_MISMATCH, TARGET_PIN, TARGET_METADATA;
+    MOVE_FAILED,
+    LEDGER_OR_HISTORY_CONFLICT,
+    HISTORY_MISSING_OR_DUPLICATE,
+    HISTORY_IDENTITY,
+    HISTORY_FINGERPRINT,
+    HISTORY_RELOCATION,
+    SOURCE_IDENTITY,
+    SOURCE_ALIAS,
+    COMPLETED_PROOF,
+    SHA_MISMATCH,
+    TARGET_PIN,
+    TARGET_METADATA;
 
-    String code() { return name().toLowerCase(Locale.ROOT); }
+    String code() {
+      return name().toLowerCase(Locale.ROOT);
+    }
   }
 
   static final class Failure extends IOException {
     final String reason;
     final int scanAttempts;
 
-    Failure(String message) { this(message, FailureReason.MOVE_FAILED); }
+    Failure(String message) {
+      this(message, FailureReason.MOVE_FAILED);
+    }
 
-    Failure(String message, FailureReason reason) { this(message, reason.code(), 0); }
+    Failure(String message, FailureReason reason) {
+      this(message, reason.code(), 0);
+    }
 
     private Failure(String message, String reason, int scanAttempts) {
       super(message);
@@ -69,16 +87,47 @@ final class PhotoMove implements AutoCloseable {
   }
 
   enum Boundary {
-    ALLOCATED, INSERTED, ATTACHED, COPIED, VERIFIED, PUBLISHED, BEFORE_HISTORY_VERIFY, HISTORY_UPDATED, REMAPPED, BEFORE_SOURCE_DELETE, DELETED
+    ALLOCATED,
+    INSERTED,
+    ATTACHED,
+    COPIED,
+    VERIFIED,
+    PUBLISHED,
+    BEFORE_HISTORY_VERIFY,
+    HISTORY_UPDATED,
+    REMAPPED,
+    BEFORE_SOURCE_DELETE,
+    DELETED
   }
-  interface Faults { void after(Boundary boundary); }
-  interface Progress { void update(PhotoMoveStore.Batch batch); }
-  interface OriginalOpen { InputStream open(Uri requiredOriginal) throws IOException; }
-  interface TargetOpen { ParcelFileDescriptor open(Uri target, String mode) throws IOException; }
-  interface AliasQuery { Cursor query(Uri uri, String[] columns, Bundle args); }
-  /** Display-only observations of historical candidates. Neither counts nor bytes authorize a move. */
-  record PreflightProgress(int total, int successful, int rejected, long totalBytes, long readBytes, boolean finished) {
-    int completed() { return successful + rejected; }
+
+  interface Faults {
+    void after(Boundary boundary);
+  }
+
+  interface Progress {
+    void update(PhotoMoveStore.Batch batch);
+  }
+
+  interface OriginalOpen {
+    InputStream open(Uri requiredOriginal) throws IOException;
+  }
+
+  interface TargetOpen {
+    ParcelFileDescriptor open(Uri target, String mode) throws IOException;
+  }
+
+  interface AliasQuery {
+    Cursor query(Uri uri, String[] columns, Bundle args);
+  }
+
+  /**
+   * Display-only observations of historical candidates. Neither counts nor bytes authorize a move.
+   */
+  record PreflightProgress(
+      int total, int successful, int rejected, long totalBytes, long readBytes, boolean finished) {
+    int completed() {
+      return successful + rejected;
+    }
   }
 
   private static final class PreflightMeter {
@@ -110,13 +159,19 @@ final class PhotoMove implements AutoCloseable {
     void publish(boolean finished) {
       if (observer == null) return;
       try {
-        observer.accept(new PreflightProgress(total, successful, rejected, totalBytes, readBytes, finished));
+        observer.accept(
+            new PreflightProgress(total, successful, rejected, totalBytes, readBytes, finished));
       } catch (RuntimeException ignored) {
         // A display observer must not change which originals pass verification.
       }
     }
   }
-  record Plan(String volume, List<PhotoMoveStore.Item> items, int skipped, int archiveRejected,
+
+  record Plan(
+      String volume,
+      List<PhotoMoveStore.Item> items,
+      int skipped,
+      int archiveRejected,
       ArchivePreflight archivePreflight) {
     Plan {
       items = List.copyOf(items);
@@ -127,29 +182,68 @@ final class PhotoMove implements AutoCloseable {
     }
   }
 
-  private record ArchivePreflight(String volume, List<PhotoMoveStore.Item> items, int skipped, int rejected) {
+  private record ArchivePreflight(
+      String volume, List<PhotoMoveStore.Item> items, int skipped, int rejected) {
     boolean covers(Plan plan) {
-      return volume.equals(plan.volume()) && items.equals(plan.items())
-          && skipped == plan.skipped() && rejected == plan.archiveRejected();
+      return volume.equals(plan.volume())
+          && items.equals(plan.items())
+          && skipped == plan.skipped()
+          && rejected == plan.archiveRejected();
     }
   }
 
-  private record Media(Uri uri, String name, String path, String mime, String volume,
-      String owner, long bytes, long modified, long added, long taken, long generationAdded,
-      long generationModified, boolean generationsKnown, boolean pending, boolean trashed) {
+  private record Media(
+      Uri uri,
+      String name,
+      String path,
+      String mime,
+      String volume,
+      String owner,
+      long bytes,
+      long modified,
+      long added,
+      long taken,
+      long generationAdded,
+      long generationModified,
+      boolean generationsKnown,
+      boolean pending,
+      boolean trashed) {
     boolean hasGenerationIdentity() {
       return generationsKnown && generationAdded >= 0 && generationModified >= generationAdded;
     }
 
     String version() {
-      return name + "\n" + path + "\n" + mime + "\n" + bytes + "\n"
-          + modified + "\n" + added + "\n" + taken + "\n" + generationAdded + "\n" + generationModified;
+      return name
+          + "\n"
+          + path
+          + "\n"
+          + mime
+          + "\n"
+          + bytes
+          + "\n"
+          + modified
+          + "\n"
+          + added
+          + "\n"
+          + taken
+          + "\n"
+          + generationAdded
+          + "\n"
+          + generationModified;
     }
 
     PhotoRepository.Photo photo() {
-      Uri root = MediaStore.Files.getContentUri(PhotoStorage.PRIMARY.equals(volume) ? "external" : volume);
-      return new PhotoRepository.Photo(ContentUris.withAppendedId(root, ContentUris.parseId(uri)), name,
-          path, bytes, modified, taken, SyncPolicy.secondsToMillis(added), 0);
+      Uri root =
+          MediaStore.Files.getContentUri(PhotoStorage.PRIMARY.equals(volume) ? "external" : volume);
+      return new PhotoRepository.Photo(
+          ContentUris.withAppendedId(root, ContentUris.parseId(uri)),
+          name,
+          path,
+          bytes,
+          modified,
+          taken,
+          SyncPolicy.secondsToMillis(added),
+          0);
     }
   }
 
@@ -160,20 +254,57 @@ final class PhotoMove implements AutoCloseable {
     long allocateNs, publishNs, historyNs, deleteNs;
 
     void log(String result) {
-      // The copy span includes the file sync. Bytes count only full, successful target verifications.
-      DiagnosticLog.event("photo_move.run", 0, "result", result,
-          "elapsed_ns", SystemClock.elapsedRealtimeNanos() - started, "completed", completed,
-          "target_verified_passes", targetVerifiedPasses, "target_verified_bytes", targetVerifiedBytes,
-          "target_verify_ns", targetVerifyNs, "source_verify_ns", sourceVerifyNs,
-          "copy_ns", copyNs, "sync_ns", syncNs, "allocate_ns", allocateNs,
-          "publish_ns", publishNs, "history_ns", historyNs, "delete_ns", deleteNs);
+      // The copy span includes the file sync. Bytes count only full, successful target
+      // verifications.
+      DiagnosticLog.event(
+          "photo_move.run",
+          0,
+          "result",
+          result,
+          "elapsed_ns",
+          SystemClock.elapsedRealtimeNanos() - started,
+          "completed",
+          completed,
+          "target_verified_passes",
+          targetVerifiedPasses,
+          "target_verified_bytes",
+          targetVerifiedBytes,
+          "target_verify_ns",
+          targetVerifyNs,
+          "source_verify_ns",
+          sourceVerifyNs,
+          "copy_ns",
+          copyNs,
+          "sync_ns",
+          syncNs,
+          "allocate_ns",
+          allocateNs,
+          "publish_ns",
+          publishNs,
+          "history_ns",
+          historyNs,
+          "delete_ns",
+          deleteNs);
     }
   }
 
   private static final Uri ALL = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
-  private static final String[] COLUMNS = {_ID, DISPLAY_NAME, RELATIVE_PATH, MIME_TYPE, VOLUME_NAME,
-      OWNER_PACKAGE_NAME, SIZE, DATE_MODIFIED, DATE_ADDED, DATE_TAKEN, GENERATION_ADDED,
-      GENERATION_MODIFIED, IS_PENDING, IS_TRASHED};
+  private static final String[] COLUMNS = {
+    _ID,
+    DISPLAY_NAME,
+    RELATIVE_PATH,
+    MIME_TYPE,
+    VOLUME_NAME,
+    OWNER_PACKAGE_NAME,
+    SIZE,
+    DATE_MODIFIED,
+    DATE_ADDED,
+    DATE_TAKEN,
+    GENERATION_ADDED,
+    GENERATION_MODIFIED,
+    IS_PENDING,
+    IS_TRASHED
+  };
   private final Context context;
   private final ContentResolver resolver;
   private final CameraImportLedger ledger;
@@ -186,31 +317,82 @@ final class PhotoMove implements AutoCloseable {
   private final AliasQuery aliasQuery;
 
   PhotoMove(Context context) {
-    this(context, CameraImportLedger.get(context), HistoryDb.Companion.get(context), new PhotoMoveStore(context), b -> {});
+    this(
+        context,
+        CameraImportLedger.get(context),
+        HistoryDb.Companion.get(context),
+        new PhotoMoveStore(context),
+        b -> {});
   }
 
-  PhotoMove(Context context, CameraImportLedger ledger, HistoryDb history, PhotoMoveStore store, Faults faults) {
+  PhotoMove(
+      Context context,
+      CameraImportLedger ledger,
+      HistoryDb history,
+      PhotoMoveStore store,
+      Faults faults) {
     this(context, ledger, history, store, faults, context.getContentResolver()::openInputStream);
   }
 
-  PhotoMove(Context context, CameraImportLedger ledger, HistoryDb history, PhotoMoveStore store, Faults faults,
+  PhotoMove(
+      Context context,
+      CameraImportLedger ledger,
+      HistoryDb history,
+      PhotoMoveStore store,
+      Faults faults,
       OriginalOpen originalOpen) {
-    this(context, ledger, history, store, faults, originalOpen, context.getContentResolver()::openFileDescriptor);
+    this(
+        context,
+        ledger,
+        history,
+        store,
+        faults,
+        originalOpen,
+        context.getContentResolver()::openFileDescriptor);
   }
 
-  PhotoMove(Context context, CameraImportLedger ledger, HistoryDb history, PhotoMoveStore store, Faults faults,
-      OriginalOpen originalOpen, TargetOpen targetOpen) {
+  PhotoMove(
+      Context context,
+      CameraImportLedger ledger,
+      HistoryDb history,
+      PhotoMoveStore store,
+      Faults faults,
+      OriginalOpen originalOpen,
+      TargetOpen targetOpen) {
     this(context, ledger, history, store, faults, originalOpen, targetOpen, () -> {});
   }
 
-  PhotoMove(Context context, CameraImportLedger ledger, HistoryDb history, PhotoMoveStore store, Faults faults,
-      OriginalOpen originalOpen, TargetOpen targetOpen, LegacyArchiveMoveProof.ScanObserver archiveScanObserver) {
-    this(context, ledger, history, store, faults, originalOpen, targetOpen, archiveScanObserver,
-        (uri, columns, args) -> context.getApplicationContext().getContentResolver().query(uri, columns, args, null));
+  PhotoMove(
+      Context context,
+      CameraImportLedger ledger,
+      HistoryDb history,
+      PhotoMoveStore store,
+      Faults faults,
+      OriginalOpen originalOpen,
+      TargetOpen targetOpen,
+      LegacyArchiveMoveProof.ScanObserver archiveScanObserver) {
+    this(
+        context,
+        ledger,
+        history,
+        store,
+        faults,
+        originalOpen,
+        targetOpen,
+        archiveScanObserver,
+        (uri, columns, args) ->
+            context.getApplicationContext().getContentResolver().query(uri, columns, args, null));
   }
 
-  PhotoMove(Context context, CameraImportLedger ledger, HistoryDb history, PhotoMoveStore store, Faults faults,
-      OriginalOpen originalOpen, TargetOpen targetOpen, LegacyArchiveMoveProof.ScanObserver archiveScanObserver,
+  PhotoMove(
+      Context context,
+      CameraImportLedger ledger,
+      HistoryDb history,
+      PhotoMoveStore store,
+      Faults faults,
+      OriginalOpen originalOpen,
+      TargetOpen targetOpen,
+      LegacyArchiveMoveProof.ScanObserver archiveScanObserver,
       AliasQuery aliasQuery) {
     this.context = context.getApplicationContext();
     resolver = context.getContentResolver();
@@ -224,17 +406,22 @@ final class PhotoMove implements AutoCloseable {
     this.aliasQuery = aliasQuery;
   }
 
-  private record ImportEvidence(Map<String, String> checksums,
+  private record ImportEvidence(
+      Map<String, String> checksums,
       Map<String, List<CameraImportLedger.MoveReceipt>> receipts,
-      Map<String, List<HistoryDb.MoveEvidence>> legacy, Set<String> imported, Map<String, Media> found,
-      Set<String> ambiguous, Set<String> writableSources) {}
+      Map<String, List<HistoryDb.MoveEvidence>> legacy,
+      Set<String> imported,
+      Map<String, Media> found,
+      Set<String> ambiguous,
+      Set<String> writableSources) {}
 
   private ImportEvidence readImportEvidence(BooleanSupplier stopped) throws IOException {
     check(stopped);
     Map<String, String> checksums = ledger.importDestinations();
     Map<String, List<CameraImportLedger.MoveReceipt>> receipts = ledger.moveReceipts();
-    Map<String, List<HistoryDb.MoveEvidence>> legacy = history.moveEvidence().stream()
-        .collect(Collectors.groupingBy(HistoryDb.MoveEvidence::getUri));
+    Map<String, List<HistoryDb.MoveEvidence>> legacy =
+        history.moveEvidence().stream()
+            .collect(Collectors.groupingBy(HistoryDb.MoveEvidence::getUri));
     Set<String> imported = new LinkedHashSet<>(checksums.keySet());
     imported.addAll(legacy.keySet());
     Map<String, Media> found = new LinkedHashMap<>();
@@ -253,7 +440,9 @@ final class PhotoMove implements AutoCloseable {
         long id = rows.getLong(0);
         String rowVolume = rows.getString(4);
         if (rowVolume == null) continue;
-        String exact = ContentUris.withAppendedId(MediaStore.Images.Media.getContentUri(rowVolume), id).toString();
+        String exact =
+            ContentUris.withAppendedId(MediaStore.Images.Media.getContentUri(rowVolume), id)
+                .toString();
         String aggregate = needsLegacyUris ? ContentUris.withAppendedId(ALL, id).toString() : "";
         boolean exactEvidence = imported.contains(exact);
         boolean aggregateEvidence = imported.contains(aggregate);
@@ -263,7 +452,8 @@ final class PhotoMove implements AutoCloseable {
         if (aggregateEvidence && found.put(aggregate, media) != null) ambiguous.add(aggregate);
       }
     }
-    return new ImportEvidence(checksums, receipts, legacy, imported, found, ambiguous, writableSources);
+    return new ImportEvidence(
+        checksums, receipts, legacy, imported, found, ambiguous, writableSources);
   }
 
   Plan plan(String volume) throws IOException {
@@ -284,7 +474,9 @@ final class PhotoMove implements AutoCloseable {
         continue;
       }
       if (volume.equals(row.volume())) continue;
-      if (evidence.ambiguous().contains(uri) || !eligible(row) || !evidence.writableSources().contains(row.volume())) {
+      if (evidence.ambiguous().contains(uri)
+          || !eligible(row)
+          || !evidence.writableSources().contains(row.volume())) {
         skipped.add(row.uri().toString());
         continue;
       }
@@ -292,27 +484,46 @@ final class PhotoMove implements AutoCloseable {
       if (eligible.containsKey(exact)) continue;
       MoveProof proof = moveProof(evidence, row);
       HistoricalProof historicalProof = historical.match(row, proof);
-      if ((!proof.matches() || historical.hasCompletedIdentity(row, proof)) && historicalProof == null) {
+      if ((!proof.matches() || historical.hasCompletedIdentity(row, proof))
+          && historicalProof == null) {
         skipped.add(exact);
         continue;
       }
-      eligible.put(exact, new PhotoMoveStore.Item(exact, proof.alias(), row.version(), proof.expected(),
-          historicalProof == null ? proof.legacyIds() : Long.toString(historicalProof.historyId()),
-          row.bytes(), null, null, null, PhotoMoveStore.QUEUED, null,
-          historicalProof == null ? null : historicalProof.archive(),
-          historicalProof == null ? null : historicalProof.completed(), null));
+      eligible.put(
+          exact,
+          new PhotoMoveStore.Item(
+              exact,
+              proof.alias(),
+              row.version(),
+              proof.expected(),
+              historicalProof == null
+                  ? proof.legacyIds()
+                  : Long.toString(historicalProof.historyId()),
+              row.bytes(),
+              null,
+              null,
+              null,
+              PhotoMoveStore.QUEUED,
+              null,
+              historicalProof == null ? null : historicalProof.archive(),
+              historicalProof == null ? null : historicalProof.completed(),
+              null));
     }
     return new Plan(volume, List.copyOf(eligible.values()), skipped.size());
   }
 
-  private record HistoricalProof(PhotoMoveStore.ArchiveProof archive, PhotoMoveStore.CompletedProof completed) {
-    long historyId() { return archive == null ? completed.historyId() : archive.historyId(); }
+  private record HistoricalProof(
+      PhotoMoveStore.ArchiveProof archive, PhotoMoveStore.CompletedProof completed) {
+    long historyId() {
+      return archive == null ? completed.historyId() : archive.historyId();
+    }
   }
 
   private final class HistoricalCandidates {
     private final ImportEvidence evidence;
     private final BooleanSupplier stopped;
-    private final LegacyArchiveMoveProof.Budget budget = new LegacyArchiveMoveProof.Budget(1_000_000);
+    private final LegacyArchiveMoveProof.Budget budget =
+        new LegacyArchiveMoveProof.Budget(1_000_000);
     private final Map<Long, PhotoMoveStore.CompletedProof> completedById = new HashMap<>();
     private final Map<String, PhotoMoveStore.CompletedProof> completedByUri = new HashMap<>();
     private final boolean active;
@@ -332,34 +543,55 @@ final class PhotoMove implements AutoCloseable {
 
     boolean hasCompletedIdentity(Media row, MoveProof proof) {
       return completedByUri.containsKey(row.uri().toString())
-          || proof.candidates().stream().anyMatch(candidate -> completedById.containsKey(candidate.getId()));
+          || proof.candidates().stream()
+              .anyMatch(candidate -> completedById.containsKey(candidate.getId()));
     }
 
     HistoricalProof match(Media row, MoveProof proof) throws IOException {
-      if (active || proof.expected() != null || proof.candidates().size() != 1
-          || !row.hasGenerationIdentity() || row.mime().startsWith("video/")) return null;
+      if (active
+          || proof.expected() != null
+          || proof.candidates().size() != 1
+          || !row.hasGenerationIdentity()
+          || row.mime().startsWith("video/")) return null;
       String alias = aggregate(row.uri());
-      if (evidence.ambiguous().contains(alias) || evidence.checksums().containsKey(alias)) return null;
+      if (evidence.ambiguous().contains(alias) || evidence.checksums().containsKey(alias))
+        return null;
       var history = proof.candidates().get(0);
       if (hasCompletedIdentity(row, proof)) {
         var completed = completedById.get(history.getId());
-        if (completed == null || !completed.source().equals(history.getUri())
-            || !matchesCompleted(completed, row) || !visibleAlias(row)
-            || !completed.historyFingerprint().equals(LegacyArchiveMoveProof.historyFingerprint(history))) return null;
+        if (completed == null
+            || !completed.source().equals(history.getUri())
+            || !matchesCompleted(completed, row)
+            || !visibleAlias(row)
+            || !completed
+                .historyFingerprint()
+                .equals(LegacyArchiveMoveProof.historyFingerprint(history))) return null;
         return new HistoricalProof(null, completed);
       }
-      if (proof.matches() || !PhotoStorage.PRIMARY.equals(row.volume()) || (row.taken() > 0
-          && row.taken() / 1000 != history.getShot() + 1)
+      if (proof.matches()
+          || !PhotoStorage.PRIMARY.equals(row.volume())
+          || (row.taken() > 0 && row.taken() / 1000 != history.getShot() + 1)
           || (row.taken() < 0 && row.taken() != -1)) return null;
       if (records == null) {
         epoch = LegacyArchiveMoveProof.epoch(context);
-        records = epoch == null ? Map.of() : new LegacyArchiveMoveProof.Records(context).read(stopped).records();
+        records =
+            epoch == null
+                ? Map.of()
+                : new LegacyArchiveMoveProof.Records(context).read(stopped).records();
       }
       var photo = row.photo();
       var record = records.get(photo.uri.toString());
       if (record == null || (proof.alias() == null && !visibleAlias(row))) return null;
-      var backup = LegacyArchiveMoveProof.match(photo, epoch, row.generationAdded(), row.generationModified(),
-          history, record, budget, stopped);
+      var backup =
+          LegacyArchiveMoveProof.match(
+              photo,
+              epoch,
+              row.generationAdded(),
+              row.generationModified(),
+              history,
+              record,
+              budget,
+              stopped);
       return backup == null ? null : new HistoricalProof(backup, null);
     }
 
@@ -373,21 +605,26 @@ final class PhotoMove implements AutoCloseable {
   }
 
   private boolean historicalAliasMatches(Media row, FailureReason reason) throws IOException {
-    try (Cursor rows = aliasQuery.query(Uri.parse(aggregate(row.uri())), COLUMNS, queryArgs(null, null))) {
+    try (Cursor rows =
+        aliasQuery.query(Uri.parse(aggregate(row.uri())), COLUMNS, queryArgs(null, null))) {
       return row.equals(singleMediaRow(rows, reason));
     }
   }
 
-  /** Checks only proposed historical candidates. A rejected original is excluded, never replaced. */
+  /**
+   * Checks only proposed historical candidates. A rejected original is excluded, never replaced.
+   */
   Plan preflight(Plan proposal, BooleanSupplier stopped) throws IOException {
     return preflight(proposal, stopped, null);
   }
 
-  Plan preflight(Plan proposal, BooleanSupplier stopped, Consumer<PreflightProgress> observer) throws IOException {
+  Plan preflight(Plan proposal, BooleanSupplier stopped, Consumer<PreflightProgress> observer)
+      throws IOException {
     check(stopped);
     var meter = new PreflightMeter(proposal.items(), observer);
     if (meter.total == 0) return proposal;
-    if (!CameraImportGate.lock.isHeldByCurrentThread()) throw new IllegalStateException("Move preflight needs the import gate");
+    if (!CameraImportGate.lock.isHeldByCurrentThread())
+      throw new IllegalStateException("Move preflight needs the import gate");
     if (!E2SyncJob.ORIGINALS.tryLock()) throw new Failure("端末の容量整理が終わってから確認してください。");
     long started = SystemClock.elapsedRealtimeNanos();
     String result = "failed";
@@ -404,7 +641,14 @@ final class PhotoMove implements AutoCloseable {
         }
         try {
           Media source = requireHistoricalSource(item, cameraEvidence, archive, stopped);
-          verify(source.uri(), item.bytes(), item.proofSha(), true, stopped, meter, FailureReason.SOURCE_IDENTITY);
+          verify(
+              source.uri(),
+              item.bytes(),
+              item.proofSha(),
+              true,
+              stopped,
+              meter,
+              FailureReason.SOURCE_IDENTITY);
           requireHistoricalSource(item, cameraEvidence, archive, stopped);
           check(stopped);
           verified.add(item);
@@ -422,46 +666,73 @@ final class PhotoMove implements AutoCloseable {
       int skipped = proposal.skipped() + meter.rejected;
       meter.publish(true);
       result = "completed";
-      return new Plan(proposal.volume(), items, skipped, meter.rejected,
+      return new Plan(
+          proposal.volume(),
+          items,
+          skipped,
+          meter.rejected,
           new ArchivePreflight(proposal.volume(), items, skipped, meter.rejected));
     } catch (InterruptedIOException cancelled) {
       result = "cancelled";
       throw cancelled;
     } finally {
       E2SyncJob.ORIGINALS.unlock();
-      DiagnosticLog.event("photo_move.preflight", 0, "result", result,
-          "elapsed_ns", SystemClock.elapsedRealtimeNanos() - started,
-          "candidates", meter.total, "candidate_bytes", meter.totalBytes, "read_bytes", meter.readBytes,
-          "verified", meter.successful, "excluded", meter.rejected, "verified_bytes", meter.verifiedBytes);
+      DiagnosticLog.event(
+          "photo_move.preflight",
+          0,
+          "result",
+          result,
+          "elapsed_ns",
+          SystemClock.elapsedRealtimeNanos() - started,
+          "candidates",
+          meter.total,
+          "candidate_bytes",
+          meter.totalBytes,
+          "read_bytes",
+          meter.readBytes,
+          "verified",
+          meter.successful,
+          "excluded",
+          meter.rejected,
+          "verified_bytes",
+          meter.verifiedBytes);
     }
   }
 
-  /** Read import locations on a worker thread. The gate keeps both histories stable during the read. */
+  /**
+   * Read import locations on a worker thread. The gate keeps both histories stable during the read.
+   */
   PhotoStorageInventory inventory() throws IOException {
     return inventory(null);
   }
 
   PhotoStorageInventory inventory(String volume) throws IOException {
-    var gate = CameraImportGate.lock;
-    if (!gate.tryLock()) throw new Failure("取り込みや移動が終わってから保存場所を確認してください。");
-    try {
-      if (PhotoMoveService.state().running())
-        throw new Failure("移動が終わってから保存場所を確認してください。");
-      if (store.batch() != null)
-        throw new Failure("移動を再開または終了してから保存場所を確認してください。");
-      String selected = volume == null ? PhotoStorage.selected(context) : volume;
-      ImportEvidence evidence = readImportEvidence(() -> false);
-      // An aggregate URI does not bind a historical receipt to a volume. Even the recent-volume
-      // catalog cannot prove that every previously used card is present. Keep its current row as
-      // a candidate; only independent exact evidence can confirm the historical association.
-      return inventory(evidence, ledger.importStoredSizes(), selected, false);
-    } finally {
-      gate.unlock();
+    String busy = "取り込みや移動が終わってから保存場所を確認してください。";
+    try (var admission = CameraImportGate.tryAdmit()) {
+      if (admission == null) throw new Failure(busy);
+      var gate = CameraImportGate.lock;
+      if (!gate.tryLock()) throw new Failure(busy);
+      try {
+        if (PhotoMoveService.state().running()) throw new Failure("移動が終わってから保存場所を確認してください。");
+        if (store.batch() != null) throw new Failure("移動を再開または終了してから保存場所を確認してください。");
+        String selected = volume == null ? PhotoStorage.selected(context) : volume;
+        ImportEvidence evidence = readImportEvidence(() -> false);
+        // An aggregate URI does not bind a historical receipt to a volume. Even the recent-volume
+        // catalog cannot prove that every previously used card is present. Keep its current row as
+        // a candidate; only independent exact evidence can confirm the historical association.
+        return inventory(evidence, ledger.importStoredSizes(), selected, false);
+      } finally {
+        gate.unlock();
+      }
     }
   }
 
-  private PhotoStorageInventory inventory(ImportEvidence evidence, Map<String, Long> storedSizes,
-      String targetVolume, boolean aggregateComplete) throws IOException {
+  private PhotoStorageInventory inventory(
+      ImportEvidence evidence,
+      Map<String, Long> storedSizes,
+      String targetVolume,
+      boolean aggregateComplete)
+      throws IOException {
     HistoricalCandidates historical = new HistoricalCandidates(evidence, () -> false);
     var volumes = new PhotoStorageLocation.Volumes(context);
     Map<Uri, PhotoStorageInventory.Photo> photos = new LinkedHashMap<>();
@@ -469,9 +740,11 @@ final class PhotoMove implements AutoCloseable {
     for (String reference : evidence.imported()) {
       boolean photoReference = CameraImportHistoryPlan.validUri(reference);
       var legacy = evidence.legacy().getOrDefault(reference, List.of());
-      if (!photoReference && !"existing".equals(reference)
+      if (!photoReference
+          && !"existing".equals(reference)
           && legacy.stream().noneMatch(row -> RawFormats.accepts(row.getName()))) continue;
-      if (!evidence.checksums().containsKey(reference) && !legacy.isEmpty()
+      if (!evidence.checksums().containsKey(reference)
+          && !legacy.isEmpty()
           && legacy.stream().allMatch(row -> VideoFormats.accepts(row.getName()))) continue;
       Media row = photoReference ? evidence.found().get(reference) : null;
       boolean ambiguous = evidence.ambiguous().contains(reference);
@@ -479,73 +752,128 @@ final class PhotoMove implements AutoCloseable {
         addUnresolved(evidence, reference, ambiguous, null, null, volumes, unresolved);
         continue;
       }
-      if (VideoFormats.accepts(row.name()) || row.mime() != null && row.mime().startsWith("video/")) continue;
+      if (VideoFormats.accepts(row.name()) || row.mime() != null && row.mime().startsWith("video/"))
+        continue;
       if (!aggregateComplete && reference.startsWith(ALL + "/")) {
-        var location = volumes.location(PhotoStorageLocation.Kind.CURRENT, row.volume(), row.path());
+        var location =
+            volumes.location(PhotoStorageLocation.Kind.CURRENT, row.volume(), row.path());
         addUnresolved(evidence, reference, true, inventoryName(row), location, volumes, unresolved);
       }
       if (!photos.containsKey(row.uri()))
-        photos.put(row.uri(), inventoryPhoto(evidence, storedSizes, row, targetVolume, aggregateComplete, volumes,
-            unresolved, historical));
+        photos.put(
+            row.uri(),
+            inventoryPhoto(
+                evidence,
+                storedSizes,
+                row,
+                targetVolume,
+                aggregateComplete,
+                volumes,
+                unresolved,
+                historical));
     }
     List<PhotoStorageInventory.History> historyRows = new ArrayList<>();
     unresolved.forEach((row, count) -> historyRows.add(row.withCount(count)));
     return new PhotoStorageInventory(new ArrayList<>(photos.values()), historyRows);
   }
 
-  private static void addUnresolved(ImportEvidence evidence, String reference, boolean ambiguous,
-      String candidateName, PhotoStorageLocation candidateLocation, PhotoStorageLocation.Volumes volumes,
+  private static void addUnresolved(
+      ImportEvidence evidence,
+      String reference,
+      boolean ambiguous,
+      String candidateName,
+      PhotoStorageLocation candidateLocation,
+      PhotoStorageLocation.Volumes volumes,
       Map<PhotoStorageInventory.History, Integer> unresolved) {
-    Reason reason = ambiguous ? Reason.AMBIGUOUS_REFERENCE
-        : CameraImportHistoryPlan.validUri(reference) ? Reason.MISSING_REFERENCE : Reason.NO_FILE_REFERENCE;
+    Reason reason =
+        ambiguous
+            ? Reason.AMBIGUOUS_REFERENCE
+            : CameraImportHistoryPlan.validUri(reference)
+                ? Reason.MISSING_REFERENCE
+                : Reason.NO_FILE_REFERENCE;
     boolean conflict = "".equals(evidence.checksums().get(reference));
     var location = recordedLocation(volumes, reference);
     List<Reason> reasons = conflict ? List.of(reason, Reason.CONFLICTING_HISTORY) : List.of(reason);
     List<HistoryDb.MoveEvidence> legacy = evidence.legacy().getOrDefault(reference, List.of());
     for (var record : legacy) {
       if (!VideoFormats.accepts(record.getName()))
-        addUnresolvedName(record.getName(), location, reasons, candidateName, candidateLocation, unresolved);
+        addUnresolvedName(
+            record.getName(), location, reasons, candidateName, candidateLocation, unresolved);
     }
-    addUnresolvedReceipts(evidence, reference, location, reasons, candidateName, candidateLocation, conflict, unresolved);
+    addUnresolvedReceipts(
+        evidence,
+        reference,
+        location,
+        reasons,
+        candidateName,
+        candidateLocation,
+        conflict,
+        unresolved);
   }
 
-  private static String addUnresolvedReceipts(ImportEvidence evidence, String reference,
-      PhotoStorageLocation location, List<Reason> reasons, String candidateName,
-      PhotoStorageLocation candidateLocation, boolean conflict, Map<PhotoStorageInventory.History, Integer> unresolved) {
+  private static String addUnresolvedReceipts(
+      ImportEvidence evidence,
+      String reference,
+      PhotoStorageLocation location,
+      List<Reason> reasons,
+      String candidateName,
+      PhotoStorageLocation candidateLocation,
+      boolean conflict,
+      Map<PhotoStorageInventory.History, Integer> unresolved) {
     List<HistoryDb.MoveEvidence> legacy = evidence.legacy().getOrDefault(reference, List.of());
-    List<CameraImportLedger.MoveReceipt> receipts = evidence.receipts().getOrDefault(reference, List.of());
+    List<CameraImportLedger.MoveReceipt> receipts =
+        evidence.receipts().getOrDefault(reference, List.of());
     if (legacy.isEmpty() && receipts.isEmpty())
       addUnresolvedName(null, location, reasons, candidateName, candidateLocation, unresolved);
     String firstName = null;
     for (var receipt : receipts) {
       if (VideoFormats.accepts(receipt.name())) continue;
       if (firstName == null) firstName = receipt.name();
-      // One history can be represented in both stores. A shared URI or filename alone is not enough.
-      if (!conflict && legacy.stream().anyMatch(record -> matchesReceipt(receipt, record))) continue;
-      addUnresolvedName(receipt.name(), location, reasons, candidateName, candidateLocation, unresolved);
+      // One history can be represented in both stores. A shared URI or filename alone is not
+      // enough.
+      if (!conflict && legacy.stream().anyMatch(record -> matchesReceipt(receipt, record)))
+        continue;
+      addUnresolvedName(
+          receipt.name(), location, reasons, candidateName, candidateLocation, unresolved);
     }
     return firstName;
   }
 
-  private static PhotoStorageLocation recordedLocation(PhotoStorageLocation.Volumes volumes, String reference) {
-    return volumes.location(PhotoStorageLocation.Kind.RECORDED, PhotoStorageLocation.recordedVolume(reference), null);
+  private static PhotoStorageLocation recordedLocation(
+      PhotoStorageLocation.Volumes volumes, String reference) {
+    return volumes.location(
+        PhotoStorageLocation.Kind.RECORDED, PhotoStorageLocation.recordedVolume(reference), null);
   }
 
-  private static void addUnresolvedName(String name, PhotoStorageLocation location, List<Reason> reasons,
-      String candidateName, PhotoStorageLocation candidateLocation,
+  private static void addUnresolvedName(
+      String name,
+      PhotoStorageLocation location,
+      List<Reason> reasons,
+      String candidateName,
+      PhotoStorageLocation candidateLocation,
       Map<PhotoStorageInventory.History, Integer> unresolved) {
     String displayName = name == null || name.isBlank() ? "名前の記録がない写真" : name;
-    unresolved.merge(new PhotoStorageInventory.History(displayName, location, reasons, candidateName,
-        candidateLocation, 1), 1, Integer::sum);
+    unresolved.merge(
+        new PhotoStorageInventory.History(
+            displayName, location, reasons, candidateName, candidateLocation, 1),
+        1,
+        Integer::sum);
   }
 
   private static String inventoryName(Media row) {
     return row.name() == null || row.name().isBlank() ? "写真名を確認できません" : row.name();
   }
 
-  private PhotoStorageInventory.Photo inventoryPhoto(ImportEvidence evidence, Map<String, Long> storedSizes,
-      Media row, String targetVolume, boolean aggregateComplete, PhotoStorageLocation.Volumes volumes,
-      Map<PhotoStorageInventory.History, Integer> unresolved, HistoricalCandidates historical) throws IOException {
+  private PhotoStorageInventory.Photo inventoryPhoto(
+      ImportEvidence evidence,
+      Map<String, Long> storedSizes,
+      Media row,
+      String targetVolume,
+      boolean aggregateComplete,
+      PhotoStorageLocation.Volumes volumes,
+      Map<PhotoStorageInventory.History, Integer> unresolved,
+      HistoricalCandidates historical)
+      throws IOException {
     var location = volumes.location(PhotoStorageLocation.Kind.CURRENT, row.volume(), row.path());
     String displayName = inventoryName(row);
     MoveProof planProof = moveProof(evidence, row);
@@ -553,32 +881,58 @@ final class PhotoMove implements AutoCloseable {
     MoveProof proof = unresolvedAggregate ? moveProof(evidence, row, false) : planProof;
     boolean conflict = "".equals(proof.expected());
     String exact = row.uri().toString();
-    List<String> references = proof.alias() == null ? List.of(exact) : List.of(exact, proof.alias());
-    boolean sizeContradiction = references.stream().anyMatch(ref -> sizeContradicts(storedSizes.get(ref), row.bytes()));
+    List<String> references =
+        proof.alias() == null ? List.of(exact) : List.of(exact, proof.alias());
+    boolean sizeContradiction =
+        references.stream().anyMatch(ref -> sizeContradicts(storedSizes.get(ref), row.bytes()));
     boolean completedIdentity = historical.hasCompletedIdentity(row, planProof);
     Reason sourceIssue = sourceIssue(row);
     boolean alreadyThere = targetVolume.equals(row.volume());
     boolean sourceWritable = evidence.writableSources().contains(row.volume());
     boolean targetWritable = evidence.writableSources().contains(targetVolume);
-    HistoricalProof historicalProof = sourceIssue == null && (completedIdentity || (!alreadyThere && sourceWritable
-        && targetWritable && !planProof.matches())) ? historical.match(row, planProof) : null;
+    HistoricalProof historicalProof =
+        sourceIssue == null
+                && (completedIdentity
+                    || (!alreadyThere && sourceWritable && targetWritable && !planProof.matches()))
+            ? historical.match(row, planProof)
+            : null;
     boolean completedMatch = historicalProof != null && historicalProof.completed() != null;
-    var mismatch = completedMatch ? new HistoryMismatch(null, List.of())
-        : unresolvedHistory(proof, row, sizeContradiction, unresolvedAggregate, volumes, displayName,
-            location, unresolved);
+    var mismatch =
+        completedMatch
+            ? new HistoryMismatch(null, List.of())
+            : unresolvedHistory(
+                proof,
+                row,
+                sizeContradiction,
+                unresolvedAggregate,
+                volumes,
+                displayName,
+                location,
+                unresolved);
 
     String recordedName = mismatch.name();
     for (String reference : references) {
       List<Reason> receiptReasons = new ArrayList<>(2);
-      if (conflict && evidence.checksums().containsKey(reference)) receiptReasons.add(Reason.CONFLICTING_HISTORY);
-      if (sizeContradicts(storedSizes.get(reference), row.bytes())) receiptReasons.add(Reason.HISTORY_SIZE);
+      if (conflict && evidence.checksums().containsKey(reference))
+        receiptReasons.add(Reason.CONFLICTING_HISTORY);
+      if (sizeContradicts(storedSizes.get(reference), row.bytes()))
+        receiptReasons.add(Reason.HISTORY_SIZE);
       if (receiptReasons.isEmpty()) continue;
-      String name = addUnresolvedReceipts(evidence, reference, recordedLocation(volumes, reference),
-          receiptReasons, displayName, location, conflict, unresolved);
+      String name =
+          addUnresolvedReceipts(
+              evidence,
+              reference,
+              recordedLocation(volumes, reference),
+              receiptReasons,
+              displayName,
+              location,
+              conflict,
+              unresolved);
       if (recordedName == null) recordedName = name;
     }
 
-    boolean historyMatches = completedMatch || (!completedIdentity && proof.matches() && !sizeContradiction);
+    boolean historyMatches =
+        completedMatch || (!completedIdentity && proof.matches() && !sizeContradiction);
     List<Reason> reasons = new ArrayList<>();
     if (sourceIssue != null) reasons.add(sourceIssue);
     if (!alreadyThere && !sourceWritable) reasons.add(Reason.VOLUME_UNAVAILABLE);
@@ -586,15 +940,32 @@ final class PhotoMove implements AutoCloseable {
     if ("".equals(planProof.expected()) && !reasons.contains(Reason.CONFLICTING_HISTORY))
       reasons.add(Reason.CONFLICTING_HISTORY);
     if (!alreadyThere && !targetWritable) reasons.add(Reason.DESTINATION_UNAVAILABLE);
-    // Plan checks the SHA while moving. Display disagreements must not silently change its membership.
-    boolean planned = planProof.matches() && !completedIdentity && sourceIssue == null && sourceWritable && targetWritable;
+    // Plan checks the SHA while moving. Display disagreements must not silently change its
+    // membership.
+    boolean planned =
+        planProof.matches()
+            && !completedIdentity
+            && sourceIssue == null
+            && sourceWritable
+            && targetWritable;
     boolean pendingCheck = historicalProof != null && sourceWritable && targetWritable;
     if (!alreadyThere && pendingCheck) reasons.add(0, Reason.ARCHIVE_CHECK_REQUIRED);
-    else if (completedIdentity && historicalProof == null) reasons.add(0, Reason.HISTORICAL_PROOF_CHANGED);
-    var status = alreadyThere ? PhotoStorageInventory.Status.ALREADY_THERE
-        : planned || pendingCheck ? PhotoStorageInventory.Status.ELIGIBLE : PhotoStorageInventory.Status.EXCLUDED;
-    return new PhotoStorageInventory.Photo(row.uri(), displayName, location, status, reasons,
-        historyMatches ? null : recordedName, historyMatches);
+    else if (completedIdentity && historicalProof == null)
+      reasons.add(0, Reason.HISTORICAL_PROOF_CHANGED);
+    var status =
+        alreadyThere
+            ? PhotoStorageInventory.Status.ALREADY_THERE
+            : planned || pendingCheck
+                ? PhotoStorageInventory.Status.ELIGIBLE
+                : PhotoStorageInventory.Status.EXCLUDED;
+    return new PhotoStorageInventory.Photo(
+        row.uri(),
+        displayName,
+        location,
+        status,
+        reasons,
+        historyMatches ? null : recordedName,
+        historyMatches);
   }
 
   private static boolean sizeContradicts(Long storedSize, long liveSize) {
@@ -603,33 +974,47 @@ final class PhotoMove implements AutoCloseable {
 
   private record HistoryMismatch(String name, List<Reason> reasons) {}
 
-  private static HistoryMismatch unresolvedHistory(MoveProof proof, Media row, boolean sizeContradiction,
-      boolean unresolvedAggregate, PhotoStorageLocation.Volumes volumes, String candidateName,
-      PhotoStorageLocation candidateLocation, Map<PhotoStorageInventory.History, Integer> unresolved) {
+  private static HistoryMismatch unresolvedHistory(
+      MoveProof proof,
+      Media row,
+      boolean sizeContradiction,
+      boolean unresolvedAggregate,
+      PhotoStorageLocation.Volumes volumes,
+      String candidateName,
+      PhotoStorageLocation candidateLocation,
+      Map<PhotoStorageInventory.History, Integer> unresolved) {
     boolean conflict = "".equals(proof.expected());
     List<Reason> contradictions = new ArrayList<>(2);
     if (conflict) contradictions.add(Reason.CONFLICTING_HISTORY);
     if (sizeContradiction) contradictions.add(Reason.HISTORY_SIZE);
-    List<Reason> fallback = contradictions.isEmpty() ? List.of(unresolvedAggregate
-        ? Reason.AMBIGUOUS_REFERENCE : Reason.CONFLICTING_HISTORY) : contradictions;
+    List<Reason> fallback =
+        contradictions.isEmpty()
+            ? List.of(unresolvedAggregate ? Reason.AMBIGUOUS_REFERENCE : Reason.CONFLICTING_HISTORY)
+            : contradictions;
     HistoryMismatch closest = new HistoryMismatch(null, fallback);
     for (HistoryDb.MoveEvidence record : proof.candidates()) {
       if (VideoFormats.accepts(record.getName())) continue;
       boolean matched = proof.matched().contains(record);
       if (contradictions.isEmpty() && matched) continue;
-      List<Reason> reasons = matched ? contradictions : historyMismatchReasons(row, record, sizeContradiction);
+      List<Reason> reasons =
+          matched ? contradictions : historyMismatchReasons(row, record, sizeContradiction);
       if (!matched && conflict) reasons.add(Reason.CONFLICTING_HISTORY);
       if (reasons.isEmpty()) reasons = fallback;
-      addUnresolvedName(record.getName(), recordedLocation(volumes, record.getUri()), reasons, candidateName,
-          candidateLocation, unresolved);
+      addUnresolvedName(
+          record.getName(),
+          recordedLocation(volumes, record.getUri()),
+          reasons,
+          candidateName,
+          candidateLocation,
+          unresolved);
       if (closest.name() == null || reasons.size() < closest.reasons().size())
         closest = new HistoryMismatch(record.getName(), reasons);
     }
     return closest;
   }
 
-  private static List<Reason> historyMismatchReasons(Media row, HistoryDb.MoveEvidence record,
-      boolean sizeContradiction) {
+  private static List<Reason> historyMismatchReasons(
+      Media row, HistoryDb.MoveEvidence record, boolean sizeContradiction) {
     List<Reason> reasons = new ArrayList<>();
     if (!matchesLegacyName(row, record)) reasons.add(Reason.HISTORY_NAME);
     if (sizeContradiction || row.bytes() != record.getBytes()) reasons.add(Reason.HISTORY_SIZE);
@@ -639,12 +1024,19 @@ final class PhotoMove implements AutoCloseable {
     return reasons;
   }
 
-  private record MoveProof(String alias, String expected, List<HistoryDb.MoveEvidence> matched,
+  private record MoveProof(
+      String alias,
+      String expected,
+      List<HistoryDb.MoveEvidence> matched,
       List<HistoryDb.MoveEvidence> candidates) {
-    boolean matches() { return !"".equals(expected) && (expected != null || !matched.isEmpty()); }
+    boolean matches() {
+      return !"".equals(expected) && (expected != null || !matched.isEmpty());
+    }
 
     String legacyIds() {
-      return matched.stream().map(candidate -> Long.toString(candidate.getId())).collect(Collectors.joining(","));
+      return matched.stream()
+          .map(candidate -> Long.toString(candidate.getId()))
+          .collect(Collectors.joining(","));
     }
   }
 
@@ -655,30 +1047,44 @@ final class PhotoMove implements AutoCloseable {
   private static MoveProof moveProof(ImportEvidence evidence, Media row, boolean includeAggregate) {
     String exact = row.uri().toString();
     String aggregate = aggregate(row.uri());
-    String oldAlias = includeAggregate && row.equals(evidence.found().get(aggregate))
-        && !evidence.ambiguous().contains(aggregate)
-        ? aggregate : null;
+    String oldAlias =
+        includeAggregate
+                && row.equals(evidence.found().get(aggregate))
+                && !evidence.ambiguous().contains(aggregate)
+            ? aggregate
+            : null;
     String expected = evidence.checksums().get(exact);
     String legacySha = oldAlias == null ? null : evidence.checksums().get(oldAlias);
     if (expected == null) expected = legacySha;
     else if (legacySha != null && !expected.equals(legacySha)) expected = "";
-    List<HistoryDb.MoveEvidence> candidates = new ArrayList<>(evidence.legacy().getOrDefault(exact, List.of()));
+    List<HistoryDb.MoveEvidence> candidates =
+        new ArrayList<>(evidence.legacy().getOrDefault(exact, List.of()));
     if (oldAlias != null) candidates.addAll(evidence.legacy().getOrDefault(oldAlias, List.of()));
     var link = new ArrayList<>(evidence.receipts().getOrDefault(exact, List.of()));
     if (oldAlias != null) link.addAll(evidence.receipts().getOrDefault(oldAlias, List.of()));
-    List<HistoryDb.MoveEvidence> matched = candidates.stream().filter(candidate -> matchesLegacy(row, candidate)
-        || link.stream().anyMatch(receipt -> matchesReceipt(receipt, candidate))).collect(Collectors.toList());
+    List<HistoryDb.MoveEvidence> matched =
+        candidates.stream()
+            .filter(
+                candidate ->
+                    matchesLegacy(row, candidate)
+                        || link.stream().anyMatch(receipt -> matchesReceipt(receipt, candidate)))
+            .collect(Collectors.toList());
     return new MoveProof(oldAlias, expected, matched, candidates);
   }
 
-  private static boolean matchesReceipt(CameraImportLedger.MoveReceipt receipt, HistoryDb.MoveEvidence evidence) {
-    return receipt.bytes() == evidence.getBytes() && receipt.name().equalsIgnoreCase(evidence.getName())
-        && evidence.getShot() > 0 && (receipt.capture() == evidence.getShot() || receipt.sourceModified() == evidence.getShot());
+  private static boolean matchesReceipt(
+      CameraImportLedger.MoveReceipt receipt, HistoryDb.MoveEvidence evidence) {
+    return receipt.bytes() == evidence.getBytes()
+        && receipt.name().equalsIgnoreCase(evidence.getName())
+        && evidence.getShot() > 0
+        && (receipt.capture() == evidence.getShot()
+            || receipt.sourceModified() == evidence.getShot());
   }
 
   private static boolean matchesLegacy(Media media, HistoryDb.MoveEvidence evidence) {
     if (media.bytes() != evidence.getBytes()) return false;
-    if (evidence.getShot() > 0 && (media.taken() <= 0 || media.taken() / 1000 != evidence.getShot())) return false;
+    if (evidence.getShot() > 0
+        && (media.taken() <= 0 || media.taken() / 1000 != evidence.getShot())) return false;
     return matchesLegacyName(media, evidence);
   }
 
@@ -689,13 +1095,21 @@ final class PhotoMove implements AutoCloseable {
     int dot = original.lastIndexOf('.');
     if (dot <= 0) return false;
     if (saved.equalsIgnoreCase(original)) return true;
-    if (evidence.getShot() > 0 && saved.equalsIgnoreCase(MediaSaver.INSTANCE.collisionName(original, evidence.getShot())))
+    if (evidence.getShot() > 0
+        && saved.equalsIgnoreCase(MediaSaver.INSTANCE.collisionName(original, evidence.getShot())))
       return true;
-    return Pattern.compile(Pattern.quote(original.substring(0, dot)) + " \\([1-9][0-9]*\\)"
-        + Pattern.quote(original.substring(dot)), Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE).matcher(saved).matches();
+    return Pattern.compile(
+            Pattern.quote(original.substring(0, dot))
+                + " \\([1-9][0-9]*\\)"
+                + Pattern.quote(original.substring(dot)),
+            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE)
+        .matcher(saved)
+        .matches();
   }
 
-  PhotoMoveStore.Batch batch() { return store.batch(); }
+  PhotoMoveStore.Batch batch() {
+    return store.batch();
+  }
 
   void begin(Plan plan) throws IOException {
     if (plan.items().stream().anyMatch(PhotoMoveStore.Item::hasHistoricalProof)
@@ -722,14 +1136,14 @@ final class PhotoMove implements AutoCloseable {
       progress.update(batch);
       Map<String, String> cameraEvidence = null;
       var archive = new LegacyArchiveMoveProof.Records(context, archiveScanObserver);
-      for (PhotoMoveStore.Item item; (item = store.next()) != null;) {
+      for (PhotoMoveStore.Item item; (item = store.next()) != null; ) {
         stage = item.stage();
         check(stopped);
         // Auto-cleanup can remove a verified photo. Serialize the two local deletion paths.
-        if (!E2SyncJob.ORIGINALS.tryLock())
-          throw new Failure("端末の容量整理が終わってから移動を再開してください。");
+        if (!E2SyncJob.ORIGINALS.tryLock()) throw new Failure("端末の容量整理が終わってから移動を再開してください。");
         try {
-          if (item.hasHistoricalProof() && cameraEvidence == null) cameraEvidence = ledger.importDestinations();
+          if (item.hasHistoricalProof() && cameraEvidence == null)
+            cameraEvidence = ledger.importDestinations();
           advance(item, batch.volume(), stopped, metrics, cameraEvidence, archive);
           metrics.completed++;
         } finally {
@@ -753,7 +1167,8 @@ final class PhotoMove implements AutoCloseable {
           // Keep the last known stage if the journal itself is unavailable.
         }
       }
-      String reason = failure instanceof Failure detail ? detail.reason : FailureReason.MOVE_FAILED.code();
+      String reason =
+          failure instanceof Failure detail ? detail.reason : FailureReason.MOVE_FAILED.code();
       int scans = failure instanceof Failure detail ? detail.scanAttempts : 0;
       Log.w("LoupePhotoMove", "reason=" + reason + " stage=" + stage + " scan_attempts=" + scans);
       throw failure;
@@ -762,14 +1177,23 @@ final class PhotoMove implements AutoCloseable {
     }
   }
 
-  private void advance(PhotoMoveStore.Item item, String volume, BooleanSupplier stopped, RunMetrics metrics,
-      Map<String, String> cameraEvidence, LegacyArchiveMoveProof.Records archive) throws IOException {
+  private void advance(
+      PhotoMoveStore.Item item,
+      String volume,
+      BooleanSupplier stopped,
+      RunMetrics metrics,
+      Map<String, String> cameraEvidence,
+      LegacyArchiveMoveProof.Records archive)
+      throws IOException {
     if (item.hasHistoricalProof()) {
       if (item.stage() > PhotoMoveStore.QUEUED && item.targetPin() == null) {
         // A completed deletion can still recover from the independently durable destination proof.
-        if (item.stage() == PhotoMoveStore.REMAPPED && item.pendingCompletion() != null
+        if (item.stage() == PhotoMoveStore.REMAPPED
+            && item.pendingCompletion() != null
             && find(Uri.parse(item.source()), FailureReason.SOURCE_IDENTITY) == null) {
-          Media verified = verifyTarget(Uri.parse(item.target()), item.bytes(), item.proofSha(), true, stopped, metrics);
+          Media verified =
+              verifyTarget(
+                  Uri.parse(item.target()), item.bytes(), item.proofSha(), true, stopped, metrics);
           finishHistoricalMove(item, verified, cameraEvidence);
           return;
         }
@@ -777,18 +1201,21 @@ final class PhotoMove implements AutoCloseable {
       }
       requireHistoricalHistory(item, cameraEvidence);
       requireHistoricalEpoch(item);
-      if (item.stage() <= PhotoMoveStore.VERIFIED) requireHistoricalSource(item, cameraEvidence, archive, stopped);
+      if (item.stage() <= PhotoMoveStore.VERIFIED)
+        requireHistoricalSource(item, cameraEvidence, archive, stopped);
       if (item.stage() >= PhotoMoveStore.VERIFIED && !item.proofSha().equals(item.sha()))
         throw archiveMismatch(FailureReason.SHA_MISMATCH);
     } else if (item.stage() <= PhotoMoveStore.VERIFIED) {
       if (!ledger.hasMoveEvidence(item.source(), item.sourceAlias(), item.expectedSha())
           && !history.hasMoveEvidence(item.source(), item.sourceAlias(), item.legacyIds()))
-        throw new Failure("取り込みの記録を確認できません。元の写真を保持しました。",
-            FailureReason.HISTORY_RELOCATION);
+        throw new Failure("取り込みの記録を確認できません。元の写真を保持しました。", FailureReason.HISTORY_RELOCATION);
     }
     if (item.stage() == PhotoMoveStore.QUEUED) {
       Media original = requireSource(item);
-      String token = "__loupe_move_" + UUID.randomUUID() + original.name().substring(original.name().lastIndexOf('.'));
+      String token =
+          "__loupe_move_"
+              + UUID.randomUUID()
+              + original.name().substring(original.name().lastIndexOf('.'));
       PhotoMoveStore.TargetPin allocation = null;
       if (item.hasHistoricalProof()) {
         String epoch = LegacyArchiveMoveProof.epoch(context, volume);
@@ -837,7 +1264,8 @@ final class PhotoMove implements AutoCloseable {
         if (replacement.pending()) requireTargetRevision(item, replacement, volume);
         else requireHistoricalMetadata(source, replacement, volume);
       }
-      Media checked = verifyTarget(target, item.bytes(), item.sha(), !replacement.pending(), stopped, metrics);
+      Media checked =
+          verifyTarget(target, item.bytes(), item.sha(), !replacement.pending(), stopped, metrics);
       if (replacement.pending()) {
         ContentValues values = new ContentValues();
         values.put(DISPLAY_NAME, source.name());
@@ -849,9 +1277,23 @@ final class PhotoMove implements AutoCloseable {
           if (item.hasHistoricalProof()) {
             requireTargetRevision(item, checked, volume);
             var pin = item.targetPin();
-            Bundle expected = queryArgs(GENERATION_ADDED + "=? AND " + GENERATION_MODIFIED + "=? AND "
-                    + OWNER_PACKAGE_NAME + "=? AND " + IS_PENDING + "=1 AND " + IS_TRASHED + "=0",
-                new String[]{pin.generationAdded().toString(), pin.generationModified().toString(), context.getPackageName()});
+            Bundle expected =
+                queryArgs(
+                    GENERATION_ADDED
+                        + "=? AND "
+                        + GENERATION_MODIFIED
+                        + "=? AND "
+                        + OWNER_PACKAGE_NAME
+                        + "=? AND "
+                        + IS_PENDING
+                        + "=1 AND "
+                        + IS_TRASHED
+                        + "=0",
+                    new String[] {
+                      pin.generationAdded().toString(),
+                      pin.generationModified().toString(),
+                      context.getPackageName()
+                    });
             changed = resolver.update(target, values, expected);
           } else {
             changed = resolver.update(target, values, null, null);
@@ -865,7 +1307,8 @@ final class PhotoMove implements AutoCloseable {
       source = requireSource(item);
       var pin = item.targetPin();
       if (item.hasHistoricalProof()) {
-        // A crash may leave publication ahead of the journal. Verify the published bytes of that same row.
+        // A crash may leave publication ahead of the journal. Verify the published bytes of that
+        // same row.
         Media published = verifyTarget(target, item.bytes(), item.sha(), true, stopped, metrics);
         requireTargetBirth(item, published, volume);
         requireHistoricalMetadata(source, published, volume);
@@ -875,9 +1318,12 @@ final class PhotoMove implements AutoCloseable {
       item = store.next();
     }
     if (item.stage() == PhotoMoveStore.UPDATING_HISTORY) {
-      Media historicalSource = item.hasHistoricalProof()
-          ? requireHistoricalSource(item, cameraEvidence, archive, stopped) : null;
-      // Prepare the journal first, then read back the published bytes before either history is changed.
+      Media historicalSource =
+          item.hasHistoricalProof()
+              ? requireHistoricalSource(item, cameraEvidence, archive, stopped)
+              : null;
+      // Prepare the journal first, then read back the published bytes before either history is
+      // changed.
       faults.after(Boundary.BEFORE_HISTORY_VERIFY);
       Media published = verifyTarget(target, item.bytes(), item.sha(), true, stopped, metrics);
       if (historicalSource != null) {
@@ -891,8 +1337,10 @@ final class PhotoMove implements AutoCloseable {
       faults.after(Boundary.REMAPPED);
       item = store.next();
     }
-    // A process can die after deletion. The mounted source query must distinguish absence from failure.
-    String targetEpoch = item.hasHistoricalProof() ? LegacyArchiveMoveProof.epoch(context, volume) : null;
+    // A process can die after deletion. The mounted source query must distinguish absence from
+    // failure.
+    String targetEpoch =
+        item.hasHistoricalProof() ? LegacyArchiveMoveProof.epoch(context, volume) : null;
     Media verified = verifyTarget(target, item.bytes(), item.sha(), true, stopped, metrics);
     if (item.hasHistoricalProof()) {
       requireTargetRevision(item, verified, volume);
@@ -920,22 +1368,33 @@ final class PhotoMove implements AutoCloseable {
         item = store.next();
       }
       faults.after(Boundary.BEFORE_SOURCE_DELETE);
-      if (item.hasHistoricalProof()) source = requireHistoricalSource(item, cameraEvidence, archive, stopped);
+      if (item.hasHistoricalProof())
+        source = requireHistoricalSource(item, cameraEvidence, archive, stopped);
       Media current = requireOwned(target);
       if (item.hasHistoricalProof()) {
         requireTargetRevision(item, current, volume);
         requireHistoricalMetadata(source, current, volume);
       }
-      if (current.pending() || !verified.version().equals(current.version())
+      if (current.pending()
+          || !verified.version().equals(current.version())
           || item.hasHistoricalProof() && !matchesCompleted(item.pendingCompletion(), current))
         throw new Failure("移動先の写真が変更されました。元の写真を保持しました。", FailureReason.TARGET_PIN);
-      Bundle exactVersion = queryArgs(
-          GENERATION_MODIFIED + "=? AND " + OWNER_PACKAGE_NAME + "=? AND " + IS_PENDING + "=0 AND " + IS_TRASHED + "=0",
-          new String[]{Long.toString(source.generationModified()), context.getPackageName()});
+      Bundle exactVersion =
+          queryArgs(
+              GENERATION_MODIFIED
+                  + "=? AND "
+                  + OWNER_PACKAGE_NAME
+                  + "=? AND "
+                  + IS_PENDING
+                  + "=0 AND "
+                  + IS_TRASHED
+                  + "=0",
+              new String[] {Long.toString(source.generationModified()), context.getPackageName()});
       check(stopped);
       started = SystemClock.elapsedRealtimeNanos();
       try {
-        if (resolver.delete(sourceUri, exactVersion) != 1 || find(sourceUri, FailureReason.SOURCE_IDENTITY) != null)
+        if (resolver.delete(sourceUri, exactVersion) != 1
+            || find(sourceUri, FailureReason.SOURCE_IDENTITY) != null)
           throw new Failure("移動元の写真を削除できません。");
       } finally {
         metrics.deleteNs += SystemClock.elapsedRealtimeNanos() - started;
@@ -953,8 +1412,8 @@ final class PhotoMove implements AutoCloseable {
   private void relocateForMove(PhotoMoveStore.Item item, RunMetrics metrics) throws IOException {
     long started = SystemClock.elapsedRealtimeNanos();
     try {
-      if (!relocate(item, false)) throw new Failure("取り込みの記録を確認できません。元の写真を保持しました。",
-            FailureReason.HISTORY_RELOCATION);
+      if (!relocate(item, false))
+        throw new Failure("取り込みの記録を確認できません。元の写真を保持しました。", FailureReason.HISTORY_RELOCATION);
     } finally {
       metrics.historyNs += SystemClock.elapsedRealtimeNanos() - started;
     }
@@ -965,7 +1424,8 @@ final class PhotoMove implements AutoCloseable {
     String alias = reset ? null : item.sourceAlias();
     String to = reset ? item.source() : item.target();
     if (item.hasHistoricalProof()) {
-      if (item.expectedSha() != null || !Long.toString(item.historyId()).equals(item.legacyIds())) return false;
+      if (item.expectedSha() != null || !Long.toString(item.historyId()).equals(item.legacyIds()))
+        return false;
       if (reset && item.sourceAlias() != null) to = item.sourceAlias();
       return history.relocate(from, alias, to, item.legacyIds());
     }
@@ -984,8 +1444,7 @@ final class PhotoMove implements AutoCloseable {
       if (item.stage() == PhotoMoveStore.COPYING) {
         discardIncomplete(item, batch.volume());
       } else if (item.hasHistoricalProof() && item.stage() >= PhotoMoveStore.UPDATING_HISTORY) {
-        if (!E2SyncJob.ORIGINALS.tryLock())
-          throw new Failure("端末の容量整理が終わってから移動を終了してください。");
+        if (!E2SyncJob.ORIGINALS.tryLock()) throw new Failure("端末の容量整理が終わってから移動を終了してください。");
         try {
           boolean rollback = abandonHistorical(item);
           return store.abandonHistorical(rollback ? item : null);
@@ -997,13 +1456,19 @@ final class PhotoMove implements AutoCloseable {
           relocate(item, true);
         } else {
           // Complete the reference swap if the only verifiable copy is already at the destination.
-          Media replacement = verify(Uri.parse(item.target()), item.bytes(), item.sha(), true, () -> false, FailureReason.TARGET_PIN);
+          Media replacement =
+              verify(
+                  Uri.parse(item.target()),
+                  item.bytes(),
+                  item.sha(),
+                  true,
+                  () -> false,
+                  FailureReason.TARGET_PIN);
           if (!relocate(item, false)) throw new Failure("取り込みの記録を確認できません。");
           store.remapped(item, replacement.photo(), item.identity());
         }
       } else if (item.stage() == PhotoMoveStore.REMAPPED && !publishedReplacement(item)) {
-        if (!intactSource(item))
-          throw new Failure("元の写真と移動先を確認できません。保存先を接続してから再試行してください。");
+        if (!intactSource(item)) throw new Failure("元の写真と移動先を確認できません。保存先を接続してから再試行してください。");
         relocate(item, true);
         identity = galleryUri(Uri.parse(item.target())).toString();
       }
@@ -1016,11 +1481,19 @@ final class PhotoMove implements AutoCloseable {
     boolean sourcePresent = find(Uri.parse(item.source()), FailureReason.SOURCE_IDENTITY) != null;
     boolean historyPresent = history.containsMoveEvidence(item.historyId());
     if (!sourcePresent) {
-      Media verified = verify(Uri.parse(item.target()), item.bytes(), item.proofSha(), true, () -> false, FailureReason.TARGET_PIN);
+      Media verified =
+          verify(
+              Uri.parse(item.target()),
+              item.bytes(),
+              item.proofSha(),
+              true,
+              () -> false,
+              FailureReason.TARGET_PIN);
       if (historyPresent) {
         finishHistoricalMove(item, verified, ledger.importDestinations());
       } else {
-        // The surviving target keeps its logical identity. An erased history grants no completed proof.
+        // The surviving target keeps its logical identity. An erased history grants no completed
+        // proof.
         requireHistoricalDestination(item, verified);
         store.finishWithoutHistory(item);
       }
@@ -1034,20 +1507,32 @@ final class PhotoMove implements AutoCloseable {
     if (!item.proofSha().equals(item.sha())) throw archiveMismatch(FailureReason.SHA_MISMATCH);
     if (!intactSource(item)) throw archiveMismatch(FailureReason.SOURCE_IDENTITY);
     requireHistoricalEpoch(item);
-    if (historyPresent && !relocate(item, true)) throw archiveMismatch(FailureReason.HISTORY_RELOCATION);
+    if (historyPresent && !relocate(item, true))
+      throw archiveMismatch(FailureReason.HISTORY_RELOCATION);
     return true;
   }
 
   private void discardIncomplete(PhotoMoveStore.Item item, String volume) throws IOException {
-    if (item.hasHistoricalProof() && (item.target() == null || item.targetPin() == null
-        || item.targetPin().generationAdded() == null)) return;
+    if (item.hasHistoricalProof()
+        && (item.target() == null
+            || item.targetPin() == null
+            || item.targetPin().generationAdded() == null)) return;
     Uri collection = MediaStore.Images.Media.getContentUri(volume);
     if (!MediaStore.getExternalVolumeNames(context).contains(volume)) return;
-    Media pending = queryOne(collection, queryArgs(DISPLAY_NAME + "=? AND " + IS_PENDING + "=1 AND " + OWNER_PACKAGE_NAME + "=?",
-        new String[]{item.token(), context.getPackageName()}), FailureReason.TARGET_PIN);
-    if (pending == null || !owned(pending) || !pending.pending() || !volume.equals(pending.volume())) return;
+    Media pending =
+        queryOne(
+            collection,
+            queryArgs(
+                DISPLAY_NAME + "=? AND " + IS_PENDING + "=1 AND " + OWNER_PACKAGE_NAME + "=?",
+                new String[] {item.token(), context.getPackageName()}),
+            FailureReason.TARGET_PIN);
+    if (pending == null
+        || !owned(pending)
+        || !pending.pending()
+        || !volume.equals(pending.volume())) return;
     if (item.target() != null && !item.target().equals(pending.uri().toString())) return;
-    String selection = DISPLAY_NAME + "=? AND " + IS_PENDING + "=1 AND " + OWNER_PACKAGE_NAME + "=?";
+    String selection =
+        DISPLAY_NAME + "=? AND " + IS_PENDING + "=1 AND " + OWNER_PACKAGE_NAME + "=?";
     String[] args = {item.token(), context.getPackageName()};
     if (item.hasHistoricalProof()) {
       try {
@@ -1056,7 +1541,10 @@ final class PhotoMove implements AutoCloseable {
         return;
       }
       selection += " AND " + GENERATION_ADDED + "=? AND " + IS_TRASHED + "=0";
-      args = new String[]{item.token(), context.getPackageName(), item.targetPin().generationAdded().toString()};
+      args =
+          new String[] {
+            item.token(), context.getPackageName(), item.targetPin().generationAdded().toString()
+          };
     }
     if (resolver.delete(pending.uri(), queryArgs(selection, args)) != 1)
       throw new Failure("未完了のコピーを片付けられません。保存先を確認してください。");
@@ -1065,10 +1553,19 @@ final class PhotoMove implements AutoCloseable {
   private boolean intactSource(PhotoMoveStore.Item item) {
     try {
       Media source = requireSource(item);
-      Media verified = verify(source.uri(), item.bytes(), item.sha(), true, () -> false, FailureReason.SOURCE_IDENTITY);
+      Media verified =
+          verify(
+              source.uri(),
+              item.bytes(),
+              item.sha(),
+              true,
+              () -> false,
+              FailureReason.SOURCE_IDENTITY);
       return !item.hasHistoricalProof()
-          || source.version().equals(verified.version()) && source.hasGenerationIdentity()
-              && verified.hasGenerationIdentity() && historicalAliasMatches(verified, FailureReason.SOURCE_ALIAS);
+          || source.version().equals(verified.version())
+              && source.hasGenerationIdentity()
+              && verified.hasGenerationIdentity()
+              && historicalAliasMatches(verified, FailureReason.SOURCE_ALIAS);
     } catch (IOException | RuntimeException unavailable) {
       return false;
     }
@@ -1076,7 +1573,13 @@ final class PhotoMove implements AutoCloseable {
 
   private boolean publishedReplacement(PhotoMoveStore.Item item) {
     try {
-      verify(Uri.parse(item.target()), item.bytes(), item.sha(), true, () -> false, FailureReason.TARGET_PIN);
+      verify(
+          Uri.parse(item.target()),
+          item.bytes(),
+          item.sha(),
+          true,
+          () -> false,
+          FailureReason.TARGET_PIN);
       return true;
     } catch (IOException | RuntimeException unavailable) {
       return false;
@@ -1085,11 +1588,13 @@ final class PhotoMove implements AutoCloseable {
 
   static Uri galleryUri(Uri image) {
     String volume = PhotoStorage.volumeOf(image);
-    return ContentUris.withAppendedId(MediaStore.Files.getContentUri(
-        PhotoStorage.PRIMARY.equals(volume) ? "external" : volume), ContentUris.parseId(image));
+    return ContentUris.withAppendedId(
+        MediaStore.Files.getContentUri(PhotoStorage.PRIMARY.equals(volume) ? "external" : volume),
+        ContentUris.parseId(image));
   }
 
-  private Uri pendingTarget(PhotoMoveStore.Item item, Media source, String volume) throws IOException {
+  private Uri pendingTarget(PhotoMoveStore.Item item, Media source, String volume)
+      throws IOException {
     var pin = item.targetPin();
     if (item.hasHistoricalProof()) requireTargetAllocation(item, volume);
     if (item.target() != null) {
@@ -1105,10 +1610,16 @@ final class PhotoMove implements AutoCloseable {
     if (pin != null && pin.generationAdded() != null) throw targetChanged();
     PhotoStorage.requireSpace(context, volume, source.bytes());
     Uri collection = MediaStore.Images.Media.getContentUri(volume);
-    String selection = DISPLAY_NAME + "=? AND " + RELATIVE_PATH + "=? AND " + OWNER_PACKAGE_NAME + "=?";
-    if (item.hasHistoricalProof()) selection += " AND " + IS_PENDING + "=1 AND " + IS_TRASHED + "=0";
-    Media previous = queryOne(collection, queryArgs(selection,
-        new String[]{item.token(), source.path(), context.getPackageName()}), FailureReason.TARGET_PIN);
+    String selection =
+        DISPLAY_NAME + "=? AND " + RELATIVE_PATH + "=? AND " + OWNER_PACKAGE_NAME + "=?";
+    if (item.hasHistoricalProof())
+      selection += " AND " + IS_PENDING + "=1 AND " + IS_TRASHED + "=0";
+    Media previous =
+        queryOne(
+            collection,
+            queryArgs(
+                selection, new String[] {item.token(), source.path(), context.getPackageName()}),
+            FailureReason.TARGET_PIN);
     Uri target;
     if (previous == null) {
       ContentValues values = new ContentValues();
@@ -1136,9 +1647,14 @@ final class PhotoMove implements AutoCloseable {
     return target;
   }
 
-  private void requirePending(Media target, PhotoMoveStore.Item item, Media source, String volume) throws IOException {
-    if (!owned(target) || !target.pending() || target.trashed() || !volume.equals(target.volume())
-        || !item.token().equals(target.name()) || !source.path().equals(target.path()))
+  private void requirePending(Media target, PhotoMoveStore.Item item, Media source, String volume)
+      throws IOException {
+    if (!owned(target)
+        || !target.pending()
+        || target.trashed()
+        || !volume.equals(target.volume())
+        || !item.token().equals(target.name())
+        || !source.path().equals(target.path()))
       throw new Failure("移動先のファイルを確認できません。", FailureReason.TARGET_PIN);
   }
 
@@ -1156,7 +1672,8 @@ final class PhotoMove implements AutoCloseable {
     if (media.pending()) return Reason.PENDING;
     if (media.trashed()) return Reason.TRASHED;
     if (media.bytes() <= 0) return Reason.SIZE_UNKNOWN;
-    if (media.path() == null || !media.path().startsWith("Pictures/CameraSync/")) return Reason.UNSUPPORTED_FOLDER;
+    if (media.path() == null || !media.path().startsWith("Pictures/CameraSync/"))
+      return Reason.UNSUPPORTED_FOLDER;
     if (media.name() == null || !RawFormats.accepts(media.name()) || media.mime() == null)
       return Reason.UNSUPPORTED_FORMAT;
     return null;
@@ -1174,28 +1691,35 @@ final class PhotoMove implements AutoCloseable {
 
   private void requireHistoricalEpoch(PhotoMoveStore.Item item) throws IOException {
     var sourceProof = item.sourceProof();
-    boolean current = sourceProof == null
-        ? item.archiveProof().epoch().equals(LegacyArchiveMoveProof.epoch(context))
-        : sourceProof.epoch().equals(LegacyArchiveMoveProof.epoch(context, sourceProof.volume()));
+    boolean current =
+        sourceProof == null
+            ? item.archiveProof().epoch().equals(LegacyArchiveMoveProof.epoch(context))
+            : sourceProof
+                .epoch()
+                .equals(LegacyArchiveMoveProof.epoch(context, sourceProof.volume()));
     if (!current) throw archiveMismatch(LegacyArchiveMoveProof.Rejection.EPOCH, 0);
   }
 
-  private HistoryDb.MoveEvidence requireHistoricalHistory(PhotoMoveStore.Item item, Map<String, String> cameraEvidence)
-      throws IOException {
+  private HistoryDb.MoveEvidence requireHistoricalHistory(
+      PhotoMoveStore.Item item, Map<String, String> cameraEvidence) throws IOException {
     String aggregate = aggregate(Uri.parse(item.source()));
     String target = item.stage() >= PhotoMoveStore.UPDATING_HISTORY ? item.target() : null;
     String targetAlias = target == null ? null : aggregate(Uri.parse(target));
-    if (item.expectedSha() != null || !Long.toString(item.historyId()).equals(item.legacyIds())
+    if (item.expectedSha() != null
+        || !Long.toString(item.historyId()).equals(item.legacyIds())
         || item.sourceAlias() != null && !aggregate.equals(item.sourceAlias()))
       throw archiveMismatch(FailureReason.HISTORY_IDENTITY);
-    if (cameraEvidence.containsKey(item.source()) || cameraEvidence.containsKey(aggregate)
-        || target != null && (cameraEvidence.containsKey(target) || cameraEvidence.containsKey(targetAlias)))
+    if (cameraEvidence.containsKey(item.source())
+        || cameraEvidence.containsKey(aggregate)
+        || target != null
+            && (cameraEvidence.containsKey(target) || cameraEvidence.containsKey(targetAlias)))
       throw archiveMismatch(FailureReason.LEDGER_OR_HISTORY_CONFLICT);
     var records = history.moveEvidenceFor(item.source(), aggregate, target, targetAlias);
     if (records.size() != 1) throw archiveMismatch(FailureReason.HISTORY_MISSING_OR_DUPLICATE);
     var record = records.get(0);
     if (record.getId() != item.historyId()
-        || !record.getUri().equals(item.source()) && !record.getUri().equals(item.sourceAlias())
+        || !record.getUri().equals(item.source())
+            && !record.getUri().equals(item.sourceAlias())
             && !record.getUri().equals(target))
       throw archiveMismatch(FailureReason.HISTORY_IDENTITY);
     if (!item.historyFingerprint().equals(LegacyArchiveMoveProof.historyFingerprint(record)))
@@ -1204,27 +1728,48 @@ final class PhotoMove implements AutoCloseable {
   }
 
   private boolean matchesCompleted(PhotoMoveStore.CompletedProof proof, Media source) {
-    return proof != null && source.hasGenerationIdentity() && proof.source().equals(source.uri().toString()) && proof.volume().equals(source.volume())
-        && proof.version().equals(source.version()) && proof.generationAdded() == source.generationAdded()
-        && proof.generationModified() == source.generationModified() && proof.bytes() == source.bytes()
+    return proof != null
+        && source.hasGenerationIdentity()
+        && proof.source().equals(source.uri().toString())
+        && proof.volume().equals(source.volume())
+        && proof.version().equals(source.version())
+        && proof.generationAdded() == source.generationAdded()
+        && proof.generationModified() == source.generationModified()
+        && proof.bytes() == source.bytes()
         && proof.epoch().equals(LegacyArchiveMoveProof.epoch(context, source.volume()));
   }
 
-  private Media requireHistoricalSource(PhotoMoveStore.Item item, Map<String, String> cameraEvidence,
-      LegacyArchiveMoveProof.Records archive, BooleanSupplier stopped) throws IOException {
+  private Media requireHistoricalSource(
+      PhotoMoveStore.Item item,
+      Map<String, String> cameraEvidence,
+      LegacyArchiveMoveProof.Records archive,
+      BooleanSupplier stopped)
+      throws IOException {
     Media source = requireSource(item);
     var record = requireHistoricalHistory(item, cameraEvidence);
     if (!source.hasGenerationIdentity()) throw archiveMismatch(FailureReason.SOURCE_IDENTITY);
-    if (!historicalAliasMatches(source, FailureReason.SOURCE_ALIAS)) throw archiveMismatch(FailureReason.SOURCE_ALIAS);
+    if (!historicalAliasMatches(source, FailureReason.SOURCE_ALIAS))
+      throw archiveMismatch(FailureReason.SOURCE_ALIAS);
     if (!Objects.equals(store.completed(item.historyId()), item.sourceProof()))
       throw archiveMismatch(FailureReason.COMPLETED_PROOF);
     if (item.sourceProof() != null) {
-      if (!matchesCompleted(item.sourceProof(), source)) throw archiveMismatch(FailureReason.COMPLETED_PROOF);
+      if (!matchesCompleted(item.sourceProof(), source))
+        throw archiveMismatch(FailureReason.COMPLETED_PROOF);
     } else {
-      if (!PhotoStorage.PRIMARY.equals(source.volume())) throw archiveMismatch(FailureReason.SOURCE_IDENTITY);
-      var result = LegacyArchiveMoveProof.revalidate(context, archive, item.archiveProof(), source.photo(),
-          source.generationAdded(), source.generationModified(), record, stopped);
-      if (result.rejection() != null) throw archiveMismatch(result.rejection(), result.scanAttempts());
+      if (!PhotoStorage.PRIMARY.equals(source.volume()))
+        throw archiveMismatch(FailureReason.SOURCE_IDENTITY);
+      var result =
+          LegacyArchiveMoveProof.revalidate(
+              context,
+              archive,
+              item.archiveProof(),
+              source.photo(),
+              source.generationAdded(),
+              source.generationModified(),
+              record,
+              stopped);
+      if (result.rejection() != null)
+        throw archiveMismatch(result.rejection(), result.scanAttempts());
     }
     return source;
   }
@@ -1235,75 +1780,106 @@ final class PhotoMove implements AutoCloseable {
 
   private void requireTargetAllocation(PhotoMoveStore.Item item, String volume) throws Failure {
     var pin = item.targetPin();
-    if (pin == null || !volume.equals(pin.volume())
-        || !pin.epoch().equals(LegacyArchiveMoveProof.epoch(context, volume))) throw targetChanged();
-  }
-
-  private void requireTargetBirth(PhotoMoveStore.Item item, Media target, String volume) throws Failure {
-    requireTargetAllocation(item, volume);
-    var pin = item.targetPin();
-    if (pin.generationAdded() == null || !target.hasGenerationIdentity() || !volume.equals(target.volume())
-        || !target.uri().toString().equals(item.target()) || pin.generationAdded() != target.generationAdded())
+    if (pin == null
+        || !volume.equals(pin.volume())
+        || !pin.epoch().equals(LegacyArchiveMoveProof.epoch(context, volume)))
       throw targetChanged();
   }
 
-  private void requireTargetRevision(PhotoMoveStore.Item item, Media target, String volume) throws Failure {
+  private void requireTargetBirth(PhotoMoveStore.Item item, Media target, String volume)
+      throws Failure {
+    requireTargetAllocation(item, volume);
+    var pin = item.targetPin();
+    if (pin.generationAdded() == null
+        || !target.hasGenerationIdentity()
+        || !volume.equals(target.volume())
+        || !target.uri().toString().equals(item.target())
+        || pin.generationAdded() != target.generationAdded()) throw targetChanged();
+  }
+
+  private void requireTargetRevision(PhotoMoveStore.Item item, Media target, String volume)
+      throws Failure {
     requireTargetBirth(item, target, volume);
     var pin = item.targetPin();
-    if (pin.generationModified() == null || pin.generationModified() != target.generationModified()
+    if (pin.generationModified() == null
+        || pin.generationModified() != target.generationModified()
         || !target.version().equals(pin.version())) throw targetChanged();
   }
 
-  private void requireHistoricalPending(PhotoMoveStore.Item item, Media target, Media source, String volume)
-      throws IOException {
+  private void requireHistoricalPending(
+      PhotoMoveStore.Item item, Media target, Media source, String volume) throws IOException {
     requirePending(target, item, source, volume);
     requireTargetBirth(item, target, volume);
   }
 
-  private static void requireHistoricalMetadata(Media source, Media target, String volume) throws IOException {
+  private static void requireHistoricalMetadata(Media source, Media target, String volume)
+      throws IOException {
     long taken = source.taken();
-    boolean capturePreserved = taken > 0 ? taken == target.taken()
-        : (taken == 0 || taken == -1) && (target.taken() == 0 || target.taken() == -1);
-    if (!volume.equals(target.volume()) || !source.path().equals(target.path()) || !capturePreserved
-        || !source.mime().equals(target.mime()) || !publishedNameMatches(source.name(), target.name()))
-      throw new Failure("移動先の保存場所または撮影日時が一致しません。元の写真を保持しました。",
-          FailureReason.TARGET_METADATA);
+    boolean capturePreserved =
+        taken > 0
+            ? taken == target.taken()
+            : (taken == 0 || taken == -1) && (target.taken() == 0 || target.taken() == -1);
+    if (!volume.equals(target.volume())
+        || !source.path().equals(target.path())
+        || !capturePreserved
+        || !source.mime().equals(target.mime())
+        || !publishedNameMatches(source.name(), target.name()))
+      throw new Failure("移動先の保存場所または撮影日時が一致しません。元の写真を保持しました。", FailureReason.TARGET_METADATA);
   }
 
   private static boolean publishedNameMatches(String source, String target) {
     if (source.equals(target)) return true;
     if (target == null) return false;
     int dot = source.lastIndexOf('.');
-    return dot > 0 && Pattern.compile(Pattern.quote(source.substring(0, dot)) + " \\([1-9][0-9]*\\)"
-        + Pattern.quote(source.substring(dot))).matcher(target).matches();
+    return dot > 0
+        && Pattern.compile(
+                Pattern.quote(source.substring(0, dot))
+                    + " \\([1-9][0-9]*\\)"
+                    + Pattern.quote(source.substring(dot)))
+            .matcher(target)
+            .matches();
   }
 
-  private PhotoMoveStore.CompletedProof historicalDestination(PhotoMoveStore.Item item, Media verified,
-      String epoch) throws IOException {
-    if (!eligible(verified) || !verified.hasGenerationIdentity() || verified.bytes() != item.bytes()
+  private PhotoMoveStore.CompletedProof historicalDestination(
+      PhotoMoveStore.Item item, Media verified, String epoch) throws IOException {
+    if (!eligible(verified)
+        || !verified.hasGenerationIdentity()
+        || verified.bytes() != item.bytes()
         || !historicalAliasMatches(verified, FailureReason.TARGET_PIN)
         || !epoch.equals(LegacyArchiveMoveProof.epoch(context, verified.volume())))
       throw archiveMismatch(FailureReason.TARGET_PIN);
-    return new PhotoMoveStore.CompletedProof(item.historyId(), verified.uri().toString(), verified.volume(), epoch,
-        verified.generationAdded(), verified.generationModified(), verified.version(), verified.bytes(),
-        item.proofSha(), item.historyFingerprint());
+    return new PhotoMoveStore.CompletedProof(
+        item.historyId(),
+        verified.uri().toString(),
+        verified.volume(),
+        epoch,
+        verified.generationAdded(),
+        verified.generationModified(),
+        verified.version(),
+        verified.bytes(),
+        item.proofSha(),
+        item.historyFingerprint());
   }
 
-  private void requireRelocatedHistory(PhotoMoveStore.Item item, Map<String, String> cameraEvidence) throws IOException {
+  private void requireRelocatedHistory(PhotoMoveStore.Item item, Map<String, String> cameraEvidence)
+      throws IOException {
     if (!item.target().equals(requireHistoricalHistory(item, cameraEvidence).getUri()))
       throw archiveMismatch(FailureReason.HISTORY_RELOCATION);
   }
 
-  private void finishHistoricalMove(PhotoMoveStore.Item item, Media verified, Map<String, String> cameraEvidence)
+  private void finishHistoricalMove(
+      PhotoMoveStore.Item item, Media verified, Map<String, String> cameraEvidence)
       throws IOException {
     requireRelocatedHistory(item, cameraEvidence);
     requireHistoricalDestination(item, verified);
     store.completeHistorical(item);
   }
 
-  private void requireHistoricalDestination(PhotoMoveStore.Item item, Media verified) throws IOException {
+  private void requireHistoricalDestination(PhotoMoveStore.Item item, Media verified)
+      throws IOException {
     var destination = item.pendingCompletion();
-    if (destination == null || !matchesCompleted(destination, verified)
+    if (destination == null
+        || !matchesCompleted(destination, verified)
         || !matchesCompleted(destination, requireOwned(verified.uri()))
         || !historicalAliasMatches(verified, FailureReason.TARGET_PIN))
       throw archiveMismatch(FailureReason.TARGET_PIN);
@@ -1350,10 +1926,22 @@ final class PhotoMove implements AutoCloseable {
 
   private static Media media(Cursor c) {
     String volume = Objects.requireNonNull(c.getString(4));
-    return new Media(ContentUris.withAppendedId(MediaStore.Images.Media.getContentUri(volume), c.getLong(0)),
-        c.getString(1), c.getString(2), c.getString(3), volume, c.getString(5), c.getLong(6), c.getLong(7),
-        c.getLong(8), c.getLong(9), c.getLong(10), c.getLong(11), !c.isNull(10) && !c.isNull(11),
-        c.getInt(12) != 0, c.getInt(13) != 0);
+    return new Media(
+        ContentUris.withAppendedId(MediaStore.Images.Media.getContentUri(volume), c.getLong(0)),
+        c.getString(1),
+        c.getString(2),
+        c.getString(3),
+        volume,
+        c.getString(5),
+        c.getLong(6),
+        c.getLong(7),
+        c.getLong(8),
+        c.getLong(9),
+        c.getLong(10),
+        c.getLong(11),
+        !c.isNull(10) && !c.isNull(11),
+        c.getInt(12) != 0,
+        c.getInt(13) != 0);
   }
 
   private static Bundle queryArgs(String selection, String[] arguments) {
@@ -1371,15 +1959,23 @@ final class PhotoMove implements AutoCloseable {
     return ContentUris.withAppendedId(ALL, ContentUris.parseId(uri)).toString();
   }
 
-  private String copy(Media source, Uri target, PhotoMoveStore.Item item, String volume, BooleanSupplier stopped,
-      RunMetrics metrics) throws IOException {
+  private String copy(
+      Media source,
+      Uri target,
+      PhotoMoveStore.Item item,
+      String volume,
+      BooleanSupplier stopped,
+      RunMetrics metrics)
+      throws IOException {
     long started = SystemClock.elapsedRealtimeNanos();
     try (InputStream in = original(source.uri())) {
       boolean historical = item.hasHistoricalProof();
       if (historical) requireHistoricalPending(item, requireOwned(target), source, volume);
-      ParcelFileDescriptor fd = historical ? targetOpen.open(target, "rw") : resolver.openFileDescriptor(target, "rwt");
+      ParcelFileDescriptor fd =
+          historical ? targetOpen.open(target, "rw") : resolver.openFileDescriptor(target, "rwt");
       if (fd == null) throw new Failure("移動先に書き込めません。");
-      try (ParcelFileDescriptor.AutoCloseOutputStream out = new ParcelFileDescriptor.AutoCloseOutputStream(fd)) {
+      try (ParcelFileDescriptor.AutoCloseOutputStream out =
+          new ParcelFileDescriptor.AutoCloseOutputStream(fd)) {
         if (historical) prepareHistoricalWrite(item, source, target, volume, fd, stopped);
         String sha = hash(in, out, source.bytes(), stopped);
         long syncing = SystemClock.elapsedRealtimeNanos();
@@ -1395,18 +1991,28 @@ final class PhotoMove implements AutoCloseable {
     }
   }
 
-  private void prepareHistoricalWrite(PhotoMoveStore.Item item, Media source, Uri target, String volume,
-      ParcelFileDescriptor write, BooleanSupplier stopped) throws IOException {
+  private void prepareHistoricalWrite(
+      PhotoMoveStore.Item item,
+      Media source,
+      Uri target,
+      String volume,
+      ParcelFileDescriptor write,
+      BooleanSupplier stopped)
+      throws IOException {
     requireHistoricalPending(item, requireOwned(target), source, volume);
-    try (ParcelFileDescriptor read = resolver.openFileDescriptor(MediaStore.setRequireOriginal(target), "r")) {
+    try (ParcelFileDescriptor read =
+        resolver.openFileDescriptor(MediaStore.setRequireOriginal(target), "r")) {
       if (read == null) throw targetChanged();
       var current = Os.fstat(read.getFileDescriptor());
       var fd = write.getFileDescriptor();
       var opened = Os.fstat(fd);
-      if (!OsConstants.S_ISREG(opened.st_mode) || !OsConstants.S_ISREG(current.st_mode)
-          || current.st_ino <= 0 || opened.st_nlink <= 0 || current.st_nlink <= 0
-          || opened.st_dev != current.st_dev || opened.st_ino != current.st_ino)
-        throw targetChanged();
+      if (!OsConstants.S_ISREG(opened.st_mode)
+          || !OsConstants.S_ISREG(current.st_mode)
+          || current.st_ino <= 0
+          || opened.st_nlink <= 0
+          || current.st_nlink <= 0
+          || opened.st_dev != current.st_dev
+          || opened.st_ino != current.st_ino) throw targetChanged();
       requireHistoricalPending(item, requireOwned(target), source, volume);
       check(stopped);
       // From here on, change only the already checked descriptor. Never reopen the writable URI.
@@ -1417,8 +2023,14 @@ final class PhotoMove implements AutoCloseable {
     }
   }
 
-  private Media verifyTarget(Uri uri, long bytes, String sha, boolean published, BooleanSupplier stopped,
-      RunMetrics metrics) throws IOException {
+  private Media verifyTarget(
+      Uri uri,
+      long bytes,
+      String sha,
+      boolean published,
+      BooleanSupplier stopped,
+      RunMetrics metrics)
+      throws IOException {
     long started = SystemClock.elapsedRealtimeNanos();
     try {
       Media verified = verify(uri, bytes, sha, published, stopped, null, FailureReason.TARGET_PIN);
@@ -1430,17 +2042,31 @@ final class PhotoMove implements AutoCloseable {
     }
   }
 
-  private Media verify(Uri uri, long bytes, String sha, boolean published, BooleanSupplier stopped,
-      FailureReason reason) throws IOException {
+  private Media verify(
+      Uri uri,
+      long bytes,
+      String sha,
+      boolean published,
+      BooleanSupplier stopped,
+      FailureReason reason)
+      throws IOException {
     return verify(uri, bytes, sha, published, stopped, null, reason);
   }
 
-  private Media verify(Uri uri, long bytes, String sha, boolean published, BooleanSupplier stopped,
-      PreflightMeter meter, FailureReason reason) throws IOException {
+  private Media verify(
+      Uri uri,
+      long bytes,
+      String sha,
+      boolean published,
+      BooleanSupplier stopped,
+      PreflightMeter meter,
+      FailureReason reason)
+      throws IOException {
     Media media = requireOwned(uri, reason);
     if (published == media.pending()) throw new Failure("写真の公開状態を確認できません。", reason);
     try (InputStream in = original(uri)) {
-      if (!sha.equals(hash(in, null, bytes, stopped, meter))) throw new Failure("写真の読み戻しがオリジナルと一致しません。", FailureReason.SHA_MISMATCH);
+      if (!sha.equals(hash(in, null, bytes, stopped, meter)))
+        throw new Failure("写真の読み戻しがオリジナルと一致しません。", FailureReason.SHA_MISMATCH);
     }
     Media current = requireOwned(uri, reason);
     if (published == current.pending() || !media.version().equals(current.version()))
@@ -1454,17 +2080,19 @@ final class PhotoMove implements AutoCloseable {
     return in;
   }
 
-  private static String hash(InputStream in, OutputStream out, long bytes, BooleanSupplier stopped) throws IOException {
+  private static String hash(InputStream in, OutputStream out, long bytes, BooleanSupplier stopped)
+      throws IOException {
     return hash(in, out, bytes, stopped, null);
   }
 
-  private static String hash(InputStream in, OutputStream out, long bytes, BooleanSupplier stopped, PreflightMeter meter)
+  private static String hash(
+      InputStream in, OutputStream out, long bytes, BooleanSupplier stopped, PreflightMeter meter)
       throws IOException {
     try {
       MessageDigest digest = MessageDigest.getInstance("SHA-256");
       byte[] buffer = new byte[64 * 1024];
       long count = 0;
-      for (int size; (size = in.read(buffer)) != -1;) {
+      for (int size; (size = in.read(buffer)) != -1; ) {
         if (meter != null && size > 0) meter.read(size);
         check(stopped);
         count += size;
@@ -1474,7 +2102,8 @@ final class PhotoMove implements AutoCloseable {
       }
       if (count != bytes) throw new Failure("写真を最後まで読み取れません。");
       StringBuilder sha = new StringBuilder(64);
-      for (byte value : digest.digest()) sha.append(String.format(Locale.ROOT, "%02x", value & 255));
+      for (byte value : digest.digest())
+        sha.append(String.format(Locale.ROOT, "%02x", value & 255));
       return sha.toString();
     } catch (NoSuchAlgorithmException impossible) {
       throw new AssertionError(impossible);
@@ -1486,5 +2115,8 @@ final class PhotoMove implements AutoCloseable {
       throw new InterruptedIOException("写真の移動を中断しました。");
   }
 
-  @Override public void close() { store.close(); }
+  @Override
+  public void close() {
+    store.close();
+  }
 }

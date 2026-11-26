@@ -3,5 +3,6 @@ set -eu
 cd "$(dirname "$0")/.."
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT HUP INT TERM
-javac -d "$work" app/src/main/java/jp/nano/rawgallery/camera/CameraCardRouting.java tests/CameraCardRoutingTest.java
+javac -d "$work" app/src/main/java/jp/nano/rawgallery/camera/CameraCardRouting.java app/src/main/java/jp/nano/rawgallery/camera/SdUsbReprobe.java tests/CameraCardRoutingTest.java tests/SdUsbReprobeTest.java
 java -cp "$work" jp.nano.rawgallery.camera.CameraCardRoutingTest
+java -cp "$work" jp.nano.rawgallery.camera.SdUsbReprobeTest
