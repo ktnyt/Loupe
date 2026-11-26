@@ -46,6 +46,8 @@ public final class MainActivity extends DiagnosticActivity {
       historyAnimating;
   private Runnable refreshShareBadges = () -> {}, refreshShareInfo = () -> {};
   private Runnable refreshSingleBest = () -> {};
+  private Runnable refreshExpandedChoice = () -> {};
+  private boolean expandedRankUnavailable;
   private AlertDialog shareHistoryFailure;
   private final SharedPreferences.OnSharedPreferenceChangeListener historyChanges =
       (prefs, key) -> {
@@ -142,6 +144,7 @@ public final class MainActivity extends DiagnosticActivity {
   private boolean rankingForeground;
   private Runnable refreshBurstRanks = () -> {};
   private StatusView rankEmpty;
+  private LinearLayout rankFilterFailure;
   private boolean rankFilterReadFailed;
   private PhotoFilterSheet rankFilterSheet;
   private RankingStore.Burst rankingBasis;
@@ -451,8 +454,11 @@ public final class MainActivity extends DiagnosticActivity {
   private void base() {
     presentedSelection = null;
     refreshSingleBest = () -> {};
+    refreshExpandedChoice = () -> {};
+    expandedRankUnavailable = false;
     refreshBurstRanks = () -> {};
     rankEmpty = null;
+    rankFilterFailure = null;
     rankingActions.clear();
     rankingSaveStatus = null;
     selectionShareNotice = null;
@@ -666,9 +672,11 @@ public final class MainActivity extends DiagnosticActivity {
     FrameLayout gridFrame = new FrameLayout(this);
     gridFrame.addView(grid, new FrameLayout.LayoutParams(-1, -1));
     rankEmpty = status(StatusView.Symbol.EMPTY, "", "表示する写真がありません");
+    FrameLayout emptyState = new FrameLayout(this);
+    emptyState.addView(rankEmpty, new FrameLayout.LayoutParams(-1, -1));
     updateRankEmpty(displayedRanks);
-    gridFrame.addView(rankEmpty, new FrameLayout.LayoutParams(-1, -1));
-    grid.setEmptyView(rankEmpty);
+    gridFrame.addView(emptyState, new FrameLayout.LayoutParams(-1, -1));
+    grid.setEmptyView(emptyState);
     body.addView(gridFrame, new LinearLayout.LayoutParams(-1, -1));
     int controlsStart = root.getChildCount();
     if (selecting) {
@@ -1227,9 +1235,9 @@ public final class MainActivity extends DiagnosticActivity {
     rankCache.clear();
     presentedSelection = null;
     if (rankFilterSheet != null && rankFilterSheet.isShowing()) rankFilterSheet.refreshCount();
-    if (rankingScreen) {
-      if (!rankingBusy) refreshComparison(snapshot);
-    } else if (detail) refreshSingleBest.run();
+    if (rankingScreen) refreshComparison(snapshot);
+    else if (detail && returnToRanking) refreshExpandedComparison(snapshot, false);
+    else if (detail) refreshSingleBest.run();
     else if (!albumHome) {
       if (burstMembers != null && !selecting) refreshBurstRanks.run();
       else if (grid != null && adapter != null) {
@@ -1261,19 +1269,35 @@ public final class MainActivity extends DiagnosticActivity {
 
   private void updateRankEmpty(RankingStore.Snapshot snapshot) {
     if (rankEmpty == null) return;
+    if (rankFilterFailure != null) rankFilterFailure.setVisibility(View.GONE);
     if (rankFilter != 0 && snapshot.phase() == RankingStore.Phase.PENDING) {
       rankEmpty.begin("順位を読み込んでいます");
     } else if (rankFilter != 0
         && (snapshot.phase() == RankingStore.Phase.FAILED || rankFilterReadFailed)) {
-      rankEmpty.show(
-          StatusView.Symbol.FAILED,
-          "",
-          "順位を読み込めませんでした",
-          () -> {
-            rankingStore.retryLoad();
-            if (rankingStore.snapshot().phase() == RankingStore.Phase.READY) gallery();
-          },
-          "再試行");
+      rankEmpty.clear();
+      if (rankFilterFailure == null) {
+        rankFilterFailure = vertical();
+        rankFilterFailure.setGravity(Gravity.CENTER_HORIZONTAL);
+        rankFilterFailure.setPadding(dp(24), 0, dp(24), 0);
+        TextView message = label("順位を読み込めませんでした", 14, TEXT);
+        message.setGravity(Gravity.CENTER);
+        message.setTag("catalog-ranking-failure");
+        message.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        rankFilterFailure.addView(message, new LinearLayout.LayoutParams(-1, -2));
+        Button retry =
+            LibraryUi.text(
+                this,
+                "順位を読み直す",
+                () -> {
+                  rankingStore.retryLoad();
+                  if (rankingStore.snapshot().phase() == RankingStore.Phase.READY) gallery();
+                });
+        retry.setTag("catalog-ranking-retry");
+        rankFilterFailure.addView(retry, new LinearLayout.LayoutParams(-2, -2));
+        ((FrameLayout) rankEmpty.getParent())
+            .addView(rankFilterFailure, new FrameLayout.LayoutParams(-1, -2, Gravity.CENTER));
+      }
+      rankFilterFailure.setVisibility(View.VISIBLE);
     } else rankEmpty.show(StatusView.Symbol.EMPTY, "", "表示する写真がありません", null, "");
   }
 
@@ -1822,10 +1846,11 @@ public final class MainActivity extends DiagnosticActivity {
                       return;
                     }
                     if (shareCapacity.snapshot(result.photos).available.actionable())
-                      shareMenu(result.photos, () -> isCurrentSelection(result));
+                      shareMenu(result.photos, result.ranks, () -> isCurrentSelection(result));
                   });
       shareDialog.show();
-    } else if (!result.photos.isEmpty()) shareMenu(result.photos, () -> isCurrentSelection(result));
+    } else if (!result.photos.isEmpty())
+      shareMenu(result.photos, result.ranks, () -> isCurrentSelection(result));
   }
 
   private void leaveRanking() {
@@ -2246,6 +2271,7 @@ public final class MainActivity extends DiagnosticActivity {
                     return;
                   }
                   rebuildDisplayed();
+                  updateRankEmpty(displayedRanks);
                   adapter.notifyDataSetChanged();
                   if (position == null) restoreGallery();
                   else position.restore(grid, photos, displayed);
@@ -2795,12 +2821,23 @@ public final class MainActivity extends DiagnosticActivity {
           dialog.show();
           if (!historyLoaded || historyReadFailed) loadShareHistory();
         });
-    if (fromRanking && !ranking.done()) {
-      boolean upper = rankingMembers.get(ranking.upper()) == position;
-      viewer.choose(() -> saveRanking(candidateRank -> candidateRank.choose(upper)));
-      viewer.footer.getChildAt(0).setEnabled(!rankingBusy);
-      rankingActions.add(viewer.footer.getChildAt(0));
+    if (fromRanking) {
+      viewer.choose(
+          () -> {
+            if (!isCurrentCandidate(position)) return;
+            boolean upper = Objects.equals(rankingMembers.get(ranking.upper()), position);
+            saveRanking(candidateRank -> candidateRank.choose(upper));
+          });
+      View choose = viewer.footer.getChildAt(0);
+      rankingActions.add(choose);
       rankingSaveIndicator(viewer.footer);
+      refreshExpandedChoice =
+          () -> {
+            boolean current = isCurrentCandidate(position);
+            choose.setVisibility(current ? View.VISIBLE : View.GONE);
+            choose.setEnabled(current && !rankingBusy);
+          };
+      refreshExpandedChoice.run();
     }
     viewing =
         actions.submit(
@@ -2911,7 +2948,7 @@ public final class MainActivity extends DiagnosticActivity {
       case RANKING -> leaveRanking();
       case SELECTION -> endSelection();
       case PHOTO -> {
-        if (returnToRanking) showRanking();
+        if (returnToRanking) returnToComparison();
         else gallery();
       }
       case BURST -> {
@@ -2949,18 +2986,56 @@ public final class MainActivity extends DiagnosticActivity {
     return displayed.journal.isEmpty() ? new PhotoRanking(displayed.ids, "B:") : displayed;
   }
 
+  private boolean reconcileComparison(RankingStore.Snapshot snapshot) throws IOException {
+    if (rankingBasis == null || rankingBusy) return false;
+    RankingStore.Burst current = snapshot.burst(rankingBasis.ids());
+    if (Objects.equals(current.storedJournal(), rankingBasis.storedJournal())) return false;
+    ranking = displayRanking(current);
+    rankingBasis = current;
+    rankingResultState = null;
+    rankingResultFocus = null;
+    return true;
+  }
+
   private void refreshComparison(RankingStore.Snapshot snapshot) {
-    if (rankingBasis == null || rankingBusy) return;
     try {
-      RankingStore.Burst current = snapshot.burst(rankingBasis.ids());
-      if (Objects.equals(current.storedJournal(), rankingBasis.storedJournal())) return;
-      ranking = displayRanking(current);
-      rankingBasis = current;
-      rankingResultState = null;
-      rankingResultFocus = null;
-      showRanking();
+      if (reconcileComparison(snapshot)) showRanking();
     } catch (IOException | IllegalArgumentException unreadable) {
       reportUnreadableRanking(snapshot, this::openRanking);
+    }
+  }
+
+  private boolean isCurrentCandidate(int position) {
+    return ranking != null
+        && !ranking.done()
+        && (Objects.equals(rankingMembers.get(ranking.upper()), position)
+            || Objects.equals(rankingMembers.get(ranking.lower()), position));
+  }
+
+  private boolean refreshExpandedComparison(RankingStore.Snapshot snapshot, boolean writeFinished) {
+    if (rankingBusy || rankingBasis == null) return false;
+    try {
+      boolean changed = reconcileComparison(snapshot);
+      refreshExpandedChoice.run();
+      if (changed || writeFinished || expandedRankUnavailable)
+        rankingSaveStatus.setVisibility(View.GONE);
+      expandedRankUnavailable = false;
+      return true;
+    } catch (IOException | IllegalArgumentException unreadable) {
+      expandedRankUnavailable = true;
+      for (View action : rankingActions) action.setEnabled(false);
+      rankingMessage("順位を読み込めませんでした。戻って確認してください", true);
+      return false;
+    }
+  }
+
+  private void returnToComparison() {
+    RankingStore.Snapshot snapshot = rankingStore.snapshot();
+    try {
+      reconcileComparison(snapshot);
+      showRanking();
+    } catch (IOException | IllegalArgumentException unreadable) {
+      reportUnreadableRanking(snapshot, this::returnToComparison);
     }
   }
 
@@ -2995,7 +3070,18 @@ public final class MainActivity extends DiagnosticActivity {
             (result, error) -> {
               rankingBusy = false;
               if (isDestroyed() || isFinishing() || store != rankingStore) return;
-              if (screen != generation || (!rankingScreen && !returnToRanking)) {
+              if (detail && returnToRanking && !rankingScreen) {
+                if (refreshExpandedComparison(store.snapshot(), true)
+                    && rankingBasis.ids().equals(members)) {
+                  boolean saved = rankingAccepted(result, error);
+                  if (rankingReadConflict(result)
+                      || saved && !result.ranking().journal.equals(ranking.journal))
+                    rankingMessage("順位が変わりました。戻って確認してください", false);
+                  else if (!saved) rankingMessage("順位を保存できませんでした。もう一度選んでください", true);
+                }
+                return;
+              }
+              if (screen != generation || !rankingScreen) {
                 if (rankingScreen && rankingBasis != null) {
                   RankingStore.Burst prior = rankingBasis;
                   refreshComparison(store.snapshot());
@@ -3422,11 +3508,13 @@ public final class MainActivity extends DiagnosticActivity {
   private Dialog shareDialog;
 
   private void shareMenu(List<PhotoRepository.Photo> selection) {
-    shareMenu(selection, () -> true);
+    shareMenu(selection, rankingStore.snapshot(), () -> true);
   }
 
-  private void shareMenu(List<PhotoRepository.Photo> selection, BooleanSupplier validSelection) {
-    RankingStore.Snapshot snapshot = rankingStore.snapshot();
+  private void shareMenu(
+      List<PhotoRepository.Photo> selection,
+      RankingStore.Snapshot snapshot,
+      BooleanSupplier validSelection) {
     List<PhotoRepository.Photo> frozen = List.copyOf(selection);
     Set<String> best = new HashSet<>();
     int cloud = 0;

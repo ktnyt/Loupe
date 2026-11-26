@@ -21,6 +21,15 @@ import java.util.Set;
 final class PhotoIdentityIndex {
   private record Binding(PhotoMoveStore.Identity identity, String moveUri) {}
 
+  /** A previous location is present only when the binding needs to be migrated. */
+  private record Existing(Binding binding, String previousLocation) {}
+
+  private static final class RankingPreparationRequired extends IOException {
+    RankingPreparationRequired() {
+      super("Ranking snapshot was not prepared");
+    }
+  }
+
   private final SQLiteDatabase db;
   private final boolean bulk;
   private final RankingStore.Snapshot rankings;
@@ -122,40 +131,64 @@ final class PhotoIdentityIndex {
       throws IOException {
     if (visible.isEmpty()) return;
     SQLiteDatabase db = store.getWritableDatabase();
-    RankingStore.Snapshot rankings = null;
-    if (needsRanking(visible, media)) {
-      if (db.inTransaction()) {
-        throw new IOException("Ranking readiness must be acquired before the identity transaction");
-      }
-      RankingStore owner = rankingStore == null ? new RankingStore(context) : rankingStore;
-      rankings = owner.awaitReady();
+    RankingStore.Snapshot rankings =
+        needsRanking(db, visible, media) ? awaitRankings(context, db, rankingStore) : null;
+    try {
+      resolveTransaction(context, db, visible, media, rankings);
+    } catch (RankingPreparationRequired changedBinding) {
+      // An existing binding can disappear after preflight. The first transaction has rolled back.
+      resolveTransaction(context, db, visible, media, awaitRankings(context, db, rankingStore));
     }
+  }
+
+  private static RankingStore.Snapshot awaitRankings(
+      Context context, SQLiteDatabase db, RankingStore rankingStore) throws IOException {
+    if (db.inTransaction()) {
+      throw new IOException("Ranking readiness must be acquired before the identity transaction");
+    }
+    RankingStore owner = rankingStore == null ? new RankingStore(context) : rankingStore;
+    return owner.awaitReady();
+  }
+
+  private static void resolveTransaction(
+      Context context,
+      SQLiteDatabase db,
+      Map<String, PhotoRepository.Photo> visible,
+      Map<String, PhotoRepository.Photo> media,
+      RankingStore.Snapshot rankings)
+      throws IOException {
+    // With simultaneous duplicates, the old path-only gallery kept the last reader.
+    List<String> keys = new ArrayList<>(visible.keySet());
+    Collections.reverse(keys);
+    List<PhotoRepository.Photo> resolved = new ArrayList<>(keys.size());
     db.beginTransactionNonExclusive();
     try {
-      PhotoIdentityIndex index = new PhotoIdentityIndex(db, visible.size() > 1, rankings);
-      // With simultaneous duplicates, the old path-only gallery kept the last reader.
-      List<String> keys = new ArrayList<>(visible.keySet());
-      Collections.reverse(keys);
+      PhotoIdentityIndex index = new PhotoIdentityIndex(db, keys.size() > 1, rankings);
       for (String key : keys) {
         PhotoRepository.Photo display = visible.get(key);
         PhotoRepository.Photo file = media.get(key);
         if (file == null || file.size != display.size) file = display;
-        visible.put(key, display.withIdentity(index.resolve(context, display, file)));
+        resolved.add(display.withIdentity(index.resolve(context, display, file)));
       }
       db.setTransactionSuccessful();
     } finally {
       db.endTransaction();
     }
+    // Do not expose partially resolved descriptors if the transaction needs to be retried.
+    for (int i = 0; i < keys.size(); i++) visible.put(keys.get(i), resolved.get(i));
   }
 
   private static boolean needsRanking(
-      Map<String, PhotoRepository.Photo> visible, Map<String, PhotoRepository.Photo> media)
+      SQLiteDatabase db,
+      Map<String, PhotoRepository.Photo> visible,
+      Map<String, PhotoRepository.Photo> media)
       throws IOException {
+    PhotoIdentityIndex probe = null;
     for (var entry : visible.entrySet()) {
       PhotoRepository.Photo display = entry.getValue(), file = media.get(entry.getKey());
-      if (file != null
-          && file != display
-          && file.size == display.size
+      if (file == null || file == display || file.size != display.size) continue;
+      if (probe == null) probe = new PhotoIdentityIndex(db, visible.size() > 1, null);
+      if (probe.existing(display, file, location(file), mediaVersion(file)) == null
           && !ArchiveStore.key(display).equals(ArchiveStore.key(file))) return true;
     }
     return false;
@@ -194,34 +227,38 @@ final class PhotoIdentityIndex {
     tagSources.add(binding.identity().tagSource());
   }
 
+  private Existing existing(
+      PhotoRepository.Photo display, PhotoRepository.Photo file, String location, String version) {
+    String oldFile = TagStore.locationSource(file), oldDisplay = TagStore.locationSource(display);
+    if (!bulk) load("location IN (?,?,?)", new String[] {location, oldFile, oldDisplay});
+    Map<String, Binding> versions = byLocation.getOrDefault(location, Map.of());
+    Binding exact = versions.get(version);
+    if (exact != null) return new Existing(exact, null);
+    // SAF alone has no DATE_ADDED or MediaStore ID. Only bridge a unique observed version.
+    if (version.isEmpty() && versions.size() == 1)
+      return new Existing(versions.values().iterator().next(), null);
+    if (!version.isEmpty() && versions.size() == 1 && versions.containsKey(""))
+      return new Existing(versions.get(""), location);
+
+    // Version 1 of the move journal identified locations by the visible URI and its observed dates.
+    String oldLocation = byLocation.containsKey(oldFile) ? oldFile : oldDisplay;
+    Binding legacy = byLocation.getOrDefault(oldLocation, Map.of()).get("");
+    return legacy == null ? null : new Existing(legacy, oldLocation);
+  }
+
   private PhotoMoveStore.Identity resolve(
       Context context, PhotoRepository.Photo display, PhotoRepository.Photo file)
       throws IOException {
     String location = location(file), version = mediaVersion(file);
-    String oldFile = TagStore.locationSource(file), oldDisplay = TagStore.locationSource(display);
-    if (!bulk) load("location IN (?,?,?)", new String[] {location, oldFile, oldDisplay});
-    Map<String, Binding> versions = byLocation.getOrDefault(location, Map.of());
-    Binding existing = versions.get(version);
-    if (existing != null) return existing.identity();
-    // SAF alone has no DATE_ADDED or MediaStore ID. Only bridge a unique observed version.
-    if (version.isEmpty() && versions.size() == 1)
-      return versions.values().iterator().next().identity();
-    String oldLocation = null;
-    if (!version.isEmpty() && versions.size() == 1 && versions.containsKey("")) {
-      existing = versions.get("");
-      oldLocation = location;
-    }
-    if (existing == null) {
-      // Version 1 of the move journal identified locations by the visible URI and its observed
-      // dates.
-      oldLocation = byLocation.containsKey(oldFile) ? oldFile : oldDisplay;
-      existing = byLocation.getOrDefault(oldLocation, Map.of()).get("");
-    }
-    Binding binding = existing;
-    if (binding == null) {
+    Existing match = existing(display, file, location, version);
+    Binding binding;
+    if (match == null) {
       binding =
           new Binding(initialIdentity(context, display, file, location + "\n" + version), null);
     } else {
+      binding = match.binding();
+      String oldLocation = match.previousLocation();
+      if (oldLocation == null) return binding.identity();
       db.delete("local_photos", "location=? AND media_version=''", new String[] {oldLocation});
       byLocation.get(oldLocation).remove("");
     }
@@ -241,12 +278,13 @@ final class PhotoIdentityIndex {
       // A persisted grant may already exist on the first scan after upgrading from the aggregate
       // gallery.
       String mediaTag = TagStore.source(file), mediaArchive = ArchiveStore.key(file);
+      boolean differentKeys = !archive.equals(mediaArchive);
+      if (differentKeys && rankings == null) throw new RankingPreparationRequired();
       try (TagStore tags = new TagStore(context)) {
         if (tags.photoId(display, false) == null && tags.photoId(file, false) != null)
           tag = mediaTag;
       }
-      if (!archive.equals(mediaArchive)) {
-        if (rankings == null) throw new IOException("Ranking snapshot was not prepared");
+      if (differentKeys) {
         try (ShareHistoryStore shares = new ShareHistoryStore(context)) {
           if (!rankings.singleBest(archive)
               && shares.history(archive).isEmpty()

@@ -27,7 +27,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** Isolated proof that ranking initialization cannot hold the identity writer transaction. */
+/** Isolated proof that only new competing identities need ranking readiness. */
 final class RankingIdentitySnapshotChecks {
   static String run(Instrumentation test) throws Exception {
     RankingPersistenceWaitChecks.requireEmptyAvd(test);
@@ -37,7 +37,9 @@ final class RankingIdentitySnapshotChecks {
     ExecutorService scans = Executors.newSingleThreadExecutor();
     ExecutorService probes = Executors.newSingleThreadExecutor();
     LoadGate gate = new LoadGate();
-    try (PhotoMoveStore moves = new PhotoMoveStore(context)) {
+    PhotoMoveStore moves = new PhotoMoveStore(context);
+    RankingStore owner = null;
+    try {
       PhotoRepository.Photo media = media(24901, "FIRST.JPG"), display = document("FIRST.JPG");
       String mediaKey = ArchiveStore.key(media), displayKey = ArchiveStore.key(display);
       require(!mediaKey.equals(displayKey), "distinct historical representation keys");
@@ -47,7 +49,8 @@ final class RankingIdentitySnapshotChecks {
               .putString("single-best-v1-" + PhotoRepository.digest(mediaKey), "1")
               .commit(),
           "seed isolated legacy media rank before owner initialization");
-      RankingStore owner = new RankingStore(gate.wrap(prefs));
+      owner = new RankingStore(gate.wrap(prefs));
+      RankingStore unboundOwner = owner;
       require(gate.entered.await(2, TimeUnit.SECONDS), "ranking initialization paused");
       require(owner.snapshot().phase() == RankingStore.Phase.PENDING, "truthful pending state");
       Map<String, PhotoRepository.Photo> visible = new HashMap<>(Map.of("first", display));
@@ -58,7 +61,8 @@ final class RankingIdentitySnapshotChecks {
               () -> {
                 scanThread.set(Thread.currentThread());
                 started.countDown();
-                PhotoIdentityIndex.resolve(context, moves, visible, Map.of("first", media), owner);
+                PhotoIdentityIndex.resolve(
+                    context, moves, visible, Map.of("first", media), unboundOwner);
                 return null;
               });
       require(started.await(1, TimeUnit.SECONDS), "identity scan started");
@@ -103,6 +107,9 @@ final class RankingIdentitySnapshotChecks {
           owner.snapshot().revision() == 0 && gate.reads.get() == 1 && prefs.getAll().size() == 1,
           "identity read does not save or reload ranking");
 
+      PhotoMoveStore.Identity first = visible.get("first").movedIdentity;
+      verifyBoundWhileHeld(context, moves, scans, first);
+
       SharedPreferences failedPrefs = context.getSharedPreferences("failed-ranking-proof", 0);
       AtomicInteger failures = new AtomicInteger(1);
       SharedPreferences failing =
@@ -119,6 +126,8 @@ final class RankingIdentitySnapshotChecks {
       } catch (IOException expected) {
         require(failed.snapshot().phase() == RankingStore.Phase.FAILED, "failed state retained");
       }
+      verifyBoundWithFailedLoad(context, moves, failed, first);
+      int boundRows = rows(moves);
       Map<String, PhotoRepository.Photo> pending =
           new HashMap<>(Map.of("second", document("SECOND.JPG")));
       try {
@@ -127,7 +136,7 @@ final class RankingIdentitySnapshotChecks {
         throw new AssertionError("failed rank load must not bind a competing identity");
       } catch (IOException expected) {
         require(
-            rows(moves) == 1 && failedPrefs.getAll().isEmpty(),
+            rows(moves) == boundRows && failedPrefs.getAll().isEmpty(),
             "failed read leaves all rows intact");
       }
       failed.retryLoad();
@@ -135,9 +144,10 @@ final class RankingIdentitySnapshotChecks {
       PhotoIdentityIndex.resolve(
           context, moves, pending, Map.of("second", media(24902, "SECOND.JPG")), failed);
       require(
-          rows(moves) == 2 && failedPrefs.getAll().isEmpty(),
+          rows(moves) == boundRows + 1 && failedPrefs.getAll().isEmpty(),
           "read-only retry permits fresh binding");
       return "PASS ranking identity snapshot pendingWriterAvailable=true markedMediaRetained=true"
+          + " existingHeldLoadSkipped=true exactAndLegacyFailedLoadSkipped=true"
           + " failedLoadNoBinding=true retryReadOnly=true defaultDataUntouched=true";
     } finally {
       gate.release.countDown();
@@ -148,11 +158,99 @@ final class RankingIdentitySnapshotChecks {
             scans.awaitTermination(6, TimeUnit.SECONDS)
                 && probes.awaitTermination(6, TimeUnit.SECONDS),
             "identity proof tasks drained");
+        if (owner != null) owner.awaitReady();
       } finally {
+        moves.close();
         context.clean();
         RankingPersistenceWaitChecks.requireEmptyAvd(test);
       }
     }
+  }
+
+  private static void verifyBoundWhileHeld(
+      Context context, PhotoMoveStore moves, ExecutorService scans, PhotoMoveStore.Identity first)
+      throws Exception {
+    LoadGate held = new LoadGate();
+    RankingStore owner =
+        new RankingStore(held.wrap(context.getSharedPreferences("held-bound-ranking-proof", 0)));
+    try {
+      require(held.entered.await(2, TimeUnit.SECONDS), "second ranking owner reached held load");
+      Map<String, PhotoRepository.Photo> visible =
+          new HashMap<>(Map.of("first", document("FIRST.JPG")));
+      scans
+          .submit(
+              () -> {
+                PhotoIdentityIndex.resolve(
+                    context, moves, visible, Map.of("first", media(24901, "FIRST.JPG")), owner);
+                return null;
+              })
+          .get(2, TimeUnit.SECONDS);
+      require(
+          first.equals(visible.get("first").movedIdentity)
+              && rows(moves) == 1
+              && owner.snapshot().phase() == RankingStore.Phase.PENDING
+              && held.reads.get() == 1,
+          "reconstructed bound pair resolves unchanged while a different owner is held");
+    } finally {
+      held.release.countDown();
+      owner.awaitReady();
+    }
+  }
+
+  private static void verifyBoundWithFailedLoad(
+      Context context, PhotoMoveStore moves, RankingStore failed, PhotoMoveStore.Identity first)
+      throws Exception {
+    var v1File = media(24903, "OLD-PATH.JPG");
+    var v1Display = document("OLD-PATH.JPG");
+    var versionlessFile = media(24904, "OLD-VERSION.JPG");
+    var v1 = new PhotoMoveStore.Identity("old-path-archive", "old-path-tag", 42);
+    var versionless = new PhotoMoveStore.Identity("old-version-archive", "old-version-tag", 43);
+    SQLiteDatabase db = moves.getWritableDatabase();
+    seedOldBinding(db, TagStore.locationSource(v1Display), v1);
+    seedOldBinding(db, PhotoIdentityIndex.location(versionlessFile), versionless);
+    Map<String, PhotoRepository.Photo> visible =
+        new HashMap<>(
+            Map.of(
+                "first", document("FIRST.JPG"),
+                "old-path", v1Display,
+                "old-version", document("OLD-VERSION.JPG")));
+    PhotoIdentityIndex.resolve(
+        context,
+        moves,
+        visible,
+        Map.of(
+            "first", media(24901, "FIRST.JPG"),
+            "old-path", v1File,
+            "old-version", versionlessFile),
+        failed);
+    require(
+        first.equals(visible.get("first").movedIdentity)
+            && v1.equals(visible.get("old-path").movedIdentity)
+            && versionless.equals(visible.get("old-version").movedIdentity)
+            && rows(moves) == 3
+            && failed.snapshot().phase() == RankingStore.Phase.FAILED,
+        "exact and legacy bindings preserve archive and tag identities without a ranking retry");
+    for (var file : new PhotoRepository.Photo[] {v1File, versionlessFile}) {
+      try (var row =
+          db.rawQuery(
+              "SELECT media_version FROM local_photos WHERE location=?",
+              new String[] {PhotoIdentityIndex.location(file)})) {
+        require(
+            row.moveToFirst()
+                && PhotoIdentityIndex.mediaVersion(file).equals(row.getString(0))
+                && !row.moveToNext(),
+            "existing binding migrated to the recognized MediaStore version");
+      }
+    }
+  }
+
+  private static void seedOldBinding(
+      SQLiteDatabase db, String location, PhotoMoveStore.Identity identity) {
+    db.execSQL(
+        "INSERT INTO local_photos VALUES(?,?,?,?,?,?)",
+        new Object[] {
+          location, "", identity.archiveKey(), identity.tagSource(), identity.sortTime(), null
+        });
   }
 
   private static int rows(PhotoMoveStore moves) {

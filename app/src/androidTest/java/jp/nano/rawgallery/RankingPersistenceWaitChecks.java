@@ -8,6 +8,7 @@ import static jp.nano.rawgallery.TagDetailChecks.ui;
 
 import android.Manifest;
 import android.app.Instrumentation;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -32,6 +33,7 @@ import android.widget.TextView;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
@@ -44,7 +46,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -59,6 +63,13 @@ final class RankingPersistenceWaitChecks {
   private static final long FRAME_WAIT_MS = 5000;
   private static final long CAPTURE_GATE_MS = 3500;
   private static final List<Integer> BURST = List.of(1, 2, 3);
+
+  private enum Probe {
+    NONE,
+    ZOOM,
+    CATALOG,
+    CLEANUP
+  }
 
   static String run(Instrumentation test, Bundle args) throws Exception {
     requireEmptyAvd(test);
@@ -82,7 +93,17 @@ final class RankingPersistenceWaitChecks {
           case "false" -> false;
           default -> throw new IllegalArgumentException("unsupported capture_states");
         };
+    Probe probe =
+        switch (args.getString("ranking_probe", "none")) {
+          case "none" -> Probe.NONE;
+          case "zoom" -> Probe.ZOOM;
+          case "catalog" -> Probe.CATALOG;
+          case "cleanup" -> Probe.CLEANUP;
+          default -> throw new IllegalArgumentException("unsupported ranking_probe");
+        };
     require(!baseline || !capture, "capture states require the candidate");
+    require(probe == Probe.NONE || !baseline, "probe requires the candidate");
+    require(probe != Probe.CLEANUP || !capture, "cleanup probe has no UI");
     int captureWidth =
         switch (args.getString("capture_width", "native")) {
           case "native" -> 0;
@@ -102,22 +123,34 @@ final class RankingPersistenceWaitChecks {
     File xml = new File(context.getApplicationInfo().dataDir, "shared_prefs/" + namespace + ".xml");
     List<File> files = new ArrayList<>();
     MainActivity activity = null;
+    RankingStore cleanupStore = null;
     Map<String, Object> originalFields = new LinkedHashMap<>();
     Commit held = new Commit(true);
-    CountDownLatch releaseInitial = new CountDownLatch(capture ? 1 : 0);
-    CountDownLatch releaseRetry = new CountDownLatch(capture ? 1 : 0);
+    boolean captureMatrix = capture && probe == Probe.NONE;
+    CountDownLatch releaseInitial = new CountDownLatch(captureMatrix ? 1 : 0);
+    CountDownLatch releaseRetry = new CountDownLatch(captureMatrix ? 1 : 0);
     try {
       seedXml(prefs, entries);
       long xmlBytes = xml.length();
       require(xmlBytes > 0 && prefs.getAll().size() == entries, "exact fixture XML population");
       List<PhotoRepository.Photo> photos = fixturePhotos(context, files);
+      if (probe == Probe.CATALOG)
+        require(
+            prefs
+                .edit()
+                .putInt(
+                    "single-best-v1-" + PhotoRepository.digest(ArchiveStore.key(photos.get(0))), 2)
+                .commit(),
+            "seed isolated malformed rating before opening owner");
       AtomicReference<Commit> next = new AtomicReference<>();
       SharedPreferences instrumented = observe(prefs, next);
       RankingStore observed =
           new RankingStore(
-              capture
+              captureMatrix
                   ? delayFailedLoads(instrumented, releaseInitial, releaseRetry)
                   : instrumented);
+      cleanupStore = observed;
+      if (probe == Probe.CLEANUP) return proveCleanupDrain(observed, prefs, next);
       activity =
           (MainActivity)
               test.startActivitySync(
@@ -129,9 +162,21 @@ final class RankingPersistenceWaitChecks {
         int displayWidth = activity.getResources().getConfiguration().screenWidthDp;
         expectedWidth = captureWidth == 0 ? displayWidth : captureWidth;
         GalleryScreenChecks.portraitFixture(test, activity, expectedWidth, captureFont);
-      } else observed.awaitReady();
+      }
+      if (!captureMatrix) observed.awaitReady();
       installFixture(test, activity, originalFields, photos, observed);
       String profile = (captureWidth == 0 ? "native" : "320") + "-" + captureFont;
+      String captureProfile = capture ? profile : null;
+      if (probe == Probe.ZOOM)
+        return proveExpandedComparison(
+                test, activity, prefs, observed, next, photos, captureProfile)
+            + activityDimensions(test, activity, expectedWidth, captureFont)
+            + "\n";
+      if (probe == Probe.CATALOG)
+        return proveCatalogReadFailure(
+                test, activity, prefs, observed, photos.get(0), captureProfile)
+            + activityDimensions(test, activity, expectedWidth, captureFont)
+            + "\n";
       if (capture)
         captureReadStates(
             test,
@@ -185,6 +230,7 @@ final class RankingPersistenceWaitChecks {
         if (activity != null) restoreAndFinish(test, activity, originalFields);
       } finally {
         try {
+          drainRankingWriter(cleanupStore);
           require(
               context.deleteSharedPreferences(namespace), "isolated ranking preferences removed");
         } finally {
@@ -196,6 +242,291 @@ final class RankingPersistenceWaitChecks {
         }
       }
     }
+  }
+
+  private static String proveExpandedComparison(
+      Instrumentation test,
+      MainActivity activity,
+      SharedPreferences prefs,
+      RankingStore store,
+      AtomicReference<Commit> next,
+      List<PhotoRepository.Photo> photos,
+      String profile)
+      throws Exception {
+    List<String> ids = new ArrayList<>();
+    for (int member : BURST) ids.add(ArchiveStore.key(photos.get(member)));
+    ui(
+        test,
+        () -> {
+          set(activity, "burstMembers", BURST);
+          set(activity, "burstPosition", 0);
+          call(activity, "openRanking");
+        });
+    waitFor(test, () -> comparisonVisible(activity, "B:"), "initial pair ready to zoom");
+    RankingStore.Burst original = store.snapshot().burst(ids);
+    PhotoRepository.Photo upper = photoForRankKey(photos, original.ranking().upper());
+    long revision = store.snapshot().revision();
+
+    Commit held = new Commit(true, false, CAPTURE_GATE_MS);
+    next.set(held);
+    try {
+      ui(test, () -> require(choice(activity).performClick(), "start choice before expanding"));
+      require(held.entered.await(2, TimeUnit.SECONDS), "comparison writer held");
+      expandUpper(test, activity);
+      waitFor(
+          test,
+          () ->
+              expandedMatches(activity, upper, true, false)
+                  && comparisonStatus(activity, "順位を保存しています"),
+          "expanded held choice shows old candidate and busy state");
+      if (profile != null) captureScreen(test, activity, "ranking-zoom-held-" + profile);
+      require(held.delegateStart == 0 && !held.timedOut, "expand completed during held write");
+    } finally {
+      held.release();
+    }
+    require(held.done.await(5, TimeUnit.SECONDS) && held.success, "held choice committed");
+    waitFor(
+        test,
+        () -> expandedMatches(activity, upper, true, true) && !comparisonStatusShown(activity),
+        "expanded choice stayed busy after confirmed commit");
+    if (profile != null) captureScreen(test, activity, "ranking-zoom-settled-" + profile);
+    ui(test, activity::onBackPressed);
+    waitFor(test, () -> comparisonVisible(activity, "B:0"), "Back uses committed pair");
+    require(
+        store.snapshot().revision() == revision + 1
+            && "B:0".equals(readSavedBurst(prefs, ids).journal),
+        "zoom and Back did not write again");
+
+    RankingStore other = new RankingStore(store);
+    publishBurst(other, ids, "B:");
+    waitFor(
+        test, () -> comparisonVisible(activity, "B:"), "restored initial pair from another owner");
+    expandUpper(test, activity);
+    waitFor(
+        test, () -> expandedMatches(activity, upper, true, true), "first candidate still expanded");
+    publishBurst(other, ids, "B:0");
+    waitFor(
+        test,
+        () ->
+            expandedMatches(activity, upper, true, true)
+                && "B:0".equals(((PhotoRanking) get(activity, "ranking")).journal),
+        "publication refreshed the expanded candidate's role");
+    ui(
+        test,
+        () ->
+            require(
+                expandedChoice(activity).performClick(),
+                "choose the displayed photo in its new role"));
+    waitFor(
+        test,
+        () ->
+            expandedMatches(activity, upper, false, false)
+                && "B:01".equals(((PhotoRanking) get(activity, "ranking")).journal),
+        "expanded choice applied to the displayed lower candidate and then hid");
+    require(
+        "B:01".equals(readSavedBurst(prefs, ids).journal),
+        "correct committed photo chosen after publication");
+    ui(test, activity::onBackPressed);
+    waitFor(test, () -> rankingResultVisible(activity, "B:01"), "Back shows the committed result");
+
+    String winnerTag = "result-hero-" + ArchiveStore.key(upper);
+    ui(
+        test,
+        () ->
+            require(
+                ((View) get(activity, "root")).findViewWithTag(winnerTag).performClick(),
+                "open native result winner"));
+    waitFor(
+        test,
+        () -> expandedMatches(activity, upper, false, false),
+        "result photo has no comparison action");
+    revision = store.snapshot().revision();
+    publishBurst(other, ids, "B:0");
+    waitFor(
+        test,
+        () -> expandedMatches(activity, upper, true, true),
+        "published undo updates expanded result");
+    if (profile != null) captureScreen(test, activity, "ranking-zoom-result-updated-" + profile);
+    ui(test, activity::onBackPressed);
+    waitFor(
+        test, () -> comparisonVisible(activity, "B:0"), "Back uses latest committed comparison");
+    require(store.snapshot().revision() == revision + 1, "expanded result and Back did not write");
+    return "PASS rankingZoom heldCommit=true heldBusyCleared=true expandedCandidateRole=true "
+        + "expandedResultPublication=true backCommitted=true extraWrites=0\n";
+  }
+
+  private static void expandUpper(Instrumentation test, MainActivity activity) throws Exception {
+    ui(
+        test,
+        () -> {
+          Button zoom = TagDetailChecks.button((View) get(activity, "root"), "Aを拡大");
+          require(
+              zoom != null && zoom.isEnabled() && zoom.performClick(),
+              "native comparison zoom enabled");
+        });
+  }
+
+  private static Button expandedChoice(MainActivity activity) {
+    View root = (View) get(activity, "root");
+    if (!(root instanceof android.view.ViewGroup content)
+        || !(content.getChildAt(0) instanceof PhotoViewerUi viewer)) return null;
+    return viewer.footer.getChildAt(0) instanceof Button button ? button : null;
+  }
+
+  private static boolean expandedMatches(
+      MainActivity activity, PhotoRepository.Photo photo, boolean visible, boolean enabled) {
+    View root = (View) get(activity, "root");
+    if (!(root instanceof android.view.ViewGroup content)
+        || !(content.getChildAt(0) instanceof PhotoViewerUi viewer)
+        || viewer.photo != photo) return false;
+    Button action = expandedChoice(activity);
+    return visible
+        ? action != null && action.isShown() && action.isEnabled() == enabled
+        : action == null || !action.isShown();
+  }
+
+  private static boolean rankingResultVisible(MainActivity activity, String journal) {
+    PhotoRanking ranking = (PhotoRanking) get(activity, "ranking");
+    return Boolean.TRUE.equals(get(activity, "rankingScreen"))
+        && ranking.done()
+        && journal.equals(ranking.journal)
+        && ((View) get(activity, "root")).findViewWithTag("result-hero-" + ranking.best().get(0))
+            != null;
+  }
+
+  private static void publishBurst(RankingStore owner, List<String> ids, String journal)
+      throws Exception {
+    RankingStore.Burst previous = owner.snapshot().burst(ids);
+    require(
+        owner
+                .submitBurst(previous, () -> new PhotoRanking(previous.ids(), journal))
+                .toCompletableFuture()
+                .get(5, TimeUnit.SECONDS)
+                .outcome()
+            == RankingStore.Outcome.SAVED,
+        "other ranking handle committed new journal");
+  }
+
+  private static String proveCatalogReadFailure(
+      Instrumentation test,
+      MainActivity activity,
+      SharedPreferences prefs,
+      RankingStore owner,
+      PhotoRepository.Photo malformedPhoto,
+      String profile)
+      throws Exception {
+    String uri = malformedPhoto.uri.toString();
+    try (GalleryIndex catalog = new GalleryIndex(activity)) {
+      require(catalog.load(null, "すべて").photos.isEmpty(), "catalog probe requires empty index");
+      ui(
+          test,
+          () -> {
+            set(activity, "photos", List.of());
+            set(activity, "bundles", List.of());
+            set(activity, "rankFilter", 1);
+            call(activity, "gallery");
+          });
+      waitFor(
+          test,
+          () -> ((View) get(activity, "rankEmpty")).isShown() && catalogRetry(activity) == null,
+          "active rank filter started with honest empty state");
+
+      ContentValues row = new ContentValues();
+      row.put("bundle", 1);
+      row.put("camera", "その他");
+      row.put("uri", uri);
+      row.put("name", malformedPhoto.name);
+      row.put("folder", malformedPhoto.folder);
+      row.put("size", malformedPhoto.size);
+      row.put("modified", malformedPhoto.modified);
+      row.put("taken", malformedPhoto.taken);
+      long id = catalog.getWritableDatabase().insertOrThrow("photos", null, row);
+      try {
+        RankingStore.Snapshot unchanged = owner.snapshot();
+        Map<String, ?> raw = new HashMap<>(prefs.getAll());
+        ui(test, () -> call(activity, "loadIndexedPhotos"));
+        waitFor(
+            test,
+            () -> ((List<?>) get(activity, "photos")).size() == 1 && catalogReadFailed(activity),
+            "completed catalog reload must display ranking read failure");
+        if (profile != null)
+          captureScreen(test, activity, "ranking-catalog-read-failure-" + profile);
+        ui(test, () -> require(catalogRetry(activity).performClick(), "explicit rank read retry"));
+        waitFor(
+            test,
+            () -> catalogReadFailed(activity),
+            "malformed entry stays readable as a failure after retry");
+        require(
+            owner.snapshot() == unchanged && raw.equals(prefs.getAll()), "retry never wrote ranks");
+      } finally {
+        require(
+            catalog
+                    .getWritableDatabase()
+                    .delete("photos", "ordinal=? AND uri=?", new String[] {Long.toString(id), uri})
+                == 1,
+            "fixture removed its exact catalog row");
+      }
+    }
+    return "PASS rankingCatalog activeFilter=true malformedKey=true failureVisible=true"
+        + " readOnlyRetry=true\n";
+  }
+
+  private static Button catalogRetry(MainActivity activity) {
+    return ((View) get(activity, "root")).findViewWithTag("catalog-ranking-retry");
+  }
+
+  private static boolean catalogReadFailed(MainActivity activity) {
+    TextView message = ((View) get(activity, "root")).findViewWithTag("catalog-ranking-failure");
+    Button retry = catalogRetry(activity);
+    return visibleLabel(message, "順位を読み込めませんでした")
+        && visibleLabel(retry, "順位を読み直す")
+        && hasHitBounds(retry)
+        && retry.createAccessibilityNodeInfo().isClickable();
+  }
+
+  static void drainRankingWriter(RankingStore owner) throws Exception {
+    if (owner != null) rankingWriterBarrier(owner).get(8, TimeUnit.SECONDS);
+  }
+
+  private static CompletableFuture<Void> rankingWriterBarrier(RankingStore owner) throws Exception {
+    // Queue after admitted writes and repairs. Waiting on Editor.commit alone misses compensation.
+    Field backend = RankingStore.class.getDeclaredField("backend");
+    backend.setAccessible(true);
+    Object lane = backend.get(owner);
+    Field worker = lane.getClass().getDeclaredField("worker");
+    worker.setAccessible(true);
+    return CompletableFuture.runAsync(() -> {}, (Executor) worker.get(lane));
+  }
+
+  private static String proveCleanupDrain(
+      RankingStore owner, SharedPreferences prefs, AtomicReference<Commit> next) throws Exception {
+    owner.awaitReady();
+    String key = "rank-fixture-cleanup";
+    Commit fail = new Commit(true, true, CAPTURE_GATE_MS);
+    Commit compensation = new Commit(true, false, CAPTURE_GATE_MS);
+    next.set(fail);
+    var write = owner.submitSingleBest(key, false, true).toCompletableFuture();
+    CompletableFuture<Void> barrier;
+    try {
+      require(
+          fail.entered.await(2, TimeUnit.SECONDS), "cleanup fixture held admitted primary write");
+      next.set(compensation);
+      barrier = rankingWriterBarrier(owner);
+      fail.release();
+      require(compensation.entered.await(2, TimeUnit.SECONDS), "cleanup reached held compensation");
+      require(!barrier.isDone() && !write.isDone(), "cleanup waits for admitted compensation");
+    } finally {
+      fail.release();
+      compensation.release();
+    }
+    barrier.get(8, TimeUnit.SECONDS);
+    require(
+        write.get(1, TimeUnit.SECONDS).outcome() == RankingStore.Outcome.WRITE_FAILED
+            && compensation.success
+            && !prefs.contains("single-best-v1-" + PhotoRepository.digest(key)),
+        "drained compensation restored absent durable value before deletion");
+    return "PASS rankingCleanup writerDrained=true compensationHeld=true"
+        + " restoredBeforeDelete=true\n";
   }
 
   private static SharedPreferences delayFailedLoads(
@@ -713,6 +1044,7 @@ final class RankingPersistenceWaitChecks {
               && outboundHits == 0,
           "ordered review completed without automatic export or handoff");
       ui(test, renewed::dismiss);
+      proveShareSnapshot(test, activity, store, ids, renewed.previewPhotos.get(0));
       return "shareReview oldPreviewNs="
           + oldPreviewNs
           + " rankChangedNs="
@@ -731,13 +1063,68 @@ final class RankingPersistenceWaitChecks {
           + attemptDelta
           + " outboundHits="
           + outboundHits
-          + " newContinueExecuted=false\n";
+          + " newContinueExecuted=false previewSnapshotConsistent=true\n";
     } finally {
       if (get(activity, "shareProgress") == null) {
         test.removeMonitor(sharing);
         test.removeMonitor(chooser);
       }
     }
+  }
+
+  private static void proveShareSnapshot(
+      Instrumentation test,
+      MainActivity activity,
+      RankingStore owner,
+      List<String> ids,
+      PhotoRepository.Photo expectedWinner)
+      throws Exception {
+    Method resultMethod = MainActivity.class.getDeclaredMethod("selectionResult");
+    resultMethod.setAccessible(true);
+    AtomicReference<Object> selected = new AtomicReference<>();
+    ui(
+        test,
+        () -> {
+          try {
+            selected.set(resultMethod.invoke(activity));
+          } catch (ReflectiveOperationException error) {
+            throw new AssertionError(error);
+          }
+        });
+    Field snapshotField = selected.get().getClass().getDeclaredField("ranks");
+    Field photosField = selected.get().getClass().getDeclaredField("photos");
+    snapshotField.setAccessible(true);
+    photosField.setAccessible(true);
+    RankingStore.Snapshot resolved = (RankingStore.Snapshot) snapshotField.get(selected.get());
+    List<?> resolvedPhotos = List.copyOf((List<?>) photosField.get(selected.get()));
+    require(
+        resolvedPhotos.equals(List.of(expectedWinner)),
+        "frozen review selected the current winner");
+    publishBurst(owner, ids, "B:00");
+    require(
+        !owner.snapshot().burst(ids).ranking().best().contains(ArchiveStore.key(expectedWinner)),
+        "a different winner published before frozen review construction");
+    Method menuMethod =
+        MainActivity.class.getDeclaredMethod(
+            "shareMenu", List.class, RankingStore.Snapshot.class, BooleanSupplier.class);
+    menuMethod.setAccessible(true);
+    ui(
+        test,
+        () -> {
+          try {
+            menuMethod.invoke(activity, resolvedPhotos, resolved, (BooleanSupplier) () -> false);
+          } catch (ReflectiveOperationException error) {
+            throw new AssertionError(error);
+          }
+          ShareUi.Menu frozen = (ShareUi.Menu) get(activity, "shareDialog");
+          require(
+              frozen.previewPhotos.equals(resolvedPhotos)
+                  && frozen.previews.size() == 1
+                  && ((android.view.ViewGroup) frozen.previews.get(0).getParent()).getChildCount()
+                      == 2,
+              "the frozen preview photo and best mark use the same resolution");
+          frozen.dismiss();
+        });
   }
 
   private static PhotoRepository.Photo photoForRankKey(

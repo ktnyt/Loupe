@@ -62,6 +62,7 @@ final class BurstBulkWinnerChecks {
     SharedPreferences prefs = a.getSharedPreferences(namespace, 0);
     List<File> files = new ArrayList<>();
     CountDownLatch release = new CountDownLatch(1);
+    List<RankingStore> owners = new ArrayList<>();
     try {
       GalleryScreenChecks.finishInitialIndex(t, a);
       check(prefs.edit().clear().commit(), "Reset fixture rankings");
@@ -73,12 +74,14 @@ final class BurstBulkWinnerChecks {
       List<Integer> members = IntStream.range(0, keys.size()).boxed().collect(Collectors.toList());
       List<Integer> other = List.of(keys.size(), keys.size() + 1);
       RankingStore disk = new RankingStore(prefs);
+      owners.add(disk);
       PhotoRanking original = ranked(disk, keys, INITIAL);
       PhotoRanking otherRanking = ranked(disk, otherKeys, new int[] {1, 2});
       check(disk.save(original) && disk.save(otherRanking), "Seed rankings");
 
       AtomicInteger commits = new AtomicInteger();
       RankingStore store = new RankingStore(failFirstCommit(prefs, release, commits));
+      owners.add(store);
       store.awaitReady();
       ui(t, () -> seed(a, photos, members, other, store));
       clickExact(t, a, "選択");
@@ -270,9 +273,16 @@ final class BurstBulkWinnerChecks {
           + " selections, unfinished and all selected.\n";
     } finally {
       release.countDown();
-      ui(t, a::finish);
-      a.deleteSharedPreferences(namespace);
-      for (File file : files) file.delete();
+      try {
+        ui(t, a::finish);
+      } finally {
+        try {
+          for (RankingStore owner : owners) RankingPersistenceWaitChecks.drainRankingWriter(owner);
+          check(a.deleteSharedPreferences(namespace), "Delete drained isolated rankings");
+        } finally {
+          for (File file : files) file.delete();
+        }
+      }
     }
   }
 

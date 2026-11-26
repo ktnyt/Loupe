@@ -415,10 +415,12 @@ final class BurstCoWinnerChecks {
     SharedPreferences prefs = a.getSharedPreferences(namespace, 0);
     List<File> files = new ArrayList<>();
     CountDownLatch release = new CountDownLatch(1);
+    List<RankingStore> owners = new ArrayList<>();
     try {
       GalleryScreenChecks.finishInitialIndex(t, a);
       check(prefs.edit().clear().commit(), "Reset fixture rankings");
       RankingStore disk = new RankingStore(prefs);
+      owners.add(disk);
       List<PhotoRepository.Photo> photos = new ArrayList<>();
       List<String> keys = new ArrayList<>();
       int[] colors = {0xff587c8c, 0xffa17862, 0xff688664, 0xff8c647f, 0xff986e52};
@@ -459,6 +461,7 @@ final class BurstCoWinnerChecks {
       AtomicInteger commits = new AtomicInteger();
       SharedPreferences failurePrefs = failFirstCommit(prefs, release, commits);
       RankingStore store = new RankingStore(failurePrefs);
+      owners.add(store);
       store.awaitReady();
       ui(t, () -> seed(a, photos, store));
       await(
@@ -574,9 +577,16 @@ final class BurstCoWinnerChecks {
           + " untested.\n";
     } finally {
       release.countDown();
-      ui(t, a::finish);
-      a.deleteSharedPreferences(namespace);
-      for (File file : files) file.delete();
+      try {
+        ui(t, a::finish);
+      } finally {
+        try {
+          for (RankingStore owner : owners) RankingPersistenceWaitChecks.drainRankingWriter(owner);
+          check(a.deleteSharedPreferences(namespace), "Delete drained isolated rankings");
+        } finally {
+          for (File file : files) file.delete();
+        }
+      }
     }
   }
 }
