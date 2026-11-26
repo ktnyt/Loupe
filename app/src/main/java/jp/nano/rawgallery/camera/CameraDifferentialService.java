@@ -308,6 +308,10 @@ public final class CameraDifferentialService extends Service {
       boolean sdRequest = confirmedRequest || SD.equals(action);
       SdConfirmation confirmation = confirmedRequest ? confirmationOf(request) : null;
       if (confirmedRequest && (confirmation == null || !confirmation.isOpen())) return;
+      if (sdRequest && !MountedCameraCard.isObserving()) {
+        if (confirmation != null) confirmation.complete(SdUsbReprobeController.REOPEN_IMPORT);
+        return;
+      }
       String profile = PAIRED.equals(action) ? request.getStringExtra("profile_id") : null;
       if (!sdRequest && !WIFI.equals(action) && (profile == null || profile.isBlank())) return;
       if (destroyed || running) {

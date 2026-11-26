@@ -8,7 +8,6 @@ import android.content.pm.PackageManager;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.hardware.usb.UsbDevice;
-import android.hardware.usb.UsbManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -111,6 +110,8 @@ public final class CameraImportActivity extends AppCompatActivity {
   private MaterialSwitch usbAutoOpen;
   private boolean updatingUsbAutoOpen;
   private Closeable permission;
+  private static final String USB_OBSERVATION_UNAVAILABLE = "USBの接続を確認できませんでした。もう一度お試しください。";
+  private UsbObservation usbObservation = new UsbObservation(null, false, false, false);
   private boolean migrating, starting, wasActive;
   private String connectionFailure;
   private Boolean manualEntryQuick;
@@ -425,6 +426,11 @@ public final class CameraImportActivity extends AppCompatActivity {
     addSdImportCard(root);
     renderSdSource(CameraQuickImportSources.SdState.CHECKING);
     removeMountObserver = MountedCameraCard.observeMounts(this, this::onSdMountChange);
+    if (removeMountObserver == null) {
+      discardSdStatusForReprobe();
+      sdPicker = null;
+      setSdSourceStatus(SdUsbReprobeController.REOPEN_IMPORT);
+    }
     LinearLayout ledger = card(root, "共通履歴");
     ledgerStatus = status(ledger);
     ledgerStatus.setText("件数を確認しています");
@@ -653,7 +659,7 @@ public final class CameraImportActivity extends AppCompatActivity {
     super.onPostResume();
     quickResumed = true;
     wifiLaunching = false;
-    sdReprobe.resume();
+    sdReprobe.resume(removeMountObserver != null);
     renderStatus();
     if (handleManualEntry()) return;
     if (!sdReprobe.busy()
@@ -690,15 +696,23 @@ public final class CameraImportActivity extends AppCompatActivity {
     if (keepOriginals) {
       quickConsumed = true;
       quickImportFlow = true;
-      if (sdReprobe.request(false, this::continueQuickAfterSdReprobe)) return true;
+      if (requestSdReprobe(false, this::continueQuickAfterSdReprobe)) return true;
       discoverQuickSource(false);
       return true;
     }
-    return sdReprobe.request(false, this::showRestoredSdSource);
+    return requestSdReprobe(false, this::showRestoredSdSource);
   }
 
   private void retrySdReprobe() {
-    sdReprobe.request(true, this::showRestoredSdSource);
+    usbObservation = observeUsb(this);
+    requestSdReprobe(true, this::showRestoredSdSource);
+  }
+
+  private boolean requestSdReprobe(
+      boolean explicitRetry,
+      java.util.function.Consumer<SdUsbReprobeController.Restoration> restored) {
+    return sdReprobe.request(
+        explicitRetry, usbObservation.available(), removeMountObserver != null, restored);
   }
 
   private void showRestoredSdSource(SdUsbReprobeController.Restoration restored) {
@@ -715,7 +729,12 @@ public final class CameraImportActivity extends AppCompatActivity {
     if (!restored.destination().equals(SdSourceRegistrations.normalizeVolumeUuid(target))) return;
     if (restored.sourceRequired()) {
       renderSdSource(CameraQuickImportSources.SdState.FOLDER_UNAVAILABLE);
-      UsbDevice usb = connected();
+      UsbObservation observation = observeUsb(this);
+      if (!observation.available()) {
+        showSdFailure(USB_OBSERVATION_UNAVAILABLE);
+        return;
+      }
+      UsbDevice usb = observation.device();
       pickSdTree(
           target,
           requestedUsbKinds(guardedSdTarget(usb) == null ? null : usb),
@@ -774,15 +793,22 @@ public final class CameraImportActivity extends AppCompatActivity {
   }
 
   private void discoverQuickSource(boolean manualSd, String attachedSdTarget, SdStartMode mode) {
-    if (!quickAvailable() || starting || sourceCheck.isPending() || sdConfirmation != null) return;
+    if (!quickAvailable()
+        || starting
+        || sourceCheck.isPending()
+        || sdConfirmation != null
+        || removeMountObserver == null) return;
+    UsbObservation observation = observeUsb(this);
+    if (!observation.available()) {
+      showSdFailure(USB_OBSERVATION_UNAVAILABLE);
+      return;
+    }
     String destination = PhotoStorage.selected(this);
-    UsbDevice usb = manualSd || attachedSdTarget != null ? null : connected();
+    UsbDevice usb = observation.device();
     String expectedTarget =
         attachedSdTarget != null
             ? attachedSdTarget
-            : manualSd
-                ? MountedCameraCard.targetWithGenericReader(this, destination)
-                : guardedSdTarget(usb);
+            : manualSd ? observedSdTarget(observation, destination) : guardedSdTarget(usb);
     if (!manualSd && expectedTarget == null && usb != null) {
       startFromScreen(true);
       return;
@@ -836,10 +862,7 @@ public final class CameraImportActivity extends AppCompatActivity {
     }
     String kinds;
     if (lookup.expectedTarget() != null) {
-      UsbDevice formatDevice = lookup.manualSd() ? connected() : usb;
-      kinds =
-          requestedUsbKinds(
-              guardedSdTarget(formatDevice, lookup.destination()) != null ? formatDevice : null);
+      kinds = requestedUsbKinds(guardedSdTarget(usb, lookup.destination()) != null ? usb : null);
     } else {
       kinds = lookup.manualSd() ? "JPEG,RAW" : null;
     }
@@ -857,7 +880,12 @@ public final class CameraImportActivity extends AppCompatActivity {
       showSdFailure("カードの接続または保存先が変わりました。取り込み元を確認してください。");
       return;
     }
-    if (!lookup.sdOnly() && connected() != null) {
+    UsbObservation observation = observeUsb(this);
+    if (!observation.available()) {
+      showSdFailure(USB_OBSERVATION_UNAVAILABLE);
+      return;
+    }
+    if (!lookup.sdOnly() && observation.device() != null) {
       startFromScreen(true);
       return;
     }
@@ -1078,20 +1106,36 @@ public final class CameraImportActivity extends AppCompatActivity {
             .putExtra(CameraBleActivity.EXTRA_QUICK_PROFILE_ID, id));
   }
 
-  private UsbDevice connected() {
-    return connected(this);
+  private record UsbObservation(
+      UsbDevice device, boolean granted, boolean genericReader, boolean available) {}
+
+  private static UsbObservation observeUsb(Context context) {
+    try {
+      var devices = CameraUsb.devices(context).values();
+      UsbDevice device =
+          devices.stream()
+              .filter(CameraUsb::supported)
+              .min(
+                  java.util.Comparator.<UsbDevice, Boolean>comparing(d -> !CameraUsb.knownCamera(d))
+                      .thenComparing(UsbDevice::getDeviceName))
+              .orElse(null);
+      boolean genericReader =
+          devices.stream()
+              .anyMatch(
+                  d -> !CameraUsb.knownCamera(d) && UsbMassStorage.Companion.isMassStorage(d));
+      boolean granted = device != null && CameraUsb.hasPermission(context, device);
+      return new UsbObservation(device, granted, genericReader, true);
+    } catch (RuntimeException unavailable) {
+      return new UsbObservation(null, false, false, false);
+    }
   }
 
-  static UsbDevice connected(android.content.Context context) {
-    UsbManager manager = context.getSystemService(UsbManager.class);
-    if (manager == null) return null;
-    return manager.getDeviceList().values().stream()
-        .filter(CameraUsb::supported)
-        .sorted(
-            java.util.Comparator.<UsbDevice, Boolean>comparing(d -> !CameraUsb.knownCamera(d))
-                .thenComparing(UsbDevice::getDeviceName))
-        .findFirst()
-        .orElse(null);
+  static UsbDevice connected(Context context) {
+    return observeUsb(context).device();
+  }
+
+  private static String observedSdTarget(UsbObservation observation, String selected) {
+    return observation.genericReader() && !PhotoStorage.PRIMARY.equals(selected) ? selected : null;
   }
 
   private void rememberPendingUsb(UsbDevice device, String expectedVolume) {
@@ -1114,14 +1158,24 @@ public final class CameraImportActivity extends AppCompatActivity {
 
   private void continuePendingUsb() {
     if (!quickAvailable() || permission != null || (!pendingUsbPermission && !resumeUsb)) return;
-    UsbDevice device = connected();
+    continuePendingUsb(observeUsb(this));
+  }
+
+  private void continuePendingUsb(UsbObservation observation) {
+    if (!observation.available()) {
+      pendingUsbPermission = false;
+      resumeUsb = false;
+      connectionFailure = USB_OBSERVATION_UNAVAILABLE;
+      return;
+    }
+    UsbDevice device = observation.device();
     if (!matchesPendingUsb(device)) {
       pendingUsbPermission = false;
       resumeUsb = false;
       connectionFailure = "許可を求めたカメラの接続が変わりました。もう一度操作してください。";
       return;
     }
-    if (!getSystemService(UsbManager.class).hasPermission(device)) {
+    if (!observation.granted()) {
       connectionFailure = "USBの接続と使用許可を確認してください。許可を取り消した場合は、取り込みボタンで再試行できます。";
       return;
     }
@@ -1139,8 +1193,9 @@ public final class CameraImportActivity extends AppCompatActivity {
   private void renderStatus() {
     // A USB permission broadcast can target the pre-recreation activity.
     // Recover only the original request, consuming it before any UI/import side effect.
+    usbObservation = observeUsb(this);
     if ((pendingUsbPermission || resumeUsb) && permission == null && quickAvailable())
-      continuePendingUsb();
+      continuePendingUsb(usbObservation);
     var completion = PROGRESS.getCompletion();
     if (quickRequestId != null
         && completion != null
@@ -1152,10 +1207,10 @@ public final class CameraImportActivity extends AppCompatActivity {
         return;
       }
     }
-    UsbDevice device = connected();
+    UsbDevice device = usbObservation.device();
     boolean manualOnly = device != null && !CameraUsb.knownCamera(device);
     boolean mountedRoute = guardedSdTarget(device) != null;
-    boolean granted = device != null && getSystemService(UsbManager.class).hasPermission(device);
+    boolean granted = usbObservation.granted();
     boolean active = PROGRESS.getActive();
     if (wasActive && !active) {
       loadCameras();
@@ -1170,12 +1225,14 @@ public final class CameraImportActivity extends AppCompatActivity {
     if (active) starting = false;
     setText(
         connection,
-        device == null
-            ? "USBケーブルでカメラをつないでください"
-            : (device.getProductName() == null ? "カメラ" : device.getProductName())
-                + (mountedRoute
-                    ? " · SDカードのフォルダを使用"
-                    : granted ? (manualOnly ? " · 手動取り込み" : " · 接続済み") : " · USBの使用許可が必要です"));
+        !usbObservation.available()
+            ? USB_OBSERVATION_UNAVAILABLE
+            : device == null
+                ? "USBケーブルでカメラをつないでください"
+                : (device.getProductName() == null ? "カメラ" : device.getProductName())
+                    + (mountedRoute
+                        ? " · SDカードのフォルダを使用"
+                        : granted ? (manualOnly ? " · 手動取り込み" : " · 接続済み") : " · USBの使用許可が必要です"));
     ImportProgressPresentation presentation = ImportProgressPresentation.current();
     setText(
         result, !active && connectionFailure != null ? connectionFailure : presentation.primary);
@@ -1220,6 +1277,8 @@ public final class CameraImportActivity extends AppCompatActivity {
     sdReprobeButton.setEnabled(!sdReprobeDisplay.busy() && canStartSdReprobe());
     boolean sdAvailable =
         !sdReprobeDisplay.busy()
+            && removeMountObserver != null
+            && usbObservation.available()
             && !active
             && !starting
             && !migrating
@@ -1246,7 +1305,12 @@ public final class CameraImportActivity extends AppCompatActivity {
   private void startFromScreen(boolean keepOriginals) {
     if (sdReprobe.busy()) return;
     if (PROGRESS.getActive() || starting || migrating || permission != null) return;
-    UsbDevice device = connected();
+    UsbObservation observation = observeUsb(this);
+    if (!observation.available()) {
+      showSdFailure(USB_OBSERVATION_UNAVAILABLE);
+      return;
+    }
+    UsbDevice device = observation.device();
     if (device == null) return;
     String expectedVolume = PhotoStorage.selected(this);
     if (guardedSdTarget(device, expectedVolume) != null) {
@@ -1254,8 +1318,7 @@ public final class CameraImportActivity extends AppCompatActivity {
       return;
     }
     connectionFailure = null;
-    if (getSystemService(UsbManager.class).hasPermission(device))
-      prepareImport(device, keepOriginals, expectedVolume);
+    if (observation.granted()) prepareImport(device, keepOriginals, expectedVolume);
     else {
       try {
         if (quickImportFlow) rememberPendingUsb(device, expectedVolume);
@@ -1272,8 +1335,11 @@ public final class CameraImportActivity extends AppCompatActivity {
                       resumeUsb = true;
                       continuePendingUsb();
                     } else {
-                      UsbDevice current = connected();
-                      if (current != null
+                      UsbObservation currentObservation = observeUsb(this);
+                      UsbDevice current = currentObservation.device();
+                      if (!currentObservation.available())
+                        connectionFailure = USB_OBSERVATION_UNAVAILABLE;
+                      else if (current != null
                           && current.getDeviceId() == device.getDeviceId()
                           && current.getDeviceName().equals(device.getDeviceName()))
                         prepareImport(device, keepOriginals, expectedVolume);
@@ -1409,16 +1475,19 @@ public final class CameraImportActivity extends AppCompatActivity {
   }
 
   private void pickSdTree() {
+    UsbObservation observation = observeUsb(this);
+    if (!observation.available()) {
+      showSdFailure(USB_OBSERVATION_UNAVAILABLE);
+      return;
+    }
     pickSdTree(
-        MountedCameraCard.targetWithGenericReader(this, PhotoStorage.selected(this)),
-        null,
-        true,
-        SdStartMode.MANUAL);
+        observedSdTarget(observation, PhotoStorage.selected(this)), null, true, SdStartMode.MANUAL);
   }
 
   private void pickSdTree(
       String expectedTarget, String kinds, boolean registrationOnly, SdStartMode mode) {
-    if (sdPicker != null
+    if (removeMountObserver == null
+        || sdPicker != null
         || sdConfirmation != null
         || PROGRESS.getActive()
         || starting
@@ -1452,7 +1521,7 @@ public final class CameraImportActivity extends AppCompatActivity {
     if (request == PICK_SD_TREE) {
       SdPicker picker = sdPicker;
       sdPicker = null;
-      if (picker == null) return;
+      if (picker == null || removeMountObserver == null) return;
       if (code != RESULT_OK || data == null || data.getData() == null) {
         quickCancelled();
         return;
@@ -1618,6 +1687,7 @@ public final class CameraImportActivity extends AppCompatActivity {
   }
 
   private void refreshSdSource() {
+    if (removeMountObserver == null || !usbObservation.available()) return;
     cancelSdStatusLoad();
     var cancellation = new android.os.CancellationSignal();
     sdStatusCancellation = cancellation;
@@ -1719,10 +1789,15 @@ public final class CameraImportActivity extends AppCompatActivity {
   }
 
   private void startSd(SdStartMode mode) {
-    if (!canStartSourceAction()) return;
+    if (!canStartSourceAction() || removeMountObserver == null) return;
+    UsbObservation observation = observeUsb(this);
+    if (!observation.available()) {
+      showSdFailure(USB_OBSERVATION_UNAVAILABLE);
+      return;
+    }
     if (sdSourceState == CameraQuickImportSources.SdState.AMBIGUOUS) {
-      String target = MountedCameraCard.targetWithGenericReader(this, PhotoStorage.selected(this));
-      UsbDevice device = connected();
+      String target = observedSdTarget(observation, PhotoStorage.selected(this));
+      UsbDevice device = observation.device();
       String kinds =
           target == null
               ? "JPEG,RAW"
@@ -1741,7 +1816,7 @@ public final class CameraImportActivity extends AppCompatActivity {
   private String configuredUsbKinds(UsbDevice device) {
     if (device != null)
       try {
-        if (getSystemService(UsbManager.class).hasPermission(device)) {
+        if (CameraUsb.hasPermission(this, device)) {
           String model = device.getProductName();
           String serial = device.getSerialNumber();
           Camera camera =
@@ -1854,7 +1929,8 @@ public final class CameraImportActivity extends AppCompatActivity {
       SdStartMode reselectMode,
       boolean registrationOnly,
       java.util.function.Consumer<SdLocation> onVerified) {
-    if (PROGRESS.getActive()
+    if (removeMountObserver == null
+        || PROGRESS.getActive()
         || starting
         || migrating
         || sourceCheck.isPending()
@@ -2033,7 +2109,7 @@ public final class CameraImportActivity extends AppCompatActivity {
   }
 
   private void requestSdStart(SdStart request) {
-    if (PROGRESS.getActive() || starting || migrating) return;
+    if (removeMountObserver == null || PROGRESS.getActive() || starting || migrating) return;
     if (!selectionContextMatches(request)) {
       clearPendingSdStart();
       showSdFailure("カードの接続または保存先が変わりました。取り込み元を確認してください。");
@@ -2059,7 +2135,8 @@ public final class CameraImportActivity extends AppCompatActivity {
   }
 
   void submitSd(SdStart request, boolean registrationOnly) {
-    if (submittedSd != null || isFinishing() || isDestroyed()) return;
+    if (removeMountObserver == null || submittedSd != null || isFinishing() || isDestroyed())
+      return;
     if (!stillSelected(request)) {
       showSdFailure("カードの接続または保存先が変わりました。取り込み元を確認してください。");
       return;

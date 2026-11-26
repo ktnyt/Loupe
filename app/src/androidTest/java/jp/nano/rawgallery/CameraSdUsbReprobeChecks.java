@@ -44,6 +44,7 @@ final class CameraSdUsbReprobeChecks {
     require(directory.isDirectory() || directory.mkdirs(), "Could not create capture directory");
     var progress = ImportProgress.INSTANCE;
     require(!progress.getActive(), "Import must be idle before rendering");
+    CameraUsbBoundaryChecks.checkColdPrimaryRegistration(test, directory, width, font);
     var activity =
         (CameraImportActivity)
             test.startActivitySync(
@@ -108,12 +109,14 @@ final class CameraSdUsbReprobeChecks {
         }
       }
       SdUsbReprobeFlowChecks.run(test, activity);
+      CameraUsbBoundaryChecks.checkPermissionResults(test, activity);
       checkCardNotificationOrdering(test, activity);
       checkManualEntry(test, activity, directory, width, font);
     } finally {
       test.runOnMainSync(activity::finish);
       test.waitForIdleSync();
     }
+    CameraUsbBoundaryChecks.checkUsbQueries(test, directory, width, font);
     return "PASS SD USB re-detection UI "
         + width
         + "dp/"
@@ -610,7 +613,7 @@ final class CameraSdUsbReprobeChecks {
     view.requestRectangleOnScreen(new Rect(0, 0, view.getWidth(), view.getHeight()), true);
   }
 
-  private static void capture(
+  static void capture(
       Instrumentation test, Window window, File directory, int width, float font, String state)
       throws Exception {
     ConsistencyLayoutChecks.frame(test, window.getDecorView());

@@ -2,6 +2,8 @@ package jp.nano.rawgallery.camera;
 
 import android.app.Activity;
 import android.app.Instrumentation;
+import android.content.Context;
+import android.hardware.usb.UsbDevice;
 import android.os.SystemClock;
 import java.io.Closeable;
 import java.util.ArrayDeque;
@@ -50,7 +52,7 @@ public final class SdUsbReprobeFlowChecks {
             flow.controller.stop();
             require(flow.platform.permissionClosed, "Stopping releases permission registration");
             require(!CameraImportGate.isPreparationReserved(), "Stopping releases permission gate");
-            flow.controller.resume();
+            flow.controller.resume(true);
             require(flow.worker.isEmpty(), "Resume cannot restart a stopped request");
           }
 
@@ -113,7 +115,7 @@ public final class SdUsbReprobeFlowChecks {
                 flow.worker.isEmpty(),
                 "Permission response alone cannot claim from the background");
             assertReserved();
-            flow.controller.resume();
+            flow.controller.resume(true);
             flow.runWorker();
           });
       test.waitForIdleSync();
@@ -231,7 +233,7 @@ public final class SdUsbReprobeFlowChecks {
     }
 
     public void start() {
-      controller.resume();
+      controller.resume(true);
     }
 
     public void setPermitted() {
@@ -268,8 +270,23 @@ public final class SdUsbReprobeFlowChecks {
       worker.remove().run();
     }
 
-    private void request() {
-      require(controller.request(false, value -> restored = value), "Supported manual request");
+    public void usePermissionReceiver(
+        Context context, UsbDevice device, Consumer<Boolean> delivered) {
+      platform.realPermission =
+          result ->
+              CameraUsb.request(
+                  context,
+                  device,
+                  granted -> {
+                    delivered.accept(granted);
+                    result.accept(granted);
+                  });
+    }
+
+    public void request() {
+      require(
+          controller.request(false, true, true, value -> restored = value),
+          "Supported manual request");
     }
 
     @Override
@@ -299,6 +316,7 @@ public final class SdUsbReprobeFlowChecks {
     Snapshot snapshot = mounted(SOURCE, false);
     final Snapshot restored = mounted(CHANGED_SOURCE, true);
     Consumer<Boolean> permission;
+    java.util.function.Function<Consumer<Boolean>, Closeable> realPermission;
     boolean permissionClosed;
     int claims, releases, closed;
     String checkedSource;
@@ -311,6 +329,7 @@ public final class SdUsbReprobeFlowChecks {
     @Override
     public Closeable requestPermission(
         Activity activity, Reader reader, Consumer<Boolean> callback) {
+      if (realPermission != null) return realPermission.apply(callback);
       permission = callback;
       return () -> permissionClosed = true;
     }

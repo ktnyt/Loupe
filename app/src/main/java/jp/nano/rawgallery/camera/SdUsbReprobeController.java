@@ -35,6 +35,7 @@ import jp.nano.rawgallery.camera.SdUsbReprobe.State;
 
 /** Coordinates a single foreground refresh with USB permission, transfer exclusion and cleanup. */
 public final class SdUsbReprobeController {
+  public static final String REOPEN_IMPORT = "SDカードを確認できませんでした。取り込み画面を開き直してください。";
   private static final String LOG = "LoupeSdReprobe";
   private static final long REMOUNT_WAIT_MS = 12_000;
   private static final long PERMISSION_WAIT_MS = 60_000;
@@ -78,6 +79,7 @@ public final class SdUsbReprobeController {
   private final Runnable expirePermission = () -> cancelPending(State.DENIED);
   private volatile boolean foreground;
   private boolean destroyed;
+  private boolean observingUsb;
   private Runnable removeMediaObserver;
   private Runnable removeSelectionObserver;
   private Snapshot positive;
@@ -150,10 +152,10 @@ public final class SdUsbReprobeController {
     return pending != null || running != null;
   }
 
-  public void resume() {
+  public void resume(boolean activityObserverAvailable) {
     if (destroyed) return;
     foreground = true;
-    if (removeMediaObserver == null) {
+    if (activityObserverAvailable && removeMediaObserver == null) {
       try {
         var filter = new IntentFilter(UsbManager.ACTION_USB_DEVICE_ATTACHED);
         filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
@@ -162,18 +164,14 @@ public final class SdUsbReprobeController {
         } else {
           activity.registerReceiver(usbReceiver, filter);
         }
-        try {
-          removeSelectionObserver =
-              PhotoStorage.observeSelection(activity, this::connectionChanged);
-          removeMediaObserver = MountedCameraCard.observeMounts(activity, this::mediaChanged);
-        } finally {
-          if (removeMediaObserver == null) {
-            if (removeSelectionObserver != null) removeSelectionObserver.run();
-            activity.unregisterReceiver(usbReceiver);
-          }
-        }
+        observingUsb = true;
+        removeSelectionObserver = PhotoStorage.observeSelection(activity, this::connectionChanged);
+        removeMediaObserver = MountedCameraCard.observeMounts(activity, this::mediaChanged);
       } catch (RuntimeException unavailable) {
         // Never claim without the connection and inventory observers.
+      } finally {
+        if (!observingUsb || removeSelectionObserver == null || removeMediaObserver == null)
+          stopObserving();
       }
     }
     continuePermission();
@@ -187,13 +185,29 @@ public final class SdUsbReprobeController {
   public void stop() {
     pause();
     cancelPending(State.CANCELLED);
-    if (removeMediaObserver == null) return;
-    removeMediaObserver.run();
-    removeSelectionObserver.run();
+    stopObserving();
+    if (positive != null) show(null);
+  }
+
+  private void stopObserving() {
+    var media = removeMediaObserver;
+    var selection = removeSelectionObserver;
+    boolean usb = observingUsb;
     removeMediaObserver = null;
     removeSelectionObserver = null;
-    activity.unregisterReceiver(usbReceiver);
-    if (positive != null) show(null);
+    observingUsb = false;
+    removeObserver(media);
+    removeObserver(selection);
+    if (usb) removeObserver(() -> activity.unregisterReceiver(usbReceiver));
+  }
+
+  private static void removeObserver(Runnable remove) {
+    if (remove == null) return;
+    try {
+      remove.run();
+    } catch (RuntimeException unavailable) {
+      android.util.Log.w(LOG, "Could not unregister a refresh observer");
+    }
   }
 
   public void destroy() {
@@ -202,16 +216,26 @@ public final class SdUsbReprobeController {
   }
 
   /** Returns false when the normal import route should handle this entry. */
-  public boolean request(boolean explicitRetry, Consumer<Restoration> restored) {
+  public boolean request(
+      boolean explicitRetry,
+      boolean usbObserved,
+      boolean activityObserverAvailable,
+      Consumer<Restoration> restored) {
     if (!foreground || destroyed) return true;
+    if (busy()) return true;
+    if (!activityObserverAvailable || !usbObserved) {
+      discardSourceStatus.run();
+      show(activityObserverAvailable ? State.UNAVAILABLE : State.OBSERVER_UNAVAILABLE);
+      return true;
+    }
     Snapshot snapshot = platform.snapshot();
     State admission = snapshot.admission();
     if (admission == State.UNSUPPORTED) {
-      if (explicitRetry && !busy()) show(State.UNSUPPORTED);
+      if (explicitRetry) show(State.UNSUPPORTED);
       return explicitRetry;
     }
-    if (busy() || !idle.getAsBoolean()) {
-      if (!busy()) show(State.BUSY);
+    if (!idle.getAsBoolean()) {
+      show(State.BUSY);
       return true;
     }
     if (admission == State.UNAVAILABLE || removeMediaObserver == null) {
@@ -344,7 +368,7 @@ public final class SdUsbReprobeController {
             : switch (next) {
               case UNSUPPORTED -> "Androidでカードを安全に取り出してから、リーダーを挿し直してください。";
               case UNAVAILABLE -> "カードの状態を確認できませんでした。「SDカードを再認識」でやり直してください。";
-              case OBSERVER_UNAVAILABLE -> "SDカードを確認できませんでした。取り込み画面を開き直してください。";
+              case OBSERVER_UNAVAILABLE -> REOPEN_IMPORT;
               case PERMISSION -> "USBの使用許可を確認しています。";
               case REDETECTING -> "SDカードを再認識しています…";
               case WAITING -> "Androidがカードを認識するのを待っています…";
@@ -516,11 +540,9 @@ public final class SdUsbReprobeController {
 
   private static final class AndroidUsb implements Platform {
     final Context app;
-    final UsbManager usb;
 
     AndroidUsb(Context app) {
       this.app = app;
-      this.usb = app.getSystemService(UsbManager.class);
     }
 
     @Override
@@ -539,7 +561,7 @@ public final class SdUsbReprobeController {
     private Snapshot observeReader(String destination) {
       UserManager users = app.getSystemService(UserManager.class);
       if (users == null || !users.isUserUnlocked()) return Snapshot.unobserved(destination);
-      var devices = usb.getDeviceList();
+      var devices = CameraUsb.devices(app);
       if (devices.size() != 1) return new Snapshot(null, destination, List.of(), false);
       UsbDevice device = devices.values().iterator().next();
       Reader reader = reader(device);
@@ -549,7 +571,7 @@ public final class SdUsbReprobeController {
           () -> {
             var volumes = currentVolumes();
             if (volumes == null) return new Snapshot(reader, destination, List.of(), false);
-            return new Snapshot(reader, destination, volumes, usb.hasPermission(device));
+            return new Snapshot(reader, destination, volumes, CameraUsb.hasPermission(app, device));
           },
           connection);
     }
@@ -589,7 +611,7 @@ public final class SdUsbReprobeController {
 
     UsbDevice device(Reader expected) {
       if (expected == null) return null;
-      var devices = usb.getDeviceList();
+      var devices = CameraUsb.devices(app);
       if (devices.size() != 1) return null;
       UsbDevice current = devices.get(expected.name());
       return current != null && expected.equals(reader(current)) ? current : null;
@@ -598,8 +620,10 @@ public final class SdUsbReprobeController {
     @Override
     public SdUsbReprobe.Session open(Reader expected) {
       UsbDevice device = device(expected);
-      if (device == null || !usb.hasPermission(device)) return null;
+      if (device == null || !CameraUsb.hasPermission(app, device)) return null;
       UsbInterface endpoint = device.getInterface(0);
+      UsbManager usb = app.getSystemService(UsbManager.class);
+      if (usb == null) return null;
       UsbDeviceConnection connection = usb.openDevice(device);
       if (connection == null) return null;
       return new SdUsbReprobe.Session() {
