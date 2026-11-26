@@ -29,6 +29,8 @@ import java.util.concurrent.TimeUnit;
 /** Measures the real gallery adapter through the point where previewInto sets the bitmap. */
 final class GalleryPhotoKeyChecks {
   private static final String DIGEST_PROVIDER = "LoupeGalleryPhotoKeyCounter";
+  private static final String KEY_PADDING =
+      "0000000000000000000000000000000000000000000000000000000000000000";
   private static final int BATCH = 128;
 
   static String run(Instrumentation test, Bundle arguments) throws Exception {
@@ -36,6 +38,13 @@ final class GalleryPhotoKeyChecks {
     require(size >= 1024 && size <= 30000, "Photo count outside fixture range");
     boolean record = Boolean.parseBoolean(arguments.getString("record", "false"));
     boolean count = Boolean.parseBoolean(arguments.getString("count", "true"));
+    String identity = arguments.getString("identity", "legacy");
+    boolean resolved =
+        switch (identity) {
+          case "legacy" -> false;
+          case "resolved" -> true;
+          default -> throw new IllegalArgumentException("identity must be legacy or resolved");
+        };
 
     Context context = test.getTargetContext();
     SharedPreferences settings = context.getSharedPreferences("diagnostics", Context.MODE_PRIVATE);
@@ -49,10 +58,10 @@ final class GalleryPhotoKeyChecks {
       GalleryScreenChecks.finishInitialIndex(test, activity);
       setRecording(activity, false);
       Harness harness = new Harness(test, activity);
-      harness.prepare(BATCH);
+      harness.prepare(BATCH, resolved);
       harness.pass(false); // Warm the adapter and view classes on separate Photo instances.
       setRecording(activity, record);
-      harness.prepare(size);
+      harness.prepare(size, resolved);
       if (count) installCounter();
       try {
         String first = harness.pass(count);
@@ -63,7 +72,9 @@ final class GalleryPhotoKeyChecks {
             + record
             + " digestCounter="
             + count
-            + " cache=preseeded-memory\nfirst "
+            + " cache=preseeded-memory\nidentity="
+            + identity
+            + "\nfirst "
             + first
             + "\nrepeat "
             + repeat
@@ -130,12 +141,19 @@ final class GalleryPhotoKeyChecks {
       cell = cells[0];
     }
 
-    void prepare(int count) throws Exception {
+    void prepare(int count, boolean resolved) throws Exception {
       size = count;
       List<PhotoRepository.Photo> photos = new ArrayList<>(count);
       List<List<Integer>> groups = new ArrayList<>(count);
       for (int i = 0; i < count; i++) {
         String name = i + ".jpg";
+        PhotoMoveStore.Identity identity = null;
+        if (resolved) {
+          String suffix = Integer.toHexString(i);
+          String storedKey = KEY_PADDING.substring(suffix.length()) + suffix;
+          identity =
+              new PhotoMoveStore.Identity(storedKey, "gallery-photo-key-fixture:" + i, 1_000_000L);
+        }
         photos.add(
             new PhotoRepository.Photo(
                 Uri.parse("file:///gallery-photo-key-fixture/" + name),
@@ -143,7 +161,10 @@ final class GalleryPhotoKeyChecks {
                 "gallery-photo-key-fixture/",
                 2048,
                 1000,
-                0));
+                0,
+                0,
+                0,
+                identity));
         groups.add(List.of(i));
       }
       Field photosField = field("photos");
