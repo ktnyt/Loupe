@@ -20,6 +20,7 @@ import android.net.ConnectivityManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
+import android.system.Os;
 import android.util.Base64;
 import android.view.KeyEvent;
 import android.view.View;
@@ -57,6 +58,7 @@ final class AmazonRetirementUpgradeChecks {
   private static final String E2_ACCESS = "synthetic-offline-access";
   private static final String E2_SECRET = "synthetic-offline-secret";
   private static final String FRESH_CONSENT = "cleanupConsentAfterAmazonRetirement";
+  private static final String PENDING_CONSENT = "e2-cleanup-consent.pending";
 
   private enum Profile {
     ABSENT(true, false),
@@ -861,6 +863,361 @@ final class AmazonRetirementUpgradeChecks {
         + " preserved selection";
   }
 
+  private enum RestartConsent {
+    REJECTED(false, true, true),
+    ACCEPTED(true, true, false),
+    REVOKED(false, true, true),
+    LEGACY_E2(true, false, false),
+    ABSENT(false, false, false),
+    FINAL_ABSENT(true, true, false),
+    FINAL_RETAINED(false, true, true);
+
+    final boolean eligible;
+    final boolean marker;
+    final boolean pending;
+
+    RestartConsent(boolean eligible, boolean marker, boolean pending) {
+      this.eligible = eligible;
+      this.marker = marker;
+      this.pending = pending;
+    }
+  }
+
+  static String writeConsentRestart(Instrumentation test, String run) throws Exception {
+    Context target = test.getTargetContext();
+    File root = consentRestartRoot(target, run);
+    var witness = target.getSharedPreferences(root.getName() + "-witness", Context.MODE_PRIVATE);
+    require(!root.exists() && witness.getAll().isEmpty(), "restart fixture already exists");
+    Files.createDirectory(root.toPath());
+    for (RestartConsent scenario : RestartConsent.values()) {
+      File parent = new File(root, scenario.name());
+      Files.createDirectory(parent.toPath());
+      var settings = consentRestartPrefs(target, root, scenario, "settings");
+      var options = consentRestartPrefs(target, root, scenario, "options");
+      require(
+          settings.getAll().isEmpty()
+              && options.getAll().isEmpty()
+              && settings
+                  .edit()
+                  .putBoolean("cleanupEnabled", scenario != RestartConsent.LEGACY_E2)
+                  .putInt("retentionDays", 31)
+                  .commit(),
+          "isolated settings seed " + scenario);
+      if (scenario != RestartConsent.ABSENT) {
+        require(
+            options.edit().putString("cleanupBucket", BUCKET).putInt("cleanupDays", 31).commit(),
+            "old cleanup tuple seed " + scenario);
+      }
+      Context context = isolatedConsentContext(target, settings, options, parent);
+      switch (scenario) {
+        case REJECTED -> rejectRestartGrant(target, settings, options, parent);
+        case ACCEPTED -> {
+          rejectRestartGrant(target, settings, options, parent);
+          applyConsentAfterPreconditions(context, 31);
+        }
+        case REVOKED -> {
+          applyConsentAfterPreconditions(context, 31);
+          require(
+              options.edit().putBoolean("enabled", true).putString("destination", BUCKET).commit(),
+              "auto-backup revoke seed");
+          Context failing =
+              isolatedConsentContext(
+                  target, settings, withCommitHook(options, editor -> false), parent);
+          try {
+            E2SyncJob.setEnabled(failing, false);
+            throw new AssertionError("failed auto-backup pause reported success");
+          } catch (IllegalStateException expected) {
+            require(
+                !(expected instanceof E2Cleanup.UnknownConsentException)
+                    && !E2Cleanup.consentUnknown(failing)
+                    && !E2Cleanup.enabled(failing, BUCKET)
+                    && E2SyncJob.enabled(context),
+                "fenced failed auto-backup pause changed backup or reopened cleanup");
+          }
+        }
+        case LEGACY_E2 -> {
+          Context noJournal =
+              isolatedConsentContext(target, settings, options, new File(parent, "not-created"));
+          require(E2Cleanup.enabled(noJournal, BUCKET), "old e2 consent required a journal");
+        }
+        case ABSENT ->
+            require(
+                !E2SyncJob.enabled(context) && !E2Cleanup.enabled(context, BUCKET),
+                "absent e2 settings granted consent or backup");
+        case FINAL_ABSENT, FINAL_RETAINED ->
+            checkFinalActivation(target, settings, options, parent, scenario);
+      }
+      require(
+          options.getBoolean(FRESH_CONSENT, false) == scenario.marker
+              && pendingConsent(parent).isFile() == scenario.pending,
+          "unexpected persisted writer state " + scenario);
+    }
+    checkConsentJournalFaults(test, root);
+    require(
+        witness
+            .edit()
+            .putString("run", run)
+            .putInt("pid", android.os.Process.myPid())
+            .putLong("start", android.os.Process.getStartElapsedRealtime())
+            .commit(),
+        "cannot persist writer identity");
+    return "PASS consent writer "
+        + run
+        + " pid="
+        + android.os.Process.myPid()
+        + " start="
+        + android.os.Process.getStartElapsedRealtime()
+        + " left all fixtures intact";
+  }
+
+  private static void rejectRestartGrant(
+      Context target, SharedPreferences settings, SharedPreferences options, File parent)
+      throws Exception {
+    var attempts = new java.util.concurrent.atomic.AtomicInteger();
+    var consent =
+        withCommitHook(
+            options,
+            editor -> {
+              if (attempts.incrementAndGet() == 1)
+                require(editor.commit(), "real backing grant commit failed");
+              return false;
+            });
+    Context context = isolatedConsentContext(target, settings, consent, parent);
+    expectConsentWriteFailure(context, 31);
+    require(
+        attempts.get() == 2
+            && options.getBoolean(FRESH_CONSENT, false)
+            && options.edit().putBoolean("fixtureUnrelated", true).commit()
+            && !E2Cleanup.consentUnknown(context)
+            && !E2Cleanup.enabled(context, BUCKET)
+            && pendingConsent(parent).isFile(),
+        "rejected grant did not preserve the contradictory disk witness");
+  }
+
+  private static void checkFinalActivation(
+      Context target,
+      SharedPreferences settings,
+      SharedPreferences options,
+      File parent,
+      RestartConsent scenario)
+      throws Exception {
+    var consent =
+        withCommitHook(
+            options,
+            editor -> {
+              require(editor.commit(), "real backing grant commit failed before final activation");
+              try {
+                if (scenario == RestartConsent.FINAL_ABSENT)
+                  Os.remove(pendingConsent(parent).getAbsolutePath());
+                else Os.chmod(parent.getAbsolutePath(), 0500);
+              } catch (android.system.ErrnoException failure) {
+                throw new AssertionError("cannot induce final activation fault", failure);
+              }
+              return true;
+            });
+    Context context = isolatedConsentContext(target, settings, consent, parent);
+    try {
+      if (scenario == RestartConsent.FINAL_RETAINED) {
+        expectConsentWriteFailure(context, 31);
+        require(!E2Cleanup.consentUnknown(context), "retained veto reported uncertain");
+      } else {
+        try {
+          applyConsentAfterPreconditions(context, 31);
+          throw new AssertionError("ambiguous unlink reported success");
+        } catch (E2Cleanup.UnknownConsentException expected) {
+          require(E2Cleanup.consentUnknown(context), "uncertain activation not exposed");
+        }
+      }
+      require(!E2Cleanup.enabled(context, BUCKET), "final fault activated same process");
+    } finally {
+      Os.chmod(parent.getAbsolutePath(), 0700);
+    }
+  }
+
+  private static void checkConsentJournalFaults(Instrumentation test, File root) throws Exception {
+    Context target = test.getTargetContext();
+    var settings =
+        target.getSharedPreferences(root.getName() + "-fault-settings", Context.MODE_PRIVATE);
+    var options =
+        target.getSharedPreferences(root.getName() + "-fault-options", Context.MODE_PRIVATE);
+    File parent = new File(root, "journal-faults");
+    File pending = pendingConsent(parent);
+    Context context = isolatedConsentContext(target, settings, options, parent);
+    try {
+      require(
+          settings.edit().putBoolean("cleanupEnabled", true).putInt("retentionDays", 31).commit()
+              && options
+                  .edit()
+                  .putString("cleanupBucket", BUCKET)
+                  .putInt("cleanupDays", 31)
+                  .commit(),
+          "journal fault seed");
+      var prior = options.getAll();
+      expectConsentWriteFailure(context, 31);
+      require(options.getAll().equals(prior), "missing parent mutated grant preferences");
+      Files.createDirectory(parent.toPath());
+      Files.createDirectory(pending.toPath());
+      expectConsentWriteFailure(context, 31);
+      require(
+          options.getAll().equals(prior), "non-regular pending entry mutated grant preferences");
+      Files.delete(pending.toPath());
+      applyConsentAfterPreconditions(context, 31);
+      require(E2Cleanup.enabled(context, BUCKET), "explicit retry failed to activate");
+
+      Os.chmod(parent.getAbsolutePath(), 0400);
+      require(!E2Cleanup.enabled(context, BUCKET), "inaccessible journal qualified as absent");
+      prior = options.getAll();
+      try {
+        E2Cleanup.setRetentionDays(context, 90);
+        throw new AssertionError("unfenced revocation reported persistent stop");
+      } catch (E2Cleanup.UnknownConsentException expected) {
+        require(
+            E2Cleanup.consentUnknown(context)
+                && E2Cleanup.days(context) == 31
+                && options.getAll().equals(prior),
+            "unknown revocation changed retention or the existing grant");
+      }
+      Os.chmod(parent.getAbsolutePath(), 0700);
+      require(!E2Cleanup.enabled(context, BUCKET), "unfenced revocation lost the process fence");
+      E2Cleanup.setEnabled(context, BUCKET, 0);
+      require(
+          !E2Cleanup.consentUnknown(context)
+              && !E2Cleanup.enabled(context, BUCKET)
+              && pending.isFile(),
+          "explicit persistent stop failed after restoring journal access");
+      require(settings.edit().putBoolean("cleanupEnabled", false).commit(), "observer fixture");
+      checkFrameworkConsentObserver(test, context, options);
+    } finally {
+      if (parent.isDirectory()) {
+        Os.chmod(parent.getAbsolutePath(), 0700);
+        Files.deleteIfExists(pending.toPath());
+        Files.delete(parent.toPath());
+      }
+      target.deleteSharedPreferences(root.getName() + "-fault-settings");
+      target.deleteSharedPreferences(root.getName() + "-fault-options");
+    }
+  }
+
+  private static void checkFrameworkConsentObserver(
+      Instrumentation test, Context context, SharedPreferences options) {
+    var observed = new AtomicBoolean();
+    var failure = new AtomicReference<Throwable>();
+    SharedPreferences.OnSharedPreferenceChangeListener listener =
+        (changed, key) -> {
+          if (FRESH_CONSENT.equals(key)) {
+            require(!E2Cleanup.enabled(context, BUCKET), "framework listener saw premature grant");
+            observed.set(true);
+          }
+        };
+    options.registerOnSharedPreferenceChangeListener(listener);
+    try {
+      test.runOnMainSync(
+          () -> {
+            try {
+              applyConsentAfterPreconditions(context, 31);
+            } catch (Throwable thrown) {
+              failure.set(thrown);
+            }
+          });
+    } finally {
+      options.unregisterOnSharedPreferenceChangeListener(listener);
+    }
+    if (failure.get() != null) throw new AssertionError("observer grant failed", failure.get());
+    require(
+        observed.get() && E2Cleanup.enabled(context, BUCKET), "framework listener not exercised");
+  }
+
+  static String readConsentRestart(Instrumentation test, String run) throws Exception {
+    Context target = test.getTargetContext();
+    File root = consentRestartRoot(target, run);
+    var witness = target.getSharedPreferences(root.getName() + "-witness", Context.MODE_PRIVATE);
+    int writerPid = witness.getInt("pid", 0);
+    long writerStart = witness.getLong("start", 0);
+    int readerPid = android.os.Process.myPid();
+    long readerStart = android.os.Process.getStartElapsedRealtime();
+    require(
+        run.equals(witness.getString("run", ""))
+            && writerPid > 0
+            && writerStart > 0
+            && (writerPid != readerPid || writerStart != readerStart),
+        "reader did not start in an independent process for " + run);
+    for (RestartConsent scenario : RestartConsent.values()) {
+      File parent = new File(root, scenario.name());
+      require(parent.isDirectory(), "writer journal is missing " + scenario);
+      var settings = consentRestartPrefs(target, root, scenario, "settings");
+      var options = consentRestartPrefs(target, root, scenario, "options");
+      Context context = isolatedConsentContext(target, settings, options, parent);
+      require(
+          E2Cleanup.enabled(context, BUCKET) == scenario.eligible
+              && !E2Cleanup.consentUnknown(context)
+              && options.getBoolean(FRESH_CONSENT, false) == scenario.marker
+              && pendingConsent(parent).isFile() == scenario.pending
+              && E2Cleanup.days(context) == 31
+              && settings.getBoolean("cleanupEnabled", false)
+                  == (scenario != RestartConsent.LEGACY_E2),
+          "unexpected fresh-process consent " + scenario);
+      if (scenario == RestartConsent.REJECTED) {
+        require(
+            BUCKET.equals(options.getString("cleanupBucket", ""))
+                && options.getInt("cleanupDays", 0) == 31
+                && options.getBoolean("fixtureUnrelated", false),
+            "the old tuple and contradictory rejected marker did not survive");
+      }
+      if (scenario == RestartConsent.REVOKED) {
+        require(
+            E2SyncJob.enabled(context)
+                && BUCKET.equals(options.getString("cleanupBucket", ""))
+                && options.getInt("cleanupDays", 0) == 31,
+            "failed auto-backup pause unexpectedly changed the persisted tuple");
+      }
+      if (scenario == RestartConsent.ABSENT) {
+        require(
+            options.getAll().isEmpty()
+                && !E2SyncJob.enabled(context)
+                && E2SyncJob.ensureRecoverySchedule(context),
+            "absent cohort changed or requested recovery scheduling");
+      }
+    }
+    for (RestartConsent scenario : RestartConsent.values()) {
+      File parent = new File(root, scenario.name());
+      Files.deleteIfExists(pendingConsent(parent).toPath());
+      Files.delete(parent.toPath());
+      target.deleteSharedPreferences(consentRestartPrefsName(root, scenario, "settings"));
+      target.deleteSharedPreferences(consentRestartPrefsName(root, scenario, "options"));
+    }
+    target.deleteSharedPreferences(root.getName() + "-witness");
+    Files.delete(root.toPath());
+    return "PASS consent reader "
+        + run
+        + " writer pid="
+        + writerPid
+        + " start="
+        + writerStart
+        + " reader pid="
+        + readerPid
+        + " start="
+        + readerStart
+        + " verified rejected, accepted, revoked, legacy-e2, absent and both final outcomes";
+  }
+
+  private static File consentRestartRoot(Context target, String run) {
+    require(run.matches("[a-z0-9][a-z0-9-]{0,31}"), "requires -e consent-run with a unique ID");
+    require(
+        target.getSystemService(ConnectivityManager.class).getActiveNetwork() == null,
+        "restart proof requires an offline AVD");
+    return new File(target.getFilesDir(), FIXTURE + "-consent-restart-" + run);
+  }
+
+  private static SharedPreferences consentRestartPrefs(
+      Context target, File root, RestartConsent scenario, String kind) {
+    return target.getSharedPreferences(
+        consentRestartPrefsName(root, scenario, kind), Context.MODE_PRIVATE);
+  }
+
+  private static String consentRestartPrefsName(File root, RestartConsent scenario, String kind) {
+    return root.getName() + "-" + scenario.name() + "-" + kind;
+  }
+
   private static void checkRetentionWrites(Context target) throws Exception {
     var settings =
         target.getSharedPreferences(FIXTURE + "-retention-settings", Context.MODE_PRIVATE);
@@ -870,9 +1227,13 @@ final class AmazonRetirementUpgradeChecks {
         "isolated test reset failed");
     var failSettings = new AtomicBoolean();
     var failConsent = new AtomicBoolean();
+    File parent = new File(target.getFilesDir(), FIXTURE + "-unused-retention-journal");
     Context context =
         isolatedConsentContext(
-            target, failNextCommit(settings, failSettings), failNextCommit(e2, failConsent));
+            target,
+            failNextCommit(settings, failSettings),
+            failNextCommit(e2, failConsent),
+            parent);
     try {
       require(E2Cleanup.days(context) == 7, "absent retention should display seven days");
       require(
@@ -959,21 +1320,25 @@ final class AmazonRetirementUpgradeChecks {
                 throw new IllegalStateException("synthetic consent acknowledgement failure");
               return saved;
             });
-    Context context = isolatedConsentContext(target, settings, consent);
+    File parent =
+        Files.createTempDirectory(target.getFilesDir().toPath(), FIXTURE + "-consent").toFile();
+    Context context = isolatedConsentContext(target, settings, consent, parent);
     try {
       require(!E2Cleanup.enabled(context, BUCKET), "old contradictory consent must be blocked");
       faults.add(CommitFault.FALSE_AFTER_WRITE);
       faults.add(CommitFault.FALSE_BEFORE_WRITE);
-      expectConsentWriteFailure(consent, 31);
+      expectConsentWriteFailure(context, 31);
       require(
           options.getBoolean(FRESH_CONSENT, false), "failed confirmation left changed preferences");
       require(options.edit().putBoolean("fixtureUnrelated", true).commit(), "unrelated preference");
-      require(!E2Cleanup.enabled(context, BUCKET), "unacknowledged grant became eligible");
-      applyConsentAfterPreconditions(consent, 0);
+      require(
+          !E2Cleanup.enabled(context, BUCKET) && pendingConsent(parent).isFile(),
+          "unacknowledged grant must retain its veto");
+      applyConsentAfterPreconditions(context, 0);
       require(!options.contains(FRESH_CONSENT), "durable revoke left the marker behind");
 
       faults.add(CommitFault.THROW_AFTER_WRITE);
-      expectConsentWriteFailure(consent, 31);
+      expectConsentWriteFailure(context, 31);
       require(
           !options.contains(FRESH_CONSENT) && !E2Cleanup.enabled(context, BUCKET),
           "throwing grant wasn't revoked");
@@ -981,7 +1346,7 @@ final class AmazonRetirementUpgradeChecks {
       beforeAcknowledgement.set(
           () ->
               require(!E2Cleanup.enabled(context, BUCKET), "grant visible before acknowledgement"));
-      applyConsentAfterPreconditions(consent, 31);
+      applyConsentAfterPreconditions(context, 31);
       require(
           E2Cleanup.enabled(context, BUCKET) && options.getBoolean(FRESH_CONSENT, false),
           "explicit acknowledged consent wasn't accepted");
@@ -990,15 +1355,15 @@ final class AmazonRetirementUpgradeChecks {
               && !options.contains(FRESH_CONSENT)
               && !E2Cleanup.enabled(context, BUCKET),
           "new retention failed to revoke the fresh consent");
-      applyConsentAfterPreconditions(consent, 90);
+      applyConsentAfterPreconditions(context, 90);
       E2Cleanup.setEnabled(context, BUCKET, 0);
       require(
           !options.contains(FRESH_CONSENT) && !E2Cleanup.enabled(context, BUCKET),
           "disabling cleanup failed to revoke the fresh consent");
 
-      applyConsentAfterPreconditions(consent, 90);
+      applyConsentAfterPreconditions(context, 90);
       faults.add(CommitFault.THROW_AFTER_WRITE);
-      expectConsentWriteFailure(consent, 0);
+      expectConsentWriteFailure(context, 0);
       require(
           !options.contains(FRESH_CONSENT)
               && !E2Cleanup.enabled(context, BUCKET)
@@ -1009,42 +1374,71 @@ final class AmazonRetirementUpgradeChecks {
       faults.clear();
       beforeAcknowledgement.set(null);
       try {
-        applyConsentAfterPreconditions(consent, 0);
+        applyConsentAfterPreconditions(context, 0);
       } finally {
         require(
             settings.edit().clear().commit() && options.edit().clear().commit(),
             "clear consent fixture");
+        Files.deleteIfExists(pendingConsent(parent).toPath());
+        Files.delete(parent.toPath());
       }
     }
   }
 
-  private static void expectConsentWriteFailure(SharedPreferences consent, int retention)
-      throws Exception {
+  private static void expectConsentWriteFailure(Context context, int retention) throws Exception {
     try {
-      applyConsentAfterPreconditions(consent, retention);
+      applyConsentAfterPreconditions(context, retention);
       throw new AssertionError("consent write was not acknowledged");
     } catch (IOException expected) {
       // Failure tests exercise the storage step without granting deletion permission to the AVD.
     }
   }
 
-  private static void applyConsentAfterPreconditions(SharedPreferences consent, int retention)
+  private static void applyConsentAfterPreconditions(Context context, int retention)
       throws Exception {
     var write =
         E2Cleanup.class.getDeclaredMethod(
-            "writeConsent", SharedPreferences.class, String.class, int.class);
+            "writeConsent", Context.class, SharedPreferences.class, String.class, int.class);
     write.setAccessible(true);
     try {
-      write.invoke(null, consent, BUCKET, retention);
+      synchronized (E2Settings.DESTINATION_LOCK) {
+        write.invoke(null, context, E2AutoSync.state(context), BUCKET, retention);
+      }
     } catch (InvocationTargetException failure) {
       if (failure.getCause() instanceof IOException io) throw io;
+      if (failure.getCause() instanceof RuntimeException runtime) throw runtime;
       throw failure;
     }
   }
 
+  private static File pendingConsent(File directory) {
+    return new File(directory, PENDING_CONSENT);
+  }
+
   private static Context isolatedConsentContext(
-      Context target, SharedPreferences settings, SharedPreferences consent) {
+      Context target, SharedPreferences settings, SharedPreferences consent, File parent) {
     return new android.content.ContextWrapper(target) {
+      @Override
+      public File getDataDir() {
+        return parent;
+      }
+
+      @Override
+      public File getFilesDir() {
+        return parent;
+      }
+
+      @Override
+      public File getNoBackupFilesDir() {
+        return parent;
+      }
+
+      @Override
+      public Object getSystemService(String name) {
+        if (JOB_SCHEDULER_SERVICE.equals(name)) throw new AssertionError("unexpected scheduling");
+        return super.getSystemService(name);
+      }
+
       @Override
       public SharedPreferences getSharedPreferences(String name, int mode) {
         return switch (name) {

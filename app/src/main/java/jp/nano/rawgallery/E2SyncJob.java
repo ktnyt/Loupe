@@ -70,7 +70,6 @@ public final class E2SyncJob extends JobService {
     if (enabled && RUNNING.get()) throw new IllegalStateException("既存のオリジナル整理を停止してから開始してください");
     if (enabled && (bucket == null || !bucket.equals(E2Settings.configuredBucket(context))))
       throw new IllegalStateException("保存先が変わりました。設定を開き直してください");
-    JobScheduler scheduler = context.getSystemService(JobScheduler.class);
     android.content.SharedPreferences state = E2AutoSync.state(context);
     String observed = enabled ? bucket : state.getString("destination", "");
     android.content.SharedPreferences.Editor setting =
@@ -82,15 +81,22 @@ public final class E2SyncJob extends JobService {
       setting.putInt("fullMediaConsent", MEDIA_CONSENT_VERSION);
       JobState.write(setting, "", JobState.Kind.WAITING, System.currentTimeMillis())
           .putBoolean("CountsKnown", false);
-    } else E2Cleanup.clearConsent(setting).remove("fullMediaConsent");
-    if (!setting.commit()) throw new IllegalStateException("自動同期の設定を保存できません");
-    if (!enabled) {
-      scheduler.cancel(PERIODIC);
-      scheduler.cancel(FIRST);
-      scheduler.cancel(CONTINUATION);
-      scheduler.cancel(MEDIA_CHANGED);
+      if (!setting.commit()) throw new IllegalStateException("自動同期の設定を保存できません");
+    } else {
+      if (!E2Cleanup.revokeForAutoBackupPause(context, setting))
+        throw new IllegalStateException("自動同期の設定を保存できません");
+      try {
+        JobScheduler scheduler = context.getSystemService(JobScheduler.class);
+        scheduler.cancel(PERIODIC);
+        scheduler.cancel(FIRST);
+        scheduler.cancel(CONTINUATION);
+        scheduler.cancel(MEDIA_CHANGED);
+      } catch (RuntimeException unavailable) {
+        Log.w("LoupeE2Sync", "Backup schedule cancellation unavailable", unavailable);
+      }
       return;
     }
+    JobScheduler scheduler = context.getSystemService(JobScheduler.class);
     ComponentName service = new ComponentName(context, E2SyncJob.class);
     boolean recovery = ensureRecoverySchedule(context);
     boolean observer = scheduleMediaJob(context);

@@ -228,12 +228,15 @@ final class E2Panel {
     }
     retentionButton.setEnabled(!busy);
     boolean cleaning = E2Cleanup.enabled(activity, activeBucket);
-    String cleanupText = cleaning ? E2Cleanup.status(activity) : "";
+    boolean unknown = E2Cleanup.consentUnknown(activity);
+    String cleanupText = unknown ? "容量整理の設定を確認できません" : cleaning ? E2Cleanup.status(activity) : "";
     if (!cleanupText.contentEquals(cleanupStatus.getText())) cleanupStatus.setText(cleanupText);
     cleanupStatus.setVisibility(cleanupText.isEmpty() ? View.GONE : View.VISIBLE);
-    cleanupToggle.setText(cleaning ? "端末オリジナルの整理を停止" : "端末オリジナルの整理を有効にする");
+    cleanupToggle.setText(unknown || cleaning ? "端末オリジナルの整理を停止" : "端末オリジナルの整理を有効にする");
     cleanupToggle.setEnabled(
-        !busy && enabled && E2SyncJob.fullMediaConsent(activity) && activeBucket != null);
+        !busy
+            && activeBucket != null
+            && (unknown || (enabled && E2SyncJob.fullMediaConsent(activity))));
   }
 
   private void chooseRetention() {
@@ -247,6 +250,8 @@ final class E2Panel {
                 if (E2Cleanup.setRetentionDays(activity, days[which])) {
                   message("保存期間を変更しました。容量整理は手動で有効にできます", GalleryUi.TEXT);
                 }
+              } catch (E2Cleanup.UnknownConsentException unknown) {
+                message(unknown.getMessage(), 0xffffb4a8);
               } catch (java.io.IOException failure) {
                 message("写真を残す期間を保存できませんでした", 0xffffb4a8);
               }
@@ -259,7 +264,7 @@ final class E2Panel {
   private void toggleCleanup() {
     String bucket = activeBucket;
     if (bucket == null) return;
-    if (E2Cleanup.enabled(activity, bucket)) {
+    if (E2Cleanup.consentUnknown(activity) || E2Cleanup.enabled(activity, bucket)) {
       setCleanup(bucket, 0);
       return;
     }
@@ -302,6 +307,8 @@ final class E2Panel {
     try {
       E2Cleanup.setEnabled(activity, bucket, retention);
       message(retention > 0 ? "次の自動バックアップで整理対象を確認します" : "端末オリジナルの整理を停止しました", GalleryUi.TEXT);
+    } catch (E2Cleanup.UnknownConsentException unknown) {
+      message(unknown.getMessage(), 0xffffb4a8);
     } catch (java.io.IOException failed) {
       message("容量整理の設定を保存できません。保存先や権限を確認してください", 0xffffb4a8);
     }
@@ -525,8 +532,12 @@ final class E2Panel {
   private void setAuto(boolean enabled) {
     try {
       E2SyncJob.setEnabled(activity, enabled, enabled ? activeBucket : null);
-    } catch (RuntimeException e) {
-      message("自動バックアップを開始できません。保存先や端末の自動削除の設定を確認してください。", 0xffffb4a8);
+    } catch (E2Cleanup.UnknownConsentException unknown) {
+      message(unknown.getMessage(), 0xffffb4a8);
+    } catch (RuntimeException failed) {
+      message(
+          enabled ? "自動バックアップを開始できません。保存先や端末の自動削除の設定を確認してください。" : "自動バックアップを停止できませんでした",
+          0xffffb4a8);
     }
     refreshAuto();
   }

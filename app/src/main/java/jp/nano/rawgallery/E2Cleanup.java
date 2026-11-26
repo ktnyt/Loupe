@@ -7,12 +7,15 @@ import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.system.ErrnoException;
+import android.system.Os;
+import android.system.OsConstants;
 import java.io.File;
+import java.io.FileDescriptor;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -30,8 +33,16 @@ final class E2Cleanup {
   private static final int EDGE = 256;
   private static final String LEGACY_CLEANUP_ENABLED = "cleanupEnabled";
   private static final String FRESH_CONSENT = "cleanupConsentAfterAmazonRetirement";
-  private static final Set<SharedPreferences> unconfirmedConsentWrites =
-      Collections.newSetFromMap(new IdentityHashMap<>());
+  private static final String PENDING_CONSENT = "e2-cleanup-consent.pending";
+  // Presence fences synchronous observers. A true value also marks an uncertain disk state.
+  private static final Map<SharedPreferences, Boolean> unconfirmedConsentWrites =
+      new IdentityHashMap<>();
+
+  static final class UnknownConsentException extends IllegalStateException {
+    UnknownConsentException(Throwable cause) {
+      super("容量整理の設定が保存されたか確認できません", cause);
+    }
+  }
 
   private record Eligible(E2AutoSync.Candidate candidate, JSONObject receipt) {}
 
@@ -49,28 +60,150 @@ final class E2Cleanup {
     if (bucket == null || bucket.isEmpty()) return false;
     SharedPreferences consent = options(c);
     synchronized (unconfirmedConsentWrites) {
-      if (unconfirmedConsentWrites.contains(consent)) return false;
+      if (unconfirmedConsentWrites.containsKey(consent)) return false;
       try {
         return bucket.equals(consent.getString("cleanupBucket", ""))
             && days(c) == consent.getInt("cleanupDays", 0)
-            && (!SettingsRepository.open(c).getBoolean(LEGACY_CLEANUP_ENABLED, false)
-                || consent.getBoolean(FRESH_CONSENT, false));
-      } catch (ClassCastException invalidConsent) {
+            && (!legacyCleanup(c)
+                || (consent.getBoolean(FRESH_CONSENT, false)
+                    && pendingConsentAbsent(c.getDataDir())));
+      } catch (RuntimeException invalidConsent) {
         return false;
       }
     }
   }
 
-  static SharedPreferences.Editor clearConsent(SharedPreferences.Editor editor) {
+  static boolean consentUnknown(Context c) {
+    SharedPreferences consent = options(c);
+    synchronized (unconfirmedConsentWrites) {
+      return Boolean.TRUE.equals(unconfirmedConsentWrites.get(consent));
+    }
+  }
+
+  private static boolean legacyCleanup(Context c) {
+    return SettingsRepository.open(c).getBoolean(LEGACY_CLEANUP_ENABLED, false);
+  }
+
+  private static FileDescriptor openConsentDirectory(File parent)
+      throws ErrnoException, IOException {
+    FileDescriptor directory =
+        Os.open(
+            parent.getAbsolutePath(),
+            OsConstants.O_RDONLY
+                | OsConstants.O_NOFOLLOW
+                | OsConstants.O_NONBLOCK
+                | OsConstants.O_CLOEXEC,
+            0);
+    boolean confirmed = false;
+    try {
+      confirmed = OsConstants.S_ISDIR(Os.fstat(directory).st_mode);
+      if (!confirmed) throw new IOException("Invalid cleanup consent directory");
+      return directory;
+    } finally {
+      if (!confirmed) Os.close(directory);
+    }
+  }
+
+  private static String pendingConsentPath(File parent) {
+    return new File(parent, PENDING_CONSENT).getAbsolutePath();
+  }
+
+  private static boolean pendingConsentAbsent(File parent) {
+    try {
+      FileDescriptor directory = openConsentDirectory(parent);
+      try {
+        Os.lstat(pendingConsentPath(parent));
+        return false;
+      } catch (ErrnoException status) {
+        return status.errno == OsConstants.ENOENT;
+      } finally {
+        Os.close(directory);
+      }
+    } catch (ErrnoException | IOException | RuntimeException unavailable) {
+      return false;
+    }
+  }
+
+  private static void preparePendingConsent(File parent) throws ErrnoException, IOException {
+    FileDescriptor directory = openConsentDirectory(parent);
+    try {
+      FileDescriptor pending =
+          Os.open(
+              pendingConsentPath(parent),
+              OsConstants.O_WRONLY
+                  | OsConstants.O_CREAT
+                  | OsConstants.O_NOFOLLOW
+                  | OsConstants.O_NONBLOCK
+                  | OsConstants.O_CLOEXEC,
+              0600);
+      try {
+        if (!OsConstants.S_ISREG(Os.fstat(pending).st_mode))
+          throw new IOException("Invalid pending cleanup consent file");
+        Os.fsync(pending);
+      } finally {
+        Os.close(pending);
+      }
+      Os.fsync(directory);
+    } finally {
+      Os.close(directory);
+    }
+  }
+
+  private static boolean activatePendingConsent(File parent) throws ErrnoException, IOException {
+    FileDescriptor directory = openConsentDirectory(parent);
+    try {
+      String path = pendingConsentPath(parent);
+      if (!OsConstants.S_ISREG(Os.lstat(path).st_mode))
+        throw new IOException("Invalid pending cleanup consent file");
+      try {
+        Os.remove(path);
+      } catch (ErrnoException unlinkFailure) {
+        try {
+          if (OsConstants.S_ISREG(Os.lstat(path).st_mode)) return false;
+        } catch (ErrnoException statusFailure) {
+          unlinkFailure.addSuppressed(statusFailure);
+        }
+        throw unlinkFailure;
+      }
+      Os.fsync(directory);
+    } finally {
+      Os.close(directory);
+    }
+    if (!pendingConsentAbsent(parent)) throw new IOException("Cannot confirm cleanup consent");
+    return true;
+  }
+
+  private static SharedPreferences.Editor clearConsent(SharedPreferences.Editor editor) {
     return editor.remove("cleanupBucket").remove("cleanupDays").remove(FRESH_CONSENT);
   }
 
-  private static void writeConsent(SharedPreferences consent, String bucket, int retention)
+  private static File beginConsentWrite(Context c, SharedPreferences consent, boolean grant)
       throws IOException {
+    // Framework listeners can read the changed in-memory preferences before commit returns.
+    unconfirmedConsentWrites.putIfAbsent(consent, false);
+    if (!legacyCleanup(c)) return null;
+    boolean hasFreshGrant = Boolean.TRUE.equals(consent.getAll().get(FRESH_CONSENT));
+    if (!grant && !hasFreshGrant) return null;
+    try {
+      // Android establishes this app-private directory when it installs the package.
+      File parent = c.getDataDir();
+      preparePendingConsent(parent);
+      unconfirmedConsentWrites.put(consent, false);
+      return parent;
+    } catch (ErrnoException | IOException | RuntimeException unavailable) {
+      if (!grant || hasFreshGrant) {
+        unconfirmedConsentWrites.put(consent, true);
+        throw new UnknownConsentException(unavailable);
+      }
+      throw new IOException("容量整理の設定を保存できません", unavailable);
+    }
+  }
+
+  private static void writeConsent(
+      Context c, SharedPreferences consent, String bucket, int retention) throws IOException {
     synchronized (unconfirmedConsentWrites) {
-      // Framework listeners can read the changed in-memory preferences before commit returns.
-      unconfirmedConsentWrites.add(consent);
-      IOException failure;
+      File pendingParent = beginConsentWrite(c, consent, retention > 0);
+      IOException failure = null;
       try {
         SharedPreferences.Editor editor = clearConsent(consent.edit());
         if (retention > 0) {
@@ -79,21 +212,45 @@ final class E2Cleanup {
               .putInt("cleanupDays", retention)
               .putBoolean(FRESH_CONSENT, true);
         }
-        if (editor.commit()) {
-          unconfirmedConsentWrites.remove(consent);
-          return;
-        }
-        failure = new IOException("容量整理の設定を保存できません");
+        if (!editor.commit()) failure = new IOException("容量整理の設定を保存できません");
       } catch (RuntimeException writeFailure) {
         failure = new IOException("容量整理の設定を保存できません", writeFailure);
       }
-      try {
-        if (clearConsent(consent.edit()).commit()) unconfirmedConsentWrites.remove(consent);
-        else failure.addSuppressed(new IOException("容量整理の停止を保存できません"));
-      } catch (RuntimeException revokeFailure) {
-        failure.addSuppressed(revokeFailure);
+      if (failure != null) {
+        // A compensation is best-effort. It never removes the durable veto.
+        try {
+          if (clearConsent(consent.edit()).commit()) unconfirmedConsentWrites.remove(consent);
+          else failure.addSuppressed(new IOException("容量整理の停止を保存できません"));
+        } catch (RuntimeException revokeFailure) {
+          failure.addSuppressed(revokeFailure);
+        }
+        throw failure;
       }
-      throw failure;
+      boolean active = true;
+      if (retention > 0 && pendingParent != null) {
+        try {
+          active = activatePendingConsent(pendingParent);
+        } catch (ErrnoException | IOException | RuntimeException unavailable) {
+          unconfirmedConsentWrites.put(consent, true);
+          throw new UnknownConsentException(unavailable);
+        }
+      }
+      unconfirmedConsentWrites.remove(consent);
+      if (!active) throw new IOException("容量整理を有効にできません");
+    }
+  }
+
+  static boolean revokeForAutoBackupPause(Context c, SharedPreferences.Editor settings) {
+    SharedPreferences consent = options(c);
+    synchronized (unconfirmedConsentWrites) {
+      try {
+        beginConsentWrite(c, consent, false);
+      } catch (IOException unavailable) {
+        throw new IllegalStateException("容量整理を停止できません", unavailable);
+      }
+      boolean saved = clearConsent(settings).remove("fullMediaConsent").commit();
+      if (saved) unconfirmedConsentWrites.remove(consent);
+      return saved;
     }
   }
 
@@ -110,7 +267,7 @@ final class E2Cleanup {
       boolean hadValue = settings.contains(SettingsRepository.RETENTION_DAYS);
       int previous = SettingsRepository.retentionDays(settings);
       // Revoke the old consent durably before changing its associated policy.
-      writeConsent(options(context), null, 0);
+      writeConsent(context, options(context), null, 0);
       try {
         if (!settings.edit().putInt(SettingsRepository.RETENTION_DAYS, next).commit()) {
           throw new IOException("写真を残す期間を保存できません");
@@ -132,13 +289,7 @@ final class E2Cleanup {
         }
         throw failure;
       }
-      try {
-        if (!E2SyncJob.ensureRecoverySchedule(context)) {
-          android.util.Log.w("LoupeE2Sync", "Recovery scheduling declined");
-        }
-      } catch (IllegalStateException unavailable) {
-        android.util.Log.w("LoupeE2Sync", "Recovery scheduler unavailable");
-      }
+      refreshRecoverySchedule(context);
       return true;
     }
   }
@@ -154,9 +305,17 @@ final class E2Cleanup {
               || !bucket.equals(E2Settings.configuredBucket(c))
               || !bucket.equals(options(c).getString("destination", ""))))
         throw new IOException("自動バックアップと写真の整理権限を確認してください");
-      writeConsent(options(c), bucket, retention);
+      writeConsent(c, options(c), bucket, retention);
+      refreshRecoverySchedule(c);
+    }
+  }
+
+  private static void refreshRecoverySchedule(Context c) {
+    try {
       if (!E2SyncJob.ensureRecoverySchedule(c))
         android.util.Log.w("LoupeE2Sync", "Recovery scheduling declined");
+    } catch (RuntimeException unavailable) {
+      android.util.Log.w("LoupeE2Sync", "Recovery scheduler unavailable", unavailable);
     }
   }
 

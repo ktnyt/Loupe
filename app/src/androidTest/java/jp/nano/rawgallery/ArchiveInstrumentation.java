@@ -265,7 +265,9 @@ public final class ArchiveInstrumentation extends Instrumentation {
       if (mode.equals("amazon-retirement-seed")
           || mode.equals("amazon-retirement-verify")
           || mode.equals("amazon-retirement-viewer")
-          || mode.equals("amazon-retirement-controls")) {
+          || mode.equals("amazon-retirement-controls")
+          || mode.equals("amazon-retirement-consent-write")
+          || mode.equals("amazon-retirement-consent-read")) {
         amazonRetirementUpgrade = mode;
         amazonRetirementUi =
             mode.equals("amazon-retirement-viewer") || mode.equals("amazon-retirement-controls");
@@ -691,6 +693,12 @@ public final class ArchiveInstrumentation extends Instrumentation {
               case "amazon-retirement-verify" -> AmazonRetirementUpgradeChecks.verify(this);
               case "amazon-retirement-viewer" ->
                   AmazonRetirementUpgradeChecks.viewer(this, tagWidth, tagFont);
+              case "amazon-retirement-consent-write" ->
+                  AmazonRetirementUpgradeChecks.writeConsentRestart(
+                      this, cameraPilotArguments.getString("consent-run", ""));
+              case "amazon-retirement-consent-read" ->
+                  AmazonRetirementUpgradeChecks.readConsentRestart(
+                      this, cameraPilotArguments.getString("consent-run", ""));
               default -> AmazonRetirementUpgradeChecks.controls(this, tagWidth, tagFont);
             });
         finish(-1, results);
