@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import jp.nano.rawgallery.camera.ImportLog;
 import jp.nano.rawgallery.camera.MountedCameraCard;
 import jp.nano.rawgallery.camera.SdSourceRegistrations;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 /**
@@ -53,6 +54,7 @@ final class DiagnosticFailureChecks {
       crashAndPrivacy(context, fixture);
       crashBounds(context);
       partialCrashSummaries(context);
+      unsupportedPrimaryCrash(context);
       simultaneousCrashes(context);
       credentialConcurrency(context);
       sourceConcurrency(test);
@@ -313,6 +315,31 @@ final class DiagnosticFailureChecks {
   }
 
   private static JSONObject checkPartialCrash(Context context, Throwable failure) throws Exception {
+    // Instrumentation-only exception classes depend on the target process's class loader.
+    String verified = DiagnosticExport.knownPrimaryException(failure.getClass().getName());
+    return checkPartialCrash(context, failure, verified == null ? "unknown" : verified);
+  }
+
+  private static void unsupportedPrimaryCrash(Context context) throws Exception {
+    JSONException failure = new JSONException(SENTINEL);
+    failure.initCause(new IOException(SENTINEL));
+    failure.setStackTrace(
+        new StackTraceElement[] {
+          new StackTraceElement(DiagnosticCrashHandler.class.getName(), "save", SENTINEL, -2)
+        });
+    JSONObject summary = checkPartialCrash(context, failure, "unknown");
+    require(
+        summary.getJSONObject("frame").getInt("line") == -2
+            && summary.getJSONArray("frames").length() == 1
+            && summary.getJSONObject("app_frame").getString("method").equals("save")
+            && summary.getJSONArray("causes").length() == 1
+            && summary.getJSONArray("causes").getString(0).equals(IOException.class.getName())
+            && !summary.toString().contains(JSONException.class.getName()),
+        "unsupported primary class preserves the safe local crash details");
+  }
+
+  private static JSONObject checkPartialCrash(
+      Context context, Throwable failure, String expectedException) throws Exception {
     File directory =
         Files.createTempDirectory(context.getCacheDir().toPath(), "partial-crash").toFile();
     File file = new File(directory, "last-crash.json");
@@ -333,7 +360,7 @@ final class DiagnosticFailureChecks {
       JSONObject note = new JSONObject(content);
       require(
           note.getInt("version_code") == 777
-              && note.getString("exception").equals(failure.getClass().getName())
+              && note.getString("exception").equals(expectedException)
               && !content.contains(SENTINEL),
           "partial crash retains version and exception without private details");
       return note;

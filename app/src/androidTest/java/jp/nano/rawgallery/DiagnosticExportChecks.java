@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.zip.ZipInputStream;
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 final class DiagnosticExportChecks {
@@ -104,6 +105,7 @@ final class DiagnosticExportChecks {
             && "length".equals(crash.getJSONObject("frame").getString("method")));
     checkExpandedCrash(context, folder);
     checkUnverifiedCrashFrames(context, folder);
+    checkUnsupportedPrimaryCrash(context, folder);
     require(
         DiagnosticExport.archive(
                     Map.of(
@@ -302,6 +304,68 @@ final class DiagnosticExportChecks {
                 && "onCreate".equals(frames.getJSONObject(index).getString("method")));
       }
     }
+  }
+
+  private static void checkUnsupportedPrimaryCrash(Context context, File folder) throws Exception {
+    JSONException failure = new JSONException(SECRET);
+    failure.initCause(new IOException(SECRET));
+    failure.setStackTrace(
+        new StackTraceElement[] {
+          new StackTraceElement(DiagnosticCrashHandler.class.getName(), "save", PATH, -2)
+        });
+    new DiagnosticCrashHandler(folder, 230, null)
+        .uncaughtException(Thread.currentThread(), failure);
+    String local =
+        new String(
+            Files.readAllBytes(new File(folder, "last-crash.json").toPath()),
+            StandardCharsets.UTF_8);
+    String exported = unzip(DiagnosticExport.capture(context)).get("last-crash.json");
+    require(exported != null);
+    for (String content : List.of(local, exported)) {
+      require(
+          !content.contains(PATH)
+              && !content.contains(SECRET)
+              && !content.contains(JSONException.class.getName()));
+      JSONObject crash = new JSONObject(content);
+      JSONObject frame = crash.getJSONObject("frame");
+      require(
+          crash.getInt("version_code") == 230
+              && "unknown".equals(crash.getString("exception"))
+              && DiagnosticCrashHandler.class.getName().equals(frame.getString("class"))
+              && "save".equals(frame.getString("method"))
+              && frame.getInt("line") == -2
+              && crash.getJSONArray("frames").length() == 1
+              && frame.toString().equals(crash.getJSONArray("frames").getJSONObject(0).toString())
+              && frame.toString().equals(crash.getJSONObject("app_frame").toString())
+              && crash.getJSONArray("causes").length() == 1
+              && IOException.class.getName().equals(crash.getJSONArray("causes").getString(0)));
+    }
+
+    JSONObject raw = new JSONObject(local);
+    for (String label : List.of(JSONException.class.getName(), "java.lang." + SECRET)) {
+      raw.put("exception", label);
+      require(archiveCrash(raw).length == 0);
+    }
+    raw.put("exception", "unknown");
+    for (long overflow : new long[] {Integer.MIN_VALUE - 1L, Integer.MAX_VALUE + 1L}) {
+      raw.put("version_code", overflow);
+      require(archiveCrash(raw).length == 0);
+      raw.put("version_code", 230);
+      raw.getJSONObject("frame").put("line", overflow);
+      raw.getJSONArray("frames").getJSONObject(0).put("line", overflow);
+      raw.getJSONObject("app_frame").put("line", overflow);
+      JSONObject filtered = new JSONObject(unzip(archiveCrash(raw)).get("last-crash.json"));
+      require(
+          !filtered.has("frame")
+              && !filtered.has("app_frame")
+              && filtered.getJSONArray("frames").length() == 0
+              && filtered.getJSONArray("causes").length() == 1);
+    }
+  }
+
+  private static byte[] archiveCrash(JSONObject crash) throws IOException {
+    return DiagnosticExport.archive(
+        Map.of("last-crash.json", crash.toString().getBytes(StandardCharsets.UTF_8)));
   }
 
   private static void checkFolderPicker(Context context) throws Exception {

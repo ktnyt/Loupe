@@ -52,10 +52,14 @@ final class DiagnosticCrashHandler implements Thread.UncaughtExceptionHandler {
   private void save(Throwable failure) throws Exception {
     if (!directory.isDirectory() && !directory.mkdirs() && !directory.isDirectory())
       throw new IOException("diagnostics directory");
+    String exception =
+        DiagnosticExport.knownPrimaryException(codeLabel(failure.getClass().getName()));
     JSONObject summary =
         new JSONObject()
             .put("version_code", versionCode)
-            .put("exception", codeLabel(failure.getClass().getName()));
+            .put(
+                "exception",
+                exception == null ? DiagnosticExport.UNKNOWN_PRIMARY_EXCEPTION : exception);
     StackTraceElement[] stack = readStack(failure);
     int stackSize = stack == null ? 0 : stack.length;
     JSONArray frames = new JSONArray();

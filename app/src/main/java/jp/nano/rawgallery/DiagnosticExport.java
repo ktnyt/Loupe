@@ -24,6 +24,7 @@ import org.json.JSONObject;
 
 /** A ZIP contains reconstructed diagnostic data, with no copy of the source file bytes. */
 final class DiagnosticExport {
+  static final String UNKNOWN_PRIMARY_EXCEPTION = "unknown";
   static final int EVENT_FILE_LIMIT = 2 * 1024 * 1024;
   // The legacy frame, eight top frames, the app frame and eight cause names fit with 240-character
   // labels.
@@ -424,11 +425,10 @@ final class DiagnosticExport {
     if (!crashDepthAllowed(source)) return null;
     try {
       JSONObject input = new JSONObject(source);
-      Number version = number(input.opt("version_code"));
-      Class<?> exception = exceptionClass(input.opt("exception"));
+      Integer version = crashInteger(input.opt("version_code"));
+      String exception = knownPrimaryException(input.opt("exception"));
       if (version == null || exception == null) return null;
-      JSONObject output =
-          new JSONObject().put("version_code", version).put("exception", exception.getName());
+      JSONObject output = new JSONObject().put("version_code", version).put("exception", exception);
       JSONObject frame = knownFrame(input.optJSONObject("frame"));
       if (frame != null) output.put("frame", frame);
 
@@ -472,13 +472,26 @@ final class DiagnosticExport {
         || !(frame.opt("method") instanceof String method)
         || method.length() > DiagnosticCrashHandler.MAX_CODE_LABEL_LENGTH) return null;
     Class<?> owner = codeClass(frame.opt("class"));
-    Number line = number(frame.opt("line"));
+    Integer line = crashInteger(frame.opt("line"));
     if (owner == null || line == null || !knownMethod(owner, method)) return null;
     return new JSONObject().put("class", owner.getName()).put("method", method).put("line", line);
   }
 
   private static Number number(Object value) {
     return value instanceof Integer || value instanceof Long ? (Number) value : null;
+  }
+
+  private static Integer crashInteger(Object value) {
+    Number candidate = number(value);
+    if (candidate == null) return null;
+    long number = candidate.longValue();
+    return number >= Integer.MIN_VALUE && number <= Integer.MAX_VALUE ? (int) number : null;
+  }
+
+  static String knownPrimaryException(Object value) {
+    if (UNKNOWN_PRIMARY_EXCEPTION.equals(value)) return UNKNOWN_PRIMARY_EXCEPTION;
+    Class<?> type = exceptionClass(value);
+    return type == null ? null : type.getName();
   }
 
   private static Class<?> exceptionClass(Object value) {
