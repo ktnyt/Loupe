@@ -92,15 +92,21 @@ final class ConfidenceAsyncChecks {
               if (probe != null) probe.enter();
               started.countDown();
               try {
-                boolean released = release.await(10, TimeUnit.SECONDS);
-                if (probe != null) probe.end(released ? "released" : "timeout");
+                release.await();
+                if (probe != null) probe.end("released");
               } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
                 if (probe != null) probe.end("interrupted");
               }
             });
-    require(started.await(5, TimeUnit.SECONDS), "analysis gate entered");
-    return release;
+    boolean entered = false;
+    try {
+      entered = started.await(5, TimeUnit.SECONDS);
+      require(entered, "analysis gate entered");
+      return release;
+    } finally {
+      if (!entered) release.countDown();
+    }
   }
 
   static void finishAnalysis(Instrumentation t, TagActivity a, CountDownLatch release)
@@ -216,6 +222,7 @@ final class ConfidenceAsyncChecks {
       idle(t, a);
       TagAnalysisProgressChecks.verify(
           t, a, progressGate, ((ArchiveInstrumentation) t).confidenceRebuildDelayMillis());
+      require("held".equals(progressGate.state()), "analysis gate held through progress checks");
       ui(t, () -> click(a, "写真を追加"));
       idle(t, a);
       require(get(a, "assignmentStatus") == null, "analysis notification view detached");
