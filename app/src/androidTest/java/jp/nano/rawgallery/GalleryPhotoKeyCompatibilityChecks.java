@@ -7,8 +7,10 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.SystemClock;
 import java.io.BufferedReader;
+import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.Security;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
@@ -29,6 +31,7 @@ final class GalleryPhotoKeyCompatibilityChecks {
   private static final Uri URI = Uri.parse("file:///gallery-key-compatibility/fixture.jpg");
 
   static String run(Instrumentation test) throws Exception {
+    GalleryPhotoKeyChecks.requireEmulator();
     PhotoRepository.Photo ordinary =
         new PhotoRepository.Photo(URI, NAME, FOLDER, 2048, MODIFIED, 0);
     require(LEGACY.equals(ArchiveStore.key(ordinary)), "legacy UTF-8 key");
@@ -102,16 +105,69 @@ final class GalleryPhotoKeyCompatibilityChecks {
     checkConcurrentReads(ordinary.withIdentity(null));
     checkRecordingCorrelation(test.getTargetContext(), ordinary, rebound);
 
-    Bundle off = new Bundle();
-    off.putString("record", "false");
-    off.putString("count", "true");
-    String measured = GalleryPhotoKeyChecks.run(test, off);
+    checkMeasurementIsolation(test, ordinary);
+    return "PASS gallery-photo-key-compat historical keys, concurrent reads, stored identity,"
+        + " recording ON preparation correlation and zero diagnostic hashes in recording OFF"
+        + " gallery binds, recorder and preference restoration, old-session rejection and"
+        + " between-batch count isolation\n";
+  }
+
+  private static void checkMeasurementIsolation(Instrumentation test, PhotoRepository.Photo noise)
+      throws Exception {
+    Context context = test.getTargetContext();
+    SharedPreferences settings = context.getSharedPreferences("diagnostics", Context.MODE_PRIVATE);
+    try (var saved = new GalleryPhotoKeyChecks.RecordingState(context)) {
+      GalleryPhotoKeyChecks.setRecording(context, true);
+      require(settings.edit().remove("record").commit(), "use implicit diagnostic preference");
+      Bundle off = new Bundle();
+      off.putString("record", "false");
+      String measured = GalleryPhotoKeyChecks.run(test, off, () -> DiagnosticLog.photo(noise));
+      require(
+          measured.contains("\nfirst archive=1024 diagnostic=0 ranking=1024 ")
+              && measured.contains("\nrepeat archive=0 diagnostic=0 ranking=1024 "),
+          "recording OFF gallery digest counts exclude a deliberate outside-batch hash");
+      checkRestored(settings, true, false, false);
+
+      require(settings.edit().putBoolean("record", true).commit(), "use explicit ON preference");
+      expectMeasurementFailure(test, off);
+      checkRestored(settings, true, true, true);
+
+      GalleryPhotoKeyChecks.setRecording(context, false);
+      Bundle on = new Bundle();
+      on.putString("record", "true");
+      GalleryPhotoKeyChecks.run(test, on);
+      checkRestored(settings, false, true, false);
+      expectMeasurementFailure(test, on);
+      checkRestored(settings, false, true, false);
+    }
+  }
+
+  private static void expectMeasurementFailure(Instrumentation test, Bundle arguments)
+      throws Exception {
+    AssertionError injected = new AssertionError("controlled failure before counted batch");
+    try {
+      GalleryPhotoKeyChecks.run(
+          test,
+          arguments,
+          () -> {
+            throw injected;
+          });
+      throw new AssertionError("expected the controlled fixture failure");
+    } catch (AssertionError failure) {
+      require(failure.getCause() == injected, "the controlled failure reached the caller");
+      require(failure.getSuppressed().length == 0, "fixture cleanup did not fail");
+    }
     require(
-        measured.contains("\nfirst archive=1024 diagnostic=0 ranking=1024 ")
-            && measured.contains("\nrepeat archive=0 diagnostic=0 ranking=1024 "),
-        "recording OFF gallery digest counts");
-    return "PASS gallery-photo-key-compat historical keys, concurrent reads, stored identity, "
-        + "recording ON preparation correlation and zero diagnostic hashes in recording OFF gallery binds\n";
+        Security.getProvider("LoupeGalleryPhotoKeyCounter") == null,
+        "the digest counter was removed after failure");
+  }
+
+  private static void checkRestored(
+      SharedPreferences settings, boolean active, boolean hasSetting, boolean value) {
+    require((DiagnosticLog.currentRecorder() != null) == active, "restored actual recorder state");
+    require(settings.contains("record") == hasSetting, "restored preference presence");
+    if (hasSetting)
+      require(settings.getBoolean("record", !value) == value, "restored preference value");
   }
 
   private static void checkConcurrentReads(PhotoRepository.Photo photo) throws Exception {
@@ -156,6 +212,19 @@ final class GalleryPhotoKeyCompatibilityChecks {
         require(ownedRecorder != null, "diagnostic fixture recorder is active");
       }
       long photoId = DiagnosticLog.photo(ordinary);
+      Field sessionField = DiagnosticLog.class.getDeclaredField("SESSION");
+      sessionField.setAccessible(true);
+      String session = (String) sessionField.get(null);
+      require(
+          !matchesRun(
+              new JSONObject()
+                  .put("session", "00000000-0000-0000-0000-000000000000")
+                  .put("parent", parent)
+                  .put("event", "preparation.item_start")
+                  .put("photo", photoId ^ 1),
+              session,
+              parent),
+          "retained older-session event with a colliding parent is excluded");
       require(photoId == DiagnosticLog.photo(rebound), "same URI in the same diagnostic session");
       PhotoRepository repository = new PhotoRepository(context);
       for (PhotoRepository.Photo photo : List.of(ordinary, rebound)) {
@@ -163,7 +232,7 @@ final class GalleryPhotoKeyCompatibilityChecks {
         require(
             !repository.prepare(photo, () -> entered.getAndSet(true)), "prepared photo canceled");
       }
-      awaitPreparationEvents(context, parent, photoId);
+      awaitPreparationEvents(context, session, parent, photoId);
     } finally {
       DiagnosticLog.use(previousParent);
       if (start) {
@@ -183,8 +252,12 @@ final class GalleryPhotoKeyCompatibilityChecks {
     }
   }
 
-  private static void awaitPreparationEvents(Context context, long parent, long photoId)
-      throws Exception {
+  private static boolean matchesRun(JSONObject event, String session, long parent) {
+    return session.equals(event.optString("session")) && event.optLong("parent", -1) == parent;
+  }
+
+  private static void awaitPreparationEvents(
+      Context context, String session, long parent, long photoId) throws Exception {
     Path directory = context.getFilesDir().toPath().resolve("diagnostics");
     long deadline = SystemClock.uptimeMillis() + 3000;
     do {
@@ -199,6 +272,7 @@ final class GalleryPhotoKeyCompatibilityChecks {
             while ((line = reader.readLine()) != null) {
               if (!line.contains("\"parent\":" + parent + ",")) continue;
               JSONObject event = new JSONObject(line);
+              if (!matchesRun(event, session, parent)) continue;
               boolean start = "preparation.item_start".equals(event.optString("event"));
               boolean cancel = "preparation.item_cancel".equals(event.optString("event"));
               if (!start && !cancel) continue;

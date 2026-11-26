@@ -8,6 +8,7 @@ import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.drawable.BitmapDrawable;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Looper;
 import android.os.SystemClock;
@@ -21,6 +22,7 @@ import java.security.NoSuchAlgorithmException;
 import java.security.Provider;
 import java.security.Security;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -34,6 +36,12 @@ final class GalleryPhotoKeyChecks {
   private static final int BATCH = 128;
 
   static String run(Instrumentation test, Bundle arguments) throws Exception {
+    return run(test, arguments, null);
+  }
+
+  static String run(Instrumentation test, Bundle arguments, Runnable beforeCountedBatch)
+      throws Exception {
+    requireEmulator();
     int size = Integer.parseInt(arguments.getString("photos", "1024"));
     require(size >= 1024 && size <= 30000, "Photo count outside fixture range");
     boolean record = Boolean.parseBoolean(arguments.getString("record", "false"));
@@ -47,52 +55,78 @@ final class GalleryPhotoKeyChecks {
         };
 
     Context context = test.getTargetContext();
-    SharedPreferences settings = context.getSharedPreferences("diagnostics", Context.MODE_PRIVATE);
-    boolean hadSetting = settings.contains("record");
-    boolean previous = settings.getBoolean("record", false);
-    MainActivity activity =
-        (MainActivity)
-            test.startActivitySync(
-                new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-    try {
-      GalleryScreenChecks.finishInitialIndex(test, activity);
-      setRecording(activity, false);
-      Harness harness = new Harness(test, activity);
-      harness.prepare(BATCH, resolved);
-      harness.pass(false); // Warm the adapter and view classes on separate Photo instances.
-      setRecording(activity, record);
-      harness.prepare(size, resolved);
-      if (count) installCounter();
+    try (RecordingState saved = new RecordingState(context)) {
+      MainActivity activity =
+          (MainActivity)
+              test.startActivitySync(
+                  new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       try {
-        String first = harness.pass(count);
-        String repeat = harness.pass(count);
-        return "PASS gallery-photo-keys photos="
-            + size
-            + " diagnostics="
-            + record
-            + " digestCounter="
-            + count
-            + " cache=preseeded-memory\nidentity="
-            + identity
-            + "\nfirst "
-            + first
-            + "\nrepeat "
-            + repeat
-            + "\n";
+        GalleryScreenChecks.finishInitialIndex(test, activity);
+        setRecording(context, false);
+        Harness harness = new Harness(test, activity);
+        harness.prepare(BATCH, resolved);
+        harness.pass(false, null); // Warm the adapter and view classes on separate Photo instances.
+        setRecording(context, record);
+        harness.prepare(size, resolved);
+        if (count) installCounter();
+        try {
+          String first = harness.pass(count, beforeCountedBatch);
+          String repeat = harness.pass(count, beforeCountedBatch);
+          return "PASS gallery-photo-keys photos="
+              + size
+              + " diagnostics="
+              + record
+              + " digestCounter="
+              + count
+              + " cache=preseeded-memory\nidentity="
+              + identity
+              + "\nfirst "
+              + first
+              + "\nrepeat "
+              + repeat
+              + "\n";
+        } finally {
+          if (count) Security.removeProvider(DIGEST_PROVIDER);
+        }
       } finally {
-        if (count) Security.removeProvider(DIGEST_PROVIDER);
+        TagDetailChecks.ui(test, activity::finish);
       }
-    } finally {
-      setRecording(activity, false);
-      SharedPreferences.Editor restore = settings.edit();
-      if (hadSetting) restore.putBoolean("record", previous);
-      else restore.remove("record");
-      require(restore.commit(), "Cannot restore recording preference");
-      TagDetailChecks.ui(test, activity::finish);
     }
   }
 
-  private static void setRecording(Context context, boolean enabled) {
+  static void requireEmulator() {
+    require("ranchu".equals(Build.HARDWARE), "Gallery key fixture requires an emulator");
+  }
+
+  static final class RecordingState implements AutoCloseable {
+    private final Context context;
+    private final SharedPreferences settings;
+    private final boolean hadSetting;
+    private final boolean previousSetting;
+    private final boolean wasRecording;
+
+    RecordingState(Context context) {
+      this.context = context;
+      settings = context.getSharedPreferences("diagnostics", Context.MODE_PRIVATE);
+      hadSetting = settings.contains("record");
+      previousSetting = settings.getBoolean("record", false);
+      wasRecording = DiagnosticLog.currentRecorder() != null;
+    }
+
+    @Override
+    public void close() {
+      try {
+        setRecording(context, wasRecording);
+      } finally {
+        SharedPreferences.Editor restore = settings.edit();
+        if (hadSetting) restore.putBoolean("record", previousSetting);
+        else restore.remove("record");
+        require(restore.commit(), "Cannot restore recording preference");
+      }
+    }
+  }
+
+  static void setRecording(Context context, boolean enabled) {
     DiagnosticLog.Recorder recorder = DiagnosticLog.currentRecorder();
     if (enabled && recorder == null) {
       require(DiagnosticLog.startRecording(context), "Cannot start diagnostics");
@@ -187,7 +221,7 @@ final class GalleryPhotoKeyChecks {
           });
     }
 
-    String pass(boolean count) throws Exception {
+    String pass(boolean count, Runnable beforeCountedBatch) throws Exception {
       int[] counts = new int[3];
       long[] elapsed = new long[1];
       CompletableFuture<Long> frame = new CompletableFuture<>();
@@ -195,9 +229,11 @@ final class GalleryPhotoKeyChecks {
       for (int offset = 0; offset < size; offset += BATCH) {
         int start = offset;
         int end = Math.min(size, offset + BATCH);
+        if (count && beforeCountedBatch != null) TagDetailChecks.ui(test, beforeCountedBatch);
         TagDetailChecks.ui(
             test,
             () -> {
+              if (count) Arrays.fill(CountingDigest.counts, 0);
               long before = SystemClock.elapsedRealtimeNanos();
               long lastBind = 0;
               for (int position = start; position < end; position++) {
@@ -209,11 +245,13 @@ final class GalleryPhotoKeyChecks {
                     "Gallery did not apply the prepared bitmap");
               }
               elapsed[0] += SystemClock.elapsedRealtimeNanos() - before;
-              if (lastBind != 0) observeLastFrame(frame, lastBind);
-              for (int i = 0; i < counts.length; i++) {
-                counts[i] += CountingDigest.counts[i];
-                CountingDigest.counts[i] = 0;
+              if (count) {
+                for (int i = 0; i < counts.length; i++) {
+                  counts[i] += CountingDigest.counts[i];
+                  CountingDigest.counts[i] = 0;
+                }
               }
+              if (lastBind != 0) observeLastFrame(frame, lastBind);
             });
       }
       require(thumbs.hitCount() - hits == size, "Preview did not get a memory hit for every bind");
