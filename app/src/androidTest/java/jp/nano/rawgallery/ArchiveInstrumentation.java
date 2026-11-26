@@ -851,6 +851,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
           result = CameraUsbLaunchChecks.choice(this, cameraPilotArguments);
         else if (cameraPilotMode.equals("camera-pilot-usb-launch"))
           result = CameraUsbLaunchChecks.run(this);
+        else if (CameraOperationAdmissionChecks.MODE.equals(cameraPilotMode))
+          result = CameraOperationAdmissionChecks.run(this);
         else if (CameraDualSlotUiChecks.MODE.equals(cameraPilotMode))
           result = CameraDualSlotUiChecks.run(this, tagWidth, tagFont);
         else if (CameraSdSwapChecks.MODE.equals(cameraPilotMode))

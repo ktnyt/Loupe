@@ -39,6 +39,7 @@ import jp.nano.rawgallery.camera.CameraDifferentialService;
 import jp.nano.rawgallery.camera.CameraDocumentSource;
 import jp.nano.rawgallery.camera.CameraImportGate;
 import jp.nano.rawgallery.camera.CameraImportLedger;
+import jp.nano.rawgallery.camera.CameraOperationTask;
 import jp.nano.rawgallery.camera.CameraUsb;
 import jp.nano.rawgallery.camera.HistoryDb;
 import jp.nano.rawgallery.camera.ImportProgress;
@@ -1404,15 +1405,16 @@ public final class CameraImportActivity extends AppCompatActivity {
     }
     if (request != PICK_DB || code != RESULT_OK || data == null || data.getData() == null) return;
     var document = data.getData();
+    String busy = "取り込みが終わってから、もう一度ファイルを選んでください";
     migrating = true;
     setText(migrationResult, "記録を読み込んでいます");
     renderStatus();
-    IO.execute(
+    if (!enqueueCameraIo(
         () -> {
           String message;
           var lock = CameraImportGate.lock;
           if (!lock.tryLock()) {
-            message = "取り込みが終わってから、もう一度ファイルを選んでください";
+            message = busy;
           } else {
             try {
               var migration =
@@ -1442,7 +1444,16 @@ public final class CameraImportActivity extends AppCompatActivity {
                 loadCameras();
                 renderStatus();
               });
-        });
+        })) {
+      migrating = false;
+      setText(migrationResult, busy);
+      renderStatus();
+    }
+  }
+
+  private boolean enqueueCameraIo(Runnable operation) {
+    var admission = CameraImportGate.tryAdmit();
+    return admission != null && CameraOperationTask.executeAdmitted(IO, admission, operation);
   }
 
   private String photoPermission() {
@@ -2102,7 +2113,7 @@ public final class CameraImportActivity extends AppCompatActivity {
                               kinds,
                               camera.getMassStorage());
                       dialog.dismiss();
-                      IO.execute(
+                      if (!enqueueCameraIo(
                           () -> {
                             var lock = CameraImportGate.lock;
                             if (!lock.tryLock()) return;
@@ -2114,7 +2125,7 @@ public final class CameraImportActivity extends AppCompatActivity {
                               lock.unlock();
                             }
                             loadCameras();
-                          });
+                          })) setText(migrationResult, "取り込みの完了後にもう一度お試しください");
                     }));
     dialog.show();
   }
@@ -2126,24 +2137,25 @@ public final class CameraImportActivity extends AppCompatActivity {
         .setNegativeButton("キャンセル", null)
         .setPositiveButton(
             "履歴を消去",
-            (d, w) ->
-                IO.execute(
-                    () -> {
-                      var lock = CameraImportGate.lock;
-                      if (!lock.tryLock()) {
-                        runOnUiThread(() -> setText(migrationResult, "取り込みの完了後にもう一度お試しください"));
-                        return;
-                      }
-                      try {
-                        HistoryDb.Companion.get(this)
-                            .resetHistory(camera.getModel(), camera.getSerial());
-                        runOnUiThread(() -> setText(migrationResult, "取り込み履歴を消去しました"));
-                      } catch (RuntimeException failure) {
-                        runOnUiThread(() -> setText(migrationResult, "取り込み履歴を消去できませんでした"));
-                      } finally {
-                        lock.unlock();
-                      }
-                    }))
+            (d, w) -> {
+              if (!enqueueCameraIo(
+                  () -> {
+                    var lock = CameraImportGate.lock;
+                    if (!lock.tryLock()) {
+                      runOnUiThread(() -> setText(migrationResult, "取り込みの完了後にもう一度お試しください"));
+                      return;
+                    }
+                    try {
+                      HistoryDb.Companion.get(this)
+                          .resetHistory(camera.getModel(), camera.getSerial());
+                      runOnUiThread(() -> setText(migrationResult, "取り込み履歴を消去しました"));
+                    } catch (RuntimeException failure) {
+                      runOnUiThread(() -> setText(migrationResult, "取り込み履歴を消去できませんでした"));
+                    } finally {
+                      lock.unlock();
+                    }
+                  })) setText(migrationResult, "取り込みの完了後にもう一度お試しください");
+            })
         .show();
   }
 

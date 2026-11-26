@@ -49,6 +49,7 @@ e2-transfer-dashboard
 
 # Camera fixtures and USB resolver settings
 camera-pilot-usb-launch
+camera-pilot-operation-admission
 camera-pilot-usb-launch-choice choice on
 camera-pilot-usb-launch-choice choice verify-on
 camera-pilot-usb-launch-choice choice off
