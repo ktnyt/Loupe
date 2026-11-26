@@ -203,12 +203,16 @@ final class GalleryPhotoKeyChecks {
       }
       Field photosField = field("photos");
       Field displayedField = field("displayed");
+      Field displayedRanksField = field("displayedRanks");
+      RankingStore.Snapshot ranks =
+          ((RankingStore) field("rankingStore").get(activity)).awaitReady();
       TagDetailChecks.ui(
           test,
           () -> {
             try {
               photosField.set(activity, photos);
               displayedField.set(activity, groups);
+              displayedRanksField.set(activity, ranks);
             } catch (IllegalAccessException e) {
               throw new AssertionError(e);
             }
