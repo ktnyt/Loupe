@@ -6,6 +6,8 @@ import java.util.Set;
 import java.util.concurrent.locks.Lock;
 import java.util.function.BooleanSupplier;
 import java.util.function.LongSupplier;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
 
 /** Only the tested dual-slot reader is eligible for this USB interface handoff. */
 final class SdUsbReprobe {
@@ -13,8 +15,20 @@ final class SdUsbReprobe {
   static final int PRODUCT = 45152;
 
   enum State {
-    UNSUPPORTED, EJECT_REQUIRED, CONFIRM_EJECTION, PERMISSION, REDETECTING, WAITING, SOURCE_REQUIRED,
-    READY, BUSY, CHANGED, DENIED, TIMEOUT, FAILED, CANCELLED
+    UNSUPPORTED,
+    EJECT_REQUIRED,
+    CONFIRM_EJECTION,
+    PERMISSION,
+    REDETECTING,
+    WAITING,
+    SOURCE_REQUIRED,
+    READY,
+    BUSY,
+    CHANGED,
+    DENIED,
+    TIMEOUT,
+    FAILED,
+    CANCELLED
   }
 
   record Reader(String name, int deviceId, int vendor, int product, int interfaceId) {
@@ -46,9 +60,11 @@ final class SdUsbReprobe {
       if (reader == null || !reader.supported() || destination == null) return false;
       Set<String> seen = new HashSet<>();
       for (Volume volume : volumes) {
-        if (volume.uuid == null || !seen.add(volume.uuid)
+        if (volume.uuid == null
+            || !seen.add(volume.uuid)
             || !("mounted".equals(volume.state)
-                || (!destination.equals(volume.uuid) && "mounted_ro".equals(volume.state)))) return false;
+                || (!destination.equals(volume.uuid) && "mounted_ro".equals(volume.state))))
+          return false;
       }
       return seen.size() <= 2 && seen.contains(destination);
     }
@@ -66,11 +82,14 @@ final class SdUsbReprobe {
       return volumes.stream()
           .map(Volume::uuid)
           .filter(uuid -> uuid != null && !uuid.equals(destination))
-          .findFirst().orElse(null);
+          .findFirst()
+          .orElse(null);
     }
 
     boolean sameConnection(Snapshot current) {
-      return reader != null && reader.equals(current.reader) && destination != null
+      return reader != null
+          && reader.equals(current.reader)
+          && destination != null
           && destination.equals(current.destination);
     }
 
@@ -81,7 +100,8 @@ final class SdUsbReprobe {
 
   record Ejection(Snapshot beforeSettings, long expiresAt) {
     Ejection {
-      if (!beforeSettings.canPrepareEjection()) throw new IllegalArgumentException("No mounted inventory");
+      if (!beforeSettings.canPrepareEjection())
+        throw new IllegalArgumentException("No mounted inventory");
     }
 
     boolean matches(Snapshot current, long now) {
@@ -96,29 +116,44 @@ final class SdUsbReprobe {
 
   interface Session extends AutoCloseable {
     boolean claim();
+
     boolean release();
-    @Override void close();
+
+    @Override
+    void close();
   }
 
   interface Platform {
     Snapshot snapshot();
+
     Session open(Reader reader);
+
     boolean destinationWritable(String destination);
+
     boolean sourceReachable(String source, String destination, BooleanSupplier cancelled);
   }
 
   interface Observer {
     void beforeClaim();
+
     void waiting();
   }
 
-  static State run(Ejection ejection, Snapshot initial, Platform platform, Lock lock,
+  static State run(
+      Ejection ejection,
+      Snapshot initial,
+      Platform platform,
+      Lock lock,
       BooleanSupplier cancelled,
-      LongSupplier now, long waitMillis, Observer observer) throws InterruptedException {
+      LongSupplier now,
+      long waitMillis,
+      Observer observer)
+      throws InterruptedException {
     if (!lock.tryLock()) return State.BUSY;
     try {
       if (cancelled.getAsBoolean()) return State.CANCELLED;
-      if (ejection == null || !ejection.confirmed(initial, now.getAsLong())) return State.EJECT_REQUIRED;
+      if (ejection == null || !ejection.confirmed(initial, now.getAsLong()))
+        return State.EJECT_REQUIRED;
       if (!initial.permitted()) return State.DENIED;
       Snapshot current = platform.snapshot();
       if (!initial.sameAdmission(current)) return State.CHANGED;
@@ -188,6 +223,61 @@ final class SdUsbReprobe {
       released = usb.release();
     }
     return claimed && released;
+  }
+
+  /** Ignores delayed mount notifications from our handoff, even after the USB handle closed. */
+  static final class MountSuppression {
+    private Object owner;
+    private Snapshot handoff;
+    private String restoredSource;
+
+    synchronized void begin(Object attempt, Snapshot snapshot) {
+      owner = attempt;
+      handoff = snapshot;
+      restoredSource = null;
+    }
+
+    synchronized void finish(Object attempt, Snapshot restored) {
+      if (owner != attempt) return;
+      owner = null;
+      if (restored != null && handoff.sameConnection(restored)) {
+        restoredSource = readableSource(restored);
+      }
+    }
+
+    synchronized boolean suppresses(Predicate<Reader> stillAttached) {
+      if (owner != null) return true;
+      if (handoff == null) return false;
+      try {
+        if (stillAttached.test(handoff.reader)) return true;
+      } catch (RuntimeException unknown) {
+        return true;
+      }
+      clear();
+      return false;
+    }
+
+    synchronized void sourceUnmounted(
+        String uuid, Supplier<Snapshot> observe, Predicate<String> targetWritable) {
+      if (owner != null || restoredSource == null || !restoredSource.equals(uuid)) return;
+      Snapshot current = observe.get();
+      if (handoff.sameConnection(current)
+          && targetWritable.test(current.destination)
+          && current.volumes.stream()
+              .filter(volume -> uuid.equals(volume.uuid))
+              .allMatch(
+                  volume ->
+                      "unmounted".equals(volume.state)
+                          || "removed".equals(volume.state)
+                          || "bad_removal".equals(volume.state))) {
+        clear();
+      }
+    }
+
+    private void clear() {
+      handoff = null;
+      restoredSource = null;
+    }
   }
 
   private SdUsbReprobe() {}

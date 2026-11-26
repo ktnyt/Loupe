@@ -79,6 +79,8 @@ public final class CameraImportActivity extends AppCompatActivity {
   private TextView sdReprobeStatus;
   private LinearProgressIndicator sdReprobeProgress;
   private SdUsbReprobeController sdReprobe;
+  private SdUsbReprobeController.Display sdReprobeDisplay =
+      new SdUsbReprobeController.Display("", false, false);
   private CameraQuickImportSources.SdState sdSourceState;
   private MaterialButton sdSettingsButton;
   private TextView sdSettingsStatus;
@@ -1137,9 +1139,10 @@ public final class CameraImportActivity extends AppCompatActivity {
     renderWifiEnabled();
     auto.setEnabled(UsbLaunchSettings.isEnabled(this) && !active && !migrating && !manualOnly);
     migrate.setEnabled(!active && !starting && !migrating && !sdReprobe.busy());
-    sdReprobeButton.setEnabled(canStartSourceAction());
+    sdReprobeButton.setEnabled(!sdReprobeDisplay.busy() && canStartSourceAction());
     boolean sdAvailable =
-        !active
+        !sdReprobeDisplay.busy()
+            && !active
             && !starting
             && !migrating
             && permission == null
@@ -1484,6 +1487,8 @@ public final class CameraImportActivity extends AppCompatActivity {
   }
 
   void renderSdReprobe(SdUsbReprobeController.Display display) {
+    sdReprobeDisplay = display;
+    updateSdStartLabel();
     setText(sdReprobeStatus, display.message());
     sdReprobeStatus.setVisibility(display.message().isEmpty() ? View.GONE : View.VISIBLE);
     sdReprobeProgress.setVisibility(display.busy() ? View.VISIBLE : View.GONE);
@@ -1499,10 +1504,18 @@ public final class CameraImportActivity extends AppCompatActivity {
     sdSourceState = state;
     setText(sdStatus, state.message);
     setText(sdSettingsStatus, state.message);
-    setText(
-        sdStart, state == CameraQuickImportSources.SdState.AMBIGUOUS ? "取り込み元を選ぶ" : "SDカードから取り込む");
+    updateSdStartLabel();
     sdChecking.setVisibility(
         state == CameraQuickImportSources.SdState.CHECKING ? View.VISIBLE : View.GONE);
+  }
+
+  private void updateSdStartLabel() {
+    setText(
+        sdStart,
+        sdReprobeDisplay.requiresSource()
+                || sdSourceState == CameraQuickImportSources.SdState.AMBIGUOUS
+            ? "取り込み元を選ぶ"
+            : "SDカードから取り込む");
   }
 
   private void cancelSdStatusLoad() {
@@ -1602,7 +1615,7 @@ public final class CameraImportActivity extends AppCompatActivity {
   private void startSd(SdStartMode mode) {
     if (!canStartSourceAction()) return;
     if (sdSourceState == CameraQuickImportSources.SdState.AMBIGUOUS
-        || sdReprobe.requiresSourceSelection()) {
+        || sdReprobeDisplay.requiresSource()) {
       String target = MountedCameraCard.targetWithGenericReader(this, PhotoStorage.selected(this));
       UsbDevice device = connected();
       String kinds =

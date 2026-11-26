@@ -126,11 +126,6 @@ public final class CameraDifferentialService extends Service {
             mediaReceiver = new BroadcastReceiver() {
                 @Override public void onReceive(Context context, Intent event) {
                     String uuid = MountedCameraCard.notifiedVolumeUuid(event);
-                    if (Intent.ACTION_MEDIA_UNMOUNTED.equals(event.getAction())) {
-                        SdUsbReprobeController.observeUnmount(context, uuid);
-                        return;
-                    }
-                    if (SdUsbReprobeController.suppressesMount(context)) return;
                     String destination = PhotoStorage.selected(context);
                     Uri tree = MountedCameraCard.registeredMountSource(context, uuid, destination);
                     if (tree == null || !SdSourceRegistrations.hasReadGrant(context, tree)) return;
@@ -138,7 +133,6 @@ public final class CameraDifferentialService extends Service {
                 }
             };
             IntentFilter f=new IntentFilter(Intent.ACTION_MEDIA_MOUNTED);
-            f.addAction(Intent.ACTION_MEDIA_UNMOUNTED);
             f.addDataScheme("file");if(Build.VERSION.SDK_INT>=33)registerReceiver(mediaReceiver,f,Context.RECEIVER_NOT_EXPORTED);else registerReceiver(mediaReceiver,f);
             watchingSdMounts=true;
         }else if(!p.getBoolean("sd_auto",false)&&mediaReceiver!=null){unregisterReceiver(mediaReceiver);mediaReceiver=null;watchingSdMounts=false;}

@@ -11,7 +11,6 @@ import android.hardware.usb.UsbDeviceConnection;
 import android.hardware.usb.UsbInterface;
 import android.hardware.usb.UsbManager;
 import android.os.Build;
-import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
@@ -37,13 +36,12 @@ import jp.nano.rawgallery.camera.SdUsbReprobe.State;
 
 /** Foreground USB permission and callbacks for the SD re-detection action. */
 public final class SdUsbReprobeController {
+  private static final String LOG = "LoupeSdReprobe";
   private static final long REMOUNT_WAIT_MS = 12_000;
   private static final long EJECTION_FLOW_MS = 2 * 60_000;
   private static final Handler MAIN = new Handler(Looper.getMainLooper());
-  private static final Object MOUNT_LOCK = new Object();
-  private static Reader suppressedReader;
-  private static String restoredSource;
-  private static Run handoffOwner;
+  private static final SdUsbReprobe.MountSuppression OWN_MOUNTS =
+      new SdUsbReprobe.MountSuppression();
 
   private final Activity activity;
   private final AndroidUsb platform;
@@ -62,49 +60,48 @@ public final class SdUsbReprobeController {
 
   private static final class Permission {
     final Snapshot request;
-    final Ejection ejection;
     Closeable registration;
     Boolean granted;
 
-    Permission(Snapshot request, Ejection ejection) {
+    Permission(Snapshot request) {
       this.request = request;
-      this.ejection = ejection;
     }
   }
 
   public record Display(String message, boolean busy, boolean requiresSource) {}
 
-  public SdUsbReprobeController(Activity activity, BooleanSupplier idle, Consumer<Display> render,
-      Runnable refresh) {
+  public SdUsbReprobeController(
+      Activity activity, BooleanSupplier idle, Consumer<Display> render, Runnable refresh) {
     this.activity = activity;
     this.platform = new AndroidUsb(activity.getApplicationContext());
     this.idle = idle;
     this.render = render;
     this.refresh = refresh;
     this.storage = activity.getSystemService(StorageManager.class);
-    this.storageCallback = new StorageManager.StorageVolumeCallback() {
-      @Override public void onStateChanged(StorageVolume volume) {
-        observeVolumeChange(platform, SdSourceRegistrations.normalizeVolumeUuid(volume.getUuid()));
-        observed();
-      }
-    };
-    this.usbReceiver = new BroadcastReceiver() {
-      @Override public void onReceive(Context context, Intent intent) {
-        observed();
-      }
-    };
+    this.storageCallback =
+        new StorageManager.StorageVolumeCallback() {
+          @Override
+          public void onStateChanged(StorageVolume volume) {
+            observeVolumeChange(
+                platform, SdSourceRegistrations.normalizeVolumeUuid(volume.getUuid()));
+            observed();
+          }
+        };
+    this.usbReceiver =
+        new BroadcastReceiver() {
+          @Override
+          public void onReceive(Context context, Intent intent) {
+            observed();
+          }
+        };
   }
 
   public boolean busy() {
     return pending != null || running != null;
   }
 
-  public boolean requiresSourceSelection() {
-    return state == State.SOURCE_REQUIRED;
-  }
-
   public void sourceSelected() {
-    if (requiresSourceSelection()) show(State.READY);
+    if (state == State.SOURCE_REQUIRED) show(State.READY);
   }
 
   public void resume() {
@@ -131,7 +128,10 @@ public final class SdUsbReprobeController {
         armed = null;
         show(State.CHANGED);
       } else {
-        show(armed.confirmed(lastObserved, SystemClock.elapsedRealtime()) ? State.CONFIRM_EJECTION : State.EJECT_REQUIRED);
+        show(
+            armed.confirmed(lastObserved, SystemClock.elapsedRealtime())
+                ? State.CONFIRM_EJECTION
+                : State.EJECT_REQUIRED);
       }
     }
     continuePermission();
@@ -166,9 +166,17 @@ public final class SdUsbReprobeController {
     if (armed != null && !armed.matches(snapshot, SystemClock.elapsedRealtime())) armed = null;
     if (armed != null && armed.confirmed(snapshot, SystemClock.elapsedRealtime())) {
       if (snapshot.permitted()) confirmEjection(armed);
-      else requestPermission(snapshot, armed);
+      else {
+        armed = null;
+        show(State.DENIED);
+      }
     } else if (armed != null || snapshot.canPrepareEjection()) {
-      offerEjection(snapshot);
+      if (snapshot.permitted()) offerEjection(snapshot);
+      else if (armed == null) requestPermission(snapshot);
+      else {
+        armed = null;
+        show(State.DENIED);
+      }
     } else {
       show(State.UNSUPPORTED);
     }
@@ -193,68 +201,85 @@ public final class SdUsbReprobeController {
         .setMessage("リーダーはつないだまま、Androidの設定で表示されているSDカードとmicroSDを安全に取り出してください。戻ったら再認識を押してください。")
         .setNegativeButton("キャンセル", (dialog, which) -> armed = null)
         .setOnCancelListener(dialog -> armed = null)
-        .setPositiveButton("ストレージ設定を開く", (dialog, which) -> {
-          if (!foreground || busy() || !idle.getAsBoolean()) return;
-          Snapshot current = platform.snapshot();
-          if (!snapshot.sameAdmission(current)) {
-            armed = null;
-            show(State.CHANGED);
-            return;
-          }
-          if (armed == null && !current.canPrepareEjection()) {
-            show(State.UNSUPPORTED);
-            return;
-          }
-          try {
-            if (armed == null) armed = new Ejection(current,
-                SystemClock.elapsedRealtime() + EJECTION_FLOW_MS);
-            settingsOpen = true;
-            activity.startActivity(new Intent(Settings.ACTION_MEMORY_CARD_SETTINGS));
-          } catch (RuntimeException unavailable) {
-            settingsOpen = false;
-            armed = null;
-            show(State.UNSUPPORTED);
-          }
-        })
+        .setPositiveButton(
+            "ストレージ設定を開く",
+            (dialog, which) -> {
+              if (!foreground || busy() || !idle.getAsBoolean()) return;
+              Snapshot current = platform.snapshot();
+              if (!snapshot.sameAdmission(current) || !current.permitted()) {
+                armed = null;
+                show(State.CHANGED);
+                return;
+              }
+              if (armed == null && !current.canPrepareEjection()) {
+                show(State.UNSUPPORTED);
+                return;
+              }
+              try {
+                if (armed == null)
+                  armed = new Ejection(current, SystemClock.elapsedRealtime() + EJECTION_FLOW_MS);
+                settingsOpen = true;
+                openStorageSettings();
+              } catch (RuntimeException unavailable) {
+                settingsOpen = false;
+                armed = null;
+                show(State.UNSUPPORTED);
+              }
+            })
         .show();
+  }
+
+  private void openStorageSettings() {
+    try {
+      activity.startActivity(new Intent(Settings.ACTION_MEMORY_CARD_SETTINGS));
+    } catch (android.content.ActivityNotFoundException unavailable) {
+      activity.startActivity(new Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS));
+    }
   }
 
   private void confirmEjection(Ejection confirmation) {
     new MaterialAlertDialogBuilder(activity)
         .setTitle("カードの取り出しを確認")
-        .setMessage("Androidで表示されていたすべてのカードの取り出しが完了し、リーダーをつないだままであることを確認してください。フォーマットやマウント中は実行できません。")
+        .setMessage(
+            "Androidで表示されていたすべてのカードの取り出しが完了し、リーダーをつないだままであることを確認してください。フォーマットやマウント中は実行できません。")
         .setNegativeButton("キャンセル", (dialog, which) -> armed = null)
         .setOnCancelListener(dialog -> armed = null)
-        .setPositiveButton("取り出し済み", (dialog, which) -> {
-          if (armed != confirmation || !foreground || busy() || !idle.getAsBoolean()) return;
-          armed = null;
-          Snapshot current = platform.snapshot();
-          if (!confirmation.confirmed(current, SystemClock.elapsedRealtime())) {
-            show(State.CHANGED);
-          } else if (!current.permitted()) {
-            show(State.DENIED);
-          } else {
-            start(current, confirmation);
-          }
-        })
+        .setPositiveButton(
+            "取り出し済み",
+            (dialog, which) -> {
+              if (armed != confirmation || !foreground || busy() || !idle.getAsBoolean()) return;
+              armed = null;
+              Snapshot current = platform.snapshot();
+              if (!confirmation.confirmed(current, SystemClock.elapsedRealtime())) {
+                show(State.CHANGED);
+              } else if (!current.permitted()) {
+                show(State.DENIED);
+              } else {
+                start(current, confirmation);
+              }
+            })
         .show();
   }
 
-  private void requestPermission(Snapshot snapshot, Ejection ejection) {
+  private void requestPermission(Snapshot snapshot) {
     UsbDevice device = platform.device(snapshot.reader());
     if (device == null) {
       show(State.CHANGED);
       return;
     }
-    Permission request = new Permission(snapshot, ejection);
+    Permission request = new Permission(snapshot);
     pending = request;
     show(State.PERMISSION);
     try {
-      request.registration = CameraUsb.request(activity, device, granted -> {
-        if (pending != request) return;
-        request.granted = granted;
-        continuePermission();
-      });
+      request.registration =
+          CameraUsb.request(
+              activity,
+              device,
+              granted -> {
+                if (pending != request) return;
+                request.granted = granted;
+                continuePermission();
+              });
     } catch (RuntimeException unavailable) {
       pending = null;
       show(State.DENIED);
@@ -271,17 +296,14 @@ public final class SdUsbReprobeController {
       return;
     }
     Snapshot current = platform.snapshot();
-    if (armed != request.ejection || !armed.confirmed(current, SystemClock.elapsedRealtime())
-        || !request.request.sameAdmission(current)) {
-      armed = null;
+    if (!request.request.sameAdmission(current) || !current.canPrepareEjection()) {
       show(State.CHANGED);
     } else if (!current.permitted()) {
       show(State.DENIED);
     } else if (!idle.getAsBoolean()) {
       show(State.BUSY);
     } else {
-      show(State.CONFIRM_EJECTION);
-      confirmEjection(armed);
+      offerEjection(current);
     }
   }
 
@@ -303,21 +325,24 @@ public final class SdUsbReprobeController {
 
   private void show(State next) {
     state = next;
-    String message = next == null ? "" : switch (next) {
-      case UNSUPPORTED -> "再認識できません。Androidで安全に取り出してから、リーダーを挿し直してください。";
-      case EJECT_REQUIRED -> "Androidでカードの取り出しが完了していることを確認してください。";
-      case CONFIRM_EJECTION -> "取り出しが済んだら、もう一度「SDカードを再認識」を押してください。";
-      case PERMISSION -> "USBの使用許可を確認しています。";
-      case REDETECTING -> "SDカードを再認識しています…";
-      case WAITING -> "Androidがカードを認識するのを待っています…";
-      case SOURCE_REQUIRED -> "カードを認識しました。取り込み元のフォルダを選んでください。";
-      case READY -> "元カードと保存先を確認しました。SDカードから取り込めます。";
-      case BUSY -> "処理中は再認識できません。完了してからもう一度お試しください。";
-      case CHANGED -> "カードの接続または保存先が変わりました。接続を確認してください。";
-      case DENIED -> "USBの使用許可を確認できません。もう一度お試しください。";
-      case TIMEOUT, FAILED -> "カードを再認識できませんでした。Androidで安全に取り出してから、リーダーを挿し直してください。";
-      case CANCELLED -> "SDカードの再認識を中止しました。";
-    };
+    String message =
+        next == null
+            ? ""
+            : switch (next) {
+              case UNSUPPORTED -> "再認識できません。Androidで安全に取り出してから、リーダーを挿し直してください。";
+              case EJECT_REQUIRED -> "Androidでカードの取り出しが完了していることを確認してください。";
+              case CONFIRM_EJECTION -> "取り出しが済んだら、もう一度「SDカードを再認識」を押してください。";
+              case PERMISSION -> "USBの使用許可を確認しています。";
+              case REDETECTING -> "SDカードを再認識しています…";
+              case WAITING -> "Androidがカードを認識するのを待っています…";
+              case SOURCE_REQUIRED -> "カードを認識しました。取り込み元のフォルダを選んでください。";
+              case READY -> "元カードと保存先を確認しました。SDカードから取り込めます。";
+              case BUSY -> "処理中は再認識できません。完了してからもう一度お試しください。";
+              case CHANGED -> "カードの接続または保存先が変わりました。接続を確認してください。";
+              case DENIED -> "USBの使用許可を確認できません。もう一度お試しください。";
+              case TIMEOUT, FAILED -> "カードを再認識できませんでした。Androidで安全に取り出してから、リーダーを挿し直してください。";
+              case CANCELLED -> "SDカードの再認識を中止しました。";
+            };
     render.accept(new Display(message, busy(), next == State.SOURCE_REQUIRED));
   }
 
@@ -328,7 +353,10 @@ public final class SdUsbReprobeController {
     final Ejection confirmation;
     final AtomicBoolean cancelled = new AtomicBoolean();
 
-    Run(AndroidUsb platform, WeakReference<SdUsbReprobeController> owner, Snapshot snapshot,
+    Run(
+        AndroidUsb platform,
+        WeakReference<SdUsbReprobeController> owner,
+        Snapshot snapshot,
         Ejection confirmation) {
       this.platform = platform;
       this.owner = owner;
@@ -336,72 +364,69 @@ public final class SdUsbReprobeController {
       this.confirmation = confirmation;
     }
 
-    @Override public void run() {
+    @Override
+    public void run() {
       State result = State.FAILED;
-      var observer = new SdUsbReprobe.Observer() {
-        @Override public void beforeClaim() {
-          synchronized (MOUNT_LOCK) {
-            handoffOwner = Run.this;
-            suppressedReader = snapshot.reader();
-            restoredSource = null;
-          }
-        }
-
-        @Override public void waiting() {
-          MAIN.post(() -> {
-            var controller = owner.get();
-            if (controller != null && controller.foreground && controller.running == Run.this) {
-              controller.show(State.WAITING);
+      var observer =
+          new SdUsbReprobe.Observer() {
+            @Override
+            public void beforeClaim() {
+              OWN_MOUNTS.begin(Run.this, snapshot);
             }
-          });
-        }
-      };
+
+            @Override
+            public void waiting() {
+              MAIN.post(
+                  () -> {
+                    var controller = owner.get();
+                    if (controller != null
+                        && controller.foreground
+                        && controller.running == Run.this) {
+                      controller.show(State.WAITING);
+                    }
+                  });
+            }
+          };
       try {
-        result = SdUsbReprobe.run(confirmation, snapshot, platform, CameraImportGate.lock,
-            cancelled::get, SystemClock::elapsedRealtime, REMOUNT_WAIT_MS, observer);
+        result =
+            SdUsbReprobe.run(
+                confirmation,
+                snapshot,
+                platform,
+                CameraImportGate.lock,
+                cancelled::get,
+                SystemClock::elapsedRealtime,
+                REMOUNT_WAIT_MS,
+                observer);
       } catch (InterruptedException stopped) {
         Thread.currentThread().interrupt();
         result = State.CANCELLED;
       } finally {
-        synchronized (MOUNT_LOCK) {
-          if (handoffOwner == this) {
-            handoffOwner = null;
-            if (result == State.READY || result == State.SOURCE_REQUIRED) {
-              var current = platform.snapshot();
-              if (snapshot.sameConnection(current)) restoredSource = SdUsbReprobe.readableSource(current);
-            }
-          }
-        }
+        Snapshot restored =
+            result == State.READY || result == State.SOURCE_REQUIRED ? platform.snapshot() : null;
+        OWN_MOUNTS.finish(this, restored);
       }
       State terminal = result;
-      MAIN.post(() -> {
-        var controller = owner.get();
-        if (controller == null || controller.running != this) return;
-        controller.running = null;
-        controller.show(cancelled.get() ? State.CANCELLED : terminal);
-        if (controller.foreground) controller.refresh.run();
-      });
+      android.util.Log.i(LOG, "outcome=" + terminal.name());
+      MAIN.post(
+          () -> {
+            var controller = owner.get();
+            if (controller == null || controller.running != this) return;
+            controller.running = null;
+            controller.show(cancelled.get() ? State.CANCELLED : terminal);
+            if (controller.foreground) controller.refresh.run();
+          });
     }
   }
 
   /** A delayed event from this attachment cannot start a copy after the handoff has finished. */
   static boolean suppressesMount(Context context) {
-    synchronized (MOUNT_LOCK) {
-      if (handoffOwner != null) return true;
-      if (suppressedReader == null) return false;
-      try {
-        UsbManager manager = context.getSystemService(UsbManager.class);
-        UsbDevice device = manager.getDeviceList().get(suppressedReader.name());
-        if (device != null && device.getDeviceId() == suppressedReader.deviceId()
-            && device.getVendorId() == suppressedReader.vendor()
-            && device.getProductId() == suppressedReader.product()) return true;
-        suppressedReader = null;
-        restoredSource = null;
-        return false;
-      } catch (RuntimeException unavailable) {
-        return true;
-      }
-    }
+    return OWN_MOUNTS.suppresses(
+        reader -> {
+          UsbManager manager = context.getSystemService(UsbManager.class);
+          UsbDevice device = manager.getDeviceList().get(reader.name());
+          return device != null && reader.equals(AndroidUsb.reader(device));
+        });
   }
 
   static void observeUnmount(Context context, String uuid) {
@@ -409,17 +434,7 @@ public final class SdUsbReprobeController {
   }
 
   private static void observeVolumeChange(AndroidUsb platform, String uuid) {
-    synchronized (MOUNT_LOCK) {
-      if (handoffOwner != null || restoredSource == null || !restoredSource.equals(uuid)) return;
-      Snapshot current = platform.snapshot();
-      if (current.reader() == null || !current.reader().equals(suppressedReader)) return;
-      if (platform.destinationWritable(current.destination())
-          && current.volumes().stream().anyMatch(volume ->
-              uuid.equals(volume.uuid()) && Environment.MEDIA_UNMOUNTED.equals(volume.state()))) {
-        suppressedReader = null;
-        restoredSource = null;
-      }
-    }
+    OWN_MOUNTS.sourceUnmounted(uuid, platform::snapshot, platform::destinationWritable);
   }
 
   private static final class AndroidUsb implements SdUsbReprobe.Platform {
@@ -431,7 +446,8 @@ public final class SdUsbReprobeController {
       this.usb = app.getSystemService(UsbManager.class);
     }
 
-    @Override public Snapshot snapshot() {
+    @Override
+    public Snapshot snapshot() {
       try {
         String destination = SdSourceRegistrations.normalizeVolumeUuid(PhotoStorage.selected(app));
         UserManager users = app.getSystemService(UserManager.class);
@@ -445,8 +461,10 @@ public final class SdUsbReprobeController {
         List<SdUsbReprobe.Volume> volumes = new ArrayList<>();
         for (StorageVolume volume : storage.getStorageVolumes()) {
           if (volume.isEmulated()) continue;
-          String uuid = volume.isPrimary() || !volume.isRemovable() ? null
-              : SdSourceRegistrations.normalizeVolumeUuid(volume.getUuid());
+          String uuid =
+              volume.isPrimary() || !volume.isRemovable()
+                  ? null
+                  : SdSourceRegistrations.normalizeVolumeUuid(volume.getUuid());
           volumes.add(new SdUsbReprobe.Volume(uuid, volume.getState()));
         }
         return new Snapshot(reader, destination, volumes, usb.hasPermission(device));
@@ -460,14 +478,21 @@ public final class SdUsbReprobeController {
     }
 
     private static Reader reader(UsbDevice device) {
-      if (device.getVendorId() != SdUsbReprobe.VENDOR || device.getProductId() != SdUsbReprobe.PRODUCT
-          || device.getConfigurationCount() != 1 || device.getInterfaceCount() != 1) return null;
+      if (device.getVendorId() != SdUsbReprobe.VENDOR
+          || device.getProductId() != SdUsbReprobe.PRODUCT
+          || device.getConfigurationCount() != 1
+          || device.getInterfaceCount() != 1) return null;
       UsbInterface endpoint = device.getInterface(0);
       if (endpoint.getInterfaceClass() != UsbConstants.USB_CLASS_MASS_STORAGE
-          || endpoint.getInterfaceSubclass() != 6 || endpoint.getInterfaceProtocol() != 80
+          || endpoint.getInterfaceSubclass() != 6
+          || endpoint.getInterfaceProtocol() != 80
           || endpoint.getAlternateSetting() != 0) return null;
-      return new Reader(device.getDeviceName(), device.getDeviceId(), device.getVendorId(),
-          device.getProductId(), endpoint.getId());
+      return new Reader(
+          device.getDeviceName(),
+          device.getDeviceId(),
+          device.getVendorId(),
+          device.getProductId(),
+          endpoint.getId());
     }
 
     UsbDevice device(Reader expected) {
@@ -478,24 +503,43 @@ public final class SdUsbReprobeController {
       return current != null && expected.equals(reader(current)) ? current : null;
     }
 
-    @Override public SdUsbReprobe.Session open(Reader expected) {
+    @Override
+    public SdUsbReprobe.Session open(Reader expected) {
       UsbDevice device = device(expected);
       if (device == null || !usb.hasPermission(device)) return null;
       UsbInterface endpoint = device.getInterface(0);
       UsbDeviceConnection connection = usb.openDevice(device);
       if (connection == null) return null;
       return new SdUsbReprobe.Session() {
-        @Override public boolean claim() { return connection.claimInterface(endpoint, true); }
-        @Override public boolean release() { return connection.releaseInterface(endpoint); }
-        @Override public void close() { connection.close(); }
+        @Override
+        public boolean claim() {
+          boolean claimed = connection.claimInterface(endpoint, true);
+          android.util.Log.i(LOG, "claim=" + claimed);
+          return claimed;
+        }
+
+        @Override
+        public boolean release() {
+          boolean released = connection.releaseInterface(endpoint);
+          android.util.Log.i(LOG, "release=" + released);
+          return released;
+        }
+
+        @Override
+        public void close() {
+          connection.close();
+          android.util.Log.i(LOG, "close=true");
+        }
       };
     }
 
-    @Override public boolean destinationWritable(String expected) {
-      String selected = PhotoStorage.selected(app);
-      if (expected == null
-          || !Objects.equals(expected, SdSourceRegistrations.normalizeVolumeUuid(selected))) return false;
+    @Override
+    public boolean destinationWritable(String expected) {
       try {
+        String selected = PhotoStorage.selected(app);
+        if (expected == null
+            || !Objects.equals(expected, SdSourceRegistrations.normalizeVolumeUuid(selected)))
+          return false;
         PhotoStorage.requireWritable(app, selected);
         return true;
       } catch (PhotoStorage.Unavailable | RuntimeException unavailable) {
@@ -503,10 +547,14 @@ public final class SdUsbReprobeController {
       }
     }
 
-    @Override public boolean sourceReachable(String source, String destination, BooleanSupplier stopped) {
+    @Override
+    public boolean sourceReachable(String source, String destination, BooleanSupplier stopped) {
       var tree = SdSourceRegistrations.forVolume(app, source);
-      if (tree == null || !source.equals(SdSourceRegistrations.normalizeVolumeUuid(
-          SdSourceRegistrations.mountedVolume(app, tree))) || !SdSourceRegistrations.hasReadGrant(app, tree)) {
+      if (tree == null
+          || !source.equals(
+              SdSourceRegistrations.normalizeVolumeUuid(
+                  SdSourceRegistrations.mountedVolume(app, tree)))
+          || !SdSourceRegistrations.hasReadGrant(app, tree)) {
         return false;
       }
       try {

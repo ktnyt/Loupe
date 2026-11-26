@@ -61,6 +61,7 @@ camera-pilot-quick-import
 camera-pilot-qr-ui
 camera-pilot-qr-image
 camera-pilot-sd-source-synthetic
+camera-pilot-sd-usb-reprobe
 camera-pilot-sd-original
 camera-pilot-sd-guards
 camera-pilot-paired-guards
