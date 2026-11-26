@@ -84,13 +84,26 @@ public final class CameraDifferentialService extends Service {
         new java.util.concurrent.atomic.AtomicReference<>(State.OPEN);
     private final Handler main = new Handler(Looper.getMainLooper());
     private final java.util.function.BiConsumer<SdConfirmation, String> response;
+    private java.lang.ref.WeakReference<CameraOperationDelivery> pendingDelivery;
 
     public SdConfirmation(java.util.function.BiConsumer<SdConfirmation, String> response) {
       this.response = response;
     }
 
-    public void cancel() {
-      state.compareAndSet(State.OPEN, State.CANCELLED);
+    public synchronized void cancel() {
+      if (!state.compareAndSet(State.OPEN, State.CANCELLED) || pendingDelivery == null) return;
+      var delivery = pendingDelivery.get();
+      if (delivery != null) delivery.discardPending();
+      pendingDelivery = null;
+    }
+
+    private synchronized boolean attachDelivery(CameraOperationDelivery delivery) {
+      if (!isOpen() || pendingDelivery != null) {
+        delivery.discardPending();
+        return false;
+      }
+      pendingDelivery = new java.lang.ref.WeakReference<>(delivery);
+      return true;
     }
 
     boolean isOpen() {
@@ -135,8 +148,14 @@ public final class CameraDifferentialService extends Service {
     extras.putBinder(SD_CONFIRMATION, confirmation);
     request.putExtras(extras);
     CameraImportGate.Admission admission = CameraImportGate.tryAdmit();
-    if (admission == null || !CameraOperationDelivery.submit(context, request, admission, null))
+    if (admission == null) {
       confirmation.complete(BUSY);
+      return;
+    }
+    var delivery = CameraOperationDelivery.prepare(request, admission, null);
+    if (delivery != null
+        && confirmation.attachDelivery(delivery)
+        && !delivery.start(context, request)) confirmation.complete(BUSY);
   }
 
   private static SdConfirmation confirmationOf(Intent request) {

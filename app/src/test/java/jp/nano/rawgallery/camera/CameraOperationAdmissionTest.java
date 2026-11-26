@@ -6,6 +6,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class CameraOperationAdmissionTest {
@@ -40,6 +41,29 @@ class CameraOperationAdmissionTest {
       proceed.countDown();
       worker.shutdownNow();
     }
+  }
+
+  @Test
+  void directIoSubmissionExcludesPreparationInEitherOrder() {
+    var queued = new AtomicReference<Runnable>();
+    try (var reservation = reserve()) {
+      assertNull(CameraImportGate.tryAdmit());
+      assertNull(queued.get());
+    }
+    assertTrue(
+        CameraOperationTask.executeAdmitted(
+            queued::set,
+            admit(),
+            () ->
+                assertTrue(
+                    CameraImportOperationGate.runIfAvailable(
+                        CameraImportGate.lock,
+                        () -> assertNull(CameraImportGate.tryReservePreparation())))));
+    assertNotNull(queued.get());
+    assertFalse(CameraImportGate.lock.isLocked());
+    assertNull(CameraImportGate.tryReservePreparation());
+    queued.getAndSet(null).run();
+    preparationAvailable();
   }
 
   @Test

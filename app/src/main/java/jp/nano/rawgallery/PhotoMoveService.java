@@ -11,6 +11,7 @@ import android.content.Intent;
 import android.os.IBinder;
 import java.io.IOException;
 import java.io.InterruptedIOException;
+import java.lang.ref.WeakReference;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -32,7 +33,8 @@ public final class PhotoMoveService extends Service {
 
   private record MoveRequest(PhotoMove.Plan plan, boolean abandon, AtomicBoolean stopped) {}
 
-  private static volatile AtomicBoolean stopRequested = new AtomicBoolean();
+  private static AtomicBoolean stopRequested = new AtomicBoolean();
+  private static WeakReference<CameraOperationDelivery> pending;
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
   private MoveRequest active;
   private int lastStartId;
@@ -59,20 +61,46 @@ public final class PhotoMoveService extends Service {
       return false;
     }
     var request = new MoveRequest(plan, abandon, new AtomicBoolean());
+    Intent intent = new Intent(context, PhotoMoveService.class);
+    var delivery = CameraOperationDelivery.prepare(intent, admission, request);
+    if (delivery == null) return false;
     stopRequested = request.stopped();
+    pending = new WeakReference<>(delivery);
     state = new State(true, null, "移動の準備をしています。");
     try {
-      if (CameraOperationDelivery.submit(
-          context, new Intent(context, PhotoMoveService.class), admission, request)) return true;
+      if (delivery.start(context, intent)) return true;
     } catch (RuntimeException unavailable) {
       android.util.Log.w("PhotoMoveService", "Could not start the move service", unavailable);
     }
-    state = new State(false, null, UNAVAILABLE);
+    if (pending != null && pending.get() == delivery) {
+      pending = null;
+      state = new State(false, null, UNAVAILABLE);
+    }
     return false;
   }
 
-  static void stopMove() {
+  static synchronized void stopMove() {
+    if (pending != null) {
+      var delivery = pending.get();
+      if (delivery == null || delivery.discardPending()) {
+        pending = null;
+        state = new State(false, null, CANCELLED);
+        return;
+      }
+    }
     stopRequested.set(true);
+  }
+
+  private static synchronized CameraOperationDelivery.Request claimMove(
+      Intent intent, ComponentName receiver) {
+    var delivery = CameraOperationDelivery.claim(intent, receiver);
+    if (delivery == null) return null;
+    if (delivery.payload() instanceof MoveRequest request && request.stopped() == stopRequested) {
+      pending = null;
+      return delivery;
+    }
+    delivery.admission().close();
+    return null;
   }
 
   @Override
@@ -83,8 +111,7 @@ public final class PhotoMoveService extends Service {
   @Override
   public int onStartCommand(Intent intent, int flags, int startId) {
     lastStartId = startId;
-    var delivery =
-        CameraOperationDelivery.claim(intent, new ComponentName(this, PhotoMoveService.class));
+    var delivery = claimMove(intent, new ComponentName(this, PhotoMoveService.class));
     if (delivery == null) {
       if (active == null) stopIdleStart(startId);
       return START_NOT_STICKY;

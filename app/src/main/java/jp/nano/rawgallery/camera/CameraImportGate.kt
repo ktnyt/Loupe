@@ -34,6 +34,12 @@ object CameraImportGate {
     class Admission internal constructor() : AutoCloseable {
         fun isOpen(): Boolean = synchronized(monitor) { transfers.containsKey(this) }
 
+        fun handoff(): Admission? =
+            synchronized(monitor) {
+                if (transfers.remove(this) == null) return@synchronized null
+                Admission().also { transfers[it] = Unit }
+            }
+
         /** Keep admission while a nested I/O worker can outlive the task that started it. */
         internal fun retain(): Admission =
             synchronized(monitor) {
