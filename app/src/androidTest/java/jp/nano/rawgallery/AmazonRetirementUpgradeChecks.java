@@ -16,6 +16,7 @@ import android.content.pm.PackageManager;
 import android.database.sqlite.SQLiteDatabase;
 import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.net.ConnectivityManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -25,6 +26,8 @@ import android.util.Base64;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.Button;
+import android.widget.TextView;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -38,6 +41,7 @@ import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -742,10 +746,12 @@ final class AmazonRetirementUpgradeChecks {
             test.startActivitySync(
                 new Intent(context, E2SyncActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     String suffix = "-" + width + "-" + font;
+    boolean absent = "absent".equals(witness.getString("consent", ""));
     var recreated = new java.util.concurrent.atomic.AtomicReference<E2SyncActivity>();
     var syncMonitor = test.addMonitor(E2SyncActivity.class.getName(), null, false);
     try {
       checkRetentionUi(test, sync, suffix);
+      if (absent) checkCleanupUnknownUi(test, sync, suffix);
       test.runOnMainSync(sync::recreate);
       var replacement = (E2SyncActivity) test.waitForMonitorWithTimeout(syncMonitor, 6500);
       require(replacement != null && replacement != sync, "E2 recreation not observed");
@@ -859,8 +865,168 @@ final class AmazonRetirementUpgradeChecks {
       test.runOnMainSync(main::finish);
     }
     return "PASS explicit E2 consent and fail-closed writes; retention chooser and recreation;"
+        + (absent ? " synthetic E2 unknown state, native stop exposure and confirmed stop;" : "")
         + " conditional archive share notice, missing-original recovery, copy rollback and"
         + " preserved selection";
+  }
+
+  private static void checkCleanupUnknownUi(
+      Instrumentation test, E2SyncActivity screen, String suffix) throws Exception {
+    Context context = test.getTargetContext();
+    SharedPreferences options = E2AutoSync.state(context);
+    var previousOptions = options.getAll();
+    var connection = context.getSharedPreferences(E2_PREFS, Context.MODE_PRIVATE);
+    var previousConnection = connection.getAll();
+    var nano = context.getSharedPreferences(NANO_PREFS, Context.MODE_PRIVATE);
+    var previousNano = nano.getAll();
+    var pending = pendingConsent(context.getDataDir()).toPath();
+    var optionsFile = new File(context.getDataDir(), "shared_prefs/e2_auto_sync.xml").toPath();
+    boolean optionsFileAbsent = Files.notExists(optionsFile, LinkOption.NOFOLLOW_LINKS);
+    var optionsBackup = optionsFile.resolveSibling(optionsFile.getFileName() + ".bak");
+    require(
+        context.getSystemService(ConnectivityManager.class).getActiveNetwork() == null
+            && previousOptions.isEmpty()
+            && previousConnection.isEmpty()
+            && !E2SyncJob.enabled(context)
+            && !options.contains(FRESH_CONSENT)
+            && Files.notExists(pending, LinkOption.NOFOLLOW_LINKS)
+            && Files.notExists(optionsBackup, LinkOption.NOFOLLOW_LINKS)
+            && (optionsFileAbsent || Files.isRegularFile(optionsFile, LinkOption.NOFOLLOW_LINKS)),
+        "unknown UI test requires the offline, absent upgrade cohort");
+    byte[] previousOptionsBytes = optionsFileAbsent ? null : Files.readAllBytes(optionsFile);
+    var previousHistory = consentUiHistory(context);
+
+    var field = E2Cleanup.class.getDeclaredField("unconfirmedConsentWrites");
+    field.setAccessible(true);
+    @SuppressWarnings("unchecked")
+    var pendingWrites = (Map<SharedPreferences, Boolean>) field.get(null);
+    var panel = (E2Panel) AlbumTagEntryChecks.field(screen, "panel");
+    var stop = (Button) AlbumTagEntryChecks.field(panel, "cleanupToggle");
+    var status = (TextView) AlbumTagEntryChecks.field(panel, "cleanupStatus");
+    var message = (TextView) AlbumTagEntryChecks.field(panel, "status");
+    String stopLabel = "端末オリジナルの整理を停止";
+    String unknownLabel = "容量整理の設定を確認できません";
+    String startLabel = "端末オリジナルの整理を有効にする";
+    var originalBucket = new AtomicReference<String>();
+    var originalWrite = new AtomicReference<Boolean>();
+    var staged = new AtomicBoolean();
+    try {
+      AlbumTagEntryChecks.main(
+          test,
+          () -> {
+            originalBucket.set((String) AlbumTagEntryChecks.field(panel, "activeBucket"));
+            require(originalBucket.get() == null, "absent cohort has an active panel bucket");
+            synchronized (pendingWrites) {
+              originalWrite.set(pendingWrites.put(options, true));
+            }
+            staged.set(true);
+            // The absent cohort has no connection. Stage a UI-only bucket without credentials.
+            AlbumTagEntryChecks.set(panel, "activeBucket", BUCKET);
+            panel.refreshAuto();
+            return true;
+          });
+      AlbumTagEntryChecks.waitFor(
+          test,
+          "visible unknown E2 state and accessible stop action",
+          () -> {
+            if (!status.isShown() || status.getHeight() <= 0) return false;
+            var card = (View) stop.getParent();
+            card.requestRectangleOnScreen(
+                new Rect(0, status.getTop(), card.getWidth(), stop.getBottom()), true);
+            var node = stop.createAccessibilityNodeInfo();
+            var bounds = new Rect();
+            node.getBoundsInScreen(bounds);
+            var visibleStatus = new Rect();
+            var visibleStop = new Rect();
+            int touchSize = GalleryUi.dp(screen, 48);
+            return screen.hasWindowFocus()
+                && status.isShown()
+                && unknownLabel.contentEquals(status.getText())
+                && status.getGlobalVisibleRect(visibleStatus)
+                && visibleStatus.height() >= status.getHeight()
+                && status.getAccessibilityLiveRegion() == View.ACCESSIBILITY_LIVE_REGION_POLITE
+                && stopLabel.contentEquals(node.getText())
+                && node.isVisibleToUser()
+                && node.isEnabled()
+                && node.isClickable()
+                && stop.getGlobalVisibleRect(visibleStop)
+                && visibleStop.width() >= touchSize
+                && visibleStop.height() >= touchSize
+                && bounds.width() >= touchSize
+                && bounds.height() >= touchSize;
+          });
+      SyncControlChecks.capture(test, "amazon-retirement-consent-unknown" + suffix);
+      AlbumTagEntryChecks.main(
+          test,
+          () -> {
+            require(
+                E2Cleanup.consentUnknown(context)
+                    && stop.isEnabled()
+                    && stopLabel.contentEquals(stop.getText())
+                    && stop.performClick(),
+                "unknown E2 state did not offer the real stop action");
+            return true;
+          });
+      AlbumTagEntryChecks.waitFor(
+          test,
+          "confirmed E2 stop returned to the off state",
+          () ->
+              !E2Cleanup.consentUnknown(context)
+                  && !E2Cleanup.enabled(context, BUCKET)
+                  && !status.isShown()
+                  && startLabel.contentEquals(stop.getText())
+                  && !stop.isEnabled()
+                  && "端末オリジナルの整理を停止しました".contentEquals(message.getText()));
+      require(previousOptions.equals(options.getAll()), "native stop changed raw E2 options");
+    } finally {
+      try {
+        if (!previousOptions.equals(options.getAll()))
+          require(options.edit().clear().commit(), "restore empty upgrade E2 options");
+        // A no-op commit against absent preferences can create an empty XML on some Android builds.
+        if (optionsFileAbsent) Files.deleteIfExists(optionsFile);
+        else if (Files.notExists(optionsFile, LinkOption.NOFOLLOW_LINKS)
+            || !Arrays.equals(previousOptionsBytes, Files.readAllBytes(optionsFile)))
+          Files.write(optionsFile, previousOptionsBytes);
+        Files.deleteIfExists(optionsBackup);
+      } finally {
+        if (staged.get()) {
+          AlbumTagEntryChecks.main(
+              test,
+              () -> {
+                synchronized (pendingWrites) {
+                  if (originalWrite.get() == null) pendingWrites.remove(options);
+                  else pendingWrites.put(options, originalWrite.get());
+                }
+                AlbumTagEntryChecks.set(panel, "activeBucket", originalBucket.get());
+                panel.refreshAuto();
+                return true;
+              });
+        }
+        require(
+            previousOptions.equals(options.getAll())
+                && !E2SyncJob.enabled(context)
+                && Files.notExists(pending, LinkOption.NOFOLLOW_LINKS)
+                && Files.notExists(optionsBackup, LinkOption.NOFOLLOW_LINKS)
+                && (optionsFileAbsent
+                    ? Files.notExists(optionsFile, LinkOption.NOFOLLOW_LINKS)
+                    : Arrays.equals(previousOptionsBytes, Files.readAllBytes(optionsFile)))
+                && previousConnection.equals(connection.getAll())
+                && previousNano.equals(nano.getAll())
+                && previousHistory.equals(consentUiHistory(context)),
+            "unknown UI proof changed preferences, credentials, history or production journal");
+      }
+    }
+  }
+
+  private static List<String> consentUiHistory(Context context) throws Exception {
+    try (var archive = new ArchiveStore(context);
+        var e2 = E2Settings.openRecords(context)) {
+      return List.of(
+          archive.get(key(false)).toString(),
+          archive.get(key(true)).toString(),
+          e2.get(e2Key(false)).toString(),
+          e2.get(e2Key(true)).toString());
+    }
   }
 
   private enum RestartConsent {
