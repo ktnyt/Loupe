@@ -65,7 +65,8 @@ final class SyncControlChecks {
       capture(test, "amazon-retirement-e2");
       test.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
       AlbumTagEntryChecks.waitFor(test, "Back to library", main::hasWindowFocus);
-      return "PASS existing IDrive e2 entry and Back; retired Amazon components absent. Settings and e2 captures saved.\\n";
+      return "PASS existing IDrive e2 entry and Back, private Amazon task aliases and removed"
+          + " operation classes. Settings and e2 captures saved.\n";
     } finally {
       test.removeMonitor(monitor);
       E2SyncActivity screen = sync;
@@ -80,12 +81,31 @@ final class SyncControlChecks {
 
   static void checkInstalledComponents(android.content.Context context) throws Exception {
     PackageManager manager = context.getPackageManager();
+    var launcher =
+        new Intent(Intent.ACTION_MAIN)
+            .addCategory(Intent.CATEGORY_LAUNCHER)
+            .setPackage(context.getPackageName());
+    var launcherEntries = manager.queryIntentActivities(launcher, 0);
     for (String name : new String[] {"CloudActivity", "SyncActivity"}) {
+      ComponentName alias = component(context, name);
+      var info = manager.getActivityInfo(alias, 0);
+      if (!info.enabled
+          || info.exported
+          || !MainActivity.class.getName().equals(info.targetActivity)) {
+        throw new AssertionError(name + " must be a private MainActivity alias");
+      }
+      if (launcherEntries.stream()
+          .anyMatch(entry -> alias.getClassName().equals(entry.activityInfo.name))) {
+        throw new AssertionError(name + " is present in launcher results");
+      }
+    }
+    for (String name :
+        new String[] {"CloudActivity", "CloudVerifier", "SyncActivity", "SyncEngine", "SyncJob"}) {
       try {
-        manager.getActivityInfo(component(context, name), PackageManager.MATCH_DISABLED_COMPONENTS);
-        throw new AssertionError(name + " is still installed");
-      } catch (PackageManager.NameNotFoundException expected) {
-        // Removed component.
+        Class.forName(component(context, name).getClassName(), false, context.getClassLoader());
+        throw new AssertionError(name + " class is still installed");
+      } catch (ClassNotFoundException expected) {
+        // Retired operational code must not be present behind the aliases.
       }
     }
     try {

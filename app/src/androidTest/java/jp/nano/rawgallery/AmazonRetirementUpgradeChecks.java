@@ -632,13 +632,10 @@ final class AmazonRetirementUpgradeChecks {
         var old = findTask(manager, id);
         var info = old == null ? null : taskInfo(old);
         if (info == null) return "OS removed the old task after a moveToFront attempt";
-        var top = info.topActivity;
         var activity = resumed.get();
-        if (activity != null
-            && (activity.getTaskId() == id || activity instanceof MainActivity)
-            && !component(context, "CloudActivity").equals(top)
-            && !component(context, "SyncActivity").equals(top)) {
-          return "retained task move yielded a supported activity resume";
+        // Task metadata can show the old alias name after MainActivity has resumed.
+        if (activity instanceof MainActivity && activity.getTaskId() == id) {
+          return "retained old task resumed MainActivity";
         }
         Thread.sleep(50);
       } while (SystemClock.elapsedRealtime() < deadline);
