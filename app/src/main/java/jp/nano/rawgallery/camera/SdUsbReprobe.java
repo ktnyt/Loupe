@@ -48,6 +48,7 @@ final class SdUsbReprobe {
 
   enum State {
     UNSUPPORTED,
+    UNAVAILABLE,
     PERMISSION,
     REDETECTING,
     WAITING,
@@ -142,8 +143,8 @@ final class SdUsbReprobe {
     }
 
     State admission() {
-      if (!complete() || reader == null || !reader.supported() || destination == null)
-        return State.UNSUPPORTED;
+      if (!complete()) return State.UNAVAILABLE;
+      if (reader == null || !reader.supported() || destination == null) return State.UNSUPPORTED;
       Set<String> seen = new HashSet<>();
       for (Volume volume : volumes) {
         if (volume.uuid == null
@@ -267,8 +268,8 @@ final class SdUsbReprobe {
     try {
       if (cancelled.getAsBoolean()) return State.CANCELLED;
       State admission = initial.admission();
-      if (admission == State.UNSUPPORTED) return admission;
       if (admission == State.PERMISSION) return State.DENIED;
+      if (admission != State.REDETECTING) return admission;
       Snapshot current = platform.snapshot();
       if (!initial.sameAdmission(current)) return State.CHANGED;
       if (!current.permitted()) return State.DENIED;

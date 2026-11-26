@@ -163,6 +163,8 @@ final class CameraSdUsbReprobeChecks {
           });
       test.waitForIdleSync();
       checkSettingsAfterFailedRetry(test, activity, directory, width, font, harness);
+      checkInitialObservationFailure(
+          test, activity, directory, width, font, harness, consume, discard);
       test.runOnMainSync(
           () -> {
             harness.setPermitted();
@@ -263,6 +265,119 @@ final class CameraSdUsbReprobeChecks {
             require(PhotoStorage.select(app, previous), "Restore destination");
           });
     }
+  }
+
+  private static void checkInitialObservationFailure(
+      Instrumentation test,
+      CameraImportActivity activity,
+      File directory,
+      int width,
+      float font,
+      SdUsbReprobeFlowChecks.Harness harness,
+      java.lang.reflect.Method consume,
+      java.lang.reflect.Method discard)
+      throws Exception {
+    var observer = SdUsbReprobeController.class.getDeclaredField("removeMediaObserver");
+    observer.setAccessible(true);
+    var sourceCheck = field("sourceCheck");
+    var statusLoad = field("sdStatusCancellation");
+    var settingsStatus = field("sdSettingsStatus");
+    var connectionFailure = field("connectionFailure");
+    View root = activity.getWindow().getDecorView();
+    test.runOnMainSync(
+        () -> {
+          try {
+            var lookup = (CameraSourceCheck) sourceCheck.get(activity);
+            var storedSettingsStatus = (TextView) settingsStatus.get(activity);
+            harness.setUnavailableObservation();
+            assertUnavailableEntry(
+                activity, consume, false, lookup, statusLoad, storedSettingsStatus);
+            assertUnavailableEntry(
+                activity, consume, true, lookup, statusLoad, storedSettingsStatus);
+            require(
+                harness.queued() == 0 && harness.claims() == 0,
+                "Neither manual entry can queue a claim with an incomplete observation");
+            require(
+                !((Boolean) invoke(consume, activity)), "An unavailable entry is consumed once");
+
+            harness.setPermitted();
+            Object registration = observer.get(harness.controller());
+            require(registration != null, "Observer was available before simulating its failure");
+            observer.set(harness.controller(), null);
+            try {
+              assertUnavailableEntry(
+                  activity, consume, false, lookup, statusLoad, storedSettingsStatus);
+              assertUnavailableEntry(
+                  activity, consume, true, lookup, statusLoad, storedSettingsStatus);
+            } finally {
+              observer.set(harness.controller(), registration);
+            }
+            require(
+                harness.queued() == 0 && harness.claims() == 0,
+                "A supported reader without required observers cannot queue a claim");
+            bringIntoView(root.findViewWithTag("sd-reprobe-status"));
+          } catch (ReflectiveOperationException failure) {
+            throw new AssertionError(failure);
+          }
+        });
+    capture(test, activity.getWindow(), directory, width, font, "observation-unavailable");
+    test.runOnMainSync(
+        () -> {
+          try {
+            var lookup = (CameraSourceCheck) sourceCheck.get(activity);
+            var app = test.getTargetContext();
+            harness.setUnsupportedLayout();
+            activity.onNewIntent(CameraImportActivity.manualImportIntent(app, false));
+            require(
+                !((Boolean) invoke(consume, activity)),
+                "A known unsupported layout still uses the ordinary open path");
+            Object priorFailure = connectionFailure.get(activity);
+            try {
+              activity.onNewIntent(CameraImportActivity.manualImportIntent(app, true));
+              require(
+                  (Boolean) invoke(consume, activity) && lookup.isPending(),
+                  "A known unsupported layout still starts ordinary quick discovery");
+            } finally {
+              invoke(discard, activity);
+              connectionFailure.set(activity, priorFailure);
+            }
+            require(
+                harness.queued() == 0 && harness.claims() == 0,
+                "Ordinary unsupported fallback cannot queue a claim");
+          } catch (ReflectiveOperationException failure) {
+            throw new AssertionError(failure);
+          }
+        });
+  }
+
+  private static void assertUnavailableEntry(
+      CameraImportActivity activity,
+      java.lang.reflect.Method consume,
+      boolean keepOriginals,
+      CameraSourceCheck lookup,
+      Field statusLoad,
+      TextView settingsStatus)
+      throws IllegalAccessException {
+    activity.renderSdSource(CameraQuickImportSources.SdState.READY);
+    activity.onNewIntent(CameraImportActivity.manualImportIntent(activity, keepOriginals));
+    require(
+        (Boolean) invoke(consume, activity), "An unavailable manual entry does not fall through");
+    require(
+        !lookup.isPending()
+            && statusLoad.get(activity) == null
+            && !ImportProgress.INSTANCE.getActive(),
+        "An unavailable manual entry cannot scan the stale source or import it");
+    View root = activity.getWindow().getDecorView();
+    TextView status = root.findViewWithTag("sd-reprobe-status");
+    require(
+        status.getText().toString().contains("カードの状態を確認できません")
+            && root.findViewWithTag("sd-reprobe-start").isEnabled(),
+        "Show a retry when required observations are unavailable");
+    require(
+        root.findViewWithTag("sd-import-status").getVisibility() == View.GONE
+            && settingsStatus.getVisibility() == View.GONE
+            && settingsStatus.getText().length() == 0,
+        "An unavailable entry discards both copies of the previous source status");
   }
 
   private static void checkSettingsAfterFailedRetry(

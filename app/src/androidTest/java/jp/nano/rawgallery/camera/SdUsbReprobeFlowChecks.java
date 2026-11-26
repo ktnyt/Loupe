@@ -238,6 +238,19 @@ public final class SdUsbReprobeFlowChecks {
       platform.snapshot = mounted(SOURCE, true);
     }
 
+    public void setUnavailableObservation() {
+      platform.snapshot =
+          Snapshot.observe(
+              () -> {
+                throw new SecurityException("synthetic USB permission query failure");
+              },
+              Snapshot.connectionOnly(READER, TARGET));
+    }
+
+    public void setUnsupportedLayout() {
+      platform.snapshot = new Snapshot(READER, TARGET, List.of(), false);
+    }
+
     public void denyPermission() {
       require(platform.permission != null, "The retry requested USB permission");
       platform.permission.accept(false);

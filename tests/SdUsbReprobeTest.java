@@ -345,12 +345,17 @@ public final class SdUsbReprobeTest {
               throw new IllegalStateException("Storage inventory failed");
             },
             Snapshot.connectionOnly(READER, TARGET));
+    Snapshot knownUnsupportedLayout = new Snapshot(READER, TARGET, List.of(), false);
+    require(
+        knownUnsupportedLayout.admission() == State.UNSUPPORTED
+            && MOUNTED.sameConnection(knownUnsupportedLayout),
+        "Successfully enumerated unsupported layout retains the connection and ordinary routing");
     var waiting = new SdUsbReprobe.MountCycle(MOUNTED);
     var restored = new SdUsbReprobe.MountCycle(MOUNTED);
     restored.finish(MOUNTED);
     for (Snapshot failure : List.of(usbUnavailable, permissionUnavailable, storageUnavailable)) {
       require(
-          failure.admission() == State.UNSUPPORTED && !MOUNTED.sameAdmission(failure),
+          failure.admission() == State.UNAVAILABLE && !MOUNTED.sameAdmission(failure),
           "An unknown observation cannot authorize a claim");
       require(
           !waiting.expired(failure, true, SOURCE) && waiting.suppresses(SOURCE, failure),

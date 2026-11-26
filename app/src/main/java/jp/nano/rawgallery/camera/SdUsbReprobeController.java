@@ -206,12 +206,17 @@ public final class SdUsbReprobeController {
     if (!foreground || destroyed) return true;
     Snapshot snapshot = platform.snapshot();
     State admission = snapshot.admission();
-    if (admission == State.UNSUPPORTED || removeMediaObserver == null) {
+    if (admission == State.UNSUPPORTED) {
       if (explicitRetry && !busy()) show(State.UNSUPPORTED);
       return explicitRetry;
     }
     if (busy() || !idle.getAsBoolean()) {
       if (!busy()) show(State.BUSY);
+      return true;
+    }
+    if (admission == State.UNAVAILABLE || removeMediaObserver == null) {
+      discardSourceStatus.run();
+      show(State.UNAVAILABLE);
       return true;
     }
     var reservation = CameraImportGate.tryReservePreparation();
@@ -338,6 +343,7 @@ public final class SdUsbReprobeController {
             ? ""
             : switch (next) {
               case UNSUPPORTED -> "Androidでカードを安全に取り出してから、リーダーを挿し直してください。";
+              case UNAVAILABLE -> "カードの状態を確認できませんでした。「SDカードを再認識」でやり直してください。";
               case PERMISSION -> "USBの使用許可を確認しています。";
               case REDETECTING -> "SDカードを再認識しています…";
               case WAITING -> "Androidがカードを認識するのを待っています…";
@@ -541,7 +547,7 @@ public final class SdUsbReprobeController {
       return Snapshot.observe(
           () -> {
             var volumes = currentVolumes();
-            if (volumes == null) return connection;
+            if (volumes == null) return new Snapshot(reader, destination, List.of(), false);
             return new Snapshot(reader, destination, volumes, usb.hasPermission(device));
           },
           connection);
