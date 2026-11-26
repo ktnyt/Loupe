@@ -47,15 +47,15 @@ public final class MountedCameraCard {
 
   public record MountChange(String volumeUuid, boolean detached, String state) {}
 
-  private static final AtomicLong unsafeMediaGeneration = new AtomicLong();
+  private static final AtomicLong mediaGeneration = new AtomicLong();
   private static boolean observing;
 
   public static long detachGeneration() {
     return detachGeneration.get();
   }
 
-  static long unsafeMediaGeneration() {
-    return unsafeMediaGeneration.get();
+  static long mediaGeneration() {
+    return mediaGeneration.get();
   }
 
   public static synchronized Runnable observeMounts(
@@ -159,12 +159,9 @@ public final class MountedCameraCard {
   }
 
   private static void publishMountChange(MountChange change) {
-    // Neither Android notification provides a shared transition ID. A delayed notification
-    // must not make a later real removal look like a duplicate.
-    if (change.volumeUuid() == null || !SdUsbReprobe.isEjectionState(change.state())) {
-      unsafeMediaGeneration.incrementAndGet();
-    }
+    mediaGeneration.incrementAndGet();
     if (change.detached()) detachGeneration.incrementAndGet();
+    SdUsbReprobeController.observeMountCycle(change);
     for (Consumer<MountChange> listener : mountListeners) listener.accept(change);
   }
 

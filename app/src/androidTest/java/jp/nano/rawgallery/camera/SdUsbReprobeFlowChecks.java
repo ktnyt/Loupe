@@ -2,10 +2,7 @@ package jp.nano.rawgallery.camera;
 
 import android.app.Activity;
 import android.app.Instrumentation;
-import android.content.ActivityNotFoundException;
-import android.content.Intent;
-import android.net.Uri;
-import android.provider.DocumentsContract;
+import android.os.SystemClock;
 import java.io.Closeable;
 import java.util.ArrayDeque;
 import java.util.List;
@@ -14,10 +11,12 @@ import java.util.function.Consumer;
 import jp.nano.rawgallery.camera.SdUsbReprobe.Reader;
 import jp.nano.rawgallery.camera.SdUsbReprobe.Snapshot;
 import jp.nano.rawgallery.camera.SdUsbReprobe.Volume;
+import jp.nano.rawgallery.camera.SdUsbReprobeController.Display;
+import jp.nano.rawgallery.camera.SdUsbReprobeController.Restoration;
 
-/** Fakes the platform and system dialogs while driving the actual controller lifecycle. */
+/** Uses mounted snapshots and a controlled worker without touching a USB device. */
 public final class SdUsbReprobeFlowChecks {
-  private static final String TARGET = "3000-0001";
+  public static final String TARGET = "3000-0001";
   private static final String SOURCE = "3000-0002";
   private static final String CHANGED_SOURCE = "3000-0003";
   private static final Reader READER = new Reader("fake-anker", 2, 8644, 45152, 0);
@@ -27,244 +26,156 @@ public final class SdUsbReprobeFlowChecks {
   public static void run(Instrumentation test, Activity activity) {
     test.runOnMainSync(
         () -> {
-          try (var flow = new Flow(activity);
+          try (var flow = new Harness(activity);
               var queued = CameraImportGate.tryAdmit()) {
+            require(queued != null, "Acquire admission before a transfer runs");
+            flow.request();
             require(
-                queued != null,
-                "An existing transfer can reserve admission before its worker runs");
-            flow.controller.resume();
-            flow.controller.request();
-            require(flow.open != null, "Show preparation guidance");
-            flow.open.run();
-            require(
-                !flow.controller.preparing()
+                !flow.controller.busy()
+                    && flow.platform.permission == null
                     && flow.platform.claims == 0
-                    && flow.last.message().contains("処理中"),
-                "An admitted but queued transfer blocks opening Settings");
+                    && flow.last.message().contains("処理が終わって"),
+                "An admitted, queued transfer prevents even requesting permission");
           }
-          try (var flow = new Flow(activity)) {
-            flow.settingsUnavailable = true;
-            flow.arm();
-            require(
-                !flow.controller.preparing()
-                    && !CameraImportGate.isPreparationReserved()
-                    && flow.platform.claims == 0
-                    && flow.last.message().contains("リーダーを挿し直してください"),
-                "Unavailable Settings releases preparation and shows manual reconnection");
-          }
-          try (var flow = new Flow(activity)) {
-            flow.arm();
-            flow.assertReserved();
-            flow.controller.resume();
-            require(
-                flow.platform.claims == 0 && !flow.controller.preparing(),
-                "Returning without ejection releases preparation without a claim");
-          }
-          try (var flow = new Flow(activity)) {
-            flow.arm();
-            flow.platform.snapshot = new Snapshot(null, null, List.of(), false);
-            flow.controller.observed();
-            flow.platform.snapshot = ejected();
-            flow.controller.observed();
-            flow.assertReserved();
-            flow.controller.resume();
-            flow.controller.request();
-            require(
-                flow.confirm == null && flow.platform.claims == 0 && !flow.controller.preparing(),
-                "A disappearance while Settings is foreground invalidates authorization permanently");
-          }
-          try (var flow = new Flow(activity)) {
-            flow.arm();
-            flow.platform.snapshot = ejected();
-            flow.controller.storageChanged(
-                new SdUsbReprobe.VisibleVolume(SOURCE, "removed", false, false, true));
-            flow.assertReserved();
-            flow.controller.resume();
-            require(
-                !flow.controller.preparing() && flow.platform.claims == 0,
-                "A transient removal event invalidates proof even after the same UUID list returns");
-          }
-          for (String action :
-              List.of(Intent.ACTION_MEDIA_REMOVED, Intent.ACTION_MEDIA_BAD_REMOVAL)) {
-            try (var flow = new Flow(activity)) {
-              flow.arm();
-              flow.platform.snapshot = ejected();
-              // Deliver only the legacy channel while Settings still owns the foreground.
-              legacyVolumeEvent(SOURCE, action);
-              legacyVolumeEvent(SOURCE, Intent.ACTION_MEDIA_MOUNTED);
-              flow.assertReserved();
-              flow.controller.resume();
-              flow.controller.request();
-              require(
-                  flow.confirm == null && flow.platform.claims == 0 && !flow.controller.preparing(),
-                  "Legacy-only removal invalidates ejection even if the original inventory returns");
-            }
-          }
-          try (var flow = new Flow(activity)) {
-            flow.arm();
-            flow.now += 3 * 60_000;
-            flow.platform.snapshot = ejected();
-            flow.controller.observed();
-            flow.assertReserved();
-            flow.controller.resume();
-            require(
-                !flow.controller.preparing() && flow.platform.claims == 0,
-                "Expired Settings proof remains exclusive until the user returns");
-          }
-          try (var flow = new Flow(activity)) {
-            flow.platform.snapshot = new Snapshot(READER, TARGET, mounted(SOURCE).volumes(), false);
-            flow.controller.resume();
-            flow.controller.request();
-            Consumer<Boolean> result = flow.platform.permission;
-            require(result != null, "Request foreground USB permission");
+
+          try (var flow = new Harness(activity)) {
+            flow.request();
+            require(flow.controller.busy(), "Permission wait is active");
+            assertReserved();
+            Consumer<Boolean> staleResult = flow.platform.permission;
+            flow.request();
+            require(flow.platform.permission == staleResult, "A duplicate cannot ask again");
+            flow.controller.pause();
+            staleResult.accept(true);
             flow.controller.stop();
-            flow.platform.snapshot = mounted(SOURCE);
-            result.accept(true);
+            require(flow.platform.permissionClosed, "Stopping releases permission registration");
+            require(!CameraImportGate.isPreparationReserved(), "Stopping releases permission gate");
             flow.controller.resume();
-            require(
-                flow.platform.permissionClosed && flow.open == null && flow.platform.claims == 0,
-                "A USB permission result cannot reauthorize a stopped activity");
+            require(flow.worker.isEmpty(), "Resume cannot restart a stopped request");
           }
-          try (var flow = new Flow(activity)) {
-            flow.arm();
-            flow.platform.snapshot = ejected();
-            flow.controller.observed();
-            flow.controller.resume();
+
+          try (var flow = new Harness(activity)) {
+            flow.platform.snapshot = mounted(SOURCE, true);
+            flow.request();
+            assertReserved();
+            flow.request();
+            require(flow.worker.size() == 1, "An explicit request queues exactly one handoff");
+            flow.controller.pause();
+            flow.runWorker();
             require(
-                flow.platform.claims == 0 && flow.confirm == null,
-                "A storage notification and settings return never claim");
-            flow.controller.request();
-            require(flow.confirm != null, "An explicit second action enables confirmation");
-            flow.controller.destroy();
-            flow.confirm.run();
-            require(
-                flow.platform.claims == 0 && !flow.controller.preparing(),
-                "Rotation tears down the settings proof");
+                flow.platform.claims == 0 && !CameraImportGate.isPreparationReserved(),
+                "A worker queued before leaving cannot claim");
           }
-          try (var flow = new Flow(activity)) {
-            flow.ejectAndConfirm();
-            flow.platform.snapshot = new Snapshot(null, null, List.of(), false);
-            flow.controller.storageChanged(
-                new SdUsbReprobe.VisibleVolume(SOURCE, "removed", false, false, true));
-            flow.platform.snapshot = ejected();
-            flow.controller.observed();
-            flow.tasks.remove().run();
+
+          try (var flow = new Harness(activity)) {
+            flow.platform.snapshot = mounted(SOURCE, true);
+            flow.request();
+            volumeEvent(SOURCE, true);
+            volumeEvent(SOURCE, false);
+            flow.runWorker();
             require(
                 flow.platform.claims == 0,
-                "A removal after confirmation invalidates the parked worker even if the inventory returns");
+                "A mount generation change invalidates even an identical snapshot");
           }
-          for (String action :
-              List.of(
-                  Intent.ACTION_MEDIA_MOUNTED,
-                  Intent.ACTION_MEDIA_CHECKING,
-                  Intent.ACTION_MEDIA_UNMOUNTABLE)) {
-            try (var flow = new Flow(activity)) {
-              flow.ejectAndConfirm();
-              // The ejected snapshot is already back before the notice arrives.
-              legacyVolumeEvent(SOURCE, action);
-              flow.tasks.remove().run();
+        });
+
+    try (var flow = new Harness(activity)) {
+      test.runOnMainSync(
+          () -> {
+            flow.start();
+            flow.request();
+            flow.platform.permission.accept(false);
+          });
+      test.waitForIdleSync();
+      test.runOnMainSync(
+          () ->
               require(
-                  flow.platform.claims == 0,
-                  "A conflicting legacy notice invalidates the parked worker " + action);
-            }
-          }
-          try (var flow = new Flow(activity)) {
-            flow.showConfirmation();
-            legacyVolumeEvent(SOURCE, Intent.ACTION_MEDIA_MOUNTED);
-            flow.confirm.run();
-            require(
-                flow.tasks.isEmpty() && flow.platform.claims == 0 && !flow.controller.preparing(),
-                "A remount invalidates the proof while the confirmation dialog is open");
-          }
-          try (var flow = new Flow(activity)) {
-            flow.arm();
-            flow.platform.snapshot = ejected();
-            flow.controller.storageChanged(
-                new SdUsbReprobe.VisibleVolume(SOURCE, "mounted", false, false, true));
-            flow.assertReserved();
-            flow.controller.resume();
-            flow.controller.request();
-            require(
-                flow.confirm == null && flow.platform.claims == 0 && !flow.controller.preparing(),
-                "A remount while Settings is open also invalidates the old ejection");
-          }
-          try (var flow = new Flow(activity)) {
-            flow.ejectAndConfirm();
-            flow.assertReserved();
-            flow.controller.destroy();
-            flow.assertReserved();
-            require(flow.platform.claims == 0, "Waiting worker has not touched USB");
-            flow.tasks.remove().run();
-            require(flow.platform.claims == 0, "A canceled worker leaves USB untouched");
-            require(
-                !CameraImportGate.isPreparationReserved(), "Worker releases its own reservation");
-          }
-        });
+                  flow.platform.permissionClosed
+                      && flow.platform.claims == 0
+                      && !CameraImportGate.isPreparationReserved()
+                      && flow.last.message().contains("使用許可を確認できません"),
+                  "Denied permission releases the gate and cannot claim"));
+    }
 
-    var ready = new java.util.concurrent.atomic.AtomicReference<Flow>();
-    test.runOnMainSync(
-        () -> {
-          var flow = new Flow(activity);
-          ready.set(flow);
-          flow.platform.restored = mounted(CHANGED_SOURCE);
-          flow.platform.folder = tree(CHANGED_SOURCE + ":DCIM");
-          flow.platform.closedUsb =
-              () -> {
-                legacyVolumeEvent(TARGET, Intent.ACTION_MEDIA_MOUNTED);
-                legacyVolumeEvent(CHANGED_SOURCE, Intent.ACTION_MEDIA_MOUNTED);
-                flow.controller.storageChanged(
-                    new SdUsbReprobe.VisibleVolume(CHANGED_SOURCE, "mounted", false, false, true));
-              };
-          flow.ejectAndConfirm();
-          // A notification for the approved eject can arrive after the UI hands off the worker.
-          legacyVolumeEvent(TARGET, Intent.ACTION_MEDIA_UNMOUNTED);
-          flow.assertReserved();
-          flow.tasks.remove().run();
-          require(
-              flow.platform.claims == 1 && flow.platform.releases == 1 && flow.platform.closed == 1,
-              "One explicit ejection authorizes exactly one claim and cleanup");
-        });
-    test.waitForIdleSync();
-    test.runOnMainSync(
-        () -> {
-          try (var flow = ready.get()) {
-            require(
-                flow.platform.checkedSource.equals(CHANGED_SOURCE)
-                    && flow.last.message().contains("元カードと保存先を確認しました"),
-                "Verify the newly registered source");
-            try (var ordinary = CameraImportGate.tryAdmit()) {
-              require(ordinary != null, "Normal admissions can resume after the completed worker");
-            }
-            flow.platform.snapshot =
-                new Snapshot(READER, TARGET, List.of(new Volume(TARGET, "mounted")), true);
-            flow.controller.observed();
-            require(flow.last.message().isEmpty(), "Source removal invalidates READY immediately");
-          }
-        });
-
-    test.runOnMainSync(
-        () -> {
-          var flow = new Flow(activity);
-          ready.set(flow);
-          flow.platform.folder = tree(SOURCE + ":");
-          flow.ejectAndConfirm();
-          flow.tasks.remove().run();
-        });
-    test.waitForIdleSync();
-    test.runOnMainSync(
-        () -> {
-          try (var flow = ready.get()) {
-            require(
-                flow.last.message().contains("取り込み元のフォルダを選んでください"),
-                "A legacy volume-root tree does not satisfy the strict picker");
-            flow.platform.snapshot = mounted(SOURCE);
+    try (var flow = new Harness(activity)) {
+      test.runOnMainSync(
+          () -> {
+            flow.start();
+            flow.request();
             flow.controller.pause();
-            flow.controller.resume();
+            flow.platform.snapshot = mounted(SOURCE, true);
+            flow.platform.permission.accept(true);
+          });
+      test.waitForIdleSync();
+      test.runOnMainSync(
+          () -> {
             require(
-                flow.last.message().isEmpty(),
-                "Returning to the screen clears a stale positive outcome");
-          }
-        });
+                flow.worker.isEmpty(),
+                "Permission response alone cannot claim from the background");
+            assertReserved();
+            flow.controller.resume();
+            flow.runWorker();
+          });
+      test.waitForIdleSync();
+      test.runOnMainSync(
+          () -> {
+            require(
+                flow.platform.claims == 1,
+                "Granted foreground request must claim once. claims="
+                    + flow.platform.claims
+                    + " status="
+                    + flow.last);
+            require(
+                flow.platform.releases == 1 && flow.platform.closed == 1,
+                "Granted request releases and closes once. release="
+                    + flow.platform.releases
+                    + " close="
+                    + flow.platform.closed);
+            require(
+                CHANGED_SOURCE.equals(flow.platform.checkedSource),
+                "Check the newly mounted source. checked=" + flow.platform.checkedSource);
+            require(
+                flow.restored != null && flow.restored.sourceRequired(),
+                "A new source without a grant requires a folder. restored="
+                    + flow.restored
+                    + " status="
+                    + flow.last);
+          });
+    }
+
+    for (boolean replaceReader : new boolean[] {true, false}) {
+      try (var flow = new Harness(activity)) {
+        test.runOnMainSync(
+            () -> {
+              flow.start();
+              flow.request();
+              flow.platform.snapshot =
+                  new Snapshot(
+                      replaceReader ? new Reader(READER.name(), 3, 8644, 45152, 0) : READER,
+                      replaceReader ? TARGET : SOURCE,
+                      mounted(SOURCE, true).volumes(),
+                      true);
+              flow.platform.permission.accept(true);
+            });
+        test.waitForIdleSync();
+        test.runOnMainSync(
+            () ->
+                require(
+                    flow.worker.isEmpty()
+                        && flow.platform.claims == 0
+                        && flow.platform.permissionClosed
+                        && !CameraImportGate.isPreparationReserved(),
+                    "A replacement reader or destination cannot inherit an outstanding permission flow"));
+      }
+    }
+  }
+
+  private static void assertReserved() {
+    try (var blocked = CameraImportGate.tryAdmit()) {
+      require(
+          blocked == null && CameraImportGate.isPreparationReserved(),
+          "Refresh excludes transfers");
+    }
   }
 
   public static void volumeEvent(String uuid, boolean detached) {
@@ -277,121 +188,102 @@ public final class SdUsbReprobeFlowChecks {
     MountedCameraCard.legacyMediaChanged(uuid, action);
   }
 
-  private static Uri tree(String document) {
-    return DocumentsContract.buildTreeDocumentUri(
-        "com.android.externalstorage.documents", document);
-  }
-
-  private static Snapshot mounted(String source) {
+  private static Snapshot mounted(String source, boolean permitted) {
     return new Snapshot(
         READER,
         TARGET,
         List.of(new Volume(TARGET, "mounted"), new Volume(source, "mounted")),
-        true);
+        permitted);
   }
 
-  private static Snapshot ejected() {
-    return new Snapshot(
-        READER,
-        TARGET,
-        List.of(new Volume(TARGET, "unmounted"), new Volume(SOURCE, "unmounted")),
-        true);
-  }
+  public static final class Harness implements AutoCloseable {
+    private final Activity activity;
+    private final ArrayDeque<Runnable> worker = new ArrayDeque<>();
+    private final FakePlatform platform = new FakePlatform();
+    private final SdUsbReprobeController controller;
+    private Display last;
+    private Restoration restored;
 
-  private static final class Flow implements SdUsbReprobeController.Dialogs, AutoCloseable {
-    final FakePlatform platform = new FakePlatform();
-    final ArrayDeque<Runnable> tasks = new ArrayDeque<>();
-    final SdUsbReprobeController controller;
-    long now;
-    boolean settingsUnavailable;
-    Runnable open, confirm;
-    SdUsbReprobeController.Display last;
+    private Harness(Activity activity) {
+      this(activity, () -> true, ignored -> {}, () -> {});
+      if (android.os.Looper.getMainLooper().isCurrentThread()) start();
+    }
 
-    Flow(Activity activity) {
+    public Harness(
+        Activity activity, BooleanSupplier idle, Consumer<Display> render, Runnable discardSource) {
+      this.activity = activity;
       controller =
           new SdUsbReprobeController(
               activity,
               platform,
-              this,
-              () -> true,
-              display -> last = display,
-              () -> {},
-              () -> now,
-              tasks::add);
+              idle,
+              display -> {
+                last = display;
+                render.accept(display);
+              },
+              discardSource,
+              SystemClock::elapsedRealtime,
+              worker::add);
     }
 
-    @Override
-    public void prepare(Runnable open, Runnable cancel) {
-      this.open = open;
+    public SdUsbReprobeController controller() {
+      return controller;
     }
 
-    @Override
-    public void confirm(Runnable confirm, Runnable cancel) {
-      this.confirm = confirm;
-    }
-
-    @Override
-    public void openSettings() {
-      assertReserved();
-      if (settingsUnavailable) throw new ActivityNotFoundException();
-      controller.stop();
-    }
-
-    void assertReserved() {
-      require(CameraImportGate.isPreparationReserved(), "Re-detection owns camera admission");
-      var automatic = CameraImportGate.tryAdmit();
-      if (automatic != null) {
-        automatic.close();
-        throw new AssertionError(
-            "Automatic transfer was accepted during Settings or the USB worker");
-      }
-      var competing = CameraImportGate.tryReservePreparation();
-      if (competing != null) {
-        competing.close();
-        throw new AssertionError("Second preparation was accepted");
-      }
-    }
-
-    void arm() {
+    public void start() {
       controller.resume();
-      controller.request();
-      require(open != null, "Show preparation guidance");
-      open.run();
     }
 
-    void showConfirmation() {
-      arm();
-      legacyVolumeEvent(SOURCE, Intent.ACTION_MEDIA_EJECT);
-      platform.snapshot = ejected();
-      legacyVolumeEvent(TARGET, Intent.ACTION_MEDIA_UNMOUNTED);
-      controller.observed();
-      controller.resume();
-      controller.request();
-      require(confirm != null && platform.claims == 0, "Wait for explicit confirmation");
+    public void setPermitted() {
+      platform.snapshot = mounted(SOURCE, true);
     }
 
-    void ejectAndConfirm() {
-      showConfirmation();
-      confirm.run();
-      require(tasks.size() == 1, "Confirmation queues one worker");
+    public int claims() {
+      return platform.claims;
+    }
+
+    public int queued() {
+      return worker.size();
+    }
+
+    public void runWorker() {
+      worker.remove().run();
+    }
+
+    private void request() {
+      require(controller.request(false, value -> restored = value), "Supported manual request");
     }
 
     @Override
     public void close() {
-      controller.destroy();
-      while (!tasks.isEmpty()) tasks.remove().run();
+      if (android.os.Looper.getMainLooper().isCurrentThread()) {
+        controller.destroy();
+      } else {
+        var finished = new java.util.concurrent.CountDownLatch(1);
+        activity.runOnUiThread(
+            () -> {
+              controller.destroy();
+              finished.countDown();
+            });
+        try {
+          require(
+              finished.await(5, java.util.concurrent.TimeUnit.SECONDS), "Close test controller");
+        } catch (InterruptedException stopped) {
+          Thread.currentThread().interrupt();
+          throw new AssertionError(stopped);
+        }
+      }
     }
   }
 
   private static final class FakePlatform
       implements SdUsbReprobeController.Platform, SdUsbReprobe.Session {
-    Snapshot snapshot = mounted(SOURCE), restored = mounted(SOURCE);
-    Uri folder = tree(SOURCE + ":DCIM");
+    Snapshot snapshot = mounted(SOURCE, false);
+    final Snapshot restored = mounted(CHANGED_SOURCE, true);
     Consumer<Boolean> permission;
     boolean permissionClosed;
     int claims, releases, closed;
     String checkedSource;
-    Runnable closedUsb = () -> {};
 
     @Override
     public Snapshot snapshot() {
@@ -412,17 +304,18 @@ public final class SdUsbReprobeFlowChecks {
 
     @Override
     public boolean destinationWritable(String destination) {
-      return snapshot.equals(restored);
+      return snapshot.equals(restored) && TARGET.equals(destination);
     }
 
     @Override
     public boolean sourceReachable(String source, String destination, BooleanSupplier cancelled) {
       checkedSource = source;
-      return CameraDocumentSource.isImportTree(folder, false);
+      return false;
     }
 
     @Override
     public boolean claim() {
+      assertReserved();
       claims++;
       return true;
     }
@@ -437,7 +330,6 @@ public final class SdUsbReprobeFlowChecks {
     public void close() {
       closed++;
       snapshot = restored;
-      closedUsb.run();
     }
   }
 

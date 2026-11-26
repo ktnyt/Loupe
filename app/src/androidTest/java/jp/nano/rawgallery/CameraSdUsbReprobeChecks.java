@@ -2,39 +2,28 @@ package jp.nano.rawgallery;
 
 import android.app.Activity;
 import android.app.Instrumentation;
-import android.content.ActivityNotFoundException;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.hardware.usb.UsbManager;
 import android.net.Uri;
 import android.os.Build;
-import android.os.SystemClock;
 import android.provider.DocumentsContract;
-import android.provider.Settings;
-import android.view.MotionEvent;
 import android.view.View;
-import android.view.accessibility.AccessibilityNodeInfo;
-import android.view.inspector.WindowInspector;
 import android.widget.Button;
-import android.widget.ScrollView;
 import android.widget.TextView;
 import java.io.File;
 import java.io.FileOutputStream;
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
+import jp.nano.rawgallery.camera.CameraAttachActivity;
 import jp.nano.rawgallery.camera.ImportProgress;
 import jp.nano.rawgallery.camera.MountedCameraCard;
 import jp.nano.rawgallery.camera.SdUsbReprobeController;
 import jp.nano.rawgallery.camera.SdUsbReprobeFlowChecks;
 
-/** Exercises the on-screen controls without USB/media fixtures or a physical device. */
+/** Exercises explicit entry, retry and accessible import status on an emulator without USB. */
 final class CameraSdUsbReprobeChecks {
   static final String MODE = "camera-pilot-sd-usb-reprobe";
 
@@ -57,7 +46,7 @@ final class CameraSdUsbReprobeChecks {
     var activity =
         (CameraImportActivity)
             test.startActivitySync(
-                new Intent(app, CameraImportActivity.class)
+                CameraImportActivity.manualImportIntent(app, false)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     try {
       test.waitForIdleSync();
@@ -67,19 +56,18 @@ final class CameraSdUsbReprobeChecks {
             require(
                 configuration.screenWidthDp == width && configuration.fontScale == font,
                 "Injected display profile");
-            Button action = activity.getWindow().getDecorView().findViewWithTag("sd-reprobe-start");
-            require(
-                action != null && action.isEnabled(),
-                "Re-detection action is enabled when no work is active");
+            View root = activity.getWindow().getDecorView();
+            Button action = root.findViewWithTag("sd-reprobe-start");
+            TextView status = root.findViewWithTag("sd-reprobe-status");
+            require(status.getVisibility() == View.GONE, "Unsupported manual entry has no error");
+            require(action != null && action.isEnabled(), "Re-detection is available when idle");
             require("SDカードを再認識".contentEquals(action.getText()), "Accessible action label");
             require(
                 action.getMinHeight() >= GalleryUi.dp(activity, 48), "At least 48dp touch target");
             action.performClick();
-            TextView status =
-                activity.getWindow().getDecorView().findViewWithTag("sd-reprobe-status");
             require(
                 status.getText().toString().contains("リーダーを挿し直してください"),
-                "Unsupported hardware has manual guidance");
+                "An explicit retry on unsupported hardware has manual guidance");
             require(
                 status.getAccessibilityLiveRegion() == View.ACCESSIBILITY_LIVE_REGION_POLITE,
                 "Announce status changes");
@@ -88,15 +76,12 @@ final class CameraSdUsbReprobeChecks {
       capture(test, directory, width, font, "unsupported");
       for (Status state :
           List.of(
-              new Status("busy", "処理中は再認識できません。完了してからもう一度お試しください。", false),
-              new Status("eject-needed", "Androidでカードの取り出しが完了していることを確認してください。", false),
+              new Status("busy", "処理が終わってから、もう一度お試しください。", false),
               new Status("permit", "USBの使用許可を確認しています。", true),
               new Status("permission-denied", "USBの使用許可を確認できません。もう一度お試しください。", false),
-              new Status("redetecting", "SDカードを再認識しています…", true),
               new Status("waiting", "Androidがカードを認識するのを待っています…", true),
               new Status("timeout", "カードを再認識できませんでした。Androidで安全に取り出してから、リーダーを挿し直してください。", false),
-              new Status("choose-source", "カードを認識しました。取り込み元のフォルダを選んでください。", false),
-              new Status("ready", "元カードと保存先を確認しました。SDカードから取り込めます。", false))) {
+              new Status("ready", "取り込み元と保存先を確認しました。", false))) {
         test.runOnMainSync(
             () -> {
               activity.renderSdReprobe(
@@ -109,16 +94,17 @@ final class CameraSdUsbReprobeChecks {
                       == state.busy,
                   "Progress indicator " + state.name);
               require(
-                  root.findViewWithTag("sd-reprobe-start").isEnabled() != state.busy,
-                  "Button admission follows active status");
+                  root.findViewWithTag("sd-reprobe-start").isEnabled() != state.busy
+                      && root.findViewWithTag("sd-import-start").isEnabled() != state.busy,
+                  "Refresh and transfer controls follow active status");
               bringIntoView(status);
               require(!progress.getActive(), "Rendering did not start an import");
             });
         capture(test, directory, width, font, state.name);
       }
-      checkDialogs(test, activity, directory, width, font);
       SdUsbReprobeFlowChecks.run(test, activity);
       checkCardNotificationOrdering(test, activity);
+      checkManualEntry(test, activity, directory, width, font);
     } finally {
       test.runOnMainSync(activity::finish);
       test.waitForIdleSync();
@@ -127,306 +113,124 @@ final class CameraSdUsbReprobeChecks {
         + width
         + "dp/"
         + font
-        + ": actual unsupported action and dialogs, synthetic status rendering and controller lifecycle. "
+        + ": manual open and keep-originals, source picker, permission and cancellation."
         + directory.getAbsolutePath();
   }
 
-  private static void checkDialogs(
+  private static void checkManualEntry(
       Instrumentation test, CameraImportActivity activity, File directory, int width, float font)
       throws Exception {
-    Class<?> type = Class.forName(SdUsbReprobeController.class.getName() + "$AndroidDialogs");
-    var constructor = type.getDeclaredConstructor(android.app.Activity.class);
-    constructor.setAccessible(true);
-    var dialogs = constructor.newInstance(activity);
-    test.runOnMainSync(
-        () -> {
-          try {
-            checkSettingsRecipients(type, constructor);
-          } catch (ReflectiveOperationException failure) {
-            throw new AssertionError(failure);
-          }
-        });
-    var cancelCount = new AtomicInteger();
-    var positiveCount = new AtomicInteger();
-    for (String name : List.of("prepare", "confirm")) {
-      boolean preparing = name.equals("prepare");
-      var show = type.getDeclaredMethod(name, Runnable.class, Runnable.class);
-      show.setAccessible(true);
-      showFakeDialog(test, show, dialogs, positiveCount, cancelCount);
-      capture(test, directory, width, font, "dialog-" + name);
-      var automation = test.getUiAutomation();
-      var root = automation.getRootInActiveWindow();
-      require(root != null, "Dialog has an accessibility window " + name);
-      var positiveLabel = preparing ? "設定を開く" : "取り出し済み";
-      var safetyText = preparing ? "各カードにパーティションが1つ" : "フォーマットやマウントが進行中";
-      require(
-          !root.findAccessibilityNodeInfosByText(safetyText).isEmpty(),
-          "Safety instructions are exposed to accessibility " + name);
-      if (preparing) {
-        require(
-            !root.findAccessibilityNodeInfosByText("カードをすべて取り出してください").isEmpty()
-                && !root.findAccessibilityNodeInfosByText("フォーマットは選ばないでください").isEmpty(),
-            "Show all-cards and no-format instructions before opening Settings");
-      }
-      boolean overflow = checkDialogControls(test, activity, root, positiveLabel);
-      var positive = dialogButton(root, positiveLabel);
-      var cancel = dialogButton(root, "キャンセル");
-      require(positive.isEnabled() == (!preparing || !overflow), "Initial action enabled state");
-      require(cancel.isEnabled(), "Cancel is enabled before exposing the rest of the text");
-      if (preparing && overflow) {
-        require(
-            !root.findAccessibilityNodeInfosByText("最後までスクロールすると設定を開けます").isEmpty(),
-            "Explain how to enable Settings while instructions overflow");
-        int beforeTap = positiveCount.get();
-        tapDialogButton(test, positive);
-        require(positiveCount.get() == beforeTap, "A real tap on disabled Settings does nothing");
-      }
-      tapDialogButton(test, cancel);
-      require(cancelCount.get() == (preparing ? 1 : 2), "Cancel works without scrolling " + name);
-
-      showFakeDialog(test, show, dialogs, positiveCount, cancelCount);
-      root = automation.getRootInActiveWindow();
-      require(root != null, "Reopened dialog retains its window " + name);
-      var reopened = dialogButton(root, positiveLabel);
-      var needsScroll = new AtomicBoolean(checkDialogControls(test, activity, root, positiveLabel));
-      require(
-          reopened.isEnabled() == (!preparing || !needsScroll.get()),
-          "Opening a new dialog starts with the original action state");
-      if (needsScroll.get()) {
-        int previousY = 0;
-        for (int page = 0; page < 5 && needsScroll.get(); page++) {
-          var scroll = scrollable(root);
-          require(
-              scroll != null && scroll.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD),
-              "Overflowing dialog instructions can scroll through accessibility");
-          // Let the native smooth scroll finish before checking whether another page remains.
-          SystemClock.sleep(300);
-          int beforeScroll = previousY;
-          var position = new AtomicInteger();
-          long deadline = SystemClock.uptimeMillis() + 1500;
-          do {
-            SystemClock.sleep(80);
-            test.runOnMainSync(
-                () -> {
-                  var body = dialogBody();
-                  position.set(body.getScrollY());
-                  needsScroll.set(body.canScrollVertically(1));
-                });
-          } while (position.get() == beforeScroll && SystemClock.uptimeMillis() < deadline);
-          require(
-              position.get() > beforeScroll,
-              "The instruction body scrolled while actions stayed fully visible");
-          previousY = position.get();
-          root = automation.getRootInActiveWindow();
-          require(root != null, "Scrolled dialog retains its window " + name);
-          if (preparing && needsScroll.get()) {
+    var app = test.getTargetContext();
+    String previous = PhotoStorage.selected(app);
+    var controllerField = field("sdReprobe");
+    var discard = CameraImportActivity.class.getDeclaredMethod("discardSdStatusForReprobe");
+    var consume = CameraImportActivity.class.getDeclaredMethod("handleManualEntry");
+    var read =
+        CameraImportActivity.class.getDeclaredMethod(
+            "readManualEntry", Intent.class, boolean.class);
+    for (var method : List.of(discard, consume, read)) method.setAccessible(true);
+    var picker =
+        test.addMonitor(
+            new IntentFilter(Intent.ACTION_OPEN_DOCUMENT_TREE),
+            new Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null),
+            true);
+    var harness =
+        new SdUsbReprobeFlowChecks.Harness(
+            activity, () -> true, activity::renderSdReprobe, () -> invoke(discard, activity));
+    try {
+      test.runOnMainSync(
+          () -> {
+            try {
+              ((SdUsbReprobeController) controllerField.get(activity)).destroy();
+              require(
+                  PhotoStorage.select(app, SdUsbReprobeFlowChecks.TARGET),
+                  "Set synthetic destination");
+              controllerField.set(activity, harness.controller());
+            } catch (ReflectiveOperationException failure) {
+              throw new AssertionError(failure);
+            }
+            harness.start();
+            harness.setPermitted();
+            for (Intent ordinary :
+                List.of(
+                    CameraImportActivity.showProgressIntent(app),
+                    CameraImportActivity.mountedReaderAttachIntent(
+                        app, SdUsbReprobeFlowChecks.TARGET),
+                    new Intent(app, CameraImportActivity.class)
+                        .setAction(CameraAttachActivity.ACTION_OPEN_FROM_USB_ATTACH))) {
+              activity.onNewIntent(ordinary);
+              require(
+                  !((Boolean) invoke(consume, activity)), "Background entry has no manual refresh");
+            }
+            require(harness.queued() == 0, "Progress and attach do not queue a claim");
+            invoke(read, activity, CameraImportActivity.manualImportIntent(app, true), false);
             require(
-                !dialogButton(root, positiveLabel).isEnabled(),
-                "Settings stays disabled mid-scroll");
-          }
-        }
-        require(!needsScroll.get(), "Entire dialog instructions are reachable " + name);
-        var endPositiveBounds = screenBounds(dialogButton(root, positiveLabel));
-        var endCancelBounds = screenBounds(dialogButton(root, "キャンセル"));
-        test.runOnMainSync(
-            () -> checkDialogBounds(activity, positiveLabel, endPositiveBounds, endCancelBounds));
-        capture(test, directory, width, font, "dialog-" + name + "-scrolled");
-      }
-      var ready = dialogButton(root, positiveLabel);
-      require(ready.isEnabled(), "Primary action is available after exposing all instructions");
-      tapDialogButton(test, ready);
+                !((Boolean) invoke(consume, activity)), "Restoring Activity state does not claim");
+            var manual = CameraImportActivity.manualImportIntent(app, false);
+            var duplicate = new Intent(manual);
+            activity.onNewIntent(manual);
+            require(
+                (Boolean) invoke(consume, activity), "Fresh explicit open takes the refresh path");
+            activity.onNewIntent(duplicate);
+            require(
+                !((Boolean) invoke(consume, activity)),
+                "A duplicate token cannot restart an explicit refresh");
+            require(harness.queued() == 1, "Open queues one refresh");
+            View root = activity.getWindow().getDecorView();
+            require(
+                root.findViewWithTag("sd-import-status").getVisibility() == View.GONE,
+                "Refresh discards the old source state");
+            require(
+                !root.findViewWithTag("sd-import-start").isEnabled(), "Refresh disables transfer");
+            bringIntoView(root.findViewWithTag("sd-reprobe-status"));
+          });
+      capture(test, directory, width, font, "redetecting");
+      test.runOnMainSync(harness::runWorker);
+      test.waitForIdleSync();
+      test.runOnMainSync(
+          () -> {
+            require(
+                picker.getHits() == 0 && !ImportProgress.INSTANCE.getActive(),
+                "Ordinary open updates the view without starting an import or picker");
+            require(harness.claims() == 1, "Manual open claimed exactly once");
+            View root = activity.getWindow().getDecorView();
+            TextView status = root.findViewWithTag("sd-reprobe-status");
+            require(
+                status.getText().toString().contains("フォルダを選んで"),
+                "The current new card requires folder selection");
+            bringIntoView(status);
+          });
+      capture(test, directory, width, font, "choose-source");
+      test.runOnMainSync(
+          () -> {
+            harness.setPermitted();
+            activity.onNewIntent(CameraImportActivity.manualImportIntent(app, true));
+            require(
+                (Boolean) invoke(consume, activity), "Long-press entry refreshes before discovery");
+            require(picker.getHits() == 0 && harness.queued() == 1, "Picker waits for remount");
+            harness.runWorker();
+          });
+      test.waitForIdleSync();
       require(
-          positiveCount.get() == (preparing ? 1 : 2), "The visible positive action works " + name);
+          harness.claims() == 2 && picker.getHits() == 1 && !ImportProgress.INSTANCE.getActive(),
+          "Long press prompts for the remounted source instead of copying the old card");
+    } finally {
+      test.removeMonitor(picker);
+      test.runOnMainSync(
+          () -> {
+            harness.close();
+            require(PhotoStorage.select(app, previous), "Restore destination");
+          });
     }
   }
 
-  private static void showFakeDialog(
-      Instrumentation test,
-      Method show,
-      Object dialogs,
-      AtomicInteger positive,
-      AtomicInteger cancel) {
-    test.runOnMainSync(
-        () -> {
-          try {
-            show.invoke(
-                dialogs, (Runnable) positive::incrementAndGet, (Runnable) cancel::incrementAndGet);
-          } catch (ReflectiveOperationException failure) {
-            throw new AssertionError(failure);
-          }
-        });
-    test.waitForIdleSync();
-    // Window enter animations run on the compositor after the app thread is idle.
-    SystemClock.sleep(300);
-  }
-
-  private static Rect screenBounds(AccessibilityNodeInfo node) {
-    var bounds = new Rect();
-    node.getBoundsInScreen(bounds);
-    return bounds;
-  }
-
-  private static void tapDialogButton(Instrumentation test, AccessibilityNodeInfo button) {
-    var bounds = new Rect();
-    button.getBoundsInScreen(bounds);
-    long start = SystemClock.uptimeMillis();
-    for (int action : new int[] {MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP}) {
-      var event =
-          MotionEvent.obtain(
-              start,
-              SystemClock.uptimeMillis(),
-              action,
-              bounds.exactCenterX(),
-              bounds.exactCenterY(),
-              0);
-      try {
-        test.sendPointerSync(event);
-      } finally {
-        event.recycle();
-      }
+  private static Object invoke(
+      java.lang.reflect.Method method, CameraImportActivity activity, Object... args) {
+    try {
+      return method.invoke(activity, args);
+    } catch (ReflectiveOperationException unavailable) {
+      throw new AssertionError(unavailable);
     }
-    test.waitForIdleSync();
-  }
-
-  private static boolean checkDialogControls(
-      Instrumentation test, Activity activity, AccessibilityNodeInfo root, String positiveLabel) {
-    var positiveBounds = screenBounds(dialogButton(root, positiveLabel));
-    var cancelBounds = screenBounds(dialogButton(root, "キャンセル"));
-    var overflow = new AtomicBoolean();
-    test.runOnMainSync(
-        () ->
-            overflow.set(
-                checkDialogBounds(activity, positiveLabel, positiveBounds, cancelBounds)
-                    .canScrollVertically(1)));
-    return overflow.get();
-  }
-
-  private static ScrollView dialogBody() {
-    for (var window : WindowInspector.getGlobalWindowViews()) {
-      ScrollView body = window.findViewWithTag("sd-reprobe-dialog-body");
-      if (body != null && body.isShown()) return body;
-    }
-    throw new AssertionError("Expected a visible re-detection dialog");
-  }
-
-  private static ScrollView checkDialogBounds(
-      Activity activity, String positiveLabel, Rect positiveBounds, Rect cancelBounds) {
-    ScrollView body = dialogBody();
-    var window = body.getRootView();
-    var positive = (Button) window.findViewById(android.R.id.button1);
-    var cancel = (Button) window.findViewById(android.R.id.button2);
-    require(positiveLabel.contentEquals(positive.getText()), "Actual positive button");
-    require("キャンセル".contentEquals(cancel.getText()), "Actual cancel button");
-    var visibleBody = new Rect();
-    var visibleWindow = new Rect();
-    var displayFrame = new Rect();
-    window.getWindowVisibleDisplayFrame(displayFrame);
-    require(
-        body.getGlobalVisibleRect(visibleBody) && window.getGlobalVisibleRect(visibleWindow),
-        "Visible dialog and instructions");
-    for (Button button : List.of(positive, cancel)) {
-      var visible = new Rect();
-      var screen = button == positive ? positiveBounds : cancelBounds;
-      int width = button.getWidth();
-      int height = button.getHeight();
-      require(
-          button.getGlobalVisibleRect(visible)
-              && visible.width() == width
-              && visible.height() == height
-              && visibleWindow.contains(visible)
-              && !Rect.intersects(visibleBody, visible)
-              && height >= GalleryUi.dp(activity, 48)
-              && screen.width() == width
-              && screen.height() == height
-              && displayFrame.contains(screen),
-          "Full 48dp action visible outside the scroll body: "
-              + button.getText()
-              + " measured="
-              + width
-              + "x"
-              + height
-              + " visible="
-              + visible
-              + " screen="
-              + screen
-              + " window="
-              + visibleWindow
-              + " display="
-              + displayFrame
-              + " body="
-              + visibleBody);
-    }
-    require(!Rect.intersects(positiveBounds, cancelBounds), "Separate touch targets");
-    return body;
-  }
-
-  private static void checkSettingsRecipients(Class<?> type, Constructor<?> ctor)
-      throws ReflectiveOperationException {
-    var open = type.getDeclaredMethod("openSettings");
-    open.setAccessible(true);
-    for (int unavailableCount = 0; unavailableCount <= 2; unavailableCount++) {
-      var activity = new SettingsLauncher(unavailableCount);
-      boolean exhausted = false;
-      try {
-        open.invoke(ctor.newInstance(activity));
-      } catch (InvocationTargetException failed) {
-        if (!(failed.getCause() instanceof ActivityNotFoundException)) throw failed;
-        exhausted = true;
-      }
-      require(exhausted == (unavailableCount == 2), "Propagate unavailable pinned routes");
-      var actions =
-          unavailableCount == 0
-              ? List.of(Settings.ACTION_MEMORY_CARD_SETTINGS)
-              : List.of(
-                  Settings.ACTION_MEMORY_CARD_SETTINGS, Settings.ACTION_INTERNAL_STORAGE_SETTINGS);
-      require(
-          actions.equals(activity.attempts.stream().map(Intent::getAction).toList())
-              && activity.attempts.stream()
-                  .allMatch(intent -> "com.android.settings".equals(intent.getPackage())),
-          "Both Settings actions can reach only the Android Settings package");
-    }
-  }
-
-  private static final class SettingsLauncher extends Activity {
-    final List<Intent> attempts = new ArrayList<>();
-    final int unavailableCount;
-
-    SettingsLauncher(int unavailableCount) {
-      this.unavailableCount = unavailableCount;
-    }
-
-    @Override
-    public void startActivity(Intent intent) {
-      attempts.add(intent);
-      if (attempts.size() <= unavailableCount) throw new ActivityNotFoundException();
-    }
-  }
-
-  private static AccessibilityNodeInfo dialogButton(AccessibilityNodeInfo root, String label) {
-    var button =
-        root.findAccessibilityNodeInfosByText(label).stream()
-            .filter(
-                node ->
-                    label.contentEquals(node.getText())
-                        && node.isClickable()
-                        && node.isVisibleToUser())
-            .findFirst()
-            .orElseThrow(() -> new AssertionError("Visible dialog button " + label));
-    var bounds = new Rect();
-    button.getBoundsInScreen(bounds);
-    require(!bounds.isEmpty(), "Reachable dialog button " + label);
-    return button;
-  }
-
-  private static AccessibilityNodeInfo scrollable(AccessibilityNodeInfo node) {
-    if (node.isScrollable()) return node;
-    for (int i = 0; i < node.getChildCount(); i++) {
-      var child = node.getChild(i);
-      if (child == null) continue;
-      var scroll = scrollable(child);
-      if (scroll != null) return scroll;
-    }
-    return null;
   }
 
   private static void checkCardNotificationOrdering(

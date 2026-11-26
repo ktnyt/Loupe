@@ -275,6 +275,7 @@ public final class CameraDifferentialService extends Service {
             public void onReceive(Context context, Intent event) {
               String uuid = MountedCameraCard.notifiedVolumeUuid(event);
               String destination = PhotoStorage.selected(context);
+              if (SdUsbReprobeController.suppressAutomaticMount(uuid, destination)) return;
               Uri tree = MountedCameraCard.registeredMountSource(context, uuid, destination);
               if (tree == null || !SdSourceRegistrations.hasReadGrant(context, tree)) return;
               enqueue(sdRequest(context, tree, destination, MountedCameraCard.detachGeneration()));

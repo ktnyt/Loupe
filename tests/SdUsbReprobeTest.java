@@ -7,7 +7,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BooleanSupplier;
-import jp.nano.rawgallery.camera.SdUsbReprobe.Ejection;
 import jp.nano.rawgallery.camera.SdUsbReprobe.Reader;
 import jp.nano.rawgallery.camera.SdUsbReprobe.Snapshot;
 import jp.nano.rawgallery.camera.SdUsbReprobe.State;
@@ -19,12 +18,12 @@ public final class SdUsbReprobeTest {
   private static final Reader READER = new Reader("usb-test", 14, 8644, 45152, 0);
   private static final Snapshot MOUNTED = snapshot("mounted", "mounted");
   private static final Snapshot EJECTED = snapshot("unmounted", "unmounted");
-  private static final Ejection EJECTION = new Ejection(MOUNTED, 100);
 
   public static void main(String[] args) throws Exception {
     admission();
     claimAuthorization();
     runPaths();
+    mountCycleAttribution();
     topology();
     System.out.println("SdUsbReprobeTest passed");
   }
@@ -35,80 +34,40 @@ public final class SdUsbReprobeTest {
   }
 
   private static void admission() {
+    require(MOUNTED.admission() == State.REDETECTING, "Manual refresh admits mounted cards");
     require(
-        MOUNTED.canPrepareEjection(), "A mounted, positively identified inventory can be armed");
+        snapshot("mounted", "mounted_ro").admission() == State.REDETECTING,
+        "A registered source can be read-only");
     require(
-        !snapshot("mounted_ro", "mounted").canPrepareEjection(),
-        "Target must be writable before ejection");
-    require(!EJECTED.canPrepareEjection(), "An unmounted entry alone cannot arm ejection");
+        new Snapshot(READER, TARGET, MOUNTED.volumes(), false).admission() == State.PERMISSION,
+        "Permission is requested for the same admitted inventory");
     require(
-        EJECTION.confirmed(EJECTED, 99),
-        "Same, fully ejected inventory can reach foreground confirmation");
-    require(
-        !EJECTION.confirmed(EJECTED, 100),
-        "An expired confirmation does not authorize the USB operation");
-    require(
-        EJECTED.expectsEjectionEvent(TARGET, "ejecting")
-            && EJECTED.expectsEjectionEvent(SOURCE, "unmounted"),
-        "Allow late orderly ejection notifications for the same inventory");
-    require(
-        !EJECTED.expectsEjectionEvent(null, "unmounted")
-            && !EJECTED.expectsEjectionEvent("3000-0003", "unmounted"),
-        "Reject ambiguous or unexpected volume identities");
+        new Snapshot(READER, TARGET, List.of(new Volume(TARGET, "mounted")), true).admission()
+            == State.REDETECTING,
+        "The source may be absent during a stale card swap");
     for (String state :
-        List.of(
-            "mounted",
-            "mounted_ro",
-            "checking",
-            "removed",
-            "bad_removal",
-            "nofs",
-            "shared",
-            "unmountable")) {
+        List.of("checking", "ejecting", "removed", "unmounted", "bad_removal", "unmountable")) {
       require(
-          !EJECTED.expectsEjectionEvent(SOURCE, state),
-          "A notification from a different mount cycle invalidates proof: " + state);
-    }
-    for (String state :
-        List.of(
-            "mounted",
-            "mounted_ro",
-            "checking",
-            "ejecting",
-            "removed",
-            "bad_removal",
-            "unknown",
-            "unmountable")) {
-      require(
-          !EJECTION.confirmed(snapshot("unmounted", state), 10),
-          "Reject unsafe source state " + state);
-      require(
-          !EJECTION.confirmed(snapshot(state, "unmounted"), 10),
-          "Reject unsafe destination state " + state);
+          snapshot("mounted", state).admission() == State.UNSUPPORTED
+              && snapshot(state, "mounted").admission() == State.UNSUPPORTED,
+          "Transitional or ambiguous volume state is unsupported: " + state);
     }
     for (List<Volume> volumes :
         List.of(
-            List.of(new Volume(SOURCE, "unmounted")),
-            List.of(new Volume(TARGET, "unmounted"), new Volume(TARGET, "unmounted")),
-            List.of(new Volume(TARGET, "unmounted"), new Volume("2345-abcd", "unmounted")),
-            List.of(new Volume(TARGET, "unmounted"), new Volume(null, "unmounted")),
+            List.of(new Volume(SOURCE, "mounted")),
+            List.of(new Volume(TARGET, "mounted"), new Volume(TARGET, "mounted")),
+            List.of(new Volume(TARGET, "mounted"), new Volume(null, "mounted")),
             List.of(
-                new Volume(TARGET, "unmounted"),
-                new Volume(SOURCE, "unmounted"),
-                new Volume("2345-abcd", "unmounted")))) {
+                new Volume(TARGET, "mounted"),
+                new Volume(SOURCE, "mounted"),
+                new Volume("2345-abcd", "mounted")))) {
       require(
-          !EJECTION.confirmed(new Snapshot(READER, TARGET, volumes, true), 10),
-          "Reject missing, changed, duplicate or extra volumes");
+          new Snapshot(READER, TARGET, volumes, true).admission() == State.UNSUPPORTED,
+          "Reject missing, duplicate or extra volumes");
     }
     require(
-        !EJECTION.confirmed(new Snapshot(null, TARGET, EJECTED.volumes(), true), 10),
+        new Snapshot(null, TARGET, MOUNTED.volumes(), true).admission() == State.UNSUPPORTED,
         "Invalid or extra USB topology is rejected");
-    require(
-        !EJECTION.confirmed(
-            new Snapshot(
-                new Reader(READER.name(), 15, 8644, 45152, 0), TARGET, EJECTED.volumes(), true),
-            10),
-        "New USB connection with the same model is rejected");
   }
 
   private static void claimAuthorization() {
@@ -124,6 +83,7 @@ public final class SdUsbReprobeTest {
 
     var started = new SdUsbReprobe.ClaimAuthorization();
     require(started.tryStart(() -> true), "An active authorization starts once");
+    require(!started.tryStart(() -> true), "A request cannot claim twice");
     started.invalidateBeforeClaim();
     require(!started.cancelled(), "Own remount notifications do not cancel a started claim");
     started.cancel();
@@ -133,48 +93,60 @@ public final class SdUsbReprobeTest {
   private static void runPaths() throws Exception {
     Fake fake = new Fake();
     require(
-        run(null, fake, new ReentrantLock(), () -> false, 0) == State.EJECT_REQUIRED
-            && fake.calls.isEmpty(),
-        "A cold ejected snapshot cannot claim");
-    require(
-        run(EJECTION, fake, new ReentrantLock(), () -> false, 0) == State.READY
+        run(fake, new ReentrantLock(), () -> false, 0) == State.READY
             && fake.calls.equals(
                 List.of("open", "claim", "release", "close", "waiting", "source", "restored")),
-        "Recheck the admitted volumes, release and close, then verify both cards");
+        "Mounted manual admission still validates a remount and both volumes after cleanup");
 
     fake = new Fake();
-    fake.beforeClaim = MOUNTED;
+    fake.beforeClaim = EJECTED;
     require(
-        run(EJECTION, fake, new ReentrantLock(), () -> false, 0) == State.CHANGED
+        run(fake, new ReentrantLock(), () -> false, 0) == State.CHANGED
             && fake.calls.equals(List.of("open", "close")),
         "A remount before claim closes the handle without claiming");
 
     fake = new Fake();
-    fake.beforeClaim = new Snapshot(READER, TARGET, EJECTED.volumes(), false);
+    fake.beforeClaim = new Snapshot(READER, TARGET, MOUNTED.volumes(), false);
     require(
-        run(EJECTION, fake, new ReentrantLock(), () -> false, 0) == State.DENIED
+        run(fake, new ReentrantLock(), () -> false, 0) == State.DENIED
             && fake.calls.equals(List.of("open", "close")),
         "Permission is checked again immediately before claim");
 
     fake = new Fake();
-    fake.beforeClaim = new Snapshot(READER, SOURCE, EJECTED.volumes(), true);
+    fake.beforeClaim = new Snapshot(READER, SOURCE, MOUNTED.volumes(), true);
     require(
-        run(EJECTION, fake, new ReentrantLock(), () -> false, 0) == State.CHANGED
+        run(fake, new ReentrantLock(), () -> false, 0) == State.CHANGED
             && fake.calls.equals(List.of("open", "close")),
         "Selected destination cannot change");
+
+    fake = new Fake();
+    fake.beforeClaim =
+        new Snapshot(
+            new Reader(READER.name(), 15, 8644, 45152, 0), TARGET, MOUNTED.volumes(), true);
+    require(
+        run(fake, new ReentrantLock(), () -> false, 0) == State.CHANGED
+            && fake.calls.equals(List.of("open", "close")),
+        "A replacement reader with an identical model cannot be claimed");
+
+    fake = new Fake();
+    fake.shouldClaim = false;
+    require(
+        run(fake, new ReentrantLock(), () -> false, 0) == State.CANCELLED
+            && fake.calls.equals(List.of("open", "close")),
+        "An invalidated foreground request cannot claim an already opened connection");
 
     for (String failure : List.of("claim", "claim_false", "release", "release_false", "close")) {
       fake = new Fake();
       fake.failure = failure;
       require(
-          run(EJECTION, fake, new ReentrantLock(), () -> false, 0) == State.FAILED
+          run(fake, new ReentrantLock(), () -> false, 0) == State.FAILED
               && fake.calls.equals(List.of("open", "claim", "release", "close")),
           "Always release and close when claim was attempted: " + failure);
     }
     fake = new Fake();
     fake.failure = "open";
     require(
-        run(EJECTION, fake, new ReentrantLock(), () -> false, 0) == State.FAILED
+        run(fake, new ReentrantLock(), () -> false, 0) == State.FAILED
             && fake.calls.equals(List.of("open")),
         "Open failure leaves no USB handle");
 
@@ -182,30 +154,39 @@ public final class SdUsbReprobeTest {
     AtomicBoolean cancel = fake.cancel;
     fake.failure = "cancel_at_claim";
     require(
-        run(EJECTION, fake, new ReentrantLock(), cancel::get, 0) == State.CANCELLED
+        run(fake, new ReentrantLock(), cancel::get, 0) == State.CANCELLED
             && fake.calls.equals(List.of("open", "claim", "release", "close", "waiting")),
         "Lifecycle cancellation during claim still releases and closes");
 
     fake = new Fake();
     fake.restored = EJECTED;
     require(
-        run(EJECTION, fake, new ReentrantLock(), () -> false, 0) == State.TIMEOUT,
+        run(fake, new ReentrantLock(), () -> false, 0) == State.TIMEOUT,
         "Claim success alone is never ready");
+
+    fake = new Fake();
+    fake.sameSourceDetached = false;
+    require(
+        run(fake, new ReentrantLock(), () -> false, 0) == State.TIMEOUT
+            && !fake.calls.contains("source"),
+        "An unchanged mounted snapshot without a new cycle is not recovery");
 
     fake = new Fake();
     fake.grant = false;
     require(
-        run(EJECTION, fake, new ReentrantLock(), () -> false, 0) == State.SOURCE_REQUIRED,
+        run(fake, new ReentrantLock(), () -> false, 0) == State.SOURCE_REQUIRED,
         "Unreachable or ungranted source requests selection");
     fake = new Fake();
+    fake.sameSourceDetached = false;
+    fake.expectedSource = "2345-abcd";
     fake.restored =
         new Snapshot(
             READER,
             TARGET,
-            List.of(new Volume(TARGET, "mounted"), new Volume("2345-abcd", "mounted")),
+            List.of(new Volume(TARGET, "mounted"), new Volume(fake.expectedSource, "mounted")),
             true);
     require(
-        run(EJECTION, fake, new ReentrantLock(), () -> false, 0) == State.READY
+        run(fake, new ReentrantLock(), () -> false, 0) == State.READY
             && fake.calls.contains("source"),
         "A changed source can be ready only after checking the current registration");
 
@@ -219,17 +200,17 @@ public final class SdUsbReprobeTest {
             List.of(new Volume(TARGET, "mounted"), new Volume(null, "unmounted")),
             true));
     require(
-        run(EJECTION, fake, new ReentrantLock(), () -> false, 5) == State.READY,
+        run(fake, new ReentrantLock(), () -> false, 5) == State.READY,
         "Missing and partial inventories after release are retried while the known connection remains");
     fake = new Fake();
     fake.restored = pending;
     require(
-        run(EJECTION, fake, new ReentrantLock(), () -> false, 0) == State.TIMEOUT,
+        run(fake, new ReentrantLock(), () -> false, 0) == State.TIMEOUT,
         "A persistently unavailable inventory cannot become ready before timeout");
     fake = new Fake();
     fake.restored = new Snapshot(READER, SOURCE, List.of(), true);
     require(
-        run(EJECTION, fake, new ReentrantLock(), () -> false, 0) == State.CHANGED,
+        run(fake, new ReentrantLock(), () -> false, 0) == State.CHANGED,
         "A changed selected destination fails even while inventory is pending");
 
     var busy = new ReentrantLock();
@@ -253,12 +234,50 @@ public final class SdUsbReprobeTest {
     try {
       fake = new Fake();
       require(
-          run(EJECTION, fake, busy, () -> false, 0) == State.BUSY && fake.calls.isEmpty(),
+          run(fake, busy, () -> false, 0) == State.BUSY && fake.calls.isEmpty(),
           "No USB or MediaStore work while an import or move owns the gate");
     } finally {
       release.countDown();
       other.join();
     }
+  }
+
+  private static void mountCycleAttribution() {
+    var cycle = new SdUsbReprobe.MountCycle(MOUNTED);
+    String different = "ABCD-1234";
+    Snapshot newSource =
+        new Snapshot(
+            READER,
+            TARGET,
+            List.of(new Volume(TARGET, "mounted"), new Volume(different, "mounted")),
+            true);
+    require(cycle.suppresses(different, newSource), "Own mount during the handoff is suppressed");
+    cycle.finish(newSource);
+    require(
+        cycle.suppresses(different, newSource) && cycle.suppresses(different, newSource),
+        "Even a late or repeated broadcast for the restored cycle cannot start auto-import");
+    require(
+        !cycle.expired(newSource, different),
+        "A queued detach broadcast cannot clear a source Android currently reports mounted");
+    require(
+        !cycle.suppresses(SOURCE, MOUNTED),
+        "A genuinely different currently mounted source preserves automatic import");
+    require(
+        cycle.expired(
+            new Snapshot(READER, TARGET, List.of(new Volume(TARGET, "mounted")), true), different),
+        "Recognized removal of the restored source ends attribution");
+    require(
+        cycle.expired(new Snapshot(null, null, List.of(), false), null),
+        "A different connection ends attribution");
+
+    cycle = new SdUsbReprobe.MountCycle(MOUNTED);
+    cycle.finish(null);
+    require(
+        cycle.suppresses(different, newSource),
+        "Timeout cannot replay the first late mount as a new automatic import");
+    require(
+        !cycle.suppresses(SOURCE, MOUNTED),
+        "Once current, late-source attribution stays scoped to that source");
   }
 
   private static void topology() {
@@ -301,12 +320,10 @@ public final class SdUsbReprobeTest {
         "An extra portable volume is not an allowed topology");
   }
 
-  private static State run(
-      Ejection ejection, Fake fake, ReentrantLock gate, BooleanSupplier cancelled, long timeout)
+  private static State run(Fake fake, ReentrantLock gate, BooleanSupplier cancelled, long timeout)
       throws InterruptedException {
     return SdUsbReprobe.run(
-        ejection,
-        EJECTED,
+        MOUNTED,
         fake,
         gate,
         cancelled,
@@ -315,7 +332,7 @@ public final class SdUsbReprobeTest {
         new SdUsbReprobe.Observer() {
           @Override
           public boolean startingClaim() {
-            return true;
+            return fake.shouldClaim;
           }
 
           @Override
@@ -324,7 +341,17 @@ public final class SdUsbReprobeTest {
           }
 
           @Override
-          public void restored(Snapshot current) {
+          public boolean detachedAfterClaim(String source) {
+            return fake.sameSourceDetached && SOURCE.equals(source);
+          }
+
+          @Override
+          public long detachGeneration() {
+            return 0;
+          }
+
+          @Override
+          public void restored(Snapshot current, long generation) {
             fake.calls.add("restored");
           }
         });
@@ -334,15 +361,18 @@ public final class SdUsbReprobeTest {
     final List<String> calls = new ArrayList<>();
     final ArrayDeque<Snapshot> postRelease = new ArrayDeque<>();
     final AtomicBoolean cancel = new AtomicBoolean();
-    Snapshot beforeClaim = EJECTED;
+    Snapshot beforeClaim = MOUNTED;
     Snapshot restored = MOUNTED;
     boolean grant = true;
+    boolean shouldClaim = true;
+    boolean sameSourceDetached = true;
+    String expectedSource = SOURCE;
     String failure = "";
 
     @Override
     public Snapshot snapshot() {
       if (calls.contains("close")) return postRelease.isEmpty() ? restored : postRelease.remove();
-      return calls.contains("open") ? beforeClaim : EJECTED;
+      return calls.contains("open") ? beforeClaim : MOUNTED;
     }
 
     @Override
@@ -359,6 +389,9 @@ public final class SdUsbReprobeTest {
 
     @Override
     public boolean sourceReachable(String source, String destination, BooleanSupplier stopped) {
+      require(
+          expectedSource.equals(source) && TARGET.equals(destination),
+          "Check the current distinct source UUID");
       calls.add("source");
       return grant;
     }
