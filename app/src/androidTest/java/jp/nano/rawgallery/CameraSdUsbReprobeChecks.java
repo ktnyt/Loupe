@@ -172,10 +172,14 @@ final class CameraSdUsbReprobeChecks {
       var positiveBounds = screenBounds(dialogButton(root, positiveLabel));
       var cancelBounds = screenBounds(dialogButton(root, "キャンセル"));
       test.runOnMainSync(
-          () ->
-              needsScroll.set(
-                  checkDialogBounds(activity, positiveLabel, positiveBounds, cancelBounds)
-                      .canScrollVertically(1)));
+          () -> {
+            var body = checkDialogBounds(activity, positiveLabel, positiveBounds, cancelBounds);
+            if (preparing) {
+              requireInitiallyVisible(body, "フォーマットは選ばないでください。");
+              requireInitiallyVisible(body, "両方のカードがポータブルストレージで、各カードにパーティションが1つの場合に使えます。");
+            }
+            needsScroll.set(body.canScrollVertically(1));
+          });
       if (needsScroll.get()) {
         int previousY = 0;
         for (int page = 0; page < 5 && needsScroll.get(); page++) {
@@ -268,6 +272,24 @@ final class CameraSdUsbReprobeChecks {
       }
     }
     test.waitForIdleSync();
+  }
+
+  private static void requireInitiallyVisible(ScrollView body, String warning) {
+    var text = (TextView) body.getChildAt(0);
+    var layout = text.getLayout();
+    int start = text.getText().toString().indexOf(warning);
+    require(start >= 0 && layout != null, "Expected laid-out safety warning: " + warning);
+    int textTop = text.getTop() + text.getTotalPaddingTop();
+    int lineTop = textTop + layout.getLineTop(layout.getLineForOffset(start));
+    int lineBottom =
+        textTop + layout.getLineBottom(layout.getLineForOffset(start + warning.length() - 1));
+    var visible = new Rect();
+    require(
+        body.getGlobalVisibleRect(visible)
+            && visible.height() == body.getHeight()
+            && lineTop >= body.getScrollY() + body.getPaddingTop()
+            && lineBottom <= body.getScrollY() + body.getHeight() - body.getPaddingBottom(),
+        "The complete safety warning is visible without scrolling: " + warning);
   }
 
   private static ScrollView dialogBody() {
