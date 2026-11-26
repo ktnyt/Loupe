@@ -115,6 +115,18 @@ public final class SdUsbReprobeFlowChecks {
           }
           try (var flow = new Flow(activity)) {
             flow.ejectAndConfirm();
+            flow.platform.snapshot = new Snapshot(null, null, List.of(), false);
+            flow.controller.storageChanged(
+                new SdUsbReprobe.VisibleVolume(SOURCE, "removed", false, false, true));
+            flow.platform.snapshot = ejected();
+            flow.controller.observed();
+            flow.tasks.remove().run();
+            require(
+                flow.platform.claims == 0,
+                "A removal after confirmation invalidates the parked worker even if the inventory returns");
+          }
+          try (var flow = new Flow(activity)) {
+            flow.ejectAndConfirm();
             flow.assertReserved();
             flow.controller.destroy();
             flow.assertReserved();
@@ -133,6 +145,7 @@ public final class SdUsbReprobeFlowChecks {
           ready.set(flow);
           flow.platform.restored = mounted(CHANGED_SOURCE);
           flow.platform.folder = tree(CHANGED_SOURCE + ":DCIM");
+          flow.platform.closedUsb = flow.controller::observed;
           flow.ejectAndConfirm();
           flow.assertReserved();
           flow.tasks.remove().run();
@@ -181,6 +194,10 @@ public final class SdUsbReprobeFlowChecks {
                 "Returning to the screen clears a stale positive outcome");
           }
         });
+  }
+
+  public static void volumeEvent(String uuid, boolean detached) {
+    MountedCameraCard.volumeChanged(uuid, detached);
   }
 
   private static Uri tree(String document) {
@@ -289,6 +306,7 @@ public final class SdUsbReprobeFlowChecks {
     boolean permissionClosed;
     int claims, releases, closed;
     String checkedSource;
+    Runnable closedUsb = () -> {};
 
     @Override
     public Snapshot snapshot() {
@@ -334,6 +352,7 @@ public final class SdUsbReprobeFlowChecks {
     public void close() {
       closed++;
       snapshot = restored;
+      closedUsb.run();
     }
   }
 

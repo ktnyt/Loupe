@@ -1378,7 +1378,8 @@ public final class CameraImportActivity extends AppCompatActivity {
     if (request == PICK_SD_TREE) {
       SdPicker picker = sdPicker;
       sdPicker = null;
-      if (picker == null || code != RESULT_OK || data == null || data.getData() == null) {
+      if (picker == null) return;
+      if (code != RESULT_OK || data == null || data.getData() == null) {
         quickCancelled();
         return;
       }
@@ -1576,6 +1577,10 @@ public final class CameraImportActivity extends AppCompatActivity {
               || submittedSd != null;
       abandonSdSubmission();
       if (sdConfirmation != null) sdConfirmation.dismiss();
+      if (sdPicker != null) {
+        sdPicker = null;
+        finishActivity(PICK_SD_TREE);
+      }
       if (sourceCheck.cancel()) starting = false;
       clearPendingSdStart();
       if (pending) showSdFailure("カードの接続が変わりました。取り込み元を確認してください。");

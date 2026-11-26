@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
@@ -132,6 +133,7 @@ public final class SdUsbReprobeController {
           @Override
           public void onReceive(Context ignored, Intent event) {
             if (armed != null) invalidateEjection();
+            if (running != null) running.invalidateBeforeClaim();
             if (positive != null) show(null);
             observed();
           }
@@ -258,6 +260,15 @@ public final class SdUsbReprobeController {
                         .anyMatch(v -> event.uuid().equals(v.uuid())))))) {
       invalidateEjection();
     }
+    if (running != null
+        && !event.emulated()
+        && running.snapshot.volumes().stream()
+            .noneMatch(
+                v ->
+                    Objects.equals(v.uuid(), event.uuid())
+                        && Objects.equals(v.state(), event.state()))) {
+      running.invalidateBeforeClaim();
+    }
     observed();
   }
 
@@ -265,6 +276,9 @@ public final class SdUsbReprobeController {
     if (destroyed) return;
     Snapshot current = platform.snapshot();
     if (armed != null && !armed.matches(current, now.getAsLong())) invalidateEjection();
+    if (running != null && (!running.snapshot.sameAdmission(current) || !current.permitted())) {
+      running.invalidateBeforeClaim();
+    }
     if (positive != null && (!positive.sameAdmission(current) || !current.permitted())) show(null);
     if (current.equals(lastObserved)) return;
     lastObserved = current;
@@ -443,7 +457,21 @@ public final class SdUsbReprobeController {
     final CameraImportGate.Reservation reservation;
     final LongSupplier now;
     final AtomicBoolean cancelled = new AtomicBoolean();
+
+    private enum ClaimPhase {
+      PENDING,
+      INVALIDATED,
+      STARTED
+    }
+
+    private final AtomicReference<ClaimPhase> claimPhase =
+        new AtomicReference<>(ClaimPhase.PENDING);
+    private final long generation = MountedCameraCard.detachGeneration();
     Snapshot restored;
+
+    void invalidateBeforeClaim() {
+      claimPhase.compareAndSet(ClaimPhase.PENDING, ClaimPhase.INVALIDATED);
+    }
 
     Run(
         Platform platform,
@@ -470,10 +498,21 @@ public final class SdUsbReprobeController {
                 snapshot,
                 platform,
                 CameraImportGate.lock,
-                () -> cancelled.get() || !reservation.isOpen(),
+                () ->
+                    cancelled.get()
+                        || claimPhase.get() == ClaimPhase.INVALIDATED
+                        || !reservation.isOpen(),
                 now,
                 REMOUNT_WAIT_MS,
                 new SdUsbReprobe.Observer() {
+                  @Override
+                  public boolean startingClaim() {
+                    return !cancelled.get()
+                        && reservation.isOpen()
+                        && generation == MountedCameraCard.detachGeneration()
+                        && claimPhase.compareAndSet(ClaimPhase.PENDING, ClaimPhase.STARTED);
+                  }
+
                   @Override
                   public void waiting() {
                     MAIN.post(
@@ -585,14 +624,22 @@ public final class SdUsbReprobeController {
         UsbDevice device = devices.values().iterator().next();
         Reader reader = reader(device);
         if (reader == null) return unavailable();
+        return new Snapshot(reader, destination, currentVolumes(), usb.hasPermission(device));
+      } catch (RuntimeException unavailable) {
+        return unavailable();
+      }
+    }
+
+    private List<SdUsbReprobe.Volume> currentVolumes() {
+      try {
         StorageManager storage = app.getSystemService(StorageManager.class);
         var visible = new ArrayList<SdUsbReprobe.VisibleVolume>();
         for (StorageVolume volume : storage.getStorageVolumes()) visible.add(visible(volume));
         var volumes = SdUsbReprobe.portableLayout(visible);
-        if (volumes == null) return unavailable();
-        return new Snapshot(reader, destination, volumes, usb.hasPermission(device));
+        return volumes == null ? List.of() : volumes;
       } catch (RuntimeException unavailable) {
-        return unavailable();
+        // USB and the selected target can still be known while vold discovers the media.
+        return List.of();
       }
     }
 

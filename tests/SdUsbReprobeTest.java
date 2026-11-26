@@ -1,5 +1,6 @@
 package jp.nano.rawgallery.camera;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -166,6 +167,29 @@ public final class SdUsbReprobeTest {
             && fake.calls.contains("source"),
         "A changed source can be ready only after checking the current registration");
 
+    fake = new Fake();
+    Snapshot pending = new Snapshot(READER, TARGET, List.of(), true);
+    fake.postRelease.add(pending);
+    fake.postRelease.add(
+        new Snapshot(
+            READER,
+            TARGET,
+            List.of(new Volume(TARGET, "mounted"), new Volume(null, "unmounted")),
+            true));
+    require(
+        run(EJECTION, fake, new ReentrantLock(), () -> false, 5) == State.READY,
+        "Missing and partial inventories after release are retried while the known connection remains");
+    fake = new Fake();
+    fake.restored = pending;
+    require(
+        run(EJECTION, fake, new ReentrantLock(), () -> false, 0) == State.TIMEOUT,
+        "A persistently unavailable inventory cannot become ready before timeout");
+    fake = new Fake();
+    fake.restored = new Snapshot(READER, SOURCE, List.of(), true);
+    require(
+        run(EJECTION, fake, new ReentrantLock(), () -> false, 0) == State.CHANGED,
+        "A changed selected destination fails even while inventory is pending");
+
     var busy = new ReentrantLock();
     var acquired = new CountDownLatch(1);
     var release = new CountDownLatch(1);
@@ -248,6 +272,11 @@ public final class SdUsbReprobeTest {
         timeout,
         new SdUsbReprobe.Observer() {
           @Override
+          public boolean startingClaim() {
+            return true;
+          }
+
+          @Override
           public void waiting() {
             fake.calls.add("waiting");
           }
@@ -261,6 +290,7 @@ public final class SdUsbReprobeTest {
 
   private static final class Fake implements SdUsbReprobe.Platform, SdUsbReprobe.Session {
     final List<String> calls = new ArrayList<>();
+    final ArrayDeque<Snapshot> postRelease = new ArrayDeque<>();
     final AtomicBoolean cancel = new AtomicBoolean();
     Snapshot beforeClaim = EJECTED;
     Snapshot restored = MOUNTED;
@@ -269,7 +299,7 @@ public final class SdUsbReprobeTest {
 
     @Override
     public Snapshot snapshot() {
-      if (calls.contains("close")) return restored;
+      if (calls.contains("close")) return postRelease.isEmpty() ? restored : postRelease.remove();
       return calls.contains("open") ? beforeClaim : EJECTED;
     }
 

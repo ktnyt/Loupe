@@ -5,15 +5,20 @@ import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.hardware.usb.UsbManager;
+import android.net.Uri;
 import android.os.Build;
+import android.provider.DocumentsContract;
 import android.view.View;
 import android.widget.Button;
 import android.widget.TextView;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.lang.reflect.Field;
 import java.util.List;
 import jp.nano.rawgallery.camera.ImportProgress;
+import jp.nano.rawgallery.camera.MountedCameraCard;
 import jp.nano.rawgallery.camera.SdUsbReprobeController;
+import jp.nano.rawgallery.camera.SdUsbReprobeFlowChecks;
 
 /** Exercises the on-screen controls without USB/media fixtures or a physical device. */
 final class CameraSdUsbReprobeChecks {
@@ -97,7 +102,8 @@ final class CameraSdUsbReprobeChecks {
             });
         capture(test, directory, width, font, state.name);
       }
-      jp.nano.rawgallery.camera.SdUsbReprobeFlowChecks.run(test, activity);
+      SdUsbReprobeFlowChecks.run(test, activity);
+      checkCallbackOnlyRemoval(test, activity);
     } finally {
       test.runOnMainSync(activity::finish);
       test.waitForIdleSync();
@@ -108,6 +114,87 @@ final class CameraSdUsbReprobeChecks {
         + font
         + ": actual unsupported action, synthetic status rendering and controller lifecycle. "
         + directory.getAbsolutePath();
+  }
+
+  private static void checkCallbackOnlyRemoval(Instrumentation test, CameraImportActivity activity)
+      throws Exception {
+    var picker = field("sdPicker");
+    var confirmation = field("sdConfirmation");
+    var pickerType = picker.getType();
+    var constructor =
+        pickerType.getDeclaredConstructor(
+            String.class,
+            String.class,
+            String.class,
+            long.class,
+            boolean.class,
+            String.class,
+            CameraImportActivity.SdStartMode.class);
+    constructor.setAccessible(true);
+    var requestCode = field("PICK_SD_TREE");
+    String uuid = "30fa-0021";
+    Uri source =
+        DocumentsContract.buildTreeDocumentUri(
+            "com.android.externalstorage.documents", uuid + ":DCIM");
+    test.runOnMainSync(
+        () -> {
+          try {
+            SdUsbReprobeFlowChecks.volumeEvent(uuid, false);
+            long beforePicker = MountedCameraCard.detachGeneration();
+            picker.set(
+                activity,
+                constructor.newInstance(
+                    null,
+                    PhotoStorage.PRIMARY,
+                    "RAW",
+                    beforePicker,
+                    false,
+                    null,
+                    CameraImportActivity.SdStartMode.MANUAL));
+            SdUsbReprobeFlowChecks.volumeEvent(uuid, true);
+            require(
+                picker.get(activity) == null,
+                "The pending folder picker is invalidated by callback-only removal");
+            long afterPicker = MountedCameraCard.detachGeneration();
+            require(afterPicker == beforePicker + 1, "Storage callback advances the generation");
+            SdUsbReprobeFlowChecks.volumeEvent(uuid, true);
+            require(
+                MountedCameraCard.detachGeneration() == afterPicker,
+                "A second notification of the same removal has no additional effect");
+            SdUsbReprobeFlowChecks.volumeEvent(uuid, false);
+            activity.onActivityResult(
+                requestCode.getInt(null),
+                android.app.Activity.RESULT_OK,
+                new Intent().setData(source).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
+            require(
+                confirmation.get(activity) == null,
+                "A result from the canceled picker is ignored even after the same card returns");
+
+            activity.confirmSdKinds(
+                new CameraImportActivity.SdStart(
+                    source, null, PhotoStorage.PRIMARY, "RAW", afterPicker, false, null),
+                "取り込み元と保存先");
+            var dialog = (androidx.appcompat.app.AlertDialog) confirmation.get(activity);
+            require(dialog != null && dialog.isShowing(), "Format confirmation is displayed");
+            SdUsbReprobeFlowChecks.volumeEvent(uuid, true);
+            SdUsbReprobeFlowChecks.volumeEvent(uuid, false);
+            require(
+                !dialog.isShowing() && MountedCameraCard.detachGeneration() == afterPicker + 1,
+                "The independently observed second removal cancels the open confirmation");
+          } catch (ReflectiveOperationException unavailable) {
+            throw new AssertionError(unavailable);
+          }
+        });
+    test.waitForIdleSync();
+    require(
+        !ImportProgress.INSTANCE.getActive(),
+        "The stale picker or confirmation never starts an import");
+  }
+
+  private static Field field(String name) throws NoSuchFieldException {
+    var field = CameraImportActivity.class.getDeclaredField(name);
+    field.setAccessible(true);
+    return field;
   }
 
   private static void bringIntoView(View view) {

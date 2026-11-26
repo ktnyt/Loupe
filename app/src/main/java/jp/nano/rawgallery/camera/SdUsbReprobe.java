@@ -156,6 +156,8 @@ final class SdUsbReprobe {
   }
 
   interface Observer {
+    boolean startingClaim();
+
     void waiting();
 
     void restored(Snapshot current);
@@ -188,6 +190,7 @@ final class SdUsbReprobe {
         if (!current.permitted()) return State.DENIED;
         if (cancelled.getAsBoolean()) return State.CANCELLED;
         if (!ejection.confirmed(current, now.getAsLong())) return State.EJECT_REQUIRED;
+        if (!observer.startingClaim()) return State.CANCELLED;
         if (!claimAndRelease(usb)) return State.FAILED;
       }
       observer.waiting();
@@ -202,10 +205,12 @@ final class SdUsbReprobe {
             boolean reachable = platform.sourceReachable(source, current.destination, cancelled);
             if (cancelled.getAsBoolean()) return State.CANCELLED;
             Snapshot verified = platform.snapshot();
-            if (!current.sameAdmission(verified)) return State.CHANGED;
+            if (!initial.sameConnection(verified)) return State.CHANGED;
             if (!verified.permitted()) return State.DENIED;
-            observer.restored(verified);
-            return reachable ? State.READY : State.SOURCE_REQUIRED;
+            if (current.sameAdmission(verified)) {
+              observer.restored(verified);
+              return reachable ? State.READY : State.SOURCE_REQUIRED;
+            }
           }
         }
         long remaining = deadline - now.getAsLong();
