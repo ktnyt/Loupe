@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Lock;
 import java.util.function.BooleanSupplier;
 import java.util.function.LongSupplier;
@@ -59,6 +60,34 @@ final class SdUsbReprobe {
     TIMEOUT,
     FAILED,
     CANCELLED
+  }
+
+  static final class ClaimAuthorization {
+    private enum Phase {
+      PENDING,
+      STARTED,
+      INVALIDATED,
+      CANCELLED
+    }
+
+    private final AtomicReference<Phase> phase = new AtomicReference<>(Phase.PENDING);
+
+    boolean tryStart(BooleanSupplier stillValid) {
+      return stillValid.getAsBoolean() && phase.compareAndSet(Phase.PENDING, Phase.STARTED);
+    }
+
+    void invalidateBeforeClaim() {
+      phase.compareAndSet(Phase.PENDING, Phase.INVALIDATED);
+    }
+
+    void cancel() {
+      phase.set(Phase.CANCELLED);
+    }
+
+    boolean cancelled() {
+      Phase current = phase.get();
+      return current == Phase.CANCELLED || current == Phase.INVALIDATED;
+    }
   }
 
   record Reader(String name, int deviceId, int vendor, int product, int interfaceId) {

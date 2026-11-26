@@ -28,8 +28,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.Executor;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
@@ -193,7 +191,7 @@ public final class SdUsbReprobeController {
 
   public void pause() {
     foreground = false;
-    if (running != null) running.cancelled.set(true);
+    if (running != null) running.authorization.cancel();
   }
 
   public void stop() {
@@ -479,21 +477,12 @@ public final class SdUsbReprobeController {
     final Ejection confirmation;
     final CameraImportGate.Reservation reservation;
     final LongSupplier now;
-    final AtomicBoolean cancelled = new AtomicBoolean();
-
-    private enum ClaimPhase {
-      PENDING,
-      INVALIDATED,
-      STARTED
-    }
-
-    private final AtomicReference<ClaimPhase> claimPhase =
-        new AtomicReference<>(ClaimPhase.PENDING);
+    final SdUsbReprobe.ClaimAuthorization authorization = new SdUsbReprobe.ClaimAuthorization();
     private final long removalGeneration = MountedCameraCard.removalGeneration();
     Snapshot restored;
 
     void invalidateBeforeClaim() {
-      claimPhase.compareAndSet(ClaimPhase.PENDING, ClaimPhase.INVALIDATED);
+      authorization.invalidateBeforeClaim();
     }
 
     Run(
@@ -521,19 +510,16 @@ public final class SdUsbReprobeController {
                 snapshot,
                 platform,
                 CameraImportGate.lock,
-                () ->
-                    cancelled.get()
-                        || claimPhase.get() == ClaimPhase.INVALIDATED
-                        || !reservation.isOpen(),
+                () -> authorization.cancelled() || !reservation.isOpen(),
                 now,
                 REMOUNT_WAIT_MS,
                 new SdUsbReprobe.Observer() {
                   @Override
                   public boolean startingClaim() {
-                    return !cancelled.get()
-                        && reservation.isOpen()
-                        && removalGeneration == MountedCameraCard.removalGeneration()
-                        && claimPhase.compareAndSet(ClaimPhase.PENDING, ClaimPhase.STARTED);
+                    return authorization.tryStart(
+                        () ->
+                            reservation.isOpen()
+                                && removalGeneration == MountedCameraCard.removalGeneration());
                   }
 
                   @Override
@@ -563,7 +549,7 @@ public final class SdUsbReprobeController {
             var controller = owner.get();
             if (controller == null || controller.destroyed || controller.running != this) return;
             controller.running = null;
-            if (cancelled.get()) {
+            if (authorization.cancelled()) {
               controller.show(State.CANCELLED);
             } else if (restored != null) {
               Snapshot current = platform.snapshot();

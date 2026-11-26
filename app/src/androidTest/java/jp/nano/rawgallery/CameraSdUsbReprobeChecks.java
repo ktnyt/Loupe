@@ -9,12 +9,14 @@ import android.net.Uri;
 import android.os.Build;
 import android.provider.DocumentsContract;
 import android.view.View;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.Button;
 import android.widget.TextView;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.lang.reflect.Field;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import jp.nano.rawgallery.camera.ImportProgress;
 import jp.nano.rawgallery.camera.MountedCameraCard;
 import jp.nano.rawgallery.camera.SdUsbReprobeController;
@@ -102,6 +104,7 @@ final class CameraSdUsbReprobeChecks {
             });
         capture(test, directory, width, font, state.name);
       }
+      checkDialogs(test, activity, directory, width, font);
       SdUsbReprobeFlowChecks.run(test, activity);
       checkCardNotificationOrdering(test, activity);
     } finally {
@@ -112,8 +115,88 @@ final class CameraSdUsbReprobeChecks {
         + width
         + "dp/"
         + font
-        + ": actual unsupported action, synthetic status rendering and controller lifecycle. "
+        + ": actual unsupported action and dialogs, synthetic status rendering and controller lifecycle. "
         + directory.getAbsolutePath();
+  }
+
+  private static void checkDialogs(
+      Instrumentation test, CameraImportActivity activity, File directory, int width, float font)
+      throws Exception {
+    Class<?> type = Class.forName(SdUsbReprobeController.class.getName() + "$AndroidDialogs");
+    var constructor = type.getDeclaredConstructor(android.app.Activity.class);
+    constructor.setAccessible(true);
+    var dialogs = constructor.newInstance(activity);
+    var cancelCount = new AtomicInteger();
+    var positiveCount = new AtomicInteger();
+    for (String name : List.of("prepare", "confirm")) {
+      boolean preparing = name.equals("prepare");
+      var show = type.getDeclaredMethod(name, Runnable.class, Runnable.class);
+      show.setAccessible(true);
+      test.runOnMainSync(
+          () -> {
+            try {
+              show.invoke(
+                  dialogs,
+                  (Runnable) positiveCount::incrementAndGet,
+                  (Runnable) cancelCount::incrementAndGet);
+            } catch (ReflectiveOperationException failure) {
+              throw new AssertionError(failure);
+            }
+          });
+      capture(test, directory, width, font, "dialog-" + name);
+      var automation = test.getUiAutomation();
+      var root = automation.getRootInActiveWindow();
+      require(root != null, "Dialog has an accessibility window " + name);
+      var positiveLabel = preparing ? "ストレージ設定を開く" : "取り出し済み";
+      var safetyText = preparing ? "各カードにパーティションが1つ" : "フォーマットやマウントが進行中";
+      require(
+          !root.findAccessibilityNodeInfosByText(safetyText).isEmpty(),
+          "Safety instructions are exposed to accessibility " + name);
+      dialogButton(root, positiveLabel);
+      dialogButton(root, "キャンセル");
+      var scroll = scrollable(root);
+      if (scroll != null && scroll.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
+        capture(test, directory, width, font, "dialog-" + name + "-scrolled");
+        root = automation.getRootInActiveWindow();
+        require(root != null, "Scrolled dialog retains its window " + name);
+        dialogButton(root, positiveLabel);
+      }
+      require(
+          dialogButton(root, "キャンセル").performAction(AccessibilityNodeInfo.ACTION_CLICK),
+          "Cancel closes the dialog without invoking its action " + name);
+      test.waitForIdleSync();
+    }
+    require(
+        cancelCount.get() == 2 && positiveCount.get() == 0,
+        "The actual dialogs were canceled without opening Settings or re-detecting");
+  }
+
+  private static AccessibilityNodeInfo dialogButton(AccessibilityNodeInfo root, String label) {
+    var button =
+        root.findAccessibilityNodeInfosByText(label).stream()
+            .filter(
+                node ->
+                    label.contentEquals(node.getText())
+                        && node.isClickable()
+                        && node.isEnabled()
+                        && node.isVisibleToUser())
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("Visible dialog button " + label));
+    var bounds = new Rect();
+    button.getBoundsInScreen(bounds);
+    require(!bounds.isEmpty(), "Reachable dialog button " + label);
+    return button;
+  }
+
+  private static AccessibilityNodeInfo scrollable(AccessibilityNodeInfo node) {
+    if (node.isScrollable()) return node;
+    for (int i = 0; i < node.getChildCount(); i++) {
+      var child = node.getChild(i);
+      if (child == null) continue;
+      var scroll = scrollable(child);
+      if (scroll != null) return scroll;
+    }
+    return null;
   }
 
   private static void checkCardNotificationOrdering(

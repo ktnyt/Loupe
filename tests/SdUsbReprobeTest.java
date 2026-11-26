@@ -23,6 +23,7 @@ public final class SdUsbReprobeTest {
 
   public static void main(String[] args) throws Exception {
     admission();
+    claimAuthorization();
     runPaths();
     topology();
     System.out.println("SdUsbReprobeTest passed");
@@ -86,6 +87,25 @@ public final class SdUsbReprobeTest {
                 new Reader(READER.name(), 15, 8644, 45152, 0), TARGET, EJECTED.volumes(), true),
             10),
         "New USB connection with the same model is rejected");
+  }
+
+  private static void claimAuthorization() {
+    var backgrounded = new SdUsbReprobe.ClaimAuthorization();
+    boolean claim =
+        backgrounded.tryStart(
+            () -> {
+              // Activity pauses after the worker's last check but before it can start claiming.
+              backgrounded.cancel();
+              return true;
+            });
+    require(!claim && backgrounded.cancelled(), "Pause wins before claim starts");
+
+    var started = new SdUsbReprobe.ClaimAuthorization();
+    require(started.tryStart(() -> true), "An active authorization starts once");
+    started.invalidateBeforeClaim();
+    require(!started.cancelled(), "Own remount notifications do not cancel a started claim");
+    started.cancel();
+    require(started.cancelled(), "Pause still stops remount polling after claim starts");
   }
 
   private static void runPaths() throws Exception {

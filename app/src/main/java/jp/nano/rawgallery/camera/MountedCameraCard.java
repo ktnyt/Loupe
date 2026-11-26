@@ -81,7 +81,11 @@ public final class MountedCameraCard {
             legacyMediaChanged(notifiedVolumeUuid(event), event.getAction());
           }
         };
-    register(app, receiver, filter);
+    if (Build.VERSION.SDK_INT >= 33) {
+      app.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
+    } else {
+      app.registerReceiver(receiver, filter);
+    }
     observing = true;
     try {
       BroadcastReceiver usb =
@@ -102,7 +106,11 @@ public final class MountedCameraCard {
           };
       var devices = new IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED);
       devices.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED);
-      register(app, usb, devices);
+      if (Build.VERSION.SDK_INT >= 33) {
+        app.registerReceiver(usb, devices, Context.RECEIVER_NOT_EXPORTED);
+      } else {
+        app.registerReceiver(usb, devices);
+      }
       StorageManager storage = app.getSystemService(StorageManager.class);
       if (storage != null) {
         storage.registerStorageVolumeCallback(
@@ -118,14 +126,6 @@ public final class MountedCameraCard {
       }
     } catch (RuntimeException unavailable) {
       // Keep the existing media-broadcast path if supplemental notifications are unavailable.
-    }
-  }
-
-  private static void register(Context app, BroadcastReceiver receiver, IntentFilter filter) {
-    if (Build.VERSION.SDK_INT >= 33) {
-      app.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
-    } else {
-      app.registerReceiver(receiver, filter);
     }
   }
 
