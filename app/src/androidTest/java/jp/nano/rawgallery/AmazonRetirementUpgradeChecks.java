@@ -931,51 +931,29 @@ final class AmazonRetirementUpgradeChecks {
             return true;
           });
       try {
-        AlbumTagEntryChecks.waitFor(
+        int captureScroll =
+            awaitCleanupUnknownFrame(test, scroll, status, stop, unknownLabel, stopLabel);
+        SyncControlChecks.capture(test, "amazon-retirement-consent-unknown" + suffix);
+        AlbumTagEntryChecks.main(
             test,
-            "visible unknown E2 state and accessible stop action",
             () -> {
-              if (!status.isShown() || status.getHeight() <= 0) return false;
-              revealCleanupUnknown(scroll, status, stop);
-              var node = stop.createAccessibilityNodeInfo();
-              var bounds = new Rect();
-              node.getBoundsInScreen(bounds);
-              var visibleStatus = new Rect();
-              var visibleStop = new Rect();
-              int touchSize = GalleryUi.dp(screen, 48);
-              return screen.hasWindowFocus()
-                  && status.isShown()
-                  && unknownLabel.contentEquals(status.getText())
-                  && status.getGlobalVisibleRect(visibleStatus)
-                  && visibleStatus.height() >= status.getHeight()
-                  && status.getAccessibilityLiveRegion() == View.ACCESSIBILITY_LIVE_REGION_POLITE
-                  && stopLabel.contentEquals(node.getText())
-                  && node.isVisibleToUser()
-                  && node.isEnabled()
-                  && node.isClickable()
-                  && stop.getGlobalVisibleRect(visibleStop)
-                  && visibleStop.width() >= touchSize
-                  && visibleStop.height() >= touchSize
-                  && bounds.width() >= touchSize
-                  && bounds.height() >= touchSize;
+              require(
+                  scroll.getScrollY() == captureScroll
+                      && cleanupUnknownVisible(status, stop, unknownLabel, stopLabel),
+                  "unknown E2 status or stop geometry changed during capture");
+              require(
+                  E2Cleanup.consentUnknown(context)
+                      && stop.isEnabled()
+                      && stopLabel.contentEquals(stop.getText())
+                      && stop.performClick(),
+                  "unknown E2 state did not offer the real stop action");
+              return true;
             });
       } catch (AssertionError failure) {
         captureCleanupUnknownFailure(
             test, screen, panel, status, stop, unknownLabel, stopLabel, suffix, failure);
         throw failure;
       }
-      SyncControlChecks.capture(test, "amazon-retirement-consent-unknown" + suffix);
-      AlbumTagEntryChecks.main(
-          test,
-          () -> {
-            require(
-                E2Cleanup.consentUnknown(context)
-                    && stop.isEnabled()
-                    && stopLabel.contentEquals(stop.getText())
-                    && stop.performClick(),
-                "unknown E2 state did not offer the real stop action");
-            return true;
-          });
       AlbumTagEntryChecks.waitFor(
           test,
           "confirmed E2 stop returned to the off state",
@@ -1025,6 +1003,70 @@ final class AmazonRetirementUpgradeChecks {
             "unknown UI proof changed preferences, credentials, history or production journal");
       }
     }
+  }
+
+  private static int awaitCleanupUnknownFrame(
+      Instrumentation test,
+      ScrollView scroll,
+      TextView status,
+      Button stop,
+      String unknownLabel,
+      String stopLabel)
+      throws Exception {
+    View decor = scroll.getRootView();
+    // Lay out the newly visible status before calculating how far to scroll.
+    ConsistencyLayoutChecks.frame(test, decor);
+    var intendedScroll = new java.util.concurrent.atomic.AtomicInteger();
+    var stable = new AtomicBoolean();
+    for (int attempt = 0; attempt < 3; attempt++) {
+      AlbumTagEntryChecks.waitFor(
+          test,
+          "visible unknown E2 state and accessible stop action",
+          () -> {
+            if (!status.isShown() || status.getHeight() <= 0) return false;
+            revealCleanupUnknown(scroll, status, stop);
+            if (!cleanupUnknownVisible(status, stop, unknownLabel, stopLabel)) return false;
+            intendedScroll.set(scroll.getScrollY());
+            return true;
+          });
+      ConsistencyLayoutChecks.frame(test, decor);
+      AlbumTagEntryChecks.main(
+          test,
+          () -> {
+            stable.set(
+                decor.hasWindowFocus()
+                    && scroll.getScrollY() == intendedScroll.get()
+                    && cleanupUnknownVisible(status, stop, unknownLabel, stopLabel));
+            return true;
+          });
+      if (stable.get()) return intendedScroll.get();
+      // Layout can restore focus and scroll. Reveal again instead of capturing that frame.
+    }
+    throw new AssertionError("unknown E2 status and stop did not stabilize after layout");
+  }
+
+  private static boolean cleanupUnknownVisible(
+      TextView status, Button stop, String unknownLabel, String stopLabel) {
+    if (!stop.hasWindowFocus() || !status.isShown() || status.getHeight() <= 0) return false;
+    var node = stop.createAccessibilityNodeInfo();
+    var bounds = new Rect();
+    node.getBoundsInScreen(bounds);
+    var visibleStatus = new Rect();
+    var visibleStop = new Rect();
+    int touchSize = GalleryUi.dp(stop.getContext(), 48);
+    return unknownLabel.contentEquals(status.getText())
+        && status.getGlobalVisibleRect(visibleStatus)
+        && visibleStatus.height() >= status.getHeight()
+        && status.getAccessibilityLiveRegion() == View.ACCESSIBILITY_LIVE_REGION_POLITE
+        && stopLabel.contentEquals(node.getText())
+        && node.isVisibleToUser()
+        && node.isEnabled()
+        && node.isClickable()
+        && stop.getGlobalVisibleRect(visibleStop)
+        && visibleStop.width() >= touchSize
+        && visibleStop.height() >= touchSize
+        && bounds.width() >= touchSize
+        && bounds.height() >= touchSize;
   }
 
   private static void revealCleanupUnknown(ScrollView scroll, View status, View stop) {
