@@ -168,11 +168,14 @@ final class CameraSdUsbReprobeChecks {
                 && !root.findAccessibilityNodeInfosByText("フォーマットは選ばないでください").isEmpty(),
             "Show all-cards and no-format instructions before opening Settings");
       }
-      dialogButton(root, positiveLabel);
-      dialogButton(root, "キャンセル");
       var needsScroll = new AtomicBoolean();
+      var positiveBounds = screenBounds(dialogButton(root, positiveLabel));
+      var cancelBounds = screenBounds(dialogButton(root, "キャンセル"));
       test.runOnMainSync(
-          () -> needsScroll.set(checkDialogBounds(activity, positiveLabel).canScrollVertically(1)));
+          () ->
+              needsScroll.set(
+                  checkDialogBounds(activity, positiveLabel, positiveBounds, cancelBounds)
+                      .canScrollVertically(1)));
       if (needsScroll.get()) {
         int previousY = 0;
         for (int page = 0; page < 5 && needsScroll.get(); page++) {
@@ -180,6 +183,8 @@ final class CameraSdUsbReprobeChecks {
           require(
               scroll != null && scroll.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD),
               "Overflowing dialog instructions can scroll through accessibility");
+          // Let the native smooth scroll finish before checking whether another page remains.
+          SystemClock.sleep(300);
           int beforeScroll = previousY;
           var position = new AtomicInteger();
           long deadline = SystemClock.uptimeMillis() + 1500;
@@ -187,7 +192,7 @@ final class CameraSdUsbReprobeChecks {
             SystemClock.sleep(80);
             test.runOnMainSync(
                 () -> {
-                  var body = checkDialogBounds(activity, positiveLabel);
+                  var body = dialogBody();
                   position.set(body.getScrollY());
                   needsScroll.set(body.canScrollVertically(1));
                 });
@@ -200,6 +205,10 @@ final class CameraSdUsbReprobeChecks {
           require(root != null, "Scrolled dialog retains its window " + name);
         }
         require(!needsScroll.get(), "Entire dialog instructions are reachable " + name);
+        var endPositiveBounds = screenBounds(dialogButton(root, positiveLabel));
+        var endCancelBounds = screenBounds(dialogButton(root, "キャンセル"));
+        test.runOnMainSync(
+            () -> checkDialogBounds(activity, positiveLabel, endPositiveBounds, endCancelBounds));
         capture(test, directory, width, font, "dialog-" + name + "-scrolled");
       }
       tapDialogButton(test, dialogButton(root, "キャンセル"));
@@ -229,6 +238,14 @@ final class CameraSdUsbReprobeChecks {
           }
         });
     test.waitForIdleSync();
+    // Window enter animations run on the compositor after the app thread is idle.
+    SystemClock.sleep(300);
+  }
+
+  private static Rect screenBounds(AccessibilityNodeInfo node) {
+    var bounds = new Rect();
+    node.getBoundsInScreen(bounds);
+    return bounds;
   }
 
   private static void tapDialogButton(Instrumentation test, AccessibilityNodeInfo button) {
@@ -253,30 +270,63 @@ final class CameraSdUsbReprobeChecks {
     test.waitForIdleSync();
   }
 
-  private static ScrollView checkDialogBounds(Activity activity, String positiveLabel) {
+  private static ScrollView dialogBody() {
     for (var window : WindowInspector.getGlobalWindowViews()) {
       ScrollView body = window.findViewWithTag("sd-reprobe-dialog-body");
-      if (body == null || !body.isShown()) continue;
-      var positive = (Button) window.findViewById(android.R.id.button1);
-      var negative = (Button) window.findViewById(android.R.id.button2);
-      require(positiveLabel.contentEquals(positive.getText()), "Actual positive button");
-      require("キャンセル".contentEquals(negative.getText()), "Actual cancel button");
-      var visibleBody = new Rect();
-      require(body.getGlobalVisibleRect(visibleBody), "Visible instructions");
-      for (Button button : List.of(positive, negative)) {
-        var visible = new Rect();
-        var local = new Rect();
-        require(
-            button.getLocalVisibleRect(local)
-                && local.equals(new Rect(0, 0, button.getWidth(), button.getHeight()))
-                && button.getHeight() >= GalleryUi.dp(activity, 48)
-                && button.getGlobalVisibleRect(visible)
-                && !Rect.intersects(visibleBody, visible),
-            "Full 48dp action visible outside the scroll body: " + button.getText() + " " + local);
-      }
-      return body;
+      if (body != null && body.isShown()) return body;
     }
     throw new AssertionError("Expected a visible re-detection dialog");
+  }
+
+  private static ScrollView checkDialogBounds(
+      Activity activity, String positiveLabel, Rect positiveBounds, Rect cancelBounds) {
+    ScrollView body = dialogBody();
+    var window = body.getRootView();
+    var positive = (Button) window.findViewById(android.R.id.button1);
+    var cancel = (Button) window.findViewById(android.R.id.button2);
+    require(positiveLabel.contentEquals(positive.getText()), "Actual positive button");
+    require("キャンセル".contentEquals(cancel.getText()), "Actual cancel button");
+    var visibleBody = new Rect();
+    var visibleWindow = new Rect();
+    var displayFrame = new Rect();
+    window.getWindowVisibleDisplayFrame(displayFrame);
+    require(
+        body.getGlobalVisibleRect(visibleBody) && window.getGlobalVisibleRect(visibleWindow),
+        "Visible dialog and instructions");
+    for (Button button : List.of(positive, cancel)) {
+      var visible = new Rect();
+      var screen = button == positive ? positiveBounds : cancelBounds;
+      int width = button.getWidth();
+      int height = button.getHeight();
+      require(
+          button.getGlobalVisibleRect(visible)
+              && visible.width() == width
+              && visible.height() == height
+              && visibleWindow.contains(visible)
+              && !Rect.intersects(visibleBody, visible)
+              && height >= GalleryUi.dp(activity, 48)
+              && screen.width() == width
+              && screen.height() == height
+              && displayFrame.contains(screen),
+          "Full 48dp action visible outside the scroll body: "
+              + button.getText()
+              + " measured="
+              + width
+              + "x"
+              + height
+              + " visible="
+              + visible
+              + " screen="
+              + screen
+              + " window="
+              + visibleWindow
+              + " display="
+              + displayFrame
+              + " body="
+              + visibleBody);
+    }
+    require(!Rect.intersects(positiveBounds, cancelBounds), "Separate touch targets");
+    return body;
   }
 
   private static void checkSettingsRecipients(Class<?> type, Constructor<?> ctor)
