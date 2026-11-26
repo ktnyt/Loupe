@@ -80,7 +80,9 @@ run_instrumentation() {
   printf '%s\n' "$result"
   if ! grep -q '^INSTRUMENTATION_RESULT: stream=PASS ' <<< "$result" ||
      ! grep -qx 'INSTRUMENTATION_CODE: -1' <<< "$result"; then
-    if [[ "$label" == photo-edit ]]; then
+    if [[ "$label" == camera-ledger* ]]; then
+      "$adb" -s "$serial" logcat -d -s LedgerIdentityProbe:E '*:S' || true
+    elif [[ "$label" == photo-edit ]]; then
       "$adb" -s "$serial" logcat -d -s LoupeRawEdit:I '*:S' |
         awk '/full[.]prepare|fixture[.]cancel|jpeg[.]load[.]complete/ {print}' || true
     elif [[ "$label" == nano-background ]]; then
@@ -94,6 +96,21 @@ run_instrumentation() {
     exit 1
   fi
 }
+
+# Diagnostic checkpoint only: this branch is deliberately not a release candidate.
+# Preserve the failing CI architecture and order, cap the experiment, and never
+# represent a no-reproduction result as successful full verification.
+if [[ "$segment" == before-camera ]]; then
+  for probe_attempt in 1 2 3 4 5; do
+    for probe_mode in camera-history-migration confidence-store camera-ledger; do
+      run_instrumentation "$probe_mode (identity probe $probe_attempt)" \
+        -e mode "$probe_mode" -e width 400 -e font 1.0 \
+        jp.nano.rawgallery.test/jp.nano.rawgallery.ArchiveInstrumentation
+    done
+  done
+  echo 'LEDGER_IDENTITY_PROBE_NO_REPRODUCTION: five sequences passed; full verification was not run. This probe must not be merged or distributed.' >&2
+  exit 2
+fi
 
 # Modes are ordered because seed/verify pairs must share the same disposable device.
 ran=false
