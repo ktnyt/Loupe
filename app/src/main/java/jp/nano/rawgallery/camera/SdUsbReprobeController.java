@@ -216,7 +216,7 @@ public final class SdUsbReprobeController {
     }
     if (admission == State.UNAVAILABLE || removeMediaObserver == null) {
       discardSourceStatus.run();
-      show(State.UNAVAILABLE);
+      show(removeMediaObserver == null ? State.OBSERVER_UNAVAILABLE : State.UNAVAILABLE);
       return true;
     }
     var reservation = CameraImportGate.tryReservePreparation();
@@ -344,6 +344,7 @@ public final class SdUsbReprobeController {
             : switch (next) {
               case UNSUPPORTED -> "Androidでカードを安全に取り出してから、リーダーを挿し直してください。";
               case UNAVAILABLE -> "カードの状態を確認できませんでした。「SDカードを再認識」でやり直してください。";
+              case OBSERVER_UNAVAILABLE -> "SDカードを確認できませんでした。取り込み画面を開き直してください。";
               case PERMISSION -> "USBの使用許可を確認しています。";
               case REDETECTING -> "SDカードを再認識しています…";
               case WAITING -> "Androidがカードを認識するのを待っています…";

@@ -49,6 +49,7 @@ final class SdUsbReprobe {
   enum State {
     UNSUPPORTED,
     UNAVAILABLE,
+    OBSERVER_UNAVAILABLE,
     PERMISSION,
     REDETECTING,
     WAITING,

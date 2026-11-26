@@ -279,6 +279,10 @@ final class CameraSdUsbReprobeChecks {
       throws Exception {
     var observer = SdUsbReprobeController.class.getDeclaredField("removeMediaObserver");
     observer.setAccessible(true);
+    var foreground = SdUsbReprobeController.class.getDeclaredField("foreground");
+    foreground.setAccessible(true);
+    String retry = "「SDカードを再認識」でやり直してください";
+    String reopen = "取り込み画面を開き直してください";
     var sourceCheck = field("sourceCheck");
     var statusLoad = field("sdStatusCancellation");
     var settingsStatus = field("sdSettingsStatus");
@@ -291,30 +295,14 @@ final class CameraSdUsbReprobeChecks {
             var storedSettingsStatus = (TextView) settingsStatus.get(activity);
             harness.setUnavailableObservation();
             assertUnavailableEntry(
-                activity, consume, false, lookup, statusLoad, storedSettingsStatus);
+                activity, consume, false, lookup, statusLoad, storedSettingsStatus, retry);
             assertUnavailableEntry(
-                activity, consume, true, lookup, statusLoad, storedSettingsStatus);
+                activity, consume, true, lookup, statusLoad, storedSettingsStatus, retry);
             require(
                 harness.queued() == 0 && harness.claims() == 0,
                 "Neither manual entry can queue a claim with an incomplete observation");
             require(
                 !((Boolean) invoke(consume, activity)), "An unavailable entry is consumed once");
-
-            harness.setPermitted();
-            Object registration = observer.get(harness.controller());
-            require(registration != null, "Observer was available before simulating its failure");
-            observer.set(harness.controller(), null);
-            try {
-              assertUnavailableEntry(
-                  activity, consume, false, lookup, statusLoad, storedSettingsStatus);
-              assertUnavailableEntry(
-                  activity, consume, true, lookup, statusLoad, storedSettingsStatus);
-            } finally {
-              observer.set(harness.controller(), registration);
-            }
-            require(
-                harness.queued() == 0 && harness.claims() == 0,
-                "A supported reader without required observers cannot queue a claim");
             bringIntoView(root.findViewWithTag("sd-reprobe-status"));
           } catch (ReflectiveOperationException failure) {
             throw new AssertionError(failure);
@@ -324,6 +312,43 @@ final class CameraSdUsbReprobeChecks {
     test.runOnMainSync(
         () -> {
           try {
+            var lookup = (CameraSourceCheck) sourceCheck.get(activity);
+            var storedSettingsStatus = (TextView) settingsStatus.get(activity);
+            harness.setPermitted();
+            harness.controller().stop();
+            // Model the resumed foreground with a failed subscription and no registered observer.
+            foreground.setBoolean(harness.controller(), true);
+            require(observer.get(harness.controller()) == null, "No media observer is registered");
+            assertUnavailableEntry(
+                activity, consume, false, lookup, statusLoad, storedSettingsStatus, reopen);
+            assertUnavailableEntry(
+                activity, consume, true, lookup, statusLoad, storedSettingsStatus, reopen);
+            View action = root.findViewWithTag("sd-reprobe-start");
+            require(action.isEnabled() && action.performClick(), "Tap retry without observers");
+            TextView status = root.findViewWithTag("sd-reprobe-status");
+            require(
+                status.getText().toString().contains(reopen)
+                    && !status.getText().toString().contains(retry)
+                    && observer.get(harness.controller()) == null
+                    && harness.queued() == 0
+                    && harness.claims() == 0
+                    && !lookup.isPending()
+                    && !ImportProgress.INSTANCE.getActive(),
+                "Retry requires reopening when the observer is still absent and starts no import");
+            bringIntoView(status);
+          } catch (ReflectiveOperationException failure) {
+            throw new AssertionError(failure);
+          }
+        });
+    capture(test, activity.getWindow(), directory, width, font, "observer-unavailable");
+    test.runOnMainSync(
+        () -> {
+          try {
+            harness.controller().pause();
+            harness.start();
+            require(
+                observer.get(harness.controller()) != null && harness.queued() == 0,
+                "Reentry registers an observer without starting a refresh by itself");
             var lookup = (CameraSourceCheck) sourceCheck.get(activity);
             var app = test.getTargetContext();
             harness.setUnsupportedLayout();
@@ -356,7 +381,8 @@ final class CameraSdUsbReprobeChecks {
       boolean keepOriginals,
       CameraSourceCheck lookup,
       Field statusLoad,
-      TextView settingsStatus)
+      TextView settingsStatus,
+      String instruction)
       throws IllegalAccessException {
     activity.renderSdSource(CameraQuickImportSources.SdState.READY);
     activity.onNewIntent(CameraImportActivity.manualImportIntent(activity, keepOriginals));
@@ -370,9 +396,8 @@ final class CameraSdUsbReprobeChecks {
     View root = activity.getWindow().getDecorView();
     TextView status = root.findViewWithTag("sd-reprobe-status");
     require(
-        status.getText().toString().contains("カードの状態を確認できません")
-            && root.findViewWithTag("sd-reprobe-start").isEnabled(),
-        "Show a retry when required observations are unavailable");
+        status.getText().toString().contains(instruction),
+        "Show the recovery action for this unavailable state");
     require(
         root.findViewWithTag("sd-import-status").getVisibility() == View.GONE
             && settingsStatus.getVisibility() == View.GONE
