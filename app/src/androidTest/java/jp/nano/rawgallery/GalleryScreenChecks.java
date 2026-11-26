@@ -262,7 +262,8 @@ final class GalleryScreenChecks {
         });
   }
 
-  static void selectionStates(Instrumentation t, MainActivity a, List<File> fixtures, int width)
+  private static void selectionStates(
+      Instrumentation t, MainActivity a, List<File> fixtures, int width, RankingFixture rankings)
       throws Exception {
     ArrayList<PhotoRepository.Photo> photos = new ArrayList<>();
     for (int i = 0; i < 9; i++)
@@ -275,23 +276,19 @@ final class GalleryScreenChecks {
               i,
               0));
     List<Integer> undecided = List.of(0, 1, 2), decided = List.of(3, 4, 5);
-    ArrayList<String> pendingIds = new ArrayList<>(), doneIds = new ArrayList<>();
-    for (int i : undecided) pendingIds.add(ArchiveStore.key(photos.get(i)));
+    ArrayList<String> doneIds = new ArrayList<>();
     for (int i : decided) doneIds.add(ArchiveStore.key(photos.get(i)));
-    PhotoRanking done = new PhotoRanking(doneIds, "B:");
-    while (!done.done()) done = done.choose(true);
-    PhotoRanking finished = done;
+    String winner = doneIds.get(doneIds.size() - 1);
+    PhotoRanking done = rankings.startBurst(doneIds, "B:");
+    while (!done.done()) done = done.choose(done.upper().equals(winner));
+    rankings.save(done);
     TagDetailChecks.ui(
         t,
         () -> {
           RankingResultChecks.set(a, "photos", photos);
           RankingResultChecks.set(
               a, "bundles", List.of(undecided, decided, List.of(6), List.of(7), List.of(8)));
-          Map<List<Integer>, PhotoRanking> cache =
-              (Map<List<Integer>, PhotoRanking>) RankingResultChecks.get(a, "rankCache");
-          cache.clear();
-          cache.put(undecided, new PhotoRanking(pendingIds, "B:"));
-          cache.put(decided, finished);
+          RankingResultChecks.set(a, "rankingStore", rankings.store);
           Set<String> selected = (Set<String>) RankingResultChecks.get(a, "selectedPhotos");
           selected.clear();
           for (int i = 0; i < 7; i++) selected.add(photos.get(i).uri.toString());
@@ -462,6 +459,7 @@ final class GalleryScreenChecks {
     float requestedFont = a.getResources().getConfiguration().fontScale;
     File file = new File(a.getCacheDir(), "gallery-screen-synthetic.jpg");
     ArrayList<File> fixtures = new ArrayList<>();
+    RankingFixture rankings = new RankingFixture(a);
     try {
       portraitFixture(t, a, width, requestedFont);
       if (talkBack) {
@@ -475,6 +473,7 @@ final class GalleryScreenChecks {
             manager.isTouchExplorationEnabled(), "real TalkBack touch exploration enabled");
       }
       finishInitialIndex(t, a);
+      rankings.store.awaitReady();
       TagDetailChecks.ui(
           t, () -> a.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON));
       if (!talkBack) BestSwitchChecks.run(t, a);
@@ -492,7 +491,7 @@ final class GalleryScreenChecks {
         fixtures.add(fixture);
       }
       if (switchOnly) {
-        selectionStates(t, a, fixtures, width);
+        selectionStates(t, a, fixtures, width, rankings);
         return (materialOnly
                 ? "PASS Material3 scope (cloud badge reference check excluded; tracked in #80). "
                 : "PASS ")
@@ -513,6 +512,7 @@ final class GalleryScreenChecks {
               a.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
               RankingResultChecks.set(a, "photos", photos);
               RankingResultChecks.set(a, "bundles", groups);
+              RankingResultChecks.set(a, "rankingStore", rankings.store);
               RankingResultChecks.set(a, "selecting", false);
               RankingResultChecks.set(a, "rankFilter", 0);
               RankingResultChecks.set(a, "burstMembers", null);
@@ -641,7 +641,7 @@ final class GalleryScreenChecks {
             });
         settle(t, a);
       }
-      selectionStates(t, a, fixtures, width);
+      selectionStates(t, a, fixtures, width, rankings);
       if (talkBack)
         TagDetailChecks.ui(
             t,
@@ -681,15 +681,18 @@ final class GalleryScreenChecks {
           + (talkBack ? "real TalkBack focus/AX click/switch semantics; " : "physical photo taps; ")
           + "selection states/backgrounds/single icons, pending sort, hidden retention, best switch, visible deselection; synthetic actual gallery captures: all/album/long title. Existing data read only; generated photos replace the gallery before captures. Text bounds, sheet filters, three-column 96dp photos, filtering, selection and Back checked.\n";
     } finally {
-      TagDetailChecks.ui(
-          t,
-          () -> {
-            a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-            a.setRequestedOrientation(originalOrientation);
-            a.finish();
-          });
-      file.delete();
-      for (File fixture : fixtures) fixture.delete();
+      try (rankings) {
+        TagDetailChecks.ui(
+            t,
+            () -> {
+              a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+              a.setRequestedOrientation(originalOrientation);
+              a.finish();
+            });
+        t.waitForIdleSync();
+        file.delete();
+        for (File fixture : fixtures) fixture.delete();
+      }
     }
   }
 }

@@ -14,27 +14,29 @@ import java.util.concurrent.atomic.AtomicReference;
 /** Uses actual selection controls and an export writer that never sends an intent. */
 final class ShareSelectionResultChecks {
   static void run(
-      Instrumentation t, MainActivity a, List<PhotoRepository.Photo> library, File fixtures)
+      Instrumentation t,
+      MainActivity a,
+      List<PhotoRepository.Photo> library,
+      File fixtures,
+      RankingFixture rankings)
       throws Exception {
     PhotoRepository.Photo first = library.get(4), second = library.get(5), single = library.get(6);
     List<Integer> burst = List.of(0, 1);
     List<PhotoRepository.Photo> photos = List.of(first, second, single);
-    List<String> ids = List.of(ArchiveStore.key(first), ArchiveStore.key(second));
-    PhotoRanking undecided = new PhotoRanking(ids, "B:");
-    PhotoRanking winner = undecided;
-    while (!winner.done()) winner = winner.choose(true);
-    PhotoRanking ranked = winner;
-    PhotoRepository.Photo best = ranked.best().contains(ids.get(0)) ? first : second;
+    String secondId = ArchiveStore.key(second);
+    PhotoRanking undecided = rankings.startBurst(List.of(ArchiveStore.key(first), secondId), "B:");
+    PhotoRanking ranked = undecided.choose(undecided.upper().equals(secondId));
+    PhotoRepository.Photo best = second;
     AtomicReference<PhotoRepository.Photo> attempted = new AtomicReference<>();
     File exportDir = new File(fixtures, "selection-export");
     try {
+      rankings.save(ranked);
       TagDetailChecks.ui(
           t,
           () -> {
             RankingResultChecks.set(a, "photos", photos);
             RankingResultChecks.set(a, "bundles", List.of(burst, List.of(2)));
             RankingResultChecks.set(a, "bestOnly", true);
-            ranks(a).put(burst, ranked);
             choose(a, first, second);
             RankingResultChecks.call(a, "gallery");
             Object presented = RankingResultChecks.get(a, "presentedSelection");
@@ -63,7 +65,11 @@ final class ShareSelectionResultChecks {
                 attempted.get() == best, "opened menu exports its frozen photos");
             ((Dialog) RankingResultChecks.get(a, "shareDialog")).dismiss();
             menu(a, List.of(single)).dismiss();
-            ranks(a).put(burst, undecided);
+          });
+      rankings.save(undecided);
+      TagDetailChecks.ui(
+          t,
+          () -> {
             choose(a, first, second, single);
             RankingResultChecks.call(a, "gallery");
             share(a).performClick();
@@ -144,11 +150,6 @@ final class ShareSelectionResultChecks {
     Set<String> chosen = (Set<String>) RankingResultChecks.get(a, "selectedPhotos");
     chosen.clear();
     for (PhotoRepository.Photo photo : photos) chosen.add(photo.uri.toString());
-  }
-
-  @SuppressWarnings("unchecked")
-  private static Map<List<Integer>, PhotoRanking> ranks(MainActivity a) {
-    return (Map<List<Integer>, PhotoRanking>) RankingResultChecks.get(a, "rankCache");
   }
 
   private static Button share(MainActivity a) {

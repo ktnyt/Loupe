@@ -63,6 +63,7 @@ final class ShareHistoryScreenChecks {
     require(captures.isDirectory() || captures.mkdirs(), "Capture directory");
     List<Bitmap> bitmaps = new ArrayList<>();
     String prefix = "share-history-" + width + "-" + font;
+    RankingFixture rankings = new RankingFixture(activity);
     try {
       GalleryScreenChecks.portraitFixture(test, activity, width, font);
       GalleryScreenChecks.finishInitialIndex(test, activity);
@@ -99,6 +100,8 @@ final class ShareHistoryScreenChecks {
       history.put(keys.get(5), items);
       List<Integer> burst = List.of(3, 4);
       List<Integer> cloudBurst = List.of(5, 6);
+      rankings.save(rank(rankings, keys, burst));
+      rankings.save(rank(rankings, keys, cloudBurst));
       ui(
           test,
           () -> {
@@ -108,6 +111,7 @@ final class ShareHistoryScreenChecks {
                 activity,
                 "bundles",
                 List.of(List.of(0), List.of(1), List.of(2), burst, cloudBurst));
+            set(activity, "rankingStore", rankings.store);
             set(activity, "selecting", false);
             set(activity, "rankFilter", 0);
             set(activity, "burstMembers", null);
@@ -116,12 +120,6 @@ final class ShareHistoryScreenChecks {
             set(activity, "shareHistory", history);
             set(activity, "historyLoaded", true);
             set(activity, "historyReadFailed", false);
-            @SuppressWarnings("unchecked")
-            Map<List<Integer>, PhotoRanking> rankings =
-                (Map<List<Integer>, PhotoRanking>) get(activity, "rankCache");
-            rankings.clear();
-            rankings.put(burst, rank(keys, burst));
-            rankings.put(cloudBurst, rank(keys, cloudBurst));
             @SuppressWarnings("unchecked")
             LruCache<String, Bitmap> thumbs = (LruCache<String, Bitmap>) get(activity, "thumbs");
             // Supply the generated cloud photo's preview without opening its archive URI.
@@ -215,10 +213,12 @@ final class ShareHistoryScreenChecks {
           + "0/1/2/7 apps, rank and cached cloud preview, photo taps near the badges (shifted inward for system gestures if needed), AX labels and decoration, "
           + "removed long label, zoom, hardware captures with geometry. No handoffs or history writes.\n";
     } finally {
-      ui(test, activity::finish);
-      test.waitForIdleSync();
-      for (File file : scratch.listFiles()) file.delete();
-      scratch.delete();
+      try (rankings) {
+        ui(test, activity::finish);
+        test.waitForIdleSync();
+        for (File file : scratch.listFiles()) file.delete();
+        scratch.delete();
+      }
     }
   }
 
@@ -279,9 +279,10 @@ final class ShareHistoryScreenChecks {
     return result;
   }
 
-  private static PhotoRanking rank(List<String> keys, List<Integer> members) {
+  private static PhotoRanking rank(RankingFixture store, List<String> keys, List<Integer> members)
+      throws java.io.IOException {
     String winner = keys.get(members.get(0));
-    PhotoRanking ranking = new PhotoRanking(List.of(winner, keys.get(members.get(1))), "A:");
+    PhotoRanking ranking = store.startBurst(List.of(winner, keys.get(members.get(1))), "A:");
     return ranking.choose(ranking.upper().equals(winner));
   }
 
