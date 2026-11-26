@@ -8,7 +8,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.IdentityHashMap;
 import org.json.JSONArray;
-import org.json.JSONException;
 import org.json.JSONObject;
 
 /** Keeps one app-private summary independent of the asynchronous diagnostic queue. */
@@ -57,22 +56,25 @@ final class DiagnosticCrashHandler implements Thread.UncaughtExceptionHandler {
         new JSONObject()
             .put("version_code", versionCode)
             .put("exception", codeLabel(failure.getClass().getName()));
-    StackTraceElement[] stack = failure.getStackTrace();
+    StackTraceElement[] stack = readStack(failure);
+    int stackSize = stack == null ? 0 : stack.length;
     JSONArray frames = new JSONArray();
-    for (int index = 0; index < Math.min(stack.length, MAX_FRAMES); index++) {
-      StackTraceElement candidate = stack[index];
-      if (candidate == null) continue;
-      JSONObject entry = frame(candidate);
+    for (int index = 0; index < Math.min(stackSize, MAX_FRAMES); index++) {
+      JSONObject entry = frame(stack[index]);
+      if (entry == null) continue;
       if (index == 0) summary.put("frame", entry);
       frames.put(entry);
     }
     summary.put("frames", frames);
-    // An absent app_frame means none was found within the scan limit.
-    for (int index = 0; index < Math.min(stack.length, MAX_SCANNED_FRAMES); index++) {
+    // An absent app_frame means none could be verified within the scan limit.
+    for (int index = 0; index < Math.min(stackSize, MAX_SCANNED_FRAMES); index++) {
       StackTraceElement candidate = stack[index];
       if (candidate != null && candidate.getClassName().startsWith(APP_CLASS_PREFIX)) {
-        summary.put("app_frame", frame(candidate));
-        break;
+        JSONObject entry = frame(candidate);
+        if (entry != null) {
+          summary.put("app_frame", entry);
+          break;
+        }
       }
     }
     JSONArray causes = new JSONArray();
@@ -82,7 +84,7 @@ final class DiagnosticCrashHandler implements Thread.UncaughtExceptionHandler {
     while (causes.length() < MAX_CAUSES) {
       try {
         cause = cause.getCause();
-      } catch (RuntimeException ignored) {
+      } catch (Throwable ignored) {
         // A custom cause accessor can fail. Keep the crash details already collected.
         break;
       }
@@ -101,16 +103,37 @@ final class DiagnosticCrashHandler implements Thread.UncaughtExceptionHandler {
     }
   }
 
-  private static JSONObject frame(StackTraceElement value) throws JSONException {
-    return new JSONObject()
-        .put("class", codeLabel(value.getClassName()))
-        .put("method", codeLabel(value.getMethodName()))
-        .put("line", value.getLineNumber());
+  private static StackTraceElement[] readStack(Throwable failure) {
+    try {
+      return failure.getStackTrace();
+    } catch (Throwable ignored) {
+      // A custom stack accessor can fail while the cause chain is still readable.
+      return null;
+    }
+  }
+
+  private static JSONObject frame(StackTraceElement value) {
+    if (value == null) return null;
+    try {
+      String owner = value.getClassName();
+      String method = value.getMethodName();
+      if (!validCodeLabel(owner) || !validCodeLabel(method)) return null;
+      return DiagnosticExport.knownFrame(
+          new JSONObject()
+              .put("class", owner)
+              .put("method", method)
+              .put("line", value.getLineNumber()));
+    } catch (Throwable ignored) {
+      // An unverified frame must not discard the other crash details.
+      return null;
+    }
   }
 
   private static String codeLabel(String value) {
-    return value.length() <= MAX_CODE_LABEL_LENGTH && value.matches("[A-Za-z0-9_.$<>-]+")
-        ? value
-        : "unknown";
+    return validCodeLabel(value) ? value : "unknown";
+  }
+
+  private static boolean validCodeLabel(String value) {
+    return value.length() <= MAX_CODE_LABEL_LENGTH && value.matches("[A-Za-z0-9_.$<>-]+");
   }
 }

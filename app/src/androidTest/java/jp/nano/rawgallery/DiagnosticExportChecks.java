@@ -103,6 +103,7 @@ final class DiagnosticExportChecks {
             && "java.io.IOException".equals(crash.getString("exception"))
             && "length".equals(crash.getJSONObject("frame").getString("method")));
     checkExpandedCrash(context, folder);
+    checkUnverifiedCrashFrames(context, folder);
     require(
         DiagnosticExport.archive(
                     Map.of(
@@ -253,6 +254,54 @@ final class DiagnosticExportChecks {
                     Map.of("last-crash.json", new byte[DiagnosticExport.CRASH_FILE_LIMIT + 1]))
                 .length
             == 0);
+  }
+
+  private static void checkUnverifiedCrashFrames(Context context, File folder) throws Exception {
+    String filename = "private-photo.jpg";
+    String token = "syntheticTokenQ7";
+    String missingOwner = "jp.nano.rawgallery.SyntheticMissingOwner";
+    Throwable failure = new IllegalStateException(SECRET);
+    StackTraceElement legitimate =
+        new StackTraceElement("android.app.Activity", "onCreate", PATH, 42);
+    StackTraceElement[] stack = new StackTraceElement[10];
+    Arrays.fill(stack, legitimate);
+    stack[0] = new StackTraceElement("android.app.Activity", filename, PATH, 41);
+    stack[2] = new StackTraceElement(DiagnosticCrashHandler.class.getName(), token, PATH, 43);
+    stack[3] = new StackTraceElement(missingOwner, "save", PATH, 44);
+    stack[8] = new StackTraceElement("java.lang.String", "length", PATH, 45);
+    stack[9] = new StackTraceElement(DiagnosticCrashHandler.class.getName(), "save", PATH, 17);
+    failure.setStackTrace(stack);
+
+    new DiagnosticCrashHandler(folder, 230, null)
+        .uncaughtException(Thread.currentThread(), failure);
+    String local =
+        new String(
+            Files.readAllBytes(new File(folder, "last-crash.json").toPath()),
+            StandardCharsets.UTF_8);
+    String exported = unzip(DiagnosticExport.capture(context)).get("last-crash.json");
+    require(exported != null);
+    for (String content : List.of(local, exported)) {
+      require(
+          !content.contains(filename)
+              && !content.contains(token)
+              && !content.contains(missingOwner)
+              && !content.contains(PATH)
+              && !content.contains(SECRET));
+      JSONObject summary = new JSONObject(content);
+      JSONArray frames = summary.getJSONArray("frames");
+      JSONObject appFrame = summary.getJSONObject("app_frame");
+      require(
+          !summary.has("frame")
+              && frames.length() == 5
+              && DiagnosticCrashHandler.class.getName().equals(appFrame.getString("class"))
+              && "save".equals(appFrame.getString("method"))
+              && appFrame.getInt("line") == 17);
+      for (int index = 0; index < frames.length(); index++) {
+        require(
+            "android.app.Activity".equals(frames.getJSONObject(index).getString("class"))
+                && "onCreate".equals(frames.getJSONObject(index).getString("method")));
+      }
+    }
   }
 
   private static void checkFolderPicker(Context context) throws Exception {

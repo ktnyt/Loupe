@@ -467,7 +467,7 @@ final class DiagnosticExport {
     }
   }
 
-  private static JSONObject knownFrame(JSONObject frame) throws JSONException {
+  static JSONObject knownFrame(JSONObject frame) throws JSONException {
     if (frame == null
         || !(frame.opt("method") instanceof String method)
         || method.length() > DiagnosticCrashHandler.MAX_CODE_LABEL_LENGTH) return null;

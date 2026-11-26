@@ -228,23 +228,81 @@ final class DiagnosticFailureChecks {
         };
     JSONObject partialStack = checkPartialCrash(context, missingFrame);
     require(
-        partialStack.getJSONArray("frames").length() == 2
+        partialStack.getJSONObject("frame").getInt("line") == 42
+            && partialStack.getJSONArray("frames").length() == 2
             && partialStack.getJSONArray("frames").getJSONObject(1).getInt("line") == 17
             && partialStack.getJSONObject("app_frame").getInt("line") == 17,
         "skip the null stack slot and keep later frames");
 
-    Throwable brokenCause =
+    Throwable cause = new IOException(SENTINEL);
+    checkUnavailableStack(
+        context,
+        new IllegalStateException(SENTINEL, cause) {
+          @Override
+          public StackTraceElement[] getStackTrace() {
+            return null;
+          }
+        });
+    checkUnavailableStack(
+        context,
+        new IllegalStateException(SENTINEL, cause) {
+          @Override
+          public StackTraceElement[] getStackTrace() {
+            throw new IllegalStateException(SENTINEL);
+          }
+        });
+    checkUnavailableStack(
+        context,
+        new IllegalStateException(SENTINEL, cause) {
+          @Override
+          public StackTraceElement[] getStackTrace() {
+            throw new AssertionError(SENTINEL);
+          }
+        });
+
+    checkBrokenCause(
+        context,
+        first,
+        appFrame,
         new IOException(SENTINEL) {
           @Override
           public Throwable getCause() {
             throw new IllegalStateException(SENTINEL);
           }
-        };
+        });
+    checkBrokenCause(
+        context,
+        first,
+        appFrame,
+        new IOException(SENTINEL) {
+          @Override
+          public Throwable getCause() {
+            throw new AssertionError(SENTINEL);
+          }
+        });
+  }
+
+  private static void checkUnavailableStack(Context context, Throwable failure) throws Exception {
+    JSONObject summary = checkPartialCrash(context, failure);
+    var causes = summary.getJSONArray("causes");
+    require(
+        !summary.has("frame")
+            && !summary.has("app_frame")
+            && summary.getJSONArray("frames").length() == 0
+            && causes.length() == 1
+            && causes.getString(0).equals(IOException.class.getName()),
+        "unavailable stack leaves metadata and the readable cause");
+  }
+
+  private static void checkBrokenCause(
+      Context context, StackTraceElement first, StackTraceElement appFrame, Throwable brokenCause)
+      throws Exception {
     Throwable missingCause = new IllegalArgumentException(SENTINEL, brokenCause);
     missingCause.setStackTrace(new StackTraceElement[] {first, appFrame});
     JSONObject partialCause = checkPartialCrash(context, missingCause);
     require(
-        partialCause.getJSONArray("frames").length() == 2
+        partialCause.getJSONObject("frame").getInt("line") == 42
+            && partialCause.getJSONArray("frames").length() == 2
             && partialCause.getJSONObject("app_frame").getInt("line") == 17
             && partialCause.getJSONArray("causes").length() == 1
             && partialCause
@@ -274,10 +332,10 @@ final class DiagnosticFailureChecks {
       String content = read(file);
       JSONObject note = new JSONObject(content);
       require(
-          note.getString("exception").equals(failure.getClass().getName())
-              && note.getJSONObject("frame").getInt("line") == 42
+          note.getInt("version_code") == 777
+              && note.getString("exception").equals(failure.getClass().getName())
               && !content.contains(SENTINEL),
-          "partial crash retains its legacy exception and frame without private details");
+          "partial crash retains version and exception without private details");
       return note;
     } finally {
       Files.deleteIfExists(file.toPath());
@@ -300,7 +358,9 @@ final class DiagnosticFailureChecks {
           public StackTraceElement[] getStackTrace() {
             saving.countDown();
             waitForLatch(allowWrite);
-            return new StackTraceElement[] {new StackTraceElement("First", "crash", null, 4)};
+            return new StackTraceElement[] {
+              new StackTraceElement("android.app.Activity", "onCreate", null, 4)
+            };
           }
         };
     Throwable secondFailure = new IllegalArgumentException();
@@ -344,7 +404,10 @@ final class DiagnosticFailureChecks {
       require(secondDelegated.await(3, TimeUnit.SECONDS), "delegation does not hold save lock");
       require(delegatedWithSummary.get() == 2, "both delegates observe the saved summary");
       require(
-          new JSONObject(read(summary)).getJSONObject("frame").getString("class").equals("First"),
+          new JSONObject(read(summary))
+              .getJSONObject("frame")
+              .getString("class")
+              .equals("android.app.Activity"),
           "second crash does not overwrite first summary");
     } finally {
       allowWrite.countDown();
