@@ -84,6 +84,7 @@ final class NanoBananaBackgroundChecks {
     volatile boolean statusTimedOut, statusExited;
     volatile IOException statusFailure;
     NanoBananaApi submitApi;
+    NanoBananaApi statusApi;
     volatile long statusEnteredAt;
     volatile String prompt;
     volatile NanoBananaOutput output;
@@ -112,6 +113,7 @@ final class NanoBananaBackgroundChecks {
     public JSONObject status(String task) throws Exception {
       statuses++;
       if (statusFailure != null) throw statusFailure;
+      if (statusApi != null) return statusApi.status(task);
       statusEnteredAt = SystemClock.elapsedRealtime();
       entered.countDown();
       // Finish when the fixture releases the provider. The watchdog covers all UI
@@ -656,23 +658,45 @@ final class NanoBananaBackgroundChecks {
           "current request cleanup removes B once without generation or polling");
       verifyDiscardWithRenamedPublishedResult(
           test, screen, store, factory, saved, input, prompt, jpeg);
-      verifySubmitFailureMessage(test, screen, factory, jpeg, saved, input, prompt, width, font);
-      verifyFailureMessage(
+      String profile = "-" + width + "-" + font;
+      Fake rateLimitedSubmit = new Fake(store, jpeg, saved);
+      rateLimitedSubmit.submitApi = NanoBananaApiChecks.rateLimitedApi();
+      verifySubmitFailureMessage(
           test,
           screen,
           factory,
-          jpeg,
-          saved,
-          NanoBananaApiChecks.verifyStatusFailure(429, NanoBananaApiChecks.RATE_LIMIT),
-          NanoBananaApiChecks.RATE_LIMIT);
+          rateLimitedSubmit,
+          input,
+          prompt,
+          NanoBananaApiChecks.SUBMIT_RATE_LIMIT,
+          "429",
+          profile);
+      Fake rateLimitedStatus = new Fake(store, jpeg, saved);
+      rateLimitedStatus.statusApi = NanoBananaApiChecks.rateLimitedApi();
       verifyFailureMessage(
+          test, screen, factory, rateLimitedStatus, NanoBananaApiChecks.RATE_LIMIT);
+      for (String malformed : List.of("{}", "{\"successFlag\":1,\"response\":{}}")) {
+        Fake invalidStatus = new Fake(store, jpeg, saved);
+        invalidStatus.statusApi = NanoBananaApiChecks.statusApi(malformed);
+        verifyFailureMessage(test, screen, factory, invalidStatus, NanoBananaApiChecks.API_FAILURE);
+      }
+      Fake arbitraryFailure = new Fake(store, jpeg, saved);
+      arbitraryFailure.statusFailure =
+          new IOException("synthetic-key https://synthetic.invalid/result?token=private");
+      verifyFailureMessage(
+          test, screen, factory, arbitraryFailure, "処理を続けられませんでした。AI編集メニューから確認してください");
+      Fake rejectedSubmit = new Fake(store, jpeg, saved);
+      rejectedSubmit.submitApi = NanoBananaApiChecks.rejectedApi();
+      verifySubmitFailureMessage(
           test,
           screen,
           factory,
-          jpeg,
-          saved,
-          new IOException("synthetic-key https://synthetic.invalid/result?token=private"),
-          "処理を続けられませんでした。AI編集メニューから確認してください");
+          rejectedSubmit,
+          input,
+          prompt,
+          NanoBananaApiChecks.SUBMIT_API_REJECTED,
+          "api-rejection",
+          profile);
       Context failing =
           new ContextWrapper(context) {
             public Context getApplicationContext() {
@@ -690,7 +714,7 @@ final class NanoBananaBackgroundChecks {
           "startup rejection rolls back reservation");
       return "PASS nano-background: actual production Android Service with isolated fake provider; next-photo operation, busy/error menu captures, Home continuation, no generation/result Activity launch, automatic JPEG save/readback 1200x800, temporary-object cleanup, duplicate admission, immutable prompt/output snapshot, next admission, saved cleanup retry without POST/download, interrupted-worker lease, durable discard retry and cleanup-only completion text, missing-version selectable manual recovery guidance, explicit ambiguous-submission messaging, stale end-confirmation A/B identity guard and current identity cleanup, stale Intent suppression and startup rejection, remote-first discard with a detached result volume, renamed published result retained on discard, MTP same-size corruption and read error checks, fixed API error delivery and suppression of arbitrary exception text. Provider remained blocked through Home after "
           + homeWaitMs
-          + " ms. POST 429 Snackbar text and confirmation action, pending menu and explicit cleanup verified. Captures are synthetic layouts; OS-service runtime assertions are separate. No real API, credentials, photos, physical touch or TalkBack speech tested.\nStatus trace (delivery hook; fixed UI text only): "
+          + " ms. Invalid polling payload recovery and both POST failure Snackbar messages, confirmation, pending menu and explicit cleanup verified. Captures are synthetic layouts; OS-service runtime assertions are separate. No real API, credentials, photos, physical touch or TalkBack speech tested.\nStatus trace (delivery hook; fixed UI text only): "
           + String.join(" → ", factory.messages)
           + "\n";
     } finally {
@@ -750,23 +774,22 @@ final class NanoBananaBackgroundChecks {
       Instrumentation test,
       MainActivity screen,
       FixtureFactory factory,
-      byte[] jpeg,
-      List<String> saved,
+      Fake network,
       PhotoRepository.Photo input,
       NanoBananaStore.Prompt prompt,
-      int width,
-      float font)
+      String expected,
+      String scenario,
+      String profile)
       throws Exception {
-    Fake network = new Fake(factory.store, jpeg, saved);
-    network.submitApi = NanoBananaApiChecks.rateLimitedApi();
     factory.fake = network;
-    String captureSuffix = "-" + width + "-" + font;
+    factory.lastResult = null;
+    String capturePrefix = "nano-background-submit-" + scenario;
     TagDetailChecks.require(NanoBananaService.start(screen, input, prompt), "start provider POST");
-    captureAndOpenSubmitFailureNotice(test, screen, captureSuffix);
+    captureAndOpenSubmitFailureNotice(test, screen, expected, capturePrefix, profile);
     idle(test);
     JSONObject pending = factory.store.job();
     TagDetailChecks.require(
-        NanoBananaApiChecks.SUBMIT_RATE_LIMIT.equals(factory.lastResult),
+        expected.equals(factory.lastResult),
         "service offers the pending submission's real recovery actions");
     TagDetailChecks.require(
         network.submits == 1
@@ -786,8 +809,8 @@ final class NanoBananaBackgroundChecks {
           return true;
         });
     View menuWindow = pendingWindow[0];
-    captureWindow(test, menuWindow, "nano-background-submit-429-menu" + captureSuffix);
-    saveDisplayCapture(test, "nano-background-submit-429-menu-display" + captureSuffix);
+    captureWindow(test, menuWindow, capturePrefix + "-menu" + profile);
+    saveDisplayCapture(test, capturePrefix + "-menu-display" + profile);
     TagDetailChecks.ui(
         test,
         () -> {
@@ -819,7 +842,12 @@ final class NanoBananaBackgroundChecks {
   }
 
   private static void captureAndOpenSubmitFailureNotice(
-      Instrumentation test, MainActivity screen, String captureSuffix) throws Exception {
+      Instrumentation test,
+      MainActivity screen,
+      String expected,
+      String capturePrefix,
+      String profile)
+      throws Exception {
     TextView[] notice = {null};
     Button[] action = {null};
     View decor = screen.getWindow().getDecorView();
@@ -844,17 +872,14 @@ final class NanoBananaBackgroundChecks {
               Snackbar snackbar = (Snackbar) snackbarField.get(indicator);
               Activity resumed = (Activity) resumedField.get(indicator);
               View host = (View) hostField.get(indicator);
-              boolean messageMatches =
-                  NanoBananaApiChecks.SUBMIT_RATE_LIMIT.equals(messageField.get(indicator));
+              boolean messageMatches = expected.equals(messageField.get(indicator));
               TextView text =
                   snackbar == null
                       ? null
                       : snackbar
                           .getView()
                           .findViewById(com.google.android.material.R.id.snackbar_text);
-              boolean textMatches =
-                  text != null
-                      && NanoBananaApiChecks.SUBMIT_RATE_LIMIT.contentEquals(text.getText());
+              boolean textMatches = text != null && expected.contentEquals(text.getText());
               boolean attached = text != null && text.isAttachedToWindow();
               boolean laidOut = text != null && text.getLayout() != null && text.isShown();
               observations.add(
@@ -892,10 +917,10 @@ final class NanoBananaBackgroundChecks {
       if (notice[0] == null) Thread.sleep(50);
     } while (notice[0] == null && SystemClock.uptimeMillis() < deadline);
 
-    String name = "nano-background-submit-429-notice" + captureSuffix;
+    String name = capturePrefix + "-notice" + profile;
     if (notice[0] == null) {
       saveCapture(test, name);
-      String problem = "POST 429 Snackbar not visible " + captureSuffix;
+      String problem = "POST failure Snackbar not visible: " + name;
       saveNoticeTrace(test, name, observations, problem);
       throw new AssertionError(problem);
     }
@@ -911,8 +936,7 @@ final class NanoBananaBackgroundChecks {
               || !text.isShown()
               || !text.hasWindowFocus()
               || layout == null) {
-            issue[0] =
-                "POST 429 Snackbar was detached or lost focus before capture " + captureSuffix;
+            issue[0] = "POST failure Snackbar was detached or lost focus before capture: " + name;
             return;
           }
           int lines = layout.getLineCount();
@@ -934,8 +958,8 @@ final class NanoBananaBackgroundChecks {
                       <= text.getHeight();
           if (ellipses != 0 || end != text.length() || !lineFits || !boundsFit) {
             issue[0] =
-                "POST 429 Snackbar text does not fit "
-                    + captureSuffix
+                "POST failure Snackbar text does not fit: "
+                    + name
                     + ": lines="
                     + lines
                     + ", ellipsized="
@@ -951,11 +975,11 @@ final class NanoBananaBackgroundChecks {
           }
         });
     saveCapture(test, name);
+    saveDisplayCapture(test, capturePrefix + "-notice-display" + profile);
     if (issue[0] != null) {
       saveNoticeTrace(test, name, observations, issue[0]);
       throw new AssertionError(issue[0]);
     }
-    saveDisplayCapture(test, "nano-background-submit-429-notice-display" + captureSuffix);
     TagDetailChecks.ui(
         test,
         () -> {
@@ -971,8 +995,7 @@ final class NanoBananaBackgroundChecks {
               || visible.width() != confirm.getWidth()
               || visible.height() != confirm.getHeight()
               || !confirm.performClick()) {
-            issue[0] =
-                "POST 429 Snackbar confirmation is not a fully visible action " + captureSuffix;
+            issue[0] = "POST failure Snackbar confirmation is not a fully visible action: " + name;
           }
         });
     saveNoticeTrace(
@@ -987,7 +1010,7 @@ final class NanoBananaBackgroundChecks {
       Instrumentation test, String name, LinkedHashSet<String> observations, String layout)
       throws IOException {
     String trace = String.join("\n", observations) + "\n" + layout + "\n";
-    android.util.Log.i("LoupeNanoFixture", "POST 429 Snackbar states\n" + trace);
+    android.util.Log.i("LoupeNanoFixture", name + " Snackbar states\n" + trace);
     try (FileOutputStream output =
         new FileOutputStream(new File(captureDirectory(test), name + ".txt"))) {
       output.write(trace.getBytes(StandardCharsets.UTF_8));
@@ -1004,14 +1027,11 @@ final class NanoBananaBackgroundChecks {
       Instrumentation test,
       MainActivity screen,
       FixtureFactory factory,
-      byte[] jpeg,
-      List<String> saved,
-      IOException failure,
+      Fake network,
       String message)
       throws Exception {
-    Fake network = new Fake(factory.store, jpeg, saved);
-    network.statusFailure = failure;
     factory.fake = network;
+    factory.lastResult = null;
     factory.store.job(
         new JSONObject()
             .put("stage", "generating")
@@ -1025,11 +1045,16 @@ final class NanoBananaBackgroundChecks {
       TagDetailChecks.require(
           message.equals(factory.lastResult),
           "service delivers only the expected safe status failure");
+      JSONObject pending = factory.store.job();
       TagDetailChecks.require(
           network.statuses == 1
               && network.submits == 0
-              && factory.store.job().optString("stage").equals("generating"),
-          "status failure preserves the job and never generates again");
+              && network.downloads == 0
+              && network.deletes == 0
+              && pending != null
+              && pending.optString("stage").equals("generating")
+              && pending.optString("task").equals("synthetic-status-failure"),
+          "status failure preserves the job and does not generate or download");
     } finally {
       factory.store.job(null);
     }

@@ -73,8 +73,23 @@ final class NanoBananaApi {
   }
 
   JSONObject status(String task) throws Exception {
-    return call(
-        "record-info?taskId=" + URLEncoder.encode(task, StandardCharsets.UTF_8.name()), null);
+    JSONObject data =
+        call("record-info?taskId=" + URLEncoder.encode(task, StandardCharsets.UTF_8.name()), null);
+    try {
+      Object successFlag = data.get("successFlag");
+      if (!(successFlag instanceof Number)) throw new JSONException("Status flag must be numeric");
+      double flag = ((Number) successFlag).doubleValue();
+      if (flag != 0 && flag != 1 && flag != 2 && flag != 3)
+        throw new JSONException("Invalid status flag");
+      if (flag == 1) {
+        Object url = data.getJSONObject("response").get("resultImageUrl");
+        if (!(url instanceof String)) throw new JSONException("Result image URL must be a string");
+        resultUrl((String) url);
+      }
+      return data;
+    } catch (JSONException | IOException error) {
+      throw new SafeFailure(API_FAILURE, error);
+    }
   }
 
   private JSONObject call(String route, JSONObject body) throws Exception {
@@ -152,7 +167,7 @@ final class NanoBananaApi {
   }
 
   /** Result CDN hosts used by the provider's public Playground. No arbitrary host or redirect. */
-  static URL resultUrl(String value) throws Exception {
+  static URL resultUrl(String value) throws IOException {
     URL url = new URL(value);
     if (!url.getHost().equals("tempfile.aiquickdraw.com")
         && !url.getHost().equals("file.aiquickdraw.com"))

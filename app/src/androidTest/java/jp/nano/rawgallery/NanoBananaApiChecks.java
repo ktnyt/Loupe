@@ -7,6 +7,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.cert.Certificate;
@@ -19,15 +20,26 @@ import org.json.JSONObject;
 final class NanoBananaApiChecks {
   private static final String KEY = "synthetic-key";
   private static final String DETAIL = "synthetic-private-detail";
-  private static final String API_FAILURE = "APIとの通信に失敗しました。APIキー・残高・通信を確認し、状態を再確認してください";
+  static final String API_FAILURE = "APIとの通信に失敗しました。APIキー・残高・通信を確認し、状態を再確認してください";
   private static final String SUBMIT_RECOVERY = "AI編集メニューから「処理を終了」し、必要に応じて「設定」を確認してください";
   private static final String SUBMIT_FAILURE = "生成依頼の結果を確認できませんでした。" + SUBMIT_RECOVERY;
   private static final String DOWNLOAD_FAILURE = "結果画像を取得できませんでした。状態を再確認してください";
   static final String RATE_LIMIT = "APIの利用上限に達しました。時間をおいて状態を確認してください";
   static final String SUBMIT_RATE_LIMIT = "APIの利用上限に達しました。" + SUBMIT_RECOVERY;
+  private static final String API_REJECTED = "APIが処理を受け付けませんでした。キーと残高を確認してください";
+  static final String SUBMIT_API_REJECTED = API_REJECTED + "。" + SUBMIT_RECOVERY;
+  private static final String REJECTED_PAYLOAD = "{\"code\":402,\"message\":\"" + DETAIL + "\"}";
 
   static NanoBananaApi rateLimitedApi() {
     return new NanoBananaApi(KEY, new Response(429, DETAIL)::open);
+  }
+
+  static NanoBananaApi rejectedApi() {
+    return new NanoBananaApi(KEY, new Response(200, REJECTED_PAYLOAD)::open);
+  }
+
+  static NanoBananaApi statusApi(String data) {
+    return new NanoBananaApi(KEY, statusResponse(data)::open);
   }
 
   static void run() throws Exception {
@@ -49,13 +61,46 @@ final class NanoBananaApiChecks {
         "POST still sends the configured key and request body to the API");
     post.verifyClosed();
 
-    Response get = new Response(200, "{\"code\":200,\"data\":{\"successFlag\":1}}");
+    String imageResult = "https://file.aiquickdraw.com/result.jpg?token=" + DETAIL;
+    Response get =
+        statusResponse(
+            "{\"successFlag\":1,\"response\":{\"resultImageUrl\":\"" + imageResult + "\"}}");
+    JSONObject completed = new NanoBananaApi(KEY, get::open).status("fixture+task&id");
     require(
-        new NanoBananaApi(KEY, get::open).status("fixture+task&id").getInt("successFlag") == 1
+        completed.getInt("successFlag") == 1
+            && completed.getJSONObject("response").getString("resultImageUrl").equals(imageResult)
             && get.url.getQuery().equals("taskId=fixture%2Btask%26id")
             && get.connection.getRequestMethod().equals("GET"),
         "status returns data and encodes the task ID");
     get.verifyClosed();
+    for (int flag : new int[] {0, 2, 3}) {
+      Response status = statusResponse("{\"successFlag\":" + flag + "}");
+      require(
+          new NanoBananaApi(KEY, status::open).status("fixture-task").getInt("successFlag") == flag,
+          "pending and unsuccessful provider statuses do not require a result image");
+      status.verifyClosed();
+    }
+    for (String data :
+        Arrays.asList(
+            "{}",
+            "{\"successFlag\":null}",
+            "{\"successFlag\":true}",
+            "{\"successFlag\":\"1\"}",
+            "{\"successFlag\":1.5}",
+            "{\"successFlag\":-1}",
+            "{\"successFlag\":4}",
+            "{\"successFlag\":1}",
+            "{\"successFlag\":1,\"response\":null}",
+            "{\"successFlag\":1,\"response\":{}}",
+            "{\"successFlag\":1,\"response\":{\"resultImageUrl\":null}}",
+            "{\"successFlag\":1,\"response\":{\"resultImageUrl\":42}}")) {
+      verifyStatusPayloadFailure(data, JSONException.class);
+    }
+    verifyStatusPayloadFailure(
+        "{\"successFlag\":1,\"response\":{\"resultImageUrl\":\"\"}}", MalformedURLException.class);
+    verifyStatusPayloadFailure(
+        "{\"successFlag\":1,\"response\":{\"resultImageUrl\":\"http://file.aiquickdraw.com/\"}}",
+        NanoBananaApi.SafeFailure.class);
 
     verifyStatusFailure(401, "APIキーまたは利用権限を確認してください");
     verifyStatusFailure(403, "APIキーまたは利用権限を確認してください");
@@ -65,11 +110,14 @@ final class NanoBananaApiChecks {
         failure(() -> rateLimitedApi().generate("fixture", imageUrl, NanoBananaOutput.DEFAULT)),
         SUBMIT_RATE_LIMIT);
 
-    Response rejected = new Response(200, "{\"code\":402,\"message\":\"" + DETAIL + "\"}");
+    Response rejected = new Response(200, REJECTED_PAYLOAD);
     IOException rejection = failure(() -> new NanoBananaApi(KEY, rejected::open).status(DETAIL));
-    verifyMessage(rejection, "APIが処理を受け付けませんでした。キーと残高を確認してください");
+    verifyMessage(rejection, API_REJECTED);
     require(rejection.getCause() == null, "API rejection keeps its specific error");
     rejected.verifyClosed();
+    verifyMessage(
+        failure(() -> rejectedApi().generate("fixture", imageUrl, NanoBananaOutput.DEFAULT)),
+        SUBMIT_API_REJECTED);
 
     Response badJson = new Response(200, "{" + DETAIL);
     IOException parseFailure = failure(() -> new NanoBananaApi(KEY, badJson::open).status(DETAIL));
@@ -184,13 +232,25 @@ final class NanoBananaApiChecks {
         "結果画像の接続先に対応していません");
   }
 
-  static IOException verifyStatusFailure(int code, String message) throws Exception {
+  private static void verifyStatusFailure(int code, String message) throws Exception {
     Response response = new Response(code, DETAIL);
     IOException error = failure(() -> new NanoBananaApi(KEY, response::open).status(DETAIL));
     verifyMessage(error, message);
     require(error.getCause() == null, "HTTP failure keeps its specific error");
     response.verifyClosed();
-    return error;
+  }
+
+  private static Response statusResponse(String data) {
+    return new Response(200, "{\"code\":200,\"data\":" + data + "}");
+  }
+
+  private static void verifyStatusPayloadFailure(String data, Class<? extends Exception> cause)
+      throws Exception {
+    Response response = statusResponse(data);
+    IOException error = failure(() -> new NanoBananaApi(KEY, response::open).status(DETAIL));
+    verifyMessage(error, API_FAILURE);
+    require(cause.isInstance(error.getCause()), "invalid status data keeps its original cause");
+    response.verifyClosed();
   }
 
   private static void verifyMessage(IOException error, String message) {
