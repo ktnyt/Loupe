@@ -233,6 +233,8 @@ public final class MainActivity extends DiagnosticActivity {
   private List<Integer> selectionBurst;
   private SelectionUi.Summary selectionCount;
   private StatusView selectionRankStatus;
+  private TextView selectionShareNotice;
+  private boolean selectionShareNeedsReview;
   private TextView selectionTitle;
   private Button selectionShare, selectionAll, selectionSort, selectionTag;
   private SelectedPhotoTags selectionTags;
@@ -453,6 +455,7 @@ public final class MainActivity extends DiagnosticActivity {
     rankEmpty = null;
     rankingActions.clear();
     rankingSaveStatus = null;
+    selectionShareNotice = null;
     refreshShareBadges = () -> {};
     refreshShareInfo = () -> {};
     root = vertical();
@@ -1310,8 +1313,16 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private void shareSelectionChanged() {
-    feedback(StatusView.Symbol.PAUSED, "共有の対象が変わりました。選択を確認してください", null, "");
+    if (!selecting || selectionShareNotice == null) return;
+    showShareSelectionNotice(true);
     updateSelection();
+  }
+
+  private void showShareSelectionNotice(boolean changed) {
+    selectionShareNeedsReview = changed;
+    if (selectionShareNotice != null) {
+      selectionShareNotice.setVisibility(changed ? View.VISIBLE : View.GONE);
+    }
   }
 
   private SelectionResult resolveSelection() {
@@ -1351,6 +1362,7 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private void toggleSelection(int pos) {
+    showShareSelectionNotice(false);
     List<Integer> members = displayed.get(pos);
     if (photos.get(members.get(0)).isVideo()) {
       feedback(StatusView.Symbol.PAUSED, "動画は写真の選択対象外です", null, "");
@@ -1413,6 +1425,7 @@ public final class MainActivity extends DiagnosticActivity {
 
   private void beginSelection() {
     if (photos.isEmpty() || !requireCurrentBurstGrouping()) return;
+    showShareSelectionNotice(false);
     selecting = true;
     bestOnly = true;
     selectedPhotos.clear();
@@ -1445,6 +1458,7 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private void toggleVisibleSelection() {
+    showShareSelectionNotice(false);
     boolean remove = allVisibleSelected();
     for (List<Integer> members : displayed)
       for (int member : members) {
@@ -1480,6 +1494,7 @@ public final class MainActivity extends DiagnosticActivity {
     check.setOnClickListener(GalleryUi::feedback);
     check.setOnCheckedChangeListener(
         (v, enabled) -> {
+          showShareSelectionNotice(false);
           bestOnly = enabled;
           updateSelection();
         });
@@ -1490,6 +1505,12 @@ public final class MainActivity extends DiagnosticActivity {
       selectionBulk = new BulkBestSheet.Entry(this, this::confirmBulkBest);
       root.addView(selectionBulk, new LinearLayout.LayoutParams(-1, -2));
     }
+    selectionShareNotice = label("共有する写真が変わりました。もう一度「共有」を押して確認してください", 14, TEXT);
+    selectionShareNotice.setTag("selection-share-notice");
+    selectionShareNotice.setPadding(dp(16), dp(6), dp(16), dp(6));
+    selectionShareNotice.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    selectionShareNotice.setVisibility(selectionShareNeedsReview ? View.VISIBLE : View.GONE);
+    root.addView(selectionShareNotice, new LinearLayout.LayoutParams(-1, -2));
     selectionShare = SelectionUi.action(this, "共有", true, this::shareSelection);
     selectionSort = SelectionUi.action(this, "比較", false, () -> shareSelection(true));
     selectionTag = SelectionUi.action(this, "タグ", false, this::tagSelectedPhotos);
@@ -1746,6 +1767,7 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private void endSelection() {
+    showShareSelectionNotice(false);
     selecting = false;
     shareCapacity.clearSelection();
     selectedPhotos.clear();
@@ -1774,6 +1796,8 @@ public final class MainActivity extends DiagnosticActivity {
     if (!sorting
         && !result.photos.isEmpty()
         && !shareCapacity.snapshot(result.photos).available.actionable()) return;
+    if (!sorting && (!result.photos.isEmpty() || !result.unresolved.isEmpty()))
+      showShareSelectionNotice(false);
     if (!result.unresolved.isEmpty()) {
       shareDialog =
           new ShareUi.Confirmation(
@@ -2517,6 +2541,7 @@ public final class MainActivity extends DiagnosticActivity {
   /** Explicit singleton choice; never interpret a one-member comparison as a user choice. */
   private void singleBestAction(PhotoViewerUi viewer, PhotoRepository.Photo photo, int screen) {
     RankingStore store = rankingStore;
+    SingleBestRecovery recovery = new SingleBestRecovery(viewer);
     final String key;
     try {
       key = ArchiveStore.key(photo);
@@ -2524,9 +2549,10 @@ public final class MainActivity extends DiagnosticActivity {
       Button retry =
           viewer.action("1位", "1位", "順位を読み込めませんでした。押すと再試行", () -> showPhoto(index, false));
       unknownStar(retry, false);
+      recovery.show("順位を読み込めませんでした", "順位を読み直す", retry::performClick);
       return;
     }
-    boolean[] chosen = {false}, loaded = {false}, busy = {false};
+    boolean[] chosen = {false}, loaded = {false}, busy = {false}, writeFailed = {false};
     Button button = viewer.action("1位", "1位", "1位にする", () -> {});
     Runnable refresh =
         () -> {
@@ -2535,13 +2561,24 @@ public final class MainActivity extends DiagnosticActivity {
           loaded[0] = false;
           if (snapshot.phase() == RankingStore.Phase.READY) {
             try {
-              chosen[0] = snapshot.singleBest(key);
+              boolean latest = snapshot.singleBest(key);
+              if (latest != chosen[0]) writeFailed[0] = false;
+              chosen[0] = latest;
               loaded[0] = true;
             } catch (Exception ignored) {
             }
           }
-          if (loaded[0]) PhotoViewerUi.bestState(button, chosen[0], false, false, false);
-          else unknownStar(button, snapshot.phase() == RankingStore.Phase.PENDING);
+          if (loaded[0]) {
+            PhotoViewerUi.bestState(button, chosen[0], false, writeFailed[0], false);
+            if (writeFailed[0]) recovery.show("順位を保存できませんでした", "保存を再試行", button::performClick);
+            else recovery.hide();
+          } else {
+            writeFailed[0] = false;
+            boolean pending = snapshot.phase() == RankingStore.Phase.PENDING;
+            unknownStar(button, pending);
+            if (pending) recovery.hide();
+            else recovery.show("順位を読み込めませんでした", "順位を読み直す", button::performClick);
+          }
         };
     refreshSingleBest = refresh;
     refresh.run();
@@ -2556,6 +2593,8 @@ public final class MainActivity extends DiagnosticActivity {
           }
           boolean expected = chosen[0];
           busy[0] = true;
+          writeFailed[0] = false;
+          recovery.hide();
           long request = DiagnosticLog.id();
           DiagnosticLog.event("ranking.single.start", request, "chosen", expected ? 0 : 1);
           PhotoViewerUi.bestState(button, expected, true, false, false);
@@ -2572,20 +2611,55 @@ public final class MainActivity extends DiagnosticActivity {
                       refreshSingleBest.run();
                       return;
                     }
+                    boolean conflict = rankingReadConflict(result);
+                    writeFailed[0] = !saved && !conflict;
                     refresh.run();
                     if (!loaded[0]) return;
-                    if (rankingReadConflict(result)) {
+                    if (conflict) {
                       button.announceForAccessibility("順位が変わりました。確認してからもう一度押してください");
-                    } else if (!saved) {
-                      PhotoViewerUi.bestState(button, chosen[0], false, true, false);
-                      button.announceForAccessibility("保存できませんでした。もう一度押すと再試行");
-                    } else if (chosen[0] == !expected) {
+                    } else if (saved && chosen[0] == !expected) {
                       button.announceForAccessibility(chosen[0] ? "1位にしました" : "1位を解除しました");
                     }
                     rankingFrame(button, "ranking.single.frame", request);
                   },
                   main::post);
         });
+  }
+
+  private final class SingleBestRecovery {
+    private final PhotoViewerUi viewer;
+    private LinearLayout row;
+    private TextView message;
+    private Button retry;
+
+    SingleBestRecovery(PhotoViewerUi viewer) {
+      this.viewer = viewer;
+    }
+
+    void show(String explanation, String retryLabel, Runnable action) {
+      if (row == null) {
+        row = row();
+        row.setPadding(dp(8), 0, 0, dp(4));
+        message = PhotoListUi.text(MainActivity.this, "", 14, 20, 0xffffb4a8);
+        message.setTag("viewer-ranking-recovery");
+        message.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        row.addView(message, new LinearLayout.LayoutParams(0, -2, 1));
+        retry = LibraryUi.text(MainActivity.this, "", () -> {});
+        retry.setTag("viewer-ranking-retry");
+        retry.setMinimumHeight(dp(48));
+        retry.setMinHeight(dp(48));
+        row.addView(retry, new LinearLayout.LayoutParams(-2, -2));
+        viewer.footer.addView(row, 0, new LinearLayout.LayoutParams(-1, -2));
+      }
+      if (!explanation.contentEquals(message.getText())) message.setText(explanation);
+      if (!retryLabel.contentEquals(retry.getText())) retry.setText(retryLabel);
+      retry.setOnClickListener(v -> action.run());
+      row.setVisibility(View.VISIBLE);
+    }
+
+    void hide() {
+      if (row != null) row.setVisibility(View.GONE);
+    }
   }
 
   private void unknownStar(Button button, boolean pending) {

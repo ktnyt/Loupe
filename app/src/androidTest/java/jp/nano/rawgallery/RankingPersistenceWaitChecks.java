@@ -149,9 +149,11 @@ final class RankingPersistenceWaitChecks {
         captureStarSave(test, activity, prefs, next, photos.get(0), profile);
       }
       String choose = choose(test, activity, prefs, next, baseline, photos);
+      String shareTrace = "";
       if (capture) {
         captureScreen(test, activity, "ranking-compare-success-" + profile);
-        captureComparisonStates(test, activity, prefs, observed, next, photos, profile);
+        shareTrace =
+            captureComparisonStates(test, activity, prefs, observed, next, photos, profile);
       }
       String dimensions = activityDimensions(test, activity, expectedWidth, captureFont);
       return "PASS ranking persistence waits baseline="
@@ -174,7 +176,7 @@ final class RankingPersistenceWaitChecks {
           + "\n"
           + choose
           + "\n"
-          + (capture ? "verified and captured initial, filter and comparison states\n" : "");
+          + shareTrace;
     } finally {
       releaseInitial.countDown();
       releaseRetry.countDown();
@@ -278,10 +280,18 @@ final class RankingPersistenceWaitChecks {
               && button.isEnabled()
               && "読み込み失敗".contentEquals(button.getStateDescription())
               && !button.createAccessibilityNodeInfo().isCheckable()
-              && hasHitBounds(button);
+              && hasHitBounds(button)
+              && viewerRecovery(activity, "順位を読み込めませんでした", "順位を読み直す");
         },
         "ranking-star-read-failure-" + profile);
-    ui(test, () -> require(star(activity).performClick(), "retry unreadable star"));
+    ViewerScreenChecks.open(test, activity, BURST.get(0));
+    ui(
+        test,
+        () ->
+            require(viewerRetry(activity) == null, "read failure belongs to the singleton viewer"));
+    ViewerScreenChecks.open(test, activity, 0);
+    Map<String, ?> beforeReadRetry = new HashMap<>(prefs.getAll());
+    ui(test, () -> require(viewerRetry(activity).performClick(), "explicit read retry"));
     captureScreen(
         test,
         activity,
@@ -291,10 +301,13 @@ final class RankingPersistenceWaitChecks {
           return button != null
               && !button.isEnabled()
               && "順位を読み込み中".contentEquals(button.getStateDescription())
-              && !button.createAccessibilityNodeInfo().isCheckable();
+              && !button.createAccessibilityNodeInfo().isCheckable()
+              && !viewerRetry(activity).isShown();
         },
         "ranking-star-read-retry-pending-" + profile);
-    require(prefs.getAll().size() == entries, "read retry did not write a rank");
+    require(
+        beforeReadRetry.size() == entries && beforeReadRetry.equals(prefs.getAll()),
+        "read retry did not write a rank");
     ui(
         test,
         () -> {
@@ -449,20 +462,37 @@ final class RankingPersistenceWaitChecks {
         test,
         activity,
         decor,
-        () -> starState(activity, true, true, "保存失敗"),
+        () ->
+            starState(activity, true, true, "保存失敗")
+                && viewerRecovery(activity, "順位を保存できませんでした", "保存を再試行"),
         "ranking-star-failure-" + profile);
     require("1".equals(prefs.getString(key, null)), "failed star kept committed checked value");
-    ui(test, () -> require(star(activity).performClick(), "retry star with a new tap"));
+    ui(test, () -> require(viewerRetry(activity).performClick(), "explicit save retry"));
     captureScreen(
         test,
         activity,
         decor,
-        () -> starState(activity, true, false, "未指定"),
+        () -> starState(activity, true, false, "未指定") && !viewerRetry(activity).isShown(),
         "ranking-star-save-recovered-" + profile);
     require("0".equals(prefs.getString(key, null)), "fresh tap cleared the saved star");
   }
 
-  private static void captureComparisonStates(
+  private static Button viewerRetry(MainActivity activity) {
+    return ((View) get(activity, "root")).findViewWithTag("viewer-ranking-retry");
+  }
+
+  private static boolean viewerRecovery(MainActivity activity, String message, String retryLabel) {
+    TextView notice = ((View) get(activity, "root")).findViewWithTag("viewer-ranking-recovery");
+    Button retry = viewerRetry(activity);
+    return visibleLabel(notice, message)
+        && notice.getAccessibilityLiveRegion() == View.ACCESSIBILITY_LIVE_REGION_POLITE
+        && visibleLabel(retry, retryLabel)
+        && hasHitBounds(retry)
+        && retry.createAccessibilityNodeInfo().isEnabled()
+        && retry.createAccessibilityNodeInfo().isClickable();
+  }
+
+  private static String captureComparisonStates(
       Instrumentation test,
       MainActivity activity,
       SharedPreferences prefs,
@@ -570,10 +600,10 @@ final class RankingPersistenceWaitChecks {
     waitFor(test, () -> !Boolean.TRUE.equals(get(activity, "rankingBusy")), "Back write published");
     require(
         "B:00".equals(readSavedBurst(prefs, ids).journal), "Back did not discard accepted choice");
-    captureChangedShare(test, activity, other, ids, photos, profile);
+    return captureChangedShare(test, activity, other, ids, photos, profile);
   }
 
-  private static void captureChangedShare(
+  private static String captureChangedShare(
       Instrumentation test,
       MainActivity activity,
       RankingStore store,
@@ -592,16 +622,25 @@ final class RankingPersistenceWaitChecks {
         });
     ShareUi.Menu menu = (ShareUi.Menu) get(activity, "shareDialog");
     waitFor(test, menu.continueButton::isEnabled, "old reviewed share action available");
+    int initialAttempt = (int) get(activity, "shareAttempt");
     RankingStore.Burst original = store.snapshot().burst(ids);
     require(
         menu.previewPhotos.equals(List.of(photoForRankKey(photos, original.ids().get(2)))),
         "reviewed only the old winner");
+    captureScreen(
+        test,
+        activity,
+        menu.getWindow().getDecorView(),
+        () -> menu.isShowing() && menu.continueButton.isEnabled(),
+        "ranking-share-old-review-" + profile);
+    long oldPreviewNs = now();
     RankingStore.WriteResult changed =
         store
             .submitBurst(original, () -> new PhotoRanking(original.ids(), "B:11"))
             .toCompletableFuture()
             .get(5, TimeUnit.SECONDS);
     require(changed.outcome() == RankingStore.Outcome.SAVED, "other handle changed the winner");
+    long rankChangedNs = now();
 
     IntentFilter outbound = new IntentFilter();
     outbound.addAction(Intent.ACTION_CHOOSER);
@@ -622,12 +661,28 @@ final class RankingPersistenceWaitChecks {
                 before == (int) get(activity, "shareAttempt")
                     && get(activity, "shareProgress") == null
                     && selected(activity).equals(burstSelection(photos)),
-                "obsolete reviewed target was rejected before export, with exact selection retained");
+                "obsolete reviewed target was rejected before export, with exact selection"
+                    + " retained");
           });
       waitFor(
           test,
           () -> !menuDecor.isAttachedToWindow() && activity.hasWindowFocus(),
           "old share review dismissed");
+      captureScreen(
+          test,
+          activity,
+          activity.getWindow().getDecorView(),
+          () -> {
+            TextView notice = (TextView) get(activity, "selectionShareNotice");
+            return visibleLabel(notice, "共有する写真が変わりました。もう一度「共有」を押して確認してください")
+                && notice.getAccessibilityLiveRegion() == View.ACCESSIBILITY_LIVE_REGION_POLITE
+                && selected(activity).equals(burstSelection(photos))
+                && (int) get(activity, "shareAttempt") == initialAttempt
+                && get(activity, "shareProgress") == null
+                && get(activity, "shareDialog") == menu;
+          },
+          "ranking-share-target-changed-" + profile);
+      long blockedNs = now();
       waitFor(test, share::isEnabled, "changed winner requires a new review");
       ui(test, () -> require(share.performClick(), "user reopens review explicitly"));
       ShareUi.Menu renewed = (ShareUi.Menu) get(activity, "shareDialog");
@@ -640,10 +695,43 @@ final class RankingPersistenceWaitChecks {
           test,
           activity,
           renewed.getWindow().getDecorView(),
-          () -> renewed.isShowing() && renewed.continueButton.isShown(),
+          () ->
+              renewed.isShowing()
+                  && renewed.continueButton.isShown()
+                  && !((View) get(activity, "selectionShareNotice")).isShown()
+                  && selected(activity).equals(burstSelection(photos))
+                  && get(activity, "shareProgress") == null,
           "ranking-share-renewed-review-" + profile);
-      require(sharing.getHits() == 0 && chooser.getHits() == 0, "no outbound share started");
+      long renewedNs = now();
+      int attemptDelta = (int) get(activity, "shareAttempt") - initialAttempt;
+      int outboundHits = sharing.getHits() + chooser.getHits();
+      require(
+          oldPreviewNs < rankChangedNs
+              && rankChangedNs < blockedNs
+              && blockedNs < renewedNs
+              && attemptDelta == 0
+              && outboundHits == 0,
+          "ordered review completed without automatic export or handoff");
       ui(test, renewed::dismiss);
+      return "shareReview oldPreviewNs="
+          + oldPreviewNs
+          + " rankChangedNs="
+          + rankChangedNs
+          + " staleContinueBlockedNs="
+          + blockedNs
+          + " explicitNewPreviewNs="
+          + renewedNs
+          + " exactSelection=true selectedCount="
+          + BURST.size()
+          + " oldPreviewCount="
+          + menu.previewPhotos.size()
+          + " newPreviewCount="
+          + renewed.previewPhotos.size()
+          + " noticeVisible=true attemptDelta="
+          + attemptDelta
+          + " outboundHits="
+          + outboundHits
+          + " newContinueExecuted=false\n";
     } finally {
       if (get(activity, "shareProgress") == null) {
         test.removeMonitor(sharing);
