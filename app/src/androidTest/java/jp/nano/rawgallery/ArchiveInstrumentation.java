@@ -667,7 +667,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
               case "amazon-retirement-seed" ->
                   AmazonRetirementUpgradeChecks.seed(
                       this, cameraPilotArguments.getString("consent", ""));
-              case "amazon-retirement-verify" -> AmazonRetirementUpgradeChecks.verify(context);
+              case "amazon-retirement-verify" -> AmazonRetirementUpgradeChecks.verify(this);
               case "amazon-retirement-viewer" ->
                   AmazonRetirementUpgradeChecks.viewer(this, tagWidth, tagFont);
               default -> AmazonRetirementUpgradeChecks.controls(this, tagWidth, tagFont);

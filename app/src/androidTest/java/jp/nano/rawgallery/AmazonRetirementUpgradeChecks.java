@@ -1,6 +1,8 @@
 package jp.nano.rawgallery;
 
+import android.app.Activity;
 import android.app.ActivityManager;
+import android.app.Application;
 import android.app.Instrumentation;
 import android.app.job.JobInfo;
 import android.app.job.JobScheduler;
@@ -9,11 +11,16 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
 import android.database.sqlite.SQLiteDatabase;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.net.ConnectivityManager;
 import android.os.Build;
+import android.os.Bundle;
+import android.os.SystemClock;
+import android.util.Base64;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -21,7 +28,10 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.util.ArrayDeque;
 import java.util.Arrays;
@@ -30,6 +40,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import jp.nano.rawgallery.security.EncryptedSecretStore;
 import org.json.JSONObject;
 
 /** Run seed on the old APK and verify on its replacement using a disposable test installation. */
@@ -38,6 +49,13 @@ final class AmazonRetirementUpgradeChecks {
   private static final byte[] ORIGINAL = {9, 4, 2, 1};
 
   private static final String BUCKET = "loupe-amazon-retirement-fixture";
+  private static final String NANO_PREFS = "nano-banana";
+  private static final String NANO_ALIAS = "loupe.nano-banana.v1";
+  private static final String NANO_KEY = "synthetic-upgrade-noncredential";
+  private static final String E2_PREFS = "e2_connection";
+  private static final String E2_ALIAS = "loupe-e2-connection";
+  private static final String E2_ACCESS = "synthetic-offline-access";
+  private static final String E2_SECRET = "synthetic-offline-secret";
   private static final String FRESH_CONSENT = "cleanupConsentAfterAmazonRetirement";
 
   private enum Profile {
@@ -86,8 +104,9 @@ final class AmazonRetirementUpgradeChecks {
     for (int id : new int[] {71, 72, 77, 78, 79, 80}) {
       require(scheduler.getPendingJob(id) == null, "existing job " + id);
     }
+    requireUnusedCredentials(context);
     var e2State = E2AutoSync.state(context);
-    var connection = context.getSharedPreferences("e2_connection", Context.MODE_PRIVATE);
+    var connection = context.getSharedPreferences(E2_PREFS, Context.MODE_PRIVATE);
     var settings = SettingsRepository.open(context);
     var witness = context.getSharedPreferences(FIXTURE, Context.MODE_PRIVATE);
     require(
@@ -108,25 +127,29 @@ final class AmazonRetirementUpgradeChecks {
             && emptyDirectory(new File(context.getFilesDir(), "e2-previews"))
             && emptyDirectory(new File(context.getCacheDir(), "originals")),
         "existing archive previews or cache files");
-    require(witness.edit().putString("phase", "seeding").commit(), "fixture marker");
+    PackageInfo installed = installedPackage(context);
+    require(
+        witness
+            .edit()
+            .putString("phase", "seeding")
+            .putLong("oldVersion", installed.getLongVersionCode())
+            .putLong("firstInstallTime", installed.firstInstallTime)
+            .putLong("oldLastUpdateTime", installed.lastUpdateTime)
+            .putString("oldApkDigest", installedApkDigest(context))
+            .putString("signer", signerDigest(installed))
+            .commit(),
+        "fixture marker");
 
-    int oldTask = -1;
-    if (profile.e2Cleanup) {
-      var old =
-          test.startActivitySync(
-              new Intent()
-                  .setComponent(component(context, "CloudActivity"))
-                  .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-      oldTask = old.getTaskId();
-      test.runOnMainSync(
-          () -> require(old.moveTaskToBack(true), "old activity task was not backgrounded"));
-      var recovering = E2SyncJob.class.getDeclaredField("OPEN_RECOVERY_QUEUED");
-      recovering.setAccessible(true);
-      var queued = (java.util.concurrent.atomic.AtomicBoolean) recovering.get(null);
-      long deadline = android.os.SystemClock.elapsedRealtime() + 5000;
-      while (queued.get() && android.os.SystemClock.elapsedRealtime() < deadline) Thread.sleep(25);
-      require(!queued.get(), "old recover-on-open did not settle");
-    }
+    int oldTask = seedOldTask(test, context);
+    requireUnusedCredentials(context);
+    seedCredentials(context, connection, profile);
+    require(
+        witness
+            .edit()
+            .putString("nanoCipher", storedCipherDigest(context, NANO_PREFS, "credential"))
+            .putString("e2Cipher", storedCipherDigest(context, E2_PREFS, "connection"))
+            .commit(),
+        "fixture ciphertext witness");
     storeFixture(context, false);
     storeFixture(context, true);
     storeE2Fixture(context, false);
@@ -136,7 +159,6 @@ final class AmazonRetirementUpgradeChecks {
     require(cache.getParentFile().isDirectory() || cache.getParentFile().mkdirs(), "cache folder");
     Files.write(cache.toPath(), ORIGINAL);
     if (profile.e2Cleanup) {
-      require(connection.edit().putString("bucket", BUCKET).commit(), "synthetic destination");
       require(
           e2State
               .edit()
@@ -170,7 +192,146 @@ final class AmazonRetirementUpgradeChecks {
             .putInt("oldTask", oldTask)
             .commit(),
         "fixture seeded marker");
-    return "PASS old JPG/WebP receipts, cache, deferred Amazon jobs and " + consentProfile;
+    return "PASS old JPG/WebP receipts, cache, deferred Amazon jobs, encrypted settings and "
+        + consentProfile;
+  }
+
+  private static void requireUnusedCredentials(Context context) throws Exception {
+    var directory = context.getDataDir().toPath().resolve("shared_prefs");
+    for (String name : List.of(NANO_PREFS, E2_PREFS)) {
+      // Android can report an empty preference map when existing XML is unreadable.
+      for (String suffix : List.of(".xml", ".xml.bak")) {
+        require(
+            Files.notExists(directory.resolve(name + suffix), LinkOption.NOFOLLOW_LINKS),
+            "credential preference file already exists or its absence cannot be confirmed");
+      }
+      require(
+          context.getSharedPreferences(name, Context.MODE_PRIVATE).getAll().isEmpty(),
+          "credential preference state is not empty");
+    }
+    KeyStore keystore = KeyStore.getInstance("AndroidKeyStore");
+    keystore.load(null);
+    require(
+        !keystore.containsAlias(NANO_ALIAS) && !keystore.containsAlias(E2_ALIAS),
+        "a credential key already exists");
+  }
+
+  private static void seedCredentials(
+      Context context, SharedPreferences connection, Profile profile) throws Exception {
+    NanoBananaStore nano = new NanoBananaStore(context);
+    nano.setOutput("16:9", "2K");
+    nano.setKey(NANO_KEY);
+    if (!profile.e2Cleanup) return;
+
+    // Same on-disk representation as E2Settings.connect, without its network probe.
+    var configuration =
+        new JSONObject().put("bucket", BUCKET).put("access", E2_ACCESS).put("secret", E2_SECRET);
+    var cipher = EncryptedSecretStore.encryptionCipher(E2_ALIAS);
+    byte[] encrypted = cipher.doFinal(configuration.toString().getBytes(StandardCharsets.UTF_8));
+    String encoded =
+        Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP)
+            + "."
+            + Base64.encodeToString(encrypted, Base64.NO_WRAP);
+    require(
+        connection.edit().putString("connection", encoded).putString("bucket", BUCKET).commit(),
+        "synthetic encrypted e2 settings");
+  }
+
+  private static void verifyCredentials(Context context, SharedPreferences witness, Profile profile)
+      throws Exception {
+    require(
+        witness
+                .getString("nanoCipher", "")
+                .equals(storedCipherDigest(context, NANO_PREFS, "credential"))
+            && !witness.getString("nanoCipher", "").isEmpty(),
+        "Nano ciphertext changed");
+    NanoBananaStore nano = new NanoBananaStore(context);
+    require(NANO_KEY.equals(nano.apiKey()), "Nano key did not decrypt to the seeded value");
+    var output = nano.output();
+    require(
+        "16:9".equals(output.aspectRatio) && "2K".equals(output.resolution),
+        "Nano output settings changed");
+    if (!profile.e2Cleanup) {
+      require(
+          context.getSharedPreferences(E2_PREFS, Context.MODE_PRIVATE).getAll().isEmpty(),
+          "upgrade introduced a connection");
+      return;
+    }
+    require(
+        witness
+                .getString("e2Cipher", "")
+                .equals(storedCipherDigest(context, E2_PREFS, "connection"))
+            && !witness.getString("e2Cipher", "").isEmpty(),
+        "e2 ciphertext changed");
+    E2Settings e2 = new E2Settings(context);
+    try (var records = e2.records) {
+      var configuration = e2.configuration();
+      require(
+          BUCKET.equals(E2Settings.configuredBucket(context))
+              && BUCKET.equals(configuration.getString("bucket"))
+              && E2_ACCESS.equals(configuration.getString("access"))
+              && E2_SECRET.equals(configuration.getString("secret")),
+          "e2 connection did not decrypt to the seeded values");
+    }
+  }
+
+  private static String storedCipherDigest(Context context, String prefs, String key)
+      throws Exception {
+    String encoded = context.getSharedPreferences(prefs, Context.MODE_PRIVATE).getString(key, "");
+    return encoded.isEmpty() ? "" : digest(encoded.getBytes(StandardCharsets.UTF_8));
+  }
+
+  private static PackageInfo installedPackage(Context context)
+      throws PackageManager.NameNotFoundException {
+    return context
+        .getPackageManager()
+        .getPackageInfo(context.getPackageName(), PackageManager.GET_SIGNING_CERTIFICATES);
+  }
+
+  private static String signerDigest(PackageInfo installed) throws Exception {
+    var signers = installed.signingInfo.getApkContentsSigners();
+    require(signers.length == 1, "fixture APK must have one signer");
+    return digest(signers[0].toByteArray());
+  }
+
+  private static String installedApkDigest(Context context) throws Exception {
+    MessageDigest digest = MessageDigest.getInstance("SHA-256");
+    byte[] buffer = new byte[32 * 1024];
+    try (var input =
+        Files.newInputStream(new File(context.getApplicationInfo().sourceDir).toPath())) {
+      for (int length; (length = input.read(buffer)) != -1; ) digest.update(buffer, 0, length);
+    } catch (IOException unreadable) {
+      throw new IOException("installed fixture APK could not be read");
+    }
+    return HexFormat.of().formatHex(digest.digest());
+  }
+
+  private static String digest(byte[] bytes) throws Exception {
+    return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+  }
+
+  private static int seedOldTask(Instrumentation test, Context context) throws Exception {
+    Activity old =
+        test.startActivitySync(
+            new Intent()
+                .setComponent(component(context, "CloudActivity"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    int taskId = old.getTaskId();
+    var manager = context.getSystemService(ActivityManager.class);
+    var appTask = findTask(manager, taskId);
+    var info = appTask == null ? null : taskInfo(appTask);
+    require(
+        info != null && component(context, "CloudActivity").equals(info.topActivity),
+        "old activity was not the top of its recorded task");
+    test.runOnMainSync(
+        () -> require(old.moveTaskToBack(true), "old activity task was not backgrounded"));
+    var recovering = E2SyncJob.class.getDeclaredField("OPEN_RECOVERY_QUEUED");
+    recovering.setAccessible(true);
+    var queued = (AtomicBoolean) recovering.get(null);
+    long deadline = SystemClock.elapsedRealtime() + 5000;
+    while (queued.get() && SystemClock.elapsedRealtime() < deadline) Thread.sleep(25);
+    require(!queued.get(), "old recover-on-open did not settle");
+    return taskId;
   }
 
   private static String key(boolean jpeg) throws Exception {
@@ -283,7 +444,8 @@ final class AmazonRetirementUpgradeChecks {
     }
   }
 
-  static String verify(Context context) throws Exception {
+  static String verify(Instrumentation test) throws Exception {
+    Context context = test.getTargetContext();
     SyncControlChecks.checkInstalledComponents(context);
     var witness = context.getSharedPreferences(FIXTURE, Context.MODE_PRIVATE);
     require("seeded".equals(witness.getString("phase", "")), "fixture was not seeded");
@@ -291,6 +453,22 @@ final class AmazonRetirementUpgradeChecks {
     require(
         context.getSystemService(ConnectivityManager.class).getActiveNetwork() == null,
         "verification requires an offline AVD");
+    PackageInfo installed = installedPackage(context);
+    long oldVersion = witness.getLong("oldVersion", -1);
+    long oldLastUpdateTime = witness.getLong("oldLastUpdateTime", 0);
+    String oldApkDigest = witness.getString("oldApkDigest", "");
+    // Feature builds may share the main version until merge. Verify actual APK replacement.
+    require(
+        oldVersion >= 0
+            && installed.getLongVersionCode() >= oldVersion
+            && oldLastUpdateTime > 0
+            && installed.lastUpdateTime > oldLastUpdateTime
+            && installed.firstInstallTime == witness.getLong("firstInstallTime", 0)
+            && signerDigest(installed).equals(witness.getString("signer", ""))
+            && oldApkDigest.matches("[0-9a-f]{64}")
+            && !oldApkDigest.equals(installedApkDigest(context)),
+        "expected a different in-place fixture update without downgrade and under the same signer");
+    verifyCredentials(context, witness, profile);
     var scheduler = context.getSystemService(JobScheduler.class);
     require(
         scheduler.getPendingJob(71) == null && scheduler.getPendingJob(72) == null,
@@ -317,18 +495,6 @@ final class AmazonRetirementUpgradeChecks {
               && e2State.getInt("cleanupDays", 0) == 31,
           "existing E2 state or raw consent was changed");
       awaitE2Schedule(scheduler, profile == Profile.ACTIVE ? 15 : 12 * 60);
-      int oldTask = witness.getInt("oldTask", -1);
-      require(oldTask >= 0, "old task was not seeded");
-      for (ActivityManager.AppTask task :
-          context.getSystemService(ActivityManager.class).getAppTasks()) {
-        var info = task.getTaskInfo();
-        if (info.taskId == oldTask) {
-          require(
-              !component(context, "CloudActivity").equals(info.topActivity)
-                  && !component(context, "SyncActivity").equals(info.topActivity),
-              "retired activity still at top of existing task");
-        }
-      }
     } else {
       require(e2State.getAll().isEmpty(), "upgrade introduced E2 consent");
       for (int id = 77; id <= 80; id++) {
@@ -360,8 +526,126 @@ final class AmazonRetirementUpgradeChecks {
         }
       }
     }
+    try (var e2 = E2Settings.openRecords(context)) {
+      for (boolean cached : new boolean[] {false, true}) {
+        String key = e2Key(cached);
+        JSONObject record = e2.get(key);
+        require(
+            record != null
+                && E2Cleanup.RELEASED.equals(record.getString("state"))
+                && BUCKET.equals(record.getString("bucket")),
+            "saved e2 receipt changed");
+        var photo = E2Cleanup.galleryPhoto(record);
+        require(key.equals(photo.uri.getHost()), "saved e2 identity changed");
+        if (cached) {
+          File file = original(context, ArchiveStore.key(photo));
+          require(
+              file.isFile() && Arrays.equals(ORIGINAL, Files.readAllBytes(file.toPath())),
+              "saved e2 cache or archive key changed");
+        }
+      }
+    }
+    String task = verifyOldTask(test, context, witness.getInt("oldTask", -1));
     return "PASS old jobs retired; consent and actual E2 schedules checked; old JPG/WebP previews,"
-        + " history and cache retained";
+        + " history, cache and encrypted settings retained; "
+        + task;
+  }
+
+  private static ActivityManager.AppTask findTask(ActivityManager manager, int id) {
+    for (ActivityManager.AppTask task : manager.getAppTasks()) {
+      var info = taskInfo(task);
+      if (info != null && info.taskId == id) return task;
+    }
+    return null;
+  }
+
+  private static ActivityManager.RecentTaskInfo taskInfo(ActivityManager.AppTask task) {
+    try {
+      return task.getTaskInfo();
+    } catch (IllegalArgumentException removed) {
+      return null;
+    }
+  }
+
+  private static String verifyOldTask(Instrumentation test, Context context, int taskId)
+      throws Exception {
+    require(taskId >= 0, "old activity task was not recorded");
+    var manager = context.getSystemService(ActivityManager.class);
+    ActivityManager.AppTask task = findTask(manager, taskId);
+    String outcome =
+        task == null
+            ? "old task absent from the OS app-task list before verification"
+            : resumeOldTask(context, manager, task, taskId);
+    Activity main =
+        test.startActivitySync(
+            new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    try {
+      require(main instanceof MainActivity, "normal launch did not open MainActivity");
+      AlbumTagEntryChecks.waitFor(
+          test, "normal MainActivity launch after update", main::hasWindowFocus);
+    } finally {
+      test.runOnMainSync(main::finish);
+    }
+    return outcome + "; normal MainActivity launch observed";
+  }
+
+  private static String resumeOldTask(
+      Context context, ActivityManager manager, ActivityManager.AppTask task, int id)
+      throws InterruptedException {
+    Application application = (Application) context.getApplicationContext();
+    var resumed = new AtomicReference<Activity>();
+    Application.ActivityLifecycleCallbacks monitor =
+        new Application.ActivityLifecycleCallbacks() {
+          @Override
+          public void onActivityResumed(Activity activity) {
+            resumed.set(activity);
+          }
+
+          @Override
+          public void onActivityCreated(Activity activity, Bundle state) {}
+
+          @Override
+          public void onActivityStarted(Activity activity) {}
+
+          @Override
+          public void onActivityPaused(Activity activity) {}
+
+          @Override
+          public void onActivityStopped(Activity activity) {}
+
+          @Override
+          public void onActivitySaveInstanceState(Activity activity, Bundle state) {}
+
+          @Override
+          public void onActivityDestroyed(Activity activity) {}
+        };
+    application.registerActivityLifecycleCallbacks(monitor);
+    try {
+      try {
+        task.moveToFront();
+      } catch (IllegalArgumentException removed) {
+        if (findTask(manager, id) == null) return "old task absent when moveToFront was attempted";
+        throw removed;
+      }
+      long deadline = SystemClock.elapsedRealtime() + 5000;
+      do {
+        var old = findTask(manager, id);
+        var info = old == null ? null : taskInfo(old);
+        if (info == null) return "OS removed the old task after a moveToFront attempt";
+        var top = info.topActivity;
+        var activity = resumed.get();
+        if (activity != null
+            && (activity.getTaskId() == id || activity instanceof MainActivity)
+            && !component(context, "CloudActivity").equals(top)
+            && !component(context, "SyncActivity").equals(top)) {
+          return "retained task move yielded a supported activity resume";
+        }
+        Thread.sleep(50);
+      } while (SystemClock.elapsedRealtime() < deadline);
+      throw new AssertionError("retained old task move had no observable safe outcome");
+    } finally {
+      application.unregisterActivityLifecycleCallbacks(monitor);
+    }
   }
 
   private static void awaitE2Schedule(JobScheduler scheduler, int intervalMinutes)

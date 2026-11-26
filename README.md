@@ -148,11 +148,10 @@ GR IVは `SubIFD1:PreviewImage`、Leitzphoneは `SubIFD:PreviewImage`、OMの２
 ## 追加の検証
 
 ```sh
-./tests/cloud-policy.sh
 sh tests/sync-policy.sh
 ```
 
-接続先の制限は22件、保持期間・機種・撮影日の判定は44件を検証します。
+保持期間・機種・撮影日の判定は44件を検証します。旧Amazon Photos接続先の検査は、操作機能の廃止に伴って削除しました。
 実機テストは承認済みのOM-1オリジナルを読み取り、クラウド照合、記録の永続化、保存したプレビューの表示、オリジナル復元、元ファイルの不変を確認し、成功しました。
 テスト用アプリは公開用APKには含めません。
 
