@@ -45,6 +45,7 @@ import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -152,8 +153,7 @@ final class AmazonRetirementUpgradeChecks {
   private static void requireFixtureOriginalCache(Context context, PhotoRepository.Photo local)
       throws Exception {
     var legacy = original(context, key(false)).toPath();
-    var e2 =
-        original(context, ArchiveStore.key(E2Cleanup.galleryPhoto(e2FixtureRecord(true)))).toPath();
+    var e2 = original(context, ArchiveStore.key(readSeededE2CachedPhoto(context))).toPath();
     var localCache = original(context, ArchiveStore.key(local)).toPath();
     var directory = legacy.getParent();
     require(
@@ -182,6 +182,34 @@ final class AmazonRetirementUpgradeChecks {
               "retirement fixture rejects a changed local cache copy");
         }
       }
+    }
+  }
+
+  private static PhotoRepository.Photo readSeededE2CachedPhoto(Context context) throws Exception {
+    var database = context.getDatabasePath(E2Settings.DATABASE).toPath();
+    require(
+        Files.isRegularFile(database, LinkOption.NOFOLLOW_LINKS),
+        "missing seeded e2 receipt database");
+    var expected = e2FixtureRecord(true);
+    try (var archive =
+            SQLiteDatabase.openDatabase(
+                database.toString(), null, SQLiteDatabase.OPEN_READONLY, ignored -> {});
+        var row =
+            archive.rawQuery(
+                "SELECT state,payload FROM photos WHERE key=?",
+                new String[] {expected.getString("key")})) {
+      require(
+          row.moveToFirst() && E2Cleanup.RELEASED.equals(row.getString(0)),
+          "missing seeded released e2 receipt");
+      var receipt = new JSONObject(row.getString(1));
+      // Cache identity and stored original proof precede catalog versioning in preserved seeds.
+      for (String field :
+          List.of("key", "uri", "name", "folder", "size", "modified", "taken", "sha", "bucket")) {
+        require(
+            expected.get(field).equals(receipt.get(field)),
+            "seeded e2 receipt identity or original metadata changed");
+      }
+      return E2Cleanup.galleryPhoto(receipt);
     }
   }
 
@@ -522,6 +550,8 @@ final class AmazonRetirementUpgradeChecks {
         .put("taken", 1)
         .put("sha", HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(ORIGINAL)))
         .put("bucket", BUCKET)
+        .put("provider", "idrive-e2")
+        .put("version", FIXTURE + "-e2-version-" + cached)
         .put("model", "Synthetic")
         .put("thumbWidth", 32)
         .put("thumbHeight", 24);
@@ -871,6 +901,7 @@ final class AmazonRetirementUpgradeChecks {
     Profile profile = Profile.parse(witness.getString("consent", ""));
     var local = localShareFixture(context);
     requireFixtureOriginalCache(context, local);
+    if (profile == Profile.CONTRADICTORY) requireFreshConsentCatalog(context);
     checkRetentionWrites(context);
     checkCleanupConsentWrites(context);
     var sync =
@@ -999,6 +1030,26 @@ final class AmazonRetirementUpgradeChecks {
         + (profile == Profile.CONTRADICTORY ? " fresh cleanup confirmation cancelled;" : "")
         + " conditional archive share notice, missing-original recovery, copy rollback and"
         + " preserved selection";
+  }
+
+  private static void requireFreshConsentCatalog(Context context) {
+    requireOffline(context);
+    try (var photos = new E2Photos(context)) {
+      require(
+          BUCKET.equals(photos.settings.configuration().getString("bucket")),
+          "unexpected bucket in fresh-consent fixture");
+      var saved = photos.saved(BUCKET);
+      require(
+          saved.size() == 2
+              && Set.of(saved.get(0).getString("key"), saved.get(1).getString("key"))
+                  .equals(Set.of(e2Key(false), e2Key(true))),
+          "unexpected rows in fresh-consent local e2 catalog");
+    } catch (Exception failure) {
+      String blocked =
+          "fresh-consent local e2 catalog read failed: " + failure.getClass().getSimpleName();
+      android.util.Log.w("LoupeRetirementFixture", blocked);
+      throw new AssertionError(blocked);
+    }
   }
 
   private record PauseUiState(String bucket, CharSequence message, int color, int scrollY) {}
