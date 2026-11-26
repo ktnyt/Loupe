@@ -98,9 +98,15 @@ final class NanoBananaApiChecks {
     }
     verifyStatusPayloadFailure(
         "{\"successFlag\":1,\"response\":{\"resultImageUrl\":\"\"}}", MalformedURLException.class);
-    verifyStatusPayloadFailure(
-        "{\"successFlag\":1,\"response\":{\"resultImageUrl\":\"http://file.aiquickdraw.com/\"}}",
-        NanoBananaApi.SafeFailure.class);
+    verifyStatusResultUrlFailure(
+        "https://synthetic.invalid/result.jpg?token=" + DETAIL, "結果画像の接続先に対応していません");
+    for (String url :
+        Arrays.asList(
+            "http://file.aiquickdraw.com/result.jpg?token=" + DETAIL,
+            "https://" + KEY + ":" + DETAIL + "@file.aiquickdraw.com/result.jpg",
+            "https://file.aiquickdraw.com:8443/result.jpg?token=" + DETAIL)) {
+      verifyStatusResultUrlFailure(url, "結果画像のURLを確認できませんでした");
+    }
 
     verifyStatusFailure(401, "APIキーまたは利用権限を確認してください");
     verifyStatusFailure(403, "APIキーまたは利用権限を確認してください");
@@ -250,6 +256,20 @@ final class NanoBananaApiChecks {
     IOException error = failure(() -> new NanoBananaApi(KEY, response::open).status(DETAIL));
     verifyMessage(error, API_FAILURE);
     require(cause.isInstance(error.getCause()), "invalid status data keeps its original cause");
+    response.verifyClosed();
+  }
+
+  private static void verifyStatusResultUrlFailure(String url, String message) throws Exception {
+    Response response =
+        statusResponse("{\"successFlag\":1,\"response\":{\"resultImageUrl\":\"" + url + "\"}}");
+    IOException error = failure(() -> new NanoBananaApi(KEY, response::open).status(DETAIL));
+    verifyMessage(error, message);
+    require(error.getCause() == null, "rejected result URL keeps its original safe failure");
+    require(
+        response.connection.getRequestMethod().equals("GET")
+            && response.url.getHost().equals("api.nanobananaapi.ai")
+            && response.url.getPath().endsWith("/record-info"),
+        "invalid result URL only uses the status endpoint");
     response.verifyClosed();
   }
 

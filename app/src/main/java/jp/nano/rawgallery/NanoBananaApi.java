@@ -87,6 +87,8 @@ final class NanoBananaApi {
         resultUrl((String) url);
       }
       return data;
+    } catch (SafeFailure error) {
+      throw error;
     } catch (JSONException | IOException error) {
       throw new SafeFailure(API_FAILURE, error);
     }
