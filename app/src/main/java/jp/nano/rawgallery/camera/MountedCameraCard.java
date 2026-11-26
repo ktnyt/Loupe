@@ -45,17 +45,17 @@ public final class MountedCameraCard {
   private static final CopyOnWriteArrayList<Consumer<MountChange>> mountListeners =
       new CopyOnWriteArrayList<>();
 
-  public record MountChange(String volumeUuid, boolean detached, boolean unexpectedRemoval) {}
+  public record MountChange(String volumeUuid, boolean detached, String state) {}
 
-  private static final AtomicLong removalGeneration = new AtomicLong();
+  private static final AtomicLong unsafeMediaGeneration = new AtomicLong();
   private static boolean observing;
 
   public static long detachGeneration() {
     return detachGeneration.get();
   }
 
-  static long removalGeneration() {
-    return removalGeneration.get();
+  static long unsafeMediaGeneration() {
+    return unsafeMediaGeneration.get();
   }
 
   public static synchronized Runnable observeMounts(
@@ -73,6 +73,10 @@ public final class MountedCameraCard {
     filter.addAction(Intent.ACTION_MEDIA_UNMOUNTED);
     filter.addAction(Intent.ACTION_MEDIA_REMOVED);
     filter.addAction(Intent.ACTION_MEDIA_BAD_REMOVAL);
+    filter.addAction(Intent.ACTION_MEDIA_CHECKING);
+    filter.addAction(Intent.ACTION_MEDIA_NOFS);
+    filter.addAction(Intent.ACTION_MEDIA_UNMOUNTABLE);
+    filter.addAction(Intent.ACTION_MEDIA_SHARED);
     filter.addDataScheme("file");
     BroadcastReceiver receiver =
         new BroadcastReceiver() {
@@ -100,7 +104,7 @@ public final class MountedCameraCard {
                           event.getParcelableExtra(UsbManager.EXTRA_DEVICE);
               if (device != null && UsbMassStorage.Companion.isMassStorage(device)) {
                 boolean detached = UsbManager.ACTION_USB_DEVICE_DETACHED.equals(event.getAction());
-                publishMountChange(new MountChange(null, detached, detached));
+                publishMountChange(new MountChange(null, detached, null));
               }
             }
           };
@@ -130,25 +134,36 @@ public final class MountedCameraCard {
   }
 
   static void legacyMediaChanged(String uuid, String action) {
-    boolean removed =
-        Intent.ACTION_MEDIA_REMOVED.equals(action)
-            || Intent.ACTION_MEDIA_BAD_REMOVAL.equals(action);
-    publishMountChange(new MountChange(uuid, !Intent.ACTION_MEDIA_MOUNTED.equals(action), removed));
+    if (action == null) return;
+    String state =
+        switch (action) {
+          case Intent.ACTION_MEDIA_EJECT -> Environment.MEDIA_EJECTING;
+          case Intent.ACTION_MEDIA_UNMOUNTED -> Environment.MEDIA_UNMOUNTED;
+          case Intent.ACTION_MEDIA_MOUNTED -> Environment.MEDIA_MOUNTED;
+          case Intent.ACTION_MEDIA_REMOVED -> Environment.MEDIA_REMOVED;
+          case Intent.ACTION_MEDIA_BAD_REMOVAL -> Environment.MEDIA_BAD_REMOVAL;
+          case Intent.ACTION_MEDIA_CHECKING -> Environment.MEDIA_CHECKING;
+          case Intent.ACTION_MEDIA_NOFS -> Environment.MEDIA_NOFS;
+          case Intent.ACTION_MEDIA_UNMOUNTABLE -> Environment.MEDIA_UNMOUNTABLE;
+          case Intent.ACTION_MEDIA_SHARED -> Environment.MEDIA_SHARED;
+          default -> null;
+        };
+    if (state != null) volumeChanged(uuid, state);
   }
 
   static void volumeChanged(String uuid, String state) {
     boolean readable =
         Environment.MEDIA_MOUNTED.equals(state)
             || Environment.MEDIA_MOUNTED_READ_ONLY.equals(state);
-    boolean removed =
-        Environment.MEDIA_REMOVED.equals(state) || Environment.MEDIA_BAD_REMOVAL.equals(state);
-    publishMountChange(new MountChange(uuid, !readable, removed));
+    publishMountChange(new MountChange(uuid, !readable, state));
   }
 
   private static void publishMountChange(MountChange change) {
     // Neither Android notification provides a shared transition ID. A delayed notification
     // must not make a later real removal look like a duplicate.
-    if (change.unexpectedRemoval()) removalGeneration.incrementAndGet();
+    if (change.volumeUuid() == null || !SdUsbReprobe.isEjectionState(change.state())) {
+      unsafeMediaGeneration.incrementAndGet();
+    }
     if (change.detached()) detachGeneration.incrementAndGet();
     for (Consumer<MountChange> listener : mountListeners) listener.accept(change);
   }

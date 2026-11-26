@@ -98,6 +98,10 @@ final class SdUsbReprobe {
 
   record Volume(String uuid, String state) {}
 
+  static boolean isEjectionState(String state) {
+    return "ejecting".equals(state) || "unmounted".equals(state);
+  }
+
   record Snapshot(Reader reader, String destination, List<Volume> volumes, boolean permitted) {
     Snapshot {
       volumes = List.copyOf(volumes);
@@ -126,6 +130,12 @@ final class SdUsbReprobe {
           return false;
       }
       return seen.size() <= 2 && seen.contains(destination);
+    }
+
+    boolean expectsEjectionEvent(String uuid, String state) {
+      return uuid != null
+          && isEjectionState(state)
+          && volumes.stream().anyMatch(volume -> uuid.equals(volume.uuid));
     }
 
     boolean sameInventory(Snapshot current) {

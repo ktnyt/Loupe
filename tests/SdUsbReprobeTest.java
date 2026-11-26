@@ -47,6 +47,28 @@ public final class SdUsbReprobeTest {
     require(
         !EJECTION.confirmed(EJECTED, 100),
         "An expired confirmation does not authorize the USB operation");
+    require(
+        EJECTED.expectsEjectionEvent(TARGET, "ejecting")
+            && EJECTED.expectsEjectionEvent(SOURCE, "unmounted"),
+        "Allow late orderly ejection notifications for the same inventory");
+    require(
+        !EJECTED.expectsEjectionEvent(null, "unmounted")
+            && !EJECTED.expectsEjectionEvent("3000-0003", "unmounted"),
+        "Reject ambiguous or unexpected volume identities");
+    for (String state :
+        List.of(
+            "mounted",
+            "mounted_ro",
+            "checking",
+            "removed",
+            "bad_removal",
+            "nofs",
+            "shared",
+            "unmountable")) {
+      require(
+          !EJECTED.expectsEjectionEvent(SOURCE, state),
+          "A notification from a different mount cycle invalidates proof: " + state);
+    }
     for (String state :
         List.of(
             "mounted",

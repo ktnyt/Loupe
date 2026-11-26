@@ -142,6 +142,41 @@ public final class SdUsbReprobeFlowChecks {
                 flow.platform.claims == 0,
                 "A removal after confirmation invalidates the parked worker even if the inventory returns");
           }
+          for (String action :
+              List.of(
+                  Intent.ACTION_MEDIA_MOUNTED,
+                  Intent.ACTION_MEDIA_CHECKING,
+                  Intent.ACTION_MEDIA_UNMOUNTABLE)) {
+            try (var flow = new Flow(activity)) {
+              flow.ejectAndConfirm();
+              // The ejected snapshot is already back before the notice arrives.
+              legacyVolumeEvent(SOURCE, action);
+              flow.tasks.remove().run();
+              require(
+                  flow.platform.claims == 0,
+                  "A conflicting legacy notice invalidates the parked worker " + action);
+            }
+          }
+          try (var flow = new Flow(activity)) {
+            flow.showConfirmation();
+            legacyVolumeEvent(SOURCE, Intent.ACTION_MEDIA_MOUNTED);
+            flow.confirm.run();
+            require(
+                flow.tasks.isEmpty() && flow.platform.claims == 0 && !flow.controller.preparing(),
+                "A remount invalidates the proof while the confirmation dialog is open");
+          }
+          try (var flow = new Flow(activity)) {
+            flow.arm();
+            flow.platform.snapshot = ejected();
+            flow.controller.storageChanged(
+                new SdUsbReprobe.VisibleVolume(SOURCE, "mounted", false, false, true));
+            flow.assertReserved();
+            flow.controller.resume();
+            flow.controller.request();
+            require(
+                flow.confirm == null && flow.platform.claims == 0 && !flow.controller.preparing(),
+                "A remount while Settings is open also invalidates the old ejection");
+          }
           try (var flow = new Flow(activity)) {
             flow.ejectAndConfirm();
             flow.assertReserved();
@@ -162,7 +197,13 @@ public final class SdUsbReprobeFlowChecks {
           ready.set(flow);
           flow.platform.restored = mounted(CHANGED_SOURCE);
           flow.platform.folder = tree(CHANGED_SOURCE + ":DCIM");
-          flow.platform.closedUsb = flow.controller::observed;
+          flow.platform.closedUsb =
+              () -> {
+                legacyVolumeEvent(TARGET, Intent.ACTION_MEDIA_MOUNTED);
+                legacyVolumeEvent(CHANGED_SOURCE, Intent.ACTION_MEDIA_MOUNTED);
+                flow.controller.storageChanged(
+                    new SdUsbReprobe.VisibleVolume(CHANGED_SOURCE, "mounted", false, false, true));
+              };
           flow.ejectAndConfirm();
           // A notification for the approved eject can arrive after the UI hands off the worker.
           legacyVolumeEvent(TARGET, Intent.ACTION_MEDIA_UNMOUNTED);
@@ -305,7 +346,7 @@ public final class SdUsbReprobeFlowChecks {
       open.run();
     }
 
-    void ejectAndConfirm() {
+    void showConfirmation() {
       arm();
       legacyVolumeEvent(SOURCE, Intent.ACTION_MEDIA_EJECT);
       platform.snapshot = ejected();
@@ -314,6 +355,10 @@ public final class SdUsbReprobeFlowChecks {
       controller.resume();
       controller.request();
       require(confirm != null && platform.claims == 0, "Wait for explicit confirmation");
+    }
+
+    void ejectAndConfirm() {
+      showConfirmation();
       confirm.run();
       require(tasks.size() == 1, "Confirmation queues one worker");
     }

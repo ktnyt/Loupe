@@ -12,7 +12,6 @@ import android.hardware.usb.UsbDeviceConnection;
 import android.hardware.usb.UsbInterface;
 import android.hardware.usb.UsbManager;
 import android.os.Build;
-import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
@@ -251,46 +250,30 @@ public final class SdUsbReprobeController {
   }
 
   private void mediaChanged(MountedCameraCard.MountChange change) {
-    if (!change.unexpectedRemoval()) return;
-    // Every visible portable volume belongs to the one allowed setup. An unlisted or
-    // unidentified removal is also a reason to discard the live proof.
-    if (armed != null) invalidateEjection();
-    if (running != null) running.invalidateBeforeClaim();
-    if (positive != null
-        && (change.volumeUuid() == null
-            || positive.volumes().stream().anyMatch(v -> change.volumeUuid().equals(v.uuid())))) {
-      show(null);
-    }
+    mediaStateChanged(change.volumeUuid(), change.state());
+    observed();
   }
 
   void storageChanged(SdUsbReprobe.VisibleVolume event) {
-    if (positive != null
-        && !event.emulated()
-        && positive.volumes().stream()
-            .noneMatch(
-                v -> Objects.equals(v.uuid(), event.uuid()) && v.state().equals(event.state()))) {
-      show(null);
-    }
-    if (armed != null
-        && (Environment.MEDIA_REMOVED.equals(event.state())
-            || Environment.MEDIA_BAD_REMOVAL.equals(event.state())
-            || (!event.emulated()
-                && (event.uuid() == null
-                    || !armed.beforeSettings().volumes().stream()
-                        .anyMatch(v -> event.uuid().equals(v.uuid())))))) {
+    if (!event.emulated()) mediaStateChanged(event.uuid(), event.state());
+    observed();
+  }
+
+  private void mediaStateChanged(String uuid, String state) {
+    // A completed ejection cannot authorize a later mount cycle with the same UUID.
+    // Both Android notification channels must agree on which transitions are expected.
+    if (armed != null && !armed.beforeSettings().expectsEjectionEvent(uuid, state)) {
       invalidateEjection();
     }
-    if (running != null
-        && !event.emulated()
-        && running.snapshot.volumes().stream()
-            .noneMatch(
-                v ->
-                    Objects.equals(v.uuid(), event.uuid())
-                        && (Objects.equals(v.state(), event.state())
-                            || Environment.MEDIA_EJECTING.equals(event.state())))) {
+    if (running != null && !running.snapshot.expectsEjectionEvent(uuid, state)) {
       running.invalidateBeforeClaim();
     }
-    observed();
+    if (positive != null
+        && (uuid == null
+            || positive.volumes().stream()
+                .noneMatch(v -> uuid.equals(v.uuid()) && Objects.equals(v.state(), state)))) {
+      show(null);
+    }
   }
 
   void observed() {
@@ -478,7 +461,7 @@ public final class SdUsbReprobeController {
     final CameraImportGate.Reservation reservation;
     final LongSupplier now;
     final SdUsbReprobe.ClaimAuthorization authorization = new SdUsbReprobe.ClaimAuthorization();
-    private final long removalGeneration = MountedCameraCard.removalGeneration();
+    private final long unsafeMediaGeneration = MountedCameraCard.unsafeMediaGeneration();
     Snapshot restored;
 
     void invalidateBeforeClaim() {
@@ -519,7 +502,8 @@ public final class SdUsbReprobeController {
                     return authorization.tryStart(
                         () ->
                             reservation.isOpen()
-                                && removalGeneration == MountedCameraCard.removalGeneration());
+                                && unsafeMediaGeneration
+                                    == MountedCameraCard.unsafeMediaGeneration());
                   }
 
                   @Override
@@ -582,7 +566,7 @@ public final class SdUsbReprobeController {
       new MaterialAlertDialogBuilder(activity)
           .setTitle("Androidでカードを取り出す")
           .setMessage(
-              "設定 → デバイス情報 → ストレージを開き、下にある「USBデバイスのマウントを解除」を選びます。リーダーはつないだまま、取り出しが完了したらLoupeに戻ってください。"
+              "設定 → デバイス情報 → ストレージを開き、下にある「USBドライブ」欄の「USBデバイスのマウントを解除」を選びます。リーダーはつないだまま、取り出しが完了したらLoupeに戻ってください。"
                   + "\n\n両方のカードがポータブルストレージで、各カードにパーティションが1つの場合に使えます。構成が分からない場合は、安全に取り出してからリーダーを挿し直してください。")
           .setNegativeButton("キャンセル", (dialog, which) -> cancel.run())
           .setOnCancelListener(dialog -> cancel.run())
