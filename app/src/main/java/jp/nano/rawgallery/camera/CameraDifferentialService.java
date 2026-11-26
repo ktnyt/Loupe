@@ -39,7 +39,7 @@ public final class CameraDifferentialService extends Service {
   private static volatile boolean watchingSdMounts;
 
   static boolean isWatchingSdMounts() {
-    return watchingSdMounts;
+    return watchingSdMounts && MountedCameraCard.isObserving();
   }
 
   private final BooleanSupplier cancelled =
