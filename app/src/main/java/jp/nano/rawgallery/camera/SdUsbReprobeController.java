@@ -59,6 +59,7 @@ public final class SdUsbReprobeController {
   private final BroadcastReceiver usbReceiver;
   private final Runnable expire = this::expirePreparation;
   private boolean observing, foreground, settingsOpen, destroyed;
+  private Runnable removeMediaObserver;
   private Snapshot lastObserved, positive;
   private Ejection armed;
   private CameraImportGate.Reservation preparing;
@@ -154,8 +155,11 @@ public final class SdUsbReprobeController {
     lastObserved = platform.snapshot();
     if (positive != null) show(null);
     if (!observing) {
+      boolean storageRegistered = false;
       try {
+        removeMediaObserver = MountedCameraCard.observeMounts(activity, this::mediaChanged);
         storage.registerStorageVolumeCallback(activity.getMainExecutor(), storageCallback);
+        storageRegistered = true;
         var filter = new IntentFilter(UsbManager.ACTION_USB_DEVICE_ATTACHED);
         filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
         if (Build.VERSION.SDK_INT >= 33) {
@@ -165,7 +169,8 @@ public final class SdUsbReprobeController {
         }
         observing = true;
       } catch (RuntimeException unavailable) {
-        if (storage != null) storage.unregisterStorageVolumeCallback(storageCallback);
+        if (storageRegistered) storage.unregisterStorageVolumeCallback(storageCallback);
+        stopObserving();
       }
     }
     if (settingsOpen) {
@@ -212,6 +217,10 @@ public final class SdUsbReprobeController {
   }
 
   private void stopObserving() {
+    if (removeMediaObserver != null) {
+      removeMediaObserver.run();
+      removeMediaObserver = null;
+    }
     if (!observing) return;
     storage.unregisterStorageVolumeCallback(storageCallback);
     activity.unregisterReceiver(usbReceiver);
@@ -243,6 +252,19 @@ public final class SdUsbReprobeController {
     }
   }
 
+  private void mediaChanged(MountedCameraCard.MountChange change) {
+    if (!change.unexpectedRemoval()) return;
+    // Every visible portable volume belongs to the one allowed setup. An unlisted or
+    // unidentified removal is also a reason to discard the live proof.
+    if (armed != null) invalidateEjection();
+    if (running != null) running.invalidateBeforeClaim();
+    if (positive != null
+        && (change.volumeUuid() == null
+            || positive.volumes().stream().anyMatch(v -> change.volumeUuid().equals(v.uuid())))) {
+      show(null);
+    }
+  }
+
   void storageChanged(SdUsbReprobe.VisibleVolume event) {
     if (positive != null
         && !event.emulated()
@@ -266,7 +288,8 @@ public final class SdUsbReprobeController {
             .noneMatch(
                 v ->
                     Objects.equals(v.uuid(), event.uuid())
-                        && Objects.equals(v.state(), event.state()))) {
+                        && (Objects.equals(v.state(), event.state())
+                            || Environment.MEDIA_EJECTING.equals(event.state())))) {
       running.invalidateBeforeClaim();
     }
     observed();
@@ -466,7 +489,7 @@ public final class SdUsbReprobeController {
 
     private final AtomicReference<ClaimPhase> claimPhase =
         new AtomicReference<>(ClaimPhase.PENDING);
-    private final long generation = MountedCameraCard.detachGeneration();
+    private final long removalGeneration = MountedCameraCard.removalGeneration();
     Snapshot restored;
 
     void invalidateBeforeClaim() {
@@ -509,7 +532,7 @@ public final class SdUsbReprobeController {
                   public boolean startingClaim() {
                     return !cancelled.get()
                         && reservation.isOpen()
-                        && generation == MountedCameraCard.detachGeneration()
+                        && removalGeneration == MountedCameraCard.removalGeneration()
                         && claimPhase.compareAndSet(ClaimPhase.PENDING, ClaimPhase.STARTED);
                   }
 
@@ -573,7 +596,8 @@ public final class SdUsbReprobeController {
       new MaterialAlertDialogBuilder(activity)
           .setTitle("Androidでカードを取り出す")
           .setMessage(
-              "カメラ用SDと保存用microSDがどちらもポータブルストレージで、1枚につき領域が1つの場合に使えます。リーダーはつないだまま、Androidに表示されるすべてのカードを安全に取り出してください。完了したら戻って再認識を押します。内部ストレージとして設定したカードや構成が分からない場合は、安全に取り外してリーダーを挿し直してください。")
+              "設定 → デバイス情報 → ストレージを開き、下にある「USBデバイスのマウントを解除」を選びます。リーダーはつないだまま、取り出しが完了したらLoupeに戻ってください。"
+                  + "\n\n両方のカードがポータブルストレージで、各カードにパーティションが1つの場合に使えます。構成が分からない場合は、安全に取り出してからリーダーを挿し直してください。")
           .setNegativeButton("キャンセル", (dialog, which) -> cancel.run())
           .setOnCancelListener(dialog -> cancel.run())
           .setPositiveButton("ストレージ設定を開く", (dialog, which) -> open.run())

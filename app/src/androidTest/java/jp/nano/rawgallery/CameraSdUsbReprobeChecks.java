@@ -103,7 +103,7 @@ final class CameraSdUsbReprobeChecks {
         capture(test, directory, width, font, state.name);
       }
       SdUsbReprobeFlowChecks.run(test, activity);
-      checkCallbackOnlyRemoval(test, activity);
+      checkCardNotificationOrdering(test, activity);
     } finally {
       test.runOnMainSync(activity::finish);
       test.waitForIdleSync();
@@ -116,8 +116,8 @@ final class CameraSdUsbReprobeChecks {
         + directory.getAbsolutePath();
   }
 
-  private static void checkCallbackOnlyRemoval(Instrumentation test, CameraImportActivity activity)
-      throws Exception {
+  private static void checkCardNotificationOrdering(
+      Instrumentation test, CameraImportActivity activity) throws Exception {
     var picker = field("sdPicker");
     var confirmation = field("sdConfirmation");
     var pickerType = picker.getType();
@@ -157,10 +157,6 @@ final class CameraSdUsbReprobeChecks {
                 "The pending folder picker is invalidated by callback-only removal");
             long afterPicker = MountedCameraCard.detachGeneration();
             require(afterPicker == beforePicker + 1, "Storage callback advances the generation");
-            SdUsbReprobeFlowChecks.volumeEvent(uuid, true);
-            require(
-                MountedCameraCard.detachGeneration() == afterPicker,
-                "A second notification of the same removal has no additional effect");
             SdUsbReprobeFlowChecks.volumeEvent(uuid, false);
             activity.onActivityResult(
                 requestCode.getInt(null),
@@ -170,16 +166,37 @@ final class CameraSdUsbReprobeChecks {
                 confirmation.get(activity) == null,
                 "A result from the canceled picker is ignored even after the same card returns");
 
+            SdUsbReprobeFlowChecks.legacyVolumeEvent(uuid, Intent.ACTION_MEDIA_UNMOUNTED);
+            long beforeFreshPicker = MountedCameraCard.detachGeneration();
+            picker.set(
+                activity,
+                constructor.newInstance(
+                    null,
+                    PhotoStorage.PRIMARY,
+                    "RAW",
+                    beforeFreshPicker,
+                    false,
+                    null,
+                    CameraImportActivity.SdStartMode.MANUAL));
+            SdUsbReprobeFlowChecks.volumeEvent(uuid, true);
+            require(
+                picker.get(activity) == null
+                    && MountedCameraCard.detachGeneration() == beforeFreshPicker + 1,
+                "A delayed legacy unmount cannot hide a later genuine callback removal");
+            SdUsbReprobeFlowChecks.volumeEvent(uuid, false);
+            long beforeConfirmation = MountedCameraCard.detachGeneration();
+
             activity.confirmSdKinds(
                 new CameraImportActivity.SdStart(
-                    source, null, PhotoStorage.PRIMARY, "RAW", afterPicker, false, null),
+                    source, null, PhotoStorage.PRIMARY, "RAW", beforeConfirmation, false, null),
                 "取り込み元と保存先");
             var dialog = (androidx.appcompat.app.AlertDialog) confirmation.get(activity);
             require(dialog != null && dialog.isShowing(), "Format confirmation is displayed");
             SdUsbReprobeFlowChecks.volumeEvent(uuid, true);
             SdUsbReprobeFlowChecks.volumeEvent(uuid, false);
             require(
-                !dialog.isShowing() && MountedCameraCard.detachGeneration() == afterPicker + 1,
+                !dialog.isShowing()
+                    && MountedCameraCard.detachGeneration() == beforeConfirmation + 1,
                 "The independently observed second removal cancels the open confirmation");
           } catch (ReflectiveOperationException unavailable) {
             throw new AssertionError(unavailable);

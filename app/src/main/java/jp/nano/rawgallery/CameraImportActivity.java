@@ -72,6 +72,7 @@ public final class CameraImportActivity extends AppCompatActivity {
   private static final java.util.concurrent.Executor IO = Executors.newSingleThreadExecutor();
   private static final ImportProgress PROGRESS = ImportProgress.INSTANCE;
   private final Handler handler = new Handler(Looper.getMainLooper());
+  private final Runnable refreshAfterMountChange = this::refreshSdAfterReprobe;
   private TextView connection, result, migrationResult, sdStatus, ledgerStatus;
   private MaterialSwitch sdVerify, sdAuto;
   private LinearProgressIndicator sdChecking;
@@ -567,6 +568,7 @@ public final class CameraImportActivity extends AppCompatActivity {
   protected void onStop() {
     sdReprobe.stop();
     handler.removeCallbacks(refresh);
+    handler.removeCallbacks(refreshAfterMountChange);
     cancelWifiLoad();
     super.onStop();
   }
@@ -1567,8 +1569,8 @@ public final class CameraImportActivity extends AppCompatActivity {
     }
   }
 
-  private void onSdMountChange(boolean detached) {
-    if (detached) {
+  private void onSdMountChange(MountedCameraCard.MountChange change) {
+    if (change.detached()) {
       boolean pending =
           sdConfirmation != null
               || pendingSdStart != null
@@ -1585,7 +1587,8 @@ public final class CameraImportActivity extends AppCompatActivity {
       clearPendingSdStart();
       if (pending) showSdFailure("カードの接続が変わりました。取り込み元を確認してください。");
     }
-    refreshSdAfterReprobe();
+    handler.removeCallbacks(refreshAfterMountChange);
+    handler.post(refreshAfterMountChange);
   }
 
   private void showSdPermissionStatus(String message) {

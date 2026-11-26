@@ -2,6 +2,7 @@ package jp.nano.rawgallery.camera;
 
 import android.app.Activity;
 import android.app.Instrumentation;
+import android.content.Intent;
 import android.net.Uri;
 import android.provider.DocumentsContract;
 import java.io.Closeable;
@@ -71,6 +72,22 @@ public final class SdUsbReprobeFlowChecks {
             require(
                 !flow.controller.preparing() && flow.platform.claims == 0,
                 "A transient removal event invalidates proof even after the same UUID list returns");
+          }
+          for (String action :
+              List.of(Intent.ACTION_MEDIA_REMOVED, Intent.ACTION_MEDIA_BAD_REMOVAL)) {
+            try (var flow = new Flow(activity)) {
+              flow.arm();
+              flow.platform.snapshot = ejected();
+              // Deliver only the legacy channel while Settings still owns the foreground.
+              legacyVolumeEvent(SOURCE, action);
+              legacyVolumeEvent(SOURCE, Intent.ACTION_MEDIA_MOUNTED);
+              flow.assertReserved();
+              flow.controller.resume();
+              flow.controller.request();
+              require(
+                  flow.confirm == null && flow.platform.claims == 0 && !flow.controller.preparing(),
+                  "Legacy-only removal invalidates ejection even if the original inventory returns");
+            }
           }
           try (var flow = new Flow(activity)) {
             flow.arm();
@@ -147,6 +164,8 @@ public final class SdUsbReprobeFlowChecks {
           flow.platform.folder = tree(CHANGED_SOURCE + ":DCIM");
           flow.platform.closedUsb = flow.controller::observed;
           flow.ejectAndConfirm();
+          // A notification for the approved eject can arrive after the UI hands off the worker.
+          legacyVolumeEvent(TARGET, Intent.ACTION_MEDIA_UNMOUNTED);
           flow.assertReserved();
           flow.tasks.remove().run();
           require(
@@ -197,7 +216,13 @@ public final class SdUsbReprobeFlowChecks {
   }
 
   public static void volumeEvent(String uuid, boolean detached) {
-    MountedCameraCard.volumeChanged(uuid, detached);
+    MountedCameraCard.volumeChanged(
+        uuid,
+        detached ? android.os.Environment.MEDIA_UNMOUNTED : android.os.Environment.MEDIA_MOUNTED);
+  }
+
+  public static void legacyVolumeEvent(String uuid, String action) {
+    MountedCameraCard.legacyMediaChanged(uuid, action);
   }
 
   private static Uri tree(String document) {
@@ -282,7 +307,9 @@ public final class SdUsbReprobeFlowChecks {
 
     void ejectAndConfirm() {
       arm();
+      legacyVolumeEvent(SOURCE, Intent.ACTION_MEDIA_EJECT);
       platform.snapshot = ejected();
+      legacyVolumeEvent(TARGET, Intent.ACTION_MEDIA_UNMOUNTED);
       controller.observed();
       controller.resume();
       controller.request();

@@ -11,8 +11,6 @@ import android.os.Environment;
 import android.os.storage.StorageManager;
 import android.os.storage.StorageVolume;
 import java.io.IOException;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
@@ -44,16 +42,24 @@ public final class MountedCameraCard {
 
   private static final AtomicLong detachGeneration =
       new AtomicLong(android.os.SystemClock.elapsedRealtimeNanos());
-  private static final CopyOnWriteArrayList<Consumer<Boolean>> mountListeners =
+  private static final CopyOnWriteArrayList<Consumer<MountChange>> mountListeners =
       new CopyOnWriteArrayList<>();
-  private static final Map<String, Boolean> volumeStates = new LinkedHashMap<>();
+
+  public record MountChange(String volumeUuid, boolean detached, boolean unexpectedRemoval) {}
+
+  private static final AtomicLong removalGeneration = new AtomicLong();
   private static boolean observing;
 
   public static long detachGeneration() {
     return detachGeneration.get();
   }
 
-  public static synchronized Runnable observeMounts(Context context, Consumer<Boolean> listener) {
+  static long removalGeneration() {
+    return removalGeneration.get();
+  }
+
+  public static synchronized Runnable observeMounts(
+      Context context, Consumer<MountChange> listener) {
     startObserving(context);
     mountListeners.add(listener);
     return () -> mountListeners.remove(listener);
@@ -72,8 +78,7 @@ public final class MountedCameraCard {
         new BroadcastReceiver() {
           @Override
           public void onReceive(Context received, Intent event) {
-            boolean detached = !Intent.ACTION_MEDIA_MOUNTED.equals(event.getAction());
-            volumeChanged(notifiedVolumeUuid(event), detached);
+            legacyMediaChanged(notifiedVolumeUuid(event), event.getAction());
           }
         };
     register(app, receiver, filter);
@@ -90,7 +95,8 @@ public final class MountedCameraCard {
                       : (android.hardware.usb.UsbDevice)
                           event.getParcelableExtra(UsbManager.EXTRA_DEVICE);
               if (device != null && UsbMassStorage.Companion.isMassStorage(device)) {
-                publishMountChange(UsbManager.ACTION_USB_DEVICE_DETACHED.equals(event.getAction()));
+                boolean detached = UsbManager.ACTION_USB_DEVICE_DETACHED.equals(event.getAction());
+                publishMountChange(new MountChange(null, detached, detached));
               }
             }
           };
@@ -106,11 +112,7 @@ public final class MountedCameraCard {
               public void onStateChanged(StorageVolume volume) {
                 if (!volume.isRemovable() || volume.isEmulated()) return;
                 String uuid = SdSourceRegistrations.normalizeVolumeUuid(volume.getUuid());
-                String state = volume.getState();
-                boolean readable =
-                    Environment.MEDIA_MOUNTED.equals(state)
-                        || Environment.MEDIA_MOUNTED_READ_ONLY.equals(state);
-                volumeChanged(uuid, !readable);
+                volumeChanged(uuid, volume.getState());
               }
             });
       }
@@ -127,26 +129,28 @@ public final class MountedCameraCard {
     }
   }
 
-  /** Media broadcasts and StorageVolume callbacks may describe the same transition. */
-  static void volumeChanged(String uuid, boolean detached) {
-    if (uuid != null) {
-      synchronized (volumeStates) {
-        Boolean previous = volumeStates.remove(uuid);
-        volumeStates.put(uuid, detached);
-        if (volumeStates.size() > 32) {
-          var oldest = volumeStates.keySet().iterator();
-          oldest.next();
-          oldest.remove();
-        }
-        if (previous != null && previous == detached) return;
-      }
-    }
-    publishMountChange(detached);
+  static void legacyMediaChanged(String uuid, String action) {
+    boolean removed =
+        Intent.ACTION_MEDIA_REMOVED.equals(action)
+            || Intent.ACTION_MEDIA_BAD_REMOVAL.equals(action);
+    publishMountChange(new MountChange(uuid, !Intent.ACTION_MEDIA_MOUNTED.equals(action), removed));
   }
 
-  private static void publishMountChange(boolean detached) {
-    if (detached) detachGeneration.incrementAndGet();
-    for (Consumer<Boolean> listener : mountListeners) listener.accept(detached);
+  static void volumeChanged(String uuid, String state) {
+    boolean readable =
+        Environment.MEDIA_MOUNTED.equals(state)
+            || Environment.MEDIA_MOUNTED_READ_ONLY.equals(state);
+    boolean removed =
+        Environment.MEDIA_REMOVED.equals(state) || Environment.MEDIA_BAD_REMOVAL.equals(state);
+    publishMountChange(new MountChange(uuid, !readable, removed));
+  }
+
+  private static void publishMountChange(MountChange change) {
+    // Neither Android notification provides a shared transition ID. A delayed notification
+    // must not make a later real removal look like a duplicate.
+    if (change.unexpectedRemoval()) removalGeneration.incrementAndGet();
+    if (change.detached()) detachGeneration.incrementAndGet();
+    for (Consumer<MountChange> listener : mountListeners) listener.accept(change);
   }
 
   static void requireGeneration(long expected) throws Unavailable {
