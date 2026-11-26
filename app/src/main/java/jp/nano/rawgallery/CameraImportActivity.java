@@ -1588,7 +1588,7 @@ public final class CameraImportActivity extends AppCompatActivity {
     if (sourceCheck.cancel()) starting = false;
     clearPendingSdStart();
     sdSourceState = null;
-    sdStatus.setVisibility(View.GONE);
+    setSdSourceStatus("");
     sdChecking.setVisibility(View.GONE);
     updateSdStartLabel();
   }
@@ -1600,9 +1600,7 @@ public final class CameraImportActivity extends AppCompatActivity {
 
   void renderSdSource(CameraQuickImportSources.SdState state) {
     sdSourceState = state;
-    sdStatus.setVisibility(View.VISIBLE);
-    setText(sdStatus, state.message);
-    setText(sdSettingsStatus, state.message);
+    setSdSourceStatus(state.message);
     updateSdStartLabel();
     sdChecking.setVisibility(
         state == CameraQuickImportSources.SdState.CHECKING ? View.VISIBLE : View.GONE);
@@ -1684,11 +1682,18 @@ public final class CameraImportActivity extends AppCompatActivity {
     handler.post(refreshAfterMountChange);
   }
 
+  private void setSdSourceStatus(String message) {
+    int visibility = message.isEmpty() ? View.GONE : View.VISIBLE;
+    setText(sdStatus, message);
+    sdStatus.setVisibility(visibility);
+    setText(sdSettingsStatus, message);
+    sdSettingsStatus.setVisibility(visibility);
+  }
+
   private void showSdPermissionStatus(String message) {
     cancelSdStatusLoad();
     sdChecking.setVisibility(View.GONE);
-    setText(sdStatus, message);
-    setText(sdSettingsStatus, message);
+    setSdSourceStatus(message);
     sdStatus.post(
         () -> {
           if (!isFinishing() && !isDestroyed())

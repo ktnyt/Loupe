@@ -23,8 +23,6 @@ import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
@@ -260,10 +258,8 @@ public final class SdUsbReprobeController {
   void mediaChanged(MountedCameraCard.MountChange change) {
     cancelPending(State.CHANGED);
     if (running != null) {
-      if (change.detached() && change.volumeUuid() != null) {
-        running.recordDetach(change.volumeUuid());
-      }
       running.invalidateBeforeClaim();
+      if (change.detached()) running.observeSourceDetach(change.volumeUuid());
     }
     if (positive != null && (change.detached() || !positive.sameAdmission(platform.snapshot()))) {
       show(null);
@@ -362,14 +358,22 @@ public final class SdUsbReprobeController {
     private final LongSupplier now;
     private final SdUsbReprobe.ClaimAuthorization authorization =
         new SdUsbReprobe.ClaimAuthorization();
-    private final Set<String> detached = ConcurrentHashMap.newKeySet();
+    private final String previousSource;
     private volatile boolean claimStarted, connectionChanged;
+    private volatile Snapshot snapshotOnSourceDetach;
     private SdUsbReprobe.MountCycle mountCycle;
     private Snapshot restored;
     private long restoredGeneration;
 
-    void recordDetach(String uuid) {
-      if (claimStarted) detached.add(uuid);
+    void observeSourceDetach(String uuid) {
+      if (!claimStarted
+          || previousSource == null
+          || (uuid != null && !previousSource.equals(uuid))
+          || snapshotOnSourceDetach != null) return;
+      Snapshot current = platform.snapshot();
+      if (admitted.sameConnection(current) && current.sourceUnavailable(previousSource)) {
+        snapshotOnSourceDetach = current;
+      }
     }
 
     void invalidateBeforeClaim() {
@@ -386,6 +390,7 @@ public final class SdUsbReprobeController {
       this.platform = platform;
       this.owner = owner;
       this.admitted = admitted;
+      this.previousSource = SdUsbReprobe.readableSource(admitted);
       this.mediaGeneration = mediaGeneration;
       this.reservation = reservation;
       this.now = now;
@@ -435,8 +440,8 @@ public final class SdUsbReprobeController {
                   }
 
                   @Override
-                  public boolean detachedAfterClaim(String source) {
-                    return detached.contains(source);
+                  public Snapshot snapshotOnSourceDetach() {
+                    return snapshotOnSourceDetach;
                   }
 
                   @Override

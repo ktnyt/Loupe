@@ -238,6 +238,11 @@ public final class SdUsbReprobeFlowChecks {
       platform.snapshot = mounted(SOURCE, true);
     }
 
+    public void denyPermission() {
+      require(platform.permission != null, "The retry requested USB permission");
+      platform.permission.accept(false);
+    }
+
     public int claims() {
       return platform.claims;
     }

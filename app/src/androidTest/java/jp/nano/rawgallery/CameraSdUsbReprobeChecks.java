@@ -11,6 +11,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.provider.DocumentsContract;
 import android.view.View;
+import android.view.Window;
 import android.widget.Button;
 import android.widget.TextView;
 import java.io.File;
@@ -73,7 +74,7 @@ final class CameraSdUsbReprobeChecks {
                 "Announce status changes");
             bringIntoView(status);
           });
-      capture(test, directory, width, font, "unsupported");
+      capture(test, activity.getWindow(), directory, width, font, "unsupported");
       for (Status state :
           List.of(
               new Status("busy", "処理が終わってから、もう一度お試しください。", false),
@@ -100,7 +101,11 @@ final class CameraSdUsbReprobeChecks {
               bringIntoView(status);
               require(!progress.getActive(), "Rendering did not start an import");
             });
-        capture(test, directory, width, font, state.name);
+        capture(test, activity.getWindow(), directory, width, font, state.name);
+        if (width == 320 && state.name.equals("timeout")) {
+          assertResultReachable(test, activity, state.message);
+          capture(test, activity.getWindow(), directory, width, font, "timeout-scrolled");
+        }
       }
       SdUsbReprobeFlowChecks.run(test, activity);
       checkCardNotificationOrdering(test, activity);
@@ -150,6 +155,16 @@ final class CameraSdUsbReprobeChecks {
               throw new AssertionError(failure);
             }
             harness.start();
+            activity.renderSdSource(CameraQuickImportSources.SdState.READY);
+            View root = activity.getWindow().getDecorView();
+            require(
+                root.findViewWithTag("sd-reprobe-start").performClick(), "Start an explicit retry");
+            harness.denyPermission();
+          });
+      test.waitForIdleSync();
+      checkSettingsAfterFailedRetry(test, activity, directory, width, font, harness);
+      test.runOnMainSync(
+          () -> {
             harness.setPermitted();
             for (Intent ordinary :
                 List.of(
@@ -184,7 +199,29 @@ final class CameraSdUsbReprobeChecks {
                 !root.findViewWithTag("sd-import-start").isEnabled(), "Refresh disables transfer");
             bringIntoView(root.findViewWithTag("sd-reprobe-status"));
           });
-      capture(test, directory, width, font, "redetecting");
+      Window window = activity.getWindow();
+      View decor = window.getDecorView();
+      ConsistencyLayoutChecks.frame(test, decor);
+      test.runOnMainSync(
+          () -> {
+            TextView status = decor.findViewWithTag("sd-reprobe-status");
+            require(
+                harness.queued() == 1 && harness.claims() == 0,
+                "The worker is still held after the actual refresh frame");
+            require(
+                status.isShown() && "SDカードを再認識しています…".contentEquals(status.getText()),
+                "The committed frame shows the current refresh text");
+            require(
+                !decor.findViewWithTag("sd-reprobe-start").isEnabled()
+                    && !decor.findViewWithTag("sd-import-start").isEnabled()
+                    && decor.findViewWithTag("sd-import-status").getVisibility() == View.GONE
+                    && decor.findViewWithTag("sd-reprobe-progress").isShown(),
+                "The committed refresh frame disables both actions and hides the old source");
+            bringIntoView(status);
+          });
+      ConsistencyLayoutChecks.captureHardware(
+          test, window, decor, directory, width + "-" + font + "-redetecting-window");
+      capture(test, window, directory, width, font, "redetecting");
       test.runOnMainSync(harness::runWorker);
       test.waitForIdleSync();
       test.runOnMainSync(
@@ -200,7 +237,11 @@ final class CameraSdUsbReprobeChecks {
                 "The current new card requires folder selection");
             bringIntoView(status);
           });
-      capture(test, directory, width, font, "choose-source");
+      capture(test, window, directory, width, font, "choose-source");
+      if (width == 320) {
+        assertResultReachable(test, activity, "取り込み元のフォルダを選んでください。");
+        capture(test, window, directory, width, font, "choose-source-scrolled");
+      }
       test.runOnMainSync(
           () -> {
             harness.setPermitted();
@@ -220,6 +261,100 @@ final class CameraSdUsbReprobeChecks {
           () -> {
             harness.close();
             require(PhotoStorage.select(app, previous), "Restore destination");
+          });
+    }
+  }
+
+  private static void checkSettingsAfterFailedRetry(
+      Instrumentation test,
+      CameraImportActivity activity,
+      File directory,
+      int width,
+      float font,
+      SdUsbReprobeFlowChecks.Harness harness)
+      throws Exception {
+    var dialogField = field("sdSettingsDialog");
+    var cachedStatus = field("sdSettingsStatus");
+    var dialog =
+        new java.util.concurrent.atomic.AtomicReference<androidx.appcompat.app.AlertDialog>();
+    test.runOnMainSync(
+        () -> {
+          try {
+            View root = activity.getWindow().getDecorView();
+            TextView failure = root.findViewWithTag("sd-reprobe-status");
+            require(
+                failure.getText().toString().contains("使用許可を確認できません")
+                    && harness.queued() == 0
+                    && harness.claims() == 0,
+                "The denied explicit retry has finished without touching the reader");
+            View settings = root.findViewWithTag("sd-import-settings");
+            require(
+                settings.isEnabled() && settings.performClick(), "Open SD settings after retry");
+            dialog.set((androidx.appcompat.app.AlertDialog) dialogField.get(activity));
+            TextView settingsStatus = (TextView) cachedStatus.get(activity);
+            require(
+                dialog.get().isShowing()
+                    && settingsStatus.getText().length() == 0
+                    && settingsStatus.getVisibility() == View.GONE,
+                "The opened settings dialog cannot show cached success from the previous card");
+            TextView sourceStatus = root.findViewWithTag("sd-import-status");
+            require(
+                sourceStatus.getText().length() == 0 && sourceStatus.getVisibility() == View.GONE,
+                "The main card also discards its cached source status");
+          } catch (ReflectiveOperationException failure) {
+            throw new AssertionError(failure);
+          }
+        });
+    try {
+      capture(
+          test, dialog.get().getWindow(), directory, width, font, "settings-after-failed-retry");
+    } finally {
+      test.runOnMainSync(dialog.get()::dismiss);
+      test.waitForIdleSync();
+    }
+  }
+
+  private static void assertResultReachable(
+      Instrumentation test, CameraImportActivity activity, String expected) throws Exception {
+    View root = activity.getWindow().getDecorView();
+    for (String tag : List.of("sd-import-start", "sd-reprobe-start", "sd-reprobe-status")) {
+      View view = root.findViewWithTag(tag);
+      test.runOnMainSync(() -> bringIntoView(view));
+      ConsistencyLayoutChecks.frame(test, root);
+      test.runOnMainSync(
+          () -> {
+            Rect visible = new Rect();
+            require(
+                view.getGlobalVisibleRect(visible)
+                    && visible.height() == view.getHeight()
+                    && visible.width() == view.getWidth(),
+                "The full "
+                    + tag
+                    + " is visible after scrolling. visible="
+                    + visible
+                    + " size="
+                    + view.getWidth()
+                    + "x"
+                    + view.getHeight());
+            if (view instanceof Button button) {
+              require(
+                  button.isEnabled() && button.getHeight() >= GalleryUi.dp(activity, 48),
+                  "The scrolled action can be operated " + tag);
+            } else {
+              TextView status = (TextView) view;
+              var layout = status.getLayout();
+              require(
+                  expected.contentEquals(status.getText())
+                      && layout != null
+                      && layout.getHeight()
+                          <= status.getHeight()
+                              - status.getCompoundPaddingTop()
+                              - status.getCompoundPaddingBottom(),
+                  "The complete result text fits its layout");
+              for (int line = 0; line < layout.getLineCount(); line++) {
+                require(layout.getEllipsisCount(line) == 0, "Result text does not use ellipsis");
+              }
+            }
           });
     }
   }
@@ -336,15 +471,17 @@ final class CameraSdUsbReprobeChecks {
   }
 
   private static void capture(
-      Instrumentation test, File directory, int width, float font, String state) throws Exception {
-    test.waitForIdleSync();
-    Bitmap bitmap = test.getUiAutomation().takeScreenshot();
-    require(bitmap != null, "Screenshot " + state);
-    try (FileOutputStream out =
+      Instrumentation test, Window window, File directory, int width, float font, String state)
+      throws Exception {
+    ConsistencyLayoutChecks.frame(test, window.getDecorView());
+    Bitmap screenshot = test.getUiAutomation().takeScreenshot();
+    require(screenshot != null, "Composed Android screenshot " + state);
+    try (FileOutputStream output =
         new FileOutputStream(new File(directory, width + "-" + font + "-" + state + ".png"))) {
-      require(bitmap.compress(Bitmap.CompressFormat.PNG, 100, out), "Write screenshot " + state);
+      require(
+          screenshot.compress(Bitmap.CompressFormat.PNG, 100, output), "Write screenshot " + state);
     } finally {
-      bitmap.recycle();
+      screenshot.recycle();
     }
   }
 

@@ -129,20 +129,33 @@ final class SdUsbReprobe {
     boolean sameAdmission(Snapshot current) {
       return sameConnection(current) && Set.copyOf(volumes).equals(Set.copyOf(current.volumes));
     }
+
+    boolean sourceUnavailable(String source) {
+      if (source == null) return false;
+      for (Volume volume : volumes) {
+        if (source.equals(volume.uuid)) {
+          return volume.state != null && !readable(volume.state);
+        }
+      }
+      // An empty or invalid inventory can also mean Android's query failed.
+      return volumes.equals(List.of(new Volume(destination, "mounted")));
+    }
   }
 
   /** Attributes notifications on the same mounted source until Android observes another cycle. */
   static final class MountCycle {
     private final Snapshot initial;
-    private boolean finished;
+    private boolean finished, waitingForLateMount;
     private String source;
 
     MountCycle(Snapshot initial) {
       this.initial = initial;
+      this.source = readableSource(initial);
     }
 
     synchronized void finish(Snapshot restored) {
       if (restored != null) source = readableSource(restored);
+      waitingForLateMount = restored == null;
       finished = true;
     }
 
@@ -150,23 +163,23 @@ final class SdUsbReprobe {
       if (!initial.sameConnection(current)) return false;
       if (!finished) return true;
       String mounted = readableSource(current);
-      // Recovery may time out before Android reports any readable source.
-      if (source == null && notifiedSource != null && notifiedSource.equals(mounted))
+      // Without an observed removal, the next new readable source can still be the handoff's
+      // delayed remount. Keep the old source as an expiry boundary until then.
+      if (waitingForLateMount
+          && notifiedSource != null
+          && notifiedSource.equals(mounted)
+          && !notifiedSource.equals(source)) {
         source = mounted;
+        waitingForLateMount = false;
+      }
       return source == null || source.equals(notifiedSource);
     }
 
     synchronized boolean expired(Snapshot current, String detached) {
       if (!initial.sameConnection(current)) return true;
       if (!finished || source == null || !source.equals(detached)) return false;
-      // A late detach notification from the handoff is not a new removal when
-      // Android still reports the restored source as mounted.
-      boolean hasTarget = false;
-      for (Volume volume : current.volumes) {
-        if (source.equals(volume.uuid)) return !readable(volume.state);
-        if (current.destination.equals(volume.uuid)) hasTarget = true;
-      }
-      return hasTarget;
+      // A queued notice cannot clear the attribution while Android still reports that source.
+      return current.sourceUnavailable(source);
     }
   }
 
@@ -194,7 +207,7 @@ final class SdUsbReprobe {
 
     void waiting();
 
-    boolean detachedAfterClaim(String source);
+    Snapshot snapshotOnSourceDetach();
 
     long detachGeneration();
 
@@ -238,16 +251,16 @@ final class SdUsbReprobe {
         current = platform.snapshot();
         if (!initial.sameConnection(current)) return State.CHANGED;
         if (!current.permitted()) return State.DENIED;
-        if (previousSource != null
-            && current.volumes.stream()
-                .anyMatch(volume -> previousSource.equals(volume.uuid) && !readable(volume.state)))
-          sourceDisappeared = true;
+        Snapshot observed = observer.snapshotOnSourceDetach();
+        sourceDisappeared |=
+            current.sourceUnavailable(previousSource)
+                || (observed != null
+                    && initial.sameConnection(observed)
+                    && observed.sourceUnavailable(previousSource));
         String source = readableSource(current);
         // The pre-claim UUID and mounted state can both be stale after a card swap.
         if (source != null
-            && (!source.equals(previousSource)
-                || sourceDisappeared
-                || observer.detachedAfterClaim(source))
+            && (!source.equals(previousSource) || sourceDisappeared)
             && platform.destinationWritable(current.destination)) {
           boolean reachable = platform.sourceReachable(source, current.destination, cancelled);
           if (cancelled.getAsBoolean()) return State.CANCELLED;

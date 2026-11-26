@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BooleanSupplier;
 import jp.nano.rawgallery.camera.SdUsbReprobe.Reader;
@@ -18,6 +19,8 @@ public final class SdUsbReprobeTest {
   private static final Reader READER = new Reader("usb-test", 14, 8644, 45152, 0);
   private static final Snapshot MOUNTED = snapshot("mounted", "mounted");
   private static final Snapshot EJECTED = snapshot("unmounted", "unmounted");
+  private static final Snapshot TARGET_ONLY =
+      new Snapshot(READER, TARGET, List.of(new Volume(TARGET, "mounted")), true);
 
   public static void main(String[] args) throws Exception {
     admission();
@@ -165,11 +168,33 @@ public final class SdUsbReprobeTest {
         "Claim success alone is never ready");
 
     fake = new Fake();
-    fake.sameSourceDetached = false;
+    fake.snapshotOnSourceDetach = null;
     require(
         run(fake, new ReentrantLock(), () -> false, 0) == State.TIMEOUT
             && !fake.calls.contains("source"),
         "An unchanged mounted snapshot without a new cycle is not recovery");
+
+    fake = new Fake();
+    fake.snapshotOnSourceDetach = MOUNTED;
+    require(
+        run(fake, new ReentrantLock(), () -> false, 2) == State.TIMEOUT
+            && !fake.calls.contains("source"),
+        "A late named detach with the source continuously mounted is not remount evidence");
+
+    fake = new Fake();
+    fake.snapshotOnSourceDetach = null;
+    fake.postRelease.add(TARGET_ONLY);
+    require(
+        run(fake, new ReentrantLock(), () -> false, 2) == State.READY
+            && fake.calls.contains("source"),
+        "A trusted target-only snapshot then same source return proves disappearance");
+
+    fake = new Fake();
+    fake.snapshotOnSourceDetach = null;
+    fake.postRelease.add(new Snapshot(READER, TARGET, List.of(), true));
+    require(
+        run(fake, new ReentrantLock(), () -> false, 2) == State.TIMEOUT,
+        "A failed or empty inventory is not a trustworthy source disappearance");
 
     fake = new Fake();
     fake.grant = false;
@@ -177,7 +202,7 @@ public final class SdUsbReprobeTest {
         run(fake, new ReentrantLock(), () -> false, 0) == State.SOURCE_REQUIRED,
         "Unreachable or ungranted source requests selection");
     fake = new Fake();
-    fake.sameSourceDetached = false;
+    fake.snapshotOnSourceDetach = null;
     fake.expectedSource = "2345-abcd";
     fake.restored =
         new Snapshot(
@@ -273,8 +298,14 @@ public final class SdUsbReprobeTest {
     cycle = new SdUsbReprobe.MountCycle(MOUNTED);
     cycle.finish(null);
     require(
+        !cycle.expired(MOUNTED, SOURCE) && cycle.suppresses(SOURCE, MOUNTED),
+        "After failure a delayed notice cannot expire attribution for the still-mounted source");
+    require(
+        cycle.expired(TARGET_ONLY, SOURCE),
+        "After failure an observed actual removal clears attribution before an independent mount");
+    require(
         cycle.suppresses(different, newSource),
-        "Timeout cannot replay the first late mount as a new automatic import");
+        "Without an observed removal, timeout cannot replay the first late mount as a new automatic import");
     require(
         !cycle.suppresses(SOURCE, MOUNTED),
         "Once current, late-source attribution stays scoped to that source");
@@ -327,7 +358,7 @@ public final class SdUsbReprobeTest {
         fake,
         gate,
         cancelled,
-        () -> 10,
+        new AtomicLong()::getAndIncrement,
         timeout,
         new SdUsbReprobe.Observer() {
           @Override
@@ -341,8 +372,8 @@ public final class SdUsbReprobeTest {
           }
 
           @Override
-          public boolean detachedAfterClaim(String source) {
-            return fake.sameSourceDetached && SOURCE.equals(source);
+          public Snapshot snapshotOnSourceDetach() {
+            return fake.snapshotOnSourceDetach;
           }
 
           @Override
@@ -365,7 +396,7 @@ public final class SdUsbReprobeTest {
     Snapshot restored = MOUNTED;
     boolean grant = true;
     boolean shouldClaim = true;
-    boolean sameSourceDetached = true;
+    Snapshot snapshotOnSourceDetach = TARGET_ONLY;
     String expectedSource = SOURCE;
     String failure = "";
 
