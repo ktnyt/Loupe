@@ -868,6 +868,7 @@ final class AmazonRetirementUpgradeChecks {
     require(
         "seeded".equals(witness.getString("phase", "")) && E2Cleanup.days(context) == 31,
         "upgrade fixture retention was not seeded");
+    Profile profile = Profile.parse(witness.getString("consent", ""));
     var local = localShareFixture(context);
     requireFixtureOriginalCache(context, local);
     checkRetentionWrites(context);
@@ -877,14 +878,16 @@ final class AmazonRetirementUpgradeChecks {
             test.startActivitySync(
                 new Intent(context, E2SyncActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     String suffix = "-" + width + "-" + font;
-    boolean absent = "absent".equals(witness.getString("consent", ""));
+    boolean absent = profile == Profile.ABSENT;
     var recreated = new java.util.concurrent.atomic.AtomicReference<E2SyncActivity>();
     var syncMonitor = test.addMonitor(E2SyncActivity.class.getName(), null, false);
     try {
       checkRetentionUi(test, sync, suffix);
       if (absent) {
-        checkAutoPauseFailureUi(test, sync);
+        checkAutoPauseFailureUi(test, sync, suffix);
         checkCleanupUnknownUi(test, sync, suffix);
+      } else if (profile == Profile.CONTRADICTORY) {
+        checkFreshConsentUi(test, sync, witness, suffix);
       }
       test.runOnMainSync(sync::recreate);
       var replacement = (E2SyncActivity) test.waitForMonitorWithTimeout(syncMonitor, 6500);
@@ -993,12 +996,15 @@ final class AmazonRetirementUpgradeChecks {
     }
     return "PASS explicit E2 consent and fail-closed writes; retention chooser and recreation;"
         + (absent ? " failed pause feedback; synthetic E2 unknown state and confirmed stop;" : "")
+        + (profile == Profile.CONTRADICTORY ? " fresh cleanup confirmation cancelled;" : "")
         + " conditional archive share notice, missing-original recovery, copy rollback and"
         + " preserved selection";
   }
 
-  private static void checkAutoPauseFailureUi(Instrumentation test, E2SyncActivity screen)
-      throws Exception {
+  private record PauseUiState(String bucket, CharSequence message, int color, int scrollY) {}
+
+  private static void checkAutoPauseFailureUi(
+      Instrumentation test, E2SyncActivity screen, String suffix) throws Exception {
     Context target = test.getTargetContext();
     require(
         target.getSystemService(ConnectivityManager.class).getActiveNetwork() == null
@@ -1006,6 +1012,9 @@ final class AmazonRetirementUpgradeChecks {
         "pause failure UI fixture requires the offline, absent upgrade cohort");
     var panel = (E2Panel) AlbumTagEntryChecks.field(screen, "panel");
     var status = (TextView) AlbumTagEntryChecks.field(panel, "status");
+    var scroll = (ScrollView) AlbumTagEntryChecks.field(panel, "scroll");
+    var previousUi = new AtomicReference<PauseUiState>();
+    String failureMessage = "自動バックアップを停止できませんでした";
     File parent =
         Files.createTempDirectory(target.getFilesDir().toPath(), FIXTURE + "-pause-").toFile();
     String settingsName = parent.getName() + "-settings";
@@ -1049,20 +1058,23 @@ final class AmazonRetirementUpgradeChecks {
       Files.createFile(blocker);
       var pause = E2Panel.class.getDeclaredMethod("pauseAuto", Context.class);
       pause.setAccessible(true);
-      AlbumTagEntryChecks.main(
-          test,
-          () -> {
-            Object previousBucket = AlbumTagEntryChecks.field(panel, "activeBucket");
-            CharSequence previousStatus = status.getText();
-            int previousColor = status.getCurrentTextColor();
-            try {
+      try {
+        AlbumTagEntryChecks.main(
+            test,
+            () -> {
+              previousUi.set(
+                  new PauseUiState(
+                      (String) AlbumTagEntryChecks.field(panel, "activeBucket"),
+                      status.getText(),
+                      status.getCurrentTextColor(),
+                      scroll.getScrollY()));
               AlbumTagEntryChecks.set(panel, "activeBucket", BUCKET);
               pause.invoke(panel, failing);
               require(
                   Boolean.FALSE.equals(acknowledged.get()) && !E2SyncJob.enabled(failing),
                   "framework did not reject persistence after updating its cache");
               require(
-                  "自動バックアップを停止できませんでした".contentEquals(status.getText()),
+                  failureMessage.contentEquals(status.getText()),
                   "cached pause state replaced the save failure message");
               require(
                   !E2Cleanup.consentUnknown(failing)
@@ -1070,13 +1082,40 @@ final class AmazonRetirementUpgradeChecks {
                       && pendingConsent(parent).isFile(),
                   "failed pause did not retain the cleanup veto");
               return true;
-            } finally {
-              AlbumTagEntryChecks.set(panel, "activeBucket", previousBucket);
-              status.setText(previousStatus);
-              status.setTextColor(previousColor);
-              panel.refreshAuto();
-            }
-          });
+            });
+        ConsistencyLayoutChecks.frame(test, status);
+        AlbumTagEntryChecks.waitFor(
+            test,
+            "visible backup pause failure message",
+            () -> {
+              revealSettingsSection(scroll, status, status);
+              return pauseFailureVisible(status, failureMessage);
+            });
+        ConsistencyLayoutChecks.frame(test, status);
+        AlbumTagEntryChecks.main(
+            test,
+            () -> {
+              require(
+                  pauseFailureVisible(status, failureMessage),
+                  "backup pause failure message moved before capture");
+              return true;
+            });
+        SyncControlChecks.capture(test, "amazon-retirement-pause-failure" + suffix);
+      } finally {
+        var previous = previousUi.get();
+        if (previous != null) {
+          AlbumTagEntryChecks.main(
+              test,
+              () -> {
+                AlbumTagEntryChecks.set(panel, "activeBucket", previous.bucket());
+                status.setText(previous.message());
+                status.setTextColor(previous.color());
+                panel.refreshAuto();
+                scroll.scrollTo(0, previous.scrollY());
+                return true;
+              });
+        }
+      }
       require(
           Files.isRegularFile(blocker) && Arrays.equals(savedOptions, Files.readAllBytes(backup)),
           "failed pause replaced the last durable options");
@@ -1094,6 +1133,179 @@ final class AmazonRetirementUpgradeChecks {
         Files.delete(parent.toPath());
       }
     }
+  }
+
+  private static boolean pauseFailureVisible(TextView status, String message) {
+    return status.hasWindowFocus()
+        && message.contentEquals(status.getText())
+        && fullyVisible(status);
+  }
+
+  private static boolean fullyVisible(View view) {
+    var bounds = new Rect();
+    return view != null
+        && view.isShown()
+        && view.getWidth() > 0
+        && view.getHeight() > 0
+        && view.getGlobalVisibleRect(bounds)
+        && bounds.width() >= view.getWidth()
+        && bounds.height() >= view.getHeight();
+  }
+
+  private static void checkFreshConsentUi(
+      Instrumentation test, E2SyncActivity screen, SharedPreferences witness, String suffix)
+      throws Exception {
+    Context context = test.getTargetContext();
+    requireOffline(context);
+    require(emptyMedia(context), "fresh consent fixture requires an empty MediaStore");
+    var settings = SettingsRepository.open(context);
+    var backup = E2AutoSync.state(context);
+    var e2 = context.getSharedPreferences(E2_PREFS, Context.MODE_PRIVATE);
+    var nano = context.getSharedPreferences(NANO_PREFS, Context.MODE_PRIVATE);
+    var pending = pendingConsent(context.getDataDir()).toPath();
+    require(
+        settings.getBoolean("cleanupEnabled", false)
+            && E2SyncJob.enabled(context)
+            && E2SyncJob.fullMediaConsent(context)
+            && BUCKET.equals(E2Settings.configuredBucket(context))
+            && BUCKET.equals(backup.getString("destination", ""))
+            && BUCKET.equals(backup.getString("cleanupBucket", ""))
+            && backup.getInt("cleanupDays", 0) == E2Cleanup.days(context)
+            && !backup.contains(FRESH_CONSENT)
+            && !E2Cleanup.enabled(context, BUCKET)
+            && !E2Cleanup.consentUnknown(context)
+            && Files.notExists(pending, LinkOption.NOFOLLOW_LINKS),
+        "fresh confirmation requires the seeded contradictory legacy consent");
+    var previousSettings = settings.getAll();
+    var previousBackup = backup.getAll();
+    var previousE2 = e2.getAll();
+    var previousNano = nano.getAll();
+    var previousHistory = consentUiHistory(context);
+    var previousOriginals = freshConsentOriginals(context);
+    var panel = (E2Panel) AlbumTagEntryChecks.field(screen, "panel");
+    var button = (Button) AlbumTagEntryChecks.field(panel, "cleanupToggle");
+    var scroll = (ScrollView) AlbumTagEntryChecks.field(panel, "scroll");
+    int[] previousScroll = {0};
+    AlbumTagEntryChecks.main(
+        test,
+        () -> {
+          previousScroll[0] = scroll.getScrollY();
+          return true;
+        });
+    String title = "端末オリジナルの整理を有効にしますか？";
+    String details =
+        BUCKET
+            + " に復元できる状態で保管したJPEGのうち、"
+            + E2Cleanup.days(context)
+            + "日以上経ったオリジナルを端末から削除します。"
+            + "小さいサムネイルは端末に残ります。";
+    var dialog = new AtomicReference<View>();
+    try {
+      AlbumTagEntryChecks.waitFor(
+          test,
+          "real contradictory-cohort cleanup enable button",
+          () -> {
+            if (!screen.hasWindowFocus()
+                || !BUCKET.equals(AlbumTagEntryChecks.field(panel, "activeBucket"))
+                || !button.isEnabled()
+                || !"端末オリジナルの整理を有効にする".contentEquals(button.getText())) return false;
+            revealSettingsSection(scroll, button, button);
+            return fullyVisible(button);
+          });
+      AlbumTagEntryChecks.main(
+          test,
+          () -> {
+            require(
+                button.isEnabled() && button.performClick(), "could not open cleanup confirmation");
+            return true;
+          });
+      AlbumTagEntryChecks.waitFor(
+          test,
+          "native fresh cleanup consent confirmation",
+          () -> {
+            for (View root : android.view.inspector.WindowInspector.getGlobalWindowViews()) {
+              if (!root.hasWindowFocus()) continue;
+              if (SyncControlChecks.find(root, "写真を整理する権限") != null) {
+                dialog.set(root);
+                String blocked =
+                    "fresh cleanup confirmation blocked by Android all-files permission sheet";
+                android.util.Log.w("LoupeRetirementFixture", blocked);
+                throw new AssertionError(blocked);
+              }
+              if (SyncControlChecks.find(root, title) == null) continue;
+              dialog.set(root);
+              return freshConsentDialogVisible(root, title, details);
+            }
+            return false;
+          });
+      ConsistencyLayoutChecks.frame(test, dialog.get());
+      AlbumTagEntryChecks.main(
+          test,
+          () -> {
+            require(
+                freshConsentDialogVisible(dialog.get(), title, details),
+                "fresh cleanup terms or actions moved before capture");
+            return true;
+          });
+      SyncControlChecks.capture(test, "amazon-retirement-fresh-consent" + suffix);
+    } finally {
+      AlbumTagEntryChecks.main(
+          test,
+          () -> {
+            if (dialog.get() != null) {
+              var cancel = AlbumTagEntryChecks.button(dialog.get(), "キャンセル");
+              require(cancel != null && cancel.performClick(), "could not cancel fresh consent");
+            }
+            scroll.scrollTo(0, previousScroll[0]);
+            return true;
+          });
+    }
+    AlbumTagEntryChecks.waitFor(
+        test, "back after cancelling fresh consent", screen::hasWindowFocus);
+    require(
+        previousSettings.equals(settings.getAll())
+            && previousBackup.equals(backup.getAll())
+            && previousE2.equals(e2.getAll())
+            && previousNano.equals(nano.getAll())
+            && previousHistory.equals(consentUiHistory(context))
+            && previousOriginals.equals(freshConsentOriginals(context))
+            && emptyMedia(context)
+            && !backup.contains(FRESH_CONSENT)
+            && !E2Cleanup.enabled(context, BUCKET)
+            && !E2Cleanup.consentUnknown(context)
+            && Files.notExists(pending, LinkOption.NOFOLLOW_LINKS),
+        "cancelled fresh consent changed settings, credentials, history, originals or eligibility");
+    verifyCredentials(context, witness, Profile.CONTRADICTORY);
+  }
+
+  private static boolean freshConsentDialogVisible(View root, String title, String details) {
+    var cancel = AlbumTagEntryChecks.button(root, "キャンセル");
+    var enable = AlbumTagEntryChecks.button(root, "有効にする");
+    return root.hasWindowFocus()
+        && fullyVisible(SyncControlChecks.find(root, title))
+        && fullyVisible(SyncControlChecks.find(root, details))
+        && fullyVisible(cancel)
+        && cancel.isEnabled()
+        && fullyVisible(enable)
+        && enable.isEnabled();
+  }
+
+  private static Map<String, String> freshConsentOriginals(Context context) throws Exception {
+    var result = new java.util.HashMap<String, String>();
+    var directory = original(context, key(false)).toPath().getParent();
+    try (var originals = Files.newDirectoryStream(directory)) {
+      for (Path file : originals) {
+        require(
+            Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS),
+            "unexpected original cache entry");
+        result.put(
+            file.getFileName().toString(),
+            Files.getLastModifiedTime(file, LinkOption.NOFOLLOW_LINKS)
+                + ":"
+                + originalCacheHash(file, Files.size(file)));
+      }
+    }
+    return result;
   }
 
   private static void checkCleanupUnknownUi(
@@ -1159,6 +1371,8 @@ final class AmazonRetirementUpgradeChecks {
         int captureScroll =
             awaitCleanupUnknownFrame(test, scroll, status, stop, unknownLabel, stopLabel);
         SyncControlChecks.capture(test, "amazon-retirement-consent-unknown" + suffix);
+        captureWindow(
+            test, screen.getWindow(), "amazon-retirement-consent-unknown-window" + suffix);
         AlbumTagEntryChecks.main(
             test,
             () -> {
@@ -1230,6 +1444,24 @@ final class AmazonRetirementUpgradeChecks {
     }
   }
 
+  private static void captureWindow(Instrumentation test, android.view.Window window, String name)
+      throws IOException {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+      String unavailable = "native window capture requires Android 14";
+      android.util.Log.w("LoupeRetirementFixture", unavailable);
+      throw new AssertionError(unavailable);
+    }
+    Bitmap image = test.getUiAutomation().takeScreenshot(window);
+    require(image != null, "Android returned no window screenshot");
+    try (var output =
+        new FileOutputStream(new File(test.getTargetContext().getCacheDir(), name + ".png"))) {
+      require(
+          image.compress(Bitmap.CompressFormat.PNG, 100, output), "window screenshot write failed");
+    } finally {
+      image.recycle();
+    }
+  }
+
   private static int awaitCleanupUnknownFrame(
       Instrumentation test,
       ScrollView scroll,
@@ -1249,7 +1481,7 @@ final class AmazonRetirementUpgradeChecks {
           "visible unknown E2 state and accessible stop action",
           () -> {
             if (!status.isShown() || status.getHeight() <= 0) return false;
-            revealCleanupUnknown(scroll, status, stop);
+            revealSettingsSection(scroll, status, stop);
             if (!cleanupUnknownVisible(status, stop, unknownLabel, stopLabel)) return false;
             intendedScroll.set(scroll.getScrollY());
             return true;
@@ -1294,17 +1526,17 @@ final class AmazonRetirementUpgradeChecks {
         && bounds.height() >= touchSize;
   }
 
-  private static void revealCleanupUnknown(ScrollView scroll, View status, View stop) {
+  private static void revealSettingsSection(ScrollView scroll, View first, View last) {
     int[] location = new int[2];
     scroll.getLocationOnScreen(location);
     int viewportTop = location[1] + scroll.getPaddingTop();
     int viewportBottom = location[1] + scroll.getHeight() - scroll.getPaddingBottom();
-    status.getLocationOnScreen(location);
+    first.getLocationOnScreen(location);
     int maxScroll = location[1] - viewportTop;
-    stop.getLocationOnScreen(location);
-    int minScroll = location[1] + stop.getHeight() - viewportBottom;
+    last.getLocationOnScreen(location);
+    int minScroll = location[1] + last.getHeight() - viewportBottom;
     if (minScroll > maxScroll) return;
-    // Keep the status and stop action inside the viewport padded for the system bars.
+    // Keep the requested settings section inside the viewport padded for system bars.
     int margin = GalleryUi.dp(scroll.getContext(), 16);
     if (minScroll > 0) scroll.scrollBy(0, Math.min(minScroll + margin, maxScroll));
     else if (maxScroll < 0) scroll.scrollBy(0, Math.max(maxScroll - margin, minScroll));
