@@ -12,7 +12,8 @@ import jp.nano.rawgallery.RankingStore.*;
 final class RankingBackend {
   private static final Map<Object, RankingBackend> namespaces = new IdentityHashMap<>();
 
-  static synchronized RankingBackend forNamespace(Object identity, Supplier<SharedPreferences> open) {
+  static synchronized RankingBackend forNamespace(
+      Object identity, Supplier<SharedPreferences> open) {
     return namespaces.computeIfAbsent(identity, ignored -> new RankingBackend(open));
   }
 
@@ -28,16 +29,25 @@ final class RankingBackend {
 
   private RankingBackend(Supplier<SharedPreferences> open) {
     this.open = open;
-    worker = new ThreadPoolExecutor(0, 1, 30, TimeUnit.SECONDS, new LinkedBlockingQueue<>(), run -> {
-      Thread thread = new Thread(run, "RankingStore");
-      thread.setDaemon(true);
-      workerThread = thread;
-      return thread;
-    });
+    worker =
+        new ThreadPoolExecutor(
+            0,
+            1,
+            30,
+            TimeUnit.SECONDS,
+            new LinkedBlockingQueue<>(),
+            run -> {
+              Thread thread = new Thread(run, "RankingStore");
+              thread.setDaemon(true);
+              workerThread = thread;
+              return thread;
+            });
     startLoad(loading);
   }
 
-  Snapshot snapshot() { return state; }
+  Snapshot snapshot() {
+    return state;
+  }
 
   Snapshot awaitReady() throws IOException {
     Snapshot current = state;
@@ -78,21 +88,22 @@ final class RankingBackend {
   }
 
   private void startLoad(CompletableFuture<Snapshot> attempt) {
-    worker.execute(() -> {
-      Snapshot loaded;
-      try {
-        preferences = open.get();
-        loaded = Snapshot.loaded(namespace, preferences.getAll());
-      } catch (RuntimeException | Error failure) {
-        loaded = Snapshot.unavailable(namespace, Phase.FAILED, failure);
-      }
-      synchronized (this) {
-        state = loaded;
-        loading = null;
-      }
-      attempt.complete(loaded);
-      notifyObservers();
-    });
+    worker.execute(
+        () -> {
+          Snapshot loaded;
+          try {
+            preferences = open.get();
+            loaded = Snapshot.loaded(namespace, preferences.getAll());
+          } catch (RuntimeException | Error failure) {
+            loaded = Snapshot.unavailable(namespace, Phase.FAILED, failure);
+          }
+          synchronized (this) {
+            state = loaded;
+            loading = null;
+          }
+          attempt.complete(loaded);
+          notifyObservers();
+        });
   }
 
   Subscription observe(Executor delivery, Runnable refresh) {
@@ -118,22 +129,28 @@ final class RankingBackend {
 
     void dispatch() {
       try {
-        delivery.execute(() -> {
-          if (!closed) refresh.run();
-        });
+        delivery.execute(
+            () -> {
+              if (!closed) refresh.run();
+            });
       } catch (RuntimeException | Error ignored) {
         // A rejected delivery or inline observer cannot change a storage acknowledgement.
       }
     }
 
-    @Override public void close() {
+    @Override
+    public void close() {
       closed = true;
       observers.remove(this);
     }
   }
 
-  interface Operation { Attempt prepare(Snapshot current) throws IOException; }
+  interface Operation {
+    Attempt prepare(Snapshot current) throws IOException;
+  }
+
   record Attempt(WriteResult result, Throwable failure) {}
+
   private record Repair(String key, String previous) {}
 
   Attempt result(Outcome outcome, PhotoRanking ranking) {
@@ -152,13 +169,14 @@ final class RankingBackend {
     }
     CompletableFuture<Attempt> completion = new CompletableFuture<>();
     // The queued task belongs to this namespace, independent of any caller's future or lifecycle.
-    worker.execute(() -> {
-      try {
-        completion.complete(execute(operation));
-      } catch (Throwable failure) {
-        completion.completeExceptionally(failure);
-      }
-    });
+    worker.execute(
+        () -> {
+          try {
+            completion.complete(execute(operation));
+          } catch (Throwable failure) {
+            completion.completeExceptionally(failure);
+          }
+        });
     return completion;
   }
 
@@ -175,7 +193,8 @@ final class RankingBackend {
   }
 
   boolean writeAndWait(Operation operation) throws IOException {
-    if (Thread.currentThread() == workerThread) throw new IllegalStateException("Cannot wait on ranking writer");
+    if (Thread.currentThread() == workerThread)
+      throw new IllegalStateException("Cannot wait on ranking writer");
     awaitReady();
     Attempt attempt;
     try {
@@ -210,7 +229,8 @@ final class RankingBackend {
       failure = error;
     }
     if (!committed) {
-      // A failed commit may already have modified framework memory. A later commit flushes all keys.
+      // A failed commit may already have modified framework memory. A later commit flushes all
+      // keys.
       repair = undo;
       Attempt repairFailure = restore(failure);
       return repairFailure != null ? repairFailure : failed(Outcome.WRITE_FAILED, failure);
@@ -228,7 +248,8 @@ final class RankingBackend {
         return null;
       }
     } catch (RuntimeException | Error restoreFailure) {
-      if (originalFailure == null) originalFailure = new IOException("Could not restore ranking", restoreFailure);
+      if (originalFailure == null)
+        originalFailure = new IOException("Could not restore ranking", restoreFailure);
       else if (restoreFailure != originalFailure) originalFailure.addSuppressed(restoreFailure);
     }
     return failed(Outcome.REPAIR_REQUIRED, originalFailure);

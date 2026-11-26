@@ -58,7 +58,8 @@ final class BurstBulkWinnerChecks {
             t.startActivitySync(
                 new Intent(t.getTargetContext(), MainActivity.class)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-    SharedPreferences prefs = a.getSharedPreferences("burst-bulk-winners-test", 0);
+    String namespace = "burst-bulk-winners-test-" + java.util.UUID.randomUUID();
+    SharedPreferences prefs = a.getSharedPreferences(namespace, 0);
     List<File> files = new ArrayList<>();
     CountDownLatch release = new CountDownLatch(1);
     try {
@@ -78,6 +79,7 @@ final class BurstBulkWinnerChecks {
 
       AtomicInteger commits = new AtomicInteger();
       RankingStore store = new RankingStore(failFirstCommit(prefs, release, commits));
+      store.awaitReady();
       ui(t, () -> seed(a, photos, members, other, store));
       clickExact(t, a, "選択");
       await(t, "empty bulk action", () -> bulk(a) != null && !bulkEnabled(a));
@@ -166,8 +168,12 @@ final class BurstBulkWinnerChecks {
       click(t, "再試行");
       await(t, "retry completed", () -> a.hasWindowFocus() && !bulkEnabled(a));
       check(commits.get() == 3, "Retry should use a single commit");
-      assertRanks(new RankingStore(prefs), keys, PROMOTED);
-      check(disk.load(otherKeys).journal.equals(otherRanking.journal), "Other burst changed");
+      assertRanks(RankingPersistenceWaitChecks.readSavedBurst(prefs, keys), keys, PROMOTED);
+      check(
+          RankingPersistenceWaitChecks.readSavedBurst(prefs, otherKeys)
+              .journal
+              .equals(otherRanking.journal),
+          "Other burst changed");
       check(Arrays.equals(gridPosition(t, a), before), "Bulk save moved the grid");
       ui(
           t,
@@ -215,7 +221,7 @@ final class BurstBulkWinnerChecks {
       await(t, "hidden selection saved", () -> a.hasWindowFocus() && !bulkEnabled(a));
       check(commits.get() == 4, "Hidden selection needs a single save");
       check(
-          Set.copyOf(disk.load(keys).best())
+          Set.copyOf(store.load(keys).best())
               .equals(
                   Set.of(
                       keys.get(0),
@@ -229,7 +235,7 @@ final class BurstBulkWinnerChecks {
       // An unfinished journal can be replaced after warning, including selecting the entire burst.
       List<Integer> longBurst =
           IntStream.range(0, fixtureKeys.size()).boxed().collect(Collectors.toList());
-      PhotoRanking mid = new PhotoRanking(disk.load(fixtureKeys).ids, "B:").choose(false);
+      PhotoRanking mid = new PhotoRanking(store.load(fixtureKeys).ids, "B:").choose(false);
       check(store.save(mid), "Seed an unfinished comparison");
       ui(t, () -> seed(a, photos, longBurst, List.of(), store));
       clickExact(t, a, "選択");
@@ -240,7 +246,8 @@ final class BurstBulkWinnerChecks {
       click(t, CANCEL);
       await(t, "unfinished confirmation closed", a::hasWindowFocus);
       check(
-          disk.load(fixtureKeys).journal.equals(mid.journal), "Cancel replaced unfinished journal");
+          store.load(fixtureKeys).journal.equals(mid.journal),
+          "Cancel replaced unfinished journal");
       click(t, "表示中の写真をすべて選択");
       t.waitForIdleSync();
       int[] unscrolled = gridPosition(t, a);
@@ -254,16 +261,17 @@ final class BurstBulkWinnerChecks {
       await(t, "all selected saved", () -> a.hasWindowFocus() && !bulkEnabled(a));
       t.waitForIdleSync();
       check(
-          disk.load(fixtureKeys).best().size() == fixtureKeys.size(),
+          store.load(fixtureKeys).best().size() == fixtureKeys.size(),
           "All selected photos must tie first");
       check(Arrays.equals(gridPosition(t, a), scrolled), "Bulk save moved a scrolled grid");
-      return "PASS isolated burst bulk UI: multiple selections, empty/already disabled, cancel, Back, "
-          + "outside, busy Back, rollback and single retry, frozen targets, selection/grid retention, "
-          + "best-only independence, hidden and other burst selections, unfinished and all selected.\n";
+      return "PASS isolated burst bulk UI: multiple selections, empty/already disabled, cancel,"
+                 + " Back, outside, busy Back, rollback and single retry, frozen targets,"
+                 + " selection/grid retention, best-only independence, hidden and other burst"
+                 + " selections, unfinished and all selected.\n";
     } finally {
       release.countDown();
       ui(t, a::finish);
-      prefs.edit().clear().commit();
+      a.deleteSharedPreferences(namespace);
       for (File file : files) file.delete();
     }
   }
@@ -482,7 +490,10 @@ final class BurstBulkWinnerChecks {
 
   private static void assertRanks(RankingStore store, List<String> keys, int[] ranks)
       throws Exception {
-    PhotoRanking result = store.load(keys);
+    assertRanks(store.load(keys), keys, ranks);
+  }
+
+  private static void assertRanks(PhotoRanking result, List<String> keys, int[] ranks) {
     check(result.done(), "Ranking incomplete");
     for (int i = 0; i < keys.size(); i++) {
       check(result.rankOf(keys.get(i)) == ranks[i], "Unexpected rank at photo " + (i + 1));

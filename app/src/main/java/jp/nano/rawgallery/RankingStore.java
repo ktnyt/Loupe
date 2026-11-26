@@ -24,12 +24,26 @@ final class RankingStore {
     backend = shared.backend;
   }
 
-  enum Phase { PENDING, READY, FAILED }
-  enum Outcome { SAVED, UNCHANGED, CONFLICT, READ_FAILED, WRITE_FAILED, REPAIR_REQUIRED }
+  enum Phase {
+    PENDING,
+    READY,
+    FAILED
+  }
+
+  enum Outcome {
+    SAVED,
+    UNCHANGED,
+    CONFLICT,
+    READ_FAILED,
+    WRITE_FAILED,
+    REPAIR_REQUIRED
+  }
+
   record WriteResult(Outcome outcome, Snapshot snapshot, PhotoRanking ranking) {}
 
   interface Subscription extends AutoCloseable {
-    @Override void close();
+    @Override
+    void close();
   }
 
   static final class Snapshot {
@@ -39,7 +53,12 @@ final class RankingStore {
     private final Map<String, String> values;
     private final Throwable readFailure;
 
-    private Snapshot(Object namespace, Phase phase, long revision, Map<String, String> values, Throwable readFailure) {
+    private Snapshot(
+        Object namespace,
+        Phase phase,
+        long revision,
+        Map<String, String> values,
+        Throwable readFailure) {
       this.namespace = namespace;
       this.phase = phase;
       this.revision = revision;
@@ -53,12 +72,13 @@ final class RankingStore {
 
     static Snapshot loaded(Object namespace, Map<String, ?> raw) {
       Map<String, String> values = new HashMap<>();
-      raw.forEach((key, value) -> {
-        if (key != null && (key.startsWith("single-best-v1-") || key.startsWith("v1-"))) {
-          // A present null marks an unsupported type. Never retain mutable preference values.
-          values.put(key, value instanceof String ? (String) value : null);
-        }
-      });
+      raw.forEach(
+          (key, value) -> {
+            if (key != null && (key.startsWith("single-best-v1-") || key.startsWith("v1-"))) {
+              // A present null marks an unsupported type. Never retain mutable preference values.
+              values.put(key, value instanceof String ? (String) value : null);
+            }
+          });
       return new Snapshot(namespace, Phase.READY, 0, values, null);
     }
 
@@ -68,8 +88,13 @@ final class RankingStore {
       return new Snapshot(namespace, Phase.READY, revision + 1, next, null);
     }
 
-    Phase phase() { return phase; }
-    long revision() { return revision; }
+    Phase phase() {
+      return phase;
+    }
+
+    long revision() {
+      return revision;
+    }
 
     void requireReady() throws IOException {
       if (phase != Phase.READY) throw new IOException("Ranking data unavailable", readFailure);
@@ -78,7 +103,8 @@ final class RankingStore {
     String raw(String key) throws IOException {
       requireReady();
       String value = values.get(key);
-      if (value == null && values.containsKey(key)) throw new IOException("Invalid ranking value type");
+      if (value == null && values.containsKey(key))
+        throw new IOException("Invalid ranking value type");
       return value;
     }
 
@@ -108,9 +134,17 @@ final class RankingStore {
       this.storedJournal = storedJournal;
     }
 
-    List<String> ids() { return ids; }
-    String storedJournal() { return storedJournal; }
-    PhotoRanking ranking() { return new PhotoRanking(ids, storedJournal == null ? "" : storedJournal); }
+    List<String> ids() {
+      return ids;
+    }
+
+    String storedJournal() {
+      return storedJournal;
+    }
+
+    PhotoRanking ranking() {
+      return new PhotoRanking(ids, storedJournal == null ? "" : storedJournal);
+    }
   }
 
   private static String singleBestKey(String archiveKey) throws IOException {
@@ -123,61 +157,89 @@ final class RankingStore {
     throw new IOException("Corrupt singleton best value");
   }
 
-  Snapshot snapshot() { return backend.snapshot(); }
-  Snapshot awaitReady() throws IOException { return backend.awaitReady(); }
-  void retryLoad() { backend.retryLoad(); }
-  Subscription observe(Executor delivery, Runnable refresh) { return backend.observe(delivery, refresh); }
+  Snapshot snapshot() {
+    return backend.snapshot();
+  }
+
+  Snapshot awaitReady() throws IOException {
+    return backend.awaitReady();
+  }
+
+  void retryLoad() {
+    backend.retryLoad();
+  }
+
+  Subscription observe(Executor delivery, Runnable refresh) {
+    return backend.observe(delivery, refresh);
+  }
 
   private RankingBackend.Operation singleChange(String archiveKey, boolean expected, boolean next) {
     return current -> {
       String key = singleBestKey(archiveKey);
-      if (decodeSingleBest(current.raw(key)) != expected) return backend.result(Outcome.CONFLICT, null);
+      if (decodeSingleBest(current.raw(key)) != expected)
+        return backend.result(Outcome.CONFLICT, null);
       if (expected == next) return backend.result(Outcome.UNCHANGED, null);
       return backend.commit(key, next ? "1" : "0", null);
     };
   }
 
   CompletionStage<WriteResult> submitSingleBest(String archiveKey, boolean expected, boolean next) {
-    return backend.submit(singleChange(archiveKey, expected, next)).thenApply(RankingBackend.Attempt::result);
+    return backend
+        .submit(singleChange(archiveKey, expected, next))
+        .thenApply(RankingBackend.Attempt::result);
   }
 
   CompletionStage<WriteResult> submitBurst(Burst expected, Supplier<PhotoRanking> makeNext) {
-    return backend.submit(current -> {
-      if (expected.namespace != current.namespace) throw new IllegalArgumentException("Different ranking store");
-      if (!Objects.equals(current.raw(expected.key), expected.storedJournal)) {
-        return backend.result(Outcome.CONFLICT, null);
-      }
-      expected.ranking(); // Validate even if a reset or mode change supplies a fresh journal.
-      PhotoRanking next = makeNext.get();
-      if (!expected.ids.equals(next.ids)) throw new IllegalArgumentException("Different ranking members");
-      return backend.commit(expected.key, next.journal, next);
-    }).thenApply(RankingBackend.Attempt::result);
+    return backend
+        .submit(
+            current -> {
+              if (expected.namespace != current.namespace)
+                throw new IllegalArgumentException("Different ranking store");
+              if (!Objects.equals(current.raw(expected.key), expected.storedJournal)) {
+                return backend.result(Outcome.CONFLICT, null);
+              }
+              expected
+                  .ranking(); // Validate even if a reset or mode change supplies a fresh journal.
+              PhotoRanking next = makeNext.get();
+              if (!expected.ids.equals(next.ids))
+                throw new IllegalArgumentException("Different ranking members");
+              return backend.commit(expected.key, next.journal, next);
+            })
+        .thenApply(RankingBackend.Attempt::result);
   }
 
   // Worker-only compatibility calls. Screen code uses a captured Snapshot and submits an intent.
-  boolean singleBest(String archiveKey) throws IOException { return awaitReady().singleBest(archiveKey); }
-  PhotoRanking load(List<String> ids) throws IOException { return awaitReady().burst(ids).ranking(); }
+  boolean singleBest(String archiveKey) throws IOException {
+    return awaitReady().singleBest(archiveKey);
+  }
+
+  PhotoRanking load(List<String> ids) throws IOException {
+    return awaitReady().burst(ids).ranking();
+  }
 
   boolean saveSingleBest(String archiveKey, boolean expected, boolean next) throws IOException {
     return backend.writeAndWait(singleChange(archiveKey, expected, next));
   }
 
   boolean save(PhotoRanking next) throws IOException {
-    return backend.writeAndWait(current -> {
-      Burst previous = current.burst(next.ids);
-      previous.ranking();
-      return backend.commit(previous.key, next.journal, next);
-    });
+    return backend.writeAndWait(
+        current -> {
+          Burst previous = current.burst(next.ids);
+          previous.ranking();
+          return backend.commit(previous.key, next.journal, next);
+        });
   }
 
   boolean saveBulk(PhotoRanking original, PhotoRanking next) throws IOException {
-    return backend.writeAndWait(current -> {
-      if (!original.ids.equals(next.ids)) throw new IllegalArgumentException("Different ranking members");
-      Burst previous = current.burst(original.ids);
-      String journal = previous.storedJournal == null ? "" : previous.storedJournal;
-      if (!original.journal.equals(journal)) return backend.result(Outcome.CONFLICT, null);
-      if (original.journal.equals(next.journal)) return backend.result(Outcome.UNCHANGED, next);
-      return backend.commit(previous.key, next.journal, next);
-    });
+    return backend.writeAndWait(
+        current -> {
+          if (!original.ids.equals(next.ids))
+            throw new IllegalArgumentException("Different ranking members");
+          Burst previous = current.burst(original.ids);
+          String journal = previous.storedJournal == null ? "" : previous.storedJournal;
+          if (!original.journal.equals(journal)) return backend.result(Outcome.CONFLICT, null);
+          if (original.journal.equals(next.journal)) return backend.result(Outcome.UNCHANGED, next);
+          return backend.commit(previous.key, next.journal, next);
+        });
   }
 }

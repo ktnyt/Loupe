@@ -474,6 +474,11 @@ public final class ArchiveInstrumentation extends Instrumentation {
           || !report.contains("ArchiveInstrumentation.java:")) throw new AssertionError();
       Context context = getTargetContext();
       String mode = cameraPilotArguments.getString("mode", "");
+      if ("ranking-identity-snapshot".equals(mode)) {
+        results.putString("stream", RankingIdentitySnapshotChecks.run(this));
+        finish(-1, results);
+        return;
+      }
       if ("ranking-persistence-waits".equals(mode)) {
         results.putString("stream", RankingPersistenceWaitChecks.run(this, cameraPilotArguments));
         finish(-1, results);
@@ -549,7 +554,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
         results.putString(
             "stream",
             NanoBananaChecks.run(this, tagWidth > 0 ? tagWidth : 400, tagFont > 0 ? tagFont : 1f)
-                + "Synthetic HTTPS API outcomes, cause retention, no POST retry and disconnect covered.\n");
+                + "Synthetic HTTPS API outcomes, cause retention, no POST retry and disconnect"
+                + " covered.\n");
         finish(-1, results);
         return;
       }

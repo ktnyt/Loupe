@@ -411,7 +411,8 @@ final class BurstCoWinnerChecks {
             t.startActivitySync(
                 new Intent(t.getTargetContext(), MainActivity.class)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-    SharedPreferences prefs = a.getSharedPreferences("burst-co-winners-test", 0);
+    String namespace = "burst-co-winners-test-" + java.util.UUID.randomUUID();
+    SharedPreferences prefs = a.getSharedPreferences(namespace, 0);
     List<File> files = new ArrayList<>();
     CountDownLatch release = new CountDownLatch(1);
     try {
@@ -445,6 +446,7 @@ final class BurstCoWinnerChecks {
       }
 
       // The normal unfinished-burst action can still designate a single first photo.
+      disk.awaitReady();
       ui(t, () -> seed(a, photos, disk));
       click(t, ENTRY);
       visible(t, "この写真を1位にしますか？");
@@ -457,6 +459,7 @@ final class BurstCoWinnerChecks {
       AtomicInteger commits = new AtomicInteger();
       SharedPreferences failurePrefs = failFirstCommit(prefs, release, commits);
       RankingStore store = new RankingStore(failurePrefs);
+      store.awaitReady();
       ui(t, () -> seed(a, photos, store));
       await(
           t,
@@ -527,7 +530,7 @@ final class BurstCoWinnerChecks {
       check(persisted.size() == 1, "Expected one stored ranking journal");
       String journal = failurePrefs.getString(persisted.keySet().iterator().next(), "");
       assertWinners(new PhotoRanking(keys.stream().sorted().toList(), journal), keys, 0, 2);
-      assertWinners(disk, keys, 2);
+      assertWinners(store, keys, 2);
       release.countDown();
       visible(t, ERROR);
       check(commits.get() == 2, "Missing restore commit");
@@ -536,7 +539,7 @@ final class BurstCoWinnerChecks {
       click(t, RETRY);
       visible(t, SAVED);
       check(commits.get() == 3, "Unexpected save count");
-      assertWinners(new RankingStore(prefs), keys, 0, 2);
+      assertWinners(RankingPersistenceWaitChecks.readSavedBurst(prefs, keys), keys, 0, 2);
       ui(t, () -> assertBestShotSelection(a, photos));
       check((int) get(a, "burstPosition") == 0, "Co-add moved the photo");
       visible(t, "1・3枚目");
@@ -546,7 +549,7 @@ final class BurstCoWinnerChecks {
       visible(t, "5枚目、3位、表示済み");
       capture(t, a, prefix + "-success", SAVED);
 
-      ui(t, () -> seed(a, photos, new RankingStore(prefs)));
+      ui(t, () -> seed(a, photos, new RankingStore(store)));
       visible(t, "1・3枚目");
       click(t, ENTRY);
       visible(t, SOLE);
@@ -557,21 +560,22 @@ final class BurstCoWinnerChecks {
       click(t, ENTRY);
       click(t, ADD);
       visible(t, "1・2・3枚目");
-      assertWinners(disk, keys, 0, 1, 2);
+      assertWinners(RankingPersistenceWaitChecks.readSavedBurst(prefs, keys), keys, 0, 1, 2);
       check((int) get(a, "burstPosition") == 1, "Second co-add moved the photo");
       click(t, ENTRY);
       click(t, SOLE);
       visible(t, "1位にしました");
-      assertWinners(disk, keys, 1);
+      assertWinners(RankingPersistenceWaitChecks.readSavedBurst(prefs, keys), keys, 1);
       check((int) get(a, "burstPosition") == 1, "Replacement moved the photo");
-      return "PASS isolated burst UI: unfinished, cancel, Back, outside tap, busy and Back, failed save, "
-          + "restore of cached and stored ranks, retry, two co-adds, reopen, all winner labels, "
-          + "best-shot selection, single replacement, and photo position. "
-          + "AX ACTION_CLICK and button bounds checked; spoken TalkBack and finger taps untested.\n";
+      return "PASS isolated burst UI: unfinished, cancel, Back, outside tap, busy and Back, failed"
+                 + " save, restore of cached and stored ranks, retry, two co-adds, reopen, all"
+                 + " winner labels, best-shot selection, single replacement, and photo position. AX"
+                 + " ACTION_CLICK and button bounds checked; spoken TalkBack and finger taps"
+                 + " untested.\n";
     } finally {
       release.countDown();
       ui(t, a::finish);
-      prefs.edit().clear().commit();
+      a.deleteSharedPreferences(namespace);
       for (File file : files) file.delete();
     }
   }
