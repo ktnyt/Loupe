@@ -1,6 +1,7 @@
 package jp.nano.rawgallery;
 
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -503,10 +504,7 @@ final class E2Panel {
 
   private void toggleAuto() {
     if (E2SyncJob.enabled(activity)) {
-      boolean cleaning = E2Cleanup.enabled(activity, activeBucket);
-      setAuto(false);
-      if (cleaning && !E2SyncJob.enabled(activity))
-        message("端末オリジナルの整理も停止しました。再開後に設定できます", GalleryUi.TEXT);
+      pauseAuto(activity);
     } else if (activeBucket != null) {
       if (!E2Settings.hasMediaAccess(activity)) {
         new GalleryUi.Sheet(activity)
@@ -524,22 +522,32 @@ final class E2Panel {
                   + "\n保存済みのオリジナルもクラウドの復元一覧に反映します。\n保存先バケット "
                   + activeBucket)
           .setNegativeButton("キャンセル", null)
-          .setPositiveButton("開始", (dialog, which) -> setAuto(true))
+          .setPositiveButton("開始", (dialog, which) -> setAuto(activity, true))
           .show();
     }
   }
 
-  private void setAuto(boolean enabled) {
+  private void pauseAuto(Context context) {
+    boolean cleaning = E2Cleanup.enabled(context, activeBucket);
+    if (setAuto(context, false) && cleaning)
+      message("端末オリジナルの整理も停止しました。再開後に設定できます", GalleryUi.TEXT);
+  }
+
+  private boolean setAuto(Context context, boolean enabled) {
     try {
-      E2SyncJob.setEnabled(activity, enabled, enabled ? activeBucket : null);
+      E2SyncJob.setEnabled(context, enabled, enabled ? activeBucket : null);
+      return true;
     } catch (E2Cleanup.UnknownConsentException unknown) {
       message(unknown.getMessage(), 0xffffb4a8);
+      return false;
     } catch (RuntimeException failed) {
       message(
           enabled ? "自動バックアップを開始できません。保存先や端末の自動削除の設定を確認してください。" : "自動バックアップを停止できませんでした",
           0xffffb4a8);
+      return false;
+    } finally {
+      refreshAuto();
     }
-    refreshAuto();
   }
 
   private void connect() {

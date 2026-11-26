@@ -752,7 +752,10 @@ final class AmazonRetirementUpgradeChecks {
     var syncMonitor = test.addMonitor(E2SyncActivity.class.getName(), null, false);
     try {
       checkRetentionUi(test, sync, suffix);
-      if (absent) checkCleanupUnknownUi(test, sync, suffix);
+      if (absent) {
+        checkAutoPauseFailureUi(test, sync);
+        checkCleanupUnknownUi(test, sync, suffix);
+      }
       test.runOnMainSync(sync::recreate);
       var replacement = (E2SyncActivity) test.waitForMonitorWithTimeout(syncMonitor, 6500);
       require(replacement != null && replacement != sync, "E2 recreation not observed");
@@ -866,9 +869,108 @@ final class AmazonRetirementUpgradeChecks {
       test.runOnMainSync(main::finish);
     }
     return "PASS explicit E2 consent and fail-closed writes; retention chooser and recreation;"
-        + (absent ? " synthetic E2 unknown state and confirmed stop;" : "")
+        + (absent ? " failed pause feedback; synthetic E2 unknown state and confirmed stop;" : "")
         + " conditional archive share notice, missing-original recovery, copy rollback and"
         + " preserved selection";
+  }
+
+  private static void checkAutoPauseFailureUi(Instrumentation test, E2SyncActivity screen)
+      throws Exception {
+    Context target = test.getTargetContext();
+    require(
+        target.getSystemService(ConnectivityManager.class).getActiveNetwork() == null
+            && !E2SyncJob.enabled(target),
+        "pause failure UI fixture requires the offline, absent upgrade cohort");
+    var panel = (E2Panel) AlbumTagEntryChecks.field(screen, "panel");
+    var status = (TextView) AlbumTagEntryChecks.field(panel, "status");
+    File parent =
+        Files.createTempDirectory(target.getFilesDir().toPath(), FIXTURE + "-pause-").toFile();
+    String settingsName = parent.getName() + "-settings";
+    String optionsName = parent.getName() + "-options";
+    var settings = target.getSharedPreferences(settingsName, Context.MODE_PRIVATE);
+    var options = target.getSharedPreferences(optionsName, Context.MODE_PRIVATE);
+    var isolated = isolatedConsentContext(target, settings, options, parent);
+    var directory = new File(target.getDataDir(), "shared_prefs").toPath();
+    var xml = directory.resolve(optionsName + ".xml");
+    var backup = directory.resolve(optionsName + ".xml.bak");
+    var blocker = xml.resolve("blocker");
+    try {
+      require(
+          settings.edit().putBoolean("cleanupEnabled", true).putInt("retentionDays", 31).commit()
+              && options
+                  .edit()
+                  .putBoolean("enabled", true)
+                  .putString("destination", BUCKET)
+                  .commit(),
+          "seed isolated automatic backup");
+      applyConsentAfterPreconditions(isolated, 31);
+      require(
+          E2SyncJob.enabled(isolated) && E2Cleanup.enabled(isolated, BUCKET),
+          "isolate active automatic backup and cleanup");
+      byte[] savedOptions = Files.readAllBytes(xml);
+      require(Files.notExists(backup, LinkOption.NOFOLLOW_LINKS), "unexpected option backup");
+      var acknowledged = new AtomicReference<Boolean>();
+      var observedConsent =
+          withCommitHook(
+              options,
+              editor -> {
+                boolean saved = editor.commit();
+                acknowledged.set(saved);
+                return saved;
+              });
+      var failing = isolatedConsentContext(target, settings, observedConsent, parent);
+
+      // Keep the previous bytes at Android's backup path and obstruct only the fixture XML.
+      Files.move(xml, backup);
+      Files.createDirectory(xml);
+      Files.createFile(blocker);
+      var pause = E2Panel.class.getDeclaredMethod("pauseAuto", Context.class);
+      pause.setAccessible(true);
+      AlbumTagEntryChecks.main(
+          test,
+          () -> {
+            Object previousBucket = AlbumTagEntryChecks.field(panel, "activeBucket");
+            CharSequence previousStatus = status.getText();
+            int previousColor = status.getCurrentTextColor();
+            try {
+              AlbumTagEntryChecks.set(panel, "activeBucket", BUCKET);
+              pause.invoke(panel, failing);
+              require(
+                  Boolean.FALSE.equals(acknowledged.get()) && !E2SyncJob.enabled(failing),
+                  "framework did not reject persistence after updating its cache");
+              require(
+                  "自動バックアップを停止できませんでした".contentEquals(status.getText()),
+                  "cached pause state replaced the save failure message");
+              require(
+                  !E2Cleanup.consentUnknown(failing)
+                      && !E2Cleanup.enabled(failing, BUCKET)
+                      && pendingConsent(parent).isFile(),
+                  "failed pause did not retain the cleanup veto");
+              return true;
+            } finally {
+              AlbumTagEntryChecks.set(panel, "activeBucket", previousBucket);
+              status.setText(previousStatus);
+              status.setTextColor(previousColor);
+              panel.refreshAuto();
+            }
+          });
+      require(
+          Files.isRegularFile(blocker) && Arrays.equals(savedOptions, Files.readAllBytes(backup)),
+          "failed pause replaced the last durable options");
+    } finally {
+      try {
+        if (Files.isDirectory(xml, LinkOption.NOFOLLOW_LINKS)) {
+          Files.deleteIfExists(blocker);
+          Files.delete(xml);
+        }
+        if (Files.isRegularFile(backup, LinkOption.NOFOLLOW_LINKS)) Files.move(backup, xml);
+      } finally {
+        target.deleteSharedPreferences(optionsName);
+        target.deleteSharedPreferences(settingsName);
+        Files.deleteIfExists(pendingConsent(parent).toPath());
+        Files.delete(parent.toPath());
+      }
+    }
   }
 
   private static void checkCleanupUnknownUi(
