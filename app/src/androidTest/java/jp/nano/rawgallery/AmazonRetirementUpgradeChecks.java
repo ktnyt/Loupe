@@ -27,6 +27,7 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -902,6 +903,10 @@ final class AmazonRetirementUpgradeChecks {
     var pendingWrites = (Map<SharedPreferences, Boolean>) field.get(null);
     var panel = (E2Panel) AlbumTagEntryChecks.field(screen, "panel");
     var stop = (Button) AlbumTagEntryChecks.field(panel, "cleanupToggle");
+    var ancestor = stop.getParent();
+    while (ancestor != null && !(ancestor instanceof ScrollView)) ancestor = ancestor.getParent();
+    require(ancestor instanceof ScrollView, "unknown E2 stop has no settings scroll view");
+    var scroll = (ScrollView) ancestor;
     var status = (TextView) AlbumTagEntryChecks.field(panel, "cleanupStatus");
     var message = (TextView) AlbumTagEntryChecks.field(panel, "status");
     String stopLabel = "端末オリジナルの整理を停止";
@@ -931,9 +936,7 @@ final class AmazonRetirementUpgradeChecks {
             "visible unknown E2 state and accessible stop action",
             () -> {
               if (!status.isShown() || status.getHeight() <= 0) return false;
-              var card = (View) stop.getParent();
-              card.requestRectangleOnScreen(
-                  new Rect(0, status.getTop(), card.getWidth(), stop.getBottom()), true);
+              revealCleanupUnknown(scroll, status, stop);
               var node = stop.createAccessibilityNodeInfo();
               var bounds = new Rect();
               node.getBoundsInScreen(bounds);
@@ -1022,6 +1025,22 @@ final class AmazonRetirementUpgradeChecks {
             "unknown UI proof changed preferences, credentials, history or production journal");
       }
     }
+  }
+
+  private static void revealCleanupUnknown(ScrollView scroll, View status, View stop) {
+    int[] location = new int[2];
+    scroll.getLocationOnScreen(location);
+    int viewportTop = location[1] + scroll.getPaddingTop();
+    int viewportBottom = location[1] + scroll.getHeight() - scroll.getPaddingBottom();
+    status.getLocationOnScreen(location);
+    int maxScroll = location[1] - viewportTop;
+    stop.getLocationOnScreen(location);
+    int minScroll = location[1] + stop.getHeight() - viewportBottom;
+    if (minScroll > maxScroll) return;
+    // Keep the status and stop action inside the viewport padded for the system bars.
+    int margin = GalleryUi.dp(scroll.getContext(), 16);
+    if (minScroll > 0) scroll.scrollBy(0, Math.min(minScroll + margin, maxScroll));
+    else if (maxScroll < 0) scroll.scrollBy(0, Math.max(maxScroll - margin, minScroll));
   }
 
   private static void captureCleanupUnknownFailure(
