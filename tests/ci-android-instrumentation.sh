@@ -73,12 +73,12 @@ esac
 "$adb" -s "$serial" install -g app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
 
 run_instrumentation() {
-  local label=$1 result
+  local label=$1 result instrument_exit=0
   shift
   printf '\nRunning Android instrumentation: %s\n' "$label"
-  result=$("$adb" -s "$serial" shell am instrument -w -r "$@" < /dev/null)
+  result=$("$adb" -s "$serial" shell am instrument -w -r "$@" < /dev/null) || instrument_exit=$?
   printf '%s\n' "$result"
-  if ! grep -q '^INSTRUMENTATION_RESULT: stream=PASS ' <<< "$result" ||
+  if (( instrument_exit != 0 )) || ! grep -q '^INSTRUMENTATION_RESULT: stream=PASS ' <<< "$result" ||
      ! grep -qx 'INSTRUMENTATION_CODE: -1' <<< "$result"; then
     if [[ "$label" == camera-ledger* ]]; then
       "$adb" -s "$serial" logcat -d -s LedgerIdentityProbe:E '*:S' || true
@@ -92,7 +92,10 @@ run_instrumentation() {
     elif [[ "$label" == look-removal ]]; then
       "$adb" -s "$serial" logcat -d -s LoupeLookFixture:I '*:S' || true
     fi
-    echo "$label did not report PASS." >&2
+    echo "$label did not report PASS (adb exit $instrument_exit)." >&2
+    if (( instrument_exit != 0 )); then
+      exit "$instrument_exit"
+    fi
     exit 1
   fi
 }
