@@ -15,6 +15,8 @@ import androidx.appcompat.app.AlertDialog;
 import java.io.*;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.function.BooleanSupplier;
+import java.util.function.UnaryOperator;
 import jp.nano.rawgallery.camera.ImportProgress;
 import jp.nano.rawgallery.gallery.LibraryScreen;
 
@@ -44,6 +46,8 @@ public final class MainActivity extends DiagnosticActivity {
       historyAnimating;
   private Runnable refreshShareBadges = () -> {}, refreshShareInfo = () -> {};
   private Runnable refreshSingleBest = () -> {};
+  private Runnable refreshExpandedChoice = () -> {};
+  private boolean expandedRankUnavailable;
   private AlertDialog shareHistoryFailure;
   private final SharedPreferences.OnSharedPreferenceChangeListener historyChanges =
       (prefs, key) -> {
@@ -134,6 +138,19 @@ public final class MainActivity extends DiagnosticActivity {
   private PhotoRepository repository;
   private static final int PHOTO_TILE_HEIGHT_DP = 96;
   private RankingStore rankingStore;
+  private RankingStore watchedRankingStore;
+  private RankingStore.Subscription rankingSubscription;
+  private RankingStore.Snapshot observedRanks, cachedRanks, displayedRanks;
+  private boolean rankingForeground;
+  private Runnable refreshBurstRanks = () -> {};
+  private StatusView rankEmpty;
+  private LinearLayout rankFilterFailure;
+  private boolean rankFilterReadFailed;
+  private PhotoFilterSheet rankFilterSheet;
+  private RankingStore.Burst rankingBasis;
+  private boolean rankingBusy;
+  private final List<View> rankingActions = new ArrayList<>();
+  private TextView rankingSaveStatus;
   private SharePreparation sharePreparation;
   private ShareCapacityChecks shareCapacity;
   private ShareUi.Menu capacityMenu;
@@ -218,6 +235,9 @@ public final class MainActivity extends DiagnosticActivity {
   private final Map<List<Integer>, PhotoRanking> rankCache = new HashMap<>();
   private List<Integer> selectionBurst;
   private SelectionUi.Summary selectionCount;
+  private StatusView selectionRankStatus;
+  private TextView selectionShareNotice;
+  private boolean selectionShareNeedsReview;
   private TextView selectionTitle;
   private Button selectionShare, selectionAll, selectionSort, selectionTag;
   private SelectedPhotoTags selectionTags;
@@ -434,6 +454,14 @@ public final class MainActivity extends DiagnosticActivity {
   private void base() {
     presentedSelection = null;
     refreshSingleBest = () -> {};
+    refreshExpandedChoice = () -> {};
+    expandedRankUnavailable = false;
+    refreshBurstRanks = () -> {};
+    rankEmpty = null;
+    rankFilterFailure = null;
+    rankingActions.clear();
+    rankingSaveStatus = null;
+    selectionShareNotice = null;
     refreshShareBadges = () -> {};
     refreshShareInfo = () -> {};
     root = vertical();
@@ -517,6 +545,7 @@ public final class MainActivity extends DiagnosticActivity {
       };
 
   private void gallery() {
+    watchRankings();
     DiagnosticLog.event("screen.gallery", burstRequest);
     rememberGallery();
     rememberAlbums();
@@ -642,9 +671,12 @@ public final class MainActivity extends DiagnosticActivity {
         });
     FrameLayout gridFrame = new FrameLayout(this);
     gridFrame.addView(grid, new FrameLayout.LayoutParams(-1, -1));
-    StatusView empty = status(StatusView.Symbol.EMPTY, "", "表示する写真がありません");
-    gridFrame.addView(empty, new FrameLayout.LayoutParams(-1, -1));
-    grid.setEmptyView(empty);
+    rankEmpty = status(StatusView.Symbol.EMPTY, "", "表示する写真がありません");
+    FrameLayout emptyState = new FrameLayout(this);
+    emptyState.addView(rankEmpty, new FrameLayout.LayoutParams(-1, -1));
+    updateRankEmpty(displayedRanks);
+    gridFrame.addView(emptyState, new FrameLayout.LayoutParams(-1, -1));
+    grid.setEmptyView(emptyState);
     body.addView(gridFrame, new LinearLayout.LayoutParams(-1, -1));
     int controlsStart = root.getChildCount();
     if (selecting) {
@@ -926,8 +958,9 @@ public final class MainActivity extends DiagnosticActivity {
           boolean tied = false;
           String rankNumber = "", rankDescription = "順位が未決定";
           StatusView.Symbol rankSymbol = StatusView.Symbol.UNKNOWN;
+          RankingStore.Snapshot snapshot = rankingStore.snapshot();
           try {
-            PhotoRanking saved = rankingFor(burstMembers);
+            PhotoRanking saved = rankingFor(snapshot, burstMembers);
             if (saved.done()) {
               List<String> positions = new ArrayList<>();
               int[] ranks = new int[burstMembers.size()];
@@ -948,9 +981,12 @@ public final class MainActivity extends DiagnosticActivity {
               rankSymbol = StatusView.Symbol.PAUSED;
             }
           } catch (Exception e) {
-            rankDescription = "順位を読み込めません";
-            rankSymbol = StatusView.Symbol.FAILED;
+            boolean pending = snapshot.phase() == RankingStore.Phase.PENDING;
+            rankDescription = pending ? "順位を読み込んでいます" : "順位を読み込めません";
+            rankSymbol = pending ? StatusView.Symbol.RUNNING : StatusView.Symbol.FAILED;
           }
+          if (rankSymbol != StatusView.Symbol.COMPLETE)
+            previews.ranks(new int[burstMembers.size()]);
           rank.setVisibility(rankSymbol == StatusView.Symbol.COMPLETE ? View.VISIBLE : View.GONE);
           rank.setText(rankNumber);
           rank.setContentDescription(rankDescription);
@@ -961,6 +997,8 @@ public final class MainActivity extends DiagnosticActivity {
               rankSymbol == StatusView.Symbol.UNKNOWN ? View.GONE : View.VISIBLE);
           RankingUi.state(rankState, rankSymbol, bestPosition);
           if (rankSymbol == StatusView.Symbol.COMPLETE) rankState.setText(winners + "枚目");
+          else if (rankSymbol == StatusView.Symbol.RUNNING
+              || rankSymbol == StatusView.Symbol.FAILED) rankState.setText(rankDescription);
           rankState.setContentDescription(
               rankSymbol == StatusView.Symbol.COMPLETE
                   ? "順位決定済み、1位は" + winners + "枚目" + (tied ? "、同率" : "")
@@ -995,6 +1033,16 @@ public final class MainActivity extends DiagnosticActivity {
             14,
             "共有");
     RankingUi.add(controls, RankingUi.pair(this, best, share), 8);
+    refreshBurstRanks =
+        () -> {
+          update.run();
+          String currentSortLabel = sortLabel();
+          sort.setText(currentSortLabel);
+          sort.setContentDescription(currentSortLabel);
+          boolean pending = rankingStore.snapshot().phase() == RankingStore.Phase.PENDING;
+          sort.setEnabled(!pending);
+          best.setEnabled(!pending);
+        };
     RankingUi.addDock(
         controls,
         RankingUi.dock(
@@ -1024,7 +1072,7 @@ public final class MainActivity extends DiagnosticActivity {
     root.addView(
         new RankingUi.Screen(this, header, stage, controls, true),
         new LinearLayout.LayoutParams(-1, 0, 1));
-    update.run();
+    refreshBurstRanks.run();
     if (burstSavedNotice != null) {
       notice.setText("✓  " + burstSavedNotice);
       burstSavedNotice = null;
@@ -1034,8 +1082,10 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private void chooseCurrentBest() {
+    RankingStore.Snapshot snapshot = rankingStore.snapshot();
     try {
-      PhotoRanking saved = rankingFor(burstMembers);
+      RankingStore.Burst basis = rankingBasis(snapshot, burstMembers);
+      PhotoRanking saved = basis.ranking();
       List<Integer> members = List.copyOf(burstMembers);
       String current = ArchiveStore.key(photos.get(members.get(burstPosition)));
       int position = burstPosition, screen = generation;
@@ -1048,7 +1098,9 @@ public final class MainActivity extends DiagnosticActivity {
       boolean tiedWinner =
           saved.done() && saved.best().contains(current) && saved.best().size() > 1;
       RankingStore store = rankingStore;
-      new BurstBestSheet(
+      BurstBestSheet[] sheet = new BurstBestSheet[1];
+      sheet[0] =
+          new BurstBestSheet(
               this,
               canAdd,
               tiedWinner,
@@ -1062,75 +1114,191 @@ public final class MainActivity extends DiagnosticActivity {
                     together ? 1 : 0,
                     "count",
                     saved.ids.size());
-                actions.execute(
-                    () -> {
-                      boolean success = false;
-                      try {
-                        PhotoRanking next;
-                        if (together) next = saved.addCoWinner(current);
-                        else {
-                          next = new PhotoRanking(saved.ids, "B:");
+                store
+                    .submitBurst(
+                        basis,
+                        () -> {
+                          if (together) return basis.ranking().addCoWinner(current);
+                          PhotoRanking next = new PhotoRanking(basis.ids(), "B:");
                           while (!next.done()) next = next.choose(next.upper().equals(current));
-                        }
-                        success = store.save(next);
-                      } catch (Exception ignored) {
-                      }
-                      // SharedPreferences may publish new memory before reporting a disk failure.
-                      if (!success)
-                        try {
-                          store.save(saved);
-                        } catch (Exception ignored) {
-                        }
-                      final boolean persisted = success;
-                      DiagnosticLog.event(
-                          persisted ? "ranking.direct.saved" : "ranking.direct.failed", request);
-                      main.post(
-                          () -> {
-                            if (isDestroyed()) return;
-                            if (persisted) {
-                              rankCache.clear();
-                              presentedSelection = null;
-                            }
-                            done.accept(persisted);
-                            if (persisted
-                                && generation == screen
-                                && members.equals(burstMembers)
-                                && burstPosition == position) {
-                              burstSavedNotice = together ? "同率1位に追加しました" : "1位にしました";
-                              gallery();
-                              root.getViewTreeObserver()
-                                  .addOnPreDrawListener(
-                                      new ViewTreeObserver.OnPreDrawListener() {
-                                        public boolean onPreDraw() {
-                                          root.getViewTreeObserver().removeOnPreDrawListener(this);
-                                          if (root.isHardwareAccelerated())
-                                            root.getViewTreeObserver()
-                                                .registerFrameCommitCallback(
-                                                    () ->
-                                                        DiagnosticLog.event(
-                                                            "ranking.direct.frame", request));
-                                          return true;
-                                        }
-                                      });
-                              root.invalidate();
-                            }
-                          });
-                    });
-              })
-          .show();
+                          return next;
+                        })
+                    .whenCompleteAsync(
+                        (result, error) -> {
+                          boolean persisted = rankingAccepted(result, error);
+                          DiagnosticLog.event(
+                              persisted ? "ranking.direct.saved" : "ranking.direct.failed",
+                              request);
+                          if (isDestroyed() || isFinishing() || store != rankingStore) return;
+                          if (rankingReadConflict(result)) {
+                            sheet[0].dismiss();
+                            if (generation == screen) rankChangedFeedback();
+                            return;
+                          }
+                          done.accept(persisted);
+                          if (persisted
+                              && generation == screen
+                              && members.equals(burstMembers)
+                              && burstPosition == position) {
+                            burstSavedNotice = together ? "同率1位に追加しました" : "1位にしました";
+                            gallery();
+                            rankingFrame(root, "ranking.direct.frame", request);
+                          }
+                        },
+                        main::post);
+              });
+      sheet[0].show();
     } catch (Exception e) {
-      feedback(StatusView.Symbol.FAILED, "順位を読み込めませんでした", this::chooseCurrentBest, "再試行");
+      reportUnreadableRanking(snapshot, this::chooseCurrentBest);
     }
   }
 
+  private static boolean rankingAccepted(RankingStore.WriteResult result, Throwable error) {
+    return error == null
+        && result != null
+        && (result.outcome() == RankingStore.Outcome.SAVED
+            || result.outcome() == RankingStore.Outcome.UNCHANGED);
+  }
+
+  private static boolean rankingReadConflict(RankingStore.WriteResult result) {
+    return result != null
+        && (result.outcome() == RankingStore.Outcome.CONFLICT
+            || result.outcome() == RankingStore.Outcome.READ_FAILED);
+  }
+
+  private void rankChangedFeedback() {
+    feedback(StatusView.Symbol.PAUSED, "順位が変わりました。確認してからもう一度操作してください", null, "");
+  }
+
+  private static void rankingFrame(View view, String event, long request) {
+    view.getViewTreeObserver()
+        .addOnPreDrawListener(
+            new ViewTreeObserver.OnPreDrawListener() {
+              @Override
+              public boolean onPreDraw() {
+                view.getViewTreeObserver().removeOnPreDrawListener(this);
+                if (view.isHardwareAccelerated())
+                  view.getViewTreeObserver()
+                      .registerFrameCommitCallback(() -> DiagnosticLog.event(event, request));
+                return true;
+              }
+            });
+    view.invalidate();
+  }
+
   private PhotoRanking rankingFor(List<Integer> members) throws IOException {
+    return rankingFor(rankingStore.snapshot(), members);
+  }
+
+  private PhotoRanking rankingFor(RankingStore.Snapshot snapshot, List<Integer> members)
+      throws IOException {
+    if (snapshot != cachedRanks) {
+      rankCache.clear();
+      cachedRanks = snapshot;
+    }
     PhotoRanking cached = rankCache.get(members);
     if (cached != null) return cached;
-    List<String> ids = new ArrayList<>();
-    for (int i : members) ids.add(ArchiveStore.key(photos.get(i)));
-    PhotoRanking saved = rankingStore.load(ids);
+    PhotoRanking saved = rankingBasis(snapshot, members).ranking();
     rankCache.put(List.copyOf(members), saved);
     return saved;
+  }
+
+  private RankingStore.Burst rankingBasis(RankingStore.Snapshot snapshot, List<Integer> members)
+      throws IOException {
+    List<String> ids = new ArrayList<>();
+    for (int i : members) ids.add(ArchiveStore.key(photos.get(i)));
+    return snapshot.burst(ids);
+  }
+
+  private void watchRankings() {
+    if (!rankingForeground || watchedRankingStore == rankingStore || rankingStore == null) return;
+    stopWatchingRankings();
+    RankingStore owner = rankingStore;
+    watchedRankingStore = owner;
+    rankingSubscription = owner.observe(main::post, () -> rankingsPublished(owner));
+  }
+
+  private void stopWatchingRankings() {
+    if (rankingSubscription != null) rankingSubscription.close();
+    rankingSubscription = null;
+    watchedRankingStore = null;
+  }
+
+  private void rankingsPublished(RankingStore owner) {
+    if (!rankingForeground
+        || isDestroyed()
+        || owner != watchedRankingStore
+        || owner != rankingStore) return;
+    RankingStore.Snapshot snapshot = owner.snapshot();
+    if (snapshot == observedRanks) return;
+    observedRanks = snapshot;
+    rankCache.clear();
+    presentedSelection = null;
+    if (rankFilterSheet != null && rankFilterSheet.isShowing()) rankFilterSheet.refreshCount();
+    if (rankingScreen) refreshComparison(snapshot);
+    else if (detail && returnToRanking) refreshExpandedComparison(snapshot, false);
+    else if (detail) refreshSingleBest.run();
+    else if (!albumHome) {
+      if (burstMembers != null && !selecting) refreshBurstRanks.run();
+      else if (grid != null && adapter != null) {
+        GalleryPosition position = GalleryPosition.capture(grid, photos, displayed);
+        rebuildDisplayed();
+        updateRankEmpty(displayedRanks);
+        adapter.notifyDataSetChanged();
+        if (position != null && !displayed.isEmpty()) position.restore(grid, photos, displayed);
+        if (selecting) updateSelection();
+        else if (!photos.isEmpty()) updateCount();
+      }
+    }
+  }
+
+  private void reportUnreadableRanking(RankingStore.Snapshot snapshot, Runnable retry) {
+    if (snapshot.phase() == RankingStore.Phase.PENDING) {
+      feedback(StatusView.Symbol.RUNNING, "順位を読み込んでいます", null, "");
+    } else {
+      feedback(
+          StatusView.Symbol.FAILED,
+          "順位を読み込めませんでした",
+          () -> {
+            rankingStore.retryLoad();
+            if (rankingStore.snapshot().phase() == RankingStore.Phase.READY) retry.run();
+          },
+          "再試行");
+    }
+  }
+
+  private void updateRankEmpty(RankingStore.Snapshot snapshot) {
+    if (rankEmpty == null) return;
+    if (rankFilterFailure != null) rankFilterFailure.setVisibility(View.GONE);
+    if (rankFilter != 0 && snapshot.phase() == RankingStore.Phase.PENDING) {
+      rankEmpty.begin("順位を読み込んでいます");
+    } else if (rankFilter != 0
+        && (snapshot.phase() == RankingStore.Phase.FAILED || rankFilterReadFailed)) {
+      rankEmpty.clear();
+      if (rankFilterFailure == null) {
+        rankFilterFailure = vertical();
+        rankFilterFailure.setGravity(Gravity.CENTER_HORIZONTAL);
+        rankFilterFailure.setPadding(dp(24), 0, dp(24), 0);
+        TextView message = label("順位を読み込めませんでした", 14, TEXT);
+        message.setGravity(Gravity.CENTER);
+        message.setTag("catalog-ranking-failure");
+        message.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        rankFilterFailure.addView(message, new LinearLayout.LayoutParams(-1, -2));
+        Button retry =
+            LibraryUi.text(
+                this,
+                "順位を読み直す",
+                () -> {
+                  rankingStore.retryLoad();
+                  if (rankingStore.snapshot().phase() == RankingStore.Phase.READY) gallery();
+                });
+        retry.setTag("catalog-ranking-retry");
+        rankFilterFailure.addView(retry, new LinearLayout.LayoutParams(-2, -2));
+        ((FrameLayout) rankEmpty.getParent())
+            .addView(rankFilterFailure, new FrameLayout.LayoutParams(-1, -2, Gravity.CENTER));
+      }
+      rankFilterFailure.setVisibility(View.VISIBLE);
+    } else rankEmpty.show(StatusView.Symbol.EMPTY, "", "表示する写真がありません", null, "");
   }
 
   private final class SelectionResult {
@@ -1138,6 +1306,7 @@ public final class MainActivity extends DiagnosticActivity {
     final List<List<Integer>> galleryBundles = bundles;
     final Set<String> chosen = Set.copyOf(selectedPhotos);
     final boolean winnersOnly = bestOnly;
+    final RankingStore.Snapshot ranks = rankingStore.snapshot();
     final List<PhotoRepository.Photo> photos = new ArrayList<>();
     final List<List<Integer>> unresolved = new ArrayList<>();
     boolean retryRanking;
@@ -1153,12 +1322,32 @@ public final class MainActivity extends DiagnosticActivity {
   private SelectionResult selectionResult() {
     if (presentedSelection == null
         || !presentedSelection.matchesSelection()
-        || presentedSelection.retryRanking) presentedSelection = resolveSelection();
+        || presentedSelection.ranks != rankingStore.snapshot())
+      presentedSelection = resolveSelection();
     return presentedSelection;
   }
 
   private boolean isCurrentSelection(SelectionResult result) {
-    return presentedSelection == result && result.matchesSelection();
+    if (!result.matchesSelection() || result.retryRanking) return false;
+    if (result.ranks == rankingStore.snapshot()) return true;
+    SelectionResult current = selectionResult();
+    return !current.retryRanking
+        && current.photos.equals(result.photos)
+        && current.unresolved.equals(result.unresolved)
+        && current.ranks == rankingStore.snapshot();
+  }
+
+  private void shareSelectionChanged() {
+    if (!selecting || selectionShareNotice == null) return;
+    showShareSelectionNotice(true);
+    updateSelection();
+  }
+
+  private void showShareSelectionNotice(boolean changed) {
+    selectionShareNeedsReview = changed;
+    if (selectionShareNotice != null) {
+      selectionShareNotice.setVisibility(changed ? View.VISIBLE : View.GONE);
+    }
   }
 
   private SelectionResult resolveSelection() {
@@ -1174,7 +1363,7 @@ public final class MainActivity extends DiagnosticActivity {
             bestOnly,
             group -> {
               try {
-                PhotoRanking r = rankingFor(group);
+                PhotoRanking r = rankingFor(result.ranks, group);
                 if (!r.done()) return null;
                 Set<String> best = new HashSet<>(r.best());
                 Set<Integer> winners = new HashSet<>();
@@ -1198,6 +1387,7 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private void toggleSelection(int pos) {
+    showShareSelectionNotice(false);
     List<Integer> members = displayed.get(pos);
     if (photos.get(members.get(0)).isVideo()) {
       feedback(StatusView.Symbol.PAUSED, "動画は写真の選択対象外です", null, "");
@@ -1236,18 +1426,31 @@ public final class MainActivity extends DiagnosticActivity {
   private void rebuildDisplayed() {
     photoBundles.clear();
     for (List<Integer> group : bundles) for (int member : group) photoBundles.put(member, group);
-    displayed =
-        RankedPhotoGroups.filter(
-            photos,
-            burstMembers == null ? bundles : List.of(burstMembers),
-            burstMembers != null,
-            rankFilter,
-            rankingStore,
-            this::rankingFor);
+    displayedRanks = rankingStore.snapshot();
+    rankFilterReadFailed = false;
+    if (rankFilter != 0 && displayedRanks.phase() != RankingStore.Phase.READY) {
+      displayed = new ArrayList<>();
+      return;
+    }
+    RankingStore.Snapshot snapshot = displayedRanks;
+    try {
+      displayed =
+          RankedPhotoGroups.filter(
+              photos,
+              burstMembers == null ? bundles : List.of(burstMembers),
+              burstMembers != null,
+              rankFilter,
+              snapshot,
+              members -> rankingFor(snapshot, members));
+    } catch (IOException | IllegalArgumentException unreadable) {
+      rankFilterReadFailed = true;
+      displayed = new ArrayList<>();
+    }
   }
 
   private void beginSelection() {
     if (photos.isEmpty() || !requireCurrentBurstGrouping()) return;
+    showShareSelectionNotice(false);
     selecting = true;
     bestOnly = true;
     selectedPhotos.clear();
@@ -1280,6 +1483,7 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private void toggleVisibleSelection() {
+    showShareSelectionNotice(false);
     boolean remove = allVisibleSelected();
     for (List<Integer> members : displayed)
       for (int member : members) {
@@ -1307,11 +1511,15 @@ public final class MainActivity extends DiagnosticActivity {
     DiagnosticLog.event("screen.selectionControls", 0);
     selectionCount = new SelectionUi.Summary(this);
     root.addView(selectionCount);
+    selectionRankStatus = status(StatusView.Symbol.RUNNING, "", "順位を読み込んでいます");
+    selectionRankStatus.setTag("selection-rank-status");
+    root.addView(selectionRankStatus);
     SelectionUi.BestSwitch check = new SelectionUi.BestSwitch(this);
     check.setChecked(bestOnly);
     check.setOnClickListener(GalleryUi::feedback);
     check.setOnCheckedChangeListener(
         (v, enabled) -> {
+          showShareSelectionNotice(false);
           bestOnly = enabled;
           updateSelection();
         });
@@ -1322,6 +1530,12 @@ public final class MainActivity extends DiagnosticActivity {
       selectionBulk = new BulkBestSheet.Entry(this, this::confirmBulkBest);
       root.addView(selectionBulk, new LinearLayout.LayoutParams(-1, -2));
     }
+    selectionShareNotice = label("共有する写真が変わりました。もう一度「共有」を押して確認してください", 14, TEXT);
+    selectionShareNotice.setTag("selection-share-notice");
+    selectionShareNotice.setPadding(dp(16), dp(6), dp(16), dp(6));
+    selectionShareNotice.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    selectionShareNotice.setVisibility(selectionShareNeedsReview ? View.VISIBLE : View.GONE);
+    root.addView(selectionShareNotice, new LinearLayout.LayoutParams(-1, -2));
     selectionShare = SelectionUi.action(this, "共有", true, this::shareSelection);
     selectionSort = SelectionUi.action(this, "比較", false, () -> shareSelection(true));
     selectionTag = SelectionUi.action(this, "タグ", false, this::tagSelectedPhotos);
@@ -1341,6 +1555,25 @@ public final class MainActivity extends DiagnosticActivity {
     for (String key : selectedPhotos) if (!visible.contains(key)) hidden++;
     List<Integer> bulkTargets = selectionBulk == null ? List.of() : selectedBurstMembers();
     int outside = selectionBulk == null ? 0 : selectedPhotos.size() - bulkTargets.size();
+    boolean rankUnavailable = result.retryRanking;
+    selectionCount.setVisibility(rankUnavailable ? View.GONE : View.VISIBLE);
+    selectionRankStatus.setVisibility(rankUnavailable ? View.VISIBLE : View.GONE);
+    if (rankUnavailable) {
+      if (result.ranks.phase() == RankingStore.Phase.PENDING) {
+        selectionRankStatus.begin("順位を読み込んでいます");
+      } else {
+        selectionRankStatus.show(
+            StatusView.Symbol.FAILED,
+            "",
+            "順位を読み込めませんでした",
+            () -> {
+              rankingStore.retryLoad();
+              presentedSelection = null;
+              updateSelection();
+            },
+            "再試行");
+      }
+    }
     selectionCount.counts(
         result.photos.size(),
         hidden - outside,
@@ -1350,15 +1583,20 @@ public final class MainActivity extends DiagnosticActivity {
     if (selectionBulk != null) updateBulkBest(bulkTargets);
     if (selectionTitle != null)
       selectionTitle.setText(selectedPhotos.isEmpty() ? "写真を選択" : selectedPhotos.size() + "枚を選択");
-    selectionSort.setEnabled(!result.unresolved.isEmpty());
+    selectionSort.setEnabled(!rankUnavailable && !result.unresolved.isEmpty());
     selectionTag.setEnabled(!selectedPhotos.isEmpty());
-    ShareCapacityChecks.Snapshot capacity = shareCapacity.request(result.photos);
+    ShareCapacityChecks.Snapshot capacity =
+        shareCapacity.request(rankUnavailable ? List.of() : result.photos);
     selectionCount.capacity(result.photos.isEmpty() ? null : capacity.available);
     selectionShare.setEnabled(
-        (!result.photos.isEmpty() && capacity.available.actionable())
-            || (result.photos.isEmpty() && !result.unresolved.isEmpty()));
+        !rankUnavailable
+            && ((!result.photos.isEmpty() && capacity.available.actionable())
+                || (result.photos.isEmpty() && !result.unresolved.isEmpty())));
     selectionShare.setContentDescription(
-        "共有" + (!result.photos.isEmpty() ? "。" + capacity.available.description() : ""));
+        "共有"
+            + (!rankUnavailable && !result.photos.isEmpty()
+                ? "。" + capacity.available.description()
+                : ""));
     selectionShare.setStateDescription(selectionShare.isEnabled() ? null : "使えません");
     String allLabel = allVisibleSelected() ? "表示分を解除" : "表示分を選択";
     selectionAll.setText(allLabel);
@@ -1381,6 +1619,10 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private void updateBulkBest(List<Integer> targets) {
+    if (rankingStore.snapshot().phase() == RankingStore.Phase.PENDING) {
+      selectionBulk.update("同率1位にする", "順位を読み込んでいます", "順位を読み込んでいます");
+      return;
+    }
     if (targets.isEmpty()) {
       selectionBulk.update("同率1位にする", "同率1位にする。この連写の写真を選ぶと使えます", "この連写の写真を選ぶと使えます");
       return;
@@ -1404,13 +1646,16 @@ public final class MainActivity extends DiagnosticActivity {
     List<Integer> members = List.copyOf(burstMembers);
     List<Integer> targets = selectedBurstMembers();
     if (targets.isEmpty()) return;
+    RankingStore.Snapshot snapshot = rankingStore.snapshot();
+    RankingStore.Burst basis;
     PhotoRanking original;
     Set<String> ids;
     try {
-      original = rankingFor(members);
+      basis = rankingBasis(snapshot, members);
+      original = basis.ranking();
       ids = Set.copyOf(rankingIds(targets));
     } catch (IOException | IllegalArgumentException e) {
-      feedback(StatusView.Symbol.FAILED, "順位を読み込めませんでした", this::confirmBulkBest, "再試行");
+      reportUnreadableRanking(snapshot, this::confirmBulkBest);
       return;
     }
     Set<String> winners = new HashSet<>(original.best());
@@ -1455,10 +1700,10 @@ public final class MainActivity extends DiagnosticActivity {
     }
 
     int screen = generation;
-    List<PhotoRepository.Photo> galleryPhotos = photos;
-    List<List<Integer>> galleryBundles = bundles;
     RankingStore store = rankingStore;
-    new BulkBestSheet(
+    BulkBestSheet[] sheet = new BulkBestSheet[1];
+    sheet[0] =
+        new BulkBestSheet(
             this,
             original.done(),
             action,
@@ -1470,42 +1715,35 @@ public final class MainActivity extends DiagnosticActivity {
             done -> {
               long request = DiagnosticLog.id();
               DiagnosticLog.event("ranking.bulk.start", request, "count", count);
-              actions.execute(
-                  () -> {
-                    PhotoRanking saved = null;
-                    try {
-                      PhotoRanking next = original.addCoWinners(ids);
-                      if (store.saveBulk(original, next)) saved = next;
-                    } catch (IOException | RuntimeException ignored) {
-                      // Keep the confirmation open for retry.
-                    }
-                    PhotoRanking persisted = saved;
-                    DiagnosticLog.event(
-                        persisted != null ? "ranking.bulk.saved" : "ranking.bulk.failed", request);
-                    main.post(
-                        () -> {
-                          if (isDestroyed()) return;
-                          if (persisted != null) {
-                            presentedSelection = null;
-                            if (galleryPhotos == photos && galleryBundles == bundles)
-                              rankCache.put(members, persisted);
-                            else rankCache.clear();
-                          }
-                          done.accept(persisted != null);
-                          if (persisted != null
-                              && generation == screen
-                              && selecting
-                              && members.equals(burstMembers))
-                            refreshAfterBulkBest(result + "しました", request);
-                        });
-                  });
-            })
-        .show();
+              store
+                  .submitBurst(basis, () -> basis.ranking().addCoWinners(ids))
+                  .whenCompleteAsync(
+                      (saved, error) -> {
+                        boolean persisted = rankingAccepted(saved, error);
+                        DiagnosticLog.event(
+                            persisted ? "ranking.bulk.saved" : "ranking.bulk.failed", request);
+                        if (isDestroyed() || isFinishing() || store != rankingStore) return;
+                        if (rankingReadConflict(saved)) {
+                          sheet[0].dismiss();
+                          if (generation == screen) rankChangedFeedback();
+                          return;
+                        }
+                        done.accept(persisted);
+                        if (persisted
+                            && generation == screen
+                            && selecting
+                            && members.equals(burstMembers))
+                          refreshAfterBulkBest(result + "しました", request);
+                      },
+                      main::post);
+            });
+    sheet[0].show();
   }
 
   private void refreshAfterBulkBest(String notice, long request) {
     GalleryPosition position = GalleryPosition.capture(grid, photos, displayed);
     rebuildDisplayed();
+    updateRankEmpty(displayedRanks);
     adapter.notifyDataSetChanged();
     if (position != null) position.restore(grid, photos, displayed);
     updateSelection();
@@ -1554,6 +1792,7 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   private void endSelection() {
+    showShareSelectionNotice(false);
     selecting = false;
     shareCapacity.clearSelection();
     selectedPhotos.clear();
@@ -1570,16 +1809,30 @@ public final class MainActivity extends DiagnosticActivity {
   private void shareSelection(boolean sorting) {
     DiagnosticLog.event("screen.shareSelection", 0);
     SelectionResult result = selectionResult();
+    if (result.retryRanking) {
+      reportUnreadableRanking(
+          result.ranks,
+          () -> {
+            presentedSelection = null;
+            updateSelection();
+          });
+      return;
+    }
     if (!sorting
         && !result.photos.isEmpty()
         && !shareCapacity.snapshot(result.photos).available.actionable()) return;
+    if (!sorting && (!result.photos.isEmpty() || !result.unresolved.isEmpty()))
+      showShareSelectionNotice(false);
     if (!result.unresolved.isEmpty()) {
       shareDialog =
           new ShareUi.Confirmation(
               this,
               result.unresolved.size(),
               () -> {
-                if (!isCurrentSelection(result)) return;
+                if (!isCurrentSelection(result)) {
+                  shareSelectionChanged();
+                  return;
+                }
                 selectionBurst = burstMembers == null ? null : new ArrayList<>(burstMembers);
                 rankingFromSelection = true;
                 burstMembers = new ArrayList<>(result.unresolved.get(0));
@@ -1589,12 +1842,16 @@ public final class MainActivity extends DiagnosticActivity {
                       || !shareCapacity.snapshot(result.photos).available.actionable()
                   ? null
                   : () -> {
-                    if (isCurrentSelection(result)
-                        && shareCapacity.snapshot(result.photos).available.actionable())
-                      shareMenu(result.photos);
+                    if (!isCurrentSelection(result)) {
+                      shareSelectionChanged();
+                      return;
+                    }
+                    if (shareCapacity.snapshot(result.photos).available.actionable())
+                      shareMenu(result.photos, result.ranks, () -> isCurrentSelection(result));
                   });
       shareDialog.show();
-    } else if (!result.photos.isEmpty()) shareMenu(result.photos);
+    } else if (!result.photos.isEmpty())
+      shareMenu(result.photos, result.ranks, () -> isCurrentSelection(result));
   }
 
   private void leaveRanking() {
@@ -1608,20 +1865,43 @@ public final class MainActivity extends DiagnosticActivity {
   private void chooseFilter() {
     if (selecting) return;
     DiagnosticLog.event("screen.photoFilter", 0);
-    new PhotoFilterSheet(this, filter, rankFilter, this::countPhotoFilter, this::applyPhotoFilter)
-        .show();
+    rankFilterSheet =
+        new PhotoFilterSheet(
+            this,
+            filter,
+            rankFilter,
+            this::countPhotoFilter,
+            this::applyPhotoFilter,
+            () -> rankingStore.retryLoad());
+    rankFilterSheet.show();
   }
 
-  private void countPhotoFilter(String camera, int rank, java.util.function.IntConsumer result) {
+  private void countPhotoFilter(
+      String camera, int rank, java.util.function.Consumer<PhotoFilterSheet.CountResult> result) {
     // A queued index load posts its UI snapshot before this barrier reaches the UI thread.
     scans.execute(
         () ->
             main.post(
                 () -> {
-                  if (isDestroyed()) return;
+                  if (isDestroyed() || isFinishing()) return;
+                  RankingStore owner = rankingStore;
+                  RankingStore.Snapshot ranks = owner.snapshot();
+                  if (rank != 0 && ranks.phase() != RankingStore.Phase.READY) {
+                    result.accept(
+                        ranks.phase() == RankingStore.Phase.PENDING
+                            ? PhotoFilterSheet.CountResult.pending()
+                            : PhotoFilterSheet.CountResult.failed());
+                    return;
+                  }
                   String currentCamera = filter, folder = albumFolder;
-                  List<PhotoRepository.Photo> observed = photos, current = List.copyOf(photos);
-                  List<List<Integer>> groups = List.copyOf(bundles);
+                  List<PhotoRepository.Photo> current = photos;
+                  List<List<Integer>> groups = bundles;
+                  BooleanSupplier valid =
+                      () ->
+                          current == photos
+                              && groups == bundles
+                              && Objects.equals(folder, albumFolder)
+                              && (rank == 0 || owner == rankingStore && ranks == owner.snapshot());
                   scans.execute(
                       () -> {
                         int count = -1;
@@ -1634,40 +1914,44 @@ public final class MainActivity extends DiagnosticActivity {
                               candidates = loaded.photos;
                               candidateGroups = loaded.bundles;
                             }
-                          final List<PhotoRepository.Photo> snapshot = candidates;
-                          List<List<Integer>> shown =
+                          List<PhotoRepository.Photo> matching = candidates;
+                          count = 0;
+                          for (List<Integer> group :
                               RankedPhotoGroups.filter(
                                   candidates,
                                   candidateGroups,
                                   false,
                                   rank,
-                                  rankingStore,
+                                  ranks,
                                   members -> {
                                     List<String> ids = new ArrayList<>();
                                     for (int member : members)
-                                      ids.add(ArchiveStore.key(snapshot.get(member)));
-                                    return rankingStore.load(ids);
-                                  });
-                          count = 0;
-                          for (List<Integer> group : shown) count += group.size();
+                                      ids.add(ArchiveStore.key(matching.get(member)));
+                                    return ranks.burst(ids).ranking();
+                                  })) count += group.size();
                         } catch (Exception unavailable) {
+                          count = -1;
                         }
                         int value = count;
                         main.post(
                             () -> {
-                              if (isDestroyed()) return;
-                              if (observed != photos && camera.equals(filter)) {
+                              if (isDestroyed() || isFinishing()) return;
+                              if (!valid.getAsBoolean()) {
                                 countPhotoFilter(camera, rank, result);
                                 return;
                               }
-                              result.accept(value);
+                              result.accept(
+                                  value < 0
+                                      ? PhotoFilterSheet.CountResult.failed()
+                                      : PhotoFilterSheet.CountResult.ready(value, valid));
                             });
                       });
                 }));
   }
 
   private void applyPhotoFilter(String camera, int rank) {
-    if (selecting) return;
+    if (selecting || rank != 0 && rankingStore.snapshot().phase() != RankingStore.Phase.READY)
+      return;
     rememberGallery();
     boolean reload = !filter.equals(camera) || photos.isEmpty();
     filter = camera;
@@ -1988,6 +2272,7 @@ public final class MainActivity extends DiagnosticActivity {
                     return;
                   }
                   rebuildDisplayed();
+                  updateRankEmpty(displayedRanks);
                   adapter.notifyDataSetChanged();
                   if (position == null) restoreGallery();
                   else position.restore(grid, photos, displayed);
@@ -2089,6 +2374,8 @@ public final class MainActivity extends DiagnosticActivity {
 
   protected void onResume() {
     super.onResume();
+    rankingForeground = true;
+    watchRankings();
     quickImportOpening = false;
     var filter = new IntentFilter(UsbManager.ACTION_USB_DEVICE_ATTACHED);
     filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
@@ -2174,6 +2461,7 @@ public final class MainActivity extends DiagnosticActivity {
     }
 
     public View getView(int position, View recycled, android.view.ViewGroup parent) {
+      RankingStore.Snapshot snapshot = displayedRanks;
       ThumbnailCell cell =
           recycled instanceof ThumbnailCell
               ? (ThumbnailCell) recycled
@@ -2184,7 +2472,7 @@ public final class MainActivity extends DiagnosticActivity {
       int representative = members.get(0);
       if (members.size() > 1)
         try {
-          PhotoRanking saved = rankingFor(members);
+          PhotoRanking saved = rankingFor(snapshot, members);
           if (saved.done())
             for (int member : members)
               if (saved.best().contains(ArchiveStore.key(photos.get(member)))) {
@@ -2232,21 +2520,19 @@ public final class MainActivity extends DiagnosticActivity {
       List<Integer> group = photoBundles.get(members.get(0));
       if (group != null && group.size() == 1 && !p.isVideo()) {
         try {
-          if (rankingStore.singleBest(ArchiveStore.key(p))) cell.badges.rank = "1位";
+          if (snapshot.singleBest(ArchiveStore.key(p))) cell.badges.rank = "1位";
         } catch (Exception e) {
-          cell.badges.rankFailed = true;
-          cell.setContentDescription(cell.getContentDescription() + "、順位を読み込めませんでした");
+          rankReadDescription(cell, snapshot);
         }
       } else if (group != null && group.size() > 1) {
         try {
-          PhotoRanking saved = rankingFor(group);
+          PhotoRanking saved = rankingFor(snapshot, group);
           cell.badges.rank =
               saved.done()
                   ? (members.size() > 1 ? "1位" : saved.rankOf(ArchiveStore.key(p)) + "位")
                   : "";
         } catch (Exception e) {
-          cell.badges.rankFailed = true;
-          cell.setContentDescription(cell.getContentDescription() + "、順位を読み込めませんでした");
+          rankReadDescription(cell, snapshot);
         }
       }
       if (!cell.badges.rank.isEmpty())
@@ -2272,114 +2558,153 @@ public final class MainActivity extends DiagnosticActivity {
 
   private boolean returnToRanking;
 
+  private static void rankReadDescription(ThumbnailCell cell, RankingStore.Snapshot snapshot) {
+    boolean pending = snapshot.phase() == RankingStore.Phase.PENDING;
+    cell.badges.rankFailed = !pending;
+    cell.setContentDescription(
+        cell.getContentDescription() + (pending ? "、順位を読み込み中" : "、順位を読み込めませんでした"));
+  }
+
   /** Explicit singleton choice; never interpret a one-member comparison as a user choice. */
   private void singleBestAction(PhotoViewerUi viewer, PhotoRepository.Photo photo, int screen) {
     RankingStore store = rankingStore;
+    SingleBestRecovery recovery = new SingleBestRecovery(viewer);
     final String key;
     try {
       key = ArchiveStore.key(photo);
     } catch (IOException e) {
       Button retry =
           viewer.action("1位", "1位", "順位を読み込めませんでした。押すと再試行", () -> showPhoto(index, false));
-      PhotoViewerUi.bestState(retry, false, false, true, true);
+      unknownStar(retry, false);
+      recovery.show("順位を読み込めませんでした", "順位を読み直す", retry::performClick);
       return;
     }
-    boolean[] chosen = {false}, loaded = {false}, busy = {false};
+    boolean[] chosen = {false}, loaded = {false}, busy = {false}, writeFailed = {false};
     Button button = viewer.action("1位", "1位", "1位にする", () -> {});
-    try {
-      chosen[0] = store.singleBest(key);
-      loaded[0] = true;
-    } catch (Exception ignored) {
-    }
-    PhotoViewerUi.bestState(button, chosen[0], false, !loaded[0], !loaded[0]);
-    refreshSingleBest =
+    Runnable refresh =
         () -> {
           if (busy[0]) return;
-          try {
-            chosen[0] = store.singleBest(key);
-            loaded[0] = true;
-          } catch (Exception ignored) {
-            loaded[0] = false;
+          RankingStore.Snapshot snapshot = store.snapshot();
+          loaded[0] = false;
+          if (snapshot.phase() == RankingStore.Phase.READY) {
+            try {
+              boolean latest = snapshot.singleBest(key);
+              if (latest != chosen[0]) writeFailed[0] = false;
+              chosen[0] = latest;
+              loaded[0] = true;
+            } catch (Exception ignored) {
+            }
           }
-          PhotoViewerUi.bestState(button, chosen[0], false, !loaded[0], !loaded[0]);
+          if (loaded[0]) {
+            PhotoViewerUi.bestState(button, chosen[0], false, writeFailed[0], false);
+            if (writeFailed[0]) recovery.show("順位を保存できませんでした", "保存を再試行", button::performClick);
+            else recovery.hide();
+          } else {
+            writeFailed[0] = false;
+            boolean pending = snapshot.phase() == RankingStore.Phase.PENDING;
+            unknownStar(button, pending);
+            if (pending) recovery.hide();
+            else recovery.show("順位を読み込めませんでした", "順位を読み直す", button::performClick);
+          }
         };
+    refreshSingleBest = refresh;
+    refresh.run();
     button.setOnClickListener(
         v -> {
           if (busy[0]) return;
           GalleryUi.feedback(v);
-          boolean expected = chosen[0], reading = !loaded[0];
+          if (!loaded[0]) {
+            store.retryLoad();
+            refresh.run();
+            return;
+          }
+          boolean expected = chosen[0];
           busy[0] = true;
+          writeFailed[0] = false;
+          recovery.hide();
           long request = DiagnosticLog.id();
           DiagnosticLog.event("ranking.single.start", request, "chosen", expected ? 0 : 1);
-          PhotoViewerUi.bestState(button, expected, true, false, reading);
-          actions.execute(
-              () -> {
-                boolean success = false, result = expected;
-                try {
-                  if (reading) {
-                    result = store.singleBest(key);
-                    success = true;
-                  } else {
-                    success = store.saveSingleBest(key, expected, !expected);
-                    if (success) result = !expected;
-                  }
-                } catch (Exception ignored) {
-                }
-                final boolean saved = success, value = result;
-                DiagnosticLog.event(
-                    saved ? "ranking.single.saved" : "ranking.single.failed", request);
-                main.post(
-                    () -> {
-                      if (isDestroyed()) return;
-                      if (generation != screen || !detail) {
-                        // The visible viewer/filter may have read the old value while this write
-                        // was queued.
-                        refreshSingleBest.run();
-                        return;
-                      }
-                      busy[0] = false;
-                      if (saved) {
-                        chosen[0] = value;
-                        loaded[0] = true;
-                      } else if (!reading) {
-                        // A rejected stale expectation must refresh before another retry.
-                        try {
-                          chosen[0] = store.singleBest(key);
-                          loaded[0] = true;
-                        } catch (Exception ignored) {
-                          loaded[0] = false;
-                        }
-                      }
-                      PhotoViewerUi.bestState(button, chosen[0], false, !saved, !loaded[0]);
-                      button.announceForAccessibility(
-                          reading
-                              ? (saved ? "順位を読み込みました" : "順位を読み込めませんでした。もう一度押すと再試行")
-                              : (saved
-                                  ? (value ? "1位にしました" : "1位を解除しました")
-                                  : "保存できませんでした。もう一度押すと再試行"));
-                      button
-                          .getViewTreeObserver()
-                          .addOnPreDrawListener(
-                              new ViewTreeObserver.OnPreDrawListener() {
-                                public boolean onPreDraw() {
-                                  button.getViewTreeObserver().removeOnPreDrawListener(this);
-                                  if (button.isHardwareAccelerated())
-                                    button
-                                        .getViewTreeObserver()
-                                        .registerFrameCommitCallback(
-                                            () ->
-                                                DiagnosticLog.event(
-                                                    "ranking.single.frame", request));
-                                  return true;
-                                }
-                              });
-                      button.invalidate();
-                    });
-              });
+          PhotoViewerUi.bestState(button, expected, true, false, false);
+          store
+              .submitSingleBest(key, expected, !expected)
+              .whenCompleteAsync(
+                  (result, error) -> {
+                    boolean saved = rankingAccepted(result, error);
+                    DiagnosticLog.event(
+                        saved ? "ranking.single.saved" : "ranking.single.failed", request);
+                    if (isDestroyed() || isFinishing() || store != rankingStore) return;
+                    busy[0] = false;
+                    if (generation != screen || !detail) {
+                      refreshSingleBest.run();
+                      return;
+                    }
+                    boolean conflict = rankingReadConflict(result);
+                    writeFailed[0] = !saved && !conflict;
+                    refresh.run();
+                    if (!loaded[0]) return;
+                    if (conflict) {
+                      button.announceForAccessibility("順位が変わりました。確認してからもう一度押してください");
+                    } else if (saved && chosen[0] == !expected) {
+                      button.announceForAccessibility(chosen[0] ? "1位にしました" : "1位を解除しました");
+                    }
+                    rankingFrame(button, "ranking.single.frame", request);
+                  },
+                  main::post);
         });
   }
 
+  private final class SingleBestRecovery {
+    private final PhotoViewerUi viewer;
+    private LinearLayout row;
+    private TextView message;
+    private Button retry;
+
+    SingleBestRecovery(PhotoViewerUi viewer) {
+      this.viewer = viewer;
+    }
+
+    void show(String explanation, String retryLabel, Runnable action) {
+      if (row == null) {
+        row = row();
+        row.setPadding(dp(8), 0, 0, dp(4));
+        message = PhotoListUi.text(MainActivity.this, "", 14, 20, 0xffffb4a8);
+        message.setTag("viewer-ranking-recovery");
+        message.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        row.addView(message, new LinearLayout.LayoutParams(0, -2, 1));
+        retry = LibraryUi.text(MainActivity.this, "", () -> {});
+        retry.setTag("viewer-ranking-retry");
+        retry.setMinimumHeight(dp(48));
+        retry.setMinHeight(dp(48));
+        row.addView(retry, new LinearLayout.LayoutParams(-2, -2));
+        viewer.footer.addView(row, 0, new LinearLayout.LayoutParams(-1, -2));
+      }
+      if (!explanation.contentEquals(message.getText())) message.setText(explanation);
+      if (!retryLabel.contentEquals(retry.getText())) retry.setText(retryLabel);
+      retry.setOnClickListener(v -> action.run());
+      row.setVisibility(View.VISIBLE);
+    }
+
+    void hide() {
+      if (row != null) row.setVisibility(View.GONE);
+    }
+  }
+
+  private void unknownStar(Button button, boolean pending) {
+    PhotoViewerUi.bestState(button, false, pending, !pending, true);
+    ((com.google.android.material.button.MaterialButton) button).setCheckable(false);
+    button.setText("1位");
+    button.setCompoundDrawables(
+        null,
+        StatusView.glyphDrawable(
+            pending ? StatusView.Symbol.RUNNING : StatusView.Symbol.FAILED, dp(24), TEXT),
+        null,
+        null);
+    button.setContentDescription(pending ? "順位を読み込み中" : "順位を読み込めませんでした。押すと再試行");
+    button.setStateDescription(pending ? "順位を読み込み中" : "読み込み失敗");
+  }
+
   private void showPhoto(int position, boolean fromRanking) {
+    watchRankings();
     DiagnosticLog.event("screen.photo", 0, "position", position);
     rememberGallery();
     if (position < 0 || position >= photos.size()) return;
@@ -2497,9 +2822,24 @@ public final class MainActivity extends DiagnosticActivity {
           dialog.show();
           if (!historyLoaded || historyReadFailed) loadShareHistory();
         });
-    if (fromRanking && !ranking.done())
+    if (fromRanking) {
       viewer.choose(
-          () -> saveRanking(ranking.choose(rankingMembers.get(ranking.upper()) == position)));
+          () -> {
+            if (!isCurrentCandidate(position)) return;
+            boolean upper = Objects.equals(rankingMembers.get(ranking.upper()), position);
+            saveRanking(candidateRank -> candidateRank.choose(upper));
+          });
+      View choose = viewer.footer.getChildAt(0);
+      rankingActions.add(choose);
+      rankingSaveIndicator(viewer.footer);
+      refreshExpandedChoice =
+          () -> {
+            boolean current = isCurrentCandidate(position);
+            choose.setVisibility(current ? View.VISIBLE : View.GONE);
+            choose.setEnabled(current && !rankingBusy);
+          };
+      refreshExpandedChoice.run();
+    }
     viewing =
         actions.submit(
             () ->
@@ -2611,7 +2951,7 @@ public final class MainActivity extends DiagnosticActivity {
       case RANKING -> leaveRanking();
       case SELECTION -> endSelection();
       case PHOTO -> {
-        if (returnToRanking) showRanking();
+        if (returnToRanking) returnToComparison();
         else gallery();
       }
       case BURST -> {
@@ -2625,38 +2965,173 @@ public final class MainActivity extends DiagnosticActivity {
 
   private void openRanking() {
     DiagnosticLog.event("screen.openRanking", 0);
-    rankingResultState = null;
-    rankingResultFocus = null;
+    watchRankings();
+    RankingStore.Snapshot snapshot = rankingStore.snapshot();
     try {
+      Map<String, Integer> members = new HashMap<>();
+      for (int member : burstMembers) members.put(ArchiveStore.key(photos.get(member)), member);
+      RankingStore.Burst basis = snapshot.burst(new ArrayList<>(members.keySet()));
+      PhotoRanking displayed = displayRanking(basis);
       rankingMembers.clear();
-      for (int member : burstMembers)
-        rankingMembers.put(ArchiveStore.key(photos.get(member)), member);
-      List<String> ids = new ArrayList<>(rankingMembers.keySet());
-      ranking = rankingStore.load(ids);
-      if (ranking.journal.isEmpty()) ranking = new PhotoRanking(ranking.ids, "B:");
+      rankingMembers.putAll(members);
+      rankingBasis = basis;
+      ranking = displayed;
+      rankingResultState = null;
+      rankingResultFocus = null;
       showRanking();
     } catch (Exception e) {
-      feedback(
-          StatusView.Symbol.FAILED, "順位の記録を読み込めませんでした。保存済みの記録は変更していません。", this::openRanking, "再試行");
+      reportUnreadableRanking(snapshot, this::openRanking);
     }
   }
 
-  private void saveRanking(PhotoRanking next) {
+  private static PhotoRanking displayRanking(RankingStore.Burst basis) throws IOException {
+    PhotoRanking displayed = basis.ranking();
+    return displayed.journal.isEmpty() ? new PhotoRanking(displayed.ids, "B:") : displayed;
+  }
+
+  private boolean reconcileComparison(RankingStore.Snapshot snapshot) throws IOException {
+    if (rankingBasis == null || rankingBusy) return false;
+    RankingStore.Burst current = snapshot.burst(rankingBasis.ids());
+    if (Objects.equals(current.storedJournal(), rankingBasis.storedJournal())) return false;
+    ranking = displayRanking(current);
+    rankingBasis = current;
+    rankingResultState = null;
+    rankingResultFocus = null;
+    return true;
+  }
+
+  private void refreshComparison(RankingStore.Snapshot snapshot) {
     try {
-      if (rankingStore.save(next)) {
-        rankCache.clear();
-        presentedSelection = null;
-        ranking = next;
-        rankingResultState = null;
-        rankingResultFocus = null;
-        showRanking();
-        return;
-      }
-    } catch (IOException e) {
-      // Keep the displayed comparison unchanged when the journal cannot be saved.
+      if (reconcileComparison(snapshot)) showRanking();
+    } catch (IOException | IllegalArgumentException unreadable) {
+      reportUnreadableRanking(snapshot, this::openRanking);
     }
-    feedback(
-        StatusView.Symbol.STORAGE, "順位を保存できませんでした。空き容量を確認してください。", this::showRanking, "ソートに戻る");
+  }
+
+  private boolean isCurrentCandidate(int position) {
+    return ranking != null
+        && !ranking.done()
+        && (Objects.equals(rankingMembers.get(ranking.upper()), position)
+            || Objects.equals(rankingMembers.get(ranking.lower()), position));
+  }
+
+  private boolean refreshExpandedComparison(RankingStore.Snapshot snapshot, boolean writeFinished) {
+    if (rankingBusy || rankingBasis == null) return false;
+    try {
+      boolean changed = reconcileComparison(snapshot);
+      refreshExpandedChoice.run();
+      if (changed || writeFinished || expandedRankUnavailable)
+        rankingSaveStatus.setVisibility(View.GONE);
+      expandedRankUnavailable = false;
+      return true;
+    } catch (IOException | IllegalArgumentException unreadable) {
+      expandedRankUnavailable = true;
+      for (View action : rankingActions) action.setEnabled(false);
+      rankingMessage("順位を読み込めませんでした。戻って確認してください", true);
+      return false;
+    }
+  }
+
+  private void returnToComparison() {
+    RankingStore.Snapshot snapshot = rankingStore.snapshot();
+    try {
+      reconcileComparison(snapshot);
+      showRanking();
+    } catch (IOException | IllegalArgumentException unreadable) {
+      reportUnreadableRanking(snapshot, this::returnToComparison);
+    }
+  }
+
+  private void saveRanking(UnaryOperator<PhotoRanking> change) {
+    saveRanking(rankingBasis, ranking.journal, generation, change);
+  }
+
+  private void saveRanking(
+      RankingStore.Burst basis,
+      String displayedJournal,
+      int screen,
+      UnaryOperator<PhotoRanking> change) {
+    if (rankingBusy || basis == null) return;
+    if (screen != generation || basis != rankingBasis) {
+      if (rankingScreen || detail && returnToRanking)
+        rankingMessage("順位が変わりました。確認して選び直してください", false);
+      return;
+    }
+    RankingStore store = rankingStore;
+    List<String> members = basis.ids();
+    rankingBusy = true;
+    Map<View, Boolean> controls = new IdentityHashMap<>();
+    for (View view : rankingActions) {
+      controls.put(view, view.isEnabled());
+      view.setEnabled(false);
+    }
+    TextView saveStatus = rankingSaveStatus;
+    rankingMessage("順位を保存しています", false);
+    store
+        .submitBurst(basis, () -> change.apply(new PhotoRanking(members, displayedJournal)))
+        .whenCompleteAsync(
+            (result, error) -> {
+              rankingBusy = false;
+              if (isDestroyed() || isFinishing() || store != rankingStore) return;
+              if (detail && returnToRanking && !rankingScreen) {
+                if (refreshExpandedComparison(store.snapshot(), true)
+                    && rankingBasis.ids().equals(members)) {
+                  boolean saved = rankingAccepted(result, error);
+                  if (rankingReadConflict(result)
+                      || saved && !result.ranking().journal.equals(ranking.journal))
+                    rankingMessage("順位が変わりました。戻って確認してください", false);
+                  else if (!saved) rankingMessage("順位を保存できませんでした。もう一度選んでください", true);
+                }
+                return;
+              }
+              if (screen != generation || !rankingScreen) {
+                if (rankingScreen && rankingBasis != null) {
+                  RankingStore.Burst prior = rankingBasis;
+                  refreshComparison(store.snapshot());
+                  if (rankingBasis == prior) showRanking();
+                }
+                return;
+              }
+              if (saveStatus != null) saveStatus.setVisibility(View.GONE);
+              controls.forEach(View::setEnabled);
+              if (rankingAccepted(result, error) || rankingReadConflict(result)) {
+                try {
+                  RankingStore.Burst current = store.snapshot().burst(members);
+                  ranking = displayRanking(current);
+                  rankingBasis = current;
+                  rankingResultState = null;
+                  rankingResultFocus = null;
+                  showRanking();
+                  if (!rankingAccepted(result, error)
+                      || !result.ranking().journal.equals(ranking.journal))
+                    rankingMessage("順位が変わりました。確認して選び直してください", false);
+                  return;
+                } catch (IOException | IllegalArgumentException unreadable) {
+                  rankingMessage("順位を読み込めませんでした。比較を開き直してください", true);
+                  return;
+                }
+              }
+              rankingMessage("順位を保存できませんでした。もう一度選んでください", true);
+            },
+            main::post);
+  }
+
+  private void rankingSaveIndicator(LinearLayout parent) {
+    rankingSaveStatus = label("", 14, TEXT);
+    rankingSaveStatus.setTag("ranking-save-status");
+    rankingSaveStatus.setGravity(Gravity.CENTER);
+    rankingSaveStatus.setPadding(dp(12), dp(4), dp(12), dp(4));
+    rankingSaveStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    rankingSaveStatus.setVisibility(View.GONE);
+    parent.addView(rankingSaveStatus, new LinearLayout.LayoutParams(-1, -2));
+    if (rankingBusy) rankingMessage("順位を保存しています", false);
+  }
+
+  private void rankingMessage(String message, boolean failed) {
+    if (rankingSaveStatus == null) return;
+    rankingSaveStatus.setTextColor(failed ? 0xffffb4a8 : TEXT);
+    rankingSaveStatus.setText(message);
+    rankingSaveStatus.setVisibility(View.VISIBLE);
   }
 
   private void showRanking() {
@@ -2689,6 +3164,7 @@ public final class MainActivity extends DiagnosticActivity {
     comparisonCount.setIncludeFontPadding(false);
     comparisonCount.setMinHeight(dp(16));
     top.addView(comparisonCount);
+    rankingSaveIndicator(top);
     LinearLayout modes =
         RankingModes.create(
             this,
@@ -2696,17 +3172,24 @@ public final class MainActivity extends DiagnosticActivity {
             () -> changeRankingMode(true),
             () -> changeRankingMode(false));
 
-    Button undo = button("直前の操作を取り消す", () -> saveRanking(ranking.undo()));
+    Button undo = button("直前の操作を取り消す", () -> saveRanking(PhotoRanking::undo));
     undo.setText("取り消し");
-    undo.setEnabled(ranking.decisions() > 0);
+    undo.setEnabled(!rankingBusy && ranking.decisions() > 0);
     Button chooseA =
-        GalleryUi.neutralPrimary(button("Aを選ぶ", () -> saveRanking(ranking.choose(true))));
+        GalleryUi.neutralPrimary(button("Aを選ぶ", () -> saveRanking(model -> model.choose(true))));
     Button chooseB =
-        GalleryUi.neutralPrimary(button("Bを選ぶ", () -> saveRanking(ranking.choose(false))));
+        GalleryUi.neutralPrimary(button("Bを選ぶ", () -> saveRanking(model -> model.choose(false))));
     chooseA.setEnabled(false);
     chooseB.setEnabled(false);
-    Button tie = button("同じ順位", () -> saveRanking(ranking.tie()));
+    Button tie = button("同じ順位", () -> saveRanking(PhotoRanking::tie));
     tie.setEnabled(false);
+    rankingActions.addAll(List.of(undo, chooseA, chooseB, tie));
+    ViewGroup modeChoices = (ViewGroup) modes.getChildAt(0);
+    for (int i = 0; i < modeChoices.getChildCount(); i++) {
+      View modeChoice = modeChoices.getChildAt(i);
+      modeChoice.setEnabled(!rankingBusy);
+      rankingActions.add(modeChoice);
+    }
 
     LinearLayout comparison = new LinearLayout(this);
     comparison.setBackgroundColor(Color.BLACK);
@@ -2718,9 +3201,9 @@ public final class MainActivity extends DiagnosticActivity {
               || ratios[1] <= 0
               || comparison.getWidth() == 0
               || comparison.getHeight() == 0) return;
-          tie.setEnabled(!ranking.bestOnly());
-          chooseA.setEnabled(true);
-          chooseB.setEnabled(true);
+          tie.setEnabled(!rankingBusy && !ranking.bestOnly());
+          chooseA.setEnabled(!rankingBusy);
+          chooseB.setEnabled(!rankingBusy);
           boolean horizontal =
               ComparisonLayout.horizontal(
                   comparison.getWidth(), comparison.getHeight(), ratios[0], ratios[1]);
@@ -2769,7 +3252,10 @@ public final class MainActivity extends DiagnosticActivity {
     modes.setPadding(0, 0, 0, 0);
     modes.setBackgroundColor(RankingUi.BG);
     RankingUi.add(controls, modes, 8);
-    RankingUi.addDock(controls, RankingUi.dock(this, undo, button("その他", this::rankingMenu)), 8);
+    Button more = button("その他", this::rankingMenu);
+    more.setEnabled(!rankingBusy);
+    rankingActions.add(more);
+    RankingUi.addDock(controls, RankingUi.dock(this, undo, more), 8);
     root.addView(
         new RankingUi.Screen(this, top, comparison, controls, false),
         new LinearLayout.LayoutParams(-1, 0, 1));
@@ -2894,35 +3380,51 @@ public final class MainActivity extends DiagnosticActivity {
             false,
             () -> changeRankingMode(!ranking.bestOnly()));
     mode.setText(ranking.bestOnly() ? "すべての順位を決める" : "1位を決める");
+    mode.setEnabled(!rankingBusy);
     controls.addView(mode, new LinearLayout.LayoutParams(-1, -2));
-    Button undo = TagDetailUi.dockButton(this, "直前の操作を取り消す", () -> saveRanking(ranking.undo()));
+    rankingSaveIndicator(controls);
+    Button undo = TagDetailUi.dockButton(this, "直前の操作を取り消す", () -> saveRanking(PhotoRanking::undo));
     undo.setText("取り消し");
-    undo.setEnabled(ranking.decisions() > 0);
+    undo.setEnabled(!rankingBusy && ranking.decisions() > 0);
     controls.addView(TagDetailUi.dock(this, undo));
+    rankingActions.addAll(List.of(undo, mode));
     TagDetailUi.gaps(controls);
     root.addView(controls);
     TagDetailUi.footer(root, first);
   }
 
   private void confirmResort() {
+    if (rankingBusy) return;
+    RankingStore.Burst basis = rankingBasis;
+    String journal = ranking.journal, mode = ranking.bestOnly() ? "B:" : "A:";
+    int screen = generation;
     new GalleryUi.Sheet(this)
         .setTitle("この連写を再ソートしますか？")
         .setMessage("この連写の選択履歴を消して、最初から比較します。写真は変更しません。")
         .setPositiveButton(
             "再ソート",
             (dialog, which) ->
-                saveRanking(new PhotoRanking(ranking.ids, ranking.bestOnly() ? "B:" : "A:")))
+                saveRanking(basis, journal, screen, model -> new PhotoRanking(model.ids, mode)))
         .setNegativeButton("キャンセル", null)
         .show();
   }
 
   private void changeRankingMode(boolean best) {
-    if (ranking.bestOnly() == best) return;
+    if (rankingBusy || ranking.bestOnly() == best) return;
+    RankingStore.Burst basis = rankingBasis;
+    String journal = ranking.journal;
+    int screen = generation;
     new GalleryUi.Sheet(this)
         .setTitle("ソート方式を変更しますか？")
         .setMessage("この連写の結果と途中の判断を置き換え、最初から比較します。")
         .setPositiveButton(
-            "変更", (d, w) -> saveRanking(new PhotoRanking(ranking.ids, best ? "B:" : "A:")))
+            "変更",
+            (d, w) ->
+                saveRanking(
+                    basis,
+                    journal,
+                    screen,
+                    model -> new PhotoRanking(model.ids, best ? "B:" : "A:")))
         .setNegativeButton("キャンセル", null)
         .show();
   }
@@ -2956,7 +3458,7 @@ public final class MainActivity extends DiagnosticActivity {
         v -> {
           if (rankingScreen && token == generation && ratios[0] > 0 && ratios[1] > 0) {
             GalleryUi.feedback(v);
-            saveRanking(ranking.choose(upper));
+            saveRanking(model -> model.choose(upper));
           }
         });
     image.setOnLongClickListener(
@@ -2966,6 +3468,7 @@ public final class MainActivity extends DiagnosticActivity {
         });
     image.setEnabled(false);
     candidates[upper ? 0 : 1] = image;
+    rankingActions.add(image);
     comparison.addView(image, new LinearLayout.LayoutParams(-1, 0, 1));
     images.execute(
         () -> {
@@ -2982,7 +3485,7 @@ public final class MainActivity extends DiagnosticActivity {
                   ratios[upper ? 0 : 1] = (double) bitmap.getWidth() / bitmap.getHeight();
                   if (ratios[0] > 0 && ratios[1] > 0) {
                     arrange.run();
-                    for (ImageView candidate : candidates) candidate.setEnabled(true);
+                    for (ImageView candidate : candidates) candidate.setEnabled(!rankingBusy);
                   }
                 });
           } catch (Exception e) {
@@ -3008,6 +3511,13 @@ public final class MainActivity extends DiagnosticActivity {
   private Dialog shareDialog;
 
   private void shareMenu(List<PhotoRepository.Photo> selection) {
+    shareMenu(selection, rankingStore.snapshot(), () -> true);
+  }
+
+  private void shareMenu(
+      List<PhotoRepository.Photo> selection,
+      RankingStore.Snapshot snapshot,
+      BooleanSupplier validSelection) {
     List<PhotoRepository.Photo> frozen = List.copyOf(selection);
     Set<String> best = new HashSet<>();
     int e2 = 0, legacy = 0;
@@ -3016,13 +3526,13 @@ public final class MainActivity extends DiagnosticActivity {
       else if (photo.isArchived()) legacy++;
       int index = photos.indexOf(photo);
       List<Integer> group = photoBundles.get(index);
-      if (group != null)
+      if (group != null && snapshot.phase() == RankingStore.Phase.READY)
         try {
           if (group.size() == 1) {
-            if (!photo.isVideo() && rankingStore.singleBest(ArchiveStore.key(photo)))
+            if (!photo.isVideo() && snapshot.singleBest(ArchiveStore.key(photo)))
               best.add(photo.uri.toString());
           } else {
-            PhotoRanking rank = rankingFor(group);
+            PhotoRanking rank = rankingFor(snapshot, group);
             if (rank.done() && rank.best().contains(ArchiveStore.key(photo)))
               best.add(photo.uri.toString());
           }
@@ -3036,7 +3546,7 @@ public final class MainActivity extends DiagnosticActivity {
             ShareTargets.load(this),
             e2,
             best,
-            (raw, target) -> export(frozen, raw, target));
+            (raw, target) -> export(frozen, raw, target, validSelection));
     if (legacy > 0) menu.archiveNotice(e2, legacy);
     capacityMenu = menu;
     menu.capacity(shareCapacity.request(frozen));
@@ -3054,7 +3564,19 @@ public final class MainActivity extends DiagnosticActivity {
 
   private void export(
       List<PhotoRepository.Photo> selection, boolean raw, ShareTargets.Target target) {
+    export(selection, raw, target, () -> true);
+  }
+
+  private void export(
+      List<PhotoRepository.Photo> selection,
+      boolean raw,
+      ShareTargets.Target target,
+      BooleanSupplier validSelection) {
     if (shareProgress != null && shareProgress.isShowing()) return;
+    if (!validSelection.getAsBoolean()) {
+      shareSelectionChanged();
+      return;
+    }
     final int attempt = ++shareAttempt;
     shareProgress =
         new ShareUi.Preparing(
@@ -3092,6 +3614,11 @@ public final class MainActivity extends DiagnosticActivity {
                         return;
                       }
                       shareProgress.dismiss();
+                      if (!validSelection.getAsBoolean()) {
+                        ShareHistoryReceiver.cancelLater(getApplicationContext(), historySession);
+                        shareSelectionChanged();
+                        return;
+                      }
                       Intent send =
                           new Intent(action)
                               .setType(type)
@@ -3128,29 +3655,34 @@ public final class MainActivity extends DiagnosticActivity {
                         }
                         send.setComponent(component);
                       }
+                      android.app.PendingIntent callback = null;
                       try {
+                        Intent outgoing = send;
                         if (target == null) {
-                          if (historySession == null) {
-                            startActivity(Intent.createChooser(send, "写真を共有"));
-                            ShareHistoryReceiver.failed(getApplicationContext());
-                          } else {
-                            android.app.PendingIntent callback =
-                                ShareHistoryReceiver.callback(this, historySession);
-                            try {
-                              startActivity(
-                                  Intent.createChooser(send, "写真を共有", callback.getIntentSender()));
-                            } catch (RuntimeException launchFailure) {
-                              callback.cancel();
-                              throw launchFailure;
-                            }
-                          }
-                        } else {
-                          startActivity(send);
+                          if (historySession != null)
+                            callback = ShareHistoryReceiver.callback(this, historySession);
+                          outgoing =
+                              callback == null
+                                  ? Intent.createChooser(send, "写真を共有")
+                                  : Intent.createChooser(send, "写真を共有", callback.getIntentSender());
+                        }
+                        if (!validSelection.getAsBoolean()) {
+                          if (callback != null) callback.cancel();
+                          ShareHistoryReceiver.cancelLater(getApplicationContext(), historySession);
+                          shareSelectionChanged();
+                          return;
+                        }
+                        startActivity(outgoing);
+                        if (target != null)
                           ShareHistoryReceiver.recordLater(
                               getApplicationContext(), historySession, send.getComponent());
-                        }
-                      } catch (ActivityNotFoundException | SecurityException e) {
+                        else if (historySession == null)
+                          ShareHistoryReceiver.failed(getApplicationContext());
+                      } catch (RuntimeException failure) {
+                        if (callback != null) callback.cancel();
                         ShareHistoryReceiver.cancelLater(getApplicationContext(), historySession);
+                        if (!(failure instanceof ActivityNotFoundException)
+                            && !(failure instanceof SecurityException)) throw failure;
                         feedback(
                             StatusView.Symbol.NO_APP,
                             "共有先が見つかりません。共有先の設定を変更してください。",
@@ -3176,7 +3708,9 @@ public final class MainActivity extends DiagnosticActivity {
                                 selection.size(),
                                 raw,
                                 limit.bytes,
-                                other.actionable() ? () -> export(selection, !raw, null) : null);
+                                other.actionable()
+                                    ? () -> export(selection, !raw, null, validSelection)
+                                    : null);
                         shareDialog.show();
                         return;
                       }
@@ -3191,7 +3725,7 @@ public final class MainActivity extends DiagnosticActivity {
                               raw,
                               selection.size()
                                   + "枚の選択は保持されています。共有を準備できませんでした。空き容量・通信・読み取り許可を確認してください。",
-                              () -> export(selection, raw, target));
+                              () -> export(selection, raw, target, validSelection));
                       shareDialog.show();
                     });
               }
@@ -3291,6 +3825,8 @@ public final class MainActivity extends DiagnosticActivity {
 
   @Override
   protected void onPause() {
+    rankingForeground = false;
+    stopWatchingRankings();
     if (usbReceiverRegistered) {
       unregisterReceiver(usbChanges);
       usbReceiverRegistered = false;
@@ -3304,12 +3840,14 @@ public final class MainActivity extends DiagnosticActivity {
   }
 
   protected void onDestroy() {
+    stopWatchingRankings();
     mediaRefreshClosed = true;
     if (selectionTags != null) selectionTags.dismiss();
     generation++;
     shareAttempt++;
     if (shareProgress != null) shareProgress.dismiss();
     if (shareDialog != null) shareDialog.dismiss();
+    if (rankFilterSheet != null) rankFilterSheet.dismiss();
     getContentResolver().unregisterContentObserver(mediaObserver);
     main.removeCallbacks(mediaChanged);
     historyReads.shutdownNow();
