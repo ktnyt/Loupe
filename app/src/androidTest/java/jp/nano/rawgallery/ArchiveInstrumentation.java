@@ -31,7 +31,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
     if (nanoBackgroundTest) NanoBananaBackgroundChecks.activityCreated(activity);
     boolean dualSlotUi =
         (CameraDualSlotUiChecks.MODE.equals(cameraPilotMode)
-                || CameraSdSwapChecks.MODE.equals(cameraPilotMode))
+                || CameraSdSwapChecks.MODE.equals(cameraPilotMode)
+                || CameraSdUsbReprobeChecks.MODE.equals(cameraPilotMode))
             && activity instanceof CameraImportActivity;
     if (dualSlotUi) {
       var config =
@@ -202,6 +203,7 @@ public final class ArchiveInstrumentation extends Instrumentation {
       comparisonLabelsTest,
       actionLabelsTest;
   private boolean automaticTest, confidenceStoreTest, confidenceUiTest;
+  private int confidenceRebuildDelayMillis;
   private boolean cleanupTest;
   private boolean compactTest;
   private boolean e2ArchiveTest, e2BackgroundTest, e2CatalogLocalTest, e2CatalogScaleTest;
@@ -271,6 +273,14 @@ public final class ArchiveInstrumentation extends Instrumentation {
       tagFont = Float.parseFloat(args.getString("font", "1.0"));
     }
     confidenceUiTest = args != null && "tag-confidence".equals(args.getString("mode"));
+    if (confidenceUiTest) {
+      confidenceRebuildDelayMillis =
+          switch (args.getString("confidence_rebuild_delay_ms", "0")) {
+            case "0" -> 0;
+            case "12000" -> 12_000;
+            default -> -1;
+          };
+    }
     confidenceStoreTest = args != null && "confidence-store".equals(args.getString("mode"));
     archiveScanTest = args != null && "archive-scan".equals(args.getString("mode"));
     indexSignatureTest = args != null && "index-signature".equals(args.getString("mode"));
@@ -350,7 +360,8 @@ public final class ArchiveInstrumentation extends Instrumentation {
     if (cameraPilotMode != null && !cameraPilotMode.startsWith("camera-pilot-"))
       cameraPilotMode = null;
     if (CameraDualSlotUiChecks.MODE.equals(cameraPilotMode)
-        || CameraSdSwapChecks.MODE.equals(cameraPilotMode)) {
+        || CameraSdSwapChecks.MODE.equals(cameraPilotMode)
+        || CameraSdUsbReprobeChecks.MODE.equals(cameraPilotMode)) {
       tagWidth = Integer.parseInt(args.getString("width", "400"));
       tagFont = Float.parseFloat(args.getString("font", "1.0"));
     }
@@ -463,6 +474,26 @@ public final class ArchiveInstrumentation extends Instrumentation {
           || !report.contains("ArchiveInstrumentation.java:")) throw new AssertionError();
       Context context = getTargetContext();
       String mode = cameraPilotArguments.getString("mode", "");
+      if ("ranking-upgrade-seed".equals(mode)) {
+        results.putString("stream", RankingUpgradeSeedChecks.run(this, cameraPilotArguments));
+        finish(-1, results);
+        return;
+      }
+      if ("ranking-upgrade-verify".equals(mode)) {
+        results.putString("stream", RankingUpgradeChecks.run(this, cameraPilotArguments));
+        finish(-1, results);
+        return;
+      }
+      if ("ranking-identity-snapshot".equals(mode)) {
+        results.putString("stream", RankingIdentitySnapshotChecks.run(this));
+        finish(-1, results);
+        return;
+      }
+      if ("ranking-persistence-waits".equals(mode)) {
+        results.putString("stream", RankingPersistenceWaitChecks.run(this, cameraPilotArguments));
+        finish(-1, results);
+        return;
+      }
       if ("release-upgrade-seed".equals(mode) || "release-upgrade-verify".equals(mode)) {
         results.putString(
             "stream", ReleaseUpgradeChecks.run(context, "release-upgrade-seed".equals(mode)));
@@ -529,9 +560,12 @@ public final class ArchiveInstrumentation extends Instrumentation {
         return;
       }
       if (nanoBananaTest) {
+        NanoBananaApiChecks.run();
         results.putString(
             "stream",
-            NanoBananaChecks.run(this, tagWidth > 0 ? tagWidth : 400, tagFont > 0 ? tagFont : 1f));
+            NanoBananaChecks.run(this, tagWidth > 0 ? tagWidth : 400, tagFont > 0 ? tagFont : 1f)
+                + "Synthetic HTTPS API outcomes, cause retention, no POST retry and disconnect"
+                + " covered.\n");
         finish(-1, results);
         return;
       }
@@ -614,6 +648,9 @@ public final class ArchiveInstrumentation extends Instrumentation {
         return;
       }
       if (confidenceUiTest) {
+        if (confidenceRebuildDelayMillis < 0) {
+          throw new IllegalArgumentException("confidence_rebuild_delay_ms must be 0 or 12000");
+        }
         results.putString("stream", ConfidenceUiChecks.run(this, tagWidth));
         finish(-1, results);
         return;
@@ -849,10 +886,14 @@ public final class ArchiveInstrumentation extends Instrumentation {
           result = CameraUsbLaunchChecks.choice(this, cameraPilotArguments);
         else if (cameraPilotMode.equals("camera-pilot-usb-launch"))
           result = CameraUsbLaunchChecks.run(this);
+        else if (CameraOperationAdmissionChecks.MODE.equals(cameraPilotMode))
+          result = CameraOperationAdmissionChecks.run(this);
         else if (CameraDualSlotUiChecks.MODE.equals(cameraPilotMode))
           result = CameraDualSlotUiChecks.run(this, tagWidth, tagFont);
         else if (CameraSdSwapChecks.MODE.equals(cameraPilotMode))
           result = CameraSdSwapChecks.run(this, tagWidth, tagFont);
+        else if (CameraSdUsbReprobeChecks.MODE.equals(cameraPilotMode))
+          result = CameraSdUsbReprobeChecks.run(this, tagWidth, tagFont);
         else if (cameraPilotMode.equals("camera-pilot-import-progress"))
           result = CameraImportProgressChecks.run(this);
         else if (cameraPilotMode.equals("camera-pilot-import-history"))
@@ -1004,6 +1045,16 @@ public final class ArchiveInstrumentation extends Instrumentation {
         finish(-1, results);
         return;
       }
+      if ("gallery-photo-keys".equals(cameraPilotArguments.getString("mode"))) {
+        results.putString("stream", GalleryPhotoKeyChecks.run(this, cameraPilotArguments));
+        finish(-1, results);
+        return;
+      }
+      if ("gallery-photo-key-compat".equals(mode)) {
+        results.putString("stream", GalleryPhotoKeyCompatibilityChecks.run(this));
+        finish(-1, results);
+        return;
+      }
       if ("diagnostic-local-export".equals(cameraPilotArguments.getString("mode"))) {
         results.putString("stream", DiagnosticExportChecks.run(context));
         finish(-1, results);
@@ -1133,6 +1184,10 @@ public final class ArchiveInstrumentation extends Instrumentation {
     } finally {
       if (restored != null) restored.delete();
     }
+  }
+
+  int confidenceRebuildDelayMillis() {
+    return confidenceRebuildDelayMillis;
   }
 
   private static String failureReport(Throwable failure) {

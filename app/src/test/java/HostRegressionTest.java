@@ -37,6 +37,7 @@ import jp.nano.rawgallery.camera.CameraImportCopyTest;
 import jp.nano.rawgallery.camera.CameraImportOperationGateTest;
 import jp.nano.rawgallery.camera.CameraRegisteredQueueTest;
 import jp.nano.rawgallery.camera.PhotoImportCopyCheckKt;
+import jp.nano.rawgallery.camera.SdUsbReprobeTest;
 import org.junit.jupiter.api.Test;
 
 /** Lets Gradle and IDEs run the same checks as the standalone host commands. */
@@ -81,6 +82,11 @@ public class HostRegressionTest {
   @Test
   void cameraCardRouting() throws Exception {
     CameraCardRoutingTest.main(NO_ARGS);
+  }
+
+  @Test
+  void sdUsbReprobe() throws Exception {
+    SdUsbReprobeTest.main(NO_ARGS);
   }
 
   @Test
@@ -235,8 +241,9 @@ public class HostRegressionTest {
     if (Files.notExists(script)) script = Path.of("../tests/raw-full-source.sh");
     ProcessBuilder command = new ProcessBuilder("sh", script.toString()).inheritIO();
     String javaBin = Path.of(System.getProperty("java.home"), "bin").toString();
-    command.environment().put("PATH", javaBin + File.pathSeparator
-        + command.environment().getOrDefault("PATH", ""));
+    command
+        .environment()
+        .put("PATH", javaBin + File.pathSeparator + command.environment().getOrDefault("PATH", ""));
     Process check = command.start();
     try {
       assertTrue(check.waitFor(120, TimeUnit.SECONDS), "RAW full-source check timed out");

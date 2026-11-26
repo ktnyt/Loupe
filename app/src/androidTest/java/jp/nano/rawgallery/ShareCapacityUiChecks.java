@@ -29,6 +29,7 @@ final class ShareCapacityUiChecks {
     List<PhotoRepository.Photo> photos = new ArrayList<>();
     List<File> files = new ArrayList<>();
     List<Dialog> dialogs = new ArrayList<>();
+    RankingFixture rankings = new RankingFixture(a);
     try {
       GalleryScreenChecks.portraitFixture(t, a, width, font);
       GalleryScreenChecks.finishInitialIndex(t, a);
@@ -53,9 +54,11 @@ final class ShareCapacityUiChecks {
       }
       List<String> ids = new ArrayList<>();
       for (int i = 0; i < 3; i++) ids.add(ArchiveStore.key(photos.get(i)));
-      PhotoRanking ranking = new PhotoRanking(ids, "B:");
-      while (!ranking.done()) ranking = ranking.choose(true);
-      PhotoRanking done = ranking;
+      PhotoRanking undecided = rankings.startBurst(ids, "B:");
+      String winner = ids.get(ids.size() - 1);
+      PhotoRanking ranking = undecided;
+      while (!ranking.done()) ranking = ranking.choose(ranking.upper().equals(winner));
+      rankings.save(ranking);
       TagDetailChecks.ui(
           t,
           () -> {
@@ -65,10 +68,7 @@ final class ShareCapacityUiChecks {
             bundles.add(List.of(0, 1, 2));
             for (int i = 3; i < photos.size(); i++) bundles.add(List.of(i));
             RankingResultChecks.set(a, "bundles", bundles);
-            Map<List<Integer>, PhotoRanking> ranks =
-                (Map<List<Integer>, PhotoRanking>) RankingResultChecks.get(a, "rankCache");
-            ranks.clear();
-            ranks.put(List.of(0, 1, 2), done);
+            RankingResultChecks.set(a, "rankingStore", rankings.store);
             Set<String> selected = (Set<String>) RankingResultChecks.get(a, "selectedPhotos");
             selected.clear();
             for (int i = 0; i < 3; i++) selected.add(photos.get(i).uri.toString());
@@ -202,6 +202,7 @@ final class ShareCapacityUiChecks {
                 !menu.isShowing() && chosen.get() == 1, "header close dismisses without sharing");
           });
       stale(t, a, photos.get(0));
+      rankings.save(undecided);
       TagDetailChecks.ui(
           t,
           () -> {
@@ -210,11 +211,8 @@ final class ShareCapacityUiChecks {
                 3,
                 new PhotoRepository.Photo(
                     old.uri, old.name, old.folder, ShareCapacity.LIMIT + 1, old.modified, 0));
-            Map<List<Integer>, PhotoRanking> ranks =
-                (Map<List<Integer>, PhotoRanking>) RankingResultChecks.get(a, "rankCache");
-            ranks.put(List.of(0, 1, 2), new PhotoRanking(ids, "B:"));
             ((Set<String>) RankingResultChecks.get(a, "selectedPhotos")).add(old.uri.toString());
-            RankingResultChecks.call(a, "updateSelection");
+            RankingResultChecks.call(a, "gallery");
             Button sort = (Button) RankingResultChecks.get(a, "selectionSort");
             TagDetailChecks.require(
                 sort.isEnabled()
@@ -228,20 +226,23 @@ final class ShareCapacityUiChecks {
                 "sort can open unresolved confirmation despite share capacity");
             dialog.dismiss();
           });
-      ShareSelectionResultChecks.run(t, a, photos, fixtures);
+      ShareSelectionResultChecks.run(t, a, photos, fixtures, rankings);
       return "PASS share capacity: selection over/exact/reduced/best-only, AX, disabled taps, per-format saved targets, stale result and unresolved sort; stable selection reuse and exact targets across photo, burst, ranking, capacity, album and selection changes; "
           + width
           + "dp font"
           + font;
     } finally {
-      TagDetailChecks.ui(
-          t,
-          () -> {
-            for (Dialog dialog : dialogs) if (dialog.isShowing()) dialog.dismiss();
-            a.finish();
-          });
-      for (File file : files) file.delete();
-      fixtures.delete();
+      try (rankings) {
+        TagDetailChecks.ui(
+            t,
+            () -> {
+              for (Dialog dialog : dialogs) if (dialog.isShowing()) dialog.dismiss();
+              a.finish();
+            });
+        t.waitForIdleSync();
+        for (File file : files) file.delete();
+        fixtures.delete();
+      }
     }
   }
 

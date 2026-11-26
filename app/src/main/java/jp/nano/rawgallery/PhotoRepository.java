@@ -29,6 +29,7 @@ public final class PhotoRepository {
     public final String name, folder;
     public final long size, modified, taken, added, created;
     final PhotoMoveStore.Identity movedIdentity;
+    private volatile String cachedLegacyArchiveKey;
 
     public Photo(Uri u, String n, String f, long s, long m, long t) {
       this(u, n, f, s, m, t, 0, 0);
@@ -61,6 +62,22 @@ public final class PhotoRepository {
 
     Photo withIdentity(PhotoMoveStore.Identity identity) {
       return new Photo(uri, name, folder, size, modified, taken, added, created, identity);
+    }
+
+    /**
+     * Caches the successful legacy digest of this immutable snapshot; failures remain retryable.
+     */
+    String legacyArchiveKey() throws IOException {
+      String key = cachedLegacyArchiveKey;
+      if (key != null) return key;
+      synchronized (this) {
+        key = cachedLegacyArchiveKey;
+        if (key == null) {
+          key = digest(ArchiveStore.legacyIdentity(this));
+          cachedLegacyArchiveKey = key;
+        }
+        return key;
+      }
     }
 
     long sortTime() {
@@ -427,14 +444,17 @@ public final class PhotoRepository {
   boolean prepare(Photo p, java.util.function.BooleanSupplier cancelled) throws IOException {
     synchronized (processingLock) {
       if (cancelled.getAsBoolean()) return false;
-      DiagnosticLog.event("preparation.item_start", 0, "photo", DiagnosticLog.photo(p));
+      if (DiagnosticLog.currentRecorder() != null)
+        DiagnosticLog.event("preparation.item_start", 0, "photo", DiagnosticLog.photo(p));
       try {
         previewLocked(p, cancelled);
       } catch (java.io.InterruptedIOException e) {
-        DiagnosticLog.event("preparation.item_cancel", 0, "photo", DiagnosticLog.photo(p));
+        if (DiagnosticLog.currentRecorder() != null)
+          DiagnosticLog.event("preparation.item_cancel", 0, "photo", DiagnosticLog.photo(p));
         return false;
       }
-      DiagnosticLog.event("preparation.item_end", 0, "photo", DiagnosticLog.photo(p));
+      if (DiagnosticLog.currentRecorder() != null)
+        DiagnosticLog.event("preparation.item_end", 0, "photo", DiagnosticLog.photo(p));
       return true;
     }
   }
