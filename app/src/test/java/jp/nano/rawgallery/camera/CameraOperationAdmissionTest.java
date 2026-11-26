@@ -6,6 +6,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
@@ -84,15 +85,57 @@ class CameraOperationAdmissionTest {
   }
 
   @Test
+  void cancelingAClaimedRequestDiscardsItsParkedTaskImmediately() {
+    var cancellation = new CameraOperationTask.Cancellation();
+    var parked = new AtomicReference<Runnable>();
+    var discarded = new AtomicInteger();
+    try (var admission = admit()) {
+      var task =
+          new CameraOperationTask(
+              () -> fail("Canceled I/O must not run"),
+              () -> {
+                discarded.incrementAndGet();
+                admission.close();
+              });
+      assertTrue(cancellation.bind(task));
+      parked.set(task);
+      assertNull(CameraImportGate.tryReservePreparation());
+
+      cancellation.cancel();
+      cancellation.cancel();
+      assertEquals(1, discarded.get());
+      try (var preparation = reserve()) {
+        parked.get().run();
+        assertTrue(preparation.isOpen());
+      }
+      preparationAvailable();
+    }
+  }
+
+  @Test
+  void cancelingBeforeTaskBindingDiscardsWhenTheServiceBindsIt() {
+    var cancellation = new CameraOperationTask.Cancellation();
+    try (var admission = admit()) {
+      cancellation.cancel();
+      var task = new CameraOperationTask(() -> fail("Canceled I/O must not run"), admission::close);
+      assertFalse(cancellation.bind(task));
+      task.run();
+      preparationAvailable();
+    }
+  }
+
+  @Test
   void interruptingAnExecutingTaskKeepsAdmissionUntilTerminalCleanup() throws Exception {
     var worker = Executors.newSingleThreadExecutor();
     var entered = new CountDownLatch(1);
     var interrupted = new CountDownLatch(1);
     var finish = new CountDownLatch(1);
+    var cancellation = new CameraOperationTask.Cancellation();
     try (var admission = admit()) {
       var task =
           new CameraOperationTask(
               () -> {
+                cancellation.clear();
                 try (admission) {
                   entered.countDown();
                   try {
@@ -104,9 +147,12 @@ class CameraOperationAdmissionTest {
                 }
               },
               admission::close);
+      assertTrue(cancellation.bind(task));
       var completion = worker.submit(task);
       await(entered);
-      task.discardBeforeStart();
+      cancellation.cancel();
+      assertTrue(cancellation.requested());
+      assertNull(CameraImportGate.tryReservePreparation());
       worker.shutdownNow();
       await(interrupted);
       assertNull(CameraImportGate.tryReservePreparation());

@@ -15,6 +15,42 @@ public final class CameraOperationTask implements Runnable {
     this.discarded = discarded;
   }
 
+  /** Binds cancellation to the exact request whose task may still be waiting for the executor. */
+  public static final class Cancellation {
+    private volatile boolean requested;
+    private CameraOperationTask queued;
+
+    public boolean requested() {
+      return requested;
+    }
+
+    public boolean bind(CameraOperationTask task) {
+      synchronized (this) {
+        if (!requested) {
+          queued = task;
+          return true;
+        }
+      }
+      task.discardBeforeStart();
+      return false;
+    }
+
+    public synchronized void clear() {
+      queued = null;
+    }
+
+    public void cancel() {
+      CameraOperationTask task;
+      synchronized (this) {
+        requested = true;
+        task = queued;
+        queued = null;
+      }
+      // Service cleanup may acquire its own monitor to advance a paired continuation.
+      if (task != null) task.discardBeforeStart();
+    }
+  }
+
   /** Submits work to an executor whose queue is not canceled during the Activity lifecycle. */
   public static boolean executeAdmitted(
       Executor executor, CameraImportGate.Admission admission, Runnable operation) {

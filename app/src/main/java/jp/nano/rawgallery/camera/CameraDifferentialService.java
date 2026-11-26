@@ -85,16 +85,22 @@ public final class CameraDifferentialService extends Service {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final java.util.function.BiConsumer<SdConfirmation, String> response;
     private java.lang.ref.WeakReference<CameraOperationDelivery> pendingDelivery;
+    private final CameraOperationTask.Cancellation cancellation =
+        new CameraOperationTask.Cancellation();
 
     public SdConfirmation(java.util.function.BiConsumer<SdConfirmation, String> response) {
       this.response = response;
     }
 
-    public synchronized void cancel() {
-      if (!state.compareAndSet(State.OPEN, State.CANCELLED) || pendingDelivery == null) return;
-      var delivery = pendingDelivery.get();
+    public void cancel() {
+      CameraOperationDelivery delivery;
+      synchronized (this) {
+        if (!state.compareAndSet(State.OPEN, State.CANCELLED)) return;
+        delivery = pendingDelivery == null ? null : pendingDelivery.get();
+        pendingDelivery = null;
+      }
       if (delivery != null) delivery.discardPending();
-      pendingDelivery = null;
+      cancellation.cancel();
     }
 
     private synchronized boolean attachDelivery(CameraOperationDelivery delivery) {
@@ -326,6 +332,7 @@ public final class CameraDifferentialService extends Service {
       CameraOperationTask task =
           new CameraOperationTask(
               () -> {
+                if (confirmation != null) confirmation.cancellation.clear();
                 try {
                   boolean acquired =
                       CameraImportOperationGate.runIfAvailable(
@@ -358,10 +365,14 @@ public final class CameraDifferentialService extends Service {
                 }
               },
               () -> {
-                if (confirmation != null) confirmation.complete(BUSY);
+                if (confirmation != null) {
+                  confirmation.cancellation.clear();
+                  confirmation.complete(BUSY);
+                }
                 operationFinished(admission);
               });
       handedOff = true;
+      if (confirmation != null && !confirmation.cancellation.bind(task)) return;
       try {
         worker.execute(task);
       } catch (RejectedExecutionException stopped) {

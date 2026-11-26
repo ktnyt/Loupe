@@ -15,7 +15,6 @@ import java.lang.ref.WeakReference;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.atomic.AtomicBoolean;
 import jp.nano.rawgallery.camera.CameraImportGate;
 import jp.nano.rawgallery.camera.CameraOperationDelivery;
 import jp.nano.rawgallery.camera.CameraOperationTask;
@@ -31,9 +30,11 @@ public final class PhotoMoveService extends Service {
   private static final String UNAVAILABLE = "移動を開始できません。もう一度お試しください。";
   private static final String CANCELLED = "移動を中断しました。";
 
-  private record MoveRequest(PhotoMove.Plan plan, boolean abandon, AtomicBoolean stopped) {}
+  private record MoveRequest(
+      PhotoMove.Plan plan, boolean abandon, CameraOperationTask.Cancellation cancellation) {}
 
-  private static AtomicBoolean stopRequested = new AtomicBoolean();
+  private static CameraOperationTask.Cancellation stopRequested =
+      new CameraOperationTask.Cancellation();
   private static WeakReference<CameraOperationDelivery> pending;
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
   private MoveRequest active;
@@ -60,11 +61,11 @@ public final class PhotoMoveService extends Service {
       state = new State(false, null, UNAVAILABLE);
       return false;
     }
-    var request = new MoveRequest(plan, abandon, new AtomicBoolean());
+    var request = new MoveRequest(plan, abandon, new CameraOperationTask.Cancellation());
     Intent intent = new Intent(context, PhotoMoveService.class);
     var delivery = CameraOperationDelivery.prepare(intent, admission, request);
     if (delivery == null) return false;
-    stopRequested = request.stopped();
+    stopRequested = request.cancellation();
     pending = new WeakReference<>(delivery);
     state = new State(true, null, "移動の準備をしています。");
     try {
@@ -79,23 +80,28 @@ public final class PhotoMoveService extends Service {
     return false;
   }
 
-  static synchronized void stopMove() {
-    if (pending != null) {
-      var delivery = pending.get();
-      if (delivery == null || delivery.discardPending()) {
-        pending = null;
-        state = new State(false, null, CANCELLED);
-        return;
+  static void stopMove() {
+    CameraOperationTask.Cancellation cancel;
+    synchronized (PhotoMoveService.class) {
+      if (pending != null) {
+        var delivery = pending.get();
+        if (delivery == null || delivery.discardPending()) {
+          pending = null;
+          state = new State(false, null, CANCELLED);
+          return;
+        }
       }
+      cancel = stopRequested;
     }
-    stopRequested.set(true);
+    cancel.cancel();
   }
 
   private static synchronized CameraOperationDelivery.Request claimMove(
       Intent intent, ComponentName receiver) {
     var delivery = CameraOperationDelivery.claim(intent, receiver);
     if (delivery == null) return null;
-    if (delivery.payload() instanceof MoveRequest request && request.stopped() == stopRequested) {
+    if (delivery.payload() instanceof MoveRequest request
+        && request.cancellation() == stopRequested) {
       pending = null;
       return delivery;
     }
@@ -129,18 +135,25 @@ public final class PhotoMoveService extends Service {
       var task =
           new CameraOperationTask(
               () -> {
+                request.cancellation().clear();
                 State result;
                 try (admission) {
                   result =
-                      request.stopped().get() ? new State(false, null, CANCELLED) : move(request);
+                      request.cancellation().requested()
+                          ? new State(false, null, CANCELLED)
+                          : move(request);
                 }
                 finish(result);
               },
               () -> {
+                request.cancellation().clear();
                 admission.close();
-                finish(new State(false, null, request.stopped().get() ? CANCELLED : UNAVAILABLE));
+                finish(
+                    new State(
+                        false, null, request.cancellation().requested() ? CANCELLED : UNAVAILABLE));
               });
       handedOff = true;
+      if (!request.cancellation().bind(task)) return START_NOT_STICKY;
       try {
         worker.execute(task);
       } catch (RejectedExecutionException unavailable) {
@@ -188,7 +201,8 @@ public final class PhotoMoveService extends Service {
             if (request.plan() != null) mover.begin(request.plan());
             batch =
                 mover.run(
-                    request.stopped()::get, batchProgress -> progress(request, batchProgress));
+                    request.cancellation()::requested,
+                    batchProgress -> progress(request, batchProgress));
             message =
                 "写真を"
                     + batch.done()
@@ -239,7 +253,8 @@ public final class PhotoMoveService extends Service {
   }
 
   private void progress(MoveRequest request, PhotoMoveStore.Batch batch) {
-    state = new State(true, batch, request.stopped().get() ? "移動を中断しています。" : "写真を移動しています。");
+    state =
+        new State(true, batch, request.cancellation().requested() ? "移動を中断しています。" : "写真を移動しています。");
     getSystemService(NotificationManager.class).notify(NOTIFICATION, notification(batch));
   }
 
@@ -263,14 +278,14 @@ public final class PhotoMoveService extends Service {
 
   @Override
   public void onTimeout(int startId, int foregroundServiceType) {
-    if (active != null) active.stopped().set(true);
+    if (active != null) active.cancellation().cancel();
     stopSelf(startId);
   }
 
   @Override
   public void onDestroy() {
     destroyed = true;
-    if (active != null) active.stopped().set(true);
+    if (active != null) active.cancellation().cancel();
     for (Runnable task : worker.shutdownNow()) ((CameraOperationTask) task).discardBeforeStart();
     super.onDestroy();
   }
