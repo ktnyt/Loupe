@@ -39,7 +39,7 @@ public final class CameraDifferentialService extends Service {
   private static volatile boolean watchingSdMounts;
 
   static boolean isWatchingSdMounts() {
-    return watchingSdMounts;
+    return watchingSdMounts && MountedCameraCard.isObserving();
   }
 
   private final BooleanSupplier cancelled =
@@ -275,6 +275,7 @@ public final class CameraDifferentialService extends Service {
             public void onReceive(Context context, Intent event) {
               String uuid = MountedCameraCard.notifiedVolumeUuid(event);
               String destination = PhotoStorage.selected(context);
+              if (SdUsbReprobeController.suppressAutomaticMount(uuid, destination)) return;
               Uri tree = MountedCameraCard.registeredMountSource(context, uuid, destination);
               if (tree == null || !SdSourceRegistrations.hasReadGrant(context, tree)) return;
               enqueue(sdRequest(context, tree, destination, MountedCameraCard.detachGeneration()));
@@ -307,6 +308,10 @@ public final class CameraDifferentialService extends Service {
       boolean sdRequest = confirmedRequest || SD.equals(action);
       SdConfirmation confirmation = confirmedRequest ? confirmationOf(request) : null;
       if (confirmedRequest && (confirmation == null || !confirmation.isOpen())) return;
+      if (sdRequest && !MountedCameraCard.isObserving()) {
+        if (confirmation != null) confirmation.complete(SdUsbReprobeController.REOPEN_IMPORT);
+        return;
+      }
       String profile = PAIRED.equals(action) ? request.getStringExtra("profile_id") : null;
       if (!sdRequest && !WIFI.equals(action) && (profile == null || profile.isBlank())) return;
       if (destroyed || running) {

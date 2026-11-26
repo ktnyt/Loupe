@@ -8,6 +8,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Lock;
 import java.util.function.BooleanSupplier;
 import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 
 /** Only the tested dual-slot reader is eligible for this USB interface handoff. */
 final class SdUsbReprobe {
@@ -47,8 +48,8 @@ final class SdUsbReprobe {
 
   enum State {
     UNSUPPORTED,
-    EJECT_REQUIRED,
-    CONFIRM_EJECTION,
+    UNAVAILABLE,
+    OBSERVER_UNAVAILABLE,
     PERMISSION,
     REDETECTING,
     WAITING,
@@ -98,53 +99,69 @@ final class SdUsbReprobe {
 
   record Volume(String uuid, String state) {}
 
-  static boolean isEjectionState(String state) {
-    return "ejecting".equals(state) || "unmounted".equals(state);
+  private static boolean readable(String state) {
+    return "mounted".equals(state) || "mounted_ro".equals(state);
   }
 
-  record Snapshot(Reader reader, String destination, List<Volume> volumes, boolean permitted) {
+  enum Observation {
+    COMPLETE,
+    CONNECTION_ONLY,
+    CONNECTION_UNKNOWN
+  }
+
+  record Snapshot(
+      Reader reader,
+      String destination,
+      List<Volume> volumes,
+      boolean permitted,
+      Observation observation) {
     Snapshot {
       volumes = List.copyOf(volumes);
     }
 
-    State admission() {
-      if (reader == null || !reader.supported() || destination == null) return State.UNSUPPORTED;
-      Set<String> seen = new HashSet<>();
-      for (Volume volume : volumes) {
-        if (volume.uuid == null || !seen.add(volume.uuid) || !"unmounted".equals(volume.state)) {
-          return State.EJECT_REQUIRED;
-        }
-      }
-      if (seen.size() > 2 || !seen.contains(destination)) return State.EJECT_REQUIRED;
-      return permitted ? State.REDETECTING : State.PERMISSION;
+    Snapshot(Reader reader, String destination, List<Volume> volumes, boolean permitted) {
+      this(reader, destination, volumes, permitted, Observation.COMPLETE);
     }
 
-    boolean canPrepareEjection() {
-      if (reader == null || !reader.supported() || destination == null) return false;
+    static Snapshot fromVisibleVolumes(
+        Reader reader, String destination, List<VisibleVolume> visible, boolean permitted) {
+      var portable = portableLayout(visible);
+      return new Snapshot(reader, destination, portable == null ? List.of() : portable, permitted);
+    }
+
+    static Snapshot unobserved(String destination) {
+      return new Snapshot(null, destination, List.of(), false, Observation.CONNECTION_UNKNOWN);
+    }
+
+    static Snapshot connectionOnly(Reader reader, String destination) {
+      return new Snapshot(reader, destination, List.of(), false, Observation.CONNECTION_ONLY);
+    }
+
+    static Snapshot observe(Supplier<Snapshot> query, Snapshot onError) {
+      try {
+        return query.get();
+      } catch (RuntimeException unavailable) {
+        return onError;
+      }
+    }
+
+    boolean complete() {
+      return observation == Observation.COMPLETE;
+    }
+
+    State admission() {
+      if (!complete()) return State.UNAVAILABLE;
+      if (reader == null || !reader.supported() || destination == null) return State.UNSUPPORTED;
       Set<String> seen = new HashSet<>();
       for (Volume volume : volumes) {
         if (volume.uuid == null
             || !seen.add(volume.uuid)
-            || !("mounted".equals(volume.state)
-                || (!destination.equals(volume.uuid) && "mounted_ro".equals(volume.state))))
-          return false;
+            || !(destination.equals(volume.uuid)
+                ? "mounted".equals(volume.state)
+                : readable(volume.state))) return State.UNSUPPORTED;
       }
-      return seen.size() <= 2 && seen.contains(destination);
-    }
-
-    boolean expectsEjectionEvent(String uuid, String state) {
-      return uuid != null
-          && isEjectionState(state)
-          && volumes.stream().anyMatch(volume -> uuid.equals(volume.uuid));
-    }
-
-    boolean sameInventory(Snapshot current) {
-      if (!sameConnection(current) || volumes.size() != current.volumes.size()) return false;
-      Set<String> expected = new HashSet<>();
-      for (Volume volume : volumes) expected.add(volume.uuid);
-      Set<String> actual = new HashSet<>();
-      for (Volume volume : current.volumes) actual.add(volume.uuid);
-      return expected.equals(actual);
+      if (seen.size() > 2 || !seen.contains(destination)) return State.UNSUPPORTED;
+      return permitted ? State.REDETECTING : State.PERMISSION;
     }
 
     boolean sameConnection(Snapshot current) {
@@ -155,23 +172,62 @@ final class SdUsbReprobe {
     }
 
     boolean sameAdmission(Snapshot current) {
-      return sameConnection(current) && Set.copyOf(volumes).equals(Set.copyOf(current.volumes));
+      return complete()
+          && current.complete()
+          && sameConnection(current)
+          && Set.copyOf(volumes).equals(Set.copyOf(current.volumes));
+    }
+
+    boolean sourceUnavailable(String source) {
+      if (!complete() || source == null) return false;
+      for (Volume volume : volumes) {
+        if (source.equals(volume.uuid)) {
+          return volume.state != null && !readable(volume.state);
+        }
+      }
+      // An empty or invalid inventory can also mean Android's query failed.
+      return volumes.equals(List.of(new Volume(destination, "mounted")));
     }
   }
 
-  record Ejection(Snapshot beforeSettings, long expiresAt) {
-    Ejection {
-      if (!beforeSettings.canPrepareEjection())
-        throw new IllegalArgumentException("No mounted inventory");
+  /** Suppresses automatic imports from a handoff until another mount cycle is observable. */
+  static final class MountCycle {
+    private final Snapshot initial;
+    private volatile String restoredSource;
+
+    MountCycle(Snapshot initial) {
+      this.initial = initial;
     }
 
-    boolean matches(Snapshot current, long now) {
-      return now < expiresAt && beforeSettings.sameInventory(current);
+    void finish(Snapshot restored) {
+      if (restored != null) restoredSource = readableSource(restored);
     }
 
-    boolean confirmed(Snapshot current, long now) {
-      State state = current.admission();
-      return matches(current, now) && (state == State.REDETECTING || state == State.PERMISSION);
+    boolean matchesDestination(String destination) {
+      return initial.destination.equals(destination);
+    }
+
+    private boolean connectionChanged(Snapshot current) {
+      if (current.observation == Observation.CONNECTION_UNKNOWN)
+        return current.destination != null && !matchesDestination(current.destination);
+      return !initial.sameConnection(current);
+    }
+
+    boolean suppresses(String notifiedSource, Snapshot current) {
+      String source = restoredSource;
+      return !connectionChanged(current)
+          && (!current.complete() || source == null || source.equals(notifiedSource));
+    }
+
+    boolean expired(Snapshot current, boolean detachObserved, String detachedSource) {
+      if (connectionChanged(current)) return true;
+      String source = restoredSource;
+      // When restoration is unverified, a detach on this connection can still be our own
+      // delayed handoff. A new explicit refresh or a connection change can replace the cycle.
+      return detachObserved
+          && source != null
+          && (detachedSource == null || source.equals(detachedSource))
+          && current.sourceUnavailable(source);
     }
   }
 
@@ -199,11 +255,14 @@ final class SdUsbReprobe {
 
     void waiting();
 
-    void restored(Snapshot current);
+    Snapshot snapshotOnSourceDetach();
+
+    long detachGeneration();
+
+    void restored(Snapshot current, long detachGeneration);
   }
 
   static State run(
-      Ejection ejection,
       Snapshot initial,
       Platform platform,
       Lock lock,
@@ -215,9 +274,9 @@ final class SdUsbReprobe {
     if (!lock.tryLock()) return State.BUSY;
     try {
       if (cancelled.getAsBoolean()) return State.CANCELLED;
-      if (ejection == null || !ejection.confirmed(initial, now.getAsLong()))
-        return State.EJECT_REQUIRED;
-      if (!initial.permitted()) return State.DENIED;
+      State admission = initial.admission();
+      if (admission == State.PERMISSION) return State.DENIED;
+      if (admission != State.REDETECTING) return admission;
       Snapshot current = platform.snapshot();
       if (!initial.sameAdmission(current)) return State.CHANGED;
       if (!current.permitted()) return State.DENIED;
@@ -228,28 +287,39 @@ final class SdUsbReprobe {
         if (!initial.sameAdmission(current)) return State.CHANGED;
         if (!current.permitted()) return State.DENIED;
         if (cancelled.getAsBoolean()) return State.CANCELLED;
-        if (!ejection.confirmed(current, now.getAsLong())) return State.EJECT_REQUIRED;
         if (!observer.startingClaim()) return State.CANCELLED;
         if (!claimAndRelease(usb)) return State.FAILED;
       }
       observer.waiting();
       long deadline = now.getAsLong() + waitMillis;
+      String previousSource = readableSource(initial);
+      boolean sourceDisappeared = false;
       while (!cancelled.getAsBoolean()) {
+        long generation = observer.detachGeneration();
         current = platform.snapshot();
         if (!initial.sameConnection(current)) return State.CHANGED;
-        if (!current.permitted()) return State.DENIED;
-        if (platform.destinationWritable(current.destination)) {
-          String source = readableSource(current);
-          if (source != null) {
-            boolean reachable = platform.sourceReachable(source, current.destination, cancelled);
-            if (cancelled.getAsBoolean()) return State.CANCELLED;
-            Snapshot verified = platform.snapshot();
-            if (!initial.sameConnection(verified)) return State.CHANGED;
-            if (!verified.permitted()) return State.DENIED;
-            if (current.sameAdmission(verified)) {
-              observer.restored(verified);
-              return reachable ? State.READY : State.SOURCE_REQUIRED;
-            }
+        if (current.complete() && !current.permitted()) return State.DENIED;
+        Snapshot observed = observer.snapshotOnSourceDetach();
+        sourceDisappeared |=
+            current.sourceUnavailable(previousSource)
+                || (observed != null
+                    && initial.sameConnection(observed)
+                    && observed.sourceUnavailable(previousSource));
+        String source = readableSource(current);
+        // The pre-claim UUID and mounted state can both be stale after a card swap.
+        if (source != null
+            && (!source.equals(previousSource) || sourceDisappeared)
+            && platform.destinationWritable(current.destination)) {
+          boolean reachable = platform.sourceReachable(source, current.destination, cancelled);
+          if (cancelled.getAsBoolean()) return State.CANCELLED;
+          Snapshot verified = platform.snapshot();
+          if (!initial.sameConnection(verified)) return State.CHANGED;
+          if (verified.complete() && !verified.permitted()) return State.DENIED;
+          if (current.sameAdmission(verified)
+              && generation == observer.detachGeneration()
+              && platform.destinationWritable(verified.destination)) {
+            observer.restored(verified, generation);
+            return reachable ? State.READY : State.SOURCE_REQUIRED;
           }
         }
         long remaining = deadline - now.getAsLong();
@@ -272,7 +342,7 @@ final class SdUsbReprobe {
       if (volume.uuid == null) return null;
       if (volume.uuid.equals(current.destination)) {
         writableTarget = "mounted".equals(volume.state);
-      } else if ("mounted".equals(volume.state) || "mounted_ro".equals(volume.state)) {
+      } else if (readable(volume.state)) {
         source = volume.uuid;
       }
     }

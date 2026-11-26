@@ -47,37 +47,33 @@ public final class MountedCameraCard {
 
   public record MountChange(String volumeUuid, boolean detached, String state) {}
 
-  private static final AtomicLong unsafeMediaGeneration = new AtomicLong();
-  private static boolean observing;
+  private static final AtomicLong mediaGeneration = new AtomicLong();
+  private static volatile boolean observing;
+  private static java.util.function.BiConsumer<Context, BroadcastReceiver> registerPrimaryMedia =
+      MountedCameraCard::registerPrimaryMedia;
 
   public static long detachGeneration() {
     return detachGeneration.get();
   }
 
-  static long unsafeMediaGeneration() {
-    return unsafeMediaGeneration.get();
+  static long mediaGeneration() {
+    return mediaGeneration.get();
+  }
+
+  static boolean isObserving() {
+    return observing;
   }
 
   public static synchronized Runnable observeMounts(
       Context context, Consumer<MountChange> listener) {
-    startObserving(context);
+    if (!startObserving(context)) return null;
     mountListeners.add(listener);
     return () -> mountListeners.remove(listener);
   }
 
-  static synchronized void startObserving(Context context) {
-    if (observing) return;
+  static synchronized boolean startObserving(Context context) {
+    if (observing) return true;
     Context app = context.getApplicationContext();
-    IntentFilter filter = new IntentFilter(Intent.ACTION_MEDIA_MOUNTED);
-    filter.addAction(Intent.ACTION_MEDIA_EJECT);
-    filter.addAction(Intent.ACTION_MEDIA_UNMOUNTED);
-    filter.addAction(Intent.ACTION_MEDIA_REMOVED);
-    filter.addAction(Intent.ACTION_MEDIA_BAD_REMOVAL);
-    filter.addAction(Intent.ACTION_MEDIA_CHECKING);
-    filter.addAction(Intent.ACTION_MEDIA_NOFS);
-    filter.addAction(Intent.ACTION_MEDIA_UNMOUNTABLE);
-    filter.addAction(Intent.ACTION_MEDIA_SHARED);
-    filter.addDataScheme("file");
     BroadcastReceiver receiver =
         new BroadcastReceiver() {
           @Override
@@ -85,10 +81,10 @@ public final class MountedCameraCard {
             legacyMediaChanged(notifiedVolumeUuid(event), event.getAction());
           }
         };
-    if (Build.VERSION.SDK_INT >= 33) {
-      app.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
-    } else {
-      app.registerReceiver(receiver, filter);
+    try {
+      registerPrimaryMedia.accept(app, receiver);
+    } catch (RuntimeException unavailable) {
+      return false;
     }
     observing = true;
     try {
@@ -131,6 +127,25 @@ public final class MountedCameraCard {
     } catch (RuntimeException unavailable) {
       // Keep the existing media-broadcast path if supplemental notifications are unavailable.
     }
+    return true;
+  }
+
+  private static void registerPrimaryMedia(Context app, BroadcastReceiver receiver) {
+    IntentFilter filter = new IntentFilter(Intent.ACTION_MEDIA_MOUNTED);
+    filter.addAction(Intent.ACTION_MEDIA_EJECT);
+    filter.addAction(Intent.ACTION_MEDIA_UNMOUNTED);
+    filter.addAction(Intent.ACTION_MEDIA_REMOVED);
+    filter.addAction(Intent.ACTION_MEDIA_BAD_REMOVAL);
+    filter.addAction(Intent.ACTION_MEDIA_CHECKING);
+    filter.addAction(Intent.ACTION_MEDIA_NOFS);
+    filter.addAction(Intent.ACTION_MEDIA_UNMOUNTABLE);
+    filter.addAction(Intent.ACTION_MEDIA_SHARED);
+    filter.addDataScheme("file");
+    if (Build.VERSION.SDK_INT >= 33) {
+      app.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
+    } else {
+      app.registerReceiver(receiver, filter);
+    }
   }
 
   static void legacyMediaChanged(String uuid, String action) {
@@ -159,12 +174,9 @@ public final class MountedCameraCard {
   }
 
   private static void publishMountChange(MountChange change) {
-    // Neither Android notification provides a shared transition ID. A delayed notification
-    // must not make a later real removal look like a duplicate.
-    if (change.volumeUuid() == null || !SdUsbReprobe.isEjectionState(change.state())) {
-      unsafeMediaGeneration.incrementAndGet();
-    }
+    mediaGeneration.incrementAndGet();
     if (change.detached()) detachGeneration.incrementAndGet();
+    SdUsbReprobeController.observeMountCycle(change);
     for (Consumer<MountChange> listener : mountListeners) listener.accept(change);
   }
 

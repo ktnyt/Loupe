@@ -14,7 +14,7 @@ CIではAndroid SDKの `system-images;android-35;google_apis;x86_64` とANGLEの
 
 `import-latency`、`import-deferred`、`import-interruption`、`import-pause-interruption` は、合成RAWを使って新規入力の表示と中断を確認する。処理速度を比較する場合は、端末、画面、画像、診断の条件をそろえて測定する。[取り込みから一覧反映まで](diagnostics.md#新規取り込みから一覧反映まで)
 
-`camera-pilot-sd-usb-reprobe` はUSB機器を接続していない専用エミュレータで、再認識ボタン・未対応時の案内・合成状態の表示とAXを検査する。実機やUSBパススルーでは実行を拒否する。通常のUSB許可、Android設定の安全な取り出し、実カードの再マウントと転送は別の実機確認が必要。[SD再認識の契約](sd-usb-reprobe.md)
+`camera-pilot-sd-usb-reprobe` はUSB機器を接続していない専用エミュレータで、手動で開く操作と長押し、再認識の表示、USB許可の保留・拒否、フォルダ選択、取り込みとの排他を検査する。実機やUSBパススルーでは実行を拒否する。実際のUSB許可、マウント中のリーダーの取得と解放、カードの再認識と転送は別途実機で確認する。[SD再認識の契約](sd-usb-reprobe.md)
 
 ## 専用の準備が必要なモード
 
