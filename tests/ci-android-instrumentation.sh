@@ -78,8 +78,8 @@ if [[ "$segment" == ledger-diagnostic ]]; then
   offline_tries=0
   until [[ $("$adb" -s "$serial" shell settings get global airplane_mode_on | tr -d '\r') == 1 ]] &&
         [[ $("$adb" -s "$serial" shell settings get global wifi_on | tr -d '\r') == 0 ]] &&
-        "$adb" -s "$serial" shell cmd wifi status | tr -d '\r' | grep -qx 'Wifi is disabled' &&
-        "$adb" -s "$serial" shell dumpsys connectivity | tr -d '\r' | grep -Eq 'Active default network: (none|-1)$'; do
+        "$adb" -s "$serial" shell cmd wifi status | tr -d '\r' | grep -x 'Wifi is disabled' >/dev/null &&
+        "$adb" -s "$serial" shell dumpsys connectivity | tr -d '\r' | grep -E 'Active default network: (none|-1)$' >/dev/null; do
     offline_tries=$((offline_tries + 1))
     if (( offline_tries == 2 )); then
       "$adb" -s "$serial" shell cmd wifi set-wifi-enabled disabled
@@ -97,13 +97,29 @@ fi
 "$adb" -s "$serial" install -g app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
 
 run_instrumentation() {
-  local label=$1 result status=0
+  local label=$1 result status=0 expected stderr_file="$work/instrumentation.stderr"
   shift
   printf '\nRunning Android instrumentation: %s\n' "$label"
-  result=$("$adb" -s "$serial" shell am instrument -w -r "$@" < /dev/null 2>&1) || status=$?
+  result=$("$adb" -s "$serial" shell am instrument -w -r "$@" < /dev/null 2>"$stderr_file") || status=$?
   printf '%s\n' "$result"
-  if (( status != 0 )) || ! grep -q '^INSTRUMENTATION_RESULT: stream=PASS ' <<< "$result" ||
-     ! grep -qx 'INSTRUMENTATION_CODE: -1' <<< "$result"; then
+  if [[ -s "$stderr_file" ]]; then cat "$stderr_file" >&2; fi
+  if (( status != 0 )); then
+    printf 'Instrumentation adb status: %s\n' "$status" >&2
+    exit "$status"
+  fi
+  case "$label" in
+    camera-history-migration) expected='INSTRUMENTATION_RESULT: stream=PASS CameraSync history migration' ;;
+    confidence-store) expected='INSTRUMENTATION_RESULT: stream=PASS confidence SQLite:' ;;
+    camera-ledger) expected='INSTRUMENTATION_RESULT: stream=PASS camera ledger:' ;;
+    *) expected='INSTRUMENTATION_RESULT: stream=PASS ' ;;
+  esac
+  if ! awk -v expected="$expected" '
+    /^INSTRUMENTATION_CODE:/ { codes++; if ($0 != "INSTRUMENTATION_CODE: -1") bad = 1 }
+    /^INSTRUMENTATION_RESULT: stream=/ { streams++; if (index($0, expected) != 1) bad = 1 }
+    /^INSTRUMENTATION_(FAILED|ABORTED):/ { bad = 1 }
+    /^INSTRUMENTATION_RESULT: (shortMsg|longMsg)=/ { bad = 1 }
+    END { exit !(codes == 1 && streams == 1 && !bad) }
+  ' <<< "$result"; then
     if [[ "$label" == photo-edit ]]; then
       "$adb" -s "$serial" logcat -d -s LoupeRawEdit:I '*:S' |
         awk '/full[.]prepare|fixture[.]cancel|jpeg[.]load[.]complete/ {print}' || true
