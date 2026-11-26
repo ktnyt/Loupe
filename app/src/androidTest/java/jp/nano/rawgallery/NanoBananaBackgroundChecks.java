@@ -1104,6 +1104,30 @@ final class NanoBananaBackgroundChecks {
       Button action,
       Layout layout,
       NoticeTextFit fit) {
+    runNoticeDiagnostic(
+        () ->
+            readSubmitNoticeGate(
+                phase, expected, requestedWidth, requestedFont, decor, text, action, layout, fit));
+  }
+
+  private static void runNoticeDiagnostic(Runnable diagnostic) {
+    try {
+      diagnostic.run();
+    } catch (RuntimeException | AssertionError unavailable) {
+      // Preserve the already rejected notice gate even if optional diagnostics fail.
+    }
+  }
+
+  private static void readSubmitNoticeGate(
+      String phase,
+      String expected,
+      int requestedWidth,
+      float requestedFont,
+      View decor,
+      TextView text,
+      Button action,
+      Layout layout,
+      NoticeTextFit fit) {
     View currentHost = null;
     View currentText = null;
     View currentAction = null;
