@@ -809,6 +809,7 @@ final class NanoBananaBackgroundChecks {
           return true;
         });
     View menuWindow = pendingWindow[0];
+    TagDetailChecks.ui(test, () -> verifyMenuTargets(menuWindow));
     captureWindow(test, menuWindow, capturePrefix + "-menu" + profile);
     saveDisplayCapture(test, capturePrefix + "-menu-display" + profile);
     TagDetailChecks.ui(
@@ -990,6 +991,8 @@ final class NanoBananaBackgroundChecks {
               || !confirm.isShown()
               || !confirm.isEnabled()
               || !confirm.isClickable()
+              || confirm.getWidth() < GalleryUi.dp(confirm.getContext(), 48)
+              || confirm.getHeight() < GalleryUi.dp(confirm.getContext(), 48)
               || !"確認".contentEquals(confirm.getText())
               || !confirm.getGlobalVisibleRect(visible)
               || visible.width() != confirm.getWidth()
