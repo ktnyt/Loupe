@@ -13,6 +13,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Rect;
 import android.net.Uri;
+import android.os.ParcelFileDescriptor;
 import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.text.Layout;
@@ -25,6 +26,7 @@ import com.google.android.material.snackbar.Snackbar;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -688,7 +690,7 @@ final class NanoBananaBackgroundChecks {
           "startup rejection rolls back reservation");
       return "PASS nano-background: actual production Android Service with isolated fake provider; next-photo operation, busy/error menu captures, Home continuation, no generation/result Activity launch, automatic JPEG save/readback 1200x800, temporary-object cleanup, duplicate admission, immutable prompt/output snapshot, next admission, saved cleanup retry without POST/download, interrupted-worker lease, durable discard retry and cleanup-only completion text, missing-version selectable manual recovery guidance, explicit ambiguous-submission messaging, stale end-confirmation A/B identity guard and current identity cleanup, stale Intent suppression and startup rejection, remote-first discard with a detached result volume, renamed published result retained on discard, MTP same-size corruption and read error checks, fixed API error delivery and suppression of arbitrary exception text. Provider remained blocked through Home after "
           + homeWaitMs
-          + " ms. Captures are synthetic layouts; OS-service runtime assertions are separate. No real API, credentials, photos, physical touch or TalkBack speech tested.\nStatus trace (delivery hook; fixed UI text only): "
+          + " ms. POST 429 Snackbar text and confirmation action, pending menu and explicit cleanup verified. Captures are synthetic layouts; OS-service runtime assertions are separate. No real API, credentials, photos, physical touch or TalkBack speech tested.\nStatus trace (delivery hook; fixed UI text only): "
           + String.join(" → ", factory.messages)
           + "\n";
     } finally {
@@ -760,7 +762,7 @@ final class NanoBananaBackgroundChecks {
     factory.fake = network;
     String captureSuffix = "-" + width + "-" + font;
     TagDetailChecks.require(NanoBananaService.start(screen, input, prompt), "start provider POST");
-    String noticeProblem = captureSubmitFailureNotice(test, screen, captureSuffix);
+    captureAndOpenSubmitFailureNotice(test, screen, captureSuffix);
     idle(test);
     JSONObject pending = factory.store.job();
     TagDetailChecks.require(
@@ -773,11 +775,19 @@ final class NanoBananaBackgroundChecks {
             && pending.optString("stage").equals("submitting")
             && !pending.has("task"),
         "failed POST retains ambiguous state and does not poll or resend");
-    Dialog[] menu = {null};
-    TagDetailChecks.ui(
-        test, () -> menu[0] = NanoBananaUi.show(screen, input, factory.store, NanoBananaUi.ACTUAL));
-    View menuWindow = menu[0].getWindow().getDecorView();
+    View[] pendingWindow = {null};
+    GenerationIndicatorChecks.await(
+        test,
+        "Snackbar confirmation opens the ambiguous submission menu",
+        () -> {
+          View heading = findWindowLabel("依頼の結果が不明です。自動では再送しません");
+          if (heading == null || !heading.isShown() || !heading.hasWindowFocus()) return false;
+          pendingWindow[0] = heading.getRootView();
+          return true;
+        });
+    View menuWindow = pendingWindow[0];
     captureWindow(test, menuWindow, "nano-background-submit-429-menu" + captureSuffix);
+    saveDisplayCapture(test, "nano-background-submit-429-menu-display" + captureSuffix);
     TagDetailChecks.ui(
         test,
         () -> {
@@ -785,9 +795,10 @@ final class NanoBananaBackgroundChecks {
           TagDetailChecks.require(
               findLabel(menuWindow, "設定") != null
                   && findLabel(menuWindow, "状態を再確認") == null
+                  && findLabel(menuWindow, "後処理を再試行") == null
                   && end != null
                   && end.performClick(),
-              "the ambiguous submission menu offers end and settings but no status check");
+              "the ambiguous submission menu offers end and settings without retry");
         });
     test.waitForIdleSync();
     android.view.accessibility.AccessibilityNodeInfo confirmation =
@@ -802,14 +813,15 @@ final class NanoBananaBackgroundChecks {
         factory.store.job() == null
             && network.deletes == 1
             && network.submits == 1
-            && network.statuses == 0,
-        "explicit end cleans the temporary input without resubmitting or polling");
-    TagDetailChecks.require(noticeProblem == null, noticeProblem);
+            && network.statuses == 0
+            && network.downloads == 0,
+        "explicit end cleans the temporary input without resubmitting, polling or downloading");
   }
 
-  private static String captureSubmitFailureNotice(
+  private static void captureAndOpenSubmitFailureNotice(
       Instrumentation test, MainActivity screen, String captureSuffix) throws Exception {
     TextView[] notice = {null};
+    Button[] action = {null};
     View decor = screen.getWindow().getDecorView();
     Field instance = indicatorField("instance"),
         snackbarField = indicatorField("snackbar"),
@@ -866,7 +878,13 @@ final class NanoBananaBackgroundChecks {
                       + attached
                       + ", laidOut="
                       + laidOut);
-              if (textMatches && attached && laidOut) notice[0] = text;
+              if (textMatches && attached && laidOut && text.hasWindowFocus()) {
+                notice[0] = text;
+                action[0] =
+                    snackbar
+                        .getView()
+                        .findViewById(com.google.android.material.R.id.snackbar_action);
+              }
             } catch (IllegalAccessException error) {
               throw new AssertionError(error);
             }
@@ -879,7 +897,7 @@ final class NanoBananaBackgroundChecks {
       saveCapture(test, name);
       String problem = "POST 429 Snackbar not visible " + captureSuffix;
       saveNoticeTrace(test, name, observations, problem);
-      return problem;
+      throw new AssertionError(problem);
     }
     // Let the currently attached Snackbar complete its entry animation.
     Thread.sleep(350);
@@ -889,8 +907,12 @@ final class NanoBananaBackgroundChecks {
         () -> {
           TextView text = notice[0];
           Layout layout = text.getLayout();
-          if (!text.isAttachedToWindow() || !text.isShown() || layout == null) {
-            issue[0] = "POST 429 Snackbar was detached before capture " + captureSuffix;
+          if (!text.isAttachedToWindow()
+              || !text.isShown()
+              || !text.hasWindowFocus()
+              || layout == null) {
+            issue[0] =
+                "POST 429 Snackbar was detached or lost focus before capture " + captureSuffix;
             return;
           }
           int lines = layout.getLineCount();
@@ -929,8 +951,36 @@ final class NanoBananaBackgroundChecks {
           }
         });
     saveCapture(test, name);
-    saveNoticeTrace(test, name, observations, issue[0] == null ? "layout fits" : issue[0]);
-    return issue[0];
+    if (issue[0] != null) {
+      saveNoticeTrace(test, name, observations, issue[0]);
+      throw new AssertionError(issue[0]);
+    }
+    saveDisplayCapture(test, "nano-background-submit-429-notice-display" + captureSuffix);
+    TagDetailChecks.ui(
+        test,
+        () -> {
+          Button confirm = action[0];
+          Rect visible = new Rect();
+          if (confirm == null
+              || !confirm.isAttachedToWindow()
+              || !confirm.isShown()
+              || !confirm.isEnabled()
+              || !confirm.isClickable()
+              || !"確認".contentEquals(confirm.getText())
+              || !confirm.getGlobalVisibleRect(visible)
+              || visible.width() != confirm.getWidth()
+              || visible.height() != confirm.getHeight()
+              || !confirm.performClick()) {
+            issue[0] =
+                "POST 429 Snackbar confirmation is not a fully visible action " + captureSuffix;
+          }
+        });
+    saveNoticeTrace(
+        test,
+        name,
+        observations,
+        issue[0] == null ? "layout fits\nSnackbar confirmation clicked" : issue[0]);
+    TagDetailChecks.require(issue[0] == null, issue[0]);
   }
 
   private static void saveNoticeTrace(
@@ -1286,6 +1336,16 @@ final class NanoBananaBackgroundChecks {
       image.compress(Bitmap.CompressFormat.PNG, 100, output);
     } finally {
       image.recycle();
+    }
+  }
+
+  private static void saveDisplayCapture(Instrumentation test, String name) throws IOException {
+    try (ParcelFileDescriptor descriptor =
+            test.getUiAutomation().executeShellCommand("screencap -p");
+        FileInputStream input = new FileInputStream(descriptor.getFileDescriptor());
+        FileOutputStream output =
+            new FileOutputStream(new File(captureDirectory(test), name + ".png"))) {
+      TagDetailChecks.require(input.transferTo(output) > 0, "display screencap returned PNG bytes");
     }
   }
 
