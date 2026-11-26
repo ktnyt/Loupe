@@ -697,25 +697,13 @@ final class NanoBananaBackgroundChecks {
           NanoBananaApiChecks.SUBMIT_API_REJECTED,
           "api-rejection",
           profile);
-      Context failing =
-          new ContextWrapper(context) {
-            public Context getApplicationContext() {
-              return this;
-            }
-
-            public ComponentName startForegroundService(Intent i) {
-              throw new IllegalStateException("synthetic startup rejection");
-            }
-          };
-      TagDetailChecks.require(
-          !NanoBananaService.start(failing, photo, prompt)
-              && !NanoBananaService.busy()
-              && store.job() == null,
-          "startup rejection rolls back reservation");
+      String startupTrace = verifyStartupRejection(context, store, photo, prompt);
       return "PASS nano-background: actual production Android Service with isolated fake provider; next-photo operation, busy/error menu captures, Home continuation, no generation/result Activity launch, automatic JPEG save/readback 1200x800, temporary-object cleanup, duplicate admission, immutable prompt/output snapshot, next admission, saved cleanup retry without POST/download, interrupted-worker lease, durable discard retry and cleanup-only completion text, missing-version selectable manual recovery guidance, explicit ambiguous-submission messaging, stale end-confirmation A/B identity guard and current identity cleanup, stale Intent suppression and startup rejection, remote-first discard with a detached result volume, renamed published result retained on discard, MTP same-size corruption and read error checks, fixed API error delivery and suppression of arbitrary exception text. Provider remained blocked through Home after "
           + homeWaitMs
           + " ms. Invalid polling payload recovery and both POST failure Snackbar messages, confirmation, pending menu and explicit cleanup verified. Captures are synthetic layouts; OS-service runtime assertions are separate. No real API, credentials, photos, physical touch or TalkBack speech tested.\nStatus trace (delivery hook; fixed UI text only): "
           + String.join(" → ", factory.messages)
+          + "\n"
+          + startupTrace
           + "\n";
     } finally {
       if (factory.fake != null) factory.fake.release.countDown();
@@ -736,6 +724,81 @@ final class NanoBananaBackgroundChecks {
       context.getContentResolver().delete(fixture, null, null);
       NanoBananaService.dependencies = NanoBananaService.PRODUCTION;
     }
+  }
+
+  private static String verifyStartupRejection(
+      Context context,
+      NanoBananaStore store,
+      PhotoRepository.Photo photo,
+      NanoBananaStore.Prompt prompt)
+      throws Exception {
+    boolean busyBefore = NanoBananaService.busy();
+    boolean jobBefore = store.job() != null;
+    String before = "startup rejection: busyBefore=" + busyBefore + ", jobBefore=" + jobBefore;
+    if (busyBefore || jobBefore) android.util.Log.e("LoupeNanoFixture", before);
+    TagDetailChecks.require(!busyBefore && !jobBefore, "startup rejection requires idle service");
+
+    class FailingStartContext extends ContextWrapper {
+      int calls;
+      boolean busyAtCallback;
+      boolean jobAtCallback;
+      boolean jobReadAtCallback;
+
+      FailingStartContext() {
+        super(context);
+      }
+
+      @Override
+      public Context getApplicationContext() {
+        return this;
+      }
+
+      @Override
+      public ComponentName startForegroundService(Intent intent) {
+        calls++;
+        busyAtCallback = NanoBananaService.busy();
+        try {
+          jobAtCallback = store.job() != null;
+          jobReadAtCallback = true;
+        } catch (IOException error) {
+          android.util.Log.e(
+              "LoupeNanoFixture", "startup rejection callback cannot read fixture job");
+        }
+        throw new IllegalStateException("synthetic startup rejection");
+      }
+    }
+    FailingStartContext failing = new FailingStartContext();
+    boolean started = NanoBananaService.start(failing, photo, prompt);
+    boolean busyAfter = NanoBananaService.busy();
+    boolean jobAfter = store.job() != null;
+    boolean rejectedAtStart =
+        failing.calls == 1
+            && failing.busyAtCallback
+            && failing.jobReadAtCallback
+            && !failing.jobAtCallback;
+    boolean rolledBack = !started && !busyAfter && !jobAfter;
+    String trace =
+        before
+            + ", callbacks="
+            + failing.calls
+            + ", busyAtCallback="
+            + failing.busyAtCallback
+            + ", jobReadAtCallback="
+            + failing.jobReadAtCallback
+            + ", jobAtCallback="
+            + failing.jobAtCallback
+            + ", started="
+            + started
+            + ", busyAfter="
+            + busyAfter
+            + ", jobAfter="
+            + jobAfter;
+    if (rejectedAtStart && rolledBack) android.util.Log.i("LoupeNanoFixture", trace);
+    else android.util.Log.e("LoupeNanoFixture", trace);
+    TagDetailChecks.require(
+        rejectedAtStart, "startup rejection injected once with reserved service");
+    TagDetailChecks.require(rolledBack, "startup rejection rolls back reservation");
+    return trace;
   }
 
   private static void requireGenerationBlocked(NanoBananaStore store, Fake first, String checkpoint)
@@ -832,6 +895,7 @@ final class NanoBananaBackgroundChecks {
             && confirmation.performAction(
                 android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK),
         "explicit end confirmation starts cleanup");
+    await("end confirmation reaches cleanup worker", () -> network.deletes > 0);
     idle(test);
     TagDetailChecks.require(
         factory.store.job() == null
