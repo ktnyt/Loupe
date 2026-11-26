@@ -2,7 +2,9 @@ package jp.nano.rawgallery;
 
 import android.app.Dialog;
 import android.app.Instrumentation;
+import android.view.View;
 import android.widget.Button;
+import android.widget.TextView;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -14,27 +16,29 @@ import java.util.concurrent.atomic.AtomicReference;
 /** Uses actual selection controls and an export writer that never sends an intent. */
 final class ShareSelectionResultChecks {
   static void run(
-      Instrumentation t, MainActivity a, List<PhotoRepository.Photo> library, File fixtures)
+      Instrumentation t,
+      MainActivity a,
+      List<PhotoRepository.Photo> library,
+      File fixtures,
+      RankingFixture rankings)
       throws Exception {
     PhotoRepository.Photo first = library.get(4), second = library.get(5), single = library.get(6);
     List<Integer> burst = List.of(0, 1);
     List<PhotoRepository.Photo> photos = List.of(first, second, single);
-    List<String> ids = List.of(ArchiveStore.key(first), ArchiveStore.key(second));
-    PhotoRanking undecided = new PhotoRanking(ids, "B:");
-    PhotoRanking winner = undecided;
-    while (!winner.done()) winner = winner.choose(true);
-    PhotoRanking ranked = winner;
-    PhotoRepository.Photo best = ranked.best().contains(ids.get(0)) ? first : second;
+    String secondId = ArchiveStore.key(second);
+    PhotoRanking undecided = rankings.startBurst(List.of(ArchiveStore.key(first), secondId), "B:");
+    PhotoRanking ranked = undecided.choose(undecided.upper().equals(secondId));
+    PhotoRepository.Photo best = second;
     AtomicReference<PhotoRepository.Photo> attempted = new AtomicReference<>();
     File exportDir = new File(fixtures, "selection-export");
     try {
+      rankings.save(ranked);
       TagDetailChecks.ui(
           t,
           () -> {
             RankingResultChecks.set(a, "photos", photos);
             RankingResultChecks.set(a, "bundles", List.of(burst, List.of(2)));
             RankingResultChecks.set(a, "bestOnly", true);
-            ranks(a).put(burst, ranked);
             choose(a, first, second);
             RankingResultChecks.call(a, "gallery");
             Object presented = RankingResultChecks.get(a, "presentedSelection");
@@ -51,19 +55,61 @@ final class ShareSelectionResultChecks {
                       attempted.set(photo);
                       throw new IOException("Synthetic export stopped");
                     }));
-            choose(a, single);
-            RankingResultChecks.call(a, "updateSelection");
-            menu.continueButton.performClick();
+            continueSharing(menu);
           });
       ShareScreenChecks.worker(t, a);
       TagDetailChecks.ui(
           t,
           () -> {
             TagDetailChecks.require(
-                attempted.get() == best, "opened menu exports its frozen photos");
-            ((Dialog) RankingResultChecks.get(a, "shareDialog")).dismiss();
-            menu(a, List.of(single)).dismiss();
-            ranks(a).put(burst, undecided);
+                attempted.getAndSet(null) == best,
+                "current menu exports its exact reviewed winner");
+            returnToSelection(a);
+
+            ShareUi.Menu obsolete = menu(a, List.of(best));
+            choose(a, single);
+            RankingResultChecks.call(a, "updateSelection");
+            Object previousProgress = RankingResultChecks.get(a, "shareProgress");
+            continueSharing(obsolete);
+            TagDetailChecks.require(
+                dialog(a) == obsolete
+                    && !obsolete.isShowing()
+                    && RankingResultChecks.get(a, "shareProgress") == previousProgress,
+                "obsolete menu closes without opening another review or starting preparation");
+          });
+      ShareScreenChecks.worker(t, a);
+      TagDetailChecks.ui(
+          t,
+          () -> {
+            TagDetailChecks.require(attempted.get() == null, "obsolete menu never starts a writer");
+            TagDetailChecks.require(
+                Set.of(single.uri.toString()).equals(RankingResultChecks.get(a, "selectedPhotos")),
+                "obsolete menu preserves the current selection");
+            TextView notice =
+                ((View) RankingResultChecks.get(a, "root"))
+                    .findViewWithTag("selection-share-notice");
+            TagDetailChecks.require(
+                notice != null
+                    && notice.isShown()
+                    && notice.getText().toString().contains("もう一度「共有」を押して確認してください"),
+                "selection explains how to review the changed share");
+
+            ShareUi.Menu renewed = menu(a, List.of(single));
+            TagDetailChecks.require(!notice.isShown(), "manual review clears the prompt");
+            continueSharing(renewed);
+          });
+      ShareScreenChecks.worker(t, a);
+      TagDetailChecks.ui(
+          t,
+          () -> {
+            TagDetailChecks.require(
+                attempted.get() == single, "renewed menu exports its exact reviewed singleton");
+            returnToSelection(a);
+          });
+      rankings.save(undecided);
+      TagDetailChecks.ui(
+          t,
+          () -> {
             choose(a, first, second, single);
             RankingResultChecks.call(a, "gallery");
             share(a).performClick();
@@ -146,17 +192,28 @@ final class ShareSelectionResultChecks {
     for (PhotoRepository.Photo photo : photos) chosen.add(photo.uri.toString());
   }
 
-  @SuppressWarnings("unchecked")
-  private static Map<List<Integer>, PhotoRanking> ranks(MainActivity a) {
-    return (Map<List<Integer>, PhotoRanking>) RankingResultChecks.get(a, "rankCache");
-  }
-
   private static Button share(MainActivity a) {
     return (Button) RankingResultChecks.get(a, "selectionShare");
   }
 
   private static Dialog dialog(MainActivity a) {
     return (Dialog) RankingResultChecks.get(a, "shareDialog");
+  }
+
+  private static void continueSharing(ShareUi.Menu menu) {
+    TagDetailChecks.require(
+        menu.continueButton.isEnabled() && menu.continueButton.performClick(),
+        "continue uses the enabled share menu action");
+  }
+
+  private static void returnToSelection(MainActivity a) {
+    Dialog failure = dialog(a);
+    TagDetailChecks.require(
+        failure instanceof ShareUi.Failure && failure.isShowing(),
+        "synthetic writer failure returns to the selection");
+    Button back = TagDetailChecks.button(failure.getWindow().getDecorView(), "選択に戻る");
+    TagDetailChecks.require(
+        back != null && back.performClick(), "use the return to selection action");
   }
 
   private static ShareUi.Menu menu(MainActivity a, List<PhotoRepository.Photo> expected) {

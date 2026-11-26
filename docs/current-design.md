@@ -117,8 +117,9 @@ flowchart TD
 - 個別指定: 確定後の非1位写真を既存1位へ追加できる。残る順位グループを保持し、同率人数に応じて順位を再計算する。単独1位への置換も可能。確認・保存・失敗時の契約は[連写の同率1位指定](burst-co-winners.md)を参照。
 - 一括指定: 連写内の選択画面から明示選択した写真をまとめて1位へ追加する。共有設定とは独立し、確定済みの1位と下位グループ順を保持する。[契約](burst-bulk-winners.md)を参照。
 - 事後条件: 選択・同順位・一手戻しで次の履歴を作り、永続保存成功後に画面の順位状態を進める。保存失敗なら次の比較に進まない。同順位は1位・1位・3位のように表示する。
-- 実装: [PhotoRanking.java](../app/src/main/java/jp/nano/rawgallery/PhotoRanking.java) コンストラクタ・`choose/tie/undo/best/rankOf`、[MainActivity.java](../app/src/main/java/jp/nano/rawgallery/MainActivity.java) `rankingFor/openRanking/saveRanking/rankingCandidate`、[RankingStore.java](../app/src/main/java/jp/nano/rawgallery/RankingStore.java) `load/save`、`ComparisonLayout`。順位のキー生成・読込・commitはRankingStoreへ分離済み。
-- 検証: 順位100順列、再開・undo・不正入力、比較レイアウトの単体検査成功。RankingStoreの保存失敗の戻り値・既存キーとの互換性はホストテストで検査済み。Androidのディスク書込み失敗と実画面の操作は未検査。
+- 読取と保存: 同じ保存領域の確定済みsnapshotを共有し、読取は進行中の保存を待たない。初期読込中・失敗を順位なしと扱わない。保存は画面から独立した専用workerで行い、対象の保存値が表示時から変わった入力は再適用しない。保存失敗と補償失敗の扱いは[順位保存の契約](ranking-persistence.md)を参照。
+- 実装: [PhotoRanking.java](../app/src/main/java/jp/nano/rawgallery/PhotoRanking.java) の再構成と変換、[MainActivity.java](../app/src/main/java/jp/nano/rawgallery/MainActivity.java) の表示と操作、[RankingStore.java](../app/src/main/java/jp/nano/rawgallery/RankingStore.java) の`Snapshot`・`submitSingleBest/submitBurst`、[RankingBackend.java](../app/src/main/java/jp/nano/rawgallery/RankingBackend.java) の初期読込・保存・補償、`ComparisonLayout`。
+- 検証: 順位計算・既存キーと履歴の互換性、保存中の確定値読取、保存・補償失敗、競合はホスト検査の対象。Androidの実行結果、条件別の性能値と未確認範囲は[Issue #249](https://github.com/ktnyt/Loupe/issues/249)で追跡する。
 
 ## P3: 今回渡す写真を確定する
 
@@ -230,7 +231,7 @@ flowchart TD
 - `SharePreparation`: 固定済みの写真リストと共有形式を受け、今回の出力合計が512 MiB以下で全件完成したときだけ、順序付きファイル一覧とMIME型を返す。過去の共有コピーは24時間保持し、今回の合計に含めない。オリジナル取得・RAW内JPEG抽出・向き付与を行い、例外・中断・容量超過では今回分だけを削除して部分結果を返さない。オリジナルの一時取得は別途1枚512 MiB以下を必要とし、選択画面でもこの条件を確認する。既存キャッシュの期限整理と、オリジナル取得側のキャッシュ更新はロールバック対象ではない。詳細は[共有容量の契約](share-capacity-contract.md)を参照する。
 - 共有先選択、URIへの読み取り権限、Intent構成、共有先の対応確認・起動、画面メッセージはMainActivityに残す。共有準備には外部アプリ起動や画面更新を持たせない。ファイル生成の依存だけを差し替えて、途中失敗を検査できる境界を設ける。
 - `RankingStore`: 写真IDをソートし、従来どおり`v1-`とID列のSHA-256で保存キーを生成する。SharedPreferences名`rankings`、履歴文字列、同期`commit()`を維持する。読み込みは同じ集合なら同じ履歴を再現し、不正な履歴は黙って初期化しない。保存はcommitの成否を返し、失敗時に画面の比較状態を進めない。
-- 順位読み込みは比較開始とベストショット判定の双方を同じ保存責務へ寄せる。写真からIDへの対応付けと画面更新はMainActivityに残す。SharedPreferencesのcommit失敗時のメモリ上の挙動を含め、従来のAndroid保存方式を変えない。
+- 順位読み込みは比較開始とベストショット判定の双方を同じ保存責務へ寄せる。写真からIDへの対応付けと画面更新はMainActivityに残す。保存形式は維持し、SharedPreferencesが先に更新する未確定のメモリ値は画面に公開しない。失敗した変更の補償と後続保存の制限は[順位保存の契約](ranking-persistence.md)に従う。
 - 検証予定: 共有の全件成功・途中失敗・容量・中断、既存キーと履歴の互換性・保存失敗のテスト。既存回帰テスト、アプリのビルドとlint。実機・外部アプリの検証結果とは分ける。
 
 ### 文書整理時の検証
