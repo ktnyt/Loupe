@@ -866,9 +866,7 @@ final class AmazonRetirementUpgradeChecks {
       test.runOnMainSync(main::finish);
     }
     return "PASS explicit E2 consent and fail-closed writes; retention chooser and recreation;"
-        + (absent
-            ? " synthetic E2 unknown state and confirmed stop; paired capture probe, pixels unchecked;"
-            : "")
+        + (absent ? " synthetic E2 unknown state and confirmed stop;" : "")
         + " conditional archive share notice, missing-original recovery, copy rollback and"
         + " preserved selection";
   }
@@ -933,14 +931,9 @@ final class AmazonRetirementUpgradeChecks {
             return true;
           });
       try {
-        int captureScroll;
-        try (var probe =
-            new CleanupConsentCaptureChecks(test, screen, scroll, status, stop, suffix)) {
-          probe.observe();
-          captureScroll =
-              awaitCleanupUnknownFrame(test, scroll, status, stop, unknownLabel, stopLabel);
-          probe.capture(captureScroll);
-        }
+        int captureScroll =
+            awaitCleanupUnknownFrame(test, scroll, status, stop, unknownLabel, stopLabel);
+        SyncControlChecks.capture(test, "amazon-retirement-consent-unknown" + suffix);
         AlbumTagEntryChecks.main(
             test,
             () -> {
