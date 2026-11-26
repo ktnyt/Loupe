@@ -1074,9 +1074,9 @@ final class AmazonRetirementUpgradeChecks {
                 .put("consentUnknown", E2Cleanup.consentUnknown(screen));
             return true;
           });
-      Files.writeString(
+      Files.write(
           new File(test.getTargetContext().getCacheDir(), name + ".json").toPath(),
-          diagnostics.toString(2));
+          diagnostics.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));
     } catch (Exception | AssertionError diagnosticFailure) {
       failure.addSuppressed(diagnosticFailure);
     }
