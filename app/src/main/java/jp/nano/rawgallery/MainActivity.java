@@ -1025,9 +1025,9 @@ public final class MainActivity extends DiagnosticActivity {
     refreshBurstRanks =
         () -> {
           update.run();
-          String title = sortLabel();
-          sort.setText(title);
-          sort.setContentDescription(title);
+          String currentSortLabel = sortLabel();
+          sort.setText(currentSortLabel);
+          sort.setContentDescription(currentSortLabel);
           boolean pending = rankingStore.snapshot().phase() == RankingStore.Phase.PENDING;
           sort.setEnabled(!pending);
           best.setEnabled(!pending);
@@ -2723,7 +2723,7 @@ public final class MainActivity extends DiagnosticActivity {
         });
     if (fromRanking && !ranking.done()) {
       boolean upper = rankingMembers.get(ranking.upper()) == position;
-      viewer.choose(() -> saveRanking(model -> model.choose(upper)));
+      viewer.choose(() -> saveRanking(candidateRank -> candidateRank.choose(upper)));
       rankingActions.add(viewer.footer.getChildAt(0));
       rankingSaveIndicator(viewer.footer);
     }
