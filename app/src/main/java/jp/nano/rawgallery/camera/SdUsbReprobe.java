@@ -1,18 +1,48 @@
 package jp.nano.rawgallery.camera;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.locks.Lock;
 import java.util.function.BooleanSupplier;
 import java.util.function.LongSupplier;
-import java.util.function.Predicate;
-import java.util.function.Supplier;
 
 /** Only the tested dual-slot reader is eligible for this USB interface handoff. */
 final class SdUsbReprobe {
   static final int VENDOR = 8644;
   static final int PRODUCT = 45152;
+  private static final String FINGERPRINT =
+      "Xiaomi/dada_global/dada:16/BP2A.250605.031.A3/OS3.0.304.0.WOCMIXM:user/release-keys";
+
+  static boolean supportedPhone(String device, int sdk, String fingerprint) {
+    return "dada".equals(device) && sdk == 36 && FINGERPRINT.equals(fingerprint);
+  }
+
+  record VisibleVolume(
+      String uuid, String state, boolean primary, boolean emulated, boolean removable) {}
+
+  static List<Volume> portableLayout(List<VisibleVolume> visible) {
+    List<Volume> portable = new ArrayList<>();
+    Set<String> uuids = new HashSet<>();
+    boolean primary = false;
+    for (VisibleVolume volume : visible) {
+      if (volume.primary && volume.emulated && !volume.removable && volume.uuid == null) {
+        if (primary || !"mounted".equals(volume.state)) return null;
+        primary = true;
+      } else if (volume.primary
+          || volume.emulated
+          || !volume.removable
+          || volume.uuid == null
+          || !uuids.add(volume.uuid)
+          || uuids.size() > 2) {
+        return null;
+      } else {
+        portable.add(new Volume(volume.uuid, volume.state));
+      }
+    }
+    return primary ? portable : null;
+  }
 
   enum State {
     UNSUPPORTED,
@@ -78,14 +108,6 @@ final class SdUsbReprobe {
       return expected.equals(actual);
     }
 
-    String source() {
-      return volumes.stream()
-          .map(Volume::uuid)
-          .filter(uuid -> uuid != null && !uuid.equals(destination))
-          .findFirst()
-          .orElse(null);
-    }
-
     boolean sameConnection(Snapshot current) {
       return reader != null
           && reader.equals(current.reader)
@@ -134,9 +156,9 @@ final class SdUsbReprobe {
   }
 
   interface Observer {
-    void beforeClaim();
-
     void waiting();
+
+    void restored(Snapshot current);
   }
 
   static State run(
@@ -164,7 +186,6 @@ final class SdUsbReprobe {
         current = platform.snapshot();
         if (!initial.sameAdmission(current)) return State.CHANGED;
         if (!current.permitted()) return State.DENIED;
-        observer.beforeClaim();
         if (cancelled.getAsBoolean()) return State.CANCELLED;
         if (!ejection.confirmed(current, now.getAsLong())) return State.EJECT_REQUIRED;
         if (!claimAndRelease(usb)) return State.FAILED;
@@ -178,12 +199,12 @@ final class SdUsbReprobe {
         if (platform.destinationWritable(current.destination)) {
           String source = readableSource(current);
           if (source != null) {
-            if (!source.equals(initial.source())) return State.SOURCE_REQUIRED;
             boolean reachable = platform.sourceReachable(source, current.destination, cancelled);
             if (cancelled.getAsBoolean()) return State.CANCELLED;
             Snapshot verified = platform.snapshot();
             if (!current.sameAdmission(verified)) return State.CHANGED;
             if (!verified.permitted()) return State.DENIED;
+            observer.restored(verified);
             return reachable ? State.READY : State.SOURCE_REQUIRED;
           }
         }
@@ -223,61 +244,6 @@ final class SdUsbReprobe {
       released = usb.release();
     }
     return claimed && released;
-  }
-
-  /** Ignores delayed mount notifications from our handoff, even after the USB handle closed. */
-  static final class MountSuppression {
-    private Object owner;
-    private Snapshot handoff;
-    private String restoredSource;
-
-    synchronized void begin(Object attempt, Snapshot snapshot) {
-      owner = attempt;
-      handoff = snapshot;
-      restoredSource = null;
-    }
-
-    synchronized void finish(Object attempt, Snapshot restored) {
-      if (owner != attempt) return;
-      owner = null;
-      if (restored != null && handoff.sameConnection(restored)) {
-        restoredSource = readableSource(restored);
-      }
-    }
-
-    synchronized boolean suppresses(Predicate<Reader> stillAttached) {
-      if (owner != null) return true;
-      if (handoff == null) return false;
-      try {
-        if (stillAttached.test(handoff.reader)) return true;
-      } catch (RuntimeException unknown) {
-        return true;
-      }
-      clear();
-      return false;
-    }
-
-    synchronized void sourceUnmounted(
-        String uuid, Supplier<Snapshot> observe, Predicate<String> targetWritable) {
-      if (owner != null || restoredSource == null || !restoredSource.equals(uuid)) return;
-      Snapshot current = observe.get();
-      if (handoff.sameConnection(current)
-          && targetWritable.test(current.destination)
-          && current.volumes.stream()
-              .filter(volume -> uuid.equals(volume.uuid))
-              .allMatch(
-                  volume ->
-                      "unmounted".equals(volume.state)
-                          || "removed".equals(volume.state)
-                          || "bad_removal".equals(volume.state))) {
-        clear();
-      }
-    }
-
-    private void clear() {
-      handoff = null;
-      restoredSource = null;
-    }
   }
 
   private SdUsbReprobe() {}

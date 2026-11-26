@@ -19,7 +19,7 @@ import jp.nano.rawgallery.camera.SdUsbReprobeController;
 final class CameraSdUsbReprobeChecks {
   static final String MODE = "camera-pilot-sd-usb-reprobe";
 
-  private record Status(String name, String message, boolean busy, boolean chooseSource) {}
+  private record Status(String name, String message, boolean busy) {}
 
   static String run(Instrumentation test, int width, float font) throws Exception {
     var app = test.getTargetContext();
@@ -69,21 +69,19 @@ final class CameraSdUsbReprobeChecks {
       capture(test, directory, width, font, "unsupported");
       for (Status state :
           List.of(
-              new Status("busy", "処理中は再認識できません。完了してからもう一度お試しください。", false, false),
-              new Status("eject-needed", "Androidでカードの取り出しが完了していることを確認してください。", false, false),
-              new Status("permit", "USBの使用許可を確認しています。", true, false),
-              new Status("permission-denied", "USBの使用許可を確認できません。もう一度お試しください。", false, false),
-              new Status("redetecting", "SDカードを再認識しています…", true, false),
-              new Status("waiting", "Androidがカードを認識するのを待っています…", true, false),
-              new Status(
-                  "timeout", "カードを再認識できませんでした。Androidで安全に取り出してから、リーダーを挿し直してください。", false, false),
-              new Status("choose-source", "カードを認識しました。取り込み元のフォルダを選んでください。", false, true),
-              new Status("ready", "元カードと保存先を確認しました。SDカードから取り込めます。", false, false))) {
+              new Status("busy", "処理中は再認識できません。完了してからもう一度お試しください。", false),
+              new Status("eject-needed", "Androidでカードの取り出しが完了していることを確認してください。", false),
+              new Status("permit", "USBの使用許可を確認しています。", true),
+              new Status("permission-denied", "USBの使用許可を確認できません。もう一度お試しください。", false),
+              new Status("redetecting", "SDカードを再認識しています…", true),
+              new Status("waiting", "Androidがカードを認識するのを待っています…", true),
+              new Status("timeout", "カードを再認識できませんでした。Androidで安全に取り出してから、リーダーを挿し直してください。", false),
+              new Status("choose-source", "カードを認識しました。取り込み元のフォルダを選んでください。", false),
+              new Status("ready", "元カードと保存先を確認しました。SDカードから取り込めます。", false))) {
         test.runOnMainSync(
             () -> {
               activity.renderSdReprobe(
-                  new SdUsbReprobeController.Display(
-                      state.message, state.busy, state.chooseSource));
+                  new SdUsbReprobeController.Display(state.message, state.busy));
               View root = activity.getWindow().getDecorView();
               TextView status = root.findViewWithTag("sd-reprobe-status");
               require(state.message.contentEquals(status.getText()), "State message " + state.name);
@@ -94,15 +92,12 @@ final class CameraSdUsbReprobeChecks {
               require(
                   root.findViewWithTag("sd-reprobe-start").isEnabled() != state.busy,
                   "Button admission follows active status");
-              Button start = root.findViewWithTag("sd-import-start");
-              require(
-                  !state.chooseSource || "取り込み元を選ぶ".contentEquals(start.getText()),
-                  "Fresh source selection is offered");
               bringIntoView(status);
               require(!progress.getActive(), "Rendering did not start an import");
             });
         capture(test, directory, width, font, state.name);
       }
+      jp.nano.rawgallery.camera.SdUsbReprobeFlowChecks.run(test, activity);
     } finally {
       test.runOnMainSync(activity::finish);
       test.waitForIdleSync();
@@ -111,7 +106,7 @@ final class CameraSdUsbReprobeChecks {
         + width
         + "dp/"
         + font
-        + ": actual unsupported action and synthetic status rendering. "
+        + ": actual unsupported action, synthetic status rendering and controller lifecycle. "
         + directory.getAbsolutePath();
   }
 

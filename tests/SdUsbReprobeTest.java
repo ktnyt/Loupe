@@ -23,7 +23,7 @@ public final class SdUsbReprobeTest {
   public static void main(String[] args) throws Exception {
     admission();
     runPaths();
-    ownMounts();
+    topology();
     System.out.println("SdUsbReprobeTest passed");
   }
 
@@ -96,8 +96,8 @@ public final class SdUsbReprobeTest {
     require(
         run(EJECTION, fake, new ReentrantLock(), () -> false, 0) == State.READY
             && fake.calls.equals(
-                List.of("open", "suppress", "claim", "release", "close", "waiting", "source")),
-        "Recheck, suppress mount events before the USB step, release, close, then verify both cards");
+                List.of("open", "claim", "release", "close", "waiting", "source", "restored")),
+        "Recheck the admitted volumes, release and close, then verify both cards");
 
     fake = new Fake();
     fake.beforeClaim = MOUNTED;
@@ -125,7 +125,7 @@ public final class SdUsbReprobeTest {
       fake.failure = failure;
       require(
           run(EJECTION, fake, new ReentrantLock(), () -> false, 0) == State.FAILED
-              && fake.calls.equals(List.of("open", "suppress", "claim", "release", "close")),
+              && fake.calls.equals(List.of("open", "claim", "release", "close")),
           "Always release and close when claim was attempted: " + failure);
     }
     fake = new Fake();
@@ -140,8 +140,7 @@ public final class SdUsbReprobeTest {
     fake.failure = "cancel_at_claim";
     require(
         run(EJECTION, fake, new ReentrantLock(), cancel::get, 0) == State.CANCELLED
-            && fake.calls.equals(
-                List.of("open", "suppress", "claim", "release", "close", "waiting")),
+            && fake.calls.equals(List.of("open", "claim", "release", "close", "waiting")),
         "Lifecycle cancellation during claim still releases and closes");
 
     fake = new Fake();
@@ -163,9 +162,9 @@ public final class SdUsbReprobeTest {
             List.of(new Volume(TARGET, "mounted"), new Volume("2345-abcd", "mounted")),
             true);
     require(
-        run(EJECTION, fake, new ReentrantLock(), () -> false, 0) == State.SOURCE_REQUIRED
-            && !fake.calls.contains("source"),
-        "A new source is not reused automatically");
+        run(EJECTION, fake, new ReentrantLock(), () -> false, 0) == State.READY
+            && fake.calls.contains("source"),
+        "A changed source can be ready only after checking the current registration");
 
     var busy = new ReentrantLock();
     var acquired = new CountDownLatch(1);
@@ -196,53 +195,44 @@ public final class SdUsbReprobeTest {
     }
   }
 
-  private static void ownMounts() {
-    var suppress = new SdUsbReprobe.MountSuppression();
-    Object first = new Object();
-    Object second = new Object();
-    suppress.begin(first, EJECTED);
-    require(suppress.suppresses(reader -> false), "In-flight operation suppresses any mount");
-    suppress.begin(second, EJECTED);
-    suppress.finish(first, MOUNTED);
+  private static void topology() {
+    String tested =
+        "Xiaomi/dada_global/dada:16/BP2A.250605.031.A3/OS3.0.304.0.WOCMIXM:user/release-keys";
     require(
-        suppress.suppresses(reader -> false), "Old completion cannot release current ownership");
-    suppress.finish(second, MOUNTED);
-    require(suppress.suppresses(READER::equals), "Own delayed mount is ignored after close");
-    suppress.sourceUnmounted(SOURCE, () -> MOUNTED, target -> true);
+        SdUsbReprobe.supportedPhone("dada", 36, tested),
+        "Only the tested stock configuration is allowed");
     require(
-        suppress.suppresses(READER::equals),
-        "Delayed unmount cannot clear a currently mounted source");
-    suppress.sourceUnmounted(SOURCE, () -> snapshot("mounted", "unmounted"), target -> false);
+        !SdUsbReprobe.supportedPhone("other", 36, tested)
+            && !SdUsbReprobe.supportedPhone("dada", 35, tested)
+            && !SdUsbReprobe.supportedPhone("dada", 36, tested.replace("304", "305")),
+        "A different phone, Android version or release is rejected");
+    var primary = new SdUsbReprobe.VisibleVolume(null, "mounted", true, true, false);
+    var target = new SdUsbReprobe.VisibleVolume(TARGET, "mounted", false, false, true);
+    var source = new SdUsbReprobe.VisibleVolume(SOURCE, "mounted", false, false, true);
     require(
-        suppress.suppresses(READER::equals),
-        "Source unmount must leave the same destination usable");
-
-    for (String removed : List.of("unmounted", "removed", "bad_removal")) {
-      suppress.begin(second, EJECTED);
-      suppress.finish(second, MOUNTED);
-      suppress.sourceUnmounted(SOURCE, () -> snapshot("mounted", removed), target -> true);
+        SdUsbReprobe.portableLayout(List.of(primary, target, source)).size() == 2,
+        "One internal primary and two identifiable portable volumes");
+    require(
+        SdUsbReprobe.portableLayout(List.of(primary, target)).size() == 1,
+        "The source may not yet be visible on the tested hardware");
+    for (var refused :
+        List.of(
+            new SdUsbReprobe.VisibleVolume("2233-4455", "mounted", false, true, false),
+            new SdUsbReprobe.VisibleVolume(null, "mounted", false, false, true),
+            new SdUsbReprobe.VisibleVolume("2233-4455", "mounted", false, false, false),
+            primary,
+            target)) {
       require(
-          !suppress.suppresses(READER::equals),
-          "Later real source removal re-enables automatic import");
+          SdUsbReprobe.portableLayout(List.of(primary, target, refused)) == null,
+          "Unexpected layout cannot authorize a handoff");
     }
-    suppress.begin(second, EJECTED);
-    suppress.finish(second, MOUNTED);
-    suppress.sourceUnmounted(
-        SOURCE,
-        () -> new Snapshot(READER, TARGET, List.of(new Volume(TARGET, "mounted")), true),
-        target -> true);
     require(
-        !suppress.suppresses(READER::equals),
-        "An observed eject can remove the old UUID from the inventory");
-
-    suppress.begin(second, EJECTED);
-    suppress.finish(second, null);
-    suppress.sourceUnmounted(SOURCE, () -> snapshot("mounted", "unmounted"), target -> true);
+        SdUsbReprobe.portableLayout(List.of(target, source)) == null,
+        "Missing internal primary is uncertain");
+    var extra = new SdUsbReprobe.VisibleVolume("2233-4455", "mounted", false, false, true);
     require(
-        suppress.suppresses(READER::equals),
-        "A failed restoration never treats late events as a new copy");
-    require(
-        !suppress.suppresses(reader -> false), "A proven physical USB detach ends old suppression");
+        SdUsbReprobe.portableLayout(List.of(primary, target, source, extra)) == null,
+        "An extra portable volume is not an allowed topology");
   }
 
   private static State run(
@@ -258,13 +248,13 @@ public final class SdUsbReprobeTest {
         timeout,
         new SdUsbReprobe.Observer() {
           @Override
-          public void beforeClaim() {
-            fake.calls.add("suppress");
+          public void waiting() {
+            fake.calls.add("waiting");
           }
 
           @Override
-          public void waiting() {
-            fake.calls.add("waiting");
+          public void restored(Snapshot current) {
+            fake.calls.add("restored");
           }
         });
   }
