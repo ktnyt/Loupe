@@ -4,10 +4,12 @@ import android.app.*;
 import android.content.*;
 import android.database.Cursor;
 import android.graphics.Bitmap;
+import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Build;
 import android.os.SystemClock;
 import android.view.KeyEvent;
+import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import java.io.*;
 import java.lang.reflect.Field;
@@ -16,6 +18,7 @@ import java.nio.file.Files;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
@@ -355,15 +358,60 @@ final class ShareHistoryHandoffChecks {
   private static void captureChooser(Instrumentation test, MainActivity activity) throws Exception {
     File dir = new File(activity.getCacheDir(), "consistency-checks");
     check(dir.isDirectory() || dir.mkdirs(), "synthetic chooser capture directory available");
-    Bitmap screenshot = test.getUiAutomation().takeScreenshot();
+    UiAutomation automation = test.getUiAutomation();
+    long deadline = SystemClock.uptimeMillis() + 15000;
+    String chooserPackage;
+    while ((chooserPackage = visibleChooserTarget(automation)) == null) {
+      long remaining = deadline - SystemClock.uptimeMillis();
+      check(remaining > 0, "visible synthetic chooser target required for capture");
+      try {
+        AccessibilityEvent event =
+            automation.executeAndWaitForEvent(() -> {}, change -> true, Math.min(250, remaining));
+        event.recycle();
+      } catch (TimeoutException ignored) {
+        // Recheck the label even when no new accessibility event is delivered.
+      }
+    }
+    long remaining = deadline - SystemClock.uptimeMillis();
+    check(remaining > 0, "synthetic chooser capture deadline");
+    try {
+      automation.waitForIdle(100, remaining);
+    } catch (TimeoutException ignored) {
+      throw new AssertionError("synthetic chooser did not settle for capture");
+    }
+    check(
+        chooserPackage.equals(visibleChooserTarget(automation)),
+        "synthetic chooser target still visible before capture");
+    Bitmap screenshot = automation.takeScreenshot();
     check(screenshot != null, "focused synthetic chooser screenshot available");
-    try (FileOutputStream out = new FileOutputStream(new File(dir, "share-handoff-chooser.png"))) {
+    try {
       check(
-          screenshot.compress(Bitmap.CompressFormat.PNG, 100, out),
-          "synthetic chooser screenshot saved");
+          chooserPackage.equals(visibleChooserTarget(automation)),
+          "synthetic chooser target still visible after capture");
+      try (FileOutputStream out =
+          new FileOutputStream(new File(dir, "share-handoff-chooser.png"))) {
+        check(
+            screenshot.compress(Bitmap.CompressFormat.PNG, 100, out),
+            "synthetic chooser screenshot saved");
+      }
     } finally {
       screenshot.recycle();
     }
+  }
+
+  private static String visibleChooserTarget(UiAutomation automation) {
+    AccessibilityNodeInfo root = automation.getRootInActiveWindow();
+    if (root == null || root.getPackageName() == null) return null;
+    String owner = root.getPackageName().toString();
+    if (owner.startsWith("jp.nano.rawgallery")) return null;
+    AccessibilityNodeInfo target = find(root, LABEL);
+    if (target == null
+        || !target.isVisibleToUser()
+        || !android.text.TextUtils.equals(owner, target.getPackageName())) return null;
+    Rect rootBounds = new Rect(), targetBounds = new Rect();
+    root.getBoundsInScreen(rootBounds);
+    target.getBoundsInScreen(targetBounds);
+    return !targetBounds.isEmpty() && rootBounds.contains(targetBounds) ? owner : null;
   }
 
   private static void awaitHistory(
