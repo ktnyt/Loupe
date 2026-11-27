@@ -81,7 +81,6 @@ run_instrumentation() {
   if [[ -s "$stderr_file" ]]; then cat "$stderr_file" >&2; fi
   if (( status != 0 )); then
     printf 'Instrumentation adb status: %s\n' "$status" >&2
-    exit "$status"
   fi
   case "$label" in
     camera-history-migration) expected='INSTRUMENTATION_RESULT: stream=PASS CameraSync history migration'; exact=1 ;;
@@ -90,7 +89,7 @@ run_instrumentation() {
     camera-ledger-teardown) expected='INSTRUMENTATION_RESULT: stream=PASS camera ledger teardown:' ;;
     *) expected='INSTRUMENTATION_RESULT: stream=PASS ' ;;
   esac
-  if ! awk -v expected="$expected" -v exact="$exact" '
+  if (( status != 0 )) || ! awk -v expected="$expected" -v exact="$exact" '
     { if (finished && $0 !~ /^[[:space:]]*$/) bad = 1 }
     /^INSTRUMENTATION_CODE:/ {
       codes++; if (streams != 1 || $0 != "INSTRUMENTATION_CODE: -1") bad = 1
@@ -100,6 +99,8 @@ run_instrumentation() {
       streams++; if (codes || index($0, expected) != 1 || (exact && $0 != expected)) bad = 1
     }
     /^INSTRUMENTATION_(FAILED|ABORTED):/ { bad = 1 }
+    /^INSTRUMENTATION_STATUS_CODE:[[:blank:]]*-[0-9]+[[:space:]]*$/ { bad = 1 }
+    /^INSTRUMENTATION_STATUS:[[:blank:]]*Error=/ { bad = 1 }
     /^INSTRUMENTATION_RESULT: (shortMsg|longMsg)=/ { bad = 1 }
     END { exit !(codes == 1 && streams == 1 && !bad) }
   ' <<< "$result"; then
@@ -116,6 +117,7 @@ run_instrumentation() {
             "$label" == 'tag-confidence (confidence_rebuild_delay_ms=12000)' ]]; then
       "$adb" -s "$serial" logcat -d -s LoupeConfidenceGate:I '*:S' || true
     fi
+    if (( status != 0 )); then exit "$status"; fi
     echo "$label did not report PASS." >&2
     exit 1
   fi
