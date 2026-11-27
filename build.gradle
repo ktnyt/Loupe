@@ -36,35 +36,14 @@ subprojects {
     }
 }
 
-def changedSourcesSince = { revision ->
-    providers.exec {
-        workingDir rootDir
-        commandLine 'git', 'diff', '--name-only', '-z', '--diff-filter=ACMRT', revision,
-                '--', 'app/src', 'raw-experiment/src', 'tests'
-    }.standardOutput.asText.map { it.tokenize('\u0000') }
-}
-
-// The fixed base keeps committed changes in scope after main advances. The incoming
-// base also detects a change that restores an already formatted file to its old bytes.
-def formatBase = 'bd20e8a31c39849cd10e6aa73f70764866aa83c4'
-def incomingBase = providers.gradleProperty('formatChangeBase').orElse('HEAD').flatMap { revision ->
-    providers.exec {
-        workingDir rootDir
-        commandLine 'git', 'rev-parse', '--verify', '--end-of-options', "${revision}^{commit}"
-    }.standardOutput.asText.map { it.trim() }
-}
-def changedSources = changedSourcesSince(formatBase).zip(incomingBase.flatMap(changedSourcesSince)) {
-    baselinePaths, incomingPaths -> (baselinePaths + incomingPaths).unique()
-}
-
 spotless {
     lineEndings = com.diffplug.spotless.LineEnding.UNIX
     java {
-        target changedSources.map { paths -> paths.findAll { it.endsWith('.java') } }
+        target 'app/src/**/*.java', 'raw-experiment/src/**/*.java', 'tests/**/*.java'
         googleJavaFormat('1.28.0')
     }
     kotlin {
-        target changedSources.map { paths -> paths.findAll { it.endsWith('.kt') } }
+        target 'app/src/**/*.kt', 'raw-experiment/src/**/*.kt', 'tests/**/*.kt'
         ktlint('1.8.0')
     }
 }
