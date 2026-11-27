@@ -119,8 +119,8 @@ final class IndexApplyRaceChecks {
                 }
               });
       check(entered.await(5, TimeUnit.SECONDS), "scan blocker entered");
-      RaceState[] beforeRelease = new RaceState[2];
-      RaceState afterDrain = null;
+      RaceState[] observed = new RaceState[3];
+      int[] viewerGeneration = new int[1];
       try {
         TagDetailChecks.ui(
             test,
@@ -140,7 +140,7 @@ final class IndexApplyRaceChecks {
                         Collections.singletonList(new ArrayList<>(Collections.singletonList(0)))));
                 call(a, "gallery");
                 int listGeneration = (int) get(a, "generation");
-                beforeRelease[0] = traceState(a, photo);
+                observed[0] = traceState(a, photo);
                 check(
                     hasIntendedPhoto(a, photo) && !(boolean) get(a, "detail"),
                     "intended photo in the synthetic gallery");
@@ -151,30 +151,46 @@ final class IndexApplyRaceChecks {
                 Method show = MainActivity.class.getDeclaredMethod("showPhoto", int.class);
                 show.setAccessible(true);
                 show.invoke(a, 0);
-                beforeRelease[1] = traceState(a, photo);
+                int openedGeneration = (int) get(a, "generation");
+                observed[1] = traceState(a, photo);
                 check(
                     hasIntendedPhoto(a, photo)
                         && (boolean) get(a, "detail")
                         && (int) get(a, "index") == 0
-                        && (int) get(a, "generation") == listGeneration + 1,
+                        && openedGeneration == listGeneration + 1,
                     "intended viewer generation before releasing scans");
+                viewerGeneration[0] = openedGeneration;
               } catch (Exception e) {
                 throw new RuntimeException(e);
               }
             });
         release.countDown();
         drain(test, a);
-        try {
-          check((boolean) get(a, "pendingIndexUpdate"), "discarded result retains pending update");
-        } finally {
-          afterDrain = traceState(a, photo);
-        }
+        TagDetailChecks.ui(
+            test,
+            () -> {
+              try {
+                check(
+                    (boolean) get(a, "pendingIndexUpdate"),
+                    "discarded result retains pending update");
+                check(
+                    hasIntendedPhoto(a, photo)
+                        && (boolean) get(a, "detail")
+                        && (int) get(a, "index") == 0
+                        && (int) get(a, "generation") == viewerGeneration[0],
+                    "discarded result preserves the intended viewer");
+              } catch (Exception e) {
+                throw new RuntimeException(e);
+              } finally {
+                observed[2] = traceState(a, photo);
+              }
+            });
       } finally {
         // Publish only after the blocker is released, including if either precondition fails.
         release.countDown();
-        reportState(test, "gallery_seeded", beforeRelease[0]);
-        reportState(test, "viewer_before_release", beforeRelease[1]);
-        reportState(test, "scan_drained", afterDrain);
+        reportState(test, "gallery_seeded", observed[0]);
+        reportState(test, "viewer_before_release", observed[1]);
+        reportState(test, "scan_drained", observed[2]);
       }
       test.runOnMainSync(a::onBackPressed);
       drain(test, a);
