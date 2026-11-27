@@ -339,8 +339,11 @@ final class GenerationIndicator implements Application.ActivityLifecycleCallback
   }
 
   public void onActivityResumed(Activity a) {
-    resumed = a;
-    a.getWindow().getDecorView().getViewTreeObserver().addOnGlobalLayoutListener(layout);
+    if (resumed != a) {
+      if (resumed != null) onActivityPaused(resumed);
+      resumed = a;
+      a.getWindow().getDecorView().getViewTreeObserver().addOnGlobalLayoutListener(layout);
+    }
     recover();
     refresh();
   }
