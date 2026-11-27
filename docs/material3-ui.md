@@ -44,7 +44,7 @@ Modal window decor includes the full-screen scrim. Measure `design_bottom_sheet`
 
 ## Verified migration evidence
 
-See [physical-device captures and validation limits](design/material3/README.md) for #92. The user explicitly omitted spoken-output/TalkBack validation for this migration; programmatic native accessibility checks are separate evidence. Existing cloud-badge pixel validation remains tracked in #80.
+See [physical-device captures and validation limits](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/material3/README.md) for #92. The user explicitly omitted spoken-output/TalkBack validation for this migration; programmatic native accessibility checks are separate evidence. Existing cloud-badge pixel validation remains tracked in #80.
 
 ## Expressive photo workflow (#112)
 

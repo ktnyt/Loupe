@@ -6,4 +6,4 @@
 
 過去のCNT校正・ルック研究の資料と検証画像は履歴として保持する。アプリに同じ機能があることや、現在のAndroid動作を確認した証拠には用いない。
 
-目的・削除範囲・保全契約は [issue #119](https://github.com/ktnyt/Loupe/issues/119)、検証時の画像と限界は [検証記録](design/issue119/README.md) を参照する。
+目的・削除範囲・保全契約は [issue #119](https://github.com/ktnyt/Loupe/issues/119)、検証時の画像と限界は [検証記録](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/issue119/README.md) を参照する。
