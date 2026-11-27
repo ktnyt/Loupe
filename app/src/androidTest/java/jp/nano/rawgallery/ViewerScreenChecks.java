@@ -236,18 +236,26 @@ final class ViewerScreenChecks {
                 + tap[1]
                 + " zoomed="
                 + image.isZoomed();
-      } catch (RuntimeException | AssertionError ignored) {
+      } catch (Throwable ignored) {
         observationError = true;
       }
     }
 
     void beforeInjection(int slot, long scheduled) {
-      injectedEvent[slot] = scheduled;
-      injectionStart[slot] = SystemClock.uptimeMillis();
+      try {
+        injectedEvent[slot] = scheduled;
+        injectionStart[slot] = SystemClock.uptimeMillis();
+      } catch (Throwable ignored) {
+        observationError = true;
+      }
     }
 
     void afterInjection(int slot) {
-      injectionEnd[slot] = SystemClock.uptimeMillis();
+      try {
+        injectionEnd[slot] = SystemClock.uptimeMillis();
+      } catch (Throwable ignored) {
+        observationError = true;
+      }
     }
 
     @Override
@@ -270,7 +278,7 @@ final class ViewerScreenChecks {
             touches++;
           }
         }
-      } catch (RuntimeException | AssertionError ignored) {
+      } catch (Throwable ignored) {
         observationError = true;
       }
       return false;
@@ -307,7 +315,7 @@ final class ViewerScreenChecks {
           display = "missing";
         }
         generation = (int) RankingResultChecks.get(activity, "generation");
-      } catch (RuntimeException | AssertionError ignored) {
+      } catch (Throwable ignored) {
         resultError = true;
       }
       resultState =
@@ -334,10 +342,13 @@ final class ViewerScreenChecks {
     void sampleAndDetach(MainActivity activity) {
       try {
         sampleResult(activity);
+      } catch (Throwable ignored) {
+        // Even result formatting must not replace the original assertion.
+        resultError = true;
       } finally {
         try {
           if (observed != null) observed.setOnTouchListener(null);
-        } catch (RuntimeException | AssertionError ignored) {
+        } catch (Throwable ignored) {
           detachError = true;
         }
       }
@@ -345,12 +356,12 @@ final class ViewerScreenChecks {
 
     void finish(Instrumentation t, MainActivity activity) {
       // Injection failure can bypass the normal assertion and its main-thread cleanup.
-      if (resultState.equals("unavailable")) {
-        try {
+      try {
+        if (resultState.equals("unavailable") && !resultError) {
           TagDetailChecks.ui(t, () -> sampleAndDetach(activity));
-        } catch (RuntimeException | AssertionError ignored) {
-          detachError = true;
         }
+      } catch (Throwable ignored) {
+        detachError = true;
       }
       try {
         Log.i(TAG, "target error=" + observationError + " " + targetState);
@@ -396,7 +407,7 @@ final class ViewerScreenChecks {
                 + overflow
                 + " "
                 + resultState);
-      } catch (RuntimeException | AssertionError ignored) {
+      } catch (Throwable ignored) {
         // Diagnostic output must preserve the gesture assertion or injection failure.
       }
     }
