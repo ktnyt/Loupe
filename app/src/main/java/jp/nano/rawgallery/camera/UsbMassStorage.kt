@@ -13,8 +13,14 @@ import java.nio.ByteOrder
 /** LBA 単位でセクタを読めるブロックデバイス */
 interface BlockDevice {
     val blockSize: Int
+
     /** [lba] から [blockCount] ブロックを [dest] の [destOffset] 以降へ読む */
-    fun readBlocks(lba: Long, dest: ByteArray, destOffset: Int, blockCount: Int)
+    fun readBlocks(
+        lba: Long,
+        dest: ByteArray,
+        destOffset: Int,
+        blockCount: Int,
+    )
 }
 
 /**
@@ -27,13 +33,14 @@ class UsbMassStorage private constructor(
     private val itf: UsbInterface,
     private val epIn: UsbEndpoint,
     private val epOut: UsbEndpoint,
-) : BlockDevice, Closeable {
-
+) : BlockDevice,
+    Closeable {
     override var blockSize: Int = 512
         private set
     private var tag = 0
     private var lastLba = 0L
     private var claimed = false
+
     // この個体で安定して通る転送サイズ。大きく始め、ストールを見たら下げて保持する。
     // 不良セクタで一時的に縮めても、正常な読みが通ればここまで戻すので底に居座らない
     private var goodBlocks = INITIAL_MAX_BLOCKS
@@ -85,14 +92,25 @@ class UsbMassStorage private constructor(
                 }
             }
             recover() // reset + HALT 解除で無反応状態を起こす
-            try { Thread.sleep(300) } catch (e: InterruptedException) { break }
+            try {
+                Thread.sleep(300)
+            } catch (e: InterruptedException) {
+                break
+            }
         }
         throw IllegalStateException("device not ready after $INIT_MAX_ATTEMPTS attempts")
     }
 
-    override fun readBlocks(lba: Long, dest: ByteArray, destOffset: Int, blockCount: Int) {
-        require(lba >= 0 && blockCount > 0 && lba + blockCount - 1 <= lastLba &&
-            destOffset >= 0 && destOffset.toLong() + blockCount.toLong() * blockSize <= dest.size) {
+    override fun readBlocks(
+        lba: Long,
+        dest: ByteArray,
+        destOffset: Int,
+        blockCount: Int,
+    ) {
+        require(
+            lba >= 0 && blockCount > 0 && lba + blockCount - 1 <= lastLba &&
+                destOffset >= 0 && destOffset.toLong() + blockCount.toLong() * blockSize <= dest.size,
+        ) {
             "USB read outside capacity or buffer"
         }
         var doneBlocks = 0
@@ -122,7 +140,7 @@ class UsbMassStorage private constructor(
             if (attempts >= MAX_READ_RETRY) {
                 // 最小単位でも読めない＝そのセクタ/ファイルが不良。運用値は下げずこの読みだけ諦める
                 throw IllegalStateException(
-                    "READ(10) failed at lba=${lba + doneBlocks} (chunk=$chunk) after $attempts attempts"
+                    "READ(10) failed at lba=${lba + doneBlocks} (chunk=$chunk) after $attempts attempts",
                 )
             }
             recover()
@@ -135,7 +153,12 @@ class UsbMassStorage private constructor(
     }
 
     /** 1 チャンク分の READ(10)。成否を返す (再試行・縮小は呼び出し側) */
-    private fun read10(lba: Long, blocks: Int, dest: ByteArray, destOffset: Int): Boolean {
+    private fun read10(
+        lba: Long,
+        blocks: Int,
+        dest: ByteArray,
+        destOffset: Int,
+    ): Boolean {
         val cb = ByteArray(10)
         cb[0] = 0x28 // READ(10)
         cb[2] = (lba ushr 24 and 0xFF).toByte()
@@ -156,7 +179,11 @@ class UsbMassStorage private constructor(
         for (attempt in 1..5) {
             val cb = ByteArray(6) // TEST UNIT READY
             if (transfer(cb, null, 0, 0, dataIn = false)) return
-            try { Thread.sleep(100) } catch (e: InterruptedException) { return }
+            try {
+                Thread.sleep(100)
+            } catch (e: InterruptedException) {
+                return
+            }
         }
     }
 
@@ -173,7 +200,13 @@ class UsbMassStorage private constructor(
     }
 
     /** CBW 送信 → (必要なら) データ転送 → CSW 受信 */
-    private fun transfer(cb: ByteArray, data: ByteArray?, dataOffset: Int, dataLen: Int, dataIn: Boolean): Boolean {
+    private fun transfer(
+        cb: ByteArray,
+        data: ByteArray?,
+        dataOffset: Int,
+        dataLen: Int,
+        dataIn: Boolean,
+    ): Boolean {
         val t = ++tag
         val cbw = ByteBuffer.allocate(31).order(ByteOrder.LITTLE_ENDIAN)
         cbw.putInt(0x43425355) // "USBC"
@@ -225,15 +258,19 @@ class UsbMassStorage private constructor(
 
     companion object {
         private const val TAG = "UsbMassStorage"
+
         // 読みは最大 60KB なので 2.5 秒あれば十分。応答しない個体で無駄に待たない
         private const val TIMEOUT = 2500
         private const val CTRL_TIMEOUT = 1000
+
         // 512→256→128→64→32→16→8 と下げて再試行しつつ、無反応時は早めに諦める
         private const val MAX_READ_RETRY = 9
+
         // 実測でこの個体の転送上限は約11MB/秒。256KB で十分その天井に届く安定サイズ
         private const val INITIAL_MAX_BLOCKS = 512 // 256KB/回
         private const val GROW_AFTER = 32 // stall で縮んだあと、この回数の成功で転送単位を戻す
         private const val MIN_BLOCKS_PER_XFER = 8 // 4KB。これでも失敗するなら諦める
+
         // 接続直後の未準備をリセット挟みで待つ回数。実測ではこの粘りで治らない個体も
         // 接続の開き直し (ImportService 側の再試行) なら一発で通るので、早めに諦めて任せる
         private const val INIT_MAX_ATTEMPTS = 3
@@ -241,7 +278,10 @@ class UsbMassStorage private constructor(
         fun isMassStorage(device: UsbDevice): Boolean =
             (0 until device.interfaceCount).any { device.getInterface(it).interfaceClass == UsbConstants.USB_CLASS_MASS_STORAGE }
 
-        fun fromDevice(device: UsbDevice, conn: UsbDeviceConnection): UsbMassStorage? {
+        fun fromDevice(
+            device: UsbDevice,
+            conn: UsbDeviceConnection,
+        ): UsbMassStorage? {
             for (i in 0 until device.interfaceCount) {
                 val itf = device.getInterface(i)
                 if (itf.interfaceClass != UsbConstants.USB_CLASS_MASS_STORAGE) continue

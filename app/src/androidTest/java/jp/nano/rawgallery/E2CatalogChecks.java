@@ -40,13 +40,16 @@ final class E2CatalogChecks {
       return value;
     }
 
-    @Override public List<String> previousCatalogVersions(String key) {
-      List<String> versions = new ArrayList<>(objects.getOrDefault(key, new LinkedHashMap<>()).keySet());
+    @Override
+    public List<String> previousCatalogVersions(String key) {
+      List<String> versions =
+          new ArrayList<>(objects.getOrDefault(key, new LinkedHashMap<>()).keySet());
       java.util.Collections.reverse(versions);
       return versions;
     }
 
-    @Override public E2Archive.CatalogObject readCatalog(String key, String version) throws Exception {
+    @Override
+    public E2Archive.CatalogObject readCatalog(String key, String version) throws Exception {
       if (key.equals(denied)) throw new IOException("Synthetic permission failure");
       if (key.equals(hidden) || !objects.containsKey(key)) return null;
       if (version.isEmpty()) version = previousCatalogVersions(key).get(0);
@@ -56,40 +59,57 @@ final class E2CatalogChecks {
       return value;
     }
 
-    @Override public E2Archive.CatalogObject writeCatalog(String key, byte[] body,
-        E2Archive.CatalogObject expected) throws Exception {
+    @Override
+    public E2Archive.CatalogObject writeCatalog(
+        String key, byte[] body, E2Archive.CatalogObject expected) throws Exception {
       if (!key.equals(INDEX) && (failPart || body.length > E2RecoveryCatalog.PART_BYTES))
         throw new IOException("Synthetic rejected part");
       E2Archive.CatalogObject current = readCatalog(key, "");
-      if (expected == null ? current != null : current == null || !current.etag().equals(expected.etag()))
+      if (expected == null
+          ? current != null
+          : current == null || !current.etag().equals(expected.etag()))
         throw new IOException("Synthetic precondition failure");
       writes++;
       return seed(key, body);
     }
 
-    @Override public void verifyVersion(JSONObject row) throws Exception {
+    @Override
+    public void verifyVersion(JSONObject row) throws Exception {
       originals.add(row.getString("version"));
     }
   }
 
   private static JSONObject row(int i, String name, String version) throws Exception {
-    return new JSONObject().put("key", String.format(Locale.ROOT, "%032x", i))
-        .put("sha", String.format(Locale.ROOT, "%064x", i)).put("name", name).put("size", i + 1)
-        .put("bucket", BUCKET).put("provider", "idrive-e2").put("state", "verified")
+    return new JSONObject()
+        .put("key", String.format(Locale.ROOT, "%032x", i))
+        .put("sha", String.format(Locale.ROOT, "%064x", i))
+        .put("name", name)
+        .put("size", i + 1)
+        .put("bucket", BUCKET)
+        .put("provider", "idrive-e2")
+        .put("state", "verified")
         .put("version", version);
   }
 
   private static byte[] legacy(JSONObject... rows) throws Exception {
-    String payload = new JSONObject().put("schema", 1).put("created", 1234)
-        .put("bucket", BUCKET).put("count", rows.length).put("photos", new JSONArray(Arrays.asList(rows)))
-        .toString();
-    return new JSONObject().put("payload", payload)
+    String payload =
+        new JSONObject()
+            .put("schema", 1)
+            .put("created", 1234)
+            .put("bucket", BUCKET)
+            .put("count", rows.length)
+            .put("photos", new JSONArray(Arrays.asList(rows)))
+            .toString();
+    return new JSONObject()
+        .put("payload", payload)
         .put("sha256", E2Archive.sha256(payload.getBytes(StandardCharsets.UTF_8)))
-        .toString().getBytes(StandardCharsets.UTF_8);
+        .toString()
+        .getBytes(StandardCharsets.UTF_8);
   }
 
   private static String partKey(E2RecoveryCatalog.Snapshot snapshot, int index) throws Exception {
-    JSONObject indexDoc = new JSONObject(new String(snapshot.index().body(), StandardCharsets.UTF_8));
+    JSONObject indexDoc =
+        new JSONObject(new String(snapshot.index().body(), StandardCharsets.UTF_8));
     JSONArray parts = new JSONObject(indexDoc.getString("payload")).getJSONArray("parts");
     return "loupe/catalog/parts/" + parts.getJSONObject(index).getString("sha256") + ".json";
   }
@@ -98,7 +118,9 @@ final class E2CatalogChecks {
     if (!condition) throw new AssertionError(message);
   }
 
-  private interface Action { void run() throws Exception; }
+  private interface Action {
+    void run() throws Exception;
+  }
 
   private static void rejected(Action action) throws Exception {
     try {
@@ -109,28 +131,41 @@ final class E2CatalogChecks {
     throw new AssertionError("Expected operation to fail closed");
   }
 
-  static String run() throws Exception { return exercise(null); }
+  static String run() throws Exception {
+    return exercise(null);
+  }
 
-  static String run(Context context) throws Exception { return exercise(context); }
+  static String run(Context context) throws Exception {
+    return exercise(context);
+  }
 
-  /** Opt-in device scale check; kept separate from the fast host and regular instrumentation suite. */
+  /**
+   * Opt-in device scale check; kept separate from the fast host and regular instrumentation suite.
+   */
   static String runScale(Context context) throws Exception {
     if (context == null) throw new IllegalArgumentException("Scale check requires Android context");
     final int count = 70_001;
     String bucketName = BUCKET;
     Bucket bucket = new Bucket();
-    List<JSONObject> rows = new AbstractList<>() {
-      @Override public JSONObject get(int index) {
-        try {
-          return row(index, "scale-" + index + (index % 2 == 0 ? ".ORF" : ".MP4"),
-              "scale-version-" + index);
-        } catch (Exception failure) {
-          throw new IllegalStateException(failure);
-        }
-      }
+    List<JSONObject> rows =
+        new AbstractList<>() {
+          @Override
+          public JSONObject get(int index) {
+            try {
+              return row(
+                  index,
+                  "scale-" + index + (index % 2 == 0 ? ".ORF" : ".MP4"),
+                  "scale-version-" + index);
+            } catch (Exception failure) {
+              throw new IllegalStateException(failure);
+            }
+          }
 
-      @Override public int size() { return count; }
-    };
+          @Override
+          public int size() {
+            return count;
+          }
+        };
     Runtime runtime = Runtime.getRuntime();
     long start = SystemClock.elapsedRealtime();
     long beforeMemory = usedMemory(runtime);
@@ -138,9 +173,11 @@ final class E2CatalogChecks {
     long afterPublish = SystemClock.elapsedRealtime();
     long publishMemory = usedMemory(runtime);
     check(published.records().size() == count, "Scale publish count mismatch");
-    check(published.records().containsKey(String.format(Locale.ROOT, "%032x", 0)),
+    check(
+        published.records().containsKey(String.format(Locale.ROOT, "%032x", 0)),
         "Scale publish lost first row");
-    check(published.records().containsKey(String.format(Locale.ROOT, "%032x", count - 1)),
+    check(
+        published.records().containsKey(String.format(Locale.ROOT, "%032x", count - 1)),
         "Scale publish lost last row");
 
     String database = "e2-catalog-scale-" + UUID.randomUUID() + ".db";
@@ -153,32 +190,40 @@ final class E2CatalogChecks {
     try {
       try (E2RecoveryCatalog receiver = new E2RecoveryCatalog(context, database)) {
         E2RecoveryCatalog.Snapshot loaded = receiver.load(bucket, bucketName, List.of());
-        check(loaded != null && loaded.records().size() == count, "Scale fresh load count mismatch");
+        check(
+            loaded != null && loaded.records().size() == count, "Scale fresh load count mismatch");
         afterFreshLoad = SystemClock.elapsedRealtime();
         loadMemory = usedMemory(runtime);
         bucket.corrupt = tail;
         rejected(() -> receiver.load(bucket, bucketName, List.of()));
         E2RecoveryCatalog.Snapshot preserved = receiver.cached(bucketName);
-        check(preserved != null && preserved.records().size() == count,
+        check(
+            preserved != null && preserved.records().size() == count,
             "Corrupt catalog tail replaced the complete cached generation");
         afterCorruptTailCheck = SystemClock.elapsedRealtime();
       }
       long reopenStart = SystemClock.elapsedRealtime();
       try (E2RecoveryCatalog reopened = new E2RecoveryCatalog(context, database)) {
         E2RecoveryCatalog.Snapshot cached = reopened.cached(bucketName);
-        check(cached != null && cached.records().size() == count,
+        check(
+            cached != null && cached.records().size() == count,
             "Scale cache reopen count mismatch");
         JSONObject first = cached.records().get(String.format(Locale.ROOT, "%032x", 0));
         String lastKey = String.format(Locale.ROOT, "%032x", count - 1);
         JSONObject last = cached.records().get(lastKey);
         JSONObject lastVideo = cached.records().get(String.format(Locale.ROOT, "%032x", count - 2));
-        check(first != null && "scale-0.ORF".equals(first.getString("name"))
-            && "image/x-olympus-orf".equals(first.getString("mime")),
+        check(
+            first != null
+                && "scale-0.ORF".equals(first.getString("name"))
+                && "image/x-olympus-orf".equals(first.getString("mime")),
             "Scale reopen lost first RAW row");
-        check(last != null && "scale-70000.ORF".equals(last.getString("name"))
-            && "image/x-olympus-orf".equals(last.getString("mime")),
+        check(
+            last != null
+                && "scale-70000.ORF".equals(last.getString("name"))
+                && "image/x-olympus-orf".equals(last.getString("mime")),
             "Scale reopen lost last RAW row");
-        check(lastVideo != null && "video/mp4".equals(lastVideo.getString("mime")),
+        check(
+            lastVideo != null && "video/mp4".equals(lastVideo.getString("mime")),
             "Scale reopen lost video row");
         afterReopen = SystemClock.elapsedRealtime();
 
@@ -188,19 +233,34 @@ final class E2CatalogChecks {
         filenameSearchMs = SystemClock.elapsedRealtime() - searchStart;
         check(matches.size() == 1, "Scale filename search did not return exactly one row");
         JSONObject match = matches.get(0);
-        check(lastKey.equals(match.getString("key"))
-            && "scale-version-70000".equals(match.getString("version"))
-            && "image/x-olympus-orf".equals(match.getString("mime")),
+        check(
+            lastKey.equals(match.getString("key"))
+                && "scale-version-70000".equals(match.getString("version"))
+                && "image/x-olympus-orf".equals(match.getString("mime")),
             "Scale filename search did not preserve the last RAW row's restore identity");
       }
       long finishedMemory = usedMemory(runtime);
-      return "PASS e2 catalog scale: " + count + " RAW/video rows, publish="
-          + (afterPublish - start) + "ms, freshLoad=" + (afterFreshLoad - afterPublish)
-          + "ms, corrupt-tail-check=" + (afterCorruptTailCheck - afterFreshLoad)
-          + "ms, reopen=" + (afterReopen - reopenStart)
-          + "ms, filenameSearch=" + filenameSearchMs
-          + "ms; used-heap samples before/publish/load/finish=" + beforeMemory + "/"
-          + publishMemory + "/" + loadMemory + "/" + finishedMemory + " bytes";
+      return "PASS e2 catalog scale: "
+          + count
+          + " RAW/video rows, publish="
+          + (afterPublish - start)
+          + "ms, freshLoad="
+          + (afterFreshLoad - afterPublish)
+          + "ms, corrupt-tail-check="
+          + (afterCorruptTailCheck - afterFreshLoad)
+          + "ms, reopen="
+          + (afterReopen - reopenStart)
+          + "ms, filenameSearch="
+          + filenameSearchMs
+          + "ms; used-heap samples before/publish/load/finish="
+          + beforeMemory
+          + "/"
+          + publishMemory
+          + "/"
+          + loadMemory
+          + "/"
+          + finishedMemory
+          + " bytes";
     } finally {
       context.deleteDatabase(database);
     }
@@ -220,10 +280,11 @@ final class E2CatalogChecks {
     E2RecoveryCatalog.SavedRows order = rows.sorted();
     E2RecoveryCatalog.SavedRows found = order.matchingFilename("  CAFÉ-a12.orf  ");
     check(found.size() == 2, "Filename search missed case, canonical or width equivalents");
-    check(found.get(0).getString("key").equals(first.getString("key"))
-        && found.get(1).getString("key").equals(second.getString("key"))
-        && found.get(1).getString("version").equals(second.getString("version"))
-        && found.get(1).getString("name").equals(second.getString("name")),
+    check(
+        found.get(0).getString("key").equals(first.getString("key"))
+            && found.get(1).getString("key").equals(second.getString("key"))
+            && found.get(1).getString("version").equals(second.getString("version"))
+            && found.get(1).getString("name").equals(second.getString("name")),
         "Search changed the order or restore identity of rows with the same name");
     check(order.matchingFilename("A12").size() == 2, "Search did not match a filename substring");
     check(order.matchingFilename("　 ").size() == 3, "A blank query omitted saved rows");
@@ -245,25 +306,37 @@ final class E2CatalogChecks {
     rejected(() -> E2RecoveryCatalog.remote(largeLegacy, BUCKET));
     Bucket largeModern = new Bucket();
     E2RecoveryCatalog.publish(largeModern, BUCKET, List.of(large));
-    JSONObject restoredLarge = E2RecoveryCatalog.remote(largeModern, BUCKET).records()
-        .get(large.getString("key"));
-    check(largeSize == restoredLarge.getLong("size") && "video/mp4".equals(restoredLarge.getString("mime")),
+    JSONObject restoredLarge =
+        E2RecoveryCatalog.remote(largeModern, BUCKET).records().get(large.getString("key"));
+    check(
+        largeSize == restoredLarge.getLong("size")
+            && "video/mp4".equals(restoredLarge.getString("mime")),
         "New catalog omitted the large video");
     Bucket bucket = new Bucket();
     JSONObject original = row(0, "original.ORF", "original-v1");
     byte[] v1 = legacy(original);
     bucket.seed(LEGACY, v1);
-    check(E2RecoveryCatalog.remote(bucket, BUCKET).records().size() == 1, "Unreadable legacy catalog");
+    check(
+        E2RecoveryCatalog.remote(bucket, BUCKET).records().size() == 1,
+        "Unreadable legacy catalog");
     List<JSONObject> rows = new ArrayList<>();
     rows.add(row(0, "original.ORF", "replayed-v2"));
     for (int i = 1; i <= 2500; i++)
       rows.add(row(i, "sample-" + i + (i % 2 == 0 ? ".MOV" : ".jpg"), "media-version"));
     E2RecoveryCatalog.Snapshot first = E2RecoveryCatalog.publish(bucket, BUCKET, rows);
-    check(first.records().size() == 2501 && first.partVersions().size() > 1, "Not all rows migrated");
-    check(bucket.originals.contains("original-v1")
-        && first.records().get(original.getString("key")).getString("version").equals("original-v1"),
+    check(
+        first.records().size() == 2501 && first.partVersions().size() > 1, "Not all rows migrated");
+    check(
+        bucket.originals.contains("original-v1")
+            && first
+                .records()
+                .get(original.getString("key"))
+                .getString("version")
+                .equals("original-v1"),
         "Legacy replay lost the published version");
-    check("video/quicktime".equals(first.records().get(rows.get(2).getString("key")).getString("mime")),
+    check(
+        "video/quicktime"
+            .equals(first.records().get(rows.get(2).getString("key")).getString("mime")),
         "Video MIME lost");
     check(Arrays.equals(v1, bucket.readCatalog(LEGACY, "").body()), "Overwrote v1");
     int writes = bucket.writes;
@@ -287,23 +360,31 @@ final class E2CatalogChecks {
         context.deleteDatabase(database);
       }
     }
-    check(beforePublish.records().size() == 2502
-        && "after-migration".equals(beforePublish.records().get(late.getString("key")).getString("version"))
-        && "original-v1".equals(beforePublish.records().get(original.getString("key")).getString("version"))
-        && !beforePublish.previous() && bucket.writes == writes, "Read-only import lost a late v1 update");
+    check(
+        beforePublish.records().size() == 2502
+            && "after-migration"
+                .equals(beforePublish.records().get(late.getString("key")).getString("version"))
+            && "original-v1"
+                .equals(beforePublish.records().get(original.getString("key")).getString("version"))
+            && !beforePublish.previous()
+            && bucket.writes == writes,
+        "Read-only import lost a late v1 update");
     bucket.seed(LEGACY, legacy(row(0, "other-content.jpg", "legacy-replay"), late));
     rejected(() -> E2RecoveryCatalog.remote(bucket, BUCKET));
     check(bucket.writes == writes, "Conflicting read-only import issued PUTs");
     bucket.seed(LEGACY, legacy(original, late));
     rows.add(row(3100, "v2-only.jpg", "v2-only-version"));
     E2RecoveryCatalog.Snapshot second = E2RecoveryCatalog.publish(bucket, BUCKET, rows);
-    check(second.records().size() == 2503 && second.records().containsKey(late.getString("key")),
+    check(
+        second.records().size() == 2503 && second.records().containsKey(late.getString("key")),
         "Lost a late v1 update");
     check(bucket.writes == writes + 2, "Unmodified parts were rewritten");
     E2RecoveryCatalog.confirmLatest(bucket, second);
     rejected(() -> E2RecoveryCatalog.confirmLatest(bucket, first));
     writes = bucket.writes;
-    check(E2RecoveryCatalog.latest(bucket, BUCKET).records().size() == 2503, "Strict roundtrip failed");
+    check(
+        E2RecoveryCatalog.latest(bucket, BUCKET).records().size() == 2503,
+        "Strict roundtrip failed");
     String tail = partKey(second, second.partVersions().size() - 1);
     bucket.corrupt = tail;
     rejected(() -> E2RecoveryCatalog.confirmLatest(bucket, second));
@@ -326,11 +407,13 @@ final class E2CatalogChecks {
     rows.add(row(3200, "new.webm", "new-original"));
     bucket.failPart = true;
     rejected(() -> E2RecoveryCatalog.publish(bucket, BUCKET, rows));
-    check(bucket.readCatalog(INDEX, "").version().equals(second.index().version()),
+    check(
+        bucket.readCatalog(INDEX, "").version().equals(second.index().version()),
         "Published partial generation");
     if (context != null) cache(context, bucket, original, v1, tail);
     String cache = context == null ? "" : ", SQLite v1 migration and atomic preservation";
-    return "PASS e2 catalog: v1 replay, 2503 rows, multipart publish/read, prior generation, fail-closed writes" + cache;
+    return "PASS e2 catalog: v1 replay, 2503 rows, multipart publish/read, prior generation, fail-closed writes"
+        + cache;
   }
 
   private static void checkLocalReceipts(Context context) throws Exception {
@@ -338,25 +421,30 @@ final class E2CatalogChecks {
     try (ArchiveStore store = new ArchiveStore(context, database)) {
       SQLiteDatabase db = store.getWritableDatabase();
       // A state-filtered read must never parse the unrelated payloads.
-      db.execSQL("WITH RECURSIVE ids(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM ids WHERE n<70000)"
-          + " INSERT INTO photos SELECT 'unrelated-' || n, 'verified', 'invalid-json' FROM ids");
+      db.execSQL(
+          "WITH RECURSIVE ids(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM ids WHERE n<70000)"
+              + " INSERT INTO photos SELECT 'unrelated-' || n, 'verified', 'invalid-json' FROM ids");
       JSONObject old = row(0, "historical.jpg", "version-old").put("taken", -1);
       store.put(old, "released");
       List<JSONObject> selected = store.inStates("released", "releasing");
-      check(selected.size() == 1 && "historical.jpg".equals(selected.get(0).getString("name")),
+      check(
+          selected.size() == 1 && "historical.jpg".equals(selected.get(0).getString("name")),
           "State query opened unrelated receipts");
-      check(store.inStates("releasing").isEmpty(), "Picked archive rows without a pending deletion");
+      check(
+          store.inStates("releasing").isEmpty(), "Picked archive rows without a pending deletion");
       db.delete("photos", "state=?", new String[] {"verified"});
       E2RecoveryCatalog.Rows local = E2Photos.localSaved(store, BUCKET);
-      check(local.size() == 1 && local.sorted().get(0).getLong("taken") == 0,
+      check(
+          local.size() == 1 && local.sorted().get(0).getLong("taken") == 0,
           "A verified historical local original was omitted");
     } finally {
       context.deleteDatabase(database);
     }
   }
 
-  private static void cache(Context context, Bucket bucket, JSONObject original, byte[] v1,
-      String tail) throws Exception {
+  private static void cache(
+      Context context, Bucket bucket, JSONObject original, byte[] v1, String tail)
+      throws Exception {
     String name = "e2-catalog-test-" + UUID.randomUUID() + ".db";
     try {
       try (SQLiteDatabase db = context.openOrCreateDatabase(name, 0, null)) {
@@ -368,7 +456,8 @@ final class E2CatalogChecks {
         db.setVersion(1);
       }
       try (E2RecoveryCatalog db = new E2RecoveryCatalog(context, name)) {
-        check(db.cached(BUCKET).records().containsKey(original.getString("key")),
+        check(
+            db.cached(BUCKET).records().containsKey(original.getString("key")),
             "Lost v1 cache during schema migration");
         db.load(bucket, BUCKET, List.of());
       }
@@ -378,13 +467,17 @@ final class E2CatalogChecks {
         rejected(() -> db.load(bucket, BUCKET, List.of()));
         check(db.cached(BUCKET).records().size() == 2503, "Partial import replaced complete cache");
         bucket.hidden = "";
-        db.getWritableDatabase().execSQL("CREATE TRIGGER fail_mid_import BEFORE INSERT ON catalog_rows"
-            + " WHEN NEW.ordinal=100 BEGIN SELECT RAISE(ABORT, 'synthetic storage failure'); END");
+        db.getWritableDatabase()
+            .execSQL(
+                "CREATE TRIGGER fail_mid_import BEFORE INSERT ON catalog_rows"
+                    + " WHEN NEW.ordinal=100 BEGIN SELECT RAISE(ABORT, 'synthetic storage failure'); END");
         try {
           db.load(bucket, BUCKET, List.of());
           throw new AssertionError("Expected synthetic SQLite failure");
         } catch (android.database.sqlite.SQLiteException expected) {
-          check(db.cached(BUCKET).records().size() == 2503, "SQLite rollback lost the previous cache");
+          check(
+              db.cached(BUCKET).records().size() == 2503,
+              "SQLite rollback lost the previous cache");
         }
       }
     } finally {

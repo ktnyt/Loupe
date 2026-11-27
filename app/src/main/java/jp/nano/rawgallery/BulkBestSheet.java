@@ -1,9 +1,5 @@
 package jp.nano.rawgallery;
 
-import com.google.android.material.button.MaterialButton;
-import com.google.android.material.bottomsheet.BottomSheetDialog;
-import com.google.android.material.bottomsheet.BottomSheetBehavior;
-
 import android.app.Activity;
 import android.content.Context;
 import android.graphics.Canvas;
@@ -20,9 +16,9 @@ import android.text.style.AbsoluteSizeSpan;
 import android.text.style.ForegroundColorSpan;
 import android.text.style.TypefaceSpan;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.Window;
-import android.view.MotionEvent;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -30,6 +26,8 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import com.google.android.material.bottomsheet.BottomSheetDialog;
+import com.google.android.material.button.MaterialButton;
 import java.util.List;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
@@ -47,8 +45,15 @@ final class BulkBestSheet extends BottomSheetDialog {
   private final boolean complete;
   private boolean busy;
 
-  BulkBestSheet(Activity owner, boolean complete, String action, String summary, int hidden,
-      int outside, List<Integer> ordinals, BiConsumer<Integer, ImageView> thumbnail,
+  BulkBestSheet(
+      Activity owner,
+      boolean complete,
+      String action,
+      String summary,
+      int hidden,
+      int outside,
+      List<Integer> ordinals,
+      BiConsumer<Integer, ImageView> thumbnail,
       Consumer<Consumer<Boolean>> save) {
     super(owner);
     setOwnerActivity(owner);
@@ -66,7 +71,8 @@ final class BulkBestSheet extends BottomSheetDialog {
     handleParams.bottomMargin = dp(12);
     content.addView(handle, handleParams);
 
-    TextView title = text(action.substring(0, action.length() - "する".length()) + "しますか？", 20, GalleryUi.TEXT);
+    TextView title =
+        text(action.substring(0, action.length() - "する".length()) + "しますか？", 20, GalleryUi.TEXT);
     title.setTypeface(SEMIBOLD);
     title.setAccessibilityHeading(true);
     title.setLineHeight(sp(28));
@@ -96,7 +102,8 @@ final class BulkBestSheet extends BottomSheetDialog {
     setConfirmLabel(false);
     FrameLayout confirmFrame = new FrameLayout(c);
     confirmFrame.addView(confirm, new FrameLayout.LayoutParams(-1, -2));
-    progress = new com.google.android.material.progressindicator.CircularProgressIndicator(c);progress.setIndeterminate(true);
+    progress = new com.google.android.material.progressindicator.CircularProgressIndicator(c);
+    progress.setIndeterminate(true);
     FrameLayout.LayoutParams progressParams =
         new FrameLayout.LayoutParams(dp(18), dp(18), Gravity.START | Gravity.CENTER_VERTICAL);
     progressParams.leftMargin = dp(16);
@@ -107,29 +114,39 @@ final class BulkBestSheet extends BottomSheetDialog {
     cancel = makeAction("キャンセル", 48, 14, true, 0, this::dismiss);
     RankingUi.add(content, cancel, 8);
 
-    ScrollView scroll = new ScrollView(c) {
-      @Override protected void onMeasure(int widthSpec, int heightSpec) {
-        Rect frame = new Rect();
-        owner.getWindow().getDecorView().getWindowVisibleDisplayFrame(frame);
-        int height = frame.height();
-        if (height <= 0) height = getResources().getDisplayMetrics().heightPixels;
-        int cap = Math.round(height * .85f);
-        if (MeasureSpec.getMode(heightSpec) != MeasureSpec.UNSPECIFIED)
-          cap = Math.min(cap, MeasureSpec.getSize(heightSpec));
-        super.onMeasure(widthSpec, MeasureSpec.makeMeasureSpec(cap, MeasureSpec.AT_MOST));
-      }
-    };
+    ScrollView scroll =
+        new ScrollView(c) {
+          @Override
+          protected void onMeasure(int widthSpec, int heightSpec) {
+            Rect frame = new Rect();
+            owner.getWindow().getDecorView().getWindowVisibleDisplayFrame(frame);
+            int height = frame.height();
+            if (height <= 0) height = getResources().getDisplayMetrics().heightPixels;
+            int cap = Math.round(height * .85f);
+            if (MeasureSpec.getMode(heightSpec) != MeasureSpec.UNSPECIFIED)
+              cap = Math.min(cap, MeasureSpec.getSize(heightSpec));
+            super.onMeasure(widthSpec, MeasureSpec.makeMeasureSpec(cap, MeasureSpec.AT_MOST));
+          }
+        };
     scroll.addView(content);
     setContentView(scroll);
     setCanceledOnTouchOutside(true);
     Window window = getWindow();
-    DiagnosticWindow.install(window);SheetDiagnostics.install(this);
+    DiagnosticWindow.install(window);
+    SheetDiagnostics.install(this);
   }
 
-  @Override public void show() { super.show();MaterialUi.sheet(this); }
+  @Override
+  public void show() {
+    super.show();
+    MaterialUi.sheet(this);
+  }
 
-  private void addThumbnails(LinearLayout content, List<Integer> ordinals,
-      BiConsumer<Integer, ImageView> thumbnail, int sheetWidth) {
+  private void addThumbnails(
+      LinearLayout content,
+      List<Integer> ordinals,
+      BiConsumer<Integer, ImageView> thumbnail,
+      int sheetWidth) {
     Context c = getContext();
     int edge = dp(40), gap = dp(6);
     int columns = Math.max(1, (sheetWidth - 2 * dp(24) + gap) / (edge + gap));
@@ -176,14 +193,21 @@ final class BulkBestSheet extends BottomSheetDialog {
     RankingUi.add(content, note, gap);
   }
 
-  private int dp(int n) { return GalleryUi.dp(getContext(), n); }
-
-  private int sp(int n) {
-    return Math.round(android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP,
-        n, getContext().getResources().getDisplayMetrics()));
+  private int dp(int n) {
+    return GalleryUi.dp(getContext(), n);
   }
 
-  private void inset(View v) { v.setPadding(dp(8), 0, dp(8), 0); }
+  private int sp(int n) {
+    return Math.round(
+        android.util.TypedValue.applyDimension(
+            android.util.TypedValue.COMPLEX_UNIT_SP,
+            n,
+            getContext().getResources().getDisplayMetrics()));
+  }
+
+  private void inset(View v) {
+    v.setPadding(dp(8), 0, dp(8), 0);
+  }
 
   private TextView text(String label, int size, int color) {
     TextView view = new TextView(getContext());
@@ -194,14 +218,20 @@ final class BulkBestSheet extends BottomSheetDialog {
     return view;
   }
 
-  private Button makeAction(String label, int height, int size, boolean primary, int border,
-      Runnable click) {
-    Button button = RankingUi.action(GalleryUi.button(getContext(), label, click),
-        primary, height, size, null);
+  private Button makeAction(
+      String label, int height, int size, boolean primary, int border, Runnable click) {
+    Button button =
+        RankingUi.action(GalleryUi.button(getContext(), label, click), primary, height, size, null);
     button.setTypeface(SEMIBOLD);
     button.setSingleLine(false);
     button.setEllipsize(null);
-    if(primary)MaterialUi.filled(button);else{MaterialUi.outlined(button);if(border!=0)((com.google.android.material.button.MaterialButton)button).setStrokeColor(android.content.res.ColorStateList.valueOf(border));}
+    if (primary) MaterialUi.filled(button);
+    else {
+      MaterialUi.outlined(button);
+      if (border != 0)
+        ((com.google.android.material.button.MaterialButton) button)
+            .setStrokeColor(android.content.res.ColorStateList.valueOf(border));
+    }
     return button;
   }
 
@@ -214,11 +244,17 @@ final class BulkBestSheet extends BottomSheetDialog {
       int detailStart = styled.length() - action.length();
       int detailEnd = styled.length();
       int detailColor = (complete ? GalleryUi.TEXT : REPLACE) & 0x00ffffff | 0xd9000000;
-      styled.setSpan(new AbsoluteSizeSpan(sp(12)), detailStart, detailEnd,
+      styled.setSpan(
+          new AbsoluteSizeSpan(sp(12)), detailStart, detailEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+      styled.setSpan(
+          new TypefaceSpan(Typeface.DEFAULT),
+          detailStart,
+          detailEnd,
           Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-      styled.setSpan(new TypefaceSpan(Typeface.DEFAULT), detailStart, detailEnd,
-          Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-      styled.setSpan(new ForegroundColorSpan(detailColor), detailStart, detailEnd,
+      styled.setSpan(
+          new ForegroundColorSpan(detailColor),
+          detailStart,
+          detailEnd,
           Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
       confirm.setText(styled);
     }
@@ -237,29 +273,30 @@ final class BulkBestSheet extends BottomSheetDialog {
     progress.setVisibility(View.VISIBLE);
     cancel.setEnabled(false);
     cancel.setAlpha(.45f);
-    save.accept(success -> {
-      if (!isShowing()) return;
-      busy = false;
-      if (success) {
-        dismiss();
-        return;
-      }
-      setCancelable(true);
-      setCanceledOnTouchOutside(true);
-      progress.setVisibility(View.GONE);
-      confirm.setEnabled(true);
-      cancel.setEnabled(true);
-      cancel.setAlpha(1f);
-      setConfirmLabel(true);
-      error.setVisibility(View.VISIBLE);
-    });
+    save.accept(
+        success -> {
+          if (!isShowing()) return;
+          busy = false;
+          if (success) {
+            dismiss();
+            return;
+          }
+          setCancelable(true);
+          setCanceledOnTouchOutside(true);
+          progress.setVisibility(View.GONE);
+          confirm.setEnabled(true);
+          cancel.setEnabled(true);
+          cancel.setAlpha(1f);
+          setConfirmLabel(true);
+          error.setVisibility(View.VISIBLE);
+        });
   }
-
 
   static Drawable starPlus(int color) {
     return new Drawable() {
       private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
       private final android.graphics.Path star = new android.graphics.Path();
+
       {
         star.moveTo(8.5f, 2f);
         star.lineTo(10.7f, 6.4f);
@@ -278,7 +315,9 @@ final class BulkBestSheet extends BottomSheetDialog {
         paint.setStrokeJoin(Paint.Join.ROUND);
         paint.setStrokeCap(Paint.Cap.ROUND);
       }
-      @Override public void draw(Canvas canvas) {
+
+      @Override
+      public void draw(Canvas canvas) {
         Rect bounds = getBounds();
         int save = canvas.save();
         canvas.translate(bounds.left, bounds.top);
@@ -288,9 +327,21 @@ final class BulkBestSheet extends BottomSheetDialog {
         canvas.drawLine(16.5f, 11.5f, 16.5f, 16.5f, paint);
         canvas.restoreToCount(save);
       }
-      @Override public void setAlpha(int alpha) { paint.setAlpha(alpha); }
-      @Override public void setColorFilter(ColorFilter filter) { paint.setColorFilter(filter); }
-      @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+
+      @Override
+      public void setAlpha(int alpha) {
+        paint.setAlpha(alpha);
+      }
+
+      @Override
+      public void setColorFilter(ColorFilter filter) {
+        paint.setColorFilter(filter);
+      }
+
+      @Override
+      public int getOpacity() {
+        return PixelFormat.TRANSLUCENT;
+      }
     };
   }
 
@@ -307,10 +358,11 @@ final class BulkBestSheet extends BottomSheetDialog {
       setEllipsize(null);
       setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
       setPadding(GalleryUi.dp(c, 16), GalleryUi.dp(c, 4), GalleryUi.dp(c, 16), GalleryUi.dp(c, 4));
-      setOnClickListener(v -> {
-        GalleryUi.feedback(v);
-        open.run();
-      });
+      setOnClickListener(
+          v -> {
+            GalleryUi.feedback(v);
+            open.run();
+          });
     }
 
     void update(String label, String description, String disabledReason) {
@@ -318,12 +370,15 @@ final class BulkBestSheet extends BottomSheetDialog {
       setEnabled(reason == null);
       int color = reason == null ? GalleryUi.TEXT : 0xff626b72;
       setTextColor(color);
-      MaterialUi.outlined(this);setStrokeColor(android.content.res.ColorStateList.valueOf(reason==null?OUTLINE:0xff2e2e32));
+      MaterialUi.outlined(this);
+      setStrokeColor(
+          android.content.res.ColorStateList.valueOf(reason == null ? OUTLINE : 0xff2e2e32));
       RankingUi.inline(this, starPlus(color), label, 20);
       setContentDescription(description);
     }
 
-    @Override public boolean onTouchEvent(MotionEvent event) {
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
       if (reason == null) return super.onTouchEvent(event);
       if (event.getActionMasked() == MotionEvent.ACTION_UP && pointInView(event)) {
         announceForAccessibility(reason);
@@ -332,8 +387,10 @@ final class BulkBestSheet extends BottomSheetDialog {
     }
 
     private boolean pointInView(MotionEvent event) {
-      return event.getX() >= 0 && event.getX() < getWidth()
-          && event.getY() >= 0 && event.getY() < getHeight();
+      return event.getX() >= 0
+          && event.getX() < getWidth()
+          && event.getY() >= 0
+          && event.getY() < getHeight();
     }
   }
 }

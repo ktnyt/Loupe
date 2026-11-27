@@ -10,246 +10,409 @@ import android.os.SystemClock;
 import android.provider.MediaStore;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.io.InterruptedIOException;
+import java.io.OutputStream;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
-import org.json.JSONObject;
 import jp.nano.rawgallery.camera.CameraImportHistoryPlan;
+import org.json.JSONObject;
 
 /** One durable generation at a time. An ambiguous POST is never resubmitted. */
 final class NanoBananaJob {
-  static final AtomicBoolean BUSY=new AtomicBoolean();
-  interface Progress { void show(String message); }
-  interface Services {
-    String upload(String object,byte[] jpeg,String owner) throws Exception;
-    String generate(String prompt,String object,String version,NanoBananaOutput output) throws Exception;
-    JSONObject status(String task) throws Exception;
-    byte[] download(String url) throws Exception;
-    void delete(String object,String version,String owner) throws Exception;
+  static final AtomicBoolean BUSY = new AtomicBoolean();
+
+  interface Progress {
+    void show(String message);
   }
+
+  interface Services {
+    String upload(String object, byte[] jpeg, String owner) throws Exception;
+
+    String generate(String prompt, String object, String version, NanoBananaOutput output)
+        throws Exception;
+
+    JSONObject status(String task) throws Exception;
+
+    byte[] download(String url) throws Exception;
+
+    void delete(String object, String version, String owner) throws Exception;
+  }
+
   private final Services services;
+
   private Services services() throws Exception {
-    if(services!=null)return services;
-    NanoBananaE2 e2=store.e2();NanoBananaApi api=new NanoBananaApi(store.apiKey());
+    if (services != null) return services;
+    NanoBananaE2 e2 = store.e2();
+    NanoBananaApi api = new NanoBananaApi(store.apiKey());
     return new Services() {
-      public String upload(String object,byte[] jpeg,String owner)throws Exception{return e2.upload(object,jpeg,owner);}
-      public String generate(String prompt,String object,String version,NanoBananaOutput output)throws Exception{return api.generate(prompt,e2.signedGet(object,version),output);}
-      public JSONObject status(String task)throws Exception{return api.status(task);}
-      public byte[] download(String url)throws Exception{return NanoBananaApi.download(url);}
-      public void delete(String object,String version,String owner)throws Exception{e2.delete(object,version,owner);}
+      public String upload(String object, byte[] jpeg, String owner) throws Exception {
+        return e2.upload(object, jpeg, owner);
+      }
+
+      public String generate(String prompt, String object, String version, NanoBananaOutput output)
+          throws Exception {
+        return api.generate(prompt, e2.signedGet(object, version), output);
+      }
+
+      public JSONObject status(String task) throws Exception {
+        return api.status(task);
+      }
+
+      public byte[] download(String url) throws Exception {
+        return NanoBananaApi.download(url);
+      }
+
+      public void delete(String object, String version, String owner) throws Exception {
+        e2.delete(object, version, owner);
+      }
     };
   }
+
   private final Context context;
   private final NanoBananaStore store;
-  NanoBananaJob(Context context) {this(context,new NanoBananaStore(context));}
-  NanoBananaJob(Context context,NanoBananaStore store) {this(context,store,null);}
-  NanoBananaJob(Context context,NanoBananaStore store,Services services) {this.context=context.getApplicationContext();this.store=store;this.services=services;}
-  void run(PhotoRepository.Photo photo,NanoBananaStore.Prompt prompt,Progress progress) throws Exception {
-    run(photo,prompt,null,progress);
+
+  NanoBananaJob(Context context) {
+    this(context, new NanoBananaStore(context));
   }
+
+  NanoBananaJob(Context context, NanoBananaStore store) {
+    this(context, store, null);
+  }
+
+  NanoBananaJob(Context context, NanoBananaStore store, Services services) {
+    this.context = context.getApplicationContext();
+    this.store = store;
+    this.services = services;
+  }
+
+  void run(PhotoRepository.Photo photo, NanoBananaStore.Prompt prompt, Progress progress)
+      throws Exception {
+    run(photo, prompt, null, progress);
+  }
+
   private static void checkInterrupted() throws InterruptedIOException {
-    if(Thread.currentThread().isInterrupted())throw new InterruptedIOException("処理を中断しました。AI編集メニューから確認してください");
+    if (Thread.currentThread().isInterrupted())
+      throw new InterruptedIOException("処理を中断しました。AI編集メニューから確認してください");
   }
-  void run(PhotoRepository.Photo photo,NanoBananaStore.Prompt prompt,NanoBananaOutput snapshot,Progress progress) throws Exception {
+
+  void run(
+      PhotoRepository.Photo photo,
+      NanoBananaStore.Prompt prompt,
+      NanoBananaOutput snapshot,
+      Progress progress)
+      throws Exception {
     checkInterrupted();
-    JSONObject job=store.job();
-    long start=SystemClock.elapsedRealtime(), event=DiagnosticLog.id();
-    DiagnosticLog.event("nano.start",event,"resume",job!=null);
+    JSONObject job = store.job();
+    long start = SystemClock.elapsedRealtime(), event = DiagnosticLog.id();
+    DiagnosticLog.event("nano.start", event, "resume", job != null);
     try {
-      if(job==null) {
-        if(photo==null||prompt==null)throw new IOException("写真とプロンプトを選び直してください");
-        NanoBananaOutput output=snapshot==null?store.output():snapshot;
-        String volume=PhotoStorage.selected(context);
-        PhotoStorage.requireWritable(context,volume);
+      if (job == null) {
+        if (photo == null || prompt == null) throw new IOException("写真とプロンプトを選び直してください");
+        NanoBananaOutput output = snapshot == null ? store.output() : snapshot;
+        String volume = PhotoStorage.selected(context);
+        PhotoStorage.requireWritable(context, volume);
         // Validate both credentials before touching the network or creating remote objects.
-        Services network=services();
+        Services network = services();
         progress.show("送信用の写真を準備しています");
-        byte[] jpeg=input(new PhotoRepository(context),photo);
+        byte[] jpeg = input(new PhotoRepository(context), photo);
         checkInterrupted();
-        String object="loupe-nano-temp/"+UUID.randomUUID()+".jpg";
-        job=new JSONObject().put("object",object).put("stage","uploading").put("owner",UUID.randomUUID().toString()).put("output",output.json()).put("photo_volume",volume);store.job(job);
+        String object = "loupe-nano-temp/" + UUID.randomUUID() + ".jpg";
+        job =
+            new JSONObject()
+                .put("object", object)
+                .put("stage", "uploading")
+                .put("owner", UUID.randomUUID().toString())
+                .put("output", output.json())
+                .put("photo_volume", volume);
+        store.job(job);
         progress.show("IDrive e2へ送信しています");
         String version;
-        try{checkInterrupted();version=network.upload(object,jpeg,job.getString("owner"));}
-        catch(NanoBananaE2.UploadRejected rejected){job.put("stage","rejected");store.job(job);throw new IOException("e2が送信を拒否しました。一時画像を削除して終了し、設定を確認してください。");}
-        if(version!=null){job.put("version",version);store.job(job);}
+        try {
+          checkInterrupted();
+          version = network.upload(object, jpeg, job.getString("owner"));
+        } catch (NanoBananaE2.UploadRejected rejected) {
+          job.put("stage", "rejected");
+          store.job(job);
+          throw new IOException("e2が送信を拒否しました。一時画像を削除して終了し、設定を確認してください。");
+        }
+        if (version != null) {
+          job.put("version", version);
+          store.job(job);
+        }
         checkInterrupted();
-        if(version==null||version.equals("null")) {
-          job.put("stage","failed");store.job(job);
+        if (version == null || version.equals("null")) {
+          job.put("stage", "failed");
+          store.job(job);
           throw new IOException("e2バケットのバージョニングを有効にしてください。一時画像の削除後に設定を確認してください。");
         }
-        // Persist this boundary BEFORE POST. Crash/timeout here requires manual cleanup, never a new POST.
-        job.put("stage","submitting");store.job(job);
+        // Persist this boundary BEFORE POST. Crash/timeout here requires manual cleanup, never a
+        // new POST.
+        job.put("stage", "submitting");
+        store.job(job);
         progress.show("Nano Bananaへ依頼しています");
         checkInterrupted();
-        String task=network.generate(prompt.text,object,version,NanoBananaOutput.fromJob(job));
-        job.put("task",task).put("stage","generating");store.job(job);
+        String task = network.generate(prompt.text, object, version, NanoBananaOutput.fromJob(job));
+        job.put("task", task).put("stage", "generating");
+        store.job(job);
         checkInterrupted();
       }
-      String stage=job.getString("stage");
-      if(stage.equals("discarding")){discard();return;}
+      String stage = job.getString("stage");
+      if (stage.equals("discarding")) {
+        discard();
+        return;
+      }
       recoverPending(job, false);
-      if(job.has("saved")&&!stage.equals("complete")){job.put("stage","cleanup");store.job(job);stage="cleanup";}
-      if(stage.equals("rejected"))throw new IOException("e2が送信を拒否しました。終了して設定を確認してください。");
-      if(stage.equals("uploading")||stage.equals("submitting"))
+      if (job.has("saved") && !stage.equals("complete")) {
+        job.put("stage", "cleanup");
+        store.job(job);
+        stage = "cleanup";
+      }
+      if (stage.equals("rejected")) throw new IOException("e2が送信を拒否しました。終了して設定を確認してください。");
+      if (stage.equals("uploading") || stage.equals("submitting"))
         throw new IOException("依頼の結果を確認できません。自動では再送しません。一時画像を削除して終了できます。API側の処理と課金は取り消せない場合があります。");
-      if(stage.equals("complete")) {progress.show("生成画像を保存しました");return;}
-      if(stage.equals("cleanup")) {cleanup(job);progress.show("一時画像を削除し、生成画像を保存しました");return;}
-      if(stage.equals("failed"))throw new IOException("画像を生成できませんでした。一時画像を削除して終了してください。");
-      Services network=services();
+      if (stage.equals("complete")) {
+        progress.show("生成画像を保存しました");
+        return;
+      }
+      if (stage.equals("cleanup")) {
+        cleanup(job);
+        progress.show("一時画像を削除し、生成画像を保存しました");
+        return;
+      }
+      if (stage.equals("failed")) throw new IOException("画像を生成できませんでした。一時画像を削除して終了してください。");
+      Services network = services();
       progress.show("画像を生成しています");
-      long deadline=SystemClock.elapsedRealtime()+300000;
+      long deadline = SystemClock.elapsedRealtime() + 300000;
       JSONObject status;
-      while(true) {
+      while (true) {
         checkInterrupted();
-        status=network.status(job.getString("task"));checkInterrupted();int flag=status.getInt("successFlag");
-        if(flag==1)break;
-        if(flag==2||flag==3){job.put("stage","failed");store.job(job);throw new IOException("画像を生成できませんでした。一時画像を削除して終了してください。");}
-        if(flag!=0)throw new IOException("生成状態を確認できませんでした");
-        if(SystemClock.elapsedRealtime()>deadline)throw new IOException("生成を待っています。「状態を再確認」で続きから確認できます。");
+        status = network.status(job.getString("task"));
+        checkInterrupted();
+        int flag = status.getInt("successFlag");
+        if (flag == 1) break;
+        if (flag == 2 || flag == 3) {
+          job.put("stage", "failed");
+          store.job(job);
+          throw new IOException("画像を生成できませんでした。一時画像を削除して終了してください。");
+        }
+        if (flag != 0) throw new IOException("生成状態を確認できませんでした");
+        if (SystemClock.elapsedRealtime() > deadline)
+          throw new IOException("生成を待っています。「状態を再確認」で続きから確認できます。");
         Thread.sleep(3000);
       }
       progress.show("生成画像を保存しています");
       recoverPending(job, false);
-      if(!job.has("saved")) {
+      if (!job.has("saved")) {
         checkInterrupted();
-        byte[] bytes=network.download(status.getJSONObject("response").getString("resultImageUrl"));
-        checkInterrupted();saveResult(job,bytes);
+        byte[] bytes =
+            network.download(status.getJSONObject("response").getString("resultImageUrl"));
+        checkInterrupted();
+        saveResult(job, bytes);
       }
-      job.put("stage","cleanup");store.job(job);
-      progress.show("送信用の一時画像を削除しています");cleanup(job);
+      job.put("stage", "cleanup");
+      store.job(job);
+      progress.show("送信用の一時画像を削除しています");
+      cleanup(job);
       progress.show("生成画像を保存しました");
-      DiagnosticLog.event("nano.complete",event,"elapsed_ms",SystemClock.elapsedRealtime()-start);
-    }catch(Exception error){DiagnosticLog.event("nano.failed",event,"elapsed_ms",SystemClock.elapsedRealtime()-start);throw error;}
+      DiagnosticLog.event(
+          "nano.complete", event, "elapsed_ms", SystemClock.elapsedRealtime() - start);
+    } catch (Exception error) {
+      DiagnosticLog.event(
+          "nano.failed", event, "elapsed_ms", SystemClock.elapsedRealtime() - start);
+      throw error;
+    }
   }
+
   /** Durable cancellation intent must precede any recovery or remote cleanup. */
   static void markDiscarding(NanoBananaStore store) throws Exception {
-    JSONObject job=store.job();if(job==null||job.optString("stage").equals("discarding"))return;
-    String stage=job.optString("stage");
-    job.put("discardDelete",!stage.equals("complete")&&!stage.equals("rejected"));
-    job.put("stage","discarding");store.job(job);
+    JSONObject job = store.job();
+    if (job == null || job.optString("stage").equals("discarding")) return;
+    String stage = job.optString("stage");
+    job.put("discardDelete", !stage.equals("complete") && !stage.equals("rejected"));
+    job.put("stage", "discarding");
+    store.job(job);
   }
+
   void discard() throws Exception {
     checkInterrupted();
     markDiscarding(store);
-    JSONObject job=store.job();if(job==null)return;
-    if(job.optBoolean("discardDelete",true)){
+    JSONObject job = store.job();
+    if (job == null) return;
+    if (job.optBoolean("discardDelete", true)) {
       deleteInput(job);
-      job.put("discardDelete",false);store.job(job);checkInterrupted();
+      job.put("discardDelete", false);
+      store.job(job);
+      checkInterrupted();
     }
     // Local reconciliation can need a detached SD card. Keep the cancelled job and
     // pending URI so retries can finish it without repeating the remote deletion.
     recoverPending(job, true);
     store.job(null);
   }
+
   private void cleanup(JSONObject job) throws Exception {
     checkInterrupted();
     deleteInput(job);
-    job.put("stage","complete");store.job(job);checkInterrupted();
-  }
-  private void deleteInput(JSONObject job) throws Exception {
-    String object=job.getString("object"), version=job.has("version")?job.getString("version"):null;
-    String owner=job.getString("owner");
-    if(services!=null)services.delete(object,version,owner);
-    else store.e2().delete(object,version,owner);
+    job.put("stage", "complete");
+    store.job(job);
+    checkInterrupted();
   }
 
-  static byte[] input(PhotoRepository repository,PhotoRepository.Photo photo) throws Exception {
-    if(photo.isVideo())throw new IOException("写真を選んでください");
-    PhotoRepository.Preview preview=repository.preview(photo);Bitmap bitmap=PhotoRepository.bitmap(preview,1600);
-    int edge=Math.max(bitmap.getWidth(),bitmap.getHeight());
-    if(edge>1600) {
-      float scale=1600f/edge;
-      Bitmap small=Bitmap.createScaledBitmap(bitmap,Math.max(1,Math.round(bitmap.getWidth()*scale)),Math.max(1,Math.round(bitmap.getHeight()*scale)),true);
-      if(small!=bitmap)bitmap.recycle();bitmap=small;
-    }
-    try(ByteArrayOutputStream out=new ByteArrayOutputStream()) {
-      if(!bitmap.compress(Bitmap.CompressFormat.JPEG,92,out))throw new IOException("送信用JPEGを作れませんでした");
-      if(out.size()>5*1024*1024)throw new IOException("送信用画像が大きすぎます");return out.toByteArray();
-    }finally{bitmap.recycle();}
+  private void deleteInput(JSONObject job) throws Exception {
+    String object = job.getString("object"),
+        version = job.has("version") ? job.getString("version") : null;
+    String owner = job.getString("owner");
+    if (services != null) services.delete(object, version, owner);
+    else store.e2().delete(object, version, owner);
   }
+
+  static byte[] input(PhotoRepository repository, PhotoRepository.Photo photo) throws Exception {
+    if (photo.isVideo()) throw new IOException("写真を選んでください");
+    PhotoRepository.Preview preview = repository.preview(photo);
+    Bitmap bitmap = PhotoRepository.bitmap(preview, 1600);
+    int edge = Math.max(bitmap.getWidth(), bitmap.getHeight());
+    if (edge > 1600) {
+      float scale = 1600f / edge;
+      Bitmap small =
+          Bitmap.createScaledBitmap(
+              bitmap,
+              Math.max(1, Math.round(bitmap.getWidth() * scale)),
+              Math.max(1, Math.round(bitmap.getHeight() * scale)),
+              true);
+      if (small != bitmap) bitmap.recycle();
+      bitmap = small;
+    }
+    try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+      if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 92, out))
+        throw new IOException("送信用JPEGを作れませんでした");
+      if (out.size() > 5 * 1024 * 1024) throw new IOException("送信用画像が大きすぎます");
+      return out.toByteArray();
+    } finally {
+      bitmap.recycle();
+    }
+  }
+
   private void recoverPending(JSONObject job, boolean discarding) throws Exception {
     checkInterrupted();
-    if(job.has("saved")||!job.has("pending"))return;
-    String location=job.getString("pending");
-    if(!CameraImportHistoryPlan.validUri(location))throw new IOException("画像の保存先を確認できませんでした");
-    Uri uri=Uri.parse(location);
-    if(!PhotoStorage.volumeOf(uri).equals(job.optString("photo_volume",PhotoStorage.PRIMARY)))
+    if (job.has("saved") || !job.has("pending")) return;
+    String location = job.getString("pending");
+    if (!CameraImportHistoryPlan.validUri(location)) throw new IOException("画像の保存先を確認できませんでした");
+    Uri uri = Uri.parse(location);
+    if (!PhotoStorage.volumeOf(uri).equals(job.optString("photo_volume", PhotoStorage.PRIMARY)))
       throw new IOException("画像の保存先を確認できませんでした");
-    PhotoStorage.requireMounted(context,uri);
-    String pending=MediaStore.MediaColumns.IS_PENDING, owner=MediaStore.MediaColumns.OWNER_PACKAGE_NAME;
-    String path=MediaStore.MediaColumns.RELATIVE_PATH, name=MediaStore.MediaColumns.DISPLAY_NAME;
-    String directory="Pictures/LoupeNanoBanana/";
+    PhotoStorage.requireMounted(context, uri);
+    String pending = MediaStore.MediaColumns.IS_PENDING,
+        owner = MediaStore.MediaColumns.OWNER_PACKAGE_NAME;
+    String path = MediaStore.MediaColumns.RELATIVE_PATH,
+        name = MediaStore.MediaColumns.DISPLAY_NAME;
+    String directory = "Pictures/LoupeNanoBanana/";
     int state;
-    String filename=null;
-    try(Cursor c=context.getContentResolver().query(uri,new String[]{pending,owner,path,name},null,null,null)) {
-      state=pendingState(c);
-      if(state==1||state==0&&!discarding) {
-        filename=c.getString(3);
-        if(!context.getPackageName().equals(c.getString(1))||!directory.equals(c.getString(2))
-            ||filename==null||!filename.matches("NanoBanana-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\\.jpg"))
+    String filename = null;
+    try (Cursor c =
+        context
+            .getContentResolver()
+            .query(uri, new String[] {pending, owner, path, name}, null, null, null)) {
+      state = pendingState(c);
+      if (state == 1 || state == 0 && !discarding) {
+        filename = c.getString(3);
+        if (!context.getPackageName().equals(c.getString(1))
+            || !directory.equals(c.getString(2))
+            || filename == null
+            || !filename.matches("NanoBanana-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\\.jpg"))
           throw new IOException("画像の所有情報を確認できませんでした");
       }
     }
-    PhotoStorage.requireMounted(context,uri);
-    if(state==0){
+    PhotoStorage.requireMounted(context, uri);
+    if (state == 0) {
       // A published result might have been renamed or moved by the user. Discard
       // never changes that row, and need not reattach it to the cancelled job.
-      if(!discarding){job.put("saved",uri.toString());store.job(job);checkInterrupted();}
+      if (!discarding) {
+        job.put("saved", uri.toString());
+        store.job(job);
+        checkInterrupted();
+      }
       return;
     }
     checkInterrupted();
-    if(state==1&&context.getContentResolver().delete(uri,pending+"=1 AND "+owner+"=? AND "+path+"=? AND "+name+"=?",
-        new String[]{context.getPackageName(),directory,filename})!=1)
-      throw new IOException("画像の保存状態を確認できませんでした。もう一度確認してください");
-    job.remove("pending");store.job(job);
+    if (state == 1
+        && context
+                .getContentResolver()
+                .delete(
+                    uri,
+                    pending + "=1 AND " + owner + "=? AND " + path + "=? AND " + name + "=?",
+                    new String[] {context.getPackageName(), directory, filename})
+            != 1) throw new IOException("画像の保存状態を確認できませんでした。もう一度確認してください");
+    job.remove("pending");
+    store.job(job);
   }
+
   /** Unknown provider availability is never treated as an absent or unpublished image. */
   static int pendingState(Cursor cursor) throws IOException {
-    if(cursor==null)throw new IOException("画像の保存先に接続できません。もう一度確認してください");
-    if(!cursor.moveToFirst())return -1;
-    int value=cursor.getInt(0);
-    if(cursor.isNull(0)||value!=0&&value!=1)throw new IOException("画像の保存状態を確認できませんでした");
+    if (cursor == null) throw new IOException("画像の保存先に接続できません。もう一度確認してください");
+    if (!cursor.moveToFirst()) return -1;
+    int value = cursor.getInt(0);
+    if (cursor.isNull(0) || value != 0 && value != 1) throw new IOException("画像の保存状態を確認できませんでした");
     return value;
   }
 
-  private void saveResult(JSONObject job,byte[] bytes) throws Exception {
-    String volume=job.optString("photo_volume",PhotoStorage.PRIMARY);
-    PhotoStorage.requireSpace(context,volume,bytes.length);
-    BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;
-    BitmapFactory.decodeByteArray(bytes,0,bytes.length,bounds);
-    if(bounds.outWidth<=0||bounds.outHeight<=0||(long)bounds.outWidth*bounds.outHeight>20000000)
+  private void saveResult(JSONObject job, byte[] bytes) throws Exception {
+    String volume = job.optString("photo_volume", PhotoStorage.PRIMARY);
+    PhotoStorage.requireSpace(context, volume, bytes.length);
+    BitmapFactory.Options bounds = new BitmapFactory.Options();
+    bounds.inJustDecodeBounds = true;
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.length, bounds);
+    if (bounds.outWidth <= 0
+        || bounds.outHeight <= 0
+        || (long) bounds.outWidth * bounds.outHeight > 20000000)
       throw new IOException("生成結果を画像として開けませんでした");
-    boolean jpeg="image/jpeg".equals(bounds.outMimeType);
-    BitmapFactory.Options decode=new BitmapFactory.Options();decode.inSampleSize=1;
-    if(jpeg)while((bounds.outWidth+decode.inSampleSize-1)/Math.max(1,decode.inSampleSize)>1600
-        ||(bounds.outHeight+decode.inSampleSize-1)/Math.max(1,decode.inSampleSize)>1600)
-      decode.inSampleSize*=2;
+    boolean jpeg = "image/jpeg".equals(bounds.outMimeType);
+    BitmapFactory.Options decode = new BitmapFactory.Options();
+    decode.inSampleSize = 1;
+    if (jpeg)
+      while ((bounds.outWidth + decode.inSampleSize - 1) / Math.max(1, decode.inSampleSize) > 1600
+          || (bounds.outHeight + decode.inSampleSize - 1) / Math.max(1, decode.inSampleSize) > 1600)
+        decode.inSampleSize *= 2;
     checkInterrupted();
-    Bitmap bitmap=BitmapFactory.decodeByteArray(bytes,0,bytes.length,decode);
-    if(bitmap==null)throw new IOException("生成結果を画像として開けませんでした");
-    Uri uri=null;boolean published=false;
+    Bitmap bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length, decode);
+    if (bitmap == null) throw new IOException("生成結果を画像として開けませんでした");
+    Uri uri = null;
+    boolean published = false;
     try {
       checkInterrupted();
-      ContentValues values=new ContentValues();values.put(MediaStore.Images.Media.DISPLAY_NAME,"NanoBanana-"+UUID.randomUUID()+".jpg");
-      values.put(MediaStore.Images.Media.MIME_TYPE,"image/jpeg");values.put(MediaStore.Images.Media.RELATIVE_PATH,"Pictures/LoupeNanoBanana");
-      values.put(MediaStore.Images.Media.IS_PENDING,1);
-      uri=context.getContentResolver().insert(MediaStore.Images.Media.getContentUri(volume),values);
-      if(uri==null)throw new IOException("画像の保存先を作れませんでした");
-      job.put("pending",uri.toString());store.job(job);
-      try(OutputStream out=context.getContentResolver().openOutputStream(uri)) {
-        if(out==null)throw new IOException("生成画像を保存できませんでした");
+      ContentValues values = new ContentValues();
+      values.put(MediaStore.Images.Media.DISPLAY_NAME, "NanoBanana-" + UUID.randomUUID() + ".jpg");
+      values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
+      values.put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/LoupeNanoBanana");
+      values.put(MediaStore.Images.Media.IS_PENDING, 1);
+      uri =
+          context
+              .getContentResolver()
+              .insert(MediaStore.Images.Media.getContentUri(volume), values);
+      if (uri == null) throw new IOException("画像の保存先を作れませんでした");
+      job.put("pending", uri.toString());
+      store.job(job);
+      try (OutputStream out = context.getContentResolver().openOutputStream(uri)) {
+        if (out == null) throw new IOException("生成画像を保存できませんでした");
         checkInterrupted();
-        if(jpeg)out.write(bytes);
-        else if(!bitmap.compress(Bitmap.CompressFormat.JPEG,95,out))throw new IOException("生成画像を保存できませんでした");
+        if (jpeg) out.write(bytes);
+        else if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out))
+          throw new IOException("生成画像を保存できませんでした");
       }
       checkInterrupted();
-      ContentValues ready=new ContentValues();ready.put(MediaStore.Images.Media.IS_PENDING,0);
-      if(context.getContentResolver().update(uri,ready,null,null)!=1)throw new IOException("生成画像を確定できませんでした");
-      published=true;job.put("saved",uri.toString());store.job(job);checkInterrupted();
-    }finally{
-      bitmap.recycle();if(!published&&uri!=null)context.getContentResolver().delete(uri,MediaStore.Images.Media.IS_PENDING+" = ?",new String[]{"1"});
+      ContentValues ready = new ContentValues();
+      ready.put(MediaStore.Images.Media.IS_PENDING, 0);
+      if (context.getContentResolver().update(uri, ready, null, null) != 1)
+        throw new IOException("生成画像を確定できませんでした");
+      published = true;
+      job.put("saved", uri.toString());
+      store.job(job);
+      checkInterrupted();
+    } finally {
+      bitmap.recycle();
+      if (!published && uri != null)
+        context
+            .getContentResolver()
+            .delete(uri, MediaStore.Images.Media.IS_PENDING + " = ?", new String[] {"1"});
     }
   }
 }

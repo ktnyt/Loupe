@@ -27,12 +27,13 @@ import java.util.Locale
  * [init] を呼ぶ前や書き込みに失敗したときは logcat へ出すだけで、握って捨てる
  */
 object ImportLog {
-
     private const val TAG = "ImportLog"
     private const val FILE_STEM = "import-log-v2"
     private const val FILE_NAME = "$FILE_STEM.txt"
+
     /** 1 ファイルの上限。1 回の取り込みが数 KB なので、この大きさで数百回ぶん残る */
     private const val MAX_BYTES = 256 * 1024L
+
     /** 世代数。現行 + 過去 [GENERATIONS] 個まで持つ */
     private const val GENERATIONS = 3
 
@@ -45,23 +46,37 @@ object ImportLog {
         dir = context.filesDir
     }
 
-    fun i(tag: String, msg: String) {
+    fun i(
+        tag: String,
+        msg: String,
+    ) {
         Log.i(tag, msg)
         append("I", tag, msg)
     }
 
-    fun w(tag: String, msg: String) {
+    fun w(
+        tag: String,
+        msg: String,
+    ) {
         Log.w(tag, msg)
         append("W", tag, msg)
     }
 
-    fun w(tag: String, msg: String, e: Throwable) {
+    fun w(
+        tag: String,
+        msg: String,
+        e: Throwable,
+    ) {
         w(tag, "$msg | ${e.javaClass.name}")
     }
 
     /** 記録の実体。書けなくても取り込みは続ける */
     @Synchronized
-    private fun append(level: String, tag: String, msg: String) {
+    private fun append(
+        level: String,
+        tag: String,
+        msg: String,
+    ) {
         val base = dir ?: return
         try {
             val f = File(base, FILE_NAME)

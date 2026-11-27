@@ -21,11 +21,23 @@ import java.util.Set;
 import java.util.regex.Pattern;
 import jp.nano.rawgallery.camera.CameraImportHistoryPlan;
 
-record PhotoStorageLocation(Kind kind, Availability availability, String volume, String label, String folder) {
+record PhotoStorageLocation(
+    Kind kind, Availability availability, String volume, String label, String folder) {
   private static final Pattern EXTERNAL_VOLUME = Pattern.compile("[0-9a-f]+(?:-[0-9a-f]+)*");
 
-  enum Kind { CURRENT, RECORDED, CLOUD, UNKNOWN }
-  enum Availability { MOUNTED, READ_ONLY, UNAVAILABLE, UNKNOWN }
+  enum Kind {
+    CURRENT,
+    RECORDED,
+    CLOUD,
+    UNKNOWN
+  }
+
+  enum Availability {
+    MOUNTED,
+    READ_ONLY,
+    UNAVAILABLE,
+    UNKNOWN
+  }
 
   String display() {
     String place = kind == Kind.RECORDED ? "記録上は " + label : label;
@@ -38,7 +50,9 @@ record PhotoStorageLocation(Kind kind, Availability availability, String volume,
 
   private record Volume(String label, Availability availability) {}
 
-  /** Capture storage state once per worker-side inventory, with no binder calls when binding rows. */
+  /**
+   * Capture storage state once per worker-side inventory, with no binder calls when binding rows.
+   */
   static final class Volumes {
     private final Map<String, Volume> known = new HashMap<>();
     private final boolean readable;
@@ -52,14 +66,18 @@ record PhotoStorageLocation(Kind kind, Availability availability, String volume,
           if (id == null) continue;
           String label = disk.getDescription(context);
           if (label == null || label.isBlank()) label = "外部ストレージ";
-          Availability availability = switch (disk.getState()) {
-            case Environment.MEDIA_MOUNTED -> Availability.MOUNTED;
-            case Environment.MEDIA_MOUNTED_READ_ONLY -> Availability.READ_ONLY;
-            default -> Availability.UNAVAILABLE;
-          };
+          Availability availability =
+              switch (disk.getState()) {
+                case Environment.MEDIA_MOUNTED -> Availability.MOUNTED;
+                case Environment.MEDIA_MOUNTED_READ_ONLY -> Availability.READ_ONLY;
+                default -> Availability.UNAVAILABLE;
+              };
           String suffix = id.toUpperCase(Locale.ROOT);
-          known.put(id, new Volume(PhotoStorage.PRIMARY.equals(id) ? "内部ストレージ"
-              : label + "（" + suffix + "）", availability));
+          known.put(
+              id,
+              new Volume(
+                  PhotoStorage.PRIMARY.equals(id) ? "内部ストレージ" : label + "（" + suffix + "）",
+                  availability));
         }
         gotVolumes = true;
       } catch (RuntimeException unavailable) {
@@ -72,9 +90,12 @@ record PhotoStorageLocation(Kind kind, Availability availability, String volume,
       if (!concrete(volume)) return unknown();
       Volume disk = known.get(volume);
       String label = disk == null ? fallbackLabel(volume) : disk.label();
-      Availability availability = disk == null ? (readable ? Availability.UNAVAILABLE : Availability.UNKNOWN)
-          : disk.availability();
-      return new PhotoStorageLocation(kind, availability, volume, label, folder == null ? "" : folder);
+      Availability availability =
+          disk == null
+              ? (readable ? Availability.UNAVAILABLE : Availability.UNKNOWN)
+              : disk.availability();
+      return new PhotoStorageLocation(
+          kind, availability, volume, label, folder == null ? "" : folder);
     }
   }
 
@@ -87,12 +108,14 @@ record PhotoStorageLocation(Kind kind, Availability availability, String volume,
   }
 
   private static String fallbackLabel(String volume) {
-    return PhotoStorage.PRIMARY.equals(volume) ? "内部ストレージ"
+    return PhotoStorage.PRIMARY.equals(volume)
+        ? "内部ストレージ"
         : "外部ストレージ（" + volume.toUpperCase(Locale.ROOT) + "）";
   }
 
   private static boolean concrete(String volume) {
-    return volume != null && !MediaStore.VOLUME_EXTERNAL.equals(volume)
+    return volume != null
+        && !MediaStore.VOLUME_EXTERNAL.equals(volume)
         && (PhotoStorage.PRIMARY.equals(volume) || EXTERNAL_VOLUME.matcher(volume).matches());
   }
 
@@ -105,8 +128,10 @@ record PhotoStorageLocation(Kind kind, Availability availability, String volume,
   /** A single visible match cannot disambiguate an aggregate reference in an incomplete catalog. */
   static Set<String> completeAggregateVolumes(Context context) {
     try {
-      String permission = Build.VERSION.SDK_INT >= 33
-          ? Manifest.permission.READ_MEDIA_IMAGES : Manifest.permission.READ_EXTERNAL_STORAGE;
+      String permission =
+          Build.VERSION.SDK_INT >= 33
+              ? Manifest.permission.READ_MEDIA_IMAGES
+              : Manifest.permission.READ_EXTERNAL_STORAGE;
       if (context.checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) return null;
       Set<String> mounted = Set.copyOf(MediaStore.getExternalVolumeNames(context));
       return mounted.containsAll(MediaStore.getRecentExternalVolumeNames(context)) ? mounted : null;
@@ -115,7 +140,10 @@ record PhotoStorageLocation(Kind kind, Availability availability, String volume,
     }
   }
 
-  /** Recheck the displayed original on a worker thread. Historical and opaque references may be unknown. */
+  /**
+   * Recheck the displayed original on a worker thread. Historical and opaque references may be
+   * unknown.
+   */
   static PhotoStorageLocation resolve(Context context, PhotoRepository.Photo photo) {
     if (photo.isArchived()) return cloud();
     Uri uri = photo.uri;
@@ -136,31 +164,48 @@ record PhotoStorageLocation(Kind kind, Availability availability, String volume,
     String referenceVolume = MediaStore.getVolumeName(photo.uri);
     boolean exact = concrete(referenceVolume);
     Set<String> aggregateVolumes = exact ? null : completeAggregateVolumes(context);
-    if (!exact && (!MediaStore.VOLUME_EXTERNAL.equals(referenceVolume) || aggregateVolumes == null)) return unknown();
+    if (!exact && (!MediaStore.VOLUME_EXTERNAL.equals(referenceVolume) || aggregateVolumes == null))
+      return unknown();
     Volumes volumes = new Volumes(context);
-    PhotoStorageLocation recorded = exact ? volumes.location(Kind.RECORDED, referenceVolume, "") : unknown();
+    PhotoStorageLocation recorded =
+        exact ? volumes.location(Kind.RECORDED, referenceVolume, "") : unknown();
     Bundle options = new Bundle();
     options.putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_EXCLUDE);
     options.putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_EXCLUDE);
-    try (Cursor row = context.getContentResolver().query(photo.uri,
-        new String[]{MediaStore.MediaColumns.VOLUME_NAME, MediaStore.MediaColumns.RELATIVE_PATH,
-            MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.SIZE, MediaStore.MediaColumns.DATE_MODIFIED,
-            MediaStore.MediaColumns.DATE_ADDED}, options, null)) {
+    try (Cursor row =
+        context
+            .getContentResolver()
+            .query(
+                photo.uri,
+                new String[] {
+                  MediaStore.MediaColumns.VOLUME_NAME,
+                  MediaStore.MediaColumns.RELATIVE_PATH,
+                  MediaStore.MediaColumns.DISPLAY_NAME,
+                  MediaStore.MediaColumns.SIZE,
+                  MediaStore.MediaColumns.DATE_MODIFIED,
+                  MediaStore.MediaColumns.DATE_ADDED
+                },
+                options,
+                null)) {
       if (row == null || row.getCount() != 1 || !row.moveToFirst()) return recorded;
       if (!exact && !aggregateVolumes.equals(completeAggregateVolumes(context))) return unknown();
       String volume = row.getString(0);
       String folder = row.getString(1);
-      if ((exact && !referenceVolume.equals(volume)) || !photo.name.equals(row.getString(2))
-          || photo.size != row.getLong(3) || !photo.folder.equals(folder)
+      if ((exact && !referenceVolume.equals(volume))
+          || !photo.name.equals(row.getString(2))
+          || photo.size != row.getLong(3)
+          || !photo.folder.equals(folder)
           || (photo.modified > 0 && photo.modified != row.getLong(4))
-          || (photo.added > 0 && photo.added != SyncPolicy.secondsToMillis(row.getLong(5)))) return recorded;
+          || (photo.added > 0 && photo.added != SyncPolicy.secondsToMillis(row.getLong(5))))
+        return recorded;
       return volumes.location(Kind.CURRENT, volume, folder);
     } catch (RuntimeException unavailable) {
       return recorded;
     }
   }
 
-  private static PhotoStorageLocation resolveDocument(Context context, PhotoRepository.Photo photo) {
+  private static PhotoStorageLocation resolveDocument(
+      Context context, PhotoRepository.Photo photo) {
     String id = DocumentsContract.getDocumentId(photo.uri);
     int separator = id.indexOf(':');
     if (separator <= 0) return unknown();
@@ -172,10 +217,19 @@ record PhotoStorageLocation(Kind kind, Availability availability, String volume,
     Volumes volumes = new Volumes(context);
     PhotoStorageLocation recorded = volumes.location(Kind.RECORDED, volume, "");
     ContentResolver resolver = context.getContentResolver();
-    try (Cursor row = resolver.query(photo.uri,
-        new String[]{DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_SIZE},
-        null, null, null)) {
-      if (row == null || row.getCount() != 1 || !row.moveToFirst() || !photo.name.equals(row.getString(0))
+    try (Cursor row =
+        resolver.query(
+            photo.uri,
+            new String[] {
+              DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_SIZE
+            },
+            null,
+            null,
+            null)) {
+      if (row == null
+          || row.getCount() != 1
+          || !row.moveToFirst()
+          || !photo.name.equals(row.getString(0))
           || photo.size != row.getLong(1)) return recorded;
       return volumes.location(Kind.CURRENT, volume, folder);
     } catch (RuntimeException unavailable) {

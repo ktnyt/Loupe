@@ -4,62 +4,162 @@ import java.nio.*;
 
 /** Shared curve sampling and CPU reference for the single global tone pipeline. */
 final class RawEditTone {
-  static final int STEPS=8192,LUT_WIDTH=1024,LUT_ROWS=9,LUT_HEIGHT=18;
-  static RawEditCurve basic(RawEditState s){
-    float b=s.get(RawEditState.BLACKS),w=s.get(RawEditState.WHITES),br=s.get(RawEditState.BRIGHTNESS),c=s.get(RawEditState.CONTRAST);
-    float x0=Math.max(0,-b*.12f),y0=Math.max(0,b*.12f),x1=1-Math.max(0,w*.15f),y1=1+Math.min(0,w*.15f);
-    float[] p={x0,y0,.2f,.2f+s.get(RawEditState.SHADOWS)*.1f+br*.1f-c*.12f,.5f,.5f+br*.16f,.8f,.8f+s.get(RawEditState.HIGHLIGHTS)*.1f+br*.1f+c*.12f,x1,y1};
-    for(int i=3;i<8;i+=2)p[i]=Math.max(p[i-2],Math.min(y1,p[i]));return new RawEditCurve(p);
+  static final int STEPS = 8192, LUT_WIDTH = 1024, LUT_ROWS = 9, LUT_HEIGHT = 18;
+
+  static RawEditCurve basic(RawEditState s) {
+    float b = s.get(RawEditState.BLACKS),
+        w = s.get(RawEditState.WHITES),
+        br = s.get(RawEditState.BRIGHTNESS),
+        c = s.get(RawEditState.CONTRAST);
+    float x0 = Math.max(0, -b * .12f),
+        y0 = Math.max(0, b * .12f),
+        x1 = 1 - Math.max(0, w * .15f),
+        y1 = 1 + Math.min(0, w * .15f);
+    float[] p = {
+      x0,
+      y0,
+      .2f,
+      .2f + s.get(RawEditState.SHADOWS) * .1f + br * .1f - c * .12f,
+      .5f,
+      .5f + br * .16f,
+      .8f,
+      .8f + s.get(RawEditState.HIGHLIGHTS) * .1f + br * .1f + c * .12f,
+      x1,
+      y1
+    };
+    for (int i = 3; i < 8; i += 2) p[i] = Math.max(p[i - 2], Math.min(y1, p[i]));
+    return new RawEditCurve(p);
   }
-  static boolean sameLut(RawEditState a,RawEditState b){if(a==null)return false;for(int i=RawEditState.BRIGHTNESS;i<=RawEditState.BLACKS;i++)if(a.get(i)!=b.get(i))return false;for(int i=0;i<5;i++)if(!a.curve(i).equals(b.curve(i)))return false;return true;}
-  static ByteBuffer lut(RawEditState s){
-    ByteBuffer data=ByteBuffer.allocateDirect(LUT_WIDTH*LUT_HEIGHT*16).order(ByteOrder.nativeOrder());updateLut(s,null,data);return data;
+
+  static boolean sameLut(RawEditState a, RawEditState b) {
+    if (a == null) return false;
+    for (int i = RawEditState.BRIGHTNESS; i <= RawEditState.BLACKS; i++)
+      if (a.get(i) != b.get(i)) return false;
+    for (int i = 0; i < 5; i++) if (!a.curve(i).equals(b.curve(i))) return false;
+    return true;
   }
-  static void updateLut(RawEditState s,RawEditState previous,ByteBuffer data){
-    RawEditCurve[] curves={basic(s),s.curve(0),s.curve(1),s.curve(2),s.curve(3),s.curve(4)};
-    for(int k=0;k<curves.length;k++){
-      RawEditCurve old=previous==null?null:k==0?basic(previous):previous.curve(k-1);
-      if(curves[k].equals(old))continue;
-      for(int i=0;i<=STEPS;i++)data.putFloat((((k/4)*LUT_ROWS+i/LUT_WIDTH)*LUT_WIDTH+i%LUT_WIDTH)*16+(k%4)*4,curves[k].at(i/(float)STEPS));
+
+  static ByteBuffer lut(RawEditState s) {
+    ByteBuffer data =
+        ByteBuffer.allocateDirect(LUT_WIDTH * LUT_HEIGHT * 16).order(ByteOrder.nativeOrder());
+    updateLut(s, null, data);
+    return data;
+  }
+
+  static void updateLut(RawEditState s, RawEditState previous, ByteBuffer data) {
+    RawEditCurve[] curves = {basic(s), s.curve(0), s.curve(1), s.curve(2), s.curve(3), s.curve(4)};
+    for (int k = 0; k < curves.length; k++) {
+      RawEditCurve old = previous == null ? null : k == 0 ? basic(previous) : previous.curve(k - 1);
+      if (curves[k].equals(old)) continue;
+      for (int i = 0; i <= STEPS; i++)
+        data.putFloat(
+            (((k / 4) * LUT_ROWS + i / LUT_WIDTH) * LUT_WIDTH + i % LUT_WIDTH) * 16 + (k % 4) * 4,
+            curves[k].at(i / (float) STEPS));
     }
   }
-  static double shoulder(double x,double rolloff){x=Math.max(0,x);if(rolloff==0)return Math.min(1,x);double k=1-.3*rolloff;return x<=k?x:k+(1-k)*(-Math.expm1(-(x-k)/(1-k)));}
-  static double encode(double x){return x<=.0031308?12.92*x:1.055*Math.pow(x,1/2.4)-.055;}
-  static double decode(double x){return x<=.04045?x/12.92:Math.pow((x+.055)/1.055,2.4);}
-  static double[] lab(double[] c){
-    double l=Math.cbrt(.4122214708*c[0]+.5363325363*c[1]+.0514459929*c[2]);
-    double m=Math.cbrt(.2119034982*c[0]+.6806995451*c[1]+.1073969566*c[2]);
-    double s=Math.cbrt(.0883024619*c[0]+.2817188376*c[1]+.6299787005*c[2]);
-    return new double[]{.2104542553*l+.793617785*m-.0040720468*s,1.9779984951*l-2.428592205*m+.4505937099*s,.0259040371*l+.7827717662*m-.808675766*s};
+
+  static double shoulder(double x, double rolloff) {
+    x = Math.max(0, x);
+    if (rolloff == 0) return Math.min(1, x);
+    double k = 1 - .3 * rolloff;
+    return x <= k ? x : k + (1 - k) * (-Math.expm1(-(x - k) / (1 - k)));
   }
-  static double[] rgb(double[] c){
-    double l=c[0]+.3963377774*c[1]+.2158037573*c[2],m=c[0]-.1055613458*c[1]-.0638541728*c[2],s=c[0]-.0894841775*c[1]-1.291485548*c[2];l=l*l*l;m=m*m*m;s=s*s*s;
-    return new double[]{4.0767416621*l-3.3077115913*m+.2309699292*s,-1.2684380046*l+2.6097574011*m-.3413193965*s,-.0041960863*l-.7034186147*m+1.707614701*s};
+
+  static double encode(double x) {
+    return x <= .0031308 ? 12.92 * x : 1.055 * Math.pow(x, 1 / 2.4) - .055;
   }
-  static boolean inGamut(double[] c){for(double v:c)if(v<0||v>1)return false;return true;}
-  static double[] gamut(double[] c){
-    c=c.clone();c[0]=Math.max(0,Math.min(1,c[0]));double[] out=rgb(c);boolean near=true;for(double v:out)near&=v>=-2e-6&&v<=1+2e-6;if(near){for(int i=0;i<3;i++)out[i]=Math.max(0,Math.min(1,out[i]));return out;}
-    double lo=0,hi=1;for(int i=0;i<16;i++){double t=(lo+hi)/2;out=rgb(new double[]{c[0],c[1]*t,c[2]*t});if(inGamut(out))lo=t;else hi=t;}
-    return rgb(new double[]{c[0],c[1]*lo,c[2]*lo});
+
+  static double decode(double x) {
+    return x <= .04045 ? x / 12.92 : Math.pow((x + .055) / 1.055, 2.4);
   }
+
+  static double[] lab(double[] c) {
+    double l = Math.cbrt(.4122214708 * c[0] + .5363325363 * c[1] + .0514459929 * c[2]);
+    double m = Math.cbrt(.2119034982 * c[0] + .6806995451 * c[1] + .1073969566 * c[2]);
+    double s = Math.cbrt(.0883024619 * c[0] + .2817188376 * c[1] + .6299787005 * c[2]);
+    return new double[] {
+      .2104542553 * l + .793617785 * m - .0040720468 * s,
+      1.9779984951 * l - 2.428592205 * m + .4505937099 * s,
+      .0259040371 * l + .7827717662 * m - .808675766 * s
+    };
+  }
+
+  static double[] rgb(double[] c) {
+    double l = c[0] + .3963377774 * c[1] + .2158037573 * c[2],
+        m = c[0] - .1055613458 * c[1] - .0638541728 * c[2],
+        s = c[0] - .0894841775 * c[1] - 1.291485548 * c[2];
+    l = l * l * l;
+    m = m * m * m;
+    s = s * s * s;
+    return new double[] {
+      4.0767416621 * l - 3.3077115913 * m + .2309699292 * s,
+      -1.2684380046 * l + 2.6097574011 * m - .3413193965 * s,
+      -.0041960863 * l - .7034186147 * m + 1.707614701 * s
+    };
+  }
+
+  static boolean inGamut(double[] c) {
+    for (double v : c) if (v < 0 || v > 1) return false;
+    return true;
+  }
+
+  static double[] gamut(double[] c) {
+    c = c.clone();
+    c[0] = Math.max(0, Math.min(1, c[0]));
+    double[] out = rgb(c);
+    boolean near = true;
+    for (double v : out) near &= v >= -2e-6 && v <= 1 + 2e-6;
+    if (near) {
+      for (int i = 0; i < 3; i++) out[i] = Math.max(0, Math.min(1, out[i]));
+      return out;
+    }
+    double lo = 0, hi = 1;
+    for (int i = 0; i < 16; i++) {
+      double t = (lo + hi) / 2;
+      out = rgb(new double[] {c[0], c[1] * t, c[2] * t});
+      if (inGamut(out)) lo = t;
+      else hi = t;
+    }
+    return rgb(new double[] {c[0], c[1] * lo, c[2] * lo});
+  }
+
   /** Global reference starts at WB/exposure-adjusted linear RGB, after optional spatial details. */
-  static double[] apply(RawEditState state,double[] input){
-    double[] c=lab(input);c[0]=basic(state).at((float)shoulder(c[0],state.get(RawEditState.ROLLOFF)));
-    if(!state.curve(0).identity())c[0]=state.curve(0).at((float)c[0]);
-    boolean rgbCurves=false;for(int i=1;i<5;i++)rgbCurves|=!state.curve(i).identity();
-    if(rgbCurves){
-      c=rgb(c);
-      for(int i=0;i<3;i++)if(!state.curve(1).identity()||!state.curve(i+2).identity()){
-        double v=encode(c[i]);if(!state.curve(1).identity())v=state.curve(1).at((float)v);if(!state.curve(i+2).identity())v=state.curve(i+2).at((float)v);c[i]=decode(v);
-      }
-      c=lab(c);
+  static double[] apply(RawEditState state, double[] input) {
+    double[] c = lab(input);
+    c[0] = basic(state).at((float) shoulder(c[0], state.get(RawEditState.ROLLOFF)));
+    if (!state.curve(0).identity()) c[0] = state.curve(0).at((float) c[0]);
+    boolean rgbCurves = false;
+    for (int i = 1; i < 5; i++) rgbCurves |= !state.curve(i).identity();
+    if (rgbCurves) {
+      c = rgb(c);
+      for (int i = 0; i < 3; i++)
+        if (!state.curve(1).identity() || !state.curve(i + 2).identity()) {
+          double v = encode(c[i]);
+          if (!state.curve(1).identity()) v = state.curve(1).at((float) v);
+          if (!state.curve(i + 2).identity()) v = state.curve(i + 2).at((float) v);
+          c[i] = decode(v);
+        }
+      c = lab(c);
     }
-    double chroma=Math.hypot(c[1],c[2]);double sat=(1+state.get(RawEditState.SATURATION))*(1+state.get(RawEditState.VIBRANCE)*(1-Math.min(1,chroma*4))*.8)*(1+state.get(RawEditState.DEHAZE)*.12);c[1]*=sat;c[2]*=sat;
-    c=gamut(c);for(int i=0;i<3;i++)c[i]=Math.max(0,Math.min(1,encode(c[i])));
-    if(state.get(RawEditState.MONO)==1){double l=Math.max(0,Math.min(1,.2126*c[0]+.7152*c[1]+.0722*c[2]+.02)),mc=(1-Math.abs(2*l-1))*.11;c=new double[]{mc/3+l-mc*.5,l-mc*.5,mc+l-mc*.5};}
+    double chroma = Math.hypot(c[1], c[2]);
+    double sat =
+        (1 + state.get(RawEditState.SATURATION))
+            * (1 + state.get(RawEditState.VIBRANCE) * (1 - Math.min(1, chroma * 4)) * .8)
+            * (1 + state.get(RawEditState.DEHAZE) * .12);
+    c[1] *= sat;
+    c[2] *= sat;
+    c = gamut(c);
+    for (int i = 0; i < 3; i++) c[i] = Math.max(0, Math.min(1, encode(c[i])));
+    if (state.get(RawEditState.MONO) == 1) {
+      double l = Math.max(0, Math.min(1, .2126 * c[0] + .7152 * c[1] + .0722 * c[2] + .02)),
+          mc = (1 - Math.abs(2 * l - 1)) * .11;
+      c = new double[] {mc / 3 + l - mc * .5, l - mc * .5, mc + l - mc * .5};
+    }
     return c;
   }
-  static final String GLSL="""
+
+  static final String GLSL =
+      """
     uniform highp sampler2D toneLut;
     uniform int curveMask;
     float lookup(float v,int bank){

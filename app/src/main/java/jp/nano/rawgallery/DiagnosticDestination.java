@@ -22,10 +22,13 @@ final class DiagnosticDestination {
   private static final String FILE_NAME = "Loupe-diagnostics.zip";
 
   static Intent folderPicker(Context context) {
-    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).putExtra(Intent.EXTRA_LOCAL_ONLY, true);
+    Intent intent =
+        new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).putExtra(Intent.EXTRA_LOCAL_ONLY, true);
     PackageManager packages = context.getPackageManager();
-    ComponentName target = systemFolderPicker(packages.queryIntentActivities(intent,
-        PackageManager.MATCH_DEFAULT_ONLY | PackageManager.MATCH_SYSTEM_ONLY));
+    ComponentName target =
+        systemFolderPicker(
+            packages.queryIntentActivities(
+                intent, PackageManager.MATCH_DEFAULT_ONLY | PackageManager.MATCH_SYSTEM_ONLY));
     return target == null ? null : intent.setComponent(target);
   }
 
@@ -35,12 +38,17 @@ final class DiagnosticDestination {
     for (ResolveInfo candidate : candidates) {
       var activity = candidate.activityInfo;
       if (candidate.isCrossProfileIntentForwarderActivity()
-          || activity == null || !activity.enabled || !activity.exported || activity.applicationInfo == null
-          || !activity.applicationInfo.enabled || (activity.applicationInfo.flags & systemFlags) == 0) {
+          || activity == null
+          || !activity.enabled
+          || !activity.exported
+          || activity.applicationInfo == null
+          || !activity.applicationInfo.enabled
+          || (activity.applicationInfo.flags & systemFlags) == 0) {
         continue;
       }
       ComponentName component = new ComponentName(activity.packageName, activity.name);
-      // Multiple system components are ambiguous. Never delegate the decision to an implicit chooser.
+      // Multiple system components are ambiguous. Never delegate the decision to an implicit
+      // chooser.
       if (selected != null && !selected.equals(component)) return null;
       selected = component;
     }
@@ -54,25 +62,33 @@ final class DiagnosticDestination {
     values.put(MediaStore.MediaColumns.MIME_TYPE, "application/zip");
     values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
     values.put(MediaStore.MediaColumns.IS_PENDING, 1);
-    Uri created = resolver.insert(MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values);
+    Uri created =
+        resolver.insert(
+            MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values);
     if (created == null) throw new IOException("Diagnostic download not created");
-    String location = writeNew(archive, new NewOutput<>() {
-      @Override public OutputStream open() throws IOException {
-        return resolver.openOutputStream(created, "w");
-      }
+    String location =
+        writeNew(
+            archive,
+            new NewOutput<>() {
+              @Override
+              public OutputStream open() throws IOException {
+                return resolver.openOutputStream(created, "w");
+              }
 
-      @Override public String publish() throws IOException {
-        ContentValues ready = new ContentValues();
-        ready.put(MediaStore.MediaColumns.IS_PENDING, 0);
-        if (resolver.update(created, ready, null, null) != 1)
-          throw new IOException("Diagnostic download not published");
-        return "ダウンロード";
-      }
+              @Override
+              public String publish() throws IOException {
+                ContentValues ready = new ContentValues();
+                ready.put(MediaStore.MediaColumns.IS_PENDING, 0);
+                if (resolver.update(created, ready, null, null) != 1)
+                  throw new IOException("Diagnostic download not published");
+                return "ダウンロード";
+              }
 
-      @Override public boolean delete() {
-        return resolver.delete(created, null, null) == 1;
-      }
-    });
+              @Override
+              public boolean delete() {
+                return resolver.delete(created, null, null) == 1;
+              }
+            });
     return describe(context, created, location);
   }
 
@@ -83,7 +99,8 @@ final class DiagnosticDestination {
       throw new IOException("Unsupported local document provider");
     }
     var provider = context.getPackageManager().resolveContentProvider(authority, 0);
-    if (provider == null || (provider.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) == 0
+    if (provider == null
+        || (provider.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) == 0
         || !DocumentsContract.isTreeUri(tree)) {
       throw new IOException("Invalid local document tree");
     }
@@ -94,29 +111,40 @@ final class DiagnosticDestination {
 
     var resolver = context.getContentResolver();
     // The picker grants access to a folder. Only createDocument confers ownership of a new file.
-    Uri created = DocumentsContract.createDocument(resolver, folder, "application/octet-stream",
-        ".Loupe-diagnostics-" + UUID.randomUUID() + ".part");
-    if (created == null || !authority.equals(created.getAuthority())
+    Uri created =
+        DocumentsContract.createDocument(
+            resolver,
+            folder,
+            "application/octet-stream",
+            ".Loupe-diagnostics-" + UUID.randomUUID() + ".part");
+    if (created == null
+        || !authority.equals(created.getAuthority())
         || !DocumentsContract.isDocumentUri(context, created)
         || folderId.equals(DocumentsContract.getDocumentId(created))) {
       throw new IOException("Diagnostic document not created");
     }
 
-    Uri published = writeNew(archive, new NewOutput<>() {
-      @Override public OutputStream open() throws IOException {
-        return resolver.openOutputStream(created, "w");
-      }
+    Uri published =
+        writeNew(
+            archive,
+            new NewOutput<>() {
+              @Override
+              public OutputStream open() throws IOException {
+                return resolver.openOutputStream(created, "w");
+              }
 
-      @Override public Uri publish() throws IOException {
-        Uri renamed = DocumentsContract.renameDocument(resolver, created, FILE_NAME);
-        if (renamed == null) throw new IOException("Diagnostic document not published");
-        return renamed;
-      }
+              @Override
+              public Uri publish() throws IOException {
+                Uri renamed = DocumentsContract.renameDocument(resolver, created, FILE_NAME);
+                if (renamed == null) throw new IOException("Diagnostic document not published");
+                return renamed;
+              }
 
-      @Override public boolean delete() throws IOException {
-        return DocumentsContract.deleteDocument(resolver, created);
-      }
-    });
+              @Override
+              public boolean delete() throws IOException {
+                return DocumentsContract.deleteDocument(resolver, created);
+              }
+            });
     return describe(context, published, folderName);
   }
 
@@ -126,8 +154,10 @@ final class DiagnosticDestination {
   }
 
   private static String displayName(Context context, Uri uri) {
-    try (var row = context.getContentResolver().query(
-        uri, new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+    try (var row =
+        context
+            .getContentResolver()
+            .query(uri, new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null)) {
       return row != null && row.moveToFirst() ? row.getString(0) : null;
     } catch (RuntimeException unavailable) {
       return null;
@@ -136,12 +166,16 @@ final class DiagnosticDestination {
 
   interface NewOutput<T> {
     OutputStream open() throws IOException;
+
     T publish() throws IOException;
+
     boolean delete() throws IOException;
   }
 
   static final class CleanupFailed extends IOException {
-    CleanupFailed(Exception cause) { super("Incomplete diagnostic output could not be removed", cause); }
+    CleanupFailed(Exception cause) {
+      super("Incomplete diagnostic output could not be removed", cause);
+    }
   }
 
   static <T> T writeNew(byte[] archive, NewOutput<T> output) throws IOException {

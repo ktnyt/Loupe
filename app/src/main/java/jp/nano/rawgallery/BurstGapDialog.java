@@ -57,27 +57,35 @@ final class BurstGapDialog {
     scroll.setPadding(inset, 0, inset, 0);
     scroll.addView(field, new ScrollView.LayoutParams(-1, -2));
 
-    AlertDialog dialog = builder.setTitle("連写番号がない写真の間隔")
-        .setView(scroll)
-        .setNegativeButton("キャンセル", null)
-        .setPositiveButton("保存", null)
-        .create();
+    AlertDialog dialog =
+        builder
+            .setTitle("連写番号がない写真の間隔")
+            .setView(scroll)
+            .setNegativeButton("キャンセル", null)
+            .setPositiveButton("保存", null)
+            .create();
     dialog.setCanceledOnTouchOutside(true);
-    dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
-        | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
+    dialog
+        .getWindow()
+        .setSoftInputMode(
+            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+                | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
     dialog.show();
     int touchHeight = GalleryUi.dp(dialogContext, 48);
     dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setMinHeight(touchHeight);
     dialog.getButton(AlertDialog.BUTTON_POSITIVE).setMinHeight(touchHeight);
-    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-      int value = BurstGapSettings.parseCustomMillis(input.getText().toString());
-      if (value == 0) {
-        field.setError("1〜2147483647の半角整数を入力");
-      } else if (!save.test(value)) {
-        field.setError(SAVE_ERROR);
-      } else {
-        dialog.dismiss();
-      }
-    });
+    dialog
+        .getButton(AlertDialog.BUTTON_POSITIVE)
+        .setOnClickListener(
+            v -> {
+              int value = BurstGapSettings.parseCustomMillis(input.getText().toString());
+              if (value == 0) {
+                field.setError("1〜2147483647の半角整数を入力");
+              } else if (!save.test(value)) {
+                field.setError(SAVE_ERROR);
+              } else {
+                dialog.dismiss();
+              }
+            });
   }
 }

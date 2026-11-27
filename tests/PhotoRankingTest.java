@@ -4,34 +4,50 @@ import java.util.*;
 
 public final class PhotoRankingTest {
   private static void selectionCounts() {
-    List<String> ids=List.of("a","b","c","d","e");
-    for (String mode:List.of("", "A:", "B:")) {
-      Random choices=new Random(123);
-      for (int trial=0;trial<100;trial++) {
-        PhotoRanking ranking=new PhotoRanking(ids,mode);
-        Map<String,Integer> expected=new HashMap<>();
+    List<String> ids = List.of("a", "b", "c", "d", "e");
+    for (String mode : List.of("", "A:", "B:")) {
+      Random choices = new Random(123);
+      for (int trial = 0; trial < 100; trial++) {
+        PhotoRanking ranking = new PhotoRanking(ids, mode);
+        Map<String, Integer> expected = new HashMap<>();
         while (!ranking.done()) {
-          for (String id:ids) check(ranking.selectionCount(id)==expected.getOrDefault(id,0),"selection count before choice");
-          PhotoRanking before=ranking;
-          boolean tie=!ranking.bestOnly() && choices.nextInt(3)==0;
-          boolean upper=choices.nextBoolean();
-          if (!tie) expected.merge(upper?ranking.upper():ranking.lower(),1,Integer::sum);
-          ranking=tie?ranking.tie():ranking.choose(upper);
-          PhotoRanking restored=new PhotoRanking(ids,ranking.journal);
-          for (String id:ids) {
-            check(ranking.selectionCount(id)==expected.getOrDefault(id,0),"only explicitly selected candidate increments");
-            check(restored.selectionCount(id)==ranking.selectionCount(id),"selection count resume");
-            check(ranking.undo().selectionCount(id)==before.selectionCount(id),"selection count undo");
+          for (String id : ids)
+            check(
+                ranking.selectionCount(id) == expected.getOrDefault(id, 0),
+                "selection count before choice");
+          PhotoRanking before = ranking;
+          boolean tie = !ranking.bestOnly() && choices.nextInt(3) == 0;
+          boolean upper = choices.nextBoolean();
+          if (!tie) expected.merge(upper ? ranking.upper() : ranking.lower(), 1, Integer::sum);
+          ranking = tie ? ranking.tie() : ranking.choose(upper);
+          PhotoRanking restored = new PhotoRanking(ids, ranking.journal);
+          for (String id : ids) {
+            check(
+                ranking.selectionCount(id) == expected.getOrDefault(id, 0),
+                "only explicitly selected candidate increments");
+            check(
+                restored.selectionCount(id) == ranking.selectionCount(id),
+                "selection count resume");
+            check(
+                ranking.undo().selectionCount(id) == before.selectionCount(id),
+                "selection count undo");
           }
         }
-        for(String id:ids) check(new PhotoRanking(ids,mode).selectionCount(id)==0,"reset count");
+        for (String id : ids)
+          check(new PhotoRanking(ids, mode).selectionCount(id) == 0, "reset count");
       }
     }
-    PhotoRanking tied=new PhotoRanking(ids,"A:").tie().choose(false);
-    check(tied.selectionCount("a")==1 && tied.selectionCount("b")==0,"tie group does not infer selections for other members");
-    try { tied.selectionCount("unknown");throw new AssertionError("unknown photo"); }
-    catch(IllegalArgumentException expected) {}
-    System.out.println("Selection counts: both modes and legacy journals, explicit choices, ties, undo, resume, reset and unknown ids passed");
+    PhotoRanking tied = new PhotoRanking(ids, "A:").tie().choose(false);
+    check(
+        tied.selectionCount("a") == 1 && tied.selectionCount("b") == 0,
+        "tie group does not infer selections for other members");
+    try {
+      tied.selectionCount("unknown");
+      throw new AssertionError("unknown photo");
+    } catch (IllegalArgumentException expected) {
+    }
+    System.out.println(
+        "Selection counts: both modes and legacy journals, explicit choices, ties, undo, resume, reset and unknown ids passed");
   }
 
   public static void main(String[] args) {
@@ -53,17 +69,20 @@ public final class PhotoRankingTest {
         }
         if (!best.best().equals(List.of(winner)) || best.decisions() != size - 1)
           throw new AssertionError("winner or comparison count");
-        for (String id : ids) if (best.rankOf(id) != (id.equals(winner) ? 1 : 2))
-          throw new AssertionError("remaining photos must tie at rank two");
+        for (String id : ids)
+          if (best.rankOf(id) != (id.equals(winner) ? 1 : 2))
+            throw new AssertionError("remaining photos must tie at rank two");
       }
     }
     for (String bad : List.of("B:2", "B:00", "B:x")) {
       try {
         new PhotoRanking(List.of("a", "b"), bad);
         throw new AssertionError("invalid best journal");
-      } catch (IllegalArgumentException expected) {}
+      } catch (IllegalArgumentException expected) {
+      }
     }
-    System.out.println("Best-only: all winners for 2..60 photos, tied second, replay, undo, invalid journals passed");
+    System.out.println(
+        "Best-only: all winners for 2..60 photos, tied second, replay, undo, invalid journals passed");
     for (int size = 1; size <= 100; size++) {
       List<String> ids = new ArrayList<>();
       for (int i = 0; i < size; i++) ids.add("p" + i);
@@ -141,9 +160,11 @@ public final class PhotoRankingTest {
     String oldJournal = ranked.journal;
     List<String> oldBest = ranked.best();
     PhotoRanking alreadyWinner = ranked.addCoWinner(oldBest.get(0));
-    check(alreadyWinner.order.equals(oldOrder) && alreadyWinner.journal.equals(oldJournal),
+    check(
+        alreadyWinner.order.equals(oldOrder) && alreadyWinner.journal.equals(oldJournal),
         "adding existing winner leaves result and journal unchanged");
-    check(ranked.order.equals(oldOrder) && ranked.journal.equals(oldJournal),
+    check(
+        ranked.order.equals(oldOrder) && ranked.journal.equals(oldJournal),
         "co-winner addition does not mutate original");
 
     String selected = ranked.order.get(ranked.best().size() + 1);
@@ -151,9 +172,11 @@ public final class PhotoRankingTest {
     PhotoRanking expanded = ranked.addCoWinner(selected);
     Set<String> expectedWinners = new HashSet<>(oldBest);
     expectedWinners.add(selected);
-    check(new HashSet<>(expanded.best()).equals(expectedWinners),
+    check(
+        new HashSet<>(expanded.best()).equals(expectedWinners),
         "existing winners retained with selected photo");
-    check(expanded.rankOf(selected) == 1 && expanded.journal.startsWith("A:"),
+    check(
+        expanded.rankOf(selected) == 1 && expanded.journal.startsWith("A:"),
         "new completed result is full-rank A mode");
     for (String id : oldOrder) {
       if (expectedWinners.contains(id)) continue;
@@ -161,10 +184,13 @@ public final class PhotoRankingTest {
     }
     check(selectedOldRank > 1, "fixture selects a lower-ranked photo");
     PhotoRanking replayed = new PhotoRanking(ids, expanded.journal);
-    check(replayed.done() && replayed.order.equals(expanded.order), "A journal replays exact completed ordering");
+    check(
+        replayed.done() && replayed.order.equals(expanded.order),
+        "A journal replays exact completed ordering");
 
     PhotoRanking twice = expanded.addCoWinner(expanded.order.get(expanded.best().size() + 1));
-    check(twice.best().containsAll(expanded.best()), "repeated additions retain every prior winner");
+    check(
+        twice.best().containsAll(expanded.best()), "repeated additions retain every prior winner");
     PhotoRanking everyone = twice;
     while (everyone.best().size() < ids.size()) {
       String next = everyone.order.get(everyone.best().size());
@@ -191,7 +217,9 @@ public final class PhotoRankingTest {
       PhotoRanking changed = source.addCoWinner(selectedId);
       Set<String> promoted = new HashSet<>(source.best());
       promoted.add(selectedId);
-      check(new HashSet<>(changed.best()).equals(promoted), "score oracle retains and expands winner group");
+      check(
+          new HashSet<>(changed.best()).equals(promoted),
+          "score oracle retains and expands winner group");
       for (String id : members) {
         if (promoted.contains(id)) {
           check(changed.rankOf(id) == 1, "promoted co-winners share rank one");
@@ -212,24 +240,32 @@ public final class PhotoRankingTest {
         groupSize++;
         prior = score;
       }
-      check(new PhotoRanking(members, changed.journal).order.equals(changed.order),
+      check(
+          new PhotoRanking(members, changed.journal).order.equals(changed.order),
           "random completed A journal replays");
     }
-    System.out.println("Co-winner additions: completion guards, immutable replay, stable groups and score oracle passed");
+    System.out.println(
+        "Co-winner additions: completion guards, immutable replay, stable groups and score oracle passed");
   }
 
   private static void bulkAdditions(Random random) {
     List<String> ids = List.of("a", "b", "c", "d", "e", "f");
-    for (PhotoRanking source : List.of(new PhotoRanking(ids, ""),
-        new PhotoRanking(ids, "A:").tie(), new PhotoRanking(ids, "B:").choose(false))) {
+    for (PhotoRanking source :
+        List.of(
+            new PhotoRanking(ids, ""),
+            new PhotoRanking(ids, "A:").tie(),
+            new PhotoRanking(ids, "B:").choose(false))) {
       String original = source.journal;
       expect(IllegalArgumentException.class, () -> source.addCoWinners(List.of()));
       expect(IllegalArgumentException.class, () -> source.addCoWinners(List.of("b", "unknown")));
       PhotoRanking result = source.addCoWinners(List.of("e", "b", "e"));
-      check(result.done() && Set.copyOf(result.best()).equals(Set.of("b", "e")),
+      check(
+          result.done() && Set.copyOf(result.best()).equals(Set.of("b", "e")),
           "unfinished ranking uses exactly the deduplicated selection");
-      for (String id : ids) check(result.rankOf(id) == (Set.of("b", "e").contains(id) ? 1 : 3),
-          "unfinished ranking ties every other photo at the next competition rank");
+      for (String id : ids)
+        check(
+            result.rankOf(id) == (Set.of("b", "e").contains(id) ? 1 : 3),
+            "unfinished ranking ties every other photo at the next competition rank");
       check(source.journal.equals(original) && !source.done(), "unfinished source remains intact");
       check(source.addCoWinners(ids).best().size() == ids.size(), "all selected photos tie first");
     }
@@ -252,19 +288,24 @@ public final class PhotoRankingTest {
       PhotoRanking result = source.addCoWinners(selected);
       check(Set.copyOf(result.best()).equals(winners), "completed result retains old winners");
       for (String id : ids) {
-        long earlier = ids.stream().filter(other -> winners.contains(other)
-            || scores.get(other) < scores.get(id)).count();
-        check(result.rankOf(id) == (winners.contains(id) ? 1 : earlier + 1),
+        long earlier =
+            ids.stream()
+                .filter(other -> winners.contains(other) || scores.get(other) < scores.get(id))
+                .count();
+        check(
+            result.rankOf(id) == (winners.contains(id) ? 1 : earlier + 1),
             "competition ranks use original scores among remaining photos");
       }
-      check(source.order.equals(originalOrder) && source.journal.equals(originalJournal),
+      check(
+          source.order.equals(originalOrder) && source.journal.equals(originalJournal),
           "completed source remains intact");
       check(result.addCoWinners(result.best()) == result, "all already first is a no-op");
       PhotoRanking replayed = new PhotoRanking(ids, result.journal);
       check(replayed.done() && replayed.order.equals(result.order), "bulk journal replays");
       for (String id : ids) check(replayed.rankOf(id) == result.rankOf(id), "replayed tie groups");
     }
-    System.out.println("Bulk winners: unfinished selections, completed groups, validation and replay passed");
+    System.out.println(
+        "Bulk winners: unfinished selections, completed groups, validation and replay passed");
   }
 
   private static void expect(Class<? extends Throwable> type, Runnable action) {

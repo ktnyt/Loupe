@@ -21,31 +21,56 @@ public final class BurstGroupsTest {
         1000,
         List.of(List.of(0, 1, 2)));
     check(List.of(), 1000, List.of());
-    check(List.of(e(0, 4000, "A"), e(1, 3650, "A"), e(2, 3299, "A")),
-        350, List.of(List.of(0, 1), List.of(2)));
-    check(List.of(e(0, 4000, "A"), e(1, 3999, "A"), e(2, 3997, "A")),
-        1, List.of(List.of(0, 1), List.of(2)));
-    check(List.of(e(0, 2L * Integer.MAX_VALUE + 2, "A"),
-            e(1, Integer.MAX_VALUE + 2L, "A"), e(2, 1, "A")),
-        Integer.MAX_VALUE, List.of(List.of(0, 1), List.of(2)));
+    check(
+        List.of(e(0, 4000, "A"), e(1, 3650, "A"), e(2, 3299, "A")),
+        350,
+        List.of(List.of(0, 1), List.of(2)));
+    check(
+        List.of(e(0, 4000, "A"), e(1, 3999, "A"), e(2, 3997, "A")),
+        1,
+        List.of(List.of(0, 1), List.of(2)));
+    check(
+        List.of(
+            e(0, 2L * Integer.MAX_VALUE + 2, "A"), e(1, Integer.MAX_VALUE + 2L, "A"), e(2, 1, "A")),
+        Integer.MAX_VALUE,
+        List.of(List.of(0, 1), List.of(2)));
     // Capture time ascending, while results retain the gallery's descending order.
-    check(List.of(n(0, 9000, "z", 1, 2), n(1, 1000, "a", 1, 1)),
-        1, List.of(List.of(0, 1)));
-    check(List.of(n(0, 9000, "z", 1, 2), n(1, 1000, "a", 1, 1)),
-        0, List.of(List.of(0), List.of(1)));
-    check(List.of(n(0, 1000, "b", 1, 2), n(1, 1000, "c", 1, 1),
-            n(2, 1000, "d", 1, 2), n(3, 1000, "a", 1, 1)),
-        1, List.of(List.of(0, 3), List.of(1, 2)));
-    check(List.of(n(0, 1000, "a", 1, 1), n(1, 1000, "b", 1, 1),
-            n(2, 1000, "c", 1, 3), n(3, 1000, "d", 2, 4)),
-        1000, List.of(List.of(0), List.of(1), List.of(2), List.of(3)));
-    check(List.of(n(0, 1000, "a", 1, 1), n(1, 1000, "b", 0, 0), n(2, 1000, "c", 1, 2),
-            n(3, 1000, "d", 0, 0), n(4, 1001, "e", 0, 0)),
-        1, List.of(List.of(0), List.of(1), List.of(2), List.of(3, 4)));
-    check(List.of(n(0, 0, "a", 1, 1), n(1, 1000, "b", 1, 2),
+    check(List.of(n(0, 9000, "z", 1, 2), n(1, 1000, "a", 1, 1)), 1, List.of(List.of(0, 1)));
+    check(
+        List.of(n(0, 9000, "z", 1, 2), n(1, 1000, "a", 1, 1)), 0, List.of(List.of(0), List.of(1)));
+    check(
+        List.of(
+            n(0, 1000, "b", 1, 2),
+            n(1, 1000, "c", 1, 1),
+            n(2, 1000, "d", 1, 2),
+            n(3, 1000, "a", 1, 1)),
+        1,
+        List.of(List.of(0, 3), List.of(1, 2)));
+    check(
+        List.of(
+            n(0, 1000, "a", 1, 1),
+            n(1, 1000, "b", 1, 1),
+            n(2, 1000, "c", 1, 3),
+            n(3, 1000, "d", 2, 4)),
+        1000,
+        List.of(List.of(0), List.of(1), List.of(2), List.of(3)));
+    check(
+        List.of(
+            n(0, 1000, "a", 1, 1),
+            n(1, 1000, "b", 0, 0),
+            n(2, 1000, "c", 1, 2),
+            n(3, 1000, "d", 0, 0),
+            n(4, 1001, "e", 0, 0)),
+        1,
+        List.of(List.of(0), List.of(1), List.of(2), List.of(3, 4)));
+    check(
+        List.of(
+            n(0, 0, "a", 1, 1),
+            n(1, 1000, "b", 1, 2),
             new BurstGroups.Entry(2, 1000, "other", "c", 1, 3),
             new BurstGroups.Entry(3, 1000, "", "d", 1, 3)),
-        1, List.of(List.of(0), List.of(1), List.of(2), List.of(3)));
+        1,
+        List.of(List.of(0), List.of(1), List.of(2), List.of(3)));
     System.out.println("Burst grouping: 17 cases passed");
   }
 

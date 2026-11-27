@@ -1,5 +1,8 @@
 package jp.nano.rawgallery;
 
+import static android.view.ViewGroup.LayoutParams.MATCH_PARENT;
+import static android.view.ViewGroup.LayoutParams.WRAP_CONTENT;
+
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
@@ -25,9 +28,6 @@ import java.io.IOException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
-import static android.view.ViewGroup.LayoutParams.MATCH_PARENT;
-import static android.view.ViewGroup.LayoutParams.WRAP_CONTENT;
-
 final class DiagnosticControls {
   // The user's operations finish in order even if DashboardActivity is recreated.
   private static final Executor WORKER = Executors.newSingleThreadExecutor();
@@ -39,8 +39,9 @@ final class DiagnosticControls {
 
   DiagnosticControls(AppCompatActivity activity) {
     this.activity = activity;
-    picker = activity.registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),
-        this::onFolder);
+    picker =
+        activity.registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(), this::onFolder);
   }
 
   public static final class ExportState extends ViewModel {
@@ -57,8 +58,7 @@ final class DiagnosticControls {
   void show() {
     DiagnosticLog.Recorder displayedRecorder = DiagnosticLog.currentRecorder();
     boolean recording = displayedRecorder != null;
-    String message = (recording ? "処理の記録中です。" : "処理の記録は停止中です。")
-        + "\n処理時間とクラッシュの概要をZIPに保存できます。";
+    String message = (recording ? "処理の記録中です。" : "処理の記録は停止中です。") + "\n処理時間とクラッシュの概要をZIPに保存できます。";
     if (lastFailure != null) message += "\n\n" + lastFailure;
     if (lastDestination != null) message += "\n\n直近の保存先\n" + lastDestination;
     MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(activity).setTitle("診断記録");
@@ -78,34 +78,42 @@ final class DiagnosticControls {
     // The body can shrink and scroll, leaving the full height for the actions.
     panel.addView(scroll, new LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, 1));
 
-    LinearLayout actions = new LinearLayout(context) {
-      @Override protected void onMeasure(int widthSpec, int heightSpec) {
-        int inlineWidth = getPaddingLeft() + getPaddingRight();
-        int natural = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
-        for (int i = 0; i < getChildCount(); i++) {
-          View child = getChildAt(i);
-          child.measure(natural, natural);
-          inlineWidth += child.getMeasuredWidth();
-        }
-        setOrientation(inlineWidth > MeasureSpec.getSize(widthSpec) ? VERTICAL : HORIZONTAL);
-        super.onMeasure(widthSpec, heightSpec);
-      }
-    };
+    LinearLayout actions =
+        new LinearLayout(context) {
+          @Override
+          protected void onMeasure(int widthSpec, int heightSpec) {
+            int inlineWidth = getPaddingLeft() + getPaddingRight();
+            int natural = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
+            for (int i = 0; i < getChildCount(); i++) {
+              View child = getChildAt(i);
+              child.measure(natural, natural);
+              inlineWidth += child.getMeasuredWidth();
+            }
+            setOrientation(inlineWidth > MeasureSpec.getSize(widthSpec) ? VERTICAL : HORIZONTAL);
+            super.onMeasure(widthSpec, heightSpec);
+          }
+        };
     int inset = dp(context, 16);
     actions.setPadding(inset, 0, inset, dp(context, 12));
     actions.setGravity(Gravity.END);
     panel.addView(actions, new LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT));
 
     AlertDialog dialog = builder.setView(panel).create();
-    addAction(actions, recording ? "記録を止める" : "記録を始める", () -> {
-      dialog.dismiss();
-      changeRecording(displayedRecorder);
-    });
+    addAction(
+        actions,
+        recording ? "記録を止める" : "記録を始める",
+        () -> {
+          dialog.dismiss();
+          changeRecording(displayedRecorder);
+        });
     addAction(actions, "閉じる", dialog::dismiss);
-    addAction(actions, "ZIPを保存", () -> {
-      dialog.dismiss();
-      chooseLocation();
-    });
+    addAction(
+        actions,
+        "ZIPを保存",
+        () -> {
+          dialog.dismiss();
+          chooseLocation();
+        });
     dialog.show();
   }
 
@@ -122,20 +130,26 @@ final class DiagnosticControls {
 
   private void changeRecording(DiagnosticLog.Recorder displayedRecorder) {
     Context app = activity.getApplicationContext();
-    WORKER.execute(() -> {
-      boolean enabled = displayedRecorder == null;
-      boolean saved = enabled ? DiagnosticLog.startRecording(app)
-          : DiagnosticLog.stopRecording(app, displayedRecorder);
-      feedback(saved ? (enabled ? "診断の記録を開始しました" : "診断の記録を停止しました")
-          : (enabled ? "診断の記録を開始できませんでした" : "診断の停止処理を完了できませんでした"));
-    });
+    WORKER.execute(
+        () -> {
+          boolean enabled = displayedRecorder == null;
+          boolean saved =
+              enabled
+                  ? DiagnosticLog.startRecording(app)
+                  : DiagnosticLog.stopRecording(app, displayedRecorder);
+          feedback(
+              saved
+                  ? (enabled ? "診断の記録を開始しました" : "診断の記録を停止しました")
+                  : (enabled ? "診断の記録を開始できませんでした" : "診断の停止処理を完了できませんでした"));
+        });
   }
 
   private void chooseLocation() {
     if (state().exporting) return;
-    new MaterialAlertDialogBuilder(activity).setTitle("診断ZIPの保存先")
-        .setItems(new String[] {"ダウンロード", "別のフォルダを選ぶ"},
-            (dialog, which) -> prepareArchive(which == 1))
+    new MaterialAlertDialogBuilder(activity)
+        .setTitle("診断ZIPの保存先")
+        .setItems(
+            new String[] {"ダウンロード", "別のフォルダを選ぶ"}, (dialog, which) -> prepareArchive(which == 1))
         .setNegativeButton("キャンセル", null)
         .show();
   }
@@ -145,21 +159,23 @@ final class DiagnosticControls {
     if (export.exporting) return;
     export.exporting = true;
     Context app = activity.getApplicationContext();
-    WORKER.execute(() -> {
-      byte[] archive;
-      try { archive = DiagnosticExport.capture(app); }
-      catch (IOException | SecurityException error) {
-        exportFailed(export, "診断記録を読み込めませんでした");
-        return;
-      }
-      if (archive.length == 0) {
-        exportFailed(export, "保存できる診断記録がありません");
-      } else if (selectFolder) {
-        activity.runOnUiThread(() -> openFolderPicker(export, archive));
-      } else {
-        save(export, app, null, archive);
-      }
-    });
+    WORKER.execute(
+        () -> {
+          byte[] archive;
+          try {
+            archive = DiagnosticExport.capture(app);
+          } catch (IOException | SecurityException error) {
+            exportFailed(export, "診断記録を読み込めませんでした");
+            return;
+          }
+          if (archive.length == 0) {
+            exportFailed(export, "保存できる診断記録がありません");
+          } else if (selectFolder) {
+            activity.runOnUiThread(() -> openFolderPicker(export, archive));
+          } else {
+            save(export, app, null, archive);
+          }
+        });
   }
 
   private void openFolderPicker(ExportState export, byte[] archive) {
@@ -184,14 +200,17 @@ final class DiagnosticControls {
     export.pending = null;
     export.exporting = false;
     lastFailure = "フォルダの選択画面を開けませんでした";
-    new MaterialAlertDialogBuilder(activity).setTitle("診断ZIPの保存先")
+    new MaterialAlertDialogBuilder(activity)
+        .setTitle("診断ZIPの保存先")
         .setMessage(lastFailure + "。")
-        .setPositiveButton("ダウンロードに保存", (dialog, which) -> {
-          if (export.exporting) return;
-          export.exporting = true;
-          Context app = activity.getApplicationContext();
-          WORKER.execute(() -> save(export, app, null, archive));
-        })
+        .setPositiveButton(
+            "ダウンロードに保存",
+            (dialog, which) -> {
+              if (export.exporting) return;
+              export.exporting = true;
+              Context app = activity.getApplicationContext();
+              WORKER.execute(() -> save(export, app, null, archive));
+            })
         .setNegativeButton("キャンセル", null)
         .show();
   }
@@ -200,8 +219,10 @@ final class DiagnosticControls {
     ExportState export = state();
     byte[] selected = export.pending;
     export.pending = null;
-    Uri uri = result.getResultCode() == Activity.RESULT_OK && result.getData() != null
-        ? result.getData().getData() : null;
+    Uri uri =
+        result.getResultCode() == Activity.RESULT_OK && result.getData() != null
+            ? result.getData().getData()
+            : null;
     if (uri == null) {
       export.exporting = false;
       return;
@@ -216,14 +237,17 @@ final class DiagnosticControls {
 
   private void save(ExportState export, Context app, Uri folder, byte[] archive) {
     try {
-      String location = folder == null ? DiagnosticDestination.downloads(app, archive)
-          : DiagnosticDestination.folder(app, folder, archive);
-      activity.runOnUiThread(() -> {
-        lastDestination = location;
-        lastFailure = null;
-        export.exporting = false;
-        feedback("診断ZIPを保存しました");
-      });
+      String location =
+          folder == null
+              ? DiagnosticDestination.downloads(app, archive)
+              : DiagnosticDestination.folder(app, folder, archive);
+      activity.runOnUiThread(
+          () -> {
+            lastDestination = location;
+            lastFailure = null;
+            export.exporting = false;
+            feedback("診断ZIPを保存しました");
+          });
     } catch (DiagnosticDestination.CleanupFailed error) {
       exportFailed(export, "保存できませんでした。保存先に一時ファイルが残った可能性があります");
     } catch (IOException | RuntimeException error) {
@@ -232,11 +256,12 @@ final class DiagnosticControls {
   }
 
   private void exportFailed(ExportState export, String message) {
-    activity.runOnUiThread(() -> {
-      lastFailure = message;
-      export.exporting = false;
-      feedback(message);
-    });
+    activity.runOnUiThread(
+        () -> {
+          lastFailure = message;
+          export.exporting = false;
+          feedback(message);
+        });
   }
 
   private void feedback(String message) {

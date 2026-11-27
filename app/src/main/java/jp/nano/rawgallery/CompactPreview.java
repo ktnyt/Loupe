@@ -13,8 +13,8 @@ final class CompactPreview {
     return save(source, destination, EDGE);
   }
 
-  static PhotoRepository.Preview save(PhotoRepository.Preview source, File destination,
-      int maxEdge) throws IOException {
+  static PhotoRepository.Preview save(PhotoRepository.Preview source, File destination, int maxEdge)
+      throws IOException {
     Bitmap decoded = PhotoRepository.bitmap(source, maxEdge);
     Bitmap scaled = decoded;
     File temporary = File.createTempFile("proxy-", ".part", destination.getParentFile());

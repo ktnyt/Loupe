@@ -1,10 +1,10 @@
 package jp.nano.rawgallery;
 
-import android.os.SystemClock;
 import android.content.Context;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.os.SystemClock;
 import android.util.Xml;
 import java.io.*;
 import java.net.URL;
@@ -15,10 +15,10 @@ import java.security.MessageDigest;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import java.util.Locale;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -42,11 +42,13 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
   static final long STORAGE_RESERVE = 64L * 1024 * 1024;
   private static final Object TEMPORARY_WRITE_LOCK = new Object();
   private static final String PHOTO_PREFIX = "loupe/originals";
-  private static final ScheduledExecutorService TRANSFER_WATCHER = Executors.newSingleThreadScheduledExecutor(task -> {
-    Thread thread = new Thread(task, "E2Archive.transfer-watch");
-    thread.setDaemon(true);
-    return thread;
-  });
+  private static final ScheduledExecutorService TRANSFER_WATCHER =
+      Executors.newSingleThreadScheduledExecutor(
+          task -> {
+            Thread thread = new Thread(task, "E2Archive.transfer-watch");
+            thread.setDaemon(true);
+            return thread;
+          });
   private static final DateTimeFormatter TIME =
       DateTimeFormatter.ofPattern("uuuuMMdd'T'HHmmss'Z'", Locale.ROOT).withZone(ZoneOffset.UTC);
   private final String bucket, keyId, secret;
@@ -63,15 +65,27 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
     return forPhotos(store, bucket, keyId, secret, null, null);
   }
 
-  static E2Archive forPhotos(ArchiveStore store, String bucket, String keyId, String secret,
-      Context context, Network network) {
+  static E2Archive forPhotos(
+      ArchiveStore store,
+      String bucket,
+      String keyId,
+      String secret,
+      Context context,
+      Network network) {
     return new E2Archive(store, bucket, keyId, secret, PHOTO_PREFIX, context, network);
   }
 
-  private E2Archive(ArchiveStore store, String bucket, String keyId, String secret, String prefix,
-      Context context, Network network) {
+  private E2Archive(
+      ArchiveStore store,
+      String bucket,
+      String keyId,
+      String secret,
+      String prefix,
+      Context context,
+      Network network) {
     if (!bucket.matches("[a-z0-9][a-z0-9-]{1,61}[a-z0-9]")
-        || !keyId.matches("[A-Za-z0-9]{20}") || !secret.matches("[A-Za-z0-9+/=_-]{40}"))
+        || !keyId.matches("[A-Za-z0-9]{20}")
+        || !secret.matches("[A-Za-z0-9+/=_-]{40}"))
       throw new IllegalArgumentException("IDrive e2の設定が不正です");
     this.store = store;
     this.prefix = prefix;
@@ -96,8 +110,10 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
         XmlPullParser xml = Xml.newPullParser();
         xml.setInput(new ByteArrayInputStream(response.toByteArray()), "UTF-8");
         for (int event = xml.next(); event != XmlPullParser.END_DOCUMENT; event = xml.next()) {
-          if (event == XmlPullParser.START_TAG && xml.getDepth() == 2
-              && "Status".equals(xml.getName()) && "Enabled".equals(xml.nextText())) return;
+          if (event == XmlPullParser.START_TAG
+              && xml.getDepth() == 2
+              && "Status".equals(xml.getName())
+              && "Enabled".equals(xml.nextText())) return;
         }
       }
       throw new IOException("バケットのバージョニングを有効にしてください");
@@ -111,8 +127,8 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
     return save(id, source, null, null);
   }
 
-  synchronized long savePhoto(File source, String name, String mime,
-      E2TransferStatus observation) throws Exception {
+  synchronized long savePhoto(File source, String name, String mime, E2TransferStatus observation)
+      throws Exception {
     return save(null, source, new JSONObject().put("name", name).put("mime", mime), observation);
   }
 
@@ -129,15 +145,21 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
       sha = readHash(in, null, size);
     }
     if (id == null) {
-      id = hex(MessageDigest.getInstance("SHA-256")
-          .digest(bytes(bucket + "\n" + sha + "\n" + metadata.getString("name")))).substring(0, 32);
+      id =
+          hex(MessageDigest.getInstance("SHA-256")
+                  .digest(bytes(bucket + "\n" + sha + "\n" + metadata.getString("name"))))
+              .substring(0, 32);
     }
     String path = path(id, sha);
     JSONObject record = store.get(id);
     if (record == null) {
-      record = (metadata == null ? new JSONObject() : metadata)
-          .put("key", id).put("provider", "idrive-e2")
-          .put("bucket", bucket).put("size", size).put("sha", sha);
+      record =
+          (metadata == null ? new JSONObject() : metadata)
+              .put("key", id)
+              .put("provider", "idrive-e2")
+              .put("bucket", bucket)
+              .put("size", size)
+              .put("sha", sha);
       store.put(record, "pending");
     } else {
       requireRecord(record);
@@ -156,7 +178,8 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
         put.setDoOutput(true);
         put.setFixedLengthStreamingMode(size);
         if (observation != null) observation.startBytes(size);
-        try (InputStream in = new FileInputStream(source); OutputStream out = put.getOutputStream()) {
+        try (InputStream in = new FileInputStream(source);
+            OutputStream out = put.getOutputStream()) {
           if (!sha.equals(readHash(in, out, size, progress, observation)))
             throw new IOException("送信中にオリジナルが変わりました");
         }
@@ -169,7 +192,8 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
     }
 
     verifySavedVersion(path, version, size, sha, checksum);
-    store.put(record.put("version", version).put("verifiedAt", System.currentTimeMillis()), "verified");
+    store.put(
+        record.put("version", version).put("verifiedAt", System.currentTimeMillis()), "verified");
     return putMillis;
   }
 
@@ -182,7 +206,8 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
     return restoreRecord(record, destination, null);
   }
 
-  long restoreRecord(JSONObject record, File destination, E2TransferStatus observation) throws Exception {
+  long restoreRecord(JSONObject record, File destination, E2TransferStatus observation)
+      throws Exception {
     requireRecord(record);
     if (!"verified".equals(record.getString("state")) || destination.exists())
       throw new IOException("復元の前提を満たしていません");
@@ -206,18 +231,24 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
     }
   }
 
-  @Override public void verifyVersion(JSONObject record) throws Exception {
+  @Override
+  public void verifyVersion(JSONObject record) throws Exception {
     requireRecord(record);
     String sha = record.getString("sha");
     long size = record.getLong("size");
     checkSize(size);
-    get(path(record.getString("key"), sha), checkedVersion(record.getString("version")),
-        size, sha, null);
+    get(
+        path(record.getString("key"), sha),
+        checkedVersion(record.getString("version")),
+        size,
+        sha,
+        null);
   }
 
   record CatalogObject(byte[] body, String version, String etag) {}
 
-  @Override public CatalogObject readCatalog(String key, String requested) throws Exception {
+  @Override
+  public CatalogObject readCatalog(String key, String requested) throws Exception {
     String query = requested.isEmpty() ? "" : "versionId=" + checkedVersion(requested);
     HttpsURLConnection connection = open("GET", "/" + bucket + "/" + key, query, EMPTY_SHA);
     try {
@@ -229,8 +260,10 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
         throw new IOException("取得したカタログの版が一致しません");
       byte[] body;
       try (InputStream in = connection.getInputStream()) {
-        int limit = key.equals(E2RecoveryCatalog.INDEX) || key.equals(E2RecoveryCatalog.LEGACY)
-            ? E2RecoveryCatalog.MAX_BYTES : E2RecoveryCatalog.PART_BYTES;
+        int limit =
+            key.equals(E2RecoveryCatalog.INDEX) || key.equals(E2RecoveryCatalog.LEGACY)
+                ? E2RecoveryCatalog.MAX_BYTES
+                : E2RecoveryCatalog.PART_BYTES;
         body = readBounded(in, limit + 1);
       }
       return new CatalogObject(body, actual, connection.getHeaderField("ETag"));
@@ -239,9 +272,14 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
     }
   }
 
-  @Override public List<String> previousCatalogVersions(String root) throws Exception {
-    HttpsURLConnection connection = open("GET", "/" + bucket,
-        "max-keys=16&prefix=" + root.replace("/", "%2F") + "&versions=", EMPTY_SHA);
+  @Override
+  public List<String> previousCatalogVersions(String root) throws Exception {
+    HttpsURLConnection connection =
+        open(
+            "GET",
+            "/" + bucket,
+            "max-keys=16&prefix=" + root.replace("/", "%2F") + "&versions=",
+            EMPTY_SHA);
     try {
       requireOk(connection.getResponseCode());
       byte[] response;
@@ -295,10 +333,11 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
     }
   }
 
-  @Override public CatalogObject writeCatalog(String key, byte[] body, CatalogObject expected)
+  @Override
+  public CatalogObject writeCatalog(String key, byte[] body, CatalogObject expected)
       throws Exception {
-    if (expected != null && (expected.etag() == null
-        || !expected.etag().matches("\"[A-Za-z0-9_-]{1,128}\"")))
+    if (expected != null
+        && (expected.etag() == null || !expected.etag().matches("\"[A-Za-z0-9_-]{1,128}\"")))
       throw new IOException("復元一覧の更新前の状態を確認できません");
     HttpsURLConnection connection = open("PUT", "/" + bucket + "/" + key, "", sha256(body));
     String saved;
@@ -336,9 +375,9 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
   }
 
   private void requireRecord(JSONObject record) throws Exception {
-    if (record == null || !"idrive-e2".equals(record.optString("provider"))
-        || !bucket.equals(record.optString("bucket")))
-      throw new IOException("保存先と保管記録が一致しません");
+    if (record == null
+        || !"idrive-e2".equals(record.optString("provider"))
+        || !bucket.equals(record.optString("bucket"))) throw new IOException("保存先と保管記録が一致しません");
   }
 
   private String path(String id, String sha) {
@@ -364,28 +403,40 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
     get(path, version, size, sha, out, null);
   }
 
-  private void get(String path, String version, long size, String sha, OutputStream out,
-      E2TransferStatus observation) throws Exception {
+  private void get(
+      String path,
+      String version,
+      long size,
+      String sha,
+      OutputStream out,
+      E2TransferStatus observation)
+      throws Exception {
     HttpsURLConnection conn = open("GET", path, "versionId=" + checkedVersion(version), EMPTY_SHA);
     try (TransferWatch progress = new TransferWatch(conn, size)) {
       requireOk(conn.getResponseCode());
-      if (!version.equals(version(conn)))
-        throw new IOException("取得した版が一致しません");
+      if (!version.equals(version(conn))) throw new IOException("取得した版が一致しません");
       long length = conn.getContentLengthLong();
       if (length >= 0 && length != size) throw new IOException("取得したサイズが一致しません");
       if (observation != null) observation.startBytes(size);
       try (InputStream in = conn.getInputStream()) {
-        if (!sha.equals(readHash(in, out, size, progress, observation))) throw new IOException("取得したSHA-256が一致しません");
+        if (!sha.equals(readHash(in, out, size, progress, observation)))
+          throw new IOException("取得したSHA-256が一致しません");
       }
     } finally {
       conn.disconnect();
     }
   }
 
-  private void verifySavedVersion(String path, String savedVersion, long size, String sha,
-      String checksum) throws Exception {
-    HttpsURLConnection head = open("HEAD", path, "versionId=" + checkedVersion(savedVersion),
-        EMPTY_SHA, "x-amz-checksum-mode", "ENABLED");
+  private void verifySavedVersion(
+      String path, String savedVersion, long size, String sha, String checksum) throws Exception {
+    HttpsURLConnection head =
+        open(
+            "HEAD",
+            path,
+            "versionId=" + checkedVersion(savedVersion),
+            EMPTY_SHA,
+            "x-amz-checksum-mode",
+            "ENABLED");
     try {
       requireOk(head.getResponseCode());
       if (!savedVersion.equals(version(head))) throw new IOException("取得した版が一致しません");
@@ -414,19 +465,48 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
     return open(method, path, query, sha, "", "");
   }
 
-  private HttpsURLConnection open(String method, String path, String query, String sha,
-      String checksumHeader, String checksumValue) throws Exception {
+  private HttpsURLConnection open(
+      String method,
+      String path,
+      String query,
+      String sha,
+      String checksumHeader,
+      String checksumValue)
+      throws Exception {
     String stamp = TIME.format(Instant.now());
     String day = stamp.substring(0, 8);
     String scope = day + SCOPE_SUFFIX;
-    String headers = "host;" + (checksumHeader.isEmpty() ? "" : checksumHeader + ";")
-        + "x-amz-content-sha256;x-amz-date";
-    String checksumLine = checksumHeader.isEmpty() ? "" : checksumHeader + ":" + checksumValue + "\n";
-    String canonical = method + "\n" + path + "\n" + query + "\nhost:" + E2Endpoint.HOST
-        + "\n" + checksumLine + "x-amz-content-sha256:" + sha + "\nx-amz-date:" + stamp + "\n\n"
-        + headers + "\n" + sha;
-    String toSign = "AWS4-HMAC-SHA256\n" + stamp + "\n" + scope + "\n"
-        + hex(MessageDigest.getInstance("SHA-256").digest(bytes(canonical)));
+    String headers =
+        "host;"
+            + (checksumHeader.isEmpty() ? "" : checksumHeader + ";")
+            + "x-amz-content-sha256;x-amz-date";
+    String checksumLine =
+        checksumHeader.isEmpty() ? "" : checksumHeader + ":" + checksumValue + "\n";
+    String canonical =
+        method
+            + "\n"
+            + path
+            + "\n"
+            + query
+            + "\nhost:"
+            + E2Endpoint.HOST
+            + "\n"
+            + checksumLine
+            + "x-amz-content-sha256:"
+            + sha
+            + "\nx-amz-date:"
+            + stamp
+            + "\n\n"
+            + headers
+            + "\n"
+            + sha;
+    String toSign =
+        "AWS4-HMAC-SHA256\n"
+            + stamp
+            + "\n"
+            + scope
+            + "\n"
+            + hex(MessageDigest.getInstance("SHA-256").digest(bytes(canonical)));
     byte[] dateKey = hmac(bytes("AWS4" + secret), day);
     byte[] regionKey = hmac(dateKey, E2Endpoint.REGION);
     byte[] serviceKey = hmac(regionKey, "s3");
@@ -449,8 +529,16 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
     if (!checksumHeader.isEmpty()) conn.setRequestProperty(checksumHeader, checksumValue);
     conn.setRequestProperty("x-amz-content-sha256", sha);
     conn.setRequestProperty("x-amz-date", stamp);
-    conn.setRequestProperty("Authorization", "AWS4-HMAC-SHA256 Credential=" + keyId + "/" + scope
-        + ", SignedHeaders=" + headers + ", Signature=" + signature);
+    conn.setRequestProperty(
+        "Authorization",
+        "AWS4-HMAC-SHA256 Credential="
+            + keyId
+            + "/"
+            + scope
+            + ", SignedHeaders="
+            + headers
+            + ", Signature="
+            + signature);
     return conn;
   }
 
@@ -472,17 +560,26 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
 
     TransferWatch(HttpsURLConnection connection, long size) {
       Thread owner = Thread.currentThread();
-      check = size <= LIMIT ? null : TRANSFER_WATCHER.scheduleAtFixedRate(() -> {
-        if (owner.isInterrupted() || SystemClock.elapsedRealtime() - lastProgress.get() > 30_000)
-          connection.disconnect();
-      }, 1, 1, TimeUnit.SECONDS);
+      check =
+          size <= LIMIT
+              ? null
+              : TRANSFER_WATCHER.scheduleAtFixedRate(
+                  () -> {
+                    if (owner.isInterrupted()
+                        || SystemClock.elapsedRealtime() - lastProgress.get() > 30_000)
+                      connection.disconnect();
+                  },
+                  1,
+                  1,
+                  TimeUnit.SECONDS);
     }
 
     void progress() {
       if (check != null) lastProgress.set(SystemClock.elapsedRealtime());
     }
 
-    @Override public void close() {
+    @Override
+    public void close() {
       if (check != null) check.cancel(false);
     }
   }
@@ -491,15 +588,21 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
     return readHash(in, out, size, null, null);
   }
 
-  private static String readHash(InputStream in, OutputStream out, long size, TransferWatch watch,
-      E2TransferStatus observation) throws Exception {
+  private static String readHash(
+      InputStream in,
+      OutputStream out,
+      long size,
+      TransferWatch watch,
+      E2TransferStatus observation)
+      throws Exception {
     MessageDigest digest = MessageDigest.getInstance("SHA-256");
     byte[] buffer = new byte[65536];
     long count = 0;
     long deadline = SystemClock.elapsedRealtime() + 300000;
     for (int n; (n = in.read(buffer)) != -1; ) {
       count += n;
-      if (count > size || Thread.currentThread().isInterrupted()
+      if (count > size
+          || Thread.currentThread().isInterrupted()
           || (size <= LIMIT && SystemClock.elapsedRealtime() > deadline))
         throw new IOException("オリジナルの転送を中止しました");
       digest.update(buffer, 0, n);
@@ -512,7 +615,9 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
     return hex(digest.digest());
   }
 
-  private static byte[] bytes(String value) { return value.getBytes(StandardCharsets.UTF_8); }
+  private static byte[] bytes(String value) {
+    return value.getBytes(StandardCharsets.UTF_8);
+  }
 
   private static byte[] hmac(byte[] key, String data) throws Exception {
     Mac mac = Mac.getInstance("HmacSHA256");
@@ -558,8 +663,7 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
   }
 
   private static void requireTemporarySpace(long usable, long bytes) throws IOException {
-    if (!hasTemporarySpace(usable, bytes))
-      throw new IOException("オリジナルを照合するための端末の空き容量が不足しています");
+    if (!hasTemporarySpace(usable, bytes)) throw new IOException("オリジナルを照合するための端末の空き容量が不足しています");
   }
 
   static boolean hasTemporarySpace(long usable, long bytes) {
@@ -578,18 +682,21 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
       this.usable = usable;
     }
 
-    @Override public void write(int value) throws IOException {
+    @Override
+    public void write(int value) throws IOException {
       synchronized (TEMPORARY_WRITE_LOCK) {
         requireTemporarySpace(usable.getAsLong(), 1);
         super.write(value);
       }
     }
 
-    @Override public void write(byte[] bytes) throws IOException {
+    @Override
+    public void write(byte[] bytes) throws IOException {
       write(bytes, 0, bytes.length);
     }
 
-    @Override public void write(byte[] bytes, int offset, int length) throws IOException {
+    @Override
+    public void write(byte[] bytes, int offset, int length) throws IOException {
       synchronized (TEMPORARY_WRITE_LOCK) {
         requireTemporarySpace(usable.getAsLong(), length);
         super.write(bytes, offset, length);
@@ -597,5 +704,7 @@ final class E2Archive implements E2RecoveryCatalog.Storage {
     }
   }
 
-  private static long millis(long start) { return (SystemClock.elapsedRealtimeNanos() - start) / 1000000; }
+  private static long millis(long start) {
+    return (SystemClock.elapsedRealtimeNanos() - start) / 1000000;
+  }
 }

@@ -32,20 +32,26 @@ import java.util.stream.Collectors;
 /** Read-only locations and move eligibility for files referenced by import history. */
 public final class PhotoStorageInventoryActivity extends AppCompatActivity {
   private record Filter(String key, String label) {}
+
   private record VolumeCount(String label, int confirmed) {}
 
   private static final Filter ALL = new Filter("all", "すべて");
   private static final Filter UNRESOLVED = new Filter("history", "確認が必要");
   private static final Filter EXCLUDED = new Filter("excluded", "移動対象外");
   private static final String VOLUME_PREFIX = "volume:";
-  // Serialize settings writes and both screens' reads, including when one opens while the other is loading.
+  // Serialize settings writes and both screens' reads, including when one opens while the other is
+  // loading.
   static final ExecutorService READS = new DiagnosticExecutor("PhotoStorage.inventory", 1);
 
   private final Handler handler = new Handler(Looper.getMainLooper());
   private final Runnable checkMove = this::checkMove;
-  private final StorageManager.StorageVolumeCallback volumeChanges = new StorageManager.StorageVolumeCallback() {
-    @Override public void onStateChanged(StorageVolume volume) { if (visible) load(); }
-  };
+  private final StorageManager.StorageVolumeCallback volumeChanges =
+      new StorageManager.StorageVolumeCallback() {
+        @Override
+        public void onStateChanged(StorageVolume volume) {
+          if (visible) load();
+        }
+      };
 
   private TextView state;
   private MaterialButton filterButton, reloadButton;
@@ -59,18 +65,24 @@ public final class PhotoStorageInventoryActivity extends AppCompatActivity {
   private boolean visible;
   private int loadRequest;
 
-  @Override public void onCreate(Bundle saved) {
+  @Override
+  public void onCreate(Bundle saved) {
     super.onCreate(saved);
     if (saved != null) filterKey = saved.getString("filter", ALL.key());
     LinearLayout root = new LinearLayout(this);
     root.setOrientation(LinearLayout.VERTICAL);
-    root.setOnApplyWindowInsetsListener((view, insets) -> {
-      var bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
-      view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
-      return insets;
-    });
-    root.addView(LibraryUi.toolbar(this, "写真の保存場所",
-        LibraryUi.icon(this, R.drawable.ic_close, "写真の保存場所を閉じる", this::finish)));
+    root.setOnApplyWindowInsetsListener(
+        (view, insets) -> {
+          var bars =
+              insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+          view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+          return insets;
+        });
+    root.addView(
+        LibraryUi.toolbar(
+            this,
+            "写真の保存場所",
+            LibraryUi.icon(this, R.drawable.ic_close, "写真の保存場所を閉じる", this::finish)));
 
     LinearLayout actions = new LinearLayout(this);
     actions.setPadding(dp(16), dp(4), dp(16), 0);
@@ -94,15 +106,18 @@ public final class PhotoStorageInventoryActivity extends AppCompatActivity {
     setContentView(root);
   }
 
-  @Override public void onResume() {
+  @Override
+  public void onResume() {
     super.onResume();
     visible = true;
-    getSystemService(StorageManager.class).registerStorageVolumeCallback(getMainExecutor(), volumeChanges);
+    getSystemService(StorageManager.class)
+        .registerStorageVolumeCallback(getMainExecutor(), volumeChanges);
     load();
     checkMove();
   }
 
-  @Override public void onPause() {
+  @Override
+  public void onPause() {
     visible = false;
     ++loadRequest;
     getSystemService(StorageManager.class).unregisterStorageVolumeCallback(volumeChanges);
@@ -111,12 +126,14 @@ public final class PhotoStorageInventoryActivity extends AppCompatActivity {
     super.onPause();
   }
 
-  @Override protected void onSaveInstanceState(Bundle state) {
+  @Override
+  protected void onSaveInstanceState(Bundle state) {
     super.onSaveInstanceState(state);
     state.putString("filter", filterKey);
   }
 
-  @Override public void onDestroy() {
+  @Override
+  public void onDestroy() {
     if (openDialog != null) openDialog.dismiss();
     super.onDestroy();
   }
@@ -144,45 +161,60 @@ public final class PhotoStorageInventoryActivity extends AppCompatActivity {
     }
     state.setText("保存場所を確認しています。");
     reloadButton.setEnabled(false);
-    pendingLoad = READS.submit(() -> {
-      try (PhotoMove mover = new PhotoMove(this)) {
-        PhotoStorageInventory result = mover.inventory();
-        List<PhotoStorageInventory.Photo> photos = result.photos().stream()
-            .sorted(Comparator.comparing(PhotoStorageInventory.Photo::name, String.CASE_INSENSITIVE_ORDER))
-            .collect(Collectors.toList());
-        List<PhotoStorageInventory.History> history = result.unresolved().stream()
-            .sorted(Comparator.comparing(PhotoStorageInventory.History::name, String.CASE_INSENSITIVE_ORDER))
-            .collect(Collectors.toList());
-        finishLoad(request, moveState, new PhotoStorageInventory(photos, history), null);
-      } catch (PhotoMove.Failure | PhotoStorage.Unavailable unavailable) {
-        finishLoad(request, moveState, null, unavailable.getMessage());
-      } catch (IOException | RuntimeException unavailable) {
-        finishLoad(request, moveState, null, "保存場所を読み込めませんでした。もう一度お試しください。");
-      }
-    });
+    pendingLoad =
+        READS.submit(
+            () -> {
+              try (PhotoMove mover = new PhotoMove(this)) {
+                PhotoStorageInventory result = mover.inventory();
+                List<PhotoStorageInventory.Photo> photos =
+                    result.photos().stream()
+                        .sorted(
+                            Comparator.comparing(
+                                PhotoStorageInventory.Photo::name, String.CASE_INSENSITIVE_ORDER))
+                        .collect(Collectors.toList());
+                List<PhotoStorageInventory.History> history =
+                    result.unresolved().stream()
+                        .sorted(
+                            Comparator.comparing(
+                                PhotoStorageInventory.History::name, String.CASE_INSENSITIVE_ORDER))
+                        .collect(Collectors.toList());
+                finishLoad(request, moveState, new PhotoStorageInventory(photos, history), null);
+              } catch (PhotoMove.Failure | PhotoStorage.Unavailable unavailable) {
+                finishLoad(request, moveState, null, unavailable.getMessage());
+              } catch (IOException | RuntimeException unavailable) {
+                finishLoad(request, moveState, null, "保存場所を読み込めませんでした。もう一度お試しください。");
+              }
+            });
   }
 
-  private void finishLoad(int request, PhotoMoveService.State moveState, PhotoStorageInventory result, String message) {
-    runOnUiThread(() -> {
-      if (request != loadRequest || !visible || isFinishing() || isDestroyed()
-          || PhotoMoveService.state() != moveState) return;
-      reloadButton.setEnabled(true);
-      snapshot = result;
-      if (result == null) {
-        state.setText(message);
-      } else {
-        filterButton.setEnabled(true);
-        showRows();
-      }
-    });
+  private void finishLoad(
+      int request, PhotoMoveService.State moveState, PhotoStorageInventory result, String message) {
+    runOnUiThread(
+        () -> {
+          if (request != loadRequest
+              || !visible
+              || isFinishing()
+              || isDestroyed()
+              || PhotoMoveService.state() != moveState) return;
+          reloadButton.setEnabled(true);
+          snapshot = result;
+          if (result == null) {
+            state.setText(message);
+          } else {
+            filterButton.setEnabled(true);
+            showRows();
+          }
+        });
   }
 
   private List<Filter> filters() {
     List<Filter> filters = new ArrayList<>();
     filters.add(ALL);
-    volumeCounts(snapshot.photos()).forEach((volume, count) -> {
-      if (volume != null) filters.add(new Filter(VOLUME_PREFIX + volume, count.label()));
-    });
+    volumeCounts(snapshot.photos())
+        .forEach(
+            (volume, count) -> {
+              if (volume != null) filters.add(new Filter(VOLUME_PREFIX + volume, count.label()));
+            });
     filters.add(UNRESOLVED);
     filters.add(EXCLUDED);
     return filters;
@@ -192,27 +224,38 @@ public final class PhotoStorageInventoryActivity extends AppCompatActivity {
     if (snapshot == null) return;
     List<Filter> choices = filters();
     List<String> labels = choices.stream().map(Filter::label).collect(Collectors.toList());
-    ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_single_choice, labels) {
-      @Override public View getView(int position, View convertView, ViewGroup parent) {
-        CheckedTextView view = (CheckedTextView) super.getView(position, convertView, parent);
-        view.setSingleLine(false);
-        view.setEllipsize(null);
-        view.setMinHeight(dp(48));
-        return view;
-      }
-    };
+    ArrayAdapter<String> adapter =
+        new ArrayAdapter<>(this, android.R.layout.simple_list_item_single_choice, labels) {
+          @Override
+          public View getView(int position, View convertView, ViewGroup parent) {
+            CheckedTextView view = (CheckedTextView) super.getView(position, convertView, parent);
+            view.setSingleLine(false);
+            view.setEllipsize(null);
+            view.setMinHeight(dp(48));
+            return view;
+          }
+        };
     int checked = choices.indexOf(activeFilter(choices));
-    openDialog = new MaterialAlertDialogBuilder(this).setTitle("表示する項目")
-        .setSingleChoiceItems(adapter, checked, (dialog, which) -> {
-          filterKey = choices.get(which).key();
-          dialog.dismiss();
-          showRows();
-        })
-        .setNegativeButton("キャンセル", null).show();
+    openDialog =
+        new MaterialAlertDialogBuilder(this)
+            .setTitle("表示する項目")
+            .setSingleChoiceItems(
+                adapter,
+                checked,
+                (dialog, which) -> {
+                  filterKey = choices.get(which).key();
+                  dialog.dismiss();
+                  showRows();
+                })
+            .setNegativeButton("キャンセル", null)
+            .show();
   }
 
   private Filter activeFilter(List<Filter> choices) {
-    return choices.stream().filter(choice -> choice.key().equals(filterKey)).findFirst().orElse(ALL);
+    return choices.stream()
+        .filter(choice -> choice.key().equals(filterKey))
+        .findFirst()
+        .orElse(ALL);
   }
 
   private void showRows() {
@@ -220,34 +263,46 @@ public final class PhotoStorageInventoryActivity extends AppCompatActivity {
     filterKey = filter.key();
     List<PhotoStorageInventory.Photo> photos = snapshot.photos();
     List<PhotoStorageInventory.History> history = snapshot.unresolved();
-    if (filter.equals(UNRESOLVED)) photos = photos.stream()
-        .filter(photo -> !photo.historyMatches() || photo.location().kind() != PhotoStorageLocation.Kind.CURRENT)
-        .collect(Collectors.toList());
+    if (filter.equals(UNRESOLVED))
+      photos =
+          photos.stream()
+              .filter(
+                  photo ->
+                      !photo.historyMatches()
+                          || photo.location().kind() != PhotoStorageLocation.Kind.CURRENT)
+              .collect(Collectors.toList());
     else if (filter.equals(EXCLUDED)) {
-      photos = photos.stream().filter(photo -> photo.status() == PhotoStorageInventory.Status.EXCLUDED)
-          .collect(Collectors.toList());
+      photos =
+          photos.stream()
+              .filter(photo -> photo.status() == PhotoStorageInventory.Status.EXCLUDED)
+              .collect(Collectors.toList());
       history = List.of();
-    }
-    else if (!filter.equals(ALL)) {
+    } else if (!filter.equals(ALL)) {
       String volume = filter.key().substring(VOLUME_PREFIX.length());
-      photos = photos.stream().filter(photo -> volume.equals(photo.location().volume())).collect(Collectors.toList());
+      photos =
+          photos.stream()
+              .filter(photo -> volume.equals(photo.location().volume()))
+              .collect(Collectors.toList());
       history = List.of();
     }
     rows.replace(photos, history);
     list.setSelection(0);
     String selection = filter.equals(ALL) ? "" : filter.label() + "\n";
     filterButton.setStateDescription(filter.label());
-    state.setText(selection + countGroups(photos, history) + (rows.isEmpty() ? "\n表示する項目はありません。" : ""));
+    state.setText(
+        selection + countGroups(photos, history) + (rows.isEmpty() ? "\n表示する項目はありません。" : ""));
   }
 
   static String summary(PhotoStorageInventory inventory) {
     return countGroups(inventory.photos(), inventory.unresolved());
   }
 
-  private static String countGroups(List<PhotoStorageInventory.Photo> photos, List<PhotoStorageInventory.History> history) {
+  private static String countGroups(
+      List<PhotoStorageInventory.Photo> photos, List<PhotoStorageInventory.History> history) {
     int matched = 0, matchedPending = 0, unmatchedPending = 0, otherReferences = 0;
     for (var photo : photos) {
-      boolean pending = photo.reasons().contains(PhotoStorageInventory.Reason.ARCHIVE_CHECK_REQUIRED);
+      boolean pending =
+          photo.reasons().contains(PhotoStorageInventory.Reason.ARCHIVE_CHECK_REQUIRED);
       if (photo.historyMatches()) {
         matched++;
         if (pending) matchedPending++;
@@ -278,12 +333,16 @@ public final class PhotoStorageInventoryActivity extends AppCompatActivity {
     Map<String, VolumeCount> counts = new LinkedHashMap<>();
     for (var photo : photos) {
       PhotoStorageLocation location = photo.location();
-      counts.merge(location.volume(), new VolumeCount(location.label(), photo.historyMatches() ? 1 : 0),
+      counts.merge(
+          location.volume(),
+          new VolumeCount(location.label(), photo.historyMatches() ? 1 : 0),
           (left, right) -> new VolumeCount(left.label(), left.confirmed() + right.confirmed()));
     }
     Map<String, VolumeCount> ordered = new LinkedHashMap<>();
-    if (counts.containsKey(PhotoStorage.PRIMARY)) ordered.put(PhotoStorage.PRIMARY, counts.remove(PhotoStorage.PRIMARY));
-    counts.entrySet().stream().sorted(Comparator.comparing(entry -> entry.getValue().label()))
+    if (counts.containsKey(PhotoStorage.PRIMARY))
+      ordered.put(PhotoStorage.PRIMARY, counts.remove(PhotoStorage.PRIMARY));
+    counts.entrySet().stream()
+        .sorted(Comparator.comparing(entry -> entry.getValue().label()))
         .forEach(entry -> ordered.put(entry.getKey(), entry.getValue()));
     return ordered;
   }
@@ -302,16 +361,23 @@ public final class PhotoStorageInventoryActivity extends AppCompatActivity {
     details.setText(details(item));
     ScrollView scroll = new ScrollView(this);
     scroll.addView(details, new ScrollView.LayoutParams(-1, -2));
-    openDialog = new MaterialAlertDialogBuilder(this)
-        .setTitle(title)
-        .setView(scroll).setPositiveButton("閉じる", null).show();
+    openDialog =
+        new MaterialAlertDialogBuilder(this)
+            .setTitle(title)
+            .setView(scroll)
+            .setPositiveButton("閉じる", null)
+            .show();
   }
 
   private static String details(Object item) {
     if (item instanceof PhotoStorageInventory.Photo photo) {
-      StringBuilder detail = new StringBuilder(photo.historyMatches() ? "写真名　" + photo.name()
-          : referencePhoto(photo.name())).append('\n')
-          .append(locationText(photo.location())).append("\n\n").append(moveStatus(photo));
+      StringBuilder detail =
+          new StringBuilder(
+                  photo.historyMatches() ? "写真名　" + photo.name() : referencePhoto(photo.name()))
+              .append('\n')
+              .append(locationText(photo.location()))
+              .append("\n\n")
+              .append(moveStatus(photo));
       if (!photo.historyMatches()) detail.append("\n履歴と同じ写真か確認できません。");
       if (photo.recordedName() != null && !photo.recordedName().isEmpty())
         detail.append("\n履歴の名前　").append(photo.recordedName());
@@ -319,8 +385,13 @@ public final class PhotoStorageInventoryActivity extends AppCompatActivity {
       return detail.toString();
     }
     var history = (PhotoStorageInventory.History) item;
-    var detail = new StringBuilder(historyTitle(history)).append('\n').append(locationText(history.location()))
-        .append("\n\n確認が必要な履歴 ").append(history.count()).append("件");
+    var detail =
+        new StringBuilder(historyTitle(history))
+            .append('\n')
+            .append(locationText(history.location()))
+            .append("\n\n確認が必要な履歴 ")
+            .append(history.count())
+            .append("件");
     if (history.candidateName() != null) {
       detail.append('\n').append(referencePhoto(history.candidateName()));
       if (history.candidateLocation() != null)
@@ -330,7 +401,8 @@ public final class PhotoStorageInventoryActivity extends AppCompatActivity {
     return detail.toString();
   }
 
-  private static void appendReasons(StringBuilder detail, List<PhotoStorageInventory.Reason> reasons) {
+  private static void appendReasons(
+      StringBuilder detail, List<PhotoStorageInventory.Reason> reasons) {
     for (var reason : reasons) {
       detail.append("\n\n").append(reason.label());
       if (!reason.action().isEmpty()) detail.append('\n').append(reason.action());
@@ -353,7 +425,9 @@ public final class PhotoStorageInventoryActivity extends AppCompatActivity {
     return history.name().isEmpty() ? "履歴の名前は不明" : "履歴の名前　" + history.name();
   }
 
-  private static String referencePhoto(String name) { return "参照先の写真　" + name; }
+  private static String referencePhoto(String name) {
+    return "参照先の写真　" + name;
+  }
 
   private TextView text(int size, int color) {
     TextView text = new TextView(this);
@@ -362,25 +436,40 @@ public final class PhotoStorageInventoryActivity extends AppCompatActivity {
     return text;
   }
 
-  private int dp(int value) { return GalleryUi.dp(this, value); }
+  private int dp(int value) {
+    return GalleryUi.dp(this, value);
+  }
 
   private final class InventoryRows extends BaseAdapter {
     private List<PhotoStorageInventory.Photo> photos = List.of();
     private List<PhotoStorageInventory.History> history = List.of();
 
-    void replace(List<PhotoStorageInventory.Photo> photos, List<PhotoStorageInventory.History> history) {
+    void replace(
+        List<PhotoStorageInventory.Photo> photos, List<PhotoStorageInventory.History> history) {
       this.photos = photos;
       this.history = history;
       notifyDataSetChanged();
     }
 
-    @Override public int getCount() { return photos.size() + history.size(); }
-    @Override public Object getItem(int position) {
-      return position < photos.size() ? photos.get(position) : history.get(position - photos.size());
+    @Override
+    public int getCount() {
+      return photos.size() + history.size();
     }
-    @Override public long getItemId(int position) { return position; }
 
-    @Override public View getView(int position, View convertView, ViewGroup parent) {
+    @Override
+    public Object getItem(int position) {
+      return position < photos.size()
+          ? photos.get(position)
+          : history.get(position - photos.size());
+    }
+
+    @Override
+    public long getItemId(int position) {
+      return position;
+    }
+
+    @Override
+    public View getView(int position, View convertView, ViewGroup parent) {
       RowView row = convertView instanceof RowView recycled ? recycled : new RowView();
       row.bind(getItem(position));
       return row;
@@ -416,9 +505,15 @@ public final class PhotoStorageInventoryActivity extends AppCompatActivity {
       } else {
         var history = (PhotoStorageInventory.History) item;
         name = historyTitle(history);
-        description = locationText(history.location()) + "\n" + history.reason().label()
-            + " · 履歴 " + history.count() + "件";
-        if (history.candidateName() != null) description += "\n" + referencePhoto(history.candidateName());
+        description =
+            locationText(history.location())
+                + "\n"
+                + history.reason().label()
+                + " · 履歴 "
+                + history.count()
+                + "件";
+        if (history.candidateName() != null)
+          description += "\n" + referencePhoto(history.candidateName());
       }
       title.setText(name);
       subtitle.setText(description);

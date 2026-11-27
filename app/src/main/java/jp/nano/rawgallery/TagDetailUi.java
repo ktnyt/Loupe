@@ -1,50 +1,222 @@
 package jp.nano.rawgallery;
 
-import com.google.android.material.button.MaterialButton;
 import android.content.Context;
 import android.graphics.Typeface;
 import android.widget.*;
+import com.google.android.material.button.MaterialButton;
 
 /** Tag detail heading; counts already resolve human and automatic judgments. */
 final class TagDetailUi {
-  static LinearLayout heading(Context c,String scope,String name,int attached,int automatic,int excluded,int unknown){
-    LinearLayout box=new LinearLayout(c);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(GalleryUi.dp(c,20),GalleryUi.dp(c,40),GalleryUi.dp(c,20),GalleryUi.dp(c,20));
-    box.addView(text(c,scope,13,18,0xffa9a9a4));TextView title=text(c,name,28,36,GalleryUi.TEXT);title.setTypeface(Typeface.create(Typeface.DEFAULT,600,false));title.setAccessibilityHeading(true);add(c,box,title);
-    add(c,box,text(c,"タグ付き "+attached+"枚"+(automatic>0?"（自動 "+automatic+"枚）":"")+" · 該当しない "+excluded+"枚 · 未確認 "+unknown+"枚",14,20,0xffa9a9a4));return box;
+  static LinearLayout heading(
+      Context c,
+      String scope,
+      String name,
+      int attached,
+      int automatic,
+      int excluded,
+      int unknown) {
+    LinearLayout box = new LinearLayout(c);
+    box.setOrientation(LinearLayout.VERTICAL);
+    box.setPadding(
+        GalleryUi.dp(c, 20), GalleryUi.dp(c, 40), GalleryUi.dp(c, 20), GalleryUi.dp(c, 20));
+    box.addView(text(c, scope, 13, 18, 0xffa9a9a4));
+    TextView title = text(c, name, 28, 36, GalleryUi.TEXT);
+    title.setTypeface(Typeface.create(Typeface.DEFAULT, 600, false));
+    title.setAccessibilityHeading(true);
+    add(c, box, title);
+    add(
+        c,
+        box,
+        text(
+            c,
+            "タグ付き "
+                + attached
+                + "枚"
+                + (automatic > 0 ? "（自動 " + automatic + "枚）" : "")
+                + " · 該当しない "
+                + excluded
+                + "枚 · 未確認 "
+                + unknown
+                + "枚",
+            14,
+            20,
+            0xffa9a9a4));
+    return box;
   }
-  private static void add(Context c,LinearLayout box,TextView text){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=GalleryUi.dp(c,4);box.addView(text,p);}
-  private static TextView text(Context c,String value,int size,int line,int color){TextView t=new TextView(c);t.setText(value);t.setTextSize(size);t.setTextColor(color);t.setIncludeFontPadding(false);t.setLineHeight(Math.round(t.getTextSize()*line/size));return t;}
-  static Button state(Context c,String title,boolean selected,Runnable action) {
-    Button button=GalleryUi.chip(c,title,selected,action);
+
+  private static void add(Context c, LinearLayout box, TextView text) {
+    LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
+    p.topMargin = GalleryUi.dp(c, 4);
+    box.addView(text, p);
+  }
+
+  private static TextView text(Context c, String value, int size, int line, int color) {
+    TextView t = new TextView(c);
+    t.setText(value);
+    t.setTextSize(size);
+    t.setTextColor(color);
+    t.setIncludeFontPadding(false);
+    t.setLineHeight(Math.round(t.getTextSize() * line / size));
+    return t;
+  }
+
+  static Button state(Context c, String title, boolean selected, Runnable action) {
+    Button button = GalleryUi.chip(c, title, selected, action);
     button.setIncludeFontPadding(false);
-    button.setPadding(GalleryUi.dp(c,8),GalleryUi.dp(c,4),GalleryUi.dp(c,8),GalleryUi.dp(c,4));
+    button.setPadding(
+        GalleryUi.dp(c, 8), GalleryUi.dp(c, 4), GalleryUi.dp(c, 8), GalleryUi.dp(c, 4));
     return button;
   }
-  static Button action(Context c,String title,boolean primary,Runnable action){
-    Button b=new ActionButton(c);if(primary)MaterialUi.filled(b);else MaterialUi.outlined(b);b.setText(title);b.setContentDescription(title);b.setAllCaps(false);b.setMinWidth(0);b.setMinimumWidth(0);b.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));b.setOnClickListener(v->{GalleryUi.feedback(v);try(DiagnosticLog.Scope ignored=DiagnosticLog.span("action.button")){action.run();}});b.setTextSize(primary?15:14);b.setIncludeFontPadding(false);b.setMinHeight(GalleryUi.dp(c,primary?52:48));b.setMinimumHeight(GalleryUi.dp(c,primary?52:48));b.setPadding(GalleryUi.dp(c,16),GalleryUi.dp(c,6),GalleryUi.dp(c,16),GalleryUi.dp(c,6));
-    android.text.SpannableString label=new android.text.SpannableString(" "+title);label.setSpan(new android.text.style.ReplacementSpan(){
-      public int getSize(android.graphics.Paint paint,CharSequence value,int start,int end,android.graphics.Paint.FontMetricsInt fm){return GalleryUi.dp(c,26);}
-      public void draw(android.graphics.Canvas canvas,CharSequence value,int start,int end,float x,int top,int y,int bottom,android.graphics.Paint paint){int n=GalleryUi.dp(c,18);int center=Math.round(y+(paint.ascent()+paint.descent())/2);
-        if(b.getTag()==StatusView.Symbol.RUNNING){StatusView.glyph(canvas,new android.graphics.Paint(3),StatusView.Symbol.RUNNING,x,center-n/2,n,paint.getColor(),android.animation.ValueAnimator.areAnimatorsEnabled()?(android.os.SystemClock.uptimeMillis()%1000)*.36f:0);if(b.isShown()&&android.animation.ValueAnimator.areAnimatorsEnabled())b.postInvalidateDelayed(50);return;}
-        ActionIcon icon=new ActionIcon(title,c.getResources().getDisplayMetrics().density);icon.setBounds((int)x,center-n/2,(int)x+n,center+n/2);icon.setTintList(android.content.res.ColorStateList.valueOf(paint.getColor()));icon.draw(canvas);}
-    },0,1,android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);b.setText(label);return b;
+
+  static Button action(Context c, String title, boolean primary, Runnable action) {
+    Button b = new ActionButton(c);
+    if (primary) MaterialUi.filled(b);
+    else MaterialUi.outlined(b);
+    b.setText(title);
+    b.setContentDescription(title);
+    b.setAllCaps(false);
+    b.setMinWidth(0);
+    b.setMinimumWidth(0);
+    b.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+    b.setOnClickListener(
+        v -> {
+          GalleryUi.feedback(v);
+          try (DiagnosticLog.Scope ignored = DiagnosticLog.span("action.button")) {
+            action.run();
+          }
+        });
+    b.setTextSize(primary ? 15 : 14);
+    b.setIncludeFontPadding(false);
+    b.setMinHeight(GalleryUi.dp(c, primary ? 52 : 48));
+    b.setMinimumHeight(GalleryUi.dp(c, primary ? 52 : 48));
+    b.setPadding(GalleryUi.dp(c, 16), GalleryUi.dp(c, 6), GalleryUi.dp(c, 16), GalleryUi.dp(c, 6));
+    android.text.SpannableString label = new android.text.SpannableString(" " + title);
+    label.setSpan(
+        new android.text.style.ReplacementSpan() {
+          public int getSize(
+              android.graphics.Paint paint,
+              CharSequence value,
+              int start,
+              int end,
+              android.graphics.Paint.FontMetricsInt fm) {
+            return GalleryUi.dp(c, 26);
+          }
+
+          public void draw(
+              android.graphics.Canvas canvas,
+              CharSequence value,
+              int start,
+              int end,
+              float x,
+              int top,
+              int y,
+              int bottom,
+              android.graphics.Paint paint) {
+            int n = GalleryUi.dp(c, 18);
+            int center = Math.round(y + (paint.ascent() + paint.descent()) / 2);
+            if (b.getTag() == StatusView.Symbol.RUNNING) {
+              StatusView.glyph(
+                  canvas,
+                  new android.graphics.Paint(3),
+                  StatusView.Symbol.RUNNING,
+                  x,
+                  center - n / 2,
+                  n,
+                  paint.getColor(),
+                  android.animation.ValueAnimator.areAnimatorsEnabled()
+                      ? (android.os.SystemClock.uptimeMillis() % 1000) * .36f
+                      : 0);
+              if (b.isShown() && android.animation.ValueAnimator.areAnimatorsEnabled())
+                b.postInvalidateDelayed(50);
+              return;
+            }
+            ActionIcon icon = new ActionIcon(title, c.getResources().getDisplayMetrics().density);
+            icon.setBounds((int) x, center - n / 2, (int) x + n, center + n / 2);
+            icon.setTintList(android.content.res.ColorStateList.valueOf(paint.getColor()));
+            icon.draw(canvas);
+          }
+        },
+        0,
+        1,
+        android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+    b.setText(label);
+    return b;
   }
+
   private static final class ActionButton extends MaterialButton {
-    private final android.graphics.Paint badge=new android.graphics.Paint(3);
-    ActionButton(Context c){super(c);setAccessibilityLiveRegion(ACCESSIBILITY_LIVE_REGION_POLITE);}
-    protected void onDraw(android.graphics.Canvas canvas){
+    private final android.graphics.Paint badge = new android.graphics.Paint(3);
+
+    ActionButton(Context c) {
+      super(c);
+      setAccessibilityLiveRegion(ACCESSIBILITY_LIVE_REGION_POLITE);
+    }
+
+    protected void onDraw(android.graphics.Canvas canvas) {
       super.onDraw(canvas);
-      if(getTag()==StatusView.Symbol.FAILED){
-        int d=GalleryUi.dp(getContext(),18),x=getWidth()-GalleryUi.dp(getContext(),24),y=GalleryUi.dp(getContext(),3);
-        badge.setStyle(android.graphics.Paint.Style.FILL);badge.setColor(0xff0b0b0d);canvas.drawCircle(x+d/2f,y+d/2f,d/2f+GalleryUi.dp(getContext(),2),badge);
-        StatusView.glyph(canvas,badge,StatusView.Symbol.FAILED,x,y,d,0xffff8a7a,0);
+      if (getTag() == StatusView.Symbol.FAILED) {
+        int d = GalleryUi.dp(getContext(), 18),
+            x = getWidth() - GalleryUi.dp(getContext(), 24),
+            y = GalleryUi.dp(getContext(), 3);
+        badge.setStyle(android.graphics.Paint.Style.FILL);
+        badge.setColor(0xff0b0b0d);
+        canvas.drawCircle(x + d / 2f, y + d / 2f, d / 2f + GalleryUi.dp(getContext(), 2), badge);
+        StatusView.glyph(canvas, badge, StatusView.Symbol.FAILED, x, y, d, 0xffff8a7a, 0);
       }
     }
   }
-  static Button dockButton(Context c,String title,Runnable action){Button b=GalleryUi.button(c,title,action);MaterialUi.text(b);b.setTextSize(12);b.setIncludeFontPadding(false);b.setMinHeight(GalleryUi.dp(c,64));b.setMinimumHeight(GalleryUi.dp(c,64));icon(c,b,title,true,24);return b;}
-  private static void icon(Context c,Button b,String title,boolean top,int size){ActionIcon icon=new ActionIcon(title,c.getResources().getDisplayMetrics().density);int n=GalleryUi.dp(c,size);icon.setBounds(0,0,n,n);b.setCompoundDrawables(top?null:icon,top?icon:null,null,null);b.setCompoundDrawablePadding(GalleryUi.dp(c,top?4:8));}
-  static LinearLayout dock(Context c,Button... buttons){LinearLayout row=new LinearLayout(c);for(Button b:buttons)row.addView(b,new LinearLayout.LayoutParams(0,-2,1));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.leftMargin=-GalleryUi.dp(c,8);p.rightMargin=-GalleryUi.dp(c,8);row.setLayoutParams(p);return row;}
-  static void footer(LinearLayout root,int first){GalleryUi.bottomControls(root,first);ScrollView scroll=(ScrollView)root.getChildAt(root.getChildCount()-1);LinearLayout panel=(LinearLayout)scroll.getChildAt(0);Context c=root.getContext();panel.setBackgroundColor(0xff0b0b0d);panel.setPadding(GalleryUi.dp(c,16),GalleryUi.dp(c,10),GalleryUi.dp(c,16),GalleryUi.dp(c,20));}
-  static void gaps(LinearLayout box){for(int i=1;i<box.getChildCount();i++){LinearLayout.LayoutParams p=box.getChildAt(i).getLayoutParams() instanceof LinearLayout.LayoutParams?(LinearLayout.LayoutParams)box.getChildAt(i).getLayoutParams():new LinearLayout.LayoutParams(-1,-2);p.topMargin=GalleryUi.dp(box.getContext(),8);box.getChildAt(i).setLayoutParams(p);}}
-  static void configureTile(ThumbnailCell cell){cell.fixedHeight=GalleryUi.dp(cell.getContext(),96);cell.badges.tagAtRight=true;}
+
+  static Button dockButton(Context c, String title, Runnable action) {
+    Button b = GalleryUi.button(c, title, action);
+    MaterialUi.text(b);
+    b.setTextSize(12);
+    b.setIncludeFontPadding(false);
+    b.setMinHeight(GalleryUi.dp(c, 64));
+    b.setMinimumHeight(GalleryUi.dp(c, 64));
+    icon(c, b, title, true, 24);
+    return b;
+  }
+
+  private static void icon(Context c, Button b, String title, boolean top, int size) {
+    ActionIcon icon = new ActionIcon(title, c.getResources().getDisplayMetrics().density);
+    int n = GalleryUi.dp(c, size);
+    icon.setBounds(0, 0, n, n);
+    b.setCompoundDrawables(top ? null : icon, top ? icon : null, null, null);
+    b.setCompoundDrawablePadding(GalleryUi.dp(c, top ? 4 : 8));
+  }
+
+  static LinearLayout dock(Context c, Button... buttons) {
+    LinearLayout row = new LinearLayout(c);
+    for (Button b : buttons) row.addView(b, new LinearLayout.LayoutParams(0, -2, 1));
+    LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
+    p.leftMargin = -GalleryUi.dp(c, 8);
+    p.rightMargin = -GalleryUi.dp(c, 8);
+    row.setLayoutParams(p);
+    return row;
+  }
+
+  static void footer(LinearLayout root, int first) {
+    GalleryUi.bottomControls(root, first);
+    ScrollView scroll = (ScrollView) root.getChildAt(root.getChildCount() - 1);
+    LinearLayout panel = (LinearLayout) scroll.getChildAt(0);
+    Context c = root.getContext();
+    panel.setBackgroundColor(0xff0b0b0d);
+    panel.setPadding(
+        GalleryUi.dp(c, 16), GalleryUi.dp(c, 10), GalleryUi.dp(c, 16), GalleryUi.dp(c, 20));
+  }
+
+  static void gaps(LinearLayout box) {
+    for (int i = 1; i < box.getChildCount(); i++) {
+      LinearLayout.LayoutParams p =
+          box.getChildAt(i).getLayoutParams() instanceof LinearLayout.LayoutParams
+              ? (LinearLayout.LayoutParams) box.getChildAt(i).getLayoutParams()
+              : new LinearLayout.LayoutParams(-1, -2);
+      p.topMargin = GalleryUi.dp(box.getContext(), 8);
+      box.getChildAt(i).setLayoutParams(p);
+    }
+  }
+
+  static void configureTile(ThumbnailCell cell) {
+    cell.fixedHeight = GalleryUi.dp(cell.getContext(), 96);
+    cell.badges.tagAtRight = true;
+  }
 }

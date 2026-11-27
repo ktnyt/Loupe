@@ -4,7 +4,11 @@ import android.app.*;
 import android.content.*;
 import android.graphics.*;
 import android.net.Uri;
+import android.os.SystemClock;
+import android.text.TextUtils;
+import android.util.Log;
 import android.view.*;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import java.io.*;
@@ -138,7 +142,10 @@ final class ViewerScreenChecks {
     t.waitForIdleSync();
   }
 
-  static void doubleTap(Instrumentation t, View image) throws Exception {
+  private static void doubleTap(
+      Instrumentation t, MainActivity activity, PhotoViewerUi target, DoubleTapTrace trace)
+      throws Exception {
+    ZoomImageView image = target.image;
     int[] p = new int[2];
     TagDetailChecks.ui(
         t,
@@ -146,14 +153,19 @@ final class ViewerScreenChecks {
           image.getLocationOnScreen(p);
           p[0] += image.getWidth() / 2;
           p[1] += image.getHeight() / 2;
+          trace.observe(activity, target, p);
         });
     for (int i = 0; i < 2; i++) {
       long down = android.os.SystemClock.uptimeMillis();
       MotionEvent press = MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, p[0], p[1], 0),
           release = MotionEvent.obtain(down, down + 30, MotionEvent.ACTION_UP, p[0], p[1], 0);
       try {
+        trace.beforeInjection(2 * i, down);
         t.sendPointerSync(press);
+        trace.afterInjection(2 * i);
+        trace.beforeInjection(2 * i + 1, down + 30);
         t.sendPointerSync(release);
+        trace.afterInjection(2 * i + 1);
       } finally {
         press.recycle();
         release.recycle();
@@ -161,6 +173,244 @@ final class ViewerScreenChecks {
       Thread.sleep(70);
     }
     t.waitForIdleSync();
+  }
+
+  private static final class DoubleTapTrace implements View.OnTouchListener {
+    private static final String TAG = "LoupeViewerTap";
+    private static final int MAX_TOUCHES = 8;
+    private final long[] injectedEvent = new long[4];
+    private final long[] injectionStart = new long[4];
+    private final long[] injectionEnd = new long[4];
+    private final int[] action = new int[MAX_TOUCHES];
+    private final long[] eventUptime = new long[MAX_TOUCHES];
+    private final long[] deliveryUptime = new long[MAX_TOUCHES];
+    private final float[] x = new float[MAX_TOUCHES], y = new float[MAX_TOUCHES];
+    private final boolean[] zoomed = new boolean[MAX_TOUCHES];
+    private int touches;
+    private boolean overflow, observationError, resultError, detachError;
+    private ZoomImageView observed;
+    private String targetState = "unavailable", resultState = "unavailable";
+
+    void observe(MainActivity activity, PhotoViewerUi target, int[] tap) {
+      try {
+        ZoomImageView image = target.image;
+        observed = image;
+        image.setOnTouchListener(this);
+        Rect visible = new Rect();
+        boolean hasVisibleRect = image.getLocalVisibleRect(visible);
+        int width = image.getWidth(), height = image.getHeight();
+        targetState =
+            "viewer="
+                + System.identityHashCode(target)
+                + " image="
+                + System.identityHashCode(image)
+                + " generation="
+                + (int) RankingResultChecks.get(activity, "generation")
+                + " focus="
+                + image.hasWindowFocus()
+                + " attached="
+                + image.isAttachedToWindow()
+                + " shown="
+                + image.isShown()
+                + " visible="
+                + hasVisibleRect
+                + " visibleLocal="
+                + visible.left
+                + ","
+                + visible.top
+                + ","
+                + visible.right
+                + ","
+                + visible.bottom
+                + " screenBounds="
+                + (tap[0] - width / 2)
+                + ","
+                + (tap[1] - height / 2)
+                + ","
+                + (tap[0] - width / 2 + width)
+                + ","
+                + (tap[1] - height / 2 + height)
+                + " tapScreen="
+                + tap[0]
+                + ","
+                + tap[1]
+                + " zoomed="
+                + image.isZoomed();
+      } catch (Throwable ignored) {
+        observationError = true;
+      }
+    }
+
+    void beforeInjection(int slot, long scheduled) {
+      try {
+        injectedEvent[slot] = scheduled;
+        injectionStart[slot] = SystemClock.uptimeMillis();
+      } catch (Throwable ignored) {
+        observationError = true;
+      }
+    }
+
+    void afterInjection(int slot) {
+      try {
+        injectionEnd[slot] = SystemClock.uptimeMillis();
+      } catch (Throwable ignored) {
+        observationError = true;
+      }
+    }
+
+    @Override
+    public boolean onTouch(View view, MotionEvent event) {
+      try {
+        int kind = event.getActionMasked();
+        if (kind == MotionEvent.ACTION_DOWN
+            || kind == MotionEvent.ACTION_UP
+            || kind == MotionEvent.ACTION_CANCEL) {
+          if (touches == MAX_TOUCHES) {
+            overflow = true;
+          } else {
+            int slot = touches;
+            deliveryUptime[slot] = SystemClock.uptimeMillis();
+            action[slot] = kind;
+            eventUptime[slot] = event.getEventTime();
+            x[slot] = event.getX();
+            y[slot] = event.getY();
+            zoomed[slot] = ((ZoomImageView) view).isZoomed();
+            touches++;
+          }
+        }
+      } catch (Throwable ignored) {
+        observationError = true;
+      }
+      return false;
+    }
+
+    private void sampleResult(MainActivity activity) {
+      Integer viewerId = null, imageId = null, generation = null;
+      Boolean fit = null, lookup = null, nodeAvailable = null, checkable = null, checked = null;
+      String display = "unavailable";
+      try {
+        PhotoViewerUi current = viewer(activity);
+        viewerId = System.identityHashCode(current);
+        imageId = System.identityHashCode(current.image);
+        fit = !current.image.isZoomed();
+        Button button = current.actionButton("拡大");
+        lookup = button != null;
+        if (lookup) {
+          CharSequence label = button.getText();
+          display =
+              TextUtils.equals("拡大", label)
+                  ? "zoom"
+                  : TextUtils.equals("全体", label) ? "fit" : "other";
+          AccessibilityNodeInfo node = button.createAccessibilityNodeInfo();
+          nodeAvailable = node != null;
+          if (nodeAvailable) {
+            try {
+              checkable = node.isCheckable();
+              checked = node.isChecked();
+            } finally {
+              node.recycle();
+            }
+          }
+        } else {
+          display = "missing";
+        }
+        generation = (int) RankingResultChecks.get(activity, "generation");
+      } catch (Throwable ignored) {
+        resultError = true;
+      }
+      resultState =
+          "viewer="
+              + viewerId
+              + " image="
+              + imageId
+              + " generation="
+              + generation
+              + " fit="
+              + fit
+              + " button="
+              + lookup
+              + " display="
+              + display
+              + " ax="
+              + nodeAvailable
+              + " checkable="
+              + checkable
+              + " checked="
+              + checked;
+    }
+
+    void sampleAndDetach(MainActivity activity) {
+      try {
+        sampleResult(activity);
+      } catch (Throwable ignored) {
+        // Even result formatting must not replace the original assertion.
+        resultError = true;
+      } finally {
+        try {
+          if (observed != null) observed.setOnTouchListener(null);
+        } catch (Throwable ignored) {
+          detachError = true;
+        }
+      }
+    }
+
+    void finish(Instrumentation t, MainActivity activity) {
+      // Injection failure can bypass the normal assertion and its main-thread cleanup.
+      try {
+        if (resultState.equals("unavailable") && !resultError) {
+          TagDetailChecks.ui(t, () -> sampleAndDetach(activity));
+        }
+      } catch (Throwable ignored) {
+        detachError = true;
+      }
+      try {
+        Log.i(TAG, "target error=" + observationError + " " + targetState);
+        for (int slot = 0; slot < injectedEvent.length; slot++) {
+          Log.i(
+              TAG,
+              "inject slot="
+                  + slot
+                  + " event="
+                  + injectedEvent[slot]
+                  + " start="
+                  + injectionStart[slot]
+                  + " end="
+                  + injectionEnd[slot]);
+        }
+        for (int slot = 0; slot < touches; slot++) {
+          Log.i(
+              TAG,
+              "touch slot="
+                  + slot
+                  + " action="
+                  + action[slot]
+                  + " event="
+                  + eventUptime[slot]
+                  + " delivery="
+                  + deliveryUptime[slot]
+                  + " local="
+                  + x[slot]
+                  + ","
+                  + y[slot]
+                  + " zoomedBefore="
+                  + zoomed[slot]);
+        }
+        Log.i(
+            TAG,
+            "result error="
+                + resultError
+                + " detachError="
+                + detachError
+                + " touches="
+                + touches
+                + " overflow="
+                + overflow
+                + " "
+                + resultState);
+      } catch (Throwable ignored) {
+        // Diagnostic output must preserve the gesture assertion or injection failure.
+      }
+    }
   }
 
   static void pinch(Instrumentation t, View view) throws Exception {
@@ -552,13 +802,23 @@ final class ViewerScreenChecks {
             }
           });
       shot(t, a, dir, "viewer-zoom-" + width);
-      doubleTap(t, viewer(a).image);
-      TagDetailChecks.ui(
-          t,
-          () ->
-              TagDetailChecks.require(
-                  !viewer(a).image.isZoomed() && viewer(a).actionButton("拡大") != null,
-                  "double tap restores fit and label"));
+      DoubleTapTrace tapTrace = new DoubleTapTrace();
+      try {
+        doubleTap(t, a, viewer(a), tapTrace);
+        TagDetailChecks.ui(
+            t,
+            () -> {
+              try {
+                TagDetailChecks.require(
+                    !viewer(a).image.isZoomed() && viewer(a).actionButton("拡大") != null,
+                    "double tap restores fit and label");
+              } finally {
+                tapTrace.sampleAndDetach(a);
+              }
+            });
+      } finally {
+        tapTrace.finish(t, a);
+      }
       pinch(t, viewer(a).image);
       TagDetailChecks.ui(
           t,

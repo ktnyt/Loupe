@@ -56,12 +56,17 @@ public final class PhotoRanking {
     for (List<String> group : groups) order.addAll(group);
   }
 
-  public boolean bestOnly() { return journal.startsWith("B:"); }
+  public boolean bestOnly() {
+    return journal.startsWith("B:");
+  }
 
-  public int decisions() { return journal.length() - (bestOnly() || journal.startsWith("A:") ? 2 : 0); }
+  public int decisions() {
+    return journal.length() - (bestOnly() || journal.startsWith("A:") ? 2 : 0);
+  }
 
-  /** Explicit A/B selections in the current journal; ties and inferred wins add nothing.
-   * Replaying after undo/resume restores the counts without changing the persisted format.
+  /**
+   * Explicit A/B selections in the current journal; ties and inferred wins add nothing. Replaying
+   * after undo/resume restores the counts without changing the persisted format.
    */
   public int selectionCount(String id) {
     if (!ids.contains(id)) throw new IllegalArgumentException("Unknown photo");
