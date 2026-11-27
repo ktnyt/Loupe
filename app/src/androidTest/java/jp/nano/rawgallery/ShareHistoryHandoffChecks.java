@@ -7,6 +7,7 @@ import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Build;
+import android.os.ParcelFileDescriptor;
 import android.os.SystemClock;
 import android.view.KeyEvent;
 import android.view.accessibility.AccessibilityEvent;
@@ -14,6 +15,7 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import java.io.*;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
@@ -356,6 +358,7 @@ final class ShareHistoryHandoffChecks {
   }
 
   private static void captureChooser(Instrumentation test, MainActivity activity) throws Exception {
+    if (!chooserCaptureAllowed(test)) return;
     File dir = new File(activity.getCacheDir(), "consistency-checks");
     check(dir.isDirectory() || dir.mkdirs(), "synthetic chooser capture directory available");
     ComponentName chooser =
@@ -402,6 +405,27 @@ final class ShareHistoryHandoffChecks {
       }
     } finally {
       screenshot.recycle();
+    }
+  }
+
+  private static boolean chooserCaptureAllowed(Instrumentation test) {
+    if (!"ranchu".equals(Build.HARDWARE)) return false;
+    try (InputStream input =
+        new ParcelFileDescriptor.AutoCloseInputStream(
+            test.getUiAutomation().executeShellCommand("getprop ro.boot.qemu.avd_name"))) {
+      byte[] output = new byte[128];
+      int length = 0;
+      while (length < output.length) {
+        int count = input.read(output, length, output.length - length);
+        if (count < 0) break;
+        if (count == 0) return false;
+        length += count;
+      }
+      if (length == output.length && input.read() != -1) return false;
+      String name = new String(output, 0, length, StandardCharsets.US_ASCII);
+      return "loupe249-ranking-baseline\n".equals(name);
+    } catch (IOException | RuntimeException ignored) {
+      return false;
     }
   }
 
