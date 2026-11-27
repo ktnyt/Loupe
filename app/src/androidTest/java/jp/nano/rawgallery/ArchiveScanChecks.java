@@ -241,6 +241,37 @@ final class ArchiveScanChecks {
     File cached = new File(originals, ArchiveStore.key(photo) + ".jpg");
     Files.write(cached.toPath(), bytes);
     checkOriginal(context, photo, bytes);
+    if (legacy) {
+      byte[] different = bytes.clone();
+      different[0] ^= 1;
+      Files.write(cached.toPath(), different);
+      checkLegacyUnavailable(context, photo);
+      check(
+          Arrays.equals(different, Files.readAllBytes(cached.toPath())),
+          "cache miss rewrote original");
+      Files.delete(cached.toPath());
+      checkLegacyUnavailable(context, photo);
+      check(!cached.exists(), "cache miss downloaded an original");
+      try {
+        new SharePreparation(context, repository).prepare(List.of(photo), true);
+        throw new AssertionError("uncached legacy original was shared");
+      } catch (OriginalCache.LegacyOriginalUnavailable expected) {
+        File[] shares = new File(context.getCacheDir(), "shares").listFiles();
+        check(shares != null && shares.length == 0, "failed share left a partial copy");
+      }
+
+      check(Arrays.equals(bytes, Files.readAllBytes(preview.toPath())), "old preview changed");
+    }
+  }
+
+  private static void checkLegacyUnavailable(Context context, PhotoRepository.Photo photo)
+      throws Exception {
+    try {
+      OriginalCache.obtain(context, photo);
+      throw new AssertionError("uncached legacy original was opened");
+    } catch (OriginalCache.LegacyOriginalUnavailable expected) {
+      check(expected.getMessage().contains("IDrive e2の復元一覧"), "legacy recovery guidance missing");
+    }
   }
 
   private static void checkOriginal(Context context, PhotoRepository.Photo photo, byte[] bytes)

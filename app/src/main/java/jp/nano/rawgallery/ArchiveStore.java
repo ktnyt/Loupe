@@ -452,34 +452,6 @@ final class ArchiveStore extends SQLiteOpenHelper {
     if (row < 0) throw new IOException("同期記録を永続保存できません");
   }
 
-  void pending(PhotoRepository.Photo p) throws Exception {
-    put(base(p), "pending");
-  }
-
-  void verified(PhotoRepository.Photo p, CloudVerifier.Verified verified) throws Exception {
-    if (verified == null) throw new IOException("復元が未検証です");
-    String key = key(p);
-    PhotoRepository.Preview preview = new PhotoRepository(context).sourcePreview(p);
-    File dir = new File(context.getFilesDir(), "archive");
-    if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("プレビューを保存できません");
-    File compact = new File(dir, key + ".webp");
-    preview = CompactPreview.save(preview, compact);
-    JSONObject record =
-        base(p)
-            .put("id", verified.id)
-            .put("owner", verified.owner)
-            .put("sha", verified.sha)
-            .put("md5", verified.md5)
-            .put("verifiedAt", System.currentTimeMillis())
-            .put("width", preview.width)
-            .put("height", preview.height)
-            .put("orientation", preview.orientation)
-            .put("model", preview.model)
-            .put("previewFormat", "webp");
-    put(record, "verified");
-    new File(dir, key + ".jpg").delete();
-  }
-
   interface ReceiptVisitor {
     boolean visit(JSONObject row) throws Exception;
   }

@@ -8,61 +8,12 @@ import android.content.res.Configuration;
 import android.graphics.*;
 import android.view.*;
 import android.view.accessibility.AccessibilityNodeInfo;
-import android.webkit.WebView;
 import android.widget.*;
-import java.lang.reflect.Method;
 
-/** Synthetic pixels and real entry UI only: no login, upload, sync or logout. */
+/** Synthetic ranking rows and the normal sort entry. */
 final class AffordanceChecks {
   static String run(Instrumentation t) throws Exception {
     String regression = SortNamingChecks.run(t);
-    CloudActivity cloud =
-        (CloudActivity)
-            t.startActivitySync(
-                new Intent(t.getTargetContext(), CloudActivity.class)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-    try {
-      waitFor(t, "Cloud focused", () -> cloud.hasWindowFocus());
-      main(
-          t,
-          () -> {
-            if ((cloud.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE)
-                == 0) throw new AssertionError("secure flag missing");
-            StatusView status = (StatusView) field(cloud, "status");
-            WebView web = (WebView) field(cloud, "web");
-            if (status.getVisibility() != View.GONE
-                || web.getVisibility() != View.GONE
-                || web.getUrl() != null) throw new AssertionError("initial state");
-            for (String name : new String[] {"ログイン", "同期の設定", "接続と確認"})
-              if (button(cloud.getWindow().getDecorView(), name) == null)
-                throw new AssertionError(name);
-            Method method =
-                CloudActivity.class.getDeclaredMethod(
-                    "setStatus", StatusView.Symbol.class, String.class, Runnable.class);
-            method.setAccessible(true);
-            method.invoke(cloud, StatusView.Symbol.TLS, "合成検査：通信の安全性を確認できないため停止しました。", null);
-            if (status.getVisibility() != View.VISIBLE
-                || status.getAccessibilityLiveRegion() != View.ACCESSIBILITY_LIVE_REGION_POLITE
-                || !status.getContentDescription().toString().contains("安全性"))
-              throw new AssertionError("status lost");
-            button(cloud.getWindow().getDecorView(), "接続と確認").performClick();
-            return true;
-          });
-      waitFor(t, "menu focus", () -> !cloud.hasWindowFocus());
-      AccessibilityNodeInfo root = t.getUiAutomation().getRootInActiveWindow();
-      for (String name : new String[] {"接続を確認", "保存した写真をダウンロードして確認", "写真1枚を保存して内容を確認", "ログアウト"})
-        if (root.findAccessibilityNodeInfosByText(name).isEmpty())
-          throw new AssertionError("menu " + name);
-      t.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
-      waitFor(t, "menu cancelled", () -> cloud.hasWindowFocus());
-    } finally {
-      main(
-          t,
-          () -> {
-            cloud.finish();
-            return true;
-          });
-    }
     MainActivity a =
         (MainActivity)
             t.startActivitySync(
@@ -74,8 +25,6 @@ final class AffordanceChecks {
         for (float scale : new float[] {1f, 1.3f})
           for (boolean longer : new boolean[] {false, true}) {
             LinearLayout[] content = {null};
-            View[] dock = {null};
-            int[] clicks = {0};
             main(
                 t,
                 () -> {
@@ -115,14 +64,10 @@ final class AffordanceChecks {
                   }
                   root.addView(
                       content[0], new LinearLayout.LayoutParams(GalleryUi.dp(c, width), -2));
-                  dock[0] =
-                      CloudActivity.actions(
-                          c, () -> clicks[0]++, () -> clicks[0]++, () -> clicks[0]++);
-                  root.addView(dock[0], new LinearLayout.LayoutParams(GalleryUi.dp(c, width), -2));
                   a.setContentView(root);
                   return true;
                 });
-            waitFor(t, "fixture layout", () -> dock[0].getHeight() > 0);
+            waitFor(t, "fixture layout", () -> content[0].getHeight() > 0);
             main(
                 t,
                 () -> {
@@ -142,11 +87,7 @@ final class AffordanceChecks {
                       if (android.text.TextUtils.equals("拡大", act.getLabel())) action = true;
                     if (!action || !Button.class.getName().contentEquals(info.getClassName()))
                       throw new AssertionError("row AX");
-                    Button button = (Button) ((LinearLayout) dock[0]).getChildAt(i);
-                    ActionLabelChecks.checkFit(button);
-                    button.performClick();
                   }
-                  if (clicks[0] != 3) throw new AssertionError("entry callbacks");
                   return true;
                 });
             capture(
@@ -155,13 +96,12 @@ final class AffordanceChecks {
                 content[0],
                 content[0].getHeight(),
                 "affordance-rows-" + width + "-" + scale + "-" + longer);
-            capture(t, a, dock[0], dock[0].getHeight(), "affordance-cloud-" + width + "-" + scale);
             count++;
           }
       return regression
-          + "PASS Cloud initial hidden status/web/no URL, FLAG_SECURE, status visible/polite, 4 menu entries and Back; "
+          + "PASS "
           + count
-          + " synthetic result/Cloud layouts, 320/400dp fonts1/1.3 short/long filenames, failed preview, AX action and entry callbacks. No live login/network/transfer; TalkBack speech untested.\n";
+          + " synthetic ranking layouts at 320/400dp and fonts 1/1.3. Short and long filenames, failed preview and the accessibility action checked.\n";
     } finally {
       main(
           t,
