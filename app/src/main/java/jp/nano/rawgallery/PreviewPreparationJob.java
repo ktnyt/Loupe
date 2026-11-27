@@ -12,96 +12,178 @@ public final class PreviewPreparationJob extends JobService {
       new DiagnosticExecutor("PreviewPreparation.worker", 1);
   private static volatile int visible;
   private AtomicBoolean stopped;
-  private static final java.util.concurrent.atomic.AtomicInteger active = new java.util.concurrent.atomic.AtomicInteger();
-  static void enter() { visible++; DiagnosticLog.event("preparation.pause", 0); }
-  static void leave(Context c) { visible = Math.max(0, visible - 1); if (visible == 0) schedule(c); }
-  static boolean browsing() { return visible > 0; }
+  private static final java.util.concurrent.atomic.AtomicInteger active =
+      new java.util.concurrent.atomic.AtomicInteger();
+
+  static void enter() {
+    visible++;
+    DiagnosticLog.event("preparation.pause", 0);
+  }
+
+  static void leave(Context c) {
+    visible = Math.max(0, visible - 1);
+    if (visible == 0) schedule(c);
+  }
+
+  static boolean browsing() {
+    return visible > 0;
+  }
+
   static void schedule(Context c) {
     JobScheduler scheduler = c.getSystemService(JobScheduler.class);
     if (scheduler.getPendingJob(JOB) == null)
-      scheduler.schedule(new JobInfo.Builder(JOB, new ComponentName(c, PreviewPreparationJob.class))
-          .setMinimumLatency(1500).setRequiresStorageNotLow(true).setPersisted(true).build());
+      scheduler.schedule(
+          new JobInfo.Builder(JOB, new ComponentName(c, PreviewPreparationJob.class))
+              .setMinimumLatency(1500)
+              .setRequiresStorageNotLow(true)
+              .setPersisted(true)
+              .build());
   }
+
   static boolean local(PhotoRepository.Photo p) {
     if (p.isVideo()) return false;
     String scheme = p.uri.getScheme(), authority = p.uri.getAuthority();
-    return "file".equals(scheme) || ("content".equals(scheme)
-        && ("media".equals(authority) || "com.android.externalstorage.documents".equals(authority)));
+    return "file".equals(scheme)
+        || ("content".equals(scheme)
+            && ("media".equals(authority)
+                || "com.android.externalstorage.documents".equals(authority)));
   }
+
   static String status(Context c) {
     android.content.SharedPreferences p = c.getSharedPreferences("preview-preparation", 0);
     String state = browsing() ? "閲覧中のため一時停止" : p.getString("state", "準備を待っています");
-    return p.getInt("ready", 0) + " / " + p.getInt("total", 0) + "枚の準備ができました\n"
-        + state + "\n準備できなかった写真：" + p.getInt("failed", 0) + "枚"
+    return p.getInt("ready", 0)
+        + " / "
+        + p.getInt("total", 0)
+        + "枚の準備ができました\n"
+        + state
+        + "\n準備できなかった写真："
+        + p.getInt("failed", 0)
+        + "枚"
         + "\n充電中以外も、Loupeを閉じている間に進めます。写真のオリジナルは変更しません。";
   }
+
   static JobState snapshot(Context c) {
-    return JobState.read(c.getSharedPreferences("preview-preparation",0),"preparation",active.get()>0,true);
+    return JobState.read(
+        c.getSharedPreferences("preview-preparation", 0), "preparation", active.get() > 0, true);
   }
-  private void save(boolean countsKnown, int ready, int total, int failed, JobState.Kind kind, String state) {
-    JobState.write(getSharedPreferences("preview-preparation",0).edit(),"preparation",kind,System.currentTimeMillis())
-        .putBoolean("preparationCountsKnown",countsKnown).putInt("ready",ready).putInt("total",total).putInt("failed",failed).putString("state",state).apply();
-    DiagnosticLog.event("preparation.progress", 0, "ready", ready, "total", total, "failed", failed);
+
+  private void save(
+      boolean countsKnown, int ready, int total, int failed, JobState.Kind kind, String state) {
+    JobState.write(
+            getSharedPreferences("preview-preparation", 0).edit(),
+            "preparation",
+            kind,
+            System.currentTimeMillis())
+        .putBoolean("preparationCountsKnown", countsKnown)
+        .putInt("ready", ready)
+        .putInt("total", total)
+        .putInt("failed", failed)
+        .putString("state", state)
+        .apply();
+    DiagnosticLog.event(
+        "preparation.progress", 0, "ready", ready, "total", total, "failed", failed);
   }
+
   public boolean onStartJob(JobParameters params) {
     if (browsing()) return false; // Leaving the last Activity schedules another attempt.
-    AtomicBoolean cancel = new AtomicBoolean(); stopped = cancel;
-    WORKER.execute(() -> {
-      active.incrementAndGet();
-      android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
-      int ready = 0, failed = 0, total = 0;
-      boolean retry = false, countsKnown = false;
-      try (GalleryIndex index = new GalleryIndex(this)) {
-        PhotoRepository repository = new PhotoRepository(this, true);
-        List<PhotoRepository.Photo> photos = index.load(null, "すべて").photos;
-        Set<String> keys = new HashSet<>();
-        for (PhotoRepository.Photo p : photos) if (local(p)) {
-          if (cancel.get() || browsing()) { if (!cancel.get()) jobFinished(params, true); return; }
-          total++; keys.add(PhotoRepository.previewKey(p)); if (repository.prepared(p)) ready++;
-        }
-        countsKnown = true;
-        repository.prunePrepared(keys, () -> cancel.get() || browsing());
-        save(countsKnown, ready, total, 0, JobState.Kind.RUNNING, "準備中");
-        for (PhotoRepository.Photo p : photos) {
-          if (cancel.get() || browsing()) { retry = true; break; }
-          if (!local(p)) continue;
-          boolean wasReady = repository.prepared(p);
-          if (wasReady && PreviewPlaceholders.get(this).has(p)) continue;
-          if (getFilesDir().getUsableSpace() < 1024L * 1024 * 1024) {
-            save(countsKnown, ready, total, failed, JobState.Kind.PAUSED, "空き容量が少ないため一時停止");
-            retry = true; break;
-          }
-          try {
-            if (!repository.prepare(p, () -> cancel.get() || browsing())) { retry = true; break; }
-            if (!wasReady) ready++;
-            if (!cancel.get() && !browsing() && !PreviewPlaceholders.get(this).has(p)) {
-              android.graphics.Bitmap small = PhotoRepository.bitmap(repository.preview(p), 64);
-              try { PreviewPlaceholders.get(this).store(p, small); } finally { small.recycle(); }
+    AtomicBoolean cancel = new AtomicBoolean();
+    stopped = cancel;
+    WORKER.execute(
+        () -> {
+          active.incrementAndGet();
+          android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
+          int ready = 0, failed = 0, total = 0;
+          boolean retry = false, countsKnown = false;
+          try (GalleryIndex index = new GalleryIndex(this)) {
+            PhotoRepository repository = new PhotoRepository(this, true);
+            List<PhotoRepository.Photo> photos = index.load(null, "すべて").photos;
+            Set<String> keys = new HashSet<>();
+            for (PhotoRepository.Photo p : photos)
+              if (local(p)) {
+                if (cancel.get() || browsing()) {
+                  if (!cancel.get()) jobFinished(params, true);
+                  return;
+                }
+                total++;
+                keys.add(PhotoRepository.previewKey(p));
+                if (repository.prepared(p)) ready++;
+              }
+            countsKnown = true;
+            repository.prunePrepared(keys, () -> cancel.get() || browsing());
+            save(countsKnown, ready, total, 0, JobState.Kind.RUNNING, "準備中");
+            for (PhotoRepository.Photo p : photos) {
+              if (cancel.get() || browsing()) {
+                retry = true;
+                break;
+              }
+              if (!local(p)) continue;
+              boolean wasReady = repository.prepared(p);
+              if (wasReady && PreviewPlaceholders.get(this).has(p)) continue;
+              if (getFilesDir().getUsableSpace() < 1024L * 1024 * 1024) {
+                save(countsKnown, ready, total, failed, JobState.Kind.PAUSED, "空き容量が少ないため一時停止");
+                retry = true;
+                break;
+              }
+              try {
+                if (!repository.prepare(p, () -> cancel.get() || browsing())) {
+                  retry = true;
+                  break;
+                }
+                if (!wasReady) ready++;
+                if (!cancel.get() && !browsing() && !PreviewPlaceholders.get(this).has(p)) {
+                  android.graphics.Bitmap small = PhotoRepository.bitmap(repository.preview(p), 64);
+                  try {
+                    PreviewPlaceholders.get(this).store(p, small);
+                  } finally {
+                    small.recycle();
+                  }
+                }
+              } catch (Exception e) {
+                boolean paused = cancel.get() || browsing();
+                DiagnosticLog.exception("preparation.item", paused ? "cancelled" : "failed", e);
+                if (paused) {
+                  retry = true;
+                  break;
+                }
+                failed++;
+              }
+              save(countsKnown, ready, total, failed, JobState.Kind.RUNNING, "準備中");
             }
+            if (browsing())
+              save(countsKnown, ready, total, failed, JobState.Kind.PAUSED, "閲覧中のため一時停止");
+            else if (!retry && !cancel.get())
+              save(
+                  countsKnown,
+                  ready,
+                  total,
+                  failed,
+                  failed == 0 ? JobState.Kind.COMPLETE : JobState.Kind.PARTIAL,
+                  failed == 0 ? "準備できました" : "一部の写真を準備できませんでした");
+          } catch (Exception e) {
+            boolean stopped = cancel.get();
+            boolean paused = browsing();
+            DiagnosticLog.exception(
+                "preparation.run", stopped ? "cancelled" : paused ? "paused" : "failed", e);
+            if (!stopped)
+              save(
+                  countsKnown,
+                  ready,
+                  total,
+                  failed,
+                  paused ? JobState.Kind.PAUSED : JobState.Kind.FAILED,
+                  paused ? "閲覧中のため一時停止" : "準備を再開できませんでした");
+            retry = true;
+          } finally {
+            active.decrementAndGet();
           }
-          catch (Exception e) {
-            boolean paused = cancel.get() || browsing();
-            DiagnosticLog.exception("preparation.item", paused ? "cancelled" : "failed", e);
-            if (paused) { retry = true; break; }
-            failed++;
-          }
-          save(countsKnown, ready, total, failed, JobState.Kind.RUNNING, "準備中");
-        }
-        if (browsing()) save(countsKnown, ready, total, failed, JobState.Kind.PAUSED, "閲覧中のため一時停止");
-        else if (!retry && !cancel.get()) save(countsKnown, ready, total, failed, failed == 0 ? JobState.Kind.COMPLETE : JobState.Kind.PARTIAL,
-            failed == 0 ? "準備できました" : "一部の写真を準備できませんでした");
-      } catch (Exception e) {
-        boolean stopped = cancel.get();
-        boolean paused = browsing();
-        DiagnosticLog.exception("preparation.run", stopped ? "cancelled" : paused ? "paused" : "failed", e);
-        if (!stopped) save(countsKnown, ready, total, failed,
-            paused ? JobState.Kind.PAUSED : JobState.Kind.FAILED,
-            paused ? "閲覧中のため一時停止" : "準備を再開できませんでした");
-        retry = true;
-      } finally { active.decrementAndGet(); }
-      if (!cancel.get()) jobFinished(params, retry);
-    });
+          if (!cancel.get()) jobFinished(params, retry);
+        });
     return true;
   }
-  public boolean onStopJob(JobParameters params) { if (stopped != null) stopped.set(true); return true; }
+
+  public boolean onStopJob(JobParameters params) {
+    if (stopped != null) stopped.set(true);
+    return true;
+  }
 }

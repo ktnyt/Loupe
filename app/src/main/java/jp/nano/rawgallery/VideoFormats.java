@@ -6,7 +6,9 @@ import java.util.Arrays;
 final class VideoFormats {
   private static final String EXTENSIONS = "mp4|m4v|mov|3gp|3gpp|mkv|webm";
 
-  static boolean accepts(String name) { return RawFormats.extension(name).matches(EXTENSIONS); }
+  static boolean accepts(String name) {
+    return RawFormats.extension(name).matches(EXTENSIONS);
+  }
 
   static String[] patterns() {
     return Arrays.stream(EXTENSIONS.split("\\|")).map(e -> "%." + e).toArray(String[]::new);

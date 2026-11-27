@@ -13,20 +13,26 @@ import java.util.function.BooleanSupplier
 
 /** MTP セッションを開き、写真・RAW・動画の差分取り込みを行う (仕様書 5 章の手順 3〜6) */
 object MtpImporter {
-
     private const val TAG = "MtpImporter"
 
     /** スキャンで照会する format code。0 (全件) に加え、全件に含めてこない機種がある枠を明示する */
-    private val SCAN_FORMATS = intArrayOf(
-        0, // 全件
-        MtpConstants.FORMAT_UNDEFINED, // 0x3000: ORF/RW2 など RAW はここに入る機種が多い
-        0x3811, // DNG
-        MtpConstants.FORMAT_TIFF, // 0x380D: RAW を TIFF 扱いで見せる機種向け
+    private val SCAN_FORMATS =
+        intArrayOf(
+            0, // 全件
+            MtpConstants.FORMAT_UNDEFINED, // 0x3000: ORF/RW2 など RAW はここに入る機種が多い
+            0x3811, // DNG
+            MtpConstants.FORMAT_TIFF, // 0x380D: RAW を TIFF 扱いで見せる機種向け
+        )
+
+    data class CameraIdentity(
+        val model: String,
+        val serial: String,
     )
 
-    data class CameraIdentity(val model: String, val serial: String)
-
-    data class Progress(val total: Int, val done: Int)
+    data class Progress(
+        val total: Int,
+        val done: Int,
+    )
 
     data class Result(
         val imported: Int,
@@ -93,7 +99,11 @@ object MtpImporter {
             conn = manager.openDevice(usbDevice)
             if (conn != null) break
             ImportLog.w(TAG, "openDevice returned null (attempt $attempt)")
-            try { Thread.sleep(400) } catch (e: InterruptedException) { break }
+            try {
+                Thread.sleep(400)
+            } catch (e: InterruptedException) {
+                break
+            }
         }
         if (conn == null) {
             ImportLog.w(TAG, "openDevice failed after retries")
@@ -121,15 +131,19 @@ object MtpImporter {
      * MTP セッションを開いている最中に呼ぶと interface を奪って壊すので、
      * セッションを閉じた後にだけ呼ぶこと
      */
-    fun deviceStatus(context: Context, usbDevice: UsbDevice): String {
+    fun deviceStatus(
+        context: Context,
+        usbDevice: UsbDevice,
+    ): String {
         val manager = context.getSystemService(Context.USB_SERVICE) as UsbManager
         if (!manager.hasPermission(usbDevice)) return "no-permission"
         val conn = manager.openDevice(usbDevice) ?: return "openDevice-failed"
         try {
-            val itf = (0 until usbDevice.interfaceCount)
-                .map { usbDevice.getInterface(it) }
-                .firstOrNull { it.interfaceClass == UsbConstants.USB_CLASS_STILL_IMAGE }
-                ?: return "no-still-image-interface"
+            val itf =
+                (0 until usbDevice.interfaceCount)
+                    .map { usbDevice.getInterface(it) }
+                    .firstOrNull { it.interfaceClass == UsbConstants.USB_CLASS_STILL_IMAGE }
+                    ?: return "no-still-image-interface"
             if (!conn.claimInterface(itf, true)) return "claim-failed"
             try {
                 val buf = ByteArray(64)
@@ -147,26 +161,30 @@ object MtpImporter {
     }
 
     /** PTP の応答コードのうち、この文脈で出そうなものだけ名前を付ける */
-    private fun statusName(code: Int): String = when (code) {
-        0x2001 -> "OK"
-        0x2019 -> "DeviceBusy"
-        0x201F -> "TransactionCancelled"
-        0x2000 -> "Undefined"
-        0x2002 -> "GeneralError"
-        0x2003 -> "SessionNotOpen"
-        0x201E -> "InvalidTransactionID"
-        else -> "unknown"
-    }
+    private fun statusName(code: Int): String =
+        when (code) {
+            0x2001 -> "OK"
+            0x2019 -> "DeviceBusy"
+            0x201F -> "TransactionCancelled"
+            0x2000 -> "Undefined"
+            0x2002 -> "GeneralError"
+            0x2003 -> "SessionNotOpen"
+            0x201E -> "InvalidTransactionID"
+            else -> "unknown"
+        }
 
     private fun logInterfaces(d: UsbDevice) {
         // USB 記述子側の識別子も残す。MTP の GetDeviceInfo は設定アプリとのセッション
         // 競合で失敗することがあり (2026-08-22 実測)、そのときここから同じカメラだと
         // 判断できるかを確かめるための観測
-        val sb = StringBuilder(
-            "device 0x%04x:0x%04x class=%d ifaces=".format(
-                d.vendorId, d.productId, d.deviceClass,
+        val sb =
+            StringBuilder(
+                "device 0x%04x:0x%04x class=%d ifaces=".format(
+                    d.vendorId,
+                    d.productId,
+                    d.deviceClass,
+                ),
             )
-        )
         for (i in 0 until d.interfaceCount) {
             val itf = d.getInterface(i)
             sb.append("[cls=${itf.interfaceClass},sub=${itf.interfaceSubclass},proto=${itf.interfaceProtocol}]")
@@ -198,7 +216,9 @@ object MtpImporter {
          * format 0 に RAW を含めない機種では RAW を取りこぼすが、全滅よりはよい
          */
         fullScan: Boolean = true,
-        volume: String = jp.nano.rawgallery.PhotoStorage.selected(context),
+        volume: String =
+            jp.nano.rawgallery.PhotoStorage
+                .selected(context),
     ): Result {
         val start = System.currentTimeMillis()
         val known = db.importedKeys(camera.model, camera.serial)
@@ -281,14 +301,15 @@ object MtpImporter {
                 val kind = MediaTypes.kindOf(name) ?: continue
                 kindCount.merge(kind, 1, Int::plus)
                 if (kind !in kinds) continue
-                val key = ImportedKey(
-                    fileName = name,
-                    // MTP の ObjectInfo は 32bit のため 4GB 超の動画は折り返した値になるが、
-                    // 照合キーとしては毎回同じ値になるので差分判定には使える
-                    fileSize = info.compressedSizeLong,
-                    // dateCreated が 0 の機種では dateModified で代用 (仕様書 9 の未決事項)
-                    shotAt = (if (info.dateCreated != 0L) info.dateCreated else info.dateModified) / 1000,
-                )
+                val key =
+                    ImportedKey(
+                        fileName = name,
+                        // MTP の ObjectInfo は 32bit のため 4GB 超の動画は折り返した値になるが、
+                        // 照合キーとしては毎回同じ値になるので差分判定には使える
+                        fileSize = info.compressedSizeLong,
+                        // dateCreated が 0 の機種では dateModified で代用 (仕様書 9 の未決事項)
+                        shotAt = (if (info.dateCreated != 0L) info.dateCreated else info.dateModified) / 1000,
+                    )
                 val wasDeleted = known[key.asString()]
                 if (wasDeleted != null) {
                     skipped++
@@ -307,7 +328,7 @@ object MtpImporter {
                     } else {
                         // 同名の別写真。撮影日時付きの別名で取り込む
                         targets.add(
-                            Target(handle, info, key, MediaSaver.collisionName(key.fileName, key.shotAt))
+                            Target(handle, info, key, MediaSaver.collisionName(key.fileName, key.shotAt)),
                         )
                     }
                 }
@@ -326,10 +347,11 @@ object MtpImporter {
 
         onProgress(Progress(targets.size, 0))
         val importedHandles = ArrayList<Pair<Target, SavedTransfer>>()
-        val cancelledDuringProof = BooleanSupplier {
-            onScanAlive()
-            isCancelled() || Thread.currentThread().isInterrupted
-        }
+        val cancelledDuringProof =
+            BooleanSupplier {
+                onScanAlive()
+                isCancelled() || Thread.currentThread().isInterrupted
+            }
         var deleteUnverified = 0
         for ((i, t) in targets.withIndex()) {
             if (isCancelled()) {
@@ -337,8 +359,18 @@ object MtpImporter {
                 break
             }
             try {
-                val saved = saveOne(context, mtp, t.handle, t.key, t.saveName, camera, volume,
-                    deleteAfterImport, cancelledDuringProof)
+                val saved =
+                    saveOne(
+                        context,
+                        mtp,
+                        t.handle,
+                        t.key,
+                        t.saveName,
+                        camera,
+                        volume,
+                        deleteAfterImport,
+                        cancelledDuringProof,
+                    )
                 // 保存が完了してから履歴に記録する順序 (仕様書 5.4)
                 db.recordImport(camera.model, camera.serial, t.key, saved.uri.toString())
                 imported++
@@ -390,7 +422,11 @@ object MtpImporter {
             }
         }
         return Result(
-            imported, skipped, failed, elapsed(start), aborted,
+            imported,
+            skipped,
+            failed,
+            elapsed(start),
+            aborted,
             deleted = deleted,
             // RAW を頼まれていないなら、縮退スキャンでも取りこぼしは起きない
             degraded = !fullScan && MediaTypes.Kind.RAW in kinds,
@@ -420,12 +456,13 @@ object MtpImporter {
         val want = minOf(HEAD_COMPARE_BYTES.toLong(), ex.size).toInt()
         if (want <= 0) return false
         val buf = ByteArray(want)
-        val got = try {
-            mtp.getPartialObject(handle, 0, want.toLong(), buf)
-        } catch (e: Exception) {
-            ImportLog.w(TAG, "getPartialObject failed", e)
-            -1L
-        }
+        val got =
+            try {
+                mtp.getPartialObject(handle, 0, want.toLong(), buf)
+            } catch (e: Exception) {
+                ImportLog.w(TAG, "getPartialObject failed", e)
+                -1L
+            }
         if (got != want.toLong()) return false
         val cameraHead = buf
         val phoneHead = MediaSaver.readHead(context, ex.uri, want) ?: return false
@@ -436,7 +473,10 @@ object MtpImporter {
 
     private fun elapsed(start: Long) = System.currentTimeMillis() - start
 
-    private data class SavedTransfer(val uri: Uri, val fingerprint: MediaSaver.SavedFingerprint?)
+    private data class SavedTransfer(
+        val uri: Uri,
+        val fingerprint: MediaSaver.SavedFingerprint?,
+    )
 
     private fun saveOne(
         context: Context,
@@ -467,11 +507,16 @@ object MtpImporter {
                 if (patched > 0) ImportLog.i(TAG, "patched $patched broken offset tag(s)")
             }
             val bytes = tmp.length()
-            val fingerprint = if (verifyBeforeDeletion)
-                MediaSaver.SavedFingerprint(bytes, CameraImportCopy.sha256(tmp, cancelled)) else null
-            val uri = MediaSaver.save(context, saveName, key.shotAt, camera, volume, bytes) { out ->
-                tmp.inputStream().use { it.copyTo(out) }
-            }
+            val fingerprint =
+                if (verifyBeforeDeletion) {
+                    MediaSaver.SavedFingerprint(bytes, CameraImportCopy.sha256(tmp, cancelled))
+                } else {
+                    null
+                }
+            val uri =
+                MediaSaver.save(context, saveName, key.shotAt, camera, volume, bytes) { out ->
+                    tmp.inputStream().use { it.copyTo(out) }
+                }
             return SavedTransfer(uri, fingerprint)
         } finally {
             tmp.delete()

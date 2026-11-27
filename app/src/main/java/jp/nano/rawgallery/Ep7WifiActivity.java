@@ -3,10 +3,10 @@ package jp.nano.rawgallery;
 import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.net.Uri;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -27,172 +27,325 @@ import jp.nano.rawgallery.camera.ImportProgress;
 
 /** Explicit Wi-Fi import and opt-in automatic connection handling. */
 public final class Ep7WifiActivity extends AppCompatActivity {
-    private final ImportProgress progress = ImportProgress.INSTANCE;
-    private final Runnable listener = () -> runOnUiThread(this::render);
-    private TextView status;
-    private MaterialButton start, stop, connect;
-    private final Handler connectionHandler = new Handler(Looper.getMainLooper());
-    private boolean panelPending, connectionWaiting, permissionForConnect, identityPermissionPending;
-    private long connectionDeadline;
-    private MaterialSwitch verify;
-    private TextView photoPermissionStatus;
+  private final ImportProgress progress = ImportProgress.INSTANCE;
+  private final Runnable listener = () -> runOnUiThread(this::render);
+  private TextView status;
+  private MaterialButton start, stop, connect;
+  private final Handler connectionHandler = new Handler(Looper.getMainLooper());
+  private boolean panelPending, connectionWaiting, permissionForConnect, identityPermissionPending;
+  private long connectionDeadline;
+  private MaterialSwitch verify;
+  private TextView photoPermissionStatus;
 
-    @Override public void onCreate(Bundle state) {
-        super.onCreate(state);
-        LinearLayout frame = new LinearLayout(this);
-        frame.setOrientation(LinearLayout.VERTICAL);
-        frame.setBackgroundColor(GalleryUi.BG);
-        frame.setOnApplyWindowInsetsListener((v, insets) -> {
-            var safe = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
-            v.setPadding(safe.left, safe.top, safe.right, safe.bottom); return insets;
+  @Override
+  public void onCreate(Bundle state) {
+    super.onCreate(state);
+    LinearLayout frame = new LinearLayout(this);
+    frame.setOrientation(LinearLayout.VERTICAL);
+    frame.setBackgroundColor(GalleryUi.BG);
+    frame.setOnApplyWindowInsetsListener(
+        (v, insets) -> {
+          var safe =
+              insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+          v.setPadding(safe.left, safe.top, safe.right, safe.bottom);
+          return insets;
         });
-        LinearLayout toolbar = LibraryUi.toolbar(this, "Wi-Fi取り込み設定");
-        toolbar.addView(LibraryUi.icon(this, R.drawable.ic_back, "戻る", this::finish), 0);
-        frame.addView(toolbar);
-        ScrollView scroll = new ScrollView(this);
-        LinearLayout body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(dp(16), dp(8), dp(16), dp(24));
-        scroll.addView(body); frame.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        text(body, "手動で接続する場合は、カメラのWi-Fiを選んでください。カメラの写真は削除しません。", 16);
-        connect = button(body, "手動でWi-Fiに接続して取り込む", this::openWifiPanel);
-        text(body, "Wi-Fiパネルでカメラを選び、閉じると取り込みを開始します。", 14);
-        button(body, "Wi-Fi設定を開く", () -> startActivity(new Intent(Settings.ACTION_WIFI_SETTINGS)));
-        button(body, "カメラの登録を編集", () -> startActivity(new Intent(this, CameraBleActivity.class)));
-        var prefs = getSharedPreferences("camera_import", MODE_PRIVATE);
-        verify = new MaterialSwitch(this);
-        verify.setChecked(prefs.getBoolean("wifi_verify_all", false)); verify.setText("カメラのオリジナルも確認する"); verify.setMinHeight(dp(48));
-        verify.setOnCheckedChangeListener((v, checked) -> prefs.edit().putBoolean("wifi_verify_all", checked).apply());
-        body.addView(verify);
-        text(body, "通常は履歴を使い、スマホに保存した写真の内容を照合します。オンにすると、カメラのオリジナルも読み直します。同じ名前・サイズ・日時のままオリジナルだけを差し替えた変更は、オフでは見逃す場合があります。", 14);
-        start = button(body, "写真を取り込む", () -> { if (ensurePhotoPermission()) startWifi(); });
-        MaterialUi.filled(connect);
-        MaterialUi.outlined(start);
-        stop = button(body, "中止", () -> { progress.requestStop(); status.setText("中止しています…"); stop.setEnabled(false); });
-        status = text(body, "待機中", 16); status.setTag("ep7-status");
-        status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
-        MaterialSwitch auto = new MaterialSwitch(this);
-        auto.setText("カメラのWi-Fi接続時に自動で取り込む"); auto.setMinHeight(dp(48));
-        auto.setChecked(prefs.getBoolean("wifi_auto", false));
-        auto.setOnCheckedChangeListener((v, checked) -> {
-            if (checked && !ensurePhotoPermission()) { auto.setChecked(false); return; }
-            prefs.edit().putBoolean("wifi_auto", checked).apply();
-            CameraDifferentialService.updateAuto(this);
-            if (checked && Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
-                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 403);
+    LinearLayout toolbar = LibraryUi.toolbar(this, "Wi-Fi取り込み設定");
+    toolbar.addView(LibraryUi.icon(this, R.drawable.ic_back, "戻る", this::finish), 0);
+    frame.addView(toolbar);
+    ScrollView scroll = new ScrollView(this);
+    LinearLayout body = new LinearLayout(this);
+    body.setOrientation(LinearLayout.VERTICAL);
+    body.setPadding(dp(16), dp(8), dp(16), dp(24));
+    scroll.addView(body);
+    frame.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+    text(body, "手動で接続する場合は、カメラのWi-Fiを選んでください。カメラの写真は削除しません。", 16);
+    connect = button(body, "手動でWi-Fiに接続して取り込む", this::openWifiPanel);
+    text(body, "Wi-Fiパネルでカメラを選び、閉じると取り込みを開始します。", 14);
+    button(body, "Wi-Fi設定を開く", () -> startActivity(new Intent(Settings.ACTION_WIFI_SETTINGS)));
+    button(body, "カメラの登録を編集", () -> startActivity(new Intent(this, CameraBleActivity.class)));
+    var prefs = getSharedPreferences("camera_import", MODE_PRIVATE);
+    verify = new MaterialSwitch(this);
+    verify.setChecked(prefs.getBoolean("wifi_verify_all", false));
+    verify.setText("カメラのオリジナルも確認する");
+    verify.setMinHeight(dp(48));
+    verify.setOnCheckedChangeListener(
+        (v, checked) -> prefs.edit().putBoolean("wifi_verify_all", checked).apply());
+    body.addView(verify);
+    text(
+        body,
+        "通常は履歴を使い、スマホに保存した写真の内容を照合します。オンにすると、カメラのオリジナルも読み直します。同じ名前・サイズ・日時のままオリジナルだけを差し替えた変更は、オフでは見逃す場合があります。",
+        14);
+    start =
+        button(
+            body,
+            "写真を取り込む",
+            () -> {
+              if (ensurePhotoPermission()) startWifi();
+            });
+    MaterialUi.filled(connect);
+    MaterialUi.outlined(start);
+    stop =
+        button(
+            body,
+            "中止",
+            () -> {
+              progress.requestStop();
+              status.setText("中止しています…");
+              stop.setEnabled(false);
+            });
+    status = text(body, "待機中", 16);
+    status.setTag("ep7-status");
+    status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    MaterialSwitch auto = new MaterialSwitch(this);
+    auto.setText("カメラのWi-Fi接続時に自動で取り込む");
+    auto.setMinHeight(dp(48));
+    auto.setChecked(prefs.getBoolean("wifi_auto", false));
+    auto.setOnCheckedChangeListener(
+        (v, checked) -> {
+          if (checked && !ensurePhotoPermission()) {
+            auto.setChecked(false);
+            return;
+          }
+          prefs.edit().putBoolean("wifi_auto", checked).apply();
+          CameraDifferentialService.updateAuto(this);
+          if (checked
+              && Build.VERSION.SDK_INT >= 33
+              && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                  != PackageManager.PERMISSION_GRANTED)
+            requestPermissions(new String[] {Manifest.permission.POST_NOTIFICATIONS}, 403);
         });
-        body.addView(auto);
-        photoPermissionStatus = text(body, "重複を確認するため、端末内の写真すべてへのアクセスが必要です。", 14);
-        photoPermissionStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
-        button(body, "写真のアクセス権限を確認", this::ensurePhotoPermission);
-        button(body, "アプリの権限設定を開く", () -> startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", getPackageName(), null))));
-        setContentView(frame);
-        frame.post(() -> { var bars=getWindow().getInsetsController(); if(bars!=null)bars.setSystemBarsAppearance(0, android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS); }); render();
+    body.addView(auto);
+    photoPermissionStatus = text(body, "重複を確認するため、端末内の写真すべてへのアクセスが必要です。", 14);
+    photoPermissionStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    button(body, "写真のアクセス権限を確認", this::ensurePhotoPermission);
+    button(
+        body,
+        "アプリの権限設定を開く",
+        () ->
+            startActivity(
+                new Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.fromParts("package", getPackageName(), null))));
+    setContentView(frame);
+    frame.post(
+        () -> {
+          var bars = getWindow().getInsetsController();
+          if (bars != null)
+            bars.setSystemBarsAppearance(
+                0,
+                android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                    | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
+        });
+    render();
+  }
+
+  private String photoPermission() {
+    return Build.VERSION.SDK_INT >= 33
+        ? Manifest.permission.READ_MEDIA_IMAGES
+        : Manifest.permission.READ_EXTERNAL_STORAGE;
+  }
+
+  private boolean ensurePhotoPermission() {
+    if (checkSelfPermission(photoPermission()) == PackageManager.PERMISSION_GRANTED) return true;
+    photoPermissionStatus.setText("写真すべてへのアクセスを許可してください。選択した写真のみでは取り込めません。許可後にもう一度操作してください。");
+    requestPermissions(
+        Build.VERSION.SDK_INT >= 34
+            ? new String[] {photoPermission(), Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED}
+            : new String[] {photoPermission()},
+        406);
+    return false;
+  }
+
+  @Override
+  public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
+    super.onRequestPermissionsResult(request, permissions, results);
+    if (request == 406) {
+      boolean granted = checkSelfPermission(photoPermission()) == PackageManager.PERMISSION_GRANTED;
+      boolean resumeConnect = permissionForConnect;
+      permissionForConnect = false;
+      photoPermissionStatus.setText(
+          granted ? "写真へのアクセスを許可しました。" : "写真すべてへのアクセスが必要です。再度許可するか、アプリの権限設定を確認してください。");
+      if (granted && resumeConnect) startWifi();
+    } else if (request == 408 && identityPermissionPending) {
+      identityPermissionPending = false;
+      // Denial or approximate-only permission safely falls back to reading content.
+      startWifiNow(false);
     }
-    private String photoPermission() { return Build.VERSION.SDK_INT >= 33 ? Manifest.permission.READ_MEDIA_IMAGES : Manifest.permission.READ_EXTERNAL_STORAGE; }
-    private boolean ensurePhotoPermission() {
-        if (checkSelfPermission(photoPermission()) == PackageManager.PERMISSION_GRANTED) return true;
-        photoPermissionStatus.setText("写真すべてへのアクセスを許可してください。選択した写真のみでは取り込めません。許可後にもう一度操作してください。");
-        requestPermissions(Build.VERSION.SDK_INT >= 34
-                ? new String[]{photoPermission(), Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED}
-                : new String[]{photoPermission()}, 406);
-        return false;
+  }
+
+  private void openWifiPanel() {
+    if (progress.getActive() || panelPending || connectionWaiting) return;
+    panelPending = true;
+    connect.setEnabled(false);
+    start.setEnabled(false);
+    try {
+      startActivityForResult(new Intent(Settings.Panel.ACTION_WIFI), 407);
+    } catch (RuntimeException error) {
+      panelPending = false;
+      connect.setEnabled(true);
+      start.setEnabled(true);
+      status.setText("Wi-Fiパネルを開けませんでした。Wi-Fi設定から接続してください。");
     }
-    @Override public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
-        super.onRequestPermissionsResult(request, permissions, results);
-        if (request == 406) {
-            boolean granted = checkSelfPermission(photoPermission()) == PackageManager.PERMISSION_GRANTED;
-            boolean resumeConnect = permissionForConnect; permissionForConnect = false;
-            photoPermissionStatus.setText(granted ? "写真へのアクセスを許可しました。" : "写真すべてへのアクセスが必要です。再度許可するか、アプリの権限設定を確認してください。");
-            if (granted && resumeConnect) startWifi();
-        } else if (request == 408 && identityPermissionPending) {
-            identityPermissionPending = false;
-            // Denial or approximate-only permission safely falls back to reading content.
-            startWifiNow(false);
+  }
+
+  @Override
+  protected void onActivityResult(int request, int result, Intent data) {
+    super.onActivityResult(request, result, data);
+    if (request != 407 || !panelPending) return;
+    panelPending = false;
+    connectionWaiting = true;
+    connectionDeadline = SystemClock.elapsedRealtime() + 15000;
+    status.setText("Wi-Fi接続を待っています…");
+    waitForWifi();
+  }
+
+  private void waitForWifi() {
+    if (!connectionWaiting || isFinishing() || isDestroyed()) return;
+    ConnectivityManager manager = getSystemService(ConnectivityManager.class);
+    boolean available = false;
+    if (manager != null)
+      for (Network network : manager.getAllNetworks()) {
+        NetworkCapabilities caps = manager.getNetworkCapabilities(network);
+        if (caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+          available = true;
+          break;
         }
+      }
+    if (available) {
+      connectionWaiting = false;
+      connect.setEnabled(true);
+      start.setEnabled(true);
+      permissionForConnect = true;
+      if (ensurePhotoPermission()) {
+        permissionForConnect = false;
+        startWifi();
+      }
+    } else if (SystemClock.elapsedRealtime() >= connectionDeadline) {
+      connectionWaiting = false;
+      connect.setEnabled(true);
+      start.setEnabled(true);
+      status.setText("Wi-Fiに接続できませんでした。カメラを確認して再試行してください。");
+    } else connectionHandler.postDelayed(this::waitForWifi, 500);
+  }
+
+  private void startWifi() {
+    if (progress.getActive()) {
+      status.setText("取り込みが終わってから再試行してください。");
+      return;
     }
-    private void openWifiPanel() {
-        if (progress.getActive() || panelPending || connectionWaiting) return;
-        panelPending = true; connect.setEnabled(false); start.setEnabled(false);
-        try {
-            startActivityForResult(new Intent(Settings.Panel.ACTION_WIFI), 407);
-        } catch (RuntimeException error) {
-            panelPending = false; connect.setEnabled(true); start.setEnabled(true);
-            status.setText("Wi-Fiパネルを開けませんでした。Wi-Fi設定から接続してください。");
-        }
+    if (verify.isChecked()
+        || checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+            == PackageManager.PERMISSION_GRANTED
+        || getSharedPreferences("camera_import", MODE_PRIVATE)
+            .getBoolean("wifi_identity_asked", false)) {
+      startWifiNow(verify.isChecked());
+      return;
     }
-    @Override protected void onActivityResult(int request, int result, Intent data) {
-        super.onActivityResult(request, result, data);
-        if (request != 407 || !panelPending) return;
-        panelPending = false; connectionWaiting = true;
-        connectionDeadline = SystemClock.elapsedRealtime() + 15000;
-        status.setText("Wi-Fi接続を待っています…");
-        waitForWifi();
+    new MaterialAlertDialogBuilder(this)
+        .setTitle("カメラのWi-Fiを識別")
+        .setMessage(
+            "同じ接続元の写真をすばやく確認するため、Wi-Fiの識別に位置情報の権限を使います。GPSの位置は取得・保存しません。許可しない場合は写真の内容を確認します。")
+        .setPositiveButton(
+            "許可して開始",
+            (dialog, which) -> {
+              getSharedPreferences("camera_import", MODE_PRIVATE)
+                  .edit()
+                  .putBoolean("wifi_identity_asked", true)
+                  .apply();
+              identityPermissionPending = true;
+              requestPermissions(
+                  new String[] {
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                    Manifest.permission.ACCESS_FINE_LOCATION
+                  },
+                  408);
+            })
+        .setNegativeButton(
+            "内容を確認して開始",
+            (dialog, which) -> {
+              getSharedPreferences("camera_import", MODE_PRIVATE)
+                  .edit()
+                  .putBoolean("wifi_identity_asked", true)
+                  .apply();
+              startWifiNow(true);
+            })
+        .show();
+  }
+
+  private void startWifiNow(boolean verifyAll) {
+    if (isFinishing() || isDestroyed() || progress.getActive()) return;
+    if (checkSelfPermission(photoPermission()) != PackageManager.PERMISSION_GRANTED) {
+      ensurePhotoPermission();
+      return;
     }
-    private void waitForWifi() {
-        if (!connectionWaiting || isFinishing() || isDestroyed()) return;
-        ConnectivityManager manager = getSystemService(ConnectivityManager.class);
-        boolean available = false;
-        if (manager != null) for (Network network : manager.getAllNetworks()) {
-            NetworkCapabilities caps = manager.getNetworkCapabilities(network);
-            if (caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) { available = true; break; }
-        }
-        if (available) {
-            connectionWaiting = false; connect.setEnabled(true); start.setEnabled(true);
-            permissionForConnect = true;
-            if (ensurePhotoPermission()) { permissionForConnect = false; startWifi(); }
-        } else if (SystemClock.elapsedRealtime() >= connectionDeadline) {
-            connectionWaiting = false; connect.setEnabled(true); start.setEnabled(true);
-            status.setText("Wi-Fiに接続できませんでした。カメラを確認して再試行してください。");
-        } else connectionHandler.postDelayed(this::waitForWifi, 500);
+    try {
+      CameraDifferentialService.startWifi(this, verifyAll);
+    } catch (RuntimeException error) {
+      status.setText("取り込みを開始できませんでした。接続と権限を確認してください。");
+      return;
     }
-    private void startWifi() {
-        if (progress.getActive()) { status.setText("取り込みが終わってから再試行してください。"); return; }
-        if (verify.isChecked() || checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-                || getSharedPreferences("camera_import", MODE_PRIVATE).getBoolean("wifi_identity_asked", false)) {
-            startWifiNow(verify.isChecked()); return;
-        }
-        new MaterialAlertDialogBuilder(this)
-                .setTitle("カメラのWi-Fiを識別")
-                .setMessage("同じ接続元の写真をすばやく確認するため、Wi-Fiの識別に位置情報の権限を使います。GPSの位置は取得・保存しません。許可しない場合は写真の内容を確認します。")
-                .setPositiveButton("許可して開始", (dialog, which) -> {
-                    getSharedPreferences("camera_import", MODE_PRIVATE).edit().putBoolean("wifi_identity_asked", true).apply();
-                    identityPermissionPending = true;
-                    requestPermissions(new String[]{Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION}, 408);
-                })
-                .setNegativeButton("内容を確認して開始", (dialog, which) -> {
-                    getSharedPreferences("camera_import", MODE_PRIVATE).edit().putBoolean("wifi_identity_asked", true).apply();
-                    startWifiNow(true);
-                }).show();
-    }
-    private void startWifiNow(boolean verifyAll) {
-        if (isFinishing() || isDestroyed() || progress.getActive()) return;
-        if (checkSelfPermission(photoPermission()) != PackageManager.PERMISSION_GRANTED) { ensurePhotoPermission(); return; }
-        try { CameraDifferentialService.startWifi(this, verifyAll); }
-        catch (RuntimeException error) { status.setText("取り込みを開始できませんでした。接続と権限を確認してください。"); return; }
-        render();
-    }
-    @Override protected void onDestroy() {
-        panelPending = false; connectionWaiting = false; permissionForConnect = false; identityPermissionPending = false;
-        connectionHandler.removeCallbacksAndMessages(null); super.onDestroy();
-    }
-    @Override protected void onStart() { super.onStart(); progress.addListener(listener); render(); }
-    @Override protected void onStop() { progress.removeListener(listener); super.onStop(); }
-    private void render() {
-        if (status == null) return;
-        boolean active = progress.getActive();
-        start.setEnabled(!active && !panelPending && !connectionWaiting); connect.setEnabled(!active && !panelPending && !connectionWaiting); verify.setEnabled(!active); stop.setEnabled(active && !progress.getStopRequested());
-        String message = active ? progress.getStatus() : progress.getLastMessage();
-        if (active && (message == null || message.isEmpty())) message = "取り込み中 " + progress.getDone() + " / " + progress.getTotal();
-        status.setText(message == null || message.isEmpty() ? "待機中" : message);
-    }
-    private int dp(int value) { return GalleryUi.dp(this, value); }
-    private TextView text(LinearLayout root, String value, int size) {
-        TextView v = new TextView(this); v.setText(value); v.setTextSize(size); v.setTextColor(GalleryUi.TEXT);
-        v.setPadding(0, dp(8), 0, dp(8)); root.addView(v, new LinearLayout.LayoutParams(-1, -2)); return v;
-    }
-    private MaterialButton button(LinearLayout root, String label, Runnable action) {
-        MaterialButton v = MaterialUi.button(this); v.setText(label); v.setAllCaps(false); v.setMinHeight(dp(48));
-        v.setMinimumHeight(dp(48)); v.setOnClickListener(x -> action.run()); root.addView(v, new LinearLayout.LayoutParams(-1, -2)); return v;
-    }
+    render();
+  }
+
+  @Override
+  protected void onDestroy() {
+    panelPending = false;
+    connectionWaiting = false;
+    permissionForConnect = false;
+    identityPermissionPending = false;
+    connectionHandler.removeCallbacksAndMessages(null);
+    super.onDestroy();
+  }
+
+  @Override
+  protected void onStart() {
+    super.onStart();
+    progress.addListener(listener);
+    render();
+  }
+
+  @Override
+  protected void onStop() {
+    progress.removeListener(listener);
+    super.onStop();
+  }
+
+  private void render() {
+    if (status == null) return;
+    boolean active = progress.getActive();
+    start.setEnabled(!active && !panelPending && !connectionWaiting);
+    connect.setEnabled(!active && !panelPending && !connectionWaiting);
+    verify.setEnabled(!active);
+    stop.setEnabled(active && !progress.getStopRequested());
+    String message = active ? progress.getStatus() : progress.getLastMessage();
+    if (active && (message == null || message.isEmpty()))
+      message = "取り込み中 " + progress.getDone() + " / " + progress.getTotal();
+    status.setText(message == null || message.isEmpty() ? "待機中" : message);
+  }
+
+  private int dp(int value) {
+    return GalleryUi.dp(this, value);
+  }
+
+  private TextView text(LinearLayout root, String value, int size) {
+    TextView v = new TextView(this);
+    v.setText(value);
+    v.setTextSize(size);
+    v.setTextColor(GalleryUi.TEXT);
+    v.setPadding(0, dp(8), 0, dp(8));
+    root.addView(v, new LinearLayout.LayoutParams(-1, -2));
+    return v;
+  }
+
+  private MaterialButton button(LinearLayout root, String label, Runnable action) {
+    MaterialButton v = MaterialUi.button(this);
+    v.setText(label);
+    v.setAllCaps(false);
+    v.setMinHeight(dp(48));
+    v.setMinimumHeight(dp(48));
+    v.setOnClickListener(x -> action.run());
+    root.addView(v, new LinearLayout.LayoutParams(-1, -2));
+    return v;
+  }
 }

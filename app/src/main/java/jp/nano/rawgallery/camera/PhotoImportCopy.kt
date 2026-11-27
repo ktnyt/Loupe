@@ -13,9 +13,12 @@ object PhotoImportCopy {
         use: (File) -> T,
     ): T {
         require(expectedBytes > 0) { "Photo size is unknown" }
-        val temporary = File.createTempFile(
-            "camera-photo-", "." + fileName.substringAfterLast('.', "bin"), cacheDirectory,
-        )
+        val temporary =
+            File.createTempFile(
+                "camera-photo-",
+                "." + fileName.substringAfterLast('.', "bin"),
+                cacheDirectory,
+            )
         try {
             temporary.outputStream().use(copy)
             check(temporary.length() == expectedBytes) { "Photo transfer size could not be verified" }
@@ -27,7 +30,11 @@ object PhotoImportCopy {
     }
 
     /** Match only permitted source repairs; a phone timezone change must not change identity. */
-    fun sameHead(cacheDirectory: File, cameraHead: ByteArray, phoneHead: ByteArray): Boolean {
+    fun sameHead(
+        cacheDirectory: File,
+        cameraHead: ByteArray,
+        phoneHead: ByteArray,
+    ): Boolean {
         if (cameraHead.contentEquals(phoneHead)) return true
         if (cameraHead.size != phoneHead.size) return false
         val cameraCopy = File.createTempFile("camera-head-", ".bin", cacheDirectory)

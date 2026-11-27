@@ -37,8 +37,22 @@ public final class BurstGapSettingsTest {
     check(BurstGapSettings.parseCustomMillis("1") == 1, "lowest valid input");
     check(BurstGapSettings.parseCustomMillis(" 0350\t") == 350, "trim and leading zero");
     check(BurstGapSettings.parseCustomMillis("2147483647") == Integer.MAX_VALUE, "upper limit");
-    for (String value : new String[] {"", " ", "0", "000", "+1", "-1", "1.5", "350 ms", "3 5", "1e3",
-        "３５０", "2147483648", "9000000000000000000000"}) {
+    for (String value :
+        new String[] {
+          "",
+          " ",
+          "0",
+          "000",
+          "+1",
+          "-1",
+          "1.5",
+          "350 ms",
+          "3 5",
+          "1e3",
+          "３５０",
+          "2147483648",
+          "9000000000000000000000"
+        }) {
       check(BurstGapSettings.parseCustomMillis(value) == 0, "reject invalid input: " + value);
     }
     System.out.println("Burst settings: migration, preferences rollback and custom parsing passed");
@@ -53,37 +67,45 @@ public final class BurstGapSettingsTest {
     boolean commitSucceeds = true;
 
     SharedPreferences settings() {
-      return (SharedPreferences) Proxy.newProxyInstance(SharedPreferences.class.getClassLoader(),
-          new Class<?>[] {SharedPreferences.class}, (proxy, method, args) -> switch (method.getName()) {
-            case "getInt" -> values.getOrDefault((String) args[0], (Integer) args[1]);
-            case "edit" -> editor();
-            default -> throw new UnsupportedOperationException(method.getName());
-          });
+      return (SharedPreferences)
+          Proxy.newProxyInstance(
+              SharedPreferences.class.getClassLoader(),
+              new Class<?>[] {SharedPreferences.class},
+              (proxy, method, args) ->
+                  switch (method.getName()) {
+                    case "getInt" -> values.getOrDefault((String) args[0], (Integer) args[1]);
+                    case "edit" -> editor();
+                    default -> throw new UnsupportedOperationException(method.getName());
+                  });
     }
 
     SharedPreferences.Editor editor() {
       Map<String, Integer> changes = new HashMap<>();
-      return (SharedPreferences.Editor) Proxy.newProxyInstance(SharedPreferences.Editor.class.getClassLoader(),
-          new Class<?>[] {SharedPreferences.Editor.class}, (proxy, method, args) -> {
-            switch (method.getName()) {
-              case "putInt":
-                changes.put((String) args[0], (Integer) args[1]);
-                return proxy;
-              case "remove":
-                changes.put((String) args[0], null);
-                return proxy;
-              case "commit":
-              case "apply":
-                // The real Android implementation mutates memory even if commit fails.
-                changes.forEach((key, value) -> {
-                  if (value == null) values.remove(key);
-                  else values.put(key, value);
-                });
-                return method.getName().equals("commit") ? commitSucceeds : null;
-              default:
-                throw new UnsupportedOperationException(method.getName());
-            }
-          });
+      return (SharedPreferences.Editor)
+          Proxy.newProxyInstance(
+              SharedPreferences.Editor.class.getClassLoader(),
+              new Class<?>[] {SharedPreferences.Editor.class},
+              (proxy, method, args) -> {
+                switch (method.getName()) {
+                  case "putInt":
+                    changes.put((String) args[0], (Integer) args[1]);
+                    return proxy;
+                  case "remove":
+                    changes.put((String) args[0], null);
+                    return proxy;
+                  case "commit":
+                  case "apply":
+                    // The real Android implementation mutates memory even if commit fails.
+                    changes.forEach(
+                        (key, value) -> {
+                          if (value == null) values.remove(key);
+                          else values.put(key, value);
+                        });
+                    return method.getName().equals("commit") ? commitSucceeds : null;
+                  default:
+                    throw new UnsupportedOperationException(method.getName());
+                }
+              });
     }
   }
 }

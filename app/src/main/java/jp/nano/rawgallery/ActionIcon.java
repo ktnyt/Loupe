@@ -23,8 +23,10 @@ final class ActionIcon extends Drawable {
   public void draw(Canvas canvas) {
     boolean enabled = false;
     for (int state : getState()) if (state == android.R.attr.state_enabled) enabled = true;
-    int foreground = tint == null ? (enabled ? GalleryUi.TEXT : 0xff626b72)
-        : tint.getColorForState(getState(), tint.getDefaultColor());
+    int foreground =
+        tint == null
+            ? (enabled ? GalleryUi.TEXT : 0xff626b72)
+            : tint.getColorForState(getState(), tint.getDefaultColor());
     paint.setColor(foreground);
     int save = canvas.save();
     Rect bounds = getBounds();
@@ -32,26 +34,53 @@ final class ActionIcon extends Drawable {
     canvas.scale(size / 24, size / 24);
     switch (action) {
       case "写真を解析":
-        line(canvas,4,8,4,4,8,4);line(canvas,16,4,20,4,20,8);line(canvas,20,16,20,20,16,20);line(canvas,8,20,4,20,4,16);canvas.drawCircle(12,12,3.2f,paint);break;
+        line(canvas, 4, 8, 4, 4, 8, 4);
+        line(canvas, 16, 4, 20, 4, 20, 8);
+        line(canvas, 20, 16, 20, 20, 16, 20);
+        line(canvas, 8, 20, 4, 20, 4, 16);
+        canvas.drawCircle(12, 12, 3.2f, paint);
+        break;
       case "似た写真にもタグを付ける":
-        canvas.drawRoundRect(3.5f,7,11.5f,17,1.5f,1.5f,paint);canvas.drawRoundRect(13.5f,4,20.5f,11,1.5f,1.5f,paint);canvas.drawRoundRect(13.5f,13,20.5f,20,1.5f,1.5f,paint);break;
+        canvas.drawRoundRect(3.5f, 7, 11.5f, 17, 1.5f, 1.5f, paint);
+        canvas.drawRoundRect(13.5f, 4, 20.5f, 11, 1.5f, 1.5f, paint);
+        canvas.drawRoundRect(13.5f, 13, 20.5f, 20, 1.5f, 1.5f, paint);
+        break;
       case "基準を教える":
-        canvas.drawRoundRect(4,4,20,20,2.5f,2.5f,paint);line(canvas,8.3f,12.3f,10.9f,14.9f,15.8f,9.7f);break;
+        canvas.drawRoundRect(4, 4, 20, 20, 2.5f, 2.5f, paint);
+        line(canvas, 8.3f, 12.3f, 10.9f, 14.9f, 15.8f, 9.7f);
+        break;
       case "1枚ずつ確認する":
-        canvas.drawRoundRect(5,4,19,20,2,2,paint);line(canvas,9,12,15,12);break;
+        canvas.drawRoundRect(5, 4, 19, 20, 2, 2, paint);
+        line(canvas, 9, 12, 15, 12);
+        break;
       case "含める":
-        canvas.drawCircle(12,12,9,paint);line(canvas,7,12,11,16,17,8);break;
+        canvas.drawCircle(12, 12, 9, paint);
+        line(canvas, 7, 12, 11, 16, 17, 8);
+        break;
       case "含めない":
-        canvas.drawCircle(12,12,9,paint);line(canvas,6,18,18,6);break;
+        canvas.drawCircle(12, 12, 9, paint);
+        line(canvas, 6, 18, 18, 6);
+        break;
       case "保留":
-        canvas.drawCircle(12,12,9,paint);line(canvas,7,12,17,12);break;
+        canvas.drawCircle(12, 12, 9, paint);
+        line(canvas, 7, 12, 17, 12);
+        break;
       case "写真を追加":
-        canvas.drawRoundRect(3.5f,5,16.5f,18,2,2,paint);line(canvas,18.5f,9,18.5f,17);line(canvas,14.5f,13,22.5f,13);break;
+        canvas.drawRoundRect(3.5f, 5, 16.5f, 18, 2, 2, paint);
+        line(canvas, 18.5f, 9, 18.5f, 17);
+        line(canvas, 14.5f, 13, 22.5f, 13);
+        break;
       case "一括訂正":
-        canvas.drawRoundRect(3.5f,3.5f,10.5f,10.5f,1.5f,1.5f,paint);canvas.drawRoundRect(13.5f,3.5f,20.5f,10.5f,1.5f,1.5f,paint);canvas.drawRoundRect(3.5f,13.5f,10.5f,20.5f,1.5f,1.5f,paint);line(canvas,14,17,16,19,20,14.5f);break;
+        canvas.drawRoundRect(3.5f, 3.5f, 10.5f, 10.5f, 1.5f, 1.5f, paint);
+        canvas.drawRoundRect(13.5f, 3.5f, 20.5f, 10.5f, 1.5f, 1.5f, paint);
+        canvas.drawRoundRect(3.5f, 13.5f, 10.5f, 20.5f, 1.5f, 1.5f, paint);
+        line(canvas, 14, 17, 16, 19, 20, 14.5f);
+        break;
       case "再試行":
-        canvas.drawArc(4.5f,4.5f,19.5f,19.5f,0,315,false,paint);
-        line(canvas,19.5f,4.5f,19.5f,8.5f);line(canvas,19.5f,8.5f,15.5f,8.5f);break;
+        canvas.drawArc(4.5f, 4.5f, 19.5f, 19.5f, 0, 315, false, paint);
+        line(canvas, 19.5f, 4.5f, 19.5f, 8.5f);
+        line(canvas, 19.5f, 8.5f, 15.5f, 8.5f);
+        break;
       case "同じ順位":
       case "同順位":
         line(canvas, 5, 9, 19, 9);
@@ -71,7 +100,10 @@ final class ActionIcon extends Drawable {
         line(canvas, 11, 6, 5, 12, 11, 18);
         break;
       case "情報":
-        canvas.drawCircle(12,12,9,paint);line(canvas,12,11,12,17);canvas.drawCircle(12,7.5f,.5f,paint);break;
+        canvas.drawCircle(12, 12, 9, paint);
+        line(canvas, 12, 11, 12, 17);
+        canvas.drawCircle(12, 7.5f, .5f, paint);
+        break;
       case "その他":
         for (int y : new int[] {5, 12, 19}) canvas.drawCircle(12, y, 1, paint);
         break;
@@ -121,7 +153,10 @@ final class ActionIcon extends Drawable {
         canvas.drawCircle(7.5f, 7.5f, 1, paint);
         break;
       case "全体":
-        canvas.drawCircle(11,11,6.5f,paint);line(canvas,20,20,15.6f,15.6f);line(canvas,8.5f,11,13.5f,11);break;
+        canvas.drawCircle(11, 11, 6.5f, paint);
+        line(canvas, 20, 20, 15.6f, 15.6f);
+        line(canvas, 8.5f, 11, 13.5f, 11);
+        break;
       case "拡大":
         canvas.drawCircle(10, 10, 6, paint);
         line(canvas, 15, 15, 21, 21);

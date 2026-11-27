@@ -9,7 +9,10 @@ import java.util.function.*;
 
 /** One visible image first, then one strip image at a time. State belongs to this screen. */
 final class BurstPreviews {
-  interface Loader { void load(ImageView view, PhotoRepository.Photo photo, int edge, Consumer<Boolean> done); }
+  interface Loader {
+    void load(ImageView view, PhotoRepository.Photo photo, int edge, Consumer<Boolean> done);
+  }
+
   private final ImageView hero;
   private final TextView position;
   private final StatusView heroState, progress;
@@ -26,126 +29,297 @@ final class BurstPreviews {
   private boolean heroReady, stripBusy;
   private boolean heroFailed;
   private int[] ranks;
-  private Function<PhotoRepository.Photo,List<ShareHistoryUi.Item>> history = photo -> Collections.emptyList();
+  private Function<PhotoRepository.Photo, List<ShareHistoryUi.Item>> history =
+      photo -> Collections.emptyList();
   private final List<ShareHistoryUi.Overlay> shared = new ArrayList<>();
   private final List<TextView> stars = new ArrayList<>();
-  private int dp(Context c, int value) { return Math.round(value * c.getResources().getDisplayMetrics().density); }
-  BurstPreviews(Context c, ImageView hero, FrameLayout stage, LinearLayout strip,
-      StatusView progress, Button retry, List<PhotoRepository.Photo> photos, Loader loader,
-      BooleanSupplier active, IntConsumer choose) {
-    this.hero = hero; this.progress = progress; this.retry = retry; this.photos = photos;
-    this.loader = loader; this.active = active; states = new int[photos.size()];rendered=new int[photos.size()];Arrays.fill(rendered,-1);
+
+  private int dp(Context c, int value) {
+    return Math.round(value * c.getResources().getDisplayMetrics().density);
+  }
+
+  BurstPreviews(
+      Context c,
+      ImageView hero,
+      FrameLayout stage,
+      LinearLayout strip,
+      StatusView progress,
+      Button retry,
+      List<PhotoRepository.Photo> photos,
+      Loader loader,
+      BooleanSupplier active,
+      IntConsumer choose) {
+    this.hero = hero;
+    this.progress = progress;
+    this.retry = retry;
+    this.photos = photos;
+    this.loader = loader;
+    this.active = active;
+    states = new int[photos.size()];
+    rendered = new int[photos.size()];
+    Arrays.fill(rendered, -1);
     heroState = new StatusView(c);
-    FrameLayout.LayoutParams indicator=new FrameLayout.LayoutParams(-2,dp(c,48),Gravity.TOP|Gravity.END);
-    indicator.setMargins(0,dp(c,8),dp(c,8),0);stage.addView(heroState,indicator);
-    position = new TextView(c); position.setTextColor(Color.WHITE); position.setPadding(dp(c, 8),dp(c, 4),dp(c, 8),dp(c, 4));
-    position.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);position.setTextSize(12);position.setMinHeight(dp(c,24));position.setGravity(Gravity.CENTER);position.setIncludeFontPadding(false);position.setBackground(GalleryUi.shape(c,0x9e000000,12));
-    FrameLayout.LayoutParams badge = new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM | Gravity.END);
-    badge.setMargins(dp(c,12),0,dp(c,12),dp(c,12)); stage.addView(position,badge);
-    for (int i=0; i<photos.size(); i++) {
-      final int n=i;
+    FrameLayout.LayoutParams indicator =
+        new FrameLayout.LayoutParams(-2, dp(c, 48), Gravity.TOP | Gravity.END);
+    indicator.setMargins(0, dp(c, 8), dp(c, 8), 0);
+    stage.addView(heroState, indicator);
+    position = new TextView(c);
+    position.setTextColor(Color.WHITE);
+    position.setPadding(dp(c, 8), dp(c, 4), dp(c, 8), dp(c, 4));
+    position.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    position.setTextSize(12);
+    position.setMinHeight(dp(c, 24));
+    position.setGravity(Gravity.CENTER);
+    position.setIncludeFontPadding(false);
+    position.setBackground(GalleryUi.shape(c, 0x9e000000, 12));
+    FrameLayout.LayoutParams badge =
+        new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.END);
+    badge.setMargins(dp(c, 12), 0, dp(c, 12), dp(c, 12));
+    stage.addView(position, badge);
+    for (int i = 0; i < photos.size(); i++) {
+      final int n = i;
       FrameLayout cell = new FrameLayout(c);
-      ImageView image = new ImageView(c); image.setScaleType(ImageView.ScaleType.CENTER_CROP);
-      image.setBackground(GalleryUi.shape(c, GalleryUi.PANEL,4));
+      ImageView image = new ImageView(c);
+      image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+      image.setBackground(GalleryUi.shape(c, GalleryUi.PANEL, 4));
       image.setClipToOutline(true);
-      cell.addView(image,new FrameLayout.LayoutParams(dp(c,52),dp(c,35),Gravity.CENTER)); images.add(image);
-      ShareHistoryUi.Overlay badgeView=new ShareHistoryUi.Overlay(c,()->new android.graphics.RectF(0,0,image.getWidth(),image.getHeight()),2,1,true);
-      cell.addView(badgeView,new FrameLayout.LayoutParams(dp(c,52),dp(c,35),Gravity.CENTER));shared.add(badgeView);
-      TextView text = new TextView(c); text.setGravity(Gravity.CENTER); text.setTextColor(Color.WHITE);
-      cell.addView(text,new FrameLayout.LayoutParams(-1,-1)); labels.add(text);
+      cell.addView(image, new FrameLayout.LayoutParams(dp(c, 52), dp(c, 35), Gravity.CENTER));
+      images.add(image);
+      ShareHistoryUi.Overlay badgeView =
+          new ShareHistoryUi.Overlay(
+              c,
+              () -> new android.graphics.RectF(0, 0, image.getWidth(), image.getHeight()),
+              2,
+              1,
+              true);
+      cell.addView(badgeView, new FrameLayout.LayoutParams(dp(c, 52), dp(c, 35), Gravity.CENTER));
+      shared.add(badgeView);
+      TextView text = new TextView(c);
+      text.setGravity(Gravity.CENTER);
+      text.setTextColor(Color.WHITE);
+      cell.addView(text, new FrameLayout.LayoutParams(-1, -1));
+      labels.add(text);
       StatusView spin = new StatusView(c);
-      cell.addView(spin,new FrameLayout.LayoutParams(dp(c,48),dp(c,48),Gravity.CENTER)); spinners.add(spin);
-      TextView star=new TextView(c);star.setText("★");star.setTextSize(10);star.setTextColor(0xff241800);star.setGravity(Gravity.CENTER);star.setBackground(GalleryUi.shape(c,0xfff5b947,5));star.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);star.setVisibility(View.GONE);cell.addView(star,new FrameLayout.LayoutParams(dp(c,16),dp(c,16),Gravity.TOP|Gravity.END));stars.add(star);
-      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(c,56),dp(c,48)); lp.setMargins(0,0,0,0);
-      strip.addView(cell,lp); cell.setOnClickListener(v -> choose.accept(n));
+      cell.addView(spin, new FrameLayout.LayoutParams(dp(c, 48), dp(c, 48), Gravity.CENTER));
+      spinners.add(spin);
+      TextView star = new TextView(c);
+      star.setText("★");
+      star.setTextSize(10);
+      star.setTextColor(0xff241800);
+      star.setGravity(Gravity.CENTER);
+      star.setBackground(GalleryUi.shape(c, 0xfff5b947, 5));
+      star.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+      star.setVisibility(View.GONE);
+      cell.addView(
+          star, new FrameLayout.LayoutParams(dp(c, 16), dp(c, 16), Gravity.TOP | Gravity.END));
+      stars.add(star);
+      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(c, 56), dp(c, 48));
+      lp.setMargins(0, 0, 0, 0);
+      strip.addView(cell, lp);
+      cell.setOnClickListener(v -> choose.accept(n));
       cell.setFocusable(true);
     }
-    retry.setOnClickListener(v -> {
-      for (int i=0;i<states.length;i++) if (states[i]==3) states[i]=0;
-      if (heroFailed) { selected=-1; select(currentPosition()); } else pump();
-      render();
-    });
-    {strip.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->{
-      int gap=(photos.size()*dp(c,56)+Math.max(0,photos.size()-1)*dp(c,4)<=(strip.getParent() instanceof View?((View)strip.getParent()).getWidth():r-l))?dp(c,4):0;
-      for(int i=0;i<strip.getChildCount();i++){View child=strip.getChildAt(i);LinearLayout.LayoutParams lp=(LinearLayout.LayoutParams)child.getLayoutParams();int margin=i==0?0:gap;if(lp.leftMargin!=margin){lp.leftMargin=margin;child.setLayoutParams(lp);}}
-    });}
+    retry.setOnClickListener(
+        v -> {
+          for (int i = 0; i < states.length; i++) if (states[i] == 3) states[i] = 0;
+          if (heroFailed) {
+            selected = -1;
+            select(currentPosition());
+          } else pump();
+          render();
+        });
+    {
+      strip.addOnLayoutChangeListener(
+          (v, l, t, r, b, ol, ot, or, ob) -> {
+            int gap =
+                (photos.size() * dp(c, 56) + Math.max(0, photos.size() - 1) * dp(c, 4)
+                        <= (strip.getParent() instanceof View
+                            ? ((View) strip.getParent()).getWidth()
+                            : r - l))
+                    ? dp(c, 4)
+                    : 0;
+            for (int i = 0; i < strip.getChildCount(); i++) {
+              View child = strip.getChildAt(i);
+              LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) child.getLayoutParams();
+              int margin = i == 0 ? 0 : gap;
+              if (lp.leftMargin != margin) {
+                lp.leftMargin = margin;
+                child.setLayoutParams(lp);
+              }
+            }
+          });
+    }
     render();
   }
-  void history(Function<PhotoRepository.Photo,List<ShareHistoryUi.Item>> value){history=value;render();}
-  void ranks(int[] values){ranks=values.clone();render();}
-  private int currentPosition() { return Integer.parseInt(position.getTag().toString()); }
+
+  void history(Function<PhotoRepository.Photo, List<ShareHistoryUi.Item>> value) {
+    history = value;
+    render();
+  }
+
+  void ranks(int[] values) {
+    ranks = values.clone();
+    render();
+  }
+
+  private int currentPosition() {
+    return Integer.parseInt(position.getTag().toString());
+  }
+
   void select(int index) {
-    if (!active.getAsBoolean() || selected==index) return;
-    selected=index; position.setTag(index); heroReady=false; heroFailed=false;
-    int request=++version;
-    position.setText(photos.size()+"枚中"+(index+1)+"枚目");
+    if (!active.getAsBoolean() || selected == index) return;
+    selected = index;
+    position.setTag(index);
+    heroReady = false;
+    heroFailed = false;
+    int request = ++version;
+    position.setText(photos.size() + "枚中" + (index + 1) + "枚目");
     heroState.begin("写真を読み込んでいます");
     render();
-    loader.load(hero,photos.get(index),1600,success -> {
-      if (!active.getAsBoolean() || version!=request) return;
-      heroFailed=!success;
-      if(success)heroState.finish();
-      else heroState.show(StatusView.Symbol.FAILED,"","この写真を読み込めませんでした",()->retry.performClick(),"再試行");
-      render();
-      if (success) afterDraw(hero, () -> {
-        if (active.getAsBoolean() && version==request) { heroReady=true; pump(); }
-      });
-      else { heroReady=true; pump(); }
-    });
-  }
-  private static void afterDraw(View view, Runnable action) {
-    ViewTreeObserver.OnDrawListener listener = new ViewTreeObserver.OnDrawListener() {
-      boolean posted;
-      public void onDraw() {
-        if (posted) return; posted=true;
-        view.post(() -> {
-          if (view.getViewTreeObserver().isAlive()) view.getViewTreeObserver().removeOnDrawListener(this);
-          action.run();
+    loader.load(
+        hero,
+        photos.get(index),
+        1600,
+        success -> {
+          if (!active.getAsBoolean() || version != request) return;
+          heroFailed = !success;
+          if (success) heroState.finish();
+          else
+            heroState.show(
+                StatusView.Symbol.FAILED, "", "この写真を読み込めませんでした", () -> retry.performClick(), "再試行");
+          render();
+          if (success)
+            afterDraw(
+                hero,
+                () -> {
+                  if (active.getAsBoolean() && version == request) {
+                    heroReady = true;
+                    pump();
+                  }
+                });
+          else {
+            heroReady = true;
+            pump();
+          }
         });
-      }
-    };
-    view.getViewTreeObserver().addOnDrawListener(listener); view.invalidate();
   }
+
+  private static void afterDraw(View view, Runnable action) {
+    ViewTreeObserver.OnDrawListener listener =
+        new ViewTreeObserver.OnDrawListener() {
+          boolean posted;
+
+          public void onDraw() {
+            if (posted) return;
+            posted = true;
+            view.post(
+                () -> {
+                  if (view.getViewTreeObserver().isAlive())
+                    view.getViewTreeObserver().removeOnDrawListener(this);
+                  action.run();
+                });
+          }
+        };
+    view.getViewTreeObserver().addOnDrawListener(listener);
+    view.invalidate();
+  }
+
   private void pump() {
     if (!active.getAsBoolean() || !heroReady || stripBusy) return;
-    int next=-1;
-    if (selected>=0 && states[selected]==0) next=selected;
-    else for (int i=0;i<states.length;i++) if (states[i]==0) { next=i; break; }
-    if (next<0) { render(); return; }
-    final int index=next; states[index]=1; stripBusy=true; render();
-    loader.load(images.get(index),photos.get(index),200,success -> {
-      if (!active.getAsBoolean()) return;
-      states[index]=success?2:3; stripBusy=false; render();
-      // Avoid recursive synchronous memory hits and allow a pending user selection to run.
-      hero.post(this::pump);
-    });
+    int next = -1;
+    if (selected >= 0 && states[selected] == 0) next = selected;
+    else
+      for (int i = 0; i < states.length; i++)
+        if (states[i] == 0) {
+          next = i;
+          break;
+        }
+    if (next < 0) {
+      render();
+      return;
+    }
+    final int index = next;
+    states[index] = 1;
+    stripBusy = true;
+    render();
+    loader.load(
+        images.get(index),
+        photos.get(index),
+        200,
+        success -> {
+          if (!active.getAsBoolean()) return;
+          states[index] = success ? 2 : 3;
+          stripBusy = false;
+          render();
+          // Avoid recursive synchronous memory hits and allow a pending user selection to run.
+          hero.post(this::pump);
+        });
   }
+
   private void render() {
-    if(selected>=0)hero.setContentDescription(photos.get(selected).name+"、タップで写真を拡大"+(heroFailed?"、読み込めませんでした":"")+ShareHistoryUi.description(history.apply(photos.get(selected))));
-    int ready=0,failed=0;
-    for (int i=0;i<states.length;i++) {
-      int state=states[i]; if(state==2) ready++; if(state==3) failed++;
-      labels.get(i).setText(state==0?Integer.toString(i+1):"");
-      if(rendered[i]!=state){rendered[i]=state;StatusView indicator=spinners.get(i);
-        if(state==1)indicator.begin("読み込み中");
-        else if(state==3)indicator.show(StatusView.Symbol.FAILED,"読み込めませんでした");
-        else if(state==2)indicator.finish();
+    if (selected >= 0)
+      hero.setContentDescription(
+          photos.get(selected).name
+              + "、タップで写真を拡大"
+              + (heroFailed ? "、読み込めませんでした" : "")
+              + ShareHistoryUi.description(history.apply(photos.get(selected))));
+    int ready = 0, failed = 0;
+    for (int i = 0; i < states.length; i++) {
+      int state = states[i];
+      if (state == 2) ready++;
+      if (state == 3) failed++;
+      labels.get(i).setText(state == 0 ? Integer.toString(i + 1) : "");
+      if (rendered[i] != state) {
+        rendered[i] = state;
+        StatusView indicator = spinners.get(i);
+        if (state == 1) indicator.begin("読み込み中");
+        else if (state == 3) indicator.show(StatusView.Symbol.FAILED, "読み込めませんでした");
+        else if (state == 2) indicator.finish();
         else indicator.clear();
       }
-      String status=state==0?"待機中":state==1?"読み込み中":state==2?"表示済み":"読み込めませんでした";
-      View cell=(View)images.get(i).getParent();
-      String rank="";
-      if(ranks!=null){int winners=0;for(int value:ranks)if(value==1)winners++;rank="、"+(ranks[i]==1&&winners>1?"同率":"")+ranks[i]+"位";}
-      stars.get(i).setVisibility(ranks!=null&&ranks[i]==1?View.VISIBLE:View.GONE);
-      List<ShareHistoryUi.Item> entries=history.apply(photos.get(i));shared.get(i).items(entries);
-      cell.setContentDescription((i+1)+"枚目"+rank+"、"+status+(i==selected?"、表示中":"")+ShareHistoryUi.description(entries));
-      android.graphics.drawable.GradientDrawable border=GalleryUi.shape(cell.getContext(),Color.TRANSPARENT,6);
-      border.setStroke(dp(cell.getContext(),2),i==selected?Color.WHITE:state==3?0xffff8a7a:Color.TRANSPARENT);
-      ((FrameLayout)cell).setForeground(new android.graphics.drawable.InsetDrawable(border,0,dp(cell.getContext(),4),0,dp(cell.getContext(),4)));
+      String status =
+          state == 0 ? "待機中" : state == 1 ? "読み込み中" : state == 2 ? "表示済み" : "読み込めませんでした";
+      View cell = (View) images.get(i).getParent();
+      String rank = "";
+      if (ranks != null) {
+        int winners = 0;
+        for (int value : ranks) if (value == 1) winners++;
+        rank = "、" + (ranks[i] == 1 && winners > 1 ? "同率" : "") + ranks[i] + "位";
+      }
+      stars.get(i).setVisibility(ranks != null && ranks[i] == 1 ? View.VISIBLE : View.GONE);
+      List<ShareHistoryUi.Item> entries = history.apply(photos.get(i));
+      shared.get(i).items(entries);
+      cell.setContentDescription(
+          (i + 1)
+              + "枚目"
+              + rank
+              + "、"
+              + status
+              + (i == selected ? "、表示中" : "")
+              + ShareHistoryUi.description(entries));
+      android.graphics.drawable.GradientDrawable border =
+          GalleryUi.shape(cell.getContext(), Color.TRANSPARENT, 6);
+      border.setStroke(
+          dp(cell.getContext(), 2),
+          i == selected ? Color.WHITE : state == 3 ? 0xffff8a7a : Color.TRANSPARENT);
+      ((FrameLayout) cell)
+          .setForeground(
+              new android.graphics.drawable.InsetDrawable(
+                  border, 0, dp(cell.getContext(), 4), 0, dp(cell.getContext(), 4)));
     }
-    if(failed>0)progress.show(StatusView.Symbol.FAILED,Integer.toString(failed),ready+"/"+states.length+"枚を読み込み、"+failed+"枚失敗",null,"");
-    else if(ready<states.length)progress.observe(StatusView.Symbol.RUNNING,ready+" / "+states.length+"枚",states.length+"枚中"+ready+"枚を読み込みました");
+    if (failed > 0)
+      progress.show(
+          StatusView.Symbol.FAILED,
+          Integer.toString(failed),
+          ready + "/" + states.length + "枚を読み込み、" + failed + "枚失敗",
+          null,
+          "");
+    else if (ready < states.length)
+      progress.observe(
+          StatusView.Symbol.RUNNING,
+          ready + " / " + states.length + "枚",
+          states.length + "枚中" + ready + "枚を読み込みました");
     else progress.clear();
-    retry.setVisibility(failed>0||heroFailed?View.VISIBLE:View.GONE);
+    retry.setVisibility(failed > 0 || heroFailed ? View.VISIBLE : View.GONE);
   }
 }

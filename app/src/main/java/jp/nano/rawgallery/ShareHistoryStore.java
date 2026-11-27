@@ -27,17 +27,25 @@ final class ShareHistoryStore extends SQLiteOpenHelper {
     }
   }
 
-  ShareHistoryStore(Context context) { this(context, "share-history.db"); }
-
-  ShareHistoryStore(Context context, String name) { super(context, name, null, 1); }
-
-  @Override public void onCreate(SQLiteDatabase db) {
-    db.execSQL("CREATE TABLE history (photo TEXT NOT NULL, package TEXT NOT NULL, label TEXT NOT NULL, handed_off INTEGER NOT NULL, PRIMARY KEY(photo,package))");
-    db.execSQL("CREATE TABLE sessions (id TEXT PRIMARY KEY, created INTEGER NOT NULL)");
-    db.execSQL("CREATE TABLE session_photos (session TEXT NOT NULL, photo TEXT NOT NULL, PRIMARY KEY(session,photo))");
+  ShareHistoryStore(Context context) {
+    this(context, "share-history.db");
   }
 
-  @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+  ShareHistoryStore(Context context, String name) {
+    super(context, name, null, 1);
+  }
+
+  @Override
+  public void onCreate(SQLiteDatabase db) {
+    db.execSQL(
+        "CREATE TABLE history (photo TEXT NOT NULL, package TEXT NOT NULL, label TEXT NOT NULL, handed_off INTEGER NOT NULL, PRIMARY KEY(photo,package))");
+    db.execSQL("CREATE TABLE sessions (id TEXT PRIMARY KEY, created INTEGER NOT NULL)");
+    db.execSQL(
+        "CREATE TABLE session_photos (session TEXT NOT NULL, photo TEXT NOT NULL, PRIMARY KEY(session,photo))");
+  }
+
+  @Override
+  public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
     throw new IllegalStateException("Unsupported share history schema");
   }
 
@@ -55,20 +63,28 @@ final class ShareHistoryStore extends SQLiteOpenHelper {
     SQLiteDatabase db = getWritableDatabase();
     db.beginTransaction();
     try {
-      db.delete("session_photos", "session IN (SELECT id FROM sessions WHERE created<? OR created>?)",
+      db.delete(
+          "session_photos",
+          "session IN (SELECT id FROM sessions WHERE created<? OR created>?)",
           new String[] {Long.toString(now - SESSION_LIFETIME_MS), Long.toString(now)});
-      db.delete("sessions", "created<? OR created>?",
+      db.delete(
+          "sessions",
+          "created<? OR created>?",
           new String[] {Long.toString(now - SESSION_LIFETIME_MS), Long.toString(now)});
       ContentValues session = new ContentValues();
-      session.put("id", id); session.put("created", created);
+      session.put("id", id);
+      session.put("created", created);
       db.insertOrThrow("sessions", null, session);
       for (String key : keys) {
         ContentValues photo = new ContentValues();
-        photo.put("session", id); photo.put("photo", key);
+        photo.put("session", id);
+        photo.put("photo", key);
         db.insertOrThrow("session_photos", null, photo);
       }
       db.setTransactionSuccessful();
-    } finally { db.endTransaction(); }
+    } finally {
+      db.endTransaction();
+    }
     return id;
   }
 
@@ -80,8 +96,15 @@ final class ShareHistoryStore extends SQLiteOpenHelper {
     db.beginTransaction();
     try {
       long created;
-      try (Cursor cursor = db.query("sessions", new String[] {"created"}, "id=?",
-          new String[] {sessionId}, null, null, null)) {
+      try (Cursor cursor =
+          db.query(
+              "sessions",
+              new String[] {"created"},
+              "id=?",
+              new String[] {sessionId},
+              null,
+              null,
+              null)) {
         if (!cursor.moveToFirst()) return false;
         created = cursor.getLong(0);
       }
@@ -91,29 +114,47 @@ final class ShareHistoryStore extends SQLiteOpenHelper {
         return false;
       }
       List<String> keys = new ArrayList<>();
-      try (Cursor cursor = db.query("session_photos", new String[] {"photo"}, "session=?",
-          new String[] {sessionId}, null, null, null)) {
+      try (Cursor cursor =
+          db.query(
+              "session_photos",
+              new String[] {"photo"},
+              "session=?",
+              new String[] {sessionId},
+              null,
+              null,
+              null)) {
         while (cursor.moveToNext()) keys.add(cursor.getString(0));
       }
       if (keys.isEmpty()) return false;
       for (String key : keys) {
         // Delayed callbacks must not replace a more recent handoff's label or timestamp.
         long previous = -1;
-        try (Cursor cursor = db.query("history", new String[] {"handed_off"}, "photo=? AND package=?",
-            new String[] {key, packageName}, null, null, null)) {
+        try (Cursor cursor =
+            db.query(
+                "history",
+                new String[] {"handed_off"},
+                "photo=? AND package=?",
+                new String[] {key, packageName},
+                null,
+                null,
+                null)) {
           if (cursor.moveToFirst()) previous = cursor.getLong(0);
         }
         if (previous > now) continue;
         ContentValues entry = new ContentValues();
-        entry.put("photo", key); entry.put("package", packageName);
-        entry.put("label", label); entry.put("handed_off", now);
+        entry.put("photo", key);
+        entry.put("package", packageName);
+        entry.put("label", label);
+        entry.put("handed_off", now);
         if (db.insertWithOnConflict("history", null, entry, SQLiteDatabase.CONFLICT_REPLACE) == -1)
           throw new android.database.SQLException("Could not save share history");
       }
       deleteSession(db, sessionId);
       db.setTransactionSuccessful();
       return true;
-    } finally { db.endTransaction(); }
+    } finally {
+      db.endTransaction();
+    }
   }
 
   synchronized void cancel(String sessionId) {
@@ -123,14 +164,23 @@ final class ShareHistoryStore extends SQLiteOpenHelper {
     try {
       deleteSession(db, sessionId);
       db.setTransactionSuccessful();
-    } finally { db.endTransaction(); }
+    } finally {
+      db.endTransaction();
+    }
   }
 
   synchronized List<Entry> history(String photoKey) {
     List<Entry> result = new ArrayList<>();
-    try (Cursor cursor = getReadableDatabase().query("history",
-        new String[] {"package", "label", "handed_off"}, "photo=?", new String[] {photoKey},
-        null, null, "handed_off DESC, package ASC")) {
+    try (Cursor cursor =
+        getReadableDatabase()
+            .query(
+                "history",
+                new String[] {"package", "label", "handed_off"},
+                "photo=?",
+                new String[] {photoKey},
+                null,
+                null,
+                "handed_off DESC, package ASC")) {
       while (cursor.moveToNext())
         result.add(new Entry(cursor.getString(0), cursor.getString(1), cursor.getLong(2)));
     }
@@ -140,11 +190,19 @@ final class ShareHistoryStore extends SQLiteOpenHelper {
   /** One snapshot for rebinding visible photos; callers perform disk I/O off the UI thread. */
   synchronized java.util.Map<String, List<Entry>> snapshot() {
     java.util.Map<String, List<Entry>> mutable = new java.util.HashMap<>();
-    try (Cursor cursor = getReadableDatabase().query("history",
-        new String[] {"photo", "package", "label", "handed_off"}, null, null,
-        null, null, "handed_off DESC, package ASC")) {
+    try (Cursor cursor =
+        getReadableDatabase()
+            .query(
+                "history",
+                new String[] {"photo", "package", "label", "handed_off"},
+                null,
+                null,
+                null,
+                null,
+                "handed_off DESC, package ASC")) {
       while (cursor.moveToNext()) {
-        mutable.computeIfAbsent(cursor.getString(0), key -> new ArrayList<>())
+        mutable
+            .computeIfAbsent(cursor.getString(0), key -> new ArrayList<>())
             .add(new Entry(cursor.getString(1), cursor.getString(2), cursor.getLong(3)));
       }
     }
@@ -171,8 +229,12 @@ final class ShareHistoryStore extends SQLiteOpenHelper {
   }
 
   static void validateApp(String packageName, String label, long now) {
-    if (packageName == null || !packageName.matches("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)*")
-        || packageName.length() > 255 || label == null || label.isBlank() || label.length() > 512 || now < 0)
-      throw new IllegalArgumentException("Invalid share destination");
+    if (packageName == null
+        || !packageName.matches("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)*")
+        || packageName.length() > 255
+        || label == null
+        || label.isBlank()
+        || label.length() > 512
+        || now < 0) throw new IllegalArgumentException("Invalid share destination");
   }
 }

@@ -77,18 +77,27 @@ final class ReleaseUpgradeChecks {
     }
     settings.setOutput("16:9", "2K");
     settings.setKey(CREDENTIAL);
-    require(witness.edit().putLong("version", version).putLong("installed", installed)
-        .putString("original", originalUri.toString()).putString("edit", editUri.toString())
-        .putInt("size", original.length).putString("tag", tagId).putString("tag-photo", photoId)
-        .putString("original-key", originalKey).putString("edit-key", editKey)
-        .putString("comparison", comparison.journal).commit());
+    require(
+        witness
+            .edit()
+            .putLong("version", version)
+            .putLong("installed", installed)
+            .putString("original", originalUri.toString())
+            .putString("edit", editUri.toString())
+            .putInt("size", original.length)
+            .putString("tag", tagId)
+            .putString("tag-photo", photoId)
+            .putString("original-key", originalKey)
+            .putString("edit-key", editKey)
+            .putString("comparison", comparison.journal)
+            .commit());
   }
 
   private static void verify(Context context, SharedPreferences witness) throws Exception {
     Uri originalUri = Uri.parse(witness.getString("original", ""));
     Uri editUri = Uri.parse(witness.getString("edit", ""));
     try (InputStream original = context.getContentResolver().openInputStream(originalUri);
-         InputStream edit = context.getContentResolver().openInputStream(editUri)) {
+        InputStream edit = context.getContentResolver().openInputStream(editUri)) {
       require(Arrays.equals(jpeg(0xff253b5c), original.readAllBytes()));
       require(Arrays.equals(jpeg(0xff8f6e34), edit.readAllBytes()));
     }
@@ -110,7 +119,9 @@ final class ReleaseUpgradeChecks {
     PhotoRanking comparison = rankings.load(List.of(originalKey, editKey));
     require(comparison.journal.equals(witness.getString("comparison", "")));
     require(comparison.done() && comparison.order.equals(List.of(originalKey, editKey)));
-    require(comparison.best().equals(List.of(originalKey)) && comparison.selectionCount(originalKey) == 1);
+    require(
+        comparison.best().equals(List.of(originalKey))
+            && comparison.selectionCount(originalKey) == 1);
     require(comparison.selectionCount(editKey) == 0);
     try (TagStore tags = new TagStore(context)) {
       String tagId = witness.getString("tag", "");
@@ -125,11 +136,17 @@ final class ReleaseUpgradeChecks {
     require("16:9".equals(output.aspectRatio) && "2K".equals(output.resolution));
   }
 
-  private static PhotoRepository.Photo photo(List<PhotoRepository.Photo> photos, Uri uri, String name) {
+  private static PhotoRepository.Photo photo(
+      List<PhotoRepository.Photo> photos, Uri uri, String name) {
     long id = ContentUris.parseId(uri);
-    return photos.stream().filter(photo -> name.equals(photo.name) && !photo.isArchived()
-        && ContentUris.parseId(photo.uri) == id)
-        .findFirst().orElseThrow(() -> new AssertionError("Synthetic photo not visible in library"));
+    return photos.stream()
+        .filter(
+            photo ->
+                name.equals(photo.name)
+                    && !photo.isArchived()
+                    && ContentUris.parseId(photo.uri) == id)
+        .findFirst()
+        .orElseThrow(() -> new AssertionError("Synthetic photo not visible in library"));
   }
 
   private static byte[] jpeg(int color) {
@@ -151,8 +168,10 @@ final class ReleaseUpgradeChecks {
     values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
     values.put(MediaStore.Images.Media.RELATIVE_PATH, DIR);
     values.put(MediaStore.Images.Media.IS_PENDING, 1);
-    Uri uri = Objects.requireNonNull(resolver.insert(
-        MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values));
+    Uri uri =
+        Objects.requireNonNull(
+            resolver.insert(
+                MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values));
     try (OutputStream out = resolver.openOutputStream(uri)) {
       out.write(bytes);
     }

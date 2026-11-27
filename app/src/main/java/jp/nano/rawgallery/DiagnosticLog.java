@@ -28,13 +28,17 @@ final class DiagnosticLog {
       initialized = true;
       boolean debug = (context.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
       SharedPreferences prefs = settings(context);
-      if (prefs.getBoolean("record", debug) && !start(context, prefs, false) && prefs.contains("record")) {
+      if (prefs.getBoolean("record", debug)
+          && !start(context, prefs, false)
+          && prefs.contains("record")) {
         remember(prefs, false);
       }
     }
   }
 
-  static Recorder currentRecorder() { return recorder; }
+  static Recorder currentRecorder() {
+    return recorder;
+  }
 
   static boolean startRecording(Context context) {
     synchronized (CONFIG) {
@@ -82,15 +86,20 @@ final class DiagnosticLog {
     DiagnosticWriter sink;
     try {
       synchronized (FILES) {
-        sink = new DiagnosticWriter(new File(context.getFilesDir(), "diagnostics"),
-            DiagnosticExport.EVENT_FILE_LIMIT);
+        sink =
+            new DiagnosticWriter(
+                new File(context.getFilesDir(), "diagnostics"), DiagnosticExport.EVENT_FILE_LIMIT);
       }
     } catch (IOException | SecurityException error) {
       logFailure(error);
       return false;
     }
     if (persist && !remember(prefs, true)) {
-      try { sink.close(); } catch (IOException error) { logFailure(error); }
+      try {
+        sink.close();
+      } catch (IOException error) {
+        logFailure(error);
+      }
       return false;
     }
 
@@ -99,8 +108,14 @@ final class DiagnosticLog {
     latestRecorderToken = started.token;
     recorder = started;
     long version = 0;
-    try { version = context.getPackageManager().getPackageInfo(context.getPackageName(), 0).getLongVersionCode(); }
-    catch (android.content.pm.PackageManager.NameNotFoundException ignored) {}
+    try {
+      version =
+          context
+              .getPackageManager()
+              .getPackageInfo(context.getPackageName(), 0)
+              .getLongVersionCode();
+    } catch (android.content.pm.PackageManager.NameNotFoundException ignored) {
+    }
     event("session", 0, "version", version, "wall_ms", System.currentTimeMillis());
     return true;
   }
@@ -146,8 +161,12 @@ final class DiagnosticLog {
       boolean interrupted = false;
       try {
         while (true) {
-          try { thread.join(); return !failed; }
-          catch (InterruptedException ignored) { interrupted = true; }
+          try {
+            thread.join();
+            return !failed;
+          } catch (InterruptedException ignored) {
+            interrupted = true;
+          }
         }
       } finally {
         if (interrupted) Thread.currentThread().interrupt();
@@ -155,48 +174,87 @@ final class DiagnosticLog {
     }
   }
 
-  static long parent() { return PARENT.get(); }
-  static long use(long id) { long old = parent(); PARENT.set(id); return old; }
-  static long id() { return IDS.incrementAndGet(); }
+  static long parent() {
+    return PARENT.get();
+  }
+
+  static long use(long id) {
+    long old = parent();
+    PARENT.set(id);
+    return old;
+  }
+
+  static long id() {
+    return IDS.incrementAndGet();
+  }
+
   static long photo(PhotoRepository.Photo p) {
     // Session-local pseudonym, never persist the URI or a stable cross-session identifier.
     try {
-      byte[] bytes = java.security.MessageDigest.getInstance("SHA-256")
-          .digest((SESSION + p.uri.toString()).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      byte[] bytes =
+          java.security.MessageDigest.getInstance("SHA-256")
+              .digest(
+                  (SESSION + p.uri.toString()).getBytes(java.nio.charset.StandardCharsets.UTF_8));
       return java.nio.ByteBuffer.wrap(bytes).getLong() & Long.MAX_VALUE;
-    } catch (java.security.NoSuchAlgorithmException e) { throw new AssertionError(e); }
+    } catch (java.security.NoSuchAlgorithmException e) {
+      throw new AssertionError(e);
+    }
   }
+
   static void event(String event, long request, Object... fields) {
     Recorder target = recorder;
     if (target == null) return;
     try {
-      JSONObject j = new JSONObject().put("session", SESSION).put("seq", id())
-          .put("ns", SystemClock.elapsedRealtimeNanos()).put("event", event)
-          .put("request", request).put("parent", parent())
-          .put("thread", Thread.currentThread().getId()).put("dropped", DROPPED.get());
+      JSONObject j =
+          new JSONObject()
+              .put("session", SESSION)
+              .put("seq", id())
+              .put("ns", SystemClock.elapsedRealtimeNanos())
+              .put("event", event)
+              .put("request", request)
+              .put("parent", parent())
+              .put("thread", Thread.currentThread().getId())
+              .put("dropped", DROPPED.get());
       for (int i = 0; i < fields.length; i += 2) j.put((String) fields[i], fields[i + 1]);
       String line = j.toString();
       synchronized (DiagnosticLog.class) {
-        if (recorder == target && (target.queue.remainingCapacity() <= 1 || !target.queue.offer(line))) {
+        if (recorder == target
+            && (target.queue.remainingCapacity() <= 1 || !target.queue.offer(line))) {
           DROPPED.incrementAndGet();
         }
       }
-    } catch (Exception e) { DROPPED.incrementAndGet(); }
+    } catch (Exception e) {
+      DROPPED.incrementAndGet();
+    }
   }
+
   /** Pass only fixed phase/outcome labels. Never record exception text or stack traces here. */
   static void exception(String phase, String outcome, Throwable error) {
-    event("operation.exception", 0, "phase", phase, "outcome", outcome,
-        "exception", error.getClass().getName());
+    event(
+        "operation.exception",
+        0,
+        "phase",
+        phase,
+        "outcome",
+        outcome,
+        "exception",
+        error.getClass().getName());
   }
-  static Scope span(String name) { return new Scope(name); }
+
+  static Scope span(String name) {
+    return new Scope(name);
+  }
+
   static final class Scope implements AutoCloseable {
     final String name;
     final long id = id(), previous;
+
     Scope(String name) {
       this.name = name;
       event(name + ".start", id);
       previous = use(id);
     }
+
     public void close() {
       event(name + ".end", id);
       use(previous);

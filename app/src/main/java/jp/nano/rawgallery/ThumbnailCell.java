@@ -28,13 +28,25 @@ final class ThumbnailCell extends FrameLayout {
     int side = MeasureSpec.getSize(width);
     super.onMeasure(
         MeasureSpec.makeMeasureSpec(side, MeasureSpec.EXACTLY),
-        MeasureSpec.makeMeasureSpec(fixedHeight>0?fixedHeight:side, MeasureSpec.EXACTLY));
+        MeasureSpec.makeMeasureSpec(fixedHeight > 0 ? fixedHeight : side, MeasureSpec.EXACTLY));
   }
 
-  private final Path selectedClip=new Path();
-  @Override protected boolean drawChild(Canvas canvas,View child,long time){
-    if(child==image&&badges.photoSelection&&badges.selected){int save=canvas.save();float inset=GalleryUi.dp(getContext(),10),radius=GalleryUi.dp(getContext(),6);selectedClip.reset();selectedClip.addRoundRect(inset,inset,getWidth()-inset,getHeight()-inset,radius,radius,Path.Direction.CW);canvas.clipPath(selectedClip);boolean drawn=super.drawChild(canvas,child,time);canvas.restoreToCount(save);return drawn;}
-    return super.drawChild(canvas,child,time);
+  private final Path selectedClip = new Path();
+
+  @Override
+  protected boolean drawChild(Canvas canvas, View child, long time) {
+    if (child == image && badges.photoSelection && badges.selected) {
+      int save = canvas.save();
+      float inset = GalleryUi.dp(getContext(), 10), radius = GalleryUi.dp(getContext(), 6);
+      selectedClip.reset();
+      selectedClip.addRoundRect(
+          inset, inset, getWidth() - inset, getHeight() - inset, radius, radius, Path.Direction.CW);
+      canvas.clipPath(selectedClip);
+      boolean drawn = super.drawChild(canvas, child, time);
+      canvas.restoreToCount(save);
+      return drawn;
+    }
+    return super.drawChild(canvas, child, time);
   }
 
   static final class Badges extends View {
@@ -47,10 +59,16 @@ final class ThumbnailCell extends FrameLayout {
     private final ShareHistoryUi.Painter sharePainter;
     private String sharedKey;
     private long shareAppeared;
-    void shared(String key,java.util.List<ShareHistoryUi.Item> value){
-      shareAppeared=key.equals(sharedKey)&&ShareHistoryUi.added(shared,value)?ShareHistoryUi.animationStart():0;
-      sharedKey=key;shared=value;
+
+    void shared(String key, java.util.List<ShareHistoryUi.Item> value) {
+      shareAppeared =
+          key.equals(sharedKey) && ShareHistoryUi.added(shared, value)
+              ? ShareHistoryUi.animationStart()
+              : 0;
+      sharedKey = key;
+      shared = value;
     }
+
     StatusView.Symbol tagState;
     boolean cloud, failed, rankFailed, selectionMode, selected, partial, tagAtRight, photoSelection;
     boolean burstSelection, video;
@@ -58,8 +76,8 @@ final class ThumbnailCell extends FrameLayout {
     Badges(Context context) {
       super(context);
       density = getResources().getDisplayMetrics().density;
-      selectionCloud=context.getDrawable(R.drawable.ic_selection_cloud);
-      sharePainter=new ShareHistoryUi.Painter(context);
+      selectionCloud = context.getDrawable(R.drawable.ic_selection_cloud);
+      sharePainter = new ShareHistoryUi.Painter(context);
     }
 
     protected void onDraw(Canvas canvas) {
@@ -73,10 +91,16 @@ final class ThumbnailCell extends FrameLayout {
         paint.setColor(Color.WHITE);
         canvas.drawText(camera, 11, 19, paint);
       }
-      if(shared.isEmpty()&&cloud&&photoSelection&&selectionMode){
-        float edge=selected?14:5,left=w-edge-24,top=h-edge-20;
-        paint.setStyle(Paint.Style.FILL);paint.setColor(0x9e000000);canvas.drawRoundRect(left,top,left+24,top+20,10,10,paint);
-        int save=canvas.save();canvas.translate(left+5,top+3);selectionCloud.setBounds(0,0,14,14);selectionCloud.draw(canvas);canvas.restoreToCount(save);
+      if (shared.isEmpty() && cloud && photoSelection && selectionMode) {
+        float edge = selected ? 14 : 5, left = w - edge - 24, top = h - edge - 20;
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(0x9e000000);
+        canvas.drawRoundRect(left, top, left + 24, top + 20, 10, 10, paint);
+        int save = canvas.save();
+        canvas.translate(left + 5, top + 3);
+        selectionCloud.setBounds(0, 0, 14, 14);
+        selectionCloud.draw(canvas);
+        canvas.restoreToCount(save);
       }
       if (shared.isEmpty() && cloud && !selectionMode) {
         box(canvas, w - 29, h - 26, 24, 21);
@@ -86,34 +110,67 @@ final class ThumbnailCell extends FrameLayout {
         canvas.drawCircle(w - 11, h - 14, 3, paint);
         canvas.drawRect(w - 21, h - 15, w - 11, h - 11, paint);
       }
-      boolean selectionStyle=photoSelection&&selectionMode;
-      float edge=selectionStyle?(selected?14:4):5;
-      if(selectionStyle)paint.setTextSize(12);
+      boolean selectionStyle = photoSelection && selectionMode;
+      float edge = selectionStyle ? (selected ? 14 : 4) : 5;
+      if (selectionStyle) paint.setTextSize(12);
       if (count > 1) {
         String number = Integer.toString(count);
         float width = 26 + paint.measureText(number), left = w - edge - width;
-        if(selectionStyle){paint.setStyle(Paint.Style.FILL);paint.setColor(0x9e000000);canvas.drawRoundRect(left,edge,left+width,edge+20,10,10,paint);}else box(canvas,left,edge,width,21);
-        paint.setColor(Color.WHITE);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1.3f);
-        canvas.drawRoundRect(left+5,edge+5,left+13,edge+13,1,1,paint);canvas.drawRoundRect(left+8,edge+8,left+16,edge+16,1,1,paint);paint.setStyle(Paint.Style.FILL);canvas.drawText(number,left+21,edge+14,paint);
+        if (selectionStyle) {
+          paint.setStyle(Paint.Style.FILL);
+          paint.setColor(0x9e000000);
+          canvas.drawRoundRect(left, edge, left + width, edge + 20, 10, 10, paint);
+        } else box(canvas, left, edge, width, 21);
+        paint.setColor(Color.WHITE);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(1.3f);
+        canvas.drawRoundRect(left + 5, edge + 5, left + 13, edge + 13, 1, 1, paint);
+        canvas.drawRoundRect(left + 8, edge + 8, left + 16, edge + 16, 1, 1, paint);
+        paint.setStyle(Paint.Style.FILL);
+        canvas.drawText(number, left + 21, edge + 14, paint);
       }
-      float rankWidth=rankFailed?20:0;
+      float rankWidth = rankFailed ? 20 : 0;
       if (!rank.isEmpty()) {
-        rankWidth=selectionStyle&&rank.equals("1位")?20:paint.measureText(rank)+12;
-        if(selectionStyle&&rank.equals("1位")){
-          paint.setStyle(Paint.Style.FILL);paint.setColor(0xfff5b947);float top=h-edge-20;canvas.drawRoundRect(edge,top,edge+20,top+20,5,5,paint);paint.setColor(0xff241800);Path star=new Path();for(int i=0;i<10;i++){double angle=-Math.PI/2+i*Math.PI/5;float radius=i%2==0?6:2.8f;float x=edge+10+(float)Math.cos(angle)*radius,y=top+10+(float)Math.sin(angle)*radius;if(i==0)star.moveTo(x,y);else star.lineTo(x,y);}star.close();canvas.drawPath(star,paint);
+        rankWidth = selectionStyle && rank.equals("1位") ? 20 : paint.measureText(rank) + 12;
+        if (selectionStyle && rank.equals("1位")) {
+          paint.setStyle(Paint.Style.FILL);
+          paint.setColor(0xfff5b947);
+          float top = h - edge - 20;
+          canvas.drawRoundRect(edge, top, edge + 20, top + 20, 5, 5, paint);
+          paint.setColor(0xff241800);
+          Path star = new Path();
+          for (int i = 0; i < 10; i++) {
+            double angle = -Math.PI / 2 + i * Math.PI / 5;
+            float radius = i % 2 == 0 ? 6 : 2.8f;
+            float x = edge + 10 + (float) Math.cos(angle) * radius,
+                y = top + 10 + (float) Math.sin(angle) * radius;
+            if (i == 0) star.moveTo(x, y);
+            else star.lineTo(x, y);
+          }
+          star.close();
+          canvas.drawPath(star, paint);
         } else if (burstSelection) {
           paint.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-          paint.setTextSize(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 12,
-              getResources().getDisplayMetrics()) / density);
-          rankWidth=paint.measureText(rank)+12;
+          paint.setTextSize(
+              TypedValue.applyDimension(
+                      TypedValue.COMPLEX_UNIT_SP, 12, getResources().getDisplayMetrics())
+                  / density);
+          rankWidth = paint.measureText(rank) + 12;
           float height = Math.max(20, paint.descent() - paint.ascent() + 2);
           float bottom = h - edge;
           paint.setStyle(Paint.Style.FILL);
           paint.setColor(0x9e000000);
-          canvas.drawRoundRect(edge, bottom - height, edge + paint.measureText(rank) + 12,
-              bottom, height / 2, height / 2, paint);
+          canvas.drawRoundRect(
+              edge,
+              bottom - height,
+              edge + paint.measureText(rank) + 12,
+              bottom,
+              height / 2,
+              height / 2,
+              paint);
           paint.setColor(Color.WHITE);
-          canvas.drawText(rank, edge + 6, bottom - (height + paint.ascent() + paint.descent()) / 2, paint);
+          canvas.drawText(
+              rank, edge + 6, bottom - (height + paint.ascent() + paint.descent()) / 2, paint);
           paint.setTypeface(Typeface.DEFAULT_BOLD);
           paint.setTextSize(12);
         } else {
@@ -122,15 +179,33 @@ final class ThumbnailCell extends FrameLayout {
           canvas.drawText(rank, edge + 6, h - edge - 7, paint);
         }
       }
-      if(!shared.isEmpty()) {
-        float inset=photoSelection&&selectionMode&&selected?15:5;
-        float reserved=rankWidth==0?inset:edge+rankWidth+2;
-        int opacity=ShareHistoryUi.alpha(shareAppeared),layer=canvas.saveLayerAlpha(0,0,w,h,opacity);
-        sharePainter.draw(canvas,shared,w-inset,h-inset,w-inset-reserved,w-inset*2,14,20,2,cloud,false);
-        canvas.restoreToCount(layer);if(opacity<255)postInvalidateOnAnimation();
+      if (!shared.isEmpty()) {
+        float inset = photoSelection && selectionMode && selected ? 15 : 5;
+        float reserved = rankWidth == 0 ? inset : edge + rankWidth + 2;
+        int opacity = ShareHistoryUi.alpha(shareAppeared),
+            layer = canvas.saveLayerAlpha(0, 0, w, h, opacity);
+        sharePainter.draw(
+            canvas,
+            shared,
+            w - inset,
+            h - inset,
+            w - inset - reserved,
+            w - inset * 2,
+            14,
+            20,
+            2,
+            cloud,
+            false);
+        canvas.restoreToCount(layer);
+        if (opacity < 255) postInvalidateOnAnimation();
       }
-      if(tagState!=null){if(tagAtRight)box(canvas,w-30,h-26,24,20);StatusView.glyph(canvas,paint,tagState,tagAtRight?w-28:5,h-26,20,GalleryUi.TEXT,0);}
-      if(rankFailed)StatusView.glyph(canvas,paint,StatusView.Symbol.FAILED,5,h-26,20,0xffff8a7a,0);
+      if (tagState != null) {
+        if (tagAtRight) box(canvas, w - 30, h - 26, 24, 20);
+        StatusView.glyph(
+            canvas, paint, tagState, tagAtRight ? w - 28 : 5, h - 26, 20, GalleryUi.TEXT, 0);
+      }
+      if (rankFailed)
+        StatusView.glyph(canvas, paint, StatusView.Symbol.FAILED, 5, h - 26, 20, 0xffff8a7a, 0);
       if (video) {
         box(canvas, w / 2 - 14, h / 2 - 14, 28, 28);
         paint.setColor(Color.WHITE);
@@ -154,7 +229,10 @@ final class ThumbnailCell extends FrameLayout {
           tick.lineTo(16, 21);
           tick.lineTo(23, 13);
           canvas.drawPath(tick, paint);
-          if(!photoSelection){paint.setColor(GalleryUi.ACCENT);canvas.drawRect(1,1,w-1,h-1,paint);}
+          if (!photoSelection) {
+            paint.setColor(GalleryUi.ACCENT);
+            canvas.drawRect(1, 1, w - 1, h - 1, paint);
+          }
         } else {
           canvas.drawCircle(17, 17, 10, paint);
           if (partial) canvas.drawLine(12, 17, 22, 17, paint);
@@ -164,7 +242,8 @@ final class ThumbnailCell extends FrameLayout {
       if (failed) {
         box(canvas, w / 2 - 12, h / 2 - 12, 24, 24);
         paint.setColor(Color.WHITE);
-        StatusView.glyph(canvas,paint,StatusView.Symbol.FAILED,w/2-10,h/2-10,20,0xffff8a7a,0);
+        StatusView.glyph(
+            canvas, paint, StatusView.Symbol.FAILED, w / 2 - 10, h / 2 - 10, 20, 0xffff8a7a, 0);
       }
       canvas.restore();
     }

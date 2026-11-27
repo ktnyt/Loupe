@@ -19,11 +19,15 @@ final class BurstGroups {
       this.frame = frame;
     }
 
-    private boolean numbered() { return mode > 0 && frame > 0; }
+    private boolean numbered() {
+      return mode > 0 && frame > 0;
+    }
 
     private boolean follows(Entry previous, long gap) {
       if (numbered() || previous.numbered())
-        return numbered() && previous.numbered() && mode == previous.mode
+        return numbered()
+            && previous.numbered()
+            && mode == previous.mode
             && (long) frame - previous.frame == 1;
       return time - previous.time <= gap;
     }
@@ -37,8 +41,7 @@ final class BurstGroups {
       else streams.computeIfAbsent(e.stream, ignored -> new ArrayList<>()).add(e);
     }
     for (List<Entry> stream : streams.values()) {
-      stream.sort(
-          Comparator.comparingLong((Entry e) -> e.time).thenComparing(e -> e.name));
+      stream.sort(Comparator.comparingLong((Entry e) -> e.time).thenComparing(e -> e.name));
       List<Entry> current = null;
       Entry previous = null;
       for (Entry e : stream) {

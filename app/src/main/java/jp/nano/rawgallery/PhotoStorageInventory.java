@@ -10,24 +10,44 @@ record PhotoStorageInventory(List<Photo> photos, List<History> unresolved) {
     unresolved = List.copyOf(unresolved);
   }
 
-  enum Status { ELIGIBLE, ALREADY_THERE, EXCLUDED }
+  enum Status {
+    ELIGIBLE,
+    ALREADY_THERE,
+    EXCLUDED
+  }
 
-  /** historyMatches describes compatible import evidence. It is not a byte verification of this file. */
-  record Photo(Uri uri, String name, PhotoStorageLocation location, Status status, List<Reason> reasons,
-      String recordedName, boolean historyMatches) {
+  /**
+   * historyMatches describes compatible import evidence. It is not a byte verification of this
+   * file.
+   */
+  record Photo(
+      Uri uri,
+      String name,
+      PhotoStorageLocation location,
+      Status status,
+      List<Reason> reasons,
+      String recordedName,
+      boolean historyMatches) {
     Photo {
       reasons = List.copyOf(reasons);
     }
   }
 
   /** Count is the number of records represented by this row, regardless of physical file count. */
-  record History(String name, PhotoStorageLocation location, List<Reason> reasons, String candidateName,
-      PhotoStorageLocation candidateLocation, int count) {
+  record History(
+      String name,
+      PhotoStorageLocation location,
+      List<Reason> reasons,
+      String candidateName,
+      PhotoStorageLocation candidateLocation,
+      int count) {
     History {
       reasons = List.copyOf(reasons);
     }
 
-    Reason reason() { return reasons.get(0); }
+    Reason reason() {
+      return reasons.get(0);
+    }
 
     History withCount(int count) {
       return new History(name, location, reasons, candidateName, candidateLocation, count);
@@ -63,7 +83,12 @@ record PhotoStorageInventory(List<Photo> photos, List<History> unresolved) {
       this.action = action;
     }
 
-    String label() { return label; }
-    String action() { return action; }
+    String label() {
+      return label;
+    }
+
+    String action() {
+      return action;
+    }
   }
 }
