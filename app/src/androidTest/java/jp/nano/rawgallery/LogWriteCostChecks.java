@@ -40,6 +40,9 @@ final class LogWriteCostChecks {
   static String run(Instrumentation test, Bundle args) throws Exception {
     Context context = test.getTargetContext();
     String source = args.getString("source-commit", "");
+    String control = args.getString("controlled-failure", "");
+    require(
+        control.isEmpty() || "visibility-deadline".equals(control), "unknown controlled failure");
     require("true".equals(args.getString("disposable-avd")), "dedicated offline AVD required");
     require("ranchu".equals(Build.HARDWARE), "Android emulator required");
     require(
@@ -65,15 +68,20 @@ final class LogWriteCostChecks {
             .put("rotation_seed_bytes", SEED_LINES * 1024)
             .put("poll_interval_ms", VISIBILITY_POLL_MS)
             .put("visibility_timeout_ms", VISIBILITY_TIMEOUT_MS)
-            .put("producer_threads", 1));
+            .put("producer_threads", 1)
+            .put("controlled_failure", control));
     boolean recorderAbsent;
     boolean settingsUnchanged;
     try {
+      if (!control.isEmpty()) {
+        measure(test, context, SCENARIOS.get(3), -1, 0, true);
+        throw new AssertionError("controlled observation unexpectedly succeeded");
+      }
       // Round zero is a warmup for every scenario. Rotate order deterministically each round.
       for (int round = 0; round <= 3; round++) {
         for (int position = 0; position < SCENARIOS.size(); position++) {
           Scenario scenario = SCENARIOS.get((position + round) % SCENARIOS.size());
-          measure(test, context, scenario, round, position);
+          measure(test, context, scenario, round, position, false);
         }
       }
     } finally {
@@ -92,19 +100,30 @@ final class LogWriteCostChecks {
   }
 
   private static void measure(
-      Instrumentation test, Context context, Scenario scenario, int round, int position)
+      Instrumentation test,
+      Context context,
+      Scenario scenario,
+      int round,
+      int position,
+      boolean controlledFailure)
       throws Exception {
     boolean probe = scenario.enabled() && round != 2;
+    long visibilityTimeoutMs = controlledFailure ? 0 : VISIBILITY_TIMEOUT_MS;
     var receipt =
         new JSONObject()
             .put("scenario", scenario.name())
             .put("round", round)
             .put("position", position)
             .put("warmup", round == 0)
+            .put("controlled_failure", controlledFailure)
+            .put("performance_sample", round > 0 && !controlledFailure)
             .put("diagnostics_on", scenario.enabled())
             .put("events_planned", scenario.count())
             .put("requested_gap_ms", scenario.gapMs())
-            .put("probe_visibility_before_stop", probe);
+            .put("probe_visibility_before_stop", probe)
+            .put("visibility_timeout_ms", visibilityTimeoutMs)
+            .put("readback_status", "unavailable")
+            .put("readback_unavailable_reason", "trial_did_not_reach_probe_or_stop");
     Trial trial = null;
     long[] calls = new long[scenario.count()];
     long[] starts = new long[scenario.count()];
@@ -126,20 +145,25 @@ final class LogWriteCostChecks {
         int last = scenario.count() - 1;
         long submitted = start + starts[last] + calls[last];
 
-        if (probe) {
-          byte[] marker = ("\"fixture_index\":" + last + "}\n").getBytes(StandardCharsets.UTF_8);
-          long visible = awaitTail(owned.current, marker);
-          receipt.put("last_return_to_tail_observed_ns", visible - submitted);
+        try {
+          if (probe) {
+            byte[] marker = ("\"fixture_index\":" + last + "}\n").getBytes(StandardCharsets.UTF_8);
+            long visible = awaitTail(owned.current, marker, visibilityTimeoutMs);
+            receipt.put("last_return_to_tail_observed_ns", visible - submitted);
+          }
+          if (scenario.enabled()) {
+            long before = SystemClock.elapsedRealtimeNanos();
+            owned.stop();
+            long stopped = SystemClock.elapsedRealtimeNanos();
+            receipt
+                .put("stop_ns", stopped - before)
+                .put("last_return_to_stop_ns", stopped - submitted);
+          }
+        } catch (Exception | AssertionError failure) {
+          retainAfterFailure(owned, scenario, receipt, failure);
+          throw failure;
         }
-        if (scenario.enabled()) {
-          long before = SystemClock.elapsedRealtimeNanos();
-          owned.stop();
-          long stopped = SystemClock.elapsedRealtimeNanos();
-          receipt
-              .put("stop_ns", stopped - before)
-              .put("last_return_to_stop_ns", stopped - submitted);
-        }
-        verifyReadback(owned, scenario, receipt);
+        readback(owned, scenario, receipt);
       }
       receipt.put("outcome", "pass");
     } catch (Exception | AssertionError failure) {
@@ -160,13 +184,41 @@ final class LogWriteCostChecks {
       if (trial != null) {
         receipt.put("owned_preferences_removed", trial.prefsRemoved);
         receipt.put("owned_files_removed", trial.filesRemoved);
+        if (trial.cleanupFailure != null) {
+          receipt.put("cleanup_failure", failureDetails(trial.cleanupFailure));
+        }
       }
       publish(test, "log_write_trial", receipt);
     }
   }
 
-  private static long awaitTail(File current, byte[] marker) throws Exception {
-    long deadline = SystemClock.elapsedRealtime() + VISIBILITY_TIMEOUT_MS;
+  private static void retainAfterFailure(
+      Trial trial, Scenario scenario, JSONObject receipt, Throwable primary) throws Exception {
+    trial.recoveryAttempted = true;
+    try {
+      if (trial.recorder != null && DiagnosticLog.currentRecorder() == trial.recorder) {
+        trial.stop();
+      }
+    } catch (Exception | AssertionError stopFailure) {
+      primary.addSuppressed(stopFailure);
+      receipt.put("recovery_stop_failure", failureDetails(stopFailure));
+    }
+    if (DiagnosticLog.currentRecorder() != null || trial.recorder == null) {
+      receipt.put("readback_unavailable_reason", "fixture_recorder_not_confirmed_stopped");
+      return;
+    }
+    // A writer that failed can detach before its thread exits. Join the owned recorder
+    // before reading its files. A false stop result is still a failure even after this join.
+    receipt.put("recovery_recorder_stopped_cleanly", trial.joinRecorder());
+    try {
+      readback(trial, scenario, receipt);
+    } catch (Exception | AssertionError readbackFailure) {
+      primary.addSuppressed(readbackFailure);
+    }
+  }
+
+  private static long awaitTail(File current, byte[] marker, long timeoutMs) throws Exception {
+    long deadline = SystemClock.elapsedRealtime() + timeoutMs;
     byte[] tail = new byte[marker.length];
     while (SystemClock.elapsedRealtime() < deadline) {
       // Match the export reader's lock so rotation and flush are complete within a snapshot.
@@ -189,65 +241,109 @@ final class LogWriteCostChecks {
     throw new AssertionError("last accepted row was not readable before the observation deadline");
   }
 
+  private static void readback(Trial trial, Scenario scenario, JSONObject receipt)
+      throws Exception {
+    receipt.remove("readback_unavailable_reason");
+    try {
+      verifyReadback(trial, scenario, receipt);
+      receipt.put("readback_status", "complete");
+    } catch (Exception | AssertionError failure) {
+      receipt.put("readback_status", "failed").put("readback_failure", failureDetails(failure));
+      throw failure;
+    }
+  }
+
+  private static JSONObject failureDetails(Throwable failure) throws Exception {
+    var details = new JSONObject().put("failure_class", failure.getClass().getSimpleName());
+    if (failure instanceof AssertionError) details.put("failed_check", failure.getMessage());
+    return details;
+  }
+
   private static void verifyReadback(Trial trial, Scenario scenario, JSONObject receipt)
       throws Exception {
     int files = 0;
     int seeds = 0;
     int seen = 0;
     int sessions = 0;
+    int unexpected = 0;
+    boolean ordered = true;
+    boolean contentMatches = true;
+    boolean scanComplete = false;
+    boolean lastFixtureSeen = false;
     long startDropped = -1;
     long lastDropped = -1;
     long maxDropped = -1;
     long previousSeq = -1;
-    for (File file : List.of(trial.previous, trial.current)) {
-      if (!file.exists()) continue;
-      files++;
-      long bytes = file.length();
-      receipt.put(file == trial.current ? "current_bytes" : "previous_bytes", bytes);
-      require(bytes > 0 && bytes <= DiagnosticExport.EVENT_FILE_LIMIT, "log file size exceeded");
-      try (var input = new RandomAccessFile(file, "r")) {
-        input.seek(bytes - 1);
-        require(input.read() == '\n', "incomplete final JSONL line");
-      }
-      try (BufferedReader reader = Files.newBufferedReader(file.toPath(), StandardCharsets.UTF_8)) {
-        String line;
-        while ((line = reader.readLine()) != null) {
-          if (scenario.rotation() && file == trial.previous && seeds < SEED_LINES) {
-            require(SEED.equals(line), "rotation seed changed");
-            seeds++;
-            continue;
-          }
-          JSONObject event = new JSONObject(line);
-          long seq = event.getLong("seq");
-          require(seq > previousSeq, "recorder sequence out of order");
-          previousSeq = seq;
-          lastDropped = event.getLong("dropped");
-          maxDropped = Math.max(maxDropped, lastDropped);
-          if ("session".equals(event.getString("event"))) {
-            require(sessions == 0 && seen == 0, "unexpected session row");
-            sessions++;
-            startDropped = lastDropped;
-          } else {
-            require(sessions == 1 && EVENT.equals(event.getString("event")), "unexpected event");
-            require(event.getInt("fixture_index") == seen, "fixture event missing or out of order");
-            require(PAYLOAD.equals(event.getString("fixture_payload")), "fixture payload changed");
-            seen++;
+    try {
+      for (File file : List.of(trial.previous, trial.current)) {
+        if (!file.exists()) continue;
+        files++;
+        long bytes = file.length();
+        receipt.put(file == trial.current ? "current_bytes" : "previous_bytes", bytes);
+        require(bytes > 0 && bytes <= DiagnosticExport.EVENT_FILE_LIMIT, "log file size exceeded");
+        try (var input = new RandomAccessFile(file, "r")) {
+          input.seek(bytes - 1);
+          contentMatches &= input.read() == '\n';
+        }
+        try (BufferedReader reader =
+            Files.newBufferedReader(file.toPath(), StandardCharsets.UTF_8)) {
+          String line;
+          while ((line = reader.readLine()) != null) {
+            if (scenario.rotation() && file == trial.previous && seeds < SEED_LINES) {
+              contentMatches &= SEED.equals(line);
+              seeds++;
+              continue;
+            }
+            JSONObject event = new JSONObject(line);
+            long seq = event.getLong("seq");
+            ordered &= seq > previousSeq;
+            previousSeq = seq;
+            lastDropped = event.getLong("dropped");
+            maxDropped = Math.max(maxDropped, lastDropped);
+            switch (event.getString("event")) {
+              case "session" -> {
+                ordered &= sessions == 0 && seen == 0;
+                if (sessions == 0) startDropped = lastDropped;
+                sessions++;
+              }
+              case EVENT -> {
+                int index = event.getInt("fixture_index");
+                ordered &= sessions == 1 && index == seen;
+                lastFixtureSeen |= index == scenario.count() - 1;
+                seen++;
+                contentMatches &= PAYLOAD.equals(event.getString("fixture_payload"));
+              }
+              default -> unexpected++;
+            }
           }
         }
       }
-    }
-    receipt
-        .put("files", files)
-        .put("rotated", trial.previous.isFile())
-        .put("seed_rows_read", seeds)
-        .put("session_rows_read", sessions)
-        .put("fixture_rows_read", seen);
-    if (scenario.enabled()) {
+      scanComplete = true;
+    } finally {
       receipt
-          .put("dropped_counter_start", startDropped)
-          .put("dropped_counter_last", lastDropped)
-          .put("observed_dropped_delta", maxDropped - startDropped);
+          .put("files", files)
+          .put("rotated", trial.previous.isFile())
+          .put("seed_rows_read", seeds)
+          .put("session_rows_read", sessions)
+          .put("fixture_rows_read", seen)
+          .put("unexpected_rows_read", unexpected)
+          .put("last_fixture_row_seen", lastFixtureSeen)
+          .put("readback_scan_complete", scanComplete)
+          .put("readback_order_matches", ordered)
+          .put("readback_content_matches", contentMatches);
+      if (scenario.enabled()) {
+        receipt
+            .put("dropped_counter_start", startDropped)
+            .put("dropped_counter_last", lastDropped)
+            .put(
+                "observed_dropped_delta",
+                startDropped < 0 ? JSONObject.NULL : maxDropped - startDropped);
+      }
+    }
+    if (scenario.enabled()) {
       require(sessions == 1 && seen == scenario.count(), "accepted rows missing after stop");
+      require(ordered && unexpected == 0, "unexpected or out-of-order diagnostic rows");
+      require(contentMatches, "diagnostic row contents or framing changed");
       require(
           startDropped >= 0 && startDropped == maxDropped, "drop counter changed within the trial");
       require(
@@ -266,8 +362,13 @@ final class LogWriteCostChecks {
     final File previous;
     private final String prefsName;
     private DiagnosticLog.Recorder recorder;
+    private boolean startSucceeded;
+    private boolean joined;
+    private boolean stoppedCleanly;
+    boolean recoveryAttempted;
     boolean prefsRemoved;
     boolean filesRemoved;
+    Throwable cleanupFailure;
 
     Trial(Context context) throws IOException {
       super(context);
@@ -299,30 +400,59 @@ final class LogWriteCostChecks {
 
     void start() {
       require(DiagnosticLog.currentRecorder() == null, "recorder appeared before fixture start");
-      boolean started = DiagnosticLog.startRecording(this);
+      startSucceeded = DiagnosticLog.startRecording(this);
       recorder = DiagnosticLog.currentRecorder();
-      require(started && recorder != null, "fixture recorder did not start");
+      require(startSucceeded && recorder != null, "fixture recorder did not start");
     }
 
     void stop() {
       require(
           recorder != null && DiagnosticLog.stopRecording(this, recorder), "fixture stop failed");
+      joined = true;
+      stoppedCleanly = true;
       require(DiagnosticLog.currentRecorder() == null, "fixture recorder still active after stop");
+    }
+
+    boolean joinRecorder() {
+      if (!joined) {
+        stoppedCleanly = recorder.awaitStop();
+        joined = true;
+      }
+      return stoppedCleanly;
     }
 
     @Override
     public void close() throws IOException {
-      if (recorder != null && DiagnosticLog.currentRecorder() == recorder) stop();
-      require(
-          DiagnosticLog.currentRecorder() == null, "fixture recorder still active during cleanup");
       try {
-        for (File file : List.of(current, previous, folder, root)) {
-          Files.deleteIfExists(file.toPath());
+        if (!recoveryAttempted && recorder != null && DiagnosticLog.currentRecorder() == recorder) {
+          stop();
         }
-        filesRemoved = true;
-      } finally {
-        prefsRemoved = super.deleteSharedPreferences(prefsName);
+        require(
+            DiagnosticLog.currentRecorder() == null && (!startSucceeded || recorder != null),
+            "fixture recorder not confirmed stopped during cleanup");
+        if (recorder != null) joinRecorder();
+        try {
+          for (File file : List.of(current, previous, folder, root)) {
+            Files.deleteIfExists(file.toPath());
+          }
+          filesRemoved = true;
+        } catch (IOException | RuntimeException failure) {
+          try {
+            removePreferences();
+          } catch (RuntimeException | AssertionError prefsFailure) {
+            failure.addSuppressed(prefsFailure);
+          }
+          throw failure;
+        }
+        removePreferences();
+      } catch (IOException | RuntimeException | AssertionError failure) {
+        cleanupFailure = failure;
+        throw failure;
       }
+    }
+
+    private void removePreferences() {
+      prefsRemoved = super.deleteSharedPreferences(prefsName);
       require(prefsRemoved, "could not remove fixture preferences");
     }
   }
