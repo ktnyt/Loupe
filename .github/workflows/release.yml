@@ -83,12 +83,37 @@ jobs:
           python3 scripts/deploy-apk.py --sdk "$ANDROID_HOME" inspect \
             --apk app/build/outputs/apk/debug/app-debug.apk --certificate "$fingerprint" --require-no-shizuku
 
-      - name: Android instrumentation before camera on a disposable emulator
+      - name: DIAGNOSTIC ONLY bounded saved-photo identity probe
         timeout-minutes: 30
+        env:
+          PROBE_HEAD_REF: ${{ github.head_ref }}
+          PROBE_IS_DRAFT: ${{ github.event.pull_request.draft }}
         run: |
+          if [[ "$GITHUB_EVENT_NAME" != pull_request || "$PROBE_HEAD_REF" != '264/saved-ref-recurrence' ||
+                "$PROBE_IS_DRAFT" != true ]]; then
+            echo 'DIAGNOSTIC_ONLY_INCONCLUSIVE: expected the dedicated diagnostic pull request.'
+            exit 1
+          fi
           sudo chmod a+rw /dev/kvm
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'emulator' 'system-images;android-35;google_apis;x86_64'
-          bash tests/ci-android-instrumentation.sh before-camera
+          for sequence in 1 2 3 4 5; do
+            printf 'DIAGNOSTIC_ONLY_SEQUENCE: %s/5\n' "$sequence"
+            status=0
+            result=$(bash tests/ci-android-instrumentation.sh ledger-diagnostic 2>&1) || status=$?
+            printf '%s\n' "$result"
+            if [[ "$status" == 2 ]] &&
+               grep -Fx 'DIAGNOSTIC_ONLY_SEQUENCE_PASS: migration, confidence and ledger all reported PASS.' <<< "$result" >/dev/null; then
+              continue
+            fi
+            if [[ "$status" == 3 ]] &&
+               grep -E '^DIAGNOSTIC_ONLY_IDENTITY_MISMATCH: branch=' <<< "$result" >/dev/null; then
+              exit 3
+            fi
+            echo 'DIAGNOSTIC_ONLY_INCONCLUSIVE: stopped before completing the bounded experiment.'
+            exit 1
+          done
+          echo 'DIAGNOSTIC_ONLY_NO_REPRODUCTION: all five ordered synthetic sequences passed.'
+          exit 2
 
       - name: Android instrumentation from camera through RAW on a disposable emulator
         timeout-minutes: 30

@@ -7,6 +7,7 @@ import android.system.ErrnoException;
 import android.system.Os;
 import android.system.OsConstants;
 import android.system.StructStat;
+import android.util.Log;
 import java.io.*;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
@@ -152,10 +153,20 @@ public final class CameraPhotoImporter {
       if (size != content.storedBytes || !sha.toString().equals(content.storedSha))
         throw savedPhotoChanged(content, clearSdOnMismatch);
       try (ParcelFileDescriptor current = resolver.openFileDescriptor(uri, "r")) {
-        if (current == null
-            || !sameFile(opened, Os.fstat(current.getFileDescriptor()))
-            || !sameFile(opened, Os.fstat(file.getFileDescriptor())))
+        if (current == null) {
+          Log.e("LedgerIdentityProbe", "branch=reopen-null");
           throw savedPhotoChanged(content, clearSdOnMismatch);
+        }
+        StructStat reopened = Os.fstat(current.getFileDescriptor());
+        if (!sameFile(opened, reopened)) {
+          logIdentityMismatch("reopened-stat", opened, reopened);
+          throw savedPhotoChanged(content, clearSdOnMismatch);
+        }
+        StructStat held = Os.fstat(file.getFileDescriptor());
+        if (!sameFile(opened, held)) {
+          logIdentityMismatch("held-stat", opened, held);
+          throw savedPhotoChanged(content, clearSdOnMismatch);
+        }
       }
       if (!before.equals(CameraPhotoPublisher.savedRevision(context, uri, cancelled)))
         throw savedPhotoChanged(content, clearSdOnMismatch);
@@ -186,6 +197,26 @@ public final class CameraPhotoImporter {
         && before.st_size == after.st_size
         && before.st_mtime == after.st_mtime
         && before.st_ctime == after.st_ctime;
+  }
+
+  // Probe build only. Report differences without writing file identities or contents.
+  private static void logIdentityMismatch(String branch, StructStat before, StructStat after) {
+    Log.e(
+        "LedgerIdentityProbe",
+        "branch="
+            + branch
+            + " regularChanged="
+            + (OsConstants.S_ISREG(before.st_mode) != OsConstants.S_ISREG(after.st_mode))
+            + " devChanged="
+            + (before.st_dev != after.st_dev)
+            + " inodeChanged="
+            + (before.st_ino != after.st_ino)
+            + " sizeChanged="
+            + (before.st_size != after.st_size)
+            + " mtimeChanged="
+            + (before.st_mtime != after.st_mtime)
+            + " ctimeChanged="
+            + (before.st_ctime != after.st_ctime));
   }
 
   public Result importPhoto(
