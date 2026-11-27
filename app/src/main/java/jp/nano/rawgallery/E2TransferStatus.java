@@ -7,8 +7,18 @@ import java.util.List;
 
 /** In-process observations of user-facing transfers. The backup job persists its own counters. */
 final class E2TransferStatus implements AutoCloseable {
-  enum Kind { MANUAL_UPLOAD, CATALOG_DOWNLOAD, ORIGINAL_DOWNLOAD }
-  enum State { RUNNING, COMPLETE, FAILED, CANCELLED }
+  enum Kind {
+    MANUAL_UPLOAD,
+    CATALOG_DOWNLOAD,
+    ORIGINAL_DOWNLOAD
+  }
+
+  enum State {
+    RUNNING,
+    COMPLETE,
+    FAILED,
+    CANCELLED
+  }
 
   private static final List<E2TransferStatus> active = new ArrayList<>();
   private static final EnumMap<Kind, E2TransferStatus> last = new EnumMap<>(Kind.class);
@@ -21,8 +31,14 @@ final class E2TransferStatus implements AutoCloseable {
   private int count = -1;
   private boolean publishing, originalSaved;
 
-  record Snapshot(State state, long bytes, long totalBytes, int count,
-      boolean publishing, boolean originalSaved, double bytesPerSecond) {}
+  record Snapshot(
+      State state,
+      long bytes,
+      long totalBytes,
+      int count,
+      boolean publishing,
+      boolean originalSaved,
+      double bytesPerSecond) {}
 
   private E2TransferStatus(Kind kind, String bucket, long totalBytes) {
     this.kind = kind;
@@ -48,8 +64,10 @@ final class E2TransferStatus implements AutoCloseable {
     long received = bytes;
     long now = SystemClock.elapsedRealtime();
     long elapsed = now - startedAt;
-    double rate = startedAt > 0 && elapsed >= 1000 && now - lastBytesAt <= 5000
-        ? 1000.0 * received / elapsed : 0;
+    double rate =
+        startedAt > 0 && elapsed >= 1000 && now - lastBytesAt <= 5000
+            ? 1000.0 * received / elapsed
+            : 0;
     return new Snapshot(state, received, totalBytes, count, publishing, originalSaved, rate);
   }
 
@@ -92,7 +110,8 @@ final class E2TransferStatus implements AutoCloseable {
     }
   }
 
-  @Override public void close() {
+  @Override
+  public void close() {
     finish(Thread.currentThread().isInterrupted() ? State.CANCELLED : State.FAILED, -1);
   }
 }

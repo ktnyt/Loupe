@@ -6,9 +6,9 @@ import java.io.*;
 import java.util.*;
 
 /**
- * Prepares all share copies before any recipient is opened (current-design.md P4).
- * Originals and durable previews are never cleanup targets. Failure removes this
- * attempt's copies, but does not roll back expired-cache cleanup or original retrieval.
+ * Prepares all share copies before any recipient is opened (current-design.md P4). Originals and
+ * durable previews are never cleanup targets. Failure removes this attempt's copies, but does not
+ * roll back expired-cache cleanup or original retrieval.
  */
 final class SharePreparation {
   private static final long LIMIT = ShareCapacity.LIMIT;
@@ -22,9 +22,9 @@ final class SharePreparation {
   static final class Result {
     final List<File> files;
     final String mimeType;
-    final Map<String,Long> jpegSizes;
+    final Map<String, Long> jpegSizes;
 
-    private Result(List<File> files, String mimeType, Map<String,Long> jpegSizes) {
+    private Result(List<File> files, String mimeType, Map<String, Long> jpegSizes) {
       this.files = List.copyOf(files);
       this.mimeType = mimeType;
       this.jpegSizes = Map.copyOf(jpegSizes);
@@ -46,21 +46,20 @@ final class SharePreparation {
   }
 
   /**
-   * Requires a nonempty, fixed selection. Returns ordered files only after all copies
-   * fit the 512 MiB per-share limit. Retained recipient copies use a separate lifetime.
-   * Exceptions (including interruption) return
-   * no partial result and attempt to delete every copy created by this call.
+   * Requires a nonempty, fixed selection. Returns ordered files only after all copies fit the 512
+   * MiB per-share limit. Retained recipient copies use a separate lifetime. Exceptions (including
+   * interruption) return no partial result and attempt to delete every copy created by this call.
    */
   Result prepare(List<PhotoRepository.Photo> selection, boolean raw) throws Exception {
     List<File> prepared = new ArrayList<>();
-    Map<String,Long> jpegSizes=new HashMap<>();
+    Map<String, Long> jpegSizes = new HashMap<>();
     try {
       if (selection.isEmpty()) throw new IOException("共有する写真がありません");
-      ShareCapacity.Result known=ShareCapacity.assess(selection, raw, Map.of(), false);
-      if (known.state == ShareCapacity.State.OVER) throw new CapacityException(known.bytes, Map.of());
+      ShareCapacity.Result known = ShareCapacity.assess(selection, raw, Map.of(), false);
+      if (known.state == ShareCapacity.State.OVER)
+        throw new CapacityException(known.bytes, Map.of());
       Set<String> types = new HashSet<>();
-      if (!directory.isDirectory() && !directory.mkdirs())
-        throw new IOException("共有用の空き領域を作れません");
+      if (!directory.isDirectory() && !directory.mkdirs()) throw new IOException("共有用の空き領域を作れません");
       File[] old = directory.listFiles();
       long total = 0;
       if (old != null)
@@ -75,14 +74,20 @@ final class SharePreparation {
         writer.write(photo, raw, file);
         types.add(RawFormats.mime("file." + extension));
         if (file.length() <= 0) throw new IOException("共有用ファイルを準備できませんでした");
-        if (!raw) jpegSizes.put(ShareCapacity.key(photo),file.length());
-        if (file.length() > LIMIT - total) throw new CapacityException(
-            total>Long.MAX_VALUE-file.length()?Long.MAX_VALUE:total+file.length(),jpegSizes);
+        if (!raw) jpegSizes.put(ShareCapacity.key(photo), file.length());
+        if (file.length() > LIMIT - total)
+          throw new CapacityException(
+              total > Long.MAX_VALUE - file.length() ? Long.MAX_VALUE : total + file.length(),
+              jpegSizes);
         total += file.length();
       }
       if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
-      return new Result(prepared, types.size() == 1 ? types.iterator().next()
-          : types.contains("application/octet-stream") ? "*/*" : "image/*", jpegSizes);
+      return new Result(
+          prepared,
+          types.size() == 1
+              ? types.iterator().next()
+              : types.contains("application/octet-stream") ? "*/*" : "image/*",
+          jpegSizes);
     } catch (Exception e) {
       for (File file : prepared) file.delete();
       throw e;
@@ -91,16 +96,18 @@ final class SharePreparation {
 
   static final class CapacityException extends IOException {
     final long bytes;
-    final Map<String,Long> jpegSizes;
-    CapacityException(long bytes,Map<String,Long> jpegSizes) {
+    final Map<String, Long> jpegSizes;
+
+    CapacityException(long bytes, Map<String, Long> jpegSizes) {
       super("1回の共有は512 MiBまでです。写真を減らしてください。");
-      this.bytes=bytes;this.jpegSizes=Map.copyOf(jpegSizes);
+      this.bytes = bytes;
+      this.jpegSizes = Map.copyOf(jpegSizes);
     }
   }
 
   /** Exact local RAW export size; never retrieves cloud originals on a selection change. */
-  static long measureJpeg(Context context, PhotoRepository repository,
-      PhotoRepository.Photo photo) throws Exception {
+  static long measureJpeg(Context context, PhotoRepository repository, PhotoRepository.Photo photo)
+      throws Exception {
     if (photo.isJpeg()) return photo.size;
     if (!OriginalCache.supportsSize(photo.size)) throw new IOException("オリジナルの一時保存上限は512 MiBです");
     if (photo.isArchived()) throw new IOException("共有の準備時に容量を確認します");
@@ -110,7 +117,9 @@ final class SharePreparation {
       writePreview(preview, scratch);
       if (scratch.length() <= 0) throw new IOException("JPEGのサイズを確認できませんでした");
       return scratch.length();
-    } finally { scratch.delete(); }
+    } finally {
+      scratch.delete();
+    }
   }
 
   private static void writeCopy(
@@ -135,7 +144,7 @@ final class SharePreparation {
   private static void writePreview(PhotoRepository.Preview preview, File destination)
       throws IOException {
     try (InputStream in = new FileInputStream(preview.file);
-          OutputStream out = new FileOutputStream(destination)) {
+        OutputStream out = new FileOutputStream(destination)) {
       copy(in, out);
     }
     ExifInterface exif = new ExifInterface(destination);

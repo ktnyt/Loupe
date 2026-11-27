@@ -27,7 +27,8 @@ public final class SharePreparationTest {
       check(result.mimeType.equals("image/*"), "mixed raw MIME");
       for (int i = 0; i < result.files.size(); i++) {
         File file = result.files.get(i);
-        check(Files.readString(file.toPath()).equals(photos.get(i).name), "ordered complete copies");
+        check(
+            Files.readString(file.toPath()).equals(photos.get(i).name), "ordered complete copies");
         check(file.getName().matches("[a-f0-9-]{36}\\.(orf|dng|jpg)"), "provider-compatible name");
       }
       check(result.files.get(0).getName().endsWith(".orf"), "ORF extension");
@@ -40,22 +41,36 @@ public final class SharePreparationTest {
       }
       for (String name : List.of("one.ORF", "one.dng", "one.jpg")) {
         SharePreparation.Result single = preparation.prepare(List.of(photo(name)), true);
-        String expected = name.endsWith("ORF") ? "image/x-olympus-orf"
-            : name.endsWith("dng") ? "image/x-adobe-dng" : "image/jpeg";
+        String expected =
+            name.endsWith("ORF")
+                ? "image/x-olympus-orf"
+                : name.endsWith("dng") ? "image/x-adobe-dng" : "image/jpeg";
         check(single.mimeType.equals(expected), "single format MIME");
       }
       for (String extension : RawFormats.RAW_EXTENSIONS.split("\\|")) {
-        SharePreparation.Result single = preparation.prepare(List.of(photo("one." + extension)), true);
-        check(single.files.get(0).getName().endsWith("." + extension), "original extension " + extension);
-        check(single.mimeType.equals(RawFormats.mime("one." + extension)), "original MIME " + extension);
+        SharePreparation.Result single =
+            preparation.prepare(List.of(photo("one." + extension)), true);
+        check(
+            single.files.get(0).getName().endsWith("." + extension),
+            "original extension " + extension);
+        check(
+            single.mimeType.equals(RawFormats.mime("one." + extension)),
+            "original MIME " + extension);
       }
-      check(preparation.prepare(List.of(photo("one.iiq"), photo("two.cr3")), true)
-          .mimeType.equals("*/*"), "mixed binary and image MIME");
+      check(
+          preparation
+              .prepare(List.of(photo("one.iiq"), photo("two.cr3")), true)
+              .mimeType
+              .equals("*/*"),
+          "mixed binary and image MIME");
       SharePreparation.Result jpeg =
-          new SharePreparation(new File(root, "jpeg"), (photo, raw, destination) -> {
-            check(!raw, "JPEG format passed to copy boundary");
-            Files.writeString(destination.toPath(), "preview");
-          }).prepare(photos, false);
+          new SharePreparation(
+                  new File(root, "jpeg"),
+                  (photo, raw, destination) -> {
+                    check(!raw, "JPEG format passed to copy boundary");
+                    Files.writeString(destination.toPath(), "preview");
+                  })
+              .prepare(photos, false);
       check(jpeg.mimeType.equals("image/jpeg"), "JPEG MIME");
       check(jpeg.files.stream().allMatch(f -> f.getName().endsWith(".jpg")), "JPEG extensions");
 
@@ -65,59 +80,95 @@ public final class SharePreparationTest {
       Files.writeString(previous.toPath(), "previous share");
       int[] attempts = {0};
       expectFailure(
-          new SharePreparation(failure, (photo, raw, destination) -> {
-            Files.writeString(destination.toPath(), "partial");
-            if (++attempts[0] == 2) throw new IOException("source unavailable");
-          }), photos);
+          new SharePreparation(
+              failure,
+              (photo, raw, destination) -> {
+                Files.writeString(destination.toPath(), "partial");
+                if (++attempts[0] == 2) throw new IOException("source unavailable");
+              }),
+          photos);
       check(attempts[0] == 2, "no remaining source fetched after failure");
-      check(Arrays.equals(failure.list(), new String[] {"previous.jpg"}), "only this attempt removed");
+      check(
+          Arrays.equals(failure.list(), new String[] {"previous.jpg"}),
+          "only this attempt removed");
       check(Files.readString(previous.toPath()).equals("previous share"), "prior copy unchanged");
 
       File capacity = new File(root, "capacity");
-      expectFailure(new SharePreparation(capacity, (photo, raw, destination) -> {
-        try (RandomAccessFile file = new RandomAccessFile(destination, "rw")) {
-          file.setLength(LIMIT + 1); // Sparse file: no 512 MiB buffer allocation.
-        }
-      }), List.of(photo("large.dng")));
+      expectFailure(
+          new SharePreparation(
+              capacity,
+              (photo, raw, destination) -> {
+                try (RandomAccessFile file = new RandomAccessFile(destination, "rw")) {
+                  file.setLength(LIMIT + 1); // Sparse file: no 512 MiB buffer allocation.
+                }
+              }),
+          List.of(photo("large.dng")));
       check(capacity.list().length == 0, "oversized result removed");
       File existing = new File(capacity, "existing.jpg");
       try (RandomAccessFile file = new RandomAccessFile(existing, "rw")) {
         file.setLength(LIMIT);
       }
-      SharePreparation.Result besideExisting = new SharePreparation(capacity, (photo, raw, destination) -> {
-        Files.write(destination.toPath(), new byte[] {1});
-      }).prepare(List.of(photo("one.jpg")), true);
-      check(capacity.list().length == 2 && existing.length() == LIMIT,
+      SharePreparation.Result besideExisting =
+          new SharePreparation(
+                  capacity,
+                  (photo, raw, destination) -> {
+                    Files.write(destination.toPath(), new byte[] {1});
+                  })
+              .prepare(List.of(photo("one.jpg")), true);
+      check(
+          capacity.list().length == 2 && existing.length() == LIMIT,
           "retained recipient copies do not consume this share budget");
-      check(besideExisting.files.get(0).length() == 1, "new share succeeds beside full retained cache");
-      SharePreparation.Result exact = new SharePreparation(new File(root,"exact"), (photo, raw, destination) -> {
-        try (RandomAccessFile f = new RandomAccessFile(destination,"rw")) { f.setLength(LIMIT); }
-      }).prepare(List.of(photo("one.jpg")),true);
+      check(
+          besideExisting.files.get(0).length() == 1,
+          "new share succeeds beside full retained cache");
+      SharePreparation.Result exact =
+          new SharePreparation(
+                  new File(root, "exact"),
+                  (photo, raw, destination) -> {
+                    try (RandomAccessFile f = new RandomAccessFile(destination, "rw")) {
+                      f.setLength(LIMIT);
+                    }
+                  })
+              .prepare(List.of(photo("one.jpg")), true);
       check(exact.files.get(0).length() == LIMIT, "exact per-share limit succeeds");
-      int[] preflightCopies={0};
-      expectFailure(new SharePreparation(new File(root,"early"), (photo,raw,destination)->{
-        preflightCopies[0]++; Files.write(destination.toPath(),new byte[]{1});
-      }), List.of(new PhotoRepository.Photo(null,"too-large.jpg","test/",LIMIT+1,0,0)));
-      check(preflightCopies[0]==0,"known oversized selection rejected before retrieval");
-      check(existing.setLastModified(System.currentTimeMillis() - 25L * 60 * 60 * 1000), "age fixture");
-      new SharePreparation(capacity, (photo, raw, destination) -> {
-        Files.write(destination.toPath(), new byte[] {1});
-      }).prepare(List.of(photo("one.jpg")), true);
+      int[] preflightCopies = {0};
+      expectFailure(
+          new SharePreparation(
+              new File(root, "early"),
+              (photo, raw, destination) -> {
+                preflightCopies[0]++;
+                Files.write(destination.toPath(), new byte[] {1});
+              }),
+          List.of(new PhotoRepository.Photo(null, "too-large.jpg", "test/", LIMIT + 1, 0, 0)));
+      check(preflightCopies[0] == 0, "known oversized selection rejected before retrieval");
+      check(
+          existing.setLastModified(System.currentTimeMillis() - 25L * 60 * 60 * 1000),
+          "age fixture");
+      new SharePreparation(
+              capacity,
+              (photo, raw, destination) -> {
+                Files.write(destination.toPath(), new byte[] {1});
+              })
+          .prepare(List.of(photo("one.jpg")), true);
       check(!existing.exists(), "expired cache removed before capacity check");
 
       File interrupted = new File(root, "interrupted");
       try {
-        new SharePreparation(interrupted, (photo, raw, destination) -> {
-          Files.writeString(destination.toPath(), "first complete");
-          Thread.currentThread().interrupt();
-        }).prepare(photos, true);
+        new SharePreparation(
+                interrupted,
+                (photo, raw, destination) -> {
+                  Files.writeString(destination.toPath(), "first complete");
+                  Thread.currentThread().interrupt();
+                })
+            .prepare(photos, true);
         throw new AssertionError("interrupt ignored");
       } catch (InterruptedException expected) {
         check(interrupted.list().length == 0, "completed copy removed on interruption");
       } finally {
         Thread.interrupted();
       }
-      System.out.println("Share preparation: ordering, formats, partial failure, capacity, expiry and interruption passed");
+      System.out.println(
+          "Share preparation: ordering, formats, partial failure, capacity, expiry and interruption passed");
     } finally {
       try (var paths = Files.walk(root.toPath())) {
         for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path);
@@ -129,8 +180,8 @@ public final class SharePreparationTest {
     return new PhotoRepository.Photo(null, name, "test/", 1, 0, 0);
   }
 
-  private static void expectFailure(SharePreparation preparation, List<PhotoRepository.Photo> photos)
-      throws Exception {
+  private static void expectFailure(
+      SharePreparation preparation, List<PhotoRepository.Photo> photos) throws Exception {
     try {
       preparation.prepare(photos, true);
       throw new AssertionError("partial result returned");

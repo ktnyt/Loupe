@@ -1,33 +1,33 @@
 package jp.nano.rawgallery;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.StringReader;
-import org.xml.sax.InputSource;
-import org.xml.sax.SAXException;
-import org.xml.sax.SAXParseException;
-import org.xml.sax.ErrorHandler;
-import java.util.ArrayList;
-import java.util.List;
-import javax.xml.parsers.DocumentBuilderFactory;
-import org.w3c.dom.Element;
-import org.w3c.dom.Node;
 import java.io.OutputStream;
+import java.io.StringReader;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import javax.net.ssl.HttpsURLConnection;
+import javax.xml.parsers.DocumentBuilderFactory;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.xml.sax.ErrorHandler;
+import org.xml.sax.InputSource;
+import org.xml.sax.SAXException;
+import org.xml.sax.SAXParseException;
 
 /**
- * Short-lived JPEG transport for Nano Banana. Only the dedicated UUID prefix is reachable.
- * The caller persists the object key before upload and retains it until delete succeeds.
+ * Short-lived JPEG transport for Nano Banana. Only the dedicated UUID prefix is reachable. The
+ * caller persists the object key before upload and retains it until delete succeeds.
  */
 final class NanoBananaE2 {
   private static final String HEADERS = "host;x-amz-content-sha256;x-amz-date";
@@ -39,9 +39,12 @@ final class NanoBananaE2 {
   private final String bucket, keyId, secret;
 
   NanoBananaE2(String bucket, String keyId, String secret) {
-    if (bucket == null || !bucket.matches("[a-z0-9][a-z0-9-]{1,61}[a-z0-9]")
-        || keyId == null || !keyId.matches("[A-Za-z0-9]{20}")
-        || secret == null || !secret.matches("[A-Za-z0-9+/=_-]{40}"))
+    if (bucket == null
+        || !bucket.matches("[a-z0-9][a-z0-9-]{1,61}[a-z0-9]")
+        || keyId == null
+        || !keyId.matches("[A-Za-z0-9]{20}")
+        || secret == null
+        || !secret.matches("[A-Za-z0-9+/=_-]{40}"))
       throw new IllegalArgumentException("IDrive e2の設定が不正です");
     this.bucket = bucket;
     this.keyId = keyId;
@@ -51,6 +54,7 @@ final class NanoBananaE2 {
   /** A confirmed client rejection did not create an object; no cleanup is required. */
   static final class UploadRejected extends IOException {
     final int statusCode;
+
     UploadRejected(int statusCode) {
       super("一時画像のアップロードが拒否されました (HTTP " + statusCode + ")");
       this.statusCode = statusCode;
@@ -68,7 +72,9 @@ final class NanoBananaE2 {
       connection.setRequestProperty("Content-Type", "image/jpeg");
       connection.setDoOutput(true);
       connection.setFixedLengthStreamingMode(jpeg.length);
-      try (OutputStream out = connection.getOutputStream()) { out.write(jpeg); }
+      try (OutputStream out = connection.getOutputStream()) {
+        out.write(jpeg);
+      }
       int code = connection.getResponseCode();
       if (code >= 400 && code < 500 && code != 408) throw new UploadRejected(code);
       if (code != 200) throw new IOException();
@@ -86,11 +92,14 @@ final class NanoBananaE2 {
   /** A 30-minute URL pinned to a successful immutable version; never log or persist it. */
   String signedGet(String objectKey, String version) throws Exception {
     String path = path(objectKey);
-    if (version == null || "null".equals(version))
-      throw versioningRequired();
+    if (version == null || "null".equals(version)) throw versioningRequired();
     checkedVersion(version);
-    try { return presignGet(E2Endpoint.HOST, E2Endpoint.REGION, path, keyId, secret, Instant.now(), 1800, version); }
-    catch (Exception unavailable) { throw new IOException("一時画像の読み取りURLを作成できません"); }
+    try {
+      return presignGet(
+          E2Endpoint.HOST, E2Endpoint.REGION, path, keyId, secret, Instant.now(), 1800, version);
+    } catch (Exception unavailable) {
+      throw new IOException("一時画像の読み取りURLを作成できません");
+    }
   }
 
   /** Deletes only data versions carrying this attempt's independent, persisted owner token. */
@@ -110,9 +119,10 @@ final class NanoBananaE2 {
     for (String version : versions(objectKey)) deleteOwnedVersion(path, version, owner, false);
   }
 
-  private void deleteOwnedVersion(String path, String version, String owner, boolean known) throws Exception {
+  private void deleteOwnedVersion(String path, String version, String owner, boolean known)
+      throws Exception {
     Head value = head(path, version);
-    if(!value.missing && (!validOwner(value.owner) || known&&!owner.equals(value.owner)))
+    if (!value.missing && (!validOwner(value.owner) || known && !owner.equals(value.owner)))
       throw new IOException("記録した一時画像の所有情報が一致しないため削除を保留しました");
     if (!value.missing && owner.equals(value.owner)) {
       if (version == null || "null".equals(version)) throw versioningRequired();
@@ -123,8 +133,11 @@ final class NanoBananaE2 {
   private static final class Head {
     final boolean missing;
     final String version, owner;
+
     Head(boolean missing, String version, String owner) {
-      this.missing = missing; this.version = version; this.owner = owner;
+      this.missing = missing;
+      this.version = version;
+      this.owner = owner;
     }
   }
 
@@ -172,9 +185,10 @@ final class NanoBananaE2 {
       list = open("GET", "/" + bucket, query, EMPTY_SHA);
       if (list.getResponseCode() != 200) throw new IOException();
       byte[] body;
-      try (InputStream in = list.getInputStream(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+      try (InputStream in = list.getInputStream();
+          ByteArrayOutputStream out = new ByteArrayOutputStream()) {
         byte[] buffer = new byte[8192];
-        for (int count; (count = in.read(buffer)) != -1;) {
+        for (int count; (count = in.read(buffer)) != -1; ) {
           if (out.size() + count > 1024 * 1024) throw new IOException();
           out.write(buffer, 0, count);
         }
@@ -197,12 +211,24 @@ final class NanoBananaE2 {
     String xml = new String(body, StandardCharsets.UTF_8);
     if (xml.indexOf('\0') >= 0 || xml.contains("<!")) throw new IOException();
     javax.xml.parsers.DocumentBuilder parser = factory.newDocumentBuilder();
-    parser.setEntityResolver((publicId, systemId) -> { throw new SAXException("External XML is disabled"); });
-    parser.setErrorHandler(new ErrorHandler() {
-      public void warning(SAXParseException error) throws SAXException { throw error; }
-      public void error(SAXParseException error) throws SAXException { throw error; }
-      public void fatalError(SAXParseException error) throws SAXException { throw error; }
-    });
+    parser.setEntityResolver(
+        (publicId, systemId) -> {
+          throw new SAXException("External XML is disabled");
+        });
+    parser.setErrorHandler(
+        new ErrorHandler() {
+          public void warning(SAXParseException error) throws SAXException {
+            throw error;
+          }
+
+          public void error(SAXParseException error) throws SAXException {
+            throw error;
+          }
+
+          public void fatalError(SAXParseException error) throws SAXException {
+            throw error;
+          }
+        });
     Element root = parser.parse(new InputSource(new StringReader(xml))).getDocumentElement();
     if (!"ListVersionsResult".equals(root.getLocalName())
         || !objectKey.equals(child(root, "Prefix"))
@@ -233,24 +259,30 @@ final class NanoBananaE2 {
   }
 
   private String path(String objectKey) {
-    if (objectKey == null || !objectKey.matches(
-        "loupe-nano-temp/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.jpg"))
+    if (objectKey == null
+        || !objectKey.matches(
+            "loupe-nano-temp/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.jpg"))
       throw new IllegalArgumentException("一時画像の識別子が不正です");
     return "/" + bucket + "/" + objectKey;
   }
 
   private static boolean validOwner(String owner) {
-    return owner!=null&&owner.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
+    return owner != null
+        && owner.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
   }
+
   private static void checkOwner(String owner) {
-    if (!validOwner(owner))
-      throw new IllegalArgumentException("一時画像の所有識別子が不正です");
+    if (!validOwner(owner)) throw new IllegalArgumentException("一時画像の所有識別子が不正です");
   }
 
   private static void checkJpeg(byte[] jpeg) {
-    if (jpeg == null || jpeg.length < 4 || jpeg.length > JPEG_LIMIT
-        || (jpeg[0] & 255) != 255 || (jpeg[1] & 255) != 216
-        || (jpeg[jpeg.length - 2] & 255) != 255 || (jpeg[jpeg.length - 1] & 255) != 217)
+    if (jpeg == null
+        || jpeg.length < 4
+        || jpeg.length > JPEG_LIMIT
+        || (jpeg[0] & 255) != 255
+        || (jpeg[1] & 255) != 216
+        || (jpeg[jpeg.length - 2] & 255) != 255
+        || (jpeg[jpeg.length - 1] & 255) != 217)
       throw new IllegalArgumentException("一時画像は5 MiB以下のJPEGにしてください");
   }
 
@@ -258,19 +290,22 @@ final class NanoBananaE2 {
     if (version == null) return null; // No version header: unversioned object.
     if (version.isEmpty() || version.length() > 1024) throw new IOException("一時画像の版が不正です");
     for (int i = 0; i < version.length(); i++)
-      if (version.charAt(i) < 33 || version.charAt(i) > 126)
-        throw new IOException("一時画像の版が不正です");
+      if (version.charAt(i) < 33 || version.charAt(i) > 126) throw new IOException("一時画像の版が不正です");
     return version;
   }
 
   private HttpsURLConnection open(String method, String path, String query, String sha)
-      throws Exception { return open(method, path, query, sha, null); }
-
-  private HttpsURLConnection open(String method, String path, String query, String sha, String owner)
       throws Exception {
+    return open(method, path, query, sha, null);
+  }
+
+  private HttpsURLConnection open(
+      String method, String path, String query, String sha, String owner) throws Exception {
     String stamp = TIME.format(Instant.now());
-    HttpsURLConnection connection = (HttpsURLConnection) new URL("https://" + E2Endpoint.HOST + path
-        + (query.isEmpty() ? "" : "?" + query)).openConnection();
+    HttpsURLConnection connection =
+        (HttpsURLConnection)
+            new URL("https://" + E2Endpoint.HOST + path + (query.isEmpty() ? "" : "?" + query))
+                .openConnection();
     connection.setInstanceFollowRedirects(false);
     connection.setUseCaches(false);
     connection.setConnectTimeout(15000);
@@ -280,45 +315,119 @@ final class NanoBananaE2 {
     connection.setRequestProperty("x-amz-content-sha256", sha);
     connection.setRequestProperty("x-amz-date", stamp);
     if (owner != null) connection.setRequestProperty("x-amz-meta-loupe-nano-owner", owner);
-    connection.setRequestProperty("Authorization", authorization(
-        method, E2Endpoint.HOST, E2Endpoint.REGION, path, query, sha, stamp, keyId, secret, owner));
+    connection.setRequestProperty(
+        "Authorization",
+        authorization(
+            method,
+            E2Endpoint.HOST,
+            E2Endpoint.REGION,
+            path,
+            query,
+            sha,
+            stamp,
+            keyId,
+            secret,
+            owner));
     return connection;
   }
 
   // Pure Java signing helpers are also exercised with AWS's published fixed vectors.
-  static String authorization(String method, String host, String region, String path, String query,
-      String sha, String stamp, String keyId, String secret) throws Exception {
+  static String authorization(
+      String method,
+      String host,
+      String region,
+      String path,
+      String query,
+      String sha,
+      String stamp,
+      String keyId,
+      String secret)
+      throws Exception {
     return authorization(method, host, region, path, query, sha, stamp, keyId, secret, null);
   }
 
-  static String authorization(String method, String host, String region, String path, String query,
-      String sha, String stamp, String keyId, String secret, String owner) throws Exception {
+  static String authorization(
+      String method,
+      String host,
+      String region,
+      String path,
+      String query,
+      String sha,
+      String stamp,
+      String keyId,
+      String secret,
+      String owner)
+      throws Exception {
     String scope = stamp.substring(0, 8) + "/" + region + "/s3/aws4_request";
     String headers = HEADERS + (owner == null ? "" : ";x-amz-meta-loupe-nano-owner");
-    String canonical = method + "\n" + path + "\n" + query + "\nhost:" + host
-        + "\nx-amz-content-sha256:" + sha + "\nx-amz-date:" + stamp
-        + (owner == null ? "" : "\nx-amz-meta-loupe-nano-owner:" + owner) + "\n\n"
-        + headers + "\n" + sha;
-    return "AWS4-HMAC-SHA256 Credential=" + keyId + "/" + scope
-        + ",SignedHeaders=" + headers + ",Signature="
+    String canonical =
+        method
+            + "\n"
+            + path
+            + "\n"
+            + query
+            + "\nhost:"
+            + host
+            + "\nx-amz-content-sha256:"
+            + sha
+            + "\nx-amz-date:"
+            + stamp
+            + (owner == null ? "" : "\nx-amz-meta-loupe-nano-owner:" + owner)
+            + "\n\n"
+            + headers
+            + "\n"
+            + sha;
+    return "AWS4-HMAC-SHA256 Credential="
+        + keyId
+        + "/"
+        + scope
+        + ",SignedHeaders="
+        + headers
+        + ",Signature="
         + signature(canonical, stamp, region, secret);
   }
 
-  static String presignGet(String host, String region, String path, String keyId, String secret,
-      Instant instant, int seconds) throws Exception {
+  static String presignGet(
+      String host,
+      String region,
+      String path,
+      String keyId,
+      String secret,
+      Instant instant,
+      int seconds)
+      throws Exception {
     return presignGet(host, region, path, keyId, secret, instant, seconds, null);
   }
 
-  static String presignGet(String host, String region, String path, String keyId, String secret,
-      Instant instant, int seconds, String version) throws Exception {
+  static String presignGet(
+      String host,
+      String region,
+      String path,
+      String keyId,
+      String secret,
+      Instant instant,
+      int seconds,
+      String version)
+      throws Exception {
     String stamp = TIME.format(instant);
     String scope = stamp.substring(0, 8) + "/" + region + "/s3/aws4_request";
-    String query = "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=" + encode(keyId + "/" + scope)
-        + "&X-Amz-Date=" + stamp + "&X-Amz-Expires=" + seconds + "&X-Amz-SignedHeaders=host"
-        + (version == null ? "" : "&versionId=" + encode(version));
-    String canonical = "GET\n" + path + "\n" + query + "\nhost:" + host
-        + "\n\nhost\nUNSIGNED-PAYLOAD";
-    return "https://" + host + path + "?" + query + "&X-Amz-Signature="
+    String query =
+        "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential="
+            + encode(keyId + "/" + scope)
+            + "&X-Amz-Date="
+            + stamp
+            + "&X-Amz-Expires="
+            + seconds
+            + "&X-Amz-SignedHeaders=host"
+            + (version == null ? "" : "&versionId=" + encode(version));
+    String canonical =
+        "GET\n" + path + "\n" + query + "\nhost:" + host + "\n\nhost\nUNSIGNED-PAYLOAD";
+    return "https://"
+        + host
+        + path
+        + "?"
+        + query
+        + "&X-Amz-Signature="
         + signature(canonical, stamp, region, secret);
   }
 
@@ -339,14 +448,21 @@ final class NanoBananaE2 {
     String digits = "0123456789ABCDEF";
     for (byte item : bytes(value)) {
       int b = item & 255;
-      if (b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9'
-          || b == '-' || b == '_' || b == '.' || b == '~') encoded.append((char) b);
+      if (b >= 'a' && b <= 'z'
+          || b >= 'A' && b <= 'Z'
+          || b >= '0' && b <= '9'
+          || b == '-'
+          || b == '_'
+          || b == '.'
+          || b == '~') encoded.append((char) b);
       else encoded.append('%').append(digits.charAt(b >>> 4)).append(digits.charAt(b & 15));
     }
     return encoded.toString();
   }
 
-  private static byte[] bytes(String value) { return value.getBytes(StandardCharsets.UTF_8); }
+  private static byte[] bytes(String value) {
+    return value.getBytes(StandardCharsets.UTF_8);
+  }
 
   private static String hash(byte[] input) throws Exception {
     return hex(MessageDigest.getInstance("SHA-256").digest(input));

@@ -89,13 +89,14 @@ public final class ShareHistoryReceiver extends BroadcastReceiver {
 
   static void retryLater(Context context) {
     Context app = context.getApplicationContext();
-    WRITES.execute(() -> {
-      List<Handoff> pending;
-      synchronized (SESSION_LOCK) {
-        pending = new ArrayList<>(RETRIES.values());
-      }
-      for (Handoff handoff : pending) write(app, handoff);
-    });
+    WRITES.execute(
+        () -> {
+          List<Handoff> pending;
+          synchronized (SESSION_LOCK) {
+            pending = new ArrayList<>(RETRIES.values());
+          }
+          for (Handoff handoff : pending) write(app, handoff);
+        });
   }
 
   private static boolean expired(Session session, long now) {
@@ -108,8 +109,15 @@ public final class ShareHistoryReceiver extends BroadcastReceiver {
   }
 
   static PendingIntent callback(Context context, String session) {
-    Intent callback = new Intent(context, ShareHistoryReceiver.class).setAction(ACTION)
-        .setData(new Uri.Builder().scheme("loupe-share").authority("chosen").appendPath(session).build());
+    Intent callback =
+        new Intent(context, ShareHistoryReceiver.class)
+            .setAction(ACTION)
+            .setData(
+                new Uri.Builder()
+                    .scheme("loupe-share")
+                    .authority("chosen")
+                    .appendPath(session)
+                    .build());
     // Mutable is necessary for Android to append EXTRA_CHOSEN_COMPONENT. The explicit component,
     // action and session data are already fixed and cannot be replaced by ordinary fill-in extras.
     int flags = PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_CANCEL_CURRENT;
@@ -117,70 +125,95 @@ public final class ShareHistoryReceiver extends BroadcastReceiver {
     return PendingIntent.getBroadcast(context, 0, callback, flags);
   }
 
-  @Override public void onReceive(Context context, Intent intent) {
+  @Override
+  public void onReceive(Context context, Intent intent) {
     long handedOffAt = System.currentTimeMillis();
     if (intent == null || !ACTION.equals(intent.getAction())) return;
     Uri data = intent.getData();
-    if (data == null || !"loupe-share".equals(data.getScheme()) || !"chosen".equals(data.getAuthority())
+    if (data == null
+        || !"loupe-share".equals(data.getScheme())
+        || !"chosen".equals(data.getAuthority())
         || data.getPathSegments().size() != 1) return;
     ComponentName chosen;
     try {
       if (Build.VERSION.SDK_INT >= 35 && intent.hasExtra(Intent.EXTRA_CHOOSER_RESULT)) {
-        android.service.chooser.ChooserResult result = intent.getParcelableExtra(
-            Intent.EXTRA_CHOOSER_RESULT, android.service.chooser.ChooserResult.class);
-        if (result == null || result.getType() != android.service.chooser.ChooserResult.CHOOSER_RESULT_SELECTED_COMPONENT) return;
+        android.service.chooser.ChooserResult result =
+            intent.getParcelableExtra(
+                Intent.EXTRA_CHOOSER_RESULT, android.service.chooser.ChooserResult.class);
+        if (result == null
+            || result.getType()
+                != android.service.chooser.ChooserResult.CHOOSER_RESULT_SELECTED_COMPONENT) return;
         chosen = result.getSelectedComponent();
       } else {
-        chosen = Build.VERSION.SDK_INT >= 33
-            ? intent.getParcelableExtra(Intent.EXTRA_CHOSEN_COMPONENT, ComponentName.class)
-            : intent.getParcelableExtra(Intent.EXTRA_CHOSEN_COMPONENT);
+        chosen =
+            Build.VERSION.SDK_INT >= 33
+                ? intent.getParcelableExtra(Intent.EXTRA_CHOSEN_COMPONENT, ComponentName.class)
+                : intent.getParcelableExtra(Intent.EXTRA_CHOSEN_COMPONENT);
       }
-    } catch (RuntimeException malformed) { return; }
+    } catch (RuntimeException malformed) {
+      return;
+    }
     if (chosen == null || chosen.getPackageName().equals(context.getPackageName())) return;
     String session = data.getLastPathSegment();
     if (session == null || !session.matches("[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")) return;
     PendingResult pending = goAsync();
     Context app = context.getApplicationContext();
     ComponentName target = chosen;
-    WRITES.execute(() -> {
-      try { record(app, session, target, handedOffAt); }
-      finally { pending.finish(); }
-    });
+    WRITES.execute(
+        () -> {
+          try {
+            record(app, session, target, handedOffAt);
+          } finally {
+            pending.finish();
+          }
+        });
   }
 
   static void recordLater(Context context, String session, ComponentName target) {
     long handedOffAt = System.currentTimeMillis();
     Context app = context.getApplicationContext();
-    WRITES.execute(() -> {
-      if (session == null) failed(app);
-      else record(app, session, target, handedOffAt);
-    });
+    WRITES.execute(
+        () -> {
+          if (session == null) failed(app);
+          else record(app, session, target, handedOffAt);
+        });
   }
 
   static void cancelLater(Context context, String session) {
     if (session == null) return;
     Context app = context.getApplicationContext();
-    WRITES.execute(() -> {
-      Session cancelled;
-      synchronized (SESSION_LOCK) {
-        cancelled = RECENT.remove(session);
-      }
-      if (cancelled != null && !cancelled.fallbackKeys.isEmpty()) return;
-      try (ShareHistoryStore store = new ShareHistoryStore(app)) { store.cancel(session); }
-      catch (RuntimeException ignored) { /* Unconsumed sessions expire without becoming history. */ }
-    });
+    WRITES.execute(
+        () -> {
+          Session cancelled;
+          synchronized (SESSION_LOCK) {
+            cancelled = RECENT.remove(session);
+          }
+          if (cancelled != null && !cancelled.fallbackKeys.isEmpty()) return;
+          try (ShareHistoryStore store = new ShareHistoryStore(app)) {
+            store.cancel(session);
+          } catch (RuntimeException ignored) {
+            /* Unconsumed sessions expire without becoming history. */
+          }
+        });
   }
 
   static void failed(Context context) {
-    context.getSharedPreferences(PREFS, 0).edit()
-        .putBoolean("write_failed", true).putLong("failure_revision", System.nanoTime()).apply();
+    context
+        .getSharedPreferences(PREFS, 0)
+        .edit()
+        .putBoolean("write_failed", true)
+        .putLong("failure_revision", System.nanoTime())
+        .apply();
   }
 
-  private static void record(Context context, String sessionId, ComponentName target, long handedOffAt) {
+  private static void record(
+      Context context, String sessionId, ComponentName target, long handedOffAt) {
     String packageName = target.getPackageName();
     try {
       ShareHistoryStore.validateApp(packageName, packageName, handedOffAt);
-    } catch (IllegalArgumentException invalid) { return; }
+    } catch (IllegalArgumentException invalid) {
+      return;
+    }
     Session session;
     synchronized (SESSION_LOCK) {
       if (RETRIES.containsKey(sessionId)) return;
@@ -205,7 +238,11 @@ public final class ShareHistoryReceiver extends BroadcastReceiver {
       // A chooser callback can recreate the process, leaving only the durable session.
       // Report storage failure even when no in-memory retry can be recovered.
       failed(context);
-      DiagnosticLog.event("share.history.failed", request, "elapsedMs", android.os.SystemClock.elapsedRealtime() - started);
+      DiagnosticLog.event(
+          "share.history.failed",
+          request,
+          "elapsedMs",
+          android.os.SystemClock.elapsedRealtime() - started);
       return;
     }
 
@@ -217,25 +254,39 @@ public final class ShareHistoryReceiver extends BroadcastReceiver {
       hasPending = !RETRIES.isEmpty();
     }
     if (saved) {
-      SharedPreferences.Editor status = context.getSharedPreferences(PREFS, 0)
-          .edit().putLong("revision", System.nanoTime());
+      SharedPreferences.Editor status =
+          context.getSharedPreferences(PREFS, 0).edit().putLong("revision", System.nanoTime());
       if (!hasPending) status.putBoolean("write_failed", false);
       status.apply();
-      DiagnosticLog.event("share.history.saved", request, "elapsedMs", android.os.SystemClock.elapsedRealtime() - started);
+      DiagnosticLog.event(
+          "share.history.saved",
+          request,
+          "elapsedMs",
+          android.os.SystemClock.elapsedRealtime() - started);
     } else {
-      DiagnosticLog.event("share.history.ignored", request, "elapsedMs", android.os.SystemClock.elapsedRealtime() - started);
+      DiagnosticLog.event(
+          "share.history.ignored",
+          request,
+          "elapsedMs",
+          android.os.SystemClock.elapsedRealtime() - started);
     }
   }
 
   private static boolean save(Context context, Handoff handoff) {
     long now = System.currentTimeMillis();
-    if (handoff.session != null && (expired(handoff.session, handoff.handedOffAt)
-        || expired(handoff.session, now))) return false;
+    if (handoff.session != null
+        && (expired(handoff.session, handoff.handedOffAt) || expired(handoff.session, now)))
+      return false;
     String label = handoff.packageName;
     try {
-      label = context.getPackageManager().getApplicationLabel(
-          context.getPackageManager().getApplicationInfo(handoff.packageName, 0)).toString();
-    } catch (android.content.pm.PackageManager.NameNotFoundException ignored) {}
+      label =
+          context
+              .getPackageManager()
+              .getApplicationLabel(
+                  context.getPackageManager().getApplicationInfo(handoff.packageName, 0))
+              .toString();
+    } catch (android.content.pm.PackageManager.NameNotFoundException ignored) {
+    }
     if (label.isBlank()) label = handoff.packageName;
     if (label.length() > 512) label = label.substring(0, 512);
     try (ShareHistoryStore store = new ShareHistoryStore(context)) {

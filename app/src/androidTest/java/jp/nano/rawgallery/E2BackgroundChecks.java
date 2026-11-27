@@ -45,8 +45,10 @@ final class E2BackgroundChecks {
   static String product(Instrumentation test, String mode, String token) throws Exception {
     Context c = test.getTargetContext();
     String user = new String(shell(test, "am get-current-user")).trim();
-    if (!user.matches("[1-9][0-9]{0,3}") || android.os.Process.myUid() / 100000 != Integer.parseInt(user)
-        || token == null || !token.matches("[0-9a-f]{12}")
+    if (!user.matches("[1-9][0-9]{0,3}")
+        || android.os.Process.myUid() / 100000 != Integer.parseInt(user)
+        || token == null
+        || !token.matches("[0-9a-f]{12}")
         || !("seed".equals(mode) ? FIXTURE_APP : APP).equals(c.getPackageName()))
       throw new AssertionError("Requires a separate foreground Android user and verification APK");
     String old = "loupe-cleanup-" + token + ".jpg";
@@ -72,24 +74,31 @@ final class E2BackgroundChecks {
       for (E2AutoSync.Candidate row : rows) {
         if (!(old.equals(row.photo().name) || recent.equals(row.photo().name)))
           throw new AssertionError("Unexpected photo in test user");
-        if (row.generation() <= 0 || !"Pictures/LoupeE2Verify/".equals(row.photo().folder)
+        if (row.generation() <= 0
+            || !"Pictures/LoupeE2Verify/".equals(row.photo().folder)
             || !MediaStore.VOLUME_EXTERNAL_PRIMARY.equals(row.volume()))
           throw new AssertionError("Fixture must have a current generation on primary storage");
         verifyFixtureBytes(c, row.photo().uri, productJpeg(c, old.equals(row.photo().name)));
       }
-      if (rows.stream().noneMatch(row -> old.equals(row.photo().name) && row.photo().taken > 0
-          && row.photo().taken < 1600000000000L))
+      if (rows.stream()
+          .noneMatch(
+              row ->
+                  old.equals(row.photo().name)
+                      && row.photo().taken > 0
+                      && row.photo().taken < 1600000000000L))
         throw new AssertionError("Old synthetic date was not indexed");
       List<String> config = sharedCloudCredentials(c);
-      Activity activity = test.startActivitySync(new Intent(c, E2SyncActivity.class)
-          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+      Activity activity =
+          test.startActivitySync(
+              new Intent(c, E2SyncActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       View root = activity.getWindow().getDecorView();
-      test.runOnMainSync(() -> {
-        ((EditText) find(root, "バケット", true)).setText(BUCKET);
-        ((EditText) find(root, "アクセスキー", true)).setText(config.get(1));
-        ((EditText) find(root, "シークレットキー", true)).setText(config.get(2));
-        find(root, "接続して保存", false).performClick();
-      });
+      test.runOnMainSync(
+          () -> {
+            ((EditText) find(root, "バケット", true)).setText(BUCKET);
+            ((EditText) find(root, "アクセスキー", true)).setText(config.get(1));
+            ((EditText) find(root, "シークレットキー", true)).setText(config.get(2));
+            find(root, "接続して保存", false).performClick();
+          });
       waitFor("e2 connect", 30000, () -> onUi(test, () -> find(root, "接続しました", false) != null));
       shell(test, "svc data disable");
       shell(test, "svc wifi disable");
@@ -97,11 +106,11 @@ final class E2BackgroundChecks {
       clickView(test, root, "開始", false);
       SystemClock.sleep(500);
       capture(test, c, "e2-product-backup.png");
-      waitFor("backup consent", 12000,
-          () -> clickPositive(test, "自動バックアップを開始しますか？"));
+      waitFor("backup consent", 12000, () -> clickPositive(test, "自動バックアップを開始しますか？"));
       waitFor("backup enabled", 10000, () -> E2SyncJob.enabled(c));
       clickView(test, root, "端末オリジナルの整理を有効にする", false);
-      waitFor("cleanup consent visible", 10000, () -> activeContains(test, APP, "端末オリジナルの整理を有効にしますか？"));
+      waitFor(
+          "cleanup consent visible", 10000, () -> activeContains(test, APP, "端末オリジナルの整理を有効にしますか？"));
       SystemClock.sleep(350);
       capture(test, c, "e2-product-consent.png");
       waitFor("cleanup consent", 10000, () -> clickPositive(test, "端末オリジナルの整理を有効にしますか？"));
@@ -111,18 +120,29 @@ final class E2BackgroundChecks {
       shell(test, "am start --user " + user + " -a android.settings.SETTINGS");
       waitFor("background", 12000, () -> !activePackage(test, APP));
       shell(test, "svc wifi enable");
-      waitFor("native background cleanup", 100000, () -> {
-        try (ArchiveStore store = E2Settings.openRecords(c)) {
-          return store.all().stream().anyMatch(r -> old.equals(r.optString("name")) && E2Cleanup.released(r));
-        } catch (Exception ignored) { return false; }
-      });
+      waitFor(
+          "native background cleanup",
+          100000,
+          () -> {
+            try (ArchiveStore store = E2Settings.openRecords(c)) {
+              return store.all().stream()
+                  .anyMatch(r -> old.equals(r.optString("name")) && E2Cleanup.released(r));
+            } catch (Exception ignored) {
+              return false;
+            }
+          });
       List<E2AutoSync.Candidate> left = E2AutoSync.candidates(c);
-      if (left.size() != 1 || !recent.equals(left.get(0).photo().name)
-          || new File(android.os.Environment.getExternalStoragePublicDirectory(
-              android.os.Environment.DIRECTORY_PICTURES), "LoupeE2Verify/" + old).exists())
+      if (left.size() != 1
+          || !recent.equals(left.get(0).photo().name)
+          || new File(
+                  android.os.Environment.getExternalStoragePublicDirectory(
+                      android.os.Environment.DIRECTORY_PICTURES),
+                  "LoupeE2Verify/" + old)
+              .exists())
         throw new AssertionError("Expected only the recent synthetic original to remain");
       verifyFixtureBytes(c, left.get(0).photo().uri, productJpeg(c, false));
-      if (activePackage(test, APP)) throw new AssertionError("The cleanup did not stay in the background");
+      if (activePackage(test, APP))
+        throw new AssertionError("The cleanup did not stay in the background");
       return "PASS e2-cleanup-product-sync: scheduled e2 cleanup removed only the old synthetic JPEG";
     }
     if ("restore".equals(mode) && E2Settings.configuredBucket(c).isEmpty()) {
@@ -131,70 +151,117 @@ final class E2BackgroundChecks {
         photos.settings.connect(BUCKET, config.get(1), config.get(2));
       }
     }
-    if (!BUCKET.equals(E2Settings.configuredBucket(c))) throw new AssertionError("Requires loupe-test");
+    if (!BUCKET.equals(E2Settings.configuredBucket(c)))
+      throw new AssertionError("Requires loupe-test");
     if ("offline".equals(mode)) {
       ConnectivityManager manager = c.getSystemService(ConnectivityManager.class);
-      if (manager.getActiveNetwork() != null || rows.size() != 1 || !recent.equals(rows.get(0).photo().name))
+      if (manager.getActiveNetwork() != null
+          || rows.size() != 1
+          || !recent.equals(rows.get(0).photo().name))
         throw new AssertionError("Expected offline and only the preserved synthetic original");
       PhotoRepository repository = new PhotoRepository(c);
-      PhotoRepository.Photo released = repository.scan("すべて").stream()
-          .filter(p -> old.equals(p.name) && E2Cleanup.archived(p.uri)).findFirst().orElseThrow();
+      PhotoRepository.Photo released =
+          repository.scan("すべて").stream()
+              .filter(p -> old.equals(p.name) && E2Cleanup.archived(p.uri))
+              .findFirst()
+              .orElseThrow();
       PhotoRepository.Preview preview = E2Cleanup.preview(c, released.uri);
       int edge = Math.max(preview.width, preview.height);
       if (edge != 256) throw new AssertionError("Unexpected persisted thumbnail dimensions");
-      Activity gallery = test.startActivitySync(new Intent(c, MainActivity.class)
-          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+      Activity gallery =
+          test.startActivitySync(
+              new Intent(c, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       View root = gallery.getWindow().getDecorView();
-      waitFor("photo tab", 15000, () -> onUi(test, () -> {
-        View navigation = root.findViewWithTag("library-navigation");
-        return navigation instanceof LibraryTabs tabs && tabs.isEnabled()
-            && (tabs.selectedDestination() == 0 || tabs.destinationView(0).performClick());
-      }));
-      waitFor("archived thumbnail bound to the gallery", 22000, () -> onUi(test, () -> {
-        View cell = findDescriptionPrefix(root, old);
-        return cell != null && (cell instanceof android.widget.ImageView image
-            ? image.getDrawable() instanceof android.graphics.drawable.BitmapDrawable
-                && "表示済み".contentEquals(String.valueOf(image.getStateDescription()))
-            : hasBoundImage(cell));
-      }));
+      waitFor(
+          "photo tab",
+          15000,
+          () ->
+              onUi(
+                  test,
+                  () -> {
+                    View navigation = root.findViewWithTag("library-navigation");
+                    return navigation instanceof LibraryTabs tabs
+                        && tabs.isEnabled()
+                        && (tabs.selectedDestination() == 0
+                            || tabs.destinationView(0).performClick());
+                  }));
+      waitFor(
+          "archived thumbnail bound to the gallery",
+          22000,
+          () ->
+              onUi(
+                  test,
+                  () -> {
+                    View cell = findDescriptionPrefix(root, old);
+                    return cell != null
+                        && (cell instanceof android.widget.ImageView image
+                            ? image.getDrawable()
+                                    instanceof android.graphics.drawable.BitmapDrawable
+                                && "表示済み".contentEquals(String.valueOf(image.getStateDescription()))
+                            : hasBoundImage(cell));
+                  }));
       SystemClock.sleep(400);
       capture(test, c, "e2-product-offline.png");
-      return "PASS e2-cleanup-product-offline: persisted thumbnail bound to the gallery; edge=" + edge;
+      return "PASS e2-cleanup-product-offline: persisted thumbnail bound to the gallery; edge="
+          + edge;
     }
     if (!"restore".equals(mode)) throw new AssertionError("Unknown product verification mode");
-    Activity activity = test.startActivitySync(new Intent(c, E2SyncActivity.class)
-        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    Activity activity =
+        test.startActivitySync(
+            new Intent(c, E2SyncActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     View root = activity.getWindow().getDecorView();
     clickView(test, root, "保存したオリジナルを更新", false);
     clickView(test, root, old + "を復元", true);
-    waitFor("Android save dialog", 25000, () -> {
-      AccessibilityNodeInfo picker = test.getUiAutomation().getRootInActiveWindow();
-      if (picker == null || !List.of("com.google.android.documentsui", "com.android.documentsui")
-          .contains(String.valueOf(picker.getPackageName()))) return false;
-      for (AccessibilityNodeInfo button : picker.findAccessibilityNodeInfosByViewId("android:id/button1")) {
-        if (!button.isEnabled()) continue;
-        android.graphics.Rect bounds = new android.graphics.Rect();
-        button.getBoundsInScreen(bounds);
-        if (bounds.isEmpty()) continue;
-        try {
-          shell(test, "input tap " + bounds.centerX() + " " + (bounds.top + bounds.height() / 4));
-          return true;
-        } catch (Exception ignored) { return false; }
-      }
-      return false;
-    });
+    waitFor(
+        "Android save dialog",
+        25000,
+        () -> {
+          AccessibilityNodeInfo picker = test.getUiAutomation().getRootInActiveWindow();
+          if (picker == null
+              || !List.of("com.google.android.documentsui", "com.android.documentsui")
+                  .contains(String.valueOf(picker.getPackageName()))) return false;
+          for (AccessibilityNodeInfo button :
+              picker.findAccessibilityNodeInfosByViewId("android:id/button1")) {
+            if (!button.isEnabled()) continue;
+            android.graphics.Rect bounds = new android.graphics.Rect();
+            button.getBoundsInScreen(bounds);
+            if (bounds.isEmpty()) continue;
+            try {
+              shell(
+                  test, "input tap " + bounds.centerX() + " " + (bounds.top + bounds.height() / 4));
+              return true;
+            } catch (Exception ignored) {
+              return false;
+            }
+          }
+          return false;
+        });
     waitFor("restore success", 25000, () -> activeContains(test, APP, "オリジナルを復元しました"));
-    String downloads = new String(shell(test, "content query --user " + user
-        + " --uri content://media/external_primary/downloads --projection _id:_display_name"));
-    java.util.regex.Matcher row = java.util.regex.Pattern.compile(
-        "_id=(\\d+), _display_name=" + java.util.regex.Pattern.quote(old) + "(?=\\s|$)").matcher(downloads);
+    String downloads =
+        new String(
+            shell(
+                test,
+                "content query --user "
+                    + user
+                    + " --uri content://media/external_primary/downloads --projection _id:_display_name"));
+    java.util.regex.Matcher row =
+        java.util.regex.Pattern.compile(
+                "_id=(\\d+), _display_name=" + java.util.regex.Pattern.quote(old) + "(?=\\s|$)")
+            .matcher(downloads);
     if (!row.find()) throw new AssertionError("Restored fixture is not in Downloads");
-    byte[] restored = shell(test, "content read --user " + user
-        + " --uri content://media/external_primary/downloads/" + row.group(1));
-    if (!Arrays.equals(productJpeg(c, true), restored)) throw new AssertionError("Restored JPEG differs from the original");
+    byte[] restored =
+        shell(
+            test,
+            "content read --user "
+                + user
+                + " --uri content://media/external_primary/downloads/"
+                + row.group(1));
+    if (!Arrays.equals(productJpeg(c, true), restored))
+      throw new AssertionError("Restored JPEG differs from the original");
     SystemClock.sleep(350);
     capture(test, c, "e2-product-restored.png");
-    String sha = E2Archive.readHash(new java.io.ByteArrayInputStream(restored), null, restored.length);
+    String sha =
+        E2Archive.readHash(new java.io.ByteArrayInputStream(restored), null, restored.length);
     return "PASS e2-cleanup-product-restore: bytes=" + restored.length + " sha256=" + sha;
   }
 
@@ -217,15 +284,18 @@ final class E2BackgroundChecks {
 
   private static boolean clickPositive(Instrumentation test, String title) {
     AccessibilityNodeInfo root = test.getUiAutomation().getRootInActiveWindow();
-    if (root == null || !APP.contentEquals(root.getPackageName()) || node(root, title) == null) return false;
-    for (AccessibilityNodeInfo button : root.findAccessibilityNodeInfosByViewId("android:id/button1"))
-      if (button.isEnabled() && button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true;
+    if (root == null || !APP.contentEquals(root.getPackageName()) || node(root, title) == null)
+      return false;
+    for (AccessibilityNodeInfo button :
+        root.findAccessibilityNodeInfosByViewId("android:id/button1"))
+      if (button.isEnabled() && button.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+        return true;
     return false;
   }
 
   private static View findDescriptionPrefix(View view, String label) {
-    if (view.getContentDescription() != null && view.getContentDescription().toString().startsWith(label))
-      return view;
+    if (view.getContentDescription() != null
+        && view.getContentDescription().toString().startsWith(label)) return view;
     if (view instanceof ViewGroup group)
       for (int i = 0; i < group.getChildCount(); i++) {
         View found = findDescriptionPrefix(group.getChildAt(i), label);
@@ -244,13 +314,14 @@ final class E2BackgroundChecks {
     return false;
   }
 
-  static String sharedCleanup(Instrumentation test, String mode, long oldGeneration,
-      long staleId, long matchId)
+  static String sharedCleanup(
+      Instrumentation test, String mode, long oldGeneration, long staleId, long matchId)
       throws Exception {
     Context context = test.getTargetContext();
     if (!"ranchu".equals(Build.HARDWARE)) throw new AssertionError("Requires an isolated emulator");
     if ("e2-cleanup-shared-seed".equals(mode)) return sharedSeed(context);
-    if (!APP.equals(context.getPackageName())) throw new AssertionError("Requires the verification APK");
+    if (!APP.equals(context.getPackageName()))
+      throw new AssertionError("Requires the verification APK");
     boolean live = "e2-cleanup-shared-live".equals(mode);
     List<String> cloudConfig = live ? sharedCloudCredentials(context) : List.of();
     if (staleId <= 0 || matchId <= 0 || staleId == matchId)
@@ -258,7 +329,8 @@ final class E2BackgroundChecks {
     List<E2AutoSync.Candidate> rows = E2AutoSync.candidates(context);
     E2AutoSync.Candidate changed = exactFixture(rows, SHARED_STALE, staleId);
     if ("e2-cleanup-shared-preview".equals(mode)) {
-      if (rows.size() != 1) throw new AssertionError("Expected only the preserved synthetic original");
+      if (rows.size() != 1)
+        throw new AssertionError("Expected only the preserved synthetic original");
       verifyFixtureBytes(context, changed.photo().uri);
       Bitmap preview = android.graphics.BitmapFactory.decodeFile(sharedPreview(context).getPath());
       if (preview == null) throw new AssertionError("Retained thumbnail is unreadable");
@@ -289,7 +361,8 @@ final class E2BackgroundChecks {
       } catch (SecurityException denied) {
         removed = 0;
       }
-      if (removed != 0) throw new AssertionError("Delete unexpectedly succeeded with read-only access");
+      if (removed != 0)
+        throw new AssertionError("Delete unexpectedly succeeded with read-only access");
       verifyFixtureBytes(context, exactUri);
       return "PASS e2-cleanup-shared-denied: read access alone preserved another app's JPEG";
     }
@@ -309,7 +382,8 @@ final class E2BackgroundChecks {
         remote = sharedCloudReference(photos, cloudConfig);
         verifyCloudReference(photos, remote);
       }
-      int stale = resolver.delete(changedUri, condition, new String[]{Long.toString(oldGeneration)});
+      int stale =
+          resolver.delete(changedUri, condition, new String[] {Long.toString(oldGeneration)});
       if (stale != 0) throw new AssertionError("A stale revision was deleted");
       verifyFixtureBytes(context, changedUri);
       removeSharedFixture(context, exactUri, condition, current);
@@ -319,15 +393,19 @@ final class E2BackgroundChecks {
         throw new AssertionError("Could not clear the temporary e2 connection");
     }
     verifyFixtureBytes(context, changedUri);
-    if (live) return "PASS e2-cleanup-shared-live: same loupe-test version read and matched "
-        + "before and after removing only the verified synthetic JPEG";
+    if (live)
+      return "PASS e2-cleanup-shared-live: same loupe-test version read and matched "
+          + "before and after removing only the verified synthetic JPEG";
     return "PASS e2-cleanup-shared-allowed: stale photo retained; matching photo removed after thumbnail";
   }
 
-  private static void removeSharedFixture(Context context, Uri exactUri, String condition,
-      String[] current) throws Exception {
-    File folder = new File(android.os.Environment.getExternalStoragePublicDirectory(
-        android.os.Environment.DIRECTORY_PICTURES), "LoupeE2Verify");
+  private static void removeSharedFixture(
+      Context context, Uri exactUri, String condition, String[] current) throws Exception {
+    File folder =
+        new File(
+            android.os.Environment.getExternalStoragePublicDirectory(
+                android.os.Environment.DIRECTORY_PICTURES),
+            "LoupeE2Verify");
     File exactFile = new File(folder, SHARED_MATCH);
     if (!Arrays.equals(jpeg(), Files.readAllBytes(exactFile.toPath())))
       throw new AssertionError("Unexpected backing file");
@@ -335,7 +413,8 @@ final class E2BackgroundChecks {
     CompactPreview.save(new PhotoRepository.Preview(exactFile, "JPEG", 160, 96, 1), thumbnail, 64);
     if (!thumbnail.isFile() || thumbnail.length() <= 0)
       throw new AssertionError("Durable thumbnail was not written before deletion");
-    if (context.getContentResolver().delete(exactUri, condition, current) != 1 || exactFile.exists())
+    if (context.getContentResolver().delete(exactUri, condition, current) != 1
+        || exactFile.exists())
       throw new AssertionError("A matching synthetic original did not disappear");
   }
 
@@ -384,24 +463,30 @@ final class E2BackgroundChecks {
     Uri source = original(context, "loupe-shared-before.jpg", expected);
     Uri exact = original(context, SHARED_MATCH, expected);
     fixtureGeneration(context.getContentResolver(), exact, SHARED_MATCH, FIXTURE_APP);
-    long generation = fixtureGeneration(context.getContentResolver(), source, "loupe-shared-before.jpg",
-        FIXTURE_APP);
+    long generation =
+        fixtureGeneration(
+            context.getContentResolver(), source, "loupe-shared-before.jpg", FIXTURE_APP);
     ContentValues rename = new ContentValues();
     rename.put(MediaStore.MediaColumns.DISPLAY_NAME, SHARED_STALE);
     if (context.getContentResolver().update(source, rename, null, null) != 1
-        || fixtureGeneration(context.getContentResolver(), source, SHARED_STALE, FIXTURE_APP) <= generation)
+        || fixtureGeneration(context.getContentResolver(), source, SHARED_STALE, FIXTURE_APP)
+            <= generation)
       throw new AssertionError("Expected a new generation after the fixture rename");
-    return "PASS e2-cleanup-shared-seed: stale_generation=" + generation + " stale_id="
-        + android.content.ContentUris.parseId(source) + " match_id="
+    return "PASS e2-cleanup-shared-seed: stale_generation="
+        + generation
+        + " stale_id="
+        + android.content.ContentUris.parseId(source)
+        + " match_id="
         + android.content.ContentUris.parseId(exact);
   }
 
-  private static E2AutoSync.Candidate exactFixture(List<E2AutoSync.Candidate> rows, String name,
-      long seededId) {
+  private static E2AutoSync.Candidate exactFixture(
+      List<E2AutoSync.Candidate> rows, String name, long seededId) {
     E2AutoSync.Candidate found = null;
     for (E2AutoSync.Candidate row : rows) {
       if (!name.equals(row.photo().name)) continue;
-      if (found != null || seededId != android.content.ContentUris.parseId(row.photo().uri)
+      if (found != null
+          || seededId != android.content.ContentUris.parseId(row.photo().uri)
           || !"Pictures/LoupeE2Verify/".equals(row.photo().folder)
           || !MediaStore.VOLUME_EXTERNAL_PRIMARY.equals(row.volume()))
         throw new AssertionError("Unexpected synthetic fixture identity");
@@ -415,7 +500,8 @@ final class E2BackgroundChecks {
     verifyFixtureBytes(context, uri, jpeg());
   }
 
-  private static void verifyFixtureBytes(Context context, Uri uri, byte[] expected) throws Exception {
+  private static void verifyFixtureBytes(Context context, Uri uri, byte[] expected)
+      throws Exception {
     try (InputStream input = context.getContentResolver().openInputStream(uri)) {
       if (input == null) throw new AssertionError("Synthetic original is missing");
       byte[] actual = new byte[expected.length];
@@ -431,7 +517,8 @@ final class E2BackgroundChecks {
 
   static String cleanupBoundary(Instrumentation test) throws Exception {
     Context context = test.getTargetContext();
-    if (!APP.equals(context.getPackageName()) || !"ranchu".equals(Build.HARDWARE)
+    if (!APP.equals(context.getPackageName())
+        || !"ranchu".equals(Build.HARDWARE)
         || !E2AutoSync.candidates(context).isEmpty())
       throw new AssertionError("Requires an empty isolated emulator APK");
     byte[] expected = jpeg();
@@ -440,18 +527,25 @@ final class E2BackgroundChecks {
     String eligibleName = "loupe-cleanup-remove-" + UUID.randomUUID() + ".jpg";
     Uri changedImage = original(context, changedName, expected);
     Uri eligibleImage = original(context, eligibleName, expected);
-    Uri changed = android.content.ContentUris.withAppendedId(files,
-        android.content.ContentUris.parseId(changedImage));
-    Uri eligible = android.content.ContentUris.withAppendedId(files,
-        android.content.ContentUris.parseId(eligibleImage));
+    Uri changed =
+        android.content.ContentUris.withAppendedId(
+            files, android.content.ContentUris.parseId(changedImage));
+    Uri eligible =
+        android.content.ContentUris.withAppendedId(
+            files, android.content.ContentUris.parseId(eligibleImage));
     android.content.ContentResolver resolver = context.getContentResolver();
     long oldGeneration = fixtureGeneration(resolver, changed, changedName, APP);
     long unchangedGeneration = fixtureGeneration(resolver, eligible, eligibleName, APP);
-    File folder = new File(android.os.Environment.getExternalStoragePublicDirectory(
-        android.os.Environment.DIRECTORY_PICTURES), "LoupeE2Verify");
+    File folder =
+        new File(
+            android.os.Environment.getExternalStoragePublicDirectory(
+                android.os.Environment.DIRECTORY_PICTURES),
+            "LoupeE2Verify");
     File eligibleFile = new File(folder, eligibleName);
-    if (!eligibleFile.isFile() || !Arrays.equals(expected, Files.readAllBytes(eligibleFile.toPath())))
-      throw new AssertionError("The exact synthetic JPEG must be readable as a file before removal");
+    if (!eligibleFile.isFile()
+        || !Arrays.equals(expected, Files.readAllBytes(eligibleFile.toPath())))
+      throw new AssertionError(
+          "The exact synthetic JPEG must be readable as a file before removal");
     String changedAfterRename = "renamed-" + changedName;
     ContentValues metadata = new ContentValues();
     metadata.put(MediaStore.MediaColumns.DISPLAY_NAME, changedAfterRename);
@@ -460,19 +554,23 @@ final class E2BackgroundChecks {
       throw new AssertionError("The synthetic MediaStore revision did not change");
 
     String generationMatches = MediaStore.MediaColumns.GENERATION_MODIFIED + "=?";
-    int stale = resolver.delete(changed, generationMatches, new String[]{Long.toString(oldGeneration)});
+    int stale =
+        resolver.delete(changed, generationMatches, new String[] {Long.toString(oldGeneration)});
     if (stale != 0) throw new AssertionError("MediaStore accepted a stale generation condition");
     try (InputStream source = resolver.openInputStream(changed)) {
       if (source == null || !Arrays.equals(expected, source.readAllBytes()))
         throw new AssertionError("The stale original bytes did not survive");
     }
 
-    int removed = resolver.delete(eligible, generationMatches,
-        new String[]{Long.toString(unchangedGeneration)});
-    if (removed != 1) throw new AssertionError("An exact generation did not delete one owned fixture");
-    try (android.database.Cursor found = resolver.query(eligible,
-        new String[]{MediaStore.MediaColumns._ID}, null, null, null)) {
-      if (found == null || found.moveToFirst()) throw new AssertionError("Deleted fixture is still indexed");
+    int removed =
+        resolver.delete(
+            eligible, generationMatches, new String[] {Long.toString(unchangedGeneration)});
+    if (removed != 1)
+      throw new AssertionError("An exact generation did not delete one owned fixture");
+    try (android.database.Cursor found =
+        resolver.query(eligible, new String[] {MediaStore.MediaColumns._ID}, null, null, null)) {
+      if (found == null || found.moveToFirst())
+        throw new AssertionError("Deleted fixture is still indexed");
     }
     try (InputStream result = resolver.openInputStream(eligible)) {
       if (result != null) throw new AssertionError("Deleted fixture is still readable");
@@ -484,15 +582,28 @@ final class E2BackgroundChecks {
         + "matching generation deleted one owned synthetic JPEG";
   }
 
-  private static long fixtureGeneration(android.content.ContentResolver resolver, Uri uri,
-      String name, String owner) {
-    try (android.database.Cursor row = resolver.query(uri,
-        new String[]{MediaStore.MediaColumns.GENERATION_MODIFIED, MediaStore.MediaColumns.DISPLAY_NAME,
-            MediaStore.MediaColumns.RELATIVE_PATH, MediaStore.MediaColumns.OWNER_PACKAGE_NAME,
-            MediaStore.MediaColumns.VOLUME_NAME}, null, null, null)) {
-      if (row == null || !row.moveToFirst() || row.getLong(0) <= 0
-          || !name.equals(row.getString(1)) || !"Pictures/LoupeE2Verify/".equals(row.getString(2))
-          || !owner.equals(row.getString(3)) || !MediaStore.VOLUME_EXTERNAL_PRIMARY.equals(row.getString(4)))
+  private static long fixtureGeneration(
+      android.content.ContentResolver resolver, Uri uri, String name, String owner) {
+    try (android.database.Cursor row =
+        resolver.query(
+            uri,
+            new String[] {
+              MediaStore.MediaColumns.GENERATION_MODIFIED,
+              MediaStore.MediaColumns.DISPLAY_NAME,
+              MediaStore.MediaColumns.RELATIVE_PATH,
+              MediaStore.MediaColumns.OWNER_PACKAGE_NAME,
+              MediaStore.MediaColumns.VOLUME_NAME
+            },
+            null,
+            null,
+            null)) {
+      if (row == null
+          || !row.moveToFirst()
+          || row.getLong(0) <= 0
+          || !name.equals(row.getString(1))
+          || !"Pictures/LoupeE2Verify/".equals(row.getString(2))
+          || !owner.equals(row.getString(3))
+          || !MediaStore.VOLUME_EXTERNAL_PRIMARY.equals(row.getString(4)))
         throw new AssertionError("An exact owned synthetic photo and its generation are required");
       return row.getLong(0);
     }
@@ -523,32 +634,39 @@ final class E2BackgroundChecks {
       throw new AssertionError("Requires loupe-test");
     try (E2Photos photos = new E2Photos(context)) {
       List<JSONObject> rows = photos.saved(BUCKET);
-      if (photos.settings.configured() || photos.settings.records.all().size() != (republish ? 1 : 0)
+      if (photos.settings.configured()
+          || photos.settings.records.all().size() != (republish ? 1 : 0)
           || rows.size() != (republish ? 1 : 0)
           || (republish && !CATALOG_JPEG.equals(rows.get(0).getString("name"))))
         throw new AssertionError("Unexpected starting catalog or connection state");
     }
     byte[] expected = jpeg();
-    Activity activity = test.startActivitySync(new Intent(context, E2SyncActivity.class)
-        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    Activity activity =
+        test.startActivitySync(
+            new Intent(context, E2SyncActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     try {
       View root = activity.getWindow().getDecorView();
-      test.runOnMainSync(() -> {
-        ((EditText) find(root, "バケット", true)).setText(BUCKET);
-        ((EditText) find(root, "アクセスキー", true)).setText(config.get(1));
-        ((EditText) find(root, "シークレットキー", true)).setText(config.get(2));
-        find(root, "接続して保存", false).performClick();
-      });
+      test.runOnMainSync(
+          () -> {
+            ((EditText) find(root, "バケット", true)).setText(BUCKET);
+            ((EditText) find(root, "アクセスキー", true)).setText(config.get(1));
+            ((EditText) find(root, "シークレットキー", true)).setText(config.get(2));
+            find(root, "接続して保存", false).performClick();
+          });
       waitFor("connect", 30000, () -> onUi(test, () -> find(root, "接続しました", false) != null));
       if (publish) {
-        Uri fixture = republish ? initial.get(0).photo().uri : original(context, CATALOG_JPEG, expected);
-        if (E2AutoSync.candidates(context).size() != 1) throw new AssertionError("Expected one JPEG");
+        Uri fixture =
+            republish ? initial.get(0).photo().uri : original(context, CATALOG_JPEG, expected);
+        if (E2AutoSync.candidates(context).size() != 1)
+          throw new AssertionError("Expected one JPEG");
         try (E2Photos photos = new E2Photos(context)) {
           if (!republish) photos.save(fixture, CATALOG_JPEG, BUCKET);
         }
         clickView(test, root, "復元一覧をクラウドに保存", false);
         waitFor("catalog publication consent", 10000, () -> clickActive(test, APP, "保存"));
-        waitFor("catalog publication readback", 30000,
+        waitFor(
+            "catalog publication readback",
+            30000,
             () -> onUi(test, () -> hasTextPrefix(root, "復元一覧を保存しました")));
         try (InputStream source = context.getContentResolver().openInputStream(fixture)) {
           if (source == null || !Arrays.equals(expected, source.readAllBytes()))
@@ -562,56 +680,91 @@ final class E2BackgroundChecks {
       waitFor("catalog import", 30000, () -> onUi(test, () -> hasTextPrefix(root, result)));
       try (E2Photos photos = new E2Photos(context)) {
         List<JSONObject> rows = photos.saved(BUCKET);
-        if (!photos.settings.records.all().isEmpty() || rows.size() != 1
+        if (!photos.settings.records.all().isEmpty()
+            || rows.size() != 1
             || !CATALOG_JPEG.equals(rows.get(0).getString("name")))
           throw new AssertionError("Expected one recoverable row in the separate cache");
       }
       try {
-        waitFor("restoration action is visible", 10000, () -> onUi(test, () -> {
-          View restore = findDescription(root, CATALOG_JPEG + "を復元");
-          android.graphics.Rect visible = new android.graphics.Rect();
-          return restore != null && restore.getGlobalVisibleRect(visible)
-              && visible.height() >= restore.getHeight();
-        }));
+        waitFor(
+            "restoration action is visible",
+            10000,
+            () ->
+                onUi(
+                    test,
+                    () -> {
+                      View restore = findDescription(root, CATALOG_JPEG + "を復元");
+                      android.graphics.Rect visible = new android.graphics.Rect();
+                      return restore != null
+                          && restore.getGlobalVisibleRect(visible)
+                          && visible.height() >= restore.getHeight();
+                    }));
       } catch (AssertionError failure) {
         capture(test, context, "e2-catalog-visibility-failed.png");
         throw failure;
       }
       capture(test, context, "e2-catalog-loaded.png");
       clickView(test, root, CATALOG_JPEG + "を復元", true);
-      waitFor("save document", 25000, () -> {
-        AccessibilityNodeInfo picker = test.getUiAutomation().getRootInActiveWindow();
-        if (picker == null || !List.of("com.google.android.documentsui", "com.android.documentsui")
-            .contains(String.valueOf(picker.getPackageName()))) return false;
-        for (AccessibilityNodeInfo button : picker.findAccessibilityNodeInfosByViewId("android:id/button1"))
-          if (button.isEnabled() && button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true;
-        return false;
-      });
+      waitFor(
+          "save document",
+          25000,
+          () -> {
+            AccessibilityNodeInfo picker = test.getUiAutomation().getRootInActiveWindow();
+            if (picker == null
+                || !List.of("com.google.android.documentsui", "com.android.documentsui")
+                    .contains(String.valueOf(picker.getPackageName()))) return false;
+            for (AccessibilityNodeInfo button :
+                picker.findAccessibilityNodeInfosByViewId("android:id/button1"))
+              if (button.isEnabled() && button.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+                return true;
+            return false;
+          });
       waitFor("restore success", 20000, () -> activeContains(test, APP, "オリジナルを復元しました"));
-      byte[] resultRows = shell(test, "content query --user " + user
-          + " --uri content://media/external_primary/downloads --projection _id:_display_name");
-      java.util.regex.Matcher row = java.util.regex.Pattern.compile(
-          "_id=(\\d+), _display_name=" + java.util.regex.Pattern.quote(CATALOG_JPEG))
-          .matcher(new String(resultRows));
+      byte[] resultRows =
+          shell(
+              test,
+              "content query --user "
+                  + user
+                  + " --uri content://media/external_primary/downloads --projection _id:_display_name");
+      java.util.regex.Matcher row =
+          java.util.regex.Pattern.compile(
+                  "_id=(\\d+), _display_name=" + java.util.regex.Pattern.quote(CATALOG_JPEG))
+              .matcher(new String(resultRows));
       if (!row.find()) throw new AssertionError("No fresh JPEG in Downloads");
-      byte[] restored = shell(test, "content read --user " + user
-          + " --uri content://media/external_primary/downloads/" + row.group(1));
-      if (!Arrays.equals(expected, restored)) throw new AssertionError("Restored JPEG bytes differ");
-      return "PASS e2-catalog: empty Android user read " + (previous ? "previous" : "latest")
-          + " generation and restored matching JPEG; bytes=" + restored.length;
+      byte[] restored =
+          shell(
+              test,
+              "content read --user "
+                  + user
+                  + " --uri content://media/external_primary/downloads/"
+                  + row.group(1));
+      if (!Arrays.equals(expected, restored))
+        throw new AssertionError("Restored JPEG bytes differ");
+      return "PASS e2-catalog: empty Android user read "
+          + (previous ? "previous" : "latest")
+          + " generation and restored matching JPEG; bytes="
+          + restored.length;
     } finally {
       test.runOnMainSync(activity::finish);
       context.getSharedPreferences("e2_connection", Context.MODE_PRIVATE).edit().clear().commit();
     }
   }
 
-  private static void clickView(Instrumentation test, View root, String label, boolean description) {
-    waitFor(label, 12000, () -> onUi(test, () -> {
-      View view = description ? findDescription(root, label) : find(root, label, false);
-      if (view == null || !view.isEnabled()) return false;
-      view.requestRectangleOnScreen(new android.graphics.Rect(0, 0, view.getWidth(), view.getHeight()), true);
-      return view.performClick();
-    }));
+  private static void clickView(
+      Instrumentation test, View root, String label, boolean description) {
+    waitFor(
+        label,
+        12000,
+        () ->
+            onUi(
+                test,
+                () -> {
+                  View view = description ? findDescription(root, label) : find(root, label, false);
+                  if (view == null || !view.isEnabled()) return false;
+                  view.requestRectangleOnScreen(
+                      new android.graphics.Rect(0, 0, view.getWidth(), view.getHeight()), true);
+                  return view.performClick();
+                }));
   }
 
   private static boolean hasTextPrefix(View view, String prefix) {
@@ -634,7 +787,8 @@ final class E2BackgroundChecks {
     } finally {
       Files.deleteIfExists(input.toPath());
     }
-    if (config.size() != 3 || !BUCKET.equals(config.get(0))
+    if (config.size() != 3
+        || !BUCKET.equals(config.get(0))
         || !E2AutoSync.candidates(context).isEmpty())
       throw new AssertionError("Requires an empty photo collection and loupe-test");
     String name = "loupe-e2-" + UUID.randomUUID() + ".jpg";
@@ -642,16 +796,18 @@ final class E2BackgroundChecks {
     Uri original = original(context, name, expected);
     if (E2AutoSync.candidates(context).size() != 1)
       throw new AssertionError("Expected only one synthetic JPEG");
-    Activity activity = test.startActivitySync(new Intent(context, E2SyncActivity.class)
-        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    Activity activity =
+        test.startActivitySync(
+            new Intent(context, E2SyncActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     try {
       View root = activity.getWindow().getDecorView();
-      test.runOnMainSync(() -> {
-        ((EditText) find(root, "バケット", true)).setText(BUCKET);
-        ((EditText) find(root, "アクセスキー", true)).setText(config.get(1));
-        ((EditText) find(root, "シークレットキー", true)).setText(config.get(2));
-        find(root, "接続して保存", false).performClick();
-      });
+      test.runOnMainSync(
+          () -> {
+            ((EditText) find(root, "バケット", true)).setText(BUCKET);
+            ((EditText) find(root, "アクセスキー", true)).setText(config.get(1));
+            ((EditText) find(root, "シークレットキー", true)).setText(config.get(2));
+            find(root, "接続して保存", false).performClick();
+          });
       waitFor("connect", 30000, () -> onUi(test, () -> find(root, "接続しました", false) != null));
       capture(test, context, "e2-connected.png");
       shell(test, "svc data disable");
@@ -667,7 +823,9 @@ final class E2BackgroundChecks {
         throw new AssertionError("Expected queued sync before restoring Wi-Fi");
       long start = SystemClock.elapsedRealtime();
       shell(test, "svc wifi enable");
-      waitFor("background sync", 65000,
+      waitFor(
+          "background sync",
+          65000,
           () -> E2SyncJob.snapshot(context).kind == JobState.Kind.COMPLETE);
       long elapsed = SystemClock.elapsedRealtime() - start;
       JobState status = E2SyncJob.snapshot(context);
@@ -680,32 +838,51 @@ final class E2BackgroundChecks {
           throw new AssertionError("Unexpected verified photo");
         row = saved.get(0);
       }
-      context.startActivity(new Intent(context, E2SyncActivity.class)
-          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP
-              | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+      context.startActivity(
+          new Intent(context, E2SyncActivity.class)
+              .addFlags(
+                  Intent.FLAG_ACTIVITY_NEW_TASK
+                      | Intent.FLAG_ACTIVITY_CLEAR_TOP
+                      | Intent.FLAG_ACTIVITY_SINGLE_TOP));
       waitFor("return to app", 12000, () -> activePackage(test, APP));
       View restoreRoot = owner.getWindow().getDecorView();
       test.runOnMainSync(() -> find(restoreRoot, "保存したオリジナルを更新", false).performClick());
-      waitFor("restore button", 12000, () -> onUi(test, () -> {
-        View button = findDescription(restoreRoot, name + "を復元");
-        if (button == null || !button.isEnabled()) return false;
-        button.requestRectangleOnScreen(new android.graphics.Rect(0, 0,
-            button.getWidth(), button.getHeight()), true);
-        return button.performClick();
-      }));
-      waitFor("document picker", 20000, () -> activePackage(test, "com.google.android.documentsui")
-          || activePackage(test, "com.android.documentsui"));
-      waitFor("save document", 15000, () -> {
-        AccessibilityNodeInfo picker = test.getUiAutomation().getRootInActiveWindow();
-        if (picker == null || !List.of("com.google.android.documentsui", "com.android.documentsui")
-            .contains(String.valueOf(picker.getPackageName()))) return false;
-        for (AccessibilityNodeInfo button : picker.findAccessibilityNodeInfosByViewId("android:id/button1"))
-          if (button.isEnabled() && button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true;
-        AccessibilityNodeInfo save = node(picker, "SAVE");
-        return save != null && save.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-      });
-      waitFor("restore success", 20000,
-          () -> activeContains(test, APP, "オリジナルを復元しました"));
+      waitFor(
+          "restore button",
+          12000,
+          () ->
+              onUi(
+                  test,
+                  () -> {
+                    View button = findDescription(restoreRoot, name + "を復元");
+                    if (button == null || !button.isEnabled()) return false;
+                    button.requestRectangleOnScreen(
+                        new android.graphics.Rect(0, 0, button.getWidth(), button.getHeight()),
+                        true);
+                    return button.performClick();
+                  }));
+      waitFor(
+          "document picker",
+          20000,
+          () ->
+              activePackage(test, "com.google.android.documentsui")
+                  || activePackage(test, "com.android.documentsui"));
+      waitFor(
+          "save document",
+          15000,
+          () -> {
+            AccessibilityNodeInfo picker = test.getUiAutomation().getRootInActiveWindow();
+            if (picker == null
+                || !List.of("com.google.android.documentsui", "com.android.documentsui")
+                    .contains(String.valueOf(picker.getPackageName()))) return false;
+            for (AccessibilityNodeInfo button :
+                picker.findAccessibilityNodeInfosByViewId("android:id/button1"))
+              if (button.isEnabled() && button.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+                return true;
+            AccessibilityNodeInfo save = node(picker, "SAVE");
+            return save != null && save.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+          });
+      waitFor("restore success", 20000, () -> activeContains(test, APP, "オリジナルを復元しました"));
       capture(test, context, "e2-restored.png");
       if (!Arrays.equals(expected, shell(test, "cat /sdcard/Download/" + name)))
         throw new AssertionError("Exported JPEG bytes differ");
@@ -715,8 +892,14 @@ final class E2BackgroundChecks {
       }
       test.runOnMainSync(owner::finish);
       return "PASS e2-background: native scheduler after Home, 1/1, versioned restore, "
-          + "SAF output and source match; bytes=" + expected.length + " elapsed_ms=" + elapsed
-          + " object_path=loupe/originals/" + row.getString("key") + "/" + row.getString("sha");
+          + "SAF output and source match; bytes="
+          + expected.length
+          + " elapsed_ms="
+          + elapsed
+          + " object_path=loupe/originals/"
+          + row.getString("key")
+          + "/"
+          + row.getString("sha");
     } finally {
       E2SyncJob.setEnabled(context, false);
       context.getSharedPreferences("e2_connection", Context.MODE_PRIVATE).edit().clear().commit();
@@ -739,8 +922,10 @@ final class E2BackgroundChecks {
     ConnectivityManager manager = context.getSystemService(ConnectivityManager.class);
     for (Network network : manager.getAllNetworks()) {
       NetworkCapabilities capabilities = manager.getNetworkCapabilities(network);
-      if (capabilities != null && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-          && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)) return true;
+      if (capabilities != null
+          && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+          && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED))
+        return true;
     }
     return false;
   }
@@ -765,7 +950,8 @@ final class E2BackgroundChecks {
     values.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg");
     values.put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/LoupeE2Verify/");
     values.put(MediaStore.MediaColumns.IS_PENDING, 1);
-    Uri uri = context.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+    Uri uri =
+        context.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
     if (uri == null) throw new AssertionError("Could not stage synthetic JPEG");
     try (OutputStream out = context.getContentResolver().openOutputStream(uri)) {
       out.write(data);
@@ -778,8 +964,9 @@ final class E2BackgroundChecks {
   }
 
   private static byte[] shell(Instrumentation test, String command) throws Exception {
-    try (InputStream input = new ParcelFileDescriptor.AutoCloseInputStream(
-        test.getUiAutomation().executeShellCommand(command))) {
+    try (InputStream input =
+        new ParcelFileDescriptor.AutoCloseInputStream(
+            test.getUiAutomation().executeShellCommand(command))) {
       return input.readAllBytes();
     }
   }
@@ -800,8 +987,9 @@ final class E2BackgroundChecks {
   }
 
   private static View find(View view, String name, boolean hint) {
-    if (view instanceof TextView text && name.contentEquals(
-        hint && text.getHint() != null ? text.getHint() : text.getText())) return view;
+    if (view instanceof TextView text
+        && name.contentEquals(hint && text.getHint() != null ? text.getHint() : text.getText()))
+      return view;
     if (view instanceof ViewGroup group) {
       for (int index = 0; index < group.getChildCount(); index++) {
         View child = find(group.getChildAt(index), name, hint);
@@ -840,7 +1028,8 @@ final class E2BackgroundChecks {
 
   private static AccessibilityNodeInfo node(AccessibilityNodeInfo root, String label) {
     if (label.contentEquals(root.getText() == null ? "" : root.getText())
-        || label.contentEquals(root.getContentDescription() == null ? "" : root.getContentDescription())) return root;
+        || label.contentEquals(
+            root.getContentDescription() == null ? "" : root.getContentDescription())) return root;
     for (int i = 0; i < root.getChildCount(); i++) {
       AccessibilityNodeInfo child = root.getChild(i);
       if (child == null) continue;

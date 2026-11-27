@@ -11,8 +11,10 @@ import java.util.GregorianCalendar
  *
  * 参照: Microsoft exFAT file system specification
  */
-class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
-
+class ExFat(
+    private val dev: BlockDevice,
+    private val partitionLba: Long,
+) {
     data class Node(
         val name: String,
         val isDir: Boolean,
@@ -47,8 +49,10 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
     /** Raw unsigned exFAT VolumeSerialNumber from the main boot sector (offset 100). */
     var volumeSerial: Long = 0L
         private set
+
     /** Zero is exposed as unreliable so callers can avoid trusting it for fast deduplication. */
     val volumeSerialReliable: Boolean get() = volumeSerial != 0L
+
     /** Stable transport-independent descriptor for this volume and its parsed geometry. */
     var volumeId: String = ""
         private set
@@ -74,30 +78,36 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
         require(sectorShift in 9..12 && clusterShift <= 25 - sectorShift) { "Invalid exFAT geometry" }
         bytesPerSector = 1 shl sectorShift
         sectorsPerCluster = 1 shl clusterShift
-        require(bytesPerSector % dev.blockSize == 0 && validCluster(rootDirCluster) &&
-            fatOffsetSectors > 0 && clusterHeapOffsetSectors > fatOffsetSectors) { "Invalid exFAT volume" }
-        volumeId = listOf(
-            "exfat",
-            java.lang.Long.toUnsignedString(volumeSerial, 16).padStart(8, '0'),
-            java.lang.Long.toUnsignedString(partitionLba),
-            java.lang.Long.toUnsignedString(volumeLength),
-            java.lang.Long.toUnsignedString(fatOffsetSectors),
-            java.lang.Long.toUnsignedString(fatLengthSectors),
-            java.lang.Long.toUnsignedString(clusterHeapOffsetSectors),
-            java.lang.Long.toUnsignedString(clusterCount),
-            java.lang.Long.toUnsignedString(rootDirCluster),
-            bytesPerSector.toString(),
-            sectorsPerCluster.toString(),
-            numberOfFats.toString(),
-        ).joinToString(":")
+        require(
+            bytesPerSector % dev.blockSize == 0 && validCluster(rootDirCluster) &&
+                fatOffsetSectors > 0 && clusterHeapOffsetSectors > fatOffsetSectors,
+        ) { "Invalid exFAT volume" }
+        volumeId =
+            listOf(
+                "exfat",
+                java.lang.Long
+                    .toUnsignedString(volumeSerial, 16)
+                    .padStart(8, '0'),
+                java.lang.Long.toUnsignedString(partitionLba),
+                java.lang.Long.toUnsignedString(volumeLength),
+                java.lang.Long.toUnsignedString(fatOffsetSectors),
+                java.lang.Long.toUnsignedString(fatLengthSectors),
+                java.lang.Long.toUnsignedString(clusterHeapOffsetSectors),
+                java.lang.Long.toUnsignedString(clusterCount),
+                java.lang.Long.toUnsignedString(rootDirCluster),
+                bytesPerSector.toString(),
+                sectorsPerCluster.toString(),
+                numberOfFats.toString(),
+            ).joinToString(":")
     }
 
     /** DCIM を辿って取り込み対象 (写真・RAW・動画) のノードを機種フォルダ順に列挙する */
     fun listMediaUnderDcim(): List<Node> {
         val budget = ScanBudget()
-        val dcim = listDir(rootDirCluster, noFatChain = false, length = -1, relativePath = "", budget = budget)
-            .firstOrNull { it.isDir && it.name.equals("DCIM", ignoreCase = true) }
-            ?: return emptyList()
+        val dcim =
+            listDir(rootDirCluster, noFatChain = false, length = -1, relativePath = "", budget = budget)
+                .firstOrNull { it.isDir && it.name.equals("DCIM", ignoreCase = true) }
+                ?: return emptyList()
         val out = ArrayList<Node>()
         for (sub in listDir(dcim.firstCluster, dcim.noFatChain, dcim.length, dcim.relativePath, budget).sortedBy { it.name }) {
             if (!sub.isDir) continue
@@ -109,15 +119,23 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
     }
 
     /** 先頭 [maxBytes] バイトだけを読む。実在ファイルとの同一性確認用 */
-    fun readHead(node: Node, maxBytes: Int): ByteArray {
+    fun readHead(
+        node: Node,
+        maxBytes: Int,
+    ): ByteArray {
         val out = java.io.ByteArrayOutputStream()
         copyTo(node.copy(length = minOf(node.length, maxBytes.toLong())), out)
         return out.toByteArray()
     }
 
-    fun copyTo(node: Node, out: OutputStream) {
-        require(node.length > 0 && node.length <= clusterCount * bytesPerCluster &&
-            validCluster(node.firstCluster)) { "Invalid exFAT file allocation" }
+    fun copyTo(
+        node: Node,
+        out: OutputStream,
+    ) {
+        require(
+            node.length > 0 && node.length <= clusterCount * bytesPerCluster &&
+                validCluster(node.firstCluster),
+        ) { "Invalid exFAT file allocation" }
         if (node.noFatChain) {
             require((node.length - 1) / bytesPerCluster <= clusterCount + 1 - node.firstCluster) {
                 "Invalid exFAT extent"
@@ -130,7 +148,11 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
     }
 
     /** 連続配置 (NoFatChain) のファイルを [READ_WINDOW_BYTES] の窓でまとめ読みする */
-    private fun copyContiguous(firstCluster: Long, length: Long, out: OutputStream) {
+    private fun copyContiguous(
+        firstCluster: Long,
+        length: Long,
+        out: OutputStream,
+    ) {
         var remaining = length
         var sector = clusterHeapOffsetSectors + (firstCluster - 2) * sectorsPerCluster
         val windowSectors = maxOf(sectorsPerCluster, READ_WINDOW_BYTES / bytesPerSector)
@@ -147,7 +169,10 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
     }
 
     /** 断片化 (FAT チェーン) のファイルはクラスタごとに辿る */
-    private fun copyChained(node: Node, out: OutputStream) {
+    private fun copyChained(
+        node: Node,
+        out: OutputStream,
+    ) {
         var remaining = node.length
         val clusterBuf = ByteArray(bytesPerCluster)
         var cluster = node.firstCluster
@@ -178,7 +203,10 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
         while (i + 32 <= bytes.size) {
             val type = bytes[i].toInt() and 0xFF
             if (type == 0x00) break // End of directory
-            if (type != 0x85) { i += 32; continue } // File Directory Entry 以外は飛ばす
+            if (type != 0x85) {
+                i += 32
+                continue
+            } // File Directory Entry 以外は飛ばす
             val secondaryCount = bytes[i + 1].toInt() and 0xFF
             val attrs = le16(bytes, i + 4)
             val isDir = attrs and 0x10 != 0
@@ -200,6 +228,7 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
                         firstClusterOfNode = le32(bytes, j + 20)
                         dataLen = le64(bytes, j + 24)
                     }
+
                     0xC1 -> {
                         var k = j + 2
                         while (k <= j + 30 && nameSb.length < nameLen) {
@@ -222,7 +251,7 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
                     noFatChain = noChain,
                     modifiedEpochSec = modified,
                     relativePath = if (relativePath.isEmpty()) name else "$relativePath/$name",
-                )
+                ),
             )
             i = j
         }
@@ -230,7 +259,12 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
     }
 
     /** ディレクトリのクラスタチェーンをすべて連結して返す */
-    private fun readDirBytes(firstCluster: Long, noFatChain: Boolean, length: Long, budget: ScanBudget): ByteArray {
+    private fun readDirBytes(
+        firstCluster: Long,
+        noFatChain: Boolean,
+        length: Long,
+        budget: ScanBudget,
+    ): ByteArray {
         require(validCluster(firstCluster)) { "Invalid exFAT directory cluster" }
         budget.directoryCluster(firstCluster, bytesPerCluster)
         val out = java.io.ByteArrayOutputStream()
@@ -261,7 +295,10 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
         private var entries = 0
         private val clusters = HashSet<Long>()
 
-        fun directoryCluster(cluster: Long, count: Int) {
+        fun directoryCluster(
+            cluster: Long,
+            count: Int,
+        ) {
             require(clusters.add(cluster) && bytes + count <= MAX_DIR_BYTES) {
                 "Repeated or oversized exFAT directory scan"
             }
@@ -284,13 +321,21 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
         return le32(buf, within)
     }
 
-    private fun readCluster(cluster: Long, dest: ByteArray) {
+    private fun readCluster(
+        cluster: Long,
+        dest: ByteArray,
+    ) {
         val sector = clusterHeapOffsetSectors + (cluster - 2) * sectorsPerCluster
         readSectors(sector, sectorsPerCluster, dest, 0)
     }
 
     /** exFAT セクタ単位の read を BlockDevice のブロック単位に変換する */
-    private fun readSectors(sector: Long, count: Int, dest: ByteArray, destOffset: Int) {
+    private fun readSectors(
+        sector: Long,
+        count: Int,
+        dest: ByteArray,
+        destOffset: Int,
+    ) {
         if (bytesPerSector == dev.blockSize) {
             dev.readBlocks(partitionLba + sector, dest, destOffset, count)
         } else {
@@ -301,13 +346,24 @@ class ExFat(private val dev: BlockDevice, private val partitionLba: Long) {
         }
     }
 
-    private fun le16(b: ByteArray, o: Int) = (b[o].toInt() and 0xFF) or ((b[o + 1].toInt() and 0xFF) shl 8)
-    private fun le32(b: ByteArray, o: Int): Long {
+    private fun le16(
+        b: ByteArray,
+        o: Int,
+    ) = (b[o].toInt() and 0xFF) or ((b[o + 1].toInt() and 0xFF) shl 8)
+
+    private fun le32(
+        b: ByteArray,
+        o: Int,
+    ): Long {
         var v = 0L
         for (k in 0 until 4) v = v or ((b[o + k].toLong() and 0xFF) shl (8 * k))
         return v
     }
-    private fun le64(b: ByteArray, o: Int): Long {
+
+    private fun le64(
+        b: ByteArray,
+        o: Int,
+    ): Long {
         var v = 0L
         for (k in 0 until 8) v = v or ((b[o + k].toLong() and 0xFF) shl (8 * k))
         return v

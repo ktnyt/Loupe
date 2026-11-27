@@ -17,7 +17,6 @@ import java.util.TimeZone
  * JPEG と TIFF 構造の RAW (ORF 等) の両方を扱う
  */
 object ExifOffsetFix {
-
     private const val TAG_EXIF_IFD = 0x8769
     private const val TAG_DATETIME_ORIGINAL = 0x9003
     private const val TAG_DATETIME_DIGITIZED = 0x9004
@@ -36,11 +35,16 @@ object ExifOffsetFix {
         }
 
     /** Comparison uses the imported values only for fields the source repair is allowed to change. */
-    internal fun patchForComparison(sourceCopy: File, importedHeader: File) {
+    internal fun patchForComparison(
+        sourceCopy: File,
+        importedHeader: File,
+    ) {
         try {
             val entries = RandomAccessFile(sourceCopy, "r").use { repairableEntries(it) }
-            val offsets = OFFSET_TAGS.associateWith { "+00:00\u0000".toByteArray(Charsets.US_ASCII) }
-                .toMutableMap()
+            val offsets =
+                OFFSET_TAGS
+                    .associateWith { "+00:00\u0000".toByteArray(Charsets.US_ASCII) }
+                    .toMutableMap()
             RandomAccessFile(importedHeader, "r").use { offsets.putAll(validOffsets(it)) }
             RandomAccessFile(sourceCopy, "rw").use { patch(it, offsets, entries) }
             RandomAccessFile(importedHeader, "rw").use { patch(it, offsets, entries) }
@@ -49,16 +53,22 @@ object ExifOffsetFix {
         }
     }
 
-    private data class Directory(val base: Long, val offset: Long, val little: Boolean, val count: Int)
+    private data class Directory(
+        val base: Long,
+        val offset: Long,
+        val little: Boolean,
+        val count: Int,
+    )
 
     private fun directory(f: RandomAccessFile): Directory? {
         val tiffBase = findTiffBase(f) ?: return null
         // "II"/"MM" は 2 バイト同値なのでエンディアン指定はどちらでもよい
-        val le = when (readU16(f, tiffBase, le = true)) {
-            0x4949 -> true
-            0x4D4D -> false
-            else -> return null
-        }
+        val le =
+            when (readU16(f, tiffBase, le = true)) {
+                0x4949 -> true
+                0x4D4D -> false
+                else -> return null
+            }
         val ifd0 = tiffBase + readU32(f, tiffBase + 4, le)
         val exifIfdOff = findTagValue(f, ifd0, le, TAG_EXIF_IFD) ?: return null
         val exifIfd = tiffBase + exifIfdOff
@@ -74,7 +84,10 @@ object ExifOffsetFix {
             val entry = d.offset + 2 + i.toLong() * 12
             val tag = readU16(f, entry, d.little)
             if (tag !in OFFSET_TAGS || readU16(f, entry + 2, d.little) != TYPE_ASCII ||
-                readU32(f, entry + 4, d.little) != OFFSET_LEN.toLong()) continue
+                readU32(f, entry + 4, d.little) != OFFSET_LEN.toLong()
+            ) {
+                continue
+            }
             val value = ByteArray(OFFSET_LEN)
             f.seek(d.base + readU32(f, entry + 8, d.little))
             f.readFully(value)
@@ -97,8 +110,10 @@ object ExifOffsetFix {
             f.seek(if (n <= 4) entry + 8 else d.base + readU32(f, entry + 8, d.little))
             f.readFully(value)
             if ((tag in OFFSET_TAGS && !isValidOffsetString(value)) ||
-                (tag == TAG_PADDING && n.toInt() == OFFSET_LEN && isBlankOffset(value)))
+                (tag == TAG_PADDING && n.toInt() == OFFSET_LEN && isBlankOffset(value))
+            ) {
                 result.add(entry)
+            }
         }
         return result
     }
@@ -115,10 +130,15 @@ object ExifOffsetFix {
         val count = d.count
 
         // 撮影日時のタイムゾーンオフセット。DST のある地域でも撮影時点の値になる
-        val offsetBytes = if (comparisonOffsets == null) offsetStringFor(
-            readAsciiTag(f, tiffBase, exifIfd, le, count, TAG_DATETIME_ORIGINAL)
-                ?: readAsciiTag(f, tiffBase, exifIfd, le, count, TAG_DATETIME_DIGITIZED)
-        ) else null
+        val offsetBytes =
+            if (comparisonOffsets == null) {
+                offsetStringFor(
+                    readAsciiTag(f, tiffBase, exifIfd, le, count, TAG_DATETIME_ORIGINAL)
+                        ?: readAsciiTag(f, tiffBase, exifIfd, le, count, TAG_DATETIME_DIGITIZED),
+                )
+            } else {
+                null
+            }
 
         var patched = 0
         var restored = 0
@@ -146,6 +166,7 @@ object ExifOffsetFix {
                     }
                     patched++
                 }
+
                 // 旧版のこのアプリが Padding 化した痕跡 (空欄値のまま残っている)。
                 // IFD はタグ昇順なので、遭遇順に 0x9010/0x9011/0x9012 を割り戻す
                 tag == TAG_PADDING && n.toInt() == OFFSET_LEN && isBlankOffset(bytes) && restored < 3 -> {
@@ -176,17 +197,19 @@ object ExifOffsetFix {
 
     /** 撮影日時 (無ければ現在時刻) に対する端末タイムゾーンの "+09:00\u0000" (7 バイト) */
     private fun offsetStringFor(dateTime: String?): ByteArray {
-        val millis = dateTime?.let {
-            try {
-                SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).parse(it.take(19))?.time
-            } catch (e: Exception) {
-                null
-            }
-        } ?: System.currentTimeMillis()
+        val millis =
+            dateTime?.let {
+                try {
+                    SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).parse(it.take(19))?.time
+                } catch (e: Exception) {
+                    null
+                }
+            } ?: System.currentTimeMillis()
         val off = TimeZone.getDefault().getOffset(millis)
         val sign = if (off < 0) '-' else '+'
         val absMin = kotlin.math.abs(off) / 60000
-        return "%c%02d:%02d\u0000".format(sign, absMin / 60, absMin % 60)
+        return "%c%02d:%02d\u0000"
+            .format(sign, absMin / 60, absMin % 60)
             .toByteArray(Charsets.US_ASCII)
     }
 
@@ -243,7 +266,12 @@ object ExifOffsetFix {
         return null
     }
 
-    private fun findTagValue(f: RandomAccessFile, ifd: Long, le: Boolean, wanted: Int): Long? {
+    private fun findTagValue(
+        f: RandomAccessFile,
+        ifd: Long,
+        le: Boolean,
+        wanted: Int,
+    ): Long? {
         val count = readU16(f, ifd, le)
         if (count <= 0 || count > MAX_IFD_ENTRIES) return null
         for (i in 0 until count) {
@@ -253,7 +281,11 @@ object ExifOffsetFix {
         return null
     }
 
-    private fun readU16(f: RandomAccessFile, pos: Long, le: Boolean): Int {
+    private fun readU16(
+        f: RandomAccessFile,
+        pos: Long,
+        le: Boolean,
+    ): Int {
         f.seek(pos)
         val a = f.read()
         val b = f.read()
@@ -261,7 +293,11 @@ object ExifOffsetFix {
         return if (le) a or (b shl 8) else (a shl 8) or b
     }
 
-    private fun readU32(f: RandomAccessFile, pos: Long, le: Boolean): Long {
+    private fun readU32(
+        f: RandomAccessFile,
+        pos: Long,
+        le: Boolean,
+    ): Long {
         f.seek(pos)
         val b = ByteArray(4)
         f.readFully(b)
@@ -274,7 +310,12 @@ object ExifOffsetFix {
         }
     }
 
-    private fun writeU16(f: RandomAccessFile, pos: Long, le: Boolean, v: Int) {
+    private fun writeU16(
+        f: RandomAccessFile,
+        pos: Long,
+        le: Boolean,
+        v: Int,
+    ) {
         f.seek(pos)
         if (le) {
             f.write(v and 0xFF)

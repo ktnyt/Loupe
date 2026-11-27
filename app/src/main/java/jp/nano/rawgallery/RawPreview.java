@@ -48,7 +48,14 @@ public final class RawPreview {
       this(o, n, w, h, rotation, camera, capturedAt, false);
     }
 
-    Result(long o, int n, int w, int h, int rotation, String camera, long capturedAt,
+    Result(
+        long o,
+        int n,
+        int w,
+        int h,
+        int rotation,
+        String camera,
+        long capturedAt,
         boolean repaired) {
       repairedHeader = repaired;
       taken = capturedAt;
@@ -116,7 +123,8 @@ public final class RawPreview {
         best.height,
         p.orientation,
         p.model,
-        captureTime(p.capturedText, p.capturedOffset), best.repairedHeader);
+        captureTime(p.capturedText, p.capturedOffset),
+        best.repairedHeader);
   }
 
   static BurstFrame readBurstFrame(Source source) throws IOException {
@@ -131,12 +139,18 @@ public final class RawPreview {
 
   static BurstFrame readBurstFrame(byte[] makerNote) throws IOException {
     if (makerNote == null) return BurstFrame.NONE;
-    return new RawPreview(new Source() {
-      public long length() { return makerNote.length; }
-      public void read(long offset, byte[] data) {
-        System.arraycopy(makerNote, (int) offset, data, 0, data.length);
-      }
-    }, true).readMakerBurstFrame();
+    return new RawPreview(
+            new Source() {
+              public long length() {
+                return makerNote.length;
+              }
+
+              public void read(long offset, byte[] data) {
+                System.arraycopy(makerNote, (int) offset, data, 0, data.length);
+              }
+            },
+            true)
+        .readMakerBurstFrame();
   }
 
   private BurstFrame readMakerBurstFrame() throws IOException {
@@ -160,7 +174,9 @@ public final class RawPreview {
   }
 
   private static final class InvalidDirectory extends IOException {
-    InvalidDirectory(String message) { super(message); }
+    InvalidDirectory(String message) {
+      super(message);
+    }
   }
 
   static long captureTime(String text, String offset) {
@@ -279,12 +295,19 @@ public final class RawPreview {
         long start = maker.location();
         if (start >= 0 && start <= size && maker.count <= size - start) {
           // Olympus offsets are relative to the MakerNote. Confine new reads to that span.
-          burstFrame = new RawPreview(new Source() {
-            public long length() { return maker.count; }
-            public void read(long offset, byte[] data) throws IOException {
-              source.read(start + offset, data);
-            }
-          }, true).readMakerBurstFrame();
+          burstFrame =
+              new RawPreview(
+                      new Source() {
+                        public long length() {
+                          return maker.count;
+                        }
+
+                        public void read(long offset, byte[] data) throws IOException {
+                          source.read(start + offset, data);
+                        }
+                      },
+                      true)
+                  .readMakerBurstFrame();
         }
         return;
       }
@@ -315,7 +338,10 @@ public final class RawPreview {
       }
       if (depth == 0 && entries.containsKey(274)) {
         int o = (int) num(entries, 274);
-        if (o >= 1 && o <= 8) { orientation = o; orientationKnown = true; }
+        if (o >= 1 && o <= 8) {
+          orientation = o;
+          orientationKnown = true;
+        }
       }
       if (entries.containsKey(513) && entries.containsKey(514))
         candidate(base + num(entries, 513), num(entries, 514));
@@ -348,11 +374,13 @@ public final class RawPreview {
     byte[] header = bytes(start, (int) Math.min(length, 16));
     int headerLength =
         new String(header, 0, 8, StandardCharsets.US_ASCII).equals("OLYMPUS\0")
-                && header[8] == 'I' && header[9] == 'I'
+                && header[8] == 'I'
+                && header[9] == 'I'
             ? 12
             : header.length >= 16
                     && new String(header, 0, 9, StandardCharsets.US_ASCII).equals("OM SYSTEM")
-                    && header[12] == 'I' && header[13] == 'I'
+                    && header[12] == 'I'
+                    && header[13] == 'I'
                 ? 16
                 : 0;
     if (headerLength == 0) return;
@@ -366,7 +394,8 @@ public final class RawPreview {
   }
 
   private BurstFrame readDriveMode(Entry entry) throws IOException {
-    if (entry == null || entry.type != 3
+    if (entry == null
+        || entry.type != 3
         || (entry.count != 2 && entry.count != 3 && entry.count != 5 && entry.count != 6))
       return BurstFrame.NONE;
     long[] values = entry.numbers();
@@ -374,11 +403,27 @@ public final class RawPreview {
     // Olympus DriveMode distinguishes legacy continuous shooting from modern sequential submodes.
     int mode = 1;
     if (values.length == 6) {
-      mode = switch ((int) values[5]) {
-        case 0x02, 0x03, 0x07, 0x12, 0x13, 0x17, 0x22, 0x23, 0x27, 0x28, 0x29,
-            0x41, 0x42, 0x43, 0x48, 0x49 -> (int) values[5];
-        default -> 0;
-      };
+      mode =
+          switch ((int) values[5]) {
+            case 0x02,
+                0x03,
+                0x07,
+                0x12,
+                0x13,
+                0x17,
+                0x22,
+                0x23,
+                0x27,
+                0x28,
+                0x29,
+                0x41,
+                0x42,
+                0x43,
+                0x48,
+                0x49 ->
+                (int) values[5];
+            default -> 0;
+          };
       if (mode == 0) return BurstFrame.NONE;
     }
     int shutter = values.length >= 5 ? (int) values[4] + 1 : 0;
@@ -410,7 +455,8 @@ public final class RawPreview {
         if (r != null) {
           // Retain only the largest complete stream, preserving first-on-tie ordering.
           if (candidates.isEmpty()
-              || (long) r.width * r.height > (long) candidates.get(0).width * candidates.get(0).height) {
+              || (long) r.width * r.height
+                  > (long) candidates.get(0).width * candidates.get(0).height) {
             candidates.clear();
             candidates.add(r);
           }
@@ -432,13 +478,15 @@ public final class RawPreview {
     private byte[] buffer = new byte[0];
     private long start = -1;
     // Overlapping malformed candidates must not turn a linear scan into unbounded re-parsing.
-    private long budget = size > Long.MAX_VALUE / 8 ? Long.MAX_VALUE : Math.max(1_048_576, size * 8);
+    private long budget =
+        size > Long.MAX_VALUE / 8 ? Long.MAX_VALUE : Math.max(1_048_576, size * 8);
 
     int at(long offset) throws IOException {
       if (--budget < 0) throw new IOException("JPEG探索の処理量上限を超えました");
       if (offset < 0 || offset >= size) throw new EOFException();
       if (start < 0 || offset < start || offset - start >= buffer.length) {
-        if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("RAW抽出を中断しました");
+        if (Thread.currentThread().isInterrupted())
+          throw new InterruptedIOException("RAW抽出を中断しました");
         start = offset;
         buffer = bytes(start, (int) Math.min(65536, size - start));
       }
@@ -452,7 +500,8 @@ public final class RawPreview {
     Result parse(long offset, long end) throws IOException {
       if (end - offset < 4 || at(offset + 1) != 216) return null;
       boolean repair = at(offset) != 255;
-      if (repair && !(repairPreviewHeader && at(offset + 2) == 255 && at(offset + 3) == 219)) return null;
+      if (repair && !(repairPreviewHeader && at(offset + 2) == 255 && at(offset + 3) == 219))
+        return null;
       long pos = offset + 2;
       int width = 0, height = 0, components = 0;
       boolean entropy = false, scan = false, payload = false;
@@ -466,11 +515,16 @@ public final class RawPreview {
         while (pos < end && at(pos) == 255) pos++;
         if (pos >= end) return null;
         int marker = at(pos++);
-        if (entropy && marker == 0) { payload = true; continue; }
+        if (entropy && marker == 0) {
+          payload = true;
+          continue;
+        }
         if (entropy && marker >= 0xd0 && marker <= 0xd7) continue;
         if (marker == 0xd9) {
           return width > 0 && scan && payload
-              ? new Result(offset, (int) (pos - offset), width, height, orientation, model, 0, repair) : null;
+              ? new Result(
+                  offset, (int) (pos - offset), width, height, orientation, model, 0, repair)
+              : null;
         }
         entropy = false;
         if (marker == 0 || marker == 0xd8 || (marker >= 0xd0 && marker <= 0xd7)) return null;
@@ -478,15 +532,22 @@ public final class RawPreview {
         if (pos + 2 > end) return null;
         int length = word(pos);
         if (length < 2 || length > end - pos) return null;
-        if (marker >= 0xc0 && marker <= 0xcf && marker != 0xc4 && marker != 0xc8 && marker != 0xcc) {
+        if (marker >= 0xc0
+            && marker <= 0xcf
+            && marker != 0xc4
+            && marker != 0xc8
+            && marker != 0xcc) {
           // Lossless sensor JPEG (SOF3 etc.) is not a display preview.
           if (marker != 0xc0 && marker != 0xc1 && marker != 0xc2) return null;
           if (width != 0 || length < 8 || at(pos + 2) != 8) return null;
           height = word(pos + 3);
           width = word(pos + 5);
           components = at(pos + 7);
-          if (width == 0 || height == 0 || (long) width * height > 120_000_000L
-              || (components != 1 && components != 3) || length != 8 + 3 * components) return null;
+          if (width == 0
+              || height == 0
+              || (long) width * height > 120_000_000L
+              || (components != 1 && components != 3)
+              || length != 8 + 3 * components) return null;
         }
         if (marker == 0xda) {
           if (width == 0 || length < 6) return null;
@@ -511,20 +572,30 @@ public final class RawPreview {
       if (marker == 1) continue;
       int length = reader.word(pos);
       if (length < 2 || length > end - pos) break;
-      if (marker == 0xe1 && length >= 16
+      if (marker == 0xe1
+          && length >= 16
           && Arrays.equals(bytes(pos + 2, 6), new byte[] {'E', 'x', 'i', 'f', 0, 0})) {
         final long base = pos + 8, limit = pos + length - base;
-        RawPreview exif = new RawPreview(new Source() {
-          public long length() { return limit; }
-          public void read(long offset, byte[] data) throws IOException { source.read(base + offset, data); }
-        });
+        RawPreview exif =
+            new RawPreview(
+                new Source() {
+                  public long length() {
+                    return limit;
+                  }
+
+                  public void read(long offset, byte[] data) throws IOException {
+                    source.read(base + offset, data);
+                  }
+                });
         try {
           byte[] h = exif.bytes(0, 8);
           if (!((h[0] == 'I' && h[1] == 'I') || (h[0] == 'M' && h[1] == 'M'))) break;
           exif.little = h[0] == 'I';
           if (exif.u16(h, 2) != 42) break;
           exif.directory(exif.u32(h, 4), 0, 0, 0);
-        } catch (IOException ignored) { /* Optional EXIF may be incomplete. */ }
+        } catch (IOException ignored) {
+          /* Optional EXIF may be incomplete. */
+        }
         if (!orientationKnown) orientation = exif.orientation;
         if (model.equals("不明なカメラ")) model = exif.model;
         if (capturedText.isEmpty()) capturedText = exif.capturedText;

@@ -44,26 +44,50 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
 
   interface Storage {
     E2Archive.CatalogObject readCatalog(String key, String version) throws Exception;
+
     List<String> previousCatalogVersions(String root) throws Exception;
+
     // Conditional write followed by an exact-version GET and byte comparison.
     E2Archive.CatalogObject writeCatalog(String key, byte[] body, E2Archive.CatalogObject expected)
         throws Exception;
+
     void verifyVersion(JSONObject record) throws Exception;
   }
 
-  record Snapshot(String bucket, long created, Rows records, boolean previous,
-                  E2Archive.CatalogObject index, Map<String, String> partVersions) {}
+  record Snapshot(
+      String bucket,
+      long created,
+      Rows records,
+      boolean previous,
+      E2Archive.CatalogObject index,
+      Map<String, String> partVersions) {}
 
-  private record Row(String key, String sha, String name, String version, long size, long taken,
-                     long verifiedAt, String mime) {
+  private record Row(
+      String key,
+      String sha,
+      String name,
+      String version,
+      long size,
+      long taken,
+      long verifiedAt,
+      String mime) {
     JSONObject json(String bucket) {
       try {
-        return new JSONObject().put("key", key).put("sha", sha).put("name", name)
-            .put("version", version).put("size", size).put("taken", taken)
-            .put("verifiedAt", verifiedAt).put("bucket", bucket)
-            .put("provider", "idrive-e2").put("state", "verified").put("mime", mime);
+        return new JSONObject()
+            .put("key", key)
+            .put("sha", sha)
+            .put("name", name)
+            .put("version", version)
+            .put("size", size)
+            .put("taken", taken)
+            .put("verifiedAt", verifiedAt)
+            .put("bucket", bucket)
+            .put("provider", "idrive-e2")
+            .put("state", "verified")
+            .put("mime", mime);
       } catch (org.json.JSONException impossible) {
-        throw new IllegalStateException("A validated catalog row could not be serialized", impossible);
+        throw new IllegalStateException(
+            "A validated catalog row could not be serialized", impossible);
       }
     }
 
@@ -81,8 +105,15 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
       this.order = order;
     }
 
-    @Override public int size() { return order.size(); }
-    @Override public JSONObject get(int index) { return order.get(index).json(bucket); }
+    @Override
+    public int size() {
+      return order.size();
+    }
+
+    @Override
+    public JSONObject get(int index) {
+      return order.get(index).json(bucket);
+    }
 
     SavedRows matchingFilename(String query) {
       Normalizer2 fold = Normalizer2.getNFKCCasefoldInstance();
@@ -114,22 +145,41 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
       return new Rows(bucket, new LinkedHashMap<>(rows));
     }
 
-    @Override public int size() { return rows.size(); }
-    @Override public boolean containsKey(Object key) { return rows.containsKey(key); }
+    @Override
+    public int size() {
+      return rows.size();
+    }
 
-    @Override public JSONObject get(Object key) {
+    @Override
+    public boolean containsKey(Object key) {
+      return rows.containsKey(key);
+    }
+
+    @Override
+    public JSONObject get(Object key) {
       Row row = rows.get(key);
       return row == null ? null : row.json(bucket);
     }
 
-    @Override public Set<Entry<String, JSONObject>> entrySet() {
+    @Override
+    public Set<Entry<String, JSONObject>> entrySet() {
       return new AbstractSet<>() {
-        @Override public int size() { return rows.size(); }
-        @Override public Iterator<Entry<String, JSONObject>> iterator() {
+        @Override
+        public int size() {
+          return rows.size();
+        }
+
+        @Override
+        public Iterator<Entry<String, JSONObject>> iterator() {
           Iterator<Row> source = rows.values().iterator();
           return new Iterator<>() {
-            @Override public boolean hasNext() { return source.hasNext(); }
-            @Override public Entry<String, JSONObject> next() {
+            @Override
+            public boolean hasNext() {
+              return source.hasNext();
+            }
+
+            @Override
+            public Entry<String, JSONObject> next() {
               Row row = source.next();
               return new SimpleImmutableEntry<>(row.key(), row.json(bucket));
             }
@@ -169,34 +219,40 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
     super(context, databaseName, null, 2);
   }
 
-  @Override public void onCreate(SQLiteDatabase db) {
+  @Override
+  public void onCreate(SQLiteDatabase db) {
     db.execSQL("CREATE TABLE snapshots (bucket TEXT PRIMARY KEY, body BLOB NOT NULL)");
     createRowCache(db);
   }
 
-  @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+  @Override
+  public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
     if (oldVersion == 1 && newVersion == 2) createRowCache(db);
     else throw new IllegalStateException("Unsupported e2 recovery cache migration");
   }
 
   private static void createRowCache(SQLiteDatabase db) {
-    db.execSQL("CREATE TABLE generations (bucket TEXT PRIMARY KEY, created INTEGER NOT NULL,"
-        + " count INTEGER NOT NULL, digest BLOB NOT NULL)");
-    db.execSQL("CREATE TABLE catalog_rows (bucket TEXT NOT NULL, ordinal INTEGER NOT NULL,"
-        + " body BLOB NOT NULL, PRIMARY KEY(bucket, ordinal))");
+    db.execSQL(
+        "CREATE TABLE generations (bucket TEXT PRIMARY KEY, created INTEGER NOT NULL,"
+            + " count INTEGER NOT NULL, digest BLOB NOT NULL)");
+    db.execSQL(
+        "CREATE TABLE catalog_rows (bucket TEXT NOT NULL, ordinal INTEGER NOT NULL,"
+            + " body BLOB NOT NULL, PRIMARY KEY(bucket, ordinal))");
   }
 
   Snapshot cached(String bucket) throws Exception {
     synchronized (CACHE_LOCK) {
       String[] args = {bucket};
       SQLiteDatabase db = getReadableDatabase();
-      try (Cursor meta = db.rawQuery("SELECT created,count,digest FROM generations WHERE bucket=?", args)) {
+      try (Cursor meta =
+          db.rawQuery("SELECT created,count,digest FROM generations WHERE bucket=?", args)) {
         if (meta.moveToFirst()) {
           long created = meta.getLong(0), count = meta.getLong(1);
           if (created <= 0 || count <= 0 || count > MAX_ROWS) throw new InvalidCatalog();
           MessageDigest digest = MessageDigest.getInstance("SHA-256");
           Rows records = new Rows(bucket);
-          try (Cursor rows = db.rawQuery("SELECT body FROM catalog_rows WHERE bucket=? ORDER BY ordinal", args)) {
+          try (Cursor rows =
+              db.rawQuery("SELECT body FROM catalog_rows WHERE bucket=? ORDER BY ordinal", args)) {
             while (rows.moveToNext()) {
               if (records.size() >= count) throw new InvalidCatalog();
               byte[] body = rows.getBlob(0);
@@ -232,7 +288,8 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
           Row incoming = candidate.records().rows.get(saved.key());
           if (incoming == null || !saved.sameContent(incoming))
             throw new IOException("新しい復元一覧に不足または競合があります");
-          if (!saved.version().equals(incoming.version())) archive.verifyVersion(incoming.json(bucket));
+          if (!saved.version().equals(incoming.version()))
+            archive.verifyVersion(incoming.json(bucket));
         }
       }
       cache(bucket, candidate);
@@ -289,7 +346,8 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
 
       JSONArray parts = new JSONArray();
       Map<String, String> versions = new HashMap<>();
-      Map<String, String> reusable = current == null ? Collections.emptyMap() : current.partVersions();
+      Map<String, String> reusable =
+          current == null ? Collections.emptyMap() : current.partVersions();
       ByteArrayOutputStream body = new ByteArrayOutputStream();
       body.write('[');
       int count = 0;
@@ -307,18 +365,29 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
       appendPart(archive, parts, reusable, versions, body, count);
       if (current != null && current.partVersions().equals(versions)) return current;
       long created = System.currentTimeMillis();
-      JSONObject doc = new JSONObject().put("schema", 2).put("bucket", bucket)
-          .put("created", created).put("count", all.size()).put("parts", parts);
+      JSONObject doc =
+          new JSONObject()
+              .put("schema", 2)
+              .put("bucket", bucket)
+              .put("created", created)
+              .put("count", all.size())
+              .put("parts", parts);
       byte[] encoded = envelope(doc);
       if (encoded.length > MAX_BYTES) throw new IOException("復元一覧の索引が大きすぎます");
-      E2Archive.CatalogObject saved = archive.writeCatalog(INDEX, encoded,
-          current == null ? null : current.index());
+      E2Archive.CatalogObject saved =
+          archive.writeCatalog(INDEX, encoded, current == null ? null : current.index());
       return new Snapshot(bucket, created, all, false, saved, versions);
     }
   }
 
-  private static void appendPart(Storage archive, JSONArray parts, Map<String, String> reusable,
-      Map<String, String> versions, ByteArrayOutputStream buffer, int count) throws Exception {
+  private static void appendPart(
+      Storage archive,
+      JSONArray parts,
+      Map<String, String> reusable,
+      Map<String, String> versions,
+      ByteArrayOutputStream buffer,
+      int count)
+      throws Exception {
     buffer.write(']');
     byte[] body = buffer.toByteArray();
     if (count < 1 || count > PART_ROWS || body.length > PART_BYTES || parts.length() >= MAX_PARTS)
@@ -342,7 +411,8 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
     // Re-read every pinned part. The root can remain unchanged while a part becomes unavailable.
     decode(archive, snapshot.bucket(), INDEX, snapshot.index(), false);
     E2Archive.CatalogObject current = archive.readCatalog(INDEX, "");
-    if (current == null || !snapshot.index().version().equals(current.version())
+    if (current == null
+        || !snapshot.index().version().equals(current.version())
         || !Arrays.equals(snapshot.index().body(), current.body()))
       throw new IOException("公開後に復元一覧の最新版が変わりました");
   }
@@ -356,7 +426,8 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
     return result;
   }
 
-  static Rows merged(String bucket, Snapshot snapshot, Rows local, Storage archive) throws Exception {
+  static Rows merged(String bucket, Snapshot snapshot, Rows local, Storage archive)
+      throws Exception {
     if (snapshot != null) requireBucket(bucket, snapshot.records());
     Rows result = snapshot == null ? new Rows(bucket) : snapshot.records().copy();
     mergeRows(result, local, archive);
@@ -375,8 +446,7 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
   private static void mergeRow(Rows result, Row clean, Storage archive) throws Exception {
     Row previous = result.rows.get(clean.key());
     if (previous != null) {
-      if (!previous.sameContent(clean))
-        throw new IOException("保管記録と復元一覧でオリジナルの内容が一致しません");
+      if (!previous.sameContent(clean)) throw new IOException("保管記録と復元一覧でオリジナルの内容が一致しません");
       if (!previous.version().equals(clean.version())) {
         if (archive != null) archive.verifyVersion(previous.json(result.bucket));
         return;
@@ -393,7 +463,8 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
     } catch (InvalidCatalog invalid) {
       Snapshot legacy = generation(archive, bucket, LEGACY, true);
       if (legacy == null) throw invalid;
-      return new Snapshot(bucket, legacy.created(), legacy.records(), true, null, Collections.emptyMap());
+      return new Snapshot(
+          bucket, legacy.created(), legacy.records(), true, null, Collections.emptyMap());
     }
     if (modern == null) return generation(archive, bucket, LEGACY, true);
     Snapshot legacy;
@@ -401,15 +472,21 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
       legacy = generation(archive, bucket, LEGACY, true);
     } catch (InvalidCatalog invalid) {
       // An intact v2 generation can still be restored when all retained v1 generations are invalid.
-      return new Snapshot(bucket, modern.created(), modern.records(), true, null, Collections.emptyMap());
+      return new Snapshot(
+          bucket, modern.created(), modern.records(), true, null, Collections.emptyMap());
     }
     if (legacy == null) return modern;
     Rows all = modern.records().copy();
     mergeRows(all, legacy.records(), archive);
     if (all.size() > MAX_ROWS) throw new IOException("復元一覧の件数が対応範囲外です");
     // This read-only view may span two independent writers and has no single published root.
-    return new Snapshot(bucket, Math.max(modern.created(), legacy.created()), all,
-        modern.previous() || legacy.previous(), null, Collections.emptyMap());
+    return new Snapshot(
+        bucket,
+        Math.max(modern.created(), legacy.created()),
+        all,
+        modern.previous() || legacy.previous(),
+        null,
+        Collections.emptyMap());
   }
 
   static Snapshot latest(Storage archive, String bucket) throws Exception {
@@ -448,8 +525,9 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
 
   private record Part(String sha, String version, int count) {}
 
-  private static Snapshot decode(Storage archive, String bucket, String root,
-      E2Archive.CatalogObject obj, boolean previous) throws Exception {
+  private static Snapshot decode(
+      Storage archive, String bucket, String root, E2Archive.CatalogObject obj, boolean previous)
+      throws Exception {
     if (LEGACY.equals(root)) return decodeLegacy(bucket, obj.body(), previous);
     JSONObject doc = payload(bucket, 2, obj.body());
     List<Part> parts = new ArrayList<>();
@@ -459,14 +537,20 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
       long total = integer(doc, "count");
       created = integer(doc, "created");
       JSONArray list = doc.getJSONArray("parts");
-      if (created <= 0 || total < 1 || total > MAX_ROWS || list.length() < 1
+      if (created <= 0
+          || total < 1
+          || total > MAX_ROWS
+          || list.length() < 1
           || list.length() > MAX_PARTS) throw new InvalidCatalog();
       long sum = 0;
       for (int i = 0; i < list.length(); i++) {
         JSONObject ref = list.getJSONObject(i);
-        String sha = string(ref, "sha256"), version = E2Archive.checkedVersion(string(ref, "version"));
+        String sha = string(ref, "sha256"),
+            version = E2Archive.checkedVersion(string(ref, "version"));
         long count = integer(ref, "count");
-        if (!sha.matches("[0-9a-f]{64}") || count < 1 || count > PART_ROWS
+        if (!sha.matches("[0-9a-f]{64}")
+            || count < 1
+            || count > PART_ROWS
             || versions.put(sha, version) != null) throw new InvalidCatalog();
         parts.add(new Part(sha, version, (int) count));
         sum += count;
@@ -478,7 +562,9 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
     Rows records = new Rows(bucket);
     for (Part part : parts) {
       E2Archive.CatalogObject piece = archive.readCatalog(partKey(part.sha()), part.version());
-      if (piece == null || !part.version().equals(piece.version()) || piece.body().length > PART_BYTES
+      if (piece == null
+          || !part.version().equals(piece.version())
+          || piece.body().length > PART_BYTES
           || !part.sha().equals(E2Archive.sha256(piece.body()))) throw new InvalidCatalog();
       try {
         String json = new String(piece.body(), StandardCharsets.UTF_8);
@@ -499,7 +585,9 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
     try {
       long created = integer(doc, "created");
       JSONArray photos = doc.getJSONArray("photos");
-      if (created <= 0 || photos.length() < 1 || photos.length() > MAX_LEGACY_ROWS
+      if (created <= 0
+          || photos.length() < 1
+          || photos.length() > MAX_LEGACY_ROWS
           || photos.length() != integer(doc, "count")) throw new InvalidCatalog();
       Rows records = new Rows(bucket);
       for (int i = 0; i < photos.length(); i++) {
@@ -513,17 +601,25 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
     }
   }
 
-  private static String partKey(String sha) { return "loupe/catalog/parts/" + sha + ".json"; }
+  private static String partKey(String sha) {
+    return "loupe/catalog/parts/" + sha + ".json";
+  }
 
-  private static byte[] bytes(String s) { return s.getBytes(StandardCharsets.UTF_8); }
+  private static byte[] bytes(String s) {
+    return s.getBytes(StandardCharsets.UTF_8);
+  }
 
   private static byte[] envelope(JSONObject doc) throws Exception {
     String payload = doc.toString();
-    return bytes(new JSONObject().put("payload", payload)
-        .put("sha256", E2Archive.sha256(bytes(payload))).toString());
+    return bytes(
+        new JSONObject()
+            .put("payload", payload)
+            .put("sha256", E2Archive.sha256(bytes(payload)))
+            .toString());
   }
 
-  private static JSONObject payload(String bucket, int schema, byte[] encoded) throws InvalidCatalog {
+  private static JSONObject payload(String bucket, int schema, byte[] encoded)
+      throws InvalidCatalog {
     try {
       if (encoded.length > MAX_BYTES) throw new InvalidCatalog();
       JSONObject envelope = object(new String(encoded, StandardCharsets.UTF_8));
@@ -549,10 +645,22 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
       int depth = 0;
       while (reader.peek() != JsonToken.END_DOCUMENT) {
         switch (reader.peek()) {
-          case BEGIN_OBJECT -> { reader.beginObject(); depth++; }
-          case BEGIN_ARRAY -> { reader.beginArray(); depth++; }
-          case END_OBJECT -> { reader.endObject(); depth--; }
-          case END_ARRAY -> { reader.endArray(); depth--; }
+          case BEGIN_OBJECT -> {
+            reader.beginObject();
+            depth++;
+          }
+          case BEGIN_ARRAY -> {
+            reader.beginArray();
+            depth++;
+          }
+          case END_OBJECT -> {
+            reader.endObject();
+            depth--;
+          }
+          case END_ARRAY -> {
+            reader.endArray();
+            depth--;
+          }
           case NAME -> reader.nextName();
           case NUMBER, STRING -> reader.nextString();
           case BOOLEAN -> reader.nextBoolean();
@@ -570,14 +678,27 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
     long size = integer(row, "size");
     long taken = row.has("taken") ? integer(row, "taken") : 0;
     long verifiedAt = row.has("verifiedAt") ? integer(row, "verifiedAt") : 0;
-    if (!bucket.equals(string(row, "bucket")) || !"idrive-e2".equals(string(row, "provider"))
-        || !"verified".equals(string(row, "state")) || !key.matches("[0-9a-f]{32}")
-        || !sha.matches("[0-9a-f]{64}") || size <= 0 || size > E2Archive.ORIGINAL_LIMIT || taken < 0
-        || verifiedAt < 0 || name.length() > 255 || name.lastIndexOf('.') <= 0
+    if (!bucket.equals(string(row, "bucket"))
+        || !"idrive-e2".equals(string(row, "provider"))
+        || !"verified".equals(string(row, "state"))
+        || !key.matches("[0-9a-f]{32}")
+        || !sha.matches("[0-9a-f]{64}")
+        || size <= 0
+        || size > E2Archive.ORIGINAL_LIMIT
+        || taken < 0
+        || verifiedAt < 0
+        || name.length() > 255
+        || name.lastIndexOf('.') <= 0
         || !(RawFormats.accepts(name) || VideoFormats.accepts(name))
-        || name.matches("(?s).*[\\\\/\\p{Cntrl}].*"))
-      throw new IOException("復元一覧の保管記録が不正です");
-    return new Row(key, sha, name, version, size, taken, verifiedAt,
+        || name.matches("(?s).*[\\\\/\\p{Cntrl}].*")) throw new IOException("復元一覧の保管記録が不正です");
+    return new Row(
+        key,
+        sha,
+        name,
+        version,
+        size,
+        taken,
+        verifiedAt,
         VideoFormats.accepts(name) ? VideoFormats.mime(name) : RawFormats.mime(name));
   }
 
@@ -605,6 +726,8 @@ final class E2RecoveryCatalog extends SQLiteOpenHelper {
   }
 
   private static final class InvalidCatalog extends IOException {
-    InvalidCatalog() { super("復元一覧の形式または照合値が不正です"); }
+    InvalidCatalog() {
+      super("復元一覧の形式または照合値が不正です");
+    }
   }
 }

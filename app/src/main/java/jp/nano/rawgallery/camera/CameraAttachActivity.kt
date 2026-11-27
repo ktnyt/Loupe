@@ -2,12 +2,12 @@ package jp.nano.rawgallery.camera
 
 import android.app.Activity
 import android.content.Intent
-import jp.nano.rawgallery.CameraImportActivity
 import android.hardware.usb.UsbManager
 import android.os.Bundle
 import android.widget.Toast
-import jp.nano.rawgallery.R
+import jp.nano.rawgallery.CameraImportActivity
 import jp.nano.rawgallery.PhotoStorage
+import jp.nano.rawgallery.R
 import java.io.Closeable
 
 /** Transparent receiver for the Android USB handler; never trusts parcelled device details. */
@@ -29,11 +29,18 @@ class CameraAttachActivity : Activity() {
         val volume = savedInstanceState?.getString("expected_volume") ?: PhotoStorage.selected(this)
         expectedVolume = volume
         val settings = getSharedPreferences("camera_import", MODE_PRIVATE)
-        val route = CameraCardRouting.route(UsbMassStorage.isMassStorage(device),
-            CameraUsb.knownCamera(device), volume != PhotoStorage.PRIMARY)
-        val attach = CameraCardRouting.onAttach(route,
-            settings.getBoolean("configured", false) && settings.getBoolean("auto", true),
-            settings.getBoolean("sd_auto", false) && CameraDifferentialService.isWatchingSdMounts())
+        val route =
+            CameraCardRouting.route(
+                UsbMassStorage.isMassStorage(device),
+                CameraUsb.knownCamera(device),
+                volume != PhotoStorage.PRIMARY,
+            )
+        val attach =
+            CameraCardRouting.onAttach(
+                route,
+                settings.getBoolean("configured", false) && settings.getBoolean("auto", true),
+                settings.getBoolean("sd_auto", false) && CameraDifferentialService.isWatchingSdMounts(),
+            )
         if (attach == CameraCardRouting.Attach.CONFIRM_MOUNTED) {
             startActivity(CameraImportActivity.mountedReaderAttachIntent(this, volume))
             finish()
@@ -48,12 +55,20 @@ class CameraAttachActivity : Activity() {
             ImportService.start(this, device, expectedVolume = volume)
             finish()
         } else {
-            permission = CameraUsb.request(this, device) { granted ->
-                if (granted) ImportService.start(this, device, expectedVolume = volume)
-                else Toast.makeText(this, R.string.camera_import_usb_permission_denied,
-                    Toast.LENGTH_LONG).show()
-                finish()
-            }
+            permission =
+                CameraUsb.request(this, device) { granted ->
+                    if (granted) {
+                        ImportService.start(this, device, expectedVolume = volume)
+                    } else {
+                        Toast
+                            .makeText(
+                                this,
+                                R.string.camera_import_usb_permission_denied,
+                                Toast.LENGTH_LONG,
+                            ).show()
+                    }
+                    finish()
+                }
         }
     }
 

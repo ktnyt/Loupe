@@ -1,6 +1,5 @@
 package jp.nano.rawgallery;
 
-import android.content.ContentResolver;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.database.Cursor;
@@ -43,19 +42,25 @@ final class E2Photos implements AutoCloseable {
   }
 
   String name(Uri uri) throws IOException {
-    try (Cursor cursor = context.getContentResolver()
-        .query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+    try (Cursor cursor =
+        context
+            .getContentResolver()
+            .query(uri, new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null)) {
       if (cursor == null || !cursor.moveToFirst()) throw new IOException("ファイル名を取得できません");
       String name = cursor.getString(0);
-      if (name == null || name.isEmpty() || name.length() > 255
-          || name.matches("(?s).*[\\\\/\\p{Cntrl}].*") || mime(name) == null)
-        throw new IOException("RAW・JPEG・動画を選んでください");
+      if (name == null
+          || name.isEmpty()
+          || name.length() > 255
+          || name.matches("(?s).*[\\\\/\\p{Cntrl}].*")
+          || mime(name) == null) throw new IOException("RAW・JPEG・動画を選んでください");
       return name;
     }
   }
 
   static String mime(String name) {
-    if (name == null || name.lastIndexOf('.') <= 0 || name.length() > 255
+    if (name == null
+        || name.lastIndexOf('.') <= 0
+        || name.length() > 255
         || name.matches("(?s).*[\\\\/\\p{Cntrl}].*")) return null;
     if (RawFormats.accepts(name)) return RawFormats.mime(name);
     return VideoFormats.accepts(name) ? VideoFormats.mime(name) : null;
@@ -67,8 +72,8 @@ final class E2Photos implements AutoCloseable {
 
   long save(Uri source, String name, String bucket, E2TransferStatus observation) throws Exception {
     if (mime(name) == null) throw new IOException("RAW・JPEG・動画を選んでください");
-    File staged = stage(() -> context.getContentResolver().openInputStream(source),
-        sizeHint(source));
+    File staged =
+        stage(() -> context.getContentResolver().openInputStream(source), sizeHint(source));
     try {
       synchronized (SAVE_LOCK) {
         return settings.archive(bucket).savePhoto(staged, name, mime(name), observation);
@@ -93,8 +98,9 @@ final class E2Photos implements AutoCloseable {
         }
       }
       // Original backup does not depend on a RAW decoder or video preview.
-      ArchiveStore.RawMetadata inspected = new ArchiveStore.RawMetadata(
-          photo.isVideo() ? "動画" : photo.isJpeg() ? "JPEG" : "RAW", photo.taken);
+      ArchiveStore.RawMetadata inspected =
+          new ArchiveStore.RawMetadata(
+              photo.isVideo() ? "動画" : photo.isJpeg() ? "JPEG" : "RAW", photo.taken);
       if (photo.isJpeg()) {
         try {
           inspected = settings.records.metadata(photo);
@@ -103,9 +109,11 @@ final class E2Photos implements AutoCloseable {
             throw new IOException("同期を中断しました", unavailableMetadata);
         }
       }
-      JSONObject metadata = ArchiveStore.base(photo).put("mime", mime(photo.name))
-          .put("model", inspected.model)
-          .put("taken", inspected.taken > 0 ? inspected.taken : photo.taken);
+      JSONObject metadata =
+          ArchiveStore.base(photo)
+              .put("mime", mime(photo.name))
+              .put("model", inspected.model)
+              .put("taken", inspected.taken > 0 ? inspected.taken : photo.taken);
       // The automatic sweep submits each indexed ID only once. Manual saves have separate IDs.
       return settings.archive(bucket).saveIndexed(id, staged, metadata);
     } finally {
@@ -115,8 +123,10 @@ final class E2Photos implements AutoCloseable {
 
   private long sizeHint(Uri source) {
     if (!"content".equals(source.getScheme())) return -1;
-    try (Cursor row = context.getContentResolver()
-        .query(source, new String[]{OpenableColumns.SIZE}, null, null, null)) {
+    try (Cursor row =
+        context
+            .getContentResolver()
+            .query(source, new String[] {OpenableColumns.SIZE}, null, null, null)) {
       return row != null && row.moveToFirst() && !row.isNull(0) ? Math.max(-1, row.getLong(0)) : -1;
     } catch (RuntimeException unavailable) {
       return -1;
@@ -155,8 +165,9 @@ final class E2Photos implements AutoCloseable {
         }
         lease.delete();
         original.delete();
-        File[] incomplete = file.listFiles((directory, part) ->
-            part.startsWith("e2-restore-") && part.endsWith(".part"));
+        File[] incomplete =
+            file.listFiles(
+                (directory, part) -> part.startsWith("e2-restore-") && part.endsWith(".part"));
         if (incomplete != null) for (File part : incomplete) part.delete();
         file.delete();
       }
@@ -217,8 +228,10 @@ final class E2Photos implements AutoCloseable {
 
   record PreparedRestore(File file, long size, String sha) {
     PreparedRestore {
-      if (size <= 0 || size > E2Archive.ORIGINAL_LIMIT || sha == null || !sha.matches("[0-9a-f]{64}"))
-        throw new IllegalArgumentException("復元の照合値が不正です");
+      if (size <= 0
+          || size > E2Archive.ORIGINAL_LIMIT
+          || sha == null
+          || !sha.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("復元の照合値が不正です");
     }
 
     void verifyStagedFile() throws Exception {
@@ -263,7 +276,8 @@ final class E2Photos implements AutoCloseable {
     ACTIVE_PICKER_FILES.remove(verified);
     File marker = new File(verified.getParentFile(), "picker");
     if (marker.isFile())
-      nextPickerCleanupAt = Math.min(nextPickerCleanupAt, marker.lastModified() + PICKER_LIFETIME_MS);
+      nextPickerCleanupAt =
+          Math.min(nextPickerCleanupAt, marker.lastModified() + PICKER_LIFETIME_MS);
   }
 
   static synchronized void discard(File verified) {
@@ -276,7 +290,8 @@ final class E2Photos implements AutoCloseable {
   E2RecoveryCatalog.SavedRows saved(String bucket) throws Exception {
     E2RecoveryCatalog.Rows local = localSaved(settings.records, bucket);
     E2RecoveryCatalog.Snapshot imported = catalog.cached(bucket);
-    return (imported == null ? local : E2RecoveryCatalog.merged(bucket, imported, local, null)).sorted();
+    return (imported == null ? local : E2RecoveryCatalog.merged(bucket, imported, local, null))
+        .sorted();
   }
 
   E2RecoveryCatalog.Snapshot publishCatalog(String bucket) throws Exception {
@@ -326,18 +341,22 @@ final class E2Photos implements AutoCloseable {
     return "fingerprint:v1:" + bucket;
   }
 
-  private E2RecoveryCatalog.Snapshot publishCatalog(String bucket, boolean allowEmpty) throws Exception {
+  private E2RecoveryCatalog.Snapshot publishCatalog(String bucket, boolean allowEmpty)
+      throws Exception {
     synchronized (CATALOG_PUBLICATION_LOCK) {
       long revision = settings.records.indexRevision();
       E2RecoveryCatalog.Rows local = localSaved(settings.records, bucket);
       if (allowEmpty && local.isEmpty()) return null;
       String fingerprint = local.fingerprint();
-      E2RecoveryCatalog.Snapshot result = E2RecoveryCatalog.publish(settings.archive(bucket), bucket, local);
+      E2RecoveryCatalog.Snapshot result =
+          E2RecoveryCatalog.publish(settings.archive(bucket), bucket, local);
       synchronized (CATALOG_ACK_LOCK) {
         // Acknowledge the submitted rows using the revision read before their scan.
-        if (!catalogPublication().edit().putLong(bucket, revision)
-            .putString(catalogIdentityKey(bucket), fingerprint).commit())
-          throw new IOException("復元一覧の公開結果を端末に保存できません");
+        if (!catalogPublication()
+            .edit()
+            .putLong(bucket, revision)
+            .putString(catalogIdentityKey(bucket), fingerprint)
+            .commit()) throw new IOException("復元一覧の公開結果を端末に保存できません");
       }
       return result;
     }
@@ -353,17 +372,19 @@ final class E2Photos implements AutoCloseable {
 
   static E2RecoveryCatalog.Rows localSaved(ArchiveStore store, String bucket) throws Exception {
     E2RecoveryCatalog.Rows results = new E2RecoveryCatalog.Rows(bucket);
-    store.visitReceipts(record -> {
-      if (isRecoverable(bucket, record)) {
-        if (record.optLong("taken") < 0) record.put("taken", 0);
-        results.add(record.put("state", "verified"));
-      }
-      return true;
-    });
+    store.visitReceipts(
+        record -> {
+          if (isRecoverable(bucket, record)) {
+            if (record.optLong("taken") < 0) record.put("taken", 0);
+            results.add(record.put("state", "verified"));
+          }
+          return true;
+        });
     return results;
   }
 
-  @Override public void close() {
+  @Override
+  public void close() {
     catalog.close();
     settings.records.close();
   }

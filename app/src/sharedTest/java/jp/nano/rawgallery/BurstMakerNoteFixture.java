@@ -8,8 +8,9 @@ import java.nio.charset.StandardCharsets;
 final class BurstMakerNoteFixture {
   static byte[] makerNote(boolean omSystem, int type, int... driveMode) {
     ByteBuffer note = ByteBuffer.allocate(128).order(ByteOrder.LITTLE_ENDIAN);
-    note.put((omSystem ? "OM SYSTEM\0\0\0II\0\0" : "OLYMPUS\0II\0\0")
-        .getBytes(StandardCharsets.US_ASCII));
+    note.put(
+        (omSystem ? "OM SYSTEM\0\0\0II\0\0" : "OLYMPUS\0II\0\0")
+            .getBytes(StandardCharsets.US_ASCII));
     note.putShort((short) 1);
     item(note, 0x2020, 13, 1, 32);
     note.position(32);
@@ -40,8 +41,8 @@ final class BurstMakerNoteFixture {
     tiff.position(96);
     tiff.put(note);
     byte[] withTime = java.util.Arrays.copyOf(tiff.array(), tiff.capacity() + 20);
-    System.arraycopy((dateTime + "\0").getBytes(StandardCharsets.US_ASCII),
-        0, withTime, tiff.capacity(), 20);
+    System.arraycopy(
+        (dateTime + "\0").getBytes(StandardCharsets.US_ASCII), 0, withTime, tiff.capacity(), 20);
     return withTime;
   }
 

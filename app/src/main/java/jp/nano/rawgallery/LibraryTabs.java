@@ -1,7 +1,7 @@
 package jp.nano.rawgallery;
 
-import android.content.Context;
 import android.animation.ValueAnimator;
+import android.content.Context;
 import android.os.Build;
 import android.view.View;
 import androidx.core.view.ViewCompat;
@@ -28,8 +28,13 @@ final class LibraryTabs extends BottomNavigationView {
     this(context, albums, enabled, change, null, null);
   }
 
-  LibraryTabs(Context context, boolean albums, boolean enabled, Consumer<Boolean> change,
-      Runnable openCamera, Runnable startImport) {
+  LibraryTabs(
+      Context context,
+      boolean albums,
+      boolean enabled,
+      Consumer<Boolean> change,
+      Runnable openCamera,
+      Runnable startImport) {
     super(context);
     setTag("library-navigation");
     this.openCamera = openCamera;
@@ -45,27 +50,29 @@ final class LibraryTabs extends BottomNavigationView {
     getMenu().add(0, ALBUMS, 1, "アルバム").setIcon(R.drawable.ic_nav_albums);
     getMenu().add(0, IMPORT, 2, "取り込み").setIcon(R.drawable.ic_camera_usb);
     setSelectedItemId(albums ? ALBUMS : PHOTOS);
-    setOnItemSelectedListener(item -> {
-      if (!isEnabled()) return false;
-      if (item.getItemId() == IMPORT) {
-        if (this.openCamera != null) {
+    setOnItemSelectedListener(
+        item -> {
+          if (!isEnabled()) return false;
+          if (item.getItemId() == IMPORT) {
+            if (this.openCamera != null) {
+              GalleryUi.feedback(this);
+              this.openCamera.run();
+            }
+            return false;
+          }
           GalleryUi.feedback(this);
-          this.openCamera.run();
-        }
-        return false;
-      }
-      GalleryUi.feedback(this);
-      change.accept(item.getItemId() == ALBUMS);
-      return true;
-    });
+          change.accept(item.getItemId() == ALBUMS);
+          return true;
+        });
     setOnItemReselectedListener(item -> {});
     for (int i = 0; i < 3; i++) {
       View destination = destinationView(i);
-      destination.setOnClickListener(view -> {
-        // performClick() and accessibility can be invoked directly on a disabled view.
-        // Keep the native menu selection path behind the same guard as physical taps.
-        if (isEnabled() && view.isEnabled()) setSelectedItemId(view.getId());
-      });
+      destination.setOnClickListener(
+          view -> {
+            // performClick() and accessibility can be invoked directly on a disabled view.
+            // Keep the native menu selection path behind the same guard as physical taps.
+            if (isEnabled() && view.isEnabled()) setSelectedItemId(view.getId());
+          });
     }
     setEnabled(enabled);
     updateCameraAccessibility();
@@ -76,9 +83,12 @@ final class LibraryTabs extends BottomNavigationView {
     return findViewById(index == 0 ? PHOTOS : index == 1 ? ALBUMS : IMPORT);
   }
 
-  int selectedDestination() { return getSelectedItemId() == ALBUMS ? 1 : 0; }
+  int selectedDestination() {
+    return getSelectedItemId() == ALBUMS ? 1 : 0;
+  }
 
-  @Override public void setEnabled(boolean enabled) {
+  @Override
+  public void setEnabled(boolean enabled) {
     super.setEnabled(enabled);
     if (getMenu() == null) return;
     for (int i = 0; i < getMenu().size(); i++) getMenu().getItem(i).setEnabled(enabled);
@@ -90,12 +100,19 @@ final class LibraryTabs extends BottomNavigationView {
     setCameraState(connected, name, active, done, total, false);
   }
 
-  void setCameraState(boolean connected, String name, boolean active, int done, int total, boolean waiting) {
+  void setCameraState(
+      boolean connected, String name, boolean active, int done, int total, boolean waiting) {
     setCameraState(connected, name, active, done, total, waiting, null);
   }
 
-  void setCameraState(boolean connected, String name, boolean active, int done, int total,
-      boolean waiting, ImportProgressPresentation presentation) {
+  void setCameraState(
+      boolean connected,
+      String name,
+      boolean active,
+      int done,
+      int total,
+      boolean waiting,
+      ImportProgressPresentation presentation) {
     this.presentation = presentation;
     this.connected = connected;
     cameraName = name;
@@ -105,9 +122,13 @@ final class LibraryTabs extends BottomNavigationView {
     this.waiting = active && waiting;
     if (connected || active) {
       var badge = getOrCreateBadge(IMPORT);
-      if (active && total > 0 && (presentation == null || !presentation.rich)) badge.setNumber(Math.max(0, done));
+      if (active && total > 0 && (presentation == null || !presentation.rich))
+        badge.setNumber(Math.max(0, done));
       else badge.clearNumber();
-      badge.setContentDescriptionNumberless(presentation != null && active ? presentation.accessibility() : this.waiting ? "カメラ接続待ち" : active ? "取り込み中" : "カメラ接続中");
+      badge.setContentDescriptionNumberless(
+          presentation != null && active
+              ? presentation.accessibility()
+              : this.waiting ? "カメラ接続待ち" : active ? "取り込み中" : "カメラ接続中");
     } else removeBadge(IMPORT);
     updateWaitingPulse();
     updateCameraAccessibility();
@@ -118,27 +139,44 @@ final class LibraryTabs extends BottomNavigationView {
     if (camera == null) return;
     String state = connected ? "カメラ接続中" : "カメラ未接続";
     if (connected && cameraName != null && !cameraName.isBlank()) state += "、" + cameraName;
-    if (importing) state += presentation != null ? "、" + presentation.accessibility() : waiting ? "、カメラ接続待ち" : total > 0 ? "、取り込み中 " + done + " / " + total + "件" : "、取り込み中";
+    if (importing)
+      state +=
+          presentation != null
+              ? "、" + presentation.accessibility()
+              : waiting
+                  ? "、カメラ接続待ち"
+                  : total > 0 ? "、取り込み中 " + done + " / " + total + "件" : "、取り込み中";
     if (!isEnabled()) state += "、選択中は使えません";
     ViewCompat.setStateDescription(camera, state);
     boolean quickImport = isEnabled() && !importing && startImport != null;
-    camera.setOnLongClickListener(quickImport ? view -> {
-      // Recheck live state as device and import events can arrive between gestures.
-      if (!isEnabled() || importing) return false;
-      startImport.run();
-      return true;
-    } : null);
+    camera.setOnLongClickListener(
+        quickImport
+            ? view -> {
+              // Recheck live state as device and import events can arrive between gestures.
+              if (!isEnabled() || importing) return false;
+              startImport.run();
+              return true;
+            }
+            : null);
     ViewCompat.removeAccessibilityAction(camera, AccessibilityNodeInfoCompat.ACTION_LONG_CLICK);
-    if (quickImport) ViewCompat.replaceAccessibilityAction(camera,
-        AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_LONG_CLICK,
-        "オリジナルを削除せずに取り込む", (view, arguments) -> view.performLongClick());
+    if (quickImport)
+      ViewCompat.replaceAccessibilityAction(
+          camera,
+          AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_LONG_CLICK,
+          "オリジナルを削除せずに取り込む",
+          (view, arguments) -> view.performLongClick());
     camera.setLongClickable(quickImport);
   }
 
   private void updateWaitingPulse() {
-    boolean shouldPulse = waiting && isAttachedToWindow() && isShown()
-        && getWindowVisibility() == View.VISIBLE && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-        && ValueAnimator.areAnimatorsEnabled() && cameraBadge() != null;
+    boolean shouldPulse =
+        waiting
+            && isAttachedToWindow()
+            && isShown()
+            && getWindowVisibility() == View.VISIBLE
+            && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+            && ValueAnimator.areAnimatorsEnabled()
+            && cameraBadge() != null;
     if (shouldPulse) {
       if (waitingPulse != null && waitingPulse.isStarted()) return;
       BadgeDrawable badge = cameraBadge();
@@ -148,7 +186,8 @@ final class LibraryTabs extends BottomNavigationView {
       waitingPulse.setDuration(1200);
       waitingPulse.setRepeatMode(ValueAnimator.REVERSE);
       waitingPulse.setRepeatCount(ValueAnimator.INFINITE);
-      waitingPulse.addUpdateListener(animation -> setBadgeAlpha((Integer) animation.getAnimatedValue()));
+      waitingPulse.addUpdateListener(
+          animation -> setBadgeAlpha((Integer) animation.getAnimatedValue()));
       waitingPulse.start();
       return;
     }
@@ -172,22 +211,26 @@ final class LibraryTabs extends BottomNavigationView {
     setBadgeAlpha(255);
   }
 
-  @Override protected void onAttachedToWindow() {
+  @Override
+  protected void onAttachedToWindow() {
     super.onAttachedToWindow();
     updateWaitingPulse();
   }
 
-  @Override protected void onDetachedFromWindow() {
+  @Override
+  protected void onDetachedFromWindow() {
     stopWaitingPulse();
     super.onDetachedFromWindow();
   }
 
-  @Override protected void onVisibilityChanged(View changedView, int visibility) {
+  @Override
+  protected void onVisibilityChanged(View changedView, int visibility) {
     super.onVisibilityChanged(changedView, visibility);
     updateWaitingPulse();
   }
 
-  @Override protected void onWindowVisibilityChanged(int visibility) {
+  @Override
+  protected void onWindowVisibilityChanged(int visibility) {
     super.onWindowVisibilityChanged(visibility);
     updateWaitingPulse();
   }
