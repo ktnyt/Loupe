@@ -38,6 +38,8 @@ cacheのhitはファイル対の存在を表す。破損して再生成された
 
 処理中に捕捉した例外は `operation.exception` イベントに固定の工程名、結果、例外クラスを記録する。例外本文、原因の連鎖、スタック、資格情報、URIは記録しない。RawEditLogは従来どおりdebugの描画計測用logcatを使う。
 
+順位の保存と補償は、失敗した保存試行ごとに `ranking.commit` または `ranking.restore` を工程名として記録する。例外が発生した場合は `operation.exception`、保存先が失敗を返した場合は例外クラスを持たない `ranking.persistence.failed` を使う。記録の結果にかかわらず、保存結果と補償の扱いは[順位保存の契約](ranking-persistence.md)に従う。
+
 未捕捉例外が起きると、プロセスごとに最初の1件を `files/diagnostics/last-crash.json` に保存する。アプリ版（`version_code`）と例外クラスに加え、検証できた先頭フレーム（`frame`）、先頭8枠のうち検証できたフレーム（`frames`）、先頭1,024枠以内で最初に検証できた `jp.nano.rawgallery.*` のフレーム（`app_frame`）を記録する。検証できない最上位の例外クラスは固定値 `unknown` とし、他の項目は保存する。
 
 フレームにはクラス、メソッド、行番号を記録する。クラスとメソッドは最大240文字の許可されたASCIIラベルに限る。クラスが許可範囲にあり読み込めることと、そのクラスにメソッドが宣言されていることを検査する。`<init>` と `<clinit>` はクラスを確認できれば固定のJVMラベルとして扱う。
