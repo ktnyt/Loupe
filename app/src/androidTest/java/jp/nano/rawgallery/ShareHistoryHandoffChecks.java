@@ -4,23 +4,18 @@ import android.app.*;
 import android.content.*;
 import android.database.Cursor;
 import android.graphics.Bitmap;
-import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Build;
-import android.os.ParcelFileDescriptor;
 import android.os.SystemClock;
 import android.view.KeyEvent;
-import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import java.io.*;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
@@ -108,7 +103,6 @@ final class ShareHistoryHandoffChecks {
       long chooserStarted = System.currentTimeMillis();
       export(t, a, photos.subList(0, 2), null);
       awaitChooser(t, 15000);
-      captureChooser(t, a);
       choose(t, LABEL);
       awaitText(t, "Loupe test receipt 2 OK", 15000);
       awaitHistory(context, keys.subList(0, 2), targetPackage, 1, chooserStarted);
@@ -355,88 +349,6 @@ final class ShareHistoryHandoffChecks {
             "missing target left no in-memory session");
       }
     }
-  }
-
-  private static void captureChooser(Instrumentation test, MainActivity activity) throws Exception {
-    if (!chooserCaptureAllowed(test)) return;
-    File dir = new File(activity.getCacheDir(), "consistency-checks");
-    check(dir.isDirectory() || dir.mkdirs(), "synthetic chooser capture directory available");
-    ComponentName chooser =
-        Intent.createChooser(new Intent(Intent.ACTION_SEND_MULTIPLE).setType("image/jpeg"), null)
-            .resolveActivity(activity.getPackageManager());
-    check(
-        chooser != null && !chooser.getPackageName().startsWith(activity.getPackageName()),
-        "external Android chooser resolved for capture");
-    String chooserPackage = chooser.getPackageName();
-    UiAutomation automation = test.getUiAutomation();
-    long deadline = SystemClock.uptimeMillis() + 15000;
-    while (!visibleChooserWindow(automation, chooserPackage)) {
-      long remaining = deadline - SystemClock.uptimeMillis();
-      check(remaining > 0, "visible Android chooser window required for capture");
-      try {
-        AccessibilityEvent event =
-            automation.executeAndWaitForEvent(() -> {}, change -> true, Math.min(250, remaining));
-        event.recycle();
-      } catch (TimeoutException ignored) {
-        // Recheck the window even when no new accessibility event is delivered.
-      }
-    }
-    long remaining = deadline - SystemClock.uptimeMillis();
-    check(remaining > 0, "synthetic chooser capture deadline");
-    try {
-      automation.waitForIdle(100, remaining);
-    } catch (TimeoutException ignored) {
-      throw new AssertionError("synthetic chooser did not settle for capture");
-    }
-    check(
-        visibleChooserWindow(automation, chooserPackage),
-        "Android chooser window still visible before capture");
-    Bitmap screenshot = automation.takeScreenshot();
-    check(screenshot != null, "focused synthetic chooser screenshot available");
-    try {
-      check(
-          visibleChooserWindow(automation, chooserPackage),
-          "Android chooser window still visible after capture");
-      try (FileOutputStream out =
-          new FileOutputStream(new File(dir, "share-handoff-chooser.png"))) {
-        check(
-            screenshot.compress(Bitmap.CompressFormat.PNG, 100, out),
-            "synthetic chooser screenshot saved");
-      }
-    } finally {
-      screenshot.recycle();
-    }
-  }
-
-  private static boolean chooserCaptureAllowed(Instrumentation test) {
-    if (!"ranchu".equals(Build.HARDWARE)) return false;
-    try (InputStream input =
-        new ParcelFileDescriptor.AutoCloseInputStream(
-            test.getUiAutomation().executeShellCommand("getprop ro.boot.qemu.avd_name"))) {
-      byte[] output = new byte[128];
-      int length = 0;
-      while (length < output.length) {
-        int count = input.read(output, length, output.length - length);
-        if (count < 0) break;
-        if (count == 0) return false;
-        length += count;
-      }
-      if (length == output.length && input.read() != -1) return false;
-      String name = new String(output, 0, length, StandardCharsets.US_ASCII);
-      return "loupe249-ranking-baseline\n".equals(name);
-    } catch (IOException | RuntimeException ignored) {
-      return false;
-    }
-  }
-
-  private static boolean visibleChooserWindow(UiAutomation automation, String chooserPackage) {
-    AccessibilityNodeInfo root = automation.getRootInActiveWindow();
-    if (root == null
-        || !root.isVisibleToUser()
-        || !android.text.TextUtils.equals(chooserPackage, root.getPackageName())) return false;
-    Rect bounds = new Rect();
-    root.getBoundsInScreen(bounds);
-    return !bounds.isEmpty();
   }
 
   private static void awaitHistory(
