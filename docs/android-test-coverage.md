@@ -4,7 +4,9 @@ GitHub Actionsの `verify` は本体と `raw-experiment` のAPK、各モジュ�
 
 CIではAndroid SDKの `system-images;android-35;google_apis;x86_64` とANGLEのソフトウェア描画（`-gpu swangle`）を使う。手元では `:app` と `:raw-experiment` それぞれの `assembleDebug` と `assembleDebugAndroidTest` を実行してから `bash tests/ci-android-instrumentation.sh` を実行する。CIと同じ分割で実行する場合は `before-camera` と `camera-onward` を順に指定する。Apple siliconでは `LOUPE_INSTRUMENTATION_IMAGE='system-images;android-35;google_apis;arm64-v8a'` を指定する。既定ポート5580を使用中なら `LOUPE_INSTRUMENTATION_PORT` に空いている偶数ポートを指定する。
 
-合成モードの一覧は実行順。共有履歴とカメラ資格情報の再起動確認ではseedからverifyへ進み、USBの選択状態は最後に既定へ戻す。UIを計測するモードへ幅400dp・文字倍率1.0を渡す。`burst-gap-millis` は連写番号あり・なしを合成JPEGで検証する。`camera-pilot-ble-diagnostics` では、検査用APKへの権限付与後にBLEの事前検査で保存する診断項目を合成入力で検証する。各モードのPASSとAndroidの結果コードを照合し、失敗したモードや起動できなかった計測もCIの失敗とする。
+合成モードの一覧は実行順。共有履歴とカメラ資格情報の再起動確認ではseedからverifyへ進み、USBの選択状態は最後に既定へ戻す。UIを計測するモードへ幅400dp・文字倍率1.0を渡す。`burst-gap-millis` は連写番号あり・なしを合成JPEGで検証する。`camera-pilot-ble-diagnostics` では、検査用APKへの権限付与後にBLEの事前検査で保存する診断項目を合成入力で検証する。CIは、adbが終了値0を返し、標準出力にPASSを示す結果が1件あり、最後にAndroidの結果コード `-1` が1件あることを確かめる。`camera-history-migration` では結果の行全体を、`confidence-store`・`camera-ledger`・`camera-ledger-teardown` では行の先頭を、モード固有の文言と照合する。標準エラーは判定に使わず、読み返せるように出力する。[ホスト回帰テスト](../tests/test-ci-android-instrumentation.py)では、adbの応答を差し替え、同じ判定処理をエミュレータなしで実行する。
+
+`camera-ledger-teardown` は `camera-ledger` の直後に実行する。合成データ用にアプリの非公開領域に作った実際のSQLiteデータベースを使い、最初の削除を失敗させても後続のデータベースが削除されることを確かめる。検査本体が例外やエラーを出したときは、その失敗が主例外のまま残り、後片付けの失敗も記録されることを確かめる。後片付けだけが失敗する場合と、すべて成功する場合も検査する。
 
 `RawEditInstrumentation` の `full` はEGLの色・向き・比較表示に加え、合成DNGのデコード、原寸タイル、JPEG保存と中止を検査する。本体の `photo-storage-import-guard` は、移動が取り込み履歴を更新する間だけ、新しい取り込みを止めることを確かめる。`diagnostic-failures` は合成エラーを使い、クラッシュや保存失敗の記録と、個人データを出力しないことを検査する。
 
