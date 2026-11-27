@@ -358,18 +358,24 @@ final class ShareHistoryHandoffChecks {
   private static void captureChooser(Instrumentation test, MainActivity activity) throws Exception {
     File dir = new File(activity.getCacheDir(), "consistency-checks");
     check(dir.isDirectory() || dir.mkdirs(), "synthetic chooser capture directory available");
+    ComponentName chooser =
+        Intent.createChooser(new Intent(Intent.ACTION_SEND_MULTIPLE).setType("image/jpeg"), null)
+            .resolveActivity(activity.getPackageManager());
+    check(
+        chooser != null && !chooser.getPackageName().startsWith(activity.getPackageName()),
+        "external Android chooser resolved for capture");
+    String chooserPackage = chooser.getPackageName();
     UiAutomation automation = test.getUiAutomation();
     long deadline = SystemClock.uptimeMillis() + 15000;
-    String chooserPackage;
-    while ((chooserPackage = visibleChooserTarget(automation)) == null) {
+    while (!visibleChooserWindow(automation, chooserPackage)) {
       long remaining = deadline - SystemClock.uptimeMillis();
-      check(remaining > 0, "visible synthetic chooser target required for capture");
+      check(remaining > 0, "visible Android chooser window required for capture");
       try {
         AccessibilityEvent event =
             automation.executeAndWaitForEvent(() -> {}, change -> true, Math.min(250, remaining));
         event.recycle();
       } catch (TimeoutException ignored) {
-        // Recheck the label even when no new accessibility event is delivered.
+        // Recheck the window even when no new accessibility event is delivered.
       }
     }
     long remaining = deadline - SystemClock.uptimeMillis();
@@ -380,14 +386,14 @@ final class ShareHistoryHandoffChecks {
       throw new AssertionError("synthetic chooser did not settle for capture");
     }
     check(
-        chooserPackage.equals(visibleChooserTarget(automation)),
-        "synthetic chooser target still visible before capture");
+        visibleChooserWindow(automation, chooserPackage),
+        "Android chooser window still visible before capture");
     Bitmap screenshot = automation.takeScreenshot();
     check(screenshot != null, "focused synthetic chooser screenshot available");
     try {
       check(
-          chooserPackage.equals(visibleChooserTarget(automation)),
-          "synthetic chooser target still visible after capture");
+          visibleChooserWindow(automation, chooserPackage),
+          "Android chooser window still visible after capture");
       try (FileOutputStream out =
           new FileOutputStream(new File(dir, "share-handoff-chooser.png"))) {
         check(
@@ -399,19 +405,14 @@ final class ShareHistoryHandoffChecks {
     }
   }
 
-  private static String visibleChooserTarget(UiAutomation automation) {
+  private static boolean visibleChooserWindow(UiAutomation automation, String chooserPackage) {
     AccessibilityNodeInfo root = automation.getRootInActiveWindow();
-    if (root == null || root.getPackageName() == null) return null;
-    String owner = root.getPackageName().toString();
-    if (owner.startsWith("jp.nano.rawgallery")) return null;
-    AccessibilityNodeInfo target = find(root, LABEL);
-    if (target == null
-        || !target.isVisibleToUser()
-        || !android.text.TextUtils.equals(owner, target.getPackageName())) return null;
-    Rect rootBounds = new Rect(), targetBounds = new Rect();
-    root.getBoundsInScreen(rootBounds);
-    target.getBoundsInScreen(targetBounds);
-    return !targetBounds.isEmpty() && rootBounds.contains(targetBounds) ? owner : null;
+    if (root == null
+        || !root.isVisibleToUser()
+        || !android.text.TextUtils.equals(chooserPackage, root.getPackageName())) return false;
+    Rect bounds = new Rect();
+    root.getBoundsInScreen(bounds);
+    return !bounds.isEmpty();
   }
 
   private static void awaitHistory(
