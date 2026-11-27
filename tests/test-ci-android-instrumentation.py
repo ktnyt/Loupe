@@ -17,8 +17,11 @@ LEDGER = "INSTRUMENTATION_RESULT: stream=PASS camera ledger: cross-route receipt
 TEARDOWN = "INSTRUMENTATION_RESULT: stream=PASS camera ledger teardown: exception and error primary\n"
 PASS_CODE = "INSTRUMENTATION_CODE: -1\n"
 NANO = "INSTRUMENTATION_RESULT: stream=PASS synthetic nano\n"
-NANO_LOGCAT_ARGS = ["-s", "emulator-5998", "logcat", "-d", "-s", "LoupeNanoFixture:E", "*:S"]
-LOGCAT_LINE = "E LoupeNanoFixture: synthetic geometry\n"
+VIEWER = "INSTRUMENTATION_RESULT: stream=PASS synthetic viewer\n"
+LOGCAT_FIXTURES = {
+    "nano-background": ("LoupeNanoFixture:E", "E LoupeNanoFixture: synthetic geometry\n"),
+    "viewer-screen": ("LoupeViewerTap:I", "I LoupeViewerTap: result fit=false\n"),
+}
 LOGCAT_ERROR = "synthetic logcat failure\n"
 
 # Only this function is evaluated. The surrounding script can create or connect to an AVD.
@@ -38,8 +41,8 @@ if [[ $# == 11 &&
   cat stderr.txt >&2
   exit "$ADB_STATUS"
 fi
-if [[ $EXPECTED_MODE == nano-background && $# == 7 &&
-      "$*" == '-s emulator-5998 logcat -d -s LoupeNanoFixture:E *:S' ]]; then
+if [[ -n $EXPECTED_LOGCAT_TAG && $# == 7 &&
+      "$*" == "-s emulator-5998 logcat -d -s $EXPECTED_LOGCAT_TAG *:S" ]]; then
   if (( LOGCAT_STATUS == 0 )); then
     printf '%s' "$LOGCAT_LINE"
   else
@@ -75,6 +78,7 @@ class InstrumentationResultTests(unittest.TestCase):
         calls.write_text("", encoding="utf-8")
         (self.work / "stdout.txt").write_text(stdout, encoding="utf-8")
         (self.work / "stderr.txt").write_text(stderr, encoding="utf-8")
+        logcat_tag, logcat_line = LOGCAT_FIXTURES.get(mode, ("", ""))
         result = subprocess.run(
             [
                 "bash",
@@ -91,7 +95,8 @@ class InstrumentationResultTests(unittest.TestCase):
                 "EXPECTED_COMPONENT": COMPONENT,
                 "ADB_STATUS": str(adb_status),
                 "LOGCAT_STATUS": str(0 if logcat_status is None else logcat_status),
-                "LOGCAT_LINE": LOGCAT_LINE,
+                "EXPECTED_LOGCAT_TAG": logcat_tag,
+                "LOGCAT_LINE": logcat_line,
                 "LOGCAT_ERROR": LOGCAT_ERROR,
             },
             text=True,
@@ -104,13 +109,15 @@ class InstrumentationResultTests(unittest.TestCase):
             "-e", "mode", mode, COMPONENT,
         ]
         if logcat_status is not None:
-            expected_calls += [str(len(NANO_LOGCAT_ARGS)), *NANO_LOGCAT_ARGS]
+            expected_calls += [
+                "7", "-s", "emulator-5998", "logcat", "-d", "-s", logcat_tag, "*:S",
+            ]
         self.assertEqual(calls.read_text(encoding="utf-8").splitlines(), expected_calls)
         # Bash command substitution removes trailing newlines, and the runner writes one back.
         self.assertEqual(
             result.stdout,
             f"\nRunning Android instrumentation: {mode}\n"
-            + stdout.rstrip("\n") + "\n" + (LOGCAT_LINE if logcat_status == 0 else ""),
+            + stdout.rstrip("\n") + "\n" + (logcat_line if logcat_status == 0 else ""),
         )
         if adb_status:
             stderr += f"Instrumentation adb status: {adb_status}\n"
@@ -209,6 +216,27 @@ class InstrumentationResultTests(unittest.TestCase):
                 self.check_result(
                     "nano-background",
                     NANO + PASS_CODE,
+                    stderr="synthetic transport stderr\n",
+                    adb_status=7,
+                    expected_status=7,
+                    logcat_status=logcat_status,
+                )
+
+    def test_viewer_collects_only_after_its_own_failure(self):
+        self.check_result("viewer-screen", VIEWER + PASS_CODE)
+        for logcat_status in (0, 9):
+            with self.subTest(logcat_status=logcat_status):
+                self.check_result(
+                    "viewer-screen", VIEWER, expected_status=1, logcat_status=logcat_status
+                )
+        self.check_result("gallery-screen", VIEWER, expected_status=1)
+
+    def test_viewer_logcat_does_not_replace_adb_failure(self):
+        for logcat_status in (0, 9):
+            with self.subTest(logcat_status=logcat_status):
+                self.check_result(
+                    "viewer-screen",
+                    VIEWER + PASS_CODE,
                     stderr="synthetic transport stderr\n",
                     adb_status=7,
                     expected_status=7,
