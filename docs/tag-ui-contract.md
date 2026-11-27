@@ -1,6 +1,6 @@
 # タグの閲覧と基準を教える操作
 
-詳細の参照は[Confidence UI](design/loupe-tag-confidence.html)、学習と表示の契約は[タグConfidence](tag-confidence-contract.md)。4列の写真、タグ付き/該当しないの切替、写真を解析、基準を教える、写真を追加/一括訂正/その他を持つ。アルバムとカメラの範囲を明示する。閾値と学習状態は下部のスクロール可能な操作パネルに置く。
+詳細の参照は[Confidence UI](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-tag-confidence.html)、学習と表示の契約は[タグConfidence](tag-confidence-contract.md)。4列の写真、タグ付き/該当しないの切替、写真を解析、基準を教える、写真を追加/一括訂正/その他を持つ。アルバムとカメラの範囲を明示する。閾値と学習状態は下部のスクロール可能な操作パネルに置く。
 
 閲覧はタップで拡大、左右は移動のみ。タグを付ける/外すを保存した後も同じ写真に留まる。外す操作はEXCLUDEDとし、再推定の表示を抑える。既存のUNDECIDED履歴も抑制を保持する。手動判断が推定より優先される。
 

@@ -8,7 +8,7 @@ Issue #56。カーソル表示・ヒット・写真操作の現行要件は[Issu
 
 ## 契約
 
-- 面は1dpの白35%枠と黒25%の補助線、白12%の格子、白32%の中央基準線。右/下は2dp・白35%のレールと現在値の点を示す。写真上の軸名/数値札や面の塗りは追加しない。外観の正本は[Claude参照](design/loupe-raw-editor-guides.html)。
+- 面は1dpの白35%枠と黒25%の補助線、白12%の格子、白32%の中央基準線。右/下は2dp・白35%のレールと現在値の点を示す。写真上の軸名/数値札や面の塗りは追加しない。外観の正本は[Claude参照](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe-raw-editor-guides.html)。
 - 最初の操作前はカーソルだけ。単指操作でガイドを120msで表示し、指が離れるまで保持する。離して3秒後から400msでフェードする。新しい操作は待機とフェードを取り消して再表示する。フェード後も半透明カーソルとヒット領域を保持する。
 - 面のダブルタップは対応するx/y値だけをRawEditStateのdefaultへ戻す。右帯はyだけ、下帯はxだけ。かすみ/コントラストの独立スライダーは自分の値だけを戻す。WBのdefaultは撮影時WBからの相対調整0/0、曲線の点は0.5/0.5。他のパラメーター・Mono/MAXは変えない。
 - ダブルタップ後の同じ指のUPで値を触点へ書き戻さない。ドラッグや長押し、時間/距離の離れた2タップは初期化しない。Androidのタッチ/ダブルタップ判定の許容値を使う。
@@ -18,4 +18,4 @@ Issue #56。カーソル表示・ヒット・写真操作の現行要件は[Issu
 
 ## 検証
 
-合成実機でガイドの画素/時間/保持/再操作/消去、全7タブdefaultと固定位置、両軸/片軸/補助slider reset、WB0/curve.5、最終UP変位の2回帰、ドラッグ/長押し/遠いtapの除外、Mono/MAX保持、ピンチ取消、AX/Delete、tab/background cleanupを確認済み。通常window/文字1.0・高さ640dp/文字1.3の撮影を行い、写真/カーソル/選択線の実Window画素を同時確認した14枚を独立レビュー済み。ガイド4状態と参照形状も確認。OS inset/viewport/合成素材/フォント条件が異なるため全画素の厳密一致とは扱わない。Cold/Securityの必須指摘は解消済み。本体0.19.1/140の合成編集/保存/状態復元/オリジナル保全を確認済み。実指操作、実TalkBack音声、実写真上のガイド視認性は未確認。比較資料は[参照と実機](design/loupe56-comparison-drag.png)、[4状態](design/loupe56-states-matrix.png)、[画素確認済み7タブ](design/loupe56-tabs-confirmed.png)。
+合成実機でガイドの画素/時間/保持/再操作/消去、全7タブdefaultと固定位置、両軸/片軸/補助slider reset、WB0/curve.5、最終UP変位の2回帰、ドラッグ/長押し/遠いtapの除外、Mono/MAX保持、ピンチ取消、AX/Delete、tab/background cleanupを確認済み。通常window/文字1.0・高さ640dp/文字1.3の撮影を行い、写真/カーソル/選択線の実Window画素を同時確認した14枚を独立レビュー済み。ガイド4状態と参照形状も確認。OS inset/viewport/合成素材/フォント条件が異なるため全画素の厳密一致とは扱わない。Cold/Securityの必須指摘は解消済み。本体0.19.1/140の合成編集/保存/状態復元/オリジナル保全を確認済み。実指操作、実TalkBack音声、実写真上のガイド視認性は未確認。比較資料は[参照と実機](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe56-comparison-drag.png)、[4状態](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe56-states-matrix.png)、[画素確認済み7タブ](https://github.com/ktnyt/Loupe/blob/b7b917850eb45aa85dfe4352151071a89c61cc75/docs/design/loupe56-tabs-confirmed.png)。
