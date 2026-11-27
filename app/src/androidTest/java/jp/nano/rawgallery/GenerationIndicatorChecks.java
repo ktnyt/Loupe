@@ -363,6 +363,7 @@ final class GenerationIndicatorChecks {
           "credential settings remain secure");
       await(t, "settings window focused", config::hasWindowFocus);
       TagDetailChecks.ui(t, () -> verifyActivityHandoff(main, config));
+      TagDetailChecks.ui(t, () -> verifyHandoffWithOutgoingFocus(config, main));
       TagDetailChecks.ui(t, config::finish);
       await(t, "viewer restored", () -> main.hasWindowFocus() && indicator() != null);
       TagDetailChecks.ui(
@@ -564,14 +565,15 @@ final class GenerationIndicatorChecks {
       TagDetailChecks.require(
           requestsLayoutRefresh(oldObserver, handler, refresh), "old activity listener installed");
       PopupWindow previousPopup = (PopupWindow) indicatorField(controller, "popup");
-      TagDetailChecks.require(previousPopup != null, "popup owned before handoff");
 
       controller.onActivityResumed(newActivity);
       TagDetailChecks.require(
           !requestsLayoutRefresh(oldObserver, handler, refresh), "handoff removes old listener");
       PopupWindow currentPopup = (PopupWindow) indicatorField(controller, "popup");
       TagDetailChecks.require(
-          currentPopup != null && currentPopup != previousPopup && !previousPopup.isShowing(),
+          currentPopup != null
+              && currentPopup != previousPopup
+              && (previousPopup == null || !previousPopup.isShowing()),
           "handoff releases previous popup");
 
       controller.onActivityPaused(oldActivity);
@@ -597,6 +599,47 @@ final class GenerationIndicatorChecks {
       controller.onActivityPaused(oldActivity);
       controller.onActivityPaused(newActivity);
       controller.onActivityResumed(newActivity);
+    }
+  }
+
+  private static void verifyHandoffWithOutgoingFocus(Activity outgoing, Activity incoming) {
+    GenerationIndicator controller = (GenerationIndicator) indicatorField(null, "instance");
+    Handler handler = (Handler) indicatorField(null, "MAIN");
+    Runnable refresh = (Runnable) indicatorField(controller, "refresh");
+    View outgoingDecor = outgoing.getWindow().getDecorView();
+    View incomingDecor = incoming.getWindow().getDecorView();
+    TagDetailChecks.require(
+        outgoingDecor.isAttachedToWindow()
+            && outgoingDecor.hasWindowFocus()
+            && !incomingDecor.hasWindowFocus()
+            && indicatorField(controller, "resumed") == outgoing
+            && indicatorField(controller, "host") == outgoingDecor,
+        "outgoing settings owns the focused window and indicator");
+    PopupWindow outgoingPopup = (PopupWindow) indicatorField(controller, "popup");
+    TagDetailChecks.require(
+        outgoingPopup != null && outgoingPopup.isShowing(), "outgoing settings popup visible");
+    try {
+      controller.onActivityResumed(incoming);
+      Object host = indicatorField(controller, "host");
+      Object popup = indicatorField(controller, "popup");
+      TagDetailChecks.require(
+          outgoingDecor.hasWindowFocus()
+              && !incomingDecor.hasWindowFocus()
+              && indicatorField(controller, "resumed") == incoming
+              && (host == null || host == incomingDecor)
+              && popup != outgoingPopup
+              && !outgoingPopup.isShowing()
+              && !requestsLayoutRefresh(outgoingDecor.getViewTreeObserver(), handler, refresh),
+          "handoff does not reattach popup or listeners to still-focused outgoing settings");
+      controller.onActivityPaused(outgoing);
+      controller.onActivityDestroyed(outgoing);
+      TagDetailChecks.require(
+          indicatorField(controller, "resumed") == incoming
+              && indicatorField(controller, "host") == host
+              && indicatorField(controller, "popup") == popup,
+          "late outgoing callbacks preserve incoming owner and window state");
+    } finally {
+      controller.onActivityResumed(outgoing);
     }
   }
 

@@ -7,12 +7,15 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
 import android.view.WindowInsets;
+import android.view.WindowManager;
 import android.view.inspector.WindowInspector;
 import android.widget.FrameLayout;
 import android.widget.PopupWindow;
@@ -119,14 +122,21 @@ final class GenerationIndicator implements Application.ActivityLifecycleCallback
   }
 
   private View focusedRoot() {
-    // A dialog is a separate window. Use its token so the control remains above the modal scrim.
+    Window owner = resumed.getWindow();
+    View decor = owner.getDecorView();
+    IBinder ownerToken = owner.getAttributes().token;
+    // An activity dialog shares the window attributes token, even with a separate decor view.
     for (View view : WindowInspector.getGlobalWindowViews())
       if (view.hasWindowFocus()
           && view.isAttachedToWindow()
           && view.getVisibility() == View.VISIBLE
           && !"generation-popup".equals(view.getTag())
-          && view != control) return view;
-    return resumed.getWindow().getDecorView();
+          && view != control
+          && (view == decor
+              || (ownerToken != null
+                  && view.getLayoutParams() instanceof WindowManager.LayoutParams attributes
+                  && ownerToken.equals(attributes.token)))) return view;
+    return decor;
   }
 
   private void scheduleRefresh() {
