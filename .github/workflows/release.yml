@@ -18,10 +18,26 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        id: java
         with:
           distribution: temurin
           java-version: '17'
           cache: gradle
+      - name: Locate the Gradle dependency cache after an exact miss
+        if: steps.java.outputs['cache-hit'] == 'false'
+        id: gradle-cache
+        env:
+          GRADLE_CACHE_KEY: ${{ steps.java.outputs['cache-primary-key'] }}
+        run: |
+          printf 'path=%s/.gradle/caches\n' "$HOME" >> "$GITHUB_OUTPUT"
+          printf 'prefix=%s-\n' "${GRADLE_CACHE_KEY%-*}" >> "$GITHUB_OUTPUT"
+      - name: Restore a compatible Gradle dependency cache
+        if: steps.java.outputs['cache-hit'] == 'false'
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ steps.gradle-cache.outputs.path }}
+          key: ${{ steps.java.outputs['cache-primary-key'] }}
+          restore-keys: ${{ steps.gradle-cache.outputs.prefix }}
       - name: Install pinned Android build tools
         run: |
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.0.12077973' 'cmake;3.22.1'
