@@ -31,6 +31,8 @@ JDK 17 と Android SDK を用意し、`./gradlew testDebugUnitTest` で合成入
 
 チェック本体は既存の `tests/` に置き、Gradle から実行する場合は `HostRegressionTest` から同じ本体を呼ぶ。新しい standalone Java チェックを Gradle に追加する場合は `app/build.gradle` の `hostJavaChecks` に登録する。既存シェルからも実行できる。外部 RAW コーパス（`tests/run.sh`、`tests/raw-corpus.sh`）と Android SQLite を使う検査は、それぞれ専用の実行環境を使う。
 
+Gradle と併用する `sh tests/host-regression.sh --junit-in-gradle` では、JUnit から実行する検査だけで構成されたシェルを省略する。省略対象のシェルに検査を追加したときは、追加分も含めてすべて JUnit から実行できることを確認する。
+
 ## Android Lintとソースの整形
 
 `./gradlew :app:lintDebug :raw-experiment:lintDebug` で各モジュールを検査する。既存の指摘はモジュール別の `lint-baseline.xml` に記録する。新しい警告は修正し、通常の修正で baseline に加えない。依存ライブラリ・ビルドツールの新バージョン案内（`GradleDependency`、`AndroidGradlePluginVersion`）は公開状況で変わるため、Lint の情報として表示する。既存の targetSdk 35 とインストール済み SDK の差による案内（`OldTargetApi`）も、targetSdk が 35 の場合に限って情報として表示する。Lint の実行時は、各 variant の実効 targetSdk が 35 未満であれば失敗する。

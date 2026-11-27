@@ -4,6 +4,7 @@ import android.app.Instrumentation;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.net.Uri;
+import android.os.Bundle;
 import java.io.*;
 import java.lang.reflect.*;
 import java.util.*;
@@ -38,6 +39,52 @@ final class IndexApplyRaceChecks {
     test.waitForIdleSync();
   }
 
+  private static boolean hasIntendedPhoto(MainActivity activity, PhotoRepository.Photo expected)
+      throws Exception {
+    List<?> photos = (List<?>) get(activity, "photos");
+    return photos.size() == 1 && photos.get(0) == expected;
+  }
+
+  private record RaceState(
+      boolean intendedPhoto, boolean detail, boolean pending, int generation, long version) {}
+
+  private static RaceState traceState(MainActivity activity, PhotoRepository.Photo expected) {
+    try {
+      return new RaceState(
+          hasIntendedPhoto(activity, expected),
+          (boolean) get(activity, "detail"),
+          (boolean) get(activity, "pendingIndexUpdate"),
+          (int) get(activity, "generation"),
+          (long) get(activity, "indexUpdateVersion"));
+    } catch (Throwable ignored) {
+      return null;
+    }
+  }
+
+  private static void reportState(Instrumentation test, String phase, RaceState state) {
+    try {
+      if (state == null) return;
+      Bundle status = new Bundle();
+      status.putString(
+          "stream",
+          "LoupeIndexRace phase="
+              + phase
+              + " intendedPhoto="
+              + state.intendedPhoto
+              + " detail="
+              + state.detail
+              + " pending="
+              + state.pending
+              + " generation="
+              + state.generation
+              + " version="
+              + state.version);
+      test.sendStatus(0, status);
+    } catch (Throwable ignored) {
+      // Diagnostic output must not replace the fixture result.
+    }
+  }
+
   static String run(Instrumentation test) throws Exception {
     MainActivity a =
         (MainActivity)
@@ -58,25 +105,6 @@ final class IndexApplyRaceChecks {
       drain(test, a);
       PhotoRepository.Photo photo =
           new PhotoRepository.Photo(Uri.fromFile(seed), "synthetic.jpg", "", seed.length(), 1, 0);
-      test.runOnMainSync(
-          () -> {
-            try {
-              set(a, "pendingRestore", null);
-              set(a, "albumFolder", "Pictures/index-race-" + UUID.randomUUID() + "/");
-              set(a, "burstMembers", null);
-              set(a, "selecting", false);
-              set(a, "photos", new ArrayList<>(Collections.singletonList(photo)));
-              set(
-                  a,
-                  "bundles",
-                  new ArrayList<>(
-                      Collections.singletonList(new ArrayList<>(Collections.singletonList(0)))));
-              call(a, "gallery");
-            } catch (Exception e) {
-              throw new RuntimeException(e);
-            }
-          });
-      drain(test, a);
       CountDownLatch entered = new CountDownLatch(1);
       ((ExecutorService) get(a, "scans"))
           .execute(
@@ -91,22 +119,79 @@ final class IndexApplyRaceChecks {
                 }
               });
       check(entered.await(5, TimeUnit.SECONDS), "scan blocker entered");
-      test.runOnMainSync(
-          () -> {
-            try {
-              set(a, "indexUpdateVersion", (long) get(a, "indexUpdateVersion") + 1);
-              set(a, "pendingIndexUpdate", true);
-              call(a, "applyPendingIndexUpdate");
-              Method show = MainActivity.class.getDeclaredMethod("showPhoto", int.class);
-              show.setAccessible(true);
-              show.invoke(a, 0);
-            } catch (Exception e) {
-              throw new RuntimeException(e);
-            }
-          });
-      release.countDown();
-      drain(test, a);
-      check((boolean) get(a, "pendingIndexUpdate"), "discarded result retains pending update");
+      RaceState[] observed = new RaceState[3];
+      int[] viewerGeneration = new int[1];
+      try {
+        TagDetailChecks.ui(
+            test,
+            () -> {
+              try {
+                // An outstanding startup read cannot replace the synthetic photo before viewer
+                // entry.
+                set(a, "pendingRestore", null);
+                set(a, "albumFolder", "Pictures/index-race-" + UUID.randomUUID() + "/");
+                set(a, "burstMembers", null);
+                set(a, "selecting", false);
+                set(a, "photos", new ArrayList<>(Collections.singletonList(photo)));
+                set(
+                    a,
+                    "bundles",
+                    new ArrayList<>(
+                        Collections.singletonList(new ArrayList<>(Collections.singletonList(0)))));
+                call(a, "gallery");
+                int listGeneration = (int) get(a, "generation");
+                observed[0] = traceState(a, photo);
+                check(
+                    hasIntendedPhoto(a, photo) && !(boolean) get(a, "detail"),
+                    "intended photo in the synthetic gallery");
+
+                set(a, "indexUpdateVersion", (long) get(a, "indexUpdateVersion") + 1);
+                set(a, "pendingIndexUpdate", true);
+                call(a, "applyPendingIndexUpdate");
+                Method show = MainActivity.class.getDeclaredMethod("showPhoto", int.class);
+                show.setAccessible(true);
+                show.invoke(a, 0);
+                int openedGeneration = (int) get(a, "generation");
+                observed[1] = traceState(a, photo);
+                check(
+                    hasIntendedPhoto(a, photo)
+                        && (boolean) get(a, "detail")
+                        && (int) get(a, "index") == 0
+                        && openedGeneration == listGeneration + 1,
+                    "intended viewer generation before releasing scans");
+                viewerGeneration[0] = openedGeneration;
+              } catch (Exception e) {
+                throw new RuntimeException(e);
+              }
+            });
+        release.countDown();
+        drain(test, a);
+        TagDetailChecks.ui(
+            test,
+            () -> {
+              try {
+                check(
+                    (boolean) get(a, "pendingIndexUpdate"),
+                    "discarded result retains pending update");
+                check(
+                    hasIntendedPhoto(a, photo)
+                        && (boolean) get(a, "detail")
+                        && (int) get(a, "index") == 0
+                        && (int) get(a, "generation") == viewerGeneration[0],
+                    "discarded result preserves the intended viewer");
+              } catch (Exception e) {
+                throw new RuntimeException(e);
+              } finally {
+                observed[2] = traceState(a, photo);
+              }
+            });
+      } finally {
+        // Publish only after the blocker is released, including if either precondition fails.
+        release.countDown();
+        reportState(test, "gallery_seeded", observed[0]);
+        reportState(test, "viewer_before_release", observed[1]);
+        reportState(test, "scan_drained", observed[2]);
+      }
       test.runOnMainSync(a::onBackPressed);
       drain(test, a);
       check(((List<?>) get(a, "photos")).isEmpty(), "return applies authoritative empty folder");
