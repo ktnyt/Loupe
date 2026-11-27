@@ -11,6 +11,7 @@ import android.content.ContextWrapper;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Point;
 import android.graphics.Rect;
 import android.net.Uri;
 import android.os.ParcelFileDescriptor;
@@ -19,6 +20,7 @@ import android.provider.MediaStore;
 import android.text.Layout;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.widget.Button;
 import android.widget.TextView;
 import androidx.core.content.ContextCompat;
@@ -1006,6 +1008,7 @@ final class NanoBananaBackgroundChecks {
               || !text.isShown()
               || !text.hasWindowFocus()
               || layout == null) {
+            logSubmitNoticeGeometry("lifecycle", expected, width, font, true, text, action[0]);
             issue[0] = "POST failure Snackbar was detached or lost focus before capture: " + name;
             logSubmitNoticeGate(
                 "lifecycle", expected, width, font, decor, text, action[0], layout, null);
@@ -1029,7 +1032,9 @@ final class NanoBananaBackgroundChecks {
                   && visible.height() == text.getHeight()
                   && layout.getHeight() + text.getTotalPaddingTop() + text.getTotalPaddingBottom()
                       <= text.getHeight();
-          if (ellipses != 0 || end != text.length() || !lineFits || !boundsFit) {
+          boolean rejected = ellipses != 0 || end != text.length() || !lineFits || !boundsFit;
+          logSubmitNoticeGeometry("text_fit", expected, width, font, rejected, text, action[0]);
+          if (rejected) {
             issue[0] =
                 "POST failure Snackbar text does not fit: "
                     + name
@@ -1114,8 +1119,149 @@ final class NanoBananaBackgroundChecks {
     try {
       diagnostic.run();
     } catch (RuntimeException | AssertionError unavailable) {
-      // Preserve the already rejected notice gate even if optional diagnostics fail.
+      // Optional diagnostics never determine the notice verdict.
     }
+  }
+
+  private static void logSubmitNoticeGeometry(
+      String phase,
+      String expected,
+      int width,
+      float font,
+      boolean rejected,
+      View text,
+      View action) {
+    runNoticeDiagnostic(
+        () -> {
+          String scenario =
+              expected.equals(NanoBananaApiChecks.SUBMIT_RATE_LIMIT)
+                  ? "rate_limit"
+                  : "api_rejection";
+          String sample =
+              " scenario="
+                  + scenario
+                  + " phase="
+                  + phase
+                  + " rejected="
+                  + rejected
+                  + " reqWidthDp="
+                  + width
+                  + " reqFont="
+                  + font;
+          logNoticeViewChain(sample + " chain=text", text);
+          logNoticeViewChain(sample + " chain=action", action);
+        });
+  }
+
+  private static void logNoticeViewChain(String sample, View leaf) {
+    final int maxNodes = 32;
+    View node = leaf;
+    int depth = 0;
+    boolean reachedRoot = false;
+    while (node != null && depth < maxNodes) {
+      ViewParent parent = node.getParent();
+      boolean root = !(parent instanceof View);
+      boolean attached = node.isAttachedToWindow();
+      ViewGroup group = node instanceof ViewGroup vg ? vg : null;
+      float[] matrix = new float[9];
+      node.getMatrix().getValues(matrix);
+      Rect clip = node.getClipBounds();
+      Rect visible = new Rect();
+      Point offset = new Point();
+      boolean globalVisible = node.getGlobalVisibleRect(visible, offset);
+      String rootGeometry = "";
+      if (root) {
+        int[] screen = new int[2];
+        int[] window = new int[2];
+        node.getLocationOnScreen(screen);
+        node.getLocationInWindow(window);
+        // Query the terminal ViewParent's virtual canvas through its public visibility API.
+        Rect canvas = new Rect(0, 0, Integer.MAX_VALUE, Integer.MAX_VALUE);
+        boolean canvasVisible =
+            attached && parent != null && parent.getChildVisibleRect(node, canvas, null);
+        rootGeometry =
+            " rootScreen="
+                + Arrays.toString(screen)
+                + " rootWindow="
+                + Arrays.toString(window)
+                + " canvasVisible="
+                + canvasVisible
+                + " canvasClip="
+                + (canvasVisible ? canvas.toShortString() : "none");
+      }
+      android.util.Log.e(
+          "LoupeNanoFixture",
+          "submit_notice_geometry_node"
+              + sample
+              + " depth="
+              + depth
+              + " root="
+              + root
+              + " attached="
+              + attached
+              + " hasParent="
+              + (parent != null)
+              + " ltwh=["
+              + node.getLeft()
+              + ","
+              + node.getTop()
+              + ","
+              + node.getWidth()
+              + ","
+              + node.getHeight()
+              + "]"
+              + " scroll=["
+              + node.getScrollX()
+              + ","
+              + node.getScrollY()
+              + "]"
+              + " padding=["
+              + node.getPaddingLeft()
+              + ","
+              + node.getPaddingTop()
+              + ","
+              + node.getPaddingRight()
+              + ","
+              + node.getPaddingBottom()
+              + "]"
+              + " matrix="
+              + Arrays.toString(matrix)
+              + " group="
+              + (group != null)
+              + " clipChildren="
+              + (group != null && group.getClipChildren())
+              + " clipToPadding="
+              + (group != null && group.getClipToPadding())
+              + " clipToOutline="
+              + node.getClipToOutline()
+              + " clipBounds="
+              + (clip == null ? "none" : clip.toShortString())
+              + " globalVisible="
+              + globalVisible
+              + " visibleRoot="
+              + visible.toShortString()
+              + " offset=["
+              + offset.x
+              + ","
+              + offset.y
+              + "]"
+              + rootGeometry);
+      depth++;
+      reachedRoot = root;
+      node = parent instanceof View parentView ? parentView : null;
+    }
+    android.util.Log.e(
+        "LoupeNanoFixture",
+        "submit_notice_geometry_end"
+            + sample
+            + " present="
+            + (leaf != null)
+            + " nodes="
+            + depth
+            + " complete="
+            + reachedRoot
+            + " truncated="
+            + (node != null));
   }
 
   private static void readSubmitNoticeGate(
