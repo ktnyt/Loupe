@@ -88,6 +88,7 @@ jobs:
         env:
           PROBE_HEAD_REF: ${{ github.head_ref }}
           PROBE_IS_DRAFT: ${{ github.event.pull_request.draft }}
+          LOUPE_INSTRUMENTATION_PORT: '5580'
         run: |
           if [[ "$GITHUB_EVENT_NAME" != pull_request || "$PROBE_HEAD_REF" != '264/saved-ref-recurrence' ||
                 "$PROBE_IS_DRAFT" != true ]]; then
@@ -96,13 +97,34 @@ jobs:
           fi
           sudo chmod a+rw /dev/kvm
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'emulator' 'system-images;android-35;google_apis;x86_64'
-          for sequence in 1 2 3 4 5; do
+          wait_for_probe_serial_release() {
+            local deadline=$((SECONDS + 20)) remaining devices
+            while (( (remaining = deadline - SECONDS) > 0 )); do
+              if ! devices=$(timeout --signal=KILL "${remaining}s" "$ANDROID_HOME/platform-tools/adb" devices) ||
+                 [[ "${devices%%$'\n'*}" != 'List of devices attached' ]]; then
+                echo 'DIAGNOSTIC_ONLY_INCONCLUSIVE: could not read ADB devices after a passing sequence.'
+                return 1
+              fi
+              if ! grep -Eq '^emulator-5580([[:space:]]|$)' <<< "$devices"; then
+                return 0
+              fi
+              sleep 1
+            done
+            echo 'DIAGNOSTIC_ONLY_INCONCLUSIVE: emulator-5580 remained listed after 20 seconds.'
+            return 1
+          }
+
+          # Run 45980523462 completed sequence 1 with all three native modes passing.
+          for sequence in 2 3 4 5; do
             printf 'DIAGNOSTIC_ONLY_SEQUENCE: %s/5\n' "$sequence"
             status=0
             result=$(bash tests/ci-android-instrumentation.sh ledger-diagnostic 2>&1) || status=$?
             printf '%s\n' "$result"
             if [[ "$status" == 2 ]] &&
                grep -Fx 'DIAGNOSTIC_ONLY_SEQUENCE_PASS: migration, confidence and ledger all reported PASS.' <<< "$result" >/dev/null; then
+              if (( sequence < 5 )); then
+                wait_for_probe_serial_release || exit 1
+              fi
               continue
             fi
             if [[ "$status" == 3 ]] &&
@@ -112,7 +134,7 @@ jobs:
             echo 'DIAGNOSTIC_ONLY_INCONCLUSIVE: stopped before completing the bounded experiment.'
             exit 1
           done
-          echo 'DIAGNOSTIC_ONLY_NO_REPRODUCTION: all five ordered synthetic sequences passed.'
+          echo 'DIAGNOSTIC_ONLY_NO_REPRODUCTION: all four remaining ordered synthetic sequences passed.'
           exit 2
 
       - name: Android instrumentation from camera through RAW on a disposable emulator
