@@ -39,3 +39,20 @@ CIではAndroid SDKの `system-images;android-35;google_apis;x86_64` とANGLEの
 | `RawEditInstrumentation` の `real`、`viewportUri`、個別の編集UIと開発用キャプチャ | 実素材を使う `real` または `viewportUri` には承認済みのRAWが必要。画面・入力状態まで確認する専用検査は、対象の実験APKと計測APKを用い、目的に応じた引数と画面条件を指定する。[RAW実験アプリの検証](cnt-look-poc.md#開発と確認)、[原寸表示と保存状態](raw-full-resolution-contract.md) |
 
 本体の専用モードは、対象の入力を準備したあと、該当手順で `adb -s SERIAL shell am instrument -w -e mode MODE jp.nano.rawgallery.test/jp.nano.rawgallery.ArchiveInstrumentation` に必要な引数を渡す。端末の選定、実施記録、利用者データの取り扱いは[開発手順](development-workflow.md)に従う。
+
+## 診断ログの書き込み時間を測る手動モード
+
+`diagnostic-log-write-cost` は通常のCI一覧に含めない。起動中のActivityと診断recorderがない専用のオフラインAVDに、非デバッグの本体APKと対応する計測APKを入れる。実行前にホストで端末、APKとソースの対応を照合し、ホスト側にも実行の制限時間を設ける。
+
+```sh
+adb -s SERIAL shell am instrument -w \
+  -e mode diagnostic-log-write-cost -e disposable-avd true \
+  -e source-commit FULL_COMMIT_SHA \
+  jp.nano.rawgallery.test/jp.nano.rawgallery.ArchiveInstrumentation
+```
+
+1スレッドで128バイトの固定ASCII文字列を診断イベントに渡す。診断OFFの32件、診断ONで20ms間隔の8件、間隔を設けない32件、2MiB上限の2KiB手前から回転する32件を実行する。各条件の1回目はウォームアップで集計から外し、その後に条件の順をずらして3回測る。診断ONの2回は末尾がファイルに見えるまで確認してから停止し、別の1回は投入直後に停止してキューの排出を待つ。
+
+標準出力の `log_write_environment`、各 `log_write_trial`、`log_write_restore` はJSON。環境、試行順、呼び出しごとの経過時間と開始時点、ファイルで末尾を観測した時点または停止完了、行数と回転、記録された欠落カウンタと後片付けを保存する。末尾は1ms間隔を目安に最大5秒観測するため、値には読取りとスケジューリングの時間が含まれる。停止の値は設定保存とスレッドの終了待ちを含む。成功の判定では末尾の読み戻し、行順、保持上限、設定とファイルの分離を確認する。性能値による合否判定は設けない。
+
+ログと設定は試行ごとの専用ディレクトリと専用のSharedPreferencesへ書く。既存のログと設定を保持し、停止後に専用品だけを削除する。プロセス内の採番・欠落累計と停止済みrecorderの識別子は本体の停止処理に従い、初期化せずに計測プロセスを終了する。このモードは合成入力での診断書き込みを測る。元のContextへ戻すAPIがないImportLogの計測、実際のUSB取り込みや画面表示、端末の物理ストレージへの永続化は別の検証が必要。[Issue #257](https://github.com/ktnyt/Loupe/issues/257)
