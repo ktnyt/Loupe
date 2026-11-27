@@ -116,7 +116,7 @@ final class LogWriteCostChecks {
             .put("position", position)
             .put("warmup", round == 0)
             .put("controlled_failure", controlledFailure)
-            .put("performance_sample", round > 0 && !controlledFailure)
+            .put("performance_sample", false)
             .put("diagnostics_on", scenario.enabled())
             .put("events_planned", scenario.count())
             .put("requested_gap_ms", scenario.gapMs())
@@ -188,6 +188,9 @@ final class LogWriteCostChecks {
           receipt.put("cleanup_failure", failureDetails(trial.cleanupFailure));
         }
       }
+      receipt.put(
+          "performance_sample",
+          round > 0 && !controlledFailure && "pass".equals(receipt.optString("outcome")));
       publish(test, "log_write_trial", receipt);
     }
   }
