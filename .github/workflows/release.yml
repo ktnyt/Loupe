@@ -98,19 +98,37 @@ jobs:
           sudo chmod a+rw /dev/kvm
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'emulator' 'system-images;android-35;google_apis;x86_64'
           wait_for_probe_serial_release() {
-            local deadline=$((SECONDS + 20)) remaining devices
+            local deadline=$((SECONDS + 20)) remaining devices presence
             while (( (remaining = deadline - SECONDS) > 0 )); do
               if ! devices=$(timeout --signal=KILL "${remaining}s" "$ANDROID_HOME/platform-tools/adb" devices) ||
-                 [[ "${devices%%$'\n'*}" != 'List of devices attached' ]]; then
+                 ! presence=$(awk -F '\t' '
+                   NR == 1 {
+                     if ($0 != "List of devices attached") bad = 1
+                     next
+                   }
+                   /^[[:space:]]*$/ { next }
+                   NF == 2 && $1 ~ /^[^[:space:]]+$/ && $2 ~ /^(device|offline|unauthorized)$/ {
+                     if ($1 == "emulator-5580") present = 1
+                     next
+                   }
+                   { bad = 1 }
+                   END {
+                     if (bad || NR == 0) exit 1
+                     print (present ? "present" : "absent")
+                   }
+                 ' <<< "$devices"); then
                 echo 'DIAGNOSTIC_ONLY_INCONCLUSIVE: could not read ADB devices after a passing sequence.'
                 return 1
               fi
-              if ! grep -Eq '^emulator-5580([[:space:]]|$)' <<< "$devices"; then
+              if (( SECONDS >= deadline )); then
+                break
+              fi
+              if [[ "$presence" == absent ]]; then
                 return 0
               fi
               sleep 1
             done
-            echo 'DIAGNOSTIC_ONLY_INCONCLUSIVE: emulator-5580 remained listed after 20 seconds.'
+            echo 'DIAGNOSTIC_ONLY_INCONCLUSIVE: emulator-5580 absence was not confirmed within 20 seconds.'
             return 1
           }
 
