@@ -73,13 +73,36 @@ esac
 "$adb" -s "$serial" install -g app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
 
 run_instrumentation() {
-  local label=$1 result
+  local label=$1 result status=0 expected exact=0 stderr_file="$work/instrumentation.stderr"
   shift
   printf '\nRunning Android instrumentation: %s\n' "$label"
-  result=$("$adb" -s "$serial" shell am instrument -w -r "$@" < /dev/null)
+  result=$("$adb" -s "$serial" shell am instrument -w -r "$@" < /dev/null 2>"$stderr_file") || status=$?
   printf '%s\n' "$result"
-  if ! grep -q '^INSTRUMENTATION_RESULT: stream=PASS ' <<< "$result" ||
-     ! grep -qx 'INSTRUMENTATION_CODE: -1' <<< "$result"; then
+  if [[ -s "$stderr_file" ]]; then cat "$stderr_file" >&2; fi
+  if (( status != 0 )); then
+    printf 'Instrumentation adb status: %s\n' "$status" >&2
+    exit "$status"
+  fi
+  case "$label" in
+    camera-history-migration) expected='INSTRUMENTATION_RESULT: stream=PASS CameraSync history migration'; exact=1 ;;
+    confidence-store) expected='INSTRUMENTATION_RESULT: stream=PASS confidence SQLite:' ;;
+    camera-ledger) expected='INSTRUMENTATION_RESULT: stream=PASS camera ledger:' ;;
+    camera-ledger-teardown) expected='INSTRUMENTATION_RESULT: stream=PASS camera ledger teardown:' ;;
+    *) expected='INSTRUMENTATION_RESULT: stream=PASS ' ;;
+  esac
+  if ! awk -v expected="$expected" -v exact="$exact" '
+    { if (finished && $0 !~ /^[[:space:]]*$/) bad = 1 }
+    /^INSTRUMENTATION_CODE:/ {
+      codes++; if (streams != 1 || $0 != "INSTRUMENTATION_CODE: -1") bad = 1
+      finished = 1
+    }
+    /^INSTRUMENTATION_RESULT: stream=/ {
+      streams++; if (codes || index($0, expected) != 1 || (exact && $0 != expected)) bad = 1
+    }
+    /^INSTRUMENTATION_(FAILED|ABORTED):/ { bad = 1 }
+    /^INSTRUMENTATION_RESULT: (shortMsg|longMsg)=/ { bad = 1 }
+    END { exit !(codes == 1 && streams == 1 && !bad) }
+  ' <<< "$result"; then
     if [[ "$label" == photo-edit ]]; then
       "$adb" -s "$serial" logcat -d -s LoupeRawEdit:I '*:S' |
         awk '/full[.]prepare|fixture[.]cancel|jpeg[.]load[.]complete/ {print}' || true
