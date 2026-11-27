@@ -23,9 +23,24 @@ LOGCAT_FIXTURES = {
     "viewer-screen": ("LoupeViewerTap:I", "I LoupeViewerTap: result fit=false\n"),
 }
 LOGCAT_ERROR = "synthetic logcat failure\n"
+IDENTITY_HEADER = "INSTRUMENTATION_RESULT: stream=java.io.IOException\n"
+IDENTITY_FRAME = (
+    "  at jp.nano.rawgallery.camera.CameraPhotoImporter."
+    "savedPhotoChanged(CameraPhotoImporter.java:179)\n"
+)
+IDENTITY_REPORT = (
+    IDENTITY_HEADER + IDENTITY_FRAME
+    + "Suppressed: jp.nano.rawgallery.CameraImportLedgerChecks$FixtureDiagnostic: phase=CROSS_ROUTE\n"
+    + "Archive device checks failed: IOException\n\n"
+)
+FAIL_CODE = "INSTRUMENTATION_CODE: 0\n"
+IDENTITY_TRACE = "branch=reopen-null\n"
 
-# Only this function is evaluated. The surrounding script can create or connect to an AVD.
-FUNCTION = re.compile(r"^run_instrumentation\(\) \{\n.*?^\}$", re.MULTILINE | re.DOTALL)
+# Only the result and trace functions are evaluated. The surrounding script can create an AVD.
+FUNCTIONS = re.compile(
+    r"^(?:run_instrumentation|report_identity_mismatch)\(\) \{\n.*?^\}$",
+    re.MULTILINE | re.DOTALL,
+)
 INVOKE = """
 set -euo pipefail
 work=$PWD
@@ -50,6 +65,10 @@ if [[ -n $EXPECTED_LOGCAT_TAG && $# == 7 &&
   fi
   exit "$LOGCAT_STATUS"
 fi
+if [[ "$*" == '-s emulator-5998 logcat -d -v raw -s LedgerIdentityProbe:E *:S' ]]; then
+  printf '%s' "$LOGCAT_LINE"
+  exit "$LOGCAT_STATUS"
+fi
 printf 'Unexpected fake adb arguments\n' >&2
 exit 99
 """
@@ -58,10 +77,10 @@ exit 99
 class InstrumentationResultTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        match = FUNCTION.search(RUNNER.read_text(encoding="utf-8"))
-        if match is None:
-            raise AssertionError("Could not extract run_instrumentation from the CI runner")
-        cls.function = match.group()
+        functions = FUNCTIONS.findall(RUNNER.read_text(encoding="utf-8"))
+        if len(functions) != 2:
+            raise AssertionError("Could not extract the result and trace functions from the CI runner")
+        cls.functions = "\n".join(functions)
 
     def setUp(self):
         directory = tempfile.TemporaryDirectory(prefix="loupe-instrumentation-test-")
@@ -72,18 +91,23 @@ class InstrumentationResultTests(unittest.TestCase):
         adb.chmod(0o700)
 
     def check_result(
-        self, mode, stdout, *, stderr="", adb_status=0, expected_status=0, logcat_status=None
+        self, mode, stdout, *, stderr="", adb_status=0, expected_status=0, logcat_status=None,
+        diagnostic=False, identity_trace=IDENTITY_TRACE,
     ):
         calls = self.work / "calls.txt"
         calls.write_text("", encoding="utf-8")
         (self.work / "stdout.txt").write_text(stdout, encoding="utf-8")
         (self.work / "stderr.txt").write_text(stderr, encoding="utf-8")
         logcat_tag, logcat_line = LOGCAT_FIXTURES.get(mode, ("", ""))
+        setup = INVOKE
+        if diagnostic:
+            setup += "segment=ledger-diagnostic\n"
+            logcat_tag, logcat_line = "LedgerIdentityProbe:E", identity_trace
         result = subprocess.run(
             [
                 "bash",
                 "-c",
-                INVOKE + self.function + '\nrun_instrumentation "$1" -e mode "$1" "$2"',
+                setup + self.functions + '\nrun_instrumentation "$1" -e mode "$1" "$2"',
                 "instrumentation-test",
                 mode,
                 COMPONENT,
@@ -109,21 +133,29 @@ class InstrumentationResultTests(unittest.TestCase):
             "-e", "mode", mode, COMPONENT,
         ]
         if logcat_status is not None:
-            expected_calls += [
-                "7", "-s", "emulator-5998", "logcat", "-d", "-s", logcat_tag, "*:S",
-            ]
+            if diagnostic:
+                expected_calls += [
+                    "9", "-s", "emulator-5998", "logcat", "-d", "-v", "raw", "-s", logcat_tag, "*:S",
+                ]
+            else:
+                expected_calls += [
+                    "7", "-s", "emulator-5998", "logcat", "-d", "-s", logcat_tag, "*:S",
+                ]
         self.assertEqual(calls.read_text(encoding="utf-8").splitlines(), expected_calls)
         # Bash command substitution removes trailing newlines, and the runner writes one back.
-        self.assertEqual(
-            result.stdout,
-            f"\nRunning Android instrumentation: {mode}\n"
-            + stdout.rstrip("\n") + "\n" + (logcat_line if logcat_status == 0 else ""),
-        )
+        output = f"\nRunning Android instrumentation: {mode}\n" + stdout.rstrip("\n") + "\n"
+        if diagnostic and expected_status == 3:
+            output += "DIAGNOSTIC_ONLY_IDENTITY_MISMATCH: " + logcat_line
+        elif not diagnostic and logcat_status == 0:
+            output += logcat_line
+        self.assertEqual(result.stdout, output)
         if adb_status:
             stderr += f"Instrumentation adb status: {adb_status}\n"
-        if logcat_status:
+        if logcat_status and not diagnostic:
             stderr += LOGCAT_ERROR
-        if expected_status == 1 and not adb_status:
+        if diagnostic and expected_status == 1:
+            stderr += f"DIAGNOSTIC_ONLY_INCONCLUSIVE: {mode} did not report PASS with a confirmed identity trace.\n"
+        elif expected_status == 1 and not adb_status:
             stderr += f"{mode} did not report PASS.\n"
         self.assertEqual(result.stderr, stderr)
 
@@ -241,6 +273,46 @@ class InstrumentationResultTests(unittest.TestCase):
                     adb_status=7,
                     expected_status=7,
                     logcat_status=logcat_status,
+                )
+
+
+    def test_diagnostic_requires_the_complete_ledger_failure_before_reading_trace(self):
+        complete = IDENTITY_REPORT + FAIL_CODE
+        self.check_result(
+            "camera-ledger", complete + " \t\n", diagnostic=True,
+            logcat_status=0, expected_status=3,
+        )
+        for name, stdout in (
+            ("contradictory code", complete + PASS_CODE),
+            ("duplicate code", complete + FAIL_CODE),
+            ("duplicate stream", IDENTITY_HEADER + complete),
+            ("aborted", "INSTRUMENTATION_ABORTED: synthetic abort\n" + complete),
+            ("failed", "INSTRUMENTATION_FAILED: synthetic failure\n" + complete),
+            ("status error", "INSTRUMENTATION_STATUS: Error=synthetic error\n" + complete),
+            ("status code", "INSTRUMENTATION_STATUS_CODE: -2\n" + complete),
+            ("short message", "INSTRUMENTATION_RESULT: shortMsg=synthetic error\n" + complete),
+            ("long message", "INSTRUMENTATION_RESULT: longMsg=synthetic error\n" + complete),
+            ("missing terminal code", IDENTITY_REPORT),
+            ("missing summary", IDENTITY_HEADER + IDENTITY_FRAME + FAIL_CODE),
+            ("frame after suppression", IDENTITY_HEADER + "Suppressed: java.io.IOException\n"
+             + IDENTITY_FRAME + "Archive device checks failed: IOException\n" + FAIL_CODE),
+            ("non-primary saved-photo frame", complete.replace(
+                IDENTITY_FRAME, "  at unrelated.Class.run(Class.java:1)\n" + IDENTITY_FRAME,
+            )),
+            ("trailing record", complete + "synthetic unexpected data\n"),
+        ):
+            with self.subTest(name=name):
+                self.check_result("camera-ledger", stdout, diagnostic=True, expected_status=1)
+
+        self.check_result("camera-ledger", complete, diagnostic=True, adb_status=7, expected_status=1)
+        self.check_result("confidence-store", complete, diagnostic=True, expected_status=1)
+
+    def test_diagnostic_requires_an_unambiguous_trace(self):
+        for trace, status in (("", 0), (IDENTITY_TRACE * 2, 0), (IDENTITY_TRACE, 7)):
+            with self.subTest(trace=trace, status=status):
+                self.check_result(
+                    "camera-ledger", IDENTITY_REPORT + FAIL_CODE, diagnostic=True,
+                    logcat_status=status, identity_trace=trace, expected_status=1,
                 )
 
 

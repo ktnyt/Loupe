@@ -209,10 +209,29 @@ run_instrumentation() {
             "$label" == 'tag-confidence (confidence_rebuild_delay_ms=12000)' ]]; then
       "$adb" -s "$serial" logcat -d -s LoupeConfidenceGate:I '*:S' || true
     fi
-    if [[ "$segment" == ledger-diagnostic ]]; then
+    if [[ "${segment:-}" == ledger-diagnostic ]]; then
       if (( status == 0 )) && [[ "$label" == camera-ledger ]] &&
-         grep -Fx 'INSTRUMENTATION_CODE: 0' <<< "$result" >/dev/null &&
-         grep -E '^  at jp[.]nano[.]rawgallery[.]camera[.]CameraPhotoImporter[.]savedPhotoChanged[(]' <<< "$result" >/dev/null &&
+         awk '
+           /^[[:space:]]*$/ { next }
+           finished { bad = 1; next }
+           !stream && $0 == "INSTRUMENTATION_RESULT: stream=java.io.IOException" {
+             stream = 1
+             next
+           }
+           summary && $0 == "INSTRUMENTATION_CODE: 0" { finished = 1; next }
+           !stream || summary { bad = 1; next }
+           !frame {
+             if ($0 ~ /^  at jp[.]nano[.]rawgallery[.]camera[.]CameraPhotoImporter[.]savedPhotoChanged[(]CameraPhotoImporter[.]java:[0-9]+[)]$/)
+               frame = 1
+             else
+               bad = 1
+             next
+           }
+           $0 == "Archive device checks failed: IOException" { summary = 1; next }
+           /^  at / || /^(Suppressed|Caused by): / { next }
+           { bad = 1 }
+           END { exit !(finished && !bad) }
+         ' <<< "$result" &&
          report_identity_mismatch; then
         exit 3
       fi
