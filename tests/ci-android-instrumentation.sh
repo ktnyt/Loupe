@@ -149,13 +149,17 @@ report_identity_mismatch() {
   local trace
   trace=$("$adb" -s "$serial" logcat -d -v raw -s 'LedgerIdentityProbe:E' '*:S' |
     awk '
+      /^[[:space:]]*$/ { next }
+      /^--------- beginning of (main|system|crash)$/ { next }
       /^branch=reopen-null$/ ||
       /^branch=(reopened-stat|held-stat) regularChanged=(true|false) devChanged=(true|false) inodeChanged=(true|false) sizeChanged=(true|false) mtimeChanged=(true|false) ctimeChanged=(true|false)$/ {
         count++
         entry = $0
+        next
       }
+      { bad = 1 }
       END {
-        if (count != 1) exit 1
+        if (bad || count != 1) exit 1
         print entry
       }
     ') || return 1

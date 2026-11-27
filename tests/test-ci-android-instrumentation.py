@@ -92,7 +92,7 @@ class InstrumentationResultTests(unittest.TestCase):
 
     def check_result(
         self, mode, stdout, *, stderr="", adb_status=0, expected_status=0, logcat_status=None,
-        diagnostic=False, identity_trace=IDENTITY_TRACE,
+        diagnostic=False, identity_trace=IDENTITY_TRACE, expected_trace=None,
     ):
         calls = self.work / "calls.txt"
         calls.write_text("", encoding="utf-8")
@@ -145,7 +145,8 @@ class InstrumentationResultTests(unittest.TestCase):
         # Bash command substitution removes trailing newlines, and the runner writes one back.
         output = f"\nRunning Android instrumentation: {mode}\n" + stdout.rstrip("\n") + "\n"
         if diagnostic and expected_status == 3:
-            output += "DIAGNOSTIC_ONLY_IDENTITY_MISMATCH: " + logcat_line
+            trace = logcat_line if expected_trace is None else expected_trace
+            output += "DIAGNOSTIC_ONLY_IDENTITY_MISMATCH: " + trace
         elif not diagnostic and logcat_status == 0:
             output += logcat_line
         self.assertEqual(result.stdout, output)
@@ -308,7 +309,35 @@ class InstrumentationResultTests(unittest.TestCase):
         self.check_result("confidence-store", complete, diagnostic=True, expected_status=1)
 
     def test_diagnostic_requires_an_unambiguous_trace(self):
-        for trace, status in (("", 0), (IDENTITY_TRACE * 2, 0), (IDENTITY_TRACE, 7)):
+        reopened = (
+            "branch=reopened-stat regularChanged=false devChanged=true inodeChanged=false "
+            "sizeChanged=true mtimeChanged=false ctimeChanged=true\n"
+        )
+        held = (
+            "branch=held-stat regularChanged=true devChanged=false inodeChanged=true "
+            "sizeChanged=false mtimeChanged=true ctimeChanged=false\n"
+        )
+        for trace, expected in (
+            (reopened, reopened),
+            ("--------- beginning of main\n \t\n" + held + "  \n", held),
+        ):
+            with self.subTest(accepted=expected):
+                self.check_result(
+                    "camera-ledger", IDENTITY_REPORT + FAIL_CODE, diagnostic=True,
+                    logcat_status=0, identity_trace=trace, expected_trace=expected, expected_status=3,
+                )
+
+        for trace, status in (
+            ("", 0),
+            (IDENTITY_TRACE * 2, 0),
+            (reopened + held, 0),
+            (IDENTITY_TRACE + "branch=held-stat\n", 0),
+            ("branch=unknown-stat\n" + IDENTITY_TRACE, 0),
+            (held.replace("inodeChanged=true", "inode=123") + reopened, 0),
+            (IDENTITY_TRACE + "unexpected raw tag message\n", 0),
+            ("--------- beginning of unexpected\n" + IDENTITY_TRACE, 0),
+            (IDENTITY_TRACE, 7),
+        ):
             with self.subTest(trace=trace, status=status):
                 self.check_result(
                     "camera-ledger", IDENTITY_REPORT + FAIL_CODE, diagnostic=True,
