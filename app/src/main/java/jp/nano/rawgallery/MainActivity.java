@@ -3619,75 +3619,31 @@ public final class MainActivity extends DiagnosticActivity {
                         shareSelectionChanged();
                         return;
                       }
-                      Intent send =
-                          new Intent(action)
-                              .setType(type)
-                              .putExtra(Intent.EXTRA_TITLE, selection.size() + "枚の写真")
-                              .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                      if (uris.size() == 1) send.putExtra(Intent.EXTRA_STREAM, uris.get(0));
-                      else send.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
-                      ClipData clip = ClipData.newRawUri("写真", uris.get(0));
-                      for (int i = 1; i < uris.size(); i++)
-                        clip.addItem(new ClipData.Item(uris.get(i)));
-                      send.setClipData(clip);
-                      if (target != null) {
-                        ComponentName component =
-                            ComponentName.unflattenFromString(target.component);
-                        boolean supported = false;
-                        for (ResolveInfo candidate :
-                            getPackageManager()
-                                .queryIntentActivities(new Intent(action).setType(type), 0)) {
-                          if (new ComponentName(
-                                  candidate.activityInfo.packageName, candidate.activityInfo.name)
-                              .equals(component)) {
-                            supported = true;
-                            break;
-                          }
-                        }
-                        if (!supported) {
-                          ShareHistoryReceiver.cancelLater(getApplicationContext(), historySession);
-                          feedback(
-                              StatusView.Symbol.FORMAT,
-                              "この共有先は選んだ画像形式に対応していません。共有先の形式を変更してください。",
-                              this::editTargets,
-                              "共有先の設定");
-                          return;
-                        }
-                        send.setComponent(component);
-                      }
-                      android.app.PendingIntent callback = null;
-                      try {
-                        Intent outgoing = send;
-                        if (target == null) {
-                          if (historySession != null)
-                            callback = ShareHistoryReceiver.callback(this, historySession);
-                          outgoing =
-                              callback == null
-                                  ? Intent.createChooser(send, "写真を共有")
-                                  : Intent.createChooser(send, "写真を共有", callback.getIntentSender());
-                        }
-                        if (!validSelection.getAsBoolean()) {
-                          if (callback != null) callback.cancel();
-                          ShareHistoryReceiver.cancelLater(getApplicationContext(), historySession);
-                          shareSelectionChanged();
-                          return;
-                        }
-                        startActivity(outgoing);
-                        if (target != null)
-                          ShareHistoryReceiver.recordLater(
-                              getApplicationContext(), historySession, send.getComponent());
-                        else if (historySession == null)
-                          ShareHistoryReceiver.failed(getApplicationContext());
-                      } catch (RuntimeException failure) {
-                        if (callback != null) callback.cancel();
-                        ShareHistoryReceiver.cancelLater(getApplicationContext(), historySession);
-                        if (!(failure instanceof ActivityNotFoundException)
-                            && !(failure instanceof SecurityException)) throw failure;
-                        feedback(
-                            StatusView.Symbol.NO_APP,
-                            "共有先が見つかりません。共有先の設定を変更してください。",
-                            this::editTargets,
-                            "共有先の設定");
+                      ShareHandoff.Outcome outcome =
+                          ShareHandoff.launch(
+                              this,
+                              uris,
+                              action,
+                              type,
+                              selection.size(),
+                              target,
+                              historySession,
+                              validSelection,
+                              this::shareSelectionChanged);
+                      switch (outcome) {
+                        case LAUNCHED, SELECTION_CHANGED -> {}
+                        case UNSUPPORTED ->
+                            feedback(
+                                StatusView.Symbol.FORMAT,
+                                "この共有先は選んだ画像形式に対応していません。共有先の形式を変更してください。",
+                                this::editTargets,
+                                "共有先の設定");
+                        case NO_APP ->
+                            feedback(
+                                StatusView.Symbol.NO_APP,
+                                "共有先が見つかりません。共有先の設定を変更してください。",
+                                this::editTargets,
+                                "共有先の設定");
                       }
                     });
               } catch (Exception e) {
