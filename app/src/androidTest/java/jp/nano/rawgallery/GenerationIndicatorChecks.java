@@ -12,14 +12,18 @@ import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.Shader;
 import android.net.Uri;
+import android.os.Handler;
 import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.view.inspector.WindowInspector;
+import android.widget.PopupWindow;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -357,6 +361,9 @@ final class GenerationIndicatorChecks {
                   & android.view.WindowManager.LayoutParams.FLAG_SECURE)
               != 0,
           "credential settings remain secure");
+      await(t, "settings window focused", config::hasWindowFocus);
+      TagDetailChecks.ui(t, () -> verifyActivityHandoff(main, config));
+      TagDetailChecks.ui(t, () -> verifyHandoffWithOutgoingFocus(config, main));
       TagDetailChecks.ui(t, config::finish);
       await(t, "viewer restored", () -> main.hasWindowFocus() && indicator() != null);
       TagDetailChecks.ui(
@@ -536,6 +543,122 @@ final class GenerationIndicatorChecks {
       for (Uri item : new java.util.LinkedHashSet<>(owned))
         context.getContentResolver().delete(item, null, null);
       GenerationIndicator.finished("fixture ended", null, false);
+    }
+  }
+
+  private static void verifyActivityHandoff(Activity oldActivity, Activity newActivity) {
+    GenerationIndicator controller = (GenerationIndicator) indicatorField(null, "instance");
+    Handler handler = (Handler) indicatorField(null, "MAIN");
+    Runnable refresh = (Runnable) indicatorField(controller, "refresh");
+    ViewTreeObserver oldObserver = oldActivity.getWindow().getDecorView().getViewTreeObserver();
+    View newDecor = newActivity.getWindow().getDecorView();
+    ViewTreeObserver newObserver = newDecor.getViewTreeObserver();
+    TagDetailChecks.require(
+        oldObserver != newObserver && oldObserver.isAlive() && newObserver.isAlive(),
+        "separate live activity layout observers");
+    TagDetailChecks.require(
+        indicatorField(controller, "resumed") == newActivity, "settings initially owns indicator");
+    try {
+      // Replay the callbacks on the main thread while Android keeps the settings window focused.
+      controller.onActivityPaused(newActivity);
+      controller.onActivityResumed(oldActivity);
+      TagDetailChecks.require(
+          requestsLayoutRefresh(oldObserver, handler, refresh), "old activity listener installed");
+      PopupWindow previousPopup = (PopupWindow) indicatorField(controller, "popup");
+
+      controller.onActivityResumed(newActivity);
+      TagDetailChecks.require(
+          !requestsLayoutRefresh(oldObserver, handler, refresh), "handoff removes old listener");
+      PopupWindow currentPopup = (PopupWindow) indicatorField(controller, "popup");
+      TagDetailChecks.require(
+          currentPopup != null
+              && currentPopup != previousPopup
+              && (previousPopup == null || !previousPopup.isShowing()),
+          "handoff releases previous popup");
+
+      controller.onActivityPaused(oldActivity);
+      controller.onActivityDestroyed(oldActivity);
+      TagDetailChecks.require(
+          indicatorField(controller, "resumed") == newActivity
+              && indicatorField(controller, "host") == newDecor
+              && indicatorField(controller, "popup") == currentPopup
+              && currentPopup.isShowing()
+              && requestsLayoutRefresh(newObserver, handler, refresh),
+          "late old callbacks preserve current owner, popup and listener");
+
+      controller.onActivityResumed(newActivity);
+      controller.onActivityPaused(newActivity);
+      TagDetailChecks.require(
+          indicatorField(controller, "resumed") == null
+              && indicatorField(controller, "host") == null
+              && indicatorField(controller, "popup") == null
+              && !currentPopup.isShowing()
+              && !requestsLayoutRefresh(newObserver, handler, refresh),
+          "single current pause removes listener and releases window references");
+    } finally {
+      controller.onActivityPaused(oldActivity);
+      controller.onActivityPaused(newActivity);
+      controller.onActivityResumed(newActivity);
+    }
+  }
+
+  private static void verifyHandoffWithOutgoingFocus(Activity outgoing, Activity incoming) {
+    GenerationIndicator controller = (GenerationIndicator) indicatorField(null, "instance");
+    Handler handler = (Handler) indicatorField(null, "MAIN");
+    Runnable refresh = (Runnable) indicatorField(controller, "refresh");
+    View outgoingDecor = outgoing.getWindow().getDecorView();
+    View incomingDecor = incoming.getWindow().getDecorView();
+    TagDetailChecks.require(
+        outgoingDecor.isAttachedToWindow()
+            && outgoingDecor.hasWindowFocus()
+            && !incomingDecor.hasWindowFocus()
+            && indicatorField(controller, "resumed") == outgoing
+            && indicatorField(controller, "host") == outgoingDecor,
+        "outgoing settings owns the focused window and indicator");
+    PopupWindow outgoingPopup = (PopupWindow) indicatorField(controller, "popup");
+    TagDetailChecks.require(
+        outgoingPopup != null && outgoingPopup.isShowing(), "outgoing settings popup visible");
+    try {
+      controller.onActivityResumed(incoming);
+      Object host = indicatorField(controller, "host");
+      Object popup = indicatorField(controller, "popup");
+      TagDetailChecks.require(
+          outgoingDecor.hasWindowFocus()
+              && !incomingDecor.hasWindowFocus()
+              && indicatorField(controller, "resumed") == incoming
+              && (host == null || host == incomingDecor)
+              && popup != outgoingPopup
+              && !outgoingPopup.isShowing()
+              && !requestsLayoutRefresh(outgoingDecor.getViewTreeObserver(), handler, refresh),
+          "handoff does not reattach popup or listeners to still-focused outgoing settings");
+      controller.onActivityPaused(outgoing);
+      controller.onActivityDestroyed(outgoing);
+      TagDetailChecks.require(
+          indicatorField(controller, "resumed") == incoming
+              && indicatorField(controller, "host") == host
+              && indicatorField(controller, "popup") == popup,
+          "late outgoing callbacks preserve incoming owner and window state");
+    } finally {
+      controller.onActivityResumed(outgoing);
+    }
+  }
+
+  private static boolean requestsLayoutRefresh(
+      ViewTreeObserver observer, Handler handler, Runnable refresh) {
+    handler.removeCallbacks(refresh);
+    observer.dispatchOnGlobalLayout();
+    boolean queued = handler.hasCallbacks(refresh);
+    handler.removeCallbacks(refresh);
+    return queued;
+  }
+
+  private static Object indicatorField(GenerationIndicator controller, String name) {
+    try {
+      Field field = GenerationIndicator.class.getDeclaredField(name);
+      field.setAccessible(true);
+      return field.get(controller);
+    } catch (ReflectiveOperationException failure) {
+      throw new AssertionError("indicator fixture field: " + name, failure);
     }
   }
 
