@@ -241,10 +241,10 @@ final class DiagnosticExportChecks {
     require(commits.isEmpty());
     recording.finish();
 
-    String raw = Files.readString(current.toPath());
+    String raw = new String(Files.readAllBytes(current.toPath()), StandardCharsets.UTF_8);
     commits.add(false);
     require(rankingOutcome(store, key, false, true) == RankingStore.Outcome.WRITE_FAILED);
-    require(raw.equals(Files.readString(current.toPath())));
+    require(raw.equals(new String(Files.readAllBytes(current.toPath()), StandardCharsets.UTF_8)));
     String safe = unzip(DiagnosticExport.capture(isolated)).get("events.jsonl");
     List<List<String>> expected =
         List.of(
