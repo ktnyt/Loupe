@@ -17,7 +17,7 @@ final class ViewerPhotoLoad {
 
     void original(PhotoRepository.Preview source, Bitmap bitmap);
 
-    void originalUnavailable();
+    void originalUnavailable(boolean legacy);
   }
 
   static void read(
@@ -41,7 +41,8 @@ final class ViewerPhotoLoad {
       Bitmap high = PhotoRepository.bitmap(full, 4000);
       postImage(main, current, high, image -> display.original(full, image));
     } catch (Exception unavailable) {
-      postFailure(main, current, display::originalUnavailable);
+      boolean legacy = unavailable instanceof OriginalCache.LegacyOriginalUnavailable;
+      postFailure(main, current, () -> display.originalUnavailable(legacy));
     }
   }
 

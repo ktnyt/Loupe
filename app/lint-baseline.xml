@@ -453,17 +453,6 @@
     </issue>
 
     <issue
-        id="SetJavaScriptEnabled"
-        message="Using `setJavaScriptEnabled` can introduce XSS vulnerabilities into your application, review carefully"
-        errorLine1="    s.setJavaScriptEnabled(true);"
-        errorLine2="    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/jp/nano/rawgallery/CloudActivity.java"
-            line="110"
-            column="5"/>
-    </issue>
-
-    <issue
         id="DrawAllocation"
         message="Avoid object allocations during draw/layout operations (preallocate and reuse instead)"
         errorLine1="        Rect frame = new Rect();"
@@ -681,28 +670,6 @@
             file="src/main/java/jp/nano/rawgallery/ShareUi.java"
             line="135"
             column="780"/>
-    </issue>
-
-    <issue
-        id="DrawAllocation"
-        message="Avoid object allocations during draw/layout operations (preallocate and reuse instead)"
-        errorLine1="      if(label.equals(&quot;その他&quot;)){paint.setStyle(Paint.Style.FILL);for(int x:new int[]{4,10,16})canvas.drawCircle(x,10,1.4f,paint);}"
-        errorLine2="                                                                         ~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/jp/nano/rawgallery/SyncSettingsUi.java"
-            line="85"
-            column="74"/>
-    </issue>
-
-    <issue
-        id="DrawAllocation"
-        message="Avoid object allocations during draw/layout operations (preallocate and reuse instead)"
-        errorLine1="      else if(label.contains(&quot;位置情報&quot;)){canvas.drawCircle(10,8,2.3f,paint);Path p=new Path();p.moveTo(10,18);p.cubicTo(2,10,2,3,10,2);p.cubicTo(18,3,18,10,10,18);canvas.drawPath(p,paint);}"
-        errorLine2="                                                                                ~~~~~~~~~~">
-        <location
-            file="src/main/java/jp/nano/rawgallery/SyncSettingsUi.java"
-            line="86"
-            column="81"/>
     </issue>
 
     <issue
@@ -1269,17 +1236,6 @@
     <issue
         id="SetTextI18n"
         message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="    title.setText(&quot;Amazon Photos&quot;);"
-        errorLine2="                  ~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/jp/nano/rawgallery/CloudActivity.java"
-            line="40"
-            column="19"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
         errorLine1="        auto.setText(&quot;カメラのWi-Fi接続時に自動で取り込む&quot;); auto.setMinHeight(dp(48));"
         errorLine2="                     ~~~~~~~~~~~~~~~~~~~~~~">
         <location
@@ -1462,17 +1418,6 @@
             file="src/main/java/jp/nano/rawgallery/ShareUi.java"
             line="180"
             column="24"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
-        errorLine1="            if(lastSync!=null)lastSync.setText(&quot;最後の同期：&quot;+(finishedAt>0?android.text.format.DateFormat.format(&quot;M月d日 HH:mm&quot;,finishedAt):&quot;—&quot;));"
-        errorLine2="                                               ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/jp/nano/rawgallery/SyncActivity.java"
-            line="32"
-            column="48"/>
     </issue>
 
     <issue

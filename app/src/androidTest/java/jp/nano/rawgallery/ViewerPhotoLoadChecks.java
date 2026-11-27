@@ -163,7 +163,8 @@ final class ViewerPhotoLoadChecks {
           }
 
           @Override
-          public void originalUnavailable() {
+          public void originalUnavailable(boolean legacy) {
+            if (legacy) throw new AssertionError("Local failure reported as legacy");
             stages.add("original failed");
           }
         });

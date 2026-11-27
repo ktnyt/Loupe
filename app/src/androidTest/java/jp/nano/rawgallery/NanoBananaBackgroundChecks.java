@@ -11,6 +11,7 @@ import android.content.ContextWrapper;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Point;
 import android.graphics.Rect;
 import android.net.Uri;
 import android.os.ParcelFileDescriptor;
@@ -19,6 +20,7 @@ import android.provider.MediaStore;
 import android.text.Layout;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.widget.Button;
 import android.widget.TextView;
 import androidx.core.content.ContextCompat;
@@ -658,7 +660,6 @@ final class NanoBananaBackgroundChecks {
           "current request cleanup removes B once without generation or polling");
       verifyDiscardWithRenamedPublishedResult(
           test, screen, store, factory, saved, input, prompt, jpeg);
-      String profile = "-" + width + "-" + font;
       Fake rateLimitedSubmit = new Fake(store, jpeg, saved);
       rateLimitedSubmit.submitApi = NanoBananaApiChecks.rateLimitedApi();
       verifySubmitFailureMessage(
@@ -670,7 +671,8 @@ final class NanoBananaBackgroundChecks {
           prompt,
           NanoBananaApiChecks.SUBMIT_RATE_LIMIT,
           "429",
-          profile);
+          width,
+          font);
       Fake rateLimitedStatus = new Fake(store, jpeg, saved);
       rateLimitedStatus.statusApi = NanoBananaApiChecks.rateLimitedApi();
       verifyFailureMessage(
@@ -696,7 +698,8 @@ final class NanoBananaBackgroundChecks {
           prompt,
           NanoBananaApiChecks.SUBMIT_API_REJECTED,
           "api-rejection",
-          profile);
+          width,
+          font);
       String startupTrace = verifyStartupRejection(context, store, photo, prompt);
       return "PASS nano-background: actual production Android Service with isolated fake provider; next-photo operation, busy/error menu captures, Home continuation, no generation/result Activity launch, automatic JPEG save/readback 1200x800, temporary-object cleanup, duplicate admission, immutable prompt/output snapshot, next admission, saved cleanup retry without POST/download, interrupted-worker lease, durable discard retry and cleanup-only completion text, missing-version selectable manual recovery guidance, explicit ambiguous-submission messaging, stale end-confirmation A/B identity guard and current identity cleanup, stale Intent suppression and startup rejection, remote-first discard with a detached result volume, renamed published result retained on discard, MTP same-size corruption and read error checks, fixed API error delivery and suppression of arbitrary exception text. Provider remained blocked through Home after "
           + homeWaitMs
@@ -842,13 +845,15 @@ final class NanoBananaBackgroundChecks {
       NanoBananaStore.Prompt prompt,
       String expected,
       String scenario,
-      String profile)
+      int width,
+      float font)
       throws Exception {
     factory.fake = network;
     factory.lastResult = null;
     String capturePrefix = "nano-background-submit-" + scenario;
+    String profile = "-" + width + "-" + font;
     TagDetailChecks.require(NanoBananaService.start(screen, input, prompt), "start provider POST");
-    captureAndOpenSubmitFailureNotice(test, screen, expected, capturePrefix, profile);
+    captureAndOpenSubmitFailureNotice(test, screen, expected, capturePrefix, profile, width, font);
     idle(test);
     JSONObject pending = factory.store.job();
     TagDetailChecks.require(
@@ -911,7 +916,9 @@ final class NanoBananaBackgroundChecks {
       MainActivity screen,
       String expected,
       String capturePrefix,
-      String profile)
+      String profile,
+      int width,
+      float font)
       throws Exception {
     TextView[] notice = {null};
     Button[] action = {null};
@@ -1001,7 +1008,10 @@ final class NanoBananaBackgroundChecks {
               || !text.isShown()
               || !text.hasWindowFocus()
               || layout == null) {
+            logSubmitNoticeGeometry("lifecycle", expected, width, font, true, text, action[0]);
             issue[0] = "POST failure Snackbar was detached or lost focus before capture: " + name;
+            logSubmitNoticeGate(
+                "lifecycle", expected, width, font, decor, text, action[0], layout, null);
             return;
           }
           int lines = layout.getLineCount();
@@ -1015,13 +1025,16 @@ final class NanoBananaBackgroundChecks {
                     && layout.getLineRight(line) <= layout.getWidth() + 1;
           }
           Rect visible = new Rect();
+          boolean globalVisible = text.getGlobalVisibleRect(visible);
           boolean boundsFit =
-              text.getGlobalVisibleRect(visible)
+              globalVisible
                   && visible.width() == text.getWidth()
                   && visible.height() == text.getHeight()
                   && layout.getHeight() + text.getTotalPaddingTop() + text.getTotalPaddingBottom()
                       <= text.getHeight();
-          if (ellipses != 0 || end != text.length() || !lineFits || !boundsFit) {
+          boolean rejected = ellipses != 0 || end != text.length() || !lineFits || !boundsFit;
+          logSubmitNoticeGeometry("text_fit", expected, width, font, rejected, text, action[0]);
+          if (rejected) {
             issue[0] =
                 "POST failure Snackbar text does not fit: "
                     + name
@@ -1037,6 +1050,16 @@ final class NanoBananaBackgroundChecks {
                     + lineFits
                     + ", boundsFit="
                     + boundsFit;
+            logSubmitNoticeGate(
+                "text_fit",
+                expected,
+                width,
+                font,
+                decor,
+                text,
+                action[0],
+                layout,
+                new NoticeTextFit(lines, end, ellipses, lineFits, visible, globalVisible));
           }
         });
     saveCapture(test, name);
@@ -1071,6 +1094,322 @@ final class NanoBananaBackgroundChecks {
         observations,
         issue[0] == null ? "layout fits\nSnackbar confirmation clicked" : issue[0]);
     TagDetailChecks.require(issue[0] == null, issue[0]);
+  }
+
+  private record NoticeTextFit(
+      int lines, int end, int ellipses, boolean lineFits, Rect visible, boolean globalVisible) {}
+
+  private static void logSubmitNoticeGate(
+      String phase,
+      String expected,
+      int requestedWidth,
+      float requestedFont,
+      View decor,
+      TextView text,
+      Button action,
+      Layout layout,
+      NoticeTextFit fit) {
+    runNoticeDiagnostic(
+        () ->
+            readSubmitNoticeGate(
+                phase, expected, requestedWidth, requestedFont, decor, text, action, layout, fit));
+  }
+
+  private static void runNoticeDiagnostic(Runnable diagnostic) {
+    try {
+      diagnostic.run();
+    } catch (RuntimeException | AssertionError unavailable) {
+      // Optional diagnostics never determine the notice verdict.
+    }
+  }
+
+  private static void logSubmitNoticeGeometry(
+      String phase,
+      String expected,
+      int width,
+      float font,
+      boolean rejected,
+      View text,
+      View action) {
+    runNoticeDiagnostic(
+        () -> {
+          String scenario =
+              expected.equals(NanoBananaApiChecks.SUBMIT_RATE_LIMIT)
+                  ? "rate_limit"
+                  : "api_rejection";
+          String sample =
+              " scenario="
+                  + scenario
+                  + " phase="
+                  + phase
+                  + " rejected="
+                  + rejected
+                  + " reqWidthDp="
+                  + width
+                  + " reqFont="
+                  + font;
+          logNoticeViewChain(sample + " chain=text", text);
+          logNoticeViewChain(sample + " chain=action", action);
+        });
+  }
+
+  private static void logNoticeViewChain(String sample, View leaf) {
+    final int maxNodes = 32;
+    View node = leaf;
+    int depth = 0;
+    boolean reachedRoot = false;
+    while (node != null && depth < maxNodes) {
+      ViewParent parent = node.getParent();
+      boolean root = !(parent instanceof View);
+      boolean attached = node.isAttachedToWindow();
+      ViewGroup group = node instanceof ViewGroup vg ? vg : null;
+      float[] matrix = new float[9];
+      node.getMatrix().getValues(matrix);
+      Rect clip = node.getClipBounds();
+      Rect visible = new Rect();
+      Point offset = new Point();
+      boolean globalVisible = node.getGlobalVisibleRect(visible, offset);
+      String rootGeometry = "";
+      if (root) {
+        int[] screen = new int[2];
+        int[] window = new int[2];
+        node.getLocationOnScreen(screen);
+        node.getLocationInWindow(window);
+        // Query the terminal ViewParent's virtual canvas through its public visibility API.
+        Rect canvas = new Rect(0, 0, Integer.MAX_VALUE, Integer.MAX_VALUE);
+        boolean canvasVisible =
+            attached && parent != null && parent.getChildVisibleRect(node, canvas, null);
+        rootGeometry =
+            " rootScreen="
+                + Arrays.toString(screen)
+                + " rootWindow="
+                + Arrays.toString(window)
+                + " canvasVisible="
+                + canvasVisible
+                + " canvasClip="
+                + (canvasVisible ? canvas.toShortString() : "none");
+      }
+      android.util.Log.e(
+          "LoupeNanoFixture",
+          "submit_notice_geometry_node"
+              + sample
+              + " depth="
+              + depth
+              + " root="
+              + root
+              + " attached="
+              + attached
+              + " hasParent="
+              + (parent != null)
+              + " ltwh=["
+              + node.getLeft()
+              + ","
+              + node.getTop()
+              + ","
+              + node.getWidth()
+              + ","
+              + node.getHeight()
+              + "]"
+              + " scroll=["
+              + node.getScrollX()
+              + ","
+              + node.getScrollY()
+              + "]"
+              + " padding=["
+              + node.getPaddingLeft()
+              + ","
+              + node.getPaddingTop()
+              + ","
+              + node.getPaddingRight()
+              + ","
+              + node.getPaddingBottom()
+              + "]"
+              + " matrix="
+              + Arrays.toString(matrix)
+              + " group="
+              + (group != null)
+              + " clipChildren="
+              + (group != null && group.getClipChildren())
+              + " clipToPadding="
+              + (group != null && group.getClipToPadding())
+              + " clipToOutline="
+              + node.getClipToOutline()
+              + " clipBounds="
+              + (clip == null ? "none" : clip.toShortString())
+              + " globalVisible="
+              + globalVisible
+              + " visibleRoot="
+              + visible.toShortString()
+              + " offset=["
+              + offset.x
+              + ","
+              + offset.y
+              + "]"
+              + rootGeometry);
+      depth++;
+      reachedRoot = root;
+      node = parent instanceof View parentView ? parentView : null;
+    }
+    android.util.Log.e(
+        "LoupeNanoFixture",
+        "submit_notice_geometry_end"
+            + sample
+            + " present="
+            + (leaf != null)
+            + " nodes="
+            + depth
+            + " complete="
+            + reachedRoot
+            + " truncated="
+            + (node != null));
+  }
+
+  private static void readSubmitNoticeGate(
+      String phase,
+      String expected,
+      int requestedWidth,
+      float requestedFont,
+      View decor,
+      TextView text,
+      Button action,
+      Layout layout,
+      NoticeTextFit fit) {
+    View currentHost = null;
+    View currentText = null;
+    View currentAction = null;
+    View currentAnchor = null;
+    boolean currentRead = false;
+    try {
+      Object indicator = indicatorField("instance").get(null);
+      if (indicator != null) {
+        currentHost = (View) indicatorField("host").get(indicator);
+        var snackbar = (Snackbar) indicatorField("snackbar").get(indicator);
+        if (snackbar != null) {
+          currentText =
+              snackbar.getView().findViewById(com.google.android.material.R.id.snackbar_text);
+          currentAction =
+              snackbar.getView().findViewById(com.google.android.material.R.id.snackbar_action);
+          currentAnchor = snackbar.getAnchorView();
+        }
+      }
+      currentRead = true;
+    } catch (ReflectiveOperationException unavailable) {
+      // Geometry for the acquired view still identifies the failing gate.
+    }
+    var resources = text.getResources();
+    var config = resources.getConfiguration();
+    var metrics = resources.getDisplayMetrics();
+    Rect visible = fit == null ? new Rect() : fit.visible();
+    boolean globalVisible = fit == null ? text.getGlobalVisibleRect(visible) : fit.globalVisible();
+    int lines = fit != null ? fit.lines() : layout == null ? 0 : layout.getLineCount();
+    int end = fit != null ? fit.end() : lines == 0 ? 0 : layout.getLineEnd(lines - 1);
+    int ellipses = fit == null ? 0 : fit.ellipses();
+    float minLeft = 0;
+    float maxRight = 0;
+    for (int line = 0; line < lines; line++) {
+      float left = layout.getLineLeft(line);
+      float right = layout.getLineRight(line);
+      minLeft = line == 0 ? left : Math.min(minLeft, left);
+      maxRight = line == 0 ? right : Math.max(maxRight, right);
+      if (fit == null) ellipses += layout.getEllipsisCount(line);
+    }
+    int layoutWidth = layout == null ? -1 : layout.getWidth();
+    int layoutHeight = layout == null ? -1 : layout.getHeight();
+    int padTop = layout == null ? -1 : text.getTotalPaddingTop();
+    int padBottom = layout == null ? -1 : text.getTotalPaddingBottom();
+    String scenario =
+        expected.equals(NanoBananaApiChecks.SUBMIT_RATE_LIMIT) ? "rate_limit" : "api_rejection";
+    android.util.Log.e(
+        "LoupeNanoFixture",
+        "submit_notice_gate scenario="
+            + scenario
+            + " phase="
+            + phase
+            + " reqWidthDp="
+            + requestedWidth
+            + " reqFont="
+            + requestedFont
+            + " configWidthDp="
+            + config.screenWidthDp
+            + " configHeightDp="
+            + config.screenHeightDp
+            + " decorWidthDp="
+            + Math.round(decor.getWidth() / metrics.density)
+            + " font="
+            + config.fontScale
+            + " density="
+            + metrics.density
+            + " attached="
+            + text.isAttachedToWindow()
+            + " shown="
+            + text.isShown()
+            + " focus="
+            + text.hasWindowFocus()
+            + " hasLayout="
+            + (layout != null)
+            + " currentRead="
+            + currentRead
+            + " sameTextView="
+            + (text == currentText)
+            + " sameAction="
+            + (action != null && action == currentAction)
+            + " lines="
+            + lines
+            + " ellipses="
+            + ellipses
+            + " end="
+            + end
+            + " currentLength="
+            + text.length()
+            + " expectedLength="
+            + expected.length()
+            + " textMatches="
+            + expected.contentEquals(text.getText())
+            + " minLeft="
+            + minLeft
+            + " maxRight="
+            + maxRight
+            + " layoutWidth="
+            + layoutWidth
+            + " fitSampled="
+            + (fit != null)
+            + " lineFits="
+            + (fit != null && fit.lineFits())
+            + " globalVisible="
+            + globalVisible
+            + " visibleRoot="
+            + visible.toShortString()
+            + " fullWidth="
+            + (globalVisible && visible.width() == text.getWidth())
+            + " fullHeight="
+            + (globalVisible && visible.height() == text.getHeight())
+            + " layoutHeight="
+            + layoutHeight
+            + " padTop="
+            + padTop
+            + " padBottom="
+            + padBottom
+            + " paddedHeightFit="
+            + (layout != null && layoutHeight + padTop + padBottom <= text.getHeight())
+            + " decorScreen="
+            + noticeScreenBounds(decor)
+            + " hostScreen="
+            + noticeScreenBounds(currentHost)
+            + " anchorScreen="
+            + noticeScreenBounds(currentAnchor)
+            + " textScreen="
+            + noticeScreenBounds(text)
+            + " actionScreen="
+            + noticeScreenBounds(action));
+  }
+
+  private static String noticeScreenBounds(View view) {
+    if (view == null) return "none";
+    int[] location = new int[2];
+    view.getLocationOnScreen(location);
+    return new Rect(
+            location[0], location[1], location[0] + view.getWidth(), location[1] + view.getHeight())
+        .toShortString();
   }
 
   private static void saveNoticeTrace(

@@ -4,6 +4,7 @@
 camera-history-migration
 confidence-store
 camera-ledger
+camera-ledger-teardown
 index-signature
 gallery-photo-key-compat
 photo-storage-import-guard

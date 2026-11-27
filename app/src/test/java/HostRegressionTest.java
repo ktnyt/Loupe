@@ -11,7 +11,6 @@ import jp.nano.rawgallery.BurstFrameTest;
 import jp.nano.rawgallery.BurstGapSettingsTest;
 import jp.nano.rawgallery.BurstGroupsTest;
 import jp.nano.rawgallery.CameraExFatCheck;
-import jp.nano.rawgallery.CloudPolicyTest;
 import jp.nano.rawgallery.ComparisonLayoutTest;
 import jp.nano.rawgallery.DiagnosticWriterTest;
 import jp.nano.rawgallery.DigestCompatibilityTest;
@@ -122,11 +121,6 @@ public class HostRegressionTest {
   @Test
   void cameraSourceKey() throws Exception {
     CameraSourceKeyTest.main(NO_ARGS);
-  }
-
-  @Test
-  void cloudPolicy() throws Exception {
-    CloudPolicyTest.main(NO_ARGS);
   }
 
   @Test
