@@ -144,9 +144,10 @@ public final class RankingStoreTest {
     initialLoadAndRetry();
     committedSnapshotsAndCompare();
     repairBeforeOtherOperations();
+    preservePersistenceFailures();
     System.out.println(
         "Ranking storage: legacy keys and journals, cold retry, snapshot isolation, serialized CAS"
-            + " and repair passed");
+            + " and repair with original failures passed");
   }
 
   private static void sharedNamespaceAcquisition() throws Exception {
@@ -517,6 +518,62 @@ public final class RankingStoreTest {
         "fresh namespace loaded from simulated disk contains only acknowledged edits");
   }
 
+  private static void preservePersistenceFailures() throws Exception {
+    Preferences file = new Preferences();
+    RankingStore store = new RankingStore(file.preferences);
+    check(store.awaitReady().phase() == Phase.READY, "new fixture loads successfully");
+    assertOutcome(store, "original", false, false, Outcome.UNCHANGED);
+    AtomicInteger acknowledgements = new AtomicInteger();
+    try (Subscription observation =
+        store.observe(Runnable::run, acknowledgements::incrementAndGet)) {
+      RuntimeException primary = new IllegalStateException("write failure");
+      RuntimeException secondary = new SecurityException("repair failure");
+      file.steps.addAll(List.of(Step.THROW_AFTER, Step.THROW_BEFORE));
+      file.injectedFailures.addAll(List.of(primary, secondary));
+      try {
+        store.saveSingleBest("original", false, true);
+        throw new AssertionError("synchronous write failure was lost");
+      } catch (IllegalStateException failure) {
+        check(
+            failure == primary
+                && Arrays.equals(failure.getSuppressed(), new Throwable[] {secondary}),
+            "synchronous caller receives the exact primary and suppressed failures");
+      }
+      check(
+          store.snapshot().revision() == 0 && acknowledgements.get() == 1 && file.disk.isEmpty(),
+          "failed commit and repair publish nothing");
+
+      file.steps.add(Step.FAIL_AFTER);
+      assertOutcome(store, "unrelated", false, true, Outcome.REPAIR_REQUIRED);
+      check(file.commits.get() == 3, "only repair is attempted before an unrelated write");
+      assertOutcome(store, "unrelated", false, true, Outcome.SAVED);
+      check(
+          file.commits.get() == 5
+              && store.snapshot().revision() == 1
+              && acknowledgements.get() == 2
+              && !file.reopen().singleBest("original"),
+          "successful repair permits the new write and publishes once");
+    }
+
+    RuntimeException repairFailure = new SecurityException("restore cause");
+    file.steps.addAll(List.of(Step.FAIL_AFTER, Step.THROW_BEFORE));
+    file.injectedFailures.add(repairFailure);
+    try {
+      store.saveSingleBest("original", false, true);
+      throw new AssertionError("synchronous repair cause was lost");
+    } catch (IOException failure) {
+      check(failure.getCause() == repairFailure, "false write retains the actual repair cause");
+    }
+  }
+
+  private static void assertOutcome(
+      RankingStore store, String key, boolean expected, boolean next, Outcome outcome)
+      throws Exception {
+    check(
+        done(store.submitSingleBest(key, expected, next)).outcome() == outcome,
+        "outcome " + outcome);
+  }
+
   private static WriteResult done(CompletionStage<WriteResult> result) throws Exception {
     return result.toCompletableFuture().get(5, TimeUnit.SECONDS);
   }
@@ -567,6 +624,7 @@ public final class RankingStoreTest {
     final Map<String, Object> memory = new ConcurrentHashMap<>();
     final Map<String, Object> disk = new ConcurrentHashMap<>();
     final Queue<Step> steps = new ConcurrentLinkedQueue<>();
+    final Queue<RuntimeException> injectedFailures = new ConcurrentLinkedQueue<>();
     final AtomicInteger commits = new AtomicInteger();
     final AtomicInteger loads = new AtomicInteger();
     volatile Gate loadGate, commitGate;
@@ -633,7 +691,7 @@ public final class RankingStoreTest {
     private boolean commit(Map<String, String> changes) throws InterruptedException {
       commits.incrementAndGet();
       Step step = steps.poll();
-      if (step == Step.THROW_BEFORE) throw new IllegalStateException("injected commit");
+      if (step == Step.THROW_BEFORE) throw injectedFailure();
       changes.forEach(
           (key, value) -> {
             if (value == null) memory.remove(key);
@@ -642,11 +700,16 @@ public final class RankingStoreTest {
       Gate gate = commitGate;
       commitGate = null;
       if (gate != null) gate.enter();
-      if (step == Step.THROW_AFTER) throw new IllegalStateException("injected commit");
+      if (step == Step.THROW_AFTER) throw injectedFailure();
       if (step == Step.FAIL_AFTER) return false;
       disk.clear();
       disk.putAll(memory);
       return true;
+    }
+
+    private RuntimeException injectedFailure() {
+      RuntimeException failure = injectedFailures.poll();
+      return failure != null ? failure : new IllegalStateException("injected commit");
     }
   }
 

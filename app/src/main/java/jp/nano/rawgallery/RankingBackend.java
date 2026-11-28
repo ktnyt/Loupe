@@ -232,6 +232,7 @@ final class RankingBackend {
       // A failed commit may already have modified framework memory. A later commit flushes all
       // keys.
       repair = undo;
+      reportPersistenceFailure("ranking.commit", failure);
       Attempt repairFailure = restore(failure);
       return repairFailure != null ? repairFailure : failed(Outcome.WRITE_FAILED, failure);
     }
@@ -242,17 +243,32 @@ final class RankingBackend {
 
   /** Null means the previous value (including absence) was durably restored. */
   private Attempt restore(Throwable originalFailure) {
+    Throwable failure = null;
     try {
       if (edit(repair.key(), repair.previous())) {
         repair = null;
         return null;
       }
     } catch (RuntimeException | Error restoreFailure) {
+      failure = restoreFailure;
       if (originalFailure == null)
         originalFailure = new IOException("Could not restore ranking", restoreFailure);
       else if (restoreFailure != originalFailure) originalFailure.addSuppressed(restoreFailure);
     }
+    reportPersistenceFailure("ranking.restore", failure);
     return failed(Outcome.REPAIR_REQUIRED, originalFailure);
+  }
+
+  private static void reportPersistenceFailure(String phase, Throwable failure) {
+    try {
+      if (failure == null) {
+        DiagnosticLog.event("ranking.persistence.failed", 0, "phase", phase, "outcome", "failed");
+      } else {
+        DiagnosticLog.exception(phase, "failed", failure);
+      }
+    } catch (RuntimeException | Error ignored) {
+      // Recorder failure cannot interrupt compensation or replace the storage result.
+    }
   }
 
   private boolean edit(String key, String value) {

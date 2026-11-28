@@ -4,6 +4,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.ContextWrapper;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.ResolveInfo;
@@ -14,14 +15,18 @@ import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.RandomAccessFile;
+import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.zip.ZipInputStream;
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -162,6 +167,8 @@ final class DiagnosticExportChecks {
     String events = unzip(DiagnosticExport.capture(context)).get("events.jsonl");
     require(
         events.contains("556677889") && !events.contains("999999991") && !events.contains(PATH));
+    checkRankingCleanupFailures();
+    checkRankingPersistence(context);
     checkFailedRecording(context);
     checkOutput("write", false);
     checkOutput("close", false);
@@ -169,7 +176,291 @@ final class DiagnosticExportChecks {
     checkOutput("", false);
     return "PASS non-debuggable diagnostics, failed open, stop tail, E2 phases, legacy and expanded"
         + " crash redaction, ZIP output failures, failed recorder identity, and system-only"
-        + " picker";
+        + " picker, ranking persistence failures";
+  }
+
+  private static void checkRankingPersistence(Context context) throws Exception {
+    File root =
+        Files.createTempDirectory(context.getCacheDir().toPath(), "ranking-diagnostic-fixture")
+            .toFile();
+    String prefsName = root.getName();
+    Context isolated =
+        new ContextWrapper(context) {
+          @Override
+          public File getFilesDir() {
+            return root;
+          }
+
+          @Override
+          public SharedPreferences getSharedPreferences(String name, int mode) {
+            require("diagnostics".equals(name));
+            return context.getSharedPreferences(prefsName, mode);
+          }
+        };
+    var recording = new RankingFixtureRecording(isolated);
+    File folder = new File(root, "diagnostics");
+    File current = new File(folder, "events.jsonl");
+    runRankingFixture(
+        () -> assertRankingPersistence(isolated, current, recording),
+        () -> {
+          recording.finish();
+          runRankingFixture(
+              () -> deleteRankingFixturePreferences(context, prefsName),
+              () -> {
+                for (File file :
+                    List.of(current, new File(folder, "previous.jsonl"), folder, root)) {
+                  Files.deleteIfExists(file.toPath());
+                }
+              });
+        });
+  }
+
+  private static void assertRankingPersistence(
+      Context isolated, File current, RankingFixtureRecording recording) throws Exception {
+    String key = "synthetic-ranking-key-do-not-export";
+    var commits = new ArrayDeque<Object>();
+    RankingStore store = new RankingStore(rankingPreferences(commits));
+    require(DiagnosticLog.currentRecorder() == null);
+    require(store.awaitReady().phase() == RankingStore.Phase.READY);
+    commits.add(false);
+    require(rankingOutcome(store, key, false, true) == RankingStore.Outcome.WRITE_FAILED);
+    require(DiagnosticExport.capture(isolated).length == 0);
+
+    recording.start();
+    require(rankingOutcome(store, "success", false, true) == RankingStore.Outcome.SAVED);
+    require(rankingOutcome(store, "success", true, true) == RankingStore.Outcome.UNCHANGED);
+    require(rankingOutcome(store, "success", false, true) == RankingStore.Outcome.CONFLICT);
+    commits.addAll(List.of(false, false));
+    require(rankingOutcome(store, key, false, true) == RankingStore.Outcome.REPAIR_REQUIRED);
+    commits.add(new SecurityException(SECRET + PATH));
+    require(rankingOutcome(store, "blocked", false, true) == RankingStore.Outcome.REPAIR_REQUIRED);
+    require(rankingOutcome(store, "blocked", false, true) == RankingStore.Outcome.SAVED);
+    commits.add(new IllegalStateException(SECRET + PATH, new IOException(PATH)));
+    require(rankingOutcome(store, key, false, true) == RankingStore.Outcome.WRITE_FAILED);
+    require(!store.snapshot().singleBest(key) && store.snapshot().revision() == 2);
+    require(commits.isEmpty());
+    recording.finish();
+
+    String raw = new String(Files.readAllBytes(current.toPath()), StandardCharsets.UTF_8);
+    commits.add(false);
+    require(rankingOutcome(store, key, false, true) == RankingStore.Outcome.WRITE_FAILED);
+    require(raw.equals(new String(Files.readAllBytes(current.toPath()), StandardCharsets.UTF_8)));
+    String safe = unzip(DiagnosticExport.capture(isolated)).get("events.jsonl");
+    List<List<String>> expected =
+        List.of(
+            List.of("ranking.persistence.failed", "ranking.commit", ""),
+            List.of("ranking.persistence.failed", "ranking.restore", ""),
+            List.of("operation.exception", "ranking.restore", "java.lang.SecurityException"),
+            List.of("operation.exception", "ranking.commit", "java.lang.IllegalStateException"));
+    require(rankingEvents(raw, key).equals(expected));
+    require(rankingEvents(safe, key).equals(expected));
+    String malformed =
+        new JSONObject()
+            .put("event", "operation.exception")
+            .put("session", SESSION)
+            .put("seq", 1)
+            .put("ns", 1)
+            .put("request", 0)
+            .put("phase", "ranking.restore")
+            .put("outcome", "failed")
+            .put("exception", "java.lang.String")
+            .put("path", PATH)
+            .put("message", SECRET)
+            .toString();
+    String sanitized =
+        unzip(
+                DiagnosticExport.archive(
+                    Map.of("events.jsonl", malformed.getBytes(StandardCharsets.UTF_8))))
+            .get("events.jsonl");
+    require(
+        rankingEvents(sanitized, key)
+            .equals(List.of(List.of("operation.exception", "ranking.restore", ""))));
+  }
+
+  private static final class RankingFixtureRecording {
+    private final Context context;
+    private DiagnosticLog.Recorder recorder;
+    private boolean mayHaveStarted;
+
+    RankingFixtureRecording(Context context) {
+      this.context = context;
+    }
+
+    void start() {
+      require(DiagnosticLog.currentRecorder() == null);
+      mayHaveStarted = true;
+      boolean started;
+      try {
+        started = DiagnosticLog.startRecording(context);
+      } finally {
+        recorder = DiagnosticLog.currentRecorder();
+      }
+      if (!started && recorder == null) mayHaveStarted = false;
+      require(started && recorder != null);
+    }
+
+    void finish() throws IOException {
+      if (!mayHaveStarted) return;
+      if (recorder == null
+          || !DiagnosticLog.stopRecording(context, recorder)
+          || DiagnosticLog.currentRecorder() != null) {
+        throw new IOException("Could not confirm ranking fixture recorder stopped");
+      }
+      mayHaveStarted = false;
+      recorder = null;
+    }
+  }
+
+  private static void deleteRankingFixturePreferences(Context context, String name)
+      throws IOException {
+    File directory = new File(context.getDataDir(), "shared_prefs");
+    File file = new File(directory, name + ".xml");
+    File backup = new File(directory, name + ".xml.bak");
+    if (rankingPreferencesAbsent(file, backup)) return;
+    if (!context.deleteSharedPreferences(name) || !rankingPreferencesAbsent(file, backup)) {
+      throw new IOException("Could not delete owned ranking fixture preferences");
+    }
+  }
+
+  private static boolean rankingPreferencesAbsent(File file, File backup) {
+    return Files.notExists(file.toPath(), LinkOption.NOFOLLOW_LINKS)
+        && Files.notExists(backup.toPath(), LinkOption.NOFOLLOW_LINKS);
+  }
+
+  @FunctionalInterface
+  private interface RankingFixtureStep {
+    void run() throws Exception;
+  }
+
+  private static void runRankingFixture(RankingFixtureStep body, RankingFixtureStep cleanup)
+      throws Exception {
+    try {
+      body.run();
+    } catch (Exception | Error primary) {
+      try {
+        cleanup.run();
+      } catch (Exception | Error secondary) {
+        if (secondary != primary) primary.addSuppressed(secondary);
+      }
+      throw primary;
+    }
+    cleanup.run();
+  }
+
+  private static void checkRankingCleanupFailures() throws Exception {
+    var bodyFailure = new AssertionError("early ranking fixture failure");
+    var cleanupFailure = new IOException("ranking fixture cleanup failure");
+    try {
+      runRankingFixture(
+          () -> {
+            throw bodyFailure;
+          },
+          () -> {
+            throw cleanupFailure;
+          });
+      throw new AssertionError("body failure was lost");
+    } catch (AssertionError failure) {
+      require(failure == bodyFailure);
+      require(Arrays.equals(failure.getSuppressed(), new Throwable[] {cleanupFailure}));
+    }
+    try {
+      runRankingFixture(
+          () -> {},
+          () -> {
+            throw cleanupFailure;
+          });
+      throw new AssertionError("cleanup failure was lost");
+    } catch (IOException failure) {
+      require(failure == cleanupFailure);
+    }
+  }
+
+  private static List<List<String>> rankingEvents(String events, String key) throws Exception {
+    require(
+        events != null
+            && !events.contains(SECRET)
+            && !events.contains(PATH)
+            && !events.contains(key)
+            && !events.contains(PhotoRepository.digest(key)));
+    var actual = new ArrayList<List<String>>();
+    for (String line : events.split("\n")) {
+      var item = new JSONObject(line);
+      String name = item.getString("event"), phase = item.optString("phase");
+      if (!name.equals("ranking.persistence.failed") && !phase.startsWith("ranking.")) continue;
+      require(item.getLong("request") == 0 && item.getString("outcome").equals("failed"));
+      for (var fields = item.keys(); fields.hasNext(); ) {
+        require(
+            Set.of(
+                    "session",
+                    "seq",
+                    "ns",
+                    "event",
+                    "request",
+                    "parent",
+                    "thread",
+                    "dropped",
+                    "phase",
+                    "outcome",
+                    "exception")
+                .contains(fields.next()));
+      }
+      if (name.equals("ranking.persistence.failed")) require(!item.has("exception"));
+      actual.add(List.of(name, phase, item.optString("exception")));
+    }
+    return actual;
+  }
+
+  private static RankingStore.Outcome rankingOutcome(
+      RankingStore store, String key, boolean previous, boolean next) throws Exception {
+    return store
+        .submitSingleBest(key, previous, next)
+        .toCompletableFuture()
+        .get(5, TimeUnit.SECONDS)
+        .outcome();
+  }
+
+  private static SharedPreferences rankingPreferences(ArrayDeque<Object> commits) {
+    Map<String, String> memory = new HashMap<>();
+    return (SharedPreferences)
+        Proxy.newProxyInstance(
+            DiagnosticExportChecks.class.getClassLoader(),
+            new Class<?>[] {SharedPreferences.class},
+            (prefs, method, args) ->
+                switch (method.getName()) {
+                  case "getAll" -> new HashMap<>(memory);
+                  case "edit" -> rankingEditor(memory, commits);
+                  default -> throw new AssertionError("Unexpected ranking preferences call");
+                });
+  }
+
+  private static SharedPreferences.Editor rankingEditor(
+      Map<String, String> memory, ArrayDeque<Object> commits) {
+    Map<String, String> changes = new HashMap<>();
+    return (SharedPreferences.Editor)
+        Proxy.newProxyInstance(
+            DiagnosticExportChecks.class.getClassLoader(),
+            new Class<?>[] {SharedPreferences.Editor.class},
+            (editor, method, args) -> {
+              switch (method.getName()) {
+                case "putString":
+                  changes.put((String) args[0], (String) args[1]);
+                  return editor;
+                case "remove":
+                  changes.put((String) args[0], null);
+                  return editor;
+                case "commit":
+                  changes.forEach(
+                      (key, value) -> {
+                        if (value == null) memory.remove(key);
+                        else memory.put(key, value);
+                      });
+                  Object result = commits.poll();
+                  if (result instanceof RuntimeException failure) throw failure;
+                  return result == null || (boolean) result;
+                default:
+                  throw new AssertionError("Unexpected ranking editor call");
+              }
+            });
   }
 
   private static void checkExpandedCrash(Context context, File folder) throws Exception {
