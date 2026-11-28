@@ -23,6 +23,7 @@ import android.text.Layout;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
+import android.view.ViewTreeObserver;
 import android.widget.Button;
 import android.widget.TextView;
 import androidx.core.content.ContextCompat;
@@ -665,6 +666,7 @@ final class NanoBananaBackgroundChecks {
           "current request cleanup removes B once without generation or polling");
       verifyDiscardWithRenamedPublishedResult(
           test, screen, store, factory, saved, input, prompt, jpeg);
+      verifySubmitNoticeFailureReporting(test, screen, factory);
       Fake rateLimitedSubmit = new Fake(store, jpeg, saved);
       rateLimitedSubmit.submitApi = NanoBananaApiChecks.rateLimitedApi();
       Snackbar rateLimitNotice =
@@ -862,13 +864,21 @@ final class NanoBananaBackgroundChecks {
     String capturePrefix = "nano-background-submit-" + scenario;
     String profile = "-" + width + "-" + font;
     SubmitFailureNotice notice = new SubmitFailureNotice(screen, expected, priorShown);
-    try {
+    String noticeName = capturePrefix + "-notice" + profile;
+    try (AutoCloseable observer = () -> TagDetailChecks.ui(test, () -> notice.disarm(factory))) {
       TagDetailChecks.ui(test, () -> notice.arm(factory));
       TagDetailChecks.require(
           NanoBananaService.start(screen, input, prompt), "start provider POST");
-      captureAndOpenSubmitFailureNotice(test, notice, capturePrefix, profile, width, font);
-    } finally {
-      TagDetailChecks.ui(test, () -> notice.disarm(factory));
+      captureAndOpenSubmitFailureNotice(
+          test,
+          notice,
+          noticeName,
+          width,
+          font,
+          new NoticeEvidence(
+              () -> saveCapture(test, noticeName),
+              () -> saveDisplayCapture(test, capturePrefix + "-notice-display" + profile),
+              (observations, verdict) -> saveNoticeTrace(test, noticeName, observations, verdict)));
     }
     idle(test);
     JSONObject pending = factory.store.job();
@@ -1151,15 +1161,78 @@ final class NanoBananaBackgroundChecks {
     }
   }
 
+  @FunctionalInterface
+  private interface NoticeCheck {
+    void run() throws Exception;
+  }
+
+  @FunctionalInterface
+  private interface NoticeTrace {
+    void save(LinkedHashSet<String> observations, String verdict) throws IOException;
+  }
+
+  private record NoticeEvidence(NoticeCheck screenshot, NoticeCheck display, NoticeTrace trace) {}
+
   private static void captureAndOpenSubmitFailureNotice(
       Instrumentation test,
       SubmitFailureNotice notice,
-      String capturePrefix,
-      String profile,
+      String name,
       int width,
-      float font)
-      throws Exception {
-    String name = capturePrefix + "-notice" + profile;
+      float font,
+      NoticeEvidence captures) {
+    Throwable failure;
+    try {
+      failure = verifyShownNoticeFit(test, notice, width, font);
+    } catch (Throwable error) {
+      failure = error;
+    }
+    List<Throwable> evidenceErrors = new ArrayList<>();
+    if (failure == null) {
+      collectNoticeEvidence(
+          evidenceErrors, "settled Snackbar frame", () -> commitNoticeFrame(test, notice));
+    }
+    // Failure screenshots are best effort, including when there is no attached notice.
+    collectNoticeEvidence(evidenceErrors, "notice screenshot", captures.screenshot());
+    collectNoticeEvidence(evidenceErrors, "notice display screenshot", captures.display());
+    if (failure == null) {
+      try {
+        failure = verifyNoticeConfirmation(test, notice);
+      } catch (Throwable error) {
+        failure = error;
+      }
+    }
+    String verdict =
+        failure == null ? "layout fits\nSnackbar confirmation clicked" : failure.toString();
+    collectNoticeEvidence(
+        evidenceErrors,
+        "notice trace",
+        () -> {
+          LinkedHashSet<String> trace = new LinkedHashSet<>();
+          TagDetailChecks.ui(test, () -> trace.addAll(notice.observations));
+          for (Throwable error : evidenceErrors)
+            trace.add("capture evidence failed: " + error.getMessage());
+          captures.trace().save(trace, verdict);
+        });
+    if (failure == null && evidenceErrors.isEmpty()) return;
+    AssertionError report =
+        new AssertionError(
+            "POST failure Snackbar check failed: " + name,
+            failure != null ? failure : evidenceErrors.remove(0));
+    for (Throwable error : evidenceErrors) report.addSuppressed(error);
+    throw report;
+  }
+
+  private static void collectNoticeEvidence(
+      List<Throwable> errors, String label, NoticeCheck check) {
+    try {
+      check.run();
+    } catch (Throwable error) {
+      errors.add(new AssertionError("Could not collect " + label, error));
+    }
+  }
+
+  private static Throwable verifyShownNoticeFit(
+      Instrumentation test, SubmitFailureNotice notice, int width, float font) throws Exception {
     boolean signaled = notice.terminal.await(10, TimeUnit.SECONDS);
     Throwable[] issue = {null};
     TagDetailChecks.ui(
@@ -1238,46 +1311,142 @@ final class NanoBananaBackgroundChecks {
             }
           }
         });
-    saveCapture(test, name);
-    saveDisplayCapture(test, capturePrefix + "-notice-display" + profile);
-    if (issue[0] == null) {
+    return issue[0];
+  }
+
+  private static void commitNoticeFrame(Instrumentation test, SubmitFailureNotice notice)
+      throws Exception {
+    CountDownLatch committed = new CountDownLatch(1);
+    Runnable callback = committed::countDown;
+    ViewTreeObserver[] tree = {null};
+    try (AutoCloseable unregister =
+        () ->
+            TagDetailChecks.ui(
+                test,
+                () -> {
+                  if (tree[0] != null && tree[0].isAlive())
+                    tree[0].unregisterFrameCommitCallback(callback);
+                })) {
       TagDetailChecks.ui(
           test,
           () -> {
-            if (notice.failure != null) {
-              issue[0] = notice.failure;
-              return;
-            }
-            try {
-              notice.requireVisible();
-              Button confirm = notice.action;
-              Rect visible = new Rect();
-              TagDetailChecks.require(
-                  confirm.isEnabled()
-                      && confirm.isClickable()
-                      && confirm.getWidth() >= GalleryUi.dp(confirm.getContext(), 48)
-                      && confirm.getHeight() >= GalleryUi.dp(confirm.getContext(), 48)
-                      && confirm.getGlobalVisibleRect(visible)
-                      && visible.width() == confirm.getWidth()
-                      && visible.height() == confirm.getHeight()
-                      && confirm.performClick(),
-                  "Snackbar confirmation is not a fully visible action");
-              // The action itself dismisses this bar. Observation ends once the click succeeds.
-              notice.active = false;
-            } catch (IllegalAccessException | RuntimeException | AssertionError error) {
-              issue[0] = error;
-            }
+            requireCurrentNoticeForCapture(notice);
+            View root = notice.text.getRootView();
+            TagDetailChecks.require(
+                root.isHardwareAccelerated(), "notice capture requires an attached hardware root");
+            tree[0] = root.getViewTreeObserver();
+            tree[0].registerFrameCommitCallback(callback);
+            root.requestLayout();
+            root.postInvalidateOnAnimation();
+          });
+      boolean rendered = committed.await(5, TimeUnit.SECONDS);
+      TagDetailChecks.ui(
+          test,
+          () -> {
+            requireCurrentNoticeForCapture(notice);
+            TagDetailChecks.require(rendered, "settled Snackbar frame commit timed out");
+            notice.observations.add(
+                "settled frame committed for current Snackbar before notice captures");
           });
     }
-    LinkedHashSet<String> trace = new LinkedHashSet<>();
-    TagDetailChecks.ui(test, () -> trace.addAll(notice.observations));
-    saveNoticeTrace(
+  }
+
+  private static void requireCurrentNoticeForCapture(SubmitFailureNotice notice) {
+    try {
+      if (notice.failure != null) throw new AssertionError(notice.failure);
+      notice.requireVisible();
+    } catch (IllegalAccessException error) {
+      throw new AssertionError(error);
+    }
+  }
+
+  private static Throwable verifyNoticeConfirmation(
+      Instrumentation test, SubmitFailureNotice notice) {
+    Throwable[] issue = {null};
+    TagDetailChecks.ui(
         test,
-        name,
-        trace,
-        issue[0] == null ? "layout fits\nSnackbar confirmation clicked" : issue[0].toString());
-    if (issue[0] != null)
-      throw new AssertionError("POST failure Snackbar check failed: " + name, issue[0]);
+        () -> {
+          if (notice.failure != null) {
+            issue[0] = notice.failure;
+            return;
+          }
+          try {
+            notice.requireVisible();
+            Button confirm = notice.action;
+            Rect visible = new Rect();
+            TagDetailChecks.require(
+                confirm.isEnabled()
+                    && confirm.isClickable()
+                    && confirm.getWidth() >= GalleryUi.dp(confirm.getContext(), 48)
+                    && confirm.getHeight() >= GalleryUi.dp(confirm.getContext(), 48)
+                    && confirm.getGlobalVisibleRect(visible)
+                    && visible.width() == confirm.getWidth()
+                    && visible.height() == confirm.getHeight()
+                    && confirm.performClick(),
+                "Snackbar confirmation is not a fully visible action");
+            // The action itself dismisses this bar. Observation ends once the click succeeds.
+            notice.active = false;
+          } catch (IllegalAccessException | RuntimeException | AssertionError error) {
+            issue[0] = error;
+          }
+        });
+    return issue[0];
+  }
+
+  private static void verifySubmitNoticeFailureReporting(
+      Instrumentation test, MainActivity screen, FixtureFactory factory) throws Exception {
+    SubmitFailureNotice observer =
+        new SubmitFailureNotice(screen, NanoBananaApiChecks.SUBMIT_RATE_LIMIT, null);
+    AssertionError observerError = new AssertionError("synthetic submit observer failure");
+    IOException screenshotError = new IOException("synthetic notice screenshot write failure");
+    IOException traceError = new IOException("synthetic notice trace write failure");
+    boolean[] displayAttempted = {false};
+    try (AutoCloseable disarm = () -> TagDetailChecks.ui(test, () -> observer.disarm(factory))) {
+      TagDetailChecks.ui(
+          test,
+          () -> {
+            observer.arm(factory);
+            observer.fail(observerError);
+          });
+      captureAndOpenSubmitFailureNotice(
+          test,
+          observer,
+          "injected evidence failures",
+          0,
+          0f,
+          new NoticeEvidence(
+              () -> {
+                throw screenshotError;
+              },
+              () -> displayAttempted[0] = true,
+              (trace, verdict) -> {
+                TagDetailChecks.require(
+                    trace.contains("failed: " + observerError)
+                        && verdict.equals(observerError.toString()),
+                    "trace receives the observer failure even when screenshot writing fails");
+                throw traceError;
+              }));
+      throw new AssertionError("injected submit observer failure did not propagate");
+    } catch (AssertionError reported) {
+      Throwable[] suppressed = reported.getSuppressed();
+      if (reported.getCause() != observerError
+          || suppressed.length != 2
+          || suppressed[0].getCause() != screenshotError
+          || suppressed[1].getCause() != traceError
+          || !displayAttempted[0]) {
+        throw new AssertionError(
+            "submit notice failure reporting lost the original or evidence failures", reported);
+      }
+    }
+    TagDetailChecks.ui(
+        test,
+        () ->
+            TagDetailChecks.require(
+                !observer.active && factory.submitNotice == null,
+                "submit observer is disarmed after combined observer and evidence failures"));
+    android.util.Log.i(
+        "LoupeNanoFixture",
+        "submit_notice_failure_control preserved the observer error, attempted both captures and trace, and disarmed");
   }
 
   private static NoticeTextFit readNoticeTextFit(TextView text) {
@@ -2008,9 +2177,11 @@ final class NanoBananaBackgroundChecks {
 
   private static void saveCapture(Instrumentation test, String name) throws Exception {
     Bitmap image = test.getUiAutomation().takeScreenshot();
+    if (image == null) throw new IOException("UiAutomation returned no screenshot");
     try (FileOutputStream output =
         new FileOutputStream(new File(captureDirectory(test), name + ".png"))) {
-      image.compress(Bitmap.CompressFormat.PNG, 100, output);
+      if (!image.compress(Bitmap.CompressFormat.PNG, 100, output))
+        throw new IOException("UiAutomation screenshot PNG encoding failed");
     } finally {
       image.recycle();
     }
