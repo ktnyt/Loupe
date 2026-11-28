@@ -14,6 +14,8 @@ import android.graphics.BitmapFactory;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.os.SystemClock;
 import android.provider.MediaStore;
@@ -174,6 +176,7 @@ final class NanoBananaBackgroundChecks {
     volatile String lastResult;
     volatile int jobs;
     volatile long lastMessageAt;
+    private volatile SubmitFailureNotice submitNotice;
     final List<String> messages = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     FixtureFactory(NanoBananaStore store) {
@@ -188,6 +191,8 @@ final class NanoBananaBackgroundChecks {
       lastResult = message;
       lastMessageAt = SystemClock.uptimeMillis();
       messages.add(message);
+      SubmitFailureNotice notice = submitNotice;
+      if (notice != null && notice.expected.equals(message)) notice.onResult();
     }
 
     public NanoBananaJob job(Context context, NanoBananaStore received) {
@@ -662,17 +667,19 @@ final class NanoBananaBackgroundChecks {
           test, screen, store, factory, saved, input, prompt, jpeg);
       Fake rateLimitedSubmit = new Fake(store, jpeg, saved);
       rateLimitedSubmit.submitApi = NanoBananaApiChecks.rateLimitedApi();
-      verifySubmitFailureMessage(
-          test,
-          screen,
-          factory,
-          rateLimitedSubmit,
-          input,
-          prompt,
-          NanoBananaApiChecks.SUBMIT_RATE_LIMIT,
-          "429",
-          width,
-          font);
+      Snackbar rateLimitNotice =
+          verifySubmitFailureMessage(
+              test,
+              screen,
+              factory,
+              rateLimitedSubmit,
+              input,
+              prompt,
+              NanoBananaApiChecks.SUBMIT_RATE_LIMIT,
+              "429",
+              width,
+              font,
+              null);
       Fake rateLimitedStatus = new Fake(store, jpeg, saved);
       rateLimitedStatus.statusApi = NanoBananaApiChecks.rateLimitedApi();
       verifyFailureMessage(
@@ -699,7 +706,8 @@ final class NanoBananaBackgroundChecks {
           NanoBananaApiChecks.SUBMIT_API_REJECTED,
           "api-rejection",
           width,
-          font);
+          font,
+          rateLimitNotice);
       String startupTrace = verifyStartupRejection(context, store, photo, prompt);
       return "PASS nano-background: actual production Android Service with isolated fake provider; next-photo operation, busy/error menu captures, Home continuation, no generation/result Activity launch, automatic JPEG save/readback 1200x800, temporary-object cleanup, duplicate admission, immutable prompt/output snapshot, next admission, saved cleanup retry without POST/download, interrupted-worker lease, durable discard retry and cleanup-only completion text, missing-version selectable manual recovery guidance, explicit ambiguous-submission messaging, stale end-confirmation A/B identity guard and current identity cleanup, stale Intent suppression and startup rejection, remote-first discard with a detached result volume, renamed published result retained on discard, MTP same-size corruption and read error checks, fixed API error delivery and suppression of arbitrary exception text. Provider remained blocked through Home after "
           + homeWaitMs
@@ -836,7 +844,7 @@ final class NanoBananaBackgroundChecks {
     }
   }
 
-  private static void verifySubmitFailureMessage(
+  private static Snackbar verifySubmitFailureMessage(
       Instrumentation test,
       MainActivity screen,
       FixtureFactory factory,
@@ -846,14 +854,22 @@ final class NanoBananaBackgroundChecks {
       String expected,
       String scenario,
       int width,
-      float font)
+      float font,
+      Snackbar priorShown)
       throws Exception {
     factory.fake = network;
     factory.lastResult = null;
     String capturePrefix = "nano-background-submit-" + scenario;
     String profile = "-" + width + "-" + font;
-    TagDetailChecks.require(NanoBananaService.start(screen, input, prompt), "start provider POST");
-    captureAndOpenSubmitFailureNotice(test, screen, expected, capturePrefix, profile, width, font);
+    SubmitFailureNotice notice = new SubmitFailureNotice(screen, expected, priorShown);
+    try {
+      TagDetailChecks.ui(test, () -> notice.arm(factory));
+      TagDetailChecks.require(
+          NanoBananaService.start(screen, input, prompt), "start provider POST");
+      captureAndOpenSubmitFailureNotice(test, notice, capturePrefix, profile, width, font);
+    } finally {
+      TagDetailChecks.ui(test, () -> notice.disarm(factory));
+    }
     idle(test);
     JSONObject pending = factory.store.job();
     TagDetailChecks.require(
@@ -909,195 +925,425 @@ final class NanoBananaBackgroundChecks {
             && network.statuses == 0
             && network.downloads == 0,
         "explicit end cleans the temporary input without resubmitting, polling or downloading");
+    return notice.bar;
+  }
+
+  private static final class SubmitFailureNotice extends Snackbar.Callback
+      implements View.OnAttachStateChangeListener {
+    final MainActivity screen;
+    final String expected;
+    final Snackbar priorShown;
+    final Field instance = indicatorField("instance");
+    final Field snackbarField = indicatorField("snackbar");
+    final Field resumedField = indicatorField("resumed");
+    final Field hostField = indicatorField("host");
+    final Field messageField = indicatorField("message");
+    final Field stateField = indicatorField("state");
+    final Handler main = new Handler(Looper.getMainLooper());
+    final Runnable registration = this::register;
+    final CountDownLatch terminal = new CountDownLatch(1);
+    final LinkedHashSet<String> observations = new LinkedHashSet<>();
+    View decor;
+    Snackbar beforeStart;
+    Snackbar bar;
+    TextView text;
+    Button action;
+    Throwable failure;
+    boolean active;
+    boolean registrationPosted;
+
+    SubmitFailureNotice(MainActivity screen, String expected, Snackbar priorShown)
+        throws ReflectiveOperationException {
+      this.screen = screen;
+      this.expected = expected;
+      this.priorShown = priorShown;
+    }
+
+    private Snackbar currentBar(Object indicator) throws IllegalAccessException {
+      return indicator == null ? null : (Snackbar) snackbarField.get(indicator);
+    }
+
+    void arm(FixtureFactory factory) {
+      TagDetailChecks.require(
+          factory.submitNotice == null, "no other submit notice observer armed");
+      try {
+        beforeStart = currentBar(instance.get(null));
+      } catch (IllegalAccessException error) {
+        throw new AssertionError(error);
+      }
+      decor = screen.getWindow().getDecorView();
+      active = true;
+      factory.submitNotice = this;
+      observations.add("armed before provider POST");
+    }
+
+    void onResult() {
+      if (Looper.myLooper() != main.getLooper()) {
+        main.post(
+            () -> {
+              if (active) fail(new AssertionError("expected submit result on the main looper"));
+            });
+        return;
+      }
+      if (!active || failure != null) return;
+      if (registrationPosted) {
+        fail(new AssertionError("duplicate matching submit result"));
+        return;
+      }
+      registrationPosted = true;
+      observations.add("matched fixture result");
+      // The service has posted the indicator update. That update creates the notice and queues
+      // Material's SHOW behind this registration, even if the notice will show without animation.
+      if (!main.post(registration))
+        fail(new AssertionError("could not queue Snackbar registration"));
+    }
+
+    private void register() {
+      if (!active || failure != null) return;
+      try {
+        Object indicator = instance.get(null);
+        if (indicator == null)
+          throw new AssertionError("generation indicator absent at registration");
+        Snackbar candidate = currentBar(indicator);
+        Activity resumed = (Activity) resumedField.get(indicator);
+        View host = (View) hostField.get(indicator);
+        boolean messageMatches = expected.equals(messageField.get(indicator));
+        observations.add(
+            "registration state="
+                + ((Enum<?>) stateField.get(indicator)).name()
+                + ", resumed="
+                + (resumed == null ? "none" : resumed == screen ? "fixture" : "other")
+                + ", host="
+                + (host == null ? "none" : host == decor ? "activity" : "other-window")
+                + ", hostFocused="
+                + (host != null && host.hasWindowFocus())
+                + ", messageMatches="
+                + messageMatches
+                + ", snackbar="
+                + (candidate != null)
+                + ", queuedOrShowing="
+                + (candidate != null && candidate.isShownOrQueued()));
+        TagDetailChecks.require(
+            resumed == screen
+                && host != null
+                && messageMatches
+                && candidate != null
+                && candidate != beforeStart
+                && candidate.isShownOrQueued(),
+            "matching new Snackbar unavailable at registration");
+        bar = candidate;
+        text = bar.getView().findViewById(com.google.android.material.R.id.snackbar_text);
+        action = bar.getView().findViewById(com.google.android.material.R.id.snackbar_action);
+        requireIdentity();
+        TagDetailChecks.require(
+            !bar.getView().isAttachedToWindow(),
+            "registration reached the Snackbar after attachment");
+        if (priorShown != null) {
+          TagDetailChecks.require(
+              priorShown != bar && !priorShown.getView().isAttachedToWindow(),
+              "previous scenario's Snackbar must already be detached");
+          // Replay delayed events from the previous real notice against the active observer.
+          onDismissed(priorShown, DISMISS_EVENT_ACTION);
+          onShown(priorShown);
+          TagDetailChecks.require(
+              terminal.getCount() == 1,
+              "previous scenario's dismissed Snackbar released this scenario's wait");
+        }
+        bar.getView().addOnAttachStateChangeListener(this);
+        bar.addCallback(this);
+        observations.add("callback registered before attachment");
+      } catch (ReflectiveOperationException | RuntimeException | AssertionError error) {
+        fail(error);
+      }
+    }
+
+    private void requireIdentity() throws IllegalAccessException {
+      Object indicator = instance.get(null);
+      TagDetailChecks.require(
+          bar != null
+              && currentBar(indicator) == bar
+              && resumedField.get(indicator) == screen
+              && expected.equals(messageField.get(indicator))
+              && text != null
+              && expected.contentEquals(text.getText())
+              && text == bar.getView().findViewById(com.google.android.material.R.id.snackbar_text)
+              && action != null
+              && "確認".contentEquals(action.getText())
+              && action
+                  == bar.getView().findViewById(com.google.android.material.R.id.snackbar_action),
+          "Snackbar, expected message, text or confirmation action is no longer current");
+    }
+
+    void requireVisible() throws IllegalAccessException {
+      requireIdentity();
+      TagDetailChecks.require(
+          bar.isShown()
+              && text.isAttachedToWindow()
+              && text.isShown()
+              && text.hasWindowFocus()
+              && text.getLayout() != null
+              && action.isAttachedToWindow()
+              && action.isShown()
+              && action.hasWindowFocus(),
+          "matching Snackbar is detached, hidden, unlaid-out or unfocused");
+    }
+
+    @Override
+    public void onViewAttachedToWindow(View view) {
+      if (!active || failure != null) return;
+      try {
+        requireIdentity();
+        // Material already reports isShown() at attachment, before its shown callback.
+        TagDetailChecks.require(
+            bar.isShown() && terminal.getCount() == 1,
+            "attaching the current Snackbar released the wait before onShown");
+        observations.add(
+            "current Snackbar attached and manager isShown=true while wait is pending");
+      } catch (IllegalAccessException | RuntimeException | AssertionError error) {
+        fail(error);
+      }
+    }
+
+    @Override
+    public void onViewDetachedFromWindow(View view) {
+      if (active) fail(new AssertionError("matching Snackbar detached during observation"));
+    }
+
+    @Override
+    public void onShown(Snackbar shown) {
+      if (!active || failure != null) return;
+      if (shown != bar) {
+        observations.add("ignored onShown from another Snackbar");
+        return;
+      }
+      try {
+        TagDetailChecks.require(terminal.getCount() == 1, "duplicate matching Snackbar onShown");
+        requireVisible();
+        observations.add("onShown for current Snackbar with matching text and action");
+        terminal.countDown();
+      } catch (IllegalAccessException | RuntimeException | AssertionError error) {
+        fail(error);
+      }
+    }
+
+    @Override
+    public void onDismissed(Snackbar dismissed, int event) {
+      if (!active) return;
+      if (dismissed == bar)
+        fail(new AssertionError("matching Snackbar dismissed during observation, event=" + event));
+      else observations.add("ignored onDismissed from another Snackbar, event=" + event);
+    }
+
+    private void fail(Throwable error) {
+      if (failure == null) failure = error;
+      observations.add("failed: " + error);
+      terminal.countDown();
+    }
+
+    void disarm(FixtureFactory factory) {
+      active = false;
+      if (factory.submitNotice == this) factory.submitNotice = null;
+      main.removeCallbacksAndMessages(null);
+      if (bar != null) {
+        bar.removeCallback(this);
+        bar.getView().removeOnAttachStateChangeListener(this);
+      }
+    }
   }
 
   private static void captureAndOpenSubmitFailureNotice(
       Instrumentation test,
-      MainActivity screen,
-      String expected,
+      SubmitFailureNotice notice,
       String capturePrefix,
       String profile,
       int width,
       float font)
       throws Exception {
-    TextView[] notice = {null};
-    Button[] action = {null};
-    View decor = screen.getWindow().getDecorView();
-    Field instance = indicatorField("instance"),
-        snackbarField = indicatorField("snackbar"),
-        stateField = indicatorField("state"),
-        resumedField = indicatorField("resumed"),
-        hostField = indicatorField("host"),
-        messageField = indicatorField("message");
-    LinkedHashSet<String> observations = new LinkedHashSet<>();
-    long deadline = SystemClock.uptimeMillis() + 10000;
-    do {
-      TagDetailChecks.ui(
-          test,
-          () -> {
-            try {
-              Object indicator = instance.get(null);
-              if (indicator == null) {
-                observations.add("indicator=absent");
-                return;
-              }
-              Snackbar snackbar = (Snackbar) snackbarField.get(indicator);
-              Activity resumed = (Activity) resumedField.get(indicator);
-              View host = (View) hostField.get(indicator);
-              boolean messageMatches = expected.equals(messageField.get(indicator));
-              TextView text =
-                  snackbar == null
-                      ? null
-                      : snackbar
-                          .getView()
-                          .findViewById(com.google.android.material.R.id.snackbar_text);
-              boolean textMatches = text != null && expected.contentEquals(text.getText());
-              boolean attached = text != null && text.isAttachedToWindow();
-              boolean laidOut = text != null && text.getLayout() != null && text.isShown();
-              observations.add(
-                  "state="
-                      + ((Enum<?>) stateField.get(indicator)).name()
-                      + ", resumed="
-                      + (resumed == null ? "none" : resumed == screen ? "fixture" : "other")
-                      + ", host="
-                      + (host == null ? "none" : host == decor ? "activity" : "other-window")
-                      + ", hostFocused="
-                      + (host != null && host.hasWindowFocus())
-                      + ", messageMatches="
-                      + messageMatches
-                      + ", snackbar="
-                      + (snackbar != null)
-                      + ", queuedOrShowing="
-                      + (snackbar != null && snackbar.isShownOrQueued())
-                      + ", textMatches="
-                      + textMatches
-                      + ", attached="
-                      + attached
-                      + ", laidOut="
-                      + laidOut);
-              if (textMatches && attached && laidOut && text.hasWindowFocus()) {
-                notice[0] = text;
-                action[0] =
-                    snackbar
-                        .getView()
-                        .findViewById(com.google.android.material.R.id.snackbar_action);
-              }
-            } catch (IllegalAccessException error) {
-              throw new AssertionError(error);
-            }
-          });
-      if (notice[0] == null) Thread.sleep(50);
-    } while (notice[0] == null && SystemClock.uptimeMillis() < deadline);
-
     String name = capturePrefix + "-notice" + profile;
-    if (notice[0] == null) {
-      saveCapture(test, name);
-      String problem = "POST failure Snackbar not visible: " + name;
-      saveNoticeTrace(test, name, observations, problem);
-      throw new AssertionError(problem);
-    }
-    // Let the currently attached Snackbar complete its entry animation.
-    Thread.sleep(350);
-    String[] issue = {null};
+    boolean signaled = notice.terminal.await(10, TimeUnit.SECONDS);
+    Throwable[] issue = {null};
     TagDetailChecks.ui(
         test,
         () -> {
-          TextView text = notice[0];
-          Layout layout = text.getLayout();
-          if (!text.isAttachedToWindow()
-              || !text.isShown()
-              || !text.hasWindowFocus()
-              || layout == null) {
-            logSubmitNoticeGeometry("lifecycle", expected, width, font, true, text, action[0]);
-            issue[0] = "POST failure Snackbar was detached or lost focus before capture: " + name;
-            logSubmitNoticeGate(
-                "lifecycle", expected, width, font, decor, text, action[0], layout, null);
+          if (!signaled)
+            notice.fail(new AssertionError("timed out waiting for matching Snackbar onShown"));
+          if (notice.failure != null) {
+            issue[0] = notice.failure;
             return;
           }
-          int lines = layout.getLineCount();
-          int end = lines == 0 ? 0 : layout.getLineEnd(lines - 1);
-          int ellipses = 0;
-          boolean lineFits = true;
-          for (int line = 0; line < lines; line++) {
-            ellipses += layout.getEllipsisCount(line);
-            lineFits &=
-                layout.getLineLeft(line) >= -1
-                    && layout.getLineRight(line) <= layout.getWidth() + 1;
-          }
-          Rect visible = new Rect();
-          boolean globalVisible = text.getGlobalVisibleRect(visible);
-          boolean boundsFit =
-              globalVisible
-                  && visible.width() == text.getWidth()
-                  && visible.height() == text.getHeight()
-                  && layout.getHeight() + text.getTotalPaddingTop() + text.getTotalPaddingBottom()
-                      <= text.getHeight();
-          boolean rejected = ellipses != 0 || end != text.length() || !lineFits || !boundsFit;
-          logSubmitNoticeGeometry("text_fit", expected, width, font, rejected, text, action[0]);
-          if (rejected) {
-            issue[0] =
-                "POST failure Snackbar text does not fit: "
-                    + name
-                    + ": lines="
-                    + lines
-                    + ", ellipsized="
-                    + ellipses
-                    + ", lineEnd="
-                    + end
-                    + "/"
-                    + text.length()
-                    + ", lineFits="
-                    + lineFits
-                    + ", boundsFit="
-                    + boundsFit;
+          TextView text = notice.text;
+          Button action = notice.action;
+          try {
+            notice.requireVisible();
+          } catch (IllegalAccessException | RuntimeException | AssertionError error) {
+            logSubmitNoticeGeometry("lifecycle", notice.expected, width, font, true, text, action);
             logSubmitNoticeGate(
-                "text_fit",
-                expected,
+                "lifecycle",
+                notice.expected,
                 width,
                 font,
-                decor,
+                notice.decor,
                 text,
-                action[0],
-                layout,
-                new NoticeTextFit(lines, end, ellipses, lineFits, visible, globalVisible));
+                action,
+                text.getLayout(),
+                null);
+            issue[0] = error;
+            return;
+          }
+          NoticeTextFit fit = readNoticeTextFit(text);
+          boolean rejected = fit.rejected(text);
+          logSubmitNoticeGeometry("text_fit", notice.expected, width, font, rejected, text, action);
+          notice.observations.add(
+              "text fit after onShown: rejected="
+                  + rejected
+                  + ", visible="
+                  + fit.visible().width()
+                  + "x"
+                  + fit.visible().height()
+                  + ", local="
+                  + text.getWidth()
+                  + "x"
+                  + text.getHeight());
+          if (rejected) {
+            issue[0] =
+                new AssertionError(
+                    "lines="
+                        + fit.lines()
+                        + ", ellipsized="
+                        + fit.ellipses()
+                        + ", lineEnd="
+                        + fit.end()
+                        + "/"
+                        + text.length()
+                        + ", lineFits="
+                        + fit.lineFits()
+                        + ", boundsFit="
+                        + fit.boundsFit());
+            logSubmitNoticeGate(
+                "text_fit",
+                notice.expected,
+                width,
+                font,
+                notice.decor,
+                text,
+                action,
+                text.getLayout(),
+                fit);
+          } else if (notice.priorShown != null) {
+            // Exercise the negative fit control once, on the second settled notice.
+            try {
+              verifyClippedNoticeRejected(notice, fit);
+            } catch (RuntimeException | AssertionError error) {
+              issue[0] = error;
+            }
           }
         });
     saveCapture(test, name);
     saveDisplayCapture(test, capturePrefix + "-notice-display" + profile);
-    if (issue[0] != null) {
-      saveNoticeTrace(test, name, observations, issue[0]);
-      throw new AssertionError(issue[0]);
+    if (issue[0] == null) {
+      TagDetailChecks.ui(
+          test,
+          () -> {
+            if (notice.failure != null) {
+              issue[0] = notice.failure;
+              return;
+            }
+            try {
+              notice.requireVisible();
+              Button confirm = notice.action;
+              Rect visible = new Rect();
+              TagDetailChecks.require(
+                  confirm.isEnabled()
+                      && confirm.isClickable()
+                      && confirm.getWidth() >= GalleryUi.dp(confirm.getContext(), 48)
+                      && confirm.getHeight() >= GalleryUi.dp(confirm.getContext(), 48)
+                      && confirm.getGlobalVisibleRect(visible)
+                      && visible.width() == confirm.getWidth()
+                      && visible.height() == confirm.getHeight()
+                      && confirm.performClick(),
+                  "Snackbar confirmation is not a fully visible action");
+              // The action itself dismisses this bar. Observation ends once the click succeeds.
+              notice.active = false;
+            } catch (IllegalAccessException | RuntimeException | AssertionError error) {
+              issue[0] = error;
+            }
+          });
     }
-    TagDetailChecks.ui(
-        test,
-        () -> {
-          Button confirm = action[0];
-          Rect visible = new Rect();
-          if (confirm == null
-              || !confirm.isAttachedToWindow()
-              || !confirm.isShown()
-              || !confirm.isEnabled()
-              || !confirm.isClickable()
-              || confirm.getWidth() < GalleryUi.dp(confirm.getContext(), 48)
-              || confirm.getHeight() < GalleryUi.dp(confirm.getContext(), 48)
-              || !"確認".contentEquals(confirm.getText())
-              || !confirm.getGlobalVisibleRect(visible)
-              || visible.width() != confirm.getWidth()
-              || visible.height() != confirm.getHeight()
-              || !confirm.performClick()) {
-            issue[0] = "POST failure Snackbar confirmation is not a fully visible action: " + name;
-          }
-        });
+    LinkedHashSet<String> trace = new LinkedHashSet<>();
+    TagDetailChecks.ui(test, () -> trace.addAll(notice.observations));
     saveNoticeTrace(
         test,
         name,
-        observations,
-        issue[0] == null ? "layout fits\nSnackbar confirmation clicked" : issue[0]);
-    TagDetailChecks.require(issue[0] == null, issue[0]);
+        trace,
+        issue[0] == null ? "layout fits\nSnackbar confirmation clicked" : issue[0].toString());
+    if (issue[0] != null)
+      throw new AssertionError("POST failure Snackbar check failed: " + name, issue[0]);
+  }
+
+  private static NoticeTextFit readNoticeTextFit(TextView text) {
+    Layout layout = text.getLayout();
+    int lines = layout.getLineCount();
+    int end = lines == 0 ? 0 : layout.getLineEnd(lines - 1);
+    int ellipses = 0;
+    boolean lineFits = true;
+    for (int line = 0; line < lines; line++) {
+      ellipses += layout.getEllipsisCount(line);
+      lineFits &=
+          layout.getLineLeft(line) >= -1 && layout.getLineRight(line) <= layout.getWidth() + 1;
+    }
+    Rect visible = new Rect();
+    boolean globalVisible = text.getGlobalVisibleRect(visible);
+    boolean boundsFit =
+        globalVisible
+            && visible.width() == text.getWidth()
+            && visible.height() == text.getHeight()
+            && layout.getHeight() + text.getTotalPaddingTop() + text.getTotalPaddingBottom()
+                <= text.getHeight();
+    return new NoticeTextFit(lines, end, ellipses, lineFits, visible, globalVisible, boundsFit);
+  }
+
+  private static void verifyClippedNoticeRejected(
+      SubmitFailureNotice notice, NoticeTextFit normal) {
+    TextView text = notice.text;
+    Rect root = new Rect();
+    TagDetailChecks.require(
+        text.getRootView().getGlobalVisibleRect(root), "Snackbar root is visible");
+    float translation = text.getTranslationX();
+    NoticeTextFit clipped;
+    try {
+      text.setTranslationX(translation - (normal.visible().left - root.left) - 2);
+      clipped = readNoticeTextFit(text);
+      TagDetailChecks.require(
+          clipped.globalVisible()
+              && normal.visible().width() - clipped.visible().width() >= 2
+              && clipped.rejected(text),
+          "strict text fit should reject a shown Snackbar clipped by at least two pixels");
+    } finally {
+      text.setTranslationX(translation);
+    }
+    NoticeTextFit restored = readNoticeTextFit(text);
+    TagDetailChecks.require(!restored.rejected(text), "restored shown Snackbar must fit exactly");
+    notice.observations.add(
+        "post-show clipping rejected by the exact fit gate: visible width "
+            + normal.visible().width()
+            + " -> "
+            + clipped.visible().width()
+            + " -> "
+            + restored.visible().width());
   }
 
   private record NoticeTextFit(
-      int lines, int end, int ellipses, boolean lineFits, Rect visible, boolean globalVisible) {}
+      int lines,
+      int end,
+      int ellipses,
+      boolean lineFits,
+      Rect visible,
+      boolean globalVisible,
+      boolean boundsFit) {
+    boolean rejected(TextView text) {
+      return ellipses != 0 || end != text.length() || !lineFits || !boundsFit;
+    }
+  }
 
   private static void logSubmitNoticeGate(
       String phase,
