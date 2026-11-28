@@ -141,6 +141,40 @@ final class VideoChecks {
     test.sendStatus(0, report);
   }
 
+  private static AssertionError reportFailedPlayback(AssertionError primary, Runnable report) {
+    try {
+      report.run();
+    } catch (RuntimeException | Error reportingFailure) {
+      if (reportingFailure != primary) primary.addSuppressed(reportingFailure);
+    }
+    return primary;
+  }
+
+  private static void checkFailureReporting() {
+    AssertionError primary = new AssertionError("playback fixture primary");
+    RuntimeException sinkFailure = new IllegalStateException("playback status sink");
+    AssertionError reported =
+        reportFailedPlayback(
+            primary,
+            () -> {
+              throw sinkFailure;
+            });
+    TagDetailChecks.require(
+        reported == primary
+            && primary.getSuppressed().length == 1
+            && primary.getSuppressed()[0] == sinkFailure,
+        "status sink error remains secondary to the original assertion");
+    reported =
+        reportFailedPlayback(
+            primary,
+            () -> {
+              throw primary;
+            });
+    TagDetailChecks.require(
+        reported == primary && primary.getSuppressed().length == 1,
+        "an assertion is not suppressed onto itself");
+  }
+
   private static void playThroughPause(
       Instrumentation test, VideoActivity activity, VideoView video, Button play) throws Exception {
     PlaybackSample[] latest = new PlaybackSample[1];
@@ -179,13 +213,17 @@ final class VideoChecks {
           },
           "playing position did not advance");
     } catch (AssertionError failure) {
-      reportPlayback(
-          test,
-          advanced[0] == null ? latest[0].progressFrom(baseline).name() : "PAUSE_CLICK_REJECTED",
-          SystemClock.uptimeMillis() - playAt[0],
-          baseline,
-          latest[0]);
-      throw failure;
+      throw reportFailedPlayback(
+          failure,
+          () ->
+              reportPlayback(
+                  test,
+                  advanced[0] == null
+                      ? latest[0].progressFrom(baseline).name()
+                      : "PAUSE_CLICK_REJECTED",
+                  SystemClock.uptimeMillis() - playAt[0],
+                  baseline,
+                  latest[0]));
     }
     try {
       await(
@@ -199,17 +237,20 @@ final class VideoChecks {
           },
           "explicit pause not observed");
     } catch (AssertionError failure) {
-      Progress progress = latest[0].progressFrom(baseline);
-      reportPlayback(
-          test,
-          switch (progress) {
-            case ERROR, UNPREPARED, COMPLETED -> "PAUSE_" + progress.name();
-            default -> "PAUSE_NOT_OBSERVED";
-          },
-          SystemClock.uptimeMillis() - playAt[0],
-          baseline,
-          latest[0]);
-      throw failure;
+      throw reportFailedPlayback(
+          failure,
+          () -> {
+            Progress progress = latest[0].progressFrom(baseline);
+            reportPlayback(
+                test,
+                switch (progress) {
+                  case ERROR, UNPREPARED, COMPLETED -> "PAUSE_" + progress.name();
+                  default -> "PAUSE_NOT_OBSERVED";
+                },
+                SystemClock.uptimeMillis() - playAt[0],
+                baseline,
+                latest[0]);
+          });
     }
     long pausedElapsed = SystemClock.uptimeMillis() - playAt[0];
     reportPlayback(test, "ADVANCED", advancedAt[0] - playAt[0], baseline, advanced[0]);
@@ -235,6 +276,7 @@ final class VideoChecks {
 
   static String run(Instrumentation test, int width, float font) throws Exception {
     checkProgressStates();
+    checkFailureReporting();
     File movie = new File(test.getTargetContext().getCacheDir(), "video-synthetic.mp4");
     try (InputStream in = test.getContext().getAssets().open("video-synthetic.mp4");
         FileOutputStream out = new FileOutputStream(movie)) {
