@@ -5,6 +5,7 @@ import android.app.Instrumentation;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.net.Uri;
+import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.View;
 import android.view.ViewGroup;
@@ -56,6 +57,165 @@ final class VideoChecks {
     return ((ViewGroup) activity.findViewById(android.R.id.content)).getChildAt(0);
   }
 
+  private enum Progress {
+    ERROR,
+    UNPREPARED,
+    COMPLETED,
+    IDLE,
+    STALLED,
+    ADVANCED
+  }
+
+  private record PlaybackSample(
+      boolean prepared,
+      boolean failed,
+      boolean completed,
+      boolean paused,
+      boolean playing,
+      int position,
+      int duration) {
+    Progress progressFrom(int baseline) {
+      if (failed) return Progress.ERROR;
+      if (!prepared) return Progress.UNPREPARED;
+      if (completed) return Progress.COMPLETED;
+      if (!playing) return Progress.IDLE;
+      return position > baseline ? Progress.ADVANCED : Progress.STALLED;
+    }
+  }
+
+  private static void checkProgressStates() {
+    int baseline = 100;
+    TagDetailChecks.require(
+        new PlaybackSample(true, false, false, false, false, 150, 6000).progressFrom(baseline)
+            == Progress.IDLE,
+        "idle position is not playback progress");
+    TagDetailChecks.require(
+        new PlaybackSample(true, false, false, false, true, baseline, 6000).progressFrom(baseline)
+            == Progress.STALLED,
+        "reported playing without movement is not progress");
+    TagDetailChecks.require(
+        new PlaybackSample(true, false, false, false, true, 150, 6000).progressFrom(baseline)
+            == Progress.ADVANCED,
+        "live forward movement is progress");
+    TagDetailChecks.require(
+        new PlaybackSample(false, false, false, false, true, 150, 6000).progressFrom(baseline)
+            == Progress.UNPREPARED,
+        "unprepared player cannot prove progress");
+    TagDetailChecks.require(
+        new PlaybackSample(false, true, false, false, true, 150, 6000).progressFrom(baseline)
+            == Progress.ERROR,
+        "error cannot prove progress");
+    TagDetailChecks.require(
+        new PlaybackSample(true, false, true, false, true, 150, 6000).progressFrom(baseline)
+            == Progress.COMPLETED,
+        "completion cannot prove progress");
+  }
+
+  private static PlaybackSample sample(VideoActivity activity, VideoView video) {
+    String state = String.valueOf(video.getStateDescription());
+    return new PlaybackSample(
+        (boolean) get(activity, "prepared"),
+        (boolean) get(activity, "failed"),
+        "再生終了".equals(state),
+        "一時停止中".equals(state),
+        video.isPlaying(),
+        video.getCurrentPosition(),
+        video.getDuration());
+  }
+
+  private static void reportPlayback(
+      Instrumentation test, String state, long elapsed, int baseline, PlaybackSample sample) {
+    Bundle report = new Bundle();
+    report.putString(
+        "video_fixture",
+        "state="
+            + state
+            + " elapsed_ms="
+            + elapsed
+            + " baseline_ms="
+            + baseline
+            + " latest_ms="
+            + sample.position()
+            + " duration_ms="
+            + sample.duration());
+    test.sendStatus(0, report);
+  }
+
+  private static void playThroughPause(
+      Instrumentation test, VideoActivity activity, VideoView video, Button play) throws Exception {
+    PlaybackSample[] latest = new PlaybackSample[1];
+    long[] playAt = new long[1];
+    TagDetailChecks.ui(
+        test,
+        () -> {
+          latest[0] = sample(activity, video);
+          TagDetailChecks.require(
+              latest[0].progressFrom(latest[0].position()) == Progress.IDLE,
+              "play action starts with a prepared idle player");
+          playAt[0] = SystemClock.uptimeMillis();
+          TagDetailChecks.require(play.performClick(), "play action accepted");
+        });
+    int baseline = latest[0].position();
+    PlaybackSample[] advanced = new PlaybackSample[1];
+    long[] advancedAt = new long[1];
+    try {
+      await(
+          test,
+          () -> {
+            latest[0] = sample(activity, video);
+            Progress progress = latest[0].progressFrom(baseline);
+            switch (progress) {
+              case ADVANCED -> {
+                advanced[0] = latest[0];
+                advancedAt[0] = SystemClock.uptimeMillis();
+                TagDetailChecks.require(play.performClick(), "pause action accepted while playing");
+                return true;
+              }
+              case IDLE, STALLED -> {
+                return false;
+              }
+              default -> throw new AssertionError("player unavailable before progress");
+            }
+          },
+          "playing position did not advance");
+    } catch (AssertionError failure) {
+      reportPlayback(
+          test,
+          advanced[0] == null ? latest[0].progressFrom(baseline).name() : "PAUSE_CLICK_REJECTED",
+          SystemClock.uptimeMillis() - playAt[0],
+          baseline,
+          latest[0]);
+      throw failure;
+    }
+    try {
+      await(
+          test,
+          () -> {
+            latest[0] = sample(activity, video);
+            TagDetailChecks.require(
+                latest[0].prepared() && !latest[0].failed() && !latest[0].completed(),
+                "player unavailable after explicit pause");
+            return latest[0].paused() && !latest[0].playing();
+          },
+          "explicit pause not observed");
+    } catch (AssertionError failure) {
+      Progress progress = latest[0].progressFrom(baseline);
+      reportPlayback(
+          test,
+          switch (progress) {
+            case ERROR, UNPREPARED, COMPLETED -> "PAUSE_" + progress.name();
+            default -> "PAUSE_NOT_OBSERVED";
+          },
+          SystemClock.uptimeMillis() - playAt[0],
+          baseline,
+          latest[0]);
+      throw failure;
+    }
+    long pausedElapsed = SystemClock.uptimeMillis() - playAt[0];
+    reportPlayback(test, "ADVANCED", advancedAt[0] - playAt[0], baseline, advanced[0]);
+    reportPlayback(test, "PAUSED", pausedElapsed, baseline, latest[0]);
+  }
+
   private static void capture(Instrumentation test, Activity activity, String name)
       throws Exception {
     test.waitForIdleSync();
@@ -74,6 +234,7 @@ final class VideoChecks {
   }
 
   static String run(Instrumentation test, int width, float font) throws Exception {
+    checkProgressStates();
     File movie = new File(test.getTargetContext().getCacheDir(), "video-synthetic.mp4");
     try (InputStream in = test.getContext().getAssets().open("video-synthetic.mp4");
         FileOutputStream out = new FileOutputStream(movie)) {
@@ -241,10 +402,8 @@ final class VideoChecks {
                 "video portrait");
           });
       capture(test, activity, "video-ready-" + width + "-" + font);
-      TagDetailChecks.ui(test, play::performClick);
-      await(test, video::isPlaying, "play action starts video");
-      Thread.sleep(400);
-      capture(test, activity, "video-playing-" + width + "-" + font);
+      playThroughPause(test, activity, video, play);
+      capture(test, activity, "video-user-paused-" + width + "-" + font);
       TagDetailChecks.ui(
           test,
           () -> {
@@ -270,15 +429,8 @@ final class VideoChecks {
             down.recycle();
             up.recycle();
           });
-      capture(test, activity, "video-controls-" + width + "-" + font);
-      TagDetailChecks.ui(
-          test,
-          () -> {
-            TagDetailChecks.require(video.getCurrentPosition() > 0, "playback progresses");
-            play.performClick();
-            TagDetailChecks.require(!video.isPlaying(), "pause action");
-            video.seekTo(2000);
-          });
+      capture(test, activity, "video-user-paused-controls-" + width + "-" + font);
+      TagDetailChecks.ui(test, () -> video.seekTo(2000));
       await(test, () -> video.getCurrentPosition() >= 1500, "seek action");
       TagDetailChecks.ui(test, play::performClick);
       await(test, video::isPlaying, "resume action");
