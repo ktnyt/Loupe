@@ -1182,27 +1182,36 @@ final class NanoBananaBackgroundChecks {
       NoticeEvidence captures) {
     Throwable failure;
     try {
-      failure = verifyShownNoticeFit(test, notice, width, font);
+      failure = awaitShownNotice(test, notice);
     } catch (Throwable error) {
       failure = error;
     }
     List<Throwable> evidenceErrors = new ArrayList<>();
+    boolean frameCommitted = false;
     if (failure == null) {
-      collectNoticeEvidence(
-          evidenceErrors, "settled Snackbar frame", () -> commitNoticeFrame(test, notice));
+      frameCommitted =
+          collectNoticeEvidence(
+              evidenceErrors, "settled Snackbar frame", () -> commitNoticeFrame(test, notice));
+      try {
+        failure = verifyNoticeForCapture(test, notice, width, font, frameCommitted);
+      } catch (Throwable error) {
+        failure = error;
+      }
     }
     // Failure screenshots are best effort, including when there is no attached notice.
     collectNoticeEvidence(evidenceErrors, "notice screenshot", captures.screenshot());
     collectNoticeEvidence(evidenceErrors, "notice display screenshot", captures.display());
-    if (failure == null) {
+    if (failure == null && frameCommitted) {
       try {
         failure = verifyNoticeConfirmation(test, notice);
       } catch (Throwable error) {
         failure = error;
       }
     }
-    String verdict =
-        failure == null ? "layout fits\nSnackbar confirmation clicked" : failure.toString();
+    String verdict;
+    if (failure != null) verdict = failure.toString();
+    else if (frameCommitted) verdict = "layout fits\nSnackbar confirmation clicked";
+    else verdict = "text fit and confirmation skipped because no settled frame was confirmed";
     collectNoticeEvidence(
         evidenceErrors,
         "notice trace",
@@ -1222,17 +1231,19 @@ final class NanoBananaBackgroundChecks {
     throw report;
   }
 
-  private static void collectNoticeEvidence(
+  private static boolean collectNoticeEvidence(
       List<Throwable> errors, String label, NoticeCheck check) {
     try {
       check.run();
+      return true;
     } catch (Throwable error) {
       errors.add(new AssertionError("Could not collect " + label, error));
+      return false;
     }
   }
 
-  private static Throwable verifyShownNoticeFit(
-      Instrumentation test, SubmitFailureNotice notice, int width, float font) throws Exception {
+  private static Throwable awaitShownNotice(Instrumentation test, SubmitFailureNotice notice)
+      throws InterruptedException {
     boolean signaled = notice.terminal.await(10, TimeUnit.SECONDS);
     Throwable[] issue = {null};
     TagDetailChecks.ui(
@@ -1240,6 +1251,21 @@ final class NanoBananaBackgroundChecks {
         () -> {
           if (!signaled)
             notice.fail(new AssertionError("timed out waiting for matching Snackbar onShown"));
+          issue[0] = notice.failure;
+        });
+    return issue[0];
+  }
+
+  private static Throwable verifyNoticeForCapture(
+      Instrumentation test,
+      SubmitFailureNotice notice,
+      int width,
+      float font,
+      boolean frameCommitted) {
+    Throwable[] issue = {null};
+    TagDetailChecks.ui(
+        test,
+        () -> {
           if (notice.failure != null) {
             issue[0] = notice.failure;
             return;
@@ -1263,6 +1289,8 @@ final class NanoBananaBackgroundChecks {
             issue[0] = error;
             return;
           }
+          // A frame failure can still coincide with an observer or lifecycle failure above.
+          if (!frameCommitted) return;
           NoticeTextFit fit = readNoticeTextFit(text);
           boolean rejected = fit.rejected(text);
           logSubmitNoticeGeometry("text_fit", notice.expected, width, font, rejected, text, action);
