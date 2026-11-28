@@ -495,6 +495,11 @@ public final class ArchiveInstrumentation extends Instrumentation {
           || !report.contains("ArchiveInstrumentation.java:")) throw new AssertionError();
       Context context = getTargetContext();
       String mode = cameraPilotArguments.getString("mode", "");
+      if ("diagnostic-log-write-cost".equals(mode)) {
+        results.putString("stream", LogWriteCostChecks.run(this, cameraPilotArguments));
+        finish(-1, results);
+        return;
+      }
       if ("ranking-upgrade-seed".equals(mode)) {
         results.putString("stream", RankingUpgradeSeedChecks.run(this, cameraPilotArguments));
         finish(-1, results);
